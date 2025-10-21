@@ -1,0 +1,42 @@
+name: logistics_to_app
+description: "A new Flutter project."
+publish_to: 'none'
+
+version: 1.0.0+1
+
+environment:
+  sdk: ^3.9.2
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  # Firebase 핵심
+  firebase_core: ^3.8.1
+  firebase_auth: ^5.3.3
+  cloud_firestore: ^5.5.0
+  firebase_messaging: ^15.1.5
+  
+  # 상태 관리
+  provider: ^6.1.2
+  
+  # UI/UX
+  cupertino_icons: ^1.0.8
+  fluttertoast: ^8.2.8
+  loading_animation_widget: ^1.2.1
+  
+  # 위치/GPS
+  geolocator: ^13.0.2
+  permission_handler: ^11.3.1
+  
+  # 유틸리티
+  intl: ^0.19.0
+  http: ^1.2.2
+  
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^5.0.0
+
+flutter:
+  uses-material-design: true

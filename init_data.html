@@ -1,0 +1,420 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Firestore 초기 데이터 생성</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+    body {
+      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 20px;
+    }
+    .container {
+      background: white;
+      border-radius: 16px;
+      box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+      padding: 40px;
+      max-width: 800px;
+      width: 100%;
+    }
+    h1 {
+      color: #667eea;
+      margin-bottom: 10px;
+      font-size: 28px;
+    }
+    .subtitle {
+      color: #666;
+      margin-bottom: 30px;
+      font-size: 14px;
+    }
+    .config-section {
+      background: #f8f9fa;
+      padding: 20px;
+      border-radius: 8px;
+      margin-bottom: 20px;
+    }
+    .config-section h3 {
+      color: #333;
+      margin-bottom: 15px;
+      font-size: 16px;
+    }
+    .input-group {
+      margin-bottom: 15px;
+    }
+    .input-group label {
+      display: block;
+      color: #555;
+      margin-bottom: 5px;
+      font-size: 14px;
+      font-weight: 600;
+    }
+    .input-group input {
+      width: 100%;
+      padding: 10px;
+      border: 1px solid #ddd;
+      border-radius: 6px;
+      font-size: 14px;
+      font-family: monospace;
+    }
+    .input-group input:focus {
+      outline: none;
+      border-color: #667eea;
+      box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+    }
+    .btn {
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      color: white;
+      border: none;
+      padding: 14px 28px;
+      border-radius: 8px;
+      font-size: 16px;
+      font-weight: 600;
+      cursor: pointer;
+      width: 100%;
+      transition: transform 0.2s;
+    }
+    .btn:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 10px 20px rgba(102, 126, 234, 0.3);
+    }
+    .btn:disabled {
+      background: #ccc;
+      cursor: not-allowed;
+      transform: none;
+    }
+    #status {
+      margin-top: 20px;
+      padding: 15px;
+      border-radius: 8px;
+      display: none;
+    }
+    #status.success {
+      background: #d4edda;
+      color: #155724;
+      border: 1px solid #c3e6cb;
+    }
+    #status.error {
+      background: #f8d7da;
+      color: #721c24;
+      border: 1px solid #f5c6cb;
+    }
+    #status.info {
+      background: #d1ecf1;
+      color: #0c5460;
+      border: 1px solid #bee5eb;
+    }
+    .log {
+      margin-top: 10px;
+      font-size: 13px;
+      line-height: 1.6;
+    }
+    .warning {
+      background: #fff3cd;
+      border: 1px solid #ffeaa7;
+      color: #856404;
+      padding: 15px;
+      border-radius: 8px;
+      margin-bottom: 20px;
+      font-size: 14px;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>🔥 Firestore 초기 데이터 생성기</h1>
+    <p class="subtitle">Firebase 설정만 입력하면 자동으로 테스트 데이터를 생성합니다</p>
+
+    <div class="warning">
+      ⚠️ <strong>주의:</strong> 이 스크립트는 기존 데이터를 덮어쓸 수 있습니다. 프로덕션 환경에서는 사용하지 마세요!
+    </div>
+
+    <div class="config-section">
+      <h3>📋 Firebase 설정 정보</h3>
+      <p style="color: #666; font-size: 13px; margin-bottom: 15px;">
+        Firebase Console → 프로젝트 설정 → 일반 → 내 앱 → Firebase SDK snippet → 구성
+      </p>
+
+      <div class="input-group">
+        <label>API Key</label>
+        <input type="text" id="apiKey" placeholder="AIzaSy...">
+      </div>
+
+      <div class="input-group">
+        <label>Auth Domain</label>
+        <input type="text" id="authDomain" placeholder="your-project.firebaseapp.com">
+      </div>
+
+      <div class="input-group">
+        <label>Project ID</label>
+        <input type="text" id="projectId" placeholder="your-project-id">
+      </div>
+
+      <div class="input-group">
+        <label>Storage Bucket</label>
+        <input type="text" id="storageBucket" placeholder="your-project.appspot.com">
+      </div>
+
+      <div class="input-group">
+        <label>Messaging Sender ID</label>
+        <input type="text" id="messagingSenderId" placeholder="123456789">
+      </div>
+
+      <div class="input-group">
+        <label>App ID</label>
+        <input type="text" id="appId" placeholder="1:123456789:web:abc123">
+      </div>
+    </div>
+
+    <button class="btn" onclick="initializeData()">🚀 데이터 생성 시작</button>
+
+    <div id="status"></div>
+  </div>
+
+  <script type="module">
+    import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js';
+    import { getAuth, createUserWithEmailAndPassword } from 'https://www.gstatic.com/firebasejs/10.7.1/firebase-auth.js';
+    import { getFirestore, collection, doc, setDoc, Timestamp } from 'https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js';
+
+    let app, auth, db;
+
+    window.initializeData = async function() {
+      const statusDiv = document.getElementById('status');
+      const btn = document.querySelector('.btn');
+      
+      // 입력값 가져오기
+      const config = {
+        apiKey: document.getElementById('apiKey').value.trim(),
+        authDomain: document.getElementById('authDomain').value.trim(),
+        projectId: document.getElementById('projectId').value.trim(),
+        storageBucket: document.getElementById('storageBucket').value.trim(),
+        messagingSenderId: document.getElementById('messagingSenderId').value.trim(),
+        appId: document.getElementById('appId').value.trim(),
+      };
+
+      // 유효성 검사
+      if (Object.values(config).some(v => !v)) {
+        showStatus('error', '⚠️ 모든 설정 정보를 입력해주세요!');
+        return;
+      }
+
+      btn.disabled = true;
+      showStatus('info', '⏳ Firebase 초기화 중...');
+
+      try {
+        // Firebase 초기화
+        app = initializeApp(config);
+        auth = getAuth(app);
+        db = getFirestore(app);
+
+        showStatus('info', '✅ Firebase 초기화 완료<br>📝 데이터 생성 중...<br><div class="log">');
+
+        // 1. 관리자 계정 생성
+        await createAdminAccount();
+
+        // 2. 일반 사용자 계정 생성
+        await createUserAccount();
+
+        // 3. TO 데이터 생성
+        await createTOData();
+
+        showStatus('success', '🎉 모든 데이터가 성공적으로 생성되었습니다!<br><br><strong>테스트 계정:</strong><br>관리자: admin@test.com / admin123!@#<br>사용자: user@test.com / user123!@#');
+
+      } catch (error) {
+        console.error(error);
+        showStatus('error', `❌ 오류 발생: ${error.message}`);
+      } finally {
+        btn.disabled = false;
+      }
+    };
+
+    async function createAdminAccount() {
+      const log = document.querySelector('.log');
+      
+      try {
+        // 관리자 계정 생성
+        const adminCred = await createUserWithEmailAndPassword(auth, 'admin@test.com', 'admin123!@#');
+        const adminUID = adminCred.user.uid;
+        
+        log.innerHTML += `✅ 관리자 계정 생성 (UID: ${adminUID})<br>`;
+
+        // Firestore에 사용자 정보 저장
+        await setDoc(doc(db, 'users', adminUID), {
+          uid: adminUID,
+          name: '관리자',
+          email: 'admin@test.com',
+          isAdmin: true,
+          createdAt: Timestamp.now(),
+          lastLoginAt: Timestamp.now(),
+        });
+
+        log.innerHTML += `✅ 관리자 정보 Firestore 저장 완료<br>`;
+        return adminUID;
+
+      } catch (error) {
+        if (error.code === 'auth/email-already-in-use') {
+          log.innerHTML += `⚠️ 관리자 계정이 이미 존재합니다 (건너뛰기)<br>`;
+          return null;
+        }
+        throw error;
+      }
+    }
+
+    async function createUserAccount() {
+      const log = document.querySelector('.log');
+      
+      try {
+        // 일반 사용자 계정 생성
+        const userCred = await createUserWithEmailAndPassword(auth, 'user@test.com', 'user123!@#');
+        const userUID = userCred.user.uid;
+        
+        log.innerHTML += `✅ 일반 사용자 계정 생성 (UID: ${userUID})<br>`;
+
+        // Firestore에 사용자 정보 저장
+        await setDoc(doc(db, 'users', userUID), {
+          uid: userUID,
+          name: '테스트 사용자',
+          email: 'user@test.com',
+          isAdmin: false,
+          createdAt: Timestamp.now(),
+          lastLoginAt: Timestamp.now(),
+        });
+
+        log.innerHTML += `✅ 사용자 정보 Firestore 저장 완료<br>`;
+
+      } catch (error) {
+        if (error.code === 'auth/email-already-in-use') {
+          log.innerHTML += `⚠️ 사용자 계정이 이미 존재합니다 (건너뛰기)<br>`;
+        } else {
+          throw error;
+        }
+      }
+    }
+
+    async function createTOData() {
+      const log = document.querySelector('.log');
+      
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      
+      const tomorrow = new Date(today);
+      tomorrow.setDate(tomorrow.getDate() + 1);
+      
+      const dayAfter = new Date(today);
+      dayAfter.setDate(dayAfter.getDate() + 2);
+
+      const tosData = [
+        // 송파 - 오늘 오전
+        {
+          centerId: 'CENTER_A',
+          centerName: '송파 물류센터',
+          date: Timestamp.fromDate(today),
+          startTime: '09:00',
+          endTime: '18:00',
+          requiredCount: 5,
+          currentCount: 2,
+          workType: '피킹',
+          description: '냉동창고 피킹 작업',
+          creatorUID: 'admin-temp-uid',
+          createdAt: Timestamp.now(),
+        },
+        // 송파 - 오늘 야간
+        {
+          centerId: 'CENTER_A',
+          centerName: '송파 물류센터',
+          date: Timestamp.fromDate(today),
+          startTime: '18:00',
+          endTime: '24:00',
+          requiredCount: 3,
+          currentCount: 0,
+          workType: '패킹',
+          description: '새벽 배송 물량 패킹',
+          creatorUID: 'admin-temp-uid',
+          createdAt: Timestamp.now(),
+        },
+        // 강남 - 내일
+        {
+          centerId: 'CENTER_B',
+          centerName: '강남 물류센터',
+          date: Timestamp.fromDate(tomorrow),
+          startTime: '08:00',
+          endTime: '17:00',
+          requiredCount: 10,
+          currentCount: 7,
+          workType: '배송',
+          description: '강남/서초 지역 배송',
+          creatorUID: 'admin-temp-uid',
+          createdAt: Timestamp.now(),
+        },
+        // 서초 - 모레
+        {
+          centerId: 'CENTER_C',
+          centerName: '서초 물류센터',
+          date: Timestamp.fromDate(dayAfter),
+          startTime: '10:00',
+          endTime: '19:00',
+          requiredCount: 8,
+          currentCount: 8,
+          workType: '분류',
+          description: '택배 분류 작업 - 마감',
+          creatorUID: 'admin-temp-uid',
+          createdAt: Timestamp.now(),
+        },
+        // 송파 - 내일
+        {
+          centerId: 'CENTER_A',
+          centerName: '송파 물류센터',
+          date: Timestamp.fromDate(tomorrow),
+          startTime: '14:00',
+          endTime: '22:00',
+          requiredCount: 6,
+          currentCount: 3,
+          workType: '하역',
+          description: '컨테이너 하역 작업',
+          creatorUID: 'admin-temp-uid',
+          createdAt: Timestamp.now(),
+        },
+        // 강남 - 오늘
+        {
+          centerId: 'CENTER_B',
+          centerName: '강남 물류센터',
+          date: Timestamp.fromDate(today),
+          startTime: '13:00',
+          endTime: '21:00',
+          requiredCount: 4,
+          currentCount: 1,
+          workType: '검수',
+          description: '입고 물품 검수',
+          creatorUID: 'admin-temp-uid',
+          createdAt: Timestamp.now(),
+        },
+      ];
+
+      for (let i = 0; i < tosData.length; i++) {
+        const toData = tosData[i];
+        const docRef = doc(collection(db, 'tos'));
+        await setDoc(docRef, toData);
+        log.innerHTML += `✅ TO ${i + 1} 생성: ${toData.centerName} - ${toData.workType}<br>`;
+      }
+
+      log.innerHTML += `<br>✅ 총 ${tosData.length}개의 TO 생성 완료!<br>`;
+    }
+
+    function showStatus(type, message) {
+      const statusDiv = document.getElementById('status');
+      statusDiv.className = type;
+      statusDiv.innerHTML = message;
+      statusDiv.style.display = 'block';
+    }
+  </script>
+</body>
+</html>

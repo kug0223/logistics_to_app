@@ -1,0 +1,84 @@
+Flutter crash report.
+Please report a bug at https://github.com/flutter/flutter/issues.
+
+## command
+
+flutter run -d web-server
+
+## exception
+
+PathAccessException: PathAccessException: Deletion failed, path = 'C:\Users\kug02\AppData\Local\Temp\flutter_tools.6f4c68a9\flutter_tool.bbf8493f' (OS Error: 다른 프로세스가 파일을 사용 중이기 때문에 프로세스가 액세스 할 수 없습니다.
+, errno = 32)
+
+```
+#0      _Directory._deleteSync (dart:io/directory_impl.dart:225:7)
+#1      FileSystemEntity.deleteSync (dart:io/file_system_entity.dart:425:7)
+#2      ForwardingFileSystemEntity.deleteSync (package:file/src/forwarding/forwarding_file_system_entity.dart:70:16)
+#3      ErrorHandlingDirectory.deleteSync.<anonymous closure> (package:flutter_tools/src/base/error_handling_io.dart:451:22)
+#4      _runSync (package:flutter_tools/src/base/error_handling_io.dart:552:14)
+#5      ErrorHandlingDirectory.deleteSync (package:flutter_tools/src/base/error_handling_io.dart:450:12)
+#6      ResidentRunner.preExit (package:flutter_tools/src/resident_runner.dart:1378:25)
+#7      ResidentRunner.exit (package:flutter_tools/src/resident_runner.dart:1216:11)
+<asynchronous suspension>
+#8      TerminalHandler._commonTerminalInputHandler (package:flutter_tools/src/resident_runner.dart:1690:9)
+<asynchronous suspension>
+#9      TerminalHandler.processTerminalInput (package:flutter_tools/src/resident_runner.dart:1751:7)
+<asynchronous suspension>
+```
+
+## flutter doctor
+
+```
+[32m[✓][39m Flutter (Channel stable, 3.35.6, on Microsoft Windows [Version 10.0.26100.6899], locale ko-KR) [383ms]
+    [32m•[39m Flutter version 3.35.6 on channel stable at C:\Users\kug02\flutter
+    [32m•[39m Upstream repository https://github.com/flutter/flutter.git
+    [32m•[39m Framework revision 9f455d2486 (12 days ago), 2025-10-08 14:55:31 -0500
+    [32m•[39m Engine revision d2913632a4
+    [32m•[39m Dart version 3.9.2
+    [32m•[39m DevTools version 2.48.0
+    [32m•[39m Feature flags: enable-web, enable-linux-desktop, enable-macos-desktop, enable-windows-desktop,
+      enable-android, enable-ios, cli-animations, enable-lldb-debugging
+
+[32m[✓][39m Windows Version (11 Home 64-bit, 24H2, 2009) [8.2s]
+
+[32m[✓][39m Android toolchain - develop for Android devices (Android SDK version 36.1.0) [5.3s]
+    [32m•[39m Android SDK at C:\Users\kug02\AppData\Local\Android\sdk
+    [32m•[39m Emulator version 36.2.12.0 (build_id 14214601) (CL:N/A)
+    [32m•[39m Platform android-36, build-tools 36.1.0
+    [32m•[39m Java binary at: C:\Program Files\Android\Android Studio\jbr\bin\java
+      This is the JDK bundled with the latest Android Studio installation on this machine.
+      To manually set the JDK path, use: `flutter config --jdk-dir="path/to/jdk"`.
+    [32m•[39m Java version OpenJDK Runtime Environment (build 21.0.8+-14018985-b1038.68)
+    [32m•[39m All Android licenses accepted.
+
+[32m[✓][39m Chrome - develop for the web [11ms]
+    [32m•[39m Chrome at C:\Program Files\Google\Chrome\Application\chrome.exe
+
+[31m[✗][39m Visual Studio - develop Windows apps [10ms]
+    [31m✗[39m Visual Studio not installed; this is necessary to develop Windows apps.
+      Download at https://visualstudio.microsoft.com/downloads/.
+      Please install the "Desktop development with C++" workload, including all of its default components
+
+[32m[✓][39m Android Studio (version 2025.1.4) [7ms]
+    [32m•[39m Android Studio at C:\Program Files\Android\Android Studio
+    [32m•[39m Flutter plugin can be installed from:
+      🔨 https://plugins.jetbrains.com/plugin/9212-flutter
+    [32m•[39m Dart plugin can be installed from:
+      🔨 https://plugins.jetbrains.com/plugin/6351-dart
+    [32m•[39m Java version OpenJDK Runtime Environment (build 21.0.8+-14018985-b1038.68)
+
+[32m[✓][39m VS Code (version 1.105.1) [5ms]
+    [32m•[39m VS Code at C:\Users\kug02\AppData\Local\Programs\Microsoft VS Code
+    [32m•[39m Flutter extension version 3.120.0
+
+[32m[✓][39m Connected device (4 available) [647ms]
+    [32m•[39m Windows (desktop) • windows    • windows-x64    • Microsoft Windows [Version 10.0.26100.6899]
+    [32m•[39m Web Server (web)  • web-server • web-javascript • Flutter Tools
+    [32m•[39m Chrome (web)      • chrome     • web-javascript • Google Chrome 141.0.7390.108
+    [32m•[39m Edge (web)        • edge       • web-javascript • Microsoft Edge 141.0.3537.85
+
+[32m[✓][39m Network resources [427ms]
+    [32m•[39m All expected network resources are available.
+
+[33m![39m Doctor found issues in 1 category.
+```
