@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../providers/user_provider.dart';
-import 'center_management_screen.dart';
+import 'admin_to_list_screen.dart'; // ✅ 경로 수정
+import 'business_registration_screen.dart'; // ✅ 변경: 사업장 등록 화면
 
+/// 관리자 홈 화면 (메뉴 카드 방식)
 class AdminHomeScreen extends StatelessWidget {
   const AdminHomeScreen({Key? key}) : super(key: key);
 
@@ -13,7 +15,7 @@ class AdminHomeScreen extends StatelessWidget {
     return Scaffold(
       appBar: AppBar(
         title: const Text('관리자 모드'),
-        backgroundColor: Colors.purple[700],
+        backgroundColor: Colors.purple[700], // ✅ shade700 → [700]
         actions: [
           IconButton(
             icon: const Icon(Icons.logout),
@@ -30,37 +32,48 @@ class AdminHomeScreen extends StatelessWidget {
                     ),
                     TextButton(
                       onPressed: () => Navigator.pop(context, true),
-                      style: TextButton.styleFrom(foregroundColor: Colors.red),
                       child: const Text('로그아웃'),
                     ),
                   ],
                 ),
               );
 
-              if (confirm == true && context.mounted) {
-                await context.read<UserProvider>().signOut();
-                if (context.mounted) {
-                  Navigator.of(context).pushReplacementNamed('/login');
-                }
+              if (confirm == true) {
+                await userProvider.signOut();
               }
             },
           ),
         ],
       ),
-      body: SingleChildScrollView(
+      body: Container(
+        decoration: BoxDecoration(
+          gradient: LinearGradient(
+            begin: Alignment.topCenter,
+            end: Alignment.bottomCenter,
+            colors: [
+              Colors.purple[700]!, // ✅ shade700 → [700]
+              Colors.purple[500]!,
+            ],
+          ),
+        ),
         child: Column(
           children: [
+            // 상단 사용자 정보
             Container(
-              width: double.infinity,
               padding: const EdgeInsets.all(24),
-              decoration: BoxDecoration(
-                color: Colors.purple[700],
-              ),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    '환영합니다, ${userProvider.currentUser?.name ?? '관리자'}님',
+                    '안녕하세요,',
+                    style: TextStyle(
+                      color: Colors.white.withOpacity(0.9),
+                      fontSize: 16,
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    '${userProvider.currentUser?.name ?? '관리자'}님', // ✅ displayName → name
                     style: const TextStyle(
                       color: Colors.white,
                       fontSize: 24,
@@ -79,96 +92,112 @@ class AdminHomeScreen extends StatelessWidget {
               ),
             ),
             const SizedBox(height: 32),
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16),
-              child: GridView.count(
-                shrinkWrap: true,
-                physics: const NeverScrollableScrollPhysics(),
-                crossAxisCount: 2,
-                crossAxisSpacing: 16,
-                mainAxisSpacing: 16,
-                children: [
-                  _buildMenuCard(
-                    context,
-                    icon: Icons.assignment_outlined,
-                    title: 'TO 관리',
-                    subtitle: '근무 오더 조회/생성',
-                    color: Colors.purple,
-                    onTap: () {
-                      Navigator.push(
-                        context,
-                        MaterialPageRoute(
-                          builder: (context) => const AdminTOListScreen(),
-                        ),
-                      );
-                    },
+
+            // 메뉴 카드들
+            Expanded(
+              child: Container(
+                decoration: BoxDecoration(
+                  color: Colors.grey[50],
+                  borderRadius: const BorderRadius.only(
+                    topLeft: Radius.circular(32),
+                    topRight: Radius.circular(32),
                   ),
-                  _buildMenuCard(
-                    context,
-                    icon: Icons.business_outlined,
-                    title: '사업장 관리',
-                    subtitle: '내 사업장 정보 관리',
-                    color: Colors.blue,
-                    onTap: () {
-                      Navigator.push(
-                        context,
-                        MaterialPageRoute(
-                          builder: (context) => const CenterManagementScreen(),
-                        ),
-                      );
-                    },
-                  ),
-                  _buildMenuCard(
-                    context,
-                    icon: Icons.category_outlined,
-                    title: '파트 관리',
-                    subtitle: '업무 파트 등록',
-                    color: Colors.teal,
-                    onTap: () {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(content: Text('준비 중입니다')),
-                      );
-                    },
-                  ),
-                  _buildMenuCard(
-                    context,
-                    icon: Icons.bar_chart_outlined,
-                    title: '통계',
-                    subtitle: 'TO 및 지원자 현황',
-                    color: Colors.orange,
-                    onTap: () {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(content: Text('준비 중입니다')),
-                      );
-                    },
-                  ),
-                ],
+                ),
+                padding: const EdgeInsets.all(24),
+                child: GridView.count(
+                  crossAxisCount: 2,
+                  crossAxisSpacing: 16,
+                  mainAxisSpacing: 16,
+                  children: [
+                    // 1. TO 관리
+                    _buildMenuCard(
+                      context,
+                      icon: Icons.assignment_outlined,
+                      title: 'TO 관리',
+                      subtitle: '근무 오더 조회/생성',
+                      color: Colors.purple,
+                      onTap: () {
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (context) => const AdminTOListScreen(), // ✅ const 추가
+                          ),
+                        );
+                      },
+                    ),
+                    
+                    // 2. 사업장 관리
+                    _buildMenuCard(
+                      context,
+                      icon: Icons.business_outlined,
+                      title: '사업장 관리',
+                      subtitle: '사업장 등록 및 관리',
+                      color: Colors.blue,
+                      onTap: () {
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (context) => const BusinessRegistrationScreen(), // ✅ 변경
+                          ),
+                        );
+                      },
+                    ),
+                    
+                    // 3. 파트 관리
+                    _buildMenuCard(
+                      context,
+                      icon: Icons.category_outlined,
+                      title: '파트 관리',
+                      subtitle: '업무 파트 등록',
+                      color: Colors.teal,
+                      onTap: () {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(content: Text('준비 중입니다')),
+                        );
+                      },
+                    ),
+                    
+                    // 4. 통계
+                    _buildMenuCard(
+                      context,
+                      icon: Icons.bar_chart_outlined,
+                      title: '통계',
+                      subtitle: '근무 현황 분석',
+                      color: Colors.orange,
+                      onTap: () {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(content: Text('준비 중입니다')),
+                        );
+                      },
+                    ),
+                  ],
+                ),
               ),
             ),
-            const SizedBox(height: 32),
           ],
         ),
       ),
     );
   }
 
+  /// 메뉴 카드
   Widget _buildMenuCard(
     BuildContext context, {
     required IconData icon,
     required String title,
     required String subtitle,
-    required MaterialColor color,
+    required MaterialColor color, // ✅ Color → MaterialColor
     required VoidCallback onTap,
   }) {
     return Card(
       elevation: 2,
       shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(12),
+        borderRadius: BorderRadius.circular(16),
       ),
       child: InkWell(
         onTap: onTap,
-        borderRadius: BorderRadius.circular(12),
-        child: Padding(
+        borderRadius: BorderRadius.circular(16),
+        child: Container(
           padding: const EdgeInsets.all(20),
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
@@ -176,13 +205,13 @@ class AdminHomeScreen extends StatelessWidget {
               Container(
                 padding: const EdgeInsets.all(16),
                 decoration: BoxDecoration(
-                  color: color[100],
+                  color: color[100], // ✅ 이제 작동함!
                   shape: BoxShape.circle,
                 ),
                 child: Icon(
                   icon,
-                  size: 32,
-                  color: color[700],
+                  size: 40,
+                  color: color[700], // ✅ 이제 작동함!
                 ),
               ),
               const SizedBox(height: 16),
@@ -190,7 +219,7 @@ class AdminHomeScreen extends StatelessWidget {
                 title,
                 style: const TextStyle(
                   fontSize: 16,
-                  fontWeight: FontWeight.w600,
+                  fontWeight: FontWeight.bold,
                 ),
                 textAlign: TextAlign.center,
               ),
