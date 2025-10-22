@@ -36,7 +36,13 @@ class ApplicationModel {
       confirmedBy: data['confirmedBy'],
     );
   }
-
+  
+  /// Firestore DocumentSnapshot에서 변환
+factory ApplicationModel.fromFirestore(DocumentSnapshot doc) {
+  final data = doc.data() as Map<String, dynamic>;
+  return ApplicationModel.fromMap(data, doc.id);
+  }
+  
   /// ApplicationModel을 Firestore 문서로 변환
   Map<String, dynamic> toMap() {
     return {

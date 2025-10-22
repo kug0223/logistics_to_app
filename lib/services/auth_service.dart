@@ -71,6 +71,8 @@ class AuthService {
     required String email,
     required String password,
     required String name,
+    UserRole role = UserRole.USER, // ✅ 기본값은 일반 사용자
+    String? businessId, // ✅ 사업장 관리자의 경우 사업장 ID
   }) async {
     try {
       // Firebase Auth 계정 생성
@@ -85,7 +87,8 @@ class AuthService {
           uid: result.user!.uid,
           name: name,
           email: email,
-          isAdmin: false,
+          role: role, // ✅ 변경
+          businessId: businessId, // ✅ 추가
           createdAt: DateTime.now(),
           lastLoginAt: DateTime.now(),
         );
@@ -120,6 +123,22 @@ class AuthService {
     }
   }
 
+  // ✅ NEW! 사업장 관리자 회원가입 (슈퍼관리자만 호출 가능)
+  Future<UserModel?> signUpBusinessAdmin({
+    required String email,
+    required String password,
+    required String name,
+    required String businessId,
+  }) async {
+    return signUp(
+      email: email,
+      password: password,
+      name: name,
+      role: UserRole.BUSINESS_ADMIN,
+      businessId: businessId,
+    );
+  }
+
   // 로그아웃
   Future<void> signOut() async {
     try {
@@ -147,6 +166,29 @@ class AuthService {
     } catch (e) {
       print('사용자 정보 가져오기 실패: $e');
       return null;
+    }
+  }
+
+  // ✅ NEW! 사용자 권한 업데이트 (슈퍼관리자만 호출 가능)
+  Future<void> updateUserRole({
+    required String uid,
+    required UserRole role,
+    String? businessId,
+  }) async {
+    try {
+      await _firestore.collection('users').doc(uid).update({
+        'role': role == UserRole.SUPER_ADMIN
+            ? 'SUPER_ADMIN'
+            : role == UserRole.BUSINESS_ADMIN
+                ? 'BUSINESS_ADMIN'
+                : 'USER',
+        'businessId': businessId,
+        'updatedAt': FieldValue.serverTimestamp(),
+      });
+      ToastHelper.showSuccess('사용자 권한이 업데이트되었습니다.');
+    } catch (e) {
+      ToastHelper.showError('권한 업데이트에 실패했습니다.');
+      throw Exception('권한 업데이트 실패: $e');
     }
   }
 }

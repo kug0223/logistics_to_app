@@ -6,7 +6,7 @@ class Constants {
   static const int errorColor = 0xFFEF4444; // Red
   static const int warningColor = 0xFFF59E0B; // Orange
 
-  // 물류센터 목록
+  // 물류센터 목록 (deprecated - Firestore의 businesses 컬렉션 사용)
   static const List<Map<String, String>> centers = [
     {
       'id': 'CENTER_A',
@@ -35,16 +35,39 @@ class Constants {
   static const List<String> workTypes = [
     '피킹',
     '패킹',
-    '분류',
     '배송',
+    '분류',
     '하역',
     '검수',
   ];
+
+  // ✅ NEW! 업종 카테고리 (가치업 스타일)
+  static const Map<String, List<String>> jobCategories = {
+    '회사': [
+      '일반 회사',
+      '제조, 생산, 건설',
+    ],
+    '알바 매장': [
+      '알바-카페 (카페, 음료, 베이커리)',
+      '알바-외식업 (음식, 외식업)',
+      '알바-판매-서비스 (편의점, 유통, 호텔 등)',
+      '알바-매장관리 (PC방, 스터디카페 등)',
+    ],
+    '기타': [
+      '교육, 의료, 기관',
+      '기타',
+    ],
+  };
+
+  // 업종 카테고리 목록 (순서 보장)
+  static const List<String> categoryList = ['회사', '알바 매장', '기타'];
 
   // Firebase Collections
   static const String collectionUsers = 'users';
   static const String collectionTOs = 'tos';
   static const String collectionApplications = 'applications';
+  static const String collectionCenters = 'centers'; // deprecated
+  static const String collectionBusinesses = 'businesses'; // ✅ NEW!
 
   // GPS 설정
   static const double gpsAccuracyThreshold = 100.0; // 미터
@@ -62,4 +85,12 @@ class Constants {
 /// 앱 상수 (main.dart에서 사용하기 위한 별칭)
 class AppConstants {
   static const int primaryColor = Constants.primaryColor;
+  
+  // centers와 workTypes도 접근 가능하게
+  static const List<Map<String, String>> centers = Constants.centers;
+  static const List<String> workTypes = Constants.workTypes;
+  
+  // ✅ NEW! 업종 카테고리 접근
+  static const Map<String, List<String>> jobCategories = Constants.jobCategories;
+  static const List<String> categoryList = Constants.categoryList;
 }
