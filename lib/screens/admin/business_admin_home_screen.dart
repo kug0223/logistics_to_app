@@ -60,17 +60,9 @@ class BusinessAdminHomeScreen extends StatelessWidget {
                                 ),
                               );
 
-                              if (confirmed == true) {
-                                await authService.signOut();
-                                if (context.mounted) {
-                                  Navigator.pushAndRemoveUntil(
-                                    context,
-                                    MaterialPageRoute(
-                                      builder: (context) => const LoginScreen(),
-                                    ),
-                                    (route) => false,
-                                  );
-                                }
+                              if (confirmed == true && context.mounted) {
+                                await userProvider.signOut();  // ✅ 이렇게 변경!
+                                // Navigator 코드는 전부 삭제 - AuthWrapper가 자동 처리
                               }
                             },
                           ),
