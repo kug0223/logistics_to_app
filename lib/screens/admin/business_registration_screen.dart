@@ -8,6 +8,7 @@ import '../../providers/user_provider.dart';
 import '../../utils/constants.dart';
 import '../../utils/toast_helper.dart';
 import '../../widgets/daum_address_search.dart';
+import '../auth/login_screen.dart';
 
 /// 사업장 등록 화면 (회원가입 후)
 class BusinessRegistrationScreen extends StatefulWidget {
@@ -111,13 +112,9 @@ class _BusinessRegistrationScreenState extends State<BusinessRegistrationScreen>
           _latitude = result.latitude;
           _longitude = result.longitude;
           print('✅ 좌표 자동 입력: $_latitude, $_longitude');
-        }
-      });
-      
-      // ⭐ 주소 선택 후 상세주소 입력으로 포커스 이동
-      FocusScope.of(context).requestFocus(FocusNode());
-      Future.delayed(const Duration(milliseconds: 300), () {
-        FocusScope.of(context).nextFocus();
+        } else {
+          print('⚠️ 좌표 정보 없음 (수동 입력 모드)');
+      }
       });
     }
   }
@@ -202,8 +199,24 @@ class _BusinessRegistrationScreenState extends State<BusinessRegistrationScreen>
       ToastHelper.showSuccess('사업장 등록이 완료되었습니다!');
       
       if (mounted) {
-        // 홈으로 이동
-        Navigator.of(context).pushNamedAndRemoveUntil('/home', (route) => false);
+        // ✅ 이 부분을 수정하세요!
+        if (widget.isFromSignUp) {
+          // 회원가입에서 온 경우 → 로그인 화면으로
+          Navigator.of(context).pushNamedAndRemoveUntil(
+            '/login',  // ← '/home'을 '/login'으로 변경!
+            (route) => false,
+          );
+          
+          // 추가 안내 메시지
+          Future.delayed(const Duration(milliseconds: 500), () {
+            if (mounted) {
+              ToastHelper.showInfo('등록하신 계정으로 로그인해주세요');
+            }
+          });
+        } else {
+          // 홈에서 온 경우 → 단순히 뒤로가기
+          Navigator.of(context).pop(true);
+        }
       }
     } catch (e) {
       print('❌ 사업장 등록 에러: $e');
@@ -235,7 +248,14 @@ class _BusinessRegistrationScreenState extends State<BusinessRegistrationScreen>
                   child: const Text('계속 등록'),
                 ),
                 TextButton(
-                  onPressed: () => Navigator.pop(context, true),
+                  onPressed: () {
+                    Navigator.pop(context, true);  // 다이얼로그 닫기
+                    // ✅ 이 줄을 추가하세요!
+                    Navigator.of(context).pushNamedAndRemoveUntil(
+                      '/login',
+                      (route) => false,
+                    );
+                  },
                   child: const Text('나중에 하기'),
                 ),
               ],
