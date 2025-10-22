@@ -1,10 +1,13 @@
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
 import '../../models/center_model.dart';
 import '../../services/firestore_service.dart';
+import '../../providers/user_provider.dart';
 import '../../utils/toast_helper.dart';
 import './center_form_screen.dart';
 
-/// 센터 관리 화면 (목록 + 추가/수정/삭제)
+/// 사업장 관리 화면 (목록 + 추가/수정/삭제)
+/// ✅ 🆕 각 관리자는 본인이 생성한 사업장만 볼 수 있음
 class CenterManagementScreen extends StatefulWidget {
   const CenterManagementScreen({Key? key}) : super(key: key);
 
@@ -23,12 +26,22 @@ class _CenterManagementScreenState extends State<CenterManagementScreen> {
     _loadCenters();
   }
 
-  /// 센터 목록 로드
+  /// ✅ 🆕 본인이 생성한 사업장만 로드
   Future<void> _loadCenters() async {
     setState(() => _isLoading = true);
     try {
-      // ✅ activeOnly 파라미터 사용
-      final centers = await _firestoreService.getCenters(activeOnly: false);
+      final userProvider = context.read<UserProvider>();
+      final currentUserId = userProvider.currentUser?.uid;
+      
+      if (currentUserId == null) {
+        ToastHelper.showError('로그인 정보를 찾을 수 없습니다');
+        setState(() => _isLoading = false);
+        return;
+      }
+
+      // ✅ 본인이 생성한 사업장만 가져오기 (ownerId 필터)
+      final centers = await _firestoreService.getCentersByOwnerId(currentUserId);
+      
       if (mounted) {
         setState(() {
           _centers = centers;
@@ -38,23 +51,23 @@ class _CenterManagementScreenState extends State<CenterManagementScreen> {
     } catch (e) {
       if (mounted) {
         setState(() => _isLoading = false);
-        ToastHelper.showError('센터 목록을 불러오는데 실패했습니다: $e');
+        ToastHelper.showError('사업장 목록을 불러오는데 실패했습니다: $e');
       }
     }
   }
 
-  /// 센터 삭제
+  /// 사업장 삭제
   Future<void> _deleteCenter(CenterModel center) async {
     // ✅ center.id null 체크
     if (center.id == null) {
-      ToastHelper.showError('센터 ID를 찾을 수 없습니다');
+      ToastHelper.showError('사업장 ID를 찾을 수 없습니다');
       return;
     }
 
     final confirm = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('센터 삭제'),
+        title: const Text('사업장 삭제'),
         content: Text('${center.name}을(를) 정말 삭제하시겠습니까?\n\n비활성화됩니다.'),
         actions: [
           TextButton(
@@ -80,7 +93,7 @@ class _CenterManagementScreenState extends State<CenterManagementScreen> {
       }
     } catch (e) {
       if (mounted) {
-        ToastHelper.showError('센터 삭제에 실패했습니다: $e');
+        ToastHelper.showError('사업장 삭제에 실패했습니다: $e');
       }
     }
   }
@@ -89,7 +102,7 @@ class _CenterManagementScreenState extends State<CenterManagementScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('사업장 관리'),
+        title: const Text('내 사업장 관리'),
         backgroundColor: Colors.blue.shade700,
       ),
       body: _isLoading
@@ -149,7 +162,7 @@ class _CenterManagementScreenState extends State<CenterManagementScreen> {
     );
   }
 
-  /// 센터 목록
+  /// 사업장 목록
   Widget _buildCenterList() {
     return RefreshIndicator(
       onRefresh: _loadCenters,
@@ -158,200 +171,111 @@ class _CenterManagementScreenState extends State<CenterManagementScreen> {
         itemCount: _centers.length,
         itemBuilder: (context, index) {
           final center = _centers[index];
-          return _buildCenterCard(center);
-        },
-      ),
-    );
-  }
-
-  /// 센터 카드
-  Widget _buildCenterCard(CenterModel center) {
-    return Card(
-      margin: const EdgeInsets.only(bottom: 12),
-      elevation: 2,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(12),
-      ),
-      child: InkWell(
-        onTap: () async {
-          final result = await Navigator.push(
-            context,
-            MaterialPageRoute(
-              builder: (context) => CenterFormScreen(center: center),
-            ),
-          );
-          if (result == true) {
-            _loadCenters();
-          }
-        },
-        borderRadius: BorderRadius.circular(12),
-        child: Padding(
-          padding: const EdgeInsets.all(16),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              // 헤더 (이름 + 상태 + 삭제 버튼)
-              Row(
+          return Card(
+            margin: const EdgeInsets.only(bottom: 12),
+            child: ListTile(
+              contentPadding: const EdgeInsets.symmetric(
+                horizontal: 16,
+                vertical: 8,
+              ),
+              leading: CircleAvatar(
+                backgroundColor: center.isActive 
+                    ? Colors.blue.shade100 
+                    : Colors.grey.shade300,
+                child: Icon(
+                  Icons.business,
+                  color: center.isActive 
+                      ? Colors.blue.shade700 
+                      : Colors.grey.shade600,
+                ),
+              ),
+              title: Text(
+                center.name,
+                style: const TextStyle(
+                  fontWeight: FontWeight.w600,
+                  fontSize: 16,
+                ),
+              ),
+              subtitle: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  // 센터 아이콘
-                  Container(
-                    padding: const EdgeInsets.all(8),
-                    decoration: BoxDecoration(
-                      color: Colors.blue.shade50,
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                    child: Icon(
-                      Icons.business,
-                      color: Colors.blue.shade700,
-                      size: 24,
+                  const SizedBox(height: 4),
+                  Text(
+                    center.address,
+                    style: TextStyle(
+                      color: Colors.grey.shade700,
+                      fontSize: 14,
                     ),
                   ),
-                  const SizedBox(width: 12),
-                  
-                  // 센터명 + 코드
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
+                  const SizedBox(height: 4),
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 8,
+                      vertical: 2,
+                    ),
+                    decoration: BoxDecoration(
+                      color: center.isActive 
+                          ? Colors.green.shade50 
+                          : Colors.red.shade50,
+                      borderRadius: BorderRadius.circular(4),
+                    ),
+                    child: Text(
+                      center.isActive ? '활성' : '비활성',
+                      style: TextStyle(
+                        color: center.isActive 
+                            ? Colors.green.shade700 
+                            : Colors.red.shade700,
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+              trailing: PopupMenuButton<String>(
+                onSelected: (value) async {
+                  if (value == 'edit') {
+                    final result = await Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (context) => CenterFormScreen(
+                          center: center,
+                        ),
+                      ),
+                    );
+                    if (result == true) {
+                      _loadCenters();
+                    }
+                  } else if (value == 'delete') {
+                    _deleteCenter(center);
+                  }
+                },
+                itemBuilder: (context) => [
+                  const PopupMenuItem(
+                    value: 'edit',
+                    child: Row(
                       children: [
-                        Row(
-                          children: [
-                            Text(
-                              center.name,
-                              style: const TextStyle(
-                                fontSize: 18,
-                                fontWeight: FontWeight.bold,
-                              ),
-                            ),
-                            const SizedBox(width: 8),
-                            // 활성화 상태 배지
-                            Container(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 8,
-                                vertical: 2,
-                              ),
-                              decoration: BoxDecoration(
-                                color: center.isActive
-                                    ? Colors.green.shade50
-                                    : Colors.grey.shade200,
-                                borderRadius: BorderRadius.circular(12),
-                              ),
-                              child: Text(
-                                center.isActive ? '활성' : '비활성',
-                                style: TextStyle(
-                                  fontSize: 12,
-                                  color: center.isActive
-                                      ? Colors.green.shade700
-                                      : Colors.grey.shade600,
-                                  fontWeight: FontWeight.w600,
-                                ),
-                              ),
-                            ),
-                          ],
-                        ),
-                        const SizedBox(height: 2),
-                        Text(
-                          'ID: ${center.code}',
-                          style: TextStyle(
-                            fontSize: 13,
-                            color: Colors.grey.shade600,
-                          ),
-                        ),
+                        Icon(Icons.edit, size: 20),
+                        SizedBox(width: 8),
+                        Text('수정'),
                       ],
                     ),
                   ),
-                  
-                  // 삭제 버튼
-                  IconButton(
-                    icon: const Icon(Icons.delete_outline),
-                    color: Colors.red.shade400,
-                    onPressed: () => _deleteCenter(center),
-                    tooltip: '삭제',
-                  ),
-                ],
-              ),
-              
-              const SizedBox(height: 12),
-              const Divider(height: 1),
-              const SizedBox(height: 12),
-              
-              // 주소
-              Row(
-                children: [
-                  Icon(Icons.location_on, size: 16, color: Colors.grey.shade600),
-                  const SizedBox(width: 6),
-                  Expanded(
-                    child: Text(
-                      center.address,
-                      style: TextStyle(
-                        fontSize: 14,
-                        color: Colors.grey.shade700,
-                      ),
+                  const PopupMenuItem(
+                    value: 'delete',
+                    child: Row(
+                      children: [
+                        Icon(Icons.delete, size: 20, color: Colors.red),
+                        SizedBox(width: 8),
+                        Text('삭제', style: TextStyle(color: Colors.red)),
+                      ],
                     ),
                   ),
                 ],
               ),
-              
-              // 좌표 (있는 경우)
-              if (center.latitude != null && center.longitude != null) ...[
-                const SizedBox(height: 8),
-                Row(
-                  children: [
-                    Icon(Icons.my_location, size: 16, color: Colors.grey.shade600),
-                    const SizedBox(width: 6),
-                    Text(
-                      '위도: ${center.latitude!.toStringAsFixed(6)}, 경도: ${center.longitude!.toStringAsFixed(6)}',
-                      style: TextStyle(
-                        fontSize: 13,
-                        color: Colors.grey.shade600,
-                      ),
-                    ),
-                  ],
-                ),
-              ],
-              
-              // 설명 (있는 경우)
-              if (center.description != null && center.description!.isNotEmpty) ...[
-                const SizedBox(height: 8),
-                Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Icon(Icons.info_outline, size: 16, color: Colors.grey.shade600),
-                    const SizedBox(width: 6),
-                    Expanded(
-                      child: Text(
-                        center.description!,
-                        style: TextStyle(
-                          fontSize: 13,
-                          color: Colors.grey.shade600,
-                        ),
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                    ),
-                  ],
-                ),
-              ],
-              
-              // 담당자 정보 (있는 경우)
-              if (center.managerName != null || center.managerPhone != null) ...[
-                const SizedBox(height: 8),
-                Row(
-                  children: [
-                    Icon(Icons.person, size: 16, color: Colors.grey.shade600),
-                    const SizedBox(width: 6),
-                    Text(
-                      '${center.managerName ?? ''}${center.managerPhone != null ? ' (${center.managerPhone})' : ''}',
-                      style: TextStyle(
-                        fontSize: 13,
-                        color: Colors.grey.shade600,
-                      ),
-                    ),
-                  ],
-                ),
-              ],
-            ],
-          ),
-        ),
+            ),
+          );
+        },
       ),
     );
   }

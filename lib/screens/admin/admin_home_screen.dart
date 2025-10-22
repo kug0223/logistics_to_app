@@ -1,10 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../providers/user_provider.dart';
-import './admin_to_list_screen.dart';
-import './center_management_screen.dart'; // ✅ 수정: center_form_screen → center_management_screen
+import 'center_management_screen.dart';
 
-/// 관리자 홈 화면 (메뉴 카드 방식)
 class AdminHomeScreen extends StatelessWidget {
   const AdminHomeScreen({Key? key}) : super(key: key);
 
@@ -15,7 +13,7 @@ class AdminHomeScreen extends StatelessWidget {
     return Scaffold(
       appBar: AppBar(
         title: const Text('관리자 모드'),
-        backgroundColor: Colors.purple.shade700,
+        backgroundColor: Colors.purple[700],
         actions: [
           IconButton(
             icon: const Icon(Icons.logout),
@@ -32,6 +30,7 @@ class AdminHomeScreen extends StatelessWidget {
                     ),
                     TextButton(
                       onPressed: () => Navigator.pop(context, true),
+                      style: TextButton.styleFrom(foregroundColor: Colors.red),
                       child: const Text('로그아웃'),
                     ),
                   ],
@@ -39,162 +38,126 @@ class AdminHomeScreen extends StatelessWidget {
               );
 
               if (confirm == true && context.mounted) {
-                await userProvider.signOut();
+                await context.read<UserProvider>().signOut();
+                if (context.mounted) {
+                  Navigator.of(context).pushReplacementNamed('/login');
+                }
               }
             },
-            tooltip: '로그아웃',
           ),
         ],
       ),
-      body: SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.all(24.0),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              // 환영 메시지
-              Container(
-                padding: const EdgeInsets.all(20),
-                decoration: BoxDecoration(
-                  gradient: LinearGradient(
-                    colors: [
-                      Colors.purple.shade700,
-                      Colors.purple.shade500,
-                    ],
+      body: SingleChildScrollView(
+        child: Column(
+          children: [
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(24),
+              decoration: BoxDecoration(
+                color: Colors.purple[700],
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    '환영합니다, ${userProvider.currentUser?.name ?? '관리자'}님',
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 24,
+                      fontWeight: FontWeight.bold,
+                    ),
                   ),
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const Row(
-                      children: [
-                        Icon(
-                          Icons.admin_panel_settings,
-                          color: Colors.white,
-                          size: 28,
-                        ),
-                        SizedBox(width: 12),
-                        Text(
-                          '관리자 모드',
-                          style: TextStyle(
-                            color: Colors.white,
-                            fontSize: 20,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                      ],
+                  const SizedBox(height: 4),
+                  Text(
+                    userProvider.currentUser?.email ?? '',
+                    style: TextStyle(
+                      color: Colors.white.withOpacity(0.9),
+                      fontSize: 14,
                     ),
-                    const SizedBox(height: 8),
-                    Text(
-                      '${userProvider.currentUser?.name ?? '관리자'}님',
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 24,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      userProvider.currentUser?.email ?? '',
-                      style: TextStyle(
-                        color: Colors.white.withOpacity(0.9),
-                        fontSize: 14,
-                      ),
-                    ),
-                  ],
-                ),
+                  ),
+                ],
               ),
-              const SizedBox(height: 32),
-
-              // 메뉴 카드들
-              Expanded(
-                child: GridView.count(
-                  crossAxisCount: 2,
-                  crossAxisSpacing: 16,
-                  mainAxisSpacing: 16,
-                  children: [
-                    // 1. TO 관리
-                    _buildMenuCard(
-                      context,
-                      icon: Icons.assignment_outlined,
-                      title: 'TO 관리',
-                      subtitle: '근무 오더 조회/생성',
-                      color: Colors.purple,
-                      onTap: () {
-                        Navigator.push(
-                          context,
-                          MaterialPageRoute(
-                            builder: (context) => AdminTOListScreen(),
-                          ),
-                        );
-                      },
-                    ),
-                    
-                    // 2. 사업장 관리
-                    _buildMenuCard(
-                      context,
-                      icon: Icons.business_outlined,
-                      title: '사업장 관리',
-                      subtitle: '센터 정보 등록',
-                      color: Colors.blue,
-                      onTap: () {
-                        Navigator.push(
-                          context,
-                          MaterialPageRoute(
-                            // ✅ 수정: CenterFormScreen() → CenterManagementScreen()
-                            builder: (context) => CenterManagementScreen(),
-                          ),
-                        );
-                      },
-                    ),
-                    
-                    // 3. 파트 관리
-                    _buildMenuCard(
-                      context,
-                      icon: Icons.category_outlined,
-                      title: '파트 관리',
-                      subtitle: '업무 파트 등록',
-                      color: Colors.teal,
-                      onTap: () {
-                        // TODO: 파트 관리 화면으로 이동
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(content: Text('준비 중입니다')),
-                        );
-                      },
-                    ),
-                    
-                    // 4. 사용자 관리
-                    _buildMenuCard(
-                      context,
-                      icon: Icons.people_outlined,
-                      title: '사용자 관리',
-                      subtitle: '직원 계정 관리',
-                      color: Colors.orange,
-                      onTap: () {
-                        // TODO: 사용자 관리 화면으로 이동
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(content: Text('준비 중입니다')),
-                        );
-                      },
-                    ),
-                  ],
-                ),
+            ),
+            const SizedBox(height: 32),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              child: GridView.count(
+                shrinkWrap: true,
+                physics: const NeverScrollableScrollPhysics(),
+                crossAxisCount: 2,
+                crossAxisSpacing: 16,
+                mainAxisSpacing: 16,
+                children: [
+                  _buildMenuCard(
+                    context,
+                    icon: Icons.assignment_outlined,
+                    title: 'TO 관리',
+                    subtitle: '근무 오더 조회/생성',
+                    color: Colors.purple,
+                    onTap: () {
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (context) => const AdminTOListScreen(),
+                        ),
+                      );
+                    },
+                  ),
+                  _buildMenuCard(
+                    context,
+                    icon: Icons.business_outlined,
+                    title: '사업장 관리',
+                    subtitle: '내 사업장 정보 관리',
+                    color: Colors.blue,
+                    onTap: () {
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (context) => const CenterManagementScreen(),
+                        ),
+                      );
+                    },
+                  ),
+                  _buildMenuCard(
+                    context,
+                    icon: Icons.category_outlined,
+                    title: '파트 관리',
+                    subtitle: '업무 파트 등록',
+                    color: Colors.teal,
+                    onTap: () {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(content: Text('준비 중입니다')),
+                      );
+                    },
+                  ),
+                  _buildMenuCard(
+                    context,
+                    icon: Icons.bar_chart_outlined,
+                    title: '통계',
+                    subtitle: 'TO 및 지원자 현황',
+                    color: Colors.orange,
+                    onTap: () {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(content: Text('준비 중입니다')),
+                      );
+                    },
+                  ),
+                ],
               ),
-            ],
-          ),
+            ),
+            const SizedBox(height: 32),
+          ],
         ),
       ),
     );
   }
 
-  /// 메뉴 카드 위젯
   Widget _buildMenuCard(
     BuildContext context, {
     required IconData icon,
     required String title,
     required String subtitle,
-    required Color color,
+    required MaterialColor color,
     required VoidCallback onTap,
   }) {
     return Card(
@@ -205,7 +168,7 @@ class AdminHomeScreen extends StatelessWidget {
       child: InkWell(
         onTap: onTap,
         borderRadius: BorderRadius.circular(12),
-        child: Container(
+        child: Padding(
           padding: const EdgeInsets.all(20),
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
@@ -213,13 +176,13 @@ class AdminHomeScreen extends StatelessWidget {
               Container(
                 padding: const EdgeInsets.all(16),
                 decoration: BoxDecoration(
-                  color: color.withOpacity(0.1),
-                  borderRadius: BorderRadius.circular(12),
+                  color: color[100],
+                  shape: BoxShape.circle,
                 ),
                 child: Icon(
                   icon,
-                  size: 40,
-                  color: color,
+                  size: 32,
+                  color: color[700],
                 ),
               ),
               const SizedBox(height: 16),
@@ -227,7 +190,7 @@ class AdminHomeScreen extends StatelessWidget {
                 title,
                 style: const TextStyle(
                   fontSize: 16,
-                  fontWeight: FontWeight.bold,
+                  fontWeight: FontWeight.w600,
                 ),
                 textAlign: TextAlign.center,
               ),

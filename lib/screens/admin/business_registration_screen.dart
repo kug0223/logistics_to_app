@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
-import 'package:cloud_firestore/cloud_firestore.dart'; // ✅ 추가
+import 'package:cloud_firestore/cloud_firestore.dart';
 import '../../models/business_model.dart';
 import '../../services/firestore_service.dart';
 import '../../providers/user_provider.dart';
@@ -33,7 +33,7 @@ class _BusinessRegistrationScreenState extends State<BusinessRegistrationScreen>
   String? _selectedSubCategory;
   
   // Step 2: 사업장 정보
-  final _businessNumberController = TextEditingController(); // ✅ 사업자등록번호 추가!
+  final _businessNumberController = TextEditingController();
   final _nameController = TextEditingController();
   final _addressController = TextEditingController();
   final _phoneController = TextEditingController();
@@ -55,10 +55,46 @@ class _BusinessRegistrationScreenState extends State<BusinessRegistrationScreen>
     super.dispose();
   }
 
+  // ✅ 🆕 로그인 화면으로 돌아가기 (나중에 등록하기)
+  void _goToLogin() {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('나중에 등록하기'),
+        content: const Text(
+          '사업장 등록을 나중에 하시겠습니까?\n\n'
+          '로그인 후 언제든지 사업장을 등록할 수 있습니다.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('취소'),
+          ),
+          TextButton(
+            onPressed: () {
+              Navigator.pop(context); // 다이얼로그 닫기
+              // 로그인 화면으로 이동 (모든 화면 제거)
+              Navigator.of(context).pushNamedAndRemoveUntil(
+                '/login',
+                (route) => false,
+              );
+            },
+            style: TextButton.styleFrom(foregroundColor: Colors.blue),
+            child: const Text('나중에 하기'),
+          ),
+        ],
+      ),
+    );
+  }
+
   // Step 1 검증
   bool _validateStep1() {
-    if (_selectedCategory == null || _selectedSubCategory == null) {
+    if (_selectedCategory == null) {
       ToastHelper.showError('업종을 선택해주세요');
+      return false;
+    }
+    if (_selectedSubCategory == null) {
+      ToastHelper.showError('세부 업종을 선택해주세요');
       return false;
     }
     return true;
@@ -70,7 +106,11 @@ class _BusinessRegistrationScreenState extends State<BusinessRegistrationScreen>
       return false;
     }
     if (_addressController.text.isEmpty) {
-      ToastHelper.showError('주소를 입력해주세요');
+      ToastHelper.showError('주소를 검색해주세요');
+      return false;
+    }
+    if (_latitude == null || _longitude == null) {
+      ToastHelper.showError('주소 검색 후 위도/경도가 자동 입력됩니다');
       return false;
     }
     return true;
@@ -84,7 +124,7 @@ class _BusinessRegistrationScreenState extends State<BusinessRegistrationScreen>
       }
     } else if (_currentStep == 1) {
       if (_validateStep2()) {
-        _handleSubmit();
+        _saveBusiness();
       }
     }
   }
@@ -96,116 +136,67 @@ class _BusinessRegistrationScreenState extends State<BusinessRegistrationScreen>
     }
   }
 
-  /// 주소 검색
-  Future<void> _searchAddress() async {
-    final result = await DaumAddressService.searchAddress(context);
-    
-    if (result != null) {
-      setState(() {
-        _addressController.text = result.fullAddress;
-        
-        // ✅ 좌표 자동 입력 (사용자에게는 보이지 않음)
-        if (result.latitude != null && result.longitude != null) {
-          _latitude = result.latitude;
-          _longitude = result.longitude;
-          print('✅ 좌표 자동 입력: $_latitude, $_longitude');
-        }
-      });
-    }
-  }
-
-  /// 사업자등록번호 검증 (10자리 숫자)
-  String? _validateBusinessNumber(String? value) {
-    if (value == null || value.isEmpty) {
-      return '사업자등록번호를 입력해주세요';
-    }
-    
-    // 하이픈 제거
-    final cleanValue = value.replaceAll('-', '');
-    
-    if (cleanValue.length != 10) {
-      return '사업자등록번호는 10자리여야 합니다';
-    }
-    
-    if (!RegExp(r'^[0-9]+$').hasMatch(cleanValue)) {
-      return '숫자만 입력해주세요';
-    }
-    
-    return null;
-  }
-
-  /// 사업자등록번호 포맷팅 (000-00-00000)
-  String _formatBusinessNumber(String value) {
-    final cleaned = value.replaceAll('-', '');
-    if (cleaned.length <= 3) {
-      return cleaned;
-    } else if (cleaned.length <= 5) {
-      return '${cleaned.substring(0, 3)}-${cleaned.substring(3)}';
-    } else {
-      return '${cleaned.substring(0, 3)}-${cleaned.substring(3, 5)}-${cleaned.substring(5, cleaned.length > 10 ? 10 : cleaned.length)}';
-    }
-  }
-
-  /// 사업장 등록
-  Future<void> _handleSubmit() async {
-    final userProvider = context.read<UserProvider>();
-    final uid = userProvider.currentUser?.uid;
-    
-    if (uid == null) {
-      ToastHelper.showError('로그인 정보를 찾을 수 없습니다');
-      return;
-    }
+  // 사업장 저장
+  Future<void> _saveBusiness() async {
+    if (_isSaving) return;
 
     setState(() => _isSaving = true);
 
     try {
-      // 사업자등록번호 정리 (하이픈 제거)
-      final cleanBusinessNumber = _businessNumberController.text.replaceAll('-', '');
+      final userProvider = context.read<UserProvider>();
+      final uid = userProvider.currentUser?.uid;
       
+      if (uid == null) {
+        ToastHelper.showError('로그인 정보를 찾을 수 없습니다');
+        return;
+      }
+
+      // ✅ BusinessModel 생성 (수정됨!)
       final business = BusinessModel(
-        id: '', // Firestore에서 자동 생성
-        businessNumber: cleanBusinessNumber, // ✅ 사업자등록번호
+        id: '',  // 🆕 추가!
+        businessNumber: _businessNumberController.text.trim(),
         name: _nameController.text.trim(),
         category: _selectedCategory!,
         subCategory: _selectedSubCategory!,
         address: _addressController.text.trim(),
-        latitude: _latitude, // ✅ 자동 입력된 좌표
-        longitude: _longitude, // ✅ 자동 입력된 좌표
+        latitude: _latitude,
+        longitude: _longitude,
         ownerId: uid,
-        phone: _phoneController.text.trim().isNotEmpty 
-            ? _phoneController.text.trim() 
-            : null,
-        description: _descriptionController.text.trim().isNotEmpty 
-            ? _descriptionController.text.trim() 
-            : null,
-        isApproved: true, // ✅ 바로 승인 (슈퍼관리자 승인 불필요)
+        phone: _phoneController.text.trim().isEmpty   // 🆕 phoneNumber → phone
+            ? null 
+            : _phoneController.text.trim(),
+        description: _descriptionController.text.trim().isEmpty 
+            ? null 
+            : _descriptionController.text.trim(),
+        isApproved: true,
         createdAt: DateTime.now(),
       );
 
+      // Firestore에 저장
       final businessId = await _firestoreService.createBusiness(business);
-      
-      if (businessId != null && mounted) {
-        // ✅ 사용자의 businessId 업데이트 (Firestore 직접 호출)
-        await FirebaseFirestore.instance
-            .collection('users')
-            .doc(uid)
-            .update({'businessId': businessId});
-        
-        await userProvider.refreshUserData();
-        
-        ToastHelper.showSuccess('사업장 등록이 완료되었습니다!');
-        
-        // ✅ 사업장 관리자 홈으로 이동 (기존 스택 모두 제거)
-        if (mounted) {
-          Navigator.of(context).pushNamedAndRemoveUntil(
-            '/',
-            (route) => false,
-          );
-        }
-      }
+
+      // users 컬렉션의 businessId 업데이트
+      await FirebaseFirestore.instance
+          .collection('users')
+          .doc(uid)
+          .update({'businessId': businessId});
+
+      // UserProvider 업데이트
+      await userProvider.refreshUser();
+
+      if (!mounted) return;
+
+      ToastHelper.showSuccess('사업장이 등록되었습니다!');
+
+      // 홈 화면으로 이동
+      Navigator.of(context).pushNamedAndRemoveUntil(
+        '/home',
+        (route) => false,
+      );
     } catch (e) {
-      print('사업장 등록 실패: $e');
-      ToastHelper.showError('사업장 등록 중 오류가 발생했습니다');
+      if (mounted) {
+        ToastHelper.showError('사업장 등록 실패: $e');
+      }
     } finally {
       if (mounted) {
         setState(() => _isSaving = false);
@@ -213,113 +204,113 @@ class _BusinessRegistrationScreenState extends State<BusinessRegistrationScreen>
     }
   }
 
-  @override
-  Widget build(BuildContext context) {
-    // ✅ 회원가입에서 온 경우만 뒤로가기 방지
-    if (widget.isFromSignUp) {
-      return WillPopScope(
-        onWillPop: () async {
-          final shouldPop = await showDialog<bool>(
-            context: context,
-            builder: (context) => AlertDialog(
-              title: const Text('등록 취소'),
-              content: const Text('사업장 등록을 나중에 하시겠습니까?'),
-              actions: [
-                TextButton(
-                  onPressed: () => Navigator.pop(context, false),
-                  child: const Text('계속 등록'),
-                ),
-                TextButton(
-                  onPressed: () {
-                    Navigator.pop(context, true);
-                    // ✅ 홈으로 이동 (사업장 없이)
-                    Navigator.of(context).pushNamedAndRemoveUntil(
-                      '/',
-                      (route) => false,
-                    );
-                  },
-                  style: TextButton.styleFrom(foregroundColor: Colors.blue),
-                  child: const Text('나중에 하기'),
-                ),
-              ],
-            ),
-          );
-          return shouldPop ?? false;
-        },
-        child: _buildScaffold(),
-      );
-    }
-    
-    // ✅ 일반 접근 (홈에서 온 경우): 뒤로가기 허용
-    return _buildScaffold();
+  // 주소 검색 완료 콜백
+  void _onAddressSelected(String address, double latitude, double longitude) {
+    setState(() {
+      _addressController.text = address;
+      _latitude = latitude;
+      _longitude = longitude;
+    });
+    ToastHelper.showSuccess('주소가 입력되었습니다');
   }
 
-  Widget _buildScaffold() {
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('사업장 등록'),
-        automaticallyImplyLeading: !widget.isFromSignUp, // ✅ 회원가입에서 온 경우만 뒤로가기 숨김
-        elevation: 0,
-      ),
-      body: SafeArea(
-        child: Stepper(
+  // 사업자등록번호 자동 포맷팅 (000-00-00000)
+  void _formatBusinessNumber(String value) {
+    final digitsOnly = value.replaceAll(RegExp(r'[^0-9]'), '');
+    String formatted = '';
+    
+    for (int i = 0; i < digitsOnly.length && i < 10; i++) {
+      if (i == 3 || i == 5) {
+        formatted += '-';
+      }
+      formatted += digitsOnly[i];
+    }
+    
+    _businessNumberController.value = TextEditingValue(
+      text: formatted,
+      selection: TextSelection.collapsed(offset: formatted.length),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return WillPopScope(
+      onWillPop: () async {
+        // ✅ 회원가입에서 온 경우에만 나중에 하기 다이얼로그 표시
+        if (widget.isFromSignUp) {
+          _goToLogin();
+          return false; // 뒤로가기 차단
+        }
+        return true; // 홈에서 온 경우 뒤로가기 허용
+      },
+      child: Scaffold(
+        appBar: AppBar(
+          title: const Text('사업장 등록'),
+          backgroundColor: Colors.blue.shade700,
+          // ✅ 회원가입에서 온 경우 뒤로가기 버튼 숨김
+          automaticallyImplyLeading: !widget.isFromSignUp,
+          actions: [
+            // ✅ 🆕 회원가입에서 온 경우 "나중에 하기" 버튼 표시
+            if (widget.isFromSignUp)
+              TextButton.icon(
+                onPressed: _goToLogin,
+                icon: const Icon(Icons.skip_next, color: Colors.white),
+                label: const Text(
+                  '나중에 하기',
+                  style: TextStyle(color: Colors.white),
+                ),
+              ),
+          ],
+        ),
+        body: Stepper(
+          type: StepperType.horizontal,
           currentStep: _currentStep,
-          onStepContinue: _isSaving ? null : _onStepContinue,
+          onStepContinue: _onStepContinue,
           onStepCancel: _currentStep > 0 ? _onStepCancel : null,
           controlsBuilder: (context, details) {
             return Padding(
-              padding: const EdgeInsets.only(top: 24.0),
+              padding: const EdgeInsets.only(top: 16),
               child: Row(
                 children: [
-                  if (_currentStep == 0)
-                    Expanded(
-                      child: ElevatedButton(
-                        onPressed: details.onStepContinue,
-                        style: ElevatedButton.styleFrom(
-                          padding: const EdgeInsets.symmetric(vertical: 16),
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(8),
-                          ),
-                        ),
-                        child: const Text('다음', style: TextStyle(fontSize: 16)),
-                      ),
-                    )
-                  else ...[
-                    Expanded(
-                      child: OutlinedButton(
-                        onPressed: details.onStepCancel,
-                        style: OutlinedButton.styleFrom(
-                          padding: const EdgeInsets.symmetric(vertical: 16),
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(8),
-                          ),
-                        ),
-                        child: const Text('이전'),
+                  // 다음/완료 버튼
+                  ElevatedButton(
+                    onPressed: _isSaving ? null : details.onStepContinue,
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.blue.shade700,
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 32,
+                        vertical: 12,
                       ),
                     ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: ElevatedButton(
-                        onPressed: _isSaving ? null : details.onStepContinue,
-                        style: ElevatedButton.styleFrom(
-                          padding: const EdgeInsets.symmetric(vertical: 16),
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(8),
+                    child: _isSaving
+                        ? const SizedBox(
+                            width: 20,
+                            height: 20,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2,
+                              color: Colors.white,
+                            ),
+                          )
+                        : Text(
+                            _currentStep == 1 ? '등록 완료' : '다음',
+                            style: const TextStyle(fontSize: 16),
                           ),
+                  ),
+                  
+                  const SizedBox(width: 12),
+                  
+                  // 이전 버튼
+                  if (_currentStep > 0)
+                    OutlinedButton(
+                      onPressed: details.onStepCancel,
+                      style: OutlinedButton.styleFrom(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 32,
+                          vertical: 12,
                         ),
-                        child: _isSaving
-                            ? const SizedBox(
-                                height: 20,
-                                width: 20,
-                                child: CircularProgressIndicator(
-                                  strokeWidth: 2,
-                                  color: Colors.white,
-                                ),
-                              )
-                            : const Text('등록 완료', style: TextStyle(fontSize: 16)),
                       ),
+                      child: const Text('이전'),
                     ),
-                  ],
                 ],
               ),
             );
@@ -328,19 +319,17 @@ class _BusinessRegistrationScreenState extends State<BusinessRegistrationScreen>
             // Step 1: 업종 선택
             Step(
               title: const Text('업종 선택'),
-              subtitle: const Text('사업장 업종을 선택해주세요'),
               isActive: _currentStep >= 0,
               state: _currentStep > 0 ? StepState.complete : StepState.indexed,
-              content: _buildCategorySelection(),
+              content: _buildStep1(),
             ),
             
             // Step 2: 사업장 정보
             Step(
               title: const Text('사업장 정보'),
-              subtitle: const Text('사업장 정보를 입력해주세요'),
               isActive: _currentStep >= 1,
               state: _currentStep > 1 ? StepState.complete : StepState.indexed,
-              content: _buildBusinessInfoForm(),
+              content: _buildStep2(),
             ),
           ],
         ),
@@ -348,244 +337,207 @@ class _BusinessRegistrationScreenState extends State<BusinessRegistrationScreen>
     );
   }
 
-  /// Step 1: 업종 선택 UI
-  Widget _buildCategorySelection() {
+  // Step 1: 업종 선택 UI
+  Widget _buildStep1() {
     return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
+      crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const SizedBox(height: 16),
-        
-        // 안내 문구
-        Container(
-          padding: const EdgeInsets.all(16),
-          decoration: BoxDecoration(
-            color: Colors.blue[50],
-            borderRadius: BorderRadius.circular(8),
-          ),
-          child: Row(
-            children: [
-              Icon(Icons.business, color: Colors.blue[700]),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Text(
-                  '어떤 업종의 사업장인가요?',
-                  style: TextStyle(
-                    fontSize: 16,
-                    fontWeight: FontWeight.bold,
-                    color: Colors.blue[900],
-                  ),
-                ),
-              ),
-            ],
+        const Text(
+          '사업장의 업종을 선택해주세요',
+          style: TextStyle(
+            fontSize: 16,
+            fontWeight: FontWeight.w500,
           ),
         ),
         const SizedBox(height: 24),
 
-        // 업종 카테고리
-        ...AppConstants.jobCategories.entries.map((entry) {
-          final category = entry.key;
-          final subCategories = entry.value;
-          final isExpanded = _selectedCategory == category;
-
-          return Container(
-            margin: const EdgeInsets.only(bottom: 12),
-            decoration: BoxDecoration(
-              border: Border.all(
-                color: isExpanded ? Colors.blue : Colors.grey[300]!,
-                width: isExpanded ? 2 : 1,
+        // 대분류 선택
+        const Text(
+          '대분류',
+          style: TextStyle(
+            fontSize: 14,
+            fontWeight: FontWeight.w500,
+            color: Colors.grey,
+          ),
+        ),
+        const SizedBox(height: 8),
+        
+        Wrap(
+          spacing: 12,
+          runSpacing: 12,
+          children: AppConstants.jobCategories.keys.map((category) {
+            final isSelected = _selectedCategory == category;
+            return ChoiceChip(
+              label: Text(category),
+              selected: isSelected,
+              onSelected: (selected) {
+                setState(() {
+                  _selectedCategory = selected ? category : null;
+                  _selectedSubCategory = null; // 소분류 초기화
+                });
+              },
+              selectedColor: Colors.blue.shade100,
+              labelStyle: TextStyle(
+                color: isSelected ? Colors.blue.shade700 : Colors.black87,
+                fontWeight: isSelected ? FontWeight.w600 : FontWeight.normal,
               ),
-              borderRadius: BorderRadius.circular(8),
+            );
+          }).toList(),
+        ),
+        
+        if (_selectedCategory != null) ...[
+          const SizedBox(height: 24),
+          const Text(
+            '세부 업종',
+            style: TextStyle(
+              fontSize: 14,
+              fontWeight: FontWeight.w500,
+              color: Colors.grey,
             ),
-            child: Theme(
-              data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
-              child: ExpansionTile(
-                title: Text(
-                  category,
-                  style: TextStyle(
-                    fontWeight: isExpanded ? FontWeight.bold : FontWeight.normal,
-                    color: isExpanded ? Colors.blue : Colors.black87,
-                  ),
-                ),
-                initiallyExpanded: isExpanded,
-                onExpansionChanged: (expanded) {
-                  if (expanded) {
-                    setState(() {
-                      _selectedCategory = category;
-                      _selectedSubCategory = null;
-                    });
-                  }
+          ),
+          const SizedBox(height: 8),
+          
+          Wrap(
+            spacing: 12,
+            runSpacing: 12,
+            children: AppConstants.jobCategories[_selectedCategory]!.map((subCategory) {
+              final isSelected = _selectedSubCategory == subCategory;
+              return ChoiceChip(
+                label: Text(subCategory),
+                selected: isSelected,
+                onSelected: (selected) {
+                  setState(() {
+                    _selectedSubCategory = selected ? subCategory : null;
+                  });
                 },
-                children: subCategories.map((subCategory) {
-                  final isSelected = _selectedSubCategory == subCategory;
-                  return RadioListTile<String>(
-                    title: Text(subCategory),
-                    value: subCategory,
-                    groupValue: _selectedSubCategory,
-                    selected: isSelected,
-                    activeColor: Colors.blue,
-                    onChanged: (value) {
-                      setState(() {
-                        _selectedCategory = category;
-                        _selectedSubCategory = value;
-                      });
-                    },
-                  );
-                }).toList(),
-              ),
-            ),
-          );
-        }),
+                selectedColor: Colors.blue.shade100,
+                labelStyle: TextStyle(
+                  color: isSelected ? Colors.blue.shade700 : Colors.black87,
+                  fontWeight: isSelected ? FontWeight.w600 : FontWeight.normal,
+                ),
+              );
+            }).toList(),
+          ),
+        ],
+        
+        const SizedBox(height: 16),
       ],
     );
   }
 
-  /// Step 2: 사업장 정보 입력 UI
-  Widget _buildBusinessInfoForm() {
+  // Step 2: 사업장 정보 UI
+  Widget _buildStep2() {
     return Form(
       key: _formKey,
       child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const SizedBox(height: 16),
-          
-          // 안내 문구
-          Container(
-            padding: const EdgeInsets.all(16),
-            decoration: BoxDecoration(
-              color: Colors.green[50],
-              borderRadius: BorderRadius.circular(8),
-            ),
-            child: Row(
-              children: [
-                Icon(Icons.info_outline, color: Colors.green[700]),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Text(
-                    '사업장 정보를 정확히 입력해주세요',
-                    style: TextStyle(
-                      fontSize: 14,
-                      color: Colors.green[900],
-                    ),
-                  ),
-                ),
-              ],
+          const Text(
+            '사업장 정보를 입력해주세요',
+            style: TextStyle(
+              fontSize: 16,
+              fontWeight: FontWeight.w500,
             ),
           ),
           const SizedBox(height: 24),
 
-          // ✅ 사업자등록번호 (필수)
+          // 사업자등록번호
           TextFormField(
             controller: _businessNumberController,
             decoration: InputDecoration(
               labelText: '사업자등록번호 *',
               hintText: '000-00-00000',
+              border: const OutlineInputBorder(),
               prefixIcon: const Icon(Icons.business_center),
-              helperText: '10자리 숫자를 입력해주세요',
-              border: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(8),
-              ),
-              filled: true,
-              fillColor: Colors.grey[50],
+              helperText: '10자리 숫자를 입력하세요',
             ),
             keyboardType: TextInputType.number,
             inputFormatters: [
-              FilteringTextInputFormatter.allow(RegExp(r'[0-9-]')),
-              LengthLimitingTextInputFormatter(12), // 000-00-00000
+              FilteringTextInputFormatter.digitsOnly,
+              LengthLimitingTextInputFormatter(10),
             ],
-            onChanged: (value) {
-              // 자동 포맷팅
-              final formatted = _formatBusinessNumber(value);
-              if (formatted != value) {
-                _businessNumberController.value = TextEditingValue(
-                  text: formatted,
-                  selection: TextSelection.collapsed(offset: formatted.length),
-                );
+            onChanged: _formatBusinessNumber,
+            validator: (value) {
+              if (value == null || value.isEmpty) {
+                return '사업자등록번호를 입력해주세요';
               }
+              final digitsOnly = value.replaceAll(RegExp(r'[^0-9]'), '');
+              if (digitsOnly.length != 10) {
+                return '10자리 숫자를 입력해주세요';
+              }
+              return null;
             },
-            validator: _validateBusinessNumber,
           ),
           const SizedBox(height: 16),
 
-          // 사업장명 (필수)
+          // 사업장명
           TextFormField(
             controller: _nameController,
-            decoration: InputDecoration(
+            decoration: const InputDecoration(
               labelText: '사업장명 *',
-              hintText: '스타벅스 강남점',
-              prefixIcon: const Icon(Icons.store),
-              border: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(8),
-              ),
-              filled: true,
-              fillColor: Colors.grey[50],
+              border: OutlineInputBorder(),
+              prefixIcon: Icon(Icons.store),
             ),
             validator: (value) {
               if (value == null || value.isEmpty) {
                 return '사업장명을 입력해주세요';
               }
-              if (value.length < 2) {
-                return '사업장명은 2자 이상이어야 합니다';
-              }
               return null;
             },
           ),
           const SizedBox(height: 16),
 
-          // 주소 (필수)
+          // 주소 검색
           TextFormField(
             controller: _addressController,
             decoration: InputDecoration(
               labelText: '주소 *',
-              hintText: '주소를 검색해주세요',
+              border: const OutlineInputBorder(),
               prefixIcon: const Icon(Icons.location_on),
               suffixIcon: IconButton(
                 icon: const Icon(Icons.search),
-                onPressed: _searchAddress,
-                tooltip: '주소 검색',
+                onPressed: () {
+                  showDialog(
+                    context: context,
+                    builder: (context) => Dialog(
+                      child: SizedBox(
+                        width: 600,
+                        height: 600,
+                        child: DaumAddressSearch(
+                          onAddressSelected: _onAddressSelected,
+                        ),
+                      ),
+                    ),
+                  );
+                },
               ),
-              border: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(8),
-              ),
-              filled: true,
-              fillColor: Colors.grey[50],
             ),
             readOnly: true,
-            onTap: _searchAddress,
-            validator: (value) {
-              if (value == null || value.isEmpty) {
-                return '주소를 입력해주세요';
-              }
-              return null;
+            onTap: () {
+              showDialog(
+                context: context,
+                builder: (context) => Dialog(
+                  child: SizedBox(
+                    width: 600,
+                    height: 600,
+                    child: DaumAddressSearch(
+                      onAddressSelected: _onAddressSelected,
+                    ),
+                  ),
+                ),
+              );
             },
           ),
-          const SizedBox(height: 8),
-          
-          // ✅ 좌표 정보 표시 (참고용)
-          if (_latitude != null && _longitude != null)
-            Padding(
-              padding: const EdgeInsets.only(left: 12),
-              child: Text(
-                '📍 좌표: ${_latitude!.toStringAsFixed(6)}, ${_longitude!.toStringAsFixed(6)}',
-                style: TextStyle(
-                  fontSize: 12,
-                  color: Colors.grey[600],
-                ),
-              ),
-            ),
           const SizedBox(height: 16),
 
           // 연락처 (선택)
           TextFormField(
             controller: _phoneController,
-            decoration: InputDecoration(
+            decoration: const InputDecoration(
               labelText: '연락처 (선택)',
               hintText: '010-1234-5678',
-              prefixIcon: const Icon(Icons.phone),
-              border: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(8),
-              ),
-              filled: true,
-              fillColor: Colors.grey[50],
+              border: OutlineInputBorder(),
+              prefixIcon: Icon(Icons.phone),
             ),
             keyboardType: TextInputType.phone,
           ),
@@ -594,19 +546,15 @@ class _BusinessRegistrationScreenState extends State<BusinessRegistrationScreen>
           // 설명 (선택)
           TextFormField(
             controller: _descriptionController,
-            decoration: InputDecoration(
-              labelText: '설명 (선택)',
-              hintText: '사업장에 대한 간단한 설명을 입력해주세요',
-              prefixIcon: const Icon(Icons.description),
-              border: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(8),
-              ),
-              filled: true,
-              fillColor: Colors.grey[50],
+            decoration: const InputDecoration(
+              labelText: '사업장 설명 (선택)',
+              border: OutlineInputBorder(),
+              prefixIcon: Icon(Icons.description),
             ),
             maxLines: 3,
-            maxLength: 200,
           ),
+
+          const SizedBox(height: 16),
         ],
       ),
     );

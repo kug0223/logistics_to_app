@@ -738,250 +738,49 @@ Future<bool> hardDeleteWorkType(String workTypeId) async {
       rethrow;
     }
   }
-  // ==================== 사업장 관련 (NEW - Phase 6-2) ====================
 
-  /// 사업장 생성
-  Future<String?> createBusiness(BusinessModel business) async {
-    try {
-      DocumentReference docRef = await _firestore.collection('businesses').add(business.toMap());
-      ToastHelper.showSuccess('사업장이 등록되었습니다!');
-      return docRef.id;
-    } catch (e) {
-      print('사업장 생성 실패: $e');
-      ToastHelper.showError('사업장 등록에 실패했습니다.');
-      return null;
-    }
+  // ✅ 🆕 firestore_service.dart에 추가할 메서드
+// 기존 FirestoreService 클래스에 아래 메서드를 추가하세요
+
+/// ✅ 🆕 특정 사용자가 생성한 사업장 목록 가져오기
+Future<List<CenterModel>> getCentersByOwnerId(String ownerId) async {
+  try {
+    final querySnapshot = await _firestore
+        .collection('centers')
+        .where('ownerId', isEqualTo: ownerId)
+        .orderBy('createdAt', descending: true)
+        .get();
+
+    return querySnapshot.docs
+        .map((doc) => CenterModel.fromFirestore(doc))
+        .toList();
+  } catch (e) {
+    print('Error getting centers by ownerId: $e');
+    return [];
   }
+}
 
-  /// 사업장 수정
-  Future<bool> updateBusiness(String businessId, BusinessModel business) async {
-    try {
-      await _firestore.collection('businesses').doc(businessId).update(
-        business.copyWith(
-          id: businessId,
-          updatedAt: DateTime.now(),
-        ).toMap(),
-      );
-      ToastHelper.showSuccess('사업장이 수정되었습니다!');
-      return true;
-    } catch (e) {
-      print('사업장 수정 실패: $e');
-      ToastHelper.showError('사업장 수정에 실패했습니다.');
-      return false;
-    }
+/// ✅ 🆕 특정 사용자가 생성한 사업장 스트림 (실시간)
+Stream<List<CenterModel>> getCentersByOwnerIdStream(String ownerId) {
+  return _firestore
+      .collection('centers')
+      .where('ownerId', isEqualTo: ownerId)
+      .orderBy('createdAt', descending: true)
+      .snapshots()
+      .map((snapshot) => snapshot.docs
+          .map((doc) => CenterModel.fromFirestore(doc))
+          .toList());
+}
+
+Future<String?> createBusiness(BusinessModel business) async {
+  try {
+    DocumentReference docRef = await _firestore.collection('businesses').add(business.toMap());
+    return docRef.id;
+  } catch (e) {
+    print('사업장 생성 실패: $e');
+    return null;
   }
+}
 
-  /// 사업장 삭제
-  Future<bool> deleteBusiness(String businessId) async {
-    try {
-      // ⚠️ 관련된 TO 데이터가 있는지 확인
-      final tosSnapshot = await _firestore
-          .collection('tos')
-          .where('businessId', isEqualTo: businessId)
-          .limit(1)
-          .get();
 
-      if (tosSnapshot.docs.isNotEmpty) {
-        ToastHelper.showError('이 사업장에 등록된 TO가 있어 삭제할 수 없습니다.');
-        return false;
-      }
-
-      await _firestore.collection('businesses').doc(businessId).delete();
-      ToastHelper.showSuccess('사업장이 삭제되었습니다.');
-      return true;
-    } catch (e) {
-      print('사업장 삭제 실패: $e');
-      ToastHelper.showError('사업장 삭제에 실패했습니다.');
-      return false;
-    }
-  }
-
-  /// 전체 사업장 조회 (슈퍼관리자용)
-  Future<List<BusinessModel>> getAllBusinesses() async {
-    try {
-      QuerySnapshot snapshot = await _firestore
-          .collection('businesses')
-          .orderBy('createdAt', descending: true)
-          .get();
-
-      return snapshot.docs
-          .map((doc) => BusinessModel.fromMap(
-                doc.data() as Map<String, dynamic>,
-                doc.id,
-              ))
-          .toList();
-    } catch (e) {
-      print('사업장 목록 조회 실패: $e');
-      return [];
-    }
-  }
-
-  /// 승인된 사업장만 조회
-  Future<List<BusinessModel>> getApprovedBusinesses() async {
-    try {
-      QuerySnapshot snapshot = await _firestore
-          .collection('businesses')
-          .where('isApproved', isEqualTo: true)
-          .orderBy('createdAt', descending: false)
-          .get();
-
-      return snapshot.docs
-          .map((doc) => BusinessModel.fromMap(
-                doc.data() as Map<String, dynamic>,
-                doc.id,
-              ))
-          .toList();
-    } catch (e) {
-      print('승인된 사업장 목록 조회 실패: $e');
-      return [];
-    }
-  }
-
-  /// 승인 대기 중인 사업장 조회 (슈퍼관리자용)
-  Future<List<BusinessModel>> getPendingBusinesses() async {
-    try {
-      QuerySnapshot snapshot = await _firestore
-          .collection('businesses')
-          .where('isApproved', isEqualTo: false)
-          .orderBy('createdAt', descending: true)
-          .get();
-
-      return snapshot.docs
-          .map((doc) => BusinessModel.fromMap(
-                doc.data() as Map<String, dynamic>,
-                doc.id,
-              ))
-          .toList();
-    } catch (e) {
-      print('승인 대기 사업장 목록 조회 실패: $e');
-      return [];
-    }
-  }
-
-  /// 내 사업장 조회 (사업장 관리자용)
-  Future<BusinessModel?> getMyBusiness(String ownerId) async {
-    try {
-      QuerySnapshot snapshot = await _firestore
-          .collection('businesses')
-          .where('ownerId', isEqualTo: ownerId)
-          .limit(1)
-          .get();
-
-      if (snapshot.docs.isEmpty) {
-        return null;
-      }
-
-      return BusinessModel.fromMap(
-        snapshot.docs.first.data() as Map<String, dynamic>,
-        snapshot.docs.first.id,
-      );
-    } catch (e) {
-      print('내 사업장 조회 실패: $e');
-      return null;
-    }
-  }
-
-  /// 사업장 ID로 조회
-  Future<BusinessModel?> getBusinessById(String businessId) async {
-    try {
-      DocumentSnapshot doc = await _firestore
-          .collection('businesses')
-          .doc(businessId)
-          .get();
-
-      if (!doc.exists) {
-        return null;
-      }
-
-      return BusinessModel.fromMap(
-        doc.data() as Map<String, dynamic>,
-        doc.id,
-      );
-    } catch (e) {
-      print('사업장 조회 실패: $e');
-      return null;
-    }
-  }
-
-  /// 사업장 승인 (슈퍼관리자 전용)
-  Future<bool> approveBusiness(String businessId) async {
-    try {
-      await _firestore.collection('businesses').doc(businessId).update({
-        'isApproved': true,
-        'updatedAt': FieldValue.serverTimestamp(),
-      });
-      ToastHelper.showSuccess('사업장이 승인되었습니다!');
-      return true;
-    } catch (e) {
-      print('사업장 승인 실패: $e');
-      ToastHelper.showError('사업장 승인에 실패했습니다.');
-      return false;
-    }
-  }
-
-  /// 사업장 거절 (슈퍼관리자 전용)
-  Future<bool> rejectBusiness(String businessId) async {
-    try {
-      // 거절된 사업장은 삭제
-      await _firestore.collection('businesses').doc(businessId).delete();
-      ToastHelper.showSuccess('사업장이 거절되었습니다.');
-      return true;
-    } catch (e) {
-      print('사업장 거절 실패: $e');
-      ToastHelper.showError('사업장 거절에 실패했습니다.');
-      return false;
-    }
-  }
-
-  /// 사업장별 TO 개수 조회
-  Future<int> getTOCountByBusiness(String businessId) async {
-    try {
-      QuerySnapshot snapshot = await _firestore
-          .collection('tos')
-          .where('businessId', isEqualTo: businessId)
-          .get();
-
-      return snapshot.docs.length;
-    } catch (e) {
-      print('TO 개수 조회 실패: $e');
-      return 0;
-    }
-  }
-
-  /// 업종별 사업장 조회
-  Future<List<BusinessModel>> getBusinessesByCategory(String category) async {
-    try {
-      QuerySnapshot snapshot = await _firestore
-          .collection('businesses')
-          .where('category', isEqualTo: category)
-          .where('isApproved', isEqualTo: true)
-          .orderBy('createdAt', descending: false)
-          .get();
-
-      return snapshot.docs
-          .map((doc) => BusinessModel.fromMap(
-                doc.data() as Map<String, dynamic>,
-                doc.id,
-              ))
-          .toList();
-    } catch (e) {
-      print('업종별 사업장 조회 실패: $e');
-      return [];
-    }
-  }
-
-  /// 승인된 사업장 실시간 스트림
-  Stream<List<BusinessModel>> approvedBusinessesStream() {
-    return _firestore
-        .collection('businesses')
-        .where('isApproved', isEqualTo: true)
-        .orderBy('createdAt', descending: false)
-        .snapshots()
-        .map((snapshot) => snapshot.docs
-            .map((doc) => BusinessModel.fromMap(
-                  doc.data(),
-                  doc.id,
-                ))
-            .toList());
-  }
 }
