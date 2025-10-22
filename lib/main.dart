@@ -9,6 +9,7 @@ import 'screens/user/user_home_screen.dart';
 import 'screens/admin/admin_home_screen.dart';
 import 'utils/constants.dart';
 import 'models/user_model.dart'; // ✅ UserRole 사용을 위해 추가
+import 'screens/admin/business_admin_home_screen.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -103,10 +104,8 @@ class AuthWrapper extends StatelessWidget {
           case UserRole.SUPER_ADMIN:
             // 슈퍼관리자 → 관리자 홈 (추후 슈퍼관리자 전용 화면 추가 가능)
             return const AdminHomeScreen();
-          
           case UserRole.BUSINESS_ADMIN:
-            // 사업장 관리자 → 관리자 홈
-            return const AdminHomeScreen();
+            return const BusinessAdminHomeScreen();  // ⭐ 사업장 관리자 (새로 추가!) 
           
           case UserRole.USER:
             // 일반 사용자 → 사용자 홈
