@@ -5,7 +5,7 @@ import 'work_type_management_screen.dart';
 
 /// 설정 화면 (사업장 관리자용)
 class SettingsScreen extends StatelessWidget {
-  const SettingsScreen({Key? key}) : super(key: key);
+  const SettingsScreen({super.key});
 
   @override
   Widget build(BuildContext context) {

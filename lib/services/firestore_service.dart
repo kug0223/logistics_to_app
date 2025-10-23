@@ -601,6 +601,7 @@ class FirestoreService {
   }
 
   /// 업무 유형 수정
+  /// 업무 유형 수정
   Future<bool> updateBusinessWorkType({
     required String businessId,
     required String workTypeId,
@@ -608,6 +609,7 @@ class FirestoreService {
     String? icon,
     String? color,
     int? displayOrder,
+    bool showToast = true,  // ✅ 이 줄 추가!
   }) async {
     try {
       print('🔍 [FirestoreService] 업무 유형 수정...');
@@ -631,11 +633,19 @@ class FirestoreService {
           .update(updates);
 
       print('✅ [FirestoreService] 업무 유형 수정 완료');
-      ToastHelper.showSuccess('업무 유형이 수정되었습니다');
+      
+      if (showToast) {  // ✅ 이 부분 수정!
+        ToastHelper.showSuccess('업무 유형이 수정되었습니다');
+      }
+      
       return true;
     } catch (e) {
       print('❌ [FirestoreService] 업무 유형 수정 실패: $e');
-      ToastHelper.showError('업무 유형 수정에 실패했습니다');
+      
+      if (showToast) {  // ✅ 이 부분 수정!
+        ToastHelper.showError('업무 유형 수정에 실패했습니다');
+      }
+      
       return false;
     }
   }

@@ -1,0 +1,29 @@
+지원자
+user@test.com
+user123!@#
+
+최고관리자
+admin@test.com
+admin123!@#
+
+중간관리자
+subadmin@test.com
+subadmin123!@#
+
+flutter run -d web-server
+
+git add .
+git commit -m "백업"
+git push
+
+아주 쾌적함!
+
+
+project_knowledge_search 도구를 사용해서
+실제 업로드된 dart 코드 파일들을 검색하고
+전체 프로젝트 구조를 확인하고 내 요청사항 준비해줘
+오래된 문서(md 파일)가 아니라 실제 코드를 봐야 해.
+완료되면 파악한 프로젝트 구조 보여줘 파악한것이 최근것과 동일한지 확인하게
+그리고 해결책 여러가지를 알려주려는건 좋은데
+앞으로 간단명료하게 방향만 알려주고 
+나한테 선택여부 한다음에 선택되면 해당방법에 대해서만 설명해 

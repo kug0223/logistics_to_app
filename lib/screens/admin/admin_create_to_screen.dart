@@ -70,9 +70,10 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
 
       setState(() {
         _myBusinesses = businesses;
-        if (_myBusinesses.length == 1) {
+        if (_myBusinesses.isNotEmpty) {  // ✅ 수정: length == 1 → isNotEmpty
           _selectedBusiness = _myBusinesses.first;
-          // ✅ 사업장이 하나면 바로 업무 유형 로드
+          // ✅ 사업장이 하나 이상이면 첫 번째 사업장의 업무 유형 로드
+          print('🔍 사업장 ${_myBusinesses.length}개 발견, 첫 번째 사업장 업무 유형 로드');
           _loadBusinessWorkTypes(_myBusinesses.first.id);
         }
         _isLoading = false;
@@ -686,7 +687,7 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
   /// 사업장 선택 드롭다운
   Widget _buildBusinessDropdown() {
     return DropdownButtonFormField<BusinessModel>(
-      value: _selectedBusiness,
+      initialValue: _selectedBusiness,
       decoration: InputDecoration(
         border: OutlineInputBorder(
           borderRadius: BorderRadius.circular(8),
@@ -881,12 +882,12 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
     }
 
     return DropdownButtonFormField<String>(
-      value: _selectedWorkType,
+      initialValue: _selectedWorkType,
       decoration: InputDecoration(
         border: OutlineInputBorder(
           borderRadius: BorderRadius.circular(8),
         ),
-        prefixIcon: const Icon(Icons.work),
+        //prefixIcon: const Icon(Icons.work),
         hintText: '업무 유형 선택',
       ),
       items: _businessWorkTypes.map((workType) {
@@ -906,7 +907,7 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
                   borderRadius: BorderRadius.circular(6),
                 ),
                 child: Center(
-                  child: Text(workType.icon, style: const TextStyle(fontSize: 16)),
+                  child: _buildIconWidget(workType.icon, workType.color),
                 ),
               ),
               const SizedBox(width: 12),
@@ -925,6 +926,22 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
         return null;
       },
     );
+  }
+  Widget _buildIconWidget(String iconString, String colorHex) {
+    // Material Icons 파싱
+    if (iconString.startsWith('material:')) {
+      final codePoint = int.parse(iconString.split(':')[1]);
+      final backgroundColor = Color(int.parse(colorHex.replaceFirst('#', '0xFF')));
+      
+      return Icon(
+        IconData(codePoint, fontFamily: 'MaterialIcons'),
+        size: 20,
+        color: Colors.white,  // Material Icons는 기본 흰색
+      );
+    } else {
+      // 이모지
+      return Text(iconString, style: const TextStyle(fontSize: 20));
+    }
   }
 
   /// 필요 인원 입력
