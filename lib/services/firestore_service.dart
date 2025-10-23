@@ -2,11 +2,10 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import '../models/user_model.dart';
 import '../models/to_model.dart';
 import '../models/application_model.dart';
-import '../utils/toast_helper.dart';
-import '../models/center_model.dart';        
+import '../utils/toast_helper.dart';    
 import '../models/work_type_model.dart';     
 import '../models/business_model.dart';
-import '../models/to_model.dart';
+
 
 
 
@@ -561,76 +560,6 @@ Future<CenterModel?> getCenterByCode(String code) async {
   }
 }
 
-/// 센터 생성
-Future<String?> createCenter(CenterModel center) async {
-  try {
-    // 코드 중복 체크
-    final existing = await getCenterByCode(center.code);
-    if (existing != null) {
-      ToastHelper.showError('이미 사용 중인 센터 코드입니다.');
-      return null;
-    }
-    
-    final docRef = await _firestore.collection('centers').add(center.toMap());
-    
-    ToastHelper.showSuccess('센터가 등록되었습니다.');
-    return docRef.id;
-  } catch (e) {
-    print('❌ 센터 생성 실패: $e');
-    ToastHelper.showError('센터 등록에 실패했습니다.');
-    return null;
-  }
-}
-/// ✅ 특정 사용자가 생성한 센터 목록 가져오기
-Future<List<CenterModel>> getCentersByOwnerId(String ownerId) async {
-  try {
-    final querySnapshot = await _firestore
-        .collection('centers')
-        .where('createdBy', isEqualTo: ownerId)
-        .orderBy('createdAt', descending: true)
-        .get();
-
-    return querySnapshot.docs
-        .map((doc) => CenterModel.fromFirestore(doc))
-        .toList();
-  } catch (e) {
-    print('❌ 사용자별 센터 조회 실패: $e');
-    ToastHelper.showError('센터 목록을 불러오는데 실패했습니다.');
-    return [];
-  }
-}
-/// 센터 수정
-Future<bool> updateCenter(String centerId, CenterModel center) async {
-  try {
-    await _firestore.collection('centers').doc(centerId).update(
-      center.copyWith(updatedAt: DateTime.now()).toMap(),
-    );
-    
-    ToastHelper.showSuccess('센터 정보가 수정되었습니다.');
-    return true;
-  } catch (e) {
-    print('❌ 센터 수정 실패: $e');
-    ToastHelper.showError('센터 수정에 실패했습니다.');
-    return false;
-  }
-}
-
-/// 센터 삭제 (소프트 삭제 - isActive를 false로)
-Future<bool> deleteCenter(String centerId) async {
-  try {
-    await _firestore.collection('centers').doc(centerId).update({
-      'isActive': false,
-      'updatedAt': FieldValue.serverTimestamp(),
-    });
-    
-    ToastHelper.showSuccess('센터가 비활성화되었습니다.');
-    return true;
-  } catch (e) {
-    print('❌ 센터 삭제 실패: $e');
-    ToastHelper.showError('센터 삭제에 실패했습니다.');
-    return false;
-  }
-}
 
 /// 센터 완전 삭제 (하드 삭제)
 Future<bool> hardDeleteCenter(String centerId) async {
@@ -798,20 +727,6 @@ Future<bool> hardDeleteWorkType(String workTypeId) async {
     return false;
   }
 }
-
-  /// 센터 ID로 센터 정보 조회
-  Future<CenterModel?> getCenterById(String centerId) async {
-    try {
-      final doc = await _firestore.collection('centers').doc(centerId).get();
-      if (doc.exists) {
-        return CenterModel.fromFirestore(doc);
-      }
-      return null;
-    } catch (e) {
-      print('센터 조회 실패: $e');
-      rethrow;
-    }
-  }
 
   /// 활성화된 센터만 조회
   Future<List<CenterModel>> getActiveCenters() async {

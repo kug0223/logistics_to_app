@@ -1,9 +1,7 @@
 import 'package:flutter/material.dart';
-import 'package:provider/provider.dart';
 import 'package:intl/intl.dart';
 import '../../models/to_model.dart';
 import '../../services/firestore_service.dart';
-import '../../providers/user_provider.dart';
 import '../../widgets/loading_widget.dart';
 import '../../utils/toast_helper.dart';
 import '../../utils/constants.dart';
@@ -23,7 +21,7 @@ class _AdminTOListScreenState extends State<AdminTOListScreen> {
   
   // 필터 상태
   DateTime? _selectedDate;
-  String _selectedCenter = 'ALL';
+  String _selectedBusiness = 'ALL';
   String _selectedWorkType = 'ALL';
   
   // TO 목록 + 통계
@@ -31,6 +29,9 @@ class _AdminTOListScreenState extends State<AdminTOListScreen> {
   List<_TOWithStats> _filteredTOsWithStats = [];
   bool _isLoading = true;
 
+  // ✅ 사업장 목록 저장
+  List<String> _businessNames = [];
+  
   @override
   void initState() {
     super.initState();
@@ -69,8 +70,13 @@ class _AdminTOListScreenState extends State<AdminTOListScreen> {
         }).toList(),
       );
 
+      // ✅ 3. 사업장 목록 추출 (중복 제거 + 정렬)
+      final businessSet = allTOs.map((to) => to.businessName).toSet();
+      final businessList = businessSet.toList()..sort();
+
       setState(() {
         _allTOsWithStats = tosWithStats;
+        _businessNames = businessList;  // ✅ 수정: 올바르게 정의된 변수 사용
         _applyFilters();
         _isLoading = false;
       });
@@ -85,28 +91,36 @@ class _AdminTOListScreenState extends State<AdminTOListScreen> {
 
   /// 필터 적용
   void _applyFilters() {
-    _filteredTOsWithStats = _allTOsWithStats.where((item) {
-      final to = item.to;
-      
-      // 날짜 필터
-      if (_selectedDate != null) {
+    // ✅ 수정: 일관된 필터링 로직
+    List<_TOWithStats> filtered = _allTOsWithStats;
+
+    // 1. 날짜 필터
+    if (_selectedDate != null) {
+      filtered = filtered.where((item) {
+        final to = item.to;
         final toDate = DateTime(to.date.year, to.date.month, to.date.day);
         final selectedDate = DateTime(_selectedDate!.year, _selectedDate!.month, _selectedDate!.day);
-        if (toDate != selectedDate) return false;
-      }
-      
-      // 센터 필터
-      if (_selectedCenter != 'ALL' && to.centerId != _selectedCenter) {
-        return false;
-      }
-      
-      // 업무 유형 필터
-      if (_selectedWorkType != 'ALL' && to.workType != _selectedWorkType) {
-        return false;
-      }
-      
-      return true;
-    }).toList();
+        return toDate == selectedDate;
+      }).toList();
+    }
+
+    // 2. 사업장 필터
+    if (_selectedBusiness != 'ALL') {
+      filtered = filtered.where((item) {
+        return item.to.businessName == _selectedBusiness;
+      }).toList();
+    }
+
+    // 3. 업무 유형 필터
+    if (_selectedWorkType != 'ALL') {
+      filtered = filtered.where((item) {
+        return item.to.workType == _selectedWorkType;
+      }).toList();
+    }
+
+    setState(() {
+      _filteredTOsWithStats = filtered;
+    });
   }
 
   /// 날짜 선택
@@ -149,7 +163,7 @@ class _AdminTOListScreenState extends State<AdminTOListScreen> {
     return Scaffold(
       appBar: AppBar(
         title: const Text('TO 관리'),
-        backgroundColor: Colors.purple[700], // ✅ shade700 → [700]
+        backgroundColor: Colors.purple[700],
         actions: [
           IconButton(
             icon: const Icon(Icons.refresh),
@@ -174,7 +188,7 @@ class _AdminTOListScreenState extends State<AdminTOListScreen> {
         },
         icon: const Icon(Icons.add),
         label: const Text('TO 생성'),
-        backgroundColor: Colors.purple[700], // ✅ shade700 → [700]
+        backgroundColor: Colors.purple[700],
         foregroundColor: Colors.white,
       ),
       
@@ -196,7 +210,7 @@ class _AdminTOListScreenState extends State<AdminTOListScreen> {
   Widget _buildFilters() {
     return Container(
       padding: const EdgeInsets.all(16),
-      color: Colors.grey[100], // ✅ shade100 → [100]
+      color: Colors.grey[100],
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -236,9 +250,9 @@ class _AdminTOListScreenState extends State<AdminTOListScreen> {
           ),
           const SizedBox(height: 16),
 
-          // 2. 센터 필터
+          // 2. 사업장 필터
           const Text(
-            '🏢 센터',
+            '🏢 사업장',
             style: TextStyle(
               fontSize: 14,
               fontWeight: FontWeight.bold,
@@ -250,21 +264,21 @@ class _AdminTOListScreenState extends State<AdminTOListScreen> {
             children: [
               _buildFilterChip(
                 label: '전체',
-                isSelected: _selectedCenter == 'ALL',
+                isSelected: _selectedBusiness == 'ALL',
                 onSelected: () {
                   setState(() {
-                    _selectedCenter = 'ALL';
+                    _selectedBusiness = 'ALL';
                     _applyFilters();
                   });
                 },
               ),
-              ...AppConstants.centers.map((center) {
+              ..._businessNames.map((businessName) {
                 return _buildFilterChip(
-                  label: center['name']!,
-                  isSelected: _selectedCenter == center['id'],
+                  label: businessName,
+                  isSelected: _selectedBusiness == businessName,
                   onSelected: () {
                     setState(() {
-                      _selectedCenter = center['id']!;
+                      _selectedBusiness = businessName;
                       _applyFilters();
                     });
                   },
@@ -326,15 +340,15 @@ class _AdminTOListScreenState extends State<AdminTOListScreen> {
       selected: isSelected,
       onSelected: (_) => onSelected(),
       backgroundColor: Colors.white,
-      selectedColor: Colors.purple[100], // ✅ shade100 → [100]
-      checkmarkColor: Colors.purple[700], // ✅ shade700 → [700]
+      selectedColor: Colors.purple[100],
+      checkmarkColor: Colors.purple[700],
       labelStyle: TextStyle(
-        color: isSelected ? Colors.purple[700] : Colors.grey[700], // ✅ shade → []
+        color: isSelected ? Colors.purple[700] : Colors.grey[700],
         fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
         fontSize: 12,
       ),
       side: BorderSide(
-        color: isSelected ? Colors.purple[700]! : Colors.grey[300]!, // ✅ shade → []
+        color: isSelected ? Colors.purple[700]! : Colors.grey[300]!,
         width: isSelected ? 2 : 1,
       ),
     );
@@ -351,14 +365,14 @@ class _AdminTOListScreenState extends State<AdminTOListScreen> {
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Icon(Icons.inbox, size: 80, color: Colors.grey[300]), // ✅ shade300 → [300]
+            Icon(Icons.inbox, size: 80, color: Colors.grey[300]),
             const SizedBox(height: 16),
             Text(
               '조건에 맞는 TO가 없습니다',
               style: TextStyle(
                 fontSize: 18,
                 fontWeight: FontWeight.bold,
-                color: Colors.grey[700], // ✅ shade700 → [700]
+                color: Colors.grey[700],
               ),
             ),
             const SizedBox(height: 8),
@@ -366,7 +380,7 @@ class _AdminTOListScreenState extends State<AdminTOListScreen> {
               '필터를 변경하거나 새로운 TO를 생성하세요',
               style: TextStyle(
                 fontSize: 14,
-                color: Colors.grey[500], // ✅ shade500 → [500]
+                color: Colors.grey[500],
               ),
             ),
           ],
@@ -412,7 +426,7 @@ class _AdminTOListScreenState extends State<AdminTOListScreen> {
         decoration: BoxDecoration(
           color: Colors.white,
           borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: Colors.grey[200]!), // ✅ shade200 → [200]
+          border: Border.all(color: Colors.grey[200]!),
           boxShadow: [
             BoxShadow(
               color: Colors.black.withOpacity(0.05),
@@ -425,7 +439,7 @@ class _AdminTOListScreenState extends State<AdminTOListScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // 센터명 + 마감 여부
+            // 사업장명 + 마감 여부
             Row(
               children: [
                 Expanded(
@@ -441,13 +455,13 @@ class _AdminTOListScreenState extends State<AdminTOListScreen> {
                   Container(
                     padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                     decoration: BoxDecoration(
-                      color: Colors.red[100], // ✅ shade100 → [100]
+                      color: Colors.red[100],
                       borderRadius: BorderRadius.circular(12),
                     ),
                     child: Text(
                       '마감',
                       style: TextStyle(
-                        color: Colors.red[700], // ✅ shade700 → [700]
+                        color: Colors.red[700],
                         fontSize: 12,
                         fontWeight: FontWeight.bold,
                       ),
@@ -464,14 +478,14 @@ class _AdminTOListScreenState extends State<AdminTOListScreen> {
                 const SizedBox(width: 4),
                 Text(
                   '${to.formattedDate} (${to.weekday})',
-                  style: TextStyle(fontSize: 14, color: Colors.grey[700]), // ✅ shade → []
+                  style: TextStyle(fontSize: 14, color: Colors.grey[700]),
                 ),
                 const SizedBox(width: 16),
                 Icon(Icons.access_time, size: 16, color: Colors.grey[600]),
                 const SizedBox(width: 4),
                 Text(
                   to.timeRange,
-                  style: TextStyle(fontSize: 14, color: Colors.grey[700]), // ✅ shade → []
+                  style: TextStyle(fontSize: 14, color: Colors.grey[700]),
                 ),
               ],
             ),
@@ -481,13 +495,13 @@ class _AdminTOListScreenState extends State<AdminTOListScreen> {
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
               decoration: BoxDecoration(
-                color: Colors.blue[100], // ✅ shade100 → [100]
+                color: Colors.blue[100],
                 borderRadius: BorderRadius.circular(4),
               ),
               child: Text(
                 to.workType,
                 style: TextStyle(
-                  color: Colors.blue[700], // ✅ shade700 → [700]
+                  color: Colors.blue[700],
                   fontSize: 12,
                   fontWeight: FontWeight.bold,
                 ),
@@ -502,14 +516,14 @@ class _AdminTOListScreenState extends State<AdminTOListScreen> {
                 const SizedBox(width: 4),
                 Text(
                   '확정: ${item.confirmedCount}/${to.requiredCount}',
-                  style: TextStyle(fontSize: 14, color: Colors.grey[700]), // ✅ shade → []
+                  style: TextStyle(fontSize: 14, color: Colors.grey[700]),
                 ),
                 const SizedBox(width: 16),
                 Icon(Icons.pending, size: 16, color: Colors.orange[600]),
                 const SizedBox(width: 4),
                 Text(
                   '대기: ${item.pendingCount}',
-                  style: TextStyle(fontSize: 14, color: Colors.grey[700]), // ✅ shade → []
+                  style: TextStyle(fontSize: 14, color: Colors.grey[700]),
                 ),
               ],
             ),

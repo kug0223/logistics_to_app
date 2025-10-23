@@ -6,24 +6,8 @@ class Constants {
   static const int errorColor = 0xFFEF4444; // Red
   static const int warningColor = 0xFFF59E0B; // Orange
 
-  // 물류센터 목록 (deprecated)
-  static const List<Map<String, String>> centers = [
-    {
-      'id': 'CENTER_A',
-      'name': '송파 물류센터',
-      'address': '서울시 송파구 올림픽로 300',
-    },
-    {
-      'id': 'CENTER_B',
-      'name': '강남 물류센터',
-      'address': '서울시 강남구 테헤란로 500',
-    },
-    {
-      'id': 'CENTER_C',
-      'name': '서초 물류센터',
-      'address': '서울시 서초구 강남대로 400',
-    },
-  ];
+  // ❌ 물류센터 목록 (deprecated) - 삭제!
+  // static const List<Map<String, String>> centers = [ ... ];
 
   // 지원 상태 코드
   static const String statusPending = 'PENDING';
@@ -71,7 +55,7 @@ class Constants {
   static const String collectionUsers = 'users';
   static const String collectionTOs = 'tos';
   static const String collectionApplications = 'applications';
-  static const String collectionCenters = 'centers';
+  // ❌ collectionCenters 삭제
   static const String collectionBusinesses = 'businesses';
 
   // GPS 설정
@@ -87,15 +71,18 @@ class Constants {
   static const String errorPermission = '권한이 없습니다.';
 }
 
-/// 앱 상수
+/// 앱 상수 (간편 접근용)
 class AppConstants {
   static const int primaryColor = Constants.primaryColor;
-  static const List<Map<String, String>> centers = Constants.centers;
   
-  // ✅ 두 가지 버전 모두 제공
+  // ❌ centers 삭제!
+  // static const List<Map<String, String>> centers = Constants.centers;
+  
+  // ✅ 업무 유형
   static const List<Map<String, String>> workTypes = Constants.workTypes;
   static final List<String> workTypeNames = Constants.workTypeNames;
   
+  // ✅ 업종 카테고리
   static const Map<String, List<String>> jobCategories = Constants.jobCategories;
   static const List<String> categoryList = Constants.categoryList;
 }
