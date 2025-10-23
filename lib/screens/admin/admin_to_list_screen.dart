@@ -430,7 +430,7 @@ class _AdminTOListScreenState extends State<AdminTOListScreen> {
               children: [
                 Expanded(
                   child: Text(
-                    to.centerName,
+                    to.businessName,
                     style: const TextStyle(
                       fontSize: 16,
                       fontWeight: FontWeight.bold,

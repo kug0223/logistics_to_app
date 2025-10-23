@@ -237,7 +237,7 @@ class _AdminTODetailScreenState extends State<AdminTODetailScreen> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
-            widget.to.centerName,
+            widget.to.businessName,
             style: const TextStyle(
               color: Colors.white,
               fontSize: 24,

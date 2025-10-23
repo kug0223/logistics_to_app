@@ -385,46 +385,77 @@ class FirestoreService {
       return false;
     }
   }
-  // ==================== TO 관련 (사업장 기반) ====================
+  // ==================== TO 생성 (Phase 1: 마감 시간 추가) ====================
 
-  /// ✅ TO 생성 (사업장 기반) - 중간관리자용
-  Future<String> createTO({
+  /// TO 생성 (사업장 기반 + 마감 시간)
+  /// 
+  /// [businessId]: 사업장 ID
+  /// [businessName]: 사업장 이름
+  /// [date]: 근무 날짜
+  /// [startTime]: 시작 시간 (예: "09:00")
+  /// [endTime]: 종료 시간 (예: "18:00")
+  /// [applicationDeadline]: 지원 마감 일시 ✅ NEW!
+  /// [workType]: 업무 유형
+  /// [requiredCount]: 필요 인원
+  /// [description]: 설명 (선택사항)
+  /// [creatorUID]: 생성자 UID
+  Future<String?> createTO({
     required String businessId,
     required String businessName,
     required DateTime date,
     required String startTime,
     required String endTime,
+    required DateTime applicationDeadline, // ✅ NEW! 필수 파라미터
     required String workType,
     required int requiredCount,
-    required String creatorUID,
     String? description,
+    required String creatorUID,
   }) async {
     try {
-      print('🔥 [FirestoreService] TO 생성 시작...');
-      print('   businessId: $businessId');
-      print('   businessName: $businessName');
-      
-      final docRef = await _firestore.collection('tos').add({
-        'businessId': businessId, // ✅ 필수
-        'businessName': businessName, // ✅ 필수
-        'centerId': null, // 하위 호환용 (deprecated)
-        'centerName': null, // 하위 호환용 (deprecated)
+      // ✅ 유효성 검증: 마감 일시는 근무 시작 전이어야 함
+      final workDateTime = DateTime(
+        date.year,
+        date.month,
+        date.day,
+        int.parse(startTime.split(':')[0]),
+        int.parse(startTime.split(':')[1]),
+      );
+
+      if (applicationDeadline.isAfter(workDateTime)) {
+        print('❌ 마감 일시는 근무 시작 시간 이전이어야 합니다');
+        return null;
+      }
+
+      // ✅ 유효성 검증: 마감 일시는 현재 시간 이후여야 함
+      if (applicationDeadline.isBefore(DateTime.now())) {
+        print('❌ 마감 일시는 현재 시간 이후여야 합니다');
+        return null;
+      }
+
+      final toData = {
+        'businessId': businessId,
+        'businessName': businessName,
         'date': Timestamp.fromDate(date),
         'startTime': startTime,
         'endTime': endTime,
-        'requiredCount': requiredCount,
-        'currentCount': 0, // 초기값
+        'applicationDeadline': Timestamp.fromDate(applicationDeadline), // ✅ NEW!
         'workType': workType,
+        'requiredCount': requiredCount,
+        'currentCount': 0,
         'description': description,
         'creatorUID': creatorUID,
         'createdAt': FieldValue.serverTimestamp(),
-      });
+      };
 
-      print('✅ [FirestoreService] TO 생성 성공! ID: ${docRef.id}');
+      final docRef = await _firestore.collection('tos').add(toData);
+      print('✅ TO 생성 성공: ${docRef.id}');
+      print('📅 근무 날짜: ${date.year}-${date.month}-${date.day}');
+      print('⏰ 근무 시간: $startTime - $endTime');
+      print('🕐 마감 일시: ${applicationDeadline.year}-${applicationDeadline.month}-${applicationDeadline.day} ${applicationDeadline.hour}:${applicationDeadline.minute}'); // ✅ NEW!
       return docRef.id;
     } catch (e) {
-      print('❌ [FirestoreService] TO 생성 실패: $e');
-      rethrow;
+      print('❌ TO 생성 실패: $e');
+      return null;
     }
   }
   /// ✅ 특정 사업장의 TO 조회 (중간관리자용)

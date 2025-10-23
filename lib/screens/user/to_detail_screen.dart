@@ -5,7 +5,7 @@ import '../../services/firestore_service.dart';
 import '../../providers/user_provider.dart';
 import '../../utils/toast_helper.dart';
 
-/// TO 상세 화면
+/// TO 상세 화면 - 마감 시간 기능 추가 버전
 class TODetailScreen extends StatefulWidget {
   final TOModel to;
 
@@ -21,27 +21,21 @@ class TODetailScreen extends StatefulWidget {
 class _TODetailScreenState extends State<TODetailScreen> {
   final FirestoreService _firestoreService = FirestoreService();
   bool _isApplying = false;
-  bool _hasApplied = false;
+  String? _applicationStatus; // null, 'PENDING', 'CONFIRMED', 'REJECTED', 'CANCELED'
   bool _isLoading = true;
 
   @override
   void initState() {
     super.initState();
-    _checkIfApplied();
+    _checkApplicationStatus();
   }
 
-  /// 이미 지원했는지 확인
-  Future<void> _checkIfApplied() async {
-    print('🔍 _checkIfApplied 시작');
-    
+  /// 내 지원 상태 확인
+  Future<void> _checkApplicationStatus() async {
     final userProvider = Provider.of<UserProvider>(context, listen: false);
     final uid = userProvider.currentUser?.uid;
 
-    print('🔍 현재 사용자 UID: $uid');
-    print('🔍 현재 TO ID: ${widget.to.id}');
-
     if (uid == null) {
-      print('❌ UID가 null입니다');
       setState(() {
         _isLoading = false;
       });
@@ -49,26 +43,22 @@ class _TODetailScreenState extends State<TODetailScreen> {
     }
 
     try {
-      final myApps = await _firestoreService.getMyApplications(uid);
-      print('✅ 내 지원 내역 개수: ${myApps.length}');
+      final myApplications = await _firestoreService.getMyApplications(uid);
       
-      for (var app in myApps) {
-        print('  - TO ID: ${app.toId}, 상태: ${app.status}');
-      }
-      
-      final applied = myApps.any((app) =>
-          app.toId == widget.to.id &&
-          (app.status == 'PENDING' || app.status == 'CONFIRMED'));
-
-      print('✅ 지원 여부: $applied');
+      // 현재 TO에 대한 지원 내역 찾기
+      final myApplication = myApplications.firstWhere(
+        (app) => app.toId == widget.to.id,
+        orElse: () => throw Exception('Not found'),
+      );
 
       setState(() {
-        _hasApplied = applied;
+        _applicationStatus = myApplication.status;
         _isLoading = false;
       });
     } catch (e) {
-      print('❌ 에러 발생: $e');
+      // 지원 내역이 없으면 null로 설정
       setState(() {
+        _applicationStatus = null;
         _isLoading = false;
       });
     }
@@ -78,8 +68,8 @@ class _TODetailScreenState extends State<TODetailScreen> {
   Widget build(BuildContext context) {
     return WillPopScope(
       onWillPop: () async {
-        // 뒤로가기 시 true 반환 (지원 상태를 결과로 전달)
-        Navigator.pop(context, _hasApplied);
+        // 뒤로가기 시 지원 상태 변경 여부를 알림
+        Navigator.pop(context, _applicationStatus != null);
         return false;
       },
       child: Scaffold(
@@ -88,21 +78,23 @@ class _TODetailScreenState extends State<TODetailScreen> {
           backgroundColor: Colors.blue[700],
           foregroundColor: Colors.white,
         ),
-        body: SingleChildScrollView(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              // 헤더 (센터명 + 상태)
-              _buildHeader(),
+        body: _isLoading
+            ? const Center(child: CircularProgressIndicator())
+            : SingleChildScrollView(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    // 헤더 (센터명 + 상태)
+                    _buildHeader(),
 
-              // 상세 정보 카드
-              _buildDetailCard(),
+                    // 상세 정보 카드
+                    _buildDetailCard(),
 
-              // 지원하기 버튼
-              _buildApplyButton(),
-            ],
-          ),
-        ),
+                    // 지원하기 버튼
+                    _buildApplyButton(),
+                  ],
+                ),
+              ),
       ),
     );
   }
@@ -114,6 +106,8 @@ class _TODetailScreenState extends State<TODetailScreen> {
       decoration: BoxDecoration(
         gradient: LinearGradient(
           colors: [Colors.blue[700]!, Colors.blue[500]!],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
         ),
       ),
       child: Column(
@@ -126,9 +120,9 @@ class _TODetailScreenState extends State<TODetailScreen> {
                 child: Text(
                   widget.to.businessName,
                   style: const TextStyle(
-                    color: Colors.white,
                     fontSize: 24,
                     fontWeight: FontWeight.bold,
+                    color: Colors.white,
                   ),
                 ),
               ),
@@ -137,10 +131,11 @@ class _TODetailScreenState extends State<TODetailScreen> {
           ),
           const SizedBox(height: 8),
           Text(
-            widget.to.workType,
+            '${widget.to.formattedDate} (${widget.to.weekday})',
             style: const TextStyle(
-              color: Colors.white70,
               fontSize: 16,
+              color: Colors.white,
+              fontWeight: FontWeight.w500,
             ),
           ),
         ],
@@ -155,65 +150,113 @@ class _TODetailScreenState extends State<TODetailScreen> {
       padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
         color: Colors.white,
-        borderRadius: BorderRadius.circular(12),
+        borderRadius: BorderRadius.circular(16),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.1),
-            blurRadius: 10,
-            offset: const Offset(0, 2),
+            color: Colors.grey.shade200,
+            blurRadius: 8,
+            offset: const Offset(0, 4),
           ),
         ],
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text(
-            '📋 근무 정보',
-            style: TextStyle(
-              fontSize: 18,
-              fontWeight: FontWeight.bold,
-              color: Colors.black87,
+          // ✅ 마감 시간 정보 카드 (NEW!)
+          Container(
+            margin: const EdgeInsets.only(bottom: 16),
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              color: widget.to.isDeadlinePassed ? Colors.red[50] : Colors.blue[50],
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(
+                color: widget.to.isDeadlinePassed
+                    ? Colors.red.shade200
+                    : Colors.blue.shade200,
+              ),
+            ),
+            child: Row(
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(8),
+                  decoration: BoxDecoration(
+                    color: widget.to.isDeadlinePassed
+                        ? Colors.red[100]
+                        : Colors.blue[100],
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Icon(
+                    widget.to.isDeadlinePassed
+                        ? Icons.lock_clock
+                        : Icons.access_time,
+                    color: widget.to.isDeadlinePassed
+                        ? Colors.red[700]
+                        : Colors.blue[700],
+                    size: 24,
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        widget.to.isDeadlinePassed ? '지원 마감됨' : '지원 마감',
+                        style: TextStyle(
+                          fontSize: 13,
+                          color: Colors.grey[600],
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        widget.to.formattedDeadline, // "10월 24일 18:00까지"
+                        style: TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.bold,
+                          color: widget.to.isDeadlinePassed
+                              ? Colors.red[700]
+                              : Colors.blue[900],
+                        ),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        widget.to.deadlineStatus, // "3시간 남음" or "마감됨"
+                        style: TextStyle(
+                          fontSize: 13,
+                          color: widget.to.isDeadlinePassed
+                              ? Colors.red[600]
+                              : Colors.orange[700],
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
             ),
           ),
-          const SizedBox(height: 16),
 
-          _buildInfoRow(
-            Icons.calendar_today,
-            '날짜',
-            '${widget.to.formattedDate} (${widget.to.weekday})',
-          ),
-
-          const Divider(height: 24),
-
+          // 기존 정보들
           _buildInfoRow(
             Icons.access_time,
-            '시간',
+            '근무 시간',
             widget.to.timeRange,
           ),
-
-          const Divider(height: 24),
-
+          const SizedBox(height: 16),
           _buildInfoRow(
-            Icons.people,
+            Icons.work_outline,
+            '업무 유형',
+            widget.to.workType,
+          ),
+          const SizedBox(height: 16),
+          _buildInfoRow(
+            Icons.people_outline,
             '모집 인원',
-            '${widget.to.requiredCount}명',
-          ),
-
-          const Divider(height: 24),
-
-          _buildInfoRow(
-            Icons.person_add,
-            '현재 지원자',
-            '${widget.to.currentCount}명',
-          ),
-
-          const Divider(height: 24),
-
-          _buildInfoRow(
-            Icons.event_available,
-            '남은 자리',
-            '${widget.to.remainingCount}명',
-            color: widget.to.isAvailable ? Colors.green : Colors.red,
+            '${widget.to.currentCount}/${widget.to.requiredCount}명',
+            color: widget.to.currentCount >= widget.to.requiredCount
+                ? Colors.red
+                : Colors.green,
           ),
 
           if (widget.to.description != null &&
@@ -311,58 +354,115 @@ class _TODetailScreenState extends State<TODetailScreen> {
     );
   }
 
-  /// 지원하기 버튼
+  /// 지원하기 버튼 - 마감 시간 체크 추가 버전
   Widget _buildApplyButton() {
-    return Container(
+    return Padding(
       padding: const EdgeInsets.all(16),
-      child: ElevatedButton(
-        onPressed: _isLoading
-            ? null
-            : (_hasApplied || !widget.to.isAvailable ? null : _handleApply),
-        style: ElevatedButton.styleFrom(
-          backgroundColor: _hasApplied
-              ? Colors.grey[400]
-              : (widget.to.isAvailable ? Colors.blue[700] : Colors.grey[400]),
-          foregroundColor: Colors.white,
-          padding: const EdgeInsets.symmetric(vertical: 16),
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(8),
-          ),
-        ),
-        child: _isApplying
-            ? const SizedBox(
-                height: 20,
-                width: 20,
-                child: CircularProgressIndicator(
-                  strokeWidth: 2,
-                  color: Colors.white,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          SizedBox(
+            width: double.infinity,
+            height: 56,
+            child: ElevatedButton(
+              // ✅ 마감 여부도 체크 (isDeadlinePassed 추가)
+              onPressed: widget.to.isDeadlinePassed ||
+                      _applicationStatus == 'PENDING' ||
+                      _applicationStatus == 'CONFIRMED' ||
+                      !widget.to.isAvailable
+                  ? null
+                  : _applyToTO,
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.blue.shade700,
+                foregroundColor: Colors.white,
+                disabledBackgroundColor: Colors.grey.shade300,
+                disabledForegroundColor: Colors.grey.shade600,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
                 ),
-              )
-            : Text(
-                _hasApplied
-                    ? '✅ 지원 완료 (승인 대기 중)'
-                    : (widget.to.isAvailable ? '지원하기' : '마감됨'),
-                style: const TextStyle(
-                  fontSize: 16,
-                  fontWeight: FontWeight.bold,
-                ),
+                elevation: 0,
               ),
+              // ✅ 버튼 텍스트도 마감 여부에 따라 변경
+              child: _isApplying
+                  ? const SizedBox(
+                      height: 20,
+                      width: 20,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        color: Colors.white,
+                      ),
+                    )
+                  : Text(
+                      widget.to.isDeadlinePassed
+                          ? '마감됨' // ✅ NEW!
+                          : _applicationStatus == 'PENDING'
+                              ? '지원 완료 (승인 대기)'
+                              : _applicationStatus == 'CONFIRMED'
+                                  ? '확정됨'
+                                  : !widget.to.isAvailable
+                                      ? '마감'
+                                      : '지원하기',
+                      style: const TextStyle(
+                        fontSize: 17,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+            ),
+          ),
+          
+          // ✅ 마감된 경우 추가 안내 메시지 (버튼 아래에 추가)
+          if (widget.to.isDeadlinePassed) ...[
+            const SizedBox(height: 12),
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: Colors.orange[50],
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: Colors.orange.shade200),
+              ),
+              child: Row(
+                children: [
+                  Icon(Icons.info_outline, color: Colors.orange[700], size: 18),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      '지원 마감 시간이 지나 더 이상 지원할 수 없습니다',
+                      style: TextStyle(
+                        fontSize: 13,
+                        color: Colors.orange[900],
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ],
       ),
     );
   }
 
-  /// 지원하기 처리
-  Future<void> _handleApply() async {
-    final userProvider = Provider.of<UserProvider>(context, listen: false);
-    final uid = userProvider.currentUser?.uid;
+  /// 지원하기 처리 - 마감 시간 체크 추가 버전
+  Future<void> _applyToTO() async {
+    // ✅ 마감 시간 체크 추가
+    if (widget.to.isDeadlinePassed) {
+      ToastHelper.showWarning('지원 마감 시간이 지났습니다');
+      return;
+    }
 
-    if (uid == null) {
-      ToastHelper.showError('로그인이 필요합니다.');
+    // 기존 유효성 검증들...
+    if (!widget.to.isAvailable) {
+      ToastHelper.showWarning('이미 인원이 마감되었습니다');
+      return;
+    }
+
+    if (_applicationStatus != null) {
+      ToastHelper.showWarning('이미 지원한 TO입니다');
       return;
     }
 
     // 확인 다이얼로그
-    final confirm = await showDialog<bool>(
+    final bool? confirm = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
         title: const Text('지원 확인'),
@@ -372,25 +472,46 @@ class _TODetailScreenState extends State<TODetailScreen> {
           children: [
             const Text('이 TO에 지원하시겠습니까?'),
             const SizedBox(height: 12),
-            Text(
-              '센터: ${widget.to.businessName}',
-              style: const TextStyle(fontSize: 14),
-            ),
-            Text(
-              '날짜: ${widget.to.formattedDate}',
-              style: const TextStyle(fontSize: 14),
-            ),
-            Text(
-              '시간: ${widget.to.timeRange}',
-              style: const TextStyle(fontSize: 14),
-            ),
-            const SizedBox(height: 12),
-            const Text(
-              '※ 관리자 승인 후 확정됩니다.',
-              style: TextStyle(
-                fontSize: 12,
-                color: Colors.orange,
-                fontWeight: FontWeight.bold,
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: Colors.grey[100],
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    widget.to.businessName,
+                    style: const TextStyle(fontWeight: FontWeight.bold),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    '${widget.to.formattedDate} (${widget.to.weekday})',
+                    style: TextStyle(fontSize: 13, color: Colors.grey[700]),
+                  ),
+                  Text(
+                    '${widget.to.timeRange} · ${widget.to.workType}',
+                    style: TextStyle(fontSize: 13, color: Colors.grey[700]),
+                  ),
+                  // ✅ 마감 시간도 표시
+                  const Divider(height: 16),
+                  Row(
+                    children: [
+                      Icon(Icons.access_time,
+                          size: 14, color: Colors.orange[700]),
+                      const SizedBox(width: 4),
+                      Text(
+                        '지원 마감: ${widget.to.formattedDeadline}',
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: Colors.orange[700],
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
               ),
             ),
           ],
@@ -402,6 +523,9 @@ class _TODetailScreenState extends State<TODetailScreen> {
           ),
           ElevatedButton(
             onPressed: () => Navigator.pop(context, true),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.blue.shade700,
+            ),
             child: const Text('지원하기'),
           ),
         ],
@@ -410,20 +534,39 @@ class _TODetailScreenState extends State<TODetailScreen> {
 
     if (confirm != true) return;
 
-    setState(() {
-      _isApplying = true;
-    });
+    // 지원 처리 로직
+    setState(() => _isApplying = true);
 
-    final success = await _firestoreService.applyToTO(widget.to.id, uid);
+    try {
+      final userProvider = Provider.of<UserProvider>(context, listen: false);
+      final uid = userProvider.currentUser?.uid;
 
-    setState(() {
-      _isApplying = false;
-    });
+      if (uid == null) {
+        ToastHelper.showError('로그인 정보를 찾을 수 없습니다');
+        return;
+      }
 
-    if (success) {
-      setState(() {
-        _hasApplied = true;
-      });
+      final success = await _firestoreService.applyToTO(
+        toId: widget.to.id,
+        uid: uid,
+      );
+
+      if (success) {
+        setState(() {
+          _applicationStatus = 'PENDING';
+        });
+        ToastHelper.showSuccess('지원이 완료되었습니다\n관리자의 승인을 기다려주세요');
+        Navigator.pop(context, true);
+      } else {
+        ToastHelper.showError('지원에 실패했습니다');
+      }
+    } catch (e) {
+      print('❌ 지원 실패: $e');
+      ToastHelper.showError('지원 중 오류가 발생했습니다');
+    } finally {
+      if (mounted) {
+        setState(() => _isApplying = false);
+      }
     }
   }
 }

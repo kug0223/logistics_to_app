@@ -15,11 +15,79 @@ class TOCardWidget extends StatelessWidget {
   }) : super(key: key);
 
   @override
-  Widget build(BuildContext context) {
-    print('🎴 TOCardWidget - TO: ${to.id}, 지원상태: $applicationStatus');
+  // ✅ 마감 뱃지 빌드 메서드 (NEW!)
+  Widget _buildDeadlineBadge() {
+    if (to.isDeadlinePassed) {
+      // 마감됨 (빨간색)
+      return Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+        decoration: BoxDecoration(
+          color: Colors.red[50],
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: Colors.red.shade300),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(
+              Icons.lock_clock,
+              size: 14,
+              color: Colors.red[700],
+            ),
+            const SizedBox(width: 4),
+            Text(
+              '마감됨',
+              style: TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.bold,
+                color: Colors.red[700],
+              ),
+            ),
+          ],
+        ),
+      );
+    } else {
+      // 마감 임박 (주황색) - 24시간 이내
+      final hoursLeft = to.applicationDeadline.difference(DateTime.now()).inHours;
+      
+      if (hoursLeft <= 24) {
+        return Container(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+          decoration: BoxDecoration(
+            color: Colors.orange[50],
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: Colors.orange.shade300),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(
+                Icons.access_alarm,
+                size: 14,
+                color: Colors.orange[700],
+              ),
+              const SizedBox(width: 4),
+              Text(
+                to.deadlineStatus, // "3시간 남음"
+                style: TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.bold,
+                  color: Colors.orange[700],
+                ),
+              ),
+            ],
+          ),
+        );
+      }
+    }
     
+    return const SizedBox.shrink(); // 마감 임박 아니면 표시 안 함
+  }
+  @override
+  Widget build(BuildContext context) {
     return Card(
-      elevation: 3,
+      margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      elevation: 2,
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(12),
       ),
@@ -31,109 +99,126 @@ class TOCardWidget extends StatelessWidget {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              // 상단: 날짜 + 요일 + 상태 배지
+              // 1행: 사업장명 + 상태 배지들
               Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
-                  // 날짜 정보
-                  Row(
-                    children: [
-                      Icon(
-                        Icons.calendar_today,
-                        size: 18,
-                        color: Colors.blue[700],
+                  Expanded(
+                    child: Text(
+                      to.businessName,
+                      style: const TextStyle(
+                        fontSize: 17,
+                        fontWeight: FontWeight.bold,
                       ),
-                      const SizedBox(width: 8),
-                      Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            to.formattedDate,
-                            style: const TextStyle(
-                              fontSize: 16,
-                              fontWeight: FontWeight.bold,
-                              color: Colors.black87,
-                            ),
-                          ),
-                          Text(
-                            to.weekday,
-                            style: TextStyle(
-                              fontSize: 12,
-                              color: Colors.grey[600],
-                            ),
-                          ),
-                        ],
-                      ),
-                    ],
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
                   ),
+                  const SizedBox(width: 8),
                   
-                  // 상태 배지
-                  _buildStatusBadge(),
+                  // ✅ 마감 뱃지 (NEW!)
+                  _buildDeadlineBadge(),
+                  const SizedBox(width: 4),
+                  
+                  // 기존 지원 상태 배지
+                  if (applicationStatus != null) _buildStatusBadge(),
                 ],
               ),
               
               const SizedBox(height: 12),
-              const Divider(height: 1),
-              const SizedBox(height: 12),
               
-              // 시간 정보
-              _buildInfoRow(
-                Icons.access_time,
-                '시간',
-                to.timeRange,
-                Colors.orange,
-              ),
-              
-              const SizedBox(height: 8),
-              
-              // 업무 유형
-              _buildInfoRow(
-                Icons.work,
-                '업무',
-                to.workType,
-                Colors.purple,
-              ),
-              
-              const SizedBox(height: 8),
-              
-              // 인원 정보
-              _buildInfoRow(
-                Icons.people,
-                '인원',
-                '${to.currentCount}/${to.requiredCount}명 (남은 자리: ${to.remainingCount}명)',
-                to.isAvailable ? Colors.green : Colors.red,
-              ),
-              
-              // 설명 (있을 경우)
-              if (to.description != null && to.description!.isNotEmpty) ...[
-                const SizedBox(height: 12),
-                Container(
-                  padding: const EdgeInsets.all(12),
-                  decoration: BoxDecoration(
-                    color: Colors.grey[100],
-                    borderRadius: BorderRadius.circular(8),
+              // 2행: 날짜 + 요일
+              Row(
+                children: [
+                  Icon(Icons.calendar_today, size: 16, color: Colors.grey[600]),
+                  const SizedBox(width: 6),
+                  Text(
+                    '${to.formattedDate} (${to.weekday})',
+                    style: TextStyle(
+                      fontSize: 14,
+                      color: Colors.grey[700],
+                    ),
                   ),
-                  child: Row(
+                ],
+              ),
+              
+              const SizedBox(height: 8),
+              
+              // 3행: 시간대
+              Row(
+                children: [
+                  Icon(Icons.access_time, size: 16, color: Colors.grey[600]),
+                  const SizedBox(width: 6),
+                  Text(
+                    to.timeRange, // "09:00 - 18:00"
+                    style: TextStyle(
+                      fontSize: 14,
+                      color: Colors.grey[700],
+                    ),
+                  ),
+                ],
+              ),
+              
+              const SizedBox(height: 8),
+              
+              // 4행: 업무 유형
+              Row(
+                children: [
+                  Icon(Icons.work_outline, size: 16, color: Colors.grey[600]),
+                  const SizedBox(width: 6),
+                  Text(
+                    to.workType,
+                    style: TextStyle(
+                      fontSize: 14,
+                      color: Colors.grey[700],
+                    ),
+                  ),
+                ],
+              ),
+              
+              const Divider(height: 20, thickness: 1),
+              
+              // 5행: 인원 정보 + 지원 마감까지 시간
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  // 인원 정보
+                  Row(
                     children: [
-                      Icon(
-                        Icons.info_outline,
-                        size: 18,
-                        color: Colors.grey[700],
-                      ),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: Text(
-                          to.description!,
-                          style: TextStyle(
-                            fontSize: 13,
-                            color: Colors.grey[800],
-                          ),
+                      Icon(Icons.people, size: 16, color: Colors.blue[700]),
+                      const SizedBox(width: 6),
+                      Text(
+                        '${to.currentCount}/${to.requiredCount}명',
+                        style: TextStyle(
+                          fontSize: 14,
+                          fontWeight: FontWeight.w600,
+                          color: Colors.blue[700],
                         ),
                       ),
                     ],
                   ),
-                ),
-              ],
+                  
+                  // ✅ 마감까지 남은 시간 (NEW!)
+                  if (!to.isDeadlinePassed)
+                    Row(
+                      children: [
+                        Icon(
+                          Icons.timer_outlined,
+                          size: 14,
+                          color: Colors.orange[600],
+                        ),
+                        const SizedBox(width: 4),
+                        Text(
+                          to.deadlineStatus, // "3시간 남음"
+                          style: TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w600,
+                            color: Colors.orange[600],
+                          ),
+                        ),
+                      ],
+                    ),
+                ],
+              ),
             ],
           ),
         ),
@@ -168,69 +253,53 @@ class TOCardWidget extends StatelessWidget {
     );
   }
 
-  /// 상태 배지 (지원 가능 여부)
+  // 기존 _buildStatusBadge() 메서드는 그대로 유지
   Widget _buildStatusBadge() {
-    print('🏷️ 배지 빌드 - applicationStatus: $applicationStatus');
-    
-    // 내가 지원한 상태가 있으면 우선 표시
-    if (applicationStatus != null) {
-      print('✅ 지원 상태 있음: $applicationStatus');
-      switch (applicationStatus) {
-        case 'PENDING':
-          return _buildBadge(
-            '지원 완료 (대기)',
-            Colors.orange,
-            Icons.schedule,
-          );
-        case 'CONFIRMED':
-          return _buildBadge(
-            '확정됨',
-            Colors.blue,
-            Icons.check_circle,
-          );
-        case 'REJECTED':
-          return _buildBadge(
-            '거절됨',
-            Colors.red,
-            Icons.cancel,
-          );
-      }
+    Color bgColor;
+    Color textColor;
+    String text;
+
+    switch (applicationStatus) {
+      case 'PENDING':
+        bgColor = Colors.orange.shade50;
+        textColor = Colors.orange.shade700;
+        text = '대기';
+        break;
+      case 'CONFIRMED':
+        bgColor = Colors.blue.shade50;
+        textColor = Colors.blue.shade700;
+        text = '확정';
+        break;
+      case 'REJECTED':
+        bgColor = Colors.red.shade50;
+        textColor = Colors.red.shade700;
+        text = '거절';
+        break;
+      case 'CANCELED':
+        bgColor = Colors.grey.shade100;
+        textColor = Colors.grey.shade600;
+        text = '취소';
+        break;
+      default:
+        bgColor = Colors.green.shade50;
+        textColor = Colors.green.shade700;
+        text = '지원 가능';
     }
 
-    print('⚪ 지원 안 함 - 기본 배지');
-    
-    // 지원 안 했으면 기존 로직
-    final isAvailable = to.isAvailable;
-    final color = isAvailable ? Colors.green : Colors.red;
-    final text = isAvailable ? '지원 가능' : '마감';
-    final icon = isAvailable ? Icons.check_circle : Icons.cancel;
-
-    return _buildBadge(text, color, icon);
-  }
-
-  /// 배지 빌더
-  Widget _buildBadge(String text, Color color, IconData icon) {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
       decoration: BoxDecoration(
-        color: color.withOpacity(0.1),
-        borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: color, width: 1.5),
+        color: bgColor,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: textColor.withOpacity(0.3)),
       ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(icon, size: 16, color: color),
-          const SizedBox(width: 4),
-          Text(
-            text,
-            style: TextStyle(
-              fontSize: 12,
-              fontWeight: FontWeight.bold,
-              color: color,
-            ),
-          ),
-        ],
+      child: Text(
+        text,
+        style: TextStyle(
+          fontSize: 11,
+          fontWeight: FontWeight.bold,
+          color: textColor,
+        ),
       ),
     );
   }
