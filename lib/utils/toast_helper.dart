@@ -34,4 +34,16 @@ class ToastHelper {
       fontSize: 16.0,
     );
   }
+
+  // ✅ NEW! showWarning 메서드 추가
+  static void showWarning(String message) {
+    Fluttertoast.showToast(
+      msg: message,
+      toastLength: Toast.LENGTH_SHORT,
+      gravity: ToastGravity.BOTTOM,
+      backgroundColor: Colors.orange,
+      textColor: Colors.white,
+      fontSize: 16.0,
+    );
+  }
 }

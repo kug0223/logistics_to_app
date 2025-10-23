@@ -581,7 +581,24 @@ Future<String?> createCenter(CenterModel center) async {
     return null;
   }
 }
+/// ✅ 특정 사용자가 생성한 센터 목록 가져오기
+Future<List<CenterModel>> getCentersByOwnerId(String ownerId) async {
+  try {
+    final querySnapshot = await _firestore
+        .collection('centers')
+        .where('createdBy', isEqualTo: ownerId)
+        .orderBy('createdAt', descending: true)
+        .get();
 
+    return querySnapshot.docs
+        .map((doc) => CenterModel.fromFirestore(doc))
+        .toList();
+  } catch (e) {
+    print('❌ 사용자별 센터 조회 실패: $e');
+    ToastHelper.showError('센터 목록을 불러오는데 실패했습니다.');
+    return [];
+  }
+}
 /// 센터 수정
 Future<bool> updateCenter(String centerId, CenterModel center) async {
   try {
@@ -815,47 +832,54 @@ Future<bool> hardDeleteWorkType(String workTypeId) async {
   }
 
   // ✅ 🆕 firestore_service.dart에 추가할 메서드
-// 기존 FirestoreService 클래스에 아래 메서드를 추가하세요
+ // 기존 FirestoreService 클래스에 아래 메서드를 추가하세요
 
-/// ✅ 🆕 특정 사용자가 생성한 사업장 목록 가져오기
-Future<List<CenterModel>> getCentersByOwnerId(String ownerId) async {
-  try {
-    final querySnapshot = await _firestore
+ /// 특정 사용자가 소유한 사업장 목록을 가져옵니다
+  Future<List<BusinessModel>> getMyBusiness(String ownerId) async {
+    try {
+      print('🔍 [FirestoreService] 내 사업장 조회 시작...');
+      print('   ownerId: $ownerId');
+
+      final snapshot = await _firestore
+          .collection('businesses')
+          .where('ownerId', isEqualTo: ownerId)
+          .where('isApproved', isEqualTo: true) // 승인된 사업장만
+          .orderBy('createdAt', descending: true)
+          .get();
+
+      final businesses = snapshot.docs
+          .map((doc) => BusinessModel.fromMap(doc.data(), doc.id))
+          .toList();
+
+      print('✅ [FirestoreService] 조회 완료: ${businesses.length}개');
+      return businesses;
+    } catch (e) {
+      print('❌ [FirestoreService] 내 사업장 조회 실패: $e');
+      return [];
+    }
+  }
+
+  /// ✅ 🆕 특정 사용자가 생성한 사업장 스트림 (실시간)
+  Stream<List<CenterModel>> getCentersByOwnerIdStream(String ownerId) {
+    return _firestore
         .collection('centers')
         .where('ownerId', isEqualTo: ownerId)
         .orderBy('createdAt', descending: true)
-        .get();
-
-    return querySnapshot.docs
-        .map((doc) => CenterModel.fromFirestore(doc))
-        .toList();
-  } catch (e) {
-    print('Error getting centers by ownerId: $e');
-    return [];
+        .snapshots()
+        .map((snapshot) => snapshot.docs
+            .map((doc) => CenterModel.fromFirestore(doc))
+            .toList());
   }
-}
 
-/// ✅ 🆕 특정 사용자가 생성한 사업장 스트림 (실시간)
-Stream<List<CenterModel>> getCentersByOwnerIdStream(String ownerId) {
-  return _firestore
-      .collection('centers')
-      .where('ownerId', isEqualTo: ownerId)
-      .orderBy('createdAt', descending: true)
-      .snapshots()
-      .map((snapshot) => snapshot.docs
-          .map((doc) => CenterModel.fromFirestore(doc))
-          .toList());
-}
-
-Future<String?> createBusiness(BusinessModel business) async {
-  try {
-    DocumentReference docRef = await _firestore.collection('businesses').add(business.toMap());
-    return docRef.id;
-  } catch (e) {
-    print('사업장 생성 실패: $e');
-    return null;
+  Future<String?> createBusiness(BusinessModel business) async {
+    try {
+      DocumentReference docRef = await _firestore.collection('businesses').add(business.toMap());
+      return docRef.id;
+    } catch (e) {
+      print('사업장 생성 실패: $e');
+      return null;
+    }
   }
-}
 
 
 }

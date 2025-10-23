@@ -547,8 +547,8 @@ class _TODetailScreenState extends State<TODetailScreen> {
       }
 
       final success = await _firestoreService.applyToTO(
-        toId: widget.to.id,
-        uid: uid,
+        widget.to.id,  // positional (순서 중요!)
+        uid,           // positional
       );
 
       if (success) {

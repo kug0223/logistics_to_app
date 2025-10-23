@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-import '../../models/center_model.dart';
+import '../../models/center_model.dart'; // ✅ 수정: Business_Model.dart → center_model.dart
 import '../../services/firestore_service.dart';
 import '../../providers/user_provider.dart';
 import '../../utils/toast_helper.dart';
@@ -39,7 +39,7 @@ class _CenterManagementScreenState extends State<CenterManagementScreen> {
         return;
       }
 
-      // ✅ 본인이 생성한 사업장만 가져오기 (ownerId 필터)
+      // ✅ 본인이 생성한 사업장만 가져오기 (createdBy 필터)
       final centers = await _firestoreService.getCentersByOwnerId(currentUserId);
       
       if (mounted) {
