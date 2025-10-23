@@ -2,16 +2,16 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import '../../models/business_model.dart';
-import '../../models/to_model.dart';
 import '../../services/firestore_service.dart';
 import '../../providers/user_provider.dart';
 import '../../utils/toast_helper.dart';
 import '../../utils/constants.dart';
+import '../../models/business_work_type_model.dart';
 
 /// TO 생성 화면 (사업장 관리자 전용)
 /// Phase 1: 마감 시간 기능 추가
 class AdminCreateTOScreen extends StatefulWidget {
-  const AdminCreateTOScreen({Key? key}) : super(key: key);
+  const AdminCreateTOScreen({super.key});
 
   @override
   State<AdminCreateTOScreen> createState() => _AdminCreateTOScreenState();
@@ -30,6 +30,7 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
   bool _isCreating = false;
   List<BusinessModel> _myBusinesses = [];
   BusinessModel? _selectedBusiness;
+  List<BusinessWorkTypeModel> _businessWorkTypes = [];
 
   // 입력 값
   DateTime? _selectedDate;
@@ -60,45 +61,48 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
       final userProvider = Provider.of<UserProvider>(context, listen: false);
       final uid = userProvider.currentUser?.uid;
 
-      print('🔍 ============ 사업장 조회 디버깅 ============');
-      print('현재 로그인 UID: $uid');
-      print('사용자 이름: ${userProvider.currentUser?.name}');
-      print('사용자 이메일: ${userProvider.currentUser?.email}');
-
       if (uid == null) {
         ToastHelper.showError('로그인 정보를 찾을 수 없습니다');
         return;
       }
 
-      // Firestore의 모든 사업장 확인
-      final allSnapshot = await FirebaseFirestore.instance
-          .collection('businesses')
-          .get();
-      
-      print('Firestore 전체 사업장 개수: ${allSnapshot.docs.length}');
-      
-      for (var doc in allSnapshot.docs) {
-        final data = doc.data();
-        print('사업장: ${data['name']}');
-        print('  ownerId: ${data['ownerId']}');
-        print('  현재 UID: $uid');
-        print('  일치? ${data['ownerId'] == uid}');
-      }
-
       final businesses = await _firestoreService.getMyBusiness(uid);
-      print('getMyBusiness 결과: ${businesses.length}개');
 
       setState(() {
         _myBusinesses = businesses;
         if (_myBusinesses.length == 1) {
           _selectedBusiness = _myBusinesses.first;
+          // ✅ 사업장이 하나면 바로 업무 유형 로드
+          _loadBusinessWorkTypes(_myBusinesses.first.id);
         }
         _isLoading = false;
       });
     } catch (e) {
-      print('❌ 에러: $e');
+      print('❌ 사업장 불러오기 실패: $e');
       setState(() => _isLoading = false);
       ToastHelper.showError('사업장 정보를 불러올 수 없습니다');
+    }
+  }
+  // 4. 새 메서드 추가 - 사업장별 업무 유형 로드
+  Future<void> _loadBusinessWorkTypes(String businessId) async {
+    try {
+      final workTypes = await _firestoreService.getBusinessWorkTypes(businessId);
+      
+      setState(() {
+        _businessWorkTypes = workTypes;
+        // 기존에 선택된 업무 유형이 새 목록에 없으면 초기화
+        if (_selectedWorkType != null && 
+            !workTypes.any((wt) => wt.name == _selectedWorkType)) {
+          _selectedWorkType = null;
+        }
+      });
+
+      if (workTypes.isEmpty) {
+        ToastHelper.showWarning('등록된 업무 유형이 없습니다.\n설정에서 업무 유형을 먼저 등록하세요.');
+      }
+    } catch (e) {
+      print('❌ 업무 유형 로드 실패: $e');
+      ToastHelper.showError('업무 유형을 불러올 수 없습니다');
     }
   }
 
@@ -687,9 +691,8 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
         border: OutlineInputBorder(
           borderRadius: BorderRadius.circular(8),
         ),
-        contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
+        prefixIcon: const Icon(Icons.business),
       ),
-      hint: const Text('사업장을 선택하세요'),
       items: _myBusinesses.map((business) {
         return DropdownMenuItem(
           value: business,
@@ -699,7 +702,16 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
       onChanged: (value) {
         setState(() {
           _selectedBusiness = value;
+          _selectedWorkType = null; // ✅ 업무 유형 초기화
         });
+        // ✅ 사업장 변경 시 해당 사업장의 업무 유형 로드
+        if (value != null) {
+          _loadBusinessWorkTypes(value.id);
+        }
+      },
+      validator: (value) {
+        if (value == null) return '사업장을 선택하세요';
+        return null;
       },
     );
   }
@@ -844,24 +856,61 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
 
   /// 업무 유형 드롭다운
   Widget _buildWorkTypeDropdown() {
+    // ✅ 업무 유형이 없으면 안내 메시지
+    if (_businessWorkTypes.isEmpty) {
+      return Container(
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: Colors.orange[50],
+          border: Border.all(color: Colors.orange[300]!),
+          borderRadius: BorderRadius.circular(8),
+        ),
+        child: Row(
+          children: [
+            Icon(Icons.warning_amber, color: Colors.orange[700]),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Text(
+                '등록된 업무 유형이 없습니다.\n설정에서 업무 유형을 먼저 등록하세요.',
+                style: TextStyle(color: Colors.orange[900]),
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
     return DropdownButtonFormField<String>(
       value: _selectedWorkType,
       decoration: InputDecoration(
         border: OutlineInputBorder(
           borderRadius: BorderRadius.circular(8),
         ),
-        contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
+        prefixIcon: const Icon(Icons.work),
+        hintText: '업무 유형 선택',
       ),
-      hint: const Text('업무 유형을 선택하세요'),
-      // ✅ 명시적으로 타입 지정
-      items: AppConstants.workTypes.map<DropdownMenuItem<String>>((type) {
-        return DropdownMenuItem<String>(
-          value: type['name'] as String,
+      items: _businessWorkTypes.map((workType) {
+        final color = Color(
+          int.parse(workType.color.replaceFirst('#', '0xFF')),
+        );
+        
+        return DropdownMenuItem(
+          value: workType.name,
           child: Row(
             children: [
-              Text(type['icon'] as String, style: const TextStyle(fontSize: 20)),
+              Container(
+                width: 32,
+                height: 32,
+                decoration: BoxDecoration(
+                  color: color.withOpacity(0.2),
+                  borderRadius: BorderRadius.circular(6),
+                ),
+                child: Center(
+                  child: Text(workType.icon, style: const TextStyle(fontSize: 16)),
+                ),
+              ),
               const SizedBox(width: 12),
-              Text(type['name'] as String),
+              Text(workType.name),
             ],
           ),
         );
@@ -870,6 +919,10 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
         setState(() {
           _selectedWorkType = value;
         });
+      },
+      validator: (value) {
+        if (value == null || value.isEmpty) return '업무 유형을 선택하세요';
+        return null;
       },
     );
   }

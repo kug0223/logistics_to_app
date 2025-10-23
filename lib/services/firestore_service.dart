@@ -5,6 +5,7 @@ import '../models/application_model.dart';
 import '../models/business_model.dart';
 import '../models/work_type_model.dart';
 import '../utils/toast_helper.dart';
+import '../models/business_work_type_model.dart';
 
 class FirestoreService {
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
@@ -526,6 +527,172 @@ class FirestoreService {
     } catch (e) {
       print('❌ 업무 유형 삭제 실패: $e');
       ToastHelper.showError('업무 삭제에 실패했습니다.');
+      return false;
+    }
+  }
+  // ==================== 사업장별 업무 유형 관리 ====================
+
+  /// 특정 사업장의 업무 유형 목록 조회
+  Future<List<BusinessWorkTypeModel>> getBusinessWorkTypes(String businessId) async {
+    try {
+      print('🔍 [FirestoreService] 사업장 업무 유형 조회...');
+      print('   businessId: $businessId');
+
+      final snapshot = await _firestore
+          .collection('businesses')
+          .doc(businessId)
+          .collection('workTypes')
+          .where('isActive', isEqualTo: true)
+          .orderBy('displayOrder')
+          .get();
+
+      final workTypes = snapshot.docs
+          .map((doc) => BusinessWorkTypeModel.fromFirestore(doc))
+          .toList();
+
+      print('✅ [FirestoreService] 조회 완료: ${workTypes.length}개');
+      return workTypes;
+    } catch (e) {
+      print('❌ [FirestoreService] 업무 유형 조회 실패: $e');
+      return [];
+    }
+  }
+
+  /// 업무 유형 추가
+  Future<String?> addBusinessWorkType({
+    required String businessId,
+    required String name,
+    required String icon,
+    required String color,
+    int? displayOrder,
+  }) async {
+    try {
+      print('🔍 [FirestoreService] 업무 유형 추가...');
+
+      // displayOrder 자동 설정 (기존 개수 + 1)
+      final existingTypes = await getBusinessWorkTypes(businessId);
+      final order = displayOrder ?? existingTypes.length;
+
+      final workType = BusinessWorkTypeModel(
+        id: '',
+        businessId: businessId,
+        name: name,
+        icon: icon,
+        color: color,
+        displayOrder: order,
+        isActive: true,
+        createdAt: DateTime.now(),
+      );
+
+      final docRef = await _firestore
+          .collection('businesses')
+          .doc(businessId)
+          .collection('workTypes')
+          .add(workType.toMap());
+
+      print('✅ [FirestoreService] 업무 유형 추가 완료: ${docRef.id}');
+      ToastHelper.showSuccess('업무 유형이 추가되었습니다');
+      return docRef.id;
+    } catch (e) {
+      print('❌ [FirestoreService] 업무 유형 추가 실패: $e');
+      ToastHelper.showError('업무 유형 추가에 실패했습니다');
+      return null;
+    }
+  }
+
+  /// 업무 유형 수정
+  Future<bool> updateBusinessWorkType({
+    required String businessId,
+    required String workTypeId,
+    String? name,
+    String? icon,
+    String? color,
+    int? displayOrder,
+  }) async {
+    try {
+      print('🔍 [FirestoreService] 업무 유형 수정...');
+
+      final updates = <String, dynamic>{};
+      if (name != null) updates['name'] = name;
+      if (icon != null) updates['icon'] = icon;
+      if (color != null) updates['color'] = color;
+      if (displayOrder != null) updates['displayOrder'] = displayOrder;
+
+      if (updates.isEmpty) {
+        print('⚠️ 수정할 내용이 없습니다');
+        return false;
+      }
+
+      await _firestore
+          .collection('businesses')
+          .doc(businessId)
+          .collection('workTypes')
+          .doc(workTypeId)
+          .update(updates);
+
+      print('✅ [FirestoreService] 업무 유형 수정 완료');
+      ToastHelper.showSuccess('업무 유형이 수정되었습니다');
+      return true;
+    } catch (e) {
+      print('❌ [FirestoreService] 업무 유형 수정 실패: $e');
+      ToastHelper.showError('업무 유형 수정에 실패했습니다');
+      return false;
+    }
+  }
+
+  /// 업무 유형 삭제 (소프트 삭제)
+  Future<bool> deleteBusinessWorkType({
+    required String businessId,
+    required String workTypeId,
+  }) async {
+    try {
+      print('🔍 [FirestoreService] 업무 유형 삭제...');
+
+      await _firestore
+          .collection('businesses')
+          .doc(businessId)
+          .collection('workTypes')
+          .doc(workTypeId)
+          .update({'isActive': false});
+
+      print('✅ [FirestoreService] 업무 유형 삭제 완료');
+      ToastHelper.showSuccess('업무 유형이 삭제되었습니다');
+      return true;
+    } catch (e) {
+      print('❌ [FirestoreService] 업무 유형 삭제 실패: $e');
+      ToastHelper.showError('업무 유형 삭제에 실패했습니다');
+      return false;
+    }
+  }
+
+  /// 업무 유형 순서 변경 (여러 개 일괄 업데이트)
+  Future<bool> reorderBusinessWorkTypes({
+    required String businessId,
+    required List<String> workTypeIds,
+  }) async {
+    try {
+      print('🔍 [FirestoreService] 업무 유형 순서 변경...');
+
+      final batch = _firestore.batch();
+
+      for (int i = 0; i < workTypeIds.length; i++) {
+        final docRef = _firestore
+            .collection('businesses')
+            .doc(businessId)
+            .collection('workTypes')
+            .doc(workTypeIds[i]);
+
+        batch.update(docRef, {'displayOrder': i});
+      }
+
+      await batch.commit();
+
+      print('✅ [FirestoreService] 순서 변경 완료');
+      ToastHelper.showSuccess('순서가 변경되었습니다');
+      return true;
+    } catch (e) {
+      print('❌ [FirestoreService] 순서 변경 실패: $e');
+      ToastHelper.showError('순서 변경에 실패했습니다');
       return false;
     }
   }
