@@ -1,11 +1,13 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import '../../services/firestore_service.dart';
 import '../../providers/user_provider.dart';
+import '../../models/business_model.dart';
 import '../../utils/toast_helper.dart';
 import '../../utils/constants.dart';
 
-/// 관리자 TO 생성 화면
+/// 중간관리자 TO 생성 화면 (여러 사업장 선택 가능)
 class AdminCreateTOScreen extends StatefulWidget {
   const AdminCreateTOScreen({Key? key}) : super(key: key);
 
@@ -17,9 +19,12 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
   final FirestoreService _firestoreService = FirestoreService();
   final _formKey = GlobalKey<FormState>();
   
-  // 선택된 값들
-  String? _selectedCenterId;
-  String? _selectedCenterName;
+  // 내 사업장 목록 ✅ 리스트로 변경
+  List<BusinessModel> _myBusinesses = [];
+  BusinessModel? _selectedBusiness; // ✅ 선택된 사업장
+  bool _isLoadingBusinesses = true;
+  
+  // TO 생성 입력값
   DateTime? _selectedDate;
   String? _startTime;
   String? _endTime;
@@ -32,10 +37,63 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
   bool _isCreating = false;
 
   @override
+  void initState() {
+    super.initState();
+    _loadMyBusinesses(); // ✅ 복수형
+  }
+
+  @override
   void dispose() {
     _requiredCountController.dispose();
     _descriptionController.dispose();
     super.dispose();
+  }
+
+  /// 내가 소유한 모든 사업장 로드 ✅
+  Future<void> _loadMyBusinesses() async {
+    setState(() {
+      _isLoadingBusinesses = true;
+    });
+
+    try {
+      final userProvider = Provider.of<UserProvider>(context, listen: false);
+      final user = userProvider.currentUser;
+
+      if (user == null) {
+        ToastHelper.showError('로그인 정보를 찾을 수 없습니다');
+        return;
+      }
+
+      final uid = user.uid;
+      print('🔍 내 사업장 조회 중... uid: $uid');
+
+      // ✅ ownerId로 내 사업장 모두 조회
+      final snapshot = await FirebaseFirestore.instance
+          .collection('businesses')
+          .where('ownerId', isEqualTo: uid)
+          .get();
+
+      final businesses = snapshot.docs
+          .map((doc) => BusinessModel.fromMap(doc.data(), doc.id))
+          .toList();
+
+      print('✅ 조회된 사업장: ${businesses.length}개');
+
+      setState(() {
+        _myBusinesses = businesses;
+        // 사업장이 1개면 자동 선택
+        if (businesses.length == 1) {
+          _selectedBusiness = businesses.first;
+        }
+        _isLoadingBusinesses = false;
+      });
+    } catch (e) {
+      print('❌ 사업장 로드 실패: $e');
+      setState(() {
+        _isLoadingBusinesses = false;
+      });
+      ToastHelper.showError('사업장 정보를 불러오는데 실패했습니다');
+    }
   }
 
   @override
@@ -43,105 +101,260 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
     return Scaffold(
       appBar: AppBar(
         title: const Text('TO 생성'),
-        backgroundColor: Colors.purple[700],
+        backgroundColor: Colors.blue[700],
         foregroundColor: Colors.white,
         elevation: 0,
       ),
       
-      body: Form(
-        key: _formKey,
-        child: SingleChildScrollView(
-          padding: const EdgeInsets.all(16),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              // 안내 카드
-              _buildInfoCard(),
-              
-              const SizedBox(height: 24),
-              
-              // 1. 센터 선택
-              _buildSectionTitle('🏢 센터 선택', isRequired: true),
-              const SizedBox(height: 8),
-              _buildCenterDropdown(),
-              
-              const SizedBox(height: 20),
-              
-              // 2. 날짜 선택
-              _buildSectionTitle('📅 날짜 선택', isRequired: true),
-              const SizedBox(height: 8),
-              _buildDatePicker(),
-              
-              const SizedBox(height: 20),
-              
-              // 3. 시간 선택
-              _buildSectionTitle('⏰ 근무 시간', isRequired: true),
-              const SizedBox(height: 8),
-              Row(
-                children: [
-                  Expanded(child: _buildStartTimePicker()),
-                  const SizedBox(width: 12),
-                  const Icon(Icons.arrow_forward, color: Colors.grey),
-                  const SizedBox(width: 12),
-                  Expanded(child: _buildEndTimePicker()),
-                ],
+      body: _isLoadingBusinesses
+          ? const Center(child: CircularProgressIndicator())
+          : _myBusinesses.isEmpty
+              ? _buildNoBusinessState()
+              : _buildCreateForm(),
+    );
+  }
+
+  /// 사업장 미등록 상태
+  Widget _buildNoBusinessState() {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(32),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(
+              Icons.business_outlined,
+              size: 100,
+              color: Colors.grey[400],
+            ),
+            const SizedBox(height: 24),
+            Text(
+              '등록된 사업장이 없습니다',
+              style: TextStyle(
+                fontSize: 20,
+                fontWeight: FontWeight.bold,
+                color: Colors.grey[800],
               ),
-              
-              const SizedBox(height: 20),
-              
-              // 4. 업무 유형 선택
-              _buildSectionTitle('💼 업무 유형', isRequired: true),
-              const SizedBox(height: 8),
-              _buildWorkTypeDropdown(),
-              
-              const SizedBox(height: 20),
-              
-              // 5. 필요 인원
-              _buildSectionTitle('👥 필요 인원', isRequired: true),
-              const SizedBox(height: 8),
-              _buildRequiredCountField(),
-              
-              const SizedBox(height: 20),
-              
-              // 6. 설명 (선택사항)
-              _buildSectionTitle('📝 설명', isRequired: false),
-              const SizedBox(height: 8),
-              _buildDescriptionField(),
-              
-              const SizedBox(height: 32),
-              
-              // 생성 버튼
-              _buildCreateButton(),
-              
-              const SizedBox(height: 16),
-            ],
-          ),
+            ),
+            const SizedBox(height: 12),
+            Text(
+              'TO를 생성하려면 먼저 사업장을 등록해주세요',
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                fontSize: 14,
+                color: Colors.grey[600],
+              ),
+            ),
+            const SizedBox(height: 32),
+            ElevatedButton.icon(
+              onPressed: () {
+                Navigator.pop(context);
+                ToastHelper.showInfo('사업장 등록 화면으로 이동하세요');
+              },
+              icon: const Icon(Icons.arrow_back),
+              label: const Text('뒤로 가기'),
+              style: ElevatedButton.styleFrom(
+                padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
+                textStyle: const TextStyle(fontSize: 16),
+              ),
+            ),
+          ],
         ),
       ),
     );
   }
 
-  /// 안내 카드
-  Widget _buildInfoCard() {
+  /// TO 생성 폼
+  Widget _buildCreateForm() {
+    return Form(
+      key: _formKey,
+      child: SingleChildScrollView(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // ✅ 사업장 선택 드롭다운 (여러 개일 때만 표시)
+            if (_myBusinesses.length > 1) ...[
+              _buildSectionTitle('🏢 사업장 선택', isRequired: true),
+              const SizedBox(height: 8),
+              _buildBusinessDropdown(),
+              const SizedBox(height: 24),
+            ],
+            
+            // 선택된 사업장 정보 카드
+            if (_selectedBusiness != null) ...[
+              _buildBusinessInfoCard(_selectedBusiness!),
+              const SizedBox(height: 24),
+            ],
+            
+            // 1. 날짜 선택
+            _buildSectionTitle('📅 근무 날짜', isRequired: true),
+            const SizedBox(height: 8),
+            _buildDatePicker(),
+            
+            const SizedBox(height: 20),
+            
+            // 2. 시간 선택
+            _buildSectionTitle('⏰ 근무 시간', isRequired: true),
+            const SizedBox(height: 8),
+            Row(
+              children: [
+                Expanded(child: _buildStartTimePicker()),
+                const SizedBox(width: 12),
+                const Icon(Icons.arrow_forward, color: Colors.grey),
+                const SizedBox(width: 12),
+                Expanded(child: _buildEndTimePicker()),
+              ],
+            ),
+            
+            const SizedBox(height: 20),
+            
+            // 3. 업무 유형
+            _buildSectionTitle('💼 업무 유형', isRequired: true),
+            const SizedBox(height: 8),
+            _buildWorkTypeDropdown(),
+            
+            const SizedBox(height: 20),
+            
+            // 4. 필요 인원
+            _buildSectionTitle('👥 필요 인원', isRequired: true),
+            const SizedBox(height: 8),
+            _buildRequiredCountField(),
+            
+            const SizedBox(height: 20),
+            
+            // 5. 설명 (선택)
+            _buildSectionTitle('📝 설명', isRequired: false),
+            const SizedBox(height: 8),
+            _buildDescriptionField(),
+            
+            const SizedBox(height: 32),
+            
+            // 생성 버튼
+            SizedBox(
+              width: double.infinity,
+              height: 50,
+              child: ElevatedButton(
+                onPressed: _isCreating ? null : _createTO,
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.blue[700],
+                  foregroundColor: Colors.white,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                ),
+                child: _isCreating
+                    ? const SizedBox(
+                        width: 20,
+                        height: 20,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+                        ),
+                      )
+                    : const Text(
+                        'TO 생성',
+                        style: TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+              ),
+            ),
+            
+            const SizedBox(height: 32),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// ✅ 사업장 선택 드롭다운 (NEW!)
+  Widget _buildBusinessDropdown() {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: Colors.grey[300]!),
+      ),
+      child: DropdownButtonHideUnderline(
+        child: DropdownButton<BusinessModel>(
+          value: _selectedBusiness,
+          hint: const Text('사업장을 선택하세요'),
+          isExpanded: true,
+          items: _myBusinesses.map((business) {
+            return DropdownMenuItem(
+              value: business,
+              child: Row(
+                children: [
+                  Icon(Icons.business, size: 20, color: Colors.blue[700]),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      business.name,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                ],
+              ),
+            );
+          }).toList(),
+          onChanged: (value) {
+            setState(() {
+              _selectedBusiness = value;
+            });
+          },
+        ),
+      ),
+    );
+  }
+
+  /// 사업장 정보 카드
+  Widget _buildBusinessInfoCard(BusinessModel business) {
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: Colors.purple[50],
+        color: Colors.blue[50],
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: Colors.purple[200]!),
+        border: Border.all(color: Colors.blue[200]!),
       ),
       child: Row(
         children: [
-          Icon(Icons.info_outline, color: Colors.purple[700], size: 24),
-          const SizedBox(width: 12),
+          Icon(Icons.business, color: Colors.blue[700], size: 40),
+          const SizedBox(width: 16),
           Expanded(
-            child: Text(
-              '새로운 TO를 생성합니다.\n모든 필수 항목을 입력해주세요.',
-              style: TextStyle(
-                color: Colors.purple[900],
-                fontSize: 13,
-                height: 1.4,
-              ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  _myBusinesses.length > 1 ? '선택된 사업장' : '내 사업장',
+                  style: const TextStyle(
+                    fontSize: 12,
+                    color: Colors.grey,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  business.name,
+                  style: const TextStyle(
+                    fontSize: 18,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.black87,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  business.address,
+                  style: TextStyle(
+                    fontSize: 13,
+                    color: Colors.grey[700],
+                  ),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ],
             ),
           ),
         ],
@@ -176,44 +389,6 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
     );
   }
 
-  /// 센터 선택 드롭다운
-  Widget _buildCenterDropdown() {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: Colors.grey[300]!),
-      ),
-      child: DropdownButtonHideUnderline(
-        child: DropdownButton<String>(
-          value: _selectedCenterId,
-          hint: const Text('센터를 선택하세요'),
-          isExpanded: true,
-          items: AppConstants.centers.map((center) {
-            return DropdownMenuItem(
-              value: center['id'],
-              child: Row(
-                children: [
-                  Icon(Icons.warehouse, size: 20, color: Colors.purple[700]),
-                  const SizedBox(width: 8),
-                  Text(center['name']!),
-                ],
-              ),
-            );
-          }).toList(),
-          onChanged: (value) {
-            setState(() {
-              _selectedCenterId = value;
-              _selectedCenterName = AppConstants.centers
-                  .firstWhere((c) => c['id'] == value)['name'];
-            });
-          },
-        ),
-      ),
-    );
-  }
-
   /// 날짜 선택
   Widget _buildDatePicker() {
     return InkWell(
@@ -227,7 +402,7 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
         ),
         child: Row(
           children: [
-            Icon(Icons.calendar_today, color: Colors.purple[700]),
+            Icon(Icons.calendar_today, color: Colors.blue[700]),
             const SizedBox(width: 12),
             Text(
               _selectedDate == null
@@ -235,7 +410,7 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
                   : '${_selectedDate!.year}년 ${_selectedDate!.month}월 ${_selectedDate!.day}일',
               style: TextStyle(
                 fontSize: 15,
-                color: _selectedDate == null ? Colors.grey[600] : Colors.black87,
+                color: _selectedDate == null ? Colors.grey : Colors.black87,
               ),
             ),
           ],
@@ -244,26 +419,39 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
     );
   }
 
+  Future<void> _selectDate() async {
+    final pickedDate = await showDatePicker(
+      context: context,
+      initialDate: _selectedDate ?? DateTime.now(),
+      firstDate: DateTime.now(),
+      lastDate: DateTime.now().add(const Duration(days: 90)),
+    );
+
+    if (pickedDate != null) {
+      setState(() {
+        _selectedDate = pickedDate;
+      });
+    }
+  }
+
   /// 시작 시간 선택
   Widget _buildStartTimePicker() {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: Colors.grey[300]!),
-      ),
-      child: DropdownButtonHideUnderline(
-        child: DropdownButton<String>(
-          value: _startTime,
-          hint: const Text('시작', style: TextStyle(fontSize: 14)),
-          isExpanded: true,
-          items: _generateTimeSlots(),
-          onChanged: (value) {
-            setState(() {
-              _startTime = value;
-            });
-          },
+    return InkWell(
+      onTap: () => _selectTime(isStartTime: true),
+      child: Container(
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: Colors.grey[300]!),
+        ),
+        child: Text(
+          _startTime ?? '시작 시간',
+          textAlign: TextAlign.center,
+          style: TextStyle(
+            fontSize: 15,
+            color: _startTime == null ? Colors.grey : Colors.black87,
+          ),
         ),
       ),
     );
@@ -271,27 +459,44 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
 
   /// 종료 시간 선택
   Widget _buildEndTimePicker() {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: Colors.grey[300]!),
-      ),
-      child: DropdownButtonHideUnderline(
-        child: DropdownButton<String>(
-          value: _endTime,
-          hint: const Text('종료', style: TextStyle(fontSize: 14)),
-          isExpanded: true,
-          items: _generateTimeSlots(),
-          onChanged: (value) {
-            setState(() {
-              _endTime = value;
-            });
-          },
+    return InkWell(
+      onTap: () => _selectTime(isStartTime: false),
+      child: Container(
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: Colors.grey[300]!),
+        ),
+        child: Text(
+          _endTime ?? '종료 시간',
+          textAlign: TextAlign.center,
+          style: TextStyle(
+            fontSize: 15,
+            color: _endTime == null ? Colors.grey : Colors.black87,
+          ),
         ),
       ),
     );
+  }
+
+  Future<void> _selectTime({required bool isStartTime}) async {
+    final pickedTime = await showTimePicker(
+      context: context,
+      initialTime: TimeOfDay.now(),
+    );
+
+    if (pickedTime != null) {
+      final timeString = '${pickedTime.hour.toString().padLeft(2, '0')}:${pickedTime.minute.toString().padLeft(2, '0')}';
+      
+      setState(() {
+        if (isStartTime) {
+          _startTime = timeString;
+        } else {
+          _endTime = timeString;
+        }
+      });
+    }
   }
 
   /// 업무 유형 드롭다운
@@ -311,13 +516,7 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
           items: AppConstants.workTypes.map((workType) {
             return DropdownMenuItem(
               value: workType,
-              child: Row(
-                children: [
-                  Icon(_getWorkTypeIcon(workType), size: 20, color: Colors.purple[700]),
-                  const SizedBox(width: 8),
-                  Text(workType),
-                ],
-              ),
+              child: Text(workType),
             );
           }).toList(),
           onChanged: (value) {
@@ -330,28 +529,16 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
     );
   }
 
-  /// 필요 인원 입력 필드
+  /// 필요 인원 입력
   Widget _buildRequiredCountField() {
     return TextFormField(
       controller: _requiredCountController,
       keyboardType: TextInputType.number,
       decoration: InputDecoration(
-        hintText: '필요한 인원 수를 입력하세요',
-        prefixIcon: Icon(Icons.people, color: Colors.purple[700]),
-        suffixText: '명',
-        filled: true,
-        fillColor: Colors.white,
+        hintText: '예: 5',
+        prefixIcon: const Icon(Icons.people),
         border: OutlineInputBorder(
           borderRadius: BorderRadius.circular(12),
-          borderSide: BorderSide(color: Colors.grey[300]!),
-        ),
-        enabledBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(12),
-          borderSide: BorderSide(color: Colors.grey[300]!),
-        ),
-        focusedBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(12),
-          borderSide: BorderSide(color: Colors.purple[700]!, width: 2),
         ),
       ),
       validator: (value) {
@@ -367,128 +554,30 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
     );
   }
 
-  /// 설명 입력 필드
+  /// 설명 입력
   Widget _buildDescriptionField() {
     return TextFormField(
       controller: _descriptionController,
-      maxLines: 4,
+      maxLines: 3,
       decoration: InputDecoration(
-        hintText: '업무에 대한 추가 설명을 입력하세요 (선택사항)',
-        filled: true,
-        fillColor: Colors.white,
+        hintText: '업무 설명을 입력하세요 (선택사항)',
         border: OutlineInputBorder(
           borderRadius: BorderRadius.circular(12),
-          borderSide: BorderSide(color: Colors.grey[300]!),
-        ),
-        enabledBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(12),
-          borderSide: BorderSide(color: Colors.grey[300]!),
-        ),
-        focusedBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(12),
-          borderSide: BorderSide(color: Colors.purple[700]!, width: 2),
         ),
       ),
     );
-  }
-
-  /// TO 생성 버튼
-  Widget _buildCreateButton() {
-    return SizedBox(
-      width: double.infinity,
-      height: 56,
-      child: ElevatedButton.icon(
-        onPressed: _isCreating ? null : _createTO,
-        icon: _isCreating
-            ? const SizedBox(
-                width: 20,
-                height: 20,
-                child: CircularProgressIndicator(
-                  strokeWidth: 2,
-                  valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
-                ),
-              )
-            : const Icon(Icons.add_circle, size: 24),
-        label: Text(
-          _isCreating ? 'TO 생성 중...' : 'TO 생성하기',
-          style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-        ),
-        style: ElevatedButton.styleFrom(
-          backgroundColor: Colors.purple[700],
-          foregroundColor: Colors.white,
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(12),
-          ),
-          elevation: 2,
-        ),
-      ),
-    );
-  }
-
-  /// 30분 단위 시간 슬롯 생성
-  List<DropdownMenuItem<String>> _generateTimeSlots() {
-    List<DropdownMenuItem<String>> items = [];
-    
-    for (int hour = 0; hour < 24; hour++) {
-      for (int minute = 0; minute < 60; minute += 30) {
-        final timeStr = '${hour.toString().padLeft(2, '0')}:${minute.toString().padLeft(2, '0')}';
-        items.add(
-          DropdownMenuItem(
-            value: timeStr,
-            child: Text(timeStr, style: const TextStyle(fontSize: 14)),
-          ),
-        );
-      }
-    }
-    
-    return items;
-  }
-
-  /// 업무 유형 아이콘
-  IconData _getWorkTypeIcon(String workType) {
-    switch (workType) {
-      case '피킹':
-        return Icons.shopping_cart;
-      case '패킹':
-        return Icons.inventory_2;
-      case '배송':
-        return Icons.local_shipping;
-      case '분류':
-        return Icons.sort;
-      case '하역':
-        return Icons.handyman;
-      case '검수':
-        return Icons.fact_check;
-      default:
-        return Icons.work;
-    }
-  }
-
-  /// 날짜 선택
-  Future<void> _selectDate() async {
-    final pickedDate = await showDatePicker(
-      context: context,
-      initialDate: _selectedDate ?? DateTime.now(),
-      firstDate: DateTime.now(),
-      lastDate: DateTime.now().add(const Duration(days: 90)),
-    );
-
-    if (pickedDate != null) {
-      setState(() {
-        _selectedDate = pickedDate;
-      });
-    }
   }
 
   /// TO 생성
   Future<void> _createTO() async {
-    // 유효성 검증
-    if (!_formKey.currentState!.validate()) {
+    // ✅ 사업장 선택 확인
+    if (_selectedBusiness == null) {
+      ToastHelper.showError('사업장을 선택하세요');
       return;
     }
 
-    if (_selectedCenterId == null) {
-      ToastHelper.showError('센터를 선택하세요');
+    // 유효성 검증
+    if (!_formKey.currentState!.validate()) {
       return;
     }
 
@@ -527,9 +616,10 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
 
       final requiredCount = int.parse(_requiredCountController.text);
 
+      // ✅ 선택된 사업장으로 TO 생성
       await _firestoreService.createTO(
-        centerId: _selectedCenterId!,
-        centerName: _selectedCenterName!,
+        businessId: _selectedBusiness!.id,
+        businessName: _selectedBusiness!.name,
         date: _selectedDate!,
         startTime: _startTime!,
         endTime: _endTime!,

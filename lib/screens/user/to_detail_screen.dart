@@ -10,9 +10,9 @@ class TODetailScreen extends StatefulWidget {
   final TOModel to;
 
   const TODetailScreen({
-    Key? key,
+    super.key,
     required this.to,
-  }) : super(key: key);
+  });
 
   @override
   State<TODetailScreen> createState() => _TODetailScreenState();
@@ -124,7 +124,7 @@ class _TODetailScreenState extends State<TODetailScreen> {
             children: [
               Expanded(
                 child: Text(
-                  widget.to.centerName,
+                  widget.to.businessName,
                   style: const TextStyle(
                     color: Colors.white,
                     fontSize: 24,
@@ -373,7 +373,7 @@ class _TODetailScreenState extends State<TODetailScreen> {
             const Text('이 TO에 지원하시겠습니까?'),
             const SizedBox(height: 12),
             Text(
-              '센터: ${widget.to.centerName}',
+              '센터: ${widget.to.businessName}',
               style: const TextStyle(fontSize: 14),
             ),
             Text(

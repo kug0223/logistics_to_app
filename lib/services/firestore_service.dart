@@ -3,9 +3,12 @@ import '../models/user_model.dart';
 import '../models/to_model.dart';
 import '../models/application_model.dart';
 import '../utils/toast_helper.dart';
-import '../models/center_model.dart';        // ✅ 추가!
-import '../models/work_type_model.dart';     // ✅ 추가!
+import '../models/center_model.dart';        
+import '../models/work_type_model.dart';     
 import '../models/business_model.dart';
+import '../models/to_model.dart';
+
+
 
 class FirestoreService {
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
@@ -33,76 +36,92 @@ class FirestoreService {
     });
   }
 
-  // ==================== TO 관련 (기존 코드 유지) ====================
-
-  Future<List<TOModel>> getTOsByCenter(String centerId, {DateTime? date}) async {
+  /// ⚠️ 하위 호환용 - 센터 기반 TO 조회 (deprecated)
+  /// 기존 코드 호환성을 위해 유지하지만 사용 권장하지 않음
+  Future<List<TOModel>> getTOsByCenter(String centerId) async {
     try {
-      Query query = _firestore
+      print('⚠️ [FirestoreService] getTOsByCenter는 deprecated입니다. getAllTOs 사용을 권장합니다.');
+      
+      final snapshot = await _firestore
           .collection('tos')
           .where('centerId', isEqualTo: centerId)
-          .orderBy('date', descending: false);
+          .orderBy('date', descending: false)
+          .get();
 
-      if (date != null) {
-        DateTime startOfDay = DateTime(date.year, date.month, date.day);
-        DateTime endOfDay = DateTime(date.year, date.month, date.day, 23, 59, 59);
-        
-        query = query
-            .where('date', isGreaterThanOrEqualTo: Timestamp.fromDate(startOfDay))
-            .where('date', isLessThanOrEqualTo: Timestamp.fromDate(endOfDay));
-      }
-
-      QuerySnapshot snapshot = await query.get();
-
-      return snapshot.docs
-          .map((doc) => TOModel.fromMap(
-                doc.data() as Map<String, dynamic>,
-                doc.id,
-              ))
+      final toList = snapshot.docs
+          .map((doc) => TOModel.fromMap(doc.data(), doc.id))
           .toList();
+
+      return toList;
     } catch (e) {
-      print('TO 목록 가져오기 실패: $e');
+      print('❌ [FirestoreService] 센터 TO 조회 실패: $e');
       return [];
     }
   }
 
+  /// ✅ 모든 TO 조회 (지원자용, 최고관리자용)
   Future<List<TOModel>> getAllTOs() async {
     try {
-      QuerySnapshot snapshot = await _firestore
+      print('🔍 [FirestoreService] 전체 TO 조회 시작...');
+
+      final snapshot = await _firestore
           .collection('tos')
           .orderBy('date', descending: false)
           .get();
 
-      return snapshot.docs
-          .map((doc) => TOModel.fromMap(
-                doc.data() as Map<String, dynamic>,
-                doc.id,
-              ))
+      final toList = snapshot.docs
+          .map((doc) => TOModel.fromMap(doc.data(), doc.id))
           .toList();
+
+      // 오늘 날짜 이전 TO 제외
+      final today = DateTime.now();
+      final filteredList = toList.where((to) {
+        return to.date.isAfter(today.subtract(const Duration(days: 1)));
+      }).toList();
+
+      print('✅ [FirestoreService] 전체 TO 조회 완료: ${filteredList.length}개 (오늘 이후)');
+      return filteredList;
     } catch (e) {
-      print('전체 TO 목록 가져오기 실패: $e');
+      print('❌ [FirestoreService] 전체 TO 조회 실패: $e');
       return [];
     }
   }
 
+  /// ✅ 단일 TO 조회
   Future<TOModel?> getTO(String toId) async {
-    final doc = await _firestore.collection('tos').doc(toId).get();
-    if (doc.exists) {
-      return TOModel.fromMap(
-        doc.data() as Map<String, dynamic>,
-        doc.id,
-      );
+    try {
+      final doc = await _firestore.collection('tos').doc(toId).get();
+      
+      if (doc.exists) {
+        return TOModel.fromMap(doc.data()!, doc.id);
+      }
+      return null;
+    } catch (e) {
+      print('❌ [FirestoreService] TO 조회 실패: $e');
+      return null;
     }
-    return null;
   }
 
+  /// ✅ TO 삭제 (관리자용)
   Future<void> deleteTO(String toId) async {
-    await _firestore.collection('tos').doc(toId).delete();
+    try {
+      await _firestore.collection('tos').doc(toId).delete();
+      print('✅ [FirestoreService] TO 삭제 완료');
+    } catch (e) {
+      print('❌ [FirestoreService] TO 삭제 실패: $e');
+      rethrow;
+    }
   }
 
-  Future<void> updateTOCurrentCount(String toId, int newCount) async {
-    await _firestore.collection('tos').doc(toId).update({
-      'currentCount': newCount,
-    });
+  /// ✅ TO 수정 (관리자용)
+  Future<void> updateTO(String toId, Map<String, dynamic> updates) async {
+    try {
+      await _firestore.collection('tos').doc(toId).update(updates);
+      print('✅ [FirestoreService] TO 수정 완료');
+    } catch (e) {
+      print('❌ [FirestoreService] TO 수정 실패: $e');
+      rethrow;
+    }
   }
 
   // ==================== 지원서 관련 (새로 추가!) ====================
@@ -366,48 +385,73 @@ class FirestoreService {
       return false;
     }
   }
-  /// TO 생성 (관리자 전용)
+  // ==================== TO 관련 (사업장 기반) ====================
+
+  /// ✅ TO 생성 (사업장 기반) - 중간관리자용
   Future<String> createTO({
-    required String centerId,
-    required String centerName,
+    required String businessId,
+    required String businessName,
     required DateTime date,
     required String startTime,
     required String endTime,
     required String workType,
     required int requiredCount,
-    required String description,
     required String creatorUID,
+    String? description,
   }) async {
     try {
-      print('📝 TO 생성 시작...');
-      print('센터: $centerName ($centerId)');
-      print('날짜: $date');
-      print('시간: $startTime ~ $endTime');
-      print('업무: $workType');
-      print('인원: $requiredCount명');
-
+      print('🔥 [FirestoreService] TO 생성 시작...');
+      print('   businessId: $businessId');
+      print('   businessName: $businessName');
+      
       final docRef = await _firestore.collection('tos').add({
-        'centerId': centerId,
-        'centerName': centerName,
+        'businessId': businessId, // ✅ 필수
+        'businessName': businessName, // ✅ 필수
+        'centerId': null, // 하위 호환용 (deprecated)
+        'centerName': null, // 하위 호환용 (deprecated)
         'date': Timestamp.fromDate(date),
         'startTime': startTime,
         'endTime': endTime,
         'requiredCount': requiredCount,
-        'currentCount': 0, // 초기값 0
+        'currentCount': 0, // 초기값
         'workType': workType,
         'description': description,
         'creatorUID': creatorUID,
         'createdAt': FieldValue.serverTimestamp(),
       });
 
-      print('✅ TO 생성 완료! 문서 ID: ${docRef.id}');
+      print('✅ [FirestoreService] TO 생성 성공! ID: ${docRef.id}');
       return docRef.id;
     } catch (e) {
-      print('❌ TO 생성 실패: $e');
+      print('❌ [FirestoreService] TO 생성 실패: $e');
       rethrow;
     }
   }
-  
+  /// ✅ 특정 사업장의 TO 조회 (중간관리자용)
+  Future<List<TOModel>> getTOsByBusiness(String businessId) async {
+    try {
+      print('🔍 [FirestoreService] 사업장 TO 조회 시작...');
+      print('   businessId: $businessId');
+
+      final snapshot = await _firestore
+          .collection('tos')
+          .where('businessId', isEqualTo: businessId)
+          .orderBy('date', descending: false)
+          .get();
+
+      final toList = snapshot.docs
+          .map((doc) => TOModel.fromMap(doc.data(), doc.id))
+          .toList();
+
+      print('✅ [FirestoreService] 조회 완료: ${toList.length}개');
+      return toList;
+    } catch (e) {
+      print('❌ [FirestoreService] 사업장 TO 조회 실패: $e');
+      return [];
+    }
+  }
+
+
   /// TO별 지원자 목록 조회
   Future<List<ApplicationModel>> getApplicationsByTOId(String toId) async {
     try {

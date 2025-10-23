@@ -1,15 +1,22 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 
-/// TO(근무 오더) 모델
+/// TO(근무 오더) 모델 - 사업장 기반 버전
 class TOModel {
   final String id; // 문서 ID
-  final String centerId; // CENTER_A, CENTER_B, CENTER_C
-  final String centerName; // 송파 물류센터, 강남 물류센터, 서초 물류센터
+  
+  // ✅ 사업장 연결 (신규)
+  final String businessId; // 사업장 ID (businesses 컬렉션 문서 ID)
+  final String businessName; // 사업장명
+  
+  // ⚠️ 하위 호환성을 위해 유지 (deprecated, 삭제 예정)
+  final String? centerId; // CENTER_A, CENTER_B, CENTER_C
+  final String? centerName; // 송파 물류센터 등
+  
   final DateTime date; // 근무 날짜
   final String startTime; // 시작 시간 (예: "09:00")
   final String endTime; // 종료 시간 (예: "18:00")
   final int requiredCount; // 필요 인원
-  final int currentCount; // 현재 지원 인원
+  final int currentCount; // 현재 지원 인원 (동적 계산, 사용 안 함)
   final String workType; // 업무 유형 (피킹, 패킹, 배송 등)
   final String? description; // 설명 (선택사항)
   final String creatorUID; // 생성한 관리자 UID
@@ -17,8 +24,10 @@ class TOModel {
 
   TOModel({
     required this.id,
-    required this.centerId,
-    required this.centerName,
+    required this.businessId,
+    required this.businessName,
+    this.centerId, // nullable (하위 호환용)
+    this.centerName, // nullable (하위 호환용)
     required this.date,
     required this.startTime,
     required this.endTime,
@@ -34,8 +43,10 @@ class TOModel {
   factory TOModel.fromMap(Map<String, dynamic> data, String documentId) {
     return TOModel(
       id: documentId,
-      centerId: data['centerId'] ?? '',
-      centerName: data['centerName'] ?? '',
+      businessId: data['businessId'] ?? '', // ✅ 신규 필드
+      businessName: data['businessName'] ?? '', // ✅ 신규 필드
+      centerId: data['centerId'], // nullable
+      centerName: data['centerName'], // nullable
       date: (data['date'] as Timestamp).toDate(),
       startTime: data['startTime'] ?? '',
       endTime: data['endTime'] ?? '',
@@ -53,8 +64,10 @@ class TOModel {
   /// TOModel을 Firestore 문서로 변환
   Map<String, dynamic> toMap() {
     return {
-      'centerId': centerId,
-      'centerName': centerName,
+      'businessId': businessId, // ✅ 필수
+      'businessName': businessName, // ✅ 필수
+      'centerId': centerId, // 하위 호환용 (nullable)
+      'centerName': centerName, // 하위 호환용 (nullable)
       'date': Timestamp.fromDate(date),
       'startTime': startTime,
       'endTime': endTime,
@@ -90,6 +103,8 @@ class TOModel {
   /// 복사본 생성 (일부 필드만 변경)
   TOModel copyWith({
     String? id,
+    String? businessId,
+    String? businessName,
     String? centerId,
     String? centerName,
     DateTime? date,
@@ -104,6 +119,8 @@ class TOModel {
   }) {
     return TOModel(
       id: id ?? this.id,
+      businessId: businessId ?? this.businessId,
+      businessName: businessName ?? this.businessName,
       centerId: centerId ?? this.centerId,
       centerName: centerName ?? this.centerName,
       date: date ?? this.date,

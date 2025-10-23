@@ -3,7 +3,9 @@ import 'package:provider/provider.dart';
 import '../../providers/user_provider.dart';
 import '../../services/auth_service.dart';
 import '../auth/login_screen.dart';
-import 'business_list_screen.dart';  // ⭐ 같은 admin 폴더!
+import 'business_list_screen.dart';
+import '../../utils/toast_helper.dart';
+import 'admin_create_to_screen.dart'; 
 
 /// 사업장 관리자 홈 화면 (USER 홈과 동일한 레이아웃)
 class BusinessAdminHomeScreen extends StatelessWidget {
@@ -139,12 +141,19 @@ class BusinessAdminHomeScreen extends StatelessWidget {
                           title: 'TO 생성',
                           subtitle: '새 근무 등록',
                           color: Colors.green,
-                          onTap: () {
-                            // TODO: AdminCreateTOScreen으로 이동
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              const SnackBar(content: Text('TO 생성 화면 준비 중입니다')),
-                            );
-                          },
+                         onTap: () async {
+                          final result = await Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (context) => const AdminCreateTOScreen(),
+                            ),
+                          );
+                          
+                          if (result == true) {
+                            // TO 생성 성공 시 목록 새로고침
+                            ToastHelper.showSuccess('TO가 생성되었습니다');
+                          }
+                        },
                         ),
 
                         // 3. TO 관리

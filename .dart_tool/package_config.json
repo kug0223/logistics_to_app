@@ -428,7 +428,7 @@
       "languageVersion": "3.9"
     },
     {
-      "name": "logistics_to_app",
+      "name": "alfit",
       "rootUri": "../",
       "packageUri": "lib/",
       "languageVersion": "3.9"

@@ -10,7 +10,7 @@ import 'package:intl/intl.dart';
 
 /// 내 지원 내역 화면
 class MyApplicationsScreen extends StatefulWidget {
-  const MyApplicationsScreen({Key? key}) : super(key: key);
+  const MyApplicationsScreen({super.key});
 
   @override
   State<MyApplicationsScreen> createState() => _MyApplicationsScreenState();
@@ -338,7 +338,7 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
                 const SizedBox(width: 8),
                 Expanded(
                   child: Text(
-                    to.centerName,
+                    to.businessName,
                     style: const TextStyle(
                       fontSize: 18,
                       fontWeight: FontWeight.bold,

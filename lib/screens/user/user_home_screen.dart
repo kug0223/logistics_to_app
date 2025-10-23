@@ -2,11 +2,11 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../providers/user_provider.dart';
 import '../../widgets/custom_button.dart';
-import 'center_list_screen.dart';
-import 'my_applications_screen.dart';  // ✅ 새로 추가!
+import 'my_applications_screen.dart';
+import 'all_to_list_screen.dart';
 
 class UserHomeScreen extends StatelessWidget {
-  const UserHomeScreen({Key? key}) : super(key: key);
+  const UserHomeScreen({super.key});
 
   @override
   Widget build(BuildContext context) {
@@ -112,7 +112,7 @@ class UserHomeScreen extends StatelessWidget {
                         Navigator.push(
                           context,
                           MaterialPageRoute(
-                            builder: (context) => const CenterListScreen(),
+                            builder: (context) => const AllTOListScreen(),
                           ),
                         );
                       },

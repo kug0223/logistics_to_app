@@ -1,5 +1,5 @@
-name: logistics_to_app
-description: "A new Flutter project."
+name: alfit
+description: "나에게 딱 맞는 알바 매칭 플랫폼"
 publish_to: 'none'
 
 version: 1.0.0+1
