@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:provider/provider.dart';
+import 'package:flutter_localizations/flutter_localizations.dart'; 
 import 'firebase_options.dart';
 import 'providers/user_provider.dart';
 import 'models/user_model.dart';
@@ -8,9 +9,9 @@ import 'models/user_model.dart';
 // ⭐ 화면 import - 반드시 정확한 경로 확인!
 import 'screens/auth/login_screen.dart';
 import 'screens/user/user_home_screen.dart';
-import 'screens/user/my_applications_screen.dart';
 import 'screens/admin/admin_home_screen.dart';
 import 'screens/admin/business_admin_home_screen.dart';
+
 
 
 void main() async {
@@ -29,7 +30,7 @@ void main() async {
 }
 
 class MyApp extends StatelessWidget {
-  const MyApp({Key? key}) : super(key: key);
+  const MyApp({super.key});
 
   @override
   Widget build(BuildContext context) {
@@ -43,6 +44,15 @@ class MyApp extends StatelessWidget {
       child: MaterialApp(
         title: '물류 TO 관리',
         debugShowCheckedModeBanner: false,
+          localizationsDelegates: const [
+          GlobalMaterialLocalizations.delegate,
+          GlobalWidgetsLocalizations.delegate,
+          GlobalCupertinoLocalizations.delegate,
+        ],
+        supportedLocales: const [
+          Locale('ko', 'KR'),
+          Locale('en', 'US'),
+        ],
         theme: ThemeData(
           primarySwatch: Colors.blue,
           useMaterial3: true,
@@ -55,7 +65,7 @@ class MyApp extends StatelessWidget {
 
 /// ✅ 인증 상태에 따라 화면 분기
 class AuthWrapper extends StatelessWidget {
-  const AuthWrapper({Key? key}) : super(key: key);
+  const AuthWrapper({super.key});
 
   @override
   Widget build(BuildContext context) {

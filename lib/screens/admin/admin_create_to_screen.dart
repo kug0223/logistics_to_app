@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import '../../models/business_model.dart';
 import '../../models/to_model.dart';
 import '../../services/firestore_service.dart';
@@ -53,18 +54,39 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
     super.dispose();
   }
 
-  /// 내 사업장 불러오기
+  /// 내 사업장 불러오기 (디버깅 강화)
   Future<void> _loadMyBusinesses() async {
     try {
       final userProvider = Provider.of<UserProvider>(context, listen: false);
       final uid = userProvider.currentUser?.uid;
+
+      print('🔍 ============ 사업장 조회 디버깅 ============');
+      print('현재 로그인 UID: $uid');
+      print('사용자 이름: ${userProvider.currentUser?.name}');
+      print('사용자 이메일: ${userProvider.currentUser?.email}');
 
       if (uid == null) {
         ToastHelper.showError('로그인 정보를 찾을 수 없습니다');
         return;
       }
 
+      // Firestore의 모든 사업장 확인
+      final allSnapshot = await FirebaseFirestore.instance
+          .collection('businesses')
+          .get();
+      
+      print('Firestore 전체 사업장 개수: ${allSnapshot.docs.length}');
+      
+      for (var doc in allSnapshot.docs) {
+        final data = doc.data();
+        print('사업장: ${data['name']}');
+        print('  ownerId: ${data['ownerId']}');
+        print('  현재 UID: $uid');
+        print('  일치? ${data['ownerId'] == uid}');
+      }
+
       final businesses = await _firestoreService.getMyBusiness(uid);
+      print('getMyBusiness 결과: ${businesses.length}개');
 
       setState(() {
         _myBusinesses = businesses;
@@ -74,7 +96,7 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
         _isLoading = false;
       });
     } catch (e) {
-      print('❌ 사업장 불러오기 실패: $e');
+      print('❌ 에러: $e');
       setState(() => _isLoading = false);
       ToastHelper.showError('사업장 정보를 불러올 수 없습니다');
     }
