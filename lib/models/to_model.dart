@@ -8,15 +8,11 @@ class TOModel {
   final String businessId; // 사업장 ID
   final String businessName; // 사업장명
   
-  // ⚠️ 하위 호환성을 위해 유지 (deprecated)
-  final String? centerId;
-  final String? centerName;
-  
   final DateTime date; // 근무 날짜
   final String startTime; // 시작 시간 (예: "09:00")
   final String endTime; // 종료 시간 (예: "18:00")
   
-  // ✅ NEW! Phase 1 추가 필드
+  // ✅ Phase 1 추가 필드
   final DateTime applicationDeadline; // 지원 마감 일시
   
   final int requiredCount; // 필요 인원
@@ -33,7 +29,7 @@ class TOModel {
     required this.date,
     required this.startTime,
     required this.endTime,
-    required this.applicationDeadline, // ✅ 필수 필드로 추가!
+    required this.applicationDeadline,
     required this.requiredCount,
     required this.currentCount,
     required this.workType,
@@ -51,7 +47,7 @@ class TOModel {
       date: (data['date'] as Timestamp).toDate(),
       startTime: data['startTime'] ?? '',
       endTime: data['endTime'] ?? '',
-      // ✅ NEW! 마감 일시 파싱 (없으면 근무 날짜 전날 18:00으로 기본값)
+      // 마감 일시 파싱 (없으면 근무 날짜 전날 18:00으로 기본값)
       applicationDeadline: data['applicationDeadline'] != null
           ? (data['applicationDeadline'] as Timestamp).toDate()
           : DateTime(
@@ -77,12 +73,10 @@ class TOModel {
     return {
       'businessId': businessId,
       'businessName': businessName,
-      'centerId': centerId,
-      'centerName': centerName,
       'date': Timestamp.fromDate(date),
       'startTime': startTime,
       'endTime': endTime,
-      'applicationDeadline': Timestamp.fromDate(applicationDeadline), // ✅ NEW!
+      'applicationDeadline': Timestamp.fromDate(applicationDeadline),
       'requiredCount': requiredCount,
       'currentCount': currentCount,
       'workType': workType,
@@ -92,13 +86,11 @@ class TOModel {
     };
   }
 
-  // ✅ NEW! 마감 여부 Getter
   /// 지원 마감이 지났는지 확인
   bool get isDeadlinePassed {
     return DateTime.now().isAfter(applicationDeadline);
   }
 
-  // ✅ NEW! 마감까지 남은 시간 표시
   /// 마감까지 남은 시간 표시 (예: "3시간 남음", "마감됨")
   String get deadlineStatus {
     if (isDeadlinePassed) {
@@ -119,7 +111,6 @@ class TOModel {
     }
   }
 
-  // ✅ NEW! 마감 일시 포맷팅
   /// 마감 일시 표시 (예: "10월 24일 18:00까지")
   String get formattedDeadline {
     return '${applicationDeadline.month}월 ${applicationDeadline.day}일 '
@@ -152,8 +143,6 @@ class TOModel {
     String? id,
     String? businessId,
     String? businessName,
-    String? centerId,
-    String? centerName,
     DateTime? date,
     String? startTime,
     String? endTime,
