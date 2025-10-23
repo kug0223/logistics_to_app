@@ -6,7 +6,7 @@ class Constants {
   static const int errorColor = 0xFFEF4444; // Red
   static const int warningColor = 0xFFF59E0B; // Orange
 
-  // 물류센터 목록 (deprecated - Firestore의 businesses 컬렉션 사용)
+  // 물류센터 목록 (deprecated)
   static const List<Map<String, String>> centers = [
     {
       'id': 'CENTER_A',
@@ -26,32 +26,38 @@ class Constants {
   ];
 
   // 지원 상태 코드
-  static const String statusPending = 'PENDING'; // 대기
-  static const String statusConfirmed = 'CONFIRMED'; // 확정
-  static const String statusRejected = 'REJECTED'; // 거절
-  static const String statusCanceled = 'CANCELED'; // 취소
+  static const String statusPending = 'PENDING';
+  static const String statusConfirmed = 'CONFIRMED';
+  static const String statusRejected = 'REJECTED';
+  static const String statusCanceled = 'CANCELED';
 
-  // 업무 유형
-  static const List<String> workTypes = [
-    '피킹',
-    '패킹',
-    '배송',
-    '분류',
-    '하역',
-    '검수',
+  // ✅ 업무 유형 (아이콘 포함)
+  static const List<Map<String, String>> workTypes = [
+    {'name': '피킹', 'icon': '📦'},
+    {'name': '패킹', 'icon': '📦'},
+    {'name': '배송', 'icon': '🚚'},
+    {'name': '분류', 'icon': '🏷️'},
+    {'name': '하역', 'icon': '🏋️'},
+    {'name': '검수', 'icon': '✅'},
   ];
 
-  // ✅ NEW! 업종 카테고리 (가치업 스타일)
+  // ✅ 업무 유형 이름만 (기존 코드 호환용)
+  static final List<String> workTypeNames = workTypes
+      .map((type) => type['name']!)
+      .toList();
+
+  // 업종 카테고리
   static const Map<String, List<String>> jobCategories = {
     '회사': [
       '일반 회사',
       '제조, 생산, 건설',
+      '물류센터'
     ],
-    '알바 매장': [
-      '알바-카페 (카페, 음료, 베이커리)',
-      '알바-외식업 (음식, 외식업)',
-      '알바-판매-서비스 (편의점, 유통, 호텔 등)',
-      '알바-매장관리 (PC방, 스터디카페 등)',
+    '매장': [
+      '카페 (카페, 음료, 베이커리)',
+      '외식업 (음식, 외식업)',
+      '판매-서비스 (편의점, 유통, 호텔 등)',
+      '매장관리 (PC방, 스터디카페 등)',
     ],
     '기타': [
       '교육, 의료, 기관',
@@ -59,18 +65,17 @@ class Constants {
     ],
   };
 
-  // 업종 카테고리 목록 (순서 보장)
   static const List<String> categoryList = ['회사', '알바 매장', '기타'];
 
   // Firebase Collections
   static const String collectionUsers = 'users';
   static const String collectionTOs = 'tos';
   static const String collectionApplications = 'applications';
-  static const String collectionCenters = 'centers'; // deprecated
-  static const String collectionBusinesses = 'businesses'; // ✅ NEW!
+  static const String collectionCenters = 'centers';
+  static const String collectionBusinesses = 'businesses';
 
   // GPS 설정
-  static const double gpsAccuracyThreshold = 100.0; // 미터
+  static const double gpsAccuracyThreshold = 100.0;
   static const Duration locationTimeout = Duration(seconds: 30);
 
   // 페이지네이션
@@ -82,15 +87,15 @@ class Constants {
   static const String errorPermission = '권한이 없습니다.';
 }
 
-/// 앱 상수 (main.dart에서 사용하기 위한 별칭)
+/// 앱 상수
 class AppConstants {
   static const int primaryColor = Constants.primaryColor;
-  
-  // centers와 workTypes도 접근 가능하게
   static const List<Map<String, String>> centers = Constants.centers;
-  static const List<String> workTypes = Constants.workTypes;
   
-  // ✅ NEW! 업종 카테고리 접근
+  // ✅ 두 가지 버전 모두 제공
+  static const List<Map<String, String>> workTypes = Constants.workTypes;
+  static final List<String> workTypeNames = Constants.workTypeNames;
+  
   static const Map<String, List<String>> jobCategories = Constants.jobCategories;
   static const List<String> categoryList = Constants.categoryList;
 }

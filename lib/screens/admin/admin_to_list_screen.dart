@@ -296,7 +296,7 @@ class _AdminTOListScreenState extends State<AdminTOListScreen> {
                   });
                 },
               ),
-              ...AppConstants.workTypes.map((workType) {
+              ...AppConstants.workTypeNames.map((workType) {
                 return _buildFilterChip(
                   label: workType,
                   isSelected: _selectedWorkType == workType,

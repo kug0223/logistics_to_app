@@ -831,8 +831,9 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
         contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
       ),
       hint: const Text('업무 유형을 선택하세요'),
-      items: AppConstants.workTypes.map((type) {
-        return DropdownMenuItem(
+      // ✅ 명시적으로 타입 지정
+      items: AppConstants.workTypes.map<DropdownMenuItem<String>>((type) {
+        return DropdownMenuItem<String>(
           value: type['name'] as String,
           child: Row(
             children: [
