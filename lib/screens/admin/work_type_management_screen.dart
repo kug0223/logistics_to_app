@@ -272,7 +272,7 @@ class _WorkTypeManagementScreenState extends State<WorkTypeManagementScreen> {
               businessId: _selectedBusiness!.id,
               name: nameController.text.trim(),
               icon: iconString,
-              color: colorHex,  // ✅ 간단하게
+              color: colorHex ?? '#2196F3',  // ✅ 간단하게
               backgroundColor: backgroundColor,
             );
             if (success != null) {
@@ -292,7 +292,8 @@ class _WorkTypeManagementScreenState extends State<WorkTypeManagementScreen> {
       builder: (context) => _IconPickerDialog(
         allIcons: _allIcons,
         initialIcon: workType.icon,
-        initialColor: workType.color,
+        initialIconColor: workType.color,
+        initialBackgroundColor: workType.backgroundColor,
         onSelected: (selectedIcon, iconColor, backgroundColor) async {
           final nameController = TextEditingController(text: workType.name);
           final confirmed = await showDialog<bool>(
@@ -341,7 +342,7 @@ class _WorkTypeManagementScreenState extends State<WorkTypeManagementScreen> {
               backgroundColor: backgroundColor,
               showToast: true,
             );
-            
+
             if (success) {
               _loadWorkTypes();
             }
@@ -567,17 +568,32 @@ class _WorkTypeManagementScreenState extends State<WorkTypeManagementScreen> {
       itemCount: _workTypes.length,
       itemBuilder: (context, index) {
         final workType = _workTypes[index];
-        final color = Color(int.parse(workType.color.replaceFirst('#', '0xFF')));
         final isFirst = index == 0;
         final isLast = index == _workTypes.length - 1;
+        
+        // ✅ backgroundColor 사용 (color가 아님!)
+        final bgColor = workType.backgroundColor != null && workType.backgroundColor!.isNotEmpty
+            ? Color(int.parse(workType.backgroundColor!.replaceFirst('#', '0xFF')))
+            : Colors.blue[700]!;
 
         Widget iconWidget;
         if (workType.icon.startsWith('material:')) {
           final codePoint = int.parse(workType.icon.split(':')[1]);
+          
+          // ✅ Material 아이콘의 색상 결정
+          Color iconColor = Colors.white; // 기본은 흰색
+          if (workType.color != null && workType.color!.isNotEmpty) {
+            try {
+              iconColor = Color(int.parse(workType.color!.replaceFirst('#', '0xFF')));
+            } catch (e) {
+              iconColor = Colors.white;
+            }
+          }
+          
           iconWidget = Icon(
             IconData(codePoint, fontFamily: 'MaterialIcons'),
             size: 24,
-            color: Colors.white,
+            color: iconColor,
           );
         } else {
           iconWidget = Text(workType.icon, style: const TextStyle(fontSize: 24));
@@ -590,7 +606,7 @@ class _WorkTypeManagementScreenState extends State<WorkTypeManagementScreen> {
               width: 48,
               height: 48,
               decoration: BoxDecoration(
-                color: color,
+                color: bgColor,  // ✅ 배경색 사용!
                 borderRadius: BorderRadius.circular(8),
               ),
               alignment: Alignment.center,
@@ -637,13 +653,15 @@ class _WorkTypeManagementScreenState extends State<WorkTypeManagementScreen> {
 class _IconPickerDialog extends StatefulWidget {
   final List<IconItem> allIcons;
   final String? initialIcon;
-  final String? initialColor;
+  final String? initialIconColor;
+  final String? initialBackgroundColor;
   final Function(dynamic icon, Color? iconColor, String backgroundColor) onSelected;
 
   const _IconPickerDialog({
     required this.allIcons,
     this.initialIcon,
-    this.initialColor,
+    this.initialIconColor, 
+    this.initialBackgroundColor,
     required this.onSelected,
   });
 
@@ -703,8 +721,8 @@ class _IconPickerDialogState extends State<_IconPickerDialog> {
       }
     }
     
-    if (widget.initialColor != null) {
-      _selectedBackgroundColor = widget.initialColor!;
+    if (widget.initialIconColor != null) {
+      _selectedBackgroundColor = widget.initialIconColor!;
     }
     
     _filteredIcons = widget.allIcons.where((icon) => icon.isPopular).toList();

@@ -326,6 +326,7 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
                 decoration: const InputDecoration(
                   border: OutlineInputBorder(),
                   hintText: '업무 선택',
+                  contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 12),
                 ),
                 isExpanded: true,  // ✅ 추가: 전체 너비 사용
                 // ✅ 선택 후 버튼에 표시 (Material Icon 또는 Emoji)
@@ -336,7 +337,7 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
                         // 배경색이 있으면 Container로 감싸기
                         if (workType.backgroundColor != null && workType.backgroundColor!.isNotEmpty)
                           Container(
-                            padding: const EdgeInsets.all(6),
+                            padding: const EdgeInsets.all(2),
                             decoration: BoxDecoration(
                               color: _parseColor(workType.backgroundColor!),
                               borderRadius: BorderRadius.circular(8),
@@ -351,6 +352,7 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
                             workType.name,
                             style: const TextStyle(fontSize: 14),
                             overflow: TextOverflow.ellipsis,
+                            maxLines: 1,
                           ),
                         ),
                       ],
@@ -367,7 +369,7 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
                       // 배경색이 있으면 Container로 감싸기
                       if (workType.backgroundColor != null && workType.backgroundColor!.isNotEmpty)
                         Container(
-                          padding: const EdgeInsets.all(6),
+                          padding: const EdgeInsets.all(4),
                           decoration: BoxDecoration(
                             color: _parseColor(workType.backgroundColor!),
                             borderRadius: BorderRadius.circular(8),
@@ -914,10 +916,10 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
                     // 배경색이 있으면 Container로 감싸기
                     if (workType.backgroundColor != null && workType.backgroundColor!.isNotEmpty)
                       Container(
-                        padding: const EdgeInsets.all(8),
+                        padding: const EdgeInsets.all(6),
                         decoration: BoxDecoration(
                           color: _parseColor(workType.backgroundColor!),
-                          borderRadius: BorderRadius.circular(8),
+                          borderRadius: BorderRadius.circular(6),
                         ),
                         child: _buildIconOrEmoji(workType),
                       )
@@ -1149,29 +1151,26 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
   Widget _buildIconOrEmoji(BusinessWorkTypeModel workType) {
     if (workType.icon.startsWith('material:')) {
       // Material Icon
-      Color iconColor;
-      
-      if (workType.backgroundColor != null && workType.backgroundColor!.isNotEmpty) {
-        // 배경색이 있으면 흰색
-        iconColor = Colors.white;
-      } else if (workType.color != null && workType.color!.isNotEmpty) {
-        // color가 있으면 사용
-        iconColor = _parseColor(workType.color);
-      } else {
-        // 둘 다 없으면 기본 파란색
-        iconColor = Colors.blue[700]!;
+      Color iconColor = Colors.white; // 기본값
+    
+      if (workType.color != null && workType.color!.isNotEmpty) {
+        try {
+          iconColor = Color(int.parse(workType.color!.replaceFirst('#', '0xFF')));
+        } catch (e) {
+          print('⚠️ 아이콘 색상 파싱 실패: ${workType.color}');
+          iconColor = Colors.white;
+        }
       }
-      
       return Icon(
         _getIconFromString(workType.icon),
-        size: 20,
+        size: 18,
         color: iconColor,
       );
     } else {
       // Emoji
       return Text(
         workType.icon,
-        style: const TextStyle(fontSize: 20),
+        style: const TextStyle(fontSize: 16),
       );
     }
   }

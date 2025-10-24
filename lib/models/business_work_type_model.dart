@@ -6,7 +6,7 @@ class BusinessWorkTypeModel {
   final String businessId;       // 소속 사업장 ID
   final String name;             // 업무 유형 이름 (예: 피킹, 패킹)
   final String icon;             // 이모지 아이콘 (예: 📦, 🚚)
-  final String color;            // 색상 코드 (예: #FF5733)
+  final String? color;            // 색상 코드 (예: #FF5733)
   final String? backgroundColor;
   final int displayOrder;        // 정렬 순서 (낮을수록 위)
   final bool isActive;           // 활성화 여부
