@@ -6,7 +6,7 @@ import '../../widgets/loading_widget.dart';
 import 'register_screen.dart';
 
 class LoginScreen extends StatefulWidget {
-  const LoginScreen({Key? key}) : super(key: key);
+  const LoginScreen({super.key});
 
   @override
   State<LoginScreen> createState() => _LoginScreenState();
@@ -65,7 +65,7 @@ class _LoginScreenState extends State<LoginScreen> {
                       ),
                       const SizedBox(height: 16),
                       const Text(
-                        '스마트 물류센터',
+                        'AlFit(알핏)',
                         textAlign: TextAlign.center,
                         style: TextStyle(
                           fontSize: 28,
@@ -74,7 +74,7 @@ class _LoginScreenState extends State<LoginScreen> {
                       ),
                       const SizedBox(height: 8),
                       Text(
-                        '인력 관리 시스템',
+                        '나에게 꼭 맞는 알바를 찾으세요?',
                         textAlign: TextAlign.center,
                         style: TextStyle(
                           fontSize: 16,

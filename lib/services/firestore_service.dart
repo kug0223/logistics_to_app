@@ -496,6 +496,7 @@ class FirestoreService {
     required String name,
     required String icon,
     required String color,
+    String? backgroundColor,
     int? displayOrder,
   }) async {
     try {
@@ -511,6 +512,7 @@ class FirestoreService {
         name: name,
         icon: icon,
         color: color,
+        backgroundColor: backgroundColor, 
         displayOrder: order,
         isActive: true,
         createdAt: DateTime.now(),
@@ -533,13 +535,13 @@ class FirestoreService {
   }
 
   /// 업무 유형 수정
-  /// 업무 유형 수정
   Future<bool> updateBusinessWorkType({
     required String businessId,
     required String workTypeId,
     String? name,
     String? icon,
     String? color,
+    String? backgroundColor,
     int? displayOrder,
     bool showToast = true,  // ✅ 이 줄 추가!
   }) async {
@@ -550,6 +552,7 @@ class FirestoreService {
       if (name != null) updates['name'] = name;
       if (icon != null) updates['icon'] = icon;
       if (color != null) updates['color'] = color;
+      if (backgroundColor != null) updates['backgroundColor'] = backgroundColor;  // ✅ 추가
       if (displayOrder != null) updates['displayOrder'] = displayOrder;
 
       if (updates.isEmpty) {

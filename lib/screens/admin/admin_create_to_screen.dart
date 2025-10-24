@@ -327,64 +327,70 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
                   border: OutlineInputBorder(),
                   hintText: '업무 선택',
                 ),
-                items: _businessWorkTypes.map((workType) {
-                  return DropdownMenuItem(
-                    value: workType.name,
-                    child: Row(
+                isExpanded: true,  // ✅ 추가: 전체 너비 사용
+                // ✅ 선택 후 버튼에 표시 (Material Icon 또는 Emoji)
+                selectedItemBuilder: (BuildContext context) {
+                  return _businessWorkTypes.map((workType) {
+                    return Row(
                       children: [
-                        Text(workType.icon, style: const TextStyle(fontSize: 20)),
+                        // 배경색이 있으면 Container로 감싸기
+                        if (workType.backgroundColor != null && workType.backgroundColor!.isNotEmpty)
+                          Container(
+                            padding: const EdgeInsets.all(6),
+                            decoration: BoxDecoration(
+                              color: _parseColor(workType.backgroundColor!),
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                            child: _buildIconOrEmoji(workType),
+                          )
+                        else
+                          _buildIconOrEmoji(workType),
                         const SizedBox(width: 8),
-                        Text(workType.name),
+                        Expanded(
+                          child: Text(
+                            workType.name,
+                            style: const TextStyle(fontSize: 14),
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
                       ],
-                    ),
-                  );
-                }).toList(),
+                    );
+                  }).toList();
+                },
+                
+                // ✅ 드롭다운 목록 (Material Icon 또는 Emoji)
+                items: _businessWorkTypes.map((workType) {
+                return DropdownMenuItem(
+                  value: workType.name,
+                  child: Row(
+                    children: [
+                      // 배경색이 있으면 Container로 감싸기
+                      if (workType.backgroundColor != null && workType.backgroundColor!.isNotEmpty)
+                        Container(
+                          padding: const EdgeInsets.all(6),
+                          decoration: BoxDecoration(
+                            color: _parseColor(workType.backgroundColor!),
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          child: _buildIconOrEmoji(workType),
+                        )
+                      else
+                        _buildIconOrEmoji(workType),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          workType.name,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                    ],
+                  ),
+                );
+              }).toList(),
+                
                 onChanged: (value) {
                   selectedWorkType = value;
                 },
-              ),
-              const SizedBox(height: 16),
-
-              // ✅ NEW: 근무 시간 입력
-              const Text('근무 시간 *', style: TextStyle(fontWeight: FontWeight.bold)),
-              const SizedBox(height: 8),
-              Row(
-                children: [
-                  Expanded(
-                    child: DropdownButtonFormField<String>(
-                      value: startTime,
-                      decoration: const InputDecoration(
-                        border: OutlineInputBorder(),
-                        labelText: '시작',
-                      ),
-                      items: _generateTimeList().map((time) {
-                        return DropdownMenuItem(value: time, child: Text(time));
-                      }).toList(),
-                      onChanged: (value) {
-                        startTime = value;
-                      },
-                    ),
-                  ),
-                  const Padding(
-                    padding: EdgeInsets.symmetric(horizontal: 8),
-                    child: Text('~', style: TextStyle(fontSize: 18)),
-                  ),
-                  Expanded(
-                    child: DropdownButtonFormField<String>(
-                      value: endTime,
-                      decoration: const InputDecoration(
-                        border: OutlineInputBorder(),
-                        labelText: '종료',
-                      ),
-                      items: _generateTimeList().map((time) {
-                        return DropdownMenuItem(value: time, child: Text(time));
-                      }).toList(),
-                      onChanged: (value) {
-                        endTime = value;
-                      },
-                    ),
-                  ),
-                ],
               ),
               const SizedBox(height: 16),
 
@@ -874,13 +880,27 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
 
   /// ✅ 업무 상세 카드 (시간 정보 표시)
   Widget _buildWorkDetailCard(WorkDetailInput detail, int index) {
+    // ✅ 해당 업무 유형 찾기
+    final workType = _businessWorkTypes.firstWhere(
+      (wt) => wt.name == detail.workType,
+      orElse: () => _businessWorkTypes.first,
+    );
+
     return Container(
-      margin: const EdgeInsets.only(bottom: 8),
+      margin: const EdgeInsets.only(bottom: 12),
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
         color: Colors.white,
-        borderRadius: BorderRadius.circular(8),
+        borderRadius: BorderRadius.circular(12),
         border: Border.all(color: Colors.grey[300]!),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.grey.withOpacity(0.1),
+            spreadRadius: 1,
+            blurRadius: 3,
+            offset: const Offset(0, 2),
+          ),
+        ],
       ),
       child: Row(
         children: [
@@ -888,14 +908,38 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(
-                  detail.workType ?? '',
-                  style: const TextStyle(
-                    fontSize: 16,
-                    fontWeight: FontWeight.bold,
-                  ),
+                // ✅ 아이콘 + 업무명 표시
+                Row(
+                  children: [
+                    // 배경색이 있으면 Container로 감싸기
+                    if (workType.backgroundColor != null && workType.backgroundColor!.isNotEmpty)
+                      Container(
+                        padding: const EdgeInsets.all(8),
+                        decoration: BoxDecoration(
+                          color: _parseColor(workType.backgroundColor!),
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: _buildIconOrEmoji(workType),
+                      )
+                    else
+                      Padding(
+                        padding: const EdgeInsets.only(right: 8),
+                        child: _buildIconOrEmoji(workType),
+                      ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        detail.workType ?? '',
+                        style: const TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ),
+                  ],
                 ),
                 const SizedBox(height: 8),
+                
                 // ✅ NEW: 근무 시간 표시
                 Row(
                   children: [
@@ -1083,4 +1127,95 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
       ),
     );
   }
+  
+  Color _parseColor(String? colorHex) {  // ✅ nullable 허용
+    if (colorHex == null || colorHex.isEmpty) {
+      return Colors.blue[700]!;  // ✅ null/빈문자열이면 기본값
+    }
+    
+    try {
+      String hex = colorHex.replaceFirst('#', '');
+      if (hex.length == 6) {
+        hex = 'FF$hex';  // 알파값 추가
+      }
+      return Color(int.parse(hex, radix: 16));
+    } catch (e) {
+      print('⚠️ 색상 파싱 실패: $colorHex, 기본 파란색 사용');
+      return Colors.blue[700]!;
+    }
+  }
+
+  /// 아이콘 또는 Emoji 위젯 생성 (색상 포함)
+  Widget _buildIconOrEmoji(BusinessWorkTypeModel workType) {
+    if (workType.icon.startsWith('material:')) {
+      // Material Icon
+      Color iconColor;
+      
+      if (workType.backgroundColor != null && workType.backgroundColor!.isNotEmpty) {
+        // 배경색이 있으면 흰색
+        iconColor = Colors.white;
+      } else if (workType.color != null && workType.color!.isNotEmpty) {
+        // color가 있으면 사용
+        iconColor = _parseColor(workType.color);
+      } else {
+        // 둘 다 없으면 기본 파란색
+        iconColor = Colors.blue[700]!;
+      }
+      
+      return Icon(
+        _getIconFromString(workType.icon),
+        size: 20,
+        color: iconColor,
+      );
+    } else {
+      // Emoji
+      return Text(
+        workType.icon,
+        style: const TextStyle(fontSize: 20),
+      );
+    }
+  }
+  /// 아이콘 문자열을 IconData로 변환
+  IconData _getIconFromString(String iconString) {
+    print('🔍 아이콘 변환: "$iconString"');
+    
+    // ✅ "material:57672" 형식 처리
+    if (iconString.startsWith('material:')) {
+      try {
+        final codePoint = int.parse(iconString.substring(9));
+        print('✅ Material 유니코드: $codePoint');
+        return IconData(codePoint, fontFamily: 'MaterialIcons');
+      } catch (e) {
+        print('❌ 유니코드 파싱 실패: $e');
+        return Icons.work_outline;
+      }
+    }
+    
+    // ✅ 일반 문자열 처리
+    switch (iconString.toLowerCase()) {
+      case 'work':
+      case 'work_outline':
+        return Icons.work_outline;
+      case 'inventory':
+      case 'inventory_2':
+        return Icons.inventory_2_outlined;
+      case 'local_shipping':
+      case 'shipping':
+        return Icons.local_shipping_outlined;
+      case 'warehouse':
+      case 'store':
+        return Icons.warehouse_outlined;
+      case 'shopping_cart':
+      case 'cart':
+        return Icons.shopping_cart_outlined;
+      case 'construction':
+      case 'build':
+        return Icons.construction_outlined;
+      default:
+        print('⚠️ 알 수 없는 아이콘: $iconString');
+        return Icons.work_outline;
+    }
+  }
+
+
 }

@@ -263,14 +263,18 @@ class _WorkTypeManagementScreenState extends State<WorkTypeManagementScreen> {
             } else {
               iconString = selectedIcon.toString();
             }
+            String? colorHex;
+            if (iconColor != null) {
+              colorHex = '#${iconColor.value.toRadixString(16).padLeft(8, '0').substring(2)}';
+            }
 
             final success = await _firestoreService.addBusinessWorkType(
               businessId: _selectedBusiness!.id,
               name: nameController.text.trim(),
               icon: iconString,
-              color: backgroundColor,
+              color: colorHex,  // ✅ 간단하게
+              backgroundColor: backgroundColor,
             );
-
             if (success != null) {
               _loadWorkTypes();
             }
@@ -323,15 +327,21 @@ class _WorkTypeManagementScreenState extends State<WorkTypeManagementScreen> {
               iconString = selectedIcon.toString();
             }
 
+            String? colorHex;
+            if (iconColor != null) {
+              colorHex = '#${iconColor.value.toRadixString(16).padLeft(8, '0').substring(2)}';
+            }
+
             final success = await _firestoreService.updateBusinessWorkType(
               businessId: _selectedBusiness!.id,
               workTypeId: workType.id,
               name: nameController.text.trim(),
               icon: iconString,
-              color: backgroundColor,
+              color: colorHex,  // ✅ 간단하게
+              backgroundColor: backgroundColor,
               showToast: true,
             );
-
+            
             if (success) {
               _loadWorkTypes();
             }

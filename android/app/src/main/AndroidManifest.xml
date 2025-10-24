@@ -5,7 +5,7 @@
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     
     <application
-        android:label="logistics_to_app"
+        android:label="AlFit(알핏)"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher"
         android:usesCleartextTraffic="true">  <!-- ✅ 이 속성을 여기로 이동! -->

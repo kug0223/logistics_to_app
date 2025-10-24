@@ -7,6 +7,7 @@ class BusinessWorkTypeModel {
   final String name;             // 업무 유형 이름 (예: 피킹, 패킹)
   final String icon;             // 이모지 아이콘 (예: 📦, 🚚)
   final String color;            // 색상 코드 (예: #FF5733)
+  final String? backgroundColor;
   final int displayOrder;        // 정렬 순서 (낮을수록 위)
   final bool isActive;           // 활성화 여부
   final DateTime createdAt;      // 생성 일시
@@ -16,7 +17,8 @@ class BusinessWorkTypeModel {
     required this.businessId,
     required this.name,
     required this.icon,
-    required this.color,
+    this.color,
+    this.backgroundColor,
     required this.displayOrder,
     this.isActive = true,
     required this.createdAt,
@@ -29,7 +31,8 @@ class BusinessWorkTypeModel {
       businessId: map['businessId'] ?? '',
       name: map['name'] ?? '',
       icon: map['icon'] ?? '📋',
-      color: map['color'] ?? '#2196F3',
+      color: map['color'],
+      backgroundColor: map['backgroundColor'],
       displayOrder: map['displayOrder'] ?? 0,
       isActive: map['isActive'] ?? true,
       createdAt: (map['createdAt'] as Timestamp).toDate(),
@@ -49,6 +52,7 @@ class BusinessWorkTypeModel {
       'name': name,
       'icon': icon,
       'color': color,
+      'backgroundColor': backgroundColor,
       'displayOrder': displayOrder,
       'isActive': isActive,
       'createdAt': Timestamp.fromDate(createdAt),
@@ -62,6 +66,7 @@ class BusinessWorkTypeModel {
     String? name,
     String? icon,
     String? color,
+    String? backgroundColor,
     int? displayOrder,
     bool? isActive,
     DateTime? createdAt,
@@ -72,6 +77,7 @@ class BusinessWorkTypeModel {
       name: name ?? this.name,
       icon: icon ?? this.icon,
       color: color ?? this.color,
+      backgroundColor: backgroundColor ?? this.backgroundColor,
       displayOrder: displayOrder ?? this.displayOrder,
       isActive: isActive ?? this.isActive,
       createdAt: createdAt ?? this.createdAt,
