@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import '../../models/business_model.dart';
 import '../../models/to_model.dart';
 import '../../services/firestore_service.dart';
@@ -11,6 +12,8 @@ import '../../models/business_work_type_model.dart';
 /// ✅ 업무 상세 입력 데이터 클래스 (시간 정보 포함)
 class WorkDetailInput {
   final String? workType;
+  final String? workTypeIcon;      // ✅ 추가
+  final String? workTypeColor;     // ✅ 추가
   final int? wage;
   final int? requiredCount;
   final String? startTime; // ✅ NEW
@@ -18,6 +21,8 @@ class WorkDetailInput {
 
   WorkDetailInput({
     this.workType,
+    this.workTypeIcon,             // ✅ 추가
+    this.workTypeColor,            // ✅ 추가
     this.wage,
     this.requiredCount,
     this.startTime, // ✅ NEW
@@ -66,9 +71,10 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
   List<BusinessWorkTypeModel> _businessWorkTypes = [];
 
   // 기본 입력 값
-  DateTime? _selectedDate;
-  // ❌ 제거: String? _selectedStartTime;
-  // ❌ 제거: String? _selectedEndTime;
+  String _dateMode = 'single'; // 'single' 또는 'range'
+  DateTime? _selectedDate;      // 단일 날짜
+  DateTime? _startDate;         // 범위 시작일
+  DateTime? _endDate;           // 범위 종료일
   DateTime? _selectedDeadlineDate;
   TimeOfDay? _selectedDeadlineTime;
 
@@ -174,22 +180,66 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
       return;
     }
 
-    for (var detail in _workDetails) {
-      if (!detail.isValid) {
-        ToastHelper.showWarning('모든 업무의 정보를 입력해주세요.');
+    if (_workDetails.any((w) => !w.isValid)) {
+      ToastHelper.showWarning('모든 업무 정보를 입력해주세요.');
+      return;
+    }
+
+    // 사업장 선택 확인
+    if (_selectedBusiness == null) {
+      ToastHelper.showWarning('사업장을 선택해주세요.');
+      return;
+    }
+
+    // ✅ NEW: 날짜 선택 확인 (모드별 분기)
+    if (_dateMode == 'single') {
+      if (_selectedDate == null) {
+        ToastHelper.showWarning('근무 날짜를 선택해주세요.');
+        return;
+      }
+    } else {
+      if (_startDate == null || _endDate == null) {
+        ToastHelper.showWarning('시작일과 종료일을 선택해주세요.');
+        return;
+      }
+      if (_endDate!.isBefore(_startDate!)) {
+        ToastHelper.showWarning('종료일은 시작일 이후여야 합니다.');
         return;
       }
     }
 
-    if (_selectedDate == null) {
-      ToastHelper.showWarning('근무 날짜를 선택해주세요.');
-      return;
-    }
-
+    // 마감 시간 확인
     if (_selectedDeadlineDate == null || _selectedDeadlineTime == null) {
       ToastHelper.showWarning('지원 마감 시간을 선택해주세요.');
       return;
     }
+
+    final applicationDeadline = DateTime(
+      _selectedDeadlineDate!.year,
+      _selectedDeadlineDate!.month,
+      _selectedDeadlineDate!.day,
+      _selectedDeadlineTime!.hour,
+      _selectedDeadlineTime!.minute,
+    );
+    // ✅ NEW: 날짜 범위 모드 추가 검증
+    if (_dateMode == 'range') {
+      // 1. 최대 30일 제한
+      final daysDiff = _endDate!.difference(_startDate!).inDays + 1;
+      if (daysDiff > 30) {
+        ToastHelper.showWarning('최대 30일까지만 선택할 수 있습니다.');
+        return;
+      }
+      
+      // 2. 마감 시간은 시작일 이전이어야 함
+      final startDateOnly = DateTime(_startDate!.year, _startDate!.month, _startDate!.day);
+      final deadlineDateOnly = DateTime(applicationDeadline.year, applicationDeadline.month, applicationDeadline.day);
+      
+      if (deadlineDateOnly.isAfter(startDateOnly)) {
+        ToastHelper.showWarning('마감 시간은 시작일 이전 또는 당일이어야 합니다.');
+        return;
+        }
+    }
+    
 
     setState(() => _isCreating = true);
 
@@ -197,88 +247,22 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
       final userProvider = Provider.of<UserProvider>(context, listen: false);
       final uid = userProvider.currentUser?.uid;
 
-      if (uid == null || _selectedBusiness == null) {
-        ToastHelper.showError('사용자 정보를 찾을 수 없습니다.');
+      if (uid == null) {
+        ToastHelper.showError('로그인 정보를 찾을 수 없습니다');
         return;
       }
 
-      // 마감 일시 생성
-      final deadlineDateTime = DateTime(
-        _selectedDeadlineDate!.year,
-        _selectedDeadlineDate!.month,
-        _selectedDeadlineDate!.day,
-        _selectedDeadlineTime!.hour,
-        _selectedDeadlineTime!.minute,
-      );
+      bool success;
 
-      // WorkDetails 데이터 변환
-      final workDetailsData = _workDetails.map((detail) => {
-        'workType': detail.workType!,
-        'wage': detail.wage!,
-        'requiredCount': detail.requiredCount!,
-        'startTime': detail.startTime!,
-        'endTime': detail.endTime!,
-      }).toList();
-
-      // ✅ 그룹 정보 처리 (수정됨!)
-      String? groupId;
-      String? groupName;
-
-      if (_linkToExisting && _selectedGroupId != null) {
-        // ✅ selectedTO 변수 정의
-        TOModel? selectedTO;
-        try {
-          selectedTO = _myRecentTOs.firstWhere(
-            (to) => to.id == _selectedGroupId,  // ✅ id로만 비교
-          );
-        } catch (e) {
-          selectedTO = _myRecentTOs.isNotEmpty ? _myRecentTOs.first : null;
-        }
-
-        if (selectedTO != null) {
-          // 기존 그룹에 연결
-          if (selectedTO.groupId != null) {
-            // 이미 그룹이 있음
-            groupId = selectedTO.groupId;
-            groupName = selectedTO.groupName ?? selectedTO.title;
-          } else {
-            // ✅ NEW: 첫 TO를 선택했고 groupId가 없으면 새로 생성
-            groupId = _firestoreService.generateGroupId();
-            groupName = selectedTO.title;
-            
-            // 첫 번째 TO도 이 그룹에 추가
-            await _firestoreService.updateTOGroup(
-              toId: selectedTO.id,
-              groupId: groupId!,
-              groupName: groupName!,
-            );
-            
-            print('✅ 첫 번째 TO에 그룹 정보 추가됨');
-          }
-        }
-      } else if (_linkToExisting) {
-        // 체크는 했지만 TO를 선택 안 함
-        groupId = _firestoreService.generateGroupId();
-        groupName = _titleController.text.trim();
+      if (_dateMode == 'single') {
+        // ✅ 단일 날짜 TO 생성 (기존 방식)
+        success = await _createSingleTO(uid, applicationDeadline);
+      } else {
+        // ✅ 날짜 범위 TO 그룹 생성 (신규)
+        success = await _createTOGroup(uid, applicationDeadline);
       }
 
-      // TO 생성
-      final toId = await _firestoreService.createTOWithDetails(
-        businessId: _selectedBusiness!.id,
-        businessName: _selectedBusiness!.name,
-        title: _titleController.text.trim(),
-        date: _selectedDate!,
-        applicationDeadline: deadlineDateTime,
-        workDetailsData: workDetailsData,
-        description: _descriptionController.text.trim().isNotEmpty
-            ? _descriptionController.text.trim()
-            : null,
-        creatorUID: uid,
-        groupId: groupId,
-        groupName: groupName,
-      );
-
-      if (toId != null && mounted) {
+      if (success && mounted) {
         Navigator.pop(context, true);
       }
     } catch (e) {
@@ -288,6 +272,136 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
       if (mounted) {
         setState(() => _isCreating = false);
       }
+    }
+  }
+  /// ✅ NEW: 실시간 검증 에러 체크 (여기에 추가!)
+  bool _hasValidationError() {
+    if (_dateMode == 'range') {
+      // 1. 30일 초과
+      if (_startDate != null && _endDate != null) {
+        final daysDiff = _endDate!.difference(_startDate!).inDays + 1;
+        if (daysDiff > 30) return true;
+      }
+      
+      // 2. 마감시간 검증 (종료일 당일까지 허용)
+      if (_endDate != null && _selectedDeadlineDate != null) {
+        final endDateOnly = DateTime(_endDate!.year, _endDate!.month, _endDate!.day);
+        final deadlineDateOnly = DateTime(
+          _selectedDeadlineDate!.year, 
+          _selectedDeadlineDate!.month, 
+          _selectedDeadlineDate!.day
+        );
+        
+        // 마감이 종료일보다 이후면 에러
+        if (deadlineDateOnly.isAfter(endDateOnly)) {
+          return true;
+        }
+      }
+    } 
+    // ✅ NEW: 단일 날짜 모드도 검증
+    else if (_dateMode == 'single') {
+      if (_selectedDate != null && _selectedDeadlineDate != null) {
+        final dateDateOnly = DateTime(_selectedDate!.year, _selectedDate!.month, _selectedDate!.day);
+        final deadlineDateOnly = DateTime(
+          _selectedDeadlineDate!.year, 
+          _selectedDeadlineDate!.month, 
+          _selectedDeadlineDate!.day
+        );
+        
+        // 마감시간이 근무일보다 이후면 에러 (당일까지 허용)
+        if (deadlineDateOnly.isAfter(dateDateOnly)) {
+          return true;
+        }
+      }
+    }
+    
+    return false;
+  }
+
+  /// ✅ 단일 날짜 TO 생성 (기존 방식 그대로)
+  Future<bool> _createSingleTO(String uid, DateTime applicationDeadline) async {
+    try {
+      // 총 필요 인원 계산
+      int totalRequired = 0;
+      for (var work in _workDetails) {
+        totalRequired += work.requiredCount!;
+      }
+
+      final toData = {
+        'businessId': _selectedBusiness!.id,
+        'businessName': _selectedBusiness!.name,
+        'groupId': null,
+        'groupName': null,
+        'startDate': null,
+        'endDate': null,
+        'isGroupMaster': false,
+        'title': _titleController.text.trim(),
+        'date': Timestamp.fromDate(_selectedDate!),
+        'startTime': _workDetails[0].startTime!,
+        'endTime': _workDetails[0].endTime!,
+        'applicationDeadline': Timestamp.fromDate(applicationDeadline),
+        'totalRequired': totalRequired,
+        'totalConfirmed': 0,
+        'description': _descriptionController.text.trim(),
+        'creatorUID': uid,
+        'createdAt': FieldValue.serverTimestamp(),
+      };
+
+      final toDoc = await FirebaseFirestore.instance.collection('tos').add(toData);
+
+      // WorkDetails 생성
+      for (int i = 0; i < _workDetails.length; i++) {
+        await FirebaseFirestore.instance
+            .collection('tos')
+            .doc(toDoc.id)
+            .collection('workDetails')
+            .add({
+          'workType': _workDetails[i].workType!,
+          'workTypeIcon': _workDetails[i].workTypeIcon,
+          'workTypeColor': _workDetails[i].workTypeColor,
+          'wage': _workDetails[i].wage!,
+          'requiredCount': _workDetails[i].requiredCount!,
+          'currentCount': 0,
+          'startTime': _workDetails[i].startTime!,
+          'endTime': _workDetails[i].endTime!,
+          'order': i,
+        });
+      }
+
+      ToastHelper.showSuccess('TO가 생성되었습니다!');
+      return true;
+    } catch (e) {
+      print('❌ 단일 TO 생성 실패: $e');
+      return false;
+    }
+  }
+
+  /// ✅ NEW: 날짜 범위 TO 그룹 생성
+  Future<bool> _createTOGroup(String uid, DateTime applicationDeadline) async {
+    try {
+      return await _firestoreService.createTOGroup(
+        businessId: _selectedBusiness!.id,
+        businessName: _selectedBusiness!.name,
+        groupName: _titleController.text.trim(),
+        title: _titleController.text.trim(),
+        startDate: _startDate!,
+        endDate: _endDate!,
+        workDetails: _workDetails.map((w) => {
+          'workType': w.workType!,
+          'workTypeIcon': w.workTypeIcon,
+          'workTypeColor': w.workTypeColor,
+          'wage': w.wage!,
+          'requiredCount': w.requiredCount!,
+          'startTime': w.startTime!,
+          'endTime': w.endTime!,
+        }).toList(),
+        applicationDeadline: applicationDeadline,
+        description: _descriptionController.text.trim(),
+        creatorUID: uid,
+      );
+    } catch (e) {
+      print('❌ TO 그룹 생성 실패: $e');
+      return false;
     }
   }
 
@@ -565,10 +679,15 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
             _buildGroupLinkSection(),
             const SizedBox(height: 24),
 
-            // 근무 날짜
+            // ✅ NEW: 날짜 선택 방식
             _buildSectionTitle('📅 근무 날짜'),
-            _buildDatePicker(),
-            const SizedBox(height: 24),
+            _buildDateModeSelector(),
+            const SizedBox(height: 12),
+
+            if (_dateMode == 'single')
+              _buildSingleDatePicker()
+            else
+              _buildDateRangePicker(),
 
             // ❌ 제거: TO 레벨 근무 시간 입력
             // _buildSectionTitle('⏰ 근무 시간'),
@@ -584,7 +703,99 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
             // 지원 마감 시간
             _buildSectionTitle('⏱️ 지원 마감 시간'),
             _buildDeadlinePicker(),
-            const SizedBox(height: 24),
+            const SizedBox(height: 12),
+
+            // ✅ NEW: 마감시간 검증 메시지 (범위 모드)
+            if (_dateMode == 'range' && 
+              _endDate != null && 
+              _selectedDeadlineDate != null) ...[
+            Builder(
+              builder: (context) {
+                final endDateOnly = DateTime(_endDate!.year, _endDate!.month, _endDate!.day);
+                final deadlineDateOnly = DateTime(
+                  _selectedDeadlineDate!.year, 
+                  _selectedDeadlineDate!.month, 
+                  _selectedDeadlineDate!.day
+                );
+                
+                final isInvalid = deadlineDateOnly.isAfter(endDateOnly);
+                
+                if (!isInvalid) return const SizedBox.shrink();
+                
+                return Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: Colors.red[50],
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(color: Colors.red[300]!),
+                  ),
+                  child: Row(
+                    children: [
+                      Icon(Icons.error_outline, size: 16, color: Colors.red[700]),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          '⚠️ 마감 시간은 종료일(${_endDate!.month}/${_endDate!.day}) 이전 또는 당일이어야 합니다',
+                          style: TextStyle(
+                            fontSize: 13,
+                            color: Colors.red[700],
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                );
+              },
+            ),
+              const SizedBox(height: 12),
+            ],
+
+            // ✅ NEW: 마감시간 검증 메시지 (단일 모드)
+            if (_dateMode == 'single' && 
+                _selectedDate != null && 
+                _selectedDeadlineDate != null) ...[
+              Builder(
+                builder: (context) {
+                  final dateDateOnly = DateTime(_selectedDate!.year, _selectedDate!.month, _selectedDate!.day);
+                  final deadlineDateOnly = DateTime(
+                    _selectedDeadlineDate!.year, 
+                    _selectedDeadlineDate!.month, 
+                    _selectedDeadlineDate!.day
+                  );
+                  
+                  final isInvalid = deadlineDateOnly.isAfter(dateDateOnly);
+                  
+                  if (!isInvalid) return const SizedBox.shrink();
+                  
+                  return Container(
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: Colors.red[50],
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(color: Colors.red[300]!),
+                    ),
+                    child: Row(
+                      children: [
+                        Icon(Icons.error_outline, size: 16, color: Colors.red[700]),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            '⚠️ 마감 시간은 근무일(${_selectedDate!.month}/${_selectedDate!.day}) 이전 또는 당일이어야 합니다',
+                            style: TextStyle(
+                              fontSize: 13,
+                              color: Colors.red[700],
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  );
+                },
+              ),
+              const SizedBox(height: 12),
+            ],
 
             // ✅ 업무 상세 (최대 3개, 시간 정보 포함)
             _buildSectionTitle('💼 업무 상세 (최대 3개)'),
@@ -639,7 +850,7 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
 
             // 생성 버튼
             ElevatedButton(
-              onPressed: _isCreating ? null : _createTO,
+              onPressed: _isCreating || _hasValidationError() ? null : _createTO,
               style: ElevatedButton.styleFrom(
                 backgroundColor: Colors.blue[700],
                 foregroundColor: Colors.white,
@@ -657,9 +868,9 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
                         valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
                       ),
                     )
-                  : const Text(
-                      'TO 생성',
-                      style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                  : Text(
+                      _dateMode == 'single' ? 'TO 생성' : 'TO 그룹 생성',
+                      style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
                     ),
             ),
             const SizedBox(height: 16),
@@ -764,14 +975,14 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
     );
   }
 
-  Widget _buildDatePicker() {
+  Widget _buildSingleDatePicker() {
     return InkWell(
       onTap: () async {
         final date = await showDatePicker(
           context: context,
-          initialDate: _selectedDate ?? DateTime.now(),
+          initialDate: _selectedDate ?? DateTime.now().add(const Duration(days: 1)),
           firstDate: DateTime.now(),
-          lastDate: DateTime.now().add(const Duration(days: 90)),
+          lastDate: DateTime.now().add(const Duration(days: 365)),
         );
         if (date != null) {
           setState(() => _selectedDate = date);
@@ -780,25 +991,185 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
       child: Container(
         padding: const EdgeInsets.all(16),
         decoration: BoxDecoration(
-          border: Border.all(color: Colors.grey[400]!),
+          border: Border.all(color: Colors.grey[300]!),
           borderRadius: BorderRadius.circular(8),
         ),
         child: Row(
           children: [
-            Icon(Icons.calendar_today, color: Colors.grey[700]),
+            Icon(Icons.calendar_today, color: Colors.blue[700]),
             const SizedBox(width: 12),
             Text(
-              _selectedDate != null
-                  ? '${_selectedDate!.year}-${_selectedDate!.month.toString().padLeft(2, '0')}-${_selectedDate!.day.toString().padLeft(2, '0')}'
-                  : '날짜 선택',
+              _selectedDate == null
+                  ? '날짜를 선택하세요'
+                  : '${_selectedDate!.year}-${_selectedDate!.month.toString().padLeft(2, '0')}-${_selectedDate!.day.toString().padLeft(2, '0')}',
               style: TextStyle(
                 fontSize: 16,
-                color: _selectedDate != null ? Colors.black : Colors.grey[600],
+                color: _selectedDate == null ? Colors.grey : Colors.black,
               ),
             ),
           ],
         ),
       ),
+    );
+  }
+  /// ✅ NEW: 날짜 범위 선택
+  Widget _buildDateRangePicker() {
+    return Column(
+      children: [
+        // 시작일
+        InkWell(
+          onTap: () async {
+            final date = await showDatePicker(
+              context: context,
+              initialDate: _startDate ?? DateTime.now().add(const Duration(days: 1)),
+              firstDate: DateTime.now(),
+              lastDate: DateTime.now().add(const Duration(days: 365)),
+            );
+            if (date != null) {
+              setState(() {
+                _startDate = date;
+                if (_endDate != null && _endDate!.isBefore(date)) {
+                  _endDate = null;
+                }
+              });
+            }
+          },
+          child: Container(
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              border: Border.all(color: Colors.grey[300]!),
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: Row(
+              children: [
+                Icon(Icons.calendar_today, color: Colors.blue[700]),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        '시작일',
+                        style: TextStyle(fontSize: 12, color: Colors.grey[600]),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        _startDate == null
+                            ? '날짜를 선택하세요'
+                            : '${_startDate!.year}-${_startDate!.month.toString().padLeft(2, '0')}-${_startDate!.day.toString().padLeft(2, '0')}',
+                        style: TextStyle(
+                          fontSize: 16,
+                          color: _startDate == null ? Colors.grey : Colors.black,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+        const SizedBox(height: 12),
+        
+        // 종료일
+        InkWell(
+          onTap: _startDate == null
+              ? null
+              : () async {
+                  final date = await showDatePicker(
+                    context: context,
+                    initialDate: _endDate ?? _startDate!.add(const Duration(days: 1)),
+                    firstDate: _startDate!,
+                    lastDate: DateTime.now().add(const Duration(days: 365)),
+                  );
+                  if (date != null) {
+                    setState(() => _endDate = date);
+                  }
+                },
+          child: Container(
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              border: Border.all(color: Colors.grey[300]!),
+              borderRadius: BorderRadius.circular(8),
+              color: _startDate == null ? Colors.grey[100] : null,
+            ),
+            child: Row(
+              children: [
+                Icon(
+                  Icons.calendar_today,
+                  color: _startDate == null ? Colors.grey : Colors.blue[700],
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        '종료일',
+                        style: TextStyle(fontSize: 12, color: Colors.grey[600]),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        _endDate == null
+                            ? (_startDate == null ? '시작일을 먼저 선택하세요' : '날짜를 선택하세요')
+                            : '${_endDate!.year}-${_endDate!.month.toString().padLeft(2, '0')}-${_endDate!.day.toString().padLeft(2, '0')}',
+                        style: TextStyle(
+                          fontSize: 16,
+                          color: _endDate == null ? Colors.grey : Colors.black,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+        
+        // 기간 표시
+        if (_startDate != null && _endDate != null) ...[
+          const SizedBox(height: 12),
+          Builder(
+            builder: (context) {
+              final daysDiff = _endDate!.difference(_startDate!).inDays + 1;
+              final isOverLimit = daysDiff > 30;
+              
+              return Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: isOverLimit ? Colors.red[50] : Colors.blue[50],
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(
+                    color: isOverLimit ? Colors.red[300]! : Colors.blue[200]!,
+                  ),
+                ),
+                child: Row(
+                  children: [
+                    Icon(
+                      isOverLimit ? Icons.error_outline : Icons.info_outline,
+                      size: 16,
+                      color: isOverLimit ? Colors.red[700] : Colors.blue[700],
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        isOverLimit
+                            ? '⚠️ 최대 30일까지만 선택 가능합니다 (현재 ${daysDiff}일)'
+                            : '총 ${daysDiff}일간의 TO가 생성됩니다',
+                        style: TextStyle(
+                          fontSize: 14,
+                          color: isOverLimit ? Colors.red[700] : Colors.blue[700],
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              );
+            },
+          ),
+        ],
+      ],
     );
   }
 
@@ -815,7 +1186,9 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
               lastDate: DateTime.now().add(const Duration(days: 90)),
             );
             if (date != null) {
-              setState(() => _selectedDeadlineDate = date);
+              setState(() {  // ✅ setState 추가
+                _selectedDeadlineDate = date;
+              });
             }
           },
           child: Container(
@@ -850,7 +1223,9 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
               initialTime: _selectedDeadlineTime ?? TimeOfDay.now(),
             );
             if (time != null) {
-              setState(() => _selectedDeadlineTime = time);
+              setState(() {  // ✅ setState 추가
+                _selectedDeadlineTime = time;
+              });
             }
           },
           child: Container(
@@ -1214,6 +1589,73 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
         print('⚠️ 알 수 없는 아이콘: $iconString');
         return Icons.work_outline;
     }
+  }
+  /// ✅ NEW: 날짜 선택 방식 토글
+Widget _buildDateModeSelector() {
+  return Container(
+    decoration: BoxDecoration(
+      color: Colors.grey[200],
+      borderRadius: BorderRadius.circular(12),
+    ),
+    padding: const EdgeInsets.all(4),
+    child: Row(
+      children: [
+        Expanded(
+          child: _buildModeButton(
+            label: '단일 날짜',
+            icon: Icons.calendar_today,
+            isSelected: _dateMode == 'single',
+            onTap: () => setState(() => _dateMode = 'single'),
+          ),
+        ),
+        Expanded(
+          child: _buildModeButton(
+            label: '날짜 범위',
+            icon: Icons.date_range,
+            isSelected: _dateMode == 'range',
+            onTap: () => setState(() => _dateMode = 'range'),
+          ),
+        ),
+      ],
+    ),
+  );
+}
+
+Widget _buildModeButton({
+    required String label,
+    required IconData icon,
+    required bool isSelected,
+    required VoidCallback onTap,
+  }) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.symmetric(vertical: 12),
+        decoration: BoxDecoration(
+          color: isSelected ? Colors.blue[700] : Colors.transparent,
+          borderRadius: BorderRadius.circular(8),
+        ),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(
+              icon,
+              size: 18,
+              color: isSelected ? Colors.white : Colors.grey[700],
+            ),
+            const SizedBox(width: 8),
+            Text(
+              label,
+              style: TextStyle(
+                fontSize: 14,
+                fontWeight: FontWeight.bold,
+                color: isSelected ? Colors.white : Colors.grey[700],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 
 

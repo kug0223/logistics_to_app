@@ -44,7 +44,7 @@ class _AdminTOListScreenState extends State<AdminTOListScreen> {
 
     try {
       // 1. 모든 TO 조회
-      final allTOs = await _firestoreService.getAllTOs();
+      final allTOs = await _firestoreService.getGroupMasterTOs();
       print('✅ 조회된 TO 개수: ${allTOs.length}');
 
       // 2. 각 TO별 지원자 통계를 병렬로 조회
@@ -419,7 +419,10 @@ class _AdminTOListScreenState extends State<AdminTOListScreen> {
                   Icon(Icons.calendar_today, size: 14, color: Colors.grey[600]),
                   const SizedBox(width: 4),
                   Text(
-                    dateFormat.format(to.date),
+                    // ✅ 그룹 TO면 범위, 아니면 단일 날짜
+                    to.isGroupTO && to.groupPeriodString != null
+                        ? '${to.groupPeriodString} (${to.groupDaysCount}일)'
+                        : dateFormat.format(to.date),
                     style: TextStyle(fontSize: 13, color: Colors.grey[700]),
                   ),
                   const SizedBox(width: 12),

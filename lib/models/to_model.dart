@@ -1,6 +1,6 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 
-/// TO(근무 오더) 모델 - 하위 컬렉션 방식
+/// TO(근무 오더) 모델 - 하위 컬렉션 방식 + 그룹 기능
 /// workDetails 하위 컬렉션에 업무 상세 정보 저장
 class TOModel {
   final String id; // 문서 ID
@@ -9,9 +9,12 @@ class TOModel {
   final String businessId; // 사업장 ID
   final String businessName; // 사업장명
   
-  // ✅ NEW Phase 2: TO 그룹 관리
+  // ✅ NEW: TO 그룹 관리 (날짜 범위 지원)
   final String? groupId; // 같은 그룹의 TO들을 묶는 ID (nullable)
-  final String? groupName; // 그룹 표시명 (nullable, 예: "물류센터_1025")
+  final String? groupName; // 그룹 표시명 (nullable, 예: "피킹 모집")
+  final DateTime? startDate; // 그룹 시작일 (nullable)
+  final DateTime? endDate; // 그룹 종료일 (nullable)
+  final bool isGroupMaster; // 대표 TO 여부 (목록 표시용, 기본값 false)
   
   // ✅ 제목
   final String title; // TO 제목 (예: "물류센터 파트타임알바")
@@ -34,8 +37,11 @@ class TOModel {
     required this.id,
     required this.businessId,
     required this.businessName,
-    this.groupId, // ✅ NEW Phase 2
-    this.groupName, // ✅ NEW Phase 2
+    this.groupId,
+    this.groupName,
+    this.startDate,
+    this.endDate,
+    this.isGroupMaster = false, // 기본값 false
     required this.title,
     required this.date,
     required this.startTime,
@@ -54,8 +60,15 @@ class TOModel {
       id: documentId,
       businessId: data['businessId'] ?? '',
       businessName: data['businessName'] ?? '',
-      groupId: data['groupId'], // ✅ NEW Phase 2
-      groupName: data['groupName'], // ✅ NEW Phase 2
+      groupId: data['groupId'],
+      groupName: data['groupName'],
+      startDate: data['startDate'] != null 
+          ? (data['startDate'] as Timestamp).toDate()
+          : null,
+      endDate: data['endDate'] != null 
+          ? (data['endDate'] as Timestamp).toDate()
+          : null,
+      isGroupMaster: data['isGroupMaster'] ?? false,
       title: data['title'] ?? '제목 없음',
       date: (data['date'] as Timestamp).toDate(),
       startTime: data['startTime'] ?? '',
@@ -84,8 +97,11 @@ class TOModel {
     return {
       'businessId': businessId,
       'businessName': businessName,
-      'groupId': groupId, // ✅ NEW Phase 2
-      'groupName': groupName, // ✅ NEW Phase 2
+      'groupId': groupId,
+      'groupName': groupName,
+      'startDate': startDate != null ? Timestamp.fromDate(startDate!) : null,
+      'endDate': endDate != null ? Timestamp.fromDate(endDate!) : null,
+      'isGroupMaster': isGroupMaster,
       'title': title,
       'date': Timestamp.fromDate(date),
       'startTime': startTime,
@@ -104,8 +120,11 @@ class TOModel {
     String? id,
     String? businessId,
     String? businessName,
-    String? groupId, // ✅ NEW Phase 2
-    String? groupName, // ✅ NEW Phase 2
+    String? groupId,
+    String? groupName,
+    DateTime? startDate,
+    DateTime? endDate,
+    bool? isGroupMaster,
     String? title,
     DateTime? date,
     String? startTime,
@@ -121,8 +140,11 @@ class TOModel {
       id: id ?? this.id,
       businessId: businessId ?? this.businessId,
       businessName: businessName ?? this.businessName,
-      groupId: groupId ?? this.groupId, // ✅ NEW Phase 2
-      groupName: groupName ?? this.groupName, // ✅ NEW Phase 2
+      groupId: groupId ?? this.groupId,
+      groupName: groupName ?? this.groupName,
+      startDate: startDate ?? this.startDate,
+      endDate: endDate ?? this.endDate,
+      isGroupMaster: isGroupMaster ?? this.isGroupMaster,
       title: title ?? this.title,
       date: date ?? this.date,
       startTime: startTime ?? this.startTime,
@@ -136,67 +158,89 @@ class TOModel {
     );
   }
 
-  // ==================== 편의 메서드 ====================
-
-  /// ✅ NEW Phase 2: 그룹에 속해있는지 여부
-  bool get isGrouped => groupId != null;
-
-  /// 포맷팅된 날짜 (예: "2025년 10월 25일")
-  String get formattedDate {
-    return '${date.year}년 ${date.month}월 ${date.day}일';
-  }
-
-  /// 요일 반환
-  String get weekday {
-    const weekdays = ['월', '화', '수', '목', '금', '토', '일'];
-    return weekdays[date.weekday - 1];
-  }
-
-  /// 시간 범위 (예: "09:00 ~ 18:00")
-  String get timeRange => '$startTime ~ $endTime';
-
-  /// 마감 여부 (전체 인원 기준)
-  bool get isFull => totalConfirmed >= totalRequired;
-
-  /// 남은 인원
-  int get remainingCount => totalRequired - totalConfirmed;
-
-  /// 지원 마감 시간이 지났는지
+  /// 마감 여부 체크
   bool get isDeadlinePassed {
     return DateTime.now().isAfter(applicationDeadline);
   }
 
-  /// 포맷팅된 마감 시간
-  String get formattedDeadline {
-    return '${applicationDeadline.month}/${applicationDeadline.day} '
-        '${applicationDeadline.hour.toString().padLeft(2, '0')}:'
-        '${applicationDeadline.minute.toString().padLeft(2, '0')}';
+  /// 그룹 TO 여부
+  bool get isGroupTO {
+    return groupId != null;
   }
 
-  /// 마감까지 남은 시간 표시 (예: "3시간 남음", "마감됨")
-  String get deadlineStatus {
-    if (isDeadlinePassed) {
-      return '마감됨';
-    }
+  /// 그룹 기간 문자열 (예: "10/24~10/30")
+  String? get groupPeriodString {
+    if (startDate == null || endDate == null) return null;
     
+    final start = '${startDate!.month}/${startDate!.day}';
+    final end = '${endDate!.month}/${endDate!.day}';
+    return '$start~$end';
+  }
+
+  /// 그룹 일수
+  int? get groupDaysCount {
+    if (startDate == null || endDate == null) return null;
+    return endDate!.difference(startDate!).inDays + 1;
+  }
+
+  /// 날짜 포맷 (예: "10/24 (금)")
+  String get formattedDate {
+    final weekdays = ['월', '화', '수', '목', '금', '토', '일'];
+    final weekday = weekdays[date.weekday - 1];
+    return '${date.month}/${date.day} ($weekday)';
+  }
+
+  /// 요일 (예: "금")
+  String get weekday {
+    final weekdays = ['월', '화', '수', '목', '금', '토', '일'];
+    return weekdays[date.weekday - 1];
+  }
+
+  /// 마감 상태 텍스트
+  String get deadlineStatus {
     final now = DateTime.now();
     final diff = applicationDeadline.difference(now);
     
-    if (diff.inMinutes < 60) {
-      return '${diff.inMinutes}분 남음';
+    if (diff.isNegative) {
+      return '마감';
+    } else if (diff.inHours < 1) {
+      return 'D-${diff.inMinutes}분';
     } else if (diff.inHours < 24) {
-      return '${diff.inHours}시간 남음';
+      return 'D-${diff.inHours}시간';
     } else {
-      final days = diff.inDays;
-      return '$days일 남음';
+      return 'D-${diff.inDays}일';
     }
   }
 
-  @override
-  String toString() {
-    return 'TOModel(id: $id, title: $title, businessName: $businessName, '
-        'groupId: $groupId, groupName: $groupName, '
-        'date: $formattedDate, totalRequired: $totalRequired, '
-        'totalConfirmed: $totalConfirmed)';
+  /// 마감 임박 여부 (24시간 이내)
+  bool get isDeadlineSoon {
+    final now = DateTime.now();
+    final diff = applicationDeadline.difference(now);
+    return diff.inHours < 24 && diff.inHours >= 0;
+  }
+
+  /// 그룹화된 TO인지 확인
+  bool get isGrouped {
+    return groupId != null;
+  }
+
+  /// 모집 정원이 다 찼는지 확인
+  bool get isFull {
+    return totalConfirmed >= totalRequired;
+  }
+
+  /// 남은 자리 수
+  int get availableSlots {
+    return totalRequired - totalConfirmed;
+  }
+  /// 시간 범위 (예: "09:00~18:00")
+  String get timeRange {
+    return '$startTime~$endTime';
+  }
+  /// 마감 시간 포맷 (예: "10/23 18:00")
+  String get formattedDeadline {
+    return '${applicationDeadline.month}/${applicationDeadline.day} '
+           '${applicationDeadline.hour.toString().padLeft(2, '0')}:'
+           '${applicationDeadline.minute.toString().padLeft(2, '0')}';
   }
 }
