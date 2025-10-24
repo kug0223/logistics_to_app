@@ -4,6 +4,7 @@ import '../models/to_model.dart';
 import '../models/application_model.dart';
 import '../models/business_model.dart';
 import '../models/work_type_model.dart';
+import '../models/work_detail_model.dart';
 import '../utils/toast_helper.dart';
 import '../models/business_work_type_model.dart';
 
@@ -706,4 +707,329 @@ class FirestoreService {
       return false;
     }
   }
+  /// WorkDetail 생성 (TO 생성 시 함께 호출)
+Future<bool> createWorkDetails({
+  required String toId,
+  required List<Map<String, dynamic>> workDetailsData,
+}) async {
+  try {
+    final batch = _firestore.batch();
+
+    for (int i = 0; i < workDetailsData.length; i++) {
+      final data = workDetailsData[i];
+      final docRef = _firestore
+          .collection('tos')
+          .doc(toId)
+          .collection('workDetails')
+          .doc();
+
+      batch.set(docRef, {
+        'workType': data['workType'],
+        'wage': data['wage'],
+        'requiredCount': data['requiredCount'],
+        'currentCount': 0,
+        'order': i,
+        'createdAt': FieldValue.serverTimestamp(),
+      });
+    }
+
+    await batch.commit();
+    print('✅ WorkDetails 생성 완료: ${workDetailsData.length}개');
+    return true;
+  } catch (e) {
+    print('❌ WorkDetails 생성 실패: $e');
+    ToastHelper.showError('업무 상세 정보 저장에 실패했습니다.');
+    return false;
+  }
+}
+
+/// 특정 TO의 WorkDetails 조회
+Future<List<WorkDetailModel>> getWorkDetails(String toId) async {
+  try {
+    final snapshot = await _firestore
+        .collection('tos')
+        .doc(toId)
+        .collection('workDetails')
+        .orderBy('order')
+        .get();
+
+    final workDetails = snapshot.docs
+        .map((doc) => WorkDetailModel.fromMap(doc.data(), doc.id))
+        .toList();
+
+    print('✅ WorkDetails 조회 완료: ${workDetails.length}개');
+    return workDetails;
+  } catch (e) {
+    print('❌ WorkDetails 조회 실패: $e');
+    return [];
+  }
+}
+
+/// 특정 WorkDetail의 currentCount 증가 (지원 확정 시)
+Future<bool> incrementWorkDetailCount(String toId, String workDetailId) async {
+  try {
+    await _firestore
+        .collection('tos')
+        .doc(toId)
+        .collection('workDetails')
+        .doc(workDetailId)
+        .update({
+      'currentCount': FieldValue.increment(1),
+    });
+
+    print('✅ WorkDetail currentCount 증가');
+    return true;
+  } catch (e) {
+    print('❌ WorkDetail currentCount 증가 실패: $e');
+    return false;
+  }
+}
+
+/// 특정 WorkDetail의 currentCount 감소 (지원 취소/거절 시)
+Future<bool> decrementWorkDetailCount(String toId, String workDetailId) async {
+  try {
+    await _firestore
+        .collection('tos')
+        .doc(toId)
+        .collection('workDetails')
+        .doc(workDetailId)
+        .update({
+      'currentCount': FieldValue.increment(-1),
+    });
+
+    print('✅ WorkDetail currentCount 감소');
+    return true;
+  } catch (e) {
+    print('❌ WorkDetail currentCount 감소 실패: $e');
+    return false;
+  }
+}
+
+/// WorkDetail ID 찾기 (workType으로 검색)
+Future<String?> findWorkDetailIdByType(String toId, String workType) async {
+  try {
+    final snapshot = await _firestore
+        .collection('tos')
+        .doc(toId)
+        .collection('workDetails')
+        .where('workType', isEqualTo: workType)
+        .limit(1)
+        .get();
+
+    if (snapshot.docs.isEmpty) {
+      print('⚠️ WorkDetail을 찾을 수 없음: $workType');
+      return null;
+    }
+
+    return snapshot.docs.first.id;
+  } catch (e) {
+    print('❌ WorkDetail 검색 실패: $e');
+    return null;
+  }
+}
+
+/// TO 생성 (WorkDetails 포함) - 기존 createTO 메서드 대체
+Future<String?> createTOWithDetails({
+  required String businessId,
+  required String businessName,
+  required String title,
+  required DateTime date,
+  required String startTime,
+  required String endTime,
+  required DateTime applicationDeadline,
+  required List<Map<String, dynamic>> workDetailsData, // [{workType, wage, requiredCount}, ...]
+  String? description,
+  required String creatorUID,
+}) async {
+  try {
+    // 1. 전체 필요 인원 계산
+    int totalRequired = 0;
+    for (var detail in workDetailsData) {
+      totalRequired += (detail['requiredCount'] as int);
+    }
+
+    // 2. TO 메인 문서 생성
+    final toRef = _firestore.collection('tos').doc();
+    
+    await toRef.set({
+      'businessId': businessId,
+      'businessName': businessName,
+      'title': title,
+      'date': Timestamp.fromDate(date),
+      'startTime': startTime,
+      'endTime': endTime,
+      'applicationDeadline': Timestamp.fromDate(applicationDeadline),
+      'totalRequired': totalRequired,
+      'totalConfirmed': 0,
+      'description': description,
+      'creatorUID': creatorUID,
+      'createdAt': FieldValue.serverTimestamp(),
+    });
+
+    // 3. WorkDetails 하위 컬렉션 생성
+    final success = await createWorkDetails(
+      toId: toRef.id,
+      workDetailsData: workDetailsData,
+    );
+
+    if (!success) {
+      // WorkDetails 생성 실패 시 TO 삭제
+      await toRef.delete();
+      return null;
+    }
+
+    print('✅ TO 생성 완료: ${toRef.id}');
+    ToastHelper.showSuccess('TO가 생성되었습니다.');
+    return toRef.id;
+  } catch (e) {
+    print('❌ TO 생성 실패: $e');
+    ToastHelper.showError('TO 생성에 실패했습니다.');
+    return null;
+  }
+}
+
+/// 지원하기 (업무유형 선택) - 기존 applyToTO 메서드 대체
+Future<bool> applyToTOWithWorkType({
+  required String toId,
+  required String uid,
+  required String selectedWorkType,
+  required int wage,
+}) async {
+  try {
+    // 1. 중복 지원 확인
+    final existingApp = await _firestore
+        .collection('applications')
+        .where('toId', isEqualTo: toId)
+        .where('uid', isEqualTo: uid)
+        .limit(1)
+        .get();
+
+    if (existingApp.docs.isNotEmpty) {
+      ToastHelper.showWarning('이미 지원한 TO입니다.');
+      return false;
+    }
+
+    // 2. 지원서 생성
+    await _firestore.collection('applications').add({
+      'toId': toId,
+      'uid': uid,
+      'selectedWorkType': selectedWorkType,
+      'wage': wage,
+      'status': 'PENDING',
+      'appliedAt': FieldValue.serverTimestamp(),
+    });
+
+    print('✅ 지원 완료: TO=$toId, WorkType=$selectedWorkType');
+    ToastHelper.showSuccess('지원이 완료되었습니다!');
+    return true;
+  } catch (e) {
+    print('❌ 지원 실패: $e');
+    ToastHelper.showError('지원 중 오류가 발생했습니다.');
+    return false;
+  }
+}
+
+/// 지원자 업무유형 변경 (관리자용)
+Future<bool> changeApplicationWorkType({
+  required String applicationId,
+  required String newWorkType,
+  required int newWage,
+  required String adminUID,
+}) async {
+  try {
+    // 1. 기존 지원서 조회
+    final appDoc = await _firestore
+        .collection('applications')
+        .doc(applicationId)
+        .get();
+
+    if (!appDoc.exists) {
+      ToastHelper.showError('지원서를 찾을 수 없습니다.');
+      return false;
+    }
+
+    final appData = appDoc.data()!;
+    final currentWorkType = appData['selectedWorkType'];
+    final currentWage = appData['wage'];
+
+    // 2. 업무유형 변경
+    await _firestore.collection('applications').doc(applicationId).update({
+      'selectedWorkType': newWorkType,
+      'wage': newWage,
+      'originalWorkType': appData['originalWorkType'] ?? currentWorkType, // 최초값 저장
+      'originalWage': appData['originalWage'] ?? currentWage,
+      'changedAt': FieldValue.serverTimestamp(),
+      'changedBy': adminUID,
+    });
+
+    print('✅ 업무유형 변경 완료: $currentWorkType → $newWorkType');
+    ToastHelper.showSuccess('업무유형이 변경되었습니다.');
+    return true;
+  } catch (e) {
+    print('❌ 업무유형 변경 실패: $e');
+    ToastHelper.showError('업무유형 변경에 실패했습니다.');
+    return false;
+  }
+}
+
+/// 지원자 확정 (WorkDetail count 업데이트 포함)
+Future<bool> confirmApplicantWithWorkDetail({
+  required String applicationId,
+  required String toId,
+  required String adminUID,
+}) async {
+  try {
+    // 1. 지원서 조회
+    final appDoc = await _firestore
+        .collection('applications')
+        .doc(applicationId)
+        .get();
+
+    if (!appDoc.exists) {
+      ToastHelper.showError('지원서를 찾을 수 없습니다.');
+      return false;
+    }
+
+    final appData = appDoc.data()!;
+    final selectedWorkType = appData['selectedWorkType'];
+
+    // 2. WorkDetail ID 찾기
+    final workDetailId = await findWorkDetailIdByType(toId, selectedWorkType);
+    if (workDetailId == null) {
+      ToastHelper.showError('업무유형 정보를 찾을 수 없습니다.');
+      return false;
+    }
+
+    // 3. Batch 업데이트
+    final batch = _firestore.batch();
+
+    // 지원서 확정
+    batch.update(_firestore.collection('applications').doc(applicationId), {
+      'status': 'CONFIRMED',
+      'confirmedAt': FieldValue.serverTimestamp(),
+      'confirmedBy': adminUID,
+    });
+
+    // WorkDetail currentCount 증가
+    batch.update(
+      _firestore.collection('tos').doc(toId).collection('workDetails').doc(workDetailId),
+      {'currentCount': FieldValue.increment(1)},
+    );
+
+    // TO totalConfirmed 증가
+    batch.update(_firestore.collection('tos').doc(toId), {
+      'totalConfirmed': FieldValue.increment(1),
+    });
+
+    await batch.commit();
+
+    print('✅ 지원자 확정 완료');
+    ToastHelper.showSuccess('지원자가 확정되었습니다.');
+    return true;
+  } catch (e) {
+    print('❌ 지원자 확정 실패: $e');
+    ToastHelper.showError('확정 중 오류가 발생했습니다.');
+    return false;
+  }
+}
 }

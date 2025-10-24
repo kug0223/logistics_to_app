@@ -8,11 +8,11 @@ class TOCardWidget extends StatelessWidget {
   final String? applicationStatus; // 지원 상태 추가!
 
   const TOCardWidget({
-    Key? key,
+    super.key,
     required this.to,
     this.onTap,
     this.applicationStatus, // 추가!
-  }) : super(key: key);
+  });
 
   @override
   // ✅ 마감 뱃지 빌드 메서드 (NEW!)

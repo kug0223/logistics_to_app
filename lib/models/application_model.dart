@@ -1,10 +1,21 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 
-/// 지원서 모델
+/// 지원서 모델 - 업무유형 선택 및 변경 이력 지원
 class ApplicationModel {
   final String id; // 문서 ID
   final String toId; // 지원한 TO의 ID
   final String uid; // 지원자 UID
+  
+  // ✅ NEW: 업무 유형 및 금액
+  final String selectedWorkType; // 현재 지원한 업무 유형 (예: "피킹")
+  final int wage; // 지원 시점의 금액 (업무유형 변경 시 함께 업데이트)
+  
+  // ✅ NEW: 업무 변경 이력
+  final String? originalWorkType; // 최초 지원한 업무 유형 (변경 시에만 값 존재)
+  final int? originalWage; // 최초 지원 시 금액
+  final DateTime? changedAt; // 업무유형 변경 시각
+  final String? changedBy; // 업무유형 변경한 관리자 UID
+  
   final String status; // PENDING, CONFIRMED, REJECTED, CANCELED
   final DateTime appliedAt; // 지원 시각
   final DateTime? confirmedAt; // 확정 시각 (null 가능)
@@ -14,6 +25,12 @@ class ApplicationModel {
     required this.id,
     required this.toId,
     required this.uid,
+    required this.selectedWorkType,
+    required this.wage,
+    this.originalWorkType,
+    this.originalWage,
+    this.changedAt,
+    this.changedBy,
     required this.status,
     required this.appliedAt,
     this.confirmedAt,
@@ -26,6 +43,14 @@ class ApplicationModel {
       id: documentId,
       toId: data['toId'] ?? '',
       uid: data['uid'] ?? '',
+      selectedWorkType: data['selectedWorkType'] ?? '',
+      wage: data['wage'] ?? 0,
+      originalWorkType: data['originalWorkType'],
+      originalWage: data['originalWage'],
+      changedAt: data['changedAt'] != null
+          ? (data['changedAt'] as Timestamp).toDate()
+          : null,
+      changedBy: data['changedBy'],
       status: data['status'] ?? 'PENDING',
       appliedAt: data['appliedAt'] != null
           ? (data['appliedAt'] as Timestamp).toDate()
@@ -38,9 +63,9 @@ class ApplicationModel {
   }
   
   /// Firestore DocumentSnapshot에서 변환
-factory ApplicationModel.fromFirestore(DocumentSnapshot doc) {
-  final data = doc.data() as Map<String, dynamic>;
-  return ApplicationModel.fromMap(data, doc.id);
+  factory ApplicationModel.fromFirestore(DocumentSnapshot doc) {
+    final data = doc.data() as Map<String, dynamic>;
+    return ApplicationModel.fromMap(data, doc.id);
   }
   
   /// ApplicationModel을 Firestore 문서로 변환
@@ -48,6 +73,12 @@ factory ApplicationModel.fromFirestore(DocumentSnapshot doc) {
     return {
       'toId': toId,
       'uid': uid,
+      'selectedWorkType': selectedWorkType,
+      'wage': wage,
+      'originalWorkType': originalWorkType,
+      'originalWage': originalWage,
+      'changedAt': changedAt != null ? Timestamp.fromDate(changedAt!) : null,
+      'changedBy': changedBy,
       'status': status,
       'appliedAt': Timestamp.fromDate(appliedAt),
       'confirmedAt': confirmedAt != null ? Timestamp.fromDate(confirmedAt!) : null,
@@ -87,11 +118,28 @@ factory ApplicationModel.fromFirestore(DocumentSnapshot doc) {
     }
   }
 
+  /// 업무유형이 변경되었는지 여부
+  bool get isWorkTypeChanged => originalWorkType != null;
+
+  /// 포맷팅된 금액 (예: "50,000원")
+  String get formattedWage {
+    return '${wage.toString().replaceAllMapped(
+      RegExp(r'(\d{1,3})(?=(\d{3})+(?!\d))'),
+      (Match m) => '${m[1]},',
+    )}원';
+  }
+
   /// 복사본 생성
   ApplicationModel copyWith({
     String? id,
     String? toId,
     String? uid,
+    String? selectedWorkType,
+    int? wage,
+    String? originalWorkType,
+    int? originalWage,
+    DateTime? changedAt,
+    String? changedBy,
     String? status,
     DateTime? appliedAt,
     DateTime? confirmedAt,
@@ -101,10 +149,23 @@ factory ApplicationModel.fromFirestore(DocumentSnapshot doc) {
       id: id ?? this.id,
       toId: toId ?? this.toId,
       uid: uid ?? this.uid,
+      selectedWorkType: selectedWorkType ?? this.selectedWorkType,
+      wage: wage ?? this.wage,
+      originalWorkType: originalWorkType ?? this.originalWorkType,
+      originalWage: originalWage ?? this.originalWage,
+      changedAt: changedAt ?? this.changedAt,
+      changedBy: changedBy ?? this.changedBy,
       status: status ?? this.status,
       appliedAt: appliedAt ?? this.appliedAt,
       confirmedAt: confirmedAt ?? this.confirmedAt,
       confirmedBy: confirmedBy ?? this.confirmedBy,
     );
+  }
+
+  @override
+  String toString() {
+    return 'ApplicationModel(id: $id, toId: $toId, uid: $uid, '
+        'selectedWorkType: $selectedWorkType, wage: $wage, '
+        'status: $status, isChanged: $isWorkTypeChanged)';
   }
 }

@@ -36,8 +36,10 @@ class _BusinessRegistrationScreenState extends State<BusinessRegistrationScreen>
   // Step 2: 사업장 정보
   final _businessNumberController = TextEditingController();
   final _nameController = TextEditingController();
+  final _displayNameController = TextEditingController(); // ✅ NEW: 공개 표시명
+  bool _useDisplayName = false; // ✅ NEW: 표시명 사용 여부
   final _addressController = TextEditingController();
-  final _detailAddressController = TextEditingController(); // ⭐ 상세주소 추가!
+  final _detailAddressController = TextEditingController();
   final _phoneController = TextEditingController();
   final _descriptionController = TextEditingController();
   
@@ -51,8 +53,9 @@ class _BusinessRegistrationScreenState extends State<BusinessRegistrationScreen>
   void dispose() {
     _businessNumberController.dispose();
     _nameController.dispose();
+    _displayNameController.dispose(); // ✅ NEW
     _addressController.dispose();
-    _detailAddressController.dispose(); // ⭐ 추가
+    _detailAddressController.dispose();
     _phoneController.dispose();
     _descriptionController.dispose();
     super.dispose();
@@ -76,6 +79,13 @@ class _BusinessRegistrationScreenState extends State<BusinessRegistrationScreen>
       ToastHelper.showError('주소를 입력해주세요');
       return false;
     }
+    
+    // ✅ NEW: displayName 사용 시 입력 검증
+    if (_useDisplayName && _displayNameController.text.trim().isEmpty) {
+      ToastHelper.showError('공개 표시명을 입력해주세요');
+      return false;
+    }
+    
     return true;
   }
 
@@ -107,14 +117,13 @@ class _BusinessRegistrationScreenState extends State<BusinessRegistrationScreen>
       setState(() {
         _addressController.text = result.fullAddress;
         
-        // 좌표 자동 입력
         if (result.latitude != null && result.longitude != null) {
           _latitude = result.latitude;
           _longitude = result.longitude;
           print('✅ 좌표 자동 입력: $_latitude, $_longitude');
         } else {
-          print('⚠️ 좌표 정보 없음 (수동 입력 모드)');
-      }
+          print('⚠️ 좌표 정보 없음');
+        }
       });
     }
   }
@@ -150,77 +159,68 @@ class _BusinessRegistrationScreenState extends State<BusinessRegistrationScreen>
     }
   }
 
-  /// 사업장 등록 처리
+  /// 사업장 등록
   Future<void> _handleSubmit() async {
-    if (_isSaving) return;
-    
     setState(() => _isSaving = true);
-    
+
     try {
       final userProvider = Provider.of<UserProvider>(context, listen: false);
       final uid = userProvider.currentUser?.uid;
-      
+
       if (uid == null) {
-        ToastHelper.showError('로그인 정보를 찾을 수 없습니다');
+        ToastHelper.showError('로그인이 필요합니다');
         return;
       }
-      
-      // ⭐ 전체 주소 = 기본 주소 + 상세주소
-      final fullAddress = _detailAddressController.text.trim().isEmpty
-          ? _addressController.text.trim()
-          : '${_addressController.text.trim()} ${_detailAddressController.text.trim()}';
-      
-      // 사업장 모델 생성
+
+      // 주소 조합 (기본 주소 + 상세 주소)
+      String fullAddress = _addressController.text.trim();
+      if (_detailAddressController.text.trim().isNotEmpty) {
+        fullAddress += ', ${_detailAddressController.text.trim()}';
+      }
+
       final business = BusinessModel(
         id: '',
-        ownerId: uid,
         businessNumber: _businessNumberController.text.replaceAll('-', ''),
         name: _nameController.text.trim(),
+        displayName: _useDisplayName ? _displayNameController.text.trim() : null, // ✅ NEW
+        useDisplayName: _useDisplayName, // ✅ NEW
         category: _selectedCategory!,
         subCategory: _selectedSubCategory!,
-        address: fullAddress, // ⭐ 전체 주소 저장
+        address: fullAddress,
         latitude: _latitude,
         longitude: _longitude,
-        phone: _phoneController.text.trim(),
-        description: _descriptionController.text.trim(),
-        isApproved: true,
+        ownerId: uid,
+        phone: _phoneController.text.trim().isNotEmpty ? _phoneController.text.trim() : null,
+        description: _descriptionController.text.trim().isNotEmpty ? _descriptionController.text.trim() : null,
+        isApproved: false,
         createdAt: DateTime.now(),
       );
-      
-      // Firestore에 저장
+
       final businessId = await _firestoreService.createBusiness(business);
-      
-      // users 컬렉션에 businessId 업데이트
-      await FirebaseFirestore.instance
-          .collection('users')
-          .doc(uid)
-          .update({'businessId': businessId});
-      
-      ToastHelper.showSuccess('사업장 등록이 완료되었습니다!');
-      
-      if (mounted) {
-        // ✅ 이 부분을 수정하세요!
+
+      if (businessId != null) {
+        // UserModel의 businessId 업데이트
+        await _firestoreService.updateUserBusinessId(uid, businessId);
+
+        if (!mounted) return;
+
+        ToastHelper.showSuccess('사업장이 등록되었습니다!');
+
         if (widget.isFromSignUp) {
-          // 회원가입에서 온 경우 → 로그인 화면으로
-          Navigator.of(context).pushNamedAndRemoveUntil(
-            '/login',  // ← '/home'을 '/login'으로 변경!
+          // 회원가입 후 → 로그인 화면으로
+          Navigator.pushAndRemoveUntil(
+            context,
+            MaterialPageRoute(builder: (context) => const LoginScreen()),
             (route) => false,
           );
-          
-          // 추가 안내 메시지
-          Future.delayed(const Duration(milliseconds: 500), () {
-            if (mounted) {
-              ToastHelper.showInfo('등록하신 계정으로 로그인해주세요');
-            }
-          });
         } else {
-          // 홈에서 온 경우 → 단순히 뒤로가기
-          Navigator.of(context).pop(true);
+          // 일반 등록 → 뒤로가기
+          Navigator.pop(context, true);
         }
       }
     } catch (e) {
-      print('❌ 사업장 등록 에러: $e');
-      ToastHelper.showError('사업장 등록에 실패했습니다: $e');
+      print('❌ 사업장 등록 실패: $e');
+      ToastHelper.showError('사업장 등록에 실패했습니다');
     } finally {
       if (mounted) {
         setState(() => _isSaving = false);
@@ -232,60 +232,49 @@ class _BusinessRegistrationScreenState extends State<BusinessRegistrationScreen>
   Widget build(BuildContext context) {
     return WillPopScope(
       onWillPop: () async {
-        // ⭐ 회원가입에서 온 경우만 다이얼로그 표시
         if (widget.isFromSignUp) {
-          final shouldPop = await showDialog<bool>(
+          // 회원가입 후라면 뒤로가기 방지
+          final confirmed = await showDialog<bool>(
             context: context,
             builder: (context) => AlertDialog(
-              title: const Text('사업장 등록 취소'),
-              content: const Text(
-                '사업장 등록을 나중에 하시겠습니까?\n'
-                '나중에 프로필에서 등록할 수 있습니다.',
-              ),
+              title: const Text('등록 취소'),
+              content: const Text('사업장 등록을 취소하시겠습니까?\n로그인 화면으로 이동합니다.'),
               actions: [
                 TextButton(
                   onPressed: () => Navigator.pop(context, false),
                   child: const Text('계속 등록'),
                 ),
                 TextButton(
-                  onPressed: () {
-                    Navigator.pop(context, true);  // 다이얼로그 닫기
-                    // ✅ 이 줄을 추가하세요!
-                    Navigator.of(context).pushNamedAndRemoveUntil(
-                      '/login',
-                      (route) => false,
-                    );
-                  },
-                  child: const Text('나중에 하기'),
+                  onPressed: () => Navigator.pop(context, true),
+                  child: const Text('취소', style: TextStyle(color: Colors.red)),
                 ),
               ],
             ),
           );
-          return shouldPop ?? false;
+
+          if (confirmed == true && mounted) {
+            Navigator.pushAndRemoveUntil(
+              context,
+              MaterialPageRoute(builder: (context) => const LoginScreen()),
+              (route) => false,
+            );
+          }
+          return false;
         }
-        return true; // 홈에서 온 경우 그냥 뒤로가기
+        return true;
       },
       child: Scaffold(
         appBar: AppBar(
           title: const Text('사업장 등록'),
-          backgroundColor: Colors.blue.shade700,
-          automaticallyImplyLeading: !widget.isFromSignUp, // ⭐ 회원가입에서 온 경우 뒤로가기 버튼 숨김
+          backgroundColor: Colors.blue[700],
+          automaticallyImplyLeading: !widget.isFromSignUp,
         ),
         body: _isSaving
-            ? const Center(
-                child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    CircularProgressIndicator(),
-                    SizedBox(height: 16),
-                    Text('사업장 등록 중...'),
-                  ],
-                ),
-              )
+            ? const LoadingWidget(message: '사업장을 등록하는 중...')
             : Stepper(
                 currentStep: _currentStep,
                 onStepContinue: _onStepContinue,
-                onStepCancel: _onStepCancel,
+                onStepCancel: _currentStep > 0 ? _onStepCancel : null,
                 controlsBuilder: (context, details) {
                   return Padding(
                     padding: const EdgeInsets.only(top: 16),
@@ -294,14 +283,14 @@ class _BusinessRegistrationScreenState extends State<BusinessRegistrationScreen>
                         ElevatedButton(
                           onPressed: details.onStepContinue,
                           style: ElevatedButton.styleFrom(
-                            backgroundColor: Colors.blue.shade700,
+                            backgroundColor: Colors.blue[700],
                             foregroundColor: Colors.white,
                           ),
-                          child: Text(_currentStep == 1 ? '등록 완료' : '다음'),
+                          child: Text(_currentStep == 1 ? '완료' : '다음'),
                         ),
                         if (_currentStep > 0) ...[
                           const SizedBox(width: 12),
-                          TextButton(
+                          OutlinedButton(
                             onPressed: details.onStepCancel,
                             child: const Text('이전'),
                           ),
@@ -397,7 +386,8 @@ class _BusinessRegistrationScreenState extends State<BusinessRegistrationScreen>
           TextFormField(
             controller: _nameController,
             decoration: const InputDecoration(
-              labelText: '사업장명',
+              labelText: '사업장명 (정식 명칭)',
+              hintText: '예: A물류센터',
               border: OutlineInputBorder(),
             ),
             validator: (value) {
@@ -406,6 +396,94 @@ class _BusinessRegistrationScreenState extends State<BusinessRegistrationScreen>
               }
               return null;
             },
+          ),
+          const SizedBox(height: 16),
+
+          // ✅ NEW: 공개 표시명 사용 여부
+          Container(
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              color: Colors.blue[50],
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(color: Colors.blue[200]!),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Icon(Icons.info_outline, color: Colors.blue[700], size: 20),
+                    const SizedBox(width: 8),
+                    const Text(
+                      '공개 표시명 설정',
+                      style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  'TO 공고에 회사명이나 브랜드명을 표시하고 싶다면 설정하세요.',
+                  style: TextStyle(fontSize: 13, color: Colors.grey[700]),
+                ),
+                const SizedBox(height: 12),
+                CheckboxListTile(
+                  value: _useDisplayName,
+                  onChanged: (value) {
+                    setState(() {
+                      _useDisplayName = value ?? false;
+                    });
+                  },
+                  title: const Text('공개 표시명 사용'),
+                  subtitle: const Text('예: 주식회사 위워커'),
+                  contentPadding: EdgeInsets.zero,
+                  controlAffinity: ListTileControlAffinity.leading,
+                ),
+                
+                // displayName 입력 필드 (체크박스 선택 시만 표시)
+                if (_useDisplayName) ...[
+                  const SizedBox(height: 12),
+                  TextFormField(
+                    controller: _displayNameController,
+                    decoration: const InputDecoration(
+                      labelText: '공개 표시명',
+                      hintText: '예: 주식회사 위워커',
+                      border: OutlineInputBorder(),
+                      filled: true,
+                      fillColor: Colors.white,
+                    ),
+                    validator: (value) {
+                      if (_useDisplayName && (value == null || value.trim().isEmpty)) {
+                        return '공개 표시명을 입력해주세요';
+                      }
+                      return null;
+                    },
+                  ),
+                  const SizedBox(height: 8),
+                  Container(
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: Colors.grey[100],
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: Row(
+                      children: [
+                        Icon(Icons.preview, color: Colors.grey[600], size: 16),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            'TO 공고 표시: ${_displayNameController.text.isEmpty ? "공개 표시명" : _displayNameController.text}',
+                            style: TextStyle(fontSize: 12, color: Colors.grey[700]),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ],
+            ),
           ),
           const SizedBox(height: 16),
 
@@ -425,7 +503,7 @@ class _BusinessRegistrationScreenState extends State<BusinessRegistrationScreen>
           ),
           const SizedBox(height: 16),
 
-          // ⭐ 상세주소 입력 (NEW!)
+          // 상세주소 입력
           TextFormField(
             controller: _detailAddressController,
             decoration: const InputDecoration(
