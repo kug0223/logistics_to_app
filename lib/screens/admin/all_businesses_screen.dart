@@ -1,14 +1,13 @@
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import '../../models/business_model.dart';
-import '../../models/user_model.dart';
 import '../../widgets/loading_widget.dart';
 import '../../utils/toast_helper.dart';
 
 /// ✅ 모든 사업장 조회 화면 (최고관리자 전용)
 /// ownerId 필터 없이 모든 사업장 표시
 class AllBusinessesScreen extends StatefulWidget {
-  const AllBusinessesScreen({Key? key}) : super(key: key);
+  const AllBusinessesScreen({super.key});
 
   @override
   State<AllBusinessesScreen> createState() => _AllBusinessesScreenState();

@@ -1,21 +1,166 @@
 import 'package:flutter/material.dart';
 import '../models/to_model.dart';
 
-/// TO 정보를 표시하는 카드 위젯
+/// TO 정보를 표시하는 카드 위젯 - 신버전
 class TOCardWidget extends StatelessWidget {
   final TOModel to;
   final VoidCallback? onTap;
-  final String? applicationStatus; // 지원 상태 추가!
+  final String? applicationStatus; // 지원 상태 (PENDING, CONFIRMED, REJECTED, CANCELED)
 
   const TOCardWidget({
     super.key,
     required this.to,
     this.onTap,
-    this.applicationStatus, // 추가!
+    this.applicationStatus,
   });
 
   @override
-  // ✅ 마감 뱃지 빌드 메서드 (NEW!)
+  Widget build(BuildContext context) {
+    return Card(
+      elevation: 2,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(12),
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // 1행: 사업장명 + 배지들
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Expanded(
+                    child: Text(
+                      to.businessName,
+                      style: const TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.bold,
+                      ),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  
+                  // 배지들
+                  Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      // 마감 배지
+                      _buildDeadlineBadge(),
+                      const SizedBox(width: 4),
+                      
+                      // 지원 상태 배지
+                      if (applicationStatus != null) _buildStatusBadge(),
+                    ],
+                  ),
+                ],
+              ),
+              
+              const SizedBox(height: 8),
+              
+              // ✅ 제목
+              Text(
+                to.title,
+                style: TextStyle(
+                  fontSize: 15,
+                  fontWeight: FontWeight.w600,
+                  color: Colors.grey[800],
+                ),
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+              ),
+              
+              const SizedBox(height: 12),
+              
+              // 2행: 날짜 + 요일
+              Row(
+                children: [
+                  Icon(Icons.calendar_today, size: 16, color: Colors.grey[600]),
+                  const SizedBox(width: 6),
+                  Text(
+                    '${to.formattedDate} (${to.weekday})',
+                    style: TextStyle(
+                      fontSize: 14,
+                      color: Colors.grey[700],
+                    ),
+                  ),
+                ],
+              ),
+              
+              const SizedBox(height: 8),
+              
+              // 3행: 시간대
+              Row(
+                children: [
+                  Icon(Icons.access_time, size: 16, color: Colors.grey[600]),
+                  const SizedBox(width: 6),
+                  Text(
+                    to.timeRange, // "09:00 - 18:00"
+                    style: TextStyle(
+                      fontSize: 14,
+                      color: Colors.grey[700],
+                    ),
+                  ),
+                ],
+              ),
+              
+              const Divider(height: 20, thickness: 1),
+              
+              // 4행: 인원 정보 + 마감까지 남은 시간
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  // ✅ 전체 인원 정보
+                  Row(
+                    children: [
+                      Icon(Icons.people, size: 16, color: Colors.blue[700]),
+                      const SizedBox(width: 6),
+                      Text(
+                        '${to.totalConfirmed}/${to.totalRequired}명',
+                        style: TextStyle(
+                          fontSize: 14,
+                          fontWeight: FontWeight.w600,
+                          color: Colors.blue[700],
+                        ),
+                      ),
+                    ],
+                  ),
+                  
+                  // 마감까지 남은 시간
+                  if (!to.isDeadlinePassed)
+                    Row(
+                      children: [
+                        Icon(
+                          Icons.timer_outlined,
+                          size: 14,
+                          color: Colors.orange[600],
+                        ),
+                        const SizedBox(width: 4),
+                        Text(
+                          to.deadlineStatus, // "3시간 남음"
+                          style: TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w600,
+                            color: Colors.orange[600],
+                          ),
+                        ),
+                      ],
+                    ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// ✅ 마감 배지 빌드 메서드
   Widget _buildDeadlineBadge() {
     if (to.isDeadlinePassed) {
       // 마감됨 (빨간색)
@@ -36,7 +181,7 @@ class TOCardWidget extends StatelessWidget {
             ),
             const SizedBox(width: 4),
             Text(
-              '마감됨',
+              '마감',
               style: TextStyle(
                 fontSize: 12,
                 fontWeight: FontWeight.bold,
@@ -83,177 +228,8 @@ class TOCardWidget extends StatelessWidget {
     
     return const SizedBox.shrink(); // 마감 임박 아니면 표시 안 함
   }
-  @override
-  Widget build(BuildContext context) {
-    return Card(
-      margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-      elevation: 2,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(12),
-      ),
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(12),
-        child: Padding(
-          padding: const EdgeInsets.all(16),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              // 1행: 사업장명 + 상태 배지들
-              Row(
-                children: [
-                  Expanded(
-                    child: Text(
-                      to.businessName,
-                      style: const TextStyle(
-                        fontSize: 17,
-                        fontWeight: FontWeight.bold,
-                      ),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  
-                  // ✅ 마감 뱃지 (NEW!)
-                  _buildDeadlineBadge(),
-                  const SizedBox(width: 4),
-                  
-                  // 기존 지원 상태 배지
-                  if (applicationStatus != null) _buildStatusBadge(),
-                ],
-              ),
-              
-              const SizedBox(height: 12),
-              
-              // 2행: 날짜 + 요일
-              Row(
-                children: [
-                  Icon(Icons.calendar_today, size: 16, color: Colors.grey[600]),
-                  const SizedBox(width: 6),
-                  Text(
-                    '${to.formattedDate} (${to.weekday})',
-                    style: TextStyle(
-                      fontSize: 14,
-                      color: Colors.grey[700],
-                    ),
-                  ),
-                ],
-              ),
-              
-              const SizedBox(height: 8),
-              
-              // 3행: 시간대
-              Row(
-                children: [
-                  Icon(Icons.access_time, size: 16, color: Colors.grey[600]),
-                  const SizedBox(width: 6),
-                  Text(
-                    to.timeRange, // "09:00 - 18:00"
-                    style: TextStyle(
-                      fontSize: 14,
-                      color: Colors.grey[700],
-                    ),
-                  ),
-                ],
-              ),
-              
-              const SizedBox(height: 8),
-              
-              // 4행: 업무 유형
-              Row(
-                children: [
-                  Icon(Icons.work_outline, size: 16, color: Colors.grey[600]),
-                  const SizedBox(width: 6),
-                  Text(
-                    to.workType,
-                    style: TextStyle(
-                      fontSize: 14,
-                      color: Colors.grey[700],
-                    ),
-                  ),
-                ],
-              ),
-              
-              const Divider(height: 20, thickness: 1),
-              
-              // 5행: 인원 정보 + 지원 마감까지 시간
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  // 인원 정보
-                  Row(
-                    children: [
-                      Icon(Icons.people, size: 16, color: Colors.blue[700]),
-                      const SizedBox(width: 6),
-                      Text(
-                        '${to.currentCount}/${to.requiredCount}명',
-                        style: TextStyle(
-                          fontSize: 14,
-                          fontWeight: FontWeight.w600,
-                          color: Colors.blue[700],
-                        ),
-                      ),
-                    ],
-                  ),
-                  
-                  // ✅ 마감까지 남은 시간 (NEW!)
-                  if (!to.isDeadlinePassed)
-                    Row(
-                      children: [
-                        Icon(
-                          Icons.timer_outlined,
-                          size: 14,
-                          color: Colors.orange[600],
-                        ),
-                        const SizedBox(width: 4),
-                        Text(
-                          to.deadlineStatus, // "3시간 남음"
-                          style: TextStyle(
-                            fontSize: 12,
-                            fontWeight: FontWeight.w600,
-                            color: Colors.orange[600],
-                          ),
-                        ),
-                      ],
-                    ),
-                ],
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
 
-  /// 정보 행 빌더
-  Widget _buildInfoRow(IconData icon, String label, String value, Color color) {
-    return Row(
-      children: [
-        Icon(icon, size: 18, color: color),
-        const SizedBox(width: 8),
-        Text(
-          '$label: ',
-          style: TextStyle(
-            fontSize: 14,
-            fontWeight: FontWeight.w600,
-            color: Colors.grey[700],
-          ),
-        ),
-        Expanded(
-          child: Text(
-            value,
-            style: const TextStyle(
-              fontSize: 14,
-              color: Colors.black87,
-            ),
-          ),
-        ),
-      ],
-    );
-  }
-
-  // 기존 _buildStatusBadge() 메서드는 그대로 유지
+  /// 지원 상태 배지
   Widget _buildStatusBadge() {
     Color bgColor;
     Color textColor;

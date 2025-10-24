@@ -100,6 +100,12 @@ class BusinessModel {
     }
     return name;
   }
+  String get formattedBusinessNumber {
+    if (businessNumber.length == 10) {
+      return '${businessNumber.substring(0, 3)}-${businessNumber.substring(3, 5)}-${businessNumber.substring(5)}';
+    }
+    return businessNumber;
+  }
 
   // copyWith 메서드
   BusinessModel copyWith({

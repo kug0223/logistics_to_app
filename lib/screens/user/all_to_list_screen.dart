@@ -9,7 +9,7 @@ import '../../widgets/loading_widget.dart';
 import '../../utils/toast_helper.dart';
 import 'to_detail_screen.dart';
 
-/// 전체 TO 목록 화면 (모든 사업장의 TO 조회) - 지원자용
+/// 전체 TO 목록 화면 (모든 사업장의 TO 조회) - 지원자용 신버전
 class AllTOListScreen extends StatefulWidget {
   const AllTOListScreen({Key? key}) : super(key: key);
 
@@ -22,7 +22,6 @@ class _AllTOListScreenState extends State<AllTOListScreen> {
   
   // 필터 상태
   DateTime? _selectedDate; // 단일 날짜 선택용
-  String _selectedWorkType = 'ALL'; // ALL, 피킹, 패킹, 배송, 분류, 하역, 검수
   String _selectedBusiness = 'ALL'; // 사업장 필터
   
   List<TOModel> _allTOList = []; // Firestore에서 가져온 전체 TO
@@ -81,7 +80,7 @@ class _AllTOListScreenState extends State<AllTOListScreen> {
     }
   }
 
-  /// 필터 적용 (날짜 + 업무 유형 + 사업장)
+  /// ✅ 필터 적용 (업무유형 필터 제거)
   void _applyFilters() {
     List<TOModel> filtered = _allTOList;
 
@@ -102,17 +101,12 @@ class _AllTOListScreenState extends State<AllTOListScreen> {
       }).toList();
     }
 
-    // 3. 업무 유형 필터
-    if (_selectedWorkType != 'ALL') {
-      filtered = filtered.where((to) => to.workType == _selectedWorkType).toList();
-    }
-
-    // 4. 사업장 필터 ✅ NEW!
+    // 3. 사업장 필터
     if (_selectedBusiness != 'ALL') {
       filtered = filtered.where((to) => to.businessName == _selectedBusiness).toList();
     }
 
-    // 5. 날짜/시간 순 정렬
+    // 4. 날짜/시간 순 정렬
     filtered.sort((a, b) {
       final dateCompare = a.date.compareTo(b.date);
       if (dateCompare != 0) return dateCompare;
@@ -133,6 +127,7 @@ class _AllTOListScreenState extends State<AllTOListScreen> {
         title: const Text('TO 지원하기'),
         elevation: 0,
         backgroundColor: Colors.blue[700],
+        foregroundColor: Colors.white,
         actions: [
           // 새로고침 버튼
           IconButton(
@@ -167,6 +162,8 @@ class _AllTOListScreenState extends State<AllTOListScreen> {
                                 id: '',
                                 toId: '',
                                 uid: '',
+                                selectedWorkType: '',
+                                wage: 0,
                                 status: '',
                                 appliedAt: DateTime.now(),
                               ),
@@ -196,7 +193,7 @@ class _AllTOListScreenState extends State<AllTOListScreen> {
     );
   }
 
-  /// 필터 섹션
+  /// ✅ 필터 섹션 (업무유형 필터 제거)
   Widget _buildFilterSection() {
     return Container(
       color: Colors.grey[100],
@@ -209,14 +206,8 @@ class _AllTOListScreenState extends State<AllTOListScreen> {
           
           const SizedBox(height: 12),
           
-          // 업무 유형 + 사업장 필터
-          Row(
-            children: [
-              Expanded(child: _buildWorkTypeFilter()),
-              const SizedBox(width: 12),
-              Expanded(child: _buildBusinessFilter()),
-            ],
-          ),
+          // 사업장 필터만 표시
+          _buildBusinessFilter(),
         ],
       ),
     );
@@ -272,6 +263,7 @@ class _AllTOListScreenState extends State<AllTOListScreen> {
       initialDate: _selectedDate ?? DateTime.now(),
       firstDate: DateTime.now(),
       lastDate: DateTime.now().add(const Duration(days: 90)),
+      locale: const Locale('ko', 'KR'),
     );
 
     if (pickedDate != null) {
@@ -282,38 +274,7 @@ class _AllTOListScreenState extends State<AllTOListScreen> {
     }
   }
 
-  /// 업무 유형 필터
-  Widget _buildWorkTypeFilter() {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: Colors.grey[300]!),
-      ),
-      child: DropdownButtonHideUnderline(
-        child: DropdownButton<String>(
-          value: _selectedWorkType,
-          isExpanded: true,
-          icon: Icon(Icons.arrow_drop_down, color: Colors.blue[700]),
-          items: [
-            const DropdownMenuItem(value: 'ALL', child: Text('전체 업무')),
-            ...['피킹', '패킹', '배송', '분류', '하역', '검수'].map((type) {
-              return DropdownMenuItem(value: type, child: Text(type));
-            }),
-          ],
-          onChanged: (value) {
-            setState(() {
-              _selectedWorkType = value!;
-            });
-            _applyFilters();
-          },
-        ),
-      ),
-    );
-  }
-
-  /// 사업장 필터 ✅ NEW!
+  /// 사업장 필터
   Widget _buildBusinessFilter() {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),

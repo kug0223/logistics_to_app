@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
 import '../../models/business_model.dart';
 import '../../services/firestore_service.dart';
 import '../../providers/user_provider.dart';
@@ -9,6 +8,7 @@ import '../../utils/constants.dart';
 import '../../utils/toast_helper.dart';
 import '../../widgets/daum_address_search.dart';
 import '../auth/login_screen.dart';
+import '../../widgets/loading_widget.dart';
 
 /// 사업장 등록 화면 (회원가입 후)
 class BusinessRegistrationScreen extends StatefulWidget {
@@ -199,8 +199,6 @@ class _BusinessRegistrationScreenState extends State<BusinessRegistrationScreen>
       final businessId = await _firestoreService.createBusiness(business);
 
       if (businessId != null) {
-        // UserModel의 businessId 업데이트
-        await _firestoreService.updateUserBusinessId(uid, businessId);
 
         if (!mounted) return;
 

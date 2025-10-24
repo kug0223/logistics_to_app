@@ -4,11 +4,10 @@ import '../../models/to_model.dart';
 import '../../services/firestore_service.dart';
 import '../../widgets/loading_widget.dart';
 import '../../utils/toast_helper.dart';
-import '../../utils/constants.dart';
 import 'admin_to_detail_screen.dart';
 import 'admin_create_to_screen.dart';
 
-/// 관리자 TO 목록 화면
+/// 관리자 TO 목록 화면 - 신버전
 class AdminTOListScreen extends StatefulWidget {
   const AdminTOListScreen({Key? key}) : super(key: key);
 
@@ -22,14 +21,13 @@ class _AdminTOListScreenState extends State<AdminTOListScreen> {
   // 필터 상태
   DateTime? _selectedDate;
   String _selectedBusiness = 'ALL';
-  String _selectedWorkType = 'ALL';
   
   // TO 목록 + 통계
   List<_TOWithStats> _allTOsWithStats = [];
   List<_TOWithStats> _filteredTOsWithStats = [];
   bool _isLoading = true;
 
-  // ✅ 사업장 목록 저장
+  // 사업장 목록
   List<String> _businessNames = [];
   
   @override
@@ -70,13 +68,13 @@ class _AdminTOListScreenState extends State<AdminTOListScreen> {
         }).toList(),
       );
 
-      // ✅ 3. 사업장 목록 추출 (중복 제거 + 정렬)
+      // 3. 사업장 목록 추출 (중복 제거 + 정렬)
       final businessSet = allTOs.map((to) => to.businessName).toSet();
       final businessList = businessSet.toList()..sort();
 
       setState(() {
         _allTOsWithStats = tosWithStats;
-        _businessNames = businessList;  // ✅ 수정: 올바르게 정의된 변수 사용
+        _businessNames = businessList;
         _applyFilters();
         _isLoading = false;
       });
@@ -89,9 +87,8 @@ class _AdminTOListScreenState extends State<AdminTOListScreen> {
     }
   }
 
-  /// 필터 적용
+  /// ✅ 필터 적용 (업무유형 필터 제거)
   void _applyFilters() {
-    // ✅ 수정: 일관된 필터링 로직
     List<_TOWithStats> filtered = _allTOsWithStats;
 
     // 1. 날짜 필터
@@ -111,13 +108,6 @@ class _AdminTOListScreenState extends State<AdminTOListScreen> {
       }).toList();
     }
 
-    // 3. 업무 유형 필터
-    if (_selectedWorkType != 'ALL') {
-      filtered = filtered.where((item) {
-        return item.to.workType == _selectedWorkType;
-      }).toList();
-    }
-
     setState(() {
       _filteredTOsWithStats = filtered;
     });
@@ -128,8 +118,9 @@ class _AdminTOListScreenState extends State<AdminTOListScreen> {
     final picked = await showDatePicker(
       context: context,
       initialDate: _selectedDate ?? DateTime.now(),
-      firstDate: DateTime.now().subtract(const Duration(days: 365)),
-      lastDate: DateTime.now().add(const Duration(days: 365)),
+      firstDate: DateTime(2020),
+      lastDate: DateTime(2030),
+      locale: const Locale('ko', 'KR'),
     );
 
     if (picked != null) {
@@ -140,39 +131,28 @@ class _AdminTOListScreenState extends State<AdminTOListScreen> {
     }
   }
 
-  /// 오늘 설정
-  void _setToday() {
-    setState(() {
-      _selectedDate = DateTime.now();
-      _applyFilters();
-    });
-    ToastHelper.showSuccess('오늘 날짜로 설정되었습니다');
-  }
-
-  /// 전체 날짜 보기
-  void _showAllDates() {
-    setState(() {
-      _selectedDate = null;
-      _applyFilters();
-    });
-    ToastHelper.showSuccess('전체 날짜를 표시합니다');
-  }
-
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
         title: const Text('TO 관리'),
-        backgroundColor: Colors.purple[700],
+        backgroundColor: Colors.blue[700],
+        foregroundColor: Colors.white,
+        elevation: 0,
         actions: [
+          // 새로고침 버튼
           IconButton(
             icon: const Icon(Icons.refresh),
             onPressed: _loadTOsWithStats,
-            tooltip: '새로고침',
           ),
         ],
       ),
-
+      body: Column(
+        children: [
+          _buildFilterSection(),
+          Expanded(child: _buildTOList()),
+        ],
+      ),
       floatingActionButton: FloatingActionButton.extended(
         onPressed: () async {
           final result = await Navigator.push(
@@ -181,76 +161,63 @@ class _AdminTOListScreenState extends State<AdminTOListScreen> {
               builder: (context) => const AdminCreateTOScreen(),
             ),
           );
-          
           if (result == true) {
             _loadTOsWithStats();
           }
         },
         icon: const Icon(Icons.add),
         label: const Text('TO 생성'),
-        backgroundColor: Colors.purple[700],
-        foregroundColor: Colors.white,
-      ),
-      
-      body: Column(
-        children: [
-          // 필터
-          _buildFilters(),
-          
-          // TO 목록
-          Expanded(
-            child: _buildTOList(),
-          ),
-        ],
+        backgroundColor: Colors.blue[700],
       ),
     );
   }
 
-  /// 필터
-  Widget _buildFilters() {
+  /// ✅ 필터 섹션 (업무유형 필터 제거)
+  Widget _buildFilterSection() {
     return Container(
+      color: Colors.white,
       padding: const EdgeInsets.all(16),
-      color: Colors.grey[100],
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // 1. 날짜 필터
-          const Text(
-            '📅 날짜',
-            style: TextStyle(
-              fontSize: 14,
-              fontWeight: FontWeight.bold,
-            ),
-          ),
-          const SizedBox(height: 8),
+          // 날짜 필터
           Row(
             children: [
+              const Text(
+                '📅 날짜',
+                style: TextStyle(
+                  fontSize: 14,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+              const SizedBox(width: 12),
               Expanded(
                 child: OutlinedButton.icon(
                   onPressed: _selectDate,
                   icon: const Icon(Icons.calendar_today, size: 16),
                   label: Text(
                     _selectedDate == null
-                        ? '날짜 선택'
-                        : DateFormat('yyyy-MM-dd').format(_selectedDate!),
+                        ? '전체'
+                        : DateFormat('yyyy-MM-dd (E)', 'ko_KR').format(_selectedDate!),
+                    style: const TextStyle(fontSize: 13),
                   ),
                 ),
               ),
-              const SizedBox(width: 8),
-              OutlinedButton(
-                onPressed: _setToday,
-                child: const Text('오늘'),
-              ),
-              const SizedBox(width: 8),
-              OutlinedButton(
-                onPressed: _showAllDates,
-                child: const Text('전체'),
-              ),
+              if (_selectedDate != null)
+                IconButton(
+                  icon: const Icon(Icons.clear, size: 20),
+                  onPressed: () {
+                    setState(() {
+                      _selectedDate = null;
+                      _applyFilters();
+                    });
+                  },
+                ),
             ],
           ),
           const SizedBox(height: 16),
 
-          // 2. 사업장 필터
+          // 사업장 필터
           const Text(
             '🏢 사업장',
             style: TextStyle(
@@ -272,51 +239,13 @@ class _AdminTOListScreenState extends State<AdminTOListScreen> {
                   });
                 },
               ),
-              ..._businessNames.map((businessName) {
+              ..._businessNames.map((business) {
                 return _buildFilterChip(
-                  label: businessName,
-                  isSelected: _selectedBusiness == businessName,
+                  label: business,
+                  isSelected: _selectedBusiness == business,
                   onSelected: () {
                     setState(() {
-                      _selectedBusiness = businessName;
-                      _applyFilters();
-                    });
-                  },
-                );
-              }),
-            ],
-          ),
-          const SizedBox(height: 16),
-
-          // 3. 업무 유형 필터
-          const Text(
-            '⚙️ 업무 유형',
-            style: TextStyle(
-              fontSize: 14,
-              fontWeight: FontWeight.bold,
-            ),
-          ),
-          const SizedBox(height: 8),
-          Wrap(
-            spacing: 8,
-            children: [
-              _buildFilterChip(
-                label: '전체',
-                isSelected: _selectedWorkType == 'ALL',
-                onSelected: () {
-                  setState(() {
-                    _selectedWorkType = 'ALL';
-                    _applyFilters();
-                  });
-                },
-              ),
-              ...AppConstants.workTypeNames.map((workType) {
-                return _buildFilterChip(
-                  label: workType,
-                  isSelected: _selectedWorkType == workType,
-                  onSelected: () {
-                    setState(() {
-                      _selectedWorkType = workType;
+                      _selectedBusiness = business;
                       _applyFilters();
                     });
                   },
@@ -340,15 +269,15 @@ class _AdminTOListScreenState extends State<AdminTOListScreen> {
       selected: isSelected,
       onSelected: (_) => onSelected(),
       backgroundColor: Colors.white,
-      selectedColor: Colors.purple[100],
-      checkmarkColor: Colors.purple[700],
+      selectedColor: Colors.blue[100],
+      checkmarkColor: Colors.blue[700],
       labelStyle: TextStyle(
-        color: isSelected ? Colors.purple[700] : Colors.grey[700],
+        color: isSelected ? Colors.blue[700] : Colors.grey[700],
         fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
         fontSize: 12,
       ),
       side: BorderSide(
-        color: isSelected ? Colors.purple[700]! : Colors.grey[300]!,
+        color: isSelected ? Colors.blue[700]! : Colors.grey[300]!,
         width: isSelected ? 2 : 1,
       ),
     );
@@ -404,10 +333,11 @@ class _AdminTOListScreenState extends State<AdminTOListScreen> {
     );
   }
 
-  /// TO 카드
+  /// ✅ TO 카드 (수정됨)
   Widget _buildTOCard(_TOWithStats item) {
     final to = item.to;
-    final isFull = item.confirmedCount >= to.requiredCount;
+    final isFull = item.confirmedCount >= to.totalRequired;
+    final dateFormat = DateFormat('yyyy-MM-dd (E)', 'ko_KR');
     
     return InkWell(
       onTap: () async {
@@ -429,105 +359,100 @@ class _AdminTOListScreenState extends State<AdminTOListScreen> {
           border: Border.all(color: Colors.grey[200]!),
           boxShadow: [
             BoxShadow(
-              color: Colors.black.withOpacity(0.05),
+              color: Colors.grey.withOpacity(0.1),
               blurRadius: 4,
               offset: const Offset(0, 2),
             ),
           ],
         ),
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            // 사업장명 + 마감 여부
-            Row(
-              children: [
-                Expanded(
-                  child: Text(
-                    to.businessName,
-                    style: const TextStyle(
-                      fontSize: 16,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-                ),
-                if (isFull)
-                  Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                    decoration: BoxDecoration(
-                      color: Colors.red[100],
-                      borderRadius: BorderRadius.circular(12),
-                    ),
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // 사업장명
+              Row(
+                children: [
+                  Expanded(
                     child: Text(
-                      '마감',
-                      style: TextStyle(
-                        color: Colors.red[700],
-                        fontSize: 12,
+                      to.businessName,
+                      style: const TextStyle(
+                        fontSize: 18,
                         fontWeight: FontWeight.bold,
                       ),
                     ),
                   ),
-              ],
-            ),
-            const SizedBox(height: 8),
-
-            // 날짜 + 시간
-            Row(
-              children: [
-                Icon(Icons.calendar_today, size: 16, color: Colors.grey[600]),
-                const SizedBox(width: 4),
-                Text(
-                  '${to.formattedDate} (${to.weekday})',
-                  style: TextStyle(fontSize: 14, color: Colors.grey[700]),
-                ),
-                const SizedBox(width: 16),
-                Icon(Icons.access_time, size: 16, color: Colors.grey[600]),
-                const SizedBox(width: 4),
-                Text(
-                  to.timeRange,
-                  style: TextStyle(fontSize: 14, color: Colors.grey[700]),
-                ),
-              ],
-            ),
-            const SizedBox(height: 8),
-
-            // 업무 유형
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-              decoration: BoxDecoration(
-                color: Colors.blue[100],
-                borderRadius: BorderRadius.circular(4),
+                  if (isFull)
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                      decoration: BoxDecoration(
+                        color: Colors.green[600],
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: const Text(
+                        '마감',
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontSize: 11,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ),
+                ],
               ),
-              child: Text(
-                to.workType,
+              const SizedBox(height: 8),
+              
+              // ✅ 제목
+              Text(
+                to.title,
                 style: TextStyle(
-                  color: Colors.blue[700],
-                  fontSize: 12,
-                  fontWeight: FontWeight.bold,
+                  fontSize: 15,
+                  fontWeight: FontWeight.w600,
+                  color: Colors.grey[800],
                 ),
               ),
-            ),
-            const SizedBox(height: 12),
+              const SizedBox(height: 8),
 
-            // 통계
-            Row(
-              children: [
-                Icon(Icons.people, size: 16, color: Colors.grey[600]),
-                const SizedBox(width: 4),
-                Text(
-                  '확정: ${item.confirmedCount}/${to.requiredCount}',
-                  style: TextStyle(fontSize: 14, color: Colors.grey[700]),
-                ),
-                const SizedBox(width: 16),
-                Icon(Icons.pending, size: 16, color: Colors.orange[600]),
-                const SizedBox(width: 4),
-                Text(
-                  '대기: ${item.pendingCount}',
-                  style: TextStyle(fontSize: 14, color: Colors.grey[700]),
-                ),
-              ],
-            ),
-          ],
+              // 날짜 + 시간
+              Row(
+                children: [
+                  Icon(Icons.calendar_today, size: 14, color: Colors.grey[600]),
+                  const SizedBox(width: 4),
+                  Text(
+                    dateFormat.format(to.date),
+                    style: TextStyle(fontSize: 13, color: Colors.grey[700]),
+                  ),
+                  const SizedBox(width: 12),
+                  Icon(Icons.access_time, size: 14, color: Colors.grey[600]),
+                  const SizedBox(width: 4),
+                  Text(
+                    '${to.startTime} ~ ${to.endTime}',
+                    style: TextStyle(fontSize: 13, color: Colors.grey[700]),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 12),
+
+              // ✅ 통계 (전체 인원 기준)
+              Row(
+                children: [
+                  Icon(Icons.people, size: 16, color: Colors.grey[600]),
+                  const SizedBox(width: 4),
+                  Text(
+                    '확정: ${item.confirmedCount}/${to.totalRequired}',
+                    style: TextStyle(fontSize: 14, color: Colors.grey[700]),
+                  ),
+                  const SizedBox(width: 16),
+                  Icon(Icons.pending, size: 16, color: Colors.orange[600]),
+                  const SizedBox(width: 4),
+                  Text(
+                    '대기: ${item.pendingCount}',
+                    style: TextStyle(fontSize: 14, color: Colors.grey[700]),
+                  ),
+                ],
+              ),
+            ],
+          ),
         ),
       ),
     );

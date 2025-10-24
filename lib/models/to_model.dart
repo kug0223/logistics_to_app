@@ -158,6 +158,24 @@ class TOModel {
         '${applicationDeadline.hour.toString().padLeft(2, '0')}:'
         '${applicationDeadline.minute.toString().padLeft(2, '0')}';
   }
+  /// 마감까지 남은 시간 표시 (예: "3시간 남음", "마감됨")
+  String get deadlineStatus {
+    if (isDeadlinePassed) {
+      return '마감됨';
+    }
+    
+    final now = DateTime.now();
+    final diff = applicationDeadline.difference(now);
+    
+    if (diff.inMinutes < 60) {
+      return '${diff.inMinutes}분 남음';
+    } else if (diff.inHours < 24) {
+      return '${diff.inHours}시간 남음';
+    } else {
+      final days = diff.inDays;
+      return '$days일 남음';
+    }
+  }
 
   @override
   String toString() {

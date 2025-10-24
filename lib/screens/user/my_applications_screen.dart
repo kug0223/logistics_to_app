@@ -8,7 +8,7 @@ import '../../widgets/loading_widget.dart';
 import '../../utils/toast_helper.dart';
 import 'package:intl/intl.dart';
 
-/// 내 지원 내역 화면
+/// 내 지원 내역 화면 - 신버전
 class MyApplicationsScreen extends StatefulWidget {
   const MyApplicationsScreen({super.key});
 
@@ -59,6 +59,9 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
         }
       }
 
+      // 최신순 정렬
+      appWithTOs.sort((a, b) => b.application.appliedAt.compareTo(a.application.appliedAt));
+
       setState(() {
         _applications = appWithTOs;
         _isLoading = false;
@@ -103,7 +106,8 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
           ),
           TextButton(
             onPressed: () => Navigator.pop(context, true),
-            child: const Text('예', style: TextStyle(color: Colors.red)),
+            style: TextButton.styleFrom(foregroundColor: Colors.red),
+            child: const Text('취소하기'),
           ),
         ],
       ),
@@ -111,44 +115,11 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
 
     if (confirmed != true) return;
 
-    // 로딩 다이얼로그 표시
-    showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder: (context) => const Center(
-        child: Card(
-          child: Padding(
-            padding: EdgeInsets.all(20),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                CircularProgressIndicator(),
-                SizedBox(height: 16),
-                Text('취소 중...'),
-              ],
-            ),
-          ),
-        ),
-      ),
-    );
-
-    try {
-      final success = await _firestoreService.cancelApplication(applicationId, uid);
-      
-      if (mounted) {
-        Navigator.pop(context); // 로딩 다이얼로그 닫기
-      }
-
-      if (success) {
-        ToastHelper.showSuccess('지원이 취소되었습니다.');
-        _loadApplications(); // 목록 새로고침
-      }
-    } catch (e) {
-      if (mounted) {
-        Navigator.pop(context); // 로딩 다이얼로그 닫기
-      }
-      print('❌ 취소 실패: $e');
-      ToastHelper.showError('취소 중 오류가 발생했습니다.');
+    // 취소 처리
+    final success = await _firestoreService.cancelApplication(applicationId, uid);
+    if (success && mounted) {
+      ToastHelper.showSuccess('지원이 취소되었습니다.');
+      _loadApplications();
     }
   }
 
@@ -157,13 +128,19 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
     return Scaffold(
       appBar: AppBar(
         title: const Text('내 지원 내역'),
-        elevation: 0,
         backgroundColor: Colors.blue[700],
+        foregroundColor: Colors.white,
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.refresh),
+            onPressed: _loadApplications,
+          ),
+        ],
       ),
       body: Column(
         children: [
-          // 상태 필터 버튼
-          _buildFilterBar(),
+          // 필터
+          _buildFilterSection(),
           
           // 지원 목록
           Expanded(
@@ -177,7 +154,8 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
                           padding: const EdgeInsets.all(16),
                           itemCount: _filteredApplications.length,
                           itemBuilder: (context, index) {
-                            return _buildApplicationCard(_filteredApplications[index]);
+                            final item = _filteredApplications[index];
+                            return _buildApplicationCard(item);
                           },
                         ),
                       ),
@@ -187,18 +165,18 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
     );
   }
 
-  /// 상태 필터 바
-  Widget _buildFilterBar() {
+  /// 필터 섹션
+  Widget _buildFilterSection() {
     return Container(
+      padding: const EdgeInsets.all(16),
       color: Colors.grey[100],
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
       child: SingleChildScrollView(
         scrollDirection: Axis.horizontal,
         child: Row(
           children: [
             _buildFilterChip('전체', 'ALL'),
             const SizedBox(width: 8),
-            _buildFilterChip('대기 중', 'PENDING'),
+            _buildFilterChip('대기중', 'PENDING'),
             const SizedBox(width: 8),
             _buildFilterChip('확정', 'CONFIRMED'),
             const SizedBox(width: 8),
@@ -211,62 +189,52 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
     );
   }
 
-  /// 필터 칩
   Widget _buildFilterChip(String label, String value) {
     final isSelected = _selectedFilter == value;
     return FilterChip(
       label: Text(label),
       selected: isSelected,
-      onSelected: (selected) {
+      onSelected: (_) {
         setState(() {
           _selectedFilter = value;
         });
       },
+      backgroundColor: Colors.white,
       selectedColor: Colors.blue[100],
-      checkmarkColor: Colors.blue[800],
+      checkmarkColor: Colors.blue[700],
       labelStyle: TextStyle(
-        color: isSelected ? Colors.blue[800] : Colors.grey[700],
+        color: isSelected ? Colors.blue[900] : Colors.grey[700],
         fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
       ),
     );
   }
 
-  /// 빈 상태 위젯
+  /// 빈 상태
   Widget _buildEmptyState() {
-    String message;
-    switch (_selectedFilter) {
-      case 'PENDING':
-        message = '대기 중인 지원이 없습니다.';
-        break;
-      case 'CONFIRMED':
-        message = '확정된 지원이 없습니다.';
-        break;
-      case 'REJECTED':
-        message = '거절된 지원이 없습니다.';
-        break;
-      case 'CANCELED':
-        message = '취소된 지원이 없습니다.';
-        break;
-      default:
-        message = '아직 지원한 TO가 없습니다.\n센터에서 TO를 찾아보세요!';
-    }
-
     return Center(
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
           Icon(
-            Icons.inbox_outlined,
+            Icons.assignment_outlined,
             size: 80,
             color: Colors.grey[400],
           ),
           const SizedBox(height: 16),
           Text(
-            message,
-            textAlign: TextAlign.center,
+            _selectedFilter == 'ALL' ? '지원 내역이 없습니다' : '해당 상태의 지원이 없습니다',
             style: TextStyle(
-              fontSize: 16,
+              fontSize: 18,
               color: Colors.grey[600],
+              fontWeight: FontWeight.w500,
+            ),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            'TO에 지원해보세요!',
+            style: TextStyle(
+              fontSize: 14,
+              color: Colors.grey[500],
             ),
           ),
         ],
@@ -274,19 +242,11 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
     );
   }
 
-  /// 요일 한글 변환
-  String _getKoreanWeekday(DateTime date) {
-    const weekdays = ['월', '화', '수', '목', '금', '토', '일'];
-    return weekdays[date.weekday - 1];
-  }
-
-  /// 지원 카드
+  /// ✅ 지원서 카드 (업무유형 + 금액 표시)
   Widget _buildApplicationCard(_ApplicationWithTO item) {
     final app = item.application;
     final to = item.to;
-    final dateFormat = DateFormat('M월 d일');
-    final timeFormat = DateFormat('HH:mm');
-    final koreanWeekday = _getKoreanWeekday(to.date);
+    final dateFormat = DateFormat('yyyy년 M월 d일');
 
     return Card(
       margin: const EdgeInsets.only(bottom: 16),
@@ -299,43 +259,10 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // 상태 배지
+            // 1행: 사업장명 + 상태 배지
             Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                  decoration: BoxDecoration(
-                    color: Color(app.statusColor),
-                    borderRadius: BorderRadius.circular(20),
-                  ),
-                  child: Text(
-                    app.statusText,
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 12,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-                ),
-                const Spacer(),
-                Text(
-                  '지원일: ${timeFormat.format(app.appliedAt)}',
-                  style: TextStyle(
-                    fontSize: 12,
-                    color: Colors.grey[600],
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 12),
-            const Divider(),
-            const SizedBox(height: 12),
-
-            // TO 정보
-            Row(
-              children: [
-                Icon(Icons.business, color: Colors.blue[700], size: 20),
-                const SizedBox(width: 8),
                 Expanded(
                   child: Text(
                     to.businessName,
@@ -343,85 +270,94 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
                       fontSize: 18,
                       fontWeight: FontWeight.bold,
                     ),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
                   ),
                 ),
+                _buildStatusBadge(app.status),
               ],
+            ),
+            
+            const SizedBox(height: 8),
+            
+            // TO 제목
+            Text(
+              to.title,
+              style: TextStyle(
+                fontSize: 15,
+                fontWeight: FontWeight.w600,
+                color: Colors.grey[800],
+              ),
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+            ),
+            
+            const Divider(height: 20),
+            
+            // 날짜 정보
+            _buildInfoRow(
+              Icons.calendar_today,
+              '근무일',
+              '${dateFormat.format(to.date)} (${to.weekday})',
             ),
             const SizedBox(height: 8),
-
-            Row(
-              children: [
-                Icon(Icons.calendar_today, color: Colors.grey[600], size: 16),
-                const SizedBox(width: 8),
-                Text(
-                  '${dateFormat.format(to.date)} ($koreanWeekday)',
-                  style: const TextStyle(fontSize: 14),
-                ),
-              ],
+            
+            // 시간 정보
+            _buildInfoRow(
+              Icons.access_time,
+              '근무시간',
+              to.timeRange,
             ),
-            const SizedBox(height: 4),
-
-            Row(
-              children: [
-                Icon(Icons.access_time, color: Colors.grey[600], size: 16),
-                const SizedBox(width: 8),
-                Text(
-                  '${to.startTime} ~ ${to.endTime}',
-                  style: const TextStyle(fontSize: 14),
-                ),
-              ],
+            const SizedBox(height: 8),
+            
+            // ✅ 업무유형 + 금액
+            _buildInfoRow(
+              Icons.work_outline,
+              '지원 업무',
+              '${app.selectedWorkType} | ${app.formattedWage}',
             ),
-            const SizedBox(height: 4),
-
-            Row(
-              children: [
-                Icon(Icons.work_outline, color: Colors.grey[600], size: 16),
-                const SizedBox(width: 8),
-                Text(
-                  to.workType,
-                  style: const TextStyle(fontSize: 14),
-                ),
-              ],
-            ),
-            const SizedBox(height: 4),
-
-            Row(
-              children: [
-                Icon(Icons.people, color: Colors.grey[600], size: 16),
-                const SizedBox(width: 8),
-                Text(
-                  '모집: ${to.currentCount}/${to.requiredCount}명',
-                  style: const TextStyle(fontSize: 14),
-                ),
-              ],
-            ),
-
-            // 확정 정보 (확정된 경우만)
-            if (app.status == 'CONFIRMED' && app.confirmedAt != null) ...[
+            
+            // ✅ 업무유형 변경 이력 표시
+            if (app.isWorkTypeChanged) ...[
               const SizedBox(height: 8),
               Container(
                 padding: const EdgeInsets.all(8),
                 decoration: BoxDecoration(
-                  color: Colors.green[50],
+                  color: Colors.orange[50],
                   borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: Colors.orange.shade200),
                 ),
                 child: Row(
                   children: [
-                    Icon(Icons.check_circle, color: Colors.green[700], size: 16),
+                    Icon(Icons.info_outline, size: 16, color: Colors.orange[700]),
                     const SizedBox(width: 8),
-                    Text(
-                      '확정일: ${timeFormat.format(app.confirmedAt!)}',
-                      style: TextStyle(
-                        fontSize: 12,
-                        color: Colors.green[700],
+                    Expanded(
+                      child: Text(
+                        '업무 변경: ${app.originalWorkType} → ${app.selectedWorkType}',
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: Colors.orange[900],
+                          fontWeight: FontWeight.w600,
+                        ),
                       ),
                     ),
                   ],
                 ),
               ),
             ],
-
-            // 취소 버튼 (대기 중인 경우만)
+            
+            const SizedBox(height: 12),
+            
+            // 지원 날짜
+            Text(
+              '지원일: ${DateFormat('yyyy.MM.dd HH:mm').format(app.appliedAt)}',
+              style: TextStyle(
+                fontSize: 12,
+                color: Colors.grey[600],
+              ),
+            ),
+            
+            // 취소 버튼 (대기중일 때만)
             if (app.status == 'PENDING') ...[
               const SizedBox(height: 12),
               SizedBox(
@@ -442,9 +378,87 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
       ),
     );
   }
+
+  /// 정보 행
+  Widget _buildInfoRow(IconData icon, String label, String value) {
+    return Row(
+      children: [
+        Icon(icon, size: 16, color: Colors.grey[600]),
+        const SizedBox(width: 8),
+        Text(
+          '$label: ',
+          style: TextStyle(
+            fontSize: 14,
+            fontWeight: FontWeight.w600,
+            color: Colors.grey[700],
+          ),
+        ),
+        Expanded(
+          child: Text(
+            value,
+            style: const TextStyle(
+              fontSize: 14,
+              color: Colors.black87,
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  /// 상태 배지
+  Widget _buildStatusBadge(String status) {
+    Color bgColor;
+    Color textColor;
+    String text;
+
+    switch (status) {
+      case 'PENDING':
+        bgColor = Colors.orange.shade50;
+        textColor = Colors.orange.shade700;
+        text = '대기중';
+        break;
+      case 'CONFIRMED':
+        bgColor = Colors.green.shade50;
+        textColor = Colors.green.shade700;
+        text = '확정';
+        break;
+      case 'REJECTED':
+        bgColor = Colors.red.shade50;
+        textColor = Colors.red.shade700;
+        text = '거절';
+        break;
+      case 'CANCELED':
+        bgColor = Colors.grey.shade100;
+        textColor = Colors.grey.shade600;
+        text = '취소';
+        break;
+      default:
+        bgColor = Colors.grey.shade100;
+        textColor = Colors.grey.shade600;
+        text = '알 수 없음';
+    }
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+      decoration: BoxDecoration(
+        color: bgColor,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: textColor.withOpacity(0.3)),
+      ),
+      child: Text(
+        text,
+        style: TextStyle(
+          fontSize: 12,
+          fontWeight: FontWeight.bold,
+          color: textColor,
+        ),
+      ),
+    );
+  }
 }
 
-/// 지원서 + TO 정보를 함께 담는 클래스
+/// 지원서 + TO 정보
 class _ApplicationWithTO {
   final ApplicationModel application;
   final TOModel to;

@@ -103,44 +103,7 @@ class FirestoreService {
     }
   }
 
-  /// TO 생성
-  Future<String?> createTO({
-    required String businessId,
-    required String businessName,
-    required DateTime date,
-    required String startTime,
-    required String endTime,
-    required DateTime applicationDeadline,
-    required int requiredCount,
-    required String workType,
-    String? description,
-    required String creatorUID,
-  }) async {
-    try {
-      final toData = {
-        'businessId': businessId,
-        'businessName': businessName,
-        'date': Timestamp.fromDate(date),
-        'startTime': startTime,
-        'endTime': endTime,
-        'applicationDeadline': Timestamp.fromDate(applicationDeadline),
-        'requiredCount': requiredCount,
-        'currentCount': 0,
-        'workType': workType,
-        'description': description,
-        'creatorUID': creatorUID,
-        'createdAt': FieldValue.serverTimestamp(),
-      };
-
-      final docRef = await _firestore.collection('tos').add(toData);
-      print('✅ [FirestoreService] TO 생성 완료: ${docRef.id}');
-      return docRef.id;
-    } catch (e) {
-      print('❌ TO 생성 실패: $e');
-      return null;
-    }
-  }
-
+ 
   /// TO 수정 (관리자용)
   Future<void> updateTO(String toId, Map<String, dynamic> updates) async {
     try {
@@ -165,39 +128,7 @@ class FirestoreService {
 
   // ==================== 지원서 관련 ====================
 
-  /// TO에 지원하기
-  Future<bool> applyToTO(String toId, String uid) async {
-    try {
-      // 중복 지원 체크
-      QuerySnapshot existingApps = await _firestore
-          .collection('applications')
-          .where('toId', isEqualTo: toId)
-          .where('uid', isEqualTo: uid)
-          .where('status', whereIn: ['PENDING', 'CONFIRMED'])
-          .get();
-
-      if (existingApps.docs.isNotEmpty) {
-        ToastHelper.showError('이미 해당 TO에 지원했습니다.');
-        return false;
-      }
-
-      // 지원서 생성
-      await _firestore.collection('applications').add({
-        'toId': toId,
-        'uid': uid,
-        'status': 'PENDING',
-        'appliedAt': FieldValue.serverTimestamp(),
-      });
-
-      ToastHelper.showSuccess('지원이 완료되었습니다.');
-      return true;
-    } catch (e) {
-      print('지원 실패: $e');
-      ToastHelper.showError('지원에 실패했습니다.');
-      return false;
-    }
-  }
-
+  
   /// TO별 지원자 목록 조회
   Future<List<ApplicationModel>> getApplicationsByTOId(String toId) async {
     try {
