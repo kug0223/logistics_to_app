@@ -99,11 +99,12 @@ class TOCardWidget extends StatelessWidget {
                 children: [
                   Icon(Icons.access_time, size: 16, color: Colors.grey[600]),
                   const SizedBox(width: 6),
-                  Text(
-                    to.timeRange, // "09:00 - 18:00"
+                  const Text(
+                    '업무별 시간 상이',
                     style: TextStyle(
-                      fontSize: 14,
-                      color: Colors.grey[700],
+                      fontSize: 13,
+                      color: Colors.grey,
+                      fontStyle: FontStyle.italic,
                     ),
                   ),
                 ],

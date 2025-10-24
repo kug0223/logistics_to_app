@@ -5,6 +5,7 @@ import '../../services/auth_service.dart';
 import 'business_list_screen.dart';
 import '../../utils/toast_helper.dart';
 import 'admin_create_to_screen.dart';
+import 'admin_to_list_screen.dart';
 import 'settings_screen.dart';
 
 /// 사업장 관리자 홈 화면 (USER 홈과 동일한 레이아웃)
@@ -164,9 +165,11 @@ class BusinessAdminHomeScreen extends StatelessWidget {
                           subtitle: '내 TO 조회',
                           color: Colors.orange,
                           onTap: () {
-                            // TODO: 내 TO 목록 화면으로 이동
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              const SnackBar(content: Text('TO 관리 화면 준비 중입니다')),
+                            Navigator.push(
+                              context,
+                              MaterialPageRoute(
+                                builder: (context) => const AdminTOListScreen(),
+                              ),
                             );
                           },
                         ),

@@ -758,62 +758,110 @@ Future<String?> findWorkDetailIdByType(String toId, String workType) async {
     return null;
   }
 }
+/// ✅ NEW: TO의 그룹 정보 업데이트
+Future<bool> updateTOGroup({
+  required String toId,
+  required String groupId,
+  required String groupName,
+}) async {
+  try {
+    await _firestore.collection('tos').doc(toId).update({
+      'groupId': groupId,
+      'groupName': groupName,
+    });
+    
+    print('✅ [FirestoreService] TO 그룹 정보 업데이트 완료');
+    print('   TO ID: $toId');
+    print('   Group ID: $groupId');
+    print('   Group Name: $groupName');
+    
+    return true;
+  } catch (e) {
+    print('❌ [FirestoreService] TO 그룹 정보 업데이트 실패: $e');
+    return false;
+  }
+}
 
-/// TO 생성 (WorkDetails 포함) - 기존 createTO 메서드 대체
+/// TO 생성 (WorkDetails 포함) - 업무별 시간 정보 포함
 Future<String?> createTOWithDetails({
   required String businessId,
   required String businessName,
   required String title,
   required DateTime date,
-  required String startTime,
-  required String endTime,
   required DateTime applicationDeadline,
-  required List<Map<String, dynamic>> workDetailsData, // [{workType, wage, requiredCount}, ...]
+  required List<Map<String, dynamic>> workDetailsData, 
+  // ✅ workDetailsData 형식:
+  // [{
+  //   workType: "피킹",
+  //   wage: 50000,
+  //   requiredCount: 5,
+  //   startTime: "09:00",  // ✅ NEW
+  //   endTime: "18:00"     // ✅ NEW
+  // }]
   String? description,
   required String creatorUID,
+  String? groupId, // ✅ NEW Phase 2: 추가
+  String? groupName, // ✅ NEW Phase 2: 추가
 }) async {
   try {
+    print('🔧 [FirestoreService] TO 생성 시작...');
+
     // 1. 전체 필요 인원 계산
     int totalRequired = 0;
     for (var detail in workDetailsData) {
       totalRequired += (detail['requiredCount'] as int);
     }
 
-    // 2. TO 메인 문서 생성
-    final toRef = _firestore.collection('tos').doc();
-    
-    await toRef.set({
+    // 2. TO 기본 정보 생성 (startTime, endTime 제거!)
+    final toData = {
       'businessId': businessId,
       'businessName': businessName,
+      'groupId': groupId, // ✅ NEW Phase 2: 추가
+      'groupName': groupName, // ✅ NEW Phase 2: 추가
       'title': title,
       'date': Timestamp.fromDate(date),
-      'startTime': startTime,
-      'endTime': endTime,
+      // ❌ 제거: 'startTime': startTime,
+      // ❌ 제거: 'endTime': endTime,
       'applicationDeadline': Timestamp.fromDate(applicationDeadline),
       'totalRequired': totalRequired,
       'totalConfirmed': 0,
-      'description': description,
+      'description': description ?? '',
       'creatorUID': creatorUID,
       'createdAt': FieldValue.serverTimestamp(),
-    });
+    };
 
-    // 3. WorkDetails 하위 컬렉션 생성
-    final success = await createWorkDetails(
-      toId: toRef.id,
-      workDetailsData: workDetailsData,
-    );
+    // 3. TO 문서 생성
+    final toDoc = await _firestore.collection('tos').add(toData);
+    print('✅ TO 문서 생성 완료: ${toDoc.id}');
 
-    if (!success) {
-      // WorkDetails 생성 실패 시 TO 삭제
-      await toRef.delete();
-      return null;
+    // 4. WorkDetails 하위 컬렉션에 업무 추가 (시간 정보 포함!)
+    final batch = _firestore.batch();
+    
+    for (int i = 0; i < workDetailsData.length; i++) {
+      final data = workDetailsData[i];
+      final docRef = toDoc.collection('workDetails').doc();
+      
+      batch.set(docRef, {
+        'workType': data['workType'],
+        'wage': data['wage'],
+        'requiredCount': data['requiredCount'],
+        'currentCount': 0,
+        'startTime': data['startTime'], // ✅ NEW
+        'endTime': data['endTime'], // ✅ NEW
+        'order': i,
+        'createdAt': FieldValue.serverTimestamp(),
+      });
+      
+      print('  - 업무 추가: ${data['workType']} (${data['startTime']} ~ ${data['endTime']})');
     }
+    
+    await batch.commit();
+    print('✅ WorkDetails 생성 완료: ${workDetailsData.length}개');
 
-    print('✅ TO 생성 완료: ${toRef.id}');
-    ToastHelper.showSuccess('TO가 생성되었습니다.');
-    return toRef.id;
+    ToastHelper.showSuccess('TO가 생성되었습니다!');
+    return toDoc.id;
   } catch (e) {
-    print('❌ TO 생성 실패: $e');
+    print('❌ [FirestoreService] TO 생성 실패: $e');
     ToastHelper.showError('TO 생성에 실패했습니다.');
     return null;
   }
@@ -961,6 +1009,119 @@ Future<bool> confirmApplicantWithWorkDetail({
     print('❌ 지원자 확정 실패: $e');
     ToastHelper.showError('확정 중 오류가 발생했습니다.');
     return false;
+  }
+}
+// ==================== Phase 2: TO 그룹 관리 ====================
+
+/// 1️⃣ 그룹 ID 생성
+/// 형식: group_밀리초타임스탬프
+/// 예시: "group_1698123456789"
+String generateGroupId() {
+  return 'group_${DateTime.now().millisecondsSinceEpoch}';
+}
+
+/// 2️⃣ 사용자의 최근 TO 목록 조회 (그룹 연결용)
+/// [uid] - 사용자 UID
+/// [days] - 조회 기간 (기본 30일)
+/// 반환: 최근 생성한 TO 목록 (최신순)
+Future<List<TOModel>> getRecentTOsByUser(String uid, {int days = 30}) async {
+  try {
+    final cutoffDate = DateTime.now().subtract(Duration(days: days));
+    
+    print('🔍 [FirestoreService] 최근 TO 조회 시작...');
+    print('   사용자 UID: $uid');
+    print('   조회 기간: 최근 $days일');
+
+    final snapshot = await _firestore
+        .collection('tos')
+        .where('creatorUID', isEqualTo: uid)
+        .where('date', isGreaterThanOrEqualTo: Timestamp.fromDate(cutoffDate))
+        .orderBy('date', descending: false)
+        .orderBy('createdAt', descending: true)
+        .limit(20) // 최대 20개
+        .get();
+
+    final toList = snapshot.docs
+        .map((doc) => TOModel.fromMap(doc.data(), doc.id))
+        .toList();
+
+    print('✅ 조회 완료: ${toList.length}개');
+    return toList;
+  } catch (e) {
+    print('❌ 최근 TO 조회 실패: $e');
+    return [];
+  }
+}
+
+/// 3️⃣ 같은 그룹의 TO들 조회
+/// [groupId] - 그룹 ID
+/// 반환: 같은 그룹에 속한 모든 TO
+Future<List<TOModel>> getTOsByGroup(String groupId) async {
+  try {
+    print('🔍 [FirestoreService] 그룹 TO 조회 시작...');
+    print('   그룹 ID: $groupId');
+
+    final snapshot = await _firestore
+        .collection('tos')
+        .where('groupId', isEqualTo: groupId)
+        .orderBy('date', descending: false)
+        .get();
+
+    final toList = snapshot.docs
+        .map((doc) => TOModel.fromMap(doc.data(), doc.id))
+        .toList();
+
+    print('✅ 그룹 TO 조회 완료: ${toList.length}개');
+    return toList;
+  } catch (e) {
+    print('❌ 그룹 TO 조회 실패: $e');
+    return [];
+  }
+}
+
+/// 4️⃣ 그룹별 지원자 통합 조회
+/// [groupId] - 그룹 ID
+/// 반환: 그룹에 속한 모든 TO의 지원자 목록
+Future<List<ApplicationModel>> getApplicationsByGroup(String groupId) async {
+  try {
+    print('🔍 [FirestoreService] 그룹 지원자 조회 시작...');
+    print('   그룹 ID: $groupId');
+
+    // 1. 같은 그룹의 TO들 조회
+    final groupTOs = await getTOsByGroup(groupId);
+    
+    if (groupTOs.isEmpty) {
+      print('⚠️ 그룹에 속한 TO가 없습니다');
+      return [];
+    }
+
+    final toIds = groupTOs.map((to) => to.id).toList();
+    print('   TO 개수: ${toIds.length}');
+
+    // 2. 각 TO의 지원자들 조회
+    List<ApplicationModel> allApplications = [];
+    
+    for (final toId in toIds) {
+      final snapshot = await _firestore
+          .collection('applications')
+          .where('toId', isEqualTo: toId)
+          .get();
+
+      final apps = snapshot.docs
+          .map((doc) => ApplicationModel.fromFirestore(doc))
+          .toList();
+      
+      allApplications.addAll(apps);
+    }
+
+    // 3. 지원 시간 기준 정렬 (최신순)
+    allApplications.sort((a, b) => b.appliedAt.compareTo(a.appliedAt));
+
+    print('✅ 그룹 지원자 조회 완료: ${allApplications.length}명');
+    return allApplications;
+  } catch (e) {
+    print('❌ 그룹 지원자 조회 실패: $e');
+    return [];
   }
 }
 }

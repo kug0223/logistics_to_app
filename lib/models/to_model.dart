@@ -9,7 +9,11 @@ class TOModel {
   final String businessId; // 사업장 ID
   final String businessName; // 사업장명
   
-  // ✅ NEW: 제목
+  // ✅ NEW Phase 2: TO 그룹 관리
+  final String? groupId; // 같은 그룹의 TO들을 묶는 ID (nullable)
+  final String? groupName; // 그룹 표시명 (nullable, 예: "물류센터_1025")
+  
+  // ✅ 제목
   final String title; // TO 제목 (예: "물류센터 파트타임알바")
   
   final DateTime date; // 근무 날짜
@@ -18,12 +22,9 @@ class TOModel {
   
   final DateTime applicationDeadline; // 지원 마감 일시
   
-  // ✅ NEW: 전체 필요 인원 (모든 업무유형 합계)
+  // ✅ 전체 필요 인원 (모든 업무유형 합계)
   final int totalRequired; // 전체 필요 인원
   final int totalConfirmed; // 전체 확정 인원
-  
-  // ❌ REMOVED: workType, requiredCount, currentCount
-  // → workDetails 하위 컬렉션으로 이동
   
   final String? description; // 전체 설명
   final String creatorUID; // 생성한 관리자 UID
@@ -33,6 +34,8 @@ class TOModel {
     required this.id,
     required this.businessId,
     required this.businessName,
+    this.groupId, // ✅ NEW Phase 2
+    this.groupName, // ✅ NEW Phase 2
     required this.title,
     required this.date,
     required this.startTime,
@@ -51,6 +54,8 @@ class TOModel {
       id: documentId,
       businessId: data['businessId'] ?? '',
       businessName: data['businessName'] ?? '',
+      groupId: data['groupId'], // ✅ NEW Phase 2
+      groupName: data['groupName'], // ✅ NEW Phase 2
       title: data['title'] ?? '제목 없음',
       date: (data['date'] as Timestamp).toDate(),
       startTime: data['startTime'] ?? '',
@@ -79,6 +84,8 @@ class TOModel {
     return {
       'businessId': businessId,
       'businessName': businessName,
+      'groupId': groupId, // ✅ NEW Phase 2
+      'groupName': groupName, // ✅ NEW Phase 2
       'title': title,
       'date': Timestamp.fromDate(date),
       'startTime': startTime,
@@ -97,6 +104,8 @@ class TOModel {
     String? id,
     String? businessId,
     String? businessName,
+    String? groupId, // ✅ NEW Phase 2
+    String? groupName, // ✅ NEW Phase 2
     String? title,
     DateTime? date,
     String? startTime,
@@ -112,6 +121,8 @@ class TOModel {
       id: id ?? this.id,
       businessId: businessId ?? this.businessId,
       businessName: businessName ?? this.businessName,
+      groupId: groupId ?? this.groupId, // ✅ NEW Phase 2
+      groupName: groupName ?? this.groupName, // ✅ NEW Phase 2
       title: title ?? this.title,
       date: date ?? this.date,
       startTime: startTime ?? this.startTime,
@@ -126,6 +137,9 @@ class TOModel {
   }
 
   // ==================== 편의 메서드 ====================
+
+  /// ✅ NEW Phase 2: 그룹에 속해있는지 여부
+  bool get isGrouped => groupId != null;
 
   /// 포맷팅된 날짜 (예: "2025년 10월 25일")
   String get formattedDate {
@@ -158,6 +172,7 @@ class TOModel {
         '${applicationDeadline.hour.toString().padLeft(2, '0')}:'
         '${applicationDeadline.minute.toString().padLeft(2, '0')}';
   }
+
   /// 마감까지 남은 시간 표시 (예: "3시간 남음", "마감됨")
   String get deadlineStatus {
     if (isDeadlinePassed) {
@@ -180,6 +195,7 @@ class TOModel {
   @override
   String toString() {
     return 'TOModel(id: $id, title: $title, businessName: $businessName, '
+        'groupId: $groupId, groupName: $groupName, '
         'date: $formattedDate, totalRequired: $totalRequired, '
         'totalConfirmed: $totalConfirmed)';
   }

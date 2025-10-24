@@ -9,6 +9,7 @@ class UserModel {
   final String uid;
   final String name;
   final String email;
+  final String? phone;
   final UserRole role;
   final String? businessId;  // 사업장 관리자의 경우 사업장 ID
   final DateTime? createdAt;
@@ -18,6 +19,7 @@ class UserModel {
     required this.uid,
     required this.name,
     required this.email,
+    this.phone,
     required this.role,
     this.businessId,
     this.createdAt,
@@ -43,7 +45,6 @@ class UserModel {
     if (map.containsKey('role')) {
       role = _roleFromString(map['role']);
     } else if (map['isAdmin'] == true) {
-      // 기존 데이터 호환: isAdmin이 true면 SUPER_ADMIN으로 처리
       role = UserRole.SUPER_ADMIN;
     } else {
       role = UserRole.USER;
@@ -53,6 +54,7 @@ class UserModel {
       uid: uid,
       name: map['name'] ?? '',
       email: map['email'] ?? '',
+      phone: map['phone'],  // ✅ 추가!
       role: role,
       businessId: map['businessId'],
       createdAt: map['createdAt']?.toDate(),
@@ -65,6 +67,7 @@ class UserModel {
     return {
       'name': name,
       'email': email,
+      'phone': phone,
       'role': _roleToString(role),
       'businessId': businessId,
       'createdAt': createdAt,
@@ -103,6 +106,7 @@ class UserModel {
     String? uid,
     String? name,
     String? email,
+    String? phone,
     UserRole? role,
     String? businessId,
     DateTime? createdAt,
@@ -112,6 +116,7 @@ class UserModel {
       uid: uid ?? this.uid,
       name: name ?? this.name,
       email: email ?? this.email,
+      phone: phone ?? this.phone,
       role: role ?? this.role,
       businessId: businessId ?? this.businessId,
       createdAt: createdAt ?? this.createdAt,

@@ -71,6 +71,7 @@ class AuthService {
     required String email,
     required String password,
     required String name,
+    String? phone,
     UserRole role = UserRole.USER, // ✅ 기본값은 일반 사용자
     String? businessId, // ✅ 사업장 관리자의 경우 사업장 ID
   }) async {
@@ -87,6 +88,7 @@ class AuthService {
           uid: result.user!.uid,
           name: name,
           email: email,
+          phone: phone,
           role: role, // ✅ 변경
           businessId: businessId, // ✅ 추가
           createdAt: DateTime.now(),

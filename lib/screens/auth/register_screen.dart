@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:flutter/services.dart'; 
 import '../../models/user_model.dart';
 import '../../providers/user_provider.dart';
 import '../../widgets/custom_button.dart';
@@ -7,7 +8,7 @@ import '../../widgets/loading_widget.dart';
 import '../admin/business_registration_screen.dart';
 
 class RegisterScreen extends StatefulWidget {
-  const RegisterScreen({Key? key}) : super(key: key);
+  const RegisterScreen({super.key});
 
   @override
   State<RegisterScreen> createState() => _RegisterScreenState();
@@ -20,6 +21,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
   final _formKey = GlobalKey<FormState>();
   final _nameController = TextEditingController();
   final _emailController = TextEditingController();
+  final _phoneController = TextEditingController();
   final _passwordController = TextEditingController();
   final _confirmPasswordController = TextEditingController();
   bool _obscurePassword = true;
@@ -34,6 +36,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
     _emailController.dispose();
     _passwordController.dispose();
     _confirmPasswordController.dispose();
+    _phoneController.dispose(); 
     super.dispose();
   }
 
@@ -200,6 +203,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
       email: _emailController.text.trim(),
       password: _passwordController.text,
       name: _nameController.text.trim(),
+      phone: _phoneController.text.trim(), 
       role: _selectedRole!,
     );
 
@@ -222,6 +226,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
       email: _emailController.text.trim(),
       password: _passwordController.text,
       name: _nameController.text.trim(),
+      phone: _phoneController.text.trim(),
       role: UserRole.BUSINESS_ADMIN,
     );
 
@@ -378,6 +383,36 @@ class _RegisterScreenState extends State<RegisterScreen> {
                               }
                               if (!value.contains('@')) {
                                 return '유효한 이메일을 입력해주세요';
+                              }
+                              return null;
+                            },
+                          ),
+                          const SizedBox(height: 16),
+                          
+                          // ✅ NEW: 전화번호 입력 (여기에 추가!)
+                          TextFormField(
+                            controller: _phoneController,
+                            keyboardType: TextInputType.phone,
+                            decoration: InputDecoration(
+                              labelText: '전화번호',
+                              hintText: '010-0000-0000',
+                              prefixIcon: const Icon(Icons.phone_outlined),
+                              border: OutlineInputBorder(
+                                borderRadius: BorderRadius.circular(8),
+                              ),
+                              filled: true,
+                              fillColor: Colors.grey[50],
+                            ),
+                            inputFormatters: [
+                              FilteringTextInputFormatter.allow(RegExp(r'[0-9-]')),
+                              LengthLimitingTextInputFormatter(13), // 010-0000-0000
+                            ],
+                            validator: (value) {
+                              if (value == null || value.isEmpty) {
+                                return '전화번호를 입력해주세요';
+                              }
+                              if (value.length < 10) {
+                                return '올바른 전화번호를 입력해주세요';
                               }
                               return null;
                             },

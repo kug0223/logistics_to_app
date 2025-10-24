@@ -92,6 +92,7 @@ class UserProvider with ChangeNotifier {
     required String email,
     required String password,
     required String name,
+    String? phone,
     required UserRole role, // ✅ 역할 파라미터
   }) async {
     try {
@@ -103,6 +104,7 @@ class UserProvider with ChangeNotifier {
         email: email,
         password: password,
         name: name,
+        phone: phone,
         role: role, // ✅ 역할 전달
       );
 

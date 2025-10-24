@@ -568,6 +568,7 @@ class _TODetailScreenState extends State<TODetailScreen> {
   }
 
   /// 업무 카드
+  /// WorkDetail 카드 위젯
   Widget _buildWorkDetailCard(WorkDetailModel work) {
     return Container(
       margin: const EdgeInsets.only(bottom: 12),
@@ -576,82 +577,71 @@ class _TODetailScreenState extends State<TODetailScreen> {
         color: Colors.white,
         borderRadius: BorderRadius.circular(12),
         border: Border.all(color: Colors.grey[300]!),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.grey.shade100,
-            blurRadius: 4,
-            offset: const Offset(0, 2),
-          ),
-        ],
       ),
-      child: Row(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // 아이콘
-          Container(
-            padding: const EdgeInsets.all(10),
-            decoration: BoxDecoration(
-              color: work.isFull ? Colors.grey[200] : Colors.blue[100],
-              shape: BoxShape.circle,
-            ),
-            child: Icon(
-              Icons.work,
-              color: work.isFull ? Colors.grey[600] : Colors.blue[700],
-              size: 24,
-            ),
-          ),
-          const SizedBox(width: 16),
-
-          // 정보
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  work.workType,
-                  style: const TextStyle(
-                    fontSize: 16,
-                    fontWeight: FontWeight.bold,
-                  ),
+          // 업무 유형
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Text(
+                work.workType,
+                style: const TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.bold,
                 ),
-                const SizedBox(height: 4),
-                Text(
-                  work.formattedWage,
-                  style: TextStyle(
-                    fontSize: 14,
-                    fontWeight: FontWeight.w600,
-                    color: Colors.blue[700],
-                  ),
+              ),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                decoration: BoxDecoration(
+                  color: work.isFull ? Colors.red[50] : Colors.blue[50],
+                  borderRadius: BorderRadius.circular(20),
                 ),
-                const SizedBox(height: 4),
-                Text(
+                child: Text(
                   work.countInfo,
                   style: TextStyle(
                     fontSize: 13,
-                    color: Colors.grey[700],
+                    fontWeight: FontWeight.w600,
+                    color: work.isFull ? Colors.red[700] : Colors.blue[700],
                   ),
                 ),
-              ],
-            ),
-          ),
-
-          // 마감 표시
-          if (work.isFull)
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-              decoration: BoxDecoration(
-                color: Colors.red[50],
-                borderRadius: BorderRadius.circular(8),
-                border: Border.all(color: Colors.red.shade300),
               ),
-              child: Text(
-                '마감',
+            ],
+          ),
+          const SizedBox(height: 12),
+
+          // ✅ NEW: 근무 시간 표시
+          Row(
+            children: [
+              Icon(Icons.access_time, size: 16, color: Colors.grey[600]),
+              const SizedBox(width: 6),
+              Text(
+                work.timeRange, // "09:00 ~ 18:00"
                 style: TextStyle(
-                  fontSize: 12,
-                  fontWeight: FontWeight.bold,
-                  color: Colors.red[700],
+                  fontSize: 14,
+                  color: Colors.grey[700],
                 ),
               ),
-            ),
+            ],
+          ),
+          const SizedBox(height: 8),
+
+          // 금액
+          Row(
+            children: [
+              Icon(Icons.payments, size: 16, color: Colors.green[600]),
+              const SizedBox(width: 6),
+              Text(
+                work.formattedWage,
+                style: const TextStyle(
+                  fontSize: 15,
+                  fontWeight: FontWeight.w600,
+                  color: Colors.green,
+                ),
+              ),
+            ],
+          ),
         ],
       ),
     );
