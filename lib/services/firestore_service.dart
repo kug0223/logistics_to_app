@@ -494,6 +494,7 @@ class FirestoreService {
     required String icon,
     String? color,
     String? backgroundColor,
+    String wageType = 'hourly', // ✅ 추가!
     int? displayOrder,
   }) async {
     try {
@@ -513,6 +514,7 @@ class FirestoreService {
         displayOrder: order,
         isActive: true,
         createdAt: DateTime.now(),
+        wageType: wageType, // ✅ 추가!
       );
 
       final docRef = await _firestore
@@ -539,6 +541,7 @@ class FirestoreService {
     String? icon,
     String? color,
     String? backgroundColor,
+    String? wageType, // ✅ 추가!
     int? displayOrder,
     bool showToast = true,  // ✅ 이 줄 추가!
   }) async {
@@ -551,6 +554,7 @@ class FirestoreService {
       if (color != null) updates['color'] = color;
       if (backgroundColor != null) updates['backgroundColor'] = backgroundColor;  // ✅ 추가
       if (displayOrder != null) updates['displayOrder'] = displayOrder;
+      if (wageType != null) updates['wageType'] = wageType; // ✅ 추가!
 
       if (updates.isEmpty) {
         print('⚠️ 수정할 내용이 없습니다');

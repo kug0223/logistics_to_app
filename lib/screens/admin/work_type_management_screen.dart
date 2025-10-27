@@ -230,30 +230,108 @@ class _WorkTypeManagementScreenState extends State<WorkTypeManagementScreen> {
         allIcons: _allIcons,
         onSelected: (selectedIcon, iconColor, backgroundColor) async {
           final nameController = TextEditingController();
+          String selectedWageType = 'hourly';
+          
           final confirmed = await showDialog<bool>(
             context: context,
-            builder: (context) => AlertDialog(
-              title: const Text('업무 유형 이름'),
-              content: TextField(
-                controller: nameController,
-                decoration: const InputDecoration(
-                  labelText: '이름',
-                  hintText: '예: 피킹, 패킹',
-                  border: OutlineInputBorder(),
-                ),
-                autofocus: true,
-              ),
-              actions: [
-                TextButton(
-                  onPressed: () => Navigator.pop(context, false),
-                  child: const Text('취소'),
-                ),
-                ElevatedButton(
-                  onPressed: () => Navigator.pop(context, true),
-                  child: const Text('추가'),
-                ),
-              ],
-            ),
+            builder: (context) {
+              // StatefulBuilder로 감싸서 다이얼로그 내부에서 setState 사용 가능하게
+              return StatefulBuilder(
+                builder: (context, setDialogState) {
+                  return AlertDialog(
+                    title: const Text('업무 유형 정보'),
+                    content: SingleChildScrollView(
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          // 이름 입력 필드
+                          TextField(
+                            controller: nameController,
+                            decoration: const InputDecoration(
+                              labelText: '이름',
+                              hintText: '예: 피킹, 패킹',
+                              border: OutlineInputBorder(),
+                            ),
+                            autofocus: true,
+                          ),
+                          
+                          const SizedBox(height: 20),
+                          
+                          // 급여 타입 제목
+                          const Text(
+                            '급여 타입',
+                            style: TextStyle(
+                              fontSize: 14, 
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                          
+                          const SizedBox(height: 8),
+                          
+                          // 급여 타입 선택 버튼들
+                          Row(
+                            children: [
+                              Expanded(
+                                child: _buildWageTypeButton(
+                                  context: context,
+                                  label: '시급',
+                                  value: 'hourly',
+                                  selectedValue: selectedWageType,
+                                  onTap: () {
+                                    setDialogState(() {
+                                      selectedWageType = 'hourly';
+                                    });
+                                  },
+                                ),
+                              ),
+                              const SizedBox(width: 8),
+                              Expanded(
+                                child: _buildWageTypeButton(
+                                  context: context,
+                                  label: '일급',
+                                  value: 'daily',
+                                  selectedValue: selectedWageType,
+                                  onTap: () {
+                                    setDialogState(() {
+                                      selectedWageType = 'daily';
+                                    });
+                                  },
+                                ),
+                              ),
+                              const SizedBox(width: 8),
+                              Expanded(
+                                child: _buildWageTypeButton(
+                                  context: context,
+                                  label: '월급',
+                                  value: 'monthly',
+                                  selectedValue: selectedWageType,
+                                  onTap: () {
+                                    setDialogState(() {
+                                      selectedWageType = 'monthly';
+                                    });
+                                  },
+                                ),
+                              ),
+                            ],
+                          ),
+                        ],
+                      ),
+                    ),
+                    actions: [
+                      TextButton(
+                        onPressed: () => Navigator.pop(context, false),
+                        child: const Text('취소'),
+                      ),
+                      ElevatedButton(
+                        onPressed: () => Navigator.pop(context, true),
+                        child: const Text('추가'),
+                      ),
+                    ],
+                  );
+                },
+              );
+            },
           );
 
           if (confirmed == true && nameController.text.trim().isNotEmpty) {
@@ -263,6 +341,7 @@ class _WorkTypeManagementScreenState extends State<WorkTypeManagementScreen> {
             } else {
               iconString = selectedIcon.toString();
             }
+            
             String? colorHex;
             if (iconColor != null) {
               colorHex = '#${iconColor.value.toRadixString(16).padLeft(8, '0').substring(2)}';
@@ -272,9 +351,11 @@ class _WorkTypeManagementScreenState extends State<WorkTypeManagementScreen> {
               businessId: _selectedBusiness!.id,
               name: nameController.text.trim(),
               icon: iconString,
-              color: colorHex ?? '#2196F3',  // ✅ 간단하게
+              color: colorHex ?? '#2196F3',
               backgroundColor: backgroundColor,
+              wageType: selectedWageType,
             );
+            
             if (success != null) {
               _loadWorkTypes();
             }
@@ -291,33 +372,110 @@ class _WorkTypeManagementScreenState extends State<WorkTypeManagementScreen> {
       context: context,
       builder: (context) => _IconPickerDialog(
         allIcons: _allIcons,
-        initialIcon: workType.icon,
-        initialIconColor: workType.color,
-        initialBackgroundColor: workType.backgroundColor,
         onSelected: (selectedIcon, iconColor, backgroundColor) async {
-          final nameController = TextEditingController(text: workType.name);
+          final nameController = TextEditingController();
+          String selectedWageType = 'hourly';
+          
           final confirmed = await showDialog<bool>(
             context: context,
-            builder: (context) => AlertDialog(
-              title: const Text('업무 유형 수정'),
-              content: TextField(
-                controller: nameController,
-                decoration: const InputDecoration(
-                  labelText: '이름',
-                  border: OutlineInputBorder(),
-                ),
-              ),
-              actions: [
-                TextButton(
-                  onPressed: () => Navigator.pop(context, false),
-                  child: const Text('취소'),
-                ),
-                ElevatedButton(
-                  onPressed: () => Navigator.pop(context, true),
-                  child: const Text('수정'),
-                ),
-              ],
-            ),
+            builder: (context) {
+              // StatefulBuilder로 감싸서 setState 사용 가능하게
+              return StatefulBuilder(
+                builder: (context, setDialogState) {
+                  return AlertDialog(
+                    title: const Text('업무 유형 정보'),
+                    content: SingleChildScrollView(
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          // 이름 입력
+                          TextField(
+                            controller: nameController,
+                            decoration: const InputDecoration(
+                              labelText: '이름',
+                              hintText: '예: 피킹, 패킹',
+                              border: OutlineInputBorder(),
+                            ),
+                            autofocus: true,
+                          ),
+                          
+                          const SizedBox(height: 20),
+                          
+                          // 급여 타입 제목
+                          const Text(
+                            '급여 타입',
+                            style: TextStyle(
+                              fontSize: 14, 
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                          
+                          const SizedBox(height: 8),
+                          
+                          // 급여 타입 선택 버튼들
+                          Row(
+                            children: [
+                              Expanded(
+                                child: _buildWageTypeButton(
+                                  context: context,
+                                  label: '시급',
+                                  value: 'hourly',
+                                  selectedValue: selectedWageType,
+                                  onTap: () {
+                                    setDialogState(() {
+                                      selectedWageType = 'hourly';
+                                    });
+                                  },
+                                ),
+                              ),
+                              const SizedBox(width: 8),
+                              Expanded(
+                                child: _buildWageTypeButton(
+                                  context: context,
+                                  label: '일급',
+                                  value: 'daily',
+                                  selectedValue: selectedWageType,
+                                  onTap: () {
+                                    setDialogState(() {
+                                      selectedWageType = 'daily';
+                                    });
+                                  },
+                                ),
+                              ),
+                              const SizedBox(width: 8),
+                              Expanded(
+                                child: _buildWageTypeButton(
+                                  context: context,
+                                  label: '월급',
+                                  value: 'monthly',
+                                  selectedValue: selectedWageType,
+                                  onTap: () {
+                                    setDialogState(() {
+                                      selectedWageType = 'monthly';
+                                    });
+                                  },
+                                ),
+                              ),
+                            ],
+                          ),
+                        ],
+                      ),
+                    ),
+                    actions: [
+                      TextButton(
+                        onPressed: () => Navigator.pop(context, false),
+                        child: const Text('취소'),
+                      ),
+                      ElevatedButton(
+                        onPressed: () => Navigator.pop(context, true),
+                        child: const Text('추가'),
+                      ),
+                    ],
+                  );
+                },
+              );
+            },
           );
 
           if (confirmed == true && nameController.text.trim().isNotEmpty) {
@@ -327,23 +485,22 @@ class _WorkTypeManagementScreenState extends State<WorkTypeManagementScreen> {
             } else {
               iconString = selectedIcon.toString();
             }
-
+            
             String? colorHex;
             if (iconColor != null) {
               colorHex = '#${iconColor.value.toRadixString(16).padLeft(8, '0').substring(2)}';
             }
 
-            final success = await _firestoreService.updateBusinessWorkType(
+            final success = await _firestoreService.addBusinessWorkType(
               businessId: _selectedBusiness!.id,
-              workTypeId: workType.id,
               name: nameController.text.trim(),
               icon: iconString,
-              color: colorHex,  // ✅ 간단하게
+              color: colorHex ?? '#2196F3',
               backgroundColor: backgroundColor,
-              showToast: true,
+              wageType: selectedWageType,
             );
-
-            if (success) {
+            
+            if (success != null) {
               _loadWorkTypes();
             }
           }
@@ -561,6 +718,73 @@ class _WorkTypeManagementScreenState extends State<WorkTypeManagementScreen> {
       ),
     );
   }
+  // ✅ 여기부터 추가!
+  Color _parseColor(String colorString) {
+    try {
+      return Color(int.parse(colorString.replaceFirst('#', '0xFF')));
+    } catch (e) {
+      return Colors.blue[700]!;
+    }
+  }
+
+
+  Widget _buildIconOrEmoji(String iconString, String? colorString) {
+    if (iconString.startsWith('material:')) {
+      try {
+        final codePoint = int.parse(iconString.substring(9));
+        Color iconColor = Colors.white;
+        if (colorString != null && colorString.isNotEmpty) {
+          iconColor = _parseColor(colorString);
+        }
+        return Icon(
+          IconData(codePoint, fontFamily: 'MaterialIcons'),
+          color: iconColor,
+          size: 28,
+        );
+      } catch (e) {
+        return const Icon(Icons.work_outline, color: Colors.white, size: 28);
+      }
+    }
+    return Text(iconString, style: const TextStyle(fontSize: 28));
+  }
+
+
+  // ✅ 급여 타입 선택 버튼 위젯
+  Widget _buildWageTypeButton({
+    required BuildContext context,
+    required String label,
+    required String value,
+    required String selectedValue,
+    required VoidCallback onTap,
+  }) {
+    final isSelected = selectedValue == value;
+    
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(8),
+      child: Container(
+        padding: const EdgeInsets.symmetric(vertical: 12),
+        decoration: BoxDecoration(
+          color: isSelected ? Colors.blue[700] : Colors.grey[200],
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(
+            color: isSelected ? Colors.blue[700]! : Colors.grey[300]!,
+            width: 2,
+          ),
+        ),
+        child: Text(
+          label,
+          textAlign: TextAlign.center,
+          style: TextStyle(
+            color: isSelected ? Colors.white : Colors.grey[700],
+            fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+            fontSize: 14,
+          ),
+        ),
+      ),
+    );
+  }
+
 
   Widget _buildWorkTypeList() {
     return ListView.builder(
@@ -572,73 +796,90 @@ class _WorkTypeManagementScreenState extends State<WorkTypeManagementScreen> {
         final isLast = index == _workTypes.length - 1;
         
         // ✅ backgroundColor 사용 (color가 아님!)
-        final bgColor = workType.backgroundColor != null && workType.backgroundColor!.isNotEmpty
-            ? Color(int.parse(workType.backgroundColor!.replaceFirst('#', '0xFF')))
+        final backgroundColor = workType.backgroundColor != null && workType.backgroundColor!.isNotEmpty
+            ? _parseColor(workType.backgroundColor!)
             : Colors.blue[700]!;
-
-        Widget iconWidget;
-        if (workType.icon.startsWith('material:')) {
-          final codePoint = int.parse(workType.icon.split(':')[1]);
-          
-          // ✅ Material 아이콘의 색상 결정
-          Color iconColor = Colors.white; // 기본은 흰색
-          if (workType.color != null && workType.color!.isNotEmpty) {
-            try {
-              iconColor = Color(int.parse(workType.color!.replaceFirst('#', '0xFF')));
-            } catch (e) {
-              iconColor = Colors.white;
-            }
-          }
-          
-          iconWidget = Icon(
-            IconData(codePoint, fontFamily: 'MaterialIcons'),
-            size: 24,
-            color: iconColor,
-          );
-        } else {
-          iconWidget = Text(workType.icon, style: const TextStyle(fontSize: 24));
-        }
 
         return Card(
           margin: const EdgeInsets.only(bottom: 12),
+          elevation: 2,
           child: ListTile(
             leading: Container(
-              width: 48,
-              height: 48,
+              width: 50,
+              height: 50,
               decoration: BoxDecoration(
-                color: bgColor,  // ✅ 배경색 사용!
+                color: backgroundColor,
                 borderRadius: BorderRadius.circular(8),
               ),
-              alignment: Alignment.center,
-              child: iconWidget,
+              child: Center(
+                child: _buildIconOrEmoji(workType.icon, workType.color),
+              ),
             ),
-            title: Text(
-              workType.name,
-              style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+            title: Row(
+              children: [
+                Text(
+                  workType.name,
+                  style: const TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+                const SizedBox(width: 8),
+                // ✅ NEW: 급여 타입 뱃지 추가
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                  decoration: BoxDecoration(
+                    color: Colors.green[50],
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: Colors.green[300]!),
+                  ),
+                  child: Text(
+                    workType.wageTypeLabel,
+                    style: TextStyle(
+                      fontSize: 11,
+                      fontWeight: FontWeight.w600,
+                      color: Colors.green[700],
+                    ),
+                  ),
+                ),
+              ],
             ),
-            subtitle: Text('순서: ${workType.displayOrder + 1}'),
+            subtitle: Text(
+              '순서: ${workType.displayOrder + 1}',
+              style: TextStyle(color: Colors.grey[600], fontSize: 12),
+            ),
             trailing: Row(
               mainAxisSize: MainAxisSize.min,
               children: [
+                // 위로 이동
                 IconButton(
-                  icon: const Icon(Icons.arrow_upward),
-                  color: isFirst ? Colors.grey : Colors.blue,
+                  icon: Icon(
+                    Icons.arrow_upward,
+                    color: isFirst ? Colors.grey[300] : Colors.blue[700],
+                  ),
                   onPressed: isFirst ? null : () => _moveUp(index),
                   tooltip: '위로',
                 ),
+                // 아래로 이동
                 IconButton(
-                  icon: const Icon(Icons.arrow_downward),
-                  color: isLast ? Colors.grey : Colors.blue,
+                  icon: Icon(
+                    Icons.arrow_downward,
+                    color: isLast ? Colors.grey[300] : Colors.blue[700],
+                  ),
                   onPressed: isLast ? null : () => _moveDown(index),
                   tooltip: '아래로',
                 ),
+                // 수정
                 IconButton(
-                  icon: const Icon(Icons.edit, color: Colors.blue),
+                  icon: Icon(Icons.edit, color: Colors.orange[700]),
                   onPressed: () => _showEditDialog(workType),
+                  tooltip: '수정',
                 ),
+                // 삭제
                 IconButton(
-                  icon: const Icon(Icons.delete, color: Colors.red),
+                  icon: Icon(Icons.delete, color: Colors.red[700]),
                   onPressed: () => _confirmDelete(workType),
+                  tooltip: '삭제',
                 ),
               ],
             ),
@@ -761,6 +1002,7 @@ class _IconPickerDialogState extends State<_IconPickerDialog> {
       }
     });
   }
+
 
   @override
   Widget build(BuildContext context) {
