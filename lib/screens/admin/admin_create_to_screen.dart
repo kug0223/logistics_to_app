@@ -24,6 +24,7 @@ class WorkDetailInput {
   final int? requiredCount;
   final String? startTime;
   final String? endTime;
+  final String wageType; // ✅ 추가
 
   WorkDetailInput({
     this.workType,
@@ -33,6 +34,7 @@ class WorkDetailInput {
     this.requiredCount,
     this.startTime,
     this.endTime,
+    this.wageType = 'hourly', // ✅ 추가
   });
 
   bool get isValid =>
@@ -204,6 +206,7 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
 
       setState(() {
         _myRecentTOs = recentTOs.take(10).toList();
+        _selectedGroupId = null; // ✅ 초기화 추가!
         _isLoadingRecentTOs = false;
       });
     } catch (e) {
@@ -414,6 +417,7 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
     BusinessWorkTypeModel? selectedWorkType;
     String? startTime;
     String? endTime;
+    String selectedWageType = 'hourly'; // ✅ 추가
     final wageController = TextEditingController();
     final countController = TextEditingController();
 
@@ -503,6 +507,41 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
                     ],
                   ),
                   const SizedBox(height: 16),
+                  // ✅ 급여 타입 선택 추가 시작
+                  const Text('급여 타입', style: TextStyle(fontWeight: FontWeight.bold)),
+                  const SizedBox(height: 8),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: _buildWageTypeChip(
+                          label: '시급',
+                          value: 'hourly',
+                          isSelected: selectedWageType == 'hourly',
+                          onTap: () => setDialogState(() => selectedWageType = 'hourly'),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: _buildWageTypeChip(
+                          label: '일급',
+                          value: 'daily',
+                          isSelected: selectedWageType == 'daily',
+                          onTap: () => setDialogState(() => selectedWageType = 'daily'),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: _buildWageTypeChip(
+                          label: '월급',
+                          value: 'monthly',
+                          isSelected: selectedWageType == 'monthly',
+                          onTap: () => setDialogState(() => selectedWageType = 'monthly'),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 16),
+                  // ✅ 급여 타입 선택 추가 끝
 
                   // 급여 입력
                   Text(
@@ -518,7 +557,7 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
                       border: const OutlineInputBorder(),
                       hintText: '15000',
                       suffixText: '원',
-                      helperText: _wageType == 'hourly'
+                       helperText: selectedWageType == 'hourly'
                           ? '2025년 최저시급: ${LaborStandards.formatCurrencyWithUnit(LaborStandards.currentMinimumWage)}'
                           : null,
                     ),
@@ -580,6 +619,7 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
                       requiredCount: count,
                       startTime: startTime,
                       endTime: endTime,
+                      wageType: selectedWageType, // ✅ 이 줄 추가!
                     ),
                   );
                 },
@@ -1412,10 +1452,6 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
 
   /// 그룹 연결 섹션
   Widget _buildGroupLinkSection() {
-    if (_selectedDates.length <= 1 || _isConsecutiveDates()) {
-      return const SizedBox.shrink();
-    }
-
     return Card(
       child: Padding(
         padding: const EdgeInsets.all(16),
@@ -1454,10 +1490,14 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
                 )
               else
                 DropdownButtonFormField<String>(
-                  value: _selectedGroupId,
+                  value: _myRecentTOs.isNotEmpty && 
+                        _myRecentTOs.any((to) => to.groupId == _selectedGroupId)
+                      ? _selectedGroupId 
+                      : null, // ✅ 유효하지 않으면 null
                   decoration: const InputDecoration(
                     labelText: '연결할 공고 선택',
                     border: OutlineInputBorder(),
+                    hintText: '선택하세요', // ✅ hint 추가
                   ),
                   items: _myRecentTOs.map((to) {
                     return DropdownMenuItem(
@@ -1524,8 +1564,9 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
   }
 
   /// 급여 라벨 반환
-  String _getWageLabel() {
-    switch (_wageType) {
+  String _getWageLabel([String? wageType]) { // ✅ 파라미터 추가
+    final type = wageType ?? _wageType; // ✅ 추가
+    switch (type) { // ✅ 수정
       case 'hourly':
         return '시급';
       case 'daily':
@@ -1615,5 +1656,38 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
     } else {
       return Text(iconString, style: const TextStyle(fontSize: 18));
     }
+  }
+  /// 급여 타입 선택 칩 위젯
+  Widget _buildWageTypeChip({
+    required String label,
+    required String value,
+    required bool isSelected,
+    required VoidCallback onTap,
+  }) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(8),
+      child: Container(
+        padding: const EdgeInsets.symmetric(vertical: 12),
+        decoration: BoxDecoration(
+          color: isSelected ? Colors.blue[700] : Colors.grey[200],
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(
+            color: isSelected ? Colors.blue[700]! : Colors.grey[400]!,
+            width: isSelected ? 2 : 1,
+          ),
+        ),
+        child: Center(
+          child: Text(
+            label,
+            style: TextStyle(
+              color: isSelected ? Colors.white : Colors.grey[700],
+              fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+              fontSize: 14,
+            ),
+          ),
+        ),
+      ),
+    );
   }
 }
