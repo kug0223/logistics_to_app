@@ -206,7 +206,10 @@ class _WorkTypeManagementScreenState extends State<WorkTypeManagementScreen> {
 
     try {
       final workTypes = await _firestoreService.getBusinessWorkTypes(_selectedBusiness!.id);
-      
+      // ✅ 이 줄 추가해서 디버깅
+      for (var wt in workTypes) {
+        print('업무: ${wt.name}, wageType: ${wt.wageType}');
+      }
       setState(() {
         _workTypes = workTypes;
         _isLoading = false;

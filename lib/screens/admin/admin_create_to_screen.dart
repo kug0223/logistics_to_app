@@ -93,11 +93,11 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
 
   // TO 설정
   String _selectedJobType = 'short'; // 'short' or 'long_term'
-  String _wageType = 'hourly'; // 'hourly', 'daily', 'per_task', 'monthly'
 
   // 날짜 선택
   String _dateMode = 'single'; // 'single' or 'multiple'
   List<DateTime> _selectedDates = [];
+  List<String> _selectedWeekdays = [];
   DateTime _focusedDay = DateTime.now();
   CalendarFormat _calendarFormat = CalendarFormat.month;
   bool _isCalendarExpanded = false;
@@ -417,7 +417,6 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
     BusinessWorkTypeModel? selectedWorkType;
     String? startTime;
     String? endTime;
-    String selectedWageType = 'hourly'; // ✅ 추가
     final wageController = TextEditingController();
     final countController = TextEditingController();
 
@@ -507,45 +506,10 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
                     ],
                   ),
                   const SizedBox(height: 16),
-                  // ✅ 급여 타입 선택 추가 시작
-                  const Text('급여 타입', style: TextStyle(fontWeight: FontWeight.bold)),
-                  const SizedBox(height: 8),
-                  Row(
-                    children: [
-                      Expanded(
-                        child: _buildWageTypeChip(
-                          label: '시급',
-                          value: 'hourly',
-                          isSelected: selectedWageType == 'hourly',
-                          onTap: () => setDialogState(() => selectedWageType = 'hourly'),
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: _buildWageTypeChip(
-                          label: '일급',
-                          value: 'daily',
-                          isSelected: selectedWageType == 'daily',
-                          onTap: () => setDialogState(() => selectedWageType = 'daily'),
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: _buildWageTypeChip(
-                          label: '월급',
-                          value: 'monthly',
-                          isSelected: selectedWageType == 'monthly',
-                          onTap: () => setDialogState(() => selectedWageType = 'monthly'),
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 16),
-                  // ✅ 급여 타입 선택 추가 끝
 
                   // 급여 입력
                   Text(
-                    _getWageLabel(),
+                    selectedWorkType?.wageTypeLabel ?? '급여',  // ✅ 수정됨
                     style: const TextStyle(fontWeight: FontWeight.bold),
                   ),
                   const SizedBox(height: 8),
@@ -555,9 +519,9 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
                     inputFormatters: [FilteringTextInputFormatter.digitsOnly],
                     decoration: InputDecoration(
                       border: const OutlineInputBorder(),
-                      hintText: '15000',
+                      hintText: '금액을 입력하세요.',
                       suffixText: '원',
-                       helperText: selectedWageType == 'hourly'
+                       helperText: selectedWorkType?.wageType == 'hourly'  // ✅ 수정됨
                           ? '2025년 최저시급: ${LaborStandards.formatCurrencyWithUnit(LaborStandards.currentMinimumWage)}'
                           : null,
                     ),
@@ -573,7 +537,7 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
                     inputFormatters: [FilteringTextInputFormatter.digitsOnly],
                     decoration: const InputDecoration(
                       border: OutlineInputBorder(),
-                      hintText: '1',
+                      hintText: '필요 인원 수 입력하세요.',
                       suffixText: '명',
                     ),
                   ),
@@ -619,7 +583,6 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
                       requiredCount: count,
                       startTime: startTime,
                       endTime: endTime,
-                      wageType: selectedWageType, // ✅ 이 줄 추가!
                     ),
                   );
                 },
@@ -853,7 +816,7 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
                 const SizedBox(width: 12),
                 Expanded(
                   child: _buildJobTypeChip(
-                    label: '1개월+ 계약직',
+                    label: '1개월 이상',
                     value: 'long_term',
                     icon: Icons.event_note,
                   ),
@@ -922,8 +885,19 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
     );
   }
 
-  /// 날짜 선택
+  /// 날짜 선택 - jobType에 따라 분기
   Widget _buildDateSelector() {
+    // 단기 알바인 경우: 캘린더
+    if (_selectedJobType == 'short') {
+      return _buildCalendarDateSelector();
+    }
+    
+    // 1개월 이상인 경우: 요일 선택
+    return _buildWeekdaySelector();
+  }
+
+  /// 캘린더 날짜 선택 (단기 알바용)
+  Widget _buildCalendarDateSelector() {
     return Card(
       child: Padding(
         padding: const EdgeInsets.all(16),
@@ -938,7 +912,7 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
                   style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
                 ),
                 TextButton.icon(
-                  onPressed: _isCalendarExpanded ? _clearAllDates : null,
+                  onPressed: _selectedDates.isNotEmpty ? _clearAllDates : null,
                   icon: const Icon(Icons.clear_all, size: 18),
                   label: const Text('전체 해제'),
                 ),
@@ -949,6 +923,31 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
             // 선택된 날짜 요약
             if (_selectedDates.isNotEmpty) ...[
               _buildDateSummary(),
+              const SizedBox(height: 12),
+            ],
+
+            // 30일 제한 경고
+            if (_selectedDates.length >= 30) ...[
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: Colors.orange[50],
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: Colors.orange[300]!),
+                ),
+                child: Row(
+                  children: [
+                    Icon(Icons.warning_amber, color: Colors.orange[700], size: 20),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        '단기 알바는 최대 30일까지 선택 가능합니다',
+                        style: TextStyle(fontSize: 13, color: Colors.orange[900]),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
               const SizedBox(height: 12),
             ],
 
@@ -966,11 +965,172 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
             // 캘린더
             if (_isCalendarExpanded) ...[
               const SizedBox(height: 12),
-              _buildCalendar(),
+              TableCalendar(
+                firstDay: DateTime.now(),
+                lastDay: DateTime.now().add(const Duration(days: 90)),
+                focusedDay: _focusedDay,
+                calendarFormat: _calendarFormat,
+                selectedDayPredicate: (day) {
+                  return _selectedDates.any((date) =>
+                      date.year == day.year &&
+                      date.month == day.month &&
+                      date.day == day.day);
+                },
+                onDaySelected: (selectedDay, focusedDay) {
+                  setState(() {
+                    _focusedDay = focusedDay;
+                    
+                    final isAlreadySelected = _selectedDates.any((date) =>
+                        date.year == selectedDay.year &&
+                        date.month == selectedDay.month &&
+                        date.day == selectedDay.day);
+                    
+                    if (isAlreadySelected) {
+                      _selectedDates.removeWhere((date) =>
+                          date.year == selectedDay.year &&
+                          date.month == selectedDay.month &&
+                          date.day == selectedDay.day);
+                    } else {
+                      if (_selectedDates.length >= 30) {
+                        ToastHelper.showWarning('단기 알바는 최대 30일까지 선택 가능합니다');
+                        return;
+                      }
+                      _selectedDates.add(selectedDay);
+                    }
+                  });
+                },
+                calendarStyle: CalendarStyle(
+                  selectedDecoration: BoxDecoration(
+                    color: Colors.blue[700],
+                    shape: BoxShape.circle,
+                  ),
+                  todayDecoration: BoxDecoration(
+                    color: Colors.blue[200],
+                    shape: BoxShape.circle,
+                  ),
+                ),
+                headerStyle: const HeaderStyle(
+                  formatButtonVisible: false,
+                  titleCentered: true,
+                ),
+              ),
             ],
           ],
         ),
       ),
+    );
+  }
+
+  /// 요일 선택 (1개월 이상용)
+  Widget _buildWeekdaySelector() {
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              '근무 요일 선택',
+              style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              '※ 매주 반복되는 근무 요일을 선택하세요',
+              style: TextStyle(fontSize: 13, color: Colors.grey[600]),
+            ),
+            const SizedBox(height: 16),
+            
+            // 요일 버튼들
+            _buildWeekdayButtons(),
+            
+            const SizedBox(height: 16),
+            
+            // 선택 요약
+            if (_selectedWeekdays.isNotEmpty) ...[
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: Colors.green[50],
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: Colors.green[200]!),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Icon(Icons.check_circle, color: Colors.green[700], size: 18),
+                        const SizedBox(width: 8),
+                        Text(
+                          '주 ${_selectedWeekdays.length}일 근무',
+                          style: TextStyle(
+                            fontSize: 14,
+                            fontWeight: FontWeight.bold,
+                            color: Colors.green[900],
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      '선택된 요일: ${_selectedWeekdays.join(', ')}',
+                      style: TextStyle(fontSize: 13, color: Colors.green[800]),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// 요일 버튼들
+  Widget _buildWeekdayButtons() {
+    final weekdays = ['월', '화', '수', '목', '금', '토', '일'];
+    
+    return Wrap(
+      spacing: 8,
+      runSpacing: 8,
+      children: weekdays.map((day) {
+        final isSelected = _selectedWeekdays.contains(day);
+        
+        return InkWell(
+          onTap: () {
+            setState(() {
+              if (isSelected) {
+                _selectedWeekdays.remove(day);
+              } else {
+                _selectedWeekdays.add(day);
+              }
+            });
+          },
+          borderRadius: BorderRadius.circular(8),
+          child: Container(
+            width: 48,
+            height: 48,
+            decoration: BoxDecoration(
+              color: isSelected ? Colors.blue[700] : Colors.white,
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(
+                color: isSelected ? Colors.blue[700]! : Colors.grey[300]!,
+                width: 2,
+              ),
+            ),
+            child: Center(
+              child: Text(
+                day,
+                style: TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.bold,
+                  color: isSelected ? Colors.white : Colors.grey[700],
+                ),
+              ),
+            ),
+          ),
+        );
+      }).toList(),
     );
   }
 
@@ -1325,7 +1485,7 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        _getWageLabel(),
+                        _getWageLabelFromType(detail.wageType),  // ✅ 수정됨
                         style: TextStyle(fontSize: 12, color: Colors.grey[600]),
                       ),
                       Text(
@@ -1563,22 +1723,6 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
     return times;
   }
 
-  /// 급여 라벨 반환
-  String _getWageLabel([String? wageType]) { // ✅ 파라미터 추가
-    final type = wageType ?? _wageType; // ✅ 추가
-    switch (type) { // ✅ 수정
-      case 'hourly':
-        return '시급';
-      case 'daily':
-        return '일급';
-      case 'per_task':
-        return '건별 금액';
-      case 'monthly':
-        return '월급';
-      default:
-        return '급여';
-    }
-  }
 
   /// 색상 문자열 파싱
   Color _parseColor(String colorString) {
@@ -1657,37 +1801,17 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
       return Text(iconString, style: const TextStyle(fontSize: 18));
     }
   }
-  /// 급여 타입 선택 칩 위젯
-  Widget _buildWageTypeChip({
-    required String label,
-    required String value,
-    required bool isSelected,
-    required VoidCallback onTap,
-  }) {
-    return InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(8),
-      child: Container(
-        padding: const EdgeInsets.symmetric(vertical: 12),
-        decoration: BoxDecoration(
-          color: isSelected ? Colors.blue[700] : Colors.grey[200],
-          borderRadius: BorderRadius.circular(8),
-          border: Border.all(
-            color: isSelected ? Colors.blue[700]! : Colors.grey[400]!,
-            width: isSelected ? 2 : 1,
-          ),
-        ),
-        child: Center(
-          child: Text(
-            label,
-            style: TextStyle(
-              color: isSelected ? Colors.white : Colors.grey[700],
-              fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
-              fontSize: 14,
-            ),
-          ),
-        ),
-      ),
-    );
+  /// 급여 타입 라벨 반환
+  String _getWageLabelFromType(String wageType) {
+    switch (wageType) {
+      case 'hourly':
+        return '시급';
+      case 'daily':
+        return '일급';
+      case 'monthly':
+        return '월급';
+      default:
+        return '급여';
+    }
   }
 }
