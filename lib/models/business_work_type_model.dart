@@ -8,7 +8,6 @@ class BusinessWorkTypeModel {
   final String icon;             // 이모지 아이콘 (예: 📦, 🚚)
   final String? color;           // 색상 코드 (예: #FF5733)
   final String? backgroundColor;
-  final String wageType;         // ✅ NEW: 급여 타입 ('hourly', 'daily', 'monthly')
   final int displayOrder;        // 정렬 순서 (낮을수록 위)
   final bool isActive;           // 활성화 여부
   final DateTime createdAt;      // 생성 일시
@@ -20,7 +19,6 @@ class BusinessWorkTypeModel {
     required this.icon,
     this.color,
     this.backgroundColor,
-    this.wageType = 'hourly',     // ✅ NEW: 기본값 시급
     required this.displayOrder,
     this.isActive = true,
     required this.createdAt,
@@ -35,7 +33,6 @@ class BusinessWorkTypeModel {
       icon: map['icon'] ?? '📋',
       color: map['color'],
       backgroundColor: map['backgroundColor'],
-      wageType: map['wageType'] ?? 'hourly', // ✅ NEW
       displayOrder: map['displayOrder'] ?? 0,
       isActive: map['isActive'] ?? true,
       createdAt: (map['createdAt'] as Timestamp).toDate(),
@@ -56,7 +53,6 @@ class BusinessWorkTypeModel {
       'icon': icon,
       'color': color,
       'backgroundColor': backgroundColor,
-      'wageType': wageType,        // ✅ NEW
       'displayOrder': displayOrder,
       'isActive': isActive,
       'createdAt': Timestamp.fromDate(createdAt),
@@ -71,7 +67,6 @@ class BusinessWorkTypeModel {
     String? icon,
     String? color,
     String? backgroundColor,
-    String? wageType,              // ✅ NEW
     int? displayOrder,
     bool? isActive,
     DateTime? createdAt,
@@ -83,25 +78,10 @@ class BusinessWorkTypeModel {
       icon: icon ?? this.icon,
       color: color ?? this.color,
       backgroundColor: backgroundColor ?? this.backgroundColor,
-      wageType: wageType ?? this.wageType, // ✅ NEW
       displayOrder: displayOrder ?? this.displayOrder,
       isActive: isActive ?? this.isActive,
       createdAt: createdAt ?? this.createdAt,
     );
-  }
-
-  /// ✅ NEW: 급여 타입 라벨 반환
-  String get wageTypeLabel {
-    switch (wageType) {
-      case 'hourly':
-        return '시급';
-      case 'daily':
-        return '일급';
-      case 'monthly':
-        return '월급';
-      default:
-        return '시급';
-    }
   }
 
   /// ✅ NEW: 금액 포맷팅 (천단위 콤마)
@@ -114,6 +94,6 @@ class BusinessWorkTypeModel {
 
   @override
   String toString() {
-    return 'BusinessWorkType(id: $id, name: $name, icon: $icon, wageType: $wageType)';
+    return 'BusinessWorkType(id: $id, name: $name, icon: $icon)';
   }
 }

@@ -191,13 +191,19 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
     setState(() => _isLoadingRecentTOs = true);
 
     try {
-      final allTOs = await _firestoreService.getTOsByBusiness(_selectedBusiness!.id);
+      // ✅ 대표 TO만 조회하도록 수정!
+      final allTOs = await _firestoreService.getGroupMasterTOs();
+      
+      // 내 사업장의 TO만 필터링
+      final myBusinessTOs = allTOs.where((to) => 
+        to.businessId == _selectedBusiness!.id
+      ).toList();
       
       // 최근 7일 이내 TO만 필터링
       final now = DateTime.now();
       final sevenDaysAgo = now.subtract(const Duration(days: 7));
       
-      final recentTOs = allTOs.where((to) {
+      final recentTOs = myBusinessTOs.where((to) {
         return to.createdAt.isAfter(sevenDaysAgo);
       }).toList();
 
@@ -206,7 +212,7 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
 
       setState(() {
         _myRecentTOs = recentTOs.take(10).toList();
-        _selectedGroupId = null; // ✅ 초기화 추가!
+        _selectedGroupId = null;
         _isLoadingRecentTOs = false;
       });
     } catch (e) {
@@ -248,6 +254,29 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
       ToastHelper.showError('지원 마감 시간을 설정해주세요');
       return;
     }
+    // 지원 마감 DateTime 생성
+    final applicationDeadline = DateTime(
+      _selectedDeadlineDate!.year,
+      _selectedDeadlineDate!.month,
+      _selectedDeadlineDate!.day,
+      _selectedDeadlineTime!.hour,
+      _selectedDeadlineTime!.minute,
+    );
+    // ✅ 지원 마감 시간 검증
+    final latestWorkDate = _selectedDates.reduce((a, b) => a.isAfter(b) ? a : b);
+    final latestWorkDateTime = DateTime(
+      latestWorkDate.year,
+      latestWorkDate.month,
+      latestWorkDate.day,
+      23,
+      59,
+      59,
+    );
+
+    if (applicationDeadline.isAfter(latestWorkDateTime)) {
+      ToastHelper.showError('지원 마감은 마지막 근무일(${latestWorkDate.month}/${latestWorkDate.day}) 23:59까지 가능합니다');
+      return;
+    }
 
     setState(() => _isCreating = true);
 
@@ -259,15 +288,6 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
         ToastHelper.showError('로그인 정보를 찾을 수 없습니다');
         return;
       }
-
-      // 지원 마감 DateTime 생성
-      final applicationDeadline = DateTime(
-        _selectedDeadlineDate!.year,
-        _selectedDeadlineDate!.month,
-        _selectedDeadlineDate!.day,
-        _selectedDeadlineTime!.hour,
-        _selectedDeadlineTime!.minute,
-      );
 
       // 연속된 날짜 그룹 생성
       final dateGroups = _groupConsecutiveDates();
@@ -415,6 +435,7 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
   /// 업무 추가 다이얼로그
   Future<void> _showAddWorkDetailDialog() async {
     BusinessWorkTypeModel? selectedWorkType;
+    String selectedWageType = 'hourly'; // ✅ 이 줄 추가
     String? startTime;
     String? endTime;
     final wageController = TextEditingController();
@@ -467,6 +488,55 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
                     },
                   ),
                   const SizedBox(height: 16),
+                  
+                  // ✅ 급여 타입 선택 추가
+                  const Text('급여 타입', style: TextStyle(fontWeight: FontWeight.bold)),
+                  const SizedBox(height: 8),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: _buildWageTypeButtonInline(
+                          context: context,
+                          label: '시급',
+                          value: 'hourly',
+                          selectedValue: selectedWageType,
+                          onTap: () {
+                            setDialogState(() {
+                              selectedWageType = 'hourly';
+                            });
+                          },
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: _buildWageTypeButtonInline(
+                          context: context,
+                          label: '일급',
+                          value: 'daily',
+                          selectedValue: selectedWageType,
+                          onTap: () {
+                            setDialogState(() {
+                              selectedWageType = 'daily';
+                            });
+                          },
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: _buildWageTypeButtonInline(
+                          context: context,
+                          label: '월급',
+                          value: 'monthly',
+                          selectedValue: selectedWageType,
+                          onTap: () {
+                            setDialogState(() {
+                              selectedWageType = 'monthly';
+                            });
+                          },
+                        ),
+                      ),
+                    ],
+                  ),
 
                   // 근무 시간
                   const Text('근무 시간', style: TextStyle(fontWeight: FontWeight.bold)),
@@ -509,19 +579,42 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
 
                   // 급여 입력
                   Text(
-                    selectedWorkType?.wageTypeLabel ?? '급여',  // ✅ 수정됨
+                    _getWageLabelFromType(selectedWageType),  // ✅ 이것만!
                     style: const TextStyle(fontWeight: FontWeight.bold),
                   ),
                   const SizedBox(height: 8),
                   TextFormField(
                     controller: wageController,
                     keyboardType: TextInputType.number,
-                    inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+                    inputFormatters: [
+                      FilteringTextInputFormatter.digitsOnly,
+                      // ✅ 천단위 콤마 포맷터 추가
+                      TextInputFormatter.withFunction((oldValue, newValue) {
+                        if (newValue.text.isEmpty) {
+                          return newValue;
+                        }
+                        
+                        final number = int.tryParse(newValue.text.replaceAll(',', ''));
+                        if (number == null) {
+                          return oldValue;
+                        }
+                        
+                        final formatted = number.toString().replaceAllMapped(
+                          RegExp(r'(\d{1,3})(?=(\d{3})+(?!\d))'),
+                          (Match m) => '${m[1]},',
+                        );
+                        
+                        return TextEditingValue(
+                          text: formatted,
+                          selection: TextSelection.collapsed(offset: formatted.length),
+                        );
+                      }),
+                    ],
                     decoration: InputDecoration(
                       border: const OutlineInputBorder(),
                       hintText: '금액을 입력하세요.',
                       suffixText: '원',
-                       helperText: selectedWorkType?.wageType == 'hourly'  // ✅ 수정됨
+                      helperText: selectedWageType == 'hourly'
                           ? '2025년 최저시급: ${LaborStandards.formatCurrencyWithUnit(LaborStandards.currentMinimumWage)}'
                           : null,
                     ),
@@ -560,7 +653,7 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
                     return;
                   }
 
-                  final wage = int.tryParse(wageController.text);
+                  final wage = int.tryParse(wageController.text.replaceAll(',', ''));
                   final count = int.tryParse(countController.text);
 
                   if (wage == null || wage <= 0) {
@@ -583,6 +676,7 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
                       requiredCount: count,
                       startTime: startTime,
                       endTime: endTime,
+                      wageType: selectedWageType, // ✅ 이 줄 추가
                     ),
                   );
                 },
@@ -966,6 +1060,7 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
             if (_isCalendarExpanded) ...[
               const SizedBox(height: 12),
               TableCalendar(
+                locale: 'ko_KR', // ✅ 이 줄 추가!
                 firstDay: DateTime.now(),
                 lastDay: DateTime.now().add(const Duration(days: 90)),
                 focusedDay: _focusedDay,
@@ -1529,6 +1624,32 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
 
   /// 지원 마감 선택
   Widget _buildDeadlineSelector() {
+    // ✅ 에러 메시지 계산
+    String? deadlineErrorMessage;
+    if (_selectedDates.isNotEmpty && _selectedDeadlineDate != null && _selectedDeadlineTime != null) {
+      final latestWorkDate = _selectedDates.reduce((a, b) => a.isAfter(b) ? a : b);
+      final applicationDeadline = DateTime(
+        _selectedDeadlineDate!.year,
+        _selectedDeadlineDate!.month,
+        _selectedDeadlineDate!.day,
+        _selectedDeadlineTime!.hour,
+        _selectedDeadlineTime!.minute,
+      );
+      
+      final latestWorkDateTime = DateTime(
+        latestWorkDate.year,
+        latestWorkDate.month,
+        latestWorkDate.day,
+        23,
+        59,
+        59,
+      );
+
+      if (applicationDeadline.isAfter(latestWorkDateTime)) {
+        deadlineErrorMessage = '⚠️ 지원 마감은 마지막 근무일(${latestWorkDate.month}/${latestWorkDate.day}) 23:59까지 가능합니다';
+      }
+    }
+
     return Card(
       child: Padding(
         padding: const EdgeInsets.all(16),
@@ -1550,6 +1671,7 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
                         initialDate: _selectedDeadlineDate ?? DateTime.now(),
                         firstDate: DateTime.now(),
                         lastDate: DateTime.now().add(const Duration(days: 30)),
+                        locale: const Locale('ko', 'KR'),
                       );
                       if (date != null) {
                         setState(() => _selectedDeadlineDate = date);
@@ -1585,6 +1707,34 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
                 ),
               ],
             ),
+            // ✅ 에러 메시지 표시
+            if (deadlineErrorMessage != null) ...[
+              const SizedBox(height: 12),
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: Colors.red[50],
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: Colors.red[300]!),
+                ),
+                child: Row(
+                  children: [
+                    Icon(Icons.error_outline, color: Colors.red[700], size: 20),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        deadlineErrorMessage,
+                        style: TextStyle(
+                          fontSize: 13,
+                          color: Colors.red[900],
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
           ],
         ),
       ),
@@ -1813,5 +1963,40 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
       default:
         return '급여';
     }
+  }
+  /// 급여 타입 선택 버튼 (인라인)
+  Widget _buildWageTypeButtonInline({
+    required BuildContext context,
+    required String label,
+    required String value,
+    required String selectedValue,
+    required VoidCallback onTap,
+  }) {
+    final isSelected = selectedValue == value;
+    
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(8),
+      child: Container(
+        padding: const EdgeInsets.symmetric(vertical: 12),
+        decoration: BoxDecoration(
+          color: isSelected ? Colors.blue[700] : Colors.grey[200],
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(
+            color: isSelected ? Colors.blue[700]! : Colors.grey[300]!,
+            width: 2,
+          ),
+        ),
+        child: Text(
+          label,
+          textAlign: TextAlign.center,
+          style: TextStyle(
+            color: isSelected ? Colors.white : Colors.grey[700],
+            fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+            fontSize: 14,
+          ),
+        ),
+      ),
+    );
   }
 }

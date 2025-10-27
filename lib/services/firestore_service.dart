@@ -514,7 +514,6 @@ class FirestoreService {
         displayOrder: order,
         isActive: true,
         createdAt: DateTime.now(),
-        wageType: wageType, // ✅ 추가!
       );
 
       final docRef = await _firestore

@@ -206,10 +206,6 @@ class _WorkTypeManagementScreenState extends State<WorkTypeManagementScreen> {
 
     try {
       final workTypes = await _firestoreService.getBusinessWorkTypes(_selectedBusiness!.id);
-      // ✅ 이 줄 추가해서 디버깅
-      for (var wt in workTypes) {
-        print('업무: ${wt.name}, wageType: ${wt.wageType}');
-      }
       setState(() {
         _workTypes = workTypes;
         _isLoading = false;
@@ -233,106 +229,40 @@ class _WorkTypeManagementScreenState extends State<WorkTypeManagementScreen> {
         allIcons: _allIcons,
         onSelected: (selectedIcon, iconColor, backgroundColor) async {
           final nameController = TextEditingController();
-          String selectedWageType = 'hourly';
           
           final confirmed = await showDialog<bool>(
             context: context,
             builder: (context) {
-              // StatefulBuilder로 감싸서 다이얼로그 내부에서 setState 사용 가능하게
-              return StatefulBuilder(
-                builder: (context, setDialogState) {
-                  return AlertDialog(
-                    title: const Text('업무 유형 정보'),
-                    content: SingleChildScrollView(
-                      child: Column(
-                        mainAxisSize: MainAxisSize.min,
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          // 이름 입력 필드
-                          TextField(
-                            controller: nameController,
-                            decoration: const InputDecoration(
-                              labelText: '이름',
-                              hintText: '예: 피킹, 패킹',
-                              border: OutlineInputBorder(),
-                            ),
-                            autofocus: true,
-                          ),
-                          
-                          const SizedBox(height: 20),
-                          
-                          // 급여 타입 제목
-                          const Text(
-                            '급여 타입',
-                            style: TextStyle(
-                              fontSize: 14, 
-                              fontWeight: FontWeight.bold,
-                            ),
-                          ),
-                          
-                          const SizedBox(height: 8),
-                          
-                          // 급여 타입 선택 버튼들
-                          Row(
-                            children: [
-                              Expanded(
-                                child: _buildWageTypeButton(
-                                  context: context,
-                                  label: '시급',
-                                  value: 'hourly',
-                                  selectedValue: selectedWageType,
-                                  onTap: () {
-                                    setDialogState(() {
-                                      selectedWageType = 'hourly';
-                                    });
-                                  },
-                                ),
-                              ),
-                              const SizedBox(width: 8),
-                              Expanded(
-                                child: _buildWageTypeButton(
-                                  context: context,
-                                  label: '일급',
-                                  value: 'daily',
-                                  selectedValue: selectedWageType,
-                                  onTap: () {
-                                    setDialogState(() {
-                                      selectedWageType = 'daily';
-                                    });
-                                  },
-                                ),
-                              ),
-                              const SizedBox(width: 8),
-                              Expanded(
-                                child: _buildWageTypeButton(
-                                  context: context,
-                                  label: '월급',
-                                  value: 'monthly',
-                                  selectedValue: selectedWageType,
-                                  onTap: () {
-                                    setDialogState(() {
-                                      selectedWageType = 'monthly';
-                                    });
-                                  },
-                                ),
-                              ),
-                            ],
-                          ),
-                        ],
-                      ),
-                    ),
-                    actions: [
-                      TextButton(
-                        onPressed: () => Navigator.pop(context, false),
-                        child: const Text('취소'),
-                      ),
-                      ElevatedButton(
-                        onPressed: () => Navigator.pop(context, true),
-                        child: const Text('추가'),
+              return AlertDialog(
+                title: const Text('업무 유형 정보'),
+                content: SingleChildScrollView(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      // 이름 입력 필드
+                      TextField(
+                        controller: nameController,
+                        decoration: const InputDecoration(
+                          labelText: '이름',
+                          hintText: '예: 피킹, 패킹',
+                          border: OutlineInputBorder(),
+                        ),
+                        autofocus: true,
                       ),
                     ],
-                  );
-                },
+                  ),
+                ),
+                actions: [
+                  TextButton(
+                    onPressed: () => Navigator.pop(context, false),
+                    child: const Text('취소'),
+                  ),
+                  ElevatedButton(
+                    onPressed: () => Navigator.pop(context, true),
+                    child: const Text('추가'),
+                  ),
+                ],
               );
             },
           );
@@ -356,7 +286,6 @@ class _WorkTypeManagementScreenState extends State<WorkTypeManagementScreen> {
               icon: iconString,
               color: colorHex ?? '#2196F3',
               backgroundColor: backgroundColor,
-              wageType: selectedWageType,
             );
             
             if (success != null) {
@@ -377,7 +306,6 @@ class _WorkTypeManagementScreenState extends State<WorkTypeManagementScreen> {
         allIcons: _allIcons,
         onSelected: (selectedIcon, iconColor, backgroundColor) async {
           final nameController = TextEditingController();
-          String selectedWageType = 'hourly';
           
           final confirmed = await showDialog<bool>(
             context: context,
@@ -404,64 +332,6 @@ class _WorkTypeManagementScreenState extends State<WorkTypeManagementScreen> {
                           ),
                           
                           const SizedBox(height: 20),
-                          
-                          // 급여 타입 제목
-                          const Text(
-                            '급여 타입',
-                            style: TextStyle(
-                              fontSize: 14, 
-                              fontWeight: FontWeight.bold,
-                            ),
-                          ),
-                          
-                          const SizedBox(height: 8),
-                          
-                          // 급여 타입 선택 버튼들
-                          Row(
-                            children: [
-                              Expanded(
-                                child: _buildWageTypeButton(
-                                  context: context,
-                                  label: '시급',
-                                  value: 'hourly',
-                                  selectedValue: selectedWageType,
-                                  onTap: () {
-                                    setDialogState(() {
-                                      selectedWageType = 'hourly';
-                                    });
-                                  },
-                                ),
-                              ),
-                              const SizedBox(width: 8),
-                              Expanded(
-                                child: _buildWageTypeButton(
-                                  context: context,
-                                  label: '일급',
-                                  value: 'daily',
-                                  selectedValue: selectedWageType,
-                                  onTap: () {
-                                    setDialogState(() {
-                                      selectedWageType = 'daily';
-                                    });
-                                  },
-                                ),
-                              ),
-                              const SizedBox(width: 8),
-                              Expanded(
-                                child: _buildWageTypeButton(
-                                  context: context,
-                                  label: '월급',
-                                  value: 'monthly',
-                                  selectedValue: selectedWageType,
-                                  onTap: () {
-                                    setDialogState(() {
-                                      selectedWageType = 'monthly';
-                                    });
-                                  },
-                                ),
-                              ),
-                            ],
-                          ),
                         ],
                       ),
                     ),
@@ -500,7 +370,6 @@ class _WorkTypeManagementScreenState extends State<WorkTypeManagementScreen> {
               icon: iconString,
               color: colorHex ?? '#2196F3',
               backgroundColor: backgroundColor,
-              wageType: selectedWageType,
             );
             
             if (success != null) {
@@ -751,44 +620,6 @@ class _WorkTypeManagementScreenState extends State<WorkTypeManagementScreen> {
     return Text(iconString, style: const TextStyle(fontSize: 28));
   }
 
-
-  // ✅ 급여 타입 선택 버튼 위젯
-  Widget _buildWageTypeButton({
-    required BuildContext context,
-    required String label,
-    required String value,
-    required String selectedValue,
-    required VoidCallback onTap,
-  }) {
-    final isSelected = selectedValue == value;
-    
-    return InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(8),
-      child: Container(
-        padding: const EdgeInsets.symmetric(vertical: 12),
-        decoration: BoxDecoration(
-          color: isSelected ? Colors.blue[700] : Colors.grey[200],
-          borderRadius: BorderRadius.circular(8),
-          border: Border.all(
-            color: isSelected ? Colors.blue[700]! : Colors.grey[300]!,
-            width: 2,
-          ),
-        ),
-        child: Text(
-          label,
-          textAlign: TextAlign.center,
-          style: TextStyle(
-            color: isSelected ? Colors.white : Colors.grey[700],
-            fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
-            fontSize: 14,
-          ),
-        ),
-      ),
-    );
-  }
-
-
   Widget _buildWorkTypeList() {
     return ListView.builder(
       padding: const EdgeInsets.all(16),
@@ -828,23 +659,6 @@ class _WorkTypeManagementScreenState extends State<WorkTypeManagementScreen> {
                   ),
                 ),
                 const SizedBox(width: 8),
-                // ✅ NEW: 급여 타입 뱃지 추가
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                  decoration: BoxDecoration(
-                    color: Colors.green[50],
-                    borderRadius: BorderRadius.circular(12),
-                    border: Border.all(color: Colors.green[300]!),
-                  ),
-                  child: Text(
-                    workType.wageTypeLabel,
-                    style: TextStyle(
-                      fontSize: 11,
-                      fontWeight: FontWeight.w600,
-                      color: Colors.green[700],
-                    ),
-                  ),
-                ),
               ],
             ),
             subtitle: Text(
