@@ -8,6 +8,7 @@ class TOModel {
   // ✅ 사업장 연결
   final String businessId; // 사업장 ID
   final String businessName; // 사업장명
+  final String jobType; // "short" (단기, ~30일) 또는 "long_term" (1개월+)
   
   // ✅ NEW: TO 그룹 관리 (날짜 범위 지원)
   final String? groupId; // 같은 그룹의 TO들을 묶는 ID (nullable)
@@ -37,6 +38,7 @@ class TOModel {
     required this.id,
     required this.businessId,
     required this.businessName,
+    this.jobType = 'short', // ✅ NEW: 기본값 'short' (하위 호환성)
     this.groupId,
     this.groupName,
     this.startDate,
@@ -60,6 +62,7 @@ class TOModel {
       id: documentId,
       businessId: data['businessId'] ?? '',
       businessName: data['businessName'] ?? '',
+      jobType: data['jobType'] ?? 'short', // ✅ NEW: 기본값 'short'
       groupId: data['groupId'],
       groupName: data['groupName'],
       startDate: data['startDate'] != null 
@@ -97,6 +100,7 @@ class TOModel {
     return {
       'businessId': businessId,
       'businessName': businessName,
+      'jobType': jobType, // ✅ NEW
       'groupId': groupId,
       'groupName': groupName,
       'startDate': startDate != null ? Timestamp.fromDate(startDate!) : null,
@@ -120,6 +124,7 @@ class TOModel {
     String? id,
     String? businessId,
     String? businessName,
+    String? jobType, // ✅ NEW
     String? groupId,
     String? groupName,
     DateTime? startDate,
@@ -242,5 +247,13 @@ class TOModel {
     return '${applicationDeadline.month}/${applicationDeadline.day} '
            '${applicationDeadline.hour.toString().padLeft(2, '0')}:'
            '${applicationDeadline.minute.toString().padLeft(2, '0')}';
+  }
+  /// Phase A: 채용 유형 확인
+  bool get isShortTerm => jobType == 'short';
+  bool get isLongTerm => jobType == 'long_term';
+
+  /// 채용 유형 표시명
+  String get jobTypeLabel {
+    return isShortTerm ? '단기 알바' : '1개월+ 계약직';
   }
 }

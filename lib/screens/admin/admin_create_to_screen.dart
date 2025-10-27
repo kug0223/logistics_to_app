@@ -2,18 +2,20 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:table_calendar/table_calendar.dart'; // ✅ NEW
 import '../../models/business_model.dart';
 import '../../models/to_model.dart';
 import '../../services/firestore_service.dart';
 import '../../providers/user_provider.dart';
 import '../../utils/toast_helper.dart';
 import '../../models/business_work_type_model.dart';
+import '../../utils/labor_standards.dart'; // ✅ NEW
 
 /// ✅ 업무 상세 입력 데이터 클래스 (시간 정보 포함)
 class WorkDetailInput {
   final String? workType;
-  final String? workTypeIcon;      // ✅ 추가
-  final String? workTypeColor;     // ✅ 추가
+  final String workTypeIcon;      // ✅ 추가
+  final String workTypeColor;     // ✅ 추가
   final int? wage;
   final int? requiredCount;
   final String? startTime; // ✅ NEW
@@ -21,8 +23,8 @@ class WorkDetailInput {
 
   WorkDetailInput({
     this.workType,
-    this.workTypeIcon,             // ✅ 추가
-    this.workTypeColor,            // ✅ 추가
+    this.workTypeIcon = 'work',      // ✅ 기본값 추가
+    this.workTypeColor = '#2196F3',  // ✅ 기본값 추가
     this.wage,
     this.requiredCount,
     this.startTime, // ✅ NEW
@@ -62,6 +64,11 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
   // 컨트롤러
   final TextEditingController _titleController = TextEditingController();
   final TextEditingController _descriptionController = TextEditingController();
+  
+  // ✅ 근무 유형
+  String _selectedJobType = 'short'; // 'short' 또는 'long_term'
+  // ✅ NEW: 급여 유형
+  String _wageType = 'hourly'; // 'hourly', 'daily', 'per_task', 'monthly'
 
   // 상태 변수
   bool _isLoading = true;
@@ -75,6 +82,14 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
   DateTime? _selectedDate;      // 단일 날짜
   DateTime? _startDate;         // 범위 시작일
   DateTime? _endDate;           // 범위 종료일
+  
+  // ✅ NEW Phase A: 캘린더 복수 선택
+  List<DateTime> _selectedDates = []; // 선택된 날짜 목록
+  DateTime _focusedDay = DateTime.now(); // 캘린더 포커스
+  CalendarFormat _calendarFormat = CalendarFormat.month; // 캘린더 형식
+  bool _isCalendarExpanded = false; // ✅ NEW: 캘린더 펼침 상태
+  bool _isRangeSelecting = false; // ✅ NEW: 범위 선택 모드
+  
   DateTime? _selectedDeadlineDate;
   TimeOfDay? _selectedDeadlineTime;
 
@@ -98,6 +113,197 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
     _titleController.dispose();
     _descriptionController.dispose();
     super.dispose();
+  }
+  /// 업무 추가 다이얼로그
+  Future<void> _showAddWorkDetailDialog() async {
+    BusinessWorkTypeModel? selectedWorkType;
+    String? startTime;
+    String? endTime;
+    final wageController = TextEditingController();
+    final countController = TextEditingController();
+
+    final result = await showDialog<WorkDetailInput>(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setDialogState) {
+          return AlertDialog(
+            title: const Text('업무 추가'),
+            content: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  // 업무 유형 선택
+                  const Text('업무 유형', style: TextStyle(fontWeight: FontWeight.bold)),
+                  const SizedBox(height: 8),
+                  DropdownButtonFormField<BusinessWorkTypeModel>(
+                    value: selectedWorkType,
+                    decoration: const InputDecoration(
+                      border: OutlineInputBorder(),
+                      hintText: '업무 선택',
+                    ),
+                    items: _businessWorkTypes.map((workType) {
+                      return DropdownMenuItem<BusinessWorkTypeModel>(
+                        value: workType,
+                        child: Row(
+                          children: [
+                            // ✅ 아이콘 표시
+                            Container(
+                              width: 32,
+                              height: 32,
+                              decoration: BoxDecoration(
+                                color: _parseColor(workType.color ?? '#2196F3').withOpacity(0.1),
+                                shape: BoxShape.circle,
+                              ),
+                              child: Icon(
+                                _parseIcon(workType.icon ?? 'work'),
+                                color: _parseColor(workType.color ?? '#2196F3'),
+                                size: 18,
+                              ),
+                            ),
+                            const SizedBox(width: 12),
+                            Text(workType.name),
+                          ],
+                        ),
+                      );
+                    }).toList(),
+                    onChanged: (value) {
+                      setDialogState(() {
+                        selectedWorkType = value;
+                      });
+                    },
+                  ),
+                  const SizedBox(height: 16),
+                  
+                  // 근무 시간
+                  const Text('근무 시간', style: TextStyle(fontWeight: FontWeight.bold)),
+                  const SizedBox(height: 8),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: DropdownButtonFormField<String>(
+                          value: startTime,
+                          decoration: const InputDecoration(
+                            border: OutlineInputBorder(),
+                            hintText: '시작',
+                          ),
+                          items: _generateTimeList().map((time) {
+                            return DropdownMenuItem(value: time, child: Text(time));
+                          }).toList(),
+                          onChanged: (value) {
+                            setDialogState(() => startTime = value);
+                          },
+                        ),
+                      ),
+                      const Padding(
+                        padding: EdgeInsets.symmetric(horizontal: 8),
+                        child: Text('~'),
+                      ),
+                      Expanded(
+                        child: DropdownButtonFormField<String>(
+                          value: endTime,
+                          decoration: const InputDecoration(
+                            border: OutlineInputBorder(),
+                            hintText: '종료',
+                          ),
+                          items: _generateTimeList().map((time) {
+                            return DropdownMenuItem(value: time, child: Text(time));
+                          }).toList(),
+                          onChanged: (value) {
+                            setDialogState(() => endTime = value);
+                          },
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 16),
+                  
+                  // 시급/급여
+                  Text(
+                    _wageType == 'hourly' ? '시급'
+                    : _wageType == 'daily' ? '일급'
+                    : _wageType == 'per_task' ? '건별 금액'
+                    : '월급',
+                    style: const TextStyle(fontWeight: FontWeight.bold),
+                  ),
+                  const SizedBox(height: 8),
+                  TextFormField(
+                    controller: wageController,
+                    keyboardType: TextInputType.number,
+                    decoration: InputDecoration(
+                      border: const OutlineInputBorder(),
+                      hintText: '15000',
+                      suffixText: '원',
+                      helperText: '2025년 최저시급: ${LaborStandards.formatCurrencyWithUnit(LaborStandards.currentMinimumWage)}',
+                      helperStyle: TextStyle(fontSize: 11, color: Colors.grey[600]),
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  
+                  // 필요 인원
+                  const Text('필요 인원', style: TextStyle(fontWeight: FontWeight.bold)),
+                  const SizedBox(height: 8),
+                  TextFormField(
+                    controller: countController,
+                    keyboardType: TextInputType.number,
+                    decoration: const InputDecoration(
+                      border: OutlineInputBorder(),
+                      hintText: '1',
+                      suffixText: '명',
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context),
+                child: const Text('취소'),
+              ),
+              ElevatedButton(
+                onPressed: () {
+                  if (selectedWorkType == null) {
+                    ToastHelper.showWarning('업무 유형을 선택하세요.');
+                    return;
+                  }
+                  if (startTime == null || endTime == null) {
+                    ToastHelper.showWarning('근무 시간을 선택하세요.');
+                    return;
+                  }
+                  if (wageController.text.isEmpty) {
+                    ToastHelper.showWarning('금액을 입력하세요.');
+                    return;
+                  }
+                  if (countController.text.isEmpty) {
+                    ToastHelper.showWarning('필요 인원을 입력하세요.');
+                    return;
+                  }
+
+                  final detail = WorkDetailInput(
+                    workType: selectedWorkType!.name,
+                    workTypeIcon: selectedWorkType!.icon ?? 'work', // ✅
+                    workTypeColor: selectedWorkType!.color ?? '#2196F3', // ✅
+                    wage: int.tryParse(wageController.text),
+                    requiredCount: int.tryParse(countController.text),
+                    startTime: startTime,
+                    endTime: endTime,
+                  );
+
+                  Navigator.pop(context, detail);
+                },
+                child: const Text('추가'),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+
+    if (result != null) {
+      setState(() {
+        _workDetails.add(result);
+      });
+    }
   }
 
   /// 내 사업장 불러오기
@@ -137,6 +343,13 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
         _businessWorkTypes = workTypes;
       });
 
+      print('✅ 업무 유형 로드: ${workTypes.length}개');
+      
+      // ✅ NEW: 각 업무 유형 정보 출력
+      for (var wt in workTypes) {
+        print('  - ${wt.name}: icon=${wt.icon}, color=${wt.color}');
+      }
+      
       if (workTypes.isEmpty) {
         ToastHelper.showWarning('등록된 업무 유형이 없습니다.\n설정에서 업무 유형을 먼저 등록하세요.');
       }
@@ -169,10 +382,163 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
       setState(() => _isLoadingRecentTOs = false);
     }
   }
+  /// 범위 내 날짜 추가
+  void _addDateRange(DateTime start, DateTime end) {
+    final daysInRange = <DateTime>[];
+    DateTime current = start;
+    
+    while (!current.isAfter(end)) {
+      final normalized = DateTime(current.year, current.month, current.day);
+      daysInRange.add(normalized);
+      current = current.add(const Duration(days: 1));
+    }
+    
+    print('📅 범위 내 날짜: ${daysInRange.length}개');
+    
+    // 중복 제거
+    final newDates = daysInRange.where((date) {
+      return !_selectedDates.any((d) => 
+        d.year == date.year && d.month == date.month && d.day == date.day
+      );
+    }).toList();
+    
+    print('➕ 새로 추가할 날짜: ${newDates.length}개');
+    
+    // 30일 체크
+    if (_selectedDates.length + newDates.length > 30) {
+      ToastHelper.showWarning('최대 30일까지만 선택할 수 있습니다.');
+      return;
+    }
+    
+    _selectedDates.addAll(newDates);
+    _selectedDates.sort(); // ✅ 정렬
+    
+    print('📊 전체 선택된 날짜: ${_selectedDates.length}개');
+    print('📆 날짜 목록: ${_selectedDates.map((d) => '${d.month}/${d.day}').join(', ')}');
+  }
+  /// 날짜 토글 또는 추가
+  void _toggleOrAddDate(DateTime date) {
+    final normalized = DateTime(date.year, date.month, date.day);
+    
+    print('🔍 _toggleOrAddDate: ${normalized.month}/${normalized.day}');
+    
+    // 이미 선택되어 있는지 확인
+    final existingIndex = _selectedDates.indexWhere((d) => 
+      d.year == normalized.year && 
+      d.month == normalized.month && 
+      d.day == normalized.day
+    );
+    
+    if (existingIndex != -1) {
+      // 해제
+      print('❌ 해제');
+      _selectedDates.removeAt(existingIndex);
+    } else {
+      // 추가
+      if (_selectedDates.length < 30) {
+        print('✅ 추가');
+        _selectedDates.add(normalized);
+      } else {
+        ToastHelper.showWarning('최대 30일까지만 선택할 수 있습니다.');
+        return;
+      }
+    }
+    
+    // 정렬
+    _selectedDates.sort();
+    
+    print('📊 현재 선택: ${_selectedDates.length}개');
+    print('📆 ${_selectedDates.map((d) => '${d.month}/${d.day}').join(', ')}');
+  }
 
+  /// 단일 날짜 토글
+  void _toggleSingleDate(DateTime date) {
+    final normalized = DateTime(date.year, date.month, date.day);
+    
+    final existingIndex = _selectedDates.indexWhere((d) {
+      return d.year == normalized.year && 
+            d.month == normalized.month && 
+            d.day == normalized.day;
+    });
+    
+    if (existingIndex != -1) {
+      _selectedDates.removeAt(existingIndex);
+    } else {
+      if (_selectedDates.length < 30) {
+        _selectedDates.add(normalized);
+        _selectedDates.sort();
+      } else {
+        ToastHelper.showWarning('최대 30일까지만 선택할 수 있습니다.');
+      }
+    }
+  }
+
+  /// 연속된 날짜 그룹화
+  List<List<DateTime>> _groupConsecutiveDates() {
+    if (_selectedDates.isEmpty) return [];
+    
+    // ✅ 정렬 확실히
+    final sorted = List<DateTime>.from(_selectedDates)..sort();
+    
+    print('🔍 그룹화 시작: ${sorted.length}개 날짜');
+    print('   날짜 목록: ${sorted.map((d) => '${d.month}/${d.day}').join(', ')}');
+    
+    final groups = <List<DateTime>>[];
+    List<DateTime> currentGroup = [sorted.first];
+    
+    for (int i = 1; i < sorted.length; i++) {
+      final diff = sorted[i].difference(currentGroup.last).inDays;
+      
+      print('   ${sorted[i-1].month}/${sorted[i-1].day} → ${sorted[i].month}/${sorted[i].day}: 차이 ${diff}일');
+      
+      if (diff == 1) {
+        // 연속됨
+        currentGroup.add(sorted[i]);
+        print('     ✅ 연속 - 현재 그룹에 추가');
+      } else {
+        // 끊김
+        groups.add(List.from(currentGroup));
+        print('     ❌ 끊김 - 새 그룹 시작');
+        currentGroup = [sorted[i]];
+      }
+    }
+    
+    groups.add(List.from(currentGroup));
+    
+    print('🔍 그룹화 완료: ${groups.length}개 그룹');
+    for (var i = 0; i < groups.length; i++) {
+      if (groups[i].length == 1) {
+        print('  그룹 ${i+1}: ${groups[i].first.month}/${groups[i].first.day} (단일)');
+      } else {
+        print('  그룹 ${i+1}: ${groups[i].first.month}/${groups[i].first.day} ~ ${groups[i].last.month}/${groups[i].last.day} (${groups[i].length}일)');
+      }
+    }
+    
+    return groups;
+  }
+
+  /// 연속 날짜인지 확인
+  bool _isConsecutiveDates() {
+    if (_selectedDates.length <= 1) return true;
+    
+    final sorted = List<DateTime>.from(_selectedDates)..sort();
+    
+    for (int i = 0; i < sorted.length - 1; i++) {
+      final diff = sorted[i + 1].difference(sorted[i]).inDays;
+      if (diff != 1) return false;
+    }
+    
+    return true;
+  }
   /// TO 생성
   Future<void> _createTO() async {
     if (!_formKey.currentState!.validate()) return;
+    
+    // ✅ NEW: 날짜 선택 검증 추가
+    if (_selectedJobType == 'short' && _selectedDates.isEmpty) {
+      ToastHelper.showWarning('근무 날짜를 선택하세요.');
+      return;
+    }
 
     // 업무 상세 검증
     if (_workDetails.isEmpty) {
@@ -405,190 +771,6 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
     }
   }
 
-  /// ✅ 업무 추가 다이얼로그 (시간 입력 포함)
-  Future<void> _showAddWorkDetailDialog() async {
-    if (_workDetails.length >= 3) {
-      ToastHelper.showWarning('최대 3개까지만 추가할 수 있습니다.');
-      return;
-    }
-
-    if (_businessWorkTypes.isEmpty) {
-      ToastHelper.showWarning('등록된 업무 유형이 없습니다.');
-      return;
-    }
-
-    String? selectedWorkType;
-    final wageController = TextEditingController();
-    final countController = TextEditingController();
-    String? startTime = '09:00'; // ✅ NEW: 기본값
-    String? endTime = '18:00'; // ✅ NEW: 기본값
-
-    final result = await showDialog<WorkDetailInput>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('업무 추가'),
-        content: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              // 업무 유형 선택
-              const Text('업무 유형 *', style: TextStyle(fontWeight: FontWeight.bold)),
-              const SizedBox(height: 8),
-              DropdownButtonFormField<String>(
-                value: selectedWorkType,
-                decoration: const InputDecoration(
-                  border: OutlineInputBorder(),
-                  hintText: '업무 선택',
-                  contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 12),
-                ),
-                isExpanded: true,  // ✅ 추가: 전체 너비 사용
-                // ✅ 선택 후 버튼에 표시 (Material Icon 또는 Emoji)
-                selectedItemBuilder: (BuildContext context) {
-                  return _businessWorkTypes.map((workType) {
-                    return Row(
-                      children: [
-                        // 배경색이 있으면 Container로 감싸기
-                        if (workType.backgroundColor != null && workType.backgroundColor!.isNotEmpty)
-                          Container(
-                            padding: const EdgeInsets.all(2),
-                            decoration: BoxDecoration(
-                              color: _parseColor(workType.backgroundColor!),
-                              borderRadius: BorderRadius.circular(8),
-                            ),
-                            child: _buildIconOrEmoji(workType),
-                          )
-                        else
-                          _buildIconOrEmoji(workType),
-                        const SizedBox(width: 8),
-                        Expanded(
-                          child: Text(
-                            workType.name,
-                            style: const TextStyle(fontSize: 14),
-                            overflow: TextOverflow.ellipsis,
-                            maxLines: 1,
-                          ),
-                        ),
-                      ],
-                    );
-                  }).toList();
-                },
-                
-                // ✅ 드롭다운 목록 (Material Icon 또는 Emoji)
-                items: _businessWorkTypes.map((workType) {
-                return DropdownMenuItem(
-                  value: workType.name,
-                  child: Row(
-                    children: [
-                      // 배경색이 있으면 Container로 감싸기
-                      if (workType.backgroundColor != null && workType.backgroundColor!.isNotEmpty)
-                        Container(
-                          padding: const EdgeInsets.all(4),
-                          decoration: BoxDecoration(
-                            color: _parseColor(workType.backgroundColor!),
-                            borderRadius: BorderRadius.circular(8),
-                          ),
-                          child: _buildIconOrEmoji(workType),
-                        )
-                      else
-                        _buildIconOrEmoji(workType),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: Text(
-                          workType.name,
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                      ),
-                    ],
-                  ),
-                );
-              }).toList(),
-                
-                onChanged: (value) {
-                  selectedWorkType = value;
-                },
-              ),
-              const SizedBox(height: 16),
-
-              // 금액 입력
-              const Text('금액 (원) *', style: TextStyle(fontWeight: FontWeight.bold)),
-              const SizedBox(height: 8),
-              TextField(
-                controller: wageController,
-                keyboardType: TextInputType.number,
-                inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-                decoration: const InputDecoration(
-                  border: OutlineInputBorder(),
-                  hintText: '50000',
-                  suffixText: '원',
-                ),
-              ),
-              const SizedBox(height: 16),
-
-              // 필요 인원 입력
-              const Text('필요 인원 (명) *', style: TextStyle(fontWeight: FontWeight.bold)),
-              const SizedBox(height: 8),
-              TextField(
-                controller: countController,
-                keyboardType: TextInputType.number,
-                inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-                decoration: const InputDecoration(
-                  border: OutlineInputBorder(),
-                  hintText: '5',
-                  suffixText: '명',
-                ),
-              ),
-            ],
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('취소'),
-          ),
-          ElevatedButton(
-            onPressed: () {
-              // 유효성 검사
-              if (selectedWorkType == null) {
-                ToastHelper.showWarning('업무 유형을 선택하세요.');
-                return;
-              }
-              if (startTime == null || endTime == null) {
-                ToastHelper.showWarning('근무 시간을 선택하세요.');
-                return;
-              }
-              if (wageController.text.isEmpty) {
-                ToastHelper.showWarning('금액을 입력하세요.');
-                return;
-              }
-              if (countController.text.isEmpty) {
-                ToastHelper.showWarning('필요 인원을 입력하세요.');
-                return;
-              }
-
-              final detail = WorkDetailInput(
-                workType: selectedWorkType,
-                wage: int.tryParse(wageController.text),
-                requiredCount: int.tryParse(countController.text),
-                startTime: startTime, // ✅ NEW
-                endTime: endTime, // ✅ NEW
-              );
-
-              Navigator.pop(context, detail);
-            },
-            child: const Text('추가'),
-          ),
-        ],
-      ),
-    );
-
-    if (result != null) {
-      setState(() {
-        _workDetails.add(result);
-      });
-    }
-  }
-
   /// ✅ NEW: 시간 목록 생성 (00:00 ~ 23:30, 30분 단위)
   List<String> _generateTimeList() {
     final times = <String>[];
@@ -645,238 +827,527 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
       ),
       body: Form(
         key: _formKey,
-        child: ListView(
+        child: SingleChildScrollView(
           padding: const EdgeInsets.all(16),
-          children: [
-            // 제목 입력
-            _buildSectionTitle('📝 TO 제목'),
-            TextFormField(
-              controller: _titleController,
-              decoration: const InputDecoration(
-                hintText: '예: 파트타임알바구인합니다',
-                border: OutlineInputBorder(),
-              ),
-              validator: (value) {
-                if (value == null || value.trim().isEmpty) {
-                  return 'TO 제목을 입력하세요';
-                }
-                return null;
-              },
-            ),
-            const SizedBox(height: 24),
-
-            // 사업장 선택
-            _buildSectionTitle('🏢 사업장'),
-            _buildBusinessDropdown(),
-            if (_selectedBusiness != null) ...[
-              const SizedBox(height: 8),
-              _buildBusinessInfoCard(_selectedBusiness!),
-            ],
-            const SizedBox(height: 24),
-            
-            // ✅ NEW Phase 2: 그룹 연결 섹션 추가 (여기에 추가!)
-            _buildSectionTitle('🔗 기존 공고와 연결 (선택사항)'),
-            _buildGroupLinkSection(),
-            const SizedBox(height: 24),
-
-            // ✅ NEW: 날짜 선택 방식
-            _buildSectionTitle('📅 근무 날짜'),
-            _buildDateModeSelector(),
-            const SizedBox(height: 12),
-
-            if (_dateMode == 'single')
-              _buildSingleDatePicker()
-            else
-              _buildDateRangePicker(),
-
-            // ❌ 제거: TO 레벨 근무 시간 입력
-            // _buildSectionTitle('⏰ 근무 시간'),
-            // Row(
-            //   children: [
-            //     Expanded(child: _buildStartTimePicker()),
-            //     const SizedBox(width: 16),
-            //     Expanded(child: _buildEndTimePicker()),
-            //   ],
-            // ),
-            // const SizedBox(height: 24),
-
-            // 지원 마감 시간
-            _buildSectionTitle('⏱️ 지원 마감 시간'),
-            _buildDeadlinePicker(),
-            const SizedBox(height: 12),
-
-            // ✅ NEW: 마감시간 검증 메시지 (범위 모드)
-            if (_dateMode == 'range' && 
-              _endDate != null && 
-              _selectedDeadlineDate != null) ...[
-            Builder(
-              builder: (context) {
-                final endDateOnly = DateTime(_endDate!.year, _endDate!.month, _endDate!.day);
-                final deadlineDateOnly = DateTime(
-                  _selectedDeadlineDate!.year, 
-                  _selectedDeadlineDate!.month, 
-                  _selectedDeadlineDate!.day
-                );
-                
-                final isInvalid = deadlineDateOnly.isAfter(endDateOnly);
-                
-                if (!isInvalid) return const SizedBox.shrink();
-                
-                return Container(
-                  padding: const EdgeInsets.all(12),
-                  decoration: BoxDecoration(
-                    color: Colors.red[50],
-                    borderRadius: BorderRadius.circular(8),
-                    border: Border.all(color: Colors.red[300]!),
-                  ),
-                  child: Row(
-                    children: [
-                      Icon(Icons.error_outline, size: 16, color: Colors.red[700]),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: Text(
-                          '⚠️ 마감 시간은 종료일(${_endDate!.month}/${_endDate!.day}) 이전 또는 당일이어야 합니다',
-                          style: TextStyle(
-                            fontSize: 13,
-                            color: Colors.red[700],
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                );
-              },
-            ),
-              const SizedBox(height: 12),
-            ],
-
-            // ✅ NEW: 마감시간 검증 메시지 (단일 모드)
-            if (_dateMode == 'single' && 
-                _selectedDate != null && 
-                _selectedDeadlineDate != null) ...[
-              Builder(
-                builder: (context) {
-                  final dateDateOnly = DateTime(_selectedDate!.year, _selectedDate!.month, _selectedDate!.day);
-                  final deadlineDateOnly = DateTime(
-                    _selectedDeadlineDate!.year, 
-                    _selectedDeadlineDate!.month, 
-                    _selectedDeadlineDate!.day
-                  );
-                  
-                  final isInvalid = deadlineDateOnly.isAfter(dateDateOnly);
-                  
-                  if (!isInvalid) return const SizedBox.shrink();
-                  
-                  return Container(
-                    padding: const EdgeInsets.all(12),
-                    decoration: BoxDecoration(
-                      color: Colors.red[50],
-                      borderRadius: BorderRadius.circular(8),
-                      border: Border.all(color: Colors.red[300]!),
-                    ),
-                    child: Row(
-                      children: [
-                        Icon(Icons.error_outline, size: 16, color: Colors.red[700]),
-                        const SizedBox(width: 8),
-                        Expanded(
-                          child: Text(
-                            '⚠️ 마감 시간은 근무일(${_selectedDate!.month}/${_selectedDate!.day}) 이전 또는 당일이어야 합니다',
-                            style: TextStyle(
-                              fontSize: 13,
-                              color: Colors.red[700],
-                              fontWeight: FontWeight.w600,
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                  );
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // 🏢 사업장 선택
+              _buildSectionTitle('🏢 사업장 선택'),
+              _buildBusinessDropdown(),
+              const SizedBox(height: 24),
+              
+              // 📝 공고 제목
+              _buildSectionTitle('📝 공고 제목'),
+              TextFormField(
+                controller: _titleController,
+                decoration: const InputDecoration(
+                  hintText: '예: 피킹 보조 구합니다',
+                  border: OutlineInputBorder(),
+                ),
+                validator: (value) {
+                  if (value == null || value.trim().isEmpty) {
+                    return '공고 제목을 입력하세요';
+                  }
+                  return null;
                 },
               ),
-              const SizedBox(height: 12),
+              const SizedBox(height: 24),
+              
+              // ✅ NEW: 근무 유형 선택
+              _buildSectionTitle('💼 근무 유형'),
+              _buildJobTypeSelector(),
+              const SizedBox(height: 24),
+              
+              // ✅ 조건부 렌더링
+              if (_selectedJobType == 'short')
+                _buildShortTermForm()
+              else
+                _buildLongTermForm(),
             ],
+          ),
+        ),
+      ),
+    );
+  }
+  /// ✅ NEW: 근무 유형 선택 (버튼 형식)
+  Widget _buildJobTypeSelector() {
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.grey[100],
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: Colors.grey[300]!),
+      ),
+      padding: const EdgeInsets.all(4),
+      child: Row(
+        children: [
+          Expanded(
+            child: _buildJobTypeButton(
+              label: '단기 (~30일)',
+              icon: Icons.calendar_today,
+              description: '시급 기준',
+              isSelected: _selectedJobType == 'short',
+              onTap: () {
+                setState(() {
+                  _selectedJobType = 'short';
+                  _workDetails.clear();
+                });
+              },
+            ),
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: _buildJobTypeButton(
+              label: '1개월+',
+              icon: Icons.work,
+              description: '월급 기준',
+              isSelected: _selectedJobType == 'long_term',
+              onTap: () {
+                setState(() {
+                  _selectedJobType = 'long_term';
+                  _workDetails.clear();
+                });
+              },
+            ),
+          ),
+        ],
+      ),
+    );
+  }
 
-            // ✅ 업무 상세 (최대 3개, 시간 정보 포함)
-            _buildSectionTitle('💼 업무 상세 (최대 3개)'),
+  Widget _buildJobTypeButton({
+    required String label,
+    required IconData icon,
+    required String description,
+    required bool isSelected,
+    required VoidCallback onTap,
+  }) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 12),
+        decoration: BoxDecoration(
+          color: isSelected ? Colors.blue[700] : Colors.white,
+          borderRadius: BorderRadius.circular(8),
+          boxShadow: isSelected
+              ? [
+                  BoxShadow(
+                    color: Colors.blue.withOpacity(0.3),
+                    blurRadius: 8,
+                    offset: const Offset(0, 2),
+                  )
+                ]
+              : null,
+        ),
+        child: Column(
+          children: [
+            Icon(
+              icon,
+              size: 28,
+              color: isSelected ? Colors.white : Colors.grey[700],
+            ),
             const SizedBox(height: 8),
-            if (_workDetails.isEmpty)
-              Container(
-                padding: const EdgeInsets.all(16),
-                decoration: BoxDecoration(
-                  color: Colors.grey[100],
-                  borderRadius: BorderRadius.circular(8),
-                  border: Border.all(color: Colors.grey[300]!),
-                ),
-                child: Column(
-                  children: [
-                    Icon(Icons.work_outline, size: 48, color: Colors.grey[400]),
-                    const SizedBox(height: 8),
-                    Text(
-                      '업무를 추가해주세요',
-                      style: TextStyle(color: Colors.grey[600]),
-                    ),
-                  ],
-                ),
-              )
-            else
-              ..._workDetails.asMap().entries.map((entry) {
-                final index = entry.key;
-                final detail = entry.value;
-                return _buildWorkDetailCard(detail, index);
-              }),
-            const SizedBox(height: 12),
-            OutlinedButton.icon(
-              onPressed: _workDetails.length < 3 ? _showAddWorkDetailDialog : null,
-              icon: const Icon(Icons.add),
-              label: Text('업무 추가 (${_workDetails.length}/3)'),
-              style: OutlinedButton.styleFrom(
-                padding: const EdgeInsets.symmetric(vertical: 16),
+            Text(
+              label,
+              style: TextStyle(
+                fontSize: 15,
+                fontWeight: FontWeight.bold,
+                color: isSelected ? Colors.white : Colors.grey[800],
               ),
             ),
-            const SizedBox(height: 24),
-
-            // 설명
-            _buildSectionTitle('📄 설명 (선택사항)'),
-            TextField(
-              controller: _descriptionController,
-              maxLines: 4,
-              decoration: const InputDecoration(
-                hintText: '업무에 대한 상세 설명을 입력하세요',
-                border: OutlineInputBorder(),
+            const SizedBox(height: 4),
+            Text(
+              description,
+              style: TextStyle(
+                fontSize: 11,
+                color: isSelected ? Colors.white70 : Colors.grey[600],
               ),
             ),
-            const SizedBox(height: 32),
-
-            // 생성 버튼
-            ElevatedButton(
-              onPressed: _isCreating || _hasValidationError() ? null : _createTO,
-              style: ElevatedButton.styleFrom(
-                backgroundColor: Colors.blue[700],
-                foregroundColor: Colors.white,
-                padding: const EdgeInsets.symmetric(vertical: 16),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(8),
-                ),
-              ),
-              child: _isCreating
-                  ? const SizedBox(
-                      height: 20,
-                      width: 20,
-                      child: CircularProgressIndicator(
-                        strokeWidth: 2,
-                        valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
-                      ),
-                    )
-                  : Text(
-                      _dateMode == 'single' ? 'TO 생성' : 'TO 그룹 생성',
-                      style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
-                    ),
-            ),
-            const SizedBox(height: 16),
           ],
         ),
       ),
+    );
+  }
+
+  /// ✅ 단기 폼
+  Widget _buildShortTermForm() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        // 📅 근무 날짜
+        _buildSectionTitle('📅 근무 날짜 (최대 30일)'),
+        _buildCalendarSection(),
+        const SizedBox(height: 24),
+        
+        // 💰 급여 유형
+        _buildSectionTitle('💰 급여 유형'),
+        _buildWageTypeSelector(),
+        const SizedBox(height: 24),
+        
+        // ⏰ 지원 마감
+        _buildSectionTitle('⏰ 지원 마감'),
+        _buildDeadlinePicker(),
+        const SizedBox(height: 24),
+        
+        // 💼 업무 상세
+        _buildSectionTitle('💼 업무 상세'),
+        _buildWorkDetailsSection(),
+        const SizedBox(height: 24),
+        
+        // 📋 상세 설명
+        _buildSectionTitle('📋 상세 설명 (선택)'),
+        TextFormField(
+          controller: _descriptionController,
+          maxLines: 4,
+          decoration: const InputDecoration(
+            hintText: '추가 설명을 입력하세요',
+            border: OutlineInputBorder(),
+          ),
+        ),
+        const SizedBox(height: 24),
+        
+        // 생성 버튼
+        SizedBox(
+          width: double.infinity,
+          height: 50,
+          child: ElevatedButton(
+            onPressed: _hasValidationError() ? null : _createTO,
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.blue[700],
+              foregroundColor: Colors.white,
+              padding: const EdgeInsets.symmetric(vertical: 16),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(8),
+              ),
+            ),
+            child: _isCreating
+                ? const SizedBox(
+                    height: 20,
+                    width: 20,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+                    ),
+                  )
+                : const Text(
+                    'TO 생성',
+                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                  ),
+          ),
+        ),
+        const SizedBox(height: 16),
+      ],
+    );
+  }
+
+  Widget _buildWageTypeChip(String label, String value) {
+    final isSelected = _wageType == value;
+    
+    return ChoiceChip(
+      label: Text(label),
+      selected: isSelected,
+      onSelected: (selected) {
+        setState(() {
+          _wageType = value;
+        });
+      },
+      selectedColor: Colors.blue[700],
+      labelStyle: TextStyle(
+        color: isSelected ? Colors.white : Colors.grey[800],
+        fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+      ),
+      backgroundColor: Colors.white,
+      side: BorderSide(
+        color: isSelected ? Colors.blue[700]! : Colors.grey[300]!,
+      ),
+    );
+  }
+  Widget _buildWageTypeSelector() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        // 급여 유형 버튼들
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          children: [
+            _buildWageTypeChip('시급', 'hourly'),
+            _buildWageTypeChip('일급', 'daily'),
+            _buildWageTypeChip('건별', 'per_task'),
+            _buildWageTypeChip('월급', 'monthly'),
+          ],
+        ),
+        
+        const SizedBox(height: 16),
+        
+        // 금액 입력 (업무 추가 시 입력하므로 여기서는 안내만)
+        Container(
+          padding: const EdgeInsets.all(12),
+          decoration: BoxDecoration(
+            color: Colors.grey[100],
+            borderRadius: BorderRadius.circular(8),
+          ),
+          child: Row(
+            children: [
+              Icon(Icons.info_outline, size: 16, color: Colors.grey[700]),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  '구체적인 금액은 아래 업무 추가에서 입력하세요',
+                  style: TextStyle(fontSize: 12, color: Colors.grey[700]),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  /// 업무 상세 섹션
+  Widget _buildWorkDetailsSection() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        // 추가된 업무들 표시
+        if (_workDetails.isNotEmpty) ...[
+          ListView.builder(
+            shrinkWrap: true,
+            physics: const NeverScrollableScrollPhysics(),
+            itemCount: _workDetails.length,
+            itemBuilder: (context, index) {
+              final work = _workDetails[index];
+              
+              // ✅ 해당 업무 유형 정보 찾기 (null-safe)
+              BusinessWorkTypeModel? workTypeInfo;
+              if (work.workType != null && work.workType!.isNotEmpty) {
+                try {
+                  workTypeInfo = _businessWorkTypes.firstWhere(
+                    (wt) => wt.name == work.workType!,
+                  );
+                } catch (e) {
+                  workTypeInfo = null;
+                }
+              }
+              
+              final iconName = workTypeInfo?.icon ?? 'work';
+              final colorHex = workTypeInfo?.color ?? '#2196F3';
+              final workTypeName = work.workType ?? '업무';
+              
+              return Card(
+                margin: const EdgeInsets.only(bottom: 12),
+                elevation: 2,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: ListTile(
+                  contentPadding: const EdgeInsets.all(16),
+                  leading: Container(
+                    width: 48,
+                    height: 48,
+                    decoration: BoxDecoration(
+                      color: _parseColor(colorHex).withOpacity(0.1),
+                      shape: BoxShape.circle,
+                    ),
+                    child: Icon(
+                      _parseIcon(iconName), // ✅ 이미 기본값 처리됨
+                      color: _parseColor(colorHex), // ✅ 이미 기본값 처리됨
+                    ),
+                  ),
+                  title: Text(
+                    workTypeName,
+                    style: const TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                  subtitle: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const SizedBox(height: 8),
+                      Row(
+                        children: [
+                          Icon(Icons.access_time, size: 14, color: Colors.grey[600]),
+                          const SizedBox(width: 4),
+                          Text(
+                            '${work.startTime ?? '00:00'} ~ ${work.endTime ?? '00:00'}',
+                            style: TextStyle(fontSize: 13, color: Colors.grey[700]),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 4),
+                      Row(
+                        children: [
+                          Icon(Icons.payments, size: 14, color: Colors.grey[600]),
+                          const SizedBox(width: 4),
+                          Text(
+                            LaborStandards.formatCurrencyWithUnit(work.wage ?? 0),
+                            style: TextStyle(
+                              fontSize: 13,
+                              color: Colors.blue[700],
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                          const SizedBox(width: 12),
+                          Icon(Icons.people, size: 14, color: Colors.grey[600]),
+                          const SizedBox(width: 4),
+                          Text(
+                            '${work.requiredCount ?? 0}명',
+                            style: TextStyle(fontSize: 13, color: Colors.grey[700]),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                  trailing: IconButton(
+                    icon: const Icon(Icons.delete, color: Colors.red),
+                    onPressed: () {
+                      setState(() {
+                        _workDetails.removeAt(index);
+                      });
+                    },
+                  ),
+                ),
+              );
+            },
+          ),
+          const SizedBox(height: 12),
+        ],
+        
+        // 업무 추가 버튼
+        if (_workDetails.length < 3)
+          OutlinedButton.icon(
+            onPressed: _businessWorkTypes.isEmpty ? null : _showAddWorkDetailDialog,
+            icon: const Icon(Icons.add),
+            label: Text('업무 추가 (${_workDetails.length}/3)'),
+            style: OutlinedButton.styleFrom(
+              minimumSize: const Size(double.infinity, 50),
+              side: BorderSide(
+                color: _businessWorkTypes.isEmpty ? Colors.grey[300]! : Colors.blue[700]!,
+              ),
+            ),
+          )
+        else
+          Container(
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: Colors.orange[50],
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(color: Colors.orange[200]!),
+            ),
+            child: Row(
+              children: [
+                Icon(Icons.info_outline, color: Colors.orange[700], size: 20),
+                const SizedBox(width: 8),
+                Text(
+                  '최대 3개까지 추가할 수 있습니다',
+                  style: TextStyle(color: Colors.orange[900]),
+                ),
+              ],
+            ),
+          ),
+          
+        // ✅ 업무 유형 없을 때 안내
+        if (_businessWorkTypes.isEmpty && _selectedBusiness != null) ...[
+          const SizedBox(height: 12),
+          Container(
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: Colors.grey[100],
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(color: Colors.grey[300]!),
+            ),
+            child: Row(
+              children: [
+                Icon(Icons.warning_amber, color: Colors.grey[700], size: 20),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    '등록된 업무 유형이 없습니다.\n설정에서 업무 유형을 먼저 등록하세요.',
+                    style: TextStyle(fontSize: 13, color: Colors.grey[700]),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ],
+    );
+  }
+
+  /// ✅ 아이콘 파싱
+  IconData _parseIcon(String iconName) {
+    final iconMap = {
+      'work': Icons.work,
+      'local_shipping': Icons.local_shipping,
+      'inventory': Icons.inventory,
+      'warehouse': Icons.warehouse,
+      'shopping_cart': Icons.shopping_cart,
+      'construction': Icons.construction,
+      'cleaning_services': Icons.cleaning_services,
+      'restaurant': Icons.restaurant,
+      'store': Icons.store,
+      'agriculture': Icons.agriculture,
+    };
+    return iconMap[iconName] ?? Icons.work;
+  }
+
+  /// ✅ 색상 파싱
+  Color _parseColor(String colorHex) {
+    try {
+      return Color(int.parse(colorHex.replaceAll('#', '0xFF')));
+    } catch (e) {
+      return Colors.blue;
+    }
+  }
+
+  /// ✅ 1개월+ 폼 (Phase B에서 구현)
+  Widget _buildLongTermForm() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Container(
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            color: Colors.green[50],
+            borderRadius: BorderRadius.circular(8),
+            border: Border.all(color: Colors.green[200]!),
+          ),
+          child: Row(
+            children: [
+              Icon(Icons.construction, color: Colors.green[700]),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Text(
+                  '1개월+ 계약직: Phase B에서 구현 예정\n(요일 선택, 월급, 4대보험 등)',
+                  style: TextStyle(
+                    fontSize: 14,
+                    color: Colors.green[900],
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 24),
+        
+        Center(
+          child: Column(
+            children: [
+              Icon(Icons.work_outline, size: 80, color: Colors.grey[400]),
+              const SizedBox(height: 16),
+              Text(
+                '준비 중입니다',
+                style: TextStyle(
+                  fontSize: 18,
+                  color: Colors.grey[600],
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
     );
   }
 
@@ -975,150 +1446,65 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
     );
   }
 
-  Widget _buildSingleDatePicker() {
-    return InkWell(
-      onTap: () async {
-        final date = await showDatePicker(
-          context: context,
-          initialDate: _selectedDate ?? DateTime.now().add(const Duration(days: 1)),
-          firstDate: DateTime.now(),
-          lastDate: DateTime.now().add(const Duration(days: 365)),
-        );
-        if (date != null) {
-          setState(() => _selectedDate = date);
-        }
-      },
-      child: Container(
-        padding: const EdgeInsets.all(16),
-        decoration: BoxDecoration(
-          border: Border.all(color: Colors.grey[300]!),
-          borderRadius: BorderRadius.circular(8),
-        ),
-        child: Row(
-          children: [
-            Icon(Icons.calendar_today, color: Colors.blue[700]),
-            const SizedBox(width: 12),
-            Text(
-              _selectedDate == null
-                  ? '날짜를 선택하세요'
-                  : '${_selectedDate!.year}-${_selectedDate!.month.toString().padLeft(2, '0')}-${_selectedDate!.day.toString().padLeft(2, '0')}',
-              style: TextStyle(
-                fontSize: 16,
-                color: _selectedDate == null ? Colors.grey : Colors.black,
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-  /// ✅ NEW: 날짜 범위 선택
-  Widget _buildDateRangePicker() {
+  /// ✅ 지원 마감 선택
+  Widget _buildDeadlinePicker() {
+    // ✅ 마감일 검증
+    String? deadlineError;
+    if (_selectedDates.isNotEmpty && _selectedDeadlineDate != null) {
+      // 가장 빠른 근무 날짜
+      final earliestWorkDate = _selectedDates.reduce((a, b) => a.isBefore(b) ? a : b);
+      final workDateOnly = DateTime(earliestWorkDate.year, earliestWorkDate.month, earliestWorkDate.day);
+      final deadlineDateOnly = DateTime(_selectedDeadlineDate!.year, _selectedDeadlineDate!.month, _selectedDeadlineDate!.day);
+      
+      if (deadlineDateOnly.isAfter(workDateOnly)) {
+        deadlineError = '⚠️ 마감일은 근무 시작일(${earliestWorkDate.month}/${earliestWorkDate.day}) 이전이어야 합니다';
+      }
+    }
+
     return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        // 시작일
+        // 마감 날짜 선택
         InkWell(
           onTap: () async {
-            final date = await showDatePicker(
+            final DateTime? picked = await showDatePicker(
               context: context,
-              initialDate: _startDate ?? DateTime.now().add(const Duration(days: 1)),
+              initialDate: _selectedDeadlineDate ?? DateTime.now(),
               firstDate: DateTime.now(),
-              lastDate: DateTime.now().add(const Duration(days: 365)),
+              lastDate: DateTime.now().add(const Duration(days: 90)),
+              locale: const Locale('ko', 'KR'),
             );
-            if (date != null) {
+            
+            if (picked != null) {
               setState(() {
-                _startDate = date;
-                if (_endDate != null && _endDate!.isBefore(date)) {
-                  _endDate = null;
-                }
+                _selectedDeadlineDate = picked;
               });
             }
           },
           child: Container(
             padding: const EdgeInsets.all(16),
             decoration: BoxDecoration(
-              border: Border.all(color: Colors.grey[300]!),
+              border: Border.all(
+                color: deadlineError != null ? Colors.red[300]! : Colors.grey[300]!,
+              ),
               borderRadius: BorderRadius.circular(8),
-            ),
-            child: Row(
-              children: [
-                Icon(Icons.calendar_today, color: Colors.blue[700]),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        '시작일',
-                        style: TextStyle(fontSize: 12, color: Colors.grey[600]),
-                      ),
-                      const SizedBox(height: 4),
-                      Text(
-                        _startDate == null
-                            ? '날짜를 선택하세요'
-                            : '${_startDate!.year}-${_startDate!.month.toString().padLeft(2, '0')}-${_startDate!.day.toString().padLeft(2, '0')}',
-                        style: TextStyle(
-                          fontSize: 16,
-                          color: _startDate == null ? Colors.grey : Colors.black,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ),
-        const SizedBox(height: 12),
-        
-        // 종료일
-        InkWell(
-          onTap: _startDate == null
-              ? null
-              : () async {
-                  final date = await showDatePicker(
-                    context: context,
-                    initialDate: _endDate ?? _startDate!.add(const Duration(days: 1)),
-                    firstDate: _startDate!,
-                    lastDate: DateTime.now().add(const Duration(days: 365)),
-                  );
-                  if (date != null) {
-                    setState(() => _endDate = date);
-                  }
-                },
-          child: Container(
-            padding: const EdgeInsets.all(16),
-            decoration: BoxDecoration(
-              border: Border.all(color: Colors.grey[300]!),
-              borderRadius: BorderRadius.circular(8),
-              color: _startDate == null ? Colors.grey[100] : null,
             ),
             child: Row(
               children: [
                 Icon(
                   Icons.calendar_today,
-                  color: _startDate == null ? Colors.grey : Colors.blue[700],
+                  color: deadlineError != null ? Colors.red[700] : Colors.blue[700],
                 ),
                 const SizedBox(width: 12),
                 Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        '종료일',
-                        style: TextStyle(fontSize: 12, color: Colors.grey[600]),
-                      ),
-                      const SizedBox(height: 4),
-                      Text(
-                        _endDate == null
-                            ? (_startDate == null ? '시작일을 먼저 선택하세요' : '날짜를 선택하세요')
-                            : '${_endDate!.year}-${_endDate!.month.toString().padLeft(2, '0')}-${_endDate!.day.toString().padLeft(2, '0')}',
-                        style: TextStyle(
-                          fontSize: 16,
-                          color: _endDate == null ? Colors.grey : Colors.black,
-                        ),
-                      ),
-                    ],
+                  child: Text(
+                    _selectedDeadlineDate == null
+                        ? '마감 날짜 선택'
+                        : '${_selectedDeadlineDate!.year}-${_selectedDeadlineDate!.month.toString().padLeft(2, '0')}-${_selectedDeadlineDate!.day.toString().padLeft(2, '0')}',
+                    style: TextStyle(
+                      fontSize: 16,
+                      color: _selectedDeadlineDate == null ? Colors.grey[600] : Colors.black87,
+                    ),
                   ),
                 ),
               ],
@@ -1126,131 +1512,82 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
           ),
         ),
         
-        // 기간 표시
-        if (_startDate != null && _endDate != null) ...[
-          const SizedBox(height: 12),
-          Builder(
-            builder: (context) {
-              final daysDiff = _endDate!.difference(_startDate!).inDays + 1;
-              final isOverLimit = daysDiff > 30;
-              
-              return Container(
-                padding: const EdgeInsets.all(12),
-                decoration: BoxDecoration(
-                  color: isOverLimit ? Colors.red[50] : Colors.blue[50],
-                  borderRadius: BorderRadius.circular(8),
-                  border: Border.all(
-                    color: isOverLimit ? Colors.red[300]! : Colors.blue[200]!,
+        const SizedBox(height: 12),
+        
+        // 마감 시간 선택
+        InkWell(
+          onTap: () async {
+            final TimeOfDay? picked = await showTimePicker(
+              context: context,
+              initialTime: _selectedDeadlineTime ?? const TimeOfDay(hour: 18, minute: 0),
+              builder: (context, child) {
+                return Localizations.override(
+                  context: context,
+                  locale: const Locale('ko', 'KR'),
+                  child: child,
+                );
+              },
+            );
+            
+            if (picked != null) {
+              setState(() {
+                _selectedDeadlineTime = picked;
+              });
+            }
+          },
+          child: Container(
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              border: Border.all(color: Colors.grey[300]!),
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: Row(
+              children: [
+                Icon(Icons.access_time, color: Colors.blue[700]),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Text(
+                    _selectedDeadlineTime == null
+                        ? '마감 시간 선택'
+                        : '${_selectedDeadlineTime!.hour.toString().padLeft(2, '0')}:${_selectedDeadlineTime!.minute.toString().padLeft(2, '0')}',
+                    style: TextStyle(
+                      fontSize: 16,
+                      color: _selectedDeadlineTime == null ? Colors.grey[600] : Colors.black87,
+                    ),
                   ),
                 ),
-                child: Row(
-                  children: [
-                    Icon(
-                      isOverLimit ? Icons.error_outline : Icons.info_outline,
-                      size: 16,
-                      color: isOverLimit ? Colors.red[700] : Colors.blue[700],
+              ],
+            ),
+          ),
+        ),
+        
+        // ✅ 에러 메시지 표시
+        if (deadlineError != null) ...[
+          const SizedBox(height: 12),
+          Container(
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: Colors.red[50],
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(color: Colors.red[200]!),
+            ),
+            child: Row(
+              children: [
+                Icon(Icons.error_outline, color: Colors.red[700], size: 20),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    deadlineError,
+                    style: TextStyle(
+                      fontSize: 13,
+                      color: Colors.red[900],
                     ),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: Text(
-                        isOverLimit
-                            ? '⚠️ 최대 30일까지만 선택 가능합니다 (현재 ${daysDiff}일)'
-                            : '총 ${daysDiff}일간의 TO가 생성됩니다',
-                        style: TextStyle(
-                          fontSize: 14,
-                          color: isOverLimit ? Colors.red[700] : Colors.blue[700],
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                    ),
-                  ],
+                  ),
                 ),
-              );
-            },
+              ],
+            ),
           ),
         ],
-      ],
-    );
-  }
-
-  Widget _buildDeadlinePicker() {
-    return Column(
-      children: [
-        // 마감 날짜
-        InkWell(
-          onTap: () async {
-            final date = await showDatePicker(
-              context: context,
-              initialDate: _selectedDeadlineDate ?? DateTime.now(),
-              firstDate: DateTime.now(),
-              lastDate: DateTime.now().add(const Duration(days: 90)),
-            );
-            if (date != null) {
-              setState(() {  // ✅ setState 추가
-                _selectedDeadlineDate = date;
-              });
-            }
-          },
-          child: Container(
-            padding: const EdgeInsets.all(16),
-            decoration: BoxDecoration(
-              border: Border.all(color: Colors.grey[400]!),
-              borderRadius: BorderRadius.circular(8),
-            ),
-            child: Row(
-              children: [
-                Icon(Icons.calendar_today, color: Colors.grey[700]),
-                const SizedBox(width: 12),
-                Text(
-                  _selectedDeadlineDate != null
-                      ? '${_selectedDeadlineDate!.year}-${_selectedDeadlineDate!.month.toString().padLeft(2, '0')}-${_selectedDeadlineDate!.day.toString().padLeft(2, '0')}'
-                      : '마감 날짜 선택',
-                  style: TextStyle(
-                    fontSize: 16,
-                    color: _selectedDeadlineDate != null ? Colors.black : Colors.grey[600],
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ),
-        const SizedBox(height: 8),
-        // 마감 시간
-        InkWell(
-          onTap: () async {
-            final time = await showTimePicker(
-              context: context,
-              initialTime: _selectedDeadlineTime ?? TimeOfDay.now(),
-            );
-            if (time != null) {
-              setState(() {  // ✅ setState 추가
-                _selectedDeadlineTime = time;
-              });
-            }
-          },
-          child: Container(
-            padding: const EdgeInsets.all(16),
-            decoration: BoxDecoration(
-              border: Border.all(color: Colors.grey[400]!),
-              borderRadius: BorderRadius.circular(8),
-            ),
-            child: Row(
-              children: [
-                Icon(Icons.access_time, color: Colors.grey[700]),
-                const SizedBox(width: 12),
-                Text(
-                  _selectedDeadlineTime != null
-                      ? '${_selectedDeadlineTime!.hour.toString().padLeft(2, '0')}:${_selectedDeadlineTime!.minute.toString().padLeft(2, '0')}'
-                      : '마감 시간 선택',
-                  style: TextStyle(
-                    fontSize: 16,
-                    color: _selectedDeadlineTime != null ? Colors.black : Colors.grey[600],
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ),
       ],
     );
   }
@@ -1505,20 +1842,592 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
     );
   }
   
-  Color _parseColor(String? colorHex) {  // ✅ nullable 허용
-    if (colorHex == null || colorHex.isEmpty) {
-      return Colors.blue[700]!;  // ✅ null/빈문자열이면 기본값
-    }
+  /// ✅ 캘린더 섹션 (단순 클릭 방식)
+  Widget _buildCalendarSection() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        // 캘린더 토글 버튼
+        InkWell(
+          onTap: () {
+            setState(() {
+              _isCalendarExpanded = !_isCalendarExpanded;
+            });
+          },
+          child: Container(
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              color: Colors.blue[50],
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(color: Colors.blue[200]!),
+            ),
+            child: Row(
+              children: [
+                Icon(
+                  _isCalendarExpanded ? Icons.calendar_today : Icons.calendar_month,
+                  color: Colors.blue[700],
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Text(
+                    _selectedDates.isEmpty 
+                        ? '날짜 선택 (최대 30일)'
+                        : '캘린더 ${_isCalendarExpanded ? "접기" : "펼치기"}',
+                    style: TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.blue[900],
+                    ),
+                  ),
+                ),
+                Icon(
+                  _isCalendarExpanded ? Icons.expand_less : Icons.expand_more,
+                  color: Colors.blue[700],
+                ),
+              ],
+            ),
+          ),
+        ),
+        
+        const SizedBox(height: 16),
+        
+        // ✅ 캘린더
+        if (_isCalendarExpanded) ...[
+          Container(
+            decoration: BoxDecoration(
+              border: Border.all(color: Colors.grey[300]!),
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: TableCalendar(
+              firstDay: DateTime.now(),
+              lastDay: DateTime.now().add(const Duration(days: 90)),
+              focusedDay: _focusedDay,
+              
+              // ✅ 범위 선택 모드 OFF
+              rangeSelectionMode: RangeSelectionMode.toggledOff,
+              
+              // 선택된 날짜
+              selectedDayPredicate: (day) {
+                return _selectedDates.any((selectedDate) =>
+                  isSameDay(selectedDate, day)
+                );
+              },
+              
+              // ✅ 단순 클릭
+              onDaySelected: (selectedDay, focusedDay) {
+                print('📅 날짜 클릭: ${selectedDay.month}/${selectedDay.day}');
+                
+                setState(() {
+                  _focusedDay = focusedDay;
+                  _toggleOrAddDate(selectedDay);
+                });
+              },
+              
+              // 캘린더 형식
+              calendarFormat: _calendarFormat,
+              onFormatChanged: (format) {
+                setState(() {
+                  _calendarFormat = format;
+                });
+              },
+              
+              // 페이지 변경
+              onPageChanged: (focusedDay) {
+                setState(() {
+                  _focusedDay = focusedDay;
+                });
+              },
+              
+              // 스타일링
+              calendarStyle: CalendarStyle(
+                selectedDecoration: BoxDecoration(
+                  color: Colors.blue[700]!,
+                  shape: BoxShape.circle,
+                ),
+                selectedTextStyle: const TextStyle(
+                  color: Colors.white,
+                  fontWeight: FontWeight.bold,
+                ),
+                todayDecoration: BoxDecoration(
+                  color: Colors.blue[200]!,
+                  shape: BoxShape.circle,
+                ),
+                todayTextStyle: TextStyle(
+                  color: Colors.blue[900],
+                  fontWeight: FontWeight.bold,
+                ),
+                outsideDaysVisible: false,
+              ),
+              
+              // ✅ 연속 날짜 시각화
+              calendarBuilders: CalendarBuilders(
+                defaultBuilder: (context, day, focusedDay) {
+                  final isSelected = _selectedDates.any((d) => 
+                    d.year == day.year && d.month == day.month && d.day == day.day
+                  );
+                  
+                  if (!isSelected) return null;
+                  
+                  // 연속 체크
+                  final yesterday = day.subtract(const Duration(days: 1));
+                  final tomorrow = day.add(const Duration(days: 1));
+                  
+                  final hasYesterday = _selectedDates.any((d) => 
+                    d.year == yesterday.year && d.month == yesterday.month && d.day == yesterday.day
+                  );
+                  
+                  final hasTomorrow = _selectedDates.any((d) => 
+                    d.year == tomorrow.year && d.month == tomorrow.month && d.day == tomorrow.day
+                  );
+                  
+                  return Container(
+                    margin: EdgeInsets.only(
+                      left: hasYesterday ? 0 : 4,
+                      right: hasTomorrow ? 0 : 4,
+                      top: 4,
+                      bottom: 4,
+                    ),
+                    decoration: BoxDecoration(
+                      color: Colors.blue[700],
+                      borderRadius: BorderRadius.horizontal(
+                        left: Radius.circular(hasYesterday ? 0 : 20),
+                        right: Radius.circular(hasTomorrow ? 0 : 20),
+                      ),
+                    ),
+                    child: Center(
+                      child: Text(
+                        '${day.day}',
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ),
+                  );
+                },
+                todayBuilder: (context, day, focusedDay) {
+                  final isSelected = _selectedDates.any((d) => 
+                    d.year == day.year && d.month == day.month && d.day == day.day
+                  );
+                  
+                  if (isSelected) {
+                    return Container(
+                      margin: const EdgeInsets.all(4),
+                      decoration: BoxDecoration(
+                        color: Colors.blue[700],
+                        shape: BoxShape.circle,
+                        border: Border.all(color: Colors.orange, width: 2),
+                      ),
+                      child: Center(
+                        child: Text(
+                          '${day.day}',
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ),
+                    );
+                  }
+                  
+                  return Container(
+                    margin: const EdgeInsets.all(4),
+                    decoration: BoxDecoration(
+                      color: Colors.blue[100],
+                      shape: BoxShape.circle,
+                    ),
+                    child: Center(
+                      child: Text(
+                        '${day.day}',
+                        style: TextStyle(
+                          color: Colors.blue[900],
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ),
+                  );
+                },
+              ),
+              
+              headerStyle: HeaderStyle(
+                formatButtonVisible: true,
+                titleCentered: true,
+                formatButtonShowsNext: false,
+                formatButtonDecoration: BoxDecoration(
+                  color: Colors.blue[100]!,
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                formatButtonTextStyle: TextStyle(
+                  color: Colors.blue[900]!,
+                  fontSize: 12,
+                ),
+              ),
+              
+              locale: 'ko_KR',
+            ),
+          ),
+          
+          const SizedBox(height: 12),
+          
+          // 사용 가이드
+          Container(
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                colors: [Colors.blue[50]!, Colors.blue[100]!],
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+              ),
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(color: Colors.blue[200]!),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Icon(Icons.touch_app, size: 18, color: Colors.blue[700]),
+                    const SizedBox(width: 8),
+                    Text(
+                      '사용 방법',
+                      style: TextStyle(
+                        fontSize: 13,
+                        fontWeight: FontWeight.bold,
+                        color: Colors.blue[900],
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 8),
+                _buildGuideRow('1️⃣', '날짜 클릭: 선택/해제'),
+                const SizedBox(height: 4),
+                _buildGuideRow('2️⃣', '연속된 날짜는 자동으로 연결됨'),
+                const SizedBox(height: 4),
+                _buildGuideRow('3️⃣', '최대 30일까지 선택 가능'),
+              ],
+            ),
+          ),
+          
+          const SizedBox(height: 16),
+        ],
+        
+        // 선택된 날짜 표시
+        if (_selectedDates.isNotEmpty) ...[
+          Container(
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              color: Colors.blue[50],
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: Colors.blue[200]!),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.all(8),
+                      decoration: BoxDecoration(
+                        color: Colors.blue[700],
+                        shape: BoxShape.circle,
+                      ),
+                      child: const Icon(
+                        Icons.check,
+                        color: Colors.white,
+                        size: 16,
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            '선택된 날짜',
+                            style: TextStyle(
+                              fontSize: 13,
+                              color: Colors.blue[700],
+                              fontWeight: FontWeight.w500,
+                            ),
+                          ),
+                          const SizedBox(height: 2),
+                          Text(
+                            '총 ${_selectedDates.length}일',
+                            style: TextStyle(
+                              fontSize: 20,
+                              fontWeight: FontWeight.bold,
+                              color: Colors.blue[900],
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    IconButton(
+                      onPressed: () {
+                        setState(() {
+                          _selectedDates.clear();
+                        });
+                      },
+                      icon: Icon(Icons.clear_all, color: Colors.red[700]),
+                      tooltip: '전체 삭제',
+                    ),
+                  ],
+                ),
+                
+                const SizedBox(height: 16),
+                
+                _buildDateChips(),
+                
+                const SizedBox(height: 12),
+                
+                _buildConsecutiveIndicator(),
+              ],
+            ),
+          ),
+        ],
+      ],
+    );
+  }
+
+  /// 가이드 행
+  Widget _buildGuideRow(String emoji, String text) {
+    return Row(
+      children: [
+        Text(emoji, style: const TextStyle(fontSize: 12)),
+        const SizedBox(width: 8),
+        Expanded(
+          child: Text(
+            text,
+            style: TextStyle(
+              fontSize: 12,
+              color: Colors.blue[800],
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  /// 날짜 칩들 (연속된 날짜는 그룹화)
+  Widget _buildDateChips() {
+    if (_selectedDates.isEmpty) return const SizedBox.shrink();
     
-    try {
-      String hex = colorHex.replaceFirst('#', '');
-      if (hex.length == 6) {
-        hex = 'FF$hex';  // 알파값 추가
-      }
-      return Color(int.parse(hex, radix: 16));
-    } catch (e) {
-      print('⚠️ 색상 파싱 실패: $colorHex, 기본 파란색 사용');
-      return Colors.blue[700]!;
+    // 연속된 날짜 그룹 찾기
+    final groups = _groupConsecutiveDates();
+    
+    print('🎨 칩 생성: ${groups.length}개 그룹');
+    
+    return Wrap(
+      spacing: 8,
+      runSpacing: 8,
+      children: groups.map((group) {
+        if (group.length == 1) {
+          print('  📌 단일: ${group.first.month}/${group.first.day}');
+          return _buildDateChip(group.first, null);
+        } else {
+          print('  📦 범위: ${group.first.month}/${group.first.day} ~ ${group.last.month}/${group.last.day} (${group.length}일)');
+          return _buildRangeChip(group.first, group.last);
+        }
+      }).toList(),
+    );
+  }
+
+  /// 단일 날짜 칩
+  Widget _buildDateChip(DateTime date, DateTime? endDate) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      decoration: BoxDecoration(
+        color: Colors.blue[700],
+        borderRadius: BorderRadius.circular(20),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.blue.withOpacity(0.3),
+            blurRadius: 4,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(
+            '${date.month}/${date.day}',
+            style: const TextStyle(
+              color: Colors.white,
+              fontSize: 13,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          const SizedBox(width: 6),
+          GestureDetector(
+            onTap: () {
+              setState(() {
+                _selectedDates.removeWhere((d) => 
+                  d.year == date.year && 
+                  d.month == date.month && 
+                  d.day == date.day
+                );
+              });
+            },
+            child: Container(
+              padding: const EdgeInsets.all(3),
+              decoration: BoxDecoration(
+                color: Colors.white.withOpacity(0.3),
+                shape: BoxShape.circle,
+              ),
+              child: const Icon(
+                Icons.close,
+                size: 14,
+                color: Colors.white,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// 범위 날짜 칩
+  Widget _buildRangeChip(DateTime start, DateTime end) {
+    final count = end.difference(start).inDays + 1; // ✅ 일수 계산
+    
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          colors: [Colors.blue[700]!, Colors.blue[500]!],
+        ),
+        borderRadius: BorderRadius.circular(20),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.blue.withOpacity(0.3),
+            blurRadius: 4,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(
+            '${start.month}/${start.day}',
+            style: const TextStyle(
+              color: Colors.white,
+              fontSize: 13,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          const Padding(
+            padding: EdgeInsets.symmetric(horizontal: 4),
+            child: Icon(
+              Icons.arrow_forward,
+              size: 12,
+              color: Colors.white,
+            ),
+          ),
+          Text(
+            '${end.month}/${end.day}',
+            style: const TextStyle(
+              color: Colors.white,
+              fontSize: 13,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          const SizedBox(width: 6),
+          // ✅ 일수 표시
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+            decoration: BoxDecoration(
+              color: Colors.white.withOpacity(0.3),
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: Text(
+              '${count}일',
+              style: const TextStyle(
+                color: Colors.white,
+                fontSize: 11,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+          ),
+          const SizedBox(width: 6),
+          GestureDetector(
+            onTap: () {
+              setState(() {
+                // 범위 내 모든 날짜 삭제
+                _selectedDates.removeWhere((d) {
+                  return !d.isBefore(start) && !d.isAfter(end);
+                });
+              });
+            },
+            child: Container(
+              padding: const EdgeInsets.all(3),
+              decoration: BoxDecoration(
+                color: Colors.white.withOpacity(0.3),
+                shape: BoxShape.circle,
+              ),
+              child: const Icon(
+                Icons.close,
+                size: 14,
+                color: Colors.white,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// 연속 표시
+  Widget _buildConsecutiveIndicator() {
+    if (_isConsecutiveDates()) {
+      return Container(
+        padding: const EdgeInsets.all(8),
+        decoration: BoxDecoration(
+          color: Colors.green[50],
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(color: Colors.green[200]!),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.check_circle, size: 16, color: Colors.green[700]),
+            const SizedBox(width: 6),
+            Text(
+              '연속된 날짜입니다',
+              style: TextStyle(
+                fontSize: 12,
+                color: Colors.green[900],
+                fontWeight: FontWeight.w500,
+              ),
+            ),
+          ],
+        ),
+      );
+    } else {
+      return Container(
+        padding: const EdgeInsets.all(8),
+        decoration: BoxDecoration(
+          color: Colors.orange[50],
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(color: Colors.orange[200]!),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.info_outline, size: 16, color: Colors.orange[700]),
+            const SizedBox(width: 6),
+            Text(
+              '비연속 날짜 (${_groupConsecutiveDates().length}개 그룹)',
+              style: TextStyle(
+                fontSize: 12,
+                color: Colors.orange[900],
+                fontWeight: FontWeight.w500,
+              ),
+            ),
+          ],
+        ),
+      );
     }
   }
 
@@ -1590,36 +2499,6 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
         return Icons.work_outline;
     }
   }
-  /// ✅ NEW: 날짜 선택 방식 토글
-Widget _buildDateModeSelector() {
-  return Container(
-    decoration: BoxDecoration(
-      color: Colors.grey[200],
-      borderRadius: BorderRadius.circular(12),
-    ),
-    padding: const EdgeInsets.all(4),
-    child: Row(
-      children: [
-        Expanded(
-          child: _buildModeButton(
-            label: '단일 날짜',
-            icon: Icons.calendar_today,
-            isSelected: _dateMode == 'single',
-            onTap: () => setState(() => _dateMode = 'single'),
-          ),
-        ),
-        Expanded(
-          child: _buildModeButton(
-            label: '날짜 범위',
-            icon: Icons.date_range,
-            isSelected: _dateMode == 'range',
-            onTap: () => setState(() => _dateMode = 'range'),
-          ),
-        ),
-      ],
-    ),
-  );
-}
 
 Widget _buildModeButton({
     required String label,

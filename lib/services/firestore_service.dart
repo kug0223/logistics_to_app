@@ -467,9 +467,6 @@ class FirestoreService {
   /// 특정 사업장의 업무 유형 목록 조회
   Future<List<BusinessWorkTypeModel>> getBusinessWorkTypes(String businessId) async {
     try {
-      print('🔍 [FirestoreService] 사업장 업무 유형 조회...');
-      print('   businessId: $businessId');
-
       final snapshot = await _firestore
           .collection('businesses')
           .doc(businessId)
@@ -479,13 +476,13 @@ class FirestoreService {
           .get();
 
       final workTypes = snapshot.docs
-          .map((doc) => BusinessWorkTypeModel.fromFirestore(doc))
+          .map((doc) => BusinessWorkTypeModel.fromMap(doc.data(), doc.id))
           .toList();
 
-      print('✅ [FirestoreService] 조회 완료: ${workTypes.length}개');
+      print('🔍 Firestore 조회: ${workTypes.length}개');
       return workTypes;
     } catch (e) {
-      print('❌ [FirestoreService] 업무 유형 조회 실패: $e');
+      print('❌ getBusinessWorkTypes 오류: $e');
       return [];
     }
   }

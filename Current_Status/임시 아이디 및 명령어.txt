@@ -10,12 +10,15 @@ admin123!@#
 subadmin@test.com
 subadmin123!@#
 
-flutter run -d web-server
+
 
 git add .
 git commit -m "백업"
 git push
 
+flutter clean
+flutter pub get
+flutter run -d web-server
 
 project_knowledge_search 도구를 사용해서
 실제 업로드된 dart 코드 파일들을 검색하고

@@ -5,7 +5,7 @@ publish_to: 'none'
 version: 1.0.0+1
 
 environment:
-  sdk: ^3.9.2
+  sdk: '>=3.0.0 <4.0.0'
 
 dependencies:
   flutter:
@@ -38,6 +38,9 @@ dependencies:
   
   # WebView (주소 검색용) ⭐ NEW!
   webview_flutter: ^4.4.2
+  
+  # ✅ NEW: 캘린더
+  table_calendar: ^3.1.2
   
 dev_dependencies:
   flutter_test:
