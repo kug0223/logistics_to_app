@@ -67,6 +67,12 @@ class _AdminTOListScreenState extends State<AdminTOListScreen> {
           for (var to in groupTOs) {
             final applications = await _firestoreService.getApplicationsByTOId(to.id);
             final workDetails = await _firestoreService.getWorkDetails(to.id);
+            // ✅ 각 WorkDetail별로 대기 인원 수 계산
+            for (var work in workDetails) {
+              work.pendingCount = applications
+                  .where((app) => app.selectedWorkType == work.workType && app.status == 'PENDING')
+                  .length;
+            }
             
             toItems.add(_TOItem(
               to: to,
@@ -173,6 +179,437 @@ class _AdminTOListScreenState extends State<AdminTOListScreen> {
         _applyFilters();
       });
     }
+  }
+  /// 그룹명 수정 다이얼로그
+  Future<void> _showEditGroupNameDialog(TOModel to) async {
+    if (to.groupId == null || to.groupName == null) return;
+
+    final controller = TextEditingController(text: to.groupName);
+
+    final result = await showDialog<String>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Row(
+          children: [
+            Icon(Icons.edit, color: Colors.blue),
+            SizedBox(width: 12),
+            Text('그룹명 수정'),
+          ],
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              '그룹에 속한 모든 TO의 이름이 변경됩니다',
+              style: TextStyle(fontSize: 14, color: Colors.grey[600]),
+            ),
+            const SizedBox(height: 16),
+            TextField(
+              controller: controller,
+              decoration: InputDecoration(
+                labelText: '새 그룹명',
+                hintText: '예: 4주차 파트타임 모음',
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(8),
+                ),
+              ),
+              autofocus: true,
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('취소'),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              final newName = controller.text.trim();
+              if (newName.isEmpty) {
+                ToastHelper.showError('그룹명을 입력하세요');
+                return;
+              }
+              Navigator.pop(context, newName);
+            },
+            child: const Text('저장'),
+          ),
+        ],
+      ),
+    );
+
+    if (result != null && result.isNotEmpty) {
+      // 그룹명 업데이트
+      final success = await _firestoreService.updateGroupName(to.groupId!, result);
+      if (success) {
+        _loadTOsWithStats(); // 목록 새로고침
+      }
+    }
+
+    controller.dispose();
+  }
+  /// TO 삭제 다이얼로그
+  Future<void> _showDeleteTODialog(_TOItem toItem) async {
+    final to = toItem.to;
+    
+    // 1. 지원자 체크
+    final checkResult = await _firestoreService.checkTOBeforeDelete(to.id);
+    final hasApplicants = checkResult['hasApplicants'] as bool;
+    final confirmedCount = checkResult['confirmedCount'] as int;
+    final totalCount = checkResult['totalCount'] as int;
+    
+    // 2. 그룹 정보 확인
+    final isGroupTO = to.groupId != null;
+    final isMasterTO = to.isGroupMaster;
+    
+    String title = 'TO 삭제 확인';
+    String content = '';
+    
+    if (isGroupTO) {
+      if (isMasterTO) {
+        title = '⚠️ 대표 TO 삭제';
+        content = '그룹: "${to.groupName}"의\n대표 TO를 삭제하시겠습니까?\n\n📋 ${DateFormat('MM/dd (E)', 'ko_KR').format(to.date)} ${to.title}\n\n⚠️ 다음 TO가 새로운 대표가 됩니다.\n✅ 그룹은 유지됩니다';
+      } else {
+        title = '⚠️ TO 삭제 확인';
+        content = '그룹: "${to.groupName}"에서\n다음 TO를 삭제하시겠습니까?\n\n📋 ${DateFormat('MM/dd (E)', 'ko_KR').format(to.date)} ${to.title}\n\n✅ 그룹은 유지됩니다\n✅ 다른 TO는 영향 없음';
+      }
+    } else {
+      content = '다음 TO를 삭제하시겠습니까?\n\n📋 ${DateFormat('MM/dd (E)', 'ko_KR').format(to.date)} ${to.title}';
+    }
+    
+    if (hasApplicants) {
+      content += '\n\n👤 지원자: $totalCount명 (확정 $confirmedCount명)';
+      if (confirmedCount > 0) {
+        content += '\n⚠️ 확정된 지원자가 있습니다!';
+      }
+    }
+    
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text(title),
+        content: Text(content),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('취소'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(context, true),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.red,
+            ),
+            child: const Text('삭제'),
+          ),
+        ],
+      ),
+    );
+    
+    if (confirmed == true) {
+      final success = await _firestoreService.deleteTO(to.id);
+      if (success) {
+        _loadTOsWithStats();
+      }
+    }
+  }
+
+  /// 그룹 전체 삭제 다이얼로그
+  Future<void> _showDeleteGroupDialog(_TOGroupItem groupItem) async {
+    final masterTO = groupItem.masterTO;
+    
+    // 전체 지원자 수 계산
+    int totalApplicants = 0;
+    for (var toItem in groupItem.groupTOs) {
+      totalApplicants += toItem.confirmedCount + toItem.pendingCount;
+    }
+    
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('⚠️ 그룹 전체 삭제'),
+        content: Text(
+          '다음 그룹을 전체 삭제하시겠습니까?\n\n'
+          '🔗 ${masterTO.groupName}\n\n'
+          '포함된 TO: ${groupItem.groupTOs.length}개\n'
+          '⚠️ 총 ${totalApplicants}명의 지원자가 영향받습니다\n'
+          '⚠️ 이 작업은 되돌릴 수 없습니다'
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('취소'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(context, true),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.red,
+            ),
+            child: const Text('전체 삭제'),
+          ),
+        ],
+      ),
+    );
+    
+    if (confirmed == true) {
+      final success = await _firestoreService.deleteGroupTOs(masterTO.groupId!);
+      if (success) {
+        _loadTOsWithStats();
+      }
+    }
+  }
+  /// 그룹 해제 다이얼로그
+  Future<void> _showRemoveFromGroupDialog(_TOItem toItem) async {
+    final to = toItem.to;
+    
+    if (to.groupId == null) {
+      ToastHelper.showError('그룹 TO가 아닙니다.');
+      return;
+    }
+    
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Row(
+          children: [
+            Icon(Icons.link_off, color: Colors.orange),
+            SizedBox(width: 12),
+            Text('그룹 해제'),
+          ],
+        ),
+        content: Text(
+          '그룹: "${to.groupName}"에서\n다음 TO를 해제하시겠습니까?\n\n'
+          '📋 ${DateFormat('MM/dd (E)', 'ko_KR').format(to.date)} ${to.title}\n\n'
+          '✅ 독립 TO로 전환됩니다\n'
+          '✅ 다른 그룹으로 재연결 가능\n'
+          '✅ 지원자 정보는 유지됩니다'
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('취소'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(context, true),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.orange,
+            ),
+            child: const Text('해제'),
+          ),
+        ],
+      ),
+    );
+    
+    if (confirmed == true) {
+      final success = await _firestoreService.removeFromGroup(to.id);
+      if (success) {
+        _loadTOsWithStats();
+      }
+    }
+  }
+  /// 그룹 연결 다이얼로그 (기존 그룹 또는 새 그룹 생성)
+  Future<void> _showReconnectToGroupDialog(_TOItem toItem) async {
+    final to = toItem.to;
+    
+    // 현재 그룹 제외한 다른 그룹 목록 가져오기
+    // ✅ 동일 사업장의 그룹만 가져오기
+    final allGroups = _allGroupItems
+        .where((item) => 
+            item.isGrouped && 
+            item.masterTO.groupId != to.groupId &&
+            item.masterTO.businessId == to.businessId  // 동일 사업장만!
+        )
+        .toList();
+    
+    String? selectedOption = 'existing'; // 'existing' or 'new'
+    String? selectedGroupId;
+    final newGroupNameController = TextEditingController();
+    
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setState) => AlertDialog(
+          title: const Row(
+            children: [
+              Icon(Icons.link, color: Colors.blue),
+              SizedBox(width: 12),
+              Text('그룹 연결'),
+            ],
+          ),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  '다음 TO를 그룹에 연결합니다:\n\n'
+                  '📋 ${DateFormat('MM/dd (E)', 'ko_KR').format(to.date)} ${to.title}',
+                  style: const TextStyle(fontSize: 14),
+                ),
+                const SizedBox(height: 20),
+                
+                // 옵션 1: 기존 그룹에 연결
+                RadioListTile<String>(
+                  title: const Text('기존 그룹에 연결'),
+                  value: 'existing',
+                  groupValue: selectedOption,
+                  onChanged: allGroups.isEmpty ? null : (value) {
+                    setState(() => selectedOption = value);
+                  },
+                  dense: true,
+                  contentPadding: EdgeInsets.zero,
+                ),
+                
+                if (selectedOption == 'existing') ...[
+                  const SizedBox(height: 8),
+                  if (allGroups.isEmpty)
+                    Padding(
+                      padding: const EdgeInsets.only(left: 16),
+                      child: Text(
+                        '연결 가능한 그룹이 없습니다',
+                        style: TextStyle(
+                          fontSize: 13,
+                          color: Colors.grey[600],
+                        ),
+                      ),
+                    )
+                  else
+                    Padding(
+                      padding: const EdgeInsets.only(left: 16),
+                      child: DropdownButtonFormField<String>(
+                        value: selectedGroupId,
+                        decoration: const InputDecoration(
+                          labelText: '그룹 선택',
+                          border: OutlineInputBorder(),
+                          isDense: true,
+                        ),
+                        items: allGroups.map((item) {
+                          final master = item.masterTO;
+                          return DropdownMenuItem(
+                            value: master.groupId,
+                            child: Text(
+                              '${master.groupName} (${master.businessName})',
+                              style: const TextStyle(fontSize: 13),
+                            ),
+                          );
+                        }).toList(),
+                        onChanged: (value) {
+                          setState(() => selectedGroupId = value);
+                        },
+                      ),
+                    ),
+                ],
+                
+                const SizedBox(height: 16),
+                
+                // 옵션 2: 새 그룹 생성
+                RadioListTile<String>(
+                  title: const Text('새 그룹 생성'),
+                  value: 'new',
+                  groupValue: selectedOption,
+                  onChanged: (value) {
+                    setState(() => selectedOption = value);
+                  },
+                  dense: true,
+                  contentPadding: EdgeInsets.zero,
+                ),
+                
+                if (selectedOption == 'new') ...[
+                const SizedBox(height: 8),
+                Padding(
+                  padding: const EdgeInsets.only(left: 16),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      TextField(
+                        controller: newGroupNameController,
+                        decoration: const InputDecoration(
+                          labelText: '새 그룹명',
+                          hintText: '예: 11월 1주차 모음',
+                          border: OutlineInputBorder(),
+                          isDense: true,
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                        decoration: BoxDecoration(
+                          color: Colors.blue[50],
+                          borderRadius: BorderRadius.circular(8),
+                          border: Border.all(color: Colors.blue[200]!),
+                        ),
+                        child: Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Icon(Icons.info_outline, size: 16, color: Colors.blue[700]),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: Text(
+                                '이 TO가 새 그룹의 대표가 됩니다.\n나중에 다른 TO를 이 그룹에 추가할 수 있습니다.',
+                                style: TextStyle(
+                                  fontSize: 11,
+                                  color: Colors.grey[700],
+                                  height: 1.4,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('취소'),
+            ),
+            ElevatedButton(
+              onPressed: () {
+                if (selectedOption == 'existing' && selectedGroupId == null) {
+                  ToastHelper.showError('그룹을 선택하세요');
+                  return;
+                }
+                if (selectedOption == 'new' && newGroupNameController.text.trim().isEmpty) {
+                  ToastHelper.showError('그룹명을 입력하세요');
+                  return;
+                }
+                Navigator.pop(context, true);
+              },
+              child: const Text('연결'),
+            ),
+          ],
+        ),
+      ),
+    );
+    
+    if (confirmed == true) {
+      bool success = false;
+      
+      if (selectedOption == 'existing' && selectedGroupId != null) {
+        // 기존 그룹에 연결
+        success = await _firestoreService.reconnectToGroup(
+          toId: to.id,
+          targetGroupId: selectedGroupId!,
+        );
+      } else if (selectedOption == 'new') {
+        // 새 그룹 생성
+        final groupName = newGroupNameController.text.trim();
+        success = await _firestoreService.createNewGroupFromTO(
+          toId: to.id,
+          groupName: groupName,
+        );
+      }
+      
+      if (success) {
+        _loadTOsWithStats();
+      }
+    }
+    
+    newGroupNameController.dispose();
   }
 
   @override
@@ -392,14 +829,15 @@ class _AdminTOListScreenState extends State<AdminTOListScreen> {
                     });
                   }
                 : () {
-                    // 단일 TO는 바로 상세 화면으로
-                    Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                        builder: (context) => AdminTODetailScreen(to: masterTO),
-                      ),
-                    ).then((result) {
-                      if (result == true) _loadTOsWithStats();
+                    // ✅ 기존: 단일 TO는 바로 상세 화면으로
+                    // ✅ 수정: 단일 TO도 토글하도록 변경
+                    setState(() {
+                      final key = masterTO.id;
+                      if (_expandedGroups.contains(key)) {
+                        _expandedGroups.remove(key);
+                      } else {
+                        _expandedGroups.add(key);
+                      }
                     });
                   },
             child: Padding(
@@ -445,11 +883,74 @@ class _AdminTOListScreenState extends State<AdminTOListScreen> {
                           ),
                         ),
                       ),
-                      if (groupItem.isGrouped)
-                        Icon(
-                          isExpanded ? Icons.keyboard_arrow_up : Icons.keyboard_arrow_down,
-                          color: Colors.grey[600],
+                      // ✅ 단일 TO인 경우 수정/삭제 버튼 추가
+                      if (!groupItem.isGrouped) ...[
+                        IconButton(
+                          icon: const Icon(Icons.edit, size: 18),
+                          color: Colors.orange[600],
+                          tooltip: 'TO 수정',
+                          padding: EdgeInsets.zero,
+                          constraints: const BoxConstraints(),
+                          onPressed: () async {
+                            final result = await Navigator.push(
+                              context,
+                              MaterialPageRoute(
+                                builder: (context) => AdminEditTOScreen(to: masterTO),
+                              ),
+                            );
+                            if (result == true) _loadTOsWithStats();
+                          },
                         ),
+                        const SizedBox(width: 4),
+                        IconButton(
+                          icon: const Icon(Icons.delete, size: 18),
+                          color: Colors.red[600],
+                          tooltip: 'TO 삭제',
+                          padding: EdgeInsets.zero,
+                          constraints: const BoxConstraints(),
+                          onPressed: () => _showDeleteTODialog(groupItem.groupTOs.first),
+                        ),
+                        const SizedBox(width: 8),
+                        // ✅ 그룹 연결 버튼 추가
+                        IconButton(
+                          icon: const Icon(Icons.link, size: 18),
+                          color: Colors.blue[600],
+                          tooltip: '그룹 연결',
+                          padding: EdgeInsets.zero,
+                          constraints: const BoxConstraints(),
+                          onPressed: () => _showReconnectToGroupDialog(groupItem.groupTOs.first),
+                        ),
+                        const SizedBox(width: 8),
+                      ],                      
+                      
+                      // 그룹명 수정 버튼
+                      if (groupItem.isGrouped && masterTO.groupId != null)
+                        IconButton(
+                          icon: const Icon(Icons.edit, size: 18),
+                          color: Colors.blue[600],
+                          tooltip: '그룹명 수정',
+                          padding: EdgeInsets.zero,
+                          constraints: const BoxConstraints(),
+                          onPressed: () => _showEditGroupNameDialog(masterTO),
+                        ),                    
+                      // 간격 추가
+                      if (groupItem.isGrouped && masterTO.groupId != null)
+                        const SizedBox(width: 4),
+                      // ✅ 그룹 전체 삭제 버튼 추가
+                      if (groupItem.isGrouped && masterTO.groupId != null)
+                        IconButton(
+                          icon: const Icon(Icons.delete_forever, size: 18),
+                          color: Colors.red[600],
+                          tooltip: '그룹 전체 삭제',
+                          padding: EdgeInsets.zero,
+                          constraints: const BoxConstraints(),
+                          onPressed: () => _showDeleteGroupDialog(groupItem),
+                        ),
+                      // ✅ 그룹 TO든 단일 TO든 모두 토글 아이콘 표시
+                      Icon(
+                        isExpanded ? Icons.keyboard_arrow_up : Icons.keyboard_arrow_down,
+                        color: Colors.grey[600],
+                      ),
                     ],
                   ),
                   const SizedBox(height: 8),
@@ -514,8 +1015,32 @@ class _AdminTOListScreenState extends State<AdminTOListScreen> {
               padding: const EdgeInsets.all(12),
               child: Column(
                 children: groupItem.groupTOs.map((toItem) {
-                  return _buildTOItemCard(toItem);
+                  return _buildTOItemCard(toItem, groupItem);
                 }).toList(),
+              ),
+            ),
+          ],
+          // ✅ NEW: 단일 TO도 펼쳐서 업무 상세 보기
+          if (isExpanded && !groupItem.isGrouped) ...[
+            const Divider(height: 1),
+            Padding(
+              padding: const EdgeInsets.all(12),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    '업무 상세',
+                    style: TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.grey[700],
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  ...groupItem.groupTOs.first.workDetails.map((work) {
+                    return _buildWorkDetailRow(work, work.currentCount, work.pendingCount);
+                  }).toList(),
+                ],
               ),
             ),
           ],
@@ -525,8 +1050,9 @@ class _AdminTOListScreenState extends State<AdminTOListScreen> {
   }
 
   /// ✅ TO 아이템 카드 (2단계 토글 - 각 TO)
-  Widget _buildTOItemCard(_TOItem toItem) {
+  Widget _buildTOItemCard(_TOItem toItem, _TOGroupItem groupItem) {
     final to = toItem.to;
+    final masterTO = groupItem.masterTO;
     final isExpanded = _expandedTOs.contains(to.id);
     final dateFormat = DateFormat('MM/dd (E)', 'ko_KR');
     final isFull = toItem.confirmedCount >= to.totalRequired;
@@ -615,14 +1141,27 @@ class _AdminTOListScreenState extends State<AdminTOListScreen> {
 
                   // 삭제 버튼
                   IconButton(
-                    onPressed: () {
-                      // TODO: 삭제 다이얼로그
-                      ToastHelper.showInfo('삭제 기능은 다음 단계에서 구현됩니다');
-                    },
+                    onPressed: () => _showDeleteTODialog(toItem),
                     icon: const Icon(Icons.delete, size: 16),
                     color: Colors.red[700],
                     tooltip: '삭제',
                   ),
+                  // 그룹 해제 버튼
+                  if (to.groupId != null)
+                    IconButton(
+                      onPressed: () => _showRemoveFromGroupDialog(toItem),
+                      icon: const Icon(Icons.link_off, size: 16),
+                      color: Colors.orange[700],
+                      tooltip: '그룹 해제',
+                    ),
+                  // ✅ 그룹 연결 버튼 (독립 TO인 경우)
+                  if (to.groupId == null)  // 조건 단순화!
+                    IconButton(
+                      onPressed: () => _showReconnectToGroupDialog(toItem),
+                      icon: const Icon(Icons.link, size: 16),
+                      color: Colors.blue[700],
+                      tooltip: '그룹 연결',
+                    ),
                   
                   // 상세 보기 버튼
                   IconButton(
@@ -668,7 +1207,9 @@ class _AdminTOListScreenState extends State<AdminTOListScreen> {
                   ),
                   const SizedBox(height: 8),
                   ...toItem.workDetails.map((work) {
-                    return _buildWorkDetailRow(work);
+                    // ✅ 이 업무의 확정/대기 인원 수 별도 계산 필요
+                    // (이미 _TOItem에 workDetails가 있으니 각 업무별 카운트가 있어야 함)
+                    return _buildWorkDetailRow(work, work.currentCount, work.pendingCount);
                   }).toList(),
                 ],
               ),
@@ -679,89 +1220,83 @@ class _AdminTOListScreenState extends State<AdminTOListScreen> {
     );
   }
 
-  /// ✅ WorkDetail 행
-  Widget _buildWorkDetailRow(WorkDetailModel work) {
-    final isFull = work.currentCount >= work.requiredCount;
-    
-    return Container(
-      margin: const EdgeInsets.only(bottom: 6),
-      padding: const EdgeInsets.all(10),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(6),
-        border: Border.all(
-          color: isFull ? Colors.green[200]! : Colors.grey[200]!,
-        ),
-      ),
+  Widget _buildWorkDetailRow(WorkDetailModel work, int confirmedCount, int pendingCount) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 6),
       child: Row(
         children: [
-          // 업무 유형
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-            decoration: BoxDecoration(
-              color: _parseColor(work.workTypeColor).withOpacity(0.1),
-              borderRadius: BorderRadius.circular(4),
-            ),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text(
-                  work.workTypeIcon,
-                  style: const TextStyle(fontSize: 14),
-                ),
-                const SizedBox(width: 4),
-                Text(
-                  work.workType,
-                  style: TextStyle(
-                    fontSize: 12,
-                    fontWeight: FontWeight.bold,
-                    color: _parseColor(work.workTypeColor),
-                  ),
-                ),
-              ],
+          
+          // ✅ 업무 아이콘 + 유형
+          Text(
+            work.workTypeIcon,
+            style: const TextStyle(fontSize: 16),
+          ),
+          const SizedBox(width: 6),
+          Expanded(
+            child: Text(
+              work.workType,
+              style: const TextStyle(
+                fontSize: 13,
+                fontWeight: FontWeight.w500,
+              ),
             ),
           ),
-          const SizedBox(width: 12),
           
           // 시간
-          Icon(Icons.access_time, size: 14, color: Colors.grey[600]),
+          Icon(Icons.access_time, size: 12, color: Colors.grey[600]),
           const SizedBox(width: 4),
           Text(
             '${work.startTime}~${work.endTime}',
             style: TextStyle(fontSize: 11, color: Colors.grey[700]),
           ),
-          const SizedBox(width: 12),
+          const SizedBox(width: 8),
           
           // 급여
-          Icon(Icons.attach_money, size: 14, color: Colors.grey[600]),
-          const SizedBox(width: 4),
           Text(
-            work.formattedWage,
+            '₩ ${NumberFormat('#,###').format(work.wage)}원',
             style: TextStyle(
               fontSize: 11,
               fontWeight: FontWeight.bold,
-              color: Colors.grey[700],
+              color: Colors.black[700],
             ),
           ),
-          
-          const Spacer(),
-          
-          // 인원
+          const SizedBox(width: 12),
+
+          // 확정 인원
           Container(
-            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
             decoration: BoxDecoration(
-              color: isFull ? Colors.green[50] : Colors.blue[50],
-              borderRadius: BorderRadius.circular(4),
+              color: work.isFull ? Colors.green[50] : Colors.blue[50],
+              borderRadius: BorderRadius.circular(12),
               border: Border.all(
-                color: isFull ? Colors.green[300]! : Colors.blue[300]!,
+                color: work.isFull ? Colors.green[200]! : Colors.blue[200]!,
               ),
             ),
             child: Text(
-              '${work.currentCount}/${work.requiredCount}명',
+              '$confirmedCount/${work.requiredCount}명',
               style: TextStyle(
-                fontSize: 11,
+                fontSize: 12,
                 fontWeight: FontWeight.bold,
-                color: isFull ? Colors.green[700] : Colors.blue[700],
+                color: work.isFull ? Colors.green[700] : Colors.blue[700],
+              ),
+            ),
+          ),
+          const SizedBox(width: 6),
+          
+          // ✅ NEW: 대기 인원 추가
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+            decoration: BoxDecoration(
+              color: Colors.orange[100],
+              borderRadius: BorderRadius.circular(4),
+              border: Border.all(color: Colors.orange[300]!),
+            ),
+            child: Text(
+              '대기 $pendingCount',
+              style: TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.bold,
+                color: Colors.orange,
               ),
             ),
           ),

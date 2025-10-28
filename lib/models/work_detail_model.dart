@@ -15,6 +15,8 @@ class WorkDetailModel {
   final int order; // 표시 순서 (0부터 시작)
   final DateTime createdAt; // 생성 시각
 
+  int pendingCount;
+
   WorkDetailModel({
     required this.id,
     required this.workType,
@@ -27,6 +29,7 @@ class WorkDetailModel {
     required this.endTime,
     required this.order,
     required this.createdAt,
+    this.pendingCount = 0, // <-- 기본값 0
   });
 
   /// Firestore 문서를 WorkDetailModel로 변환
@@ -75,6 +78,7 @@ class WorkDetailModel {
     String? endTime,
     int? order,
     DateTime? createdAt,
+    int? pendingCount, // <-- 추가
   }) {
     return WorkDetailModel(
       id: id ?? this.id,
@@ -88,6 +92,7 @@ class WorkDetailModel {
       endTime: endTime ?? this.endTime,
       order: order ?? this.order,
       createdAt: createdAt ?? this.createdAt,
+      pendingCount: pendingCount ?? this.pendingCount, // <-- 추가
     );
   }
 
