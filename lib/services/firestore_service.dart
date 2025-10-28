@@ -738,6 +738,76 @@ Future<bool> decrementWorkDetailCount(String toId, String workDetailId) async {
     return false;
   }
 }
+/// WorkDetail 추가
+Future<void> addWorkDetail({
+  required String toId,
+  required WorkDetailModel workDetail,
+}) async {
+  try {
+    await _firestore
+        .collection('tos')
+        .doc(toId)
+        .collection('workDetails')
+        .add({
+      'workType': workDetail.workType,
+      'workTypeIcon': workDetail.workTypeIcon,
+      'workTypeColor': workDetail.workTypeColor,
+      'wage': workDetail.wage,
+      'requiredCount': workDetail.requiredCount,
+      'currentCount': 0,
+      'startTime': workDetail.startTime,
+      'endTime': workDetail.endTime,
+      'order': workDetail.order,
+      'createdAt': FieldValue.serverTimestamp(),
+    });
+
+    print('✅ [FirestoreService] WorkDetail 추가 완료');
+  } catch (e) {
+    print('❌ [FirestoreService] WorkDetail 추가 실패: $e');
+    rethrow;
+  }
+}
+
+/// WorkDetail 수정
+Future<void> updateWorkDetail({
+  required String toId,
+  required String workDetailId,
+  required Map<String, dynamic> updates,
+}) async {
+  try {
+    await _firestore
+        .collection('tos')
+        .doc(toId)
+        .collection('workDetails')
+        .doc(workDetailId)
+        .update(updates);
+
+    print('✅ [FirestoreService] WorkDetail 수정 완료');
+  } catch (e) {
+    print('❌ [FirestoreService] WorkDetail 수정 실패: $e');
+    rethrow;
+  }
+}
+
+/// WorkDetail 삭제
+Future<void> deleteWorkDetail({
+  required String toId,
+  required String workDetailId,
+}) async {
+  try {
+    await _firestore
+        .collection('tos')
+        .doc(toId)
+        .collection('workDetails')
+        .doc(workDetailId)
+        .delete();
+
+    print('✅ [FirestoreService] WorkDetail 삭제 완료');
+  } catch (e) {
+    print('❌ [FirestoreService] WorkDetail 삭제 실패: $e');
+    rethrow;
+  }
+}
 
 /// WorkDetail ID 찾기 (workType으로 검색)
 Future<String?> findWorkDetailIdByType(String toId, String workType) async {
