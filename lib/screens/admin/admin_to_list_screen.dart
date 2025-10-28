@@ -67,6 +67,7 @@ class _AdminTOListScreenState extends State<AdminTOListScreen> {
           for (var to in groupTOs) {
             final applications = await _firestoreService.getApplicationsByTOId(to.id);
             final workDetails = await _firestoreService.getWorkDetails(to.id);
+
             // ✅ 각 WorkDetail별로 대기 인원 수 계산
             for (var work in workDetails) {
               work.pendingCount = applications
@@ -96,6 +97,24 @@ class _AdminTOListScreenState extends State<AdminTOListScreen> {
         else {
           final applications = await _firestoreService.getApplicationsByTOId(masterTO.id);
           final workDetails = await _firestoreService.getWorkDetails(masterTO.id);
+          // ✅ 여기 추가! - 단일 TO 시간 범위 계산
+          if (workDetails.isNotEmpty) {
+            String? minStart;
+            String? maxEnd;
+            
+            for (var work in workDetails) {
+              if (minStart == null || work.startTime.compareTo(minStart) < 0) {
+                minStart = work.startTime;
+              }
+              if (maxEnd == null || work.endTime.compareTo(maxEnd) > 0) {
+                maxEnd = work.endTime;
+              }
+            }
+            
+            if (minStart != null && maxEnd != null) {
+              masterTO.setTimeRange(minStart, maxEnd);
+            }
+          }
           
           groupItems.add(_TOGroupItem(
             masterTO: masterTO,
@@ -899,16 +918,43 @@ class _AdminTOListScreenState extends State<AdminTOListScreen> {
                         const SizedBox(height: 10),
                       ],
                       
+                      // ✅ 단일 TO: 파란 박스
+                      if (masterTO.groupName == null) ...[
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                          decoration: BoxDecoration(
+                            color: Colors.blue[50],
+                            borderRadius: BorderRadius.circular(8),
+                            border: Border.all(color: Colors.blue[300]!, width: 1.5),
+                          ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(Icons.work_outline, size: 16, color: Colors.blue[700]),
+                              const SizedBox(width: 6),
+                              Text(
+                                '단일 공고',
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.bold,
+                                  color: Colors.blue[800],
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+              
                       const Spacer(),
                       
-                      // ✅ 단일 TO인 경우 수정/삭제 버튼
+                      // ✅ 단일 TO인 경우
                       if (!groupItem.isGrouped) ...[
                         IconButton(
                           icon: const Icon(Icons.edit, size: 18),
                           color: Colors.orange[600],
                           tooltip: 'TO 수정',
-                          padding: EdgeInsets.zero,
-                          constraints: const BoxConstraints(),
+                          padding: const EdgeInsets.all(8),  // ← 변경
+                          constraints: const BoxConstraints(minWidth: 40, minHeight: 40),  // ← 변경
                           onPressed: () async {
                             final result = await Navigator.push(
                               context,
@@ -924,8 +970,8 @@ class _AdminTOListScreenState extends State<AdminTOListScreen> {
                           icon: const Icon(Icons.delete, size: 18),
                           color: Colors.red[600],
                           tooltip: 'TO 삭제',
-                          padding: EdgeInsets.zero,
-                          constraints: const BoxConstraints(),
+                          padding: const EdgeInsets.all(8),  // ← 변경
+                          constraints: const BoxConstraints(minWidth: 40, minHeight: 40),  // ← 변경
                           onPressed: () => _showDeleteTODialog(groupItem.groupTOs.first),
                         ),
                         const SizedBox(width: 4),
@@ -933,9 +979,25 @@ class _AdminTOListScreenState extends State<AdminTOListScreen> {
                           icon: const Icon(Icons.link, size: 18),
                           color: Colors.blue[600],
                           tooltip: '그룹 연결',
-                          padding: EdgeInsets.zero,
-                          constraints: const BoxConstraints(),
+                          padding: const EdgeInsets.all(8),  // ← 변경
+                          constraints: const BoxConstraints(minWidth: 40, minHeight: 40),  // ← 변경
                           onPressed: () => _showReconnectToGroupDialog(groupItem.groupTOs.first),
+                        ),
+                        const SizedBox(width: 4),
+                        IconButton(
+                          icon: const Icon(Icons.info_outline, size: 18),
+                          color: Colors.purple[600],
+                          tooltip: '지원자 관리',
+                          padding: const EdgeInsets.all(8),  // ← 변경
+                          constraints: const BoxConstraints(minWidth: 40, minHeight: 40),  // ← 변경
+                          onPressed: () {
+                            Navigator.push(
+                              context,
+                              MaterialPageRoute(
+                                builder: (context) => AdminTODetailScreen(to: masterTO),
+                              ),
+                            );
+                          },
                         ),
                       ],
                       
@@ -945,8 +1007,8 @@ class _AdminTOListScreenState extends State<AdminTOListScreen> {
                           icon: const Icon(Icons.edit, size: 18),
                           color: Colors.blue[600],
                           tooltip: '그룹명 수정',
-                          padding: EdgeInsets.zero,
-                          constraints: const BoxConstraints(),
+                          padding: const EdgeInsets.all(8),  // ← 변경
+                          constraints: const BoxConstraints(minWidth: 40, minHeight: 40),  // ← 변경
                           onPressed: () => _showEditGroupNameDialog(masterTO),
                         ),
                         const SizedBox(width: 4),
@@ -954,8 +1016,8 @@ class _AdminTOListScreenState extends State<AdminTOListScreen> {
                           icon: const Icon(Icons.delete_forever, size: 18),
                           color: Colors.red[600],
                           tooltip: '그룹 전체 삭제',
-                          padding: EdgeInsets.zero,
-                          constraints: const BoxConstraints(),
+                          padding: const EdgeInsets.all(8),  // ← 변경
+                          constraints: const BoxConstraints(minWidth: 40, minHeight: 40),  // ← 변경
                           onPressed: () => _showDeleteGroupDialog(groupItem),
                         ),
                       ],
@@ -970,8 +1032,19 @@ class _AdminTOListScreenState extends State<AdminTOListScreen> {
                     ],
                   ),
                   
-                  // ✅ 제목 제거! (그룹 카드에서는 제목 안 보여줌)
-                  
+                  // ✅ 단일 TO 제목은 별도 줄에 (배지 아래)
+                  if (masterTO.groupName == null) ...[
+                    const SizedBox(height: 8),
+                    Text(
+                      masterTO.title,
+                      style: const TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.bold,
+                        color: Colors.black87,
+                      ),
+                    ),
+                  ],
+
                   const SizedBox(height: 12),
                   
                   // ✅ 날짜 및 시간 정보
@@ -1158,8 +1231,8 @@ class _AdminTOListScreenState extends State<AdminTOListScreen> {
                         icon: const Icon(Icons.edit, size: 16),
                         color: Colors.orange[700],
                         tooltip: '수정',
-                        padding: const EdgeInsets.all(8),
-                        constraints: const BoxConstraints(),
+                        padding: const EdgeInsets.all(8),  // ← 변경
+                        constraints: const BoxConstraints(minWidth: 40, minHeight: 40),  // ← 변경
                       ),
 
                       // 삭제 버튼
@@ -1168,26 +1241,35 @@ class _AdminTOListScreenState extends State<AdminTOListScreen> {
                         icon: const Icon(Icons.delete, size: 16),
                         color: Colors.red[700],
                         tooltip: '삭제',
-                        padding: const EdgeInsets.all(8),
-                        constraints: const BoxConstraints(),
+                        padding: const EdgeInsets.all(8),  // ← 변경
+                        constraints: const BoxConstraints(minWidth: 40, minHeight: 40),  // ← 변경
                       ),
                       
-                      // 상세 보기 버튼
+                      // ✅ 그룹 해제 버튼 추가!
                       IconButton(
+                        icon: const Icon(Icons.link_off, size: 18),
+                        color: Colors.orange[700],
+                        tooltip: '그룹 해제',
+                        padding: const EdgeInsets.all(8),
+                        constraints: const BoxConstraints(minWidth: 40, minHeight: 40),
+                        onPressed: () => _showRemoveFromGroupDialog(toItem),
+                      ),
+                      
+                      // 지원자 관리 버튼
+                      IconButton(
+                        icon: const Icon(Icons.info_outline, size: 18),
+                        color: const Color.fromARGB(255, 22, 21, 22),
+                        tooltip: '지원자 관리',
+                        padding: const EdgeInsets.all(8),  // ← 변경
+                        constraints: const BoxConstraints(minWidth: 40, minHeight: 40),  // ← 변경
                         onPressed: () {
                           Navigator.push(
                             context,
                             MaterialPageRoute(
                               builder: (context) => AdminTODetailScreen(to: to),
                             ),
-                          ).then((result) {
-                            if (result == true) _loadTOsWithStats();
-                          });
+                          );
                         },
-                        icon: const Icon(Icons.arrow_forward_ios, size: 14),
-                        tooltip: '상세 보기',
-                        padding: const EdgeInsets.all(8),
-                        constraints: const BoxConstraints(),
                       ),
                       
                       // 펼치기/접기 아이콘

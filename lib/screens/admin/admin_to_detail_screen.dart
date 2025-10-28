@@ -390,7 +390,7 @@ class _AdminTODetailScreenState extends State<AdminTODetailScreen> {
             ),
             const SizedBox(height: 10),
             
-            // ✅ 그룹명 (두 번째 줄 - 녹색 배지)
+            // ✅ 그룹명 (그룹 TO) 또는 단일 공고 배지
             if (widget.to.groupName != null)
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
@@ -402,11 +402,7 @@ class _AdminTODetailScreenState extends State<AdminTODetailScreen> {
                 child: Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    Icon(
-                      Icons.folder_open,
-                      size: 16,
-                      color: Colors.green[700],
-                    ),
+                    Icon(Icons.folder_open, size: 16, color: Colors.green[700]),
                     const SizedBox(width: 6),
                     Text(
                       widget.to.groupName!,
@@ -414,6 +410,30 @@ class _AdminTODetailScreenState extends State<AdminTODetailScreen> {
                         fontSize: 14,
                         fontWeight: FontWeight.bold,
                         color: Colors.green[800],
+                      ),
+                    ),
+                  ],
+                ),
+              )
+            else
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                decoration: BoxDecoration(
+                  color: Colors.blue[50],
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: Colors.blue[300]!, width: 1.5),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(Icons.work_outline, size: 16, color: Colors.blue[700]),
+                    const SizedBox(width: 6),
+                    Text(
+                      '단일 공고',
+                      style: TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.bold,
+                        color: Colors.blue[800],
                       ),
                     ),
                   ],
