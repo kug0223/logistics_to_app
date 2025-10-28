@@ -785,6 +785,46 @@ Future<bool> updateTOGroup({
   }
 }
 
+/// 그룹명 일괄 수정
+/// [groupId] - 그룹 ID
+/// [newGroupName] - 새 그룹명
+/// 반환: 성공 여부
+Future<bool> updateGroupName(String groupId, String newGroupName) async {
+  try {
+    print('🔧 [FirestoreService] 그룹명 수정 시작...');
+    print('   그룹 ID: $groupId');
+    print('   새 그룹명: $newGroupName');
+
+    // 같은 groupId를 가진 모든 TO 조회
+    final snapshot = await _firestore
+        .collection('tos')
+        .where('groupId', isEqualTo: groupId)
+        .get();
+
+    if (snapshot.docs.isEmpty) {
+      ToastHelper.showError('그룹을 찾을 수 없습니다.');
+      return false;
+    }
+
+    // Batch 업데이트
+    final batch = _firestore.batch();
+    
+    for (var doc in snapshot.docs) {
+      batch.update(doc.reference, {'groupName': newGroupName});
+    }
+
+    await batch.commit();
+
+    print('✅ [FirestoreService] 그룹명 수정 완료: ${snapshot.docs.length}개 TO 업데이트');
+    ToastHelper.showSuccess('그룹명이 수정되었습니다.');
+    return true;
+  } catch (e) {
+    print('❌ [FirestoreService] 그룹명 수정 실패: $e');
+    ToastHelper.showError('그룹명 수정에 실패했습니다.');
+    return false;
+  }
+}
+
 /// TO 생성 (WorkDetails 포함) - 업무별 시간 정보 포함
 Future<String?> createTOWithDetails({
   required String businessId,
@@ -1126,6 +1166,133 @@ Future<bool> createTOGroup({
     return false;
   }
 }
+Future<bool> createTOGroupWithExistingGroup({
+  required String businessId,
+  required String businessName,
+  required String groupId,
+  required String groupName,
+  required String title,
+  required DateTime startDate,
+  required DateTime endDate,
+  required List<Map<String, dynamic>> workDetails,
+  required DateTime applicationDeadline,
+  String? description,
+  required String creatorUID,
+}) async {
+  try {
+    print('🔧 [FirestoreService] 기존 그룹에 TO 추가 시작...');
+    print('   그룹 ID: $groupId');
+    print('   그룹명: $groupName');
+    print('   기간: ${startDate.month}/${startDate.day} ~ ${endDate.month}/${endDate.day}');
+
+    final batch = _firestore.batch();
+    
+    // 날짜 범위 내 모든 날짜 생성
+    List<DateTime> dates = [];
+    DateTime currentDate = startDate;
+    
+    while (currentDate.isBefore(endDate) || currentDate.isAtSameMomentAs(endDate)) {
+      dates.add(currentDate);
+      currentDate = currentDate.add(const Duration(days: 1));
+    }
+
+    print('   생성할 TO 개수: ${dates.length}일');
+
+    // 전체 필요 인원 계산
+    int totalRequired = 0;
+    for (var detail in workDetails) {
+      totalRequired += (detail['requiredCount'] as int);
+    }
+
+    // 각 날짜별 TO 생성
+    for (int i = 0; i < dates.length; i++) {
+      final date = dates[i];
+      final isFirst = i == 0;
+      
+      // TO 기본 정보
+      final toData = {
+        'businessId': businessId,
+        'businessName': businessName,
+        'groupId': groupId,  // ✅ 기존 그룹 ID 사용!
+        'groupName': groupName,  // ✅ 기존 그룹명 사용!
+        'startDate': Timestamp.fromDate(startDate),
+        'endDate': Timestamp.fromDate(endDate),
+        'isGroupMaster': false,
+        'title': title,
+        'date': Timestamp.fromDate(date),
+        'applicationDeadline': Timestamp.fromDate(applicationDeadline),
+        'totalRequired': totalRequired,
+        'totalConfirmed': 0,
+        'description': description ?? '',
+        'creatorUID': creatorUID,
+        'createdAt': FieldValue.serverTimestamp(),
+      };
+
+      final toDoc = _firestore.collection('tos').doc();
+      batch.set(toDoc, toData);
+
+      // WorkDetails 추가
+      for (int j = 0; j < workDetails.length; j++) {
+        final detail = workDetails[j];
+        final workDetailDoc = toDoc.collection('workDetails').doc();
+        
+        batch.set(workDetailDoc, {
+          'workType': detail['workType'],
+          'workTypeIcon': detail['workTypeIcon'],
+          'workTypeColor': detail['workTypeColor'],
+          'wage': detail['wage'],
+          'requiredCount': detail['requiredCount'],
+          'currentCount': 0,
+          'startTime': detail['startTime'],
+          'endTime': detail['endTime'],
+          'order': j,
+          'createdAt': FieldValue.serverTimestamp(),
+        });
+      }
+
+      print('  ✅ ${date.month}/${date.day} TO 준비 완료');
+    }
+    // ✅ NEW: 대표 TO의 날짜 범위 업데이트
+    final masterTOSnapshot = await _firestore
+        .collection('tos')
+        .where('groupId', isEqualTo: groupId)
+        .where('isGroupMaster', isEqualTo: true)
+        .limit(1)
+        .get();
+
+    if (masterTOSnapshot.docs.isNotEmpty) {
+      final masterTODoc = masterTOSnapshot.docs.first;
+      final currentStartDate = (masterTODoc.data()['startDate'] as Timestamp).toDate();
+      final currentEndDate = (masterTODoc.data()['endDate'] as Timestamp).toDate();
+      
+      // 새로운 날짜 범위 계산
+      final newStartDate = startDate.isBefore(currentStartDate) ? startDate : currentStartDate;
+      final newEndDate = endDate.isAfter(currentEndDate) ? endDate : currentEndDate;
+      
+      // 대표 TO 업데이트
+      batch.update(masterTODoc.reference, {
+        'startDate': Timestamp.fromDate(newStartDate),
+        'endDate': Timestamp.fromDate(newEndDate),
+      });
+      
+      print('✅ 대표 TO 날짜 범위 업데이트: ${newStartDate.month}/${newStartDate.day} ~ ${newEndDate.month}/${newEndDate.day}');
+    }
+
+    await batch.commit();
+    
+    print('✅ [FirestoreService] 기존 그룹에 TO 추가 완료!');
+    print('   추가된 TO: ${dates.length}개');
+    print('   그룹 ID: $groupId');
+    
+    ToastHelper.showSuccess('${dates.length}개 TO가 그룹에 추가되었습니다!');
+    return true;
+    
+  } catch (e) {
+    print('❌ [FirestoreService] 기존 그룹 TO 추가 실패: $e');
+    ToastHelper.showError('TO 추가 중 오류가 발생했습니다.');
+    return false;
+  }
+}
 
 /// 같은 그룹의 TO들 조회
 /// [groupId] - 그룹 ID
@@ -1390,6 +1557,56 @@ Future<bool> deleteSingleTOFromGroup(String toId, String? groupId) async {
     print('❌ [FirestoreService] TO 삭제 실패: $e');
     ToastHelper.showError('삭제 중 오류가 발생했습니다.');
     return false;
+  }
+}
+/// 그룹 TO의 전체 시간 범위 계산
+/// [groupId] - 그룹 ID
+/// 반환: {minStart, maxEnd}
+Future<Map<String, String>> calculateGroupTimeRange(String groupId) async {
+  try {
+    print('🕐 [FirestoreService] 그룹 시간 범위 계산 시작...');
+    print('   그룹 ID: $groupId');
+
+    // 1. 그룹의 모든 TO 조회
+    final snapshot = await _firestore
+        .collection('tos')
+        .where('groupId', isEqualTo: groupId)
+        .get();
+
+    if (snapshot.docs.isEmpty) {
+      return {'minStart': '~', 'maxEnd': '~'};
+    }
+
+    String? minStart;
+    String? maxEnd;
+
+    // 2. 각 TO의 WorkDetails 조회
+    for (var doc in snapshot.docs) {
+      final workDetails = await getWorkDetails(doc.id);
+      
+      for (var work in workDetails) {
+        // 최소 시작 시간
+        if (minStart == null || work.startTime.compareTo(minStart) < 0) {
+          minStart = work.startTime;
+        }
+        
+        // 최대 종료 시간
+        if (maxEnd == null || work.endTime.compareTo(maxEnd) > 0) {
+          maxEnd = work.endTime;
+        }
+      }
+    }
+
+    print('✅ [FirestoreService] 시간 범위 계산 완료');
+    print('   최소 시작: $minStart, 최대 종료: $maxEnd');
+
+    return {
+      'minStart': minStart ?? '~',
+      'maxEnd': maxEnd ?? '~',
+    };
+  } catch (e) {
+    print('❌ [FirestoreService] 시간 범위 계산 실패: $e');
+    return {'minStart': '~', 'maxEnd': '~'};
   }
 }
 }

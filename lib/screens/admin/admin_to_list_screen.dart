@@ -71,6 +71,13 @@ class _AdminTOListScreenState extends State<AdminTOListScreen> {
       // 3. 사업장 목록 추출 (중복 제거 + 정렬)
       final businessSet = allTOs.map((to) => to.businessName).toSet();
       final businessList = businessSet.toList()..sort();
+      // ✅ 그룹 TO의 시간 범위 계산
+      for (var item in tosWithStats) {
+        if (item.to.isGrouped && item.to.groupId != null) {
+          final timeRange = await _firestoreService.calculateGroupTimeRange(item.to.groupId!);
+          item.to.setTimeRange(timeRange['minStart']!, timeRange['maxEnd']!);
+        }
+      }
 
       setState(() {
         _allTOsWithStats = tosWithStats;
@@ -333,7 +340,7 @@ class _AdminTOListScreenState extends State<AdminTOListScreen> {
     );
   }
 
-  /// ✅ TO 카드 (수정됨)
+  /// ✅ TO 카드 (그룹명 표시 + 수정 버튼 추가)
   Widget _buildTOCard(_TOWithStats item) {
     final to = item.to;
     final isFull = item.confirmedCount >= to.totalRequired;
@@ -365,100 +372,201 @@ class _AdminTOListScreenState extends State<AdminTOListScreen> {
             ),
           ],
         ),
-        child: Padding(
-          padding: const EdgeInsets.all(16),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              // 사업장명
-              Row(
-                children: [
-                  Expanded(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // ✅ 그룹명 표시 (있는 경우만)
+            if (to.isGrouped && to.groupName != null) ...[
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                decoration: BoxDecoration(
+                  color: Colors.blue[50],
+                  borderRadius: BorderRadius.circular(6),
+                  border: Border.all(color: Colors.blue[200]!),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(Icons.link, size: 14, color: Colors.blue[700]),
+                    const SizedBox(width: 6),
+                    Flexible(
+                      child: Text(
+                        to.groupName!,
+                        style: TextStyle(
+                          fontSize: 13,
+                          fontWeight: FontWeight.w600,
+                          color: Colors.blue[900],
+                        ),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                    const SizedBox(width: 4),
+                    // ✅ 그룹명 수정 버튼
+                    InkWell(
+                      onTap: () {
+                        // 이벤트 전파 방지
+                        _showEditGroupNameDialog(to);
+                      },
+                      child: Padding(
+                        padding: const EdgeInsets.all(4),
+                        child: Icon(Icons.edit, size: 14, color: Colors.blue[700]),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 10),
+            ],
+
+            // 제목 + 상태
+            Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    to.title,
+                    style: const TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ),
+                if (isFull)
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 8,
+                      vertical: 4,
+                    ),
+                    decoration: BoxDecoration(
+                      color: Colors.red[50],
+                      borderRadius: BorderRadius.circular(4),
+                    ),
                     child: Text(
-                      to.businessName,
-                      style: const TextStyle(
-                        fontSize: 18,
+                      '마감',
+                      style: TextStyle(
+                        color: Colors.red[700],
+                        fontSize: 12,
                         fontWeight: FontWeight.bold,
                       ),
                     ),
                   ),
-                  if (isFull)
-                    Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                      decoration: BoxDecoration(
-                        color: Colors.green[600],
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                      child: const Text(
-                        '마감',
-                        style: TextStyle(
-                          color: Colors.white,
-                          fontSize: 11,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                    ),
-                ],
-              ),
-              const SizedBox(height: 8),
-              
-              // ✅ 제목
-              Text(
-                to.title,
-                style: TextStyle(
-                  fontSize: 15,
-                  fontWeight: FontWeight.w600,
-                  color: Colors.grey[800],
+              ],
+            ),
+            const SizedBox(height: 8),
+
+            // 날짜 + 시간
+            Row(
+              children: [
+                Icon(Icons.calendar_today, size: 14, color: Colors.grey[600]),
+                const SizedBox(width: 4),
+                Text(
+                  to.isGrouped
+                      ? '${to.groupPeriodString} (${to.groupDaysCount}일)'
+                      : dateFormat.format(to.date),
+                  style: TextStyle(fontSize: 13, color: Colors.grey[700]),
                 ),
-              ),
-              const SizedBox(height: 8),
+                const SizedBox(width: 12),
+                Icon(Icons.access_time, size: 14, color: Colors.grey[600]),
+                const SizedBox(width: 4),
+                Text(
+                  to.displayTimeRange,
+                  style: TextStyle(fontSize: 13, color: Colors.grey[700]),
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
 
-              // 날짜 + 시간
-              Row(
-                children: [
-                  Icon(Icons.calendar_today, size: 14, color: Colors.grey[600]),
-                  const SizedBox(width: 4),
-                  Text(
-                    // ✅ 그룹 TO면 범위, 아니면 단일 날짜
-                    to.isGroupTO && to.groupPeriodString != null
-                        ? '${to.groupPeriodString} (${to.groupDaysCount}일)'
-                        : dateFormat.format(to.date),
-                    style: TextStyle(fontSize: 13, color: Colors.grey[700]),
-                  ),
-                  const SizedBox(width: 12),
-                  Icon(Icons.access_time, size: 14, color: Colors.grey[600]),
-                  const SizedBox(width: 4),
-                  Text(
-                    '${to.startTime} ~ ${to.endTime}',
-                    style: TextStyle(fontSize: 13, color: Colors.grey[700]),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 12),
-
-              // ✅ 통계 (전체 인원 기준)
-              Row(
-                children: [
-                  Icon(Icons.people, size: 16, color: Colors.grey[600]),
-                  const SizedBox(width: 4),
-                  Text(
-                    '확정: ${item.confirmedCount}/${to.totalRequired}',
-                    style: TextStyle(fontSize: 14, color: Colors.grey[700]),
-                  ),
-                  const SizedBox(width: 16),
-                  Icon(Icons.pending, size: 16, color: Colors.orange[600]),
-                  const SizedBox(width: 4),
-                  Text(
-                    '대기: ${item.pendingCount}',
-                    style: TextStyle(fontSize: 14, color: Colors.grey[700]),
-                  ),
-                ],
-              ),
-            ],
-          ),
+            // ✅ 통계 (전체 인원 기준)
+            Row(
+              children: [
+                Icon(Icons.people, size: 16, color: Colors.grey[600]),
+                const SizedBox(width: 4),
+                Text(
+                  '확정: ${item.confirmedCount}/${to.totalRequired}',
+                  style: TextStyle(fontSize: 14, color: Colors.grey[700]),
+                ),
+                const SizedBox(width: 16),
+                Icon(Icons.pending, size: 16, color: Colors.orange[600]),
+                const SizedBox(width: 4),
+                Text(
+                  '대기: ${item.pendingCount}',
+                  style: TextStyle(fontSize: 14, color: Colors.grey[700]),
+                ),
+              ],
+            ),
+          ],
         ),
       ),
     );
+  }
+  /// 그룹명 수정 다이얼로그
+  Future<void> _showEditGroupNameDialog(TOModel to) async {
+    if (to.groupId == null || to.groupName == null) return;
+
+    final controller = TextEditingController(text: to.groupName);
+
+    final result = await showDialog<String>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Row(
+          children: [
+            Icon(Icons.edit, color: Colors.blue),
+            SizedBox(width: 12),
+            Text('그룹명 수정'),
+          ],
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              '그룹에 속한 모든 TO의 이름이 변경됩니다',
+              style: TextStyle(fontSize: 14, color: Colors.grey[600]),
+            ),
+            const SizedBox(height: 16),
+            TextField(
+              controller: controller,
+              decoration: InputDecoration(
+                labelText: '새 그룹명',
+                hintText: '예: 4주차 파트타임 모음',
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(8),
+                ),
+              ),
+              autofocus: true,
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('취소'),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              final newName = controller.text.trim();
+              if (newName.isEmpty) {
+                ToastHelper.showError('그룹명을 입력하세요');
+                return;
+              }
+              Navigator.pop(context, newName);
+            },
+            child: const Text('저장'),
+          ),
+        ],
+      ),
+    );
+
+    if (result != null && result.isNotEmpty) {
+      // 그룹명 업데이트
+      final success = await _firestoreService.updateGroupName(to.groupId!, result);
+      if (success) {
+        _loadTOsWithStats(); // 목록 새로고침
+      }
+    }
+
+    controller.dispose();
   }
 }
 

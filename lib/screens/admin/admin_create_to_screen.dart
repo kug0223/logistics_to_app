@@ -76,6 +76,7 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
   final _firestoreService = FirestoreService();
   final TextEditingController _titleController = TextEditingController();
   final TextEditingController _descriptionController = TextEditingController();
+  final TextEditingController _groupNameController = TextEditingController();
 
   // ============================================================
   // 📊 상태 변수
@@ -128,6 +129,7 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
   void dispose() {
     _titleController.dispose();
     _descriptionController.dispose();
+    _groupNameController.dispose(); // ✅ NEW 추가
     super.dispose();
   }
 
@@ -185,6 +187,7 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
   }
 
   /// 최근 TO 목록 로드 (그룹 연결용)
+  /// 최근 TO 목록 로드 (그룹 연결용)
   Future<void> _loadRecentTOs() async {
     if (_selectedBusiness == null) return;
 
@@ -199,12 +202,14 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
         to.businessId == _selectedBusiness!.id
       ).toList();
       
-      // 최근 7일 이내 TO만 필터링
+      // ✅ 오늘 이전 TO 제외 (그룹 TO는 endDate 기준!)
       final now = DateTime.now();
-      final sevenDaysAgo = now.subtract(const Duration(days: 7));
+      final today = DateTime(now.year, now.month, now.day);
       
       final recentTOs = myBusinessTOs.where((to) {
-        return to.createdAt.isAfter(sevenDaysAgo);
+        // 그룹 TO: endDate 기준, 단일 TO: date 기준
+        final checkDate = to.endDate ?? to.date;
+        return checkDate.isAfter(today.subtract(const Duration(days: 1)));
       }).toList();
 
       // 최신순 정렬
@@ -331,7 +336,7 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
     }
   }
 
-  /// 단일 날짜 TO 생성
+ /// 단일 날짜 TO 생성
   Future<bool> _createSingleTO({
     required DateTime date,
     required DateTime applicationDeadline,
@@ -347,6 +352,11 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
         workDetailsData: _workDetails.map((w) => w.toMap()).toList(),
         description: _descriptionController.text.trim(),
         creatorUID: creatorUID,
+        // ✅ 그룹 연결 정보 추가!
+        groupId: _linkToExisting ? _selectedGroupId : null,
+        groupName: _linkToExisting && _selectedGroupId != null
+            ? _myRecentTOs.firstWhere((to) => to.groupId == _selectedGroupId).groupName
+            : null,
       );
 
       return toId != null;
@@ -364,27 +374,57 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
     required String creatorUID,
   }) async {
     try {
-      // 신규 그룹 생성 (그룹 연결 기능은 Phase 2에서 구현 예정)
-      return await _firestoreService.createTOGroup(
-        businessId: _selectedBusiness!.id,
-        businessName: _selectedBusiness!.publicName,
-        groupName: _titleController.text.trim(),
-        title: _titleController.text.trim(),
-        startDate: startDate,
-        endDate: endDate,
-        workDetails: _workDetails.map((w) => {
-          'workType': w.workType!,
-          'workTypeIcon': w.workTypeIcon,
-          'workTypeColor': w.workTypeColor,
-          'wage': w.wage!,
-          'requiredCount': w.requiredCount!,
-          'startTime': w.startTime!,
-          'endTime': w.endTime!,
-        }).toList(),
-        applicationDeadline: applicationDeadline,
-        description: _descriptionController.text.trim(),
-        creatorUID: creatorUID,
-      );
+      // ✅ 기존 그룹 연결 또는 신규 생성
+      if (_linkToExisting && _selectedGroupId != null) {
+        // 기존 그룹에 연결
+        final selectedTO = _myRecentTOs.firstWhere((to) => to.groupId == _selectedGroupId);
+        
+        return await _firestoreService.createTOGroupWithExistingGroup(
+          businessId: _selectedBusiness!.id,
+          businessName: _selectedBusiness!.publicName,
+          groupId: _selectedGroupId!,
+          groupName: selectedTO.groupName ?? selectedTO.title,
+          title: _titleController.text.trim(),
+          startDate: startDate,
+          endDate: endDate,
+          workDetails: _workDetails.map((w) => {
+            'workType': w.workType!,
+            'workTypeIcon': w.workTypeIcon,
+            'workTypeColor': w.workTypeColor,
+            'wage': w.wage!,
+            'requiredCount': w.requiredCount!,
+            'startTime': w.startTime!,
+            'endTime': w.endTime!,
+          }).toList(),
+          applicationDeadline: applicationDeadline,
+          description: _descriptionController.text.trim(),
+          creatorUID: creatorUID,
+        );
+      } else {
+        // 신규 그룹 생성
+        return await _firestoreService.createTOGroup(
+          businessId: _selectedBusiness!.id,
+          businessName: _selectedBusiness!.publicName,
+          groupName: _groupNameController.text.trim().isEmpty 
+            ? _titleController.text.trim() 
+            : _groupNameController.text.trim(), // ✅ 이 줄 전체 교체
+          title: _titleController.text.trim(),
+          startDate: startDate,
+          endDate: endDate,
+          workDetails: _workDetails.map((w) => {
+            'workType': w.workType!,
+            'workTypeIcon': w.workTypeIcon,
+            'workTypeColor': w.workTypeColor,
+            'wage': w.wage!,
+            'requiredCount': w.requiredCount!,
+            'startTime': w.startTime!,
+            'endTime': w.endTime!,
+          }).toList(),
+          applicationDeadline: applicationDeadline,
+          description: _descriptionController.text.trim(),
+          creatorUID: creatorUID,
+        );
+      }
     } catch (e) {
       print('❌ 그룹 TO 생성 실패: $e');
       return false;
@@ -955,25 +995,83 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
     );
   }
 
-  /// 제목 입력
+  /// 제목 입력 (+ 그룹명 입력)
   Widget _buildTitleInput() {
+    final isGroupTO = _selectedDates.length > 1 && _isConsecutiveDates();
+    
     return Card(
       child: Padding(
         padding: const EdgeInsets.all(16),
-        child: TextFormField(
-          controller: _titleController,
-          decoration: InputDecoration(
-            labelText: 'TO 제목',
-            hintText: '예: 물류센터 피킹 작업',
-            prefixIcon: const Icon(Icons.title),
-            border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
-          ),
-          validator: (value) {
-            if (value == null || value.trim().isEmpty) {
-              return 'TO 제목을 입력해주세요';
-            }
-            return null;
-          },
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // TO 제목 입력
+            TextFormField(
+              controller: _titleController,
+              decoration: InputDecoration(
+                labelText: 'TO 제목 *',
+                hintText: '예: 분류작업, 피킹업무',
+                prefixIcon: const Icon(Icons.title),
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(8),
+                ),
+              ),
+              validator: (value) {
+                if (value == null || value.trim().isEmpty) {
+                  return 'TO 제목을 입력해주세요';
+                }
+                return null;
+              },
+            ),
+            
+            // ✅ NEW: 그룹 TO일 경우 그룹명 입력 필드 표시
+            if (isGroupTO) ...[
+              const SizedBox(height: 16),
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: Colors.blue[50],
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: Colors.blue[200]!),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Icon(Icons.link, size: 18, color: Colors.blue[700]),
+                        const SizedBox(width: 8),
+                        Text(
+                          '그룹 TO 생성',
+                          style: TextStyle(
+                            fontSize: 14,
+                            fontWeight: FontWeight.bold,
+                            color: Colors.blue[900],
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 12),
+                    TextFormField(
+                      controller: _groupNameController,
+                      decoration: InputDecoration(
+                        labelText: '그룹명 (선택)',
+                        hintText: '예: 4주차 파트타임 모음',
+                        prefixIcon: Icon(Icons.folder_open, color: Colors.blue[700]),
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        filled: true,
+                        fillColor: Colors.white,
+                        helperText: '비워두면 TO 제목을 사용합니다',
+                        helperStyle: TextStyle(fontSize: 12, color: Colors.grey[600]),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ],
         ),
       ),
     );
@@ -1810,9 +1908,19 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
                     hintText: '선택하세요', // ✅ hint 추가
                   ),
                   items: _myRecentTOs.map((to) {
+                    String displayText;
+                    
+                    if (to.isGrouped && to.endDate != null) {
+                      // 그룹 TO: 그룹명 + 기간
+                      displayText = '${to.groupName ?? to.title} (${to.date.month}/${to.date.day}~${to.endDate!.month}/${to.endDate!.day})';
+                    } else {
+                      // 단일 TO: 제목 + 날짜
+                      displayText = '${to.title} (${to.date.month}/${to.date.day})';
+                    }
+                    
                     return DropdownMenuItem(
                       value: to.groupId,
-                      child: Text('${to.title} (${to.date.month}/${to.date.day})'),
+                      child: Text(displayText),
                     );
                   }).toList(),
                   onChanged: (value) {

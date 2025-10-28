@@ -48,7 +48,7 @@ class _AllTOListScreenState extends State<AllTOListScreen> {
       
       // ⚡ 병렬로 TO 목록과 내 지원 내역을 동시에 조회!
       final results = await Future.wait([
-        _firestoreService.getAllTOs(), // ✅ 모든 사업장의 TO 조회
+        _firestoreService.getGroupMasterTOs(), // ✅ 대표 TO만!
         uid != null 
             ? _firestoreService.getMyApplications(uid)
             : Future.value(<ApplicationModel>[]),
@@ -63,6 +63,14 @@ class _AllTOListScreenState extends State<AllTOListScreen> {
       // 사업장 목록 추출 (중복 제거)
       final businessSet = toList.map((to) => to.businessName).toSet();
       final businessList = businessSet.toList()..sort();
+      
+      // ✅ 그룹 TO의 시간 범위 계산
+      for (var to in toList) {
+        if (to.isGrouped && to.groupId != null) {
+          final timeRange = await _firestoreService.calculateGroupTimeRange(to.groupId!);
+          to.setTimeRange(timeRange['minStart']!, timeRange['maxEnd']!);
+        }
+      }
 
       setState(() {
         _allTOList = toList;

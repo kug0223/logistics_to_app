@@ -1015,88 +1015,104 @@ class _AdminTODetailScreenState extends State<AdminTODetailScreen> {
               final weekdays = ['월', '화', '수', '목', '금', '토', '일'];
               final weekday = weekdays[to.date.weekday - 1];
 
-              return Padding(
-                padding: const EdgeInsets.only(bottom: 8),
-                child: Container(
-                  padding: const EdgeInsets.all(12),
-                  decoration: BoxDecoration(
-                    color: Colors.white,
-                    borderRadius: BorderRadius.circular(8),
-                    border: Border.all(color: Colors.green[200]!),
-                  ),
-                  child: Row(
-                    children: [
-                      // 날짜
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 8,
-                          vertical: 4,
-                        ),
-                        decoration: BoxDecoration(
-                          color: Colors.green[100],
-                          borderRadius: BorderRadius.circular(6),
-                        ),
-                        child: Text(
-                          '${dateFormat.format(to.date)}\n($weekday)',
-                          textAlign: TextAlign.center,
-                          style: TextStyle(
-                            fontSize: 11,
-                            fontWeight: FontWeight.bold,
-                            color: Colors.green[800],
-                            height: 1.2,
-                          ),
-                        ),
-                      ),
-                      const SizedBox(width: 12),
+              return FutureBuilder<List<WorkDetailModel>>(
+                future: _firestoreService.getWorkDetails(to.id),
+                builder: (context, snapshot) {
+                  // WorkDetails 조회해서 시간 범위 계산
+                  String timeRange = '~';
+                  if (snapshot.hasData && snapshot.data!.isNotEmpty) {
+                    final workDetails = snapshot.data!;
+                    final startTimes = workDetails.map((w) => w.startTime).toList();
+                    final endTimes = workDetails.map((w) => w.endTime).toList();
+                    startTimes.sort();
+                    endTimes.sort();
+                    timeRange = '${startTimes.first} ~ ${endTimes.last}';
+                  }
 
-                      // TO 정보
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              to.title,
-                              style: const TextStyle(
-                                fontSize: 14,
-                                fontWeight: FontWeight.w600,
-                              ),
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
+                  return Padding(
+                    padding: const EdgeInsets.only(bottom: 8),
+                    child: Container(
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: Colors.white,
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(color: Colors.green[200]!),
+                      ),
+                      child: Row(
+                        children: [
+                          // 날짜
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 8,
+                              vertical: 4,
                             ),
-                            const SizedBox(height: 4),
-                            Text(
-                              '${to.timeRange} | ${to.totalConfirmed}/${to.totalRequired}명',
+                            decoration: BoxDecoration(
+                              color: Colors.green[100],
+                              borderRadius: BorderRadius.circular(6),
+                            ),
+                            child: Text(
+                              '${dateFormat.format(to.date)}\n($weekday)',
+                              textAlign: TextAlign.center,
                               style: TextStyle(
-                                fontSize: 12,
-                                color: Colors.grey[600],
+                                fontSize: 11,
+                                fontWeight: FontWeight.bold,
+                                color: Colors.green[800],
+                                height: 1.2,
                               ),
                             ),
-                          ],
-                        ),
-                      ),
-
-                      // 상태 표시
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 8,
-                          vertical: 4,
-                        ),
-                        decoration: BoxDecoration(
-                          color: to.isFull ? Colors.green[100] : Colors.blue[100],
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                        child: Text(
-                          to.isFull ? '마감' : '모집중',
-                          style: TextStyle(
-                            fontSize: 11,
-                            fontWeight: FontWeight.bold,
-                            color: to.isFull ? Colors.green[800] : Colors.blue[800],
                           ),
-                        ),
+                          const SizedBox(width: 12),
+
+                          // TO 정보
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  to.title,
+                                  style: const TextStyle(
+                                    fontSize: 14,
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                                const SizedBox(height: 4),
+                                Text(
+                                  '$timeRange | ${to.totalConfirmed}/${to.totalRequired}명',
+                                  style: TextStyle(
+                                    fontSize: 12,
+                                    color: Colors.grey[600],
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+
+                          // 상태 표시
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 8,
+                              vertical: 4,
+                            ),
+                            decoration: BoxDecoration(
+                              color: to.isFull ? Colors.green[100] : Colors.blue[100],
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                            child: Text(
+                              to.isFull ? '마감' : '모집중',
+                              style: TextStyle(
+                                fontSize: 11,
+                                fontWeight: FontWeight.bold,
+                                color: to.isFull ? Colors.green[700] : Colors.blue[700],
+                              ),
+                            ),
+                          ),
+                        ],
                       ),
-                    ],
-                  ),
-                ),
+                    ),
+                  );
+                },
               );
             }).toList(),
           ],

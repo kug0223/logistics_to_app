@@ -62,17 +62,41 @@ class TOCardWidget extends StatelessWidget {
               ),
               
               const SizedBox(height: 8),
-              
-              // ✅ 제목
-              Text(
-                to.title,
-                style: TextStyle(
-                  fontSize: 15,
-                  fontWeight: FontWeight.w600,
-                  color: Colors.grey[800],
-                ),
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
+              // ✅ 그룹명 + 제목
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  // 그룹명 표시 (그룹 TO일 경우만)
+                  if (to.isGrouped && to.groupName != null) ...[
+                    Row(
+                      children: [
+                        Icon(Icons.link, size: 12, color: Colors.green[700]),
+                        const SizedBox(width: 4),
+                        Text(
+                          to.groupName!,
+                          style: TextStyle(
+                            fontSize: 11,
+                            color: Colors.green[700],
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 4),
+                  ],
+                  
+                  // 제목
+                  Text(
+                    to.title,
+                    style: TextStyle(
+                      fontSize: 15,
+                      fontWeight: FontWeight.w600,
+                      color: Colors.grey[800],
+                    ),
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ],
               ),
               
               const SizedBox(height: 12),
@@ -99,12 +123,12 @@ class TOCardWidget extends StatelessWidget {
                 children: [
                   Icon(Icons.access_time, size: 16, color: Colors.grey[600]),
                   const SizedBox(width: 6),
-                  const Text(
-                    '업무별 시간 상이',
+                  Text(
+                    to.displayTimeRange,  // ✅ 계산된 시간 범위 사용!
                     style: TextStyle(
                       fontSize: 13,
-                      color: Colors.grey,
-                      fontStyle: FontStyle.italic,
+                      color: Colors.grey[700],  // 색상도 변경
+                      fontWeight: FontWeight.w500,  // 굵기 추가
                     ),
                   ),
                 ],

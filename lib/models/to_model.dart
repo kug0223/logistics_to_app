@@ -162,6 +162,38 @@ class TOModel {
       createdAt: createdAt ?? this.createdAt,
     );
   }
+  // ============================================
+  // ✅ NEW: 그룹 TO 시간 범위 계산
+  // ============================================
+
+  /// WorkDetails에서 계산된 최소 시작 시간 (캐시용)
+  String? _cachedMinStartTime;
+
+  /// WorkDetails에서 계산된 최대 종료 시간 (캐시용)
+  String? _cachedMaxEndTime;
+
+  /// 계산된 시간 범위 설정
+  void setTimeRange(String minStart, String maxEnd) {
+    _cachedMinStartTime = minStart;
+    _cachedMaxEndTime = maxEnd;
+  }
+
+  /// 표시용 시작 시간
+  String get displayStartTime {
+    if (_cachedMinStartTime != null) return _cachedMinStartTime!;
+    return startTime.isEmpty ? '~' : startTime;
+  }
+
+  /// 표시용 종료 시간  
+  String get displayEndTime {
+    if (_cachedMaxEndTime != null) return _cachedMaxEndTime!;
+    return endTime.isEmpty ? '~' : endTime;
+  }
+
+  /// 표시용 시간 범위 (예: "08:00 ~ 18:00")
+  String get displayTimeRange {
+    return '$displayStartTime ~ $displayEndTime';
+  }
 
   /// 마감 여부 체크
   bool get isDeadlinePassed {
@@ -238,10 +270,9 @@ class TOModel {
   int get availableSlots {
     return totalRequired - totalConfirmed;
   }
-  /// 시간 범위 (예: "09:00~18:00")
-  String get timeRange {
-    return '$startTime~$endTime';
-  }
+  /// 시간 범위 (예: "08:00 ~ 18:00")
+  /// 그룹 TO의 경우 계산된 시간 범위 사용
+  String get timeRange => displayTimeRange;
   /// 마감 시간 포맷 (예: "10/23 18:00")
   String get formattedDeadline {
     return '${applicationDeadline.month}/${applicationDeadline.day} '
