@@ -361,71 +361,92 @@ class _AdminTODetailScreenState extends State<AdminTODetailScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // 그룹명 또는 TO 제목
-            if (widget.to.isGrouped && widget.to.groupName != null) ...[
-              Row(
+            // ✅ 사업장명 (첫 줄 - 파란 배지)
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+              decoration: BoxDecoration(
+                color: const Color(0xFF1976D2),
+                borderRadius: BorderRadius.circular(6),
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
                 children: [
-                  Icon(Icons.folder_open, size: 20, color: Colors.blue[700]),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: Text(
-                      widget.to.groupName!,
-                      style: TextStyle(
-                        fontSize: 20,
-                        fontWeight: FontWeight.bold,
-                        color: Colors.blue[900],
-                      ),
+                  const Icon(
+                    Icons.business,
+                    size: 14,
+                    color: Colors.white,
+                  ),
+                  const SizedBox(width: 6),
+                  Text(
+                    widget.to.businessName,
+                    style: const TextStyle(
+                      fontSize: 12,
+                      color: Colors.white,
+                      fontWeight: FontWeight.bold,
                     ),
                   ),
                 ],
               ),
-              const SizedBox(height: 8),
-            ],
-            
-            // 사업장명
-            Text(
-              widget.to.businessName,
-              style: const TextStyle(
-                fontSize: 16,
-                fontWeight: FontWeight.w600,
-              ),
             ),
+            const SizedBox(height: 10),
+            
+            // ✅ 그룹명 (두 번째 줄 - 녹색 배지)
+            if (widget.to.groupName != null)
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                decoration: BoxDecoration(
+                  color: Colors.green[50],
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: Colors.green[300]!, width: 1.5),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(
+                      Icons.folder_open,
+                      size: 16,
+                      color: Colors.green[700],
+                    ),
+                    const SizedBox(width: 6),
+                    Text(
+                      widget.to.groupName!,
+                      style: TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.bold,
+                        color: Colors.green[800],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
             const SizedBox(height: 12),
             
-            // 기간
+            // ✅ 날짜 정보 (기존 코드 유지)
             Row(
               children: [
                 Icon(Icons.calendar_today, size: 16, color: Colors.grey[600]),
-                const SizedBox(width: 8),
+                const SizedBox(width: 6),
                 Text(
-                  widget.to.isGrouped && widget.to.endDate != null
-                      ? '${dateFormat.format(widget.to.date)} ~ ${dateFormat.format(widget.to.endDate!)}'
-                      : dateFormat.format(widget.to.date),
-                  style: TextStyle(
-                    fontSize: 14,
-                    color: Colors.grey[700],
-                  ),
+                  widget.to.groupName != null
+                      ? '${DateFormat('yyyy-MM-dd (E)', 'ko_KR').format(widget.to.date)} ~ ${DateFormat('yyyy-MM-dd (E)', 'ko_KR').format(widget.to.endDate!)}'
+                      : DateFormat('yyyy-MM-dd (E)', 'ko_KR').format(widget.to.date),
+                  style: TextStyle(fontSize: 14, color: Colors.grey[700]),
                 ),
               ],
             ),
+            const SizedBox(height: 8),
             
-            // 시간
-            if (widget.to.displayStartTime != null && widget.to.displayEndTime != null) ...[
-              const SizedBox(height: 8),
-              Row(
-                children: [
-                  Icon(Icons.access_time, size: 16, color: Colors.grey[600]),
-                  const SizedBox(width: 8),
-                  Text(
-                    '${widget.to.displayStartTime} ~ ${widget.to.displayEndTime}',
-                    style: TextStyle(
-                      fontSize: 14,
-                      color: Colors.grey[700],
-                    ),
-                  ),
-                ],
-              ),
-            ],
+            // ✅ 시간 정보 (기존 코드 유지)
+            Row(
+              children: [
+                Icon(Icons.access_time, size: 16, color: Colors.grey[600]),
+                const SizedBox(width: 6),
+                Text(
+                  '${widget.to.displayStartTime} ~ ${widget.to.displayEndTime}',
+                  style: TextStyle(fontSize: 14, color: Colors.grey[700]),
+                ),
+              ],
+            ),
           ],
         ),
       ),
@@ -723,8 +744,6 @@ class _AdminTODetailScreenState extends State<AdminTODetailScreen> {
               const SizedBox(width: 12),
               
               // 급여
-              Icon(Icons.attach_money, size: 14, color: Colors.grey[600]),
-              const SizedBox(width: 4),
               Text(
                 work.workDetail.formattedWage,
                 style: TextStyle(

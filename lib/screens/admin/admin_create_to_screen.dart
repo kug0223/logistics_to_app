@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:table_calendar/table_calendar.dart';
+import 'package:intl/intl.dart';
 import '../../models/business_model.dart';
 import '../../models/to_model.dart';
 import '../../services/firestore_service.dart';
@@ -106,6 +107,9 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
   // 지원 마감
   DateTime? _selectedDeadlineDate;
   TimeOfDay? _selectedDeadlineTime;
+  // ✅ NEW: 지원 마감 규칙
+  String _deadlineType = 'HOURS_BEFORE';  // 'HOURS_BEFORE' or 'FIXED_TIME'
+  int _hoursBeforeStart = 2;  // 기본값: 2시간 전
 
   // 업무 상세
   List<WorkDetailInput> _workDetails = [];
@@ -249,6 +253,13 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
       ToastHelper.showError('최소 1개의 업무를 추가해주세요');
       return;
     }
+    // ✅ NEW: 지원 마감 검증
+    if (_deadlineType == 'FIXED_TIME') {
+      if (_selectedDeadlineDate == null || _selectedDeadlineTime == null) {
+        ToastHelper.showError('지원 마감 시간을 설정해주세요');
+        return;
+      }
+    }
 
     if (_workDetails.any((w) => !w.isValid)) {
       ToastHelper.showError('모든 업무 정보를 입력해주세요');
@@ -310,8 +321,7 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
         // 연속된 날짜 그룹 TO
         final sortedDates = List<DateTime>.from(_selectedDates)..sort();
         success = await _createGroupTO(
-          startDate: sortedDates.first,
-          endDate: sortedDates.last,
+          dates: sortedDates,  // ✅ 추가
           applicationDeadline: applicationDeadline,
           creatorUID: uid,
         );
@@ -336,23 +346,51 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
     }
   }
 
- /// 단일 날짜 TO 생성
   Future<bool> _createSingleTO({
     required DateTime date,
     required DateTime applicationDeadline,
     required String creatorUID,
   }) async {
     try {
+      // ✅ deadlineType에 따라 마감 시간 계산
+      DateTime finalDeadline;
+      
+      if (_deadlineType == 'HOURS_BEFORE') {
+        // 근무 시작 N시간 전
+        final firstWorkStart = _workDetails.first.startTime!;
+        final timeParts = firstWorkStart.split(':');
+        final startDateTime = DateTime(
+          date.year,
+          date.month,
+          date.day,
+          int.parse(timeParts[0]),
+          int.parse(timeParts[1]),
+        );
+        finalDeadline = startDateTime.subtract(Duration(hours: _hoursBeforeStart));
+      } else {
+        // 고정 시간
+        finalDeadline = applicationDeadline;
+      }
+      
       final toId = await _firestoreService.createTOWithDetails(
         businessId: _selectedBusiness!.id,
         businessName: _selectedBusiness!.publicName,
         title: _titleController.text.trim(),
         date: date,
-        applicationDeadline: applicationDeadline,
-        workDetailsData: _workDetails.map((w) => w.toMap()).toList(),
+        workDetailsData: _workDetails.map((w) => {
+          'workType': w.workType!,
+          'workTypeIcon': w.workTypeIcon,
+          'workTypeColor': w.workTypeColor,
+          'wage': w.wage!,
+          'requiredCount': w.requiredCount!,
+          'startTime': w.startTime!,
+          'endTime': w.endTime!,
+        }).toList(),
+        applicationDeadline: finalDeadline,
         description: _descriptionController.text.trim(),
         creatorUID: creatorUID,
-        // ✅ 그룹 연결 정보 추가!
+        deadlineType: _deadlineType,  // ✅ NEW
+        hoursBeforeStart: _hoursBeforeStart,  // ✅ NEW
         groupId: _linkToExisting ? _selectedGroupId : null,
         groupName: _linkToExisting && _selectedGroupId != null
             ? _myRecentTOs.firstWhere((to) => to.groupId == _selectedGroupId).groupName
@@ -365,53 +403,60 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
       return false;
     }
   }
-
-  /// 연속 날짜 그룹 TO 생성
   Future<bool> _createGroupTO({
-    required DateTime startDate,
-    required DateTime endDate,
+    required List<DateTime> dates,
     required DateTime applicationDeadline,
     required String creatorUID,
   }) async {
     try {
-      // ✅ 기존 그룹 연결 또는 신규 생성
-      if (_linkToExisting && _selectedGroupId != null) {
-        // 기존 그룹에 연결
-        final selectedTO = _myRecentTOs.firstWhere((to) => to.groupId == _selectedGroupId);
-        
-        return await _firestoreService.createTOGroupWithExistingGroup(
-          businessId: _selectedBusiness!.id,
-          businessName: _selectedBusiness!.publicName,
-          groupId: _selectedGroupId!,
-          groupName: selectedTO.groupName ?? selectedTO.title,
-          title: _titleController.text.trim(),
-          startDate: startDate,
-          endDate: endDate,
-          workDetails: _workDetails.map((w) => {
-            'workType': w.workType!,
-            'workTypeIcon': w.workTypeIcon,
-            'workTypeColor': w.workTypeColor,
-            'wage': w.wage!,
-            'requiredCount': w.requiredCount!,
-            'startTime': w.startTime!,
-            'endTime': w.endTime!,
-          }).toList(),
-          applicationDeadline: applicationDeadline,
-          description: _descriptionController.text.trim(),
-          creatorUID: creatorUID,
-        );
+      if (dates.isEmpty) return false;
+
+      final sortedDates = List<DateTime>.from(dates)..sort();
+      final groupId = 'group_${DateTime.now().millisecondsSinceEpoch}';
+      final startDate = sortedDates.first;
+      final endDate = sortedDates.last;
+
+      // 그룹명 결정
+      String finalGroupName;
+      if (_groupNameController.text.trim().isNotEmpty) {
+        // 사용자가 그룹명 입력한 경우
+        finalGroupName = _groupNameController.text.trim();
       } else {
-        // 신규 그룹 생성
-        return await _firestoreService.createTOGroup(
+        // 자동 생성
+        finalGroupName = '${DateFormat('MM월').format(startDate)} ${_getWeekOfMonth(startDate)}주차 모음';
+      }
+
+      bool allSuccess = true;
+
+      for (int i = 0; i < sortedDates.length; i++) {
+        final date = sortedDates[i];
+        
+        // ✅ 각 날짜별로 마감 시간 계산
+        DateTime finalDeadline;
+        
+        if (_deadlineType == 'HOURS_BEFORE') {
+          // 각 날짜의 근무 시작 N시간 전
+          final firstWorkStart = _workDetails.first.startTime!;
+          final timeParts = firstWorkStart.split(':');
+          final startDateTime = DateTime(
+            date.year,
+            date.month,
+            date.day,
+            int.parse(timeParts[0]),
+            int.parse(timeParts[1]),
+          );
+          finalDeadline = startDateTime.subtract(Duration(hours: _hoursBeforeStart));
+        } else {
+          // FIXED_TIME은 그룹 TO에서 사용 안 함
+          finalDeadline = applicationDeadline;
+        }
+
+        final toId = await _firestoreService.createTOWithDetails(
           businessId: _selectedBusiness!.id,
           businessName: _selectedBusiness!.publicName,
-          groupName: _groupNameController.text.trim().isEmpty 
-            ? _titleController.text.trim() 
-            : _groupNameController.text.trim(), // ✅ 이 줄 전체 교체
           title: _titleController.text.trim(),
-          startDate: startDate,
-          endDate: endDate,
-          workDetails: _workDetails.map((w) => {
+          date: date,
+          workDetailsData: _workDetails.map((w) => {
             'workType': w.workType!,
             'workTypeIcon': w.workTypeIcon,
             'workTypeColor': w.workTypeColor,
@@ -420,11 +465,25 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
             'startTime': w.startTime!,
             'endTime': w.endTime!,
           }).toList(),
-          applicationDeadline: applicationDeadline,
+          applicationDeadline: finalDeadline,  // ✅ 각 날짜별 계산된 마감 시간
           description: _descriptionController.text.trim(),
           creatorUID: creatorUID,
+          deadlineType: _deadlineType,  // ✅ NEW
+          hoursBeforeStart: _hoursBeforeStart,  // ✅ NEW
+          groupId: groupId,
+          groupName: finalGroupName,
+          startDate: startDate,
+          endDate: endDate,
+          isGroupMaster: i == 0,
         );
+
+        if (toId == null) {
+          allSuccess = false;
+          print('❌ TO 생성 실패: ${DateFormat('yyyy-MM-dd').format(date)}');
+        }
       }
+
+      return allSuccess;
     } catch (e) {
       print('❌ 그룹 TO 생성 실패: $e');
       return false;
@@ -452,8 +511,7 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
         } else {
           // 연속 날짜
           final success = await _createGroupTO(
-            startDate: group.first,
-            endDate: group.last,
+            dates: group,
             applicationDeadline: applicationDeadline,
             creatorUID: creatorUID,
           );
@@ -1720,34 +1778,8 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
     );
   }
 
-  /// 지원 마감 선택
+  /// 지원 마감 설정
   Widget _buildDeadlineSelector() {
-    // ✅ 에러 메시지 계산
-    String? deadlineErrorMessage;
-    if (_selectedDates.isNotEmpty && _selectedDeadlineDate != null && _selectedDeadlineTime != null) {
-      final latestWorkDate = _selectedDates.reduce((a, b) => a.isAfter(b) ? a : b);
-      final applicationDeadline = DateTime(
-        _selectedDeadlineDate!.year,
-        _selectedDeadlineDate!.month,
-        _selectedDeadlineDate!.day,
-        _selectedDeadlineTime!.hour,
-        _selectedDeadlineTime!.minute,
-      );
-      
-      final latestWorkDateTime = DateTime(
-        latestWorkDate.year,
-        latestWorkDate.month,
-        latestWorkDate.day,
-        23,
-        59,
-        59,
-      );
-
-      if (applicationDeadline.isAfter(latestWorkDateTime)) {
-        deadlineErrorMessage = '⚠️ 지원 마감은 마지막 근무일(${latestWorkDate.month}/${latestWorkDate.day}) 23:59까지 가능합니다';
-      }
-    }
-
     return Card(
       child: Padding(
         padding: const EdgeInsets.all(16),
@@ -1755,79 +1787,141 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             const Text(
-              '지원 마감 시간',
-              style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+              '지원 마감 설정',
+              style: TextStyle(
+                fontSize: 16,
+                fontWeight: FontWeight.bold,
+              ),
             ),
-            const SizedBox(height: 12),
-            Row(
-              children: [
-                Expanded(
-                  child: OutlinedButton.icon(
-                    onPressed: () async {
-                      final date = await showDatePicker(
-                        context: context,
-                        initialDate: _selectedDeadlineDate ?? DateTime.now(),
-                        firstDate: DateTime.now(),
-                        lastDate: DateTime.now().add(const Duration(days: 30)),
-                        locale: const Locale('ko', 'KR'),
-                      );
-                      if (date != null) {
-                        setState(() => _selectedDeadlineDate = date);
-                      }
-                    },
-                    icon: const Icon(Icons.calendar_today),
-                    label: Text(
-                      _selectedDeadlineDate != null
-                          ? '${_selectedDeadlineDate!.year}/${_selectedDeadlineDate!.month}/${_selectedDeadlineDate!.day}'
-                          : '날짜 선택',
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: OutlinedButton.icon(
-                    onPressed: () async {
-                      final time = await showTimePicker(
-                        context: context,
-                        initialTime: _selectedDeadlineTime ?? TimeOfDay.now(),
-                      );
-                      if (time != null) {
-                        setState(() => _selectedDeadlineTime = time);
-                      }
-                    },
-                    icon: const Icon(Icons.access_time),
-                    label: Text(
-                      _selectedDeadlineTime != null
-                          ? '${_selectedDeadlineTime!.hour.toString().padLeft(2, '0')}:${_selectedDeadlineTime!.minute.toString().padLeft(2, '0')}'
-                          : '시간 선택',
-                    ),
-                  ),
-                ),
-              ],
+            const SizedBox(height: 16),
+            
+            // 옵션 1: N시간 전
+            RadioListTile<String>(
+              title: const Text('근무 시작 N시간 전'),
+              subtitle: _deadlineType == 'HOURS_BEFORE'
+                  ? _buildDeadlinePreview()
+                  : null,
+              value: 'HOURS_BEFORE',
+              groupValue: _deadlineType,
+              onChanged: (value) {
+                setState(() => _deadlineType = value!);
+              },
+              dense: true,
+              contentPadding: EdgeInsets.zero,
             ),
-            // ✅ 에러 메시지 표시
-            if (deadlineErrorMessage != null) ...[
-              const SizedBox(height: 12),
-              Container(
-                padding: const EdgeInsets.all(12),
-                decoration: BoxDecoration(
-                  color: Colors.red[50],
-                  borderRadius: BorderRadius.circular(8),
-                  border: Border.all(color: Colors.red[300]!),
-                ),
+            
+            if (_deadlineType == 'HOURS_BEFORE') ...[
+              Padding(
+                padding: const EdgeInsets.only(left: 16, top: 8, bottom: 16),
                 child: Row(
                   children: [
-                    Icon(Icons.error_outline, color: Colors.red[700], size: 20),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: Text(
-                        deadlineErrorMessage,
-                        style: TextStyle(
-                          fontSize: 13,
-                          color: Colors.red[900],
-                          fontWeight: FontWeight.w500,
+                    SizedBox(
+                      width: 80,
+                      child: TextField(
+                        keyboardType: TextInputType.number,
+                        decoration: const InputDecoration(
+                          border: OutlineInputBorder(),
+                          isDense: true,
+                          suffixText: '시간',
                         ),
+                        controller: TextEditingController(
+                          text: _hoursBeforeStart.toString(),
+                        ),
+                        onChanged: (value) {
+                          final hours = int.tryParse(value);
+                          if (hours != null && hours > 0 && hours <= 72) {
+                            setState(() => _hoursBeforeStart = hours);
+                          }
+                        },
                       ),
+                    ),
+                    const SizedBox(width: 12),
+                    const Text('전 마감'),
+                  ],
+                ),
+              ),
+            ],
+            
+            const Divider(),
+            
+            // 옵션 2: 고정 시간
+            RadioListTile<String>(
+              title: const Text('특정 날짜/시간 지정'),
+              subtitle: _deadlineType == 'FIXED_TIME' && 
+                        _selectedDeadlineDate != null && 
+                        _selectedDeadlineTime != null
+                  ? Text(
+                      '마감: ${DateFormat('MM/dd HH:mm').format(DateTime(
+                        _selectedDeadlineDate!.year,
+                        _selectedDeadlineDate!.month,
+                        _selectedDeadlineDate!.day,
+                        _selectedDeadlineTime!.hour,
+                        _selectedDeadlineTime!.minute,
+                      ))}',
+                      style: TextStyle(fontSize: 12, color: Colors.blue[700]),
+                    )
+                  : null,
+              value: 'FIXED_TIME',
+              groupValue: _deadlineType,
+              onChanged: (value) {
+                setState(() => _deadlineType = value!);
+              },
+              dense: true,
+              contentPadding: EdgeInsets.zero,
+            ),
+            
+            if (_deadlineType == 'FIXED_TIME') ...[
+              Padding(
+                padding: const EdgeInsets.only(left: 16, top: 8),
+                child: Column(
+                  children: [
+                    // 날짜 선택
+                    ListTile(
+                      contentPadding: EdgeInsets.zero,
+                      leading: Icon(Icons.calendar_today, color: Colors.blue[700]),
+                      title: Text(
+                        _selectedDeadlineDate == null
+                            ? '날짜 선택'
+                            : DateFormat('yyyy-MM-dd (E)', 'ko_KR').format(_selectedDeadlineDate!),
+                      ),
+                      trailing: const Icon(Icons.arrow_forward_ios, size: 16),
+                      onTap: () async {
+                        // 가장 이른 근무일
+                        final earliestDate = _selectedDates.isEmpty 
+                            ? DateTime.now()
+                            : _selectedDates.reduce((a, b) => a.isBefore(b) ? a : b);
+                        
+                        final picked = await showDatePicker(
+                          context: context,
+                          initialDate: _selectedDeadlineDate ?? DateTime.now(),
+                          firstDate: DateTime.now(),
+                          lastDate: earliestDate,
+                        );
+                        if (picked != null) {
+                          setState(() => _selectedDeadlineDate = picked);
+                        }
+                      },
+                    ),
+                    
+                    // 시간 선택
+                    ListTile(
+                      contentPadding: EdgeInsets.zero,
+                      leading: Icon(Icons.access_time, color: Colors.blue[700]),
+                      title: Text(
+                        _selectedDeadlineTime == null
+                            ? '시간 선택'
+                            : '${_selectedDeadlineTime!.hour.toString().padLeft(2, '0')}:${_selectedDeadlineTime!.minute.toString().padLeft(2, '0')}',
+                      ),
+                      trailing: const Icon(Icons.arrow_forward_ios, size: 16),
+                      onTap: () async {
+                        final picked = await showTimePicker(
+                          context: context,
+                          initialTime: _selectedDeadlineTime ?? const TimeOfDay(hour: 23, minute: 59),
+                        );
+                        if (picked != null) {
+                          setState(() => _selectedDeadlineTime = picked);
+                        }
+                      },
                     ),
                   ],
                 ),
@@ -1837,6 +1931,57 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
         ),
       ),
     );
+  }
+
+  /// 마감 시간 미리보기
+  Widget _buildDeadlinePreview() {
+    if (_workDetails.isEmpty || _selectedDates.isEmpty) {
+      return const SizedBox();
+    }
+    
+    try {
+      final firstWorkStart = _workDetails.first.startTime!;
+      final earliestDate = _selectedDates.reduce((a, b) => a.isBefore(b) ? a : b);
+      
+      final timeParts = firstWorkStart.split(':');
+      final startDateTime = DateTime(
+        earliestDate.year,
+        earliestDate.month,
+        earliestDate.day,
+        int.parse(timeParts[0]),
+        int.parse(timeParts[1]),
+      );
+      final deadline = startDateTime.subtract(Duration(hours: _hoursBeforeStart));
+      
+      return Container(
+        margin: const EdgeInsets.only(top: 8),
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          color: Colors.blue[50],
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(color: Colors.blue[200]!),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              '${DateFormat('MM/dd (E)', 'ko_KR').format(earliestDate)} $firstWorkStart 근무',
+              style: TextStyle(fontSize: 11, color: Colors.grey[700]),
+            ),
+            Text(
+              '→ 마감: ${DateFormat('MM/dd (E) HH:mm', 'ko_KR').format(deadline)}',
+              style: TextStyle(
+                fontSize: 11,
+                fontWeight: FontWeight.bold,
+                color: Colors.blue[700],
+              ),
+            ),
+          ],
+        ),
+      );
+    } catch (e) {
+      return const SizedBox();
+    }
   }
 
   /// 설명 입력
@@ -1979,6 +2124,19 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
       }
     }
     return times;
+  }
+  // ✅ NEW: 월의 몇 번째 주인지 계산
+  /// 해당 날짜가 월의 몇 번째 주인지 반환
+  int _getWeekOfMonth(DateTime date) {
+    final firstDayOfMonth = DateTime(date.year, date.month, 1);
+    final dayOfMonth = date.day;
+    
+    // 첫째 주는 1일부터 시작
+    // 월요일 기준으로 주차 계산
+    final firstMonday = firstDayOfMonth.weekday;
+    
+    // 간단한 계산: (일 + 첫째날 요일 - 1) / 7 + 1
+    return ((dayOfMonth + firstMonday - 1) / 7).ceil();
   }
 
 

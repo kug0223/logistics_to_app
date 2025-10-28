@@ -285,8 +285,16 @@ class FirestoreService {
     required List<Map<String, dynamic>> workDetailsData,
     String? description,
     required String creatorUID,
+    // ✅ NEW: 지원 마감 규칙
+    String deadlineType = 'HOURS_BEFORE',
+    int? hoursBeforeStart = 2,
     String? groupId,
     String? groupName,
+
+    // ✅ NEW: 그룹 TO용 파라미터
+    DateTime? startDate,
+    DateTime? endDate,
+    bool isGroupMaster = false,
   }) async {
     try {
       print('🔧 [FirestoreService] TO 생성 시작...');
@@ -301,11 +309,18 @@ class FirestoreService {
       final toData = {
         'businessId': businessId,
         'businessName': businessName,
+        'jobType': 'short',  // ✅ NEW
         'groupId': groupId,
         'groupName': groupName,
+        'startDate': startDate != null ? Timestamp.fromDate(startDate) : null,  // ✅ NEW
+        'endDate': endDate != null ? Timestamp.fromDate(endDate) : null,  // ✅ NEW
+        'isGroupMaster': isGroupMaster,  // ✅ NEW
         'title': title,
         'date': Timestamp.fromDate(date),
         'applicationDeadline': Timestamp.fromDate(applicationDeadline),
+        // ✅ NEW: 지원 마감 규칙
+        'deadlineType': deadlineType,
+        'hoursBeforeStart': hoursBeforeStart,
         'totalRequired': totalRequired,
         'totalConfirmed': 0,
         'description': description ?? '',
@@ -326,6 +341,8 @@ class FirestoreService {
         
         batch.set(docRef, {
           'workType': data['workType'],
+          'workTypeIcon': data['workTypeIcon'],  // ✅ 추가
+          'workTypeColor': data['workTypeColor'],  // ✅ 추가
           'wage': data['wage'],
           'requiredCount': data['requiredCount'],
           'currentCount': 0,
@@ -885,6 +902,19 @@ class FirestoreService {
       ToastHelper.showError('그룹 해제에 실패했습니다.');
       return false;
     }
+  }
+  /// 시간 문자열 비교 (HH:mm 형식)
+  int _compareTime(String time1, String time2) {
+    final parts1 = time1.split(':');
+    final parts2 = time2.split(':');
+    
+    final hour1 = int.parse(parts1[0]);
+    final minute1 = int.parse(parts1[1]);
+    final hour2 = int.parse(parts2[0]);
+    final minute2 = int.parse(parts2[1]);
+    
+    if (hour1 != hour2) return hour1 - hour2;
+    return minute1 - minute2;
   }
 
   /// 그룹 날짜 범위 재계산 (내부 헬퍼 함수)

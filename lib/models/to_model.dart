@@ -25,6 +25,9 @@ class TOModel {
   final String endTime; // 종료 시간 (예: "18:00")
   
   final DateTime applicationDeadline; // 지원 마감 일시
+  // ✅ NEW: 지원 마감 규칙
+  final String deadlineType;  // 'HOURS_BEFORE' or 'FIXED_TIME'
+  final int? hoursBeforeStart;  // N시간 전 (예: 2)
   
   // ✅ 전체 필요 인원 (모든 업무유형 합계)
   final int totalRequired; // 전체 필요 인원
@@ -49,6 +52,8 @@ class TOModel {
     required this.startTime,
     required this.endTime,
     required this.applicationDeadline,
+    this.deadlineType = 'HOURS_BEFORE',  // 기본값
+    this.hoursBeforeStart = 2,  // 기본값: 2시간 전
     required this.totalRequired,
     this.totalConfirmed = 0,
     this.description,
@@ -85,6 +90,10 @@ class TOModel {
               18,
               0,
             ),
+      // ✅ NEW: 지원 마감 규칙
+      deadlineType: data['deadlineType'] ?? 'HOURS_BEFORE',
+      hoursBeforeStart: data['hoursBeforeStart'] ?? 2,
+
       totalRequired: data['totalRequired'] ?? 0,
       totalConfirmed: data['totalConfirmed'] ?? 0,
       description: data['description'],
@@ -111,6 +120,9 @@ class TOModel {
       'startTime': startTime,
       'endTime': endTime,
       'applicationDeadline': Timestamp.fromDate(applicationDeadline),
+       // ✅ NEW: 지원 마감 규칙
+      'deadlineType': deadlineType,
+      'hoursBeforeStart': hoursBeforeStart,
       'totalRequired': totalRequired,
       'totalConfirmed': totalConfirmed,
       'description': description,
@@ -135,6 +147,9 @@ class TOModel {
     String? startTime,
     String? endTime,
     DateTime? applicationDeadline,
+    // ✅ NEW
+    String? deadlineType,
+    int? hoursBeforeStart,
     int? totalRequired,
     int? totalConfirmed,
     String? description,
@@ -155,6 +170,9 @@ class TOModel {
       startTime: startTime ?? this.startTime,
       endTime: endTime ?? this.endTime,
       applicationDeadline: applicationDeadline ?? this.applicationDeadline,
+      // ✅ NEW
+      deadlineType: deadlineType ?? this.deadlineType,
+      hoursBeforeStart: hoursBeforeStart ?? this.hoursBeforeStart,
       totalRequired: totalRequired ?? this.totalRequired,
       totalConfirmed: totalConfirmed ?? this.totalConfirmed,
       description: description ?? this.description,
@@ -180,14 +198,34 @@ class TOModel {
 
   /// 표시용 시작 시간
   String get displayStartTime {
-    if (_cachedMinStartTime != null) return _cachedMinStartTime!;
-    return startTime.isEmpty ? '~' : startTime;
+    // 1순위: 캐시된 값
+    if (_cachedMinStartTime != null && _cachedMinStartTime!.isNotEmpty) {
+      return _cachedMinStartTime!;
+    }
+    
+    // 2순위: startTime 필드
+    if (startTime.isNotEmpty) {
+      return startTime;
+    }
+    
+    // 3순위: 기본값
+    return '--:--';
   }
 
   /// 표시용 종료 시간  
   String get displayEndTime {
-    if (_cachedMaxEndTime != null) return _cachedMaxEndTime!;
-    return endTime.isEmpty ? '~' : endTime;
+    // 1순위: 캐시된 값
+    if (_cachedMaxEndTime != null && _cachedMaxEndTime!.isNotEmpty) {
+      return _cachedMaxEndTime!;
+    }
+    
+    // 2순위: endTime 필드
+    if (endTime.isNotEmpty) {
+      return endTime;
+    }
+    
+    // 3순위: 기본값
+    return '--:--';
   }
 
   /// 표시용 시간 범위 (예: "08:00 ~ 18:00")
@@ -286,5 +324,24 @@ class TOModel {
   /// 채용 유형 표시명
   String get jobTypeLabel {
     return isShortTerm ? '단기 알바' : '1개월+ 계약직';
+  }
+  // ✅ NEW: 실제 지원 마감 시간 계산 (getter)
+  DateTime get effectiveDeadline {
+    if (deadlineType == 'HOURS_BEFORE' && hoursBeforeStart != null && startTime != null) {
+      try {
+        final timeParts = startTime!.split(':');
+        final startDateTime = DateTime(
+          date.year,
+          date.month,
+          date.day,
+          int.parse(timeParts[0]),
+          int.parse(timeParts[1]),
+        );
+        return startDateTime.subtract(Duration(hours: hoursBeforeStart!));
+      } catch (e) {
+        return applicationDeadline;
+      }
+    }
+    return applicationDeadline;
   }
 }

@@ -785,7 +785,7 @@ class _AdminTOListScreenState extends State<AdminTOListScreen> {
     );
   }
 
-  /// ✅ 그룹 카드 (1단계 토글)
+  /// ✅ 그룹 카드 (1단계 토글) - 개선 버전
   Widget _buildGroupCard(_TOGroupItem groupItem) {
     final masterTO = groupItem.masterTO;
     final isExpanded = _expandedGroups.contains(masterTO.groupId ?? masterTO.id);
@@ -817,73 +817,91 @@ class _AdminTOListScreenState extends State<AdminTOListScreen> {
         children: [
           // 헤더 (클릭 가능)
           InkWell(
-            onTap: groupItem.isGrouped
-                ? () {
-                    setState(() {
-                      final key = masterTO.groupId ?? masterTO.id;
-                      if (_expandedGroups.contains(key)) {
-                        _expandedGroups.remove(key);
-                      } else {
-                        _expandedGroups.add(key);
-                      }
-                    });
-                  }
-                : () {
-                    // ✅ 기존: 단일 TO는 바로 상세 화면으로
-                    // ✅ 수정: 단일 TO도 토글하도록 변경
-                    setState(() {
-                      final key = masterTO.id;
-                      if (_expandedGroups.contains(key)) {
-                        _expandedGroups.remove(key);
-                      } else {
-                        _expandedGroups.add(key);
-                      }
-                    });
-                  },
+            onTap: () {
+              setState(() {
+                final key = masterTO.groupId ?? masterTO.id;
+                if (_expandedGroups.contains(key)) {
+                  _expandedGroups.remove(key);
+                } else {
+                  _expandedGroups.add(key);
+                }
+              });
+            },
             child: Padding(
               padding: const EdgeInsets.all(16),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  // 그룹명 + 사업장명
+                  // ✅ 사업장명 (첫 줄)
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF1976D2),
+                      borderRadius: BorderRadius.circular(6),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const Icon(
+                          Icons.business,
+                          size: 14,
+                          color: Colors.white,
+                        ),
+                        const SizedBox(width: 6),
+                        Flexible(
+                          child: Text(
+                            masterTO.businessName,
+                            style: const TextStyle(
+                              fontSize: 12,
+                              color: Colors.white,
+                              fontWeight: FontWeight.bold,
+                            ),
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  
+                  // ✅ 그룹명 + 버튼들 (두 번째 줄)
                   Row(
                     children: [
-                      if (masterTO.isGrouped && masterTO.groupName != null) ...[
+                      // ✅ 그룹명 (그룹 TO일 때만 표시)
+                      if (masterTO.groupName != null) ...[
                         Container(
                           padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
                           decoration: BoxDecoration(
-                            color: Colors.blue[50],
-                            borderRadius: BorderRadius.circular(6),
-                            border: Border.all(color: Colors.blue[200]!),
+                            color: Colors.green[50],
+                            borderRadius: BorderRadius.circular(8),
+                            border: Border.all(color: Colors.green[300]!, width: 1.5),
                           ),
                           child: Row(
                             mainAxisSize: MainAxisSize.min,
                             children: [
-                              Icon(Icons.folder_open, size: 16, color: Colors.blue[700]),
+                              Icon(
+                                Icons.folder_open,
+                                size: 16,
+                                color: Colors.green[700],
+                              ),
                               const SizedBox(width: 6),
                               Text(
                                 masterTO.groupName!,
                                 style: TextStyle(
-                                  fontSize: 13,
+                                  fontSize: 14,
                                   fontWeight: FontWeight.bold,
-                                  color: Colors.blue[900],
+                                  color: Colors.green[800],
                                 ),
                               ),
                             ],
                           ),
                         ),
-                        const SizedBox(width: 8),
+                        const SizedBox(height: 10),
                       ],
-                      Expanded(
-                        child: Text(
-                          masterTO.businessName,
-                          style: const TextStyle(
-                            fontSize: 16,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                      ),
-                      // ✅ 단일 TO인 경우 수정/삭제 버튼 추가
+                      
+                      const Spacer(),
+                      
+                      // ✅ 단일 TO인 경우 수정/삭제 버튼
                       if (!groupItem.isGrouped) ...[
                         IconButton(
                           icon: const Icon(Icons.edit, size: 18),
@@ -910,8 +928,7 @@ class _AdminTOListScreenState extends State<AdminTOListScreen> {
                           constraints: const BoxConstraints(),
                           onPressed: () => _showDeleteTODialog(groupItem.groupTOs.first),
                         ),
-                        const SizedBox(width: 8),
-                        // ✅ 그룹 연결 버튼 추가
+                        const SizedBox(width: 4),
                         IconButton(
                           icon: const Icon(Icons.link, size: 18),
                           color: Colors.blue[600],
@@ -920,11 +937,10 @@ class _AdminTOListScreenState extends State<AdminTOListScreen> {
                           constraints: const BoxConstraints(),
                           onPressed: () => _showReconnectToGroupDialog(groupItem.groupTOs.first),
                         ),
-                        const SizedBox(width: 8),
-                      ],                      
+                      ],
                       
-                      // 그룹명 수정 버튼
-                      if (groupItem.isGrouped && masterTO.groupId != null)
+                      // ✅ 그룹 TO인 경우 그룹명 수정/전체 삭제 버튼
+                      if (groupItem.isGrouped && masterTO.groupId != null) ...[
                         IconButton(
                           icon: const Icon(Icons.edit, size: 18),
                           color: Colors.blue[600],
@@ -932,12 +948,8 @@ class _AdminTOListScreenState extends State<AdminTOListScreen> {
                           padding: EdgeInsets.zero,
                           constraints: const BoxConstraints(),
                           onPressed: () => _showEditGroupNameDialog(masterTO),
-                        ),                    
-                      // 간격 추가
-                      if (groupItem.isGrouped && masterTO.groupId != null)
+                        ),
                         const SizedBox(width: 4),
-                      // ✅ 그룹 전체 삭제 버튼 추가
-                      if (groupItem.isGrouped && masterTO.groupId != null)
                         IconButton(
                           icon: const Icon(Icons.delete_forever, size: 18),
                           color: Colors.red[600],
@@ -946,26 +958,23 @@ class _AdminTOListScreenState extends State<AdminTOListScreen> {
                           constraints: const BoxConstraints(),
                           onPressed: () => _showDeleteGroupDialog(groupItem),
                         ),
-                      // ✅ 그룹 TO든 단일 TO든 모두 토글 아이콘 표시
+                      ],
+                      
+                      const SizedBox(width: 4),
+                      
+                      // ✅ 토글 아이콘
                       Icon(
                         isExpanded ? Icons.keyboard_arrow_up : Icons.keyboard_arrow_down,
                         color: Colors.grey[600],
                       ),
                     ],
                   ),
-                  const SizedBox(height: 8),
                   
-                  // 제목
-                  Text(
-                    masterTO.title,
-                    style: const TextStyle(
-                      fontSize: 15,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                  const SizedBox(height: 8),
+                  // ✅ 제목 제거! (그룹 카드에서는 제목 안 보여줌)
                   
-                  // 날짜 및 시간 정보
+                  const SizedBox(height: 12),
+                  
+                  // ✅ 날짜 및 시간 정보
                   Row(
                     children: [
                       Icon(Icons.calendar_today, size: 16, color: Colors.grey[600]),
@@ -987,7 +996,7 @@ class _AdminTOListScreenState extends State<AdminTOListScreen> {
                   ),
                   const SizedBox(height: 12),
                   
-                  // 통계 정보
+                  // ✅ 통계 정보
                   Row(
                     children: [
                       _buildStatChip(
@@ -1008,7 +1017,7 @@ class _AdminTOListScreenState extends State<AdminTOListScreen> {
             ),
           ),
           
-          // ✅ 펼쳐진 경우: 연결된 TO 목록 (2단계 토글)
+          // ✅ 펼쳐진 경우: 연결된 TO 목록 (그룹 TO)
           if (isExpanded && groupItem.isGrouped) ...[
             const Divider(height: 1),
             Padding(
@@ -1020,7 +1029,8 @@ class _AdminTOListScreenState extends State<AdminTOListScreen> {
               ),
             ),
           ],
-          // ✅ NEW: 단일 TO도 펼쳐서 업무 상세 보기
+          
+          // ✅ 펼쳐진 경우: 업무 상세 (단일 TO)
           if (isExpanded && !groupItem.isGrouped) ...[
             const Divider(height: 1),
             Padding(
@@ -1049,10 +1059,9 @@ class _AdminTOListScreenState extends State<AdminTOListScreen> {
     );
   }
 
-  /// ✅ TO 아이템 카드 (2단계 토글 - 각 TO)
+  /// ✅ TO 아이템 카드 (2단계 토글 - 개선 버전)
   Widget _buildTOItemCard(_TOItem toItem, _TOGroupItem groupItem) {
     final to = toItem.to;
-    final masterTO = groupItem.masterTO;
     final isExpanded = _expandedTOs.contains(to.id);
     final dateFormat = DateFormat('MM/dd (E)', 'ko_KR');
     final isFull = toItem.confirmedCount >= to.totalRequired;
@@ -1069,7 +1078,6 @@ class _AdminTOListScreenState extends State<AdminTOListScreen> {
       ),
       child: Column(
         children: [
-          // TO 헤더
           InkWell(
             onTap: () {
               setState(() {
@@ -1082,114 +1090,120 @@ class _AdminTOListScreenState extends State<AdminTOListScreen> {
             },
             child: Padding(
               padding: const EdgeInsets.all(12),
-              child: Row(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  // 날짜
-                  Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                    decoration: BoxDecoration(
-                      color: Colors.white,
-                      borderRadius: BorderRadius.circular(6),
-                      border: Border.all(color: Colors.grey[300]!),
-                    ),
-                    child: Text(
-                      dateFormat.format(to.date),
-                      style: const TextStyle(
-                        fontSize: 13,
-                        fontWeight: FontWeight.bold,
+                  // ✅ 첫 줄: 날짜 + TO 제목
+                  Row(
+                    children: [
+                      // 날짜
+                      Text(
+                        dateFormat.format(to.date),
+                        style: TextStyle(
+                          fontSize: 13,
+                          fontWeight: FontWeight.w600,
+                          color: Colors.grey[700],
+                        ),
                       ),
-                    ),
+                      const SizedBox(width: 12),
+                      
+                      // TO 제목 (확장)
+                      Expanded(
+                        child: Text(
+                          to.title,
+                          style: TextStyle(
+                            fontSize: 14,
+                            fontWeight: FontWeight.bold,
+                            color: Colors.grey[800],
+                          ),
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                    ],
                   ),
-                  const SizedBox(width: 12),
+                  const SizedBox(height: 8),
                   
-                  // 통계
-                  Expanded(
-                    child: Row(
-                      children: [
-                        _buildStatChip(
-                          '확정',
-                          '${toItem.confirmedCount}/${to.totalRequired}',
-                          isFull ? Colors.green : Colors.blue,
-                          small: true,
-                        ),
-                        const SizedBox(width: 6),
-                        _buildStatChip(
-                          '대기',
-                          '${toItem.pendingCount}',
-                          Colors.orange,
-                          small: true,
-                        ),
-                      ],
-                    ),
-                  ),
-                  
-                  // 수정 버튼
-                  IconButton(
-                    onPressed: () async {
-                      final result = await Navigator.push(
-                        context,
-                        MaterialPageRoute(
-                          builder: (context) => AdminEditTOScreen(to: to),
-                        ),
-                      );
-                      if (result == true) _loadTOsWithStats();
-                    },
-                    icon: const Icon(Icons.edit, size: 16),
-                    color: Colors.orange[700],
-                    tooltip: '수정',
-                  ),
+                  // ✅ 둘째 줄: 통계 + 버튼들
+                  Row(
+                    children: [
+                      // 통계
+                      _buildStatChip(
+                        '확정',
+                        '${toItem.confirmedCount}/${to.totalRequired}',
+                        toItem.confirmedCount >= to.totalRequired
+                            ? Colors.green : Colors.blue,
+                        small: true,
+                      ),
+                      const SizedBox(width: 4),
+                      _buildStatChip(
+                        '대기',
+                        '${toItem.pendingCount}',
+                        Colors.orange,
+                        small: true,
+                      ),
+                      
+                      const Spacer(),
+                      
+                      // 수정 버튼
+                      IconButton(
+                        onPressed: () async {
+                          final result = await Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (context) => AdminEditTOScreen(to: to),
+                            ),
+                          );
+                          if (result == true) _loadTOsWithStats();
+                        },
+                        icon: const Icon(Icons.edit, size: 16),
+                        color: Colors.orange[700],
+                        tooltip: '수정',
+                        padding: const EdgeInsets.all(8),
+                        constraints: const BoxConstraints(),
+                      ),
 
-                  // 삭제 버튼
-                  IconButton(
-                    onPressed: () => _showDeleteTODialog(toItem),
-                    icon: const Icon(Icons.delete, size: 16),
-                    color: Colors.red[700],
-                    tooltip: '삭제',
-                  ),
-                  // 그룹 해제 버튼
-                  if (to.groupId != null)
-                    IconButton(
-                      onPressed: () => _showRemoveFromGroupDialog(toItem),
-                      icon: const Icon(Icons.link_off, size: 16),
-                      color: Colors.orange[700],
-                      tooltip: '그룹 해제',
-                    ),
-                  // ✅ 그룹 연결 버튼 (독립 TO인 경우)
-                  if (to.groupId == null)  // 조건 단순화!
-                    IconButton(
-                      onPressed: () => _showReconnectToGroupDialog(toItem),
-                      icon: const Icon(Icons.link, size: 16),
-                      color: Colors.blue[700],
-                      tooltip: '그룹 연결',
-                    ),
-                  
-                  // 상세 보기 버튼
-                  IconButton(
-                    onPressed: () {
-                      Navigator.push(
-                        context,
-                        MaterialPageRoute(
-                          builder: (context) => AdminTODetailScreen(to: to),
-                        ),
-                      ).then((result) {
-                        if (result == true) _loadTOsWithStats();
-                      });
-                    },
-                    icon: const Icon(Icons.arrow_forward_ios, size: 16),
-                    tooltip: '상세 보기',
-                  ),
-                  
-                  // 펼치기/접기 아이콘
-                  Icon(
-                    isExpanded ? Icons.keyboard_arrow_up : Icons.keyboard_arrow_down,
-                    color: Colors.grey[600],
+                      // 삭제 버튼
+                      IconButton(
+                        onPressed: () => _showDeleteTODialog(toItem),
+                        icon: const Icon(Icons.delete, size: 16),
+                        color: Colors.red[700],
+                        tooltip: '삭제',
+                        padding: const EdgeInsets.all(8),
+                        constraints: const BoxConstraints(),
+                      ),
+                      
+                      // 상세 보기 버튼
+                      IconButton(
+                        onPressed: () {
+                          Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (context) => AdminTODetailScreen(to: to),
+                            ),
+                          ).then((result) {
+                            if (result == true) _loadTOsWithStats();
+                          });
+                        },
+                        icon: const Icon(Icons.arrow_forward_ios, size: 14),
+                        tooltip: '상세 보기',
+                        padding: const EdgeInsets.all(8),
+                        constraints: const BoxConstraints(),
+                      ),
+                      
+                      // 펼치기/접기 아이콘
+                      Icon(
+                        isExpanded ? Icons.expand_less : Icons.expand_more,
+                        size: 20,
+                        color: Colors.grey[600],
+                      ),
+                    ],
                   ),
                 ],
               ),
             ),
           ),
           
-          // ✅ 펼쳐진 경우: WorkDetails 표시
+          // ✅ 펼쳐진 경우: 업무 상세
           if (isExpanded) ...[
             const Divider(height: 1),
             Padding(
@@ -1200,15 +1214,13 @@ class _AdminTOListScreenState extends State<AdminTOListScreen> {
                   Text(
                     '업무 상세',
                     style: TextStyle(
-                      fontSize: 13,
+                      fontSize: 12,
                       fontWeight: FontWeight.bold,
                       color: Colors.grey[700],
                     ),
                   ),
                   const SizedBox(height: 8),
                   ...toItem.workDetails.map((work) {
-                    // ✅ 이 업무의 확정/대기 인원 수 별도 계산 필요
-                    // (이미 _TOItem에 workDetails가 있으니 각 업무별 카운트가 있어야 함)
                     return _buildWorkDetailRow(work, work.currentCount, work.pendingCount);
                   }).toList(),
                 ],
@@ -1253,18 +1265,18 @@ class _AdminTOListScreenState extends State<AdminTOListScreen> {
           
           // 급여
           Text(
-            '₩ ${NumberFormat('#,###').format(work.wage)}원',
+            '${NumberFormat('#,###').format(work.wage)}원',
             style: TextStyle(
               fontSize: 11,
               fontWeight: FontWeight.bold,
-              color: Colors.black[700],
+              color: Colors.grey[700],
             ),
           ),
           const SizedBox(width: 12),
 
           // 확정 인원
           Container(
-            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+            padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
             decoration: BoxDecoration(
               color: work.isFull ? Colors.green[50] : Colors.blue[50],
               borderRadius: BorderRadius.circular(12),
@@ -1275,7 +1287,7 @@ class _AdminTOListScreenState extends State<AdminTOListScreen> {
             child: Text(
               '$confirmedCount/${work.requiredCount}명',
               style: TextStyle(
-                fontSize: 12,
+                fontSize: 10,
                 fontWeight: FontWeight.bold,
                 color: work.isFull ? Colors.green[700] : Colors.blue[700],
               ),
@@ -1285,7 +1297,7 @@ class _AdminTOListScreenState extends State<AdminTOListScreen> {
           
           // ✅ NEW: 대기 인원 추가
           Container(
-            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
             decoration: BoxDecoration(
               color: Colors.orange[100],
               borderRadius: BorderRadius.circular(4),
@@ -1294,7 +1306,7 @@ class _AdminTOListScreenState extends State<AdminTOListScreen> {
             child: Text(
               '대기 $pendingCount',
               style: TextStyle(
-                fontSize: 12,
+                fontSize: 10,
                 fontWeight: FontWeight.bold,
                 color: Colors.orange,
               ),
