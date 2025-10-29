@@ -8,6 +8,7 @@ import '../../utils/toast_helper.dart';
 import 'admin_to_detail_screen.dart';
 import 'admin_create_to_screen.dart';
 import 'admin_edit_to_screen.dart';
+import '../../utils/format_helper.dart';
 
 /// 관리자 TO 목록 화면 - 이중 토글 UI
 class AdminTOListScreen extends StatefulWidget {
@@ -1503,20 +1504,6 @@ class _AdminTOListScreenState extends State<AdminTOListScreen> {
         ],
       ),
     );
-  }
-
-  /// 색상 파싱
-  Color _parseColor(String? colorString) {
-    if (colorString == null || colorString.isEmpty) {
-      return Colors.blue;
-    }
-    
-    try {
-      final hexColor = colorString.replaceAll('#', '');
-      return Color(int.parse('FF$hexColor', radix: 16));
-    } catch (e) {
-      return Colors.blue;
-    }
   }
 }
 

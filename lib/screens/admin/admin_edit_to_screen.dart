@@ -12,6 +12,7 @@ import '../../utils/toast_helper.dart';
 import '../../widgets/loading_widget.dart';
 import '../../widgets/work_detail_dialog.dart';
 import '../../widgets/work_type_icon.dart';
+import '../../utils/format_helper.dart';
 
 /// TO 수정 화면
 class AdminEditTOScreen extends StatefulWidget {
@@ -166,8 +167,6 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
       ToastHelper.showError('수정에 실패했습니다');
     }
   }
-
-  /// 업무 추가 다이얼로그
   /// 업무 추가 다이얼로그
   Future<void> _showAddWorkDialog() async {
     final result = await WorkDetailDialog.showAddDialog(
@@ -231,7 +230,7 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
                     decoration: const InputDecoration(
                       border: OutlineInputBorder(),
                     ),
-                    items: _generateTimeList().map((time) {
+                    items: FormatHelper.generateTimeList().map((time) {
                       return DropdownMenuItem<String>(
                         value: time,
                         child: Text(time),
@@ -253,7 +252,7 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
                     decoration: const InputDecoration(
                       border: OutlineInputBorder(),
                     ),
-                    items: _generateTimeList().map((time) {
+                    items: FormatHelper.generateTimeList().map((time) {
                       return DropdownMenuItem<String>(
                         value: time,
                         child: Text(time),
@@ -666,7 +665,7 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
                 width: 40,
                 height: 40,
                 decoration: BoxDecoration(
-                  color: _parseColor(work.workTypeColor).withOpacity(0.1),
+                  color: FormatHelper.parseColor(work.workTypeColor).withOpacity(0.1),
                   borderRadius: BorderRadius.circular(8),
                 ),
                 child: Center(
@@ -990,58 +989,4 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
     );
   }
 
-  // ============================================================
-  // 🛠️ 유틸리티 함수
-  // ============================================================
-
-  /// 시간 목록 생성
-  List<String> _generateTimeList() {
-    final times = <String>[];
-    for (int hour = 0; hour < 24; hour++) {
-      for (int minute = 0; minute < 60; minute += 30) {
-        times.add(
-          '${hour.toString().padLeft(2, '0')}:${minute.toString().padLeft(2, '0')}',
-        );
-      }
-    }
-    return times;
-  }
-
-  /// 색상 파싱
-  Color _parseColor(String colorString) {
-    try {
-      return Color(int.parse(colorString.replaceFirst('#', '0xFF')));
-    } catch (e) {
-      return Colors.blue[700]!;
-    }
-  }
-
-  /// 아이콘 파싱
-  IconData _parseIcon(String iconString) {
-    if (iconString.startsWith('material:')) {
-      try {
-        final codePoint = int.parse(iconString.substring(9));
-        return IconData(codePoint, fontFamily: 'MaterialIcons');
-      } catch (e) {
-        return Icons.work_outline;
-      }
-    }
-    return Icons.work_outline;
-  }
-
-  /// 아이콘 또는 이모지 위젯
-  Widget _buildIconOrEmoji(BusinessWorkTypeModel workType) {
-    if (workType.icon.startsWith('material:')) {
-      return Icon(
-        _parseIcon(workType.icon),
-        size: 20,
-        color: _parseColor(workType.color ?? '#2196F3'),
-      );
-    } else {
-      return Text(
-        workType.icon,
-        style: const TextStyle(fontSize: 18),
-      );
-    }
-  }
 }

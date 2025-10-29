@@ -1,4 +1,5 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
+import '../utils/format_helper.dart';
 
 /// 지원서 모델 - 업무유형 선택 및 변경 이력 지원
 class ApplicationModel {
@@ -123,10 +124,7 @@ class ApplicationModel {
 
   /// 포맷팅된 금액 (예: "50,000원")
   String get formattedWage {
-    return '${wage.toString().replaceAllMapped(
-      RegExp(r'(\d{1,3})(?=(\d{3})+(?!\d))'),
-      (Match m) => '${m[1]},',
-    )}원';
+    return FormatHelper.formatWage(wage);
   }
 
   /// 복사본 생성

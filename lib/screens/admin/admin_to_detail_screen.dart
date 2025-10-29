@@ -8,6 +8,7 @@ import '../../services/firestore_service.dart';
 import '../../providers/user_provider.dart';
 import '../../widgets/loading_widget.dart';
 import '../../utils/toast_helper.dart';
+import '../../utils/format_helper.dart';
 
 // ============================================================
 // 📦 데이터 모델
@@ -730,7 +731,7 @@ class _AdminTODetailScreenState extends State<AdminTODetailScreen> {
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                 decoration: BoxDecoration(
-                  color: _parseColor(work.workDetail.workTypeColor).withOpacity(0.1),
+                  color: FormatHelper.parseColor(work.workDetail.workTypeColor).withOpacity(0.1),
                   borderRadius: BorderRadius.circular(4),
                 ),
                 child: Row(
@@ -746,7 +747,7 @@ class _AdminTODetailScreenState extends State<AdminTODetailScreen> {
                       style: TextStyle(
                         fontSize: 12,
                         fontWeight: FontWeight.bold,
-                        color: _parseColor(work.workDetail.workTypeColor),
+                        color: FormatHelper.parseColor(work.workDetail.workTypeColor),
                       ),
                     ),
                   ],
@@ -858,21 +859,7 @@ class _AdminTODetailScreenState extends State<AdminTODetailScreen> {
     );
   }
 
-  /// 색상 파싱
-  Color _parseColor(String? colorString) {
-    if (colorString == null || colorString.isEmpty) {
-      return Colors.blue;
-    }
-    
-    try {
-      final hexColor = colorString.replaceAll('#', '');
-      return Color(int.parse('FF$hexColor', radix: 16));
-    } catch (e) {
-      return Colors.blue;
-    }
-  }
-
-  /// ✅ NEW: 확정 명단 다이얼로그
+   /// ✅ NEW: 확정 명단 다이얼로그
   Future<void> _showConfirmedListDialog(DateTime date, List<_DateTOItem> toItems) async {
     final dateFormat = DateFormat('MM/dd (E)', 'ko_KR');
     

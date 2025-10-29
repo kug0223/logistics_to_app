@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../models/business_work_type_model.dart';
+import '../utils/format_helper.dart';
 
 /// 업무 유형 아이콘/이모지 렌더링 유틸리티
 class WorkTypeIcon {
@@ -98,18 +99,5 @@ class WorkTypeIcon {
     };
 
     return iconMap[iconName] ?? Icons.work;
-  }
-
-  /// 색상 파싱
-  static Color parseColor(String? colorString) {
-    if (colorString == null || colorString.isEmpty) {
-      return Colors.blue;
-    }
-    
-    try {
-      return Color(int.parse(colorString.replaceFirst('#', '0xFF')));
-    } catch (e) {
-      return Colors.blue;
-    }
   }
 }

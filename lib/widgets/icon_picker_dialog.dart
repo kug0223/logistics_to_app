@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../utils/format_helper.dart';
 
 /// 아이콘 아이템 클래스
 class IconItem {
@@ -136,11 +137,12 @@ class _IconPickerWidgetState extends State<_IconPickerWidget> {
 
   final List<String> _categories = [
     '전체 (인기)',
-    '물류',
-    '음식/음료',
+    '물류/배송',
+    '음식/카페',
+    '판매/서비스',
     '청소/관리',
-    '도구/작업',
-    '사무/문서',
+    '사무/행정',
+    '작업/제조',
     '기타',
   ];
 
@@ -288,7 +290,7 @@ class _IconPickerWidgetState extends State<_IconPickerWidget> {
                           },
                           child: Container(
                             decoration: BoxDecoration(
-                              color: isSelected ? _parseColor(_selectedBackgroundColor) : Colors.grey[200],
+                              color: isSelected ? FormatHelper.parseColor(_selectedBackgroundColor) : Colors.grey[200],
                               border: Border.all(
                                 color: isSelected ? Colors.blue : Colors.grey[300]!,
                                 width: isSelected ? 2 : 1,
@@ -333,7 +335,7 @@ class _IconPickerWidgetState extends State<_IconPickerWidget> {
                       width: 32,
                       height: 32,
                       decoration: BoxDecoration(
-                        color: _parseColor(colorHex),
+                        color: FormatHelper.parseColor(colorHex),
                         shape: BoxShape.circle,
                         border: Border.all(
                           color: isSelected ? Colors.black : Colors.grey[300]!,
@@ -380,13 +382,5 @@ class _IconPickerWidgetState extends State<_IconPickerWidget> {
         ),
       ],
     );
-  }
-
-  Color _parseColor(String colorString) {
-    try {
-      return Color(int.parse(colorString.replaceFirst('#', '0xFF')));
-    } catch (e) {
-      return Colors.blue;
-    }
   }
 }

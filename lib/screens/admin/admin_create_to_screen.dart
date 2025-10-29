@@ -14,6 +14,7 @@ import '../../utils/labor_standards.dart';
 import '../../widgets/work_detail_dialog.dart';
 import '../../models/work_detail_input.dart';
 import '../../widgets/work_type_icon.dart';
+import '../../utils/format_helper.dart'; 
 
 
 // ============================================================
@@ -1408,7 +1409,7 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
                   width: 40,
                   height: 40,
                   decoration: BoxDecoration(
-                    color: _parseColor(detail.workTypeColor),
+                    color: FormatHelper.parseColor(detail.workTypeColor),
                     borderRadius: BorderRadius.circular(8),
                   ),
                   child: Center(
@@ -1829,18 +1830,6 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
   // 🛠️ 유틸리티 함수
   // ============================================================
 
-  /// 시간 목록 생성 (00:00 ~ 23:30)
-  List<String> _generateTimeList() {
-    final times = <String>[];
-    for (int hour = 0; hour < 24; hour++) {
-      for (int minute = 0; minute < 60; minute += 30) {
-        times.add(
-          '${hour.toString().padLeft(2, '0')}:${minute.toString().padLeft(2, '0')}',
-        );
-      }
-    }
-    return times;
-  }
   // ✅ NEW: 월의 몇 번째 주인지 계산
   /// 해당 날짜가 월의 몇 번째 주인지 반환
   int _getWeekOfMonth(DateTime date) {
@@ -1855,85 +1844,7 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
     return ((dayOfMonth + firstMonday - 1) / 7).ceil();
   }
 
-
-  /// 색상 문자열 파싱
-  Color _parseColor(String colorString) {
-    try {
-      return Color(int.parse(colorString.replaceFirst('#', '0xFF')));
-    } catch (e) {
-      return Colors.blue[700]!;
-    }
-  }
-
-  /// 아이콘 문자열 파싱
-  IconData _parseIcon(String iconString) {
-    if (iconString.startsWith('material:')) {
-      try {
-        final codePoint = int.parse(iconString.substring(9));
-        return IconData(codePoint, fontFamily: 'MaterialIcons');
-      } catch (e) {
-        return Icons.work_outline;
-      }
-    }
-
-    switch (iconString.toLowerCase()) {
-      case 'work':
-      case 'work_outline':
-        return Icons.work_outline;
-      case 'inventory':
-        return Icons.inventory_2_outlined;
-      case 'local_shipping':
-        return Icons.local_shipping_outlined;
-      case 'warehouse':
-        return Icons.warehouse_outlined;
-      default:
-        return Icons.work_outline;
-    }
-  }
-
-  /// 아이콘 또는 이모지 위젯 생성 (작은 버전)
-  Widget _buildIconOrEmojiSmall(BusinessWorkTypeModel workType) {
-    if (workType.icon.startsWith('material:')) {
-      Color iconColor = Colors.white;
-      if (workType.color != null && workType.color!.isNotEmpty) {
-        try {
-          iconColor = _parseColor(workType.color!);
-        } catch (e) {
-          iconColor = Colors.white;
-        }
-      }
-      return Icon(_parseIcon(workType.icon), size: 18, color: iconColor);
-    } else {
-      return Text(workType.icon, style: const TextStyle(fontSize: 16));
-    }
-  }
-
-  /// 아이콘 또는 이모지 위젯 생성
-  Widget _buildIconOrEmoji(BusinessWorkTypeModel workType) {
-    if (workType.icon.startsWith('material:')) {
-      Color iconColor = Colors.white;
-      if (workType.color != null && workType.color!.isNotEmpty) {
-        try {
-          iconColor = _parseColor(workType.color!);
-        } catch (e) {
-          iconColor = Colors.white;
-        }
-      }
-      return Icon(_parseIcon(workType.icon), size: 18, color: iconColor);
-    } else {
-      return Text(workType.icon, style: const TextStyle(fontSize: 16));
-    }
-  }
-
-  /// 문자열로부터 아이콘 위젯 생성
-  Widget _buildIconFromString(String iconString, Color color) {
-    if (iconString.startsWith('material:')) {
-      return Icon(_parseIcon(iconString), size: 20, color: color);
-    } else {
-      return Text(iconString, style: const TextStyle(fontSize: 18));
-    }
-  }
-  /// 급여 타입 라벨 반환
+   /// 급여 타입 라벨 반환
   String _getWageLabelFromType(String wageType) {
     switch (wageType) {
       case 'hourly':
@@ -1945,40 +1856,5 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
       default:
         return '급여';
     }
-  }
-  /// 급여 타입 선택 버튼 (인라인)
-  Widget _buildWageTypeButtonInline({
-    required BuildContext context,
-    required String label,
-    required String value,
-    required String selectedValue,
-    required VoidCallback onTap,
-  }) {
-    final isSelected = selectedValue == value;
-    
-    return InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(8),
-      child: Container(
-        padding: const EdgeInsets.symmetric(vertical: 12),
-        decoration: BoxDecoration(
-          color: isSelected ? Colors.blue[700] : Colors.grey[200],
-          borderRadius: BorderRadius.circular(8),
-          border: Border.all(
-            color: isSelected ? Colors.blue[700]! : Colors.grey[300]!,
-            width: 2,
-          ),
-        ),
-        child: Text(
-          label,
-          textAlign: TextAlign.center,
-          style: TextStyle(
-            color: isSelected ? Colors.white : Colors.grey[700],
-            fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
-            fontSize: 14,
-          ),
-        ),
-      ),
-    );
   }
 }

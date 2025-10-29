@@ -6,6 +6,7 @@ import '../utils/toast_helper.dart';
 import '../utils/labor_standards.dart';
 import '../models/work_detail_input.dart'; 
 import '../widgets/work_type_icon.dart';
+import '../utils/format_helper.dart';
 
 // ============================================================
 // 🎨 업무 추가 다이얼로그 (공통)
@@ -275,27 +276,7 @@ class WorkDetailDialog {
   // 🛠️ 헬퍼 함수들
   // ============================================================
 
-  /// 시간 리스트 생성 (00:00 ~ 23:30, 30분 단위)
-  static List<String> _generateTimeList() {
-    List<String> times = [];
-    for (int hour = 0; hour < 24; hour++) {
-      for (int minute = 0; minute < 60; minute += 30) {
-        times.add('${hour.toString().padLeft(2, '0')}:${minute.toString().padLeft(2, '0')}');
-      }
-    }
-    return times;
-  }
-
-  /// 색상 파싱
-  static Color _parseColor(String colorString) {
-    try {
-      return Color(int.parse(colorString.replaceFirst('#', '0xFF')));
-    } catch (e) {
-      return Colors.blue;
-    }
-  }
-
-  /// 급여 타입에 따른 라벨 반환
+    /// 급여 타입에 따른 라벨 반환
   static String _getWageLabelFromType(String wageType) {
     switch (wageType) {
       case 'hourly':

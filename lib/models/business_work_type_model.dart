@@ -1,4 +1,5 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
+import '../utils/format_helper.dart';
 
 /// 사업장별 업무 유형 모델 (간소화 버전)
 class BusinessWorkTypeModel {
@@ -83,15 +84,6 @@ class BusinessWorkTypeModel {
       createdAt: createdAt ?? this.createdAt,
     );
   }
-
-  /// ✅ NEW: 금액 포맷팅 (천단위 콤마)
-  String formatWage(int wage) {
-    return '${wage.toString().replaceAllMapped(
-      RegExp(r'(\d{1,3})(?=(\d{3})+(?!\d))'),
-      (Match m) => '${m[1]},',
-    )}원';
-  }
-
   @override
   String toString() {
     return 'BusinessWorkType(id: $id, name: $name, icon: $icon)';

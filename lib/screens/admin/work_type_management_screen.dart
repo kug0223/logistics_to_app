@@ -8,6 +8,7 @@ import '../../widgets/loading_widget.dart';
 import '../../widgets/icon_picker_dialog.dart';
 import '../../widgets/work_type_icon.dart';
 import '../../utils/toast_helper.dart';
+import '../../utils/format_helper.dart';
 
 /// 업무 유형 관리 화면
 class WorkTypeManagementScreen extends StatefulWidget {
@@ -447,7 +448,7 @@ class _WorkTypeManagementScreenState extends State<WorkTypeManagementScreen> {
               width: 48,
               height: 48,
               decoration: BoxDecoration(
-                color: WorkTypeIcon.parseColor(workType.backgroundColor),
+                color: FormatHelper.parseColor(workType.backgroundColor),
                 borderRadius: BorderRadius.circular(8),
               ),
               child: Center(
