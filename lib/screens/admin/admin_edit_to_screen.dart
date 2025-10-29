@@ -10,6 +10,8 @@ import '../../services/firestore_service.dart';
 import '../../providers/user_provider.dart';
 import '../../utils/toast_helper.dart';
 import '../../widgets/loading_widget.dart';
+import '../../widgets/work_detail_dialog.dart';
+import '../../widgets/work_type_icon.dart';
 
 /// TO 수정 화면
 class AdminEditTOScreen extends StatefulWidget {
@@ -166,195 +168,36 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
   }
 
   /// 업무 추가 다이얼로그
+  /// 업무 추가 다이얼로그
   Future<void> _showAddWorkDialog() async {
-    BusinessWorkTypeModel? selectedWorkType;
-    String? startTime;
-    String? endTime;
-    final wageController = TextEditingController();
-    final countController = TextEditingController();
-
-    final result = await showDialog<WorkDetailModel>(
+    final result = await WorkDetailDialog.showAddDialog(
       context: context,
-      builder: (context) => StatefulBuilder(
-        builder: (context, setDialogState) {
-          return AlertDialog(
-            title: const Text('업무 추가'),
-            content: SingleChildScrollView(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  // 업무 유형 선택
-                  const Text('업무 유형', style: TextStyle(fontWeight: FontWeight.bold)),
-                  const SizedBox(height: 8),
-                  DropdownButtonFormField<BusinessWorkTypeModel>(
-                    value: selectedWorkType,
-                    decoration: const InputDecoration(
-                      border: OutlineInputBorder(),
-                      hintText: '업무 선택',
-                    ),
-                    items: _businessWorkTypes.map((workType) {
-                      return DropdownMenuItem<BusinessWorkTypeModel>(
-                        value: workType,
-                        child: Row(
-                          children: [
-                            Container(
-                              width: 32,
-                              height: 32,
-                              decoration: BoxDecoration(
-                                color: _parseColor(workType.backgroundColor ?? '#E3F2FD'),
-                                borderRadius: BorderRadius.circular(6),
-                              ),
-                              child: Center(
-                                child: _buildIconOrEmoji(workType),
-                              ),
-                            ),
-                            const SizedBox(width: 12),
-                            Text(workType.name),
-                          ],
-                        ),
-                      );
-                    }).toList(),
-                    onChanged: (value) {
-                      setDialogState(() {
-                        selectedWorkType = value;
-                      });
-                    },
-                  ),
-                  const SizedBox(height: 16),
-
-                  // 시작 시간
-                  const Text('시작 시간', style: TextStyle(fontWeight: FontWeight.bold)),
-                  const SizedBox(height: 8),
-                  DropdownButtonFormField<String>(
-                    value: startTime,
-                    decoration: const InputDecoration(
-                      border: OutlineInputBorder(),
-                      hintText: '시작 시간',
-                    ),
-                    items: _generateTimeList().map((time) {
-                      return DropdownMenuItem<String>(
-                        value: time,
-                        child: Text(time),
-                      );
-                    }).toList(),
-                    onChanged: (value) {
-                      setDialogState(() {
-                        startTime = value;
-                      });
-                    },
-                  ),
-                  const SizedBox(height: 16),
-
-                  // 종료 시간
-                  const Text('종료 시간', style: TextStyle(fontWeight: FontWeight.bold)),
-                  const SizedBox(height: 8),
-                  DropdownButtonFormField<String>(
-                    value: endTime,
-                    decoration: const InputDecoration(
-                      border: OutlineInputBorder(),
-                      hintText: '종료 시간',
-                    ),
-                    items: _generateTimeList().map((time) {
-                      return DropdownMenuItem<String>(
-                        value: time,
-                        child: Text(time),
-                      );
-                    }).toList(),
-                    onChanged: (value) {
-                      setDialogState(() {
-                        endTime = value;
-                      });
-                    },
-                  ),
-                  const SizedBox(height: 16),
-
-                  // 금액
-                  const Text('금액 (원)', style: TextStyle(fontWeight: FontWeight.bold)),
-                  const SizedBox(height: 8),
-                  TextField(
-                    controller: wageController,
-                    keyboardType: TextInputType.number,
-                    decoration: const InputDecoration(
-                      border: OutlineInputBorder(),
-                      hintText: '예: 50000',
-                    ),
-                    inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-                  ),
-                  const SizedBox(height: 16),
-
-                  // 필요 인원
-                  const Text('필요 인원', style: TextStyle(fontWeight: FontWeight.bold)),
-                  const SizedBox(height: 8),
-                  TextField(
-                    controller: countController,
-                    keyboardType: TextInputType.number,
-                    decoration: const InputDecoration(
-                      border: OutlineInputBorder(),
-                      hintText: '예: 5',
-                    ),
-                    inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-                  ),
-                ],
-              ),
-            ),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.pop(context),
-                child: const Text('취소'),
-              ),
-              ElevatedButton(
-                onPressed: () {
-                  if (selectedWorkType == null) {
-                    ToastHelper.showError('업무 유형을 선택하세요');
-                    return;
-                  }
-                  if (startTime == null || endTime == null) {
-                    ToastHelper.showError('시간을 입력하세요');
-                    return;
-                  }
-                  final wage = int.tryParse(wageController.text);
-                  final count = int.tryParse(countController.text);
-
-                  if (wage == null || count == null) {
-                    ToastHelper.showError('금액과 인원을 입력하세요');
-                    return;
-                  }
-
-                  // 새 WorkDetail 생성 (임시 ID)
-                  final newWork = WorkDetailModel(
-                    id: 'temp_${DateTime.now().millisecondsSinceEpoch}',
-                    workType: selectedWorkType!.name,
-                    workTypeIcon: selectedWorkType!.icon,
-                    workTypeColor: selectedWorkType!.color ?? '#2196F3',
-                    wage: wage,
-                    requiredCount: count,
-                    currentCount: 0,
-                    startTime: startTime!,
-                    endTime: endTime!,
-                    order: _workDetails.length,
-                    createdAt: DateTime.now(),
-                  );
-
-                  Navigator.pop(context, newWork);
-                },
-                child: const Text('추가'),
-              ),
-            ],
-          );
-        },
-      ),
+      businessWorkTypes: _businessWorkTypes,
     );
 
     if (result != null) {
-      // Firestore에 추가
+      // WorkDetailInput → WorkDetailModel 변환
+      final newWork = WorkDetailModel(
+        id: 'temp_${DateTime.now().millisecondsSinceEpoch}',
+        workType: result.workType!,
+        workTypeIcon: result.workTypeIcon,
+        workTypeColor: result.workTypeColor,
+        wage: result.wage!,
+        requiredCount: result.requiredCount!,
+        currentCount: 0,
+        startTime: result.startTime!,
+        endTime: result.endTime!,
+        order: _workDetails.length,
+        createdAt: DateTime.now(),
+      );
+
       try {
         await _firestoreService.addWorkDetail(
           toId: widget.to.id,
-          workDetail: result,
+          workDetail: newWork,
         );
         ToastHelper.showSuccess('업무가 추가되었습니다');
-        _loadData(); // 새로고침
+        _loadData();
       } catch (e) {
         print('❌ 업무 추가 실패: $e');
         ToastHelper.showError('업무 추가에 실패했습니다');

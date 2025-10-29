@@ -11,50 +11,10 @@ import '../../providers/user_provider.dart';
 import '../../utils/toast_helper.dart';
 import '../../models/business_work_type_model.dart';
 import '../../utils/labor_standards.dart';
+import '../../widgets/work_detail_dialog.dart';
+import '../../models/work_detail_input.dart';
+import '../../widgets/work_type_icon.dart';
 
-// ============================================================
-// 📦 데이터 모델
-// ============================================================
-
-/// 업무 상세 입력 데이터 클래스
-class WorkDetailInput {
-  final String? workType;
-  final String workTypeIcon;
-  final String workTypeColor;
-  final int? wage;
-  final int? requiredCount;
-  final String? startTime;
-  final String? endTime;
-  final String wageType; // ✅ 추가
-
-  WorkDetailInput({
-    this.workType,
-    this.workTypeIcon = 'work',
-    this.workTypeColor = '#2196F3',
-    this.wage,
-    this.requiredCount,
-    this.startTime,
-    this.endTime,
-    this.wageType = 'hourly', // ✅ 추가
-  });
-
-  bool get isValid =>
-      workType != null &&
-      wage != null &&
-      requiredCount != null &&
-      startTime != null &&
-      endTime != null;
-
-  Map<String, dynamic> toMap() {
-    return {
-      'workType': workType!,
-      'wage': wage!,
-      'requiredCount': requiredCount!,
-      'startTime': startTime!,
-      'endTime': endTime!,
-    };
-  }
-}
 
 // ============================================================
 // 🎨 메인 화면
@@ -532,258 +492,10 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
 
   /// 업무 추가 다이얼로그
   Future<void> _showAddWorkDetailDialog() async {
-    BusinessWorkTypeModel? selectedWorkType;
-    String selectedWageType = 'hourly'; // ✅ 이 줄 추가
-    String? startTime;
-    String? endTime;
-    final wageController = TextEditingController();
-    final countController = TextEditingController();
-
-    final result = await showDialog<WorkDetailInput>(
+    final result = await WorkDetailDialog.showAddDialog(
       context: context,
-      builder: (context) => StatefulBuilder(
-        builder: (context, setDialogState) {
-          return AlertDialog(
-            title: const Text('업무 추가'),
-            content: SingleChildScrollView(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  // 업무 유형 선택
-                  const Text('업무 유형', style: TextStyle(fontWeight: FontWeight.bold)),
-                  const SizedBox(height: 8),
-                  DropdownButtonFormField<BusinessWorkTypeModel>(
-                    value: selectedWorkType,
-                    decoration: const InputDecoration(
-                      border: OutlineInputBorder(),
-                      hintText: '업무 선택',
-                    ),
-                    items: _businessWorkTypes.map((workType) {
-                      return DropdownMenuItem<BusinessWorkTypeModel>(
-                        value: workType,
-                        child: Row(
-                          children: [
-                            Container(
-                              width: 32,
-                              height: 32,
-                              decoration: BoxDecoration(
-                                color: _parseColor(workType.backgroundColor ?? '#2196F3'),
-                                shape: BoxShape.circle,
-                              ),
-                              child: Center(
-                                child: _buildIconOrEmojiSmall(workType),
-                              ),
-                            ),
-                            const SizedBox(width: 12),
-                            Text(workType.name),
-                          ],
-                        ),
-                      );
-                    }).toList(),
-                    onChanged: (value) {
-                      setDialogState(() => selectedWorkType = value);
-                    },
-                  ),
-                  const SizedBox(height: 16),
-                  
-                  // ✅ 급여 타입 선택 추가
-                  const Text('급여 타입', style: TextStyle(fontWeight: FontWeight.bold)),
-                  const SizedBox(height: 8),
-                  Row(
-                    children: [
-                      Expanded(
-                        child: _buildWageTypeButtonInline(
-                          context: context,
-                          label: '시급',
-                          value: 'hourly',
-                          selectedValue: selectedWageType,
-                          onTap: () {
-                            setDialogState(() {
-                              selectedWageType = 'hourly';
-                            });
-                          },
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: _buildWageTypeButtonInline(
-                          context: context,
-                          label: '일급',
-                          value: 'daily',
-                          selectedValue: selectedWageType,
-                          onTap: () {
-                            setDialogState(() {
-                              selectedWageType = 'daily';
-                            });
-                          },
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: _buildWageTypeButtonInline(
-                          context: context,
-                          label: '월급',
-                          value: 'monthly',
-                          selectedValue: selectedWageType,
-                          onTap: () {
-                            setDialogState(() {
-                              selectedWageType = 'monthly';
-                            });
-                          },
-                        ),
-                      ),
-                    ],
-                  ),
-
-                  // 근무 시간
-                  const Text('근무 시간', style: TextStyle(fontWeight: FontWeight.bold)),
-                  const SizedBox(height: 8),
-                  Row(
-                    children: [
-                      Expanded(
-                        child: DropdownButtonFormField<String>(
-                          value: startTime,
-                          decoration: const InputDecoration(
-                            border: OutlineInputBorder(),
-                            hintText: '시작',
-                          ),
-                          items: _generateTimeList().map((time) {
-                            return DropdownMenuItem(value: time, child: Text(time));
-                          }).toList(),
-                          onChanged: (value) => setDialogState(() => startTime = value),
-                        ),
-                      ),
-                      const Padding(
-                        padding: EdgeInsets.symmetric(horizontal: 8),
-                        child: Text('~', style: TextStyle(fontSize: 18)),
-                      ),
-                      Expanded(
-                        child: DropdownButtonFormField<String>(
-                          value: endTime,
-                          decoration: const InputDecoration(
-                            border: OutlineInputBorder(),
-                            hintText: '종료',
-                          ),
-                          items: _generateTimeList().map((time) {
-                            return DropdownMenuItem(value: time, child: Text(time));
-                          }).toList(),
-                          onChanged: (value) => setDialogState(() => endTime = value),
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 16),
-
-                  // 급여 입력
-                  Text(
-                    _getWageLabelFromType(selectedWageType),  // ✅ 이것만!
-                    style: const TextStyle(fontWeight: FontWeight.bold),
-                  ),
-                  const SizedBox(height: 8),
-                  TextFormField(
-                    controller: wageController,
-                    keyboardType: TextInputType.number,
-                    inputFormatters: [
-                      FilteringTextInputFormatter.digitsOnly,
-                      // ✅ 천단위 콤마 포맷터 추가
-                      TextInputFormatter.withFunction((oldValue, newValue) {
-                        if (newValue.text.isEmpty) {
-                          return newValue;
-                        }
-                        
-                        final number = int.tryParse(newValue.text.replaceAll(',', ''));
-                        if (number == null) {
-                          return oldValue;
-                        }
-                        
-                        final formatted = number.toString().replaceAllMapped(
-                          RegExp(r'(\d{1,3})(?=(\d{3})+(?!\d))'),
-                          (Match m) => '${m[1]},',
-                        );
-                        
-                        return TextEditingValue(
-                          text: formatted,
-                          selection: TextSelection.collapsed(offset: formatted.length),
-                        );
-                      }),
-                    ],
-                    decoration: InputDecoration(
-                      border: const OutlineInputBorder(),
-                      hintText: '금액을 입력하세요.',
-                      suffixText: '원',
-                      helperText: selectedWageType == 'hourly'
-                          ? '2025년 최저시급: ${LaborStandards.formatCurrencyWithUnit(LaborStandards.currentMinimumWage)}'
-                          : null,
-                    ),
-                  ),
-                  const SizedBox(height: 16),
-
-                  // 필요 인원
-                  const Text('필요 인원', style: TextStyle(fontWeight: FontWeight.bold)),
-                  const SizedBox(height: 8),
-                  TextFormField(
-                    controller: countController,
-                    keyboardType: TextInputType.number,
-                    inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-                    decoration: const InputDecoration(
-                      border: OutlineInputBorder(),
-                      hintText: '필요 인원 수 입력하세요.',
-                      suffixText: '명',
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.pop(context),
-                child: const Text('취소'),
-              ),
-              ElevatedButton(
-                onPressed: () {
-                  if (selectedWorkType == null ||
-                      startTime == null ||
-                      endTime == null ||
-                      wageController.text.isEmpty ||
-                      countController.text.isEmpty) {
-                    ToastHelper.showError('모든 정보를 입력해주세요');
-                    return;
-                  }
-
-                  final wage = int.tryParse(wageController.text.replaceAll(',', ''));
-                  final count = int.tryParse(countController.text);
-
-                  if (wage == null || wage <= 0) {
-                    ToastHelper.showError('유효한 급여를 입력해주세요');
-                    return;
-                  }
-
-                  if (count == null || count <= 0) {
-                    ToastHelper.showError('유효한 인원 수를 입력해주세요');
-                    return;
-                  }
-
-                  Navigator.pop(
-                    context,
-                    WorkDetailInput(
-                      workType: selectedWorkType!.name,
-                      workTypeIcon: selectedWorkType!.icon,
-                      workTypeColor: selectedWorkType!.backgroundColor ?? '#2196F3',
-                      wage: wage,
-                      requiredCount: count,
-                      startTime: startTime,
-                      endTime: endTime,
-                      wageType: selectedWageType, // ✅ 이 줄 추가
-                    ),
-                  );
-                },
-                child: const Text('추가'),
-              ),
-            ],
-          );
-        },
-      ),
+      businessWorkTypes: _businessWorkTypes,
+      
     );
 
     if (result != null) {
@@ -1700,8 +1412,12 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
                     borderRadius: BorderRadius.circular(8),
                   ),
                   child: Center(
-                    child: _buildIconFromString(detail.workTypeIcon, Colors.white),
-                  ),
+                    child: WorkTypeIcon.buildFromString(
+                      detail.workTypeIcon,  // ✅ 문자열 직접 전달
+                      color: Colors.white,
+                      size: 20,
+                    ),
+                    ),
                 ),
                 const SizedBox(width: 12),
                 Expanded(

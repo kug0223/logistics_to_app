@@ -949,83 +949,128 @@ class _AdminTOListScreenState extends State<AdminTOListScreen> {
                       
                       // ✅ 단일 TO인 경우
                       if (!groupItem.isGrouped) ...[
-                        IconButton(
-                          icon: const Icon(Icons.edit, size: 18),
-                          color: Colors.orange[600],
-                          tooltip: 'TO 수정',
-                          padding: const EdgeInsets.all(8),  // ← 변경
-                          constraints: const BoxConstraints(minWidth: 40, minHeight: 40),  // ← 변경
-                          onPressed: () async {
-                            final result = await Navigator.push(
-                              context,
-                              MaterialPageRoute(
-                                builder: (context) => AdminEditTOScreen(to: masterTO),
-                              ),
-                            );
-                            if (result == true) _loadTOsWithStats();
-                          },
-                        ),
-                        const SizedBox(width: 4),
-                        IconButton(
-                          icon: const Icon(Icons.delete, size: 18),
-                          color: Colors.red[600],
-                          tooltip: 'TO 삭제',
-                          padding: const EdgeInsets.all(8),  // ← 변경
-                          constraints: const BoxConstraints(minWidth: 40, minHeight: 40),  // ← 변경
-                          onPressed: () => _showDeleteTODialog(groupItem.groupTOs.first),
-                        ),
-                        const SizedBox(width: 4),
-                        IconButton(
-                          icon: const Icon(Icons.link, size: 18),
-                          color: Colors.blue[600],
-                          tooltip: '그룹 연결',
-                          padding: const EdgeInsets.all(8),  // ← 변경
-                          constraints: const BoxConstraints(minWidth: 40, minHeight: 40),  // ← 변경
-                          onPressed: () => _showReconnectToGroupDialog(groupItem.groupTOs.first),
-                        ),
-                        const SizedBox(width: 4),
-                        IconButton(
-                          icon: const Icon(Icons.info_outline, size: 18),
-                          color: Colors.purple[600],
-                          tooltip: '지원자 관리',
-                          padding: const EdgeInsets.all(8),  // ← 변경
-                          constraints: const BoxConstraints(minWidth: 40, minHeight: 40),  // ← 변경
-                          onPressed: () {
-                            Navigator.push(
-                              context,
-                              MaterialPageRoute(
-                                builder: (context) => AdminTODetailScreen(to: masterTO),
-                              ),
-                            );
-                          },
-                        ),
-                      ],
+                      PopupMenuButton<String>(
+                        icon: Icon(Icons.more_vert, size: 20, color: Colors.grey[700]),
+                        padding: EdgeInsets.zero,
+                        tooltip: '메뉴',
+                        onSelected: (value) {
+                          switch (value) {
+                            case 'edit':
+                              Navigator.push(
+                                context,
+                                MaterialPageRoute(
+                                  builder: (context) => AdminEditTOScreen(to: masterTO),
+                                ),
+                              ).then((result) {
+                                if (result == true) _loadTOsWithStats();
+                              });
+                              break;
+                            case 'delete':
+                              _showDeleteTODialog(groupItem.groupTOs.first);
+                              break;
+                            case 'link':
+                              _showReconnectToGroupDialog(groupItem.groupTOs.first);
+                              break;
+                            case 'detail':
+                              Navigator.push(
+                                context,
+                                MaterialPageRoute(
+                                  builder: (context) => AdminTODetailScreen(to: masterTO),
+                                ),
+                              );
+                              break;
+                          }
+                        },
+                        itemBuilder: (context) => [
+                          PopupMenuItem(
+                            value: 'edit',
+                            child: Row(
+                              children: [
+                                Icon(Icons.edit, size: 18, color: Colors.orange[600]),
+                                const SizedBox(width: 12),
+                                const Text('TO 수정'),
+                              ],
+                            ),
+                          ),
+                          PopupMenuItem(
+                            value: 'delete',
+                            child: Row(
+                              children: [
+                                Icon(Icons.delete, size: 18, color: Colors.red[600]),
+                                const SizedBox(width: 12),
+                                const Text('TO 삭제'),
+                              ],
+                            ),
+                          ),
+                          PopupMenuItem(
+                            value: 'link',
+                            child: Row(
+                              children: [
+                                Icon(Icons.link, size: 18, color: Colors.blue[600]),
+                                const SizedBox(width: 12),
+                                const Text('그룹 연결'),
+                              ],
+                            ),
+                          ),
+                          PopupMenuItem(
+                            value: 'detail',
+                            child: Row(
+                              children: [
+                                Icon(Icons.info_outline, size: 18, color: Colors.purple[600]),
+                                const SizedBox(width: 12),
+                                const Text('지원자 관리'),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
                       
-                      // ✅ 그룹 TO인 경우 그룹명 수정/전체 삭제 버튼
-                      if (groupItem.isGrouped && masterTO.groupId != null) ...[
-                        IconButton(
-                          icon: const Icon(Icons.edit, size: 18),
-                          color: Colors.blue[600],
-                          tooltip: '그룹명 수정',
-                          padding: const EdgeInsets.all(8),  // ← 변경
-                          constraints: const BoxConstraints(minWidth: 40, minHeight: 40),  // ← 변경
-                          onPressed: () => _showEditGroupNameDialog(masterTO),
-                        ),
-                        const SizedBox(width: 4),
-                        IconButton(
-                          icon: const Icon(Icons.delete_forever, size: 18),
-                          color: Colors.red[600],
-                          tooltip: '그룹 전체 삭제',
-                          padding: const EdgeInsets.all(8),  // ← 변경
-                          constraints: const BoxConstraints(minWidth: 40, minHeight: 40),  // ← 변경
-                          onPressed: () => _showDeleteGroupDialog(groupItem),
-                        ),
-                      ],
-                      
-                      const SizedBox(width: 4),
-                      
-                      // ✅ 토글 아이콘
-                      Icon(
+                    // ✅ 그룹 TO용 더보기 메뉴
+                    if (groupItem.isGrouped && masterTO.groupId != null) ...[
+                      PopupMenuButton<String>(
+                        icon: Icon(Icons.more_vert, size: 20, color: Colors.grey[700]),
+                        padding: EdgeInsets.zero,
+                        tooltip: '메뉴',
+                        onSelected: (value) {
+                          switch (value) {
+                            case 'editGroupName':
+                              _showEditGroupNameDialog(masterTO);
+                              break;
+                            case 'deleteGroup':
+                              _showDeleteGroupDialog(groupItem);
+                              break;
+                          }
+                        },
+                        itemBuilder: (context) => [
+                          PopupMenuItem(
+                            value: 'editGroupName',
+                            child: Row(
+                              children: [
+                                Icon(Icons.edit, size: 18, color: Colors.blue[600]),
+                                const SizedBox(width: 12),
+                                const Text('그룹명 수정'),
+                              ],
+                            ),
+                          ),
+                          PopupMenuItem(
+                            value: 'deleteGroup',
+                            child: Row(
+                              children: [
+                                Icon(Icons.delete_forever, size: 18, color: Colors.red[600]),
+                                const SizedBox(width: 12),
+                                const Text('그룹 전체 삭제'),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
+
+                    const SizedBox(width: 4),
+
+                    // ✅ 토글 아이콘
+                    Icon(
                         isExpanded ? Icons.keyboard_arrow_up : Icons.keyboard_arrow_down,
                         color: Colors.grey[600],
                       ),
@@ -1196,7 +1241,7 @@ class _AdminTOListScreenState extends State<AdminTOListScreen> {
                   ),
                   const SizedBox(height: 8),
                   
-                  // ✅ 둘째 줄: 통계 + 버튼들
+                  // ✅ 둘째 줄: 통계 + 더보기 메뉴
                   Row(
                     children: [
                       // 통계
@@ -1217,60 +1262,84 @@ class _AdminTOListScreenState extends State<AdminTOListScreen> {
                       
                       const Spacer(),
                       
-                      // 수정 버튼
-                      IconButton(
-                        onPressed: () async {
-                          final result = await Navigator.push(
-                            context,
-                            MaterialPageRoute(
-                              builder: (context) => AdminEditTOScreen(to: to),
-                            ),
-                          );
-                          if (result == true) _loadTOsWithStats();
+                      // ✅ 더보기 메뉴
+                      PopupMenuButton<String>(
+                        icon: Icon(Icons.more_vert, size: 20, color: Colors.grey[700]),
+                        padding: EdgeInsets.zero,
+                        tooltip: '메뉴',
+                        onSelected: (value) {
+                          switch (value) {
+                            case 'edit':
+                              Navigator.push(
+                                context,
+                                MaterialPageRoute(
+                                  builder: (context) => AdminEditTOScreen(to: to),
+                                ),
+                              ).then((result) {
+                                if (result == true) _loadTOsWithStats();
+                              });
+                              break;
+                            case 'delete':
+                              _showDeleteTODialog(toItem);
+                              break;
+                            case 'unlink':
+                              _showRemoveFromGroupDialog(toItem);
+                              break;
+                            case 'detail':
+                              Navigator.push(
+                                context,
+                                MaterialPageRoute(
+                                  builder: (context) => AdminTODetailScreen(to: to),
+                                ),
+                              );
+                              break;
+                          }
                         },
-                        icon: const Icon(Icons.edit, size: 16),
-                        color: Colors.orange[700],
-                        tooltip: '수정',
-                        padding: const EdgeInsets.all(8),  // ← 변경
-                        constraints: const BoxConstraints(minWidth: 40, minHeight: 40),  // ← 변경
-                      ),
-
-                      // 삭제 버튼
-                      IconButton(
-                        onPressed: () => _showDeleteTODialog(toItem),
-                        icon: const Icon(Icons.delete, size: 16),
-                        color: Colors.red[700],
-                        tooltip: '삭제',
-                        padding: const EdgeInsets.all(8),  // ← 변경
-                        constraints: const BoxConstraints(minWidth: 40, minHeight: 40),  // ← 변경
+                        itemBuilder: (context) => [
+                          PopupMenuItem(
+                            value: 'edit',
+                            child: Row(
+                              children: [
+                                Icon(Icons.edit, size: 18, color: Colors.orange[700]),
+                                SizedBox(width: 12),
+                                Text('수정'),
+                              ],
+                            ),
+                          ),
+                          PopupMenuItem(
+                            value: 'delete',
+                            child: Row(
+                              children: [
+                                Icon(Icons.delete, size: 18, color: Colors.red[700]),
+                                SizedBox(width: 12),
+                                Text('삭제'),
+                              ],
+                            ),
+                          ),
+                          PopupMenuItem(
+                            value: 'unlink',
+                            child: Row(
+                              children: [
+                                Icon(Icons.link_off, size: 18, color: Colors.orange[700]),
+                                SizedBox(width: 12),
+                                Text('그룹 해제'),
+                              ],
+                            ),
+                          ),
+                          PopupMenuItem(
+                            value: 'detail',
+                            child: Row(
+                              children: [
+                                Icon(Icons.info_outline, size: 18, color: Colors.purple[600]),
+                                SizedBox(width: 12),
+                                Text('지원자 관리'),
+                              ],
+                            ),
+                          ),
+                        ],
                       ),
                       
-                      // ✅ 그룹 해제 버튼 추가!
-                      IconButton(
-                        icon: const Icon(Icons.link_off, size: 18),
-                        color: Colors.orange[700],
-                        tooltip: '그룹 해제',
-                        padding: const EdgeInsets.all(8),
-                        constraints: const BoxConstraints(minWidth: 40, minHeight: 40),
-                        onPressed: () => _showRemoveFromGroupDialog(toItem),
-                      ),
-                      
-                      // 지원자 관리 버튼
-                      IconButton(
-                        icon: const Icon(Icons.info_outline, size: 18),
-                        color: const Color.fromARGB(255, 22, 21, 22),
-                        tooltip: '지원자 관리',
-                        padding: const EdgeInsets.all(8),  // ← 변경
-                        constraints: const BoxConstraints(minWidth: 40, minHeight: 40),  // ← 변경
-                        onPressed: () {
-                          Navigator.push(
-                            context,
-                            MaterialPageRoute(
-                              builder: (context) => AdminTODetailScreen(to: to),
-                            ),
-                          );
-                        },
-                      ),
+                      const SizedBox(width: 4),
                       
                       // 펼치기/접기 아이콘
                       Icon(
