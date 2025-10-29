@@ -2055,4 +2055,191 @@ class FirestoreService {
       return false;
     }
   }
+  // ═══════════════════════════════════════════════════════════
+  // ✅ Phase 4: TO 마감 관리 (TO Status Management)
+  // ═══════════════════════════════════════════════════════════
+
+  /// 진행중인 TO 목록 조회 (대표 TO + 단일 TO)
+  Future<List<TOModel>> getActiveTOs() async {
+    try {
+      // ✅ 모든 TO 조회 (isGroupMaster 조건 제거)
+      final snapshot = await _firestore
+          .collection('tos')
+          .orderBy('date', descending: false)
+          .get();
+
+      final allTOs = snapshot.docs
+          .map((doc) => TOModel.fromMap(doc.data(), doc.id))
+          .toList();
+
+      // ✅ 1. 대표 TO 또는 단일 TO만 필터링
+      final masterOrSingleTOs = allTOs.where((to) {
+        // 그룹 TO면 대표만, 단일 TO면 모두 포함
+        if (to.groupId != null) {
+          return to.isGroupMaster;
+        }
+        return true;  // 단일 TO (groupId가 null)
+      }).toList();
+
+      // ✅ 2. 진행중인 것만 필터링 (마감되지 않은 것)
+      final activeTOs = masterOrSingleTOs.where((to) => !to.isClosed).toList();
+
+      print('✅ 진행중 TO 조회: ${activeTOs.length}개 (그룹 대표 + 단일 TO)');
+      return activeTOs;
+    } catch (e) {
+      print('❌ 진행중 TO 조회 실패: $e');
+      return [];
+    }
+  }
+
+  /// 마감된 TO 목록 조회 (대표 TO + 단일 TO)
+  Future<List<TOModel>> getClosedTOs() async {
+    try {
+      // ✅ 1. 수동 마감된 TO (모든 TO 조회)
+      List<TOModel> manualClosed = [];
+      try {
+        final manualClosedSnapshot = await _firestore
+            .collection('tos')
+            .where('isManualClosed', isEqualTo: true)
+            .orderBy('closedAt', descending: true)
+            .get();
+
+        final allManualClosed = manualClosedSnapshot.docs
+            .map((doc) => TOModel.fromMap(doc.data(), doc.id))
+            .toList();
+
+        // 대표 TO 또는 단일 TO만 필터링
+        manualClosed = allManualClosed.where((to) {
+          if (to.groupId != null) {
+            return to.isGroupMaster;
+          }
+          return true;
+        }).toList();
+      } catch (e) {
+        print('⚠️ 수동 마감 TO 조회 실패 (필드 없을 수 있음): $e');
+      }
+
+      // ✅ 2. 모든 TO 가져와서 자동 마감 체크
+      final allSnapshot = await _firestore
+          .collection('tos')
+          .get();
+
+      final allTOs = allSnapshot.docs
+          .map((doc) => TOModel.fromMap(doc.data(), doc.id))
+          .toList();
+
+      // 대표 TO 또는 단일 TO만 필터링
+      final masterOrSingleTOs = allTOs.where((to) {
+        if (to.groupId != null) {
+          return to.isGroupMaster;
+        }
+        return true;
+      }).toList();
+
+      // 자동 마감된 TO (시간 초과 또는 인원 충족) - 수동 마감 제외
+      final autoClosed = masterOrSingleTOs
+          .where((to) => !to.isManualClosed && to.isClosed)
+          .toList();
+
+      // ✅ 3. 합치고 정렬 (최근 마감 순)
+      final allClosed = [...manualClosed, ...autoClosed];
+      allClosed.sort((a, b) {
+        final aDate = a.closedAt ?? a.date;
+        final bDate = b.closedAt ?? b.date;
+        return bDate.compareTo(aDate);
+      });
+
+      print('✅ 마감된 TO 조회: ${allClosed.length}개 (수동: ${manualClosed.length}, 자동: ${autoClosed.length})');
+      return allClosed;
+    } catch (e) {
+      print('❌ 마감된 TO 조회 실패: $e');
+      return [];
+    }
+  }
+
+  /// TO 수동 마감
+  Future<bool> closeTOManually(String toId, String adminUID) async {
+    try {
+      await _firestore.collection('tos').doc(toId).update({
+        'isManualClosed': true,
+        'closedAt': FieldValue.serverTimestamp(),
+        'closedBy': adminUID,
+      });
+
+      print('✅ TO 수동 마감 완료: $toId');
+      return true;
+    } catch (e) {
+      print('❌ TO 수동 마감 실패: $e');
+      return false;
+    }
+  }
+
+  /// TO 재오픈 (마감 취소)
+  Future<bool> reopenTO(String toId, String adminUID) async {
+    try {
+      await _firestore.collection('tos').doc(toId).update({
+        'isManualClosed': false,
+        'reopenedAt': FieldValue.serverTimestamp(),
+        'reopenedBy': adminUID,
+      });
+
+      print('✅ TO 재오픈 완료: $toId');
+      return true;
+    } catch (e) {
+      print('❌ TO 재오픈 실패: $e');
+      return false;
+    }
+  }
+
+  /// 그룹 TO 전체 마감
+  Future<bool> closeGroupTOs(String groupId, String adminUID) async {
+    try {
+      final snapshot = await _firestore
+          .collection('tos')
+          .where('groupId', isEqualTo: groupId)
+          .get();
+
+      final batch = _firestore.batch();
+      for (var doc in snapshot.docs) {
+        batch.update(doc.reference, {
+          'isManualClosed': true,
+          'closedAt': FieldValue.serverTimestamp(),
+          'closedBy': adminUID,
+        });
+      }
+
+      await batch.commit();
+      print('✅ 그룹 TO 전체 마감 완료: $groupId (${snapshot.docs.length}개)');
+      return true;
+    } catch (e) {
+      print('❌ 그룹 TO 전체 마감 실패: $e');
+      return false;
+    }
+  }
+
+  /// 그룹 TO 전체 재오픈
+  Future<bool> reopenGroupTOs(String groupId, String adminUID) async {
+    try {
+      final snapshot = await _firestore
+          .collection('tos')
+          .where('groupId', isEqualTo: groupId)
+          .get();
+
+      final batch = _firestore.batch();
+      for (var doc in snapshot.docs) {
+        batch.update(doc.reference, {
+          'isManualClosed': false,
+          'reopenedAt': FieldValue.serverTimestamp(),
+          'reopenedBy': adminUID,
+        });
+      }
+
+      await batch.commit();
+      print('✅ 그룹 TO 전체 재오픈 완료: $groupId (${snapshot.docs.length}개)');
+      return true;
+    } catch (e) {
+      print('❌ 그룹 TO 전체 재오픈 실패: $e');
+      return false;
+    }
+  }
 }

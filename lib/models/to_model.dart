@@ -38,6 +38,12 @@ class TOModel {
   final String? description; // 전체 설명
   final String creatorUID; // 생성한 관리자 UID
   final DateTime createdAt; // 생성 시각
+  // ✅ Phase 4: TO 마감 관리
+  final bool isManualClosed;        // 수동 마감 여부
+  final DateTime? closedAt;         // 마감 시각
+  final String? closedBy;           // 마감 처리자 UID
+  final DateTime? reopenedAt;       // 재오픈 시각
+  final String? reopenedBy;         // 재오픈 처리자 UID
 
   TOModel({
     required this.id,
@@ -63,6 +69,12 @@ class TOModel {
     this.description,
     required this.creatorUID,
     required this.createdAt,
+    // ✅ Phase 4: TO 마감 관리
+    this.isManualClosed = false,      // 기본값: 열림
+    this.closedAt,
+    this.closedBy,
+    this.reopenedAt,
+    this.reopenedBy,
   });
 
   /// Firestore 문서를 TOModel로 변환
@@ -108,7 +120,16 @@ class TOModel {
       createdAt: data['createdAt'] != null 
           ? (data['createdAt'] as Timestamp).toDate()
           : DateTime.now(),
-      
+      // ✅ Phase 4: TO 마감 관리
+      isManualClosed: data['isManualClosed'] ?? false,
+      closedAt: data['closedAt'] != null
+          ? (data['closedAt'] as Timestamp).toDate()
+          : null,
+      closedBy: data['closedBy'],
+      reopenedAt: data['reopenedAt'] != null
+          ? (data['reopenedAt'] as Timestamp).toDate()
+          : null,
+      reopenedBy: data['reopenedBy'],
     );
   }
 
@@ -136,6 +157,12 @@ class TOModel {
       'description': description,
       'creatorUID': creatorUID,
       'createdAt': Timestamp.fromDate(createdAt),
+      // ✅ Phase 4: TO 마감 관리
+      'isManualClosed': isManualClosed,
+      'closedAt': closedAt != null ? Timestamp.fromDate(closedAt!) : null,
+      'closedBy': closedBy,
+      'reopenedAt': reopenedAt != null ? Timestamp.fromDate(reopenedAt!) : null,
+      'reopenedBy': reopenedBy,
     };
   }
 
@@ -163,6 +190,12 @@ class TOModel {
     String? description,
     String? creatorUID,
     DateTime? createdAt,
+    // ✅ Phase 4
+    bool? isManualClosed,
+    DateTime? closedAt,
+    String? closedBy,
+    DateTime? reopenedAt,
+    String? reopenedBy,
   }) {
     return TOModel(
       id: id ?? this.id,
@@ -186,6 +219,12 @@ class TOModel {
       description: description ?? this.description,
       creatorUID: creatorUID ?? this.creatorUID,
       createdAt: createdAt ?? this.createdAt,
+      // ✅ Phase 4
+      isManualClosed: isManualClosed ?? this.isManualClosed,
+      closedAt: closedAt ?? this.closedAt,
+      closedBy: closedBy ?? this.closedBy,
+      reopenedAt: reopenedAt ?? this.reopenedAt,
+      reopenedBy: reopenedBy ?? this.reopenedBy,
     );
   }
   // ============================================
@@ -306,12 +345,6 @@ class TOModel {
   bool get isGrouped {
     return groupId != null;
   }
-
-  /// 모집 정원이 다 찼는지 확인
-  bool get isFull {
-    return totalConfirmed >= totalRequired;
-  }
-
   /// 남은 자리 수
   int get availableSlots {
     return totalRequired - totalConfirmed;
@@ -351,5 +384,48 @@ class TOModel {
       }
     }
     return applicationDeadline;
+  }
+  // ============================================
+  // ✅ Phase 4: TO 마감 상태 계산
+  // ============================================
+
+  /// 근무 시작 시간이 지났는지 확인
+  bool get isTimeExpired {
+    try {
+      final workStart = DateTime(
+        date.year,
+        date.month,
+        date.day,
+        int.parse(startTime.split(':')[0]),
+        int.parse(startTime.split(':')[1]),
+      );
+      return DateTime.now().isAfter(workStart);
+    } catch (e) {
+      return false;
+    }
+  }
+
+  /// 인원이 모두 충족되었는지 확인
+  bool get isFull => totalConfirmed >= totalRequired;
+
+  /// TO가 마감되었는지 확인 (수동 마감 or 시간 초과 or 인원 충족)
+  bool get isClosed {
+    return isManualClosed || isTimeExpired || isFull;
+  }
+
+  /// 마감 사유 문자열
+  String get closedReason {
+    if (isManualClosed) return '수동 마감';
+    if (isTimeExpired) return '시간 초과';
+    if (isFull) return '인원 충족';
+    return '';
+  }
+
+  /// 마감 사유 색상 (UI용)
+  int get closedReasonColor {
+    if (isManualClosed) return 0xFFFF9800; // 주황색
+    if (isTimeExpired) return 0xFFF44336; // 빨간색
+    if (isFull) return 0xFF4CAF50; // 초록색
+    return 0xFF9E9E9E; // 회색
   }
 }

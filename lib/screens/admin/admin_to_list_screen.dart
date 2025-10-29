@@ -11,6 +11,10 @@ import 'admin_create_to_screen.dart';
 import 'admin_edit_to_screen.dart';
 import '../../utils/format_helper.dart';
 import '../../widgets/work_type_icon.dart';
+import 'package:provider/provider.dart';
+import '../../providers/user_provider.dart';
+
+import '../../utils/test_data_helper.dart';
 
 /// 관리자 TO 목록 화면 - 이중 토글 UI
 class AdminTOListScreen extends StatefulWidget {
@@ -31,6 +35,8 @@ class _AdminTOListScreenState extends State<AdminTOListScreen> {
   List<_TOGroupItem> _allGroupItems = [];
   List<_TOGroupItem> _filteredGroupItems = [];
   bool _isLoading = true;
+  // ✅ Phase 4: 탭 상태
+  String _selectedTab = 'ACTIVE'; // 'ACTIVE' or 'CLOSED'
 
   // 사업장 목록
   List<String> _businessNames = [];
@@ -45,16 +51,22 @@ class _AdminTOListScreenState extends State<AdminTOListScreen> {
     _loadTOsWithStats();
   }
 
-  /// TO 목록 + 지원자 통계 로드 (통계 필드 활용)
+  /// TO 목록 + 지원자 통계 로드 (탭별 분리)
   Future<void> _loadTOsWithStats() async {
     setState(() {
       _isLoading = true;
     });
 
     try {
-      // 1. 대표 TO만 조회
-      final masterTOs = await _firestoreService.getGroupMasterTOs();
-      print('✅ 조회된 대표 TO 개수: ${masterTOs.length}');
+      // ✅ 탭에 따라 다른 쿼리 실행
+      List<TOModel> masterTOs;
+      if (_selectedTab == 'ACTIVE') {
+        masterTOs = await _firestoreService.getActiveTOs();
+        print('✅ 진행중 TO 조회: ${masterTOs.length}개');
+      } else {
+        masterTOs = await _firestoreService.getClosedTOs();
+        print('✅ 마감된 TO 조회: ${masterTOs.length}개');
+      }
 
       // 2. 각 TO별 처리
       List<_TOGroupItem> groupItems = [];
@@ -84,8 +96,8 @@ class _AdminTOListScreenState extends State<AdminTOListScreen> {
             toItems.add(_TOItem(
               to: to,
               workDetails: toWorkDetails,
-              confirmedCount: to.totalConfirmed,  // ✅ 통계 필드
-              pendingCount: to.totalPending,      // ✅ 통계 필드
+              confirmedCount: to.totalConfirmed,
+              pendingCount: to.totalPending,
             ));
           }
           
@@ -100,17 +112,36 @@ class _AdminTOListScreenState extends State<AdminTOListScreen> {
           
         } else {
           // 단일 TO인 경우
-          final singleWorkDetails = await _firestoreService.getWorkDetails(masterTO.id);
+          final workDetails = await _firestoreService.getWorkDetails(masterTO.id);
           
-          // ✅ TO 문서의 통계 필드 직접 사용 (지원자 조회 불필요!)
+          // ✅ 단일 TO 시간 범위 계산
+          if (workDetails.isNotEmpty) {
+            String? minStart;
+            String? maxEnd;
+            
+            for (var work in workDetails) {
+              if (minStart == null || work.startTime.compareTo(minStart) < 0) {
+                minStart = work.startTime;
+              }
+              if (maxEnd == null || work.endTime.compareTo(maxEnd) > 0) {
+                maxEnd = work.endTime;
+              }
+            }
+            
+            if (minStart != null && maxEnd != null) {
+              masterTO.setTimeRange(minStart, maxEnd);
+            }
+          }
+          
+          // ✅ 단일 TO 아이템 생성 (통계 필드 사용)
           groupItems.add(_TOGroupItem(
             masterTO: masterTO,
             groupTOs: [
               _TOItem(
                 to: masterTO,
-                workDetails: singleWorkDetails,
-                confirmedCount: masterTO.totalConfirmed,  // ✅ 통계 필드
-                pendingCount: masterTO.totalPending,      // ✅ 통계 필드
+                workDetails: workDetails,
+                confirmedCount: masterTO.totalConfirmed,
+                pendingCount: masterTO.totalPending,
               ),
             ],
             isGrouped: false,
@@ -118,22 +149,25 @@ class _AdminTOListScreenState extends State<AdminTOListScreen> {
         }
       }
 
-      // 사업장 목록 추출
+      // 3. 사업장 목록 추출
       final businessSet = masterTOs.map((to) => to.businessName).toSet();
       final businessList = businessSet.toList()..sort();
 
       setState(() {
         _allGroupItems = groupItems;
+        _filteredGroupItems = groupItems;
         _businessNames = businessList;
-        _applyFilters();
         _isLoading = false;
       });
+
+      // 4. 필터 적용
+      _applyFilters();
     } catch (e) {
-      print('❌ 에러 발생: $e');
+      print('❌ TO 목록 로드 실패: $e');
       setState(() {
         _isLoading = false;
       });
-      ToastHelper.showError('TO 목록을 불러올 수 없습니다');
+      ToastHelper.showError('TO 목록을 불러오는데 실패했습니다.');
     }
   }
 
@@ -625,6 +659,44 @@ class _AdminTOListScreenState extends State<AdminTOListScreen> {
         title: const Text('TO 관리'),
         backgroundColor: Colors.blue[700],
         actions: [
+          // ✅ 테스트 데이터 생성 버튼ㅡㅡㅡㅡㅡㅡㅡㅡㅡㅡㅡㅡㅡㅡㅡㅡㅡㅡㅡ
+          PopupMenuButton<String>(
+            icon: const Icon(Icons.science),
+            tooltip: '테스트 데이터',
+            onSelected: (value) {
+              switch (value) {
+                case 'create':
+                  _showCreateDummyDataDialog();
+                  break;
+                case 'clear':
+                  _showClearDummyDataDialog();
+                  break;
+              }
+            },
+            itemBuilder: (context) => [
+              const PopupMenuItem(
+                value: 'create',
+                child: Row(
+                  children: [
+                    Icon(Icons.add_circle, color: Colors.green),
+                    SizedBox(width: 8),
+                    Text('더미 데이터 생성'),
+                  ],
+                ),
+              ),
+              const PopupMenuItem(
+                value: 'clear',
+                child: Row(
+                  children: [
+                    Icon(Icons.delete_sweep, color: Colors.red),
+                    SizedBox(width: 8),
+                    Text('더미 데이터 삭제'),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          // ✅ 테스트 데이터 생성 버튼끝ㅡㅡㅡㅡㅡㅡㅡㅡㅡㅡㅡㅡㅡㅡㅡㅡㅡㅡㅡ
           IconButton(
             icon: const Icon(Icons.refresh),
             onPressed: _loadTOsWithStats,
@@ -633,6 +705,10 @@ class _AdminTOListScreenState extends State<AdminTOListScreen> {
       ),
       body: Column(
         children: [
+          // ✅ Phase 4: 탭 추가
+          _buildTabs(),
+          const SizedBox(height: 8),
+          
           _buildFilterSection(),
           Expanded(child: _buildTOList()),
         ],
@@ -651,7 +727,8 @@ class _AdminTOListScreenState extends State<AdminTOListScreen> {
         },
         icon: const Icon(Icons.add),
         label: const Text('TO 생성'),
-        backgroundColor: Colors.blue[700],
+        backgroundColor: const Color(0xFF1E88E5),  // ✅ 변경
+        foregroundColor: Colors.white,
       ),
     );
   }
@@ -749,28 +826,37 @@ class _AdminTOListScreenState extends State<AdminTOListScreen> {
 
     if (_filteredGroupItems.isEmpty) {
       return Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(Icons.inbox, size: 80, color: Colors.grey[300]),
-            const SizedBox(height: 16),
-            Text(
-              '조건에 맞는 TO가 없습니다',
-              style: TextStyle(
-                fontSize: 18,
-                fontWeight: FontWeight.bold,
-                color: Colors.grey[700],
+        child: Container(
+          margin: const EdgeInsets.all(40),
+          padding: const EdgeInsets.all(40),
+          decoration: BoxDecoration(
+            color: Colors.blue[50],
+            borderRadius: BorderRadius.circular(20),
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(Icons.inbox, size: 80, color: Colors.blue[200]),
+              const SizedBox(height: 20),
+              Text(
+                '조건에 맞는 TO가 없습니다',
+                style: TextStyle(
+                  fontSize: 18,
+                  fontWeight: FontWeight.bold,
+                  color: Colors.grey[800],
+                ),
               ),
-            ),
-            const SizedBox(height: 8),
-            Text(
-              '필터를 변경하거나 새로운 TO를 생성하세요',
-              style: TextStyle(
-                fontSize: 14,
-                color: Colors.grey[500],
+              const SizedBox(height: 8),
+              Text(
+                '필터를 변경하거나 새로운 TO를 생성하세요',
+                style: TextStyle(
+                  fontSize: 14,
+                  color: Colors.grey[600],
+                ),
+                textAlign: TextAlign.center,
               ),
-            ),
-          ],
+            ],
+          ),
         ),
       );
     }
@@ -966,6 +1052,12 @@ class _AdminTOListScreenState extends State<AdminTOListScreen> {
                                 ),
                               );
                               break;
+                            case 'close':  // ✅ 추가
+                              _showCloseTODialog(masterTO);
+                              break;
+                            case 'reopen':  // ✅ 추가
+                              _showReopenTODialog(masterTO);
+                              break;
                           }
                         },
                         itemBuilder: (context) => [
@@ -1009,7 +1101,49 @@ class _AdminTOListScreenState extends State<AdminTOListScreen> {
                               ],
                             ),
                           ),
+                          // ✅ Phase 4: 마감/재오픈 추가
+                          PopupMenuItem(
+                            value: masterTO.isClosed ? 'reopen' : 'close',
+                            child: Row(
+                              children: [
+                                Icon(
+                                  masterTO.isClosed ? Icons.lock_open : Icons.lock,
+                                  size: 18,
+                                  color: masterTO.isClosed ? Colors.green[600] : Colors.orange[600],
+                                ),
+                                const SizedBox(width: 12),
+                                Text(masterTO.isClosed ? 'TO 재오픈' : 'TO 마감'),
+                              ],
+                            ),
+                          ),
                         ],
+                      ),
+                    ],
+                    // ✅ Phase 4: 마감 배지
+                    if (masterTO.isClosed) ...[
+                      const SizedBox(width: 8),
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                        decoration: BoxDecoration(
+                          color: Color(masterTO.closedReasonColor).withOpacity(0.1),
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(color: Color(masterTO.closedReasonColor)),
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(Icons.lock, size: 14, color: Color(masterTO.closedReasonColor)),
+                            const SizedBox(width: 4),
+                            Text(
+                              masterTO.closedReason,
+                              style: TextStyle(
+                                fontSize: 12,
+                                fontWeight: FontWeight.bold,
+                                color: Color(masterTO.closedReasonColor),
+                              ),
+                            ),
+                          ],
+                        ),
                       ),
                     ],
                       
@@ -1024,6 +1158,12 @@ class _AdminTOListScreenState extends State<AdminTOListScreen> {
                             case 'editGroupName':
                               _showEditGroupNameDialog(masterTO);
                               break;
+                            case 'closeGroup':  // ✅ 추가
+                              _showCloseGroupDialog(groupItem);
+                              break;
+                            case 'reopenGroup':  // ✅ 추가
+                              _showReopenGroupDialog(groupItem);
+                              break;
                             case 'deleteGroup':
                               _showDeleteGroupDialog(groupItem);
                               break;
@@ -1037,6 +1177,21 @@ class _AdminTOListScreenState extends State<AdminTOListScreen> {
                                 Icon(Icons.edit, size: 18, color: Colors.blue[600]),
                                 const SizedBox(width: 12),
                                 const Text('그룹명 수정'),
+                              ],
+                            ),
+                          ),
+                          // ✅ Phase 4: 그룹 마감/재오픈
+                          PopupMenuItem(
+                            value: masterTO.isClosed ? 'reopenGroup' : 'closeGroup',
+                            child: Row(
+                              children: [
+                                Icon(
+                                  masterTO.isClosed ? Icons.lock_open : Icons.lock,
+                                  size: 18,
+                                  color: masterTO.isClosed ? Colors.green[600] : Colors.orange[600],
+                                ),
+                                const SizedBox(width: 12),
+                                Text(masterTO.isClosed ? '그룹 재오픈' : '그룹 마감'),
                               ],
                             ),
                           ),
@@ -1501,6 +1656,846 @@ class _AdminTOListScreenState extends State<AdminTOListScreen> {
         ],
       ),
     );
+  }
+  /// ✅ Phase 4: 탭 UI (개선 버전)
+  Widget _buildTabs() {
+    return Container(
+      margin: const EdgeInsets.symmetric(horizontal: 16),
+      padding: const EdgeInsets.all(4),
+      decoration: BoxDecoration(
+        color: Colors.grey[200],
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Row(
+        children: [
+          Expanded(
+            child: GestureDetector(
+              onTap: () {
+                if (_selectedTab != 'ACTIVE') {
+                  setState(() {
+                    _selectedTab = 'ACTIVE';
+                  });
+                  _loadTOsWithStats();
+                }
+              },
+              child: Container(
+                padding: const EdgeInsets.symmetric(vertical: 12),
+                decoration: BoxDecoration(
+                  color: _selectedTab == 'ACTIVE' ? const Color(0xFF1E88E5) : Colors.transparent,
+                  borderRadius: BorderRadius.circular(10),
+                  boxShadow: _selectedTab == 'ACTIVE'
+                      ? [
+                          BoxShadow(
+                            color: const Color(0xFF1E88E5).withOpacity(0.3),
+                            blurRadius: 8,
+                            offset: const Offset(0, 2),
+                          ),
+                        ]
+                      : null,
+                ),
+                child: Text(
+                  '진행중',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    fontSize: 15,
+                    fontWeight: FontWeight.w600,
+                    color: _selectedTab == 'ACTIVE' ? Colors.white : const Color(0xFF757575),
+                  ),
+                ),
+              ),
+            ),
+          ),
+          Expanded(
+            child: GestureDetector(
+              onTap: () {
+                if (_selectedTab != 'CLOSED') {
+                  setState(() {
+                    _selectedTab = 'CLOSED';
+                  });
+                  _loadTOsWithStats();
+                }
+              },
+              child: Container(
+                padding: const EdgeInsets.symmetric(vertical: 12),
+                decoration: BoxDecoration(
+                  color: _selectedTab == 'CLOSED' ? const Color(0xFF1E88E5) : Colors.transparent,
+                  borderRadius: BorderRadius.circular(10),
+                  boxShadow: _selectedTab == 'CLOSED'
+                      ? [
+                          BoxShadow(
+                            color: const Color(0xFF1E88E5).withOpacity(0.3),
+                            blurRadius: 8,
+                            offset: const Offset(0, 2),
+                          ),
+                        ]
+                      : null,
+                ),
+                child: Text(
+                  '마감됨',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    fontSize: 15,
+                    fontWeight: FontWeight.w600,
+                    color: _selectedTab == 'CLOSED' ? Colors.white : const Color(0xFF757575),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+  // ═══════════════════════════════════════════════════════════
+  // ✅ Phase 4: TO 마감/재오픈 다이얼로그
+  // ═══════════════════════════════════════════════════════════
+
+  /// 단일 TO 마감 다이얼로그
+  Future<void> _showCloseTODialog(TOModel to) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('TO 마감'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text('이 TO를 마감 처리하시겠습니까?'),
+            const SizedBox(height: 16),
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: Colors.orange[50],
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Icon(Icons.info_outline, size: 16, color: Colors.orange[700]),
+                      const SizedBox(width: 8),
+                      const Text(
+                        '마감 후 변경사항',
+                        style: TextStyle(fontWeight: FontWeight.bold),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  const Text('• 더 이상 지원을 받을 수 없습니다', style: TextStyle(fontSize: 13)),
+                  const Text('• 확정된 지원자는 유지됩니다', style: TextStyle(fontSize: 13)),
+                  const Text('• 재오픈으로 다시 열 수 있습니다', style: TextStyle(fontSize: 13)),
+                ],
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('취소'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(context, true),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.orange,
+              foregroundColor: Colors.white,
+            ),
+            child: const Text('마감'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed != true) return;
+
+    // 로딩 표시
+    if (mounted) {
+      showDialog(
+        context: context,
+        barrierDismissible: false,
+        builder: (context) => const Center(
+          child: Card(
+            child: Padding(
+              padding: EdgeInsets.all(20),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  CircularProgressIndicator(),
+                  SizedBox(height: 16),
+                  Text('마감 처리 중...'),
+                ],
+              ),
+            ),
+          ),
+        ),
+      );
+    }
+
+    try {
+      final userProvider = Provider.of<UserProvider>(context, listen: false);
+      final adminUID = userProvider.currentUser?.uid ?? '';
+
+      final success = await _firestoreService.closeTOManually(to.id, adminUID);
+
+      if (mounted) {
+        Navigator.pop(context); // 로딩 닫기
+      }
+
+      if (success) {
+        ToastHelper.showSuccess('TO가 마감되었습니다.');
+        _loadTOsWithStats();
+      } else {
+        ToastHelper.showError('TO 마감에 실패했습니다.');
+      }
+    } catch (e) {
+      if (mounted) {
+        Navigator.pop(context);
+      }
+      print('❌ TO 마감 실패: $e');
+      ToastHelper.showError('TO 마감 중 오류가 발생했습니다.');
+    }
+  }
+
+  /// 단일 TO 재오픈 다이얼로그
+  Future<void> _showReopenTODialog(TOModel to) async {
+    // ✅ 시간 초과 체크 - 재오픈 불가!
+    if (to.isTimeExpired) {
+      showDialog(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: Row(
+            children: [
+              Icon(Icons.error_outline, color: Colors.red[700]),
+              const SizedBox(width: 8),
+              const Text('재오픈 불가'),
+            ],
+          ),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                '근무 시작 시간이 지난 TO는 재오픈할 수 없습니다.',
+                style: TextStyle(fontWeight: FontWeight.bold),
+              ),
+              const SizedBox(height: 16),
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: Colors.red[50],
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: Colors.red[200]!),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Icon(Icons.calendar_today, size: 16, color: Colors.red[700]),
+                        const SizedBox(width: 8),
+                        Text(
+                          '근무일: ${DateFormat('yyyy-MM-dd (E)', 'ko_KR').format(to.date)}',
+                          style: TextStyle(
+                            fontSize: 13,
+                            color: Colors.red[900],
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 4),
+                    Row(
+                      children: [
+                        Icon(Icons.access_time, size: 16, color: Colors.red[700]),
+                        const SizedBox(width: 8),
+                        Text(
+                          '근무 시간: ${to.startTime} ~ ${to.endTime}',
+                          style: TextStyle(
+                            fontSize: 13,
+                            color: Colors.red[900],
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 16),
+              Text(
+                '💡 새로운 날짜로 TO를 생성하세요.',
+                style: TextStyle(
+                  fontSize: 14,
+                  color: Colors.grey[700],
+                ),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('확인'),
+            ),
+          ],
+        ),
+      );
+      return;
+    }
+
+    // ✅ 인원 충족 체크 - 재오픈 가능하지만 경고
+    final isFull = to.isFull;
+    
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('TO 재오픈'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text('이 TO를 다시 오픈하시겠습니까?'),
+            const SizedBox(height: 16),
+            
+            // ✅ 인원 충족 경고
+            if (isFull) ...[
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: Colors.orange[50],
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: Colors.orange[300]!),
+                ),
+                child: Row(
+                  children: [
+                    Icon(Icons.warning_amber, color: Colors.orange[700], size: 20),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        '⚠️ 이미 인원이 충족된 TO입니다.\n추가 지원자를 받으시겠습니까?',
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: Colors.orange[800],
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 16),
+            ],
+            
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: Colors.green[50],
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Icon(Icons.info_outline, size: 16, color: Colors.green[700]),
+                      const SizedBox(width: 8),
+                      const Text(
+                        '재오픈 후 변경사항',
+                        style: TextStyle(fontWeight: FontWeight.bold),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  const Text('• 지원자가 다시 지원할 수 있습니다', style: TextStyle(fontSize: 13)),
+                  const Text('• 기존 확정 지원자는 유지됩니다', style: TextStyle(fontSize: 13)),
+                ],
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('취소'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(context, true),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.green,
+              foregroundColor: Colors.white,
+            ),
+            child: const Text('재오픈'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed != true) return;
+
+    if (mounted) {
+      showDialog(
+        context: context,
+        barrierDismissible: false,
+        builder: (context) => const Center(
+          child: Card(
+            child: Padding(
+              padding: EdgeInsets.all(20),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  CircularProgressIndicator(),
+                  SizedBox(height: 16),
+                  Text('재오픈 중...'),
+                ],
+              ),
+            ),
+          ),
+        ),
+      );
+    }
+
+    try {
+      final userProvider = Provider.of<UserProvider>(context, listen: false);
+      final adminUID = userProvider.currentUser?.uid ?? '';
+
+      final success = await _firestoreService.reopenTO(to.id, adminUID);
+
+      if (mounted) {
+        Navigator.pop(context);
+      }
+
+      if (success) {
+        ToastHelper.showSuccess('TO가 재오픈되었습니다.');
+        _loadTOsWithStats();
+      } else {
+        ToastHelper.showError('TO 재오픈에 실패했습니다.');
+      }
+    } catch (e) {
+      if (mounted) {
+        Navigator.pop(context);
+      }
+      print('❌ TO 재오픈 실패: $e');
+      ToastHelper.showError('TO 재오픈 중 오류가 발생했습니다.');
+    }
+  }
+
+  /// 그룹 전체 마감 다이얼로그
+  Future<void> _showCloseGroupDialog(_TOGroupItem groupItem) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('그룹 전체 마감'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('그룹 "${groupItem.masterTO.groupName}"의 모든 TO를 마감하시겠습니까?'),
+            const SizedBox(height: 16),
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: Colors.orange[50],
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    '포함된 TO: ${groupItem.groupTOs.length}개',
+                    style: const TextStyle(fontWeight: FontWeight.bold),
+                  ),
+                  const SizedBox(height: 8),
+                  const Text('• 모든 TO가 마감됩니다', style: TextStyle(fontSize: 13)),
+                  const Text('• 더 이상 지원을 받을 수 없습니다', style: TextStyle(fontSize: 13)),
+                ],
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('취소'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(context, true),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.orange,
+              foregroundColor: Colors.white,
+            ),
+            child: const Text('전체 마감'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed != true) return;
+
+    if (mounted) {
+      showDialog(
+        context: context,
+        barrierDismissible: false,
+        builder: (context) => const Center(
+          child: Card(
+            child: Padding(
+              padding: EdgeInsets.all(20),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  CircularProgressIndicator(),
+                  SizedBox(height: 16),
+                  Text('그룹 마감 중...'),
+                ],
+              ),
+            ),
+          ),
+        ),
+      );
+    }
+
+    try {
+      final userProvider = Provider.of<UserProvider>(context, listen: false);
+      final adminUID = userProvider.currentUser?.uid ?? '';
+
+      final success = await _firestoreService.closeGroupTOs(
+        groupItem.masterTO.groupId!,
+        adminUID,
+      );
+
+      if (mounted) {
+        Navigator.pop(context);
+      }
+
+      if (success) {
+        ToastHelper.showSuccess('그룹 전체가 마감되었습니다.');
+        _loadTOsWithStats();
+      } else {
+        ToastHelper.showError('그룹 마감에 실패했습니다.');
+      }
+    } catch (e) {
+      if (mounted) {
+        Navigator.pop(context);
+      }
+      print('❌ 그룹 마감 실패: $e');
+      ToastHelper.showError('그룹 마감 중 오류가 발생했습니다.');
+    }
+  }
+
+  /// 그룹 전체 재오픈 다이얼로그
+  Future<void> _showReopenGroupDialog(_TOGroupItem groupItem) async {
+    // ✅ 그룹 내 시간 초과 TO 체크
+    final hasExpiredTO = groupItem.groupTOs.any((toItem) => toItem.to.isTimeExpired);
+    
+    if (hasExpiredTO) {
+      showDialog(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: Row(
+            children: [
+              Icon(Icons.error_outline, color: Colors.red[700]),
+              const SizedBox(width: 8),
+              const Text('재오픈 불가'),
+            ],
+          ),
+          content: const Text(
+            '그룹 내에 근무 시작 시간이 지난 TO가 있어\n그룹 전체를 재오픈할 수 없습니다.\n\n각 TO를 개별적으로 확인해주세요.',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('확인'),
+            ),
+          ],
+        ),
+      );
+      return;
+    }
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('그룹 전체 재오픈'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('그룹 "${groupItem.masterTO.groupName}"의 모든 TO를 재오픈하시겠습니까?'),
+            const SizedBox(height: 16),
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: Colors.green[50],
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    '포함된 TO: ${groupItem.groupTOs.length}개',
+                    style: const TextStyle(fontWeight: FontWeight.bold),
+                  ),
+                  const SizedBox(height: 8),
+                  const Text('• 모든 TO가 재오픈됩니다', style: TextStyle(fontSize: 13)),
+                  const Text('• 지원자가 다시 지원할 수 있습니다', style: TextStyle(fontSize: 13)),
+                ],
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('취소'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(context, true),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.green,
+              foregroundColor: Colors.white,
+            ),
+            child: const Text('전체 재오픈'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed != true) return;
+
+    if (mounted) {
+      showDialog(
+        context: context,
+        barrierDismissible: false,
+        builder: (context) => const Center(
+          child: Card(
+            child: Padding(
+              padding: EdgeInsets.all(20),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  CircularProgressIndicator(),
+                  SizedBox(height: 16),
+                  Text('그룹 재오픈 중...'),
+                ],
+              ),
+            ),
+          ),
+        ),
+      );
+    }
+
+    try {
+      final userProvider = Provider.of<UserProvider>(context, listen: false);
+      final adminUID = userProvider.currentUser?.uid ?? '';
+
+      final success = await _firestoreService.reopenGroupTOs(
+        groupItem.masterTO.groupId!,
+        adminUID,
+      );
+
+      if (mounted) {
+        Navigator.pop(context);
+      }
+
+      if (success) {
+        ToastHelper.showSuccess('그룹 전체가 재오픈되었습니다.');
+        _loadTOsWithStats();
+      } else {
+        ToastHelper.showError('그룹 재오픈에 실패했습니다.');
+      }
+    } catch (e) {
+      if (mounted) {
+        Navigator.pop(context);
+      }
+      print('❌ 그룹 재오픈 실패: $e');
+      ToastHelper.showError('그룹 재오픈 중 오류가 발생했습니다.');
+    }
+  }
+
+  /// 더미 데이터 생성 다이얼로그 ㅡㅡㅡㅡㅡㅡㅡㅡㅡㅡㅡㅡㅡㅡㅡㅡㅡㅡㅡㅡㅡㅡ
+  Future<void> _showCreateDummyDataDialog() async {
+    // TO 선택
+    if (_filteredGroupItems.isEmpty) {
+      ToastHelper.showError('생성된 TO가 없습니다');
+      return;
+    }
+
+    final selectedTO = await showDialog<TOModel>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('TO 선택'),
+        content: SizedBox(
+          width: double.maxFinite,
+          child: ListView.builder(
+            shrinkWrap: true,
+            itemCount: _filteredGroupItems.length,
+            itemBuilder: (context, index) {
+              final item = _filteredGroupItems[index];
+              final to = item.masterTO;
+              return ListTile(
+                title: Text(to.title),
+                subtitle: Text(
+                  '${DateFormat('yyyy-MM-dd').format(to.date)} | ${to.businessName}',
+                ),
+                onTap: () => Navigator.pop(context, to),
+              );
+            },
+          ),
+        ),
+      ),
+    );
+
+    if (selectedTO == null) return;
+
+    // 인원 입력
+    final TextEditingController pendingController = TextEditingController(text: '3');
+    final TextEditingController confirmedController = TextEditingController(text: '2');
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('더미 지원자 생성'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text('TO: ${selectedTO.title}'),
+            const SizedBox(height: 16),
+            TextField(
+              controller: pendingController,
+              decoration: const InputDecoration(
+                labelText: '대기 인원',
+                border: OutlineInputBorder(),
+              ),
+              keyboardType: TextInputType.number,
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: confirmedController,
+              decoration: const InputDecoration(
+                labelText: '확정 인원',
+                border: OutlineInputBorder(),
+              ),
+              keyboardType: TextInputType.number,
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('취소'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('생성'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed != true) return;
+
+    // 생성 실행
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => const Center(
+        child: Card(
+          child: Padding(
+            padding: EdgeInsets.all(20),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                CircularProgressIndicator(),
+                SizedBox(height: 16),
+                Text('더미 데이터 생성 중...'),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+
+    try {
+      await TestDataHelper.createDummyApplications(
+        toId: selectedTO.id,
+        workTypes: [],
+        pendingCount: int.parse(pendingController.text),
+        confirmedCount: int.parse(confirmedController.text),
+      );
+
+      if (mounted) {
+        Navigator.pop(context);
+      }
+
+      ToastHelper.showSuccess('더미 데이터 생성 완료!');
+      _loadTOsWithStats();
+    } catch (e) {
+      if (mounted) {
+        Navigator.pop(context);
+      }
+      print('❌ 더미 데이터 생성 실패: $e');
+      ToastHelper.showError('생성 실패: $e');
+    }
+  }
+
+  /// 더미 데이터 삭제 다이얼로그
+  Future<void> _showClearDummyDataDialog() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('더미 데이터 삭제'),
+        content: const Text(
+          '모든 더미 지원자와 지원서를 삭제하시겠습니까?\n\n'
+          '이 작업은 되돌릴 수 없습니다.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('취소'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(context, true),
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
+            child: const Text('삭제'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed != true) return;
+
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => const Center(
+        child: Card(
+          child: Padding(
+            padding: EdgeInsets.all(20),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                CircularProgressIndicator(),
+                SizedBox(height: 16),
+                Text('더미 데이터 삭제 중...'),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+
+    try {
+      await TestDataHelper.clearAllDummyData();
+
+      if (mounted) {
+        Navigator.pop(context);
+      }
+
+      ToastHelper.showSuccess('더미 데이터 삭제 완료!');
+      _loadTOsWithStats();
+    } catch (e) {
+      if (mounted) {
+        Navigator.pop(context);
+      }
+      print('❌ 더미 데이터 삭제 실패: $e');
+      ToastHelper.showError('삭제 실패: $e');
+    }
   }
 }
 
