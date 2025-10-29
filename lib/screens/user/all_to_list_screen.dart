@@ -36,7 +36,7 @@ class _AllTOListScreenState extends State<AllTOListScreen> {
     _loadAllTOs();
   }
 
-  /// 전체 TO 목록 + 내 지원 내역 병렬 로드
+  /// 전체 TO 목록 + 내 지원 내역 병렬 로드 (최적화)
   Future<void> _loadAllTOs() async {
     setState(() {
       _isLoading = true;
@@ -64,11 +64,20 @@ class _AllTOListScreenState extends State<AllTOListScreen> {
       final businessSet = toList.map((to) => to.businessName).toSet();
       final businessList = businessSet.toList()..sort();
       
-      // ✅ 그룹 TO의 시간 범위 계산
-      for (var to in toList) {
-        if (to.isGrouped && to.groupId != null) {
-          final timeRange = await _firestoreService.calculateGroupTimeRange(to.groupId!);
-          to.setTimeRange(timeRange['minStart']!, timeRange['maxEnd']!);
+      // ✅ 그룹 TO의 시간 범위 계산 (병렬 처리)
+      final groupTOs = toList.where((to) => to.isGrouped && to.groupId != null).toList();
+      if (groupTOs.isNotEmpty) {
+        final timeRangeFutures = groupTOs.map((to) => 
+          _firestoreService.calculateGroupTimeRange(to.groupId!)
+        ).toList();
+        
+        final timeRanges = await Future.wait(timeRangeFutures);
+        
+        for (int i = 0; i < groupTOs.length; i++) {
+          groupTOs[i].setTimeRange(
+            timeRanges[i]['minStart']!, 
+            timeRanges[i]['maxEnd']!
+          );
         }
       }
 

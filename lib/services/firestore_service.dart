@@ -7,9 +7,19 @@ import '../models/work_type_model.dart';
 import '../models/work_detail_model.dart';
 import '../utils/toast_helper.dart';
 import '../models/business_work_type_model.dart';
+import '../models/application_model.dart';
+import '../models/work_detail_model.dart';
 
 class FirestoreService {
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
+  // ✅ 캐시 추가
+  final Map<String, List<ApplicationModel>> _applicationCache = {};
+  final Map<String, List<WorkDetailModel>> _workDetailCache = {};
+  final Map<String, Map<String, String>> _timeRangeCache = {};
+  
+  // 캐시 유효 시간 (5분)
+  final Duration _cacheValidDuration = const Duration(minutes: 5);
+  final Map<String, DateTime> _cacheTimestamps = {};
 
   // ═══════════════════════════════════════════════════════════
   // 사용자 관리 (User Management)
@@ -62,6 +72,7 @@ class FirestoreService {
   Future<void> updateTO(String toId, Map<String, dynamic> updates) async {
     try {
       await _firestore.collection('tos').doc(toId).update(updates);
+      clearCache(toId: toId);  // ✅ 캐시 초기화
       print('✅ [FirestoreService] TO 수정 완료');
     } catch (e) {
       print('❌ [FirestoreService] TO 수정 실패: $e');
@@ -136,7 +147,9 @@ class FirestoreService {
       
       // 4. TO 문서 삭제
       await _firestore.collection('tos').doc(toId).delete();
-      
+
+      clearCache(toId: toId);  // ✅ 캐시 초기화
+
       print('✅ TO 삭제 완료: $toId');
       ToastHelper.showSuccess('TO가 삭제되었습니다.');
       return true;
@@ -309,20 +322,21 @@ class FirestoreService {
       final toData = {
         'businessId': businessId,
         'businessName': businessName,
-        'jobType': 'short',  // ✅ NEW
+        'jobType': 'short',
         'groupId': groupId,
         'groupName': groupName,
-        'startDate': startDate != null ? Timestamp.fromDate(startDate) : null,  // ✅ NEW
-        'endDate': endDate != null ? Timestamp.fromDate(endDate) : null,  // ✅ NEW
-        'isGroupMaster': isGroupMaster,  // ✅ NEW
+        'startDate': startDate != null ? Timestamp.fromDate(startDate) : null,
+        'endDate': endDate != null ? Timestamp.fromDate(endDate) : null,
+        'isGroupMaster': isGroupMaster,
         'title': title,
         'date': Timestamp.fromDate(date),
         'applicationDeadline': Timestamp.fromDate(applicationDeadline),
-        // ✅ NEW: 지원 마감 규칙
         'deadlineType': deadlineType,
         'hoursBeforeStart': hoursBeforeStart,
         'totalRequired': totalRequired,
         'totalConfirmed': 0,
+        'totalPending': 0,        // ✅ 추가
+        'totalApplications': 0,   // ✅ 추가
         'description': description ?? '',
         'creatorUID': creatorUID,
         'createdAt': FieldValue.serverTimestamp(),
@@ -358,7 +372,7 @@ class FirestoreService {
       await batch.commit();
       print('✅ WorkDetails 생성 완료: ${workDetailsData.length}개');
 
-      ToastHelper.showSuccess('TO가 생성되었습니다!');
+      //ToastHelper.showSuccess('TO가 생성되었습니다!');
       return toDoc.id;
     } catch (e) {
       print('❌ [FirestoreService] TO 생성 실패: $e');
@@ -484,7 +498,7 @@ class FirestoreService {
       }
       
       print('✅ [FirestoreService] 그룹 TO 생성 완료: ${dates.length}개');
-      ToastHelper.showSuccess('${dates.length}개의 TO가 생성되었습니다!');
+      //ToastHelper.showSuccess('${dates.length}개의 TO가 생성되었습니다!');
       return true;
       
     } catch (e) {
@@ -945,7 +959,7 @@ class FirestoreService {
     }
   }
 
-  /// 그룹 TO의 전체 시간 범위 계산
+  /// 그룹 TO의 전체 시간 범위 계산 (최적화 - 병렬 처리)
   Future<Map<String, String>> calculateGroupTimeRange(String groupId) async {
     try {
       print('🕐 [FirestoreService] 그룹 시간 범위 계산 시작...');
@@ -961,14 +975,18 @@ class FirestoreService {
         return {'minStart': '~', 'maxEnd': '~'};
       }
 
+      final toIds = snapshot.docs.map((doc) => doc.id).toList();
+
+      // 2. ✅ 병렬로 모든 WorkDetails 조회
+      final workDetailsFutures = toIds.map((toId) => getWorkDetails(toId)).toList();
+      final allWorkDetailsLists = await Future.wait(workDetailsFutures);
+
       String? minStart;
       String? maxEnd;
 
-      // 2. 각 TO의 WorkDetails 조회
-      for (var doc in snapshot.docs) {
-        final workDetails = await getWorkDetails(doc.id);
-        
-        for (var work in workDetails) {
+      // 3. 시간 범위 계산
+      for (var workDetailsList in allWorkDetailsLists) {
+        for (var work in workDetailsList) {
           // 최소 시작 시간
           if (minStart == null || work.startTime.compareTo(minStart) < 0) {
             minStart = work.startTime;
@@ -1014,6 +1032,63 @@ class FirestoreService {
       return [];
     }
   }
+  /// 여러 TO의 지원자를 한 번에 조회 (배치)
+  Future<Map<String, List<ApplicationModel>>> getApplicationsByTOIds(List<String> toIds) async {
+    try {
+      if (toIds.isEmpty) return {};
+      
+      Map<String, List<ApplicationModel>> result = {};
+      
+      // 각 TO별로 빈 리스트 초기화
+      for (var toId in toIds) {
+        result[toId] = [];
+      }
+      
+      // Firestore 'in' 쿼리는 최대 10개까지만 가능
+      for (int i = 0; i < toIds.length; i += 10) {
+        final batch = toIds.skip(i).take(10).toList();
+        
+        final snapshot = await _firestore
+            .collection('applications')
+            .where('toId', whereIn: batch)
+            .get();
+        
+        // TO별로 그룹화
+        for (var doc in snapshot.docs) {
+          final app = ApplicationModel.fromFirestore(doc);
+          result[app.toId]?.add(app);  // ✅ null-safe 접근
+        }
+      }
+      
+      print('✅ 배치 지원자 조회 완료: ${toIds.length}개 TO, ${result.values.fold(0, (sum, list) => sum + list.length)}명');
+      return result;
+    } catch (e) {
+      print('❌ 배치 지원자 조회 실패: $e');
+      return {};
+    }
+  }
+
+  /// 여러 TO의 WorkDetails를 한 번에 조회 (병렬)
+  Future<Map<String, List<WorkDetailModel>>> getWorkDetailsBatch(List<String> toIds) async {
+    try {
+      if (toIds.isEmpty) return {};
+      
+      // 병렬로 모든 WorkDetails 조회
+      final futures = toIds.map((toId) async {
+        final workDetails = await getWorkDetails(toId);
+        return MapEntry(toId, workDetails);
+      }).toList();
+      
+      final results = await Future.wait(futures);
+      
+      final map = Map.fromEntries(results);
+      print('✅ 배치 WorkDetails 조회 완료: ${toIds.length}개 TO');
+      return map;
+    } catch (e) {
+      print('❌ 배치 WorkDetails 조회 실패: $e');
+      return {};
+    }
+  }
   /// 특정 업무에 지원한 지원자 조회
   Future<List<ApplicationModel>> getApplicationsByWorkDetail(
     String toId,
@@ -1036,7 +1111,7 @@ class FirestoreService {
     }
   }
 
-  /// 그룹별 지원자 통합 조회
+  /// 그룹별 지원자 통합 조회 (최적화)
   Future<List<ApplicationModel>> getApplicationsByGroup(String groupId) async {
     try {
       print('🔍 [FirestoreService] 그룹 지원자 조회 시작...');
@@ -1053,13 +1128,16 @@ class FirestoreService {
       final toIds = groupTOs.map((to) => to.id).toList();
       print('   TO 개수: ${toIds.length}');
 
-      // 2. 각 TO의 지원자들 조회
+      // 2. ✅ 배치로 한 번에 조회 (in 쿼리 사용)
       List<ApplicationModel> allApplications = [];
       
-      for (final toId in toIds) {
+      // Firestore 'in' 쿼리는 최대 10개까지
+      for (int i = 0; i < toIds.length; i += 10) {
+        final batch = toIds.skip(i).take(10).toList();
+        
         final snapshot = await _firestore
             .collection('applications')
-            .where('toId', isEqualTo: toId)
+            .where('toId', whereIn: batch)
             .get();
 
         final apps = snapshot.docs
@@ -1184,6 +1262,12 @@ class FirestoreService {
         'appliedAt': FieldValue.serverTimestamp(),
       });
 
+      // ✅ 3. TO 통계 업데이트
+      await _firestore.collection('tos').doc(toId).update({
+        'totalApplications': FieldValue.increment(1),
+        'totalPending': FieldValue.increment(1),
+      });
+
       print('✅ 지원 완료: TO=$toId, WorkType=$selectedWorkType');
       ToastHelper.showSuccess('지원이 완료되었습니다!');
       return true;
@@ -1278,9 +1362,10 @@ class FirestoreService {
         {'currentCount': FieldValue.increment(1)},
       );
 
-      // TO totalConfirmed 증가
+      // ✅ TO 통계 업데이트 (totalConfirmed + totalPending)
       batch.update(_firestore.collection('tos').doc(toId), {
         'totalConfirmed': FieldValue.increment(1),
+        'totalPending': FieldValue.increment(-1),
       });
 
       await batch.commit();
@@ -1320,6 +1405,15 @@ class FirestoreService {
         'confirmedAt': FieldValue.serverTimestamp(),
         'confirmedBy': adminUID,
       });
+
+      // ✅ TO 통계 업데이트 (PENDING인 경우만)
+      if (appData['status'] == 'PENDING') {
+        final toId = appData['toId'];
+        await _firestore.collection('tos').doc(toId).update({
+          'totalPending': FieldValue.increment(-1),
+          'totalApplications': FieldValue.increment(-1),
+        });
+      }
 
       ToastHelper.showSuccess('지원자가 거절되었습니다.');
       return true;
@@ -1361,6 +1455,14 @@ class FirestoreService {
       await _firestore.collection('applications').doc(applicationId).update({
         'status': 'CANCELED',
       });
+
+      // ✅ TO 통계 업데이트 (PENDING만 감소)
+      if (app.status == 'PENDING') {
+        await _firestore.collection('tos').doc(app.toId).update({
+          'totalPending': FieldValue.increment(-1),
+          'totalApplications': FieldValue.increment(-1),
+        });
+      }
 
       ToastHelper.showSuccess('지원이 취소되었습니다.');
       return true;
@@ -1418,9 +1520,18 @@ class FirestoreService {
   // 업무 상세 정보 관리 (Work Details Management)
   // ═══════════════════════════════════════════════════════════
 
-  /// 업무 상세 정보 조회
+  /// 업무 상세 정보 조회 (캐싱 적용)
   Future<List<WorkDetailModel>> getWorkDetails(String toId) async {
     try {
+      // ✅ 캐시 확인
+      if (_workDetailCache.containsKey(toId)) {
+        final cacheTime = _cacheTimestamps['workDetail_$toId'];
+        if (cacheTime != null && DateTime.now().difference(cacheTime) < _cacheValidDuration) {
+          print('📦 WorkDetails 캐시 사용: $toId');
+          return _workDetailCache[toId]!;
+        }
+      }
+      
       final snapshot = await _firestore
           .collection('tos')
           .doc(toId)
@@ -1432,11 +1543,31 @@ class FirestoreService {
           .map((doc) => WorkDetailModel.fromMap(doc.data(), doc.id))
           .toList();
 
+      // ✅ 캐시 저장
+      _workDetailCache[toId] = workDetails;
+      _cacheTimestamps['workDetail_$toId'] = DateTime.now();
+
       print('✅ WorkDetails 조회 완료: ${workDetails.length}개');
       return workDetails;
     } catch (e) {
       print('❌ WorkDetails 조회 실패: $e');
       return [];
+    }
+  }
+  /// 캐시 초기화 (TO 수정/삭제 시 호출)
+  void clearCache({String? toId}) {
+    if (toId != null) {
+      _applicationCache.remove(toId);
+      _workDetailCache.remove(toId);
+      _cacheTimestamps.remove('workDetail_$toId');
+      _cacheTimestamps.remove('application_$toId');
+      print('🗑️ 캐시 삭제: $toId');
+    } else {
+      _applicationCache.clear();
+      _workDetailCache.clear();
+      _timeRangeCache.clear();
+      _cacheTimestamps.clear();
+      print('🗑️ 전체 캐시 삭제');
     }
   }
 

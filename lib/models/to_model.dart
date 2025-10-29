@@ -32,6 +32,8 @@ class TOModel {
   // ✅ 전체 필요 인원 (모든 업무유형 합계)
   final int totalRequired; // 전체 필요 인원
   final int totalConfirmed; // 전체 확정 인원
+  final int totalPending;        // ✅ 추가
+  final int totalApplications;   // ✅ 추가
   
   final String? description; // 전체 설명
   final String creatorUID; // 생성한 관리자 UID
@@ -56,6 +58,8 @@ class TOModel {
     this.hoursBeforeStart = 2,  // 기본값: 2시간 전
     required this.totalRequired,
     this.totalConfirmed = 0,
+    this.totalPending = 0,        // ✅ 추가
+    this.totalApplications = 0,   // ✅ 추가
     this.description,
     required this.creatorUID,
     required this.createdAt,
@@ -93,14 +97,18 @@ class TOModel {
       // ✅ NEW: 지원 마감 규칙
       deadlineType: data['deadlineType'] ?? 'HOURS_BEFORE',
       hoursBeforeStart: data['hoursBeforeStart'] ?? 2,
+      
 
       totalRequired: data['totalRequired'] ?? 0,
       totalConfirmed: data['totalConfirmed'] ?? 0,
+      totalPending: data['totalPending'] ?? 0,           // ✅ 추가
+      totalApplications: data['totalApplications'] ?? 0, // ✅ 추가
       description: data['description'],
       creatorUID: data['creatorUID'] ?? '',
       createdAt: data['createdAt'] != null 
           ? (data['createdAt'] as Timestamp).toDate()
           : DateTime.now(),
+      
     );
   }
 

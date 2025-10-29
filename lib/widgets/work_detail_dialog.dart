@@ -55,7 +55,7 @@ class WorkDetailDialog {
                               width: 32,
                               height: 32,
                               decoration: BoxDecoration(
-                                color: _parseColor(workType.backgroundColor ?? '#2196F3'),
+                                color: FormatHelper.parseColor(workType.backgroundColor ?? '#2196F3'),
                                 shape: BoxShape.circle,
                               ),
                               child: Center(
@@ -133,7 +133,7 @@ class WorkDetailDialog {
                             border: OutlineInputBorder(),
                             hintText: '시작',
                           ),
-                          items: _generateTimeList().map((time) {
+                          items: FormatHelper.generateTimeList().map((time) {
                             return DropdownMenuItem(value: time, child: Text(time));
                           }).toList(),
                           onChanged: (value) => setDialogState(() => startTime = value),
@@ -150,7 +150,7 @@ class WorkDetailDialog {
                             border: OutlineInputBorder(),
                             hintText: '종료',
                           ),
-                          items: _generateTimeList().map((time) {
+                          items: FormatHelper.generateTimeList().map((time) {
                             return DropdownMenuItem(value: time, child: Text(time));
                           }).toList(),
                           onChanged: (value) => setDialogState(() => endTime = value),

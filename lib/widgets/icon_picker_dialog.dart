@@ -44,29 +44,29 @@ class IconPickerDialog {
   static List<IconItem> _getAllIcons() {
     return [
       // 물류 관련 (인기)
-      IconItem(icon: '📦', keywords: ['box', '상자', '박스', '포장', '물류'], category: '물류', isPopular: true),
-      IconItem(icon: '🚚', keywords: ['truck', '트럭', '배송', '운송', '물류'], category: '물류', isPopular: true),
-      IconItem(icon: '📋', keywords: ['clipboard', '클립보드', '목록', '리스트', '체크'], category: '물류', isPopular: true),
-      IconItem(icon: '✅', keywords: ['check', '체크', '완료', '확인'], category: '물류', isPopular: true),
-      IconItem(icon: '🏭', keywords: ['factory', '공장', '제조', '생산'], category: '물류', isPopular: true),
+      IconItem(icon: '📦', keywords: ['box', '상자', '박스', '포장', '물류'], category: '물류/배송', isPopular: true),
+      IconItem(icon: '🚚', keywords: ['truck', '트럭', '배송', '운송', '물류'], category: '물류/배송', isPopular: true),
+      IconItem(icon: '📋', keywords: ['clipboard', '클립보드', '목록', '리스트', '체크'], category: '물류/배송', isPopular: true),
+      IconItem(icon: '✅', keywords: ['check', '체크', '완료', '확인'], category: '물류/배송', isPopular: true),
+      IconItem(icon: '🏭', keywords: ['factory', '공장', '제조', '생산'], category: '물류/배송', isPopular: true),
       
       // Material 아이콘 (인기)
-      IconItem(icon: Icons.inventory, keywords: ['inventory', '재고', '물류', '창고'], category: '물류', isMaterial: true, isPopular: true),
-      IconItem(icon: Icons.local_shipping, keywords: ['shipping', '배송', '트럭', '운송'], category: '물류', isMaterial: true, isPopular: true),
-      IconItem(icon: Icons.warehouse, keywords: ['warehouse', '창고', '물류', '보관'], category: '물류', isMaterial: true, isPopular: true),
-      IconItem(icon: Icons.category, keywords: ['category', '분류', '카테고리'], category: '물류', isMaterial: true, isPopular: true),
-      IconItem(icon: Icons.check_box, keywords: ['checkbox', '체크', '완료', '확인'], category: '물류', isMaterial: true, isPopular: true),
+      IconItem(icon: Icons.inventory, keywords: ['inventory', '재고', '물류', '창고'], category: '물류/배송', isMaterial: true, isPopular: true),
+      IconItem(icon: Icons.local_shipping, keywords: ['shipping', '배송', '트럭', '운송'], category: '물류/배송', isMaterial: true, isPopular: true),
+      IconItem(icon: Icons.warehouse, keywords: ['warehouse', '창고', '물류', '보관'], category: '물류/배송', isMaterial: true, isPopular: true),
+      IconItem(icon: Icons.category, keywords: ['category', '분류', '카테고리'], category: '물류/배송', isMaterial: true, isPopular: true),
+      IconItem(icon: Icons.check_box, keywords: ['checkbox', '체크', '완료', '확인'], category: '물류/배송', isMaterial: true, isPopular: true),
       
       // 물류 관련 (전체)
-      IconItem(icon: '📪', keywords: ['mailbox', '우편함', '메일', '배송'], category: '물류'),
-      IconItem(icon: '📬', keywords: ['mailbox', '우편함', '메일', '배송'], category: '물류'),
-      IconItem(icon: '📮', keywords: ['postbox', '우체통', '우편', '배송'], category: '물류'),
-      IconItem(icon: '🚛', keywords: ['truck', '트럭', '배송', '운송'], category: '물류'),
-      IconItem(icon: '🚐', keywords: ['van', '밴', '배송', '운송'], category: '물류'),
-      IconItem(icon: '🏗️', keywords: ['construction', '건설', '공사', '작업'], category: '물류'),
-      IconItem(icon: Icons.archive, keywords: ['archive', '보관', '아카이브'], category: '물류', isMaterial: true),
-      IconItem(icon: Icons.inbox, keywords: ['inbox', '받은편지함', '입고'], category: '물류', isMaterial: true),
-      IconItem(icon: Icons.unarchive, keywords: ['unarchive', '출고', '언아카이브'], category: '물류', isMaterial: true),
+      IconItem(icon: '📪', keywords: ['mailbox', '우편함', '메일', '배송'], category: '물류/배송'),
+      IconItem(icon: '📬', keywords: ['mailbox', '우편함', '메일', '배송'], category: '물류/배송'),
+      IconItem(icon: '📮', keywords: ['postbox', '우체통', '우편', '배송'], category: '물류/배송'),
+      IconItem(icon: '🚛', keywords: ['truck', '트럭', '배송', '운송'], category: '물류/배송'),
+      IconItem(icon: '🚐', keywords: ['van', '밴', '배송', '운송'], category: '물류/배송'),
+      IconItem(icon: '🏗️', keywords: ['construction', '건설', '공사', '작업'], category: '물류/배송'),
+      IconItem(icon: Icons.archive, keywords: ['archive', '보관', '아카이브'], category: '물류/배송', isMaterial: true),
+      IconItem(icon: Icons.inbox, keywords: ['inbox', '받은편지함', '입고'], category: '물류/배송', isMaterial: true),
+      IconItem(icon: Icons.unarchive, keywords: ['unarchive', '출고', '언아카이브'], category: '물류/배송', isMaterial: true),
       
       // 음식/음료
       IconItem(icon: '☕', keywords: ['coffee', '커피', '음료', '카페'], category: '음식/음료', isPopular: true),
@@ -174,6 +174,10 @@ class _IconPickerWidgetState extends State<_IconPickerWidget> {
     super.initState();
     
     _selectedBackgroundColor = widget.initialBackgroundColor ?? '#2196F3';
+    // ✅ 초기 아이콘 색상 설정
+    if (widget.initialIconColor != null) {
+      _selectedIconColor = FormatHelper.parseColor(widget.initialIconColor!);
+    }
     
     if (widget.initialIcon != null) {
       final matchingIcon = widget.allIcons.firstWhere(
@@ -301,7 +305,9 @@ class _IconPickerWidgetState extends State<_IconPickerWidget> {
                               child: iconItem.isMaterial
                                   ? Icon(
                                       iconItem.icon as IconData,
-                                      color: isSelected ? Colors.white : Colors.grey[700],
+                                      color: isSelected 
+                                          ? (_selectedIconColor ?? Colors.white)  // ✅ 선택된 색상 적용
+                                          : Colors.grey[700],
                                       size: 28,
                                     )
                                   : Text(
@@ -314,6 +320,41 @@ class _IconPickerWidgetState extends State<_IconPickerWidget> {
                       },
                     ),
             ),
+            
+            // ✅ Material 아이콘 색상 선택 (Material 아이콘일 때만)
+            if (_selectedIcon != null && _selectedIcon is IconData) ...[
+              const SizedBox(height: 12),
+              const Text('아이콘 색상', style: TextStyle(fontWeight: FontWeight.bold)),
+              const SizedBox(height: 8),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: _predefinedColors.map((colorHex) {
+                  final isSelected = _selectedIconColor != null && 
+                                    '#${_selectedIconColor!.value.toRadixString(16).padLeft(8, '0').substring(2)}' == colorHex;
+                  return InkWell(
+                    onTap: () {
+                      setState(() {
+                        _selectedIconColor = FormatHelper.parseColor(colorHex);
+                      });
+                    },
+                    child: Container(
+                      width: 32,
+                      height: 32,
+                      decoration: BoxDecoration(
+                        color: FormatHelper.parseColor(colorHex),
+                        shape: BoxShape.circle,
+                        border: Border.all(
+                          color: isSelected ? Colors.black : Colors.grey[300]!,
+                          width: isSelected ? 2 : 1,
+                        ),
+                      ),
+                      child: isSelected ? const Icon(Icons.check, color: Colors.white, size: 16) : null,
+                    ),
+                  );
+                }).toList(),
+              ),
+            ],
             
             // 배경색 선택
             if (_selectedIcon != null) ...[

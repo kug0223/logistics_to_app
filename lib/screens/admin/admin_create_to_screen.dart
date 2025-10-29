@@ -39,6 +39,7 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
   final TextEditingController _titleController = TextEditingController();
   final TextEditingController _descriptionController = TextEditingController();
   final TextEditingController _groupNameController = TextEditingController();
+  final TextEditingController _hoursBeforeController = TextEditingController(text: '2');
 
   // ============================================================
   // 📊 상태 변수
@@ -87,6 +88,7 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
   @override
   void initState() {
     super.initState();
+    _hoursBeforeController.text = _hoursBeforeStart.toString();
     _loadMyBusinesses();
   }
 
@@ -95,6 +97,7 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
     _titleController.dispose();
     _descriptionController.dispose();
     _groupNameController.dispose(); // ✅ NEW 추가
+    _hoursBeforeController.dispose();
     super.dispose();
   }
 
@@ -227,32 +230,32 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
       return;
     }
 
-    if (_selectedDeadlineDate == null || _selectedDeadlineTime == null) {
-      ToastHelper.showError('지원 마감 시간을 설정해주세요');
-      return;
-    }
-    // 지원 마감 DateTime 생성
-    final applicationDeadline = DateTime(
-      _selectedDeadlineDate!.year,
-      _selectedDeadlineDate!.month,
-      _selectedDeadlineDate!.day,
-      _selectedDeadlineTime!.hour,
-      _selectedDeadlineTime!.minute,
-    );
-    // ✅ 지원 마감 시간 검증
-    final latestWorkDate = _selectedDates.reduce((a, b) => a.isAfter(b) ? a : b);
-    final latestWorkDateTime = DateTime(
-      latestWorkDate.year,
-      latestWorkDate.month,
-      latestWorkDate.day,
-      23,
-      59,
-      59,
-    );
+    // ✅ 지원 마감 DateTime 생성 (FIXED_TIME일 때만)
+    DateTime? applicationDeadline;
+    if (_deadlineType == 'FIXED_TIME') {
+      applicationDeadline = DateTime(
+        _selectedDeadlineDate!.year,
+        _selectedDeadlineDate!.month,
+        _selectedDeadlineDate!.day,
+        _selectedDeadlineTime!.hour,
+        _selectedDeadlineTime!.minute,
+      );
 
-    if (applicationDeadline.isAfter(latestWorkDateTime)) {
-      ToastHelper.showError('지원 마감은 마지막 근무일(${latestWorkDate.month}/${latestWorkDate.day}) 23:59까지 가능합니다');
-      return;
+      // ✅ 지원 마감 시간 검증 (FIXED_TIME일 때만)
+      final latestWorkDate = _selectedDates.reduce((a, b) => a.isAfter(b) ? a : b);
+      final latestWorkDateTime = DateTime(
+        latestWorkDate.year,
+        latestWorkDate.month,
+        latestWorkDate.day,
+        23,
+        59,
+        59,
+      );
+
+      if (applicationDeadline.isAfter(latestWorkDateTime)) {
+        ToastHelper.showError('지원 마감은 마지막 근무일(${latestWorkDate.month}/${latestWorkDate.day}) 23:59까지 가능합니다');
+        return;
+      }
     }
 
     setState(() => _isCreating = true);
@@ -275,7 +278,7 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
         // 단일 날짜 TO
         success = await _createSingleTO(
           date: dateGroups[0][0],
-          applicationDeadline: applicationDeadline,
+          applicationDeadline: applicationDeadline ?? DateTime.now(),
           creatorUID: uid,
         );
       } else if (_isConsecutiveDates()) {
@@ -283,20 +286,25 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
         final sortedDates = List<DateTime>.from(_selectedDates)..sort();
         success = await _createGroupTO(
           dates: sortedDates,  // ✅ 추가
-          applicationDeadline: applicationDeadline,
+          applicationDeadline: applicationDeadline ?? DateTime.now(),
           creatorUID: uid,
         );
       } else {
         // 비연속 날짜 - 그룹별로 생성
         success = await _createMultipleGroups(
           dateGroups: dateGroups,
-          applicationDeadline: applicationDeadline,
+          applicationDeadline: applicationDeadline ?? DateTime.now(),
           creatorUID: uid,
         );
       }
 
       if (success && mounted) {
-        ToastHelper.showSuccess('TO가 생성되었습니다');
+        // ✅ 생성된 개수에 따라 메시지 다르게
+        if (_selectedDates.length > 1) {
+          ToastHelper.showSuccess('${_selectedDates.length}개의 TO가 생성되었습니다');
+        } else {
+          ToastHelper.showSuccess('TO가 생성되었습니다');
+        }
         Navigator.pop(context, true);
       }
     } catch (e) {
@@ -1371,6 +1379,14 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
                         },
                   icon: const Icon(Icons.add, size: 18),
                   label: const Text('업무 추가'),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.green[600],
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                  ),
                 ),
               ],
             ),
@@ -1541,9 +1557,7 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
                           isDense: true,
                           suffixText: '시간',
                         ),
-                        controller: TextEditingController(
-                          text: _hoursBeforeStart.toString(),
-                        ),
+                        controller: _hoursBeforeController,
                         onChanged: (value) {
                           final hours = int.tryParse(value);
                           if (hours != null && hours > 0 && hours <= 72) {

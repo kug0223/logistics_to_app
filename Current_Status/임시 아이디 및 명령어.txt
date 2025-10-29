@@ -13,7 +13,7 @@ subadmin123!@#
 
 
 git add .
-git commit -m "백업"
+git commit -m "TO그룹관리시스템개선251028-8"
 git push
 
 flutter clean
@@ -21,14 +21,12 @@ flutter pub get
 flutter run -d web-server
 
 project_knowledge_search 도구를 사용해서
-실제 업로드된 dart 코드 파일들을 검색하고
-프로젝트 구조 파악해줘.
-1. lib/screens의 모든 하위 폴더(user, admin, auth) 파일 목록
-2. lib/models의 모든 파일 목록  
-3. lib/services의 모든 파일 목록
-4. lib/providers의 모든 파일 목록
+실제 업로드된 dart 코드 파일들을 검색할것!(mnt/project 절대 보지 말것!!!!)
+프로젝트 구조 파악하고 파악한 내용 나한테 말해봐
+lib의 모든 하위 폴더와 파일구조
 오래된 문서(md 파일)가 아니라 실제 코드를 봐야 해.
-완료되면 파악한 프로젝트 구조 보여줘 파악한것이 최근것과 동일한지 확인하게
 그리고 해결책 여러가지를 알려주려는건 좋은데
 앞으로 간단명료하게 방향만 알려주고 
 나한테 선택여부 한다음에 선택되면 해당방법에 대해서만 설명해 
+
+10월 5주차 TO리스트

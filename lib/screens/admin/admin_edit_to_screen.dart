@@ -13,6 +13,7 @@ import '../../widgets/loading_widget.dart';
 import '../../widgets/work_detail_dialog.dart';
 import '../../widgets/work_type_icon.dart';
 import '../../utils/format_helper.dart';
+import '../../widgets/work_type_icon.dart';
 
 /// TO 수정 화면
 class AdminEditTOScreen extends StatefulWidget {
@@ -665,13 +666,14 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
                 width: 40,
                 height: 40,
                 decoration: BoxDecoration(
-                  color: FormatHelper.parseColor(work.workTypeColor).withOpacity(0.1),
+                  color: FormatHelper.parseColor(work.workTypeColor),
                   borderRadius: BorderRadius.circular(8),
                 ),
                 child: Center(
-                  child: Text(
+                  child: WorkTypeIcon.buildFromString(
                     work.workTypeIcon,
-                    style: const TextStyle(fontSize: 20),
+                    color: Colors.white,  // ✅ 간단하게 이것만!
+                    size: 20,
                   ),
                 ),
               ),

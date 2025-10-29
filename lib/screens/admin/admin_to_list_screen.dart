@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import '../../models/to_model.dart';
 import '../../models/work_detail_model.dart';
+import '../../models/application_model.dart';
 import '../../services/firestore_service.dart';
 import '../../widgets/loading_widget.dart';
 import '../../utils/toast_helper.dart';
@@ -9,6 +10,7 @@ import 'admin_to_detail_screen.dart';
 import 'admin_create_to_screen.dart';
 import 'admin_edit_to_screen.dart';
 import '../../utils/format_helper.dart';
+import '../../widgets/work_type_icon.dart';
 
 /// 관리자 TO 목록 화면 - 이중 토글 UI
 class AdminTOListScreen extends StatefulWidget {
@@ -43,7 +45,7 @@ class _AdminTOListScreenState extends State<AdminTOListScreen> {
     _loadTOsWithStats();
   }
 
-  /// TO 목록 + 지원자 통계 로드 (병렬 처리)
+  /// TO 목록 + 지원자 통계 로드 (통계 필드 활용)
   Future<void> _loadTOsWithStats() async {
     setState(() {
       _isLoading = true;
@@ -62,30 +64,32 @@ class _AdminTOListScreenState extends State<AdminTOListScreen> {
         if (masterTO.isGrouped && masterTO.groupId != null) {
           // 같은 그룹의 모든 TO 조회
           final groupTOs = await _firestoreService.getTOsByGroup(masterTO.groupId!);
+          final toIds = groupTOs.map((to) => to.id).toList();
           
-          // 각 TO의 지원자 통계 + WorkDetails 조회
+          // ✅ WorkDetails와 시간 범위만 조회 (통계는 TO 문서에 있음!)
+          final batchResults = await Future.wait([
+            _firestoreService.getWorkDetailsBatch(toIds),
+            _firestoreService.calculateGroupTimeRange(masterTO.groupId!),
+          ]);
+          
+          final workDetailsMap = batchResults[0] as Map<String, List<WorkDetailModel>>;
+          final timeRange = batchResults[1] as Map<String, String>;
+          
+          // 각 TO 아이템 생성
           List<_TOItem> toItems = [];
           for (var to in groupTOs) {
-            final applications = await _firestoreService.getApplicationsByTOId(to.id);
-            final workDetails = await _firestoreService.getWorkDetails(to.id);
-
-            // ✅ 각 WorkDetail별로 대기 인원 수 계산
-            for (var work in workDetails) {
-              work.pendingCount = applications
-                  .where((app) => app.selectedWorkType == work.workType && app.status == 'PENDING')
-                  .length;
-            }
+            final toWorkDetails = workDetailsMap[to.id] ?? [];
             
+            // ✅ TO 문서의 통계 필드 직접 사용 (지원자 조회 불필요!)
             toItems.add(_TOItem(
               to: to,
-              workDetails: workDetails,
-              confirmedCount: applications.where((app) => app.status == 'CONFIRMED').length,
-              pendingCount: applications.where((app) => app.status == 'PENDING').length,
+              workDetails: toWorkDetails,
+              confirmedCount: to.totalConfirmed,  // ✅ 통계 필드
+              pendingCount: to.totalPending,      // ✅ 통계 필드
             ));
           }
           
-          // 시간 범위 계산
-          final timeRange = await _firestoreService.calculateGroupTimeRange(masterTO.groupId!);
+          // 시간 범위 설정
           masterTO.setTimeRange(timeRange['minStart']!, timeRange['maxEnd']!);
           
           groupItems.add(_TOGroupItem(
@@ -93,46 +97,28 @@ class _AdminTOListScreenState extends State<AdminTOListScreen> {
             groupTOs: toItems,
             isGrouped: true,
           ));
-        } 
-        // 단일 TO인 경우
-        else {
-          final applications = await _firestoreService.getApplicationsByTOId(masterTO.id);
-          final workDetails = await _firestoreService.getWorkDetails(masterTO.id);
-          // ✅ 여기 추가! - 단일 TO 시간 범위 계산
-          if (workDetails.isNotEmpty) {
-            String? minStart;
-            String? maxEnd;
-            
-            for (var work in workDetails) {
-              if (minStart == null || work.startTime.compareTo(minStart) < 0) {
-                minStart = work.startTime;
-              }
-              if (maxEnd == null || work.endTime.compareTo(maxEnd) > 0) {
-                maxEnd = work.endTime;
-              }
-            }
-            
-            if (minStart != null && maxEnd != null) {
-              masterTO.setTimeRange(minStart, maxEnd);
-            }
-          }
           
+        } else {
+          // 단일 TO인 경우
+          final singleWorkDetails = await _firestoreService.getWorkDetails(masterTO.id);
+          
+          // ✅ TO 문서의 통계 필드 직접 사용 (지원자 조회 불필요!)
           groupItems.add(_TOGroupItem(
             masterTO: masterTO,
             groupTOs: [
               _TOItem(
                 to: masterTO,
-                workDetails: workDetails,
-                confirmedCount: applications.where((app) => app.status == 'CONFIRMED').length,
-                pendingCount: applications.where((app) => app.status == 'PENDING').length,
-              )
+                workDetails: singleWorkDetails,
+                confirmedCount: masterTO.totalConfirmed,  // ✅ 통계 필드
+                pendingCount: masterTO.totalPending,      // ✅ 통계 필드
+              ),
             ],
             isGrouped: false,
           ));
         }
       }
 
-      // 3. 사업장 목록 추출
+      // 사업장 목록 추출
       final businessSet = masterTOs.map((to) => to.businessName).toSet();
       final businessList = businessSet.toList()..sort();
 
@@ -143,11 +129,11 @@ class _AdminTOListScreenState extends State<AdminTOListScreen> {
         _isLoading = false;
       });
     } catch (e) {
-      print('❌ TO 목록 로드 실패: $e');
-      ToastHelper.showError('TO 목록을 불러오는데 실패했습니다.');
+      print('❌ 에러 발생: $e');
       setState(() {
         _isLoading = false;
       });
+      ToastHelper.showError('TO 목록을 불러올 수 없습니다');
     }
   }
 
@@ -1391,9 +1377,20 @@ class _AdminTOListScreenState extends State<AdminTOListScreen> {
         children: [
           
           // ✅ 업무 아이콘 + 유형
-          Text(
-            work.workTypeIcon,
-            style: const TextStyle(fontSize: 16),
+          Container(
+            width: 28,
+            height: 28,
+            decoration: BoxDecoration(
+              color: FormatHelper.parseColor(work.workTypeColor),
+              borderRadius: BorderRadius.circular(6),
+            ),
+            child: Center(
+              child: WorkTypeIcon.buildFromString(
+                work.workTypeIcon,
+                color: Colors.white,
+                size: 14,
+              ),
+            ),
           ),
           const SizedBox(width: 6),
           Expanded(

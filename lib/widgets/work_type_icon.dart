@@ -7,12 +7,18 @@ class WorkTypeIcon {
   /// 아이콘 또는 이모지를 렌더링 (큰 사이즈)
   static Widget build(
     BusinessWorkTypeModel workType, {
-    Color color = Colors.white,
+    Color? color,
     double size = 20,
   }) {
+    // ✅ workType에 저장된 color 사용 (없으면 기본 흰색)
+    final iconColor = color ?? 
+                    (workType.color != null 
+                        ? FormatHelper.parseColor(workType.color!) 
+                        : Colors.white);
+    
     return buildFromString(
       workType.icon,
-      color: color,
+      color: iconColor,
       size: size,
     );
   }
@@ -36,7 +42,7 @@ class WorkTypeIcon {
     double size = 20,
   }) {
     // 이모지 체크 (유니코드 범위)
-    if (_isEmoji(iconString)) {
+    if (isEmoji(iconString)) {
       return Text(
         iconString,
         style: TextStyle(fontSize: size),
@@ -53,7 +59,7 @@ class WorkTypeIcon {
   }
 
   /// 이모지 여부 확인
-  static bool _isEmoji(String text) {
+  static bool isEmoji(String text) {
     if (text.isEmpty) return false;
     
     final firstChar = text.runes.first;
@@ -70,6 +76,17 @@ class WorkTypeIcon {
 
   /// Material 아이콘 이름 → IconData 변환
   static IconData _getIconData(String iconName) {
+    // ✅ material:codePoint 형식 처리
+    if (iconName.startsWith('material:')) {
+      try {
+        final codePoint = int.parse(iconName.substring(9));
+        return IconData(codePoint, fontFamily: 'MaterialIcons');
+      } catch (e) {
+        print('❌ Material 아이콘 파싱 실패: $iconName');
+        return Icons.work;
+      }
+    }
+    
     // 아이콘 매핑 (자주 사용하는 것들)
     const iconMap = {
       'work': Icons.work,
@@ -94,8 +111,8 @@ class WorkTypeIcon {
       'move_to_inbox': Icons.move_to_inbox,
       'all_inbox': Icons.all_inbox,
       'storage': Icons.storage,
-      'package': Icons.inbox, // package 아이콘 대체
-      'forklift': Icons.local_shipping, // forklift 대체
+      'package': Icons.inbox,
+      'forklift': Icons.local_shipping,
     };
 
     return iconMap[iconName] ?? Icons.work;
