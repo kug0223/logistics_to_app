@@ -172,12 +172,25 @@ class _AllTOListScreenState extends State<AllTOListScreen> {
                           itemBuilder: (context, index) {
                             final to = _filteredTOList[index];
                             
-                            // 내 지원 상태 확인
+                            // ✅ 내 지원 상태 확인 (businessId + toTitle + workDate 비교)
                             final myApp = _myApplications.firstWhere(
-                              (app) => app.toId == to.id,
+                              (app) {
+                                // TO 날짜 정규화 (시간 제거)
+                                final toDate = DateTime(to.date.year, to.date.month, to.date.day);
+                                final appDate = DateTime(app.workDate.year, app.workDate.month, app.workDate.day);
+                                
+                                return app.businessId == to.businessId &&
+                                      app.toTitle == to.title &&
+                                      appDate.isAtSameMomentAs(toDate);
+                              },
                               orElse: () => ApplicationModel(
                                 id: '',
-                                toId: '',
+                                businessId: '',
+                                businessName: '',
+                                toTitle: '',
+                                workDate: DateTime.now(),
+                                startTime: '',
+                                endTime: '',
                                 uid: '',
                                 selectedWorkType: '',
                                 wage: 0,
@@ -201,7 +214,7 @@ class _AllTOListScreenState extends State<AllTOListScreen> {
                                 );
                               },
                             );
-                          },
+                          }
                         ),
                       ),
           ),

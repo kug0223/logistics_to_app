@@ -85,11 +85,17 @@ class _TODetailScreenState extends State<TODetailScreen> {
         return;
       }
 
+      // ✅ 변경: toId 대신 TO 정보 전달
       final success = await _firestoreService.applyToTOWithWorkType(
-        toId: widget.to.id,
+        businessId: widget.to.businessId,
+        businessName: widget.to.businessName,
+        toTitle: widget.to.title,
+        workDate: widget.to.date,
         uid: uid,
         selectedWorkType: selectedWork.workType,
         wage: selectedWork.wage,
+        startTime: selectedWork.startTime,
+        endTime: selectedWork.endTime,
       );
 
       if (success && mounted) {

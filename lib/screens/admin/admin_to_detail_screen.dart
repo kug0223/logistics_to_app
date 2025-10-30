@@ -225,7 +225,6 @@ class _AdminTODetailScreenState extends State<AdminTODetailScreen> {
       // ✅ WorkDetail과 TO 통계 업데이트 포함된 함수 사용
       final success = await _firestoreService.confirmApplicantWithWorkDetail(
         applicationId: applicationId,
-        toId: widget.to.id,
         adminUID: adminUID,
       );
       

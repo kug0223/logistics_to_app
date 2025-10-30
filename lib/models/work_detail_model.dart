@@ -46,6 +46,7 @@ class WorkDetailModel {
       endTime: map['endTime'] ?? '18:00',
       order: map['order'] ?? 0,
       createdAt: (map['createdAt'] as Timestamp?)?.toDate() ?? DateTime.now(),
+      pendingCount: map['pendingCount'] ?? 0,  // ✅ 추가!
     );
   }
 
