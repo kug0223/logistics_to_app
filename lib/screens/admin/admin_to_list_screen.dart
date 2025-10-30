@@ -924,35 +924,86 @@ class _AdminTOListScreenState extends State<AdminTOListScreen> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  // ✅ 사업장명 (첫 줄)
-                  Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-                    decoration: BoxDecoration(
-                      color: const Color(0xFF1976D2),
-                      borderRadius: BorderRadius.circular(6),
-                    ),
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        const Icon(
-                          Icons.business,
-                          size: 14,
-                          color: Colors.white,
+                  // ✅ 사업장명 + 상태 배지 (한 줄로)
+                  Row(
+                    children: [
+                      // 사업장명
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFF1976D2),
+                          borderRadius: BorderRadius.circular(6),
                         ),
-                        const SizedBox(width: 6),
-                        Flexible(
-                          child: Text(
-                            masterTO.businessName,
-                            style: const TextStyle(
-                              fontSize: 12,
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            const Icon(
+                              Icons.business,
+                              size: 14,
                               color: Colors.white,
-                              fontWeight: FontWeight.bold,
                             ),
-                            overflow: TextOverflow.ellipsis,
+                            const SizedBox(width: 6),
+                            Text(
+                              masterTO.businessName,
+                              style: const TextStyle(
+                                fontSize: 12,
+                                color: Colors.white,
+                                fontWeight: FontWeight.bold,
+                              ),
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ],
+                        ),
+                      ),
+                      
+                      const Spacer(),
+                      
+                      // ✅ 상태 배지
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                        decoration: BoxDecoration(
+                          color: masterTO.isClosed
+                              ? Color(masterTO.closedReasonColor).withOpacity(0.1)
+                              : Colors.green[50],
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(
+                            color: masterTO.isClosed
+                                ? Color(masterTO.closedReasonColor)
+                                : Colors.green[600]!,
+                            width: 1.5,
                           ),
                         ),
-                      ],
-                    ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(
+                              masterTO.isClosed
+                                  ? (masterTO.isManualClosed
+                                      ? Icons.lock
+                                      : masterTO.isTimeExpired
+                                          ? Icons.schedule
+                                          : Icons.check_circle)
+                                  : Icons.circle,
+                              size: 12,
+                              color: masterTO.isClosed
+                                  ? Color(masterTO.closedReasonColor)
+                                  : Colors.green[600],
+                            ),
+                            const SizedBox(width: 4),
+                            Text(
+                              masterTO.isClosed ? masterTO.closedReason : '진행중',
+                              style: TextStyle(
+                                fontSize: 11,
+                                fontWeight: FontWeight.bold,
+                                color: masterTO.isClosed
+                                    ? Color(masterTO.closedReasonColor)
+                                    : Colors.green[700],
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
                   ),
                   const SizedBox(height: 10),
                   
@@ -1117,33 +1168,6 @@ class _AdminTOListScreenState extends State<AdminTOListScreen> {
                             ),
                           ),
                         ],
-                      ),
-                    ],
-                    // ✅ Phase 4: 마감 배지
-                    if (masterTO.isClosed) ...[
-                      const SizedBox(width: 8),
-                      Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                        decoration: BoxDecoration(
-                          color: Color(masterTO.closedReasonColor).withOpacity(0.1),
-                          borderRadius: BorderRadius.circular(12),
-                          border: Border.all(color: Color(masterTO.closedReasonColor)),
-                        ),
-                        child: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Icon(Icons.lock, size: 14, color: Color(masterTO.closedReasonColor)),
-                            const SizedBox(width: 4),
-                            Text(
-                              masterTO.closedReason,
-                              style: TextStyle(
-                                fontSize: 12,
-                                fontWeight: FontWeight.bold,
-                                color: Color(masterTO.closedReasonColor),
-                              ),
-                            ),
-                          ],
-                        ),
                       ),
                     ],
                       
@@ -1353,7 +1377,7 @@ class _AdminTOListScreenState extends State<AdminTOListScreen> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  // ✅ 첫 줄: 날짜 + TO 제목
+                  // ✅ 첫 줄: 날짜 + TO 제목 + 상태 배지
                   Row(
                     children: [
                       // 날짜
@@ -1379,9 +1403,56 @@ class _AdminTOListScreenState extends State<AdminTOListScreen> {
                           overflow: TextOverflow.ellipsis,
                         ),
                       ),
+                      
+                      const SizedBox(width: 8),
+                      
+                      // ✅ 상태 배지
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
+                        decoration: BoxDecoration(
+                          color: to.isClosed
+                              ? Color(to.closedReasonColor).withOpacity(0.1)
+                              : Colors.green[50],
+                          borderRadius: BorderRadius.circular(10),
+                          border: Border.all(
+                            color: to.isClosed
+                                ? Color(to.closedReasonColor)
+                                : Colors.green[600]!,
+                            width: 1.5,
+                          ),
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(
+                              to.isClosed
+                                  ? (to.isManualClosed
+                                      ? Icons.lock
+                                      : to.isTimeExpired
+                                          ? Icons.schedule
+                                          : Icons.check_circle)
+                                  : Icons.circle,
+                              size: 10,
+                              color: to.isClosed
+                                  ? Color(to.closedReasonColor)
+                                  : Colors.green[600],
+                            ),
+                            const SizedBox(width: 3),
+                            Text(
+                              to.isClosed ? to.closedReason : '진행중',
+                              style: TextStyle(
+                                fontSize: 10,
+                                fontWeight: FontWeight.bold,
+                                color: to.isClosed
+                                    ? Color(to.closedReasonColor)
+                                    : Colors.green[700],
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
                     ],
                   ),
-                  const SizedBox(height: 8),
                   
                   // ✅ 둘째 줄: 통계 + 더보기 메뉴
                   Row(
@@ -2308,13 +2379,29 @@ class _AdminTOListScreenState extends State<AdminTOListScreen> {
     }
   }
 
-  /// 더미 데이터 생성 다이얼로그 ㅡㅡㅡㅡㅡㅡㅡㅡㅡㅡㅡㅡㅡㅡㅡㅡㅡㅡㅡㅡㅡㅡ
   Future<void> _showCreateDummyDataDialog() async {
     // TO 선택
     if (_filteredGroupItems.isEmpty) {
       ToastHelper.showError('생성된 TO가 없습니다');
       return;
     }
+
+    // ✅ 모든 TO를 평면화 (그룹 TO + 단일 TO)
+    List<TOModel> allTOs = [];
+    for (var groupItem in _filteredGroupItems) {
+      if (groupItem.isGrouped) {
+        // 그룹 TO: 내부의 모든 TO 추가
+        for (var toItem in groupItem.groupTOs) {
+          allTOs.add(toItem.to);
+        }
+      } else {
+        // 단일 TO: 바로 추가
+        allTOs.add(groupItem.masterTO);
+      }
+    }
+
+    // 날짜순 정렬
+    allTOs.sort((a, b) => a.date.compareTo(b.date));
 
     final selectedTO = await showDialog<TOModel>(
       context: context,
@@ -2324,14 +2411,50 @@ class _AdminTOListScreenState extends State<AdminTOListScreen> {
           width: double.maxFinite,
           child: ListView.builder(
             shrinkWrap: true,
-            itemCount: _filteredGroupItems.length,
+            itemCount: allTOs.length,
             itemBuilder: (context, index) {
-              final item = _filteredGroupItems[index];
-              final to = item.masterTO;
+              final to = allTOs[index];
+              
+              // ✅ 그룹 TO인지 단일 TO인지 표시
+              final badge = to.groupName != null
+                  ? '[${to.groupName}]'
+                  : '[단일 공고]';
+              
               return ListTile(
-                title: Text(to.title),
+                title: Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        to.title,
+                        style: const TextStyle(
+                          fontSize: 14,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                      decoration: BoxDecoration(
+                        color: to.groupName != null ? Colors.green[50] : Colors.blue[50],
+                        borderRadius: BorderRadius.circular(4),
+                        border: Border.all(
+                          color: to.groupName != null ? Colors.green[300]! : Colors.blue[300]!,
+                        ),
+                      ),
+                      child: Text(
+                        badge,
+                        style: TextStyle(
+                          fontSize: 10,
+                          color: to.groupName != null ? Colors.green[700] : Colors.blue[700],
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
                 subtitle: Text(
-                  '${DateFormat('yyyy-MM-dd').format(to.date)} | ${to.businessName}',
+                  '${DateFormat('yyyy-MM-dd (E)', 'ko_KR').format(to.date)} | ${to.businessName}',
+                  style: const TextStyle(fontSize: 12),
                 ),
                 onTap: () => Navigator.pop(context, to),
               );
@@ -2488,7 +2611,7 @@ class _AdminTOListScreenState extends State<AdminTOListScreen> {
       }
 
       ToastHelper.showSuccess('더미 데이터 삭제 완료!');
-      _loadTOsWithStats();
+      await _loadTOsWithStats();
     } catch (e) {
       if (mounted) {
         Navigator.pop(context);

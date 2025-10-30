@@ -1089,71 +1089,38 @@ class FirestoreService {
       return {};
     }
   }
-  /// 특정 업무에 지원한 지원자 조회
+  /// 특정 TO의 특정 업무 유형에 대한 지원서 조회
   Future<List<ApplicationModel>> getApplicationsByWorkDetail(
     String toId,
     String workType,
   ) async {
     try {
-      final snapshot = await _firestore
-          .collection('applications')
-          .where('toId', isEqualTo: toId)
-          .where('workType', isEqualTo: workType)
-          .orderBy('appliedAt', descending: true)
-          .get();
-      
-      return snapshot.docs
-          .map((doc) => ApplicationModel.fromMap(doc.data(), doc.id))
-          .toList();
-    } catch (e) {
-      print('❌ 업무별 지원자 조회 실패: $e');
-      return [];
-    }
-  }
-
-  /// 그룹별 지원자 통합 조회 (최적화)
-  Future<List<ApplicationModel>> getApplicationsByGroup(String groupId) async {
-    try {
-      print('🔍 [FirestoreService] 그룹 지원자 조회 시작...');
-      print('   그룹 ID: $groupId');
-
-      // 1. 같은 그룹의 TO들 조회
-      final groupTOs = await getTOsByGroup(groupId);
-      
-      if (groupTOs.isEmpty) {
-        print('⚠️ [FirestoreService] 그룹에 속한 TO가 없습니다');
+      // ✅ TO 정보 먼저 조회
+      final toDoc = await _firestore.collection('tos').doc(toId).get();
+      if (!toDoc.exists) {
+        print('❌ TO를 찾을 수 없습니다: $toId');
         return [];
       }
 
-      final toIds = groupTOs.map((to) => to.id).toList();
-      print('   TO 개수: ${toIds.length}');
+      final toData = toDoc.data()!;
+      final businessId = toData['businessId'];
+      final toTitle = toData['title'];
+      final workDate = toData['date'] as Timestamp;
 
-      // 2. ✅ 배치로 한 번에 조회 (in 쿼리 사용)
-      List<ApplicationModel> allApplications = [];
-      
-      // Firestore 'in' 쿼리는 최대 10개까지
-      for (int i = 0; i < toIds.length; i += 10) {
-        final batch = toIds.skip(i).take(10).toList();
-        
-        final snapshot = await _firestore
-            .collection('applications')
-            .where('toId', whereIn: batch)
-            .get();
+      // ✅ businessId, toTitle, workDate, workType으로 조회
+      final snapshot = await _firestore
+          .collection('applications')
+          .where('businessId', isEqualTo: businessId)
+          .where('toTitle', isEqualTo: toTitle)
+          .where('workDate', isEqualTo: workDate)
+          .where('selectedWorkType', isEqualTo: workType)
+          .get();
 
-        final apps = snapshot.docs
-            .map((doc) => ApplicationModel.fromFirestore(doc))
-            .toList();
-        
-        allApplications.addAll(apps);
-      }
-
-      // 3. 지원 시간 기준 정렬 (최신순)
-      allApplications.sort((a, b) => b.appliedAt.compareTo(a.appliedAt));
-
-      print('✅ [FirestoreService] 그룹 지원자 조회 완료: ${allApplications.length}명');
-      return allApplications;
+      return snapshot.docs
+          .map((doc) => ApplicationModel.fromFirestore(doc))
+          .toList();
     } catch (e) {
-      print('❌ [FirestoreService] 그룹 지원자 조회 실패: $e');
+      print('❌ 업무별 지원서 조회 실패: $e');
       return [];
     }
   }
@@ -1180,10 +1147,29 @@ class FirestoreService {
   /// TO별 지원자 목록 + 사용자 정보 조회 (관리자용)
   Future<List<Map<String, dynamic>>> getApplicantsWithUserInfo(String toId) async {
     try {
+      // ✅ TO 정보 먼저 조회
+      final toDoc = await _firestore.collection('tos').doc(toId).get();
+      if (!toDoc.exists) {
+        print('❌ TO를 찾을 수 없습니다: $toId');
+        return [];
+      }
+
+      final toData = toDoc.data()!;
+      final businessId = toData['businessId'];
+      final toTitle = toData['title'];
+      final workDate = toData['date'] as Timestamp;
+
+      print('🔍 지원자 조회: businessId=$businessId, toTitle=$toTitle');
+
+      // ✅ businessId, toTitle, workDate로 조회
       QuerySnapshot appSnapshot = await _firestore
           .collection('applications')
-          .where('toId', isEqualTo: toId)
+          .where('businessId', isEqualTo: businessId)
+          .where('toTitle', isEqualTo: toTitle)
+          .where('workDate', isEqualTo: workDate)
           .get();
+
+      print('✅ 조회된 지원서: ${appSnapshot.docs.length}개');
 
       // 메모리에서 정렬
       final sortedDocs = appSnapshot.docs.toList()
@@ -1212,21 +1198,16 @@ class FirestoreService {
             'applicationId': appDoc.id,
             'application': ApplicationModel.fromMap(appData, appDoc.id),
             'userName': userData['name'] ?? '(알 수 없음)',
-            'userEmail': userData['email'] ?? '(알 수 없음)',
-          });
-        } else {
-          result.add({
-            'applicationId': appDoc.id,
-            'application': ApplicationModel.fromMap(appData, appDoc.id),
-            'userName': '(탈퇴한 사용자)',
-            'userEmail': '(알 수 없음)',
+            'userEmail': userData['email'] ?? '',
+            'userPhone': userData['phone'] ?? '',
           });
         }
       }
 
+      print('✅ 사용자 정보 포함 지원자: ${result.length}명');
       return result;
     } catch (e) {
-      print('지원자 목록 조회 실패: $e');
+      print('❌ 지원자 조회 실패: $e');
       return [];
     }
   }
@@ -1318,7 +1299,7 @@ class FirestoreService {
     }
   }
 
-  /// 지원자 확정 (WorkDetail count 업데이트 포함)
+  /// 지원자 확정 (WorkDetail count + TO 통계 업데이트 포함)
   Future<bool> confirmApplicantWithWorkDetail({
     required String applicationId,
     required String toId,
@@ -1337,7 +1318,21 @@ class FirestoreService {
       }
 
       final appData = appDoc.data()!;
+      
+      // 이미 확정된 경우
+      if (appData['status'] == 'CONFIRMED') {
+        ToastHelper.showError('이미 확정된 지원자입니다.');
+        return false;
+      }
+
+      // 취소된 경우
+      if (appData['status'] == 'CANCELED') {
+        ToastHelper.showError('취소된 지원자는 확정할 수 없습니다.');
+        return false;
+      }
+
       final selectedWorkType = appData['selectedWorkType'];
+      final uid = appData['uid'];
 
       // 2. WorkDetail ID 찾기
       final workDetailId = await findWorkDetailIdByType(toId, selectedWorkType);
@@ -1348,29 +1343,55 @@ class FirestoreService {
 
       // 3. Batch 업데이트
       final batch = _firestore.batch();
+      final now = Timestamp.now();
 
-      // 지원서 확정
+      // 3-1. 지원서 확정
       batch.update(_firestore.collection('applications').doc(applicationId), {
         'status': 'CONFIRMED',
-        'confirmedAt': FieldValue.serverTimestamp(),
+        'confirmedAt': now,
         'confirmedBy': adminUID,
       });
 
-      // WorkDetail currentCount 증가
-      batch.update(
-        _firestore.collection('tos').doc(toId).collection('workDetails').doc(workDetailId),
-        {'currentCount': FieldValue.increment(1)},
-      );
+      // 3-2. confirmed_applications 서브컬렉션에 추가
+      final confirmedRef = _firestore
+          .collection('tos')
+          .doc(toId)
+          .collection('confirmed_applications')
+          .doc(applicationId);
+      
+      batch.set(confirmedRef, {
+        'uid': uid,
+        'workDetailId': workDetailId,
+        'confirmedAt': now,
+        'confirmedBy': adminUID,
+      });
 
-      // ✅ TO 통계 업데이트 (totalConfirmed + totalPending)
+      // 3-3. WorkDetail currentCount 증가, pendingCount 감소
+      final workDetailRef = _firestore
+          .collection('tos')
+          .doc(toId)
+          .collection('workDetails')
+          .doc(workDetailId);
+      
+      batch.update(workDetailRef, {
+        'currentCount': FieldValue.increment(1),
+        'pendingCount': FieldValue.increment(-1),
+      });
+
+      // 3-4. TO 통계 업데이트
       batch.update(_firestore.collection('tos').doc(toId), {
         'totalConfirmed': FieldValue.increment(1),
         'totalPending': FieldValue.increment(-1),
+        'updatedAt': now,
       });
 
       await batch.commit();
 
       print('✅ 지원자 확정 완료');
+      print('   - applicationId: $applicationId');
+      print('   - workType: $selectedWorkType');
+      print('   - workDetailId: $workDetailId');
+      
       ToastHelper.showSuccess('지원자가 확정되었습니다.');
       return true;
     } catch (e) {
@@ -1624,6 +1645,7 @@ class FirestoreService {
         'wage': workDetail.wage,
         'requiredCount': workDetail.requiredCount,
         'currentCount': 0,
+        'pendingCount': 0,
         'startTime': workDetail.startTime,
         'endTime': workDetail.endTime,
         'order': workDetail.order,
