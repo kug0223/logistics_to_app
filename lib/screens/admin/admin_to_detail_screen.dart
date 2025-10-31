@@ -50,10 +50,12 @@ class _WorkDetailWithApplicants {
 /// 관리자 TO 상세 화면 (지원자 관리) - Phase 3 리팩토링
 class AdminTODetailScreen extends StatefulWidget {
   final TOModel to;
+  final String? initialWorkType;
 
   const AdminTODetailScreen({
     Key? key,
     required this.to,
+    this.initialWorkType,
   }) : super(key: key);
 
   @override

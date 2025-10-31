@@ -1156,6 +1156,41 @@ class FirestoreService {
       return [];
     }
   }
+  /// 지원서 상태 업데이트 (승인/거절)
+  Future<void> updateApplicationStatus({
+    required String applicationId,
+    required String status,
+    String? confirmedBy,
+    String? rejectedBy,
+  }) async {
+    try {
+      final updates = <String, dynamic>{
+        'status': status,
+      };
+
+      if (status == 'CONFIRMED') {
+        updates['confirmedAt'] = FieldValue.serverTimestamp();
+        if (confirmedBy != null) {
+          updates['confirmedBy'] = confirmedBy;
+        }
+      } else if (status == 'REJECTED') {
+        updates['rejectedAt'] = FieldValue.serverTimestamp();
+        if (rejectedBy != null) {
+          updates['rejectedBy'] = rejectedBy;
+        }
+      }
+
+      await _firestore
+          .collection('applications')
+          .doc(applicationId)
+          .update(updates);
+
+      print('✅ 지원서 상태 업데이트: $status');
+    } catch (e) {
+      print('❌ 지원서 상태 업데이트 실패: $e');
+      rethrow;
+    }
+  }
   /// TO의 모든 지원서 조회 (businessId, title, date 기준)
   Future<List<ApplicationModel>> getApplicationsByTO(
     String businessId,
