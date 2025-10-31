@@ -164,18 +164,23 @@ class TestDataHelper {
       print('✅ 확정 지원서 생성: ${uids[uidIndex]} → ${workData['workType']}');
       uidIndex++;
     }
-
+    print('');
     print('🎉 지원서 생성 완료!');
-    print('   총 ${createdAppIds.length}개 지원서 생성됨');
-    print('   생성된 ID: ${createdAppIds.join(", ")}');
-    print('🎉 지원서 생성 완료!');
-    print('   총 ${createdAppIds.length}개 지원서 생성됨');
+    print('   총 ${createdAppIds.length}개 생성됨');
+    print('');
 
-    // ✅ FirestoreService로 통계 재계산
+    // ✅ TO 통계 재계산
     print('📊 TO 통계 재계산 중...');
-    await _firestoreService.recalculateTOStats(toId);
+    final success = await _firestoreService.recalculateTOStats(toId);
     _firestoreService.clearCache(toId: toId);
-    print('✅ 완료!');
+    
+    if (success) {
+      print('✅ TO 통계 재계산 완료!');
+    } else {
+      print('⚠️  TO 통계 재계산 실패');
+    }
+    print('');
+
     
   }
 

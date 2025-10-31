@@ -205,7 +205,7 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
           workDetail: newWork,
         );
         ToastHelper.showSuccess('업무가 추가되었습니다');
-        _loadData();
+        await _loadData();
       } catch (e) {
         print('❌ 업무 추가 실패: $e');
         ToastHelper.showError('업무 추가에 실패했습니다');
@@ -353,7 +353,7 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
           updates: result,
         );
         ToastHelper.showSuccess('업무가 수정되었습니다');
-        _loadData(); // 새로고침
+        await _loadData(); // 새로고침
       } catch (e) {
         print('❌ 업무 수정 실패: $e');
         ToastHelper.showError('업무 수정에 실패했습니다');
@@ -410,7 +410,7 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
           workDetailId: work.id,
         );
         ToastHelper.showSuccess('업무가 삭제되었습니다');
-        _loadData(); // 새로고침
+        await _loadData(); // 새로고침
       } catch (e) {
         print('❌ 업무 삭제 실패: $e');
         ToastHelper.showError('업무 삭제에 실패했습니다');

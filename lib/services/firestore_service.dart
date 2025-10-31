@@ -1469,7 +1469,7 @@ class FirestoreService {
         return false;
       }
 
-      // 🔥 4. 정원 체크 (NEW!)
+      // 4. 정원 체크
       final workDetailDoc = await _firestore
           .collection('tos')
           .doc(toId)
@@ -1485,13 +1485,8 @@ class FirestoreService {
       final workDetailData = workDetailDoc.data()!;
       final currentCount = workDetailData['currentCount'] ?? 0;
       final requiredCount = workDetailData['requiredCount'] ?? 0;
-      // 🔥 로그 추가
-      print('🔍 [정원체크] workType: $selectedWorkType');
-      print('   currentCount: $currentCount (DB값)');
-      print('   requiredCount: $requiredCount');
-      print('   조건: $currentCount >= $requiredCount = ${currentCount >= requiredCount}');
       
-      // 🔥 정원 초과 체크
+      // 정원 초과 체크
       if (currentCount >= requiredCount) {
         ToastHelper.showError('이미 정원이 충족되었습니다. ($currentCount/$requiredCount명)');
         return false;
@@ -1501,14 +1496,14 @@ class FirestoreService {
       final batch = _firestore.batch();
       final now = Timestamp.now();
 
-      // 4-1. 지원서 확정
+      // 5-1. 지원서 확정
       batch.update(_firestore.collection('applications').doc(applicationId), {
         'status': 'CONFIRMED',
         'confirmedAt': now,
         'confirmedBy': adminUID,
       });
 
-      // 4-2. confirmed_applications 서브컬렉션에 추가
+      // 5-2. confirmed_applications 서브컬렉션에 추가
       final confirmedRef = _firestore
           .collection('tos')
           .doc(toId)
@@ -1524,19 +1519,12 @@ class FirestoreService {
 
       await batch.commit();
 
-      // ✅ 5. 통계 재계산
+      // ✅ 통계 재계산 (통합 함수 사용)
       print('📊 지원자 확정 후 통계 재계산...');
-      await _recalculateStatsAfterConfirm(
-        businessId: businessId,
-        toTitle: toTitle,
-        workDate: workDate,
-        selectedWorkType: selectedWorkType,
-      );
+      await recalculateTOStats(toId);
+      clearCache(toId: toId);
 
       print('✅ 지원자 확정 완료');
-      print('   - applicationId: $applicationId');
-      print('   - workType: $selectedWorkType');
-      
       ToastHelper.showSuccess('지원자가 확정되었습니다.');
       return true;
     } catch (e) {
@@ -1545,43 +1533,6 @@ class FirestoreService {
       return false;
     }
   }
-  /// ✅ NEW: 확정 후 통계 재계산 (통합 버전)
-  Future<void> _recalculateStatsAfterConfirm({
-    required String businessId,
-    required String toTitle,
-    required Timestamp workDate,
-    required String selectedWorkType,
-  }) async {
-    try {
-      print('📊 확정 후 통계 재계산...');
-      
-      // TO 문서 찾기
-      final toSnapshot = await _firestore
-          .collection('tos')
-          .where('businessId', isEqualTo: businessId)
-          .where('title', isEqualTo: toTitle)
-          .where('date', isEqualTo: workDate)
-          .limit(1)
-          .get();
-
-      if (toSnapshot.docs.isEmpty) {
-        print('⚠️ TO를 찾을 수 없습니다');
-        return;
-      }
-      
-      final toId = toSnapshot.docs.first.id;
-      
-      // ✅ 통합 재계산 함수 호출
-      await recalculateTOStats(toId);
-      
-      print('✅ 확정 후 통계 재계산 완료');
-    } catch (e) {
-      print('⚠️ 통계 재계산 실패 (무시): $e');
-    }
-  }
-
-  
-
 
   /// 지원자 거절 (관리자용)
   Future<bool> rejectApplicant(String applicationId, String adminUID) async {
@@ -1607,46 +1558,14 @@ class FirestoreService {
       final businessId = appData['businessId'];
       final toTitle = appData['toTitle'];
       final workDate = appData['workDate'] as Timestamp;
-      final selectedWorkType = appData['selectedWorkType'];
-      final wasPending = appData['status'] == 'PENDING';
 
       // 지원서 거절 처리
       await _firestore.collection('applications').doc(applicationId).update({
         'status': 'REJECTED',
-        'confirmedAt': FieldValue.serverTimestamp(),
-        'confirmedBy': adminUID,
       });
 
-      // ✅ PENDING이었던 경우만 통계 재계산
-      if (wasPending) {
-        print('📊 지원자 거절 후 통계 재계산...');
-        await _recalculateStatsAfterReject(
-          businessId: businessId,
-          toTitle: toTitle,
-          workDate: workDate,
-          selectedWorkType: selectedWorkType,
-        );
-      }
-
-      ToastHelper.showSuccess('지원자가 거절되었습니다.');
-      return true;
-    } catch (e) {
-      print('지원자 거절 실패: $e');
-      ToastHelper.showError('거절 중 오류가 발생했습니다.');
-      return false;
-    }
-  }
-  /// ✅ NEW: 거절 후 통계 재계산 (통합 버전)
-  Future<void> _recalculateStatsAfterReject({
-    required String businessId,
-    required String toTitle,
-    required Timestamp workDate,
-    required String selectedWorkType,
-  }) async {
-    try {
-      print('📊 거절 후 통계 재계산...');
-      
-      // TO 문서 찾기
+      // ✅ 통계 재계산
+      print('📊 지원자 거절 후 통계 재계산...');
       final toSnapshot = await _firestore
           .collection('tos')
           .where('businessId', isEqualTo: businessId)
@@ -1655,19 +1574,18 @@ class FirestoreService {
           .limit(1)
           .get();
 
-      if (toSnapshot.docs.isEmpty) {
-        print('⚠️ TO를 찾을 수 없습니다');
-        return;
+      if (toSnapshot.docs.isNotEmpty) {
+        await recalculateTOStats(toSnapshot.docs.first.id);
+        clearCache(toId: toSnapshot.docs.first.id);
       }
-      
-      final toId = toSnapshot.docs.first.id;
-      
-      // ✅ 통합 재계산 함수 호출
-      await recalculateTOStats(toId);
-      
-      print('✅ 거절 후 통계 재계산 완료');
+
+      print('✅ 지원자 거절 완료');
+      ToastHelper.showSuccess('지원자가 거절되었습니다.');
+      return true;
     } catch (e) {
-      print('⚠️ 통계 재계산 실패 (무시): $e');
+      print('❌ 지원자 거절 실패: $e');
+      ToastHelper.showError('거절 중 오류가 발생했습니다.');
+      return false;
     }
   }
 

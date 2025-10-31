@@ -101,6 +101,11 @@ class _AdminTOListScreenState extends State<AdminTOListScreen> {
 
             int confirmed = apps.where((a) => a.status == 'CONFIRMED').length;
             int pending = apps.where((a) => a.status == 'PENDING').length;
+            // 🔥 NEW: totalRequired 실시간 계산
+            int totalRequired = 0;
+            for (var work in toWorkDetails) {
+              totalRequired += work.requiredCount;
+            }
             
             // 🔥 WorkDetail별 통계 계산
             Map<String, Map<String, int>> workStats = {};
@@ -117,6 +122,7 @@ class _AdminTOListScreenState extends State<AdminTOListScreen> {
               workDetails: toWorkDetails,
               confirmedCount: confirmed,
               pendingCount: pending,
+              totalRequired: totalRequired,
               workDetailStats: workStats, // 🔥 추가!
             ));
           }
@@ -181,15 +187,22 @@ class _AdminTOListScreenState extends State<AdminTOListScreen> {
           for (var stats in workStats.values) {
             totalConfirmed += stats['confirmed'] as int;
             totalPending += stats['pending'] as int;
-}
+          
+          }
+          // 🔥 NEW: totalRequired 실시간 계산
+          int totalRequired = 0;
+          for (var work in workDetails) {
+            totalRequired += work.requiredCount;
+          }
           groupItems.add(_TOGroupItem(
-            masterTO: masterTO,
+            masterTO: masterTO.copyWith(totalRequired: totalRequired),
             groupTOs: [
               _TOItem(
-                to: masterTO,
+                to: masterTO.copyWith(totalRequired: totalRequired),
                 workDetails: workDetails,
                 confirmedCount: totalConfirmed,  // 🔥 수정!
                 pendingCount: totalPending,      // 🔥 수정!
+                totalRequired: totalRequired,
                 workDetailStats: workStats, // 🔥 추가!
               ),
             ],
@@ -945,7 +958,7 @@ class _AdminTOListScreenState extends State<AdminTOListScreen> {
     for (var toItem in groupItem.groupTOs) {
       totalConfirmed += toItem.confirmedCount;
       totalPending += toItem.pendingCount;
-      totalRequired += toItem.to.totalRequired;
+      totalRequired += toItem.totalRequired;
     }
     
     final isFull = totalConfirmed >= totalRequired;
@@ -1411,7 +1424,7 @@ class _AdminTOListScreenState extends State<AdminTOListScreen> {
     final to = toItem.to;
     final isExpanded = _expandedTOs.contains(to.id);
     final dateFormat = DateFormat('MM/dd (E)', 'ko_KR');
-    final isFull = toItem.confirmedCount >= to.totalRequired;
+    final isFull = toItem.confirmedCount >= toItem.totalRequired;
 
     return Container(
       margin: const EdgeInsets.only(bottom: 8),
@@ -1523,7 +1536,7 @@ class _AdminTOListScreenState extends State<AdminTOListScreen> {
                       // 통계
                       _buildStatChip(
                         '확정',
-                        '${toItem.confirmedCount}/${to.totalRequired}',
+                        '${toItem.confirmedCount}/${toItem.totalRequired}명',
                         toItem.confirmedCount >= to.totalRequired
                             ? Colors.green : Colors.blue,
                         small: true,
@@ -2717,6 +2730,7 @@ class _TOItem {
   final List<WorkDetailModel> workDetails;
   final int confirmedCount;
   final int pendingCount;
+  final int totalRequired;
   final Map<String, Map<String, int>>? workDetailStats; // 🔥 추가!
 
   _TOItem({
@@ -2724,6 +2738,7 @@ class _TOItem {
     required this.workDetails,
     required this.confirmedCount,
     required this.pendingCount,
+    required this.totalRequired,
     this.workDetailStats, // 🔥 추가!
   });
 }

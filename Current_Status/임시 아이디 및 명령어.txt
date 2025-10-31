@@ -13,7 +13,7 @@ subadmin123!@#
 
 
 git add .
-git commit -m "TO그룹관리시스템개선251028-10"
+git commit -m "TO그룹관리시스템개선251028-14"
 git push
 
 flutter clean
@@ -22,11 +22,11 @@ flutter run -d web-server
 
 project_knowledge_search 도구를 사용해서
 실제 업로드된 dart 코드 파일들을 검색할것!(mnt/project 절대 보지 말것!!!!)
-프로젝트 구조 파악하고 파악한 내용 나한테 말해봐
+프로젝트 구조 파악해둬
 lib의 모든 하위 폴더와 파일구조
 오래된 문서(md 파일)가 아니라 실제 코드를 봐야 해.
+
 그리고 해결책 여러가지를 알려주려는건 좋은데
 앞으로 간단명료하게 방향만 알려주고 
 나한테 선택여부 한다음에 선택되면 해당방법에 대해서만 설명해 
 
-10월 5주차 TO리스트
