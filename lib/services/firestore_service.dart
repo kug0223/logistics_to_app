@@ -964,7 +964,7 @@ class FirestoreService {
   }
 
   /// 그룹 TO의 전체 시간 범위 계산 (최적화 - 병렬 처리)
-  Future<Map<String, String>> calculateGroupTimeRange(String groupId) async {
+  Future<Map<String, String>> calculateGroupTimeRange(String groupId, {bool forceRefresh = false}) async {
     try {
       print('🕐 [FirestoreService] 그룹 시간 범위 계산 시작...');
       print('   그룹 ID: $groupId');
@@ -982,7 +982,7 @@ class FirestoreService {
       final toIds = snapshot.docs.map((doc) => doc.id).toList();
 
       // 2. ✅ 병렬로 모든 WorkDetails 조회
-      final workDetailsFutures = toIds.map((toId) => getWorkDetails(toId)).toList();
+      final workDetailsFutures = toIds.map((toId) => getWorkDetails(toId, forceRefresh: forceRefresh)).toList();
       final allWorkDetailsLists = await Future.wait(workDetailsFutures);
 
       String? minStart;
@@ -1098,13 +1098,16 @@ class FirestoreService {
   }
 
   /// 여러 TO의 WorkDetails를 한 번에 조회 (병렬)
-  Future<Map<String, List<WorkDetailModel>>> getWorkDetailsBatch(List<String> toIds) async {
+  Future<Map<String, List<WorkDetailModel>>> getWorkDetailsBatch(
+    List<String> toIds, 
+    {bool forceRefresh = false}  // 🔥 추가!
+  ) async {
     try {
       if (toIds.isEmpty) return {};
       
       // 병렬로 모든 WorkDetails 조회
       final futures = toIds.map((toId) async {
-        final workDetails = await getWorkDetails(toId);
+        final workDetails = await getWorkDetails(toId, forceRefresh: forceRefresh);
         return MapEntry(toId, workDetails);
       }).toList();
       
@@ -1697,16 +1700,19 @@ class FirestoreService {
   // ═══════════════════════════════════════════════════════════
 
   /// 업무 상세 정보 조회 (캐싱 적용)
-  Future<List<WorkDetailModel>> getWorkDetails(String toId) async {
+  Future<List<WorkDetailModel>> getWorkDetails(String toId, {bool forceRefresh = false}) async {
     try {
-      // ✅ 캐시 확인
-      if (_workDetailCache.containsKey(toId)) {
+      print('🔍 getWorkDetails 호출: $toId, forceRefresh=$forceRefresh');
+      // 🔥 강제 새로고침이 아닐 때만 캐시 확인
+      if (!forceRefresh && _workDetailCache.containsKey(toId)) {
         final cacheTime = _cacheTimestamps['workDetail_$toId'];
         if (cacheTime != null && DateTime.now().difference(cacheTime) < _cacheValidDuration) {
           print('📦 WorkDetails 캐시 사용: $toId');
           return _workDetailCache[toId]!;
         }
       }
+      
+      print('🔄 WorkDetails Firestore 조회: $toId');
       
       final snapshot = await _firestore
           .collection('tos')
@@ -1733,17 +1739,23 @@ class FirestoreService {
   /// 캐시 초기화 (TO 수정/삭제 시 호출)
   void clearCache({String? toId}) {
     if (toId != null) {
+      print('🗑️ 캐시 삭제: $toId');
       _applicationCache.remove(toId);
       _workDetailCache.remove(toId);
-      _cacheTimestamps.remove('workDetail_$toId');
+      _timeRangeCache.remove(toId);
+      
+      // 🔥🔥🔥 타임스탬프도 삭제! (이게 핵심!)
       _cacheTimestamps.remove('application_$toId');
-      print('🗑️ 캐시 삭제: $toId');
+      _cacheTimestamps.remove('workDetail_$toId');
+      _cacheTimestamps.remove('timeRange_$toId');
+      
+      print('🗑️ 타임스탬프도 삭제 완료');
     } else {
+      print('🗑️ 전체 캐시 삭제');
       _applicationCache.clear();
       _workDetailCache.clear();
       _timeRangeCache.clear();
       _cacheTimestamps.clear();
-      print('🗑️ 전체 캐시 삭제');
     }
   }
 
@@ -1785,12 +1797,12 @@ class FirestoreService {
   }
 
   /// WorkDetail 추가
-  Future<void> addWorkDetail({
+  Future<String> addWorkDetail({  // ✅ void → String
     required String toId,
     required WorkDetailModel workDetail,
   }) async {
     try {
-      await _firestore
+      final docRef = await _firestore  // ✅ await 추가하고 변수에 저장
           .collection('tos')
           .doc(toId)
           .collection('workDetails')
@@ -1808,7 +1820,8 @@ class FirestoreService {
         'createdAt': FieldValue.serverTimestamp(),
       });
 
-      print('✅ [FirestoreService] WorkDetail 추가 완료');
+      print('✅ [FirestoreService] WorkDetail 추가 완료: ${docRef.id}');
+      return docRef.id;  // ✅ ID 반환
     } catch (e) {
       print('❌ [FirestoreService] WorkDetail 추가 실패: $e');
       rethrow;

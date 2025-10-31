@@ -107,18 +107,15 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
   }
 
   Future<void> _saveChanges() async {
+    print('🔵 [1단계] 저장 시작');
+    
     // 유효성 검증
     if (_titleController.text.trim().isEmpty) {
       ToastHelper.showError('제목을 입력해주세요');
       return;
     }
     
-    if (_deadlineType == 'FIXED_TIME') {
-      if (_selectedDeadlineDate == null || _selectedDeadlineTime == null) {
-        ToastHelper.showError('지원 마감 시간을 설정해주세요');
-        return;
-      }
-    }
+    print('🔵 [2단계] 유효성 검증 통과');
     
     try {
       // 업데이트할 데이터 준비
@@ -128,52 +125,90 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
         'deadlineType': _deadlineType,
       };
       
-      // 지원 마감 시간 계산
+      // 🔥 업무별 마감 방식으로 변경
       if (_deadlineType == 'HOURS_BEFORE') {
         updates['hoursBeforeStart'] = _hoursBeforeStart;
-        
-        // effectiveDeadline 계산해서 저장
-        if (widget.to.startTime != null) {
-          final timeParts = widget.to.startTime!.split(':');
-          final startDateTime = DateTime(
-            widget.to.date.year,
-            widget.to.date.month,
-            widget.to.date.day,
-            int.parse(timeParts[0]),
-            int.parse(timeParts[1]),
-          );
-          final deadline = startDateTime.subtract(Duration(hours: _hoursBeforeStart));
-          updates['applicationDeadline'] = Timestamp.fromDate(deadline);
-        }
-      } else {
-        // FIXED_TIME
-        final deadline = DateTime(
-          _selectedDeadlineDate!.year,
-          _selectedDeadlineDate!.month,
-          _selectedDeadlineDate!.day,
-          _selectedDeadlineTime!.hour,
-          _selectedDeadlineTime!.minute,
-        );
-        updates['applicationDeadline'] = Timestamp.fromDate(deadline);
-        updates['hoursBeforeStart'] = null;
       }
+      
       // 🔥 시간 변경 시 마감 상태 초기화
       updates['closedAt'] = FieldValue.delete();
       updates['closedBy'] = FieldValue.delete();
       updates['isManualClosed'] = false;
       updates['reopenedAt'] = Timestamp.now();
+      
       final userProvider = Provider.of<UserProvider>(context, listen: false);
       updates['reopenedBy'] = userProvider.currentUser?.uid;
-      print('🔥 [TO수정] 마감 상태 초기화');
+      
+      print('🔵 [3단계] Firestore 업데이트 시작');
+      print('   TO ID: ${widget.to.id}');
       print('   updates: $updates');
+      
       // Firestore 업데이트
       await FirestoreService().updateTO(widget.to.id, updates);
-      print('✅ [TO수정] Firestore 업데이트 완료');
+      print('🔵 [4단계] TO 문서 업데이트 완료');
+      
+      // 🔥 NEW: 각 업무별로 마감시간 계산 및 저장
+      print('🔥 [5단계] 업무별 마감시간 계산 시작');
+      for (var work in _workDetails) {
+        final workDeadline = _calculateWorkDeadline(work);
+        
+        await _firestoreService.updateWorkDetail(
+          toId: widget.to.id,          // 🔥 명명된 인자로 수정!
+          workDetailId: work.id,       // 🔥 명명된 인자로 수정!
+          updates: {
+            'applicationDeadline': workDeadline != null 
+                ? Timestamp.fromDate(workDeadline) 
+                : null,
+            'closedAt': null,
+            'closedBy': null,
+            'isManualClosed': false,
+            'isEmergencyOpen': false,
+          },
+        );
+        
+        print('   ${work.workType}: 마감시간 = ${workDeadline?.toString() ?? "없음"}');
+      }
+      print('✅ [6단계] 업무별 마감시간 설정 완료');
+      
+      // ✅ 캐시 클리어
+      _firestoreService.clearCache();
+      print('🔵 [7단계] 캐시 클리어 완료');
+      
       ToastHelper.showSuccess('TO가 수정되었습니다');
-      if (mounted) Navigator.pop(context, true);
+      
+      if (mounted) {
+        print('🔵🔵🔵 [8단계] true 반환하며 화면 닫기');
+        Navigator.pop(context, true);
+      }
     } catch (e) {
       print('❌ TO 수정 실패: $e');
       ToastHelper.showError('수정에 실패했습니다');
+    }
+  }
+
+  // 🔥 NEW: 업무별 마감시간 계산 함수
+  DateTime? _calculateWorkDeadline(WorkDetailModel work) {
+    if (_deadlineType != 'HOURS_BEFORE') return null;
+    
+    // 업무 시작 시간 파싱
+    if (work.startTime.isEmpty) return null;
+    
+    final timeParts = work.startTime.split(':');
+    if (timeParts.length < 2) return null;
+    
+    try {
+      final startDateTime = DateTime(
+        widget.to.date.year,
+        widget.to.date.month,
+        widget.to.date.day,
+        int.parse(timeParts[0]),
+        int.parse(timeParts[1]),
+      );
+      
+      return startDateTime.subtract(Duration(hours: _hoursBeforeStart));
+    } catch (e) {
+      print('⚠️ 시간 파싱 실패: ${work.startTime}');
+      return null;
     }
   }
   /// 업무 추가 다이얼로그
@@ -200,12 +235,15 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
       );
 
       try {
-        await _firestoreService.addWorkDetail(
+        final addedWorkId = await _firestoreService.addWorkDetail(
           toId: widget.to.id,
           workDetail: newWork,
         );
         ToastHelper.showSuccess('업무가 추가되었습니다');
-        await _loadData();
+        // ✅ 아래 2줄 추가
+        setState(() {
+          _workDetails.add(newWork.copyWith(id: addedWorkId));
+        });
       } catch (e) {
         print('❌ 업무 추가 실패: $e');
         ToastHelper.showError('업무 추가에 실패했습니다');
@@ -410,7 +448,10 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
           workDetailId: work.id,
         );
         ToastHelper.showSuccess('업무가 삭제되었습니다');
-        await _loadData(); // 새로고침
+        // ✅ 아래 2줄 추가
+        setState(() {
+          _workDetails.removeWhere((w) => w.id == work.id);
+        });
       } catch (e) {
         print('❌ 업무 삭제 실패: $e');
         ToastHelper.showError('업무 삭제에 실패했습니다');
@@ -790,133 +831,46 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
           ),
           const SizedBox(height: 16),
           
-          // 옵션 1: N시간 전
+          // ✅ 옵션 1: 각 업무 시작 N시간 전
           RadioListTile<String>(
-            title: const Text('근무 시작 N시간 전'),
-            subtitle: _deadlineType == 'HOURS_BEFORE'
-                ? _buildDeadlinePreview()
-                : null,
+            title: const Text('각 업무 시작 N시간 전 마감'),  // 🔥 텍스트 수정!
+            subtitle: Text('각 업무별로 시작 시간 기준 $_hoursBeforeStart시간 전에 자동 마감'),
             value: 'HOURS_BEFORE',
             groupValue: _deadlineType,
             onChanged: (value) {
-              setState(() => _deadlineType = value!);
+              setState(() {
+                _deadlineType = value!;
+              });
             },
-            dense: true,
-            contentPadding: EdgeInsets.zero,
           ),
           
-          if (_deadlineType == 'HOURS_BEFORE') ...[
-            Padding(
-              padding: const EdgeInsets.only(left: 16, top: 8, bottom: 16),
-              child: Row(
-                children: [
-                  SizedBox(
-                    width: 80,
-                    child: TextField(
-                      keyboardType: TextInputType.number,
-                      decoration: const InputDecoration(
-                        border: OutlineInputBorder(),
-                        isDense: true,
-                        suffixText: '시간',
-                      ),
-                      controller: TextEditingController(
-                        text: _hoursBeforeStart.toString(),
-                      ),
-                      onChanged: (value) {
-                        final hours = int.tryParse(value);
-                        if (hours != null && hours > 0 && hours <= 72) {
-                          setState(() => _hoursBeforeStart = hours);
-                        }
-                      },
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  const Text('전 마감'),
-                ],
-              ),
-            ),
-          ],
-          
-          const Divider(),
-          
-          // 옵션 2: 고정 시간
-          RadioListTile<String>(
-            title: const Text('특정 날짜/시간 지정'),
-            subtitle: _deadlineType == 'FIXED_TIME' && 
-                      _selectedDeadlineDate != null && 
-                      _selectedDeadlineTime != null
-                ? Text(
-                    '마감: ${DateFormat('MM/dd HH:mm').format(DateTime(
-                      _selectedDeadlineDate!.year,
-                      _selectedDeadlineDate!.month,
-                      _selectedDeadlineDate!.day,
-                      _selectedDeadlineTime!.hour,
-                      _selectedDeadlineTime!.minute,
-                    ))}',
-                    style: TextStyle(fontSize: 12, color: Colors.blue[700]),
-                  )
-                : null,
-            value: 'FIXED_TIME',
-            groupValue: _deadlineType,
-            onChanged: (value) {
-              setState(() => _deadlineType = value!);
-            },
-            dense: true,
-            contentPadding: EdgeInsets.zero,
-          ),
-          
-          if (_deadlineType == 'FIXED_TIME') ...[
+          // 시간 선택
+          if (_deadlineType == 'HOURS_BEFORE')
             Padding(
               padding: const EdgeInsets.only(left: 16, top: 8),
-              child: Column(
+              child: Row(
                 children: [
-                  // 날짜 선택
-                  ListTile(
-                    contentPadding: EdgeInsets.zero,
-                    leading: Icon(Icons.calendar_today, color: Colors.blue[700]),
-                    title: Text(
-                      _selectedDeadlineDate == null
-                          ? '날짜 선택'
-                          : DateFormat('yyyy-MM-dd (E)', 'ko_KR').format(_selectedDeadlineDate!),
-                    ),
-                    trailing: const Icon(Icons.arrow_forward_ios, size: 16),
-                    onTap: () async {
-                      final picked = await showDatePicker(
-                        context: context,
-                        initialDate: _selectedDeadlineDate ?? widget.to.date,
-                        firstDate: DateTime.now(),
-                        lastDate: widget.to.date,
-                      );
-                      if (picked != null) {
-                        setState(() => _selectedDeadlineDate = picked);
-                      }
-                    },
-                  ),
-                  
-                  // 시간 선택
-                  ListTile(
-                    contentPadding: EdgeInsets.zero,
-                    leading: Icon(Icons.access_time, color: Colors.blue[700]),
-                    title: Text(
-                      _selectedDeadlineTime == null
-                          ? '시간 선택'
-                          : '${_selectedDeadlineTime!.hour.toString().padLeft(2, '0')}:${_selectedDeadlineTime!.minute.toString().padLeft(2, '0')}',
-                    ),
-                    trailing: const Icon(Icons.arrow_forward_ios, size: 16),
-                    onTap: () async {
-                      final picked = await showTimePicker(
-                        context: context,
-                        initialTime: _selectedDeadlineTime ?? const TimeOfDay(hour: 23, minute: 59),
-                      );
-                      if (picked != null) {
-                        setState(() => _selectedDeadlineTime = picked);
-                      }
+                  const Text('시작 시간'),
+                  const SizedBox(width: 16),
+                  DropdownButton<int>(
+                    value: _hoursBeforeStart,
+                    items: List.generate(24, (index) => index + 1)
+                        .map((hour) => DropdownMenuItem(
+                              value: hour,
+                              child: Text('$hour시간 전'),
+                            ))
+                        .toList(),
+                    onChanged: (value) {
+                      setState(() {
+                        _hoursBeforeStart = value!;
+                      });
                     },
                   ),
                 ],
               ),
             ),
-          ],
+          
+          const Divider(height: 32),
         ],
       ),
     );

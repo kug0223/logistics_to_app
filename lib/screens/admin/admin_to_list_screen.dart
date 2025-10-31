@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import '../../models/to_model.dart';
 import '../../models/work_detail_model.dart';
 import '../../models/application_model.dart';
@@ -53,6 +54,7 @@ class _AdminTOListScreenState extends State<AdminTOListScreen> {
 
   /// TO 목록 + 지원자 통계 로드 (탭별 분리)
   Future<void> _loadTOsWithStats() async {
+    print('🔄🔄 [재로딩] 시작');
     setState(() {
       _isLoading = true;
     });
@@ -80,8 +82,8 @@ class _AdminTOListScreenState extends State<AdminTOListScreen> {
           
           // ✅ WorkDetails와 시간 범위만 조회 (통계는 TO 문서에 있음!)
           final batchResults = await Future.wait([
-            _firestoreService.getWorkDetailsBatch(toIds),
-            _firestoreService.calculateGroupTimeRange(masterTO.groupId!),
+            _firestoreService.getWorkDetailsBatch(toIds, forceRefresh: true),
+            _firestoreService.calculateGroupTimeRange(masterTO.groupId!, forceRefresh: true),
           ]);
           
           final workDetailsMap = batchResults[0] as Map<String, List<WorkDetailModel>>;
@@ -138,7 +140,10 @@ class _AdminTOListScreenState extends State<AdminTOListScreen> {
           
         } else {
           // 단일 TO인 경우
-          final workDetails = await _firestoreService.getWorkDetails(masterTO.id);
+          final workDetails = await _firestoreService.getWorkDetails(
+            masterTO.id,
+            forceRefresh: true
+          );
           
           // ✅ 단일 TO 시간 범위 계산
           if (workDetails.isNotEmpty) {
@@ -217,13 +222,14 @@ class _AdminTOListScreenState extends State<AdminTOListScreen> {
 
       setState(() {
         _allGroupItems = groupItems;
-        _filteredGroupItems = groupItems;
         _businessNames = businessList;
         _isLoading = false;
       });
+      print('🔄🔄 [재로딩] 완료! groupItems: ${groupItems.length}개');
 
       // 4. 필터 적용
       _applyFilters();
+      print('🔄🔄 [재로딩] 필터 적용 완료');
     } catch (e) {
       print('❌ TO 목록 로드 실패: $e');
       setState(() {
@@ -961,7 +967,14 @@ class _AdminTOListScreenState extends State<AdminTOListScreen> {
       totalRequired += toItem.totalRequired;
     }
     
-    final isFull = totalConfirmed >= totalRequired;
+    // ✅ 모든 TO의 모든 업무가 충족되었는지 확인
+    final isFull = groupItem.groupTOs.every((toItem) {
+      return toItem.workDetails.every((work) {
+        final stats = toItem.workDetailStats?[work.workType];
+        final confirmed = stats?['confirmed'] ?? 0;
+        return confirmed >= work.requiredCount;
+      });
+    });
 
     return Card(
       elevation: 2,
@@ -1147,13 +1160,18 @@ class _AdminTOListScreenState extends State<AdminTOListScreen> {
                         onSelected: (value) async {
                           switch (value) {
                             case 'edit':
-                              Navigator.push(
+                              final result = await Navigator.push(
                                 context,
                                 MaterialPageRoute(
                                   builder: (context) => AdminEditTOScreen(to: masterTO),
                                 ),
                               ).then((result) {
-                                if (result == true) _loadTOsWithStats();
+                                print('🔍 수정 결과: $result');
+                                if (result == true) {
+                                  print('🔄 재로딩 시작');
+                                  _firestoreService.clearCache();
+                                  _loadTOsWithStats();
+                                }
                               });
                               break;
                             case 'delete':
@@ -1339,14 +1357,13 @@ class _AdminTOListScreenState extends State<AdminTOListScreen> {
                             : dateFormat.format(masterTO.date),
                         style: TextStyle(fontSize: 14, color: Colors.grey[700]),
                       ),
-                      const SizedBox(width: 16),
-                      Icon(Icons.access_time, size: 16, color: Colors.grey[600]),
-                      const SizedBox(width: 6),
-                      Text(
-                        '${masterTO.displayStartTime} ~ ${masterTO.displayEndTime}',
-                        style: TextStyle(fontSize: 14, color: Colors.grey[700]),
-                      ),
+                      // 🔥 단일 TO인 경우 마감시간 추가!
+                      if (!groupItem.isGrouped) ...[
+                        const Spacer(),
+                        _buildDeadlineBadge(masterTO),
+                      ],
                     ],
+ 
                   ),
                   const SizedBox(height: 12),
                   
@@ -1424,7 +1441,12 @@ class _AdminTOListScreenState extends State<AdminTOListScreen> {
     final to = toItem.to;
     final isExpanded = _expandedTOs.contains(to.id);
     final dateFormat = DateFormat('MM/dd (E)', 'ko_KR');
-    final isFull = toItem.confirmedCount >= toItem.totalRequired;
+    // ✅ 수정
+    final isFull = toItem.workDetails.every((work) {
+      final stats = toItem.workDetailStats?[work.workType];
+      final confirmed = stats?['confirmed'] ?? 0;
+      return confirmed >= work.requiredCount;
+    });
 
     return Container(
       margin: const EdgeInsets.only(bottom: 8),
@@ -1488,12 +1510,12 @@ class _AdminTOListScreenState extends State<AdminTOListScreen> {
                         decoration: BoxDecoration(
                           color: to.isClosed
                               ? Color(to.closedReasonColor).withOpacity(0.1)
-                              : Colors.green[50],
+                              : (isFull ? Colors.green[50] : Colors.blue[50]),
                           borderRadius: BorderRadius.circular(10),
                           border: Border.all(
                             color: to.isClosed
                                 ? Color(to.closedReasonColor)
-                                : Colors.green[600]!,
+                                : (isFull ? Colors.green[600]! : Colors.blue[600]!),
                             width: 1.5,
                           ),
                         ),
@@ -1511,17 +1533,17 @@ class _AdminTOListScreenState extends State<AdminTOListScreen> {
                               size: 10,
                               color: to.isClosed
                                   ? Color(to.closedReasonColor)
-                                  : Colors.green[600],
+                                  : (isFull ? Colors.green[600] : Colors.blue[600]),
                             ),
                             const SizedBox(width: 3),
                             Text(
-                              to.isClosed ? to.closedReason : '진행중',
+                              to.isClosed ? to.closedReason : (isFull ? '인원충족' : '진행중'),
                               style: TextStyle(
                                 fontSize: 10,
                                 fontWeight: FontWeight.bold,
                                 color: to.isClosed
                                     ? Color(to.closedReasonColor)
-                                    : Colors.green[700],
+                                    : (isFull ? Colors.green[700] : Colors.blue[700]),
                               ),
                             ),
                           ],
@@ -1529,8 +1551,26 @@ class _AdminTOListScreenState extends State<AdminTOListScreen> {
                       ),
                     ],
                   ),
+                  const SizedBox(height: 8),
+                
+                  // 🔥 둘째 줄: 날짜 + 마감시간 (한 줄로!)
+                  Row(
+                    children: [
+                      Icon(Icons.calendar_today, size: 14, color: Colors.grey[600]),
+                      const SizedBox(width: 6),
+                      Text(
+                        dateFormat.format(to.date),
+                        style: TextStyle(fontSize: 13, color: Colors.grey[700]),
+                      ),
+                      
+                      const Spacer(),
+                      
+                      // 🔥 마감시간 배지
+                      _buildDeadlineBadge(to),
+                    ],
+                  ),
                   
-                  // ✅ 둘째 줄: 통계 + 더보기 메뉴
+                  // ✅ 셋째 줄: 통계 + 더보기 메뉴
                   Row(
                     children: [
                       // 통계
@@ -1559,13 +1599,20 @@ class _AdminTOListScreenState extends State<AdminTOListScreen> {
                         onSelected: (value) async {
                           switch (value) {
                             case 'edit':
-                              Navigator.push(
+                              print('🟢 [목록] 수정 화면으로 이동');
+                              final result = await Navigator.push(
                                 context,
                                 MaterialPageRoute(
-                                  builder: (context) => AdminEditTOScreen(to: to),
+                                  builder: (context) => AdminEditTOScreen(to: toItem.to),
                                 ),
                               ).then((result) {
-                                if (result == true) _loadTOsWithStats();
+                                print('🟢🟢 [목록] 돌아옴! result = $result');
+                                if (result == true) {
+                                  print('🔄 재로딩 시작');
+                                  _firestoreService.clearCache();
+                                  _loadTOsWithStats();
+                                  print('🟢🟢🟢🟢 [목록] 재로딩 완료!');
+                                }
                               });
                               break;
                             case 'delete':
@@ -1584,6 +1631,9 @@ class _AdminTOListScreenState extends State<AdminTOListScreen> {
                               if (result == true) {
                                 _loadTOsWithStats();
                               }
+                              break;
+                            case 'manageWorkDetails':  // 🔥 NEW!
+                            _showManageWorkDetailsDialog(toItem);
                               break;
                           }
                         },
@@ -1625,6 +1675,17 @@ class _AdminTOListScreenState extends State<AdminTOListScreen> {
                                 Icon(Icons.info_outline, size: 18, color: Colors.purple[600]),
                                 SizedBox(width: 12),
                                 Text('지원자 관리'),
+                              ],
+                            ),
+                          ),
+                          // 🔥 NEW: 업무별 마감
+                          PopupMenuItem(
+                            value: 'manageWorkDetails',
+                            child: Row(
+                              children: [
+                                Icon(Icons.task_alt, size: 18, color: Colors.purple[600]),
+                                const SizedBox(width: 12),
+                                const Text('업무별 마감'),
                               ],
                             ),
                           ),
@@ -1682,99 +1743,192 @@ class _AdminTOListScreenState extends State<AdminTOListScreen> {
   }
 
   Widget _buildWorkDetailRow(WorkDetailModel work, int confirmedCount, int pendingCount) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 6),
-      child: Row(
+    // 🔥 업무 상태 계산
+    final workStatus = _getWorkStatus(work, confirmedCount);
+    
+    return Container(
+      margin: EdgeInsets.only(bottom: 8),
+      padding: EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: Colors.grey[300]!),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          // 🔥 1줄: 업무명
+          Row(
+            children: [
+              Container(
+                width: 28,
+                height: 28,
+                decoration: BoxDecoration(
+                  color: FormatHelper.parseColor(work.workTypeColor),
+                  borderRadius: BorderRadius.circular(6),
+                ),
+                child: Center(
+                  child: WorkTypeIcon.buildFromString(
+                    work.workTypeIcon,
+                    color: Colors.white,
+                    size: 14,
+                  ),
+                ),
+              ),
+              SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  work.workType,
+                  style: TextStyle(
+                    fontSize: 15,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          SizedBox(height: 8),
           
-          // ✅ 업무 아이콘 + 유형
-          Container(
-            width: 28,
-            height: 28,
-            decoration: BoxDecoration(
-              color: FormatHelper.parseColor(work.workTypeColor),
-              borderRadius: BorderRadius.circular(6),
-            ),
-            child: Center(
-              child: WorkTypeIcon.buildFromString(
-                work.workTypeIcon,
-                color: Colors.white,
-                size: 14,
+          // 🔥 2줄: 시간 + 금액
+          Row(
+            children: [
+              Icon(Icons.access_time, size: 14, color: Colors.grey[600]),
+              SizedBox(width: 4),
+              Text(
+                '${work.startTime}~${work.endTime}',
+                style: TextStyle(fontSize: 13, color: Colors.grey[700]),
               ),
-            ),
-          ),
-          const SizedBox(width: 6),
-          Expanded(
-            child: Text(
-              work.workType,
-              style: const TextStyle(
-                fontSize: 13,
-                fontWeight: FontWeight.w500,
+              SizedBox(width: 12),
+              Icon(Icons.payments, size: 14, color: Colors.grey[600]),
+              SizedBox(width: 4),
+              Text(
+                '${NumberFormat('#,###').format(work.wage)}원',
+                style: TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w600,
+                  color: Colors.blue[700],
+                ),
               ),
-            ),
+            ],
           ),
+          SizedBox(height: 6),
           
-          // 시간
-          Icon(Icons.access_time, size: 12, color: Colors.grey[600]),
-          const SizedBox(width: 4),
-          Text(
-            '${work.startTime}~${work.endTime}',
-            style: TextStyle(fontSize: 11, color: Colors.grey[700]),
-          ),
-          const SizedBox(width: 8),
-          
-          // 급여
-          Text(
-            '${NumberFormat('#,###').format(work.wage)}원',
-            style: TextStyle(
-              fontSize: 11,
-              fontWeight: FontWeight.bold,
-              color: Colors.grey[700],
-            ),
-          ),
-          const SizedBox(width: 12),
-
-          // 확정 인원
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
-            decoration: BoxDecoration(
-              color: work.isFull ? Colors.green[50] : Colors.blue[50],
-              borderRadius: BorderRadius.circular(12),
-              border: Border.all(
-                color: work.isFull ? Colors.green[200]! : Colors.blue[200]!,
+          // 🔥 3줄: 인원 + 대기 + 상태
+          Row(
+            children: [
+              // 확정 인원
+              Container(
+                padding: EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                decoration: BoxDecoration(
+                  color: work.isFull ? Colors.green[50] : Colors.blue[50],
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(
+                    color: work.isFull ? Colors.green[200]! : Colors.blue[200]!,
+                  ),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      '👥',
+                      style: TextStyle(fontSize: 11),
+                    ),
+                    SizedBox(width: 4),
+                    Text(
+                      '$confirmedCount/${work.requiredCount}명',
+                      style: TextStyle(
+                        fontSize: 11,
+                        fontWeight: FontWeight.bold,
+                        color: work.isFull ? Colors.green[700] : Colors.blue[700],
+                      ),
+                    ),
+                  ],
+                ),
               ),
-            ),
-            child: Text(
-              '$confirmedCount/${work.requiredCount}명',
-              style: TextStyle(
-                fontSize: 10,
-                fontWeight: FontWeight.bold,
-                color: work.isFull ? Colors.green[700] : Colors.blue[700],
+              SizedBox(width: 8),
+              
+              // 대기 인원
+              if (pendingCount > 0)
+                Container(
+                  padding: EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                  decoration: BoxDecoration(
+                    color: Colors.orange[50],
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: Colors.orange[200]!),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text('⏳', style: TextStyle(fontSize: 11)),
+                      SizedBox(width: 4),
+                      Text(
+                        '대기 $pendingCount',
+                        style: TextStyle(
+                          fontSize: 11,
+                          fontWeight: FontWeight.bold,
+                          color: Colors.orange[700],
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              
+              Spacer(),
+              
+              // 상태 배지
+              Container(
+                padding: EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                decoration: BoxDecoration(
+                  color: workStatus['color'],
+                  borderRadius: BorderRadius.circular(4),
+                ),
+                child: Text(
+                  workStatus['label'],
+                  style: TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.white,
+                  ),
+                ),
               ),
-            ),
-          ),
-          const SizedBox(width: 6),
-          
-          // ✅ NEW: 대기 인원 추가
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
-            decoration: BoxDecoration(
-              color: Colors.orange[100],
-              borderRadius: BorderRadius.circular(4),
-              border: Border.all(color: Colors.orange[300]!),
-            ),
-            child: Text(
-              '대기 $pendingCount',
-              style: TextStyle(
-                fontSize: 10,
-                fontWeight: FontWeight.bold,
-                color: Colors.orange,
-              ),
-            ),
+            ],
           ),
         ],
       ),
     );
+  }
+
+  // 🔥 업무 상태 계산 함수 (새로 추가)
+  Map<String, dynamic> _getWorkStatus(WorkDetailModel work, int confirmed) {
+    // 마감됨
+    if (work.closedAt != null && work.isManualClosed) {
+      return {
+        'label': '마감됨',
+        'color': Colors.red[600]!,
+      };
+    }
+    
+    // 긴급모집
+    if (work.isEmergencyOpen) {
+      return {
+        'label': '🚨 긴급모집',
+        'color': Colors.orange[600]!,
+      };
+    }
+    
+    // 인원충족
+    if (confirmed >= work.requiredCount) {
+      return {
+        'label': '인원충족',
+        'color': Colors.green[600]!,
+      };
+    }
+    
+    // 진행중
+    return {
+      'label': '진행중',
+      'color': Colors.blue[600]!,
+    };
   }
 
   /// 통계 칩
@@ -2705,6 +2859,139 @@ class _AdminTOListScreenState extends State<AdminTOListScreen> {
       ToastHelper.showError('삭제 실패: $e');
     }
   }
+  /// 업무별 마감 관리 다이얼로그
+  Future<void> _showManageWorkDetailsDialog(_TOItem toItem) async {
+    await showDialog(
+      context: context,
+      builder: (context) => _WorkDetailManagementDialog(
+        toItem: toItem,
+        onChanged: () {
+          _loadTOsWithStats();
+        },
+      ),
+    );
+  }
+  /// 마감시간 표시 (업무별 마감 방식 반영)
+  Widget _buildDeadlineBadge(TOModel to) {
+    // HOURS_BEFORE 방식
+    if (to.deadlineType == 'HOURS_BEFORE' && to.hoursBeforeStart != null) {
+      return Container(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+        decoration: BoxDecoration(
+          color: Colors.orange[50],
+          border: Border.all(color: Colors.orange[300]!),
+          borderRadius: BorderRadius.circular(4),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Text('🕐', style: TextStyle(fontSize: 11)),
+            const SizedBox(width: 4),
+            Text(
+              '각 업무 ${to.hoursBeforeStart}시간 전',
+              style: TextStyle(
+                fontSize: 11,
+                color: Colors.orange[700],
+                fontWeight: FontWeight.w500,
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+    
+    // 마감시간이 없는 경우
+    return const SizedBox.shrink();
+  }
+
+  /// 업무 상세 상태 배지
+  /// 업무 상세 상태 배지
+  Widget _buildWorkStatusBadge(WorkDetailModel work, int confirmedCount) {
+    // 🔥 마감 여부 체크 (긴급 모집 제외)
+    if (work.isClosed) {
+      return Container(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+        decoration: BoxDecoration(
+          color: Colors.red[50],
+          border: Border.all(color: Colors.red[300]!, width: 1),
+          borderRadius: BorderRadius.circular(4),
+        ),
+        child: Text(
+          '마감됨',
+          style: TextStyle(
+            fontSize: 10,
+            color: Colors.red[700],
+            fontWeight: FontWeight.bold,
+          ),
+        ),
+      );
+    }
+    
+    // 🔥 긴급 모집 중
+    if (work.isInEmergencyMode) {
+      return Container(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+        decoration: BoxDecoration(
+          color: Colors.deepOrange[50],
+          border: Border.all(color: Colors.deepOrange[300]!, width: 1),
+          borderRadius: BorderRadius.circular(4),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              '🚨',
+              style: TextStyle(fontSize: 9),
+            ),
+            SizedBox(width: 2),
+            Text(
+              '긴급모집',
+              style: TextStyle(
+                fontSize: 10,
+                color: Colors.deepOrange[700],
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+    final isFull = confirmedCount >= work.requiredCount;
+    
+    Color bgColor;
+    Color borderColor;
+    Color textColor;
+    String text;
+    
+    if (isFull) {
+      bgColor = Colors.green[50]!;
+      borderColor = Colors.green[300]!;
+      textColor = Colors.green[700]!;
+      text = '인원충족';
+    } else {
+      bgColor = Colors.blue[50]!;
+      borderColor = Colors.blue[300]!;
+      textColor = Colors.blue[700]!;
+      text = '진행중';
+    }
+    
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+      decoration: BoxDecoration(
+        color: bgColor,
+        border: Border.all(color: borderColor, width: 1),
+        borderRadius: BorderRadius.circular(4),
+      ),
+      child: Text(
+        text,
+        style: TextStyle(
+          fontSize: 10,
+          color: textColor,
+          fontWeight: FontWeight.bold,
+        ),
+      ),
+    );
+  }
 }
 
 // ============================================================
@@ -2741,4 +3028,390 @@ class _TOItem {
     required this.totalRequired,
     this.workDetailStats, // 🔥 추가!
   });
+}
+
+/// 업무별 마감 관리 다이얼로그
+class _WorkDetailManagementDialog extends StatefulWidget {
+  final _TOItem toItem;
+  final VoidCallback onChanged;
+
+  const _WorkDetailManagementDialog({
+    required this.toItem,
+    required this.onChanged,
+  });
+
+  @override
+  State<_WorkDetailManagementDialog> createState() => _WorkDetailManagementDialogState();
+}
+
+class _WorkDetailManagementDialogState extends State<_WorkDetailManagementDialog> {
+  final FirestoreService _firestoreService = FirestoreService();
+  bool _isLoading = false;
+
+  /// 업무 마감
+  Future<void> _closeWork(WorkDetailModel work) async {
+    final userProvider = Provider.of<UserProvider>(context, listen: false);
+    final adminUID = userProvider.currentUser?.uid;
+
+    if (adminUID == null) {
+      ToastHelper.showError('로그인이 필요합니다');
+      return;
+    }
+
+    setState(() {
+      _isLoading = true;
+    });
+
+    try {
+      print('🔥 [업무마감] 시작: ${work.workType}');
+      await _firestoreService.updateWorkDetail(
+        toId: widget.toItem.to.id,
+        workDetailId: work.id,
+        updates: {
+          'closedAt': FieldValue.serverTimestamp(),
+          'closedBy': adminUID,
+          'isManualClosed': true,
+          'isEmergencyOpen': false,
+        },
+      );
+       print('✅ [업무마감] Firestore 업데이트 완료');
+
+      ToastHelper.showSuccess('${work.workType} 업무가 마감되었습니다');
+
+      print('🔥 [업무마감] onChanged() 호출');
+      widget.onChanged();
+      Navigator.pop(context);
+    } catch (e) {
+      print('❌ 업무 마감 실패: $e');
+      ToastHelper.showError('업무 마감에 실패했습니다');
+    } finally {
+      setState(() {
+        _isLoading = false;
+      });
+    }
+  }
+
+  /// 업무 재오픈
+  Future<void> _reopenWork(WorkDetailModel work) async {
+    setState(() {
+      _isLoading = true;
+    });
+
+    try {
+      await _firestoreService.updateWorkDetail(
+        toId: widget.toItem.to.id,
+        workDetailId: work.id,
+        updates: {
+          'closedAt': null,
+          'closedBy': null,
+          'isManualClosed': false,
+          'isEmergencyOpen': false,
+        },
+      );
+      _firestoreService.clearCache();
+
+      ToastHelper.showSuccess('${work.workType} 업무가 재오픈되었습니다');
+      widget.onChanged();
+      Navigator.pop(context);
+    } catch (e) {
+      print('❌ 업무 재오픈 실패: $e');
+      ToastHelper.showError('업무 재오픈에 실패했습니다');
+    } finally {
+      setState(() {
+        _isLoading = false;
+      });
+    }
+  }
+
+  /// 긴급 모집 시작
+  Future<void> _startEmergencyRecruitment(WorkDetailModel work) async {
+    final userProvider = Provider.of<UserProvider>(context, listen: false);
+    final adminUID = userProvider.currentUser?.uid;
+
+    if (adminUID == null) {
+      ToastHelper.showError('로그인이 필요합니다');
+      return;
+    }
+
+    // 확인 다이얼로그
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Row(
+          children: [
+            Text('🚨', style: TextStyle(fontSize: 20)),
+            SizedBox(width: 8),
+            Text('긴급 모집 시작'),
+          ],
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('${work.workType} 업무를 긴급 모집으로 전환합니다.'),
+            SizedBox(height: 12),
+            Container(
+              padding: EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: Colors.orange[50],
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: Colors.orange[300]!),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text('• 자동 마감 무시', style: TextStyle(fontSize: 13)),
+                  Text('• 업무 시작 직전까지 지원 가능', style: TextStyle(fontSize: 13)),
+                  Text('• 관리자가 직접 종료할 때까지 오픈', style: TextStyle(fontSize: 13)),
+                ],
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: Text('취소'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(context, true),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.deepOrange,
+            ),
+            child: Text('긴급 모집 시작'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed != true) return;
+
+    setState(() {
+      _isLoading = true;
+    });
+
+    try {
+      await _firestoreService.updateWorkDetail(
+        toId: widget.toItem.to.id,
+        workDetailId: work.id,
+        updates: {
+          'isEmergencyOpen': true,
+          'emergencyOpenedAt': FieldValue.serverTimestamp(),
+          'emergencyOpenedBy': adminUID,
+        },
+      );
+      _firestoreService.clearCache();
+
+      ToastHelper.showSuccess('🚨 ${work.workType} 긴급 모집이 시작되었습니다');
+      widget.onChanged();
+      Navigator.pop(context);
+    } catch (e) {
+      print('❌ 긴급 모집 시작 실패: $e');
+      ToastHelper.showError('긴급 모집 시작에 실패했습니다');
+    } finally {
+      setState(() {
+        _isLoading = false;
+      });
+    }
+  }
+
+  /// 긴급 모집 종료
+  Future<void> _stopEmergencyRecruitment(WorkDetailModel work) async {
+    setState(() {
+      _isLoading = true;
+    });
+
+    try {
+      await _firestoreService.updateWorkDetail(
+        toId: widget.toItem.to.id,
+        workDetailId: work.id,
+        updates: {
+          'isEmergencyOpen': false,
+          'emergencyOpenedAt': null,
+          'emergencyOpenedBy': null,
+        },
+      );
+      _firestoreService.clearCache();
+
+      ToastHelper.showSuccess('${work.workType} 긴급 모집이 종료되었습니다');
+      widget.onChanged();
+      Navigator.pop(context);
+    } catch (e) {
+      print('❌ 긴급 모집 종료 실패: $e');
+      ToastHelper.showError('긴급 모집 종료에 실패했습니다');
+    } finally {
+      setState(() {
+        _isLoading = false;
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: Row(
+        children: [
+          Icon(Icons.task_alt, color: Colors.purple[600]),
+          SizedBox(width: 12),
+          Text('업무별 마감 관리'),
+        ],
+      ),
+      content: _isLoading
+          ? Center(child: CircularProgressIndicator())
+          : SizedBox(
+              width: double.maxFinite,
+              child: ListView.separated(
+                shrinkWrap: true,
+                itemCount: widget.toItem.workDetails.length,
+                separatorBuilder: (context, index) => Divider(height: 24),
+                itemBuilder: (context, index) {
+                  final work = widget.toItem.workDetails[index];
+                  final stats = widget.toItem.workDetailStats?[work.workType];
+                  final confirmed = stats?['confirmed'] ?? 0;
+                  final pending = stats?['pending'] ?? 0;
+
+                  return Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      // 업무 정보
+                      Row(
+                        children: [
+                          Container(
+                            width: 32,
+                            height: 32,
+                            decoration: BoxDecoration(
+                              color: FormatHelper.parseColor(work.workTypeColor),
+                              borderRadius: BorderRadius.circular(6),
+                            ),
+                            child: Center(
+                              child: WorkTypeIcon.buildFromString(
+                                work.workTypeIcon,
+                                color: Colors.white,
+                                size: 16,
+                              ),
+                            ),
+                          ),
+                          SizedBox(width: 12),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  work.workType,
+                                  style: TextStyle(
+                                    fontSize: 15,
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
+                                Text(
+                                  '${work.timeRange} | ${work.formattedWage}',
+                                  style: TextStyle(
+                                    fontSize: 12,
+                                    color: Colors.grey[600],
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ),
+                      SizedBox(height: 8),
+                      
+                      // 인원 정보
+                      Row(
+                        children: [
+                          _buildMiniChip('확정', '$confirmed/${work.requiredCount}명', Colors.blue),
+                          SizedBox(width: 8),
+                          _buildMiniChip('대기', '$pending명', Colors.orange),
+                        ],
+                      ),
+                      SizedBox(height: 12),
+                      
+                      // 버튼들
+                      if (work.isInEmergencyMode) ...[
+                        // 긴급 모집 중
+                        SizedBox(
+                          width: double.infinity,
+                          child: ElevatedButton.icon(
+                            onPressed: () => _stopEmergencyRecruitment(work),
+                            icon: Icon(Icons.cancel, size: 18),
+                            label: Text('긴급 모집 종료'),
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: Colors.grey[700],
+                            ),
+                          ),
+                        ),
+                      ] else if (work.isClosed) ...[
+                        // 마감됨
+                        Row(
+                          children: [
+                            Expanded(
+                              child: OutlinedButton.icon(
+                                onPressed: () => _reopenWork(work),
+                                icon: Icon(Icons.lock_open, size: 18),
+                                label: Text('재오픈'),
+                                style: OutlinedButton.styleFrom(
+                                  foregroundColor: Colors.green[700],
+                                ),
+                              ),
+                            ),
+                            SizedBox(width: 8),
+                            Expanded(
+                              child: ElevatedButton.icon(
+                                onPressed: () => _startEmergencyRecruitment(work),
+                                icon: Text('🚨', style: TextStyle(fontSize: 14)),
+                                label: Text('긴급 모집'),
+                                style: ElevatedButton.styleFrom(
+                                  backgroundColor: Colors.deepOrange,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ] else ...[
+                        // 진행중
+                        SizedBox(
+                          width: double.infinity,
+                          child: ElevatedButton.icon(
+                            onPressed: () => _closeWork(work),
+                            icon: Icon(Icons.lock, size: 18),
+                            label: Text('마감하기'),
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: Colors.red[600],
+                            ),
+                          ),
+                        ),
+                      ],
+                    ],
+                  );
+                },
+              ),
+            ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: Text('닫기'),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildMiniChip(String label, String value, MaterialColor color) {
+    return Container(
+      padding: EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      decoration: BoxDecoration(
+        color: color[50],
+        borderRadius: BorderRadius.circular(4),
+        border: Border.all(color: color[200]!),
+      ),
+      child: Text(
+        '$label $value',
+        style: TextStyle(
+          fontSize: 11,
+          color: color[700],
+          fontWeight: FontWeight.bold,
+        ),
+      ),
+    );
+  }
 }

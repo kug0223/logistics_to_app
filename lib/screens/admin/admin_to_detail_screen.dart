@@ -238,7 +238,7 @@ class _AdminTODetailScreenState extends State<AdminTODetailScreen> {
         setState(() {
           _hasChanges = true; // 🔥 변경사항 기록
         });
-        _loadData();
+        await _loadData();
       }
     } catch (e) {
       if (mounted) {
@@ -309,7 +309,7 @@ class _AdminTODetailScreenState extends State<AdminTODetailScreen> {
         setState(() {
           _hasChanges = true; // 🔥 변경사항 기록
         });
-        _loadData();
+        await _loadData();
       }
     } catch (e) {
       if (mounted) {
@@ -337,33 +337,40 @@ class _AdminTODetailScreenState extends State<AdminTODetailScreen> {
         body: LoadingWidget(message: 'TO 정보를 불러오는 중...'),
       );
     }
-
-    return Scaffold(
-      appBar: AppBar(
-        title: Text(widget.to.isGrouped ? widget.to.groupName ?? '그룹 TO' : 'TO 상세'),
-        backgroundColor: Colors.blue[700],
-        foregroundColor: Colors.white,
-        leading: IconButton(  // 🔥 뒤로가기 버튼 오버라이드
-          icon: const Icon(Icons.arrow_back),
-          onPressed: () {
-            Navigator.pop(context, _hasChanges); // 변경사항 여부 반환
-          },
+    
+    return WillPopScope(  // 🔥 이 부분 추가!
+      onWillPop: () async {
+        // 뒤로가기 시 _hasChanges 값을 반환
+        Navigator.pop(context, _hasChanges);
+        return false; // false를 반환해서 기본 뒤로가기 동작을 막음
+      },
+      child: Scaffold(  // 🔥 기존 Scaffold를 WillPopScope의 child로 이동
+        appBar: AppBar(
+          title: Text(widget.to.isGrouped ? widget.to.groupName ?? '그룹 TO' : 'TO 상세'),
+          backgroundColor: Colors.blue[700],
+          foregroundColor: Colors.white,
+          leading: IconButton(
+            icon: const Icon(Icons.arrow_back),
+            onPressed: () {
+              Navigator.pop(context, _hasChanges);
+            },
+          ),
         ),
-      ),
-      body: RefreshIndicator(
-        onRefresh: _loadData,
-        child: ListView(
-          padding: const EdgeInsets.all(16),
-          children: [
-            // 헤더
-            _buildHeader(),
-            const SizedBox(height: 24),
+        body: RefreshIndicator(
+          onRefresh: _loadData,
+          child: ListView(
+            padding: const EdgeInsets.all(16),
+            children: [
+              // 헤더
+              _buildHeader(),
+              const SizedBox(height: 24),
 
-            // ✅ NEW: 날짜별 트리 구조
-            _buildDateTreeView(),
-            
-            const SizedBox(height: 32),
-          ],
+              // ✅ NEW: 날짜별 트리 구조
+              _buildDateTreeView(),
+              
+              const SizedBox(height: 32),
+            ],
+          ),
         ),
       ),
     );
