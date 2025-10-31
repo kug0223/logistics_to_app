@@ -1,4 +1,5 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:intl/intl.dart';
 import '../models/user_model.dart';
 import '../models/to_model.dart';
 import '../models/application_model.dart';
@@ -1152,6 +1153,31 @@ class FirestoreService {
       return [];
     }
   }
+  /// TO의 모든 지원서 조회 (businessId, title, date 기준)
+  Future<List<ApplicationModel>> getApplicationsByTO(
+    String businessId,
+    String title,
+    DateTime date,
+  ) async {
+    try {
+      final snapshot = await _firestore
+          .collection('applications')
+          .where('businessId', isEqualTo: businessId)
+          .where('toTitle', isEqualTo: title)
+          .where('workDate', isEqualTo: Timestamp.fromDate(date))
+          .get();
+
+      final apps = snapshot.docs
+          .map((doc) => ApplicationModel.fromFirestore(doc))
+          .toList();
+
+      print('✅ TO 지원서 조회: ${apps.length}개');
+      return apps;
+    } catch (e) {
+      print('❌ TO 지원서 조회 실패: $e');
+      return [];
+    }
+  }
   
 
   /// 내 지원 내역 조회
@@ -1328,10 +1354,11 @@ class FirestoreService {
         },
       );
 
-      await batch.commit();
+      // ✅ 통계 재계산 (통합 로직 사용)
+      print('📊 지원 생성 후 통계 재계산...');
+      await recalculateTOStats(toId);
 
       print('✅ 지원 완료: businessId=$businessId, toTitle=$toTitle, WorkType=$selectedWorkType');
-      print('   - WorkDetail pendingCount 증가');
       ToastHelper.showSuccess('지원이 완료되었습니다!');
       return true;
     } catch (e) {
@@ -1442,7 +1469,35 @@ class FirestoreService {
         return false;
       }
 
-      // 4. Batch 업데이트
+      // 🔥 4. 정원 체크 (NEW!)
+      final workDetailDoc = await _firestore
+          .collection('tos')
+          .doc(toId)
+          .collection('workDetails')
+          .doc(workDetailId)
+          .get();
+      
+      if (!workDetailDoc.exists) {
+        ToastHelper.showError('업무 정보를 찾을 수 없습니다.');
+        return false;
+      }
+      
+      final workDetailData = workDetailDoc.data()!;
+      final currentCount = workDetailData['currentCount'] ?? 0;
+      final requiredCount = workDetailData['requiredCount'] ?? 0;
+      // 🔥 로그 추가
+      print('🔍 [정원체크] workType: $selectedWorkType');
+      print('   currentCount: $currentCount (DB값)');
+      print('   requiredCount: $requiredCount');
+      print('   조건: $currentCount >= $requiredCount = ${currentCount >= requiredCount}');
+      
+      // 🔥 정원 초과 체크
+      if (currentCount >= requiredCount) {
+        ToastHelper.showError('이미 정원이 충족되었습니다. ($currentCount/$requiredCount명)');
+        return false;
+      }
+
+      // 5. Batch 업데이트
       final batch = _firestore.batch();
       final now = Timestamp.now();
 
@@ -1490,8 +1545,7 @@ class FirestoreService {
       return false;
     }
   }
-
-  // ✅ NEW: 확정 후 통계 재계산 헬퍼 함수 (재수정)
+  /// ✅ NEW: 확정 후 통계 재계산 (통합 버전)
   Future<void> _recalculateStatsAfterConfirm({
     required String businessId,
     required String toTitle,
@@ -1499,7 +1553,9 @@ class FirestoreService {
     required String selectedWorkType,
   }) async {
     try {
-      // 1. TO 문서 찾기
+      print('📊 확정 후 통계 재계산...');
+      
+      // TO 문서 찾기
       final toSnapshot = await _firestore
           .collection('tos')
           .where('businessId', isEqualTo: businessId)
@@ -1508,79 +1564,23 @@ class FirestoreService {
           .limit(1)
           .get();
 
-      if (toSnapshot.docs.isEmpty) return;
+      if (toSnapshot.docs.isEmpty) {
+        print('⚠️ TO를 찾을 수 없습니다');
+        return;
+      }
       
       final toId = toSnapshot.docs.first.id;
       
-      // 2. 이 TO의 모든 지원서 조회
-      final appsSnapshot = await _firestore
-          .collection('applications')
-          .where('businessId', isEqualTo: businessId)
-          .where('toTitle', isEqualTo: toTitle)
-          .where('workDate', isEqualTo: workDate)
-          .get();
+      // ✅ 통합 재계산 함수 호출
+      await recalculateTOStats(toId);
       
-      // 3. TO 레벨 통계 계산
-      int totalPending = 0;
-      int totalConfirmed = 0;
-      
-      for (var doc in appsSnapshot.docs) {
-        final data = doc.data();
-        final status = data['status'];
-        final isDummy = data['isDummy'] ?? false;
-        
-        if (!isDummy) {
-          if (status == 'PENDING') totalPending++;
-          if (status == 'CONFIRMED') totalConfirmed++;
-        }
-      }
-      
-      // 4. 해당 WorkDetail 통계 계산
-      int confirmedForWork = 0;
-      int pendingForWork = 0;
-      
-      for (var doc in appsSnapshot.docs) {
-        final data = doc.data();
-        final workType = data['selectedWorkType'];
-        final status = data['status'];
-        final isDummy = data['isDummy'] ?? false;
-        
-        if (!isDummy && workType == selectedWorkType) {
-          if (status == 'CONFIRMED') confirmedForWork++;
-          if (status == 'PENDING') pendingForWork++;
-        }
-      }
-      
-      // 5. Batch 업데이트
-      final batch = _firestore.batch();
-      
-      // TO 통계 업데이트
-      batch.update(_firestore.collection('tos').doc(toId), {
-        'totalPending': totalPending,
-        'totalConfirmed': totalConfirmed,
-        'updatedAt': Timestamp.now(),
-      });
-      
-      // WorkDetail 통계 업데이트
-      final workDetailId = await findWorkDetailIdByType(toId, selectedWorkType);
-      if (workDetailId != null) {
-        batch.update(
-          _firestore.collection('tos').doc(toId).collection('workDetails').doc(workDetailId),
-          {
-            'currentCount': confirmedForWork,
-            'pendingCount': pendingForWork,
-          },
-        );
-      }
-      
-      await batch.commit();
-      
-      print('   ✅ 통계 재계산 완료: 확정 $totalConfirmed, 대기 $totalPending');
-      print('   ✅ WorkDetail 재계산: $selectedWorkType 확정 $confirmedForWork, 대기 $pendingForWork');
+      print('✅ 확정 후 통계 재계산 완료');
     } catch (e) {
-      print('   ⚠️ 통계 재계산 실패 (무시): $e');
+      print('⚠️ 통계 재계산 실패 (무시): $e');
     }
   }
+
+  
 
 
   /// 지원자 거절 (관리자용)
@@ -1636,8 +1636,7 @@ class FirestoreService {
       return false;
     }
   }
-
-  // ✅ NEW: 거절 후 통계 재계산 헬퍼 함수 (재수정)
+  /// ✅ NEW: 거절 후 통계 재계산 (통합 버전)
   Future<void> _recalculateStatsAfterReject({
     required String businessId,
     required String toTitle,
@@ -1645,7 +1644,9 @@ class FirestoreService {
     required String selectedWorkType,
   }) async {
     try {
-      // 1. TO 문서 찾기
+      print('📊 거절 후 통계 재계산...');
+      
+      // TO 문서 찾기
       final toSnapshot = await _firestore
           .collection('tos')
           .where('businessId', isEqualTo: businessId)
@@ -1654,79 +1655,23 @@ class FirestoreService {
           .limit(1)
           .get();
 
-      if (toSnapshot.docs.isEmpty) return;
+      if (toSnapshot.docs.isEmpty) {
+        print('⚠️ TO를 찾을 수 없습니다');
+        return;
+      }
       
       final toId = toSnapshot.docs.first.id;
       
-      // 2. 이 TO의 모든 지원서 조회
-      final appsSnapshot = await _firestore
-          .collection('applications')
-          .where('businessId', isEqualTo: businessId)
-          .where('toTitle', isEqualTo: toTitle)
-          .where('workDate', isEqualTo: workDate)
-          .get();
+      // ✅ 통합 재계산 함수 호출
+      await recalculateTOStats(toId);
       
-      // 3. TO 레벨 통계 계산
-      int totalPending = 0;
-      int totalConfirmed = 0;
-      
-      for (var doc in appsSnapshot.docs) {
-        final data = doc.data();
-        final status = data['status'];
-        final isDummy = data['isDummy'] ?? false;
-        
-        if (!isDummy) {
-          if (status == 'PENDING') totalPending++;
-          if (status == 'CONFIRMED') totalConfirmed++;
-        }
-      }
-      
-      // 4. 해당 WorkDetail 통계 계산
-      int confirmedForWork = 0;
-      int pendingForWork = 0;
-      
-      for (var doc in appsSnapshot.docs) {
-        final data = doc.data();
-        final workType = data['selectedWorkType'];
-        final status = data['status'];
-        final isDummy = data['isDummy'] ?? false;
-        
-        if (!isDummy && workType == selectedWorkType) {
-          if (status == 'CONFIRMED') confirmedForWork++;
-          if (status == 'PENDING') pendingForWork++;
-        }
-      }
-      
-      // 5. Batch 업데이트
-      final batch = _firestore.batch();
-      
-      // TO 통계 업데이트
-      batch.update(_firestore.collection('tos').doc(toId), {
-        'totalPending': totalPending,
-        'totalConfirmed': totalConfirmed,
-        'updatedAt': Timestamp.now(),
-      });
-      
-      // WorkDetail 통계 업데이트
-      final workDetailId = await findWorkDetailIdByType(toId, selectedWorkType);
-      if (workDetailId != null) {
-        batch.update(
-          _firestore.collection('tos').doc(toId).collection('workDetails').doc(workDetailId),
-          {
-            'currentCount': confirmedForWork,
-            'pendingCount': pendingForWork,
-          },
-        );
-      }
-      
-      await batch.commit();
-      
-      print('   ✅ 통계 재계산 완료: 확정 $totalConfirmed, 대기 $totalPending');
-      print('   ✅ WorkDetail 재계산: $selectedWorkType 확정 $confirmedForWork, 대기 $pendingForWork');
+      print('✅ 거절 후 통계 재계산 완료');
     } catch (e) {
-      print('   ⚠️ 통계 재계산 실패 (무시): $e');
+      print('⚠️ 통계 재계산 실패 (무시): $e');
     }
   }
+
+  
 
   /// 지원 취소 (사용자용)
   Future<bool> cancelApplication(String applicationId, String uid) async {
@@ -1757,64 +1702,31 @@ class FirestoreService {
       final businessId = appData['businessId'];
       final toTitle = appData['toTitle'];
       final workDate = appData['workDate'] as Timestamp;
-      final selectedWorkType = appData['selectedWorkType'];
-      final wasPending = appData['status'] == 'PENDING';
 
       // 지원서 취소 처리
       await _firestore.collection('applications').doc(applicationId).update({
         'status': 'CANCELED',
       });
 
-      // ✅ PENDING이었던 경우만 통계 업데이트
-      if (wasPending) {
-        // TO 문서 찾기
-        final toSnapshot = await _firestore
-            .collection('tos')
-            .where('businessId', isEqualTo: businessId)
-            .where('title', isEqualTo: toTitle)
-            .where('date', isEqualTo: workDate)
-            .limit(1)
-            .get();
+      // ✅ 통계 재계산
+      print('📊 지원 취소 후 통계 재계산...');
+      final toSnapshot = await _firestore
+          .collection('tos')
+          .where('businessId', isEqualTo: businessId)
+          .where('title', isEqualTo: toTitle)
+          .where('date', isEqualTo: workDate)
+          .limit(1)
+          .get();
 
-        if (toSnapshot.docs.isNotEmpty) {
-          final toId = toSnapshot.docs.first.id;
-
-          // WorkDetail ID 찾기
-          final workDetailId = await findWorkDetailIdByType(toId, selectedWorkType);
-
-          // Batch 업데이트
-          final batch = _firestore.batch();
-
-          // TO 통계 업데이트
-          batch.update(_firestore.collection('tos').doc(toId), {
-            'totalPending': FieldValue.increment(-1),
-            'totalApplications': FieldValue.increment(-1),
-          });
-
-          // WorkDetail pendingCount 감소
-          if (workDetailId != null) {
-            batch.update(
-              _firestore
-                  .collection('tos')
-                  .doc(toId)
-                  .collection('workDetails')
-                  .doc(workDetailId),
-              {
-                'pendingCount': FieldValue.increment(-1),
-              },
-            );
-          }
-
-          await batch.commit();
-          print('✅ 취소 후 통계 업데이트 완료');
-        }
+      if (toSnapshot.docs.isNotEmpty) {
+        await recalculateTOStats(toSnapshot.docs.first.id);
       }
 
       ToastHelper.showSuccess('지원이 취소되었습니다.');
       return true;
     } catch (e) {
-      print('지원 취소 실패: $e');
-      ToastHelper.showError('지원 취소 중 오류가 발생했습니다.');
+      print('❌ 지원 취소 실패: $e');
+      ToastHelper.showError('지원 취소에 실패했습니다.');
       return false;
     }
   }
@@ -2410,7 +2322,7 @@ class FirestoreService {
   /// 진행중인 TO 목록 조회 (대표 TO + 단일 TO)
   Future<List<TOModel>> getActiveTOs() async {
     try {
-      // ✅ 모든 TO 조회 (isGroupMaster 조건 제거)
+      // ✅ 모든 TO 조회
       final snapshot = await _firestore
           .collection('tos')
           .orderBy('date', descending: false)
@@ -2422,15 +2334,45 @@ class FirestoreService {
 
       // ✅ 1. 대표 TO 또는 단일 TO만 필터링
       final masterOrSingleTOs = allTOs.where((to) {
-        // 그룹 TO면 대표만, 단일 TO면 모두 포함
         if (to.groupId != null) {
           return to.isGroupMaster;
         }
-        return true;  // 단일 TO (groupId가 null)
+        return true;
       }).toList();
 
-      // ✅ 2. 진행중인 것만 필터링 (마감되지 않은 것)
-      final activeTOs = masterOrSingleTOs.where((to) => !to.isClosed).toList();
+      // 🔥 2. 진행중인 것만 필터링 (수동 마감 + 시간 체크)
+      List<TOModel> activeTOs = [];
+      
+      for (var masterTO in masterOrSingleTOs) {
+        if (masterTO.isClosed) continue; // 수동 마감 제외
+        
+        // 🔥 그룹 TO인 경우: 전체 TO 체크
+        if (masterTO.groupId != null) {
+          final groupTOs = allTOs.where((to) => to.groupId == masterTO.groupId).toList();
+          print('🔍 [그룹체크] ${masterTO.groupName}');
+          print('   그룹 내 TO 개수: ${groupTOs.length}개');
+  
+          
+          // 하나라도 진행중이면 포함
+          bool hasActive = false;
+          for (var to in groupTOs) {
+            if (!_isTimeExpired(to)) {
+              hasActive = true;
+              break;
+            }
+          }
+          
+          if (hasActive) {
+            activeTOs.add(masterTO);
+          }
+        } 
+        // 🔥 단일 TO인 경우: 바로 시간 체크
+        else {
+          if (!_isTimeExpired(masterTO)) {
+            activeTOs.add(masterTO);
+          }
+        }
+      }
 
       print('✅ 진행중 TO 조회: ${activeTOs.length}개 (그룹 대표 + 단일 TO)');
       return activeTOs;
@@ -2438,6 +2380,51 @@ class FirestoreService {
       print('❌ 진행중 TO 조회 실패: $e');
       return [];
     }
+  }
+
+  // 🔥 시간 초과 체크 헬퍼 함수
+  bool _isTimeExpired(TOModel to) {
+    final now = DateTime.now();
+    final workDate = DateTime(to.date.year, to.date.month, to.date.day);
+    final today = DateTime(now.year, now.month, now.day);
+    
+    print('🔍 [시간체크] ${DateFormat('MM/dd').format(to.date)}');
+    print('   workDate: $workDate');
+    print('   today: $today');
+    // 1. 근무일이 오늘보다 이전이면 무조건 종료
+    if (workDate.isBefore(today)) {
+      print('   → 과거 날짜, 종료됨');
+      return true;
+    }
+    
+    // 2. 근무일이 오늘인 경우 시간 체크
+    if (workDate == today) {
+      final startTime = to.displayStartTime; // "HH:mm" 형식
+      if (startTime == null || startTime.isEmpty || startTime == '--:--') {
+        print('   → 오늘, startTime: $startTime');
+        return false; // 시간 정보 없으면 진행중으로 간주
+      }
+      
+      try {
+        final parts = startTime.split(':');
+        final startHour = int.parse(parts[0]);
+        final startMinute = int.parse(parts[1]);
+        
+        final startDateTime = DateTime(
+          now.year, now.month, now.day,
+          startHour, startMinute,
+        );
+        
+        // 시작 시간이 지났으면 종료
+        return now.isAfter(startDateTime);
+      } catch (e) {
+        return false;
+      }
+    }
+    
+    // 3. 근무일이 미래면 진행중
+    print('   → 미래 날짜, 진행중');
+    return false;
   }
 
   /// 마감된 TO 목록 조회 (대표 TO + 단일 TO)
@@ -2651,8 +2638,8 @@ class FirestoreService {
           final status = appData['status'];
           
           // 더미 데이터 제외 (옵션)
-          final isDummy = appData['isDummy'] ?? false;
-          if (isDummy) continue;
+          //final isDummy = appData['isDummy'] ?? false;
+          //if (isDummy) continue;
           
           if (selectedWorkType == workType) {
             if (status == 'CONFIRMED') confirmedCount++;
@@ -2725,8 +2712,8 @@ class FirestoreService {
         final status = data['status'];
         
         // 더미 데이터 제외
-        final isDummy = data['isDummy'] ?? false;
-        if (isDummy) continue;
+        //final isDummy = data['isDummy'] ?? false;
+        //if (isDummy) continue;
         
         if (status == 'PENDING') totalPending++;
         if (status == 'CONFIRMED') totalConfirmed++;

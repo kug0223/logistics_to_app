@@ -394,21 +394,24 @@ class TOModel {
     try {
       final now = DateTime.now();
       final today = DateTime(now.year, now.month, now.day);
-      final workDate = DateTime(date.year, date.month, date.day);
-      print('🔍 isTimeExpired 체크: $title');
-      print('   - 근무일: $workDate');
-      print('   - 오늘: $today');
-      print('   - startTime: $startTime');
-      print('   - displayStartTime: $displayStartTime');
       
-      // ✅ 1. 날짜가 과거면 무조건 시간 초과
+      // 🔥 그룹 TO면 엄격하게 체크 안 함 (각 날짜별 시간이 다름)
+      if (isGrouped) {
+        // 그룹의 경우 endDate까지는 진행중
+        if (endDate != null) {
+          final groupEndDate = DateTime(endDate!.year, endDate!.month, endDate!.day);
+          return groupEndDate.isBefore(today);
+        }
+      }
+      
+      // 단일 TO만 시간 체크
+      final workDate = DateTime(date.year, date.month, date.day);
+      
       if (workDate.isBefore(today)) {
         return true;
       }
       
-      // ✅ 2. 오늘 날짜면 근무 시작 시간 체크
       if (workDate.isAtSameMomentAs(today)) {
-        // startTime 있으면 체크
         if (startTime.isNotEmpty && startTime.contains(':')) {
           final timeParts = startTime.split(':');
           if (timeParts.length >= 2) {
@@ -422,31 +425,12 @@ class TOModel {
             return now.isAfter(workStart);
           }
         }
-        // startTime 없으면 displayStartTime 체크
-        else if (displayStartTime.isNotEmpty && displayStartTime.contains(':')) {
-          final timeParts = displayStartTime.split(':');
-          if (timeParts.length >= 2) {
-            final workStart = DateTime(
-              date.year,
-              date.month,
-              date.day,
-              int.parse(timeParts[0]),
-              int.parse(timeParts[1]),
-            );
-            return now.isAfter(workStart);
-          }
-        }
       }
       
-      // ✅ 3. 미래 날짜는 시간 초과 아님
       return false;
     } catch (e) {
       print('⚠️ isTimeExpired 계산 오류: $e');
-      // 에러 시 안전하게 날짜만으로 판단
-      final now = DateTime.now();
-      final today = DateTime(now.year, now.month, now.day);
-      final workDate = DateTime(date.year, date.month, date.day);
-      return workDate.isBefore(today);
+      return false;
     }
   }
 

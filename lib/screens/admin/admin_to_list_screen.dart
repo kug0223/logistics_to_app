@@ -92,12 +92,32 @@ class _AdminTOListScreenState extends State<AdminTOListScreen> {
           for (var to in groupTOs) {
             final toWorkDetails = workDetailsMap[to.id] ?? [];
             
-            // ✅ TO 문서의 통계 필드 직접 사용 (지원자 조회 불필요!)
+            // ✅ 변경: 실제 지원서 조회해서 계산
+            final apps = await _firestoreService.getApplicationsByTO(
+              to.businessId,
+              to.title,
+              to.date,
+            );
+
+            int confirmed = apps.where((a) => a.status == 'CONFIRMED').length;
+            int pending = apps.where((a) => a.status == 'PENDING').length;
+            
+            // 🔥 WorkDetail별 통계 계산
+            Map<String, Map<String, int>> workStats = {};
+            for (var work in toWorkDetails) {
+              final workApps = apps.where((a) => a.selectedWorkType == work.workType);
+              workStats[work.workType] = {
+                'confirmed': workApps.where((a) => a.status == 'CONFIRMED').length,
+                'pending': workApps.where((a) => a.status == 'PENDING').length,
+              };
+            }
+
             toItems.add(_TOItem(
               to: to,
               workDetails: toWorkDetails,
-              confirmedCount: to.totalConfirmed,
-              pendingCount: to.totalPending,
+              confirmedCount: confirmed,
+              pendingCount: pending,
+              workDetailStats: workStats, // 🔥 추가!
             ));
           }
           
@@ -133,15 +153,44 @@ class _AdminTOListScreenState extends State<AdminTOListScreen> {
             }
           }
           
-          // ✅ 단일 TO 아이템 생성 (통계 필드 사용)
+          // 🔥 지원서 조회해서 WorkDetail별 통계 계산
+          final apps = await _firestoreService.getApplicationsByTO(
+            masterTO.businessId,
+            masterTO.title,
+            masterTO.date,
+          );
+          
+          // WorkDetail별 통계 매핑
+          Map<String, Map<String, int>> workStats = {};
+          for (var work in workDetails) {
+            final workApps = apps.where((a) => a.selectedWorkType == work.workType);
+            // 🔥 변수 선언!
+            final confirmed = workApps.where((a) => a.status == 'CONFIRMED').length;
+            final pending = workApps.where((a) => a.status == 'PENDING').length;
+            
+            workStats[work.workType] = {
+              'confirmed': workApps.where((a) => a.status == 'CONFIRMED').length,
+              'pending': workApps.where((a) => a.status == 'PENDING').length,
+            };
+            print('🔍 [단일TO] ${work.workType}: 확정 $confirmed, 대기 $pending');
+          }
+          print('🔍 [단일TO] workStats 전체: $workStats'); // 🔥 로그 추가
+          // 🔥 전체 통계 계산
+          int totalConfirmed = 0;
+          int totalPending = 0;
+          for (var stats in workStats.values) {
+            totalConfirmed += stats['confirmed'] as int;
+            totalPending += stats['pending'] as int;
+}
           groupItems.add(_TOGroupItem(
             masterTO: masterTO,
             groupTOs: [
               _TOItem(
                 to: masterTO,
                 workDetails: workDetails,
-                confirmedCount: masterTO.totalConfirmed,
-                pendingCount: masterTO.totalPending,
+                confirmedCount: totalConfirmed,  // 🔥 수정!
+                pendingCount: totalPending,      // 🔥 수정!
+                workDetailStats: workStats, // 🔥 추가!
               ),
             ],
             isGrouped: false,
@@ -882,6 +931,11 @@ class _AdminTOListScreenState extends State<AdminTOListScreen> {
     final masterTO = groupItem.masterTO;
     final isExpanded = _expandedGroups.contains(masterTO.groupId ?? masterTO.id);
     final dateFormat = DateFormat('yyyy-MM-dd (E)', 'ko_KR');
+
+    print('🎯 카드 빌드: ${masterTO.title}');
+    print('   isExpanded: $isExpanded');
+    print('   isGrouped: ${groupItem.isGrouped}');
+    print('   workDetailStats: ${groupItem.groupTOs.first.workDetailStats}'); // 🔥 추가
     
     // 그룹 전체 통계
     int totalConfirmed = 0;
@@ -1077,7 +1131,7 @@ class _AdminTOListScreenState extends State<AdminTOListScreen> {
                         icon: Icon(Icons.more_vert, size: 20, color: Colors.grey[700]),
                         padding: EdgeInsets.zero,
                         tooltip: '메뉴',
-                        onSelected: (value) {
+                        onSelected: (value) async {
                           switch (value) {
                             case 'edit':
                               Navigator.push(
@@ -1096,12 +1150,15 @@ class _AdminTOListScreenState extends State<AdminTOListScreen> {
                               _showReconnectToGroupDialog(groupItem.groupTOs.first);
                               break;
                             case 'detail':
-                              Navigator.push(
+                              final result = await Navigator.push(  // 🔥 await 추가!
                                 context,
                                 MaterialPageRoute(
                                   builder: (context) => AdminTODetailScreen(to: masterTO),
                                 ),
                               );
+                              if (result == true) {
+                                _loadTOsWithStats();
+                              }
                               break;
                             case 'close':  // ✅ 추가
                               _showCloseTODialog(masterTO);
@@ -1177,7 +1234,7 @@ class _AdminTOListScreenState extends State<AdminTOListScreen> {
                         icon: Icon(Icons.more_vert, size: 20, color: Colors.grey[700]),
                         padding: EdgeInsets.zero,
                         tooltip: '메뉴',
-                        onSelected: (value) {
+                        onSelected: (value) async {
                           switch (value) {
                             case 'editGroupName':
                               _showEditGroupNameDialog(masterTO);
@@ -1331,8 +1388,14 @@ class _AdminTOListScreenState extends State<AdminTOListScreen> {
                     ),
                   ),
                   const SizedBox(height: 8),
+                  
+                  // 🔥 FutureBuilder 제거! 바로 표시
                   ...groupItem.groupTOs.first.workDetails.map((work) {
-                    return _buildWorkDetailRow(work, work.currentCount, work.pendingCount);
+                    final stats = groupItem.groupTOs.first.workDetailStats?[work.workType];
+                    final confirmed = stats?['confirmed'] ?? 0;
+                    final pending = stats?['pending'] ?? 0;
+                    print('🔍 [UI] ${work.workType}: stats=$stats, 확정=$confirmed, 대기=$pending'); // 🔥 로그 추가
+                    return _buildWorkDetailRow(work, confirmed, pending);
                   }).toList(),
                 ],
               ),
@@ -1480,7 +1543,7 @@ class _AdminTOListScreenState extends State<AdminTOListScreen> {
                         icon: Icon(Icons.more_vert, size: 20, color: Colors.grey[700]),
                         padding: EdgeInsets.zero,
                         tooltip: '메뉴',
-                        onSelected: (value) {
+                        onSelected: (value) async {
                           switch (value) {
                             case 'edit':
                               Navigator.push(
@@ -1499,12 +1562,15 @@ class _AdminTOListScreenState extends State<AdminTOListScreen> {
                               _showRemoveFromGroupDialog(toItem);
                               break;
                             case 'detail':
-                              Navigator.push(
+                              final result = await Navigator.push(  // 🔥 await 추가!
                                 context,
                                 MaterialPageRoute(
                                   builder: (context) => AdminTODetailScreen(to: to),
                                 ),
                               );
+                              if (result == true) {
+                                _loadTOsWithStats();
+                              }
                               break;
                           }
                         },
@@ -1584,8 +1650,14 @@ class _AdminTOListScreenState extends State<AdminTOListScreen> {
                     ),
                   ),
                   const SizedBox(height: 8),
+                  
+                  // 🔥 FutureBuilder 제거!
                   ...toItem.workDetails.map((work) {
-                    return _buildWorkDetailRow(work, work.currentCount, work.pendingCount);
+                    final stats = toItem.workDetailStats?[work.workType];
+                    final confirmed = stats?['confirmed'] ?? 0;
+                    final pending = stats?['pending'] ?? 0;
+                    
+                    return _buildWorkDetailRow(work, confirmed, pending);
                   }).toList(),
                 ],
               ),
@@ -2645,11 +2717,13 @@ class _TOItem {
   final List<WorkDetailModel> workDetails;
   final int confirmedCount;
   final int pendingCount;
+  final Map<String, Map<String, int>>? workDetailStats; // 🔥 추가!
 
   _TOItem({
     required this.to,
     required this.workDetails,
     required this.confirmedCount,
     required this.pendingCount,
+    this.workDetailStats, // 🔥 추가!
   });
 }

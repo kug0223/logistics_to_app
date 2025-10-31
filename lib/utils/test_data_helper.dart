@@ -1,8 +1,10 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'dart:math';
+import '../services/firestore_service.dart';
 
 class TestDataHelper {
   static final FirebaseFirestore _firestore = FirebaseFirestore.instance;
+  static final FirestoreService _firestoreService = FirestoreService();
   static final Random _random = Random();
 
   // 더미 이름 풀
@@ -166,164 +168,15 @@ class TestDataHelper {
     print('🎉 지원서 생성 완료!');
     print('   총 ${createdAppIds.length}개 지원서 생성됨');
     print('   생성된 ID: ${createdAppIds.join(", ")}');
+    print('🎉 지원서 생성 완료!');
+    print('   총 ${createdAppIds.length}개 지원서 생성됨');
 
-    // ✅ 5. 선택한 TO 통계 업데이트
-    print('📊 선택한 TO 통계 업데이트 중...');
+    // ✅ FirestoreService로 통계 재계산
+    print('📊 TO 통계 재계산 중...');
+    await _firestoreService.recalculateTOStats(toId);
+    _firestoreService.clearCache(toId: toId);
+    print('✅ 완료!');
     
-    // 현재 TO의 모든 지원서 조회
-    final allAppsSnapshot = await _firestore
-        .collection('applications')
-        .where('businessId', isEqualTo: businessId)
-        .where('toTitle', isEqualTo: toTitle)
-        .where('workDate', isEqualTo: Timestamp.fromDate(date))
-        .get();
-
-    int totalPending = 0;
-    int totalConfirmed = 0;
-
-    for (var doc in allAppsSnapshot.docs) {
-      final status = doc.data()['status'];
-      if (status == 'PENDING') totalPending++;
-      if (status == 'CONFIRMED') totalConfirmed++;
-    }
-
-    // TO 문서 업데이트
-    await _firestore.collection('tos').doc(toId).update({
-      'totalPending': totalPending,
-      'totalConfirmed': totalConfirmed,
-      'updatedAt': now,
-    });
-
-    print('✅ 선택한 TO 통계 업데이트: 대기 $totalPending, 확정 $totalConfirmed');
-
-    // ✅ 6. 선택한 TO WorkDetails 통계 업데이트
-    for (var workDetail in workDetails) {
-      final workDetailId = workDetail.id;
-      final workType = workDetail.data()['workType'];
-
-      // 해당 workType의 확정 지원자 수 계산
-      final confirmedForWork = allAppsSnapshot.docs
-          .where((doc) =>
-              doc.data()['status'] == 'CONFIRMED' &&
-              doc.data()['selectedWorkType'] == workType)
-          .length;
-
-      final pendingForWork = allAppsSnapshot.docs
-          .where((doc) =>
-              doc.data()['status'] == 'PENDING' &&
-              doc.data()['selectedWorkType'] == workType)
-          .length;
-
-      await _firestore
-          .collection('tos')
-          .doc(toId)
-          .collection('workDetails')
-          .doc(workDetailId)
-          .update({
-        'currentCount': confirmedForWork,
-        'pendingCount': pendingForWork,
-      });
-
-      print('  ✅ WorkDetail: $workType (확정: $confirmedForWork, 대기: $pendingForWork)');
-    }
-
-    print('🎊 선택한 TO 업데이트 완료!');
-    print('');
-
-    // ✅ 7. 같은 날짜의 다른 TO들도 통계 업데이트
-    print('📊 관련 TO 통계 업데이트 중...');
-    
-    final relatedTOsSnapshot = await _firestore
-        .collection('tos')
-        .where('businessId', isEqualTo: businessId)
-        .where('date', isEqualTo: Timestamp.fromDate(date))
-        .get();
-    
-    print('   관련 TO: ${relatedTOsSnapshot.docs.length}개 발견');
-    
-    int updatedCount = 0;
-    for (var relatedTODoc in relatedTOsSnapshot.docs) {
-      if (relatedTODoc.id == toId) {
-        print('   ⏭️  ${relatedTODoc.id} - 이미 업데이트됨 (스킵)');
-        continue; // 이미 업데이트한 TO는 스킵
-      }
-      
-      print('   🔄 ${relatedTODoc.id} - 통계 재계산 중...');
-      
-      // 해당 TO의 지원서 조회
-      final relatedTOData = relatedTODoc.data() as Map<String, dynamic>;
-      final relatedTitle = relatedTOData['title'];
-      
-      final relatedAppsSnapshot = await _firestore
-          .collection('applications')
-          .where('businessId', isEqualTo: businessId)
-          .where('toTitle', isEqualTo: relatedTitle)
-          .where('workDate', isEqualTo: Timestamp.fromDate(date))
-          .get();
-
-      int relatedPending = 0;
-      int relatedConfirmed = 0;
-
-      for (var doc in relatedAppsSnapshot.docs) {
-        final status = doc.data()['status'];
-        if (status == 'PENDING') relatedPending++;
-        if (status == 'CONFIRMED') relatedConfirmed++;
-      }
-
-      // TO 문서 업데이트
-      await _firestore.collection('tos').doc(relatedTODoc.id).update({
-        'totalPending': relatedPending,
-        'totalConfirmed': relatedConfirmed,
-        'updatedAt': now,
-      });
-
-      print('      ✅ 통계: 대기 $relatedPending, 확정 $relatedConfirmed');
-
-      // WorkDetails 통계도 업데이트
-      final relatedWorkDetailsSnapshot = await _firestore
-          .collection('tos')
-          .doc(relatedTODoc.id)
-          .collection('workDetails')
-          .get();
-
-      for (var relatedWorkDetail in relatedWorkDetailsSnapshot.docs) {
-        final relatedWorkDetailId = relatedWorkDetail.id;
-        final relatedWorkType = relatedWorkDetail.data()['workType'];
-
-        final confirmedForWork = relatedAppsSnapshot.docs
-            .where((doc) =>
-                doc.data()['status'] == 'CONFIRMED' &&
-                doc.data()['selectedWorkType'] == relatedWorkType)
-            .length;
-
-        final pendingForWork = relatedAppsSnapshot.docs
-            .where((doc) =>
-                doc.data()['status'] == 'PENDING' &&
-                doc.data()['selectedWorkType'] == relatedWorkType)
-            .length;
-
-        await _firestore
-            .collection('tos')
-            .doc(relatedTODoc.id)
-            .collection('workDetails')
-            .doc(relatedWorkDetailId)
-            .update({
-          'currentCount': confirmedForWork,
-          'pendingCount': pendingForWork,
-        });
-
-        print('        → $relatedWorkType: 확정 $confirmedForWork, 대기 $pendingForWork');
-      }
-      
-      updatedCount++;
-    }
-    
-    print('');
-    print('✅ 관련 TO ${updatedCount}개 통계 업데이트 완료!');
-    print('');
-    print('🎉 ═══════════════════════════════════════');
-    print('🎉 모든 작업 완료!');
-    print('🎉 ═══════════════════════════════════════');
   }
 
   /// 모든 더미 데이터 삭제 (강화 버전)
@@ -506,7 +359,8 @@ class TestDataHelper {
         
         int recalculatedCount = 0;
         for (var toId in affectedTOIds) {
-          final success = await _recalculateTOStats(toId);
+          final success = await _firestoreService.recalculateTOStats(toId);
+          _firestoreService.clearCache(toId: toId);
           if (success) recalculatedCount++;
         }
         
@@ -540,117 +394,6 @@ class TestDataHelper {
       print('스택 트레이스: $stackTrace');
       print('');
       rethrow;
-    }
-  }
-
-  /// TO 통계 재계산 (더미 데이터 삭제 후)
-  static Future<bool> _recalculateTOStats(String toId) async {
-    try {
-      print('  🔄 TO $toId 통계 재계산 중...');
-      
-      // TO 정보 조회
-      final toDoc = await _firestore.collection('tos').doc(toId).get();
-      if (!toDoc.exists) {
-        print('    ⚠️  TO 문서를 찾을 수 없음');
-        return false;
-      }
-
-      final toData = toDoc.data()!;
-      final businessId = toData['businessId'];
-      final toTitle = toData['title'];
-      final workDate = toData['date'] as Timestamp;
-
-      // 현재 TO의 모든 지원서 조회 (더미 아닌 것만)
-      final allAppsSnapshot = await _firestore
-          .collection('applications')
-          .where('businessId', isEqualTo: businessId)
-          .where('toTitle', isEqualTo: toTitle)
-          .where('workDate', isEqualTo: workDate)
-          .get();
-
-      int totalPending = 0;
-      int totalConfirmed = 0;
-
-      // 더미가 아닌 지원서만 카운트
-      for (var doc in allAppsSnapshot.docs) {
-        final data = doc.data();
-        final uid = data['uid'];
-        final isDummy = data['isDummy'] ?? false;
-        
-        // uid 패턴과 isDummy 필드 둘 다 체크
-        final isReallyDummy = isDummy || (uid != null && uid.toString().startsWith('dummy_user_'));
-        
-        if (!isReallyDummy) {
-          final status = data['status'];
-          if (status == 'PENDING') totalPending++;
-          if (status == 'CONFIRMED') totalConfirmed++;
-        }
-      }
-
-      // TO 문서 업데이트
-      await _firestore.collection('tos').doc(toId).update({
-        'totalPending': totalPending,
-        'totalConfirmed': totalConfirmed,
-        'updatedAt': Timestamp.now(),
-      });
-
-      print('    ✅ TO 통계: 대기 $totalPending, 확정 $totalConfirmed');
-
-      // WorkDetails 통계도 재계산
-      final workDetailsSnapshot = await _firestore
-          .collection('tos')
-          .doc(toId)
-          .collection('workDetails')
-          .get();
-
-      for (var workDetail in workDetailsSnapshot.docs) {
-        final workDetailId = workDetail.id;
-        final workType = workDetail.data()['workType'];
-
-        // 해당 workType의 지원자 수 계산 (더미 제외)
-        final confirmedForWork = allAppsSnapshot.docs
-            .where((doc) {
-              final data = doc.data();
-              final uid = data['uid'];
-              final isDummy = data['isDummy'] ?? false;
-              final isReallyDummy = isDummy || (uid != null && uid.toString().startsWith('dummy_user_'));
-              
-              return !isReallyDummy &&
-                  data['status'] == 'CONFIRMED' &&
-                  data['selectedWorkType'] == workType;
-            })
-            .length;
-
-        final pendingForWork = allAppsSnapshot.docs
-            .where((doc) {
-              final data = doc.data();
-              final uid = data['uid'];
-              final isDummy = data['isDummy'] ?? false;
-              final isReallyDummy = isDummy || (uid != null && uid.toString().startsWith('dummy_user_'));
-              
-              return !isReallyDummy &&
-                  data['status'] == 'PENDING' &&
-                  data['selectedWorkType'] == workType;
-            })
-            .length;
-
-        await _firestore
-            .collection('tos')
-            .doc(toId)
-            .collection('workDetails')
-            .doc(workDetailId)
-            .update({
-          'currentCount': confirmedForWork,
-          'pendingCount': pendingForWork,
-        });
-
-        print('      → $workType: 확정 $confirmedForWork, 대기 $pendingForWork');
-      }
-      
-      return true;
-    } catch (e) {
-      print('    ❌ TO $toId 통계 재계산 실패: $e');
-      return false;
     }
   }
 }

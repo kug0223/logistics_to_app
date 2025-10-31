@@ -157,10 +157,18 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
         updates['applicationDeadline'] = Timestamp.fromDate(deadline);
         updates['hoursBeforeStart'] = null;
       }
-      
+      // 🔥 시간 변경 시 마감 상태 초기화
+      updates['closedAt'] = FieldValue.delete();
+      updates['closedBy'] = FieldValue.delete();
+      updates['isManualClosed'] = false;
+      updates['reopenedAt'] = Timestamp.now();
+      final userProvider = Provider.of<UserProvider>(context, listen: false);
+      updates['reopenedBy'] = userProvider.currentUser?.uid;
+      print('🔥 [TO수정] 마감 상태 초기화');
+      print('   updates: $updates');
       // Firestore 업데이트
       await FirestoreService().updateTO(widget.to.id, updates);
-      
+      print('✅ [TO수정] Firestore 업데이트 완료');
       ToastHelper.showSuccess('TO가 수정되었습니다');
       if (mounted) Navigator.pop(context, true);
     } catch (e) {

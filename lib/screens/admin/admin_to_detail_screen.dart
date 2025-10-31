@@ -9,6 +9,7 @@ import '../../providers/user_provider.dart';
 import '../../widgets/loading_widget.dart';
 import '../../utils/toast_helper.dart';
 import '../../utils/format_helper.dart';
+import '../../widgets/work_type_icon.dart';
 
 // ============================================================
 // 📦 데이터 모델
@@ -69,6 +70,7 @@ class _AdminTODetailScreenState extends State<AdminTODetailScreen> {
   // ✅ NEW: 토글 상태 관리
   final Set<String> _expandedDates = {}; // 펼쳐진 날짜들
   final Set<String> _expandedTOs = {}; // 펼쳐진 TO들
+  bool _hasChanges = false; // 🔥 추가!
 
   @override
   void initState() {
@@ -233,11 +235,14 @@ class _AdminTODetailScreenState extends State<AdminTODetailScreen> {
       }
 
       if (success) {
+        setState(() {
+          _hasChanges = true; // 🔥 변경사항 기록
+        });
         _loadData();
       }
     } catch (e) {
       if (mounted) {
-        Navigator.pop(context);
+        Navigator.pop(context, true);
       }
       print('❌ 승인 실패: $e');
     }
@@ -301,11 +306,14 @@ class _AdminTODetailScreenState extends State<AdminTODetailScreen> {
       }
 
       if (success) {
+        setState(() {
+          _hasChanges = true; // 🔥 변경사항 기록
+        });
         _loadData();
       }
     } catch (e) {
       if (mounted) {
-        Navigator.pop(context);
+        Navigator.pop(context, true);
       }
       print('❌ 거절 실패: $e');
     }
@@ -335,6 +343,12 @@ class _AdminTODetailScreenState extends State<AdminTODetailScreen> {
         title: Text(widget.to.isGrouped ? widget.to.groupName ?? '그룹 TO' : 'TO 상세'),
         backgroundColor: Colors.blue[700],
         foregroundColor: Colors.white,
+        leading: IconButton(  // 🔥 뒤로가기 버튼 오버라이드
+          icon: const Icon(Icons.arrow_back),
+          onPressed: () {
+            Navigator.pop(context, _hasChanges); // 변경사항 여부 반환
+          },
+        ),
       ),
       body: RefreshIndicator(
         onRefresh: _loadData,
@@ -359,6 +373,29 @@ class _AdminTODetailScreenState extends State<AdminTODetailScreen> {
   Widget _buildHeader() {
     final dateFormat = DateFormat('yyyy-MM-dd (E)', 'ko_KR');
     
+    // 🔥 실제 날짜 범위 계산
+    DateTime? minDate;
+    DateTime? maxDate;
+    String? minTime;
+    String? maxTime;
+    
+    for (var dateEntry in _dateGroupedData.entries) {
+      final date = dateEntry.key;
+      if (minDate == null || date.isBefore(minDate)) minDate = date;
+      if (maxDate == null || date.isAfter(maxDate)) maxDate = date;
+      
+      for (var toItem in dateEntry.value) {
+        for (var work in toItem.workDetails) {
+          if (minTime == null || work.workDetail.startTime.compareTo(minTime) < 0) {
+            minTime = work.workDetail.startTime;
+          }
+          if (maxTime == null || work.workDetail.endTime.compareTo(maxTime) > 0) {
+            maxTime = work.workDetail.endTime;
+          }
+        }
+      }
+    }
+    
     return Card(
       elevation: 2,
       child: Padding(
@@ -366,7 +403,7 @@ class _AdminTODetailScreenState extends State<AdminTODetailScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // ✅ 사업장명 (첫 줄 - 파란 배지)
+            // ✅ 사업장명 (변경 없음)
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
               decoration: BoxDecoration(
@@ -395,7 +432,7 @@ class _AdminTODetailScreenState extends State<AdminTODetailScreen> {
             ),
             const SizedBox(height: 10),
             
-            // ✅ 그룹명 (그룹 TO) 또는 단일 공고 배지
+            // ✅ 그룹명 (변경 없음)
             if (widget.to.groupName != null)
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
@@ -446,28 +483,30 @@ class _AdminTODetailScreenState extends State<AdminTODetailScreen> {
               ),
             const SizedBox(height: 12),
             
-            // ✅ 날짜 정보 (기존 코드 유지)
+            // 🔥 날짜 정보 (실제 범위로 표시)
             Row(
               children: [
                 Icon(Icons.calendar_today, size: 16, color: Colors.grey[600]),
                 const SizedBox(width: 6),
                 Text(
-                  widget.to.groupName != null
-                      ? '${DateFormat('yyyy-MM-dd (E)', 'ko_KR').format(widget.to.date)} ~ ${DateFormat('yyyy-MM-dd (E)', 'ko_KR').format(widget.to.endDate!)}'
-                      : DateFormat('yyyy-MM-dd (E)', 'ko_KR').format(widget.to.date),
+                  widget.to.groupName != null && minDate != null && maxDate != null
+                      ? '${dateFormat.format(minDate)} ~ ${dateFormat.format(maxDate)}'
+                      : dateFormat.format(widget.to.date),
                   style: TextStyle(fontSize: 14, color: Colors.grey[700]),
                 ),
               ],
             ),
             const SizedBox(height: 8),
             
-            // ✅ 시간 정보 (기존 코드 유지)
+            // 🔥 시간 정보 (실제 범위로 표시)
             Row(
               children: [
                 Icon(Icons.access_time, size: 16, color: Colors.grey[600]),
                 const SizedBox(width: 6),
                 Text(
-                  '${widget.to.displayStartTime} ~ ${widget.to.displayEndTime}',
+                  minTime != null && maxTime != null
+                      ? '$minTime ~ $maxTime'
+                      : '${widget.to.startTime} ~ ${widget.to.endTime}',
                   style: TextStyle(fontSize: 14, color: Colors.grey[700]),
                 ),
               ],
@@ -741,9 +780,11 @@ class _AdminTODetailScreenState extends State<AdminTODetailScreen> {
                 child: Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    Text(
+                    // 🔥 WorkTypeIcon.buildFromString 사용
+                    WorkTypeIcon.buildFromString(
                       work.workDetail.workTypeIcon,
-                      style: const TextStyle(fontSize: 14),
+                      color: FormatHelper.parseColor(work.workDetail.workTypeColor),
+                      size: 14,
                     ),
                     const SizedBox(width: 4),
                     Text(
@@ -796,7 +837,7 @@ class _AdminTODetailScreenState extends State<AdminTODetailScreen> {
               ),
               const SizedBox(width: 8),
               Text(
-                '${work.workDetail.currentCount}/${work.workDetail.requiredCount}명',
+                '${work.confirmedApplicants.length}/${work.workDetail.requiredCount}명',
                 style: TextStyle(
                   fontSize: 12,
                   fontWeight: FontWeight.bold,
