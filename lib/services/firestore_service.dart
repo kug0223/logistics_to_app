@@ -8,8 +8,6 @@ import '../models/work_type_model.dart';
 import '../models/work_detail_model.dart';
 import '../utils/toast_helper.dart';
 import '../models/business_work_type_model.dart';
-import '../models/application_model.dart';
-import '../models/work_detail_model.dart';
 
 class FirestoreService {
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
@@ -349,15 +347,37 @@ class FirestoreService {
 
       // 4. WorkDetails 하위 컬렉션에 업무 추가
       final batch = _firestore.batch();
-      
+
       for (int i = 0; i < workDetailsData.length; i++) {
         final data = workDetailsData[i];
         final docRef = toDoc.collection('workDetails').doc();
         
+        // 🔥 각 WorkDetail별 마감시간 계산
+        DateTime workDeadline;
+        
+        if (deadlineType == 'HOURS_BEFORE') {
+          // 각 업무 시작 N시간 전
+          final startTime = data['startTime'] as String;
+          final timeParts = startTime.split(':');
+          final workStartDateTime = DateTime(
+            date.year,
+            date.month,
+            date.day,
+            int.parse(timeParts[0]),
+            int.parse(timeParts[1]),
+          );
+          workDeadline = workStartDateTime.subtract(
+            Duration(hours: hoursBeforeStart ?? 2)
+          );
+        } else {
+          // FIXED_TIME은 TO 마감시간 사용
+          workDeadline = applicationDeadline;
+        }
+        
         batch.set(docRef, {
           'workType': data['workType'],
-          'workTypeIcon': data['workTypeIcon'],  // ✅ 추가
-          'workTypeColor': data['workTypeColor'],  // ✅ 추가
+          'workTypeIcon': data['workTypeIcon'],
+          'workTypeColor': data['workTypeColor'],
           'wage': data['wage'],
           'requiredCount': data['requiredCount'],
           'currentCount': 0,
@@ -366,6 +386,7 @@ class FirestoreService {
           'endTime': data['endTime'],
           'order': i,
           'createdAt': FieldValue.serverTimestamp(),
+          'applicationDeadline': Timestamp.fromDate(workDeadline),  // 🔥 추가!
         });
         
         print('  - 업무 추가: ${data['workType']} (${data['startTime']} ~ ${data['endTime']})');
@@ -885,7 +906,7 @@ class FirestoreService {
       });
       
       // 2. 남은 그룹 TO 확인
-      final remainingTOs = await getTOsByGroup(groupId);
+      final remainingTOs = await getTOsByGroup(groupId);  // 🔥 이 줄만 남김
       
       if (remainingTOs.length == 1) {
         // 마지막 TO도 독립 TO로 변경
@@ -898,6 +919,7 @@ class FirestoreService {
           'endDate': FieldValue.delete(),
         });
         print('✅ 마지막 TO도 독립 TO로 변경');
+        clearCache(toId: lastTO.id);
       } else if (remainingTOs.isNotEmpty) {
         // 해제된 TO가 대표였다면 다음 TO를 대표로 지정
         if (to.isGroupMaster) {
@@ -912,6 +934,8 @@ class FirestoreService {
         await _updateGroupDateRange(groupId);
       }
       
+      clearCache(toId: toId);  // 🔥 변경!
+      
       print('✅ TO 그룹 해제 완료: $toId');
       ToastHelper.showSuccess('그룹에서 해제되었습니다.');
       return true;
@@ -920,19 +944,6 @@ class FirestoreService {
       ToastHelper.showError('그룹 해제에 실패했습니다.');
       return false;
     }
-  }
-  /// 시간 문자열 비교 (HH:mm 형식)
-  int _compareTime(String time1, String time2) {
-    final parts1 = time1.split(':');
-    final parts2 = time2.split(':');
-    
-    final hour1 = int.parse(parts1[0]);
-    final minute1 = int.parse(parts1[1]);
-    final hour2 = int.parse(parts2[0]);
-    final minute2 = int.parse(parts2[1]);
-    
-    if (hour1 != hour2) return hour1 - hour2;
-    return minute1 - minute2;
   }
 
   /// 그룹 날짜 범위 재계산 (내부 헬퍼 함수)
@@ -957,7 +968,7 @@ class FirestoreService {
         'endDate': Timestamp.fromDate(maxDate),
       });
       
-      print('✅ 그룹 날짜 범위 업데이트: ${minDate} ~ ${maxDate}');
+      print('✅ 그룹 날짜 범위 업데이트: $minDate ~ $maxDate');
     } catch (e) {
       print('❌ 그룹 날짜 범위 업데이트 실패: $e');
     }
@@ -1903,6 +1914,113 @@ class FirestoreService {
       rethrow;
     }
   }
+  
+  /// WorkDetail 마감
+  Future<bool> closeWorkDetail({
+    required String toId,
+    required String workDetailId,
+    required String adminUID,
+  }) async {
+    try {
+      await _firestore
+          .collection('tos')
+          .doc(toId)
+          .collection('workDetails')
+          .doc(workDetailId)
+          .update({
+        'closedAt': FieldValue.serverTimestamp(),
+        'closedBy': adminUID,
+      });
+      
+      clearCache(toId: toId);
+      print('✅ WorkDetail 마감 완료: $workDetailId');
+      return true;
+    } catch (e) {
+      print('❌ WorkDetail 마감 실패: $e');
+      return false;
+    }
+  }
+  /// WorkDetail 재오픈
+  Future<bool> reopenWorkDetail({
+    required String toId,
+    required String workDetailId,
+    required String adminUID,
+  }) async {
+    try {
+      await _firestore
+          .collection('tos')
+          .doc(toId)
+          .collection('workDetails')
+          .doc(workDetailId)
+          .update({
+        'closedAt': FieldValue.delete(),
+        'closedBy': FieldValue.delete(),
+        'reopenedAt': FieldValue.serverTimestamp(),
+        'reopenedBy': adminUID,
+      });
+      
+      clearCache(toId: toId);
+      print('✅ WorkDetail 재오픈 완료: $workDetailId');
+      return true;
+    } catch (e) {
+      print('❌ WorkDetail 재오픈 실패: $e');
+      return false;
+    }
+  }
+  /// WorkDetail 긴급 모집 시작
+  Future<bool> startEmergencyRecruitment({
+    required String toId,
+    required String workDetailId,
+    required String adminUID,
+  }) async {
+    try {
+      await _firestore
+          .collection('tos')
+          .doc(toId)
+          .collection('workDetails')
+          .doc(workDetailId)
+          .update({
+        'isEmergencyOpen': true,
+        'emergencyStartedAt': FieldValue.serverTimestamp(),
+        'emergencyStartedBy': adminUID,
+      });
+      
+      clearCache(toId: toId);
+      print('✅ 긴급 모집 시작: $workDetailId');
+      return true;
+    } catch (e) {
+      print('❌ 긴급 모집 시작 실패: $e');
+      return false;
+    }
+  }
+
+  /// WorkDetail 긴급 모집 종료
+  Future<bool> stopEmergencyRecruitment({
+    required String toId,
+    required String workDetailId,
+    required String adminUID,
+  }) async {
+    try {
+      await _firestore
+          .collection('tos')
+          .doc(toId)
+          .collection('workDetails')
+          .doc(workDetailId)
+          .update({
+        'isEmergencyOpen': false,
+        'emergencyStoppedAt': FieldValue.serverTimestamp(),
+        'emergencyStoppedBy': adminUID,
+      });
+      
+      clearCache(toId: toId);
+      print('✅ 긴급 모집 종료: $workDetailId');
+      return true;
+    } catch (e) {
+      print('❌ 긴급 모집 종료 실패: $e');
+      return false;
+    }
+  }
+  
 
   /// WorkDetail ID 찾기 (workType으로 검색)
   Future<String?> findWorkDetailIdByType(String toId, String workType) async {
@@ -2288,7 +2406,6 @@ class FirestoreService {
   /// 진행중인 TO 목록 조회 (대표 TO + 단일 TO)
   Future<List<TOModel>> getActiveTOs() async {
     try {
-      // ✅ 모든 TO 조회
       final snapshot = await _firestore
           .collection('tos')
           .orderBy('date', descending: false)
@@ -2298,7 +2415,7 @@ class FirestoreService {
           .map((doc) => TOModel.fromMap(doc.data(), doc.id))
           .toList();
 
-      // ✅ 1. 대표 TO 또는 단일 TO만 필터링
+      // 1. 대표 TO 또는 단일 TO만 필터링
       final masterOrSingleTOs = allTOs.where((to) {
         if (to.groupId != null) {
           return to.isGroupMaster;
@@ -2306,35 +2423,52 @@ class FirestoreService {
         return true;
       }).toList();
 
-      // 🔥 2. 진행중인 것만 필터링 (수동 마감 + 시간 체크)
+      // 2. 진행중인 것만 필터링
       List<TOModel> activeTOs = [];
       
       for (var masterTO in masterOrSingleTOs) {
-        if (masterTO.isClosed) continue; // 수동 마감 제외
+        if (masterTO.isManualClosed) continue; // 🔥 수동 마감 제외
         
-        // 🔥 그룹 TO인 경우: 전체 TO 체크
+        // 그룹 TO인 경우
         if (masterTO.groupId != null) {
           final groupTOs = allTOs.where((to) => to.groupId == masterTO.groupId).toList();
-          print('🔍 [그룹체크] ${masterTO.groupName}');
-          print('   그룹 내 TO 개수: ${groupTOs.length}개');
-  
           
-          // 하나라도 진행중이면 포함
-          bool hasActive = false;
+          // 🔥 모든 TO의 모든 WorkDetail이 마감됐는지 확인
+          bool allClosed = true;
+          
           for (var to in groupTOs) {
-            if (!_isTimeExpired(to)) {
-              hasActive = true;
-              break;
+            if (to.isManualClosed) continue; // 개별 TO가 수동 마감된 경우 스킵
+            
+            final workDetails = await getWorkDetails(to.id);
+            
+            // 하나라도 진행중이면 그룹 전체가 진행중
+            for (var work in workDetails) {
+              if (!work.isClosed && !work.isTimeExpired && !work.isFull) {
+                allClosed = false;
+                break;
+              }
             }
+            
+            if (!allClosed) break;
           }
           
-          if (hasActive) {
+          // 하나라도 진행중이면 포함
+          if (!allClosed) {
             activeTOs.add(masterTO);
           }
         } 
-        // 🔥 단일 TO인 경우: 바로 시간 체크
+        // 단일 TO인 경우
         else {
-          if (!_isTimeExpired(masterTO)) {
+          final workDetails = await getWorkDetails(masterTO.id);
+          
+          // 🔥 모든 WorkDetail이 마감됐는지 확인
+          bool allClosed = workDetails.isNotEmpty && 
+            workDetails.every((work) => 
+              work.isClosed || work.isTimeExpired || work.isFull
+            );
+          
+          // 하나라도 진행중이면 포함
+          if (!allClosed) {
             activeTOs.add(masterTO);
           }
         }
@@ -2366,7 +2500,7 @@ class FirestoreService {
     // 2. 근무일이 오늘인 경우 시간 체크
     if (workDate == today) {
       final startTime = to.displayStartTime; // "HH:mm" 형식
-      if (startTime == null || startTime.isEmpty || startTime == '--:--') {
+      if (startTime.isEmpty || startTime == '--:--') {
         print('   → 오늘, startTime: $startTime');
         return false; // 시간 정보 없으면 진행중으로 간주
       }
@@ -2396,40 +2530,17 @@ class FirestoreService {
   /// 마감된 TO 목록 조회 (대표 TO + 단일 TO)
   Future<List<TOModel>> getClosedTOs() async {
     try {
-      // ✅ 1. 수동 마감된 TO (모든 TO 조회)
-      List<TOModel> manualClosed = [];
-      try {
-        final manualClosedSnapshot = await _firestore
-            .collection('tos')
-            .where('isManualClosed', isEqualTo: true)
-            .orderBy('closedAt', descending: true)
-            .get();
-
-        final allManualClosed = manualClosedSnapshot.docs
-            .map((doc) => TOModel.fromMap(doc.data(), doc.id))
-            .toList();
-
-        // 대표 TO 또는 단일 TO만 필터링
-        manualClosed = allManualClosed.where((to) {
-          if (to.groupId != null) {
-            return to.isGroupMaster;
-          }
-          return true;
-        }).toList();
-      } catch (e) {
-        print('⚠️ 수동 마감 TO 조회 실패 (필드 없을 수 있음): $e');
-      }
-
-      // ✅ 2. 모든 TO 가져와서 자동 마감 체크
-      final allSnapshot = await _firestore
+      // 1. 모든 TO 가져오기
+      final snapshot = await _firestore
           .collection('tos')
+          .orderBy('date', descending: false)
           .get();
 
-      final allTOs = allSnapshot.docs
+      final allTOs = snapshot.docs
           .map((doc) => TOModel.fromMap(doc.data(), doc.id))
           .toList();
 
-      // 대표 TO 또는 단일 TO만 필터링
+      // 2. 대표 TO 또는 단일 TO만 필터링
       final masterOrSingleTOs = allTOs.where((to) {
         if (to.groupId != null) {
           return to.isGroupMaster;
@@ -2437,21 +2548,68 @@ class FirestoreService {
         return true;
       }).toList();
 
-      // 자동 마감된 TO (시간 초과 또는 인원 충족) - 수동 마감 제외
-      final autoClosed = masterOrSingleTOs
-          .where((to) => !to.isManualClosed && to.isClosed)
-          .toList();
+      // 3. 마감된 것만 필터링
+      List<TOModel> closedTOs = [];
+      
+      for (var masterTO in masterOrSingleTOs) {
+        // 수동 마감된 경우 무조건 포함
+        if (masterTO.isManualClosed) {
+          closedTOs.add(masterTO);
+          continue;
+        }
+        
+        // 그룹 TO인 경우
+        if (masterTO.groupId != null) {
+          final groupTOs = allTOs.where((to) => to.groupId == masterTO.groupId).toList();
+          
+          // 🔥 모든 TO의 모든 WorkDetail이 마감됐는지 확인
+          bool allClosed = true;
+          
+          for (var to in groupTOs) {
+            final workDetails = await getWorkDetails(to.id);
+            
+            // 하나라도 진행중이면 그룹은 마감 아님
+            for (var work in workDetails) {
+              if (!work.isClosed && !work.isTimeExpired && !work.isFull) {
+                allClosed = false;
+                break;
+              }
+            }
+            
+            if (!allClosed) break;
+          }
+          
+          // 모두 마감됐으면 포함
+          if (allClosed) {
+            closedTOs.add(masterTO);
+          }
+        } 
+        // 단일 TO인 경우
+        else {
+          final workDetails = await getWorkDetails(masterTO.id);
+          
+          // 🔥 모든 WorkDetail이 마감됐는지 확인
+          bool allClosed = workDetails.isNotEmpty && 
+            workDetails.every((work) => 
+              work.isClosed || work.isTimeExpired || work.isFull
+            );
+          
+          // 모두 마감됐으면 포함
+          if (allClosed) {
+            closedTOs.add(masterTO);
+          }
+        }
+      }
 
-      // ✅ 3. 합치고 정렬 (최근 마감 순)
-      final allClosed = [...manualClosed, ...autoClosed];
-      allClosed.sort((a, b) {
+      // 4. 최근 마감 순으로 정렬
+      closedTOs.sort((a, b) {
         final aDate = a.closedAt ?? a.date;
         final bDate = b.closedAt ?? b.date;
         return bDate.compareTo(aDate);
       });
 
-      print('✅ 마감된 TO 조회: ${allClosed.length}개 (수동: ${manualClosed.length}, 자동: ${autoClosed.length})');
-      return allClosed;
+      print('✅ 마감된 TO 조회: ${closedTOs.length}개');
+      return closedTOs;
     } catch (e) {
       print('❌ 마감된 TO 조회 실패: $e');
       return [];
@@ -2483,6 +2641,7 @@ class FirestoreService {
         'reopenedAt': FieldValue.serverTimestamp(),
         'reopenedBy': adminUID,
       });
+      clearCache(toId: toId);
 
       print('✅ TO 재오픈 완료: $toId');
       return true;
@@ -2536,6 +2695,10 @@ class FirestoreService {
       }
 
       await batch.commit();
+      // 🔥 각 TO의 캐시 초기화
+      for (var doc in snapshot.docs) {
+        clearCache(toId: doc.id);
+      }
       print('✅ 그룹 TO 전체 재오픈 완료: $groupId (${snapshot.docs.length}개)');
       return true;
     } catch (e) {
@@ -2636,7 +2799,7 @@ class FirestoreService {
       // 6. 캐시 초기화
       clearCache(toId: toId);
       
-      print('✅ WorkDetail 통계 재계산 완료: ${updatedCount}개 업무');
+      print('✅ WorkDetail 통계 재계산 완료: $updatedCount개 업무');
       return true;
     } catch (e) {
       print('❌ WorkDetail 통계 재계산 실패: $e');
@@ -2727,7 +2890,7 @@ class FirestoreService {
         if (success) successCount++;
       }
       
-      print('✅ 그룹 통계 재계산 완료: ${successCount}/${groupTOs.length}개 성공');
+      print('✅ 그룹 통계 재계산 완료: $successCount/${groupTOs.length}개 성공');
       return successCount == groupTOs.length;
     } catch (e) {
       print('❌ 그룹 통계 재계산 실패: $e');
@@ -2759,4 +2922,76 @@ class FirestoreService {
       return null;
     }
   }
+
+  /// 🔥 일회성: 기존 WorkDetails에 마감시간 추가
+  Future<void> migrateWorkDetailDeadlines() async {
+    try {
+      print('🔄 WorkDetail 마감시간 마이그레이션 시작...');
+      
+      // 1. 모든 TO 조회
+      final tosSnapshot = await _firestore.collection('tos').get();
+      
+      int totalUpdated = 0;
+      
+      for (var toDoc in tosSnapshot.docs) {
+        final toData = toDoc.data();
+        final toId = toDoc.id;
+        final date = (toData['date'] as Timestamp).toDate();
+        final deadlineType = toData['deadlineType'] ?? 'HOURS_BEFORE';
+        final hoursBeforeStart = toData['hoursBeforeStart'] ?? 2;
+        
+        // 2. 이 TO의 WorkDetails 조회
+        final workDetailsSnapshot = await _firestore
+            .collection('tos')
+            .doc(toId)
+            .collection('workDetails')
+            .get();
+        
+        final batch = _firestore.batch();
+        
+        for (var workDoc in workDetailsSnapshot.docs) {
+          final workData = workDoc.data();
+          
+          // 이미 마감시간 있으면 스킵
+          if (workData['applicationDeadline'] != null) continue;
+          
+          final startTime = workData['startTime'] as String;
+          
+          // 마감시간 계산
+          DateTime workDeadline;
+          
+          if (deadlineType == 'HOURS_BEFORE') {
+            final timeParts = startTime.split(':');
+            final workStartDateTime = DateTime(
+              date.year,
+              date.month,
+              date.day,
+              int.parse(timeParts[0]),
+              int.parse(timeParts[1]),
+            );
+            workDeadline = workStartDateTime.subtract(
+              Duration(hours: hoursBeforeStart)
+            );
+          } else {
+            // FIXED_TIME은 TO 마감시간 사용
+            workDeadline = (toData['applicationDeadline'] as Timestamp).toDate();
+          }
+          
+          // 배치 업데이트
+          batch.update(workDoc.reference, {
+            'applicationDeadline': Timestamp.fromDate(workDeadline),
+          });
+          
+          totalUpdated++;
+        }
+        
+        await batch.commit();
+            }
+      
+      print('✅ 마이그레이션 완료: $totalUpdated개 WorkDetail 업데이트');
+    } catch (e) {
+      print('❌ 마이그레이션 실패: $e');
+    }
+  }
+
 }

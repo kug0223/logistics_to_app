@@ -42,7 +42,7 @@ class MyApp extends StatelessWidget {
         return provider;
       },
       child: MaterialApp(
-        title: '물류 TO 관리',
+        title: 'AlFit(알핏)',
         debugShowCheckedModeBanner: false,
           localizationsDelegates: const [
           GlobalMaterialLocalizations.delegate,
