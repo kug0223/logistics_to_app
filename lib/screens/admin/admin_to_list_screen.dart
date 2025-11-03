@@ -31,10 +31,10 @@ import 'models/to_list_models.dart';
 // Local dialogs
 import 'dialogs/work_detail_management_dialog.dart';
 import 'dialogs/confirmed_list_dialog.dart';
+import 'dialogs/filter_dialog.dart';
 
 // Local Widgets
 import 'widgets/to_list_tabs.dart';
-import 'widgets/to_list_filter.dart';
 import 'widgets/to_list_dialogs.dart';
 import 'widgets/work_applicants_dialog.dart';
 
@@ -63,7 +63,7 @@ class _AdminTOListScreenState extends State<AdminTOListScreen> {
   }
   // 필터 상태
   DateTime? _selectedDate;
-  String _selectedBusiness = 'ALL';
+  String? _selectedBusiness;
   
   // TO 목록 + 통계
   List<TOGroupItem> _allGroupItems = [];
@@ -286,53 +286,58 @@ class _AdminTOListScreenState extends State<AdminTOListScreen> {
 
   /// 필터 적용
   void _applyFilters() {
-    List<TOGroupItem> filtered = _allGroupItems;
-
-    // 1. 날짜 필터
-    if (_selectedDate != null) {
-      filtered = filtered.where((item) {
-        final masterDate = DateTime(
-          item.masterTO.date.year,
-          item.masterTO.date.month,
-          item.masterTO.date.day,
-        );
-        final selectedDate = DateTime(
-          _selectedDate!.year,
-          _selectedDate!.month,
-          _selectedDate!.day,
-        );
-        return masterDate == selectedDate;
-      }).toList();
-    }
-
-    // 2. 사업장 필터
-    if (_selectedBusiness != 'ALL') {
-      filtered = filtered.where((item) {
-        return item.masterTO.businessName == _selectedBusiness;
-      }).toList();
-    }
-
+    print('🔍 필터 적용 시작');
+    print('   _selectedBusiness: $_selectedBusiness');
+    print('   _selectedDate: $_selectedDate');
+    print('   _allGroupItems: ${_allGroupItems.length}개');
+    
     setState(() {
-      _filteredGroupItems = filtered;
+      _filteredGroupItems = _allGroupItems.where((groupItem) {
+        // 사업장 필터
+        if (_selectedBusiness != null && 
+            groupItem.masterTO.businessName != _selectedBusiness) {
+          print('   ❌ 사업장 필터: ${groupItem.masterTO.businessName} != $_selectedBusiness');
+          return false;
+        }
+        
+        // 날짜 필터
+        if (_selectedDate != null) {
+          final selectedDay = DateTime(_selectedDate!.year, _selectedDate!.month, _selectedDate!.day);
+          
+          if (groupItem.isGrouped) {
+            // 그룹 TO: 날짜 범위 체크
+            final hasMatchingDate = groupItem.groupTOs.any((toItem) {
+              final toDay = DateTime(toItem.to.date.year, toItem.to.date.month, toItem.to.date.day);
+              return toDay == selectedDay;
+            });
+            
+            if (!hasMatchingDate) {
+              print('   ❌ 날짜 필터 (그룹): 일치하는 날짜 없음');
+              return false;
+            }
+          } else {
+            // 단일 TO
+            final toDay = DateTime(
+              groupItem.masterTO.date.year,
+              groupItem.masterTO.date.month,
+              groupItem.masterTO.date.day,
+            );
+            
+            if (toDay != selectedDay) {
+              print('   ❌ 날짜 필터 (단일): ${toDay} != ${selectedDay}');
+              return false;
+            }
+          }
+        }
+        
+        print('   ✅ 필터 통과: ${groupItem.masterTO.title}');
+        return true;
+      }).toList();
     });
+    
+    print('✅ 필터 적용 완료: ${_filteredGroupItems.length}개');
   }
-
-  /// 날짜 선택
-  Future<void> _selectDate() async {
-    final picked = await showDatePicker(
-      context: context,
-      initialDate: _selectedDate ?? DateTime.now(),
-      firstDate: DateTime.now().subtract(const Duration(days: 30)),
-      lastDate: DateTime.now().add(const Duration(days: 365)),
-    );
-
-    if (picked != null) {
-      setState(() {
-        _selectedDate = picked;
-        _applyFilters();
-      });
-    }
-  }
+  
   /// 업무별 마감시간 계산
   String _calculateDeadline(TOModel to, WorkDetailModel work) {
     // TO에 설정된 hoursBeforeStart 값 사용
@@ -356,7 +361,56 @@ class _AdminTOListScreenState extends State<AdminTOListScreen> {
         title: const Text('TO 관리'),
         backgroundColor: Colors.blue[700],
         actions: [
-          // ✅ 테스트 데이터 생성 버튼ㅡㅡㅡㅡㅡㅡㅡㅡㅡㅡㅡㅡㅡㅡㅡㅡㅡㅡㅡ
+          // 🔥 필터 아이콘 추가
+          Stack(
+            children: [
+              IconButton(
+                icon: Icon(
+                  Icons.filter_list,
+                  color: _hasActiveFilters() ? Colors.amber : Colors.white,
+                ),
+                onPressed: _showFilterDialog,
+                tooltip: '필터',
+              ),
+              if (_hasActiveFilters())
+                Positioned(
+                  right: 8,
+                  top: 8,
+                  child: Container(
+                    padding: const EdgeInsets.all(4),
+                    decoration: const BoxDecoration(
+                      color: Colors.red,
+                      shape: BoxShape.circle,
+                    ),
+                    constraints: const BoxConstraints(
+                      minWidth: 16,
+                      minHeight: 16,
+                    ),
+                    child: Center(
+                      child: Text(
+                        '${_getActiveFilterCount()}',
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 10,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+            ],
+          ),
+          
+          // 새로고침
+          IconButton(
+            icon: const Icon(Icons.refresh),
+            onPressed: () {
+              _firestoreService.clearCache();
+              _loadTOsWithStats();
+            },
+          ),
+          
+          // 테스트 데이터
           PopupMenuButton<String>(
             icon: const Icon(Icons.science),
             tooltip: '테스트 데이터',
@@ -393,17 +447,11 @@ class _AdminTOListScreenState extends State<AdminTOListScreen> {
               ),
             ],
           ),
-          // ✅ 테스트 데이터 생성 버튼끝ㅡㅡㅡㅡㅡㅡㅡㅡㅡㅡㅡㅡㅡㅡㅡㅡㅡㅡㅡ
-          IconButton(
-            icon: const Icon(Icons.refresh),
-            onPressed: _loadTOsWithStats,
-          ),
         ],
       ),
       body: Column(
         children: [
-          // ✅ Phase 4: 탭 추가
-          // 변경
+          // 탭
           TOListTabs(
             selectedTab: _selectedTab,
             onTabChanged: (tab) {
@@ -415,24 +463,9 @@ class _AdminTOListScreenState extends State<AdminTOListScreen> {
           ),
           const SizedBox(height: 8),
           
-          TOListFilter(
-            selectedDate: _selectedDate,
-            selectedBusiness: _selectedBusiness,
-            businessNames: _businessNames,
-            onSelectDate: _selectDate,
-            onClearDate: () {
-              setState(() {
-                _selectedDate = null;
-                _applyFilters();
-              });
-            },
-            onBusinessChanged: (value) {
-              setState(() {
-                _selectedBusiness = value;
-                _applyFilters();
-              });
-            },
-          ),
+          // 🔥 필터 UI 제거!
+          // TOListFilter(...),  ← 이 부분 삭제 또는 주석 처리
+          
           Expanded(child: _buildTOList()),
         ],
       ),
@@ -450,8 +483,55 @@ class _AdminTOListScreenState extends State<AdminTOListScreen> {
         },
         icon: const Icon(Icons.add),
         label: const Text('TO 생성'),
-        backgroundColor: const Color(0xFF1E88E5),  // ✅ 변경
+        backgroundColor: const Color(0xFF1E88E5),
         foregroundColor: Colors.white,
+      ),
+    );
+  }
+
+  // 🔥 필터 관련 메서드 추가
+  bool _hasActiveFilters() {
+    return _selectedBusiness != null || _selectedDate != null;
+  }
+
+  int _getActiveFilterCount() {
+    int count = 0;
+    if (_selectedBusiness != null) count++;
+    if (_selectedDate != null) count++;
+    return count;
+  }
+
+  void _showFilterDialog() {
+    print('🔍 호출 시점:');
+    print('   _selectedBusiness: $_selectedBusiness');
+    print('   _businessNames: $_businessNames');
+    showDialog(
+      context: context,
+      builder: (context) => FilterDialog(
+        selectedBusiness: _selectedBusiness,
+        selectedStatus: null,  // 상태 필터는 없으므로 null
+        selectedDateRange: _selectedDate != null 
+          ? DateTimeRange(
+              start: _selectedDate!,
+              end: _selectedDate!,
+            )
+          : null,
+        businessNames: _businessNames,
+        onBusinessChanged: (value) {
+          setState(() {
+            _selectedBusiness = value;
+          });
+          _applyFilters();
+        },
+        onStatusChanged: (value) {
+          // 상태 필터는 사용 안 함
+        },
+        onDateRangeChanged: (value) {
+          setState(() {
+            _selectedDate = value?.start;
+          });
+          _applyFilters();
+        },
       ),
     );
   }
