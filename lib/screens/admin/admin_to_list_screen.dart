@@ -9,6 +9,7 @@ import '../../models/work_detail_model.dart';
 
 // Services
 import '../../services/firestore_service.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 
 // Providers
 import '../../providers/user_provider.dart';
@@ -62,7 +63,7 @@ class _AdminTOListScreenState extends State<AdminTOListScreen> {
     _loadTOsWithStats();
   }
   // 필터 상태
-  DateTime? _selectedDate;
+  DateTimeRange? _selectedDateRange;
   String? _selectedBusiness;
   
   // TO 목록 + 통계
@@ -81,7 +82,6 @@ class _AdminTOListScreenState extends State<AdminTOListScreen> {
 
   /// TO 목록 + 지원자 통계 로드 (탭별 분리)
   Future<void> _loadTOsWithStats() async {
-    print('🔄🔄 [재로딩] 시작');
     setState(() {
       _isLoading = true;
     });
@@ -91,10 +91,8 @@ class _AdminTOListScreenState extends State<AdminTOListScreen> {
       List<TOModel> masterTOs;
       if (_selectedTab == 'ACTIVE') {
         masterTOs = await _firestoreService.getActiveTOs();
-        print('✅ 진행중 TO 조회: ${masterTOs.length}개');
       } else {
         masterTOs = await _firestoreService.getClosedTOs();
-        print('✅ 마감된 TO 조회: ${masterTOs.length}개');
       }
 
       // 2. 각 TO별 처리
@@ -119,17 +117,7 @@ class _AdminTOListScreenState extends State<AdminTOListScreen> {
           // 각 TO 아이템 생성
           List<TOItem> toItems = [];
           for (var to in groupTOs) {
-            final toWorkDetails = workDetailsMap[to.id] ?? [];
-            // 🔥 디버깅 로그 추가
-            print('🔍 그룹 내 TO: ${to.title}');
-            for (var work in toWorkDetails) {
-              print('   WorkDetail: ${work.workType}');
-              print('   applicationDeadline: ${work.applicationDeadline}');
-              print('   isClosed: ${work.isClosed}');
-              print('   isTimeExpired: ${work.isTimeExpired}');
-              print('   isFull: ${work.isFull}');
-            }
-            
+            final toWorkDetails = workDetailsMap[to.id] ?? [];            
             // ✅ 변경: 실제 지원서 조회해서 계산
             final apps = await _firestoreService.getApplicationsByTO(
               to.businessId,
@@ -180,15 +168,6 @@ class _AdminTOListScreenState extends State<AdminTOListScreen> {
             masterTO.id,
             forceRefresh: true
           );
-          // 🔥 디버깅 로그 추가
-          print('🔍 TO: ${masterTO.title}');
-          for (var work in workDetails) {
-            print('   WorkDetail: ${work.workType}');
-            print('   applicationDeadline: ${work.applicationDeadline}');
-            print('   isClosed: ${work.isClosed}');
-            print('   isTimeExpired: ${work.isTimeExpired}');
-            print('   isFull: ${work.isFull}');
-          }
           
           // ✅ 단일 TO 시간 범위 계산
           if (workDetails.isNotEmpty) {
@@ -219,18 +198,12 @@ class _AdminTOListScreenState extends State<AdminTOListScreen> {
           // WorkDetail별 통계 매핑
           Map<String, Map<String, int>> workStats = {};
           for (var work in workDetails) {
-            final workApps = apps.where((a) => a.selectedWorkType == work.workType);
-            // 🔥 변수 선언!
-            final confirmed = workApps.where((a) => a.status == 'CONFIRMED').length;
-            final pending = workApps.where((a) => a.status == 'PENDING').length;
-            
+            final workApps = apps.where((a) => a.selectedWorkType == work.workType);            
             workStats[work.workType] = {
               'confirmed': workApps.where((a) => a.status == 'CONFIRMED').length,
               'pending': workApps.where((a) => a.status == 'PENDING').length,
             };
-            print('🔍 [단일TO] ${work.workType}: 확정 $confirmed, 대기 $pending');
           }
-          print('🔍 [단일TO] workStats 전체: $workStats'); // 🔥 로그 추가
           // 🔥 전체 통계 계산
           int totalConfirmed = 0;
           int totalPending = 0;
@@ -270,11 +243,8 @@ class _AdminTOListScreenState extends State<AdminTOListScreen> {
         _businessNames = businessList;
         _isLoading = false;
       });
-      print('🔄🔄 [재로딩] 완료! groupItems: ${groupItems.length}개');
-
       // 4. 필터 적용
       _applyFilters();
-      print('🔄🔄 [재로딩] 필터 적용 완료');
     } catch (e) {
       print('❌ TO 목록 로드 실패: $e');
       setState(() {
@@ -284,58 +254,60 @@ class _AdminTOListScreenState extends State<AdminTOListScreen> {
     }
   }
 
-  /// 필터 적용
   void _applyFilters() {
-    print('🔍 필터 적용 시작');
-    print('   _selectedBusiness: $_selectedBusiness');
-    print('   _selectedDate: $_selectedDate');
-    print('   _allGroupItems: ${_allGroupItems.length}개');
-    
     setState(() {
       _filteredGroupItems = _allGroupItems.where((groupItem) {
-        // 사업장 필터
+        // 1. 사업장 필터
         if (_selectedBusiness != null && 
             groupItem.masterTO.businessName != _selectedBusiness) {
-          print('   ❌ 사업장 필터: ${groupItem.masterTO.businessName} != $_selectedBusiness');
           return false;
         }
         
-        // 날짜 필터
-        if (_selectedDate != null) {
-          final selectedDay = DateTime(_selectedDate!.year, _selectedDate!.month, _selectedDate!.day);
+        // 2. 날짜 범위 필터
+        if (_selectedDateRange != null) {
+          final filterStart = DateTime(
+            _selectedDateRange!.start.year,
+            _selectedDateRange!.start.month,
+            _selectedDateRange!.start.day,
+          );
+          final filterEnd = DateTime(
+            _selectedDateRange!.end.year,
+            _selectedDateRange!.end.month,
+            _selectedDateRange!.end.day,
+            23, 59, 59,  // 🔥 하루의 끝까지
+          );
           
           if (groupItem.isGrouped) {
-            // 그룹 TO: 날짜 범위 체크
+            // 그룹 TO: 범위 내에 하나라도 있으면 표시
             final hasMatchingDate = groupItem.groupTOs.any((toItem) {
-              final toDay = DateTime(toItem.to.date.year, toItem.to.date.month, toItem.to.date.day);
-              return toDay == selectedDay;
+              final toDate = DateTime(
+                toItem.to.date.year,
+                toItem.to.date.month,
+                toItem.to.date.day,
+              );
+              return toDate.isAfter(filterStart.subtract(const Duration(days: 1))) &&
+                    toDate.isBefore(filterEnd.add(const Duration(days: 1)));
             });
             
-            if (!hasMatchingDate) {
-              print('   ❌ 날짜 필터 (그룹): 일치하는 날짜 없음');
-              return false;
-            }
+            if (!hasMatchingDate) return false;
           } else {
-            // 단일 TO
-            final toDay = DateTime(
+            // 단일 TO: 범위 내에 있어야 함
+            final toDate = DateTime(
               groupItem.masterTO.date.year,
               groupItem.masterTO.date.month,
               groupItem.masterTO.date.day,
             );
             
-            if (toDay != selectedDay) {
-              print('   ❌ 날짜 필터 (단일): ${toDay} != ${selectedDay}');
+            if (!(toDate.isAfter(filterStart.subtract(const Duration(days: 1))) &&
+                  toDate.isBefore(filterEnd.add(const Duration(days: 1))))) {
               return false;
             }
           }
         }
         
-        print('   ✅ 필터 통과: ${groupItem.masterTO.title}');
         return true;
       }).toList();
     });
-    
-    print('✅ 필터 적용 완료: ${_filteredGroupItems.length}개');
   }
   
   /// 업무별 마감시간 계산
@@ -491,31 +463,22 @@ class _AdminTOListScreenState extends State<AdminTOListScreen> {
 
   // 🔥 필터 관련 메서드 추가
   bool _hasActiveFilters() {
-    return _selectedBusiness != null || _selectedDate != null;
+    return _selectedBusiness != null || _selectedDateRange != null;
   }
 
   int _getActiveFilterCount() {
     int count = 0;
     if (_selectedBusiness != null) count++;
-    if (_selectedDate != null) count++;
+    if (_selectedDateRange != null) count++;
     return count;
   }
 
   void _showFilterDialog() {
-    print('🔍 호출 시점:');
-    print('   _selectedBusiness: $_selectedBusiness');
-    print('   _businessNames: $_businessNames');
     showDialog(
       context: context,
       builder: (context) => FilterDialog(
         selectedBusiness: _selectedBusiness,
-        selectedStatus: null,  // 상태 필터는 없으므로 null
-        selectedDateRange: _selectedDate != null 
-          ? DateTimeRange(
-              start: _selectedDate!,
-              end: _selectedDate!,
-            )
-          : null,
+        selectedDateRange: _selectedDateRange,  // 🔥 DateTimeRange 전달
         businessNames: _businessNames,
         onBusinessChanged: (value) {
           setState(() {
@@ -523,12 +486,9 @@ class _AdminTOListScreenState extends State<AdminTOListScreen> {
           });
           _applyFilters();
         },
-        onStatusChanged: (value) {
-          // 상태 필터는 사용 안 함
-        },
         onDateRangeChanged: (value) {
           setState(() {
-            _selectedDate = value?.start;
+            _selectedDateRange = value;  // 🔥 DateTimeRange 저장
           });
           _applyFilters();
         },
@@ -602,11 +562,6 @@ class _AdminTOListScreenState extends State<AdminTOListScreen> {
     final isExpanded = _expandedGroups.contains(masterTO.groupId ?? masterTO.id);
     final dateFormat = DateFormat('yyyy-MM-dd (E)', 'ko_KR');
 
-    print('🎯 카드 빌드: ${masterTO.title}');
-    print('   isExpanded: $isExpanded');
-    print('   isGrouped: ${groupItem.isGrouped}');
-    print('   workDetailStats: ${groupItem.groupTOs.first.workDetailStats}'); // 🔥 추가
-    
     // 그룹 전체 통계
     int totalConfirmed = 0;
     int totalPending = 0;
@@ -854,7 +809,7 @@ class _AdminTOListScreenState extends State<AdminTOListScreen> {
                         onSelected: (value) async {
                           switch (value) {
                             case 'edit':
-                              final result = await Navigator.push(
+                              await Navigator.push(
                                 context,
                                 MaterialPageRoute(
                                   builder: (context) => AdminEditTOScreen(to: masterTO),
@@ -880,12 +835,15 @@ class _AdminTOListScreenState extends State<AdminTOListScreen> {
                             case 'confirmedList':  // 🔥 'detail' → 'confirmedList'로 변경!
                               _showConfirmedListDialog(groupItem.groupTOs.first);
                               break;
-                            case 'close':  // ✅ 추가
-                              _dialogs.showCloseTODialog(masterTO);
+                            case 'manageWorkDetails':  // 🔥 추가!
+                              WorkDetailManagementDialog(
+                                context: context,
+                                toItem: groupItem.groupTOs.first,
+                                firestoreService: _firestoreService,
+                                onComplete: () => _loadTOsWithStats(),
+                              ).show();
                               break;
-                            case 'reopen':  // ✅ 추가
-                              _dialogs.showReopenTODialog(masterTO);
-                              break;
+
                           }
                         },
                         itemBuilder: (context) => [
@@ -895,7 +853,7 @@ class _AdminTOListScreenState extends State<AdminTOListScreen> {
                               children: [
                                 Icon(Icons.edit, size: 18, color: Colors.orange[600]),
                                 const SizedBox(width: 12),
-                                const Text('TO 수정'),
+                                const Text('수정'),
                               ],
                             ),
                           ),
@@ -905,7 +863,7 @@ class _AdminTOListScreenState extends State<AdminTOListScreen> {
                               children: [
                                 Icon(Icons.delete, size: 18, color: Colors.red[600]),
                                 const SizedBox(width: 12),
-                                const Text('TO 삭제'),
+                                const Text('삭제'),
                               ],
                             ),
                           ),
@@ -929,18 +887,13 @@ class _AdminTOListScreenState extends State<AdminTOListScreen> {
                               ],
                             ),
                           ),
-                          // ✅ Phase 4: 마감/재오픈 추가
                           PopupMenuItem(
-                            value: masterTO.isClosed ? 'reopen' : 'close',
+                            value: 'manageWorkDetails',  // 🔥 추가!
                             child: Row(
                               children: [
-                                Icon(
-                                  masterTO.isClosed ? Icons.lock_open : Icons.lock,
-                                  size: 18,
-                                  color: masterTO.isClosed ? Colors.green[600] : Colors.orange[600],
-                                ),
+                                Icon(Icons.assignment_turned_in, size: 18, color: Colors.purple[600]),
                                 const SizedBox(width: 12),
-                                Text(masterTO.isClosed ? 'TO 재오픈' : 'TO 마감'),
+                                const Text('업무별 마감'),
                               ],
                             ),
                           ),
@@ -1074,7 +1027,7 @@ class _AdminTOListScreenState extends State<AdminTOListScreen> {
                               Text('👥', style: TextStyle(fontSize: 11)),
                               SizedBox(width: 4),
                               Text(
-                                '$totalConfirmed/$totalRequired명',
+                                '확정 $totalConfirmed/$totalRequired명',
                                 style: TextStyle(
                                   fontSize: 11,
                                   fontWeight: FontWeight.bold,
@@ -1087,6 +1040,7 @@ class _AdminTOListScreenState extends State<AdminTOListScreen> {
                         SizedBox(width: 8),
 
                         // 대기
+                      if (totalPending > 0)
                         Container(
                           padding: EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                           decoration: BoxDecoration(
@@ -1100,7 +1054,7 @@ class _AdminTOListScreenState extends State<AdminTOListScreen> {
                               Text('⏳', style: TextStyle(fontSize: 11)),
                               SizedBox(width: 4),
                               Text(
-                                '$totalPending명',
+                                '대기 $totalPending명',
                                 style: TextStyle(
                                   fontSize: 11,
                                   fontWeight: FontWeight.bold,
@@ -1110,6 +1064,7 @@ class _AdminTOListScreenState extends State<AdminTOListScreen> {
                             ],
                           ),
                         ),
+                      const Spacer()
                     ],
                   ),
                 ],
@@ -1334,7 +1289,7 @@ class _AdminTOListScreenState extends State<AdminTOListScreen> {
                             Text('👥', style: TextStyle(fontSize: 11)),
                             SizedBox(width: 4),
                             Text(
-                              '${toItem.confirmedCount}/${toItem.totalRequired}명',
+                              '확정 ${toItem.confirmedCount}/${toItem.totalRequired}명',
                               style: TextStyle(
                                 fontSize: 11,
                                 fontWeight: FontWeight.bold,
@@ -1347,30 +1302,30 @@ class _AdminTOListScreenState extends State<AdminTOListScreen> {
                       SizedBox(width: 8),
 
                       // 대기
-                      Container(
-                        padding: EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                        decoration: BoxDecoration(
-                          color: Colors.orange[50],
-                          borderRadius: BorderRadius.circular(12),
-                          border: Border.all(color: Colors.orange[200]!),
-                        ),
-                        child: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Text('⏳', style: TextStyle(fontSize: 11)),
-                            SizedBox(width: 4),
-                            Text(
-                              '${toItem.pendingCount}명',
-                              style: TextStyle(
-                                fontSize: 11,
-                                fontWeight: FontWeight.bold,
-                                color: Colors.orange[700],
+                      if (toItem.pendingCount > 0)
+                        Container(
+                          padding: EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                          decoration: BoxDecoration(
+                            color: Colors.orange[50],
+                            borderRadius: BorderRadius.circular(12),
+                            border: Border.all(color: Colors.orange[200]!),
+                          ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Text('⏳', style: TextStyle(fontSize: 11)),
+                              SizedBox(width: 4),
+                              Text(
+                                '대기 ${toItem.pendingCount}명',
+                                style: TextStyle(
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.bold,
+                                  color: Colors.orange[700],
+                                ),
                               ),
-                            ),
-                          ],
+                            ],
+                          ),
                         ),
-                      ),
-                      
                       const Spacer(),
                       
                       // ✅ 더보기 메뉴
@@ -1381,19 +1336,15 @@ class _AdminTOListScreenState extends State<AdminTOListScreen> {
                         onSelected: (value) async {
                           switch (value) {
                             case 'edit':
-                              print('🟢 [목록] 수정 화면으로 이동');
-                              final result = await Navigator.push(
+                              await Navigator.push(
                                 context,
                                 MaterialPageRoute(
                                   builder: (context) => AdminEditTOScreen(to: toItem.to),
                                 ),
                               ).then((result) {
-                                print('🟢🟢 [목록] 돌아옴! result = $result');
                                 if (result == true) {
-                                  print('🔄 재로딩 시작');
                                   _firestoreService.clearCache();
                                   _loadTOsWithStats();
-                                  print('🟢🟢🟢🟢 [목록] 재로딩 완료!');
                                 }
                               });
                               break;
@@ -1569,67 +1520,98 @@ class _AdminTOListScreenState extends State<AdminTOListScreen> {
                 icon: Icon(Icons.more_vert, size: 20, color: Colors.grey[600]),
                 padding: EdgeInsets.zero,
                 onSelected: (value) => _handleWorkDetailMenu(value, work, toItem),
-                itemBuilder: (context) => [
-                  PopupMenuItem(
-                    value: 'manage',
-                    child: Row(
-                      children: [
-                        Icon(Icons.people, size: 18, color: Colors.blue[700]),
-                        SizedBox(width: 8),
-                        Text('지원자 관리'),
-                      ],
-                    ),
-                  ),
-                  PopupMenuDivider(),
+                itemBuilder: (context) {
+                  // 🔥 현재 상태 확인
+                  final isClosed = work.isClosed;
+                  final isTimeExpired = work.isTimeExpired;
+                  final isEmergencyOpen = work.isEmergencyOpen;
                   
-                  // 마감/재오픈
-                  if (work.closedAt == null)
+                  return [
+                    // 지원자 관리 (항상 표시)
                     PopupMenuItem(
-                      value: 'close',
+                      value: 'manage',
                       child: Row(
                         children: [
-                          Icon(Icons.block, size: 18, color: Colors.red[700]),
+                          Icon(Icons.people, size: 18, color: Colors.blue[700]),
                           SizedBox(width: 8),
-                          Text('업무 마감'),
-                        ],
-                      ),
-                    )
-                  else
-                    PopupMenuItem(
-                      value: 'reopen',
-                      child: Row(
-                        children: [
-                          Icon(Icons.refresh, size: 18, color: Colors.green[700]),
-                          SizedBox(width: 8),
-                          Text('업무 재오픈'),
+                          Text('지원자 관리'),
                         ],
                       ),
                     ),
-                  
-                  // 긴급모집
-                  if (!work.isEmergencyOpen && work.closedAt == null)
-                    PopupMenuItem(
-                      value: 'emergency_start',
-                      child: Row(
-                        children: [
-                          Icon(Icons.warning, size: 18, color: Colors.orange[700]),
-                          SizedBox(width: 8),
-                          Text('긴급 모집 시작'),
-                        ],
+                    
+                    PopupMenuDivider(),
+                    
+                    // 🔥 마감/재오픈 (조건부)
+                    if (isTimeExpired)
+                      // 시간 만료: 재오픈 불가
+                      PopupMenuItem(
+                        enabled: false,
+                        value: 'expired',
+                        child: Row(
+                          children: [
+                            Icon(Icons.schedule, size: 18, color: Colors.grey[400]),
+                            SizedBox(width: 8),
+                            Text(
+                              '시간 만료됨',
+                              style: TextStyle(color: Colors.grey[400]),
+                            ),
+                          ],
+                        ),
+                      )
+                    else if (isClosed)
+                      // 수동 마감: 재오픈 가능
+                      PopupMenuItem(
+                        value: 'reopen',
+                        child: Row(
+                          children: [
+                            Icon(Icons.lock_open, size: 18, color: Colors.green[700]),
+                            SizedBox(width: 8),
+                            Text('업무 재오픈'),
+                          ],
+                        ),
+                      )
+                    else
+                      // 진행중: 마감 가능
+                      PopupMenuItem(
+                        value: 'close',
+                        child: Row(
+                          children: [
+                            Icon(Icons.block, size: 18, color: Colors.red[700]),
+                            SizedBox(width: 8),
+                            Text('업무 마감'),
+                          ],
+                        ),
                       ),
-                    )
-                  else if (work.isEmergencyOpen)
-                    PopupMenuItem(
-                      value: 'emergency_stop',
-                      child: Row(
-                        children: [
-                          Icon(Icons.check_circle, size: 18, color: Colors.green[700]),
-                          SizedBox(width: 8),
-                          Text('긴급 모집 종료'),
-                        ],
-                      ),
-                    ),
-                ],
+                    
+                    // 🔥 긴급모집 (진행중이고 마감 안 된 경우만)
+                    if (!isClosed && !isTimeExpired) ...[
+                      PopupMenuDivider(),
+                      
+                      if (!isEmergencyOpen)
+                        PopupMenuItem(
+                          value: 'emergency_start',
+                          child: Row(
+                            children: [
+                              Icon(Icons.warning, size: 18, color: Colors.orange[700]),
+                              SizedBox(width: 8),
+                              Text('긴급 모집 시작'),
+                            ],
+                          ),
+                        )
+                      else
+                        PopupMenuItem(
+                          value: 'emergency_stop',
+                          child: Row(
+                            children: [
+                              Icon(Icons.check_circle, size: 18, color: Colors.green[700]),
+                              SizedBox(width: 8),
+                              Text('긴급 모집 종료'),
+                            ],
+                          ),
+                        ),
+                    ],
+                  ];
+                },
               ),
             ],
           ),
@@ -1692,7 +1674,7 @@ class _AdminTOListScreenState extends State<AdminTOListScreen> {
                     ),
                     SizedBox(width: 4),
                     Text(
-                      '$confirmedCount/${work.requiredCount}명',
+                      '확정 $confirmedCount/${work.requiredCount}명',
                       style: TextStyle(
                         fontSize: 11,
                         fontWeight: FontWeight.bold,
@@ -1719,7 +1701,7 @@ class _AdminTOListScreenState extends State<AdminTOListScreen> {
                       Text('⏳', style: TextStyle(fontSize: 11)),
                       SizedBox(width: 4),
                       Text(
-                        '대기 $pendingCount',
+                        '대기 $pendingCount명',
                         style: TextStyle(
                           fontSize: 11,
                           fontWeight: FontWeight.bold,
@@ -1766,7 +1748,39 @@ class _AdminTOListScreenState extends State<AdminTOListScreen> {
         break;
         
       case 'reopen':
-        await _reopenWork(work, toItem);
+        final confirm = await showDialog<bool>(
+          context: context,
+          builder: (context) => AlertDialog(
+            title: const Text('업무 재오픈'),
+            content: Text('${work.workType} 업무를 재오픈하시겠습니까?'),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context, false),
+                child: const Text('취소'),
+              ),
+              ElevatedButton(
+                onPressed: () => Navigator.pop(context, true),
+                style: ElevatedButton.styleFrom(backgroundColor: Colors.green),
+                child: const Text('재오픈'),
+              ),
+            ],
+          ),
+        );
+        
+        if (confirm == true) {
+          await _firestoreService.reopenWorkDetail(
+            toId: toItem.to.id,
+            workDetailId: work.id,
+            adminUID: FirebaseAuth.instance.currentUser!.uid,
+          );
+          
+          _loadTOsWithStats();  // 🔥 새로고침
+          ToastHelper.showSuccess('업무가 재오픈되었습니다');
+        }
+        break;
+
+      case 'expired':
+        ToastHelper.showWarning('시간이 지난 업무는 재오픈할 수 없습니다');
         break;
         
       case 'emergency_start':
@@ -1836,26 +1850,6 @@ class _AdminTOListScreenState extends State<AdminTOListScreen> {
     }
   }
 
-  // 🔥 업무 재오픈
-  Future<void> _reopenWork(WorkDetailModel work, TOItem toItem) async {
-    try {
-      await _firestoreService.updateWorkDetail(
-        toId: toItem.to.id,
-        workDetailId: work.id,
-        updates: {
-          'closedAt': null,
-          'closedBy': null,
-          'isManualClosed': false,
-        },
-      );
-
-      ToastHelper.showSuccess('${work.workType} 업무가 재오픈되었습니다');
-      _loadTOsWithStats();
-    } catch (e) {
-      print('❌ 업무 재오픈 실패: $e');
-      ToastHelper.showError('업무 재오픈에 실패했습니다');
-    }
-  }
   /// 확정 명단 다이얼로그  // 🔥 여기에 추가!
   void _showConfirmedListDialog(TOItem toItem) {
     ConfirmedListDialog(
@@ -2247,92 +2241,5 @@ class _AdminTOListScreenState extends State<AdminTOListScreen> {
     return const SizedBox.shrink();
   }
 
-  /// 업무 상세 상태 배지
-  /// 업무 상세 상태 배지
-  Widget _buildWorkStatusBadge(WorkDetailModel work, int confirmedCount) {
-    // 🔥 마감 여부 체크 (긴급 모집 제외)
-    if (work.isClosed) {
-      return Container(
-        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-        decoration: BoxDecoration(
-          color: Colors.red[50],
-          border: Border.all(color: Colors.red[300]!, width: 1),
-          borderRadius: BorderRadius.circular(4),
-        ),
-        child: Text(
-          '마감됨',
-          style: TextStyle(
-            fontSize: 10,
-            color: Colors.red[700],
-            fontWeight: FontWeight.bold,
-          ),
-        ),
-      );
-    }
-    
-    // 🔥 긴급 모집 중
-    if (work.isInEmergencyMode) {
-      return Container(
-        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-        decoration: BoxDecoration(
-          color: Colors.deepOrange[50],
-          border: Border.all(color: Colors.deepOrange[300]!, width: 1),
-          borderRadius: BorderRadius.circular(4),
-        ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Text(
-              '🚨',
-              style: TextStyle(fontSize: 9),
-            ),
-            SizedBox(width: 2),
-            Text(
-              '긴급모집',
-              style: TextStyle(
-                fontSize: 10,
-                color: Colors.deepOrange[700],
-                fontWeight: FontWeight.bold,
-              ),
-            ),
-          ],
-        ),
-      );
-    }
-    final isFull = confirmedCount >= work.requiredCount;
-    
-    Color bgColor;
-    Color borderColor;
-    Color textColor;
-    String text;
-    
-    if (isFull) {
-      bgColor = Colors.green[50]!;
-      borderColor = Colors.green[300]!;
-      textColor = Colors.green[700]!;
-      text = '인원충족';
-    } else {
-      bgColor = Colors.blue[50]!;
-      borderColor = Colors.blue[300]!;
-      textColor = Colors.blue[700]!;
-      text = '진행중';
-    }
-    
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-      decoration: BoxDecoration(
-        color: bgColor,
-        border: Border.all(color: borderColor, width: 1),
-        borderRadius: BorderRadius.circular(4),
-      ),
-      child: Text(
-        text,
-        style: TextStyle(
-          fontSize: 10,
-          color: textColor,
-          fontWeight: FontWeight.bold,
-        ),
-      ),
-    );
-  }
+
 }

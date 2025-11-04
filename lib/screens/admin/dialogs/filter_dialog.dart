@@ -3,21 +3,17 @@ import 'package:intl/intl.dart';
 
 class FilterDialog extends StatefulWidget {
   final String? selectedBusiness;
-  final String? selectedStatus;
   final DateTimeRange? selectedDateRange;
   final List<String> businessNames;
   final Function(String?) onBusinessChanged;
-  final Function(String?) onStatusChanged;
   final Function(DateTimeRange?) onDateRangeChanged;
 
   const FilterDialog({
     Key? key,
     this.selectedBusiness,
-    this.selectedStatus,
     this.selectedDateRange,
     required this.businessNames,
     required this.onBusinessChanged,
-    required this.onStatusChanged,
     required this.onDateRangeChanged,
   }) : super(key: key);
 
@@ -27,7 +23,6 @@ class FilterDialog extends StatefulWidget {
 
 class _FilterDialogState extends State<FilterDialog> {
   String? _tempBusiness;
-  String? _tempStatus;
   DateTimeRange? _tempDateRange;
 
   @override
@@ -36,17 +31,11 @@ class _FilterDialogState extends State<FilterDialog> {
     _tempBusiness = (widget.selectedBusiness == null || widget.selectedBusiness == 'ALL') 
       ? null 
       : widget.selectedBusiness;
-    _tempStatus = (widget.selectedStatus == null || widget.selectedStatus == 'ALL') 
-      ? null 
-      : widget.selectedStatus;
     _tempDateRange = widget.selectedDateRange;
   }
 
   @override
   Widget build(BuildContext context) {
-    print('🔍 _tempBusiness: $_tempBusiness');
-    print('🔍 _tempStatus: $_tempStatus');
-    print('🔍 businessNames: ${widget.businessNames}');
     return Dialog(
       child: Container(
         width: MediaQuery.of(context).size.width * 0.9,
@@ -92,7 +81,7 @@ class _FilterDialogState extends State<FilterDialog> {
                   // 사업장 필터
                   _buildFilterSection(
                     title: '사업장',
-                    child: DropdownButtonFormField<String?>(  // 🔥 String? 타입
+                    child: DropdownButtonFormField<String?>(
                       value: _tempBusiness,
                       decoration: InputDecoration(
                         hintText: '전체',
@@ -109,7 +98,6 @@ class _FilterDialogState extends State<FilterDialog> {
                           value: null,
                           child: Text('전체'),
                         ),
-                        // 🔥 중복 제거
                         ...widget.businessNames.toSet().map((name) => DropdownMenuItem<String?>(
                           value: name,
                           child: Text(name),
@@ -125,92 +113,77 @@ class _FilterDialogState extends State<FilterDialog> {
 
                   const SizedBox(height: 16),
 
-                  // 상태 필터
-                  _buildFilterSection(
-                    title: '상태',
-                    child: DropdownButtonFormField<String>(
-                      value: _tempStatus == '' ? null : _tempStatus,  // 🔥 빈 문자열 처리
-                      decoration: InputDecoration(
-                        hintText: '전체',
-                        contentPadding: const EdgeInsets.symmetric(
-                          horizontal: 12,
-                          vertical: 8,
-                        ),
-                        border: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(8),
-                        ),
-                      ),
-                      items: const [
-                        DropdownMenuItem<String>(  // 🔥 타입 명시
-                          value: null,
-                          child: Text('전체'),
-                        ),
-                        DropdownMenuItem<String>(
-                          value: 'CONFIRMED',
-                          child: Text('확정됨'),
-                        ),
-                        DropdownMenuItem<String>(
-                          value: 'PENDING',
-                          child: Text('대기중'),
-                        ),
-                        DropdownMenuItem<String>(
-                          value: 'FULL',
-                          child: Text('인원충족'),
-                        ),
-                      ],
-                      onChanged: (value) {
-                        setState(() {
-                          _tempStatus = value;
-                        });
-                      },
-                    ),
-                  ),
-
-                  const SizedBox(height: 16),
-
                   // 날짜 필터
                   _buildFilterSection(
                     title: '날짜 범위',
-                    child: InkWell(
-                      onTap: _selectDateRange,
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 12,
-                          vertical: 12,
+                    child: Column(
+                      children: [
+                        // 날짜 범위 표시
+                        InkWell(
+                          onTap: _selectDateRange,
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 12,
+                              vertical: 12,
+                            ),
+                            decoration: BoxDecoration(
+                              border: Border.all(color: Colors.grey[400]!),
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                            child: Row(
+                              children: [
+                                Icon(Icons.calendar_today, size: 18, color: Colors.grey[700]),
+                                const SizedBox(width: 8),
+                                Expanded(
+                                  child: Text(
+                                    _tempDateRange == null
+                                        ? '전체 기간'
+                                        : '${DateFormat('MM/dd').format(_tempDateRange!.start)} - ${DateFormat('MM/dd').format(_tempDateRange!.end)}',
+                                    style: TextStyle(
+                                      fontSize: 14,
+                                      color: _tempDateRange == null ? Colors.grey[600] : Colors.black87,
+                                    ),
+                                  ),
+                                ),
+                                if (_tempDateRange != null)
+                                  IconButton(
+                                    icon: const Icon(Icons.clear, size: 18),
+                                    padding: EdgeInsets.zero,
+                                    constraints: const BoxConstraints(),
+                                    onPressed: () {
+                                      setState(() {
+                                        _tempDateRange = null;
+                                      });
+                                    },
+                                  ),
+                              ],
+                            ),
+                          ),
                         ),
-                        decoration: BoxDecoration(
-                          border: Border.all(color: Colors.grey[400]!),
-                          borderRadius: BorderRadius.circular(8),
-                        ),
-                        child: Row(
+                        
+                        const SizedBox(height: 12),
+                        
+                        // 🔥 빠른 날짜 선택 버튼
+                        Row(
                           children: [
-                            Icon(Icons.calendar_today, size: 18, color: Colors.grey[700]),
+                            Expanded(
+                              child: _buildQuickDateButton('오늘', 0),
+                            ),
                             const SizedBox(width: 8),
                             Expanded(
-                              child: Text(
-                                _tempDateRange == null
-                                    ? '전체 기간'
-                                    : '${DateFormat('MM/dd').format(_tempDateRange!.start)} - ${DateFormat('MM/dd').format(_tempDateRange!.end)}',
-                                style: TextStyle(
-                                  fontSize: 14,
-                                  color: _tempDateRange == null ? Colors.grey[600] : Colors.black87,
-                                ),
-                              ),
+                              child: _buildQuickDateButton('내일', 1),
                             ),
-                            if (_tempDateRange != null)
-                              IconButton(
-                                icon: const Icon(Icons.clear, size: 18),
-                                padding: EdgeInsets.zero,
-                                constraints: const BoxConstraints(),
-                                onPressed: () {
-                                  setState(() {
-                                    _tempDateRange = null;
-                                  });
-                                },
-                              ),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: _buildQuickDateButton('3일', 3),
+                            ),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: _buildQuickDateButton('7일', 7),
+                            ),
                           ],
                         ),
-                      ),
+                      ],
                     ),
                   ),
                 ],
@@ -239,6 +212,7 @@ class _FilterDialogState extends State<FilterDialog> {
                       onPressed: _applyFilters,
                       style: ElevatedButton.styleFrom(
                         backgroundColor: Colors.blue[700],
+                        foregroundColor: Colors.white,
                       ),
                       child: const Text('적용'),
                     ),
@@ -273,6 +247,68 @@ class _FilterDialogState extends State<FilterDialog> {
     );
   }
 
+  // 🔥 빠른 날짜 선택 버튼
+  Widget _buildQuickDateButton(String label, int days) {
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    
+    late final DateTimeRange targetRange;
+    
+    switch (label) {
+      case '오늘':
+        targetRange = DateTimeRange(start: today, end: today);
+        break;
+      case '내일':
+        final tomorrow = today.add(const Duration(days: 1));
+        targetRange = DateTimeRange(start: tomorrow, end: tomorrow);
+        break;
+      case '3일':
+        // 오늘부터 3일 후까지
+        targetRange = DateTimeRange(
+          start: today,
+          end: today.add(const Duration(days: 2)),  // 오늘 포함 3일
+        );
+        break;
+      case '7일':
+        // 오늘부터 7일 후까지
+        targetRange = DateTimeRange(
+          start: today,
+          end: today.add(const Duration(days: 6)),  // 오늘 포함 7일
+        );
+        break;
+      default:
+        targetRange = DateTimeRange(start: today, end: today);
+    }
+    
+    final isSelected = _tempDateRange != null &&
+        _tempDateRange!.start == targetRange.start &&
+        _tempDateRange!.end == targetRange.end;
+    
+    return OutlinedButton(
+      onPressed: () {
+        setState(() {
+          _tempDateRange = targetRange;
+        });
+      },
+      style: OutlinedButton.styleFrom(
+        backgroundColor: isSelected ? Colors.blue[50] : null,
+        side: BorderSide(
+          color: isSelected ? Colors.blue[700]! : Colors.grey[400]!,
+          width: isSelected ? 2 : 1,
+        ),
+        padding: const EdgeInsets.symmetric(vertical: 8),
+      ),
+      child: Text(
+        label,
+        style: TextStyle(
+          fontSize: 12,
+          fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+          color: isSelected ? Colors.blue[700] : Colors.grey[700],
+        ),
+      ),
+    );
+  }
+
   Future<void> _selectDateRange() async {
     final picked = await showDateRangePicker(
       context: context,
@@ -301,14 +337,12 @@ class _FilterDialogState extends State<FilterDialog> {
   void _resetFilters() {
     setState(() {
       _tempBusiness = null;
-      _tempStatus = null;
       _tempDateRange = null;
     });
   }
 
   void _applyFilters() {
     widget.onBusinessChanged(_tempBusiness);
-    widget.onStatusChanged(_tempStatus);
     widget.onDateRangeChanged(_tempDateRange);
     Navigator.pop(context);
   }

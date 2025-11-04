@@ -13,16 +13,15 @@ import '../../widgets/loading_widget.dart';
 import '../../widgets/work_detail_dialog.dart';
 import '../../widgets/work_type_icon.dart';
 import '../../utils/format_helper.dart';
-import '../../widgets/work_type_icon.dart';
 
 /// TO 수정 화면
 class AdminEditTOScreen extends StatefulWidget {
   final TOModel to;
 
   const AdminEditTOScreen({
-    Key? key,
+    super.key,
     required this.to,
-  }) : super(key: key);
+  });
 
   @override
   State<AdminEditTOScreen> createState() => _AdminEditTOScreenState();
@@ -38,38 +37,22 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
   
   // 상태 변수
   bool _isLoading = true;
-  bool _isSaving = false;
+  final bool _isSaving = false;
   List<WorkDetailModel> _workDetails = [];
   List<BusinessWorkTypeModel> _businessWorkTypes = [];
   
   // ✅ NEW: 지원 마감 설정
-  String _deadlineType = 'HOURS_BEFORE';
   int _hoursBeforeStart = 2;
-  DateTime? _selectedDeadlineDate;
-  TimeOfDay? _selectedDeadlineTime;
   
   @override
   void initState() {
     super.initState();
     
-    // ✅ 컨트롤러 초기화
     _titleController = TextEditingController(text: widget.to.title);
     _descriptionController = TextEditingController(text: widget.to.description ?? '');
     
-    // ✅ 기존 TO의 마감 설정 로드
-    _deadlineType = widget.to.deadlineType;
-    _hoursBeforeStart = widget.to.hoursBeforeStart ?? 2;
+    _hoursBeforeStart = widget.to.hoursBeforeStart ?? 2;  // ✅ 이것만
     
-    // FIXED_TIME인 경우 날짜/시간 파싱
-    if (_deadlineType == 'FIXED_TIME') {
-      _selectedDeadlineDate = widget.to.applicationDeadline;
-      _selectedDeadlineTime = TimeOfDay(
-        hour: widget.to.applicationDeadline.hour,
-        minute: widget.to.applicationDeadline.minute,
-      );
-    }
-    
-    // 데이터 로드
     _loadData();
   }
 
@@ -80,7 +63,6 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
     super.dispose();
   }
 
-  /// 데이터 로드 (WorkDetails + 사업장 업무유형)
   Future<void> _loadData() async {
     setState(() {
       _isLoading = true;
@@ -92,11 +74,13 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
         _firestoreService.getBusinessWorkTypes(widget.to.businessId),
       ]);
 
-      setState(() {
+      setState(() {  // 🔥 여기서 setState 확인!
         _workDetails = results[0] as List<WorkDetailModel>;
         _businessWorkTypes = results[1] as List<BusinessWorkTypeModel>;
         _isLoading = false;
       });
+      
+      print('✅ _loadData 완료: ${_workDetails.length}개 업무');  // 🔥 로그 추가
     } catch (e) {
       print('❌ 데이터 로드 실패: $e');
       ToastHelper.showError('데이터를 불러오는데 실패했습니다');
@@ -122,13 +106,8 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
       final updates = <String, dynamic>{
         'title': _titleController.text.trim(),
         'description': _descriptionController.text.trim(),
-        'deadlineType': _deadlineType,
+        'hoursBeforeStart': _hoursBeforeStart,  // ✅ 항상 저장
       };
-      
-      // 🔥 업무별 마감 방식으로 변경
-      if (_deadlineType == 'HOURS_BEFORE') {
-        updates['hoursBeforeStart'] = _hoursBeforeStart;
-      }
       
       // 🔥 시간 변경 시 마감 상태 초기화
       updates['closedAt'] = FieldValue.delete();
@@ -147,37 +126,40 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
       await FirestoreService().updateTO(widget.to.id, updates);
       print('🔵 [4단계] TO 문서 업데이트 완료');
       
-      // 🔥 NEW: 각 업무별로 마감시간 계산 및 저장
-      print('🔥 [5단계] 업무별 마감시간 계산 시작');
+      // 🔥 모든 WorkDetail 업데이트
+      print('🔥 [5단계] 모든 업무 상세 업데이트 시작');
       for (var work in _workDetails) {
-        final workDeadline = _calculateWorkDeadline(work);
-        
         await _firestoreService.updateWorkDetail(
-          toId: widget.to.id,          // 🔥 명명된 인자로 수정!
-          workDetailId: work.id,       // 🔥 명명된 인자로 수정!
+          toId: widget.to.id,
+          workDetailId: work.id,
           updates: {
-            'applicationDeadline': workDeadline != null 
-                ? Timestamp.fromDate(workDeadline) 
-                : null,
-            'closedAt': null,
-            'closedBy': null,
-            'isManualClosed': false,
-            'isEmergencyOpen': false,
+            'wage': work.wage,
+            'requiredCount': work.requiredCount,
+            'startTime': work.startTime,
+            'endTime': work.endTime,
           },
         );
-        
-        print('   ${work.workType}: 마감시간 = ${workDeadline?.toString() ?? "없음"}');
+        print('   ✅ ${work.workType} 업데이트 완료');
       }
-      print('✅ [6단계] 업무별 마감시간 설정 완료');
       
-      // ✅ 캐시 클리어
+      // 🔥 마감시간 재계산
+      print('🔥 [6단계] 업무별 마감시간 재계산 시작');
+      await _firestoreService.recalculateWorkDetailDeadlines(
+        toId: widget.to.id,
+        workDate: widget.to.date,
+        hoursBeforeStart: _hoursBeforeStart,
+        resetClosedStatus: true,
+      );
+      print('✅ [7단계] 업무별 마감시간 재계산 완료');
+      
+      _firestoreService.clearCache(toId: widget.to.id);
       _firestoreService.clearCache();
-      print('🔵 [7단계] 캐시 클리어 완료');
+      print('🔵 [8단계] 캐시 클리어 완료');
       
       ToastHelper.showSuccess('TO가 수정되었습니다');
       
       if (mounted) {
-        print('🔵🔵🔵 [8단계] true 반환하며 화면 닫기');
+        print('🔵🔵🔵 [9단계] true 반환하며 화면 닫기');
         Navigator.pop(context, true);
       }
     } catch (e) {
@@ -186,31 +168,6 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
     }
   }
 
-  // 🔥 NEW: 업무별 마감시간 계산 함수
-  DateTime? _calculateWorkDeadline(WorkDetailModel work) {
-    if (_deadlineType != 'HOURS_BEFORE') return null;
-    
-    // 업무 시작 시간 파싱
-    if (work.startTime.isEmpty) return null;
-    
-    final timeParts = work.startTime.split(':');
-    if (timeParts.length < 2) return null;
-    
-    try {
-      final startDateTime = DateTime(
-        widget.to.date.year,
-        widget.to.date.month,
-        widget.to.date.day,
-        int.parse(timeParts[0]),
-        int.parse(timeParts[1]),
-      );
-      
-      return startDateTime.subtract(Duration(hours: _hoursBeforeStart));
-    } catch (e) {
-      print('⚠️ 시간 파싱 실패: ${work.startTime}');
-      return null;
-    }
-  }
   /// 업무 추가 다이얼로그
   Future<void> _showAddWorkDialog() async {
     final result = await WorkDetailDialog.showAddDialog(
@@ -273,7 +230,7 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
                   const Text('시작 시간', style: TextStyle(fontWeight: FontWeight.bold)),
                   const SizedBox(height: 8),
                   DropdownButtonFormField<String>(
-                    value: startTime,
+                    initialValue: startTime,
                     decoration: const InputDecoration(
                       border: OutlineInputBorder(),
                     ),
@@ -295,7 +252,7 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
                   const Text('종료 시간', style: TextStyle(fontWeight: FontWeight.bold)),
                   const SizedBox(height: 8),
                   DropdownButtonFormField<String>(
-                    value: endTime,
+                    initialValue: endTime,
                     decoration: const InputDecoration(
                       border: OutlineInputBorder(),
                     ),
@@ -383,19 +340,21 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
     );
 
     if (result != null) {
-      // Firestore 업데이트
-      try {
-        await _firestoreService.updateWorkDetail(
-          toId: widget.to.id,
-          workDetailId: work.id,
-          updates: result,
-        );
-        ToastHelper.showSuccess('업무가 수정되었습니다');
-        await _loadData(); // 새로고침
-      } catch (e) {
-        print('❌ 업무 수정 실패: $e');
-        ToastHelper.showError('업무 수정에 실패했습니다');
-      }
+      // 🔥 로컬 상태만 업데이트 (Firestore는 저장 버튼 클릭 시!)
+      setState(() {
+        final index = _workDetails.indexWhere((w) => w.id == work.id);
+        if (index != -1) {
+          _workDetails[index] = _workDetails[index].copyWith(
+            wage: result['wage'],
+            requiredCount: result['requiredCount'],
+            startTime: result['startTime'],
+            endTime: result['endTime'],
+          );
+        }
+      });
+      
+      ToastHelper.showInfo('업무가 수정되었습니다 (저장 버튼을 눌러주세요)');
+      print('✅ 업무 로컬 수정 완료: ${work.workType}');
     }
   }
 
@@ -459,41 +418,11 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
     }
   }
 
-  /// 마감일 선택
-  Future<void> _selectDeadlineDate() async {
-    final picked = await showDatePicker(
-      context: context,
-      initialDate: _selectedDeadlineDate ?? DateTime.now(),
-      firstDate: DateTime.now(),
-      lastDate: widget.to.date.subtract(const Duration(days: 1)),
-    );
-
-    if (picked != null) {
-      setState(() {
-        _selectedDeadlineDate = picked;
-      });
-    }
-  }
-
-  /// 마감시간 선택
-  Future<void> _selectDeadlineTime() async {
-    final picked = await showTimePicker(
-      context: context,
-      initialTime: _selectedDeadlineTime ?? TimeOfDay.now(),
-    );
-
-    if (picked != null) {
-      setState(() {
-        _selectedDeadlineTime = picked;
-      });
-    }
-  }
-
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('TO 수정'),
+        title: const Text('수정'),
         backgroundColor: Colors.blue[700],
         actions: [
           if (!_isSaving)
@@ -829,96 +758,63 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
               fontWeight: FontWeight.bold,
             ),
           ),
-          const SizedBox(height: 16),
+          const SizedBox(height: 12),
           
-          // ✅ 옵션 1: 각 업무 시작 N시간 전
-          RadioListTile<String>(
-            title: const Text('각 업무 시작 N시간 전 마감'),  // 🔥 텍스트 수정!
-            subtitle: Text('각 업무별로 시작 시간 기준 $_hoursBeforeStart시간 전에 자동 마감'),
-            value: 'HOURS_BEFORE',
-            groupValue: _deadlineType,
-            onChanged: (value) {
-              setState(() {
-                _deadlineType = value!;
-              });
-            },
+          // 🔥 설명
+          Container(
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: Colors.blue[50],
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: Row(
+              children: [
+                Icon(Icons.info_outline, color: Colors.blue[700], size: 20),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    '각 업무별로 시작 시간 기준으로 자동 마감됩니다',
+                    style: TextStyle(
+                      fontSize: 13,
+                      color: Colors.blue[900],
+                    ),
+                  ),
+                ),
+              ],
+            ),
           ),
           
-          // 시간 선택
-          if (_deadlineType == 'HOURS_BEFORE')
-            Padding(
-              padding: const EdgeInsets.only(left: 16, top: 8),
-              child: Row(
-                children: [
-                  const Text('시작 시간'),
-                  const SizedBox(width: 16),
-                  DropdownButton<int>(
-                    value: _hoursBeforeStart,
-                    items: List.generate(24, (index) => index + 1)
-                        .map((hour) => DropdownMenuItem(
-                              value: hour,
-                              child: Text('$hour시간 전'),
-                            ))
-                        .toList(),
-                    onChanged: (value) {
-                      setState(() {
-                        _hoursBeforeStart = value!;
-                      });
-                    },
-                  ),
-                ],
-              ),
-            ),
+          const SizedBox(height: 16),
           
-          const Divider(height: 32),
+          // 시간 선택
+          Row(
+            children: [
+              const Text(
+                '업무 시작',
+                style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold),
+              ),
+              const SizedBox(width: 16),
+              DropdownButton<int>(
+                value: _hoursBeforeStart,
+                items: List.generate(24, (index) => index + 1)
+                    .map((hour) => DropdownMenuItem(
+                          value: hour,
+                          child: Text('$hour시간 전'),
+                        ))
+                    .toList(),
+                onChanged: (value) {
+                  setState(() {
+                    _hoursBeforeStart = value!;
+                  });
+                },
+              ),
+              const SizedBox(width: 8),
+              const Text('마감', style: TextStyle(fontSize: 14)),
+            ],
+          ),
         ],
       ),
     );
-  }
-  /// 마감 시간 미리보기
-  Widget _buildDeadlinePreview() {
-    if (widget.to.startTime == null) return const SizedBox();
-    
-    try {
-      final timeParts = widget.to.startTime!.split(':');
-      final startDateTime = DateTime(
-        widget.to.date.year,
-        widget.to.date.month,
-        widget.to.date.day,
-        int.parse(timeParts[0]),
-        int.parse(timeParts[1]),
-      );
-      final deadline = startDateTime.subtract(Duration(hours: _hoursBeforeStart));
-      
-      return Container(
-        margin: const EdgeInsets.only(top: 8),
-        padding: const EdgeInsets.all(12),
-        decoration: BoxDecoration(
-          color: Colors.blue[50],
-          borderRadius: BorderRadius.circular(8),
-          border: Border.all(color: Colors.blue[200]!),
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              '${DateFormat('MM/dd (E)', 'ko_KR').format(widget.to.date)} ${widget.to.startTime} 근무',
-              style: TextStyle(fontSize: 11, color: Colors.grey[700]),
-            ),
-            Text(
-              '→ 마감: ${DateFormat('MM/dd (E) HH:mm', 'ko_KR').format(deadline)}',
-              style: TextStyle(
-                fontSize: 11,
-                fontWeight: FontWeight.bold,
-                color: Colors.blue[700],
-              ),
-            ),
-          ],
-        ),
-      );
-    } catch (e) {
-      return const SizedBox();
-    }
   }
 
   /// 설명 섹션

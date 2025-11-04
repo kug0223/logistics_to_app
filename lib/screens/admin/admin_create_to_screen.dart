@@ -1,7 +1,5 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:table_calendar/table_calendar.dart';
 import 'package:intl/intl.dart';
 import '../../models/business_model.dart';
@@ -10,7 +8,6 @@ import '../../services/firestore_service.dart';
 import '../../providers/user_provider.dart';
 import '../../utils/toast_helper.dart';
 import '../../models/business_work_type_model.dart';
-import '../../utils/labor_standards.dart';
 import '../../widgets/work_detail_dialog.dart';
 import '../../models/work_detail_input.dart';
 import '../../widgets/work_type_icon.dart';
@@ -59,22 +56,21 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
   String _selectedJobType = 'short'; // 'short' or 'long_term'
 
   // 날짜 선택
-  String _dateMode = 'single'; // 'single' or 'multiple'
-  List<DateTime> _selectedDates = [];
-  List<String> _selectedWeekdays = [];
+  final String _dateMode = 'single'; // 'single' or 'multiple'
+  final List<DateTime> _selectedDates = [];
+  final List<String> _selectedWeekdays = [];
   DateTime _focusedDay = DateTime.now();
   CalendarFormat _calendarFormat = CalendarFormat.month;
   bool _isCalendarExpanded = false;
+  // 🔥 범위 선택용 변수 추가
+  DateTime? _rangeStart;
+  DateTime? _rangeEnd;
 
   // 지원 마감
-  DateTime? _selectedDeadlineDate;
-  TimeOfDay? _selectedDeadlineTime;
-  // ✅ NEW: 지원 마감 규칙
-  String _deadlineType = 'HOURS_BEFORE';  // 'HOURS_BEFORE' or 'FIXED_TIME'
   int _hoursBeforeStart = 2;  // 기본값: 2시간 전
 
   // 업무 상세
-  List<WorkDetailInput> _workDetails = [];
+  final List<WorkDetailInput> _workDetails = [];
 
   // 그룹 연결
   bool _linkToExisting = false;
@@ -155,7 +151,6 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
   }
 
   /// 최근 TO 목록 로드 (그룹 연결용)
-  /// 최근 TO 목록 로드 (그룹 연결용)
   Future<void> _loadRecentTOs() async {
     if (_selectedBusiness == null) return;
 
@@ -197,12 +192,9 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
   // ============================================================
   // 💾 TO 생성
   // ============================================================
-
-  /// TO 생성 실행
   Future<void> _createTO() async {
     if (!_formKey.currentState!.validate()) return;
 
-    // 유효성 검증
     if (_selectedBusiness == null) {
       ToastHelper.showError('사업장을 선택해주세요');
       return;
@@ -217,45 +209,10 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
       ToastHelper.showError('최소 1개의 업무를 추가해주세요');
       return;
     }
-    // ✅ NEW: 지원 마감 검증
-    if (_deadlineType == 'FIXED_TIME') {
-      if (_selectedDeadlineDate == null || _selectedDeadlineTime == null) {
-        ToastHelper.showError('지원 마감 시간을 설정해주세요');
-        return;
-      }
-    }
 
     if (_workDetails.any((w) => !w.isValid)) {
       ToastHelper.showError('모든 업무 정보를 입력해주세요');
       return;
-    }
-
-    // ✅ 지원 마감 DateTime 생성 (FIXED_TIME일 때만)
-    DateTime? applicationDeadline;
-    if (_deadlineType == 'FIXED_TIME') {
-      applicationDeadline = DateTime(
-        _selectedDeadlineDate!.year,
-        _selectedDeadlineDate!.month,
-        _selectedDeadlineDate!.day,
-        _selectedDeadlineTime!.hour,
-        _selectedDeadlineTime!.minute,
-      );
-
-      // ✅ 지원 마감 시간 검증 (FIXED_TIME일 때만)
-      final latestWorkDate = _selectedDates.reduce((a, b) => a.isAfter(b) ? a : b);
-      final latestWorkDateTime = DateTime(
-        latestWorkDate.year,
-        latestWorkDate.month,
-        latestWorkDate.day,
-        23,
-        59,
-        59,
-      );
-
-      if (applicationDeadline.isAfter(latestWorkDateTime)) {
-        ToastHelper.showError('지원 마감은 마지막 근무일(${latestWorkDate.month}/${latestWorkDate.day}) 23:59까지 가능합니다');
-        return;
-      }
     }
 
     setState(() => _isCreating = true);
@@ -269,39 +226,26 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
         return;
       }
 
-      // 연속된 날짜 그룹 생성
-      final dateGroups = _groupConsecutiveDates();
-      
       bool success = false;
 
-      if (dateGroups.length == 1 && dateGroups[0].length == 1) {
-        // 단일 날짜 TO
+      if (_selectedDates.length == 1) {
+        // 🔥 단일 날짜 TO
         success = await _createSingleTO(
-          date: dateGroups[0][0],
-          applicationDeadline: applicationDeadline ?? DateTime.now(),
-          creatorUID: uid,
-        );
-      } else if (_isConsecutiveDates()) {
-        // 연속된 날짜 그룹 TO
-        final sortedDates = List<DateTime>.from(_selectedDates)..sort();
-        success = await _createGroupTO(
-          dates: sortedDates,  // ✅ 추가
-          applicationDeadline: applicationDeadline ?? DateTime.now(),
+          date: _selectedDates[0],
           creatorUID: uid,
         );
       } else {
-        // 비연속 날짜 - 그룹별로 생성
-        success = await _createMultipleGroups(
-          dateGroups: dateGroups,
-          applicationDeadline: applicationDeadline ?? DateTime.now(),
+        // 🔥 2개 이상이면 무조건 그룹 TO
+        final sortedDates = List<DateTime>.from(_selectedDates)..sort();
+        success = await _createGroupTO(
+          dates: sortedDates,
           creatorUID: uid,
         );
       }
 
       if (success && mounted) {
-        // ✅ 생성된 개수에 따라 메시지 다르게
         if (_selectedDates.length > 1) {
-          ToastHelper.showSuccess('${_selectedDates.length}개의 TO가 생성되었습니다');
+          ToastHelper.showSuccess('${_selectedDates.length}개의 TO가 그룹으로 생성되었습니다');
         } else {
           ToastHelper.showSuccess('TO가 생성되었습니다');
         }
@@ -315,31 +259,23 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
     }
   }
 
+  /// TO 생성 실행
   Future<bool> _createSingleTO({
     required DateTime date,
-    required DateTime applicationDeadline,
     required String creatorUID,
   }) async {
     try {
-      // ✅ deadlineType에 따라 마감 시간 계산
-      DateTime finalDeadline;
-      
-      if (_deadlineType == 'HOURS_BEFORE') {
-        // 근무 시작 N시간 전
-        final firstWorkStart = _workDetails.first.startTime!;
-        final timeParts = firstWorkStart.split(':');
-        final startDateTime = DateTime(
-          date.year,
-          date.month,
-          date.day,
-          int.parse(timeParts[0]),
-          int.parse(timeParts[1]),
-        );
-        finalDeadline = startDateTime.subtract(Duration(hours: _hoursBeforeStart));
-      } else {
-        // 고정 시간
-        finalDeadline = applicationDeadline;
-      }
+      // 🔥 근무 시작 N시간 전으로 마감시간 계산
+      final firstWorkStart = _workDetails.first.startTime!;
+      final timeParts = firstWorkStart.split(':');
+      final startDateTime = DateTime(
+        date.year,
+        date.month,
+        date.day,
+        int.parse(timeParts[0]),
+        int.parse(timeParts[1]),
+      );
+      final finalDeadline = startDateTime.subtract(Duration(hours: _hoursBeforeStart));
       
       final toId = await _firestoreService.createTOWithDetails(
         businessId: _selectedBusiness!.id,
@@ -358,8 +294,7 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
         applicationDeadline: finalDeadline,
         description: _descriptionController.text.trim(),
         creatorUID: creatorUID,
-        deadlineType: _deadlineType,  // ✅ NEW
-        hoursBeforeStart: _hoursBeforeStart,  // ✅ NEW
+        hoursBeforeStart: _hoursBeforeStart,  // 🔥 유지
         groupId: _linkToExisting ? _selectedGroupId : null,
         groupName: _linkToExisting && _selectedGroupId != null
             ? _myRecentTOs.firstWhere((to) => to.groupId == _selectedGroupId).groupName
@@ -372,9 +307,9 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
       return false;
     }
   }
+
   Future<bool> _createGroupTO({
     required List<DateTime> dates,
-    required DateTime applicationDeadline,
     required String creatorUID,
   }) async {
     try {
@@ -391,8 +326,15 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
         // 사용자가 그룹명 입력한 경우
         finalGroupName = _groupNameController.text.trim();
       } else {
-        // 자동 생성
-        finalGroupName = '${DateFormat('MM월').format(startDate)} ${_getWeekOfMonth(startDate)}주차 모음';
+        // 🔥 자동 생성 로직 개선
+        if (_isConsecutiveDates()) {
+          // 연속된 날짜
+          finalGroupName = '${DateFormat('MM/dd').format(startDate)} ~ ${DateFormat('MM/dd').format(endDate)} (${sortedDates.length}일)';
+        } else {
+          // 비연속 날짜
+          final dateGroups = _groupConsecutiveDates();
+          finalGroupName = '${DateFormat('MM월').format(startDate)} 선택 근무 (${sortedDates.length}일, ${dateGroups.length}개 그룹)';
+        }
       }
 
       bool allSuccess = true;
@@ -400,25 +342,17 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
       for (int i = 0; i < sortedDates.length; i++) {
         final date = sortedDates[i];
         
-        // ✅ 각 날짜별로 마감 시간 계산
-        DateTime finalDeadline;
-        
-        if (_deadlineType == 'HOURS_BEFORE') {
-          // 각 날짜의 근무 시작 N시간 전
-          final firstWorkStart = _workDetails.first.startTime!;
-          final timeParts = firstWorkStart.split(':');
-          final startDateTime = DateTime(
-            date.year,
-            date.month,
-            date.day,
-            int.parse(timeParts[0]),
-            int.parse(timeParts[1]),
-          );
-          finalDeadline = startDateTime.subtract(Duration(hours: _hoursBeforeStart));
-        } else {
-          // FIXED_TIME은 그룹 TO에서 사용 안 함
-          finalDeadline = applicationDeadline;
-        }
+        // 각 날짜별로 마감 시간 계산
+        final firstWorkStart = _workDetails.first.startTime!;
+        final timeParts = firstWorkStart.split(':');
+        final startDateTime = DateTime(
+          date.year,
+          date.month,
+          date.day,
+          int.parse(timeParts[0]),
+          int.parse(timeParts[1]),
+        );
+        final finalDeadline = startDateTime.subtract(Duration(hours: _hoursBeforeStart));
 
         final toId = await _firestoreService.createTOWithDetails(
           businessId: _selectedBusiness!.id,
@@ -434,11 +368,10 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
             'startTime': w.startTime!,
             'endTime': w.endTime!,
           }).toList(),
-          applicationDeadline: finalDeadline,  // ✅ 각 날짜별 계산된 마감 시간
+          applicationDeadline: finalDeadline,
           description: _descriptionController.text.trim(),
           creatorUID: creatorUID,
-          deadlineType: _deadlineType,  // ✅ NEW
-          hoursBeforeStart: _hoursBeforeStart,  // ✅ NEW
+          hoursBeforeStart: _hoursBeforeStart,
           groupId: groupId,
           groupName: finalGroupName,
           startDate: startDate,
@@ -455,42 +388,6 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
       return allSuccess;
     } catch (e) {
       print('❌ 그룹 TO 생성 실패: $e');
-      return false;
-    }
-  }
-
-  /// 비연속 날짜 그룹별 TO 생성
-  Future<bool> _createMultipleGroups({
-    required List<List<DateTime>> dateGroups,
-    required DateTime applicationDeadline,
-    required String creatorUID,
-  }) async {
-    try {
-      int successCount = 0;
-
-      for (var group in dateGroups) {
-        if (group.length == 1) {
-          // 단일 날짜
-          final success = await _createSingleTO(
-            date: group[0],
-            applicationDeadline: applicationDeadline,
-            creatorUID: creatorUID,
-          );
-          if (success) successCount++;
-        } else {
-          // 연속 날짜
-          final success = await _createGroupTO(
-            dates: group,
-            applicationDeadline: applicationDeadline,
-            creatorUID: creatorUID,
-          );
-          if (success) successCount++;
-        }
-      }
-
-      return successCount == dateGroups.length;
-    } catch (e) {
-      print('❌ 다중 그룹 TO 생성 실패: $e');
       return false;
     }
   }
@@ -529,18 +426,98 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
   void _onDaySelected(DateTime selectedDay, DateTime focusedDay) {
     setState(() {
       final normalizedDay = DateTime(selectedDay.year, selectedDay.month, selectedDay.day);
-
+      _focusedDay = focusedDay;
+      
+      // 🔥 이미 선택된 날짜를 클릭한 경우: 해제
       if (_selectedDates.any((d) => _isSameDay(d, normalizedDay))) {
         _selectedDates.removeWhere((d) => _isSameDay(d, normalizedDay));
-      } else {
+        
+        if (_rangeStart != null && _isSameDay(_rangeStart!, normalizedDay)) {
+          _rangeStart = null;
+          _rangeEnd = null;
+        }
+        if (_rangeEnd != null && _isSameDay(_rangeEnd!, normalizedDay)) {
+          _rangeEnd = null;
+        }
+        
+        if (_selectedDates.length <= 1 && _linkToExisting) {
+          _linkToExisting = false;
+          _selectedGroupId = null;
+        }
+        
+        return;
+      }
+      
+      // 🔥 범위 선택 로직
+      if (_rangeStart == null) {
+        // 1단계: 시작점 선택
+        
+        // 30일 제한 체크
         if (_selectedDates.length >= 30) {
           ToastHelper.showWarning('최대 30일까지만 선택할 수 있습니다');
           return;
         }
-        _selectedDates.add(normalizedDay);
+        
+        // 🔥 똑똑한 추가: 인접한 날짜가 있는지 확인
+        final yesterday = normalizedDay.subtract(const Duration(days: 1));
+        final tomorrow = normalizedDay.add(const Duration(days: 1));
+        
+        final hasYesterday = _selectedDates.any((d) => _isSameDay(d, yesterday));
+        final hasTomorrow = _selectedDates.any((d) => _isSameDay(d, tomorrow));
+        
+        if (hasYesterday && hasTomorrow) {
+          // 양쪽에 날짜가 있음 → 중간 채우기
+          _selectedDates.add(normalizedDay);
+          ToastHelper.showInfo('인접한 날짜와 자동 연결되었습니다');
+        } else if (hasYesterday || hasTomorrow) {
+          // 한쪽에만 날짜가 있음 → 범위 시작점으로 설정
+          _rangeStart = normalizedDay;
+          _rangeEnd = null;
+          _selectedDates.add(normalizedDay);
+        } else {
+          // 인접한 날짜 없음 → 단독 추가
+          _rangeStart = normalizedDay;
+          _rangeEnd = null;
+          _selectedDates.add(normalizedDay);
+        }
+        
+      } else if (_rangeEnd == null) {
+        // 2단계: 끝점 선택 → 범위 전체 선택
+        _rangeEnd = normalizedDay;
+        
+        final start = _rangeStart!.isBefore(normalizedDay) ? _rangeStart! : normalizedDay;
+        final end = _rangeStart!.isBefore(normalizedDay) ? normalizedDay : _rangeStart!;
+        
+        final daysInRange = end.difference(start).inDays + 1;
+        
+        // 30일 제한 체크
+        final totalDays = _selectedDates.length + daysInRange - 1;
+        if (totalDays > 30) {
+          ToastHelper.showWarning('최대 30일까지만 선택할 수 있습니다');
+          _rangeStart = null;
+          _rangeEnd = null;
+          return;
+        }
+        
+        // 범위 내 모든 날짜 추가
+        for (int i = 0; i < daysInRange; i++) {
+          final date = start.add(Duration(days: i));
+          if (!_selectedDates.any((d) => _isSameDay(d, date))) {
+            _selectedDates.add(date);
+          }
+        }
+        
+        // 범위 선택 완료 후 리셋
+        _rangeStart = null;
+        _rangeEnd = null;
       }
-
-      _focusedDay = focusedDay;
+      
+      // 그룹 TO가 되면 기존 연결 해제
+      if (_selectedDates.length > 1 && _linkToExisting) {
+        _linkToExisting = false;
+        _selectedGroupId = null;
+        ToastHelper.showInfo('그룹 TO는 기존 공고와 연결할 수 없습니다');
+      }
     });
   }
 
@@ -678,7 +655,7 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
       child: Padding(
         padding: const EdgeInsets.all(16),
         child: DropdownButtonFormField<BusinessModel>(
-          value: _selectedBusiness,
+          initialValue: _selectedBusiness,
           decoration: InputDecoration(
             labelText: '사업장 선택',
             prefixIcon: const Icon(Icons.business),
@@ -776,7 +753,7 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
 
   /// 제목 입력 (+ 그룹명 입력)
   Widget _buildTitleInput() {
-    final isGroupTO = _selectedDates.length > 1 && _isConsecutiveDates();
+    final isGroupTO = _selectedDates.length > 1;  // 🔥 2개 이상이면 그룹 TO!
     
     return Card(
       child: Padding(
@@ -803,7 +780,7 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
               },
             ),
             
-            // ✅ NEW: 그룹 TO일 경우 그룹명 입력 필드 표시
+            // 🔥 2개 이상 날짜 선택 시 그룹명 입력
             if (isGroupTO) ...[
               const SizedBox(height: 16),
               Container(
@@ -821,7 +798,7 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
                         Icon(Icons.link, size: 18, color: Colors.blue[700]),
                         const SizedBox(width: 8),
                         Text(
-                          '그룹 TO 생성',
+                          '그룹 TO 생성 (${_selectedDates.length}일)',
                           style: TextStyle(
                             fontSize: 14,
                             fontWeight: FontWeight.bold,
@@ -830,19 +807,37 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
                         ),
                       ],
                     ),
+                    if (!_isConsecutiveDates()) ...[
+                      const SizedBox(height: 8),
+                      Row(
+                        children: [
+                          Icon(Icons.info_outline, size: 16, color: Colors.orange[700]),
+                          const SizedBox(width: 6),
+                          Expanded(
+                            child: Text(
+                              '비연속 날짜도 하나의 그룹으로 묶입니다',
+                              style: TextStyle(
+                                fontSize: 12,
+                                color: Colors.orange[900],
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
                     const SizedBox(height: 12),
                     TextFormField(
                       controller: _groupNameController,
                       decoration: InputDecoration(
                         labelText: '그룹명 (선택)',
-                        hintText: '예: 4주차 파트타임 모음',
+                        hintText: '예: 11월 파트타임 모음',
                         prefixIcon: Icon(Icons.folder_open, color: Colors.blue[700]),
                         border: OutlineInputBorder(
                           borderRadius: BorderRadius.circular(8),
                         ),
                         filled: true,
                         fillColor: Colors.white,
-                        helperText: '비워두면 TO 제목을 사용합니다',
+                        helperText: '비워두면 자동으로 생성됩니다',
                         helperStyle: TextStyle(fontSize: 12, color: Colors.grey[600]),
                       ),
                     ),
@@ -948,29 +943,7 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
                       date.month == day.month &&
                       date.day == day.day);
                 },
-                onDaySelected: (selectedDay, focusedDay) {
-                  setState(() {
-                    _focusedDay = focusedDay;
-                    
-                    final isAlreadySelected = _selectedDates.any((date) =>
-                        date.year == selectedDay.year &&
-                        date.month == selectedDay.month &&
-                        date.day == selectedDay.day);
-                    
-                    if (isAlreadySelected) {
-                      _selectedDates.removeWhere((date) =>
-                          date.year == selectedDay.year &&
-                          date.month == selectedDay.month &&
-                          date.day == selectedDay.day);
-                    } else {
-                      if (_selectedDates.length >= 30) {
-                        ToastHelper.showWarning('단기 알바는 최대 30일까지 선택 가능합니다');
-                        return;
-                      }
-                      _selectedDates.add(selectedDay);
-                    }
-                  });
-                },
+                onDaySelected: _onDaySelected,
                 calendarStyle: CalendarStyle(
                   selectedDecoration: BoxDecoration(
                     color: Colors.blue[700],
@@ -1234,7 +1207,7 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
               borderRadius: BorderRadius.circular(10),
             ),
             child: Text(
-              '${count}일',
+              '$count일',
               style: const TextStyle(
                 color: Colors.white,
                 fontSize: 11,
@@ -1513,153 +1486,78 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
 
   /// 지원 마감 설정
   Widget _buildDeadlineSelector() {
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text(
-              '지원 마감 설정',
-              style: TextStyle(
-                fontSize: 16,
-                fontWeight: FontWeight.bold,
-              ),
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: Colors.grey[300]!),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            '지원 마감 설정',
+            style: TextStyle(
+              fontSize: 16,
+              fontWeight: FontWeight.bold,
             ),
-            const SizedBox(height: 16),
-            
-            // 옵션 1: N시간 전
-            RadioListTile<String>(
-              title: const Text('근무 시작 N시간 전'),
-              subtitle: _deadlineType == 'HOURS_BEFORE'
-                  ? _buildDeadlinePreview()
-                  : null,
-              value: 'HOURS_BEFORE',
-              groupValue: _deadlineType,
-              onChanged: (value) {
-                setState(() => _deadlineType = value!);
-              },
-              dense: true,
-              contentPadding: EdgeInsets.zero,
+          ),
+          const SizedBox(height: 12),
+          
+          // 🔥 설명
+          Container(
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: Colors.blue[50],
+              borderRadius: BorderRadius.circular(8),
             ),
-            
-            if (_deadlineType == 'HOURS_BEFORE') ...[
-              Padding(
-                padding: const EdgeInsets.only(left: 16, top: 8, bottom: 16),
-                child: Row(
-                  children: [
-                    SizedBox(
-                      width: 80,
-                      child: TextField(
-                        keyboardType: TextInputType.number,
-                        decoration: const InputDecoration(
-                          border: OutlineInputBorder(),
-                          isDense: true,
-                          suffixText: '시간',
-                        ),
-                        controller: _hoursBeforeController,
-                        onChanged: (value) {
-                          final hours = int.tryParse(value);
-                          if (hours != null && hours > 0 && hours <= 72) {
-                            setState(() => _hoursBeforeStart = hours);
-                          }
-                        },
-                      ),
+            child: Row(
+              children: [
+                Icon(Icons.info_outline, color: Colors.blue[700], size: 20),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    '각 업무별로 시작 시간 기준으로 자동 마감됩니다',
+                    style: TextStyle(
+                      fontSize: 13,
+                      color: Colors.blue[900],
                     ),
-                    const SizedBox(width: 12),
-                    const Text('전 마감'),
-                  ],
+                  ),
                 ),
-              ),
-            ],
-            
-            const Divider(),
-            
-            // 옵션 2: 고정 시간
-            RadioListTile<String>(
-              title: const Text('특정 날짜/시간 지정'),
-              subtitle: _deadlineType == 'FIXED_TIME' && 
-                        _selectedDeadlineDate != null && 
-                        _selectedDeadlineTime != null
-                  ? Text(
-                      '마감: ${DateFormat('MM/dd HH:mm').format(DateTime(
-                        _selectedDeadlineDate!.year,
-                        _selectedDeadlineDate!.month,
-                        _selectedDeadlineDate!.day,
-                        _selectedDeadlineTime!.hour,
-                        _selectedDeadlineTime!.minute,
-                      ))}',
-                      style: TextStyle(fontSize: 12, color: Colors.blue[700]),
-                    )
-                  : null,
-              value: 'FIXED_TIME',
-              groupValue: _deadlineType,
-              onChanged: (value) {
-                setState(() => _deadlineType = value!);
-              },
-              dense: true,
-              contentPadding: EdgeInsets.zero,
+              ],
             ),
-            
-            if (_deadlineType == 'FIXED_TIME') ...[
-              Padding(
-                padding: const EdgeInsets.only(left: 16, top: 8),
-                child: Column(
-                  children: [
-                    // 날짜 선택
-                    ListTile(
-                      contentPadding: EdgeInsets.zero,
-                      leading: Icon(Icons.calendar_today, color: Colors.blue[700]),
-                      title: Text(
-                        _selectedDeadlineDate == null
-                            ? '날짜 선택'
-                            : DateFormat('yyyy-MM-dd (E)', 'ko_KR').format(_selectedDeadlineDate!),
-                      ),
-                      trailing: const Icon(Icons.arrow_forward_ios, size: 16),
-                      onTap: () async {
-                        // 가장 이른 근무일
-                        final earliestDate = _selectedDates.isEmpty 
-                            ? DateTime.now()
-                            : _selectedDates.reduce((a, b) => a.isBefore(b) ? a : b);
-                        
-                        final picked = await showDatePicker(
-                          context: context,
-                          initialDate: _selectedDeadlineDate ?? DateTime.now(),
-                          firstDate: DateTime.now(),
-                          lastDate: earliestDate,
-                        );
-                        if (picked != null) {
-                          setState(() => _selectedDeadlineDate = picked);
-                        }
-                      },
-                    ),
-                    
-                    // 시간 선택
-                    ListTile(
-                      contentPadding: EdgeInsets.zero,
-                      leading: Icon(Icons.access_time, color: Colors.blue[700]),
-                      title: Text(
-                        _selectedDeadlineTime == null
-                            ? '시간 선택'
-                            : '${_selectedDeadlineTime!.hour.toString().padLeft(2, '0')}:${_selectedDeadlineTime!.minute.toString().padLeft(2, '0')}',
-                      ),
-                      trailing: const Icon(Icons.arrow_forward_ios, size: 16),
-                      onTap: () async {
-                        final picked = await showTimePicker(
-                          context: context,
-                          initialTime: _selectedDeadlineTime ?? const TimeOfDay(hour: 23, minute: 59),
-                        );
-                        if (picked != null) {
-                          setState(() => _selectedDeadlineTime = picked);
-                        }
-                      },
-                    ),
-                  ],
-                ),
+          ),
+          
+          const SizedBox(height: 16),
+          
+          // 시간 선택
+          Row(
+            children: [
+              const Text(
+                '업무 시작',
+                style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold),
               ),
+              const SizedBox(width: 16),
+              DropdownButton<int>(
+                value: _hoursBeforeStart,
+                items: List.generate(24, (index) => index + 1)
+                    .map((hour) => DropdownMenuItem(
+                          value: hour,
+                          child: Text('$hour시간 전'),
+                        ))
+                    .toList(),
+                onChanged: (value) {
+                  setState(() {
+                    _hoursBeforeStart = value!;
+                  });
+                },
+              ),
+              const SizedBox(width: 8),
+              const Text('마감', style: TextStyle(fontSize: 14)),
             ],
-          ],
-        ),
+          ),
+        ],
       ),
     );
   }
@@ -1736,6 +1634,8 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
 
   /// 그룹 연결 섹션
   Widget _buildGroupLinkSection() {
+    final isGroupTO = _selectedDates.length > 1;  // 🔥 그룹 TO 여부 확인
+    
     return Card(
       child: Padding(
         padding: const EdgeInsets.all(16),
@@ -1746,7 +1646,7 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
               children: [
                 Checkbox(
                   value: _linkToExisting,
-                  onChanged: (value) {
+                  onChanged: isGroupTO ? null : (value) {  // 🔥 그룹 TO면 비활성화
                     setState(() {
                       _linkToExisting = value ?? false;
                       if (_linkToExisting) {
@@ -1755,15 +1655,36 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
                     });
                   },
                 ),
-                const Expanded(
-                  child: Text(
-                    '기존 공고와 연결하기',
-                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        '기존 공고와 연결하기',
+                        style: TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.bold,
+                          color: isGroupTO ? Colors.grey[400] : Colors.black,  // 🔥 비활성화 색상
+                        ),
+                      ),
+                      if (isGroupTO) ...[
+                        const SizedBox(height: 4),
+                        Text(
+                          '그룹 TO는 다른 공고와 연결할 수 없습니다',
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: Colors.grey[600],
+                          ),
+                        ),
+                      ],
+                    ],
                   ),
                 ),
               ],
             ),
-            if (_linkToExisting) ...[
+            
+            // 🔥 그룹 TO일 때는 드롭다운 숨김
+            if (_linkToExisting && !isGroupTO) ...[
               const SizedBox(height: 12),
               if (_isLoadingRecentTOs)
                 const Center(child: CircularProgressIndicator())
@@ -1774,23 +1695,21 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
                 )
               else
                 DropdownButtonFormField<String>(
-                  value: _myRecentTOs.isNotEmpty && 
+                  initialValue: _myRecentTOs.isNotEmpty && 
                         _myRecentTOs.any((to) => to.groupId == _selectedGroupId)
                       ? _selectedGroupId 
-                      : null, // ✅ 유효하지 않으면 null
+                      : null,
                   decoration: const InputDecoration(
                     labelText: '연결할 공고 선택',
                     border: OutlineInputBorder(),
-                    hintText: '선택하세요', // ✅ hint 추가
+                    hintText: '선택하세요',
                   ),
                   items: _myRecentTOs.map((to) {
                     String displayText;
                     
                     if (to.isGrouped && to.endDate != null) {
-                      // 그룹 TO: 그룹명 + 기간
                       displayText = '${to.groupName ?? to.title} (${to.date.month}/${to.date.day}~${to.endDate!.month}/${to.endDate!.day})';
                     } else {
-                      // 단일 TO: 제목 + 날짜
                       displayText = '${to.title} (${to.date.month}/${to.date.day})';
                     }
                     

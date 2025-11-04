@@ -2922,6 +2922,81 @@ class FirestoreService {
       return null;
     }
   }
+  /// WorkDetail 마감시간 재계산
+  Future<bool> recalculateWorkDetailDeadlines({
+    required String toId,
+    required DateTime workDate,
+    required int hoursBeforeStart,
+    bool resetClosedStatus = false,
+  }) async {
+    try {
+      print('🔄 WorkDetail 마감시간 재계산 시작: $toId');
+      
+      // 1. 모든 WorkDetails 조회
+      final workDetailsSnapshot = await _firestore
+          .collection('tos')
+          .doc(toId)
+          .collection('workDetails')
+          .get();
+      
+      if (workDetailsSnapshot.docs.isEmpty) {
+        print('⚠️ WorkDetails가 없습니다');
+        return true;
+      }
+      
+      // 2. Batch 업데이트
+      final batch = _firestore.batch();
+      
+      for (var workDoc in workDetailsSnapshot.docs) {
+        final workData = workDoc.data();
+        final startTime = workData['startTime'] as String;
+        
+        // 🔥 각 업무 시작 N시간 전으로 마감시간 계산
+        final timeParts = startTime.split(':');
+        final workStartDateTime = DateTime(
+          workDate.year,
+          workDate.month,
+          workDate.day,
+          int.parse(timeParts[0]),
+          int.parse(timeParts[1]),
+        );
+        final workDeadline = workStartDateTime.subtract(
+          Duration(hours: hoursBeforeStart)
+        );
+        
+        // 기본 업데이트
+        final Map<String, dynamic> updates = {
+          'applicationDeadline': Timestamp.fromDate(workDeadline),
+        };
+        
+        if (resetClosedStatus) {
+          updates['isManualClosed'] = false;
+          updates['isEmergencyOpen'] = false;
+        }
+        
+        batch.update(workDoc.reference, updates);
+        
+        // 🔥 FieldValue.delete()는 별도 처리
+        if (resetClosedStatus) {
+          batch.update(workDoc.reference, {
+            'closedAt': FieldValue.delete(),
+            'closedBy': FieldValue.delete(),
+          });
+        }
+        
+        print('   ✅ ${workData['workType']}: 마감시간 = ${DateFormat('MM/dd HH:mm').format(workDeadline)}');
+      }
+      
+      await batch.commit();
+      
+      clearCache(toId: toId);
+      print('✅ WorkDetail 마감시간 재계산 완료: ${workDetailsSnapshot.docs.length}개');
+      return true;
+    } catch (e) {
+      print('❌ WorkDetail 마감시간 재계산 실패: $e');
+      return false;
+    }
+  }
 
   /// 🔥 일회성: 기존 WorkDetails에 마감시간 추가
   Future<void> migrateWorkDetailDeadlines() async {
