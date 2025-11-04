@@ -68,6 +68,7 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
 
   // 지원 마감
   int _hoursBeforeStart = 2;  // 기본값: 2시간 전
+  DateTime? _fixedDeadline; 
 
   // 업무 상세
   final List<WorkDetailInput> _workDetails = [];
@@ -974,6 +975,59 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
+            // ⭐ 시작일/종료일 선택 추가
+            const Text(
+              '계약 기간',
+              style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+            ),
+            const SizedBox(height: 12),
+            Row(
+              children: [
+                Expanded(
+                  child: _buildDateField(
+                    label: '시작일',
+                    date: _rangeStart,
+                    onTap: () async {
+                      final picked = await showDatePicker(
+                        context: context,
+                        initialDate: _rangeStart ?? DateTime.now(),
+                        firstDate: DateTime.now(),
+                        lastDate: DateTime.now().add(const Duration(days: 365)),
+                      );
+                      if (picked != null) {
+                        setState(() => _rangeStart = picked);
+                      }
+                    },
+                  ),
+                ),
+                const SizedBox(width: 12),
+                const Icon(Icons.arrow_forward, color: Colors.grey),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: _buildDateField(
+                    label: '종료일',
+                    date: _rangeEnd,
+                    onTap: () async {
+                      final picked = await showDatePicker(
+                        context: context,
+                        initialDate: _rangeEnd ?? _rangeStart ?? DateTime.now(),
+                        firstDate: _rangeStart ?? DateTime.now(),
+                        lastDate: DateTime.now().add(const Duration(days: 365)),
+                      );
+                      if (picked != null) {
+                        setState(() => _rangeEnd = picked);
+                      }
+                    },
+                  ),
+                ),
+              ],
+            ),
+            
+            const SizedBox(height: 24),
+            const Divider(),
+            const SizedBox(height: 16),
+            
+            // 기존 요일 선택
             const Text(
               '근무 요일 선택',
               style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
@@ -1030,52 +1084,94 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
       ),
     );
   }
+  Widget _buildDateField({
+    required String label,
+    required DateTime? date,
+    required VoidCallback onTap,
+  }) {
+    return InkWell(
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          border: Border.all(color: Colors.grey[300]!),
+          borderRadius: BorderRadius.circular(8),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              label,
+              style: TextStyle(fontSize: 12, color: Colors.grey[600]),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              date != null
+                  ? DateFormat('yyyy-MM-dd').format(date)
+                  : '선택하세요',
+              style: TextStyle(
+                fontSize: 16,
+                fontWeight: FontWeight.bold,
+                color: date != null ? Colors.black : Colors.grey[400],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
 
   /// 요일 버튼들
   Widget _buildWeekdayButtons() {
     final weekdays = ['월', '화', '수', '목', '금', '토', '일'];
     
-    return Wrap(
-      spacing: 8,
-      runSpacing: 8,
-      children: weekdays.map((day) {
-        final isSelected = _selectedWeekdays.contains(day);
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        // 7개 버튼 + 6개 간격(8px)
+        final buttonWidth = (constraints.maxWidth - (6 * 8)) / 7;
         
-        return InkWell(
-          onTap: () {
-            setState(() {
-              if (isSelected) {
-                _selectedWeekdays.remove(day);
-              } else {
-                _selectedWeekdays.add(day);
-              }
-            });
-          },
-          borderRadius: BorderRadius.circular(8),
-          child: Container(
-            width: 48,
-            height: 48,
-            decoration: BoxDecoration(
-              color: isSelected ? Colors.blue[700] : Colors.white,
+        return Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: weekdays.map((day) {
+            final isSelected = _selectedWeekdays.contains(day);
+            
+            return InkWell(
+              onTap: () {
+                setState(() {
+                  if (isSelected) {
+                    _selectedWeekdays.remove(day);
+                  } else {
+                    _selectedWeekdays.add(day);
+                  }
+                });
+              },
               borderRadius: BorderRadius.circular(8),
-              border: Border.all(
-                color: isSelected ? Colors.blue[700]! : Colors.grey[300]!,
-                width: 2,
-              ),
-            ),
-            child: Center(
-              child: Text(
-                day,
-                style: TextStyle(
-                  fontSize: 16,
-                  fontWeight: FontWeight.bold,
-                  color: isSelected ? Colors.white : Colors.grey[700],
+              child: Container(
+                width: buttonWidth,
+                height: 48,
+                decoration: BoxDecoration(
+                  color: isSelected ? Colors.blue[700] : Colors.white,
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(
+                    color: isSelected ? Colors.blue[700]! : Colors.grey[300]!,
+                    width: 2,
+                  ),
+                ),
+                child: Center(
+                  child: Text(
+                    day,
+                    style: TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.bold,
+                      color: isSelected ? Colors.white : Colors.grey[700],
+                    ),
+                  ),
                 ),
               ),
-            ),
-          ),
+            );
+          }).toList(),
         );
-      }).toList(),
+      },
     );
   }
 
@@ -1484,80 +1580,200 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
     );
   }
 
-  /// 지원 마감 설정
+  /// 지원 마감 설정 - jobType에 따라 분기
   Widget _buildDeadlineSelector() {
-    return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: Colors.grey[300]!),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Text(
-            '지원 마감 설정',
-            style: TextStyle(
-              fontSize: 16,
-              fontWeight: FontWeight.bold,
+    // 단기 알바: N시간 전 자동 마감
+    if (_selectedJobType == 'short') {
+      return _buildHoursBeforeDeadline();
+    }
+    
+    // 장기 근무: 특정 날짜+시간 고정
+    return _buildFixedDateTimeDeadline();
+  }
+
+  /// N시간 전 자동 마감 (단기 알바용)
+  Widget _buildHoursBeforeDeadline() {
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              '지원 마감 설정',
+              style: TextStyle(
+                fontSize: 16,
+                fontWeight: FontWeight.bold,
+              ),
             ),
-          ),
-          const SizedBox(height: 12),
-          
-          // 🔥 설명
-          Container(
-            padding: const EdgeInsets.all(12),
-            decoration: BoxDecoration(
-              color: Colors.blue[50],
-              borderRadius: BorderRadius.circular(8),
-            ),
-            child: Row(
-              children: [
-                Icon(Icons.info_outline, color: Colors.blue[700], size: 20),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: Text(
-                    '각 업무별로 시작 시간 기준으로 자동 마감됩니다',
-                    style: TextStyle(
-                      fontSize: 13,
-                      color: Colors.blue[900],
+            const SizedBox(height: 12),
+            
+            // 🔥 설명
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: Colors.blue[50],
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Row(
+                children: [
+                  Icon(Icons.info_outline, color: Colors.blue[700], size: 20),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      '각 업무별로 시작 시간 기준으로 자동 마감됩니다',
+                      style: TextStyle(
+                        fontSize: 13,
+                        color: Colors.blue[900],
+                      ),
                     ),
                   ),
+                ],
+              ),
+            ),
+            
+            const SizedBox(height: 16),
+            
+            // 시간 선택
+            Row(
+              children: [
+                const Text(
+                  '업무 시작',
+                  style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold),
                 ),
+                const SizedBox(width: 16),
+                DropdownButton<int>(
+                  value: _hoursBeforeStart,
+                  items: List.generate(24, (index) => index + 1)
+                      .map((hour) => DropdownMenuItem(
+                            value: hour,
+                            child: Text('$hour시간 전'),
+                          ))
+                      .toList(),
+                  onChanged: (value) {
+                    setState(() {
+                      _hoursBeforeStart = value!;
+                    });
+                  },
+                ),
+                const SizedBox(width: 8),
+                const Text('마감', style: TextStyle(fontSize: 14)),
               ],
             ),
-          ),
-          
-          const SizedBox(height: 16),
-          
-          // 시간 선택
-          Row(
-            children: [
-              const Text(
-                '업무 시작',
-                style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// 특정 날짜+시간 고정 마감 (장기 근무용)
+  Widget _buildFixedDateTimeDeadline() {
+    // 상태 변수에 DateTime? _fixedDeadline 필요
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              '지원 마감 설정',
+              style: TextStyle(
+                fontSize: 16,
+                fontWeight: FontWeight.bold,
               ),
-              const SizedBox(width: 16),
-              DropdownButton<int>(
-                value: _hoursBeforeStart,
-                items: List.generate(24, (index) => index + 1)
-                    .map((hour) => DropdownMenuItem(
-                          value: hour,
-                          child: Text('$hour시간 전'),
-                        ))
-                    .toList(),
-                onChanged: (value) {
-                  setState(() {
-                    _hoursBeforeStart = value!;
-                  });
-                },
+            ),
+            const SizedBox(height: 12),
+            
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: Colors.orange[50],
+                borderRadius: BorderRadius.circular(8),
               ),
-              const SizedBox(width: 8),
-              const Text('마감', style: TextStyle(fontSize: 14)),
-            ],
-          ),
-        ],
+              child: Row(
+                children: [
+                  Icon(Icons.info_outline, color: Colors.orange[700], size: 20),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      '지원 마감 날짜와 시간을 직접 설정하세요',
+                      style: TextStyle(
+                        fontSize: 13,
+                        color: Colors.orange[900],
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            
+            const SizedBox(height: 16),
+            
+            // 날짜+시간 선택 버튼
+            InkWell(
+              onTap: () async {
+                final pickedDate = await showDatePicker(
+                  context: context,
+                  initialDate: DateTime.now(),
+                  firstDate: DateTime.now(),
+                  lastDate: DateTime.now().add(const Duration(days: 365)),
+                );
+                
+                if (pickedDate != null && mounted) {
+                  final pickedTime = await showTimePicker(
+                    context: context,
+                    initialTime: TimeOfDay.now(),
+                  );
+                  
+                  if (pickedTime != null) {
+                    setState(() {
+                      _fixedDeadline = DateTime(
+                        pickedDate.year,
+                        pickedDate.month,
+                        pickedDate.day,
+                        pickedTime.hour,
+                        pickedTime.minute,
+                      );
+                    });
+                  }
+                }
+              },
+              child: Container(
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  border: Border.all(color: Colors.grey[300]!),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          '마감 일시',
+                          style: TextStyle(fontSize: 12, color: Colors.grey[600]),
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          _fixedDeadline != null
+                              ? DateFormat('yyyy-MM-dd HH:mm').format(_fixedDeadline!)
+                              : '날짜와 시간을 선택하세요',
+                          style: TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.bold,
+                            color: _fixedDeadline != null ? Colors.black : Colors.grey[400],
+                          ),
+                        ),
+                      ],
+                    ),
+                    Icon(Icons.calendar_today, color: Colors.blue[700]),
+                  ],
+                ),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }

@@ -307,6 +307,9 @@ class FirestoreService {
     DateTime? startDate,
     DateTime? endDate,
     bool isGroupMaster = false,
+    // ⭐ 추가: 장기 근무용
+    String? jobType = 'short',
+    List<String>? workDays,
   }) async {
     try {
       print('🔧 [FirestoreService] TO 생성 시작...');
@@ -321,7 +324,8 @@ class FirestoreService {
       final toData = {
         'businessId': businessId,
         'businessName': businessName,
-        'jobType': 'short',
+        'jobType': jobType ?? 'short',
+        'workDays': workDays,
         'groupId': groupId,
         'groupName': groupName,
         'startDate': startDate != null ? Timestamp.fromDate(startDate) : null,

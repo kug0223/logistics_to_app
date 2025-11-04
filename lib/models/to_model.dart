@@ -9,6 +9,7 @@ class TOModel {
   final String businessId; // 사업장 ID
   final String businessName; // 사업장명
   final String jobType; // "short" (단기, ~30일) 또는 "long_term" (1개월+)
+  final List<String>? workDays; // 장기 근무 요일 (예: ['월', '수', '금'])  // ⭐ 이 줄 추가
   
   // ✅ NEW: TO 그룹 관리 (날짜 범위 지원)
   final String? groupId; // 같은 그룹의 TO들을 묶는 ID (nullable)
@@ -50,6 +51,7 @@ class TOModel {
     required this.businessId,
     required this.businessName,
     this.jobType = 'short', // ✅ NEW: 기본값 'short' (하위 호환성)
+    this.workDays,
     this.groupId,
     this.groupName,
     this.startDate,
@@ -84,6 +86,9 @@ class TOModel {
       businessId: data['businessId'] ?? '',
       businessName: data['businessName'] ?? '',
       jobType: data['jobType'] ?? 'short', // ✅ NEW: 기본값 'short'
+      workDays: data['workDays'] != null  // ⭐ 이 3줄 추가
+        ? List<String>.from(data['workDays'])
+        : null,
       groupId: data['groupId'],
       groupName: data['groupName'],
       startDate: data['startDate'] != null 
@@ -139,6 +144,7 @@ class TOModel {
       'businessId': businessId,
       'businessName': businessName,
       'jobType': jobType, // ✅ NEW
+      'workDays': workDays,
       'groupId': groupId,
       'groupName': groupName,
       'startDate': startDate != null ? Timestamp.fromDate(startDate!) : null,
@@ -172,6 +178,7 @@ class TOModel {
     String? businessId,
     String? businessName,
     String? jobType, // ✅ NEW
+    List<String>? workDays,
     String? groupId,
     String? groupName,
     DateTime? startDate,
@@ -201,6 +208,7 @@ class TOModel {
       id: id ?? this.id,
       businessId: businessId ?? this.businessId,
       businessName: businessName ?? this.businessName,
+      workDays: workDays ?? this.workDays,
       groupId: groupId ?? this.groupId,
       groupName: groupName ?? this.groupName,
       startDate: startDate ?? this.startDate,
@@ -368,9 +376,9 @@ class TOModel {
   }
   // ✅ NEW: 실제 지원 마감 시간 계산 (getter)
   DateTime get effectiveDeadline {
-    if (deadlineType == 'HOURS_BEFORE' && hoursBeforeStart != null && startTime != null) {
+    if (deadlineType == 'HOURS_BEFORE' && hoursBeforeStart != null) {
       try {
-        final timeParts = startTime!.split(':');
+        final timeParts = startTime.split(':');
         final startDateTime = DateTime(
           date.year,
           date.month,
