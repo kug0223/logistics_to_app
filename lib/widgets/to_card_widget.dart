@@ -101,17 +101,42 @@ class TOCardWidget extends StatelessWidget {
               
               const SizedBox(height: 12),
               
-              // 2행: 날짜 + 요일
+             // 2행: 날짜 + 요일 (장기/단기 분기)
               Row(
                 children: [
                   Icon(Icons.calendar_today, size: 16, color: Colors.grey[600]),
                   const SizedBox(width: 6),
-                  Text(
-                    '${to.formattedDate} (${to.weekday})',
-                    style: TextStyle(
-                      fontSize: 14,
-                      color: Colors.grey[700],
-                    ),
+                  Expanded(
+                    child: to.isLongTerm 
+                      ? Column(  // ⭐ 장기는 2줄
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              to.longTermPeriodWithDays,  // "1/7 ~ 2/7"
+                              style: TextStyle(
+                                fontSize: 14,
+                                color: Colors.grey[700],
+                              ),
+                            ),
+                            if (to.workDays != null && to.workDays!.isNotEmpty) ...[
+                              const SizedBox(height: 2),
+                              Text(
+                                to.workDaysLabel,  // "주 3일 (월, 수, 금)"
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  color: Colors.grey[600],
+                                ),
+                              ),
+                            ],
+                          ],
+                        )
+                      : Text(  // 단기는 1줄
+                          '${to.formattedDate} (${to.weekday})',
+                          style: TextStyle(
+                            fontSize: 14,
+                            color: Colors.grey[700],
+                          ),
+                        ),
                   ),
                 ],
               ),

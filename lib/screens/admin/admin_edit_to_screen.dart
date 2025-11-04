@@ -477,8 +477,13 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
 
   /// 날짜 섹션 (수정 불가)
   Widget _buildDateSection() {
-    final dateFormat = DateFormat('yyyy년 MM월 dd일 (E)', 'ko_KR');
-    
+    // ⭐ 올해면 연도 생략, 다른 해면 연도 표시
+    final now = DateTime.now();
+    final isSameYear = widget.to.date.year == now.year;
+    final dateFormat = DateFormat(
+      isSameYear ? 'MM월 dd일 (E)' : 'yyyy년 MM월 dd일 (E)',
+      'ko_KR'
+    );
     return Card(
       child: Padding(
         padding: const EdgeInsets.all(16),
@@ -490,7 +495,7 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
                 Icon(Icons.info_outline, color: Colors.blue[700], size: 20),
                 const SizedBox(width: 8),
                 const Text(
-                  '근무 날짜',
+                  '근무 정보',
                   style: TextStyle(
                     fontSize: 16,
                     fontWeight: FontWeight.bold,
@@ -499,30 +504,104 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
               ],
             ),
             const SizedBox(height: 12),
+            
+            // ⭐ 채용 유형 표시
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: widget.to.isLongTerm ? Colors.purple[50] : Colors.blue[50],
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(
+                  color: widget.to.isLongTerm ? Colors.purple[200]! : Colors.blue[200]!,
+                ),
+              ),
+              child: Row(
+                children: [
+                  Icon(
+                    widget.to.isLongTerm ? Icons.event_repeat : Icons.event,
+                    color: widget.to.isLongTerm ? Colors.purple[700] : Colors.blue[700],
+                    size: 20,
+                  ),
+                  const SizedBox(width: 12),
+                  Text(
+                    widget.to.jobTypeLabel,  // "단기 알바" or "1개월+ 계약직"
+                    style: TextStyle(
+                      fontSize: 15,
+                      color: widget.to.isLongTerm ? Colors.purple[900] : Colors.blue[900],
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            
+            const SizedBox(height: 12),
+            
+            // ⭐ 날짜 표시 (단기/장기 분기)
             Container(
               padding: const EdgeInsets.all(12),
               decoration: BoxDecoration(
                 color: Colors.grey[100],
                 borderRadius: BorderRadius.circular(8),
               ),
-              child: Row(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Icon(Icons.calendar_today, color: Colors.grey[700], size: 20),
-                  const SizedBox(width: 12),
-                  Text(
-                    dateFormat.format(widget.to.date),
-                    style: TextStyle(
-                      fontSize: 15,
-                      color: Colors.grey[700],
-                      fontWeight: FontWeight.w500,
-                    ),
+                  Row(
+                    children: [
+                      Icon(Icons.calendar_today, color: Colors.grey[700], size: 20),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: widget.to.isLongTerm
+                          ? Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  '계약 기간',
+                                  style: TextStyle(
+                                    fontSize: 12,
+                                    color: Colors.grey[600],
+                                  ),
+                                ),
+                                const SizedBox(height: 4),
+                                Text(
+                                  widget.to.longTermPeriodWithDays,
+                                  style: TextStyle(
+                                    fontSize: 15,
+                                    color: Colors.grey[800],
+                                    fontWeight: FontWeight.w500,
+                                  ),
+                                ),
+                                if (widget.to.workDays != null && widget.to.workDays!.isNotEmpty) ...[
+                                  const SizedBox(height: 4),
+                                  Text(
+                                    widget.to.workDaysLabel,
+                                    style: TextStyle(
+                                      fontSize: 13,
+                                      color: Colors.grey[700],
+                                    ),
+                                  ),
+                                ],
+                              ],
+                            )
+                          : Text(
+                              dateFormat.format(widget.to.date),
+                              style: TextStyle(
+                                fontSize: 15,
+                                color: Colors.grey[700],
+                                fontWeight: FontWeight.w500,
+                              ),
+                            ),
+                      ),
+                    ],
                   ),
                 ],
               ),
             ),
+            
             const SizedBox(height: 8),
             Text(
-              '⚠️ 날짜는 수정할 수 없습니다. 날짜를 변경하려면 TO를 삭제 후 다시 생성하세요.',
+              '⚠️ ${widget.to.isLongTerm ? "계약 기간과 근무 요일" : "날짜"}은(는) 수정할 수 없습니다. 변경하려면 TO를 삭제 후 다시 생성하세요.',
               style: TextStyle(
                 fontSize: 12,
                 color: Colors.orange[700],

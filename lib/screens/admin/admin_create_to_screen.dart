@@ -201,9 +201,26 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
       return;
     }
 
-    if (_selectedDates.isEmpty) {
-      ToastHelper.showError('날짜를 선택해주세요');
-      return;
+    // ⭐ 단기/장기 분기 검증
+    if (_selectedJobType == 'short') {
+      if (_selectedDates.isEmpty) {
+        ToastHelper.showError('날짜를 선택해주세요');
+        return;
+      }
+    } else {
+      // 장기 근무 검증
+      if (_rangeStart == null || _rangeEnd == null) {
+        ToastHelper.showError('계약 기간을 설정해주세요');
+        return;
+      }
+      if (_selectedWeekdays.isEmpty) {
+        ToastHelper.showError('근무 요일을 선택해주세요');
+        return;
+      }
+      if (_fixedDeadline == null) {
+        ToastHelper.showError('지원 마감 시간을 설정해주세요');
+        return;
+      }
     }
 
     if (_workDetails.isEmpty) {
@@ -229,14 +246,20 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
 
       bool success = false;
 
-      if (_selectedDates.length == 1) {
-        // 🔥 단일 날짜 TO
+      // ⭐ 장기 근무는 무조건 단일 TO
+      if (_selectedJobType == 'long_term') {
+        success = await _createSingleTO(
+          date: _rangeStart!,  // 시작일을 대표 날짜로 사용
+          creatorUID: uid,
+        );
+      } else if (_selectedDates.length == 1) {
+        // 단기 알바 - 단일 날짜 TO
         success = await _createSingleTO(
           date: _selectedDates[0],
           creatorUID: uid,
         );
       } else {
-        // 🔥 2개 이상이면 무조건 그룹 TO
+        // 단기 알바 - 그룹 TO (2개 이상)
         final sortedDates = List<DateTime>.from(_selectedDates)..sort();
         success = await _createGroupTO(
           dates: sortedDates,
@@ -245,7 +268,9 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
       }
 
       if (success && mounted) {
-        if (_selectedDates.length > 1) {
+        if (_selectedJobType == 'long_term') {
+          ToastHelper.showSuccess('장기 근무 TO가 생성되었습니다');
+        } else if (_selectedDates.length > 1) {
           ToastHelper.showSuccess('${_selectedDates.length}개의 TO가 그룹으로 생성되었습니다');
         } else {
           ToastHelper.showSuccess('TO가 생성되었습니다');
@@ -266,17 +291,29 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
     required String creatorUID,
   }) async {
     try {
-      // 🔥 근무 시작 N시간 전으로 마감시간 계산
-      final firstWorkStart = _workDetails.first.startTime!;
-      final timeParts = firstWorkStart.split(':');
-      final startDateTime = DateTime(
-        date.year,
-        date.month,
-        date.day,
-        int.parse(timeParts[0]),
-        int.parse(timeParts[1]),
-      );
-      final finalDeadline = startDateTime.subtract(Duration(hours: _hoursBeforeStart));
+      // ⭐ 단기/장기 분기
+      DateTime finalDeadline;
+      
+      if (_selectedJobType == 'short') {
+        // 단기: N시간 전 자동 계산
+        final firstWorkStart = _workDetails.first.startTime!;
+        final timeParts = firstWorkStart.split(':');
+        final startDateTime = DateTime(
+          date.year,
+          date.month,
+          date.day,
+          int.parse(timeParts[0]),
+          int.parse(timeParts[1]),
+        );
+        finalDeadline = startDateTime.subtract(Duration(hours: _hoursBeforeStart));
+      } else {
+        // 장기: 고정 마감 시간
+        if (_fixedDeadline == null) {
+          ToastHelper.showError('지원 마감 시간을 설정해주세요');
+          return false;
+        }
+        finalDeadline = _fixedDeadline!;
+      }
       
       final toId = await _firestoreService.createTOWithDetails(
         businessId: _selectedBusiness!.id,
@@ -295,7 +332,12 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
         applicationDeadline: finalDeadline,
         description: _descriptionController.text.trim(),
         creatorUID: creatorUID,
-        hoursBeforeStart: _hoursBeforeStart,  // 🔥 유지
+        deadlineType: _selectedJobType == 'short' ? 'HOURS_BEFORE' : 'FIXED_TIME',
+        hoursBeforeStart: _selectedJobType == 'short' ? _hoursBeforeStart : null,
+        jobType: _selectedJobType,
+        workDays: _selectedJobType == 'long_term' ? _selectedWeekdays : null,
+        startDate: _selectedJobType == 'long_term' ? _rangeStart : null,
+        endDate: _selectedJobType == 'long_term' ? _rangeEnd : null,
         groupId: _linkToExisting ? _selectedGroupId : null,
         groupName: _linkToExisting && _selectedGroupId != null
             ? _myRecentTOs.firstWhere((to) => to.groupId == _selectedGroupId).groupName
@@ -1594,6 +1636,7 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
   /// N시간 전 자동 마감 (단기 알바용)
   Widget _buildHoursBeforeDeadline() {
     return Card(
+      color: Colors.white,
       child: Padding(
         padding: const EdgeInsets.all(16),
         child: Column(
@@ -1670,6 +1713,7 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
   Widget _buildFixedDateTimeDeadline() {
     // 상태 변수에 DateTime? _fixedDeadline 필요
     return Card(
+      color: Colors.white,
       child: Padding(
         padding: const EdgeInsets.all(16),
         child: Column(
@@ -1851,6 +1895,8 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
   /// 그룹 연결 섹션
   Widget _buildGroupLinkSection() {
     final isGroupTO = _selectedDates.length > 1;  // 🔥 그룹 TO 여부 확인
+    final isLongTerm = _selectedJobType == 'long_term';  // ⭐ 장기 근무 여부 추가
+    final isDisabled = isGroupTO || isLongTerm;  // ⭐ 비활성화 조건
     
     return Card(
       child: Padding(
@@ -1862,7 +1908,7 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
               children: [
                 Checkbox(
                   value: _linkToExisting,
-                  onChanged: isGroupTO ? null : (value) {  // 🔥 그룹 TO면 비활성화
+                  onChanged: isDisabled ? null : (value) {  // ⭐ 그룹 또는 장기면 비활성화
                     setState(() {
                       _linkToExisting = value ?? false;
                       if (_linkToExisting) {
@@ -1880,13 +1926,15 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
                         style: TextStyle(
                           fontSize: 16,
                           fontWeight: FontWeight.bold,
-                          color: isGroupTO ? Colors.grey[400] : Colors.black,  // 🔥 비활성화 색상
+                          color: isDisabled ? Colors.grey[400] : Colors.black,  // ⭐ 수정
                         ),
                       ),
-                      if (isGroupTO) ...[
+                      if (isDisabled) ...[  // ⭐ 수정
                         const SizedBox(height: 4),
                         Text(
-                          '그룹 TO는 다른 공고와 연결할 수 없습니다',
+                          isLongTerm 
+                            ? '장기 근무는 다른 공고와 연결할 수 없습니다'  // ⭐ 새 메시지
+                            : '그룹 TO는 다른 공고와 연결할 수 없습니다',
                           style: TextStyle(
                             fontSize: 12,
                             color: Colors.grey[600],
@@ -1900,7 +1948,7 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
             ),
             
             // 🔥 그룹 TO일 때는 드롭다운 숨김
-            if (_linkToExisting && !isGroupTO) ...[
+            if (_linkToExisting && !isDisabled) ...[
               const SizedBox(height: 12),
               if (_isLoadingRecentTOs)
                 const Center(child: CircularProgressIndicator())

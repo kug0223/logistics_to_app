@@ -233,6 +233,7 @@ class TOModel {
       closedBy: closedBy ?? this.closedBy,
       reopenedAt: reopenedAt ?? this.reopenedAt,
       reopenedBy: reopenedBy ?? this.reopenedBy,
+      
     );
   }
   // ============================================
@@ -249,6 +250,47 @@ class TOModel {
   void setTimeRange(String minStart, String maxEnd) {
     _cachedMinStartTime = minStart;
     _cachedMaxEndTime = maxEnd;
+  }
+  /// 장기 근무 기간 표시 (예: "3/1 ~ 3/31 (월,수,금)")
+  String get longTermPeriodWithDays {
+    if (!isLongTerm || startDate == null || endDate == null) return '';
+    
+    final start = '${startDate!.month}/${startDate!.day}';
+    final end = '${endDate!.month}/${endDate!.day}';
+    
+    return '$start ~ $end';  // ⭐ 요일 제거
+  }
+  /// 근무 요일 레이블 (새로 추가)
+  String get workDaysLabel {
+    if (!isLongTerm || workDays == null || workDays!.isEmpty) return '';
+    
+    final workCount = workDays!.length;
+    
+    // 주 7일
+    if (workCount == 7) {
+      return '매일 근무';
+    }
+    
+    // 주 6일 (1일 휴무)
+    if (workCount == 6) {
+      final allDays = ['월', '화', '수', '목', '금', '토', '일'];
+      final offDay = allDays.firstWhere((day) => !workDays!.contains(day));
+      return '주 6일 ($offDay 휴무)';
+    }
+    
+    // 주 5일 (2일 휴무)
+    if (workCount == 5) {
+      final allDays = ['월', '화', '수', '목', '금', '토', '일'];
+      final offDays = allDays.where((day) => !workDays!.contains(day)).join(', ');
+      return '주 5일 ($offDays 휴무)';
+    }
+    
+    // 주 4일 이하
+    if (workCount <= 4) {
+      return '주 $workCount일 (${workDays!.join(', ')})';
+    }
+    
+    return '주 $workCount일';
   }
 
   /// 표시용 시작 시간

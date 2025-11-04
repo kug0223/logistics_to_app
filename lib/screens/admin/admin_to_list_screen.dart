@@ -560,8 +560,7 @@ class _AdminTOListScreenState extends State<AdminTOListScreen> {
   Widget _buildGroupCard(TOGroupItem groupItem) {
     final masterTO = groupItem.masterTO;
     final isExpanded = _expandedGroups.contains(masterTO.groupId ?? masterTO.id);
-    final dateFormat = DateFormat('yyyy-MM-dd (E)', 'ko_KR');
-
+    final dateFormat = DateFormat('MM/dd (E)', 'ko_KR');
     // 그룹 전체 통계
     int totalConfirmed = 0;
     int totalPending = 0;
@@ -644,6 +643,27 @@ class _AdminTOListScreenState extends State<AdminTOListScreen> {
                               overflow: TextOverflow.ellipsis,
                             ),
                           ],
+                        ),
+                      ),
+                      const SizedBox(width: 8),  // ⭐ 추가
+    
+                      // ⭐ 장기/단기 뱃지 추가
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                        decoration: BoxDecoration(
+                          color: masterTO.isLongTerm ? Colors.purple[50] : Colors.blue[50],
+                          borderRadius: BorderRadius.circular(6),
+                          border: Border.all(
+                            color: masterTO.isLongTerm ? Colors.purple[300]! : Colors.blue[300]!,
+                          ),
+                        ),
+                        child: Text(
+                          masterTO.jobTypeLabel,  // "단기 알바" or "1개월+ 계약직"
+                          style: TextStyle(
+                            fontSize: 11,
+                            fontWeight: FontWeight.bold,
+                            color: masterTO.isLongTerm ? Colors.purple[700] : Colors.blue[700],
+                          ),
                         ),
                       ),
                       
@@ -993,11 +1013,30 @@ class _AdminTOListScreenState extends State<AdminTOListScreen> {
                     children: [
                       Icon(Icons.calendar_today, size: 16, color: Colors.grey[600]),
                       const SizedBox(width: 6),
-                      Text(
-                        groupItem.isGrouped
-                            ? '${dateFormat.format(masterTO.date)} 외 ${groupItem.groupTOs.length - 1}일'
-                            : dateFormat.format(masterTO.date),
-                        style: TextStyle(fontSize: 14, color: Colors.grey[700]),
+                      Expanded(
+                        child: masterTO.isLongTerm
+                          ? Column(  // ⭐ 장기 TO는 2줄
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  masterTO.longTermPeriodWithDays,  // "1/7 ~ 2/7"
+                                  style: TextStyle(fontSize: 14, color: Colors.grey[700]),
+                                ),
+                                if (masterTO.workDays != null && masterTO.workDays!.isNotEmpty) ...[
+                                  const SizedBox(height: 2),
+                                  Text(
+                                    masterTO.workDaysLabel,  // "주 3일 (월, 수, 금)"
+                                    style: TextStyle(fontSize: 12, color: Colors.grey[600]),
+                                  ),
+                                ],
+                              ],
+                            )
+                          : Text(
+                              groupItem.isGrouped
+                                  ? '${dateFormat.format(masterTO.date)} 외 ${groupItem.groupTOs.length - 1}일'
+                                  : dateFormat.format(masterTO.date),
+                              style: TextStyle(fontSize: 14, color: Colors.grey[700]),
+                            ),
                       ),
                       // 🔥 단일 TO인 경우 마감시간 추가!
                       if (!groupItem.isGrouped) ...[
@@ -1258,9 +1297,28 @@ class _AdminTOListScreenState extends State<AdminTOListScreen> {
                     children: [
                       Icon(Icons.calendar_today, size: 14, color: Colors.grey[600]),
                       const SizedBox(width: 6),
-                      Text(
-                        dateFormat.format(to.date),
-                        style: TextStyle(fontSize: 13, color: Colors.grey[700]),
+                      Expanded(
+                        child: to.isLongTerm 
+                          ? Column(  // ⭐ 장기 TO는 2줄
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  to.longTermPeriodWithDays,
+                                  style: TextStyle(fontSize: 13, color: Colors.grey[700]),
+                                ),
+                                if (to.workDays != null && to.workDays!.isNotEmpty) ...[
+                                  const SizedBox(height: 2),
+                                  Text(
+                                    to.workDaysLabel,
+                                    style: TextStyle(fontSize: 11, color: Colors.grey[600]),
+                                  ),
+                                ],
+                              ],
+                            )
+                          : Text(
+                              dateFormat.format(to.date),
+                              style: TextStyle(fontSize: 13, color: Colors.grey[700]),
+                            ),
                       ),
                       
                       const Spacer(),
@@ -2210,7 +2268,34 @@ class _AdminTOListScreenState extends State<AdminTOListScreen> {
   }
   /// 마감시간 표시 (업무별 마감 방식 반영)
   Widget _buildDeadlineBadge(TOModel to) {
-    // HOURS_BEFORE 방식
+    // ⭐ FIXED_TIME 방식 (장기 근무)
+    if (to.deadlineType == 'FIXED_TIME') {
+      return Container(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+        decoration: BoxDecoration(
+          color: Colors.orange[50],
+          border: Border.all(color: Colors.orange[300]!),
+          borderRadius: BorderRadius.circular(4),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Text('🕐', style: TextStyle(fontSize: 11)),
+            const SizedBox(width: 4),
+            Text(
+              DateFormat('MM/dd HH:mm').format(to.applicationDeadline),
+              style: TextStyle(
+                fontSize: 12,
+                color: Colors.orange[700],
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+    
+    // ⭐ HOURS_BEFORE 방식 (단기 알바)
     if (to.deadlineType == 'HOURS_BEFORE' && to.hoursBeforeStart != null) {
       return Container(
         padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
@@ -2227,9 +2312,9 @@ class _AdminTOListScreenState extends State<AdminTOListScreen> {
             Text(
               '각 업무 ${to.hoursBeforeStart}시간 전',
               style: TextStyle(
-                fontSize: 11,
+                fontSize: 12,
                 color: Colors.orange[700],
-                fontWeight: FontWeight.w500,
+                fontWeight: FontWeight.bold,
               ),
             ),
           ],
