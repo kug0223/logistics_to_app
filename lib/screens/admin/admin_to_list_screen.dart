@@ -559,6 +559,13 @@ class _AdminTOListScreenState extends State<AdminTOListScreen> {
   /// ✅ 그룹 카드 (1단계 토글) - 개선 버전
   Widget _buildGroupCard(TOGroupItem groupItem) {
     final masterTO = groupItem.masterTO;
+    // ⭐ 모든 TO 출력 (조건 제거!)
+    print('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+    print('🔍 [카드] 제목: ${masterTO.title}');
+    print('   jobType: "${masterTO.jobType}"');
+    print('   isLongTerm: ${masterTO.isLongTerm}');
+    print('   workDays: ${masterTO.workDays}');
+    print('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
     final isExpanded = _expandedGroups.contains(masterTO.groupId ?? masterTO.id);
     final dateFormat = DateFormat('MM/dd (E)', 'ko_KR');
     // 그룹 전체 통계
@@ -645,9 +652,10 @@ class _AdminTOListScreenState extends State<AdminTOListScreen> {
                           ],
                         ),
                       ),
+
                       const SizedBox(width: 8),  // ⭐ 추가
-    
-                      // ⭐ 장기/단기 뱃지 추가
+
+                      // ⭐ 장기/단기 배지 추가
                       Container(
                         padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                         decoration: BoxDecoration(
@@ -666,7 +674,7 @@ class _AdminTOListScreenState extends State<AdminTOListScreen> {
                           ),
                         ),
                       ),
-                      
+
                       const Spacer(),
                       
                       // ✅ 상태 배지
@@ -1014,18 +1022,18 @@ class _AdminTOListScreenState extends State<AdminTOListScreen> {
                       Icon(Icons.calendar_today, size: 16, color: Colors.grey[600]),
                       const SizedBox(width: 6),
                       Expanded(
-                        child: masterTO.isLongTerm
-                          ? Column(  // ⭐ 장기 TO는 2줄
+                        child: masterTO.isLongTerm  // ⭐ 장기 TO 체크 추가!
+                          ? Column(
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
                                 Text(
-                                  masterTO.longTermPeriodWithDays,  // "1/7 ~ 2/7"
+                                  masterTO.longTermPeriodWithDays,  // "11/04 ~ 11/25"
                                   style: TextStyle(fontSize: 14, color: Colors.grey[700]),
                                 ),
                                 if (masterTO.workDays != null && masterTO.workDays!.isNotEmpty) ...[
                                   const SizedBox(height: 2),
                                   Text(
-                                    masterTO.workDaysLabel,  // "주 3일 (월, 수, 금)"
+                                    masterTO.workDaysLabel,  // "주 1일 (월)"
                                     style: TextStyle(fontSize: 12, color: Colors.grey[600]),
                                   ),
                                 ],
@@ -1695,19 +1703,22 @@ class _AdminTOListScreenState extends State<AdminTOListScreen> {
                   color: Colors.blue[700],
                 ),
               ),
-              Spacer(),  // 🔥 추가: 오른쪽 정렬
-                  Icon(Icons.alarm, size: 13, color: Colors.orange[600]),  // 🔥 추가
-                  SizedBox(width: 4),  // 🔥 추가
-                  Text(  // 🔥 추가
-                    '마감: ${_calculateDeadline(toItem.to, work)}까지',
-                    style: TextStyle(
-                      fontSize: 11,
-                      fontWeight: FontWeight.w600,
-                      color: Colors.orange[700],
-                    ),
+              // ⭐ 단기 TO인 경우만 업무별 마감 시간 표시
+              if (toItem.to.deadlineType == 'HOURS_BEFORE') ...[
+                Spacer(),
+                Icon(Icons.alarm, size: 13, color: Colors.orange[600]),
+                SizedBox(width: 4),
+                Text(
+                  '마감: ${_calculateDeadline(toItem.to, work)}까지',
+                  style: TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.w600,
+                    color: Colors.orange[700],
                   ),
-                ],
-              ),
+                ),
+              ],
+            ],
+          ),
           SizedBox(height: 6),
           
           // 🔥 3줄: 인원 + 대기 + 상태

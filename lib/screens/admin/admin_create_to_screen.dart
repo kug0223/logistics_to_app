@@ -1756,11 +1756,18 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
             // 날짜+시간 선택 버튼
             InkWell(
               onTap: () async {
+                // ⭐ 검증: 범위 종료일이 설정되어 있어야 함
+                if (_rangeEnd == null) {
+                  ToastHelper.showError('먼저 근무 종료일을 선택해주세요');
+                  return;
+                }
+                
                 final pickedDate = await showDatePicker(
                   context: context,
                   initialDate: DateTime.now(),
                   firstDate: DateTime.now(),
-                  lastDate: DateTime.now().add(const Duration(days: 365)),
+                  lastDate: _rangeEnd!,  // ⭐ 근무 종료일까지만!
+                  locale: const Locale('ko', 'KR'),
                 );
                 
                 if (pickedDate != null && mounted) {
@@ -1770,14 +1777,30 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
                   );
                   
                   if (pickedTime != null) {
+                    final selectedDeadline = DateTime(
+                      pickedDate.year,
+                      pickedDate.month,
+                      pickedDate.day,
+                      pickedTime.hour,
+                      pickedTime.minute,
+                    );
+                    
+                    // ⭐ 검증: 종료일보다 늦으면 안 됨
+                    final endDateTime = DateTime(
+                      _rangeEnd!.year,
+                      _rangeEnd!.month,
+                      _rangeEnd!.day,
+                      23,
+                      59,
+                    );
+                    
+                    if (selectedDeadline.isAfter(endDateTime)) {
+                      ToastHelper.showError('마감 시간은 근무 종료일 이전이어야 합니다');
+                      return;
+                    }
+                    
                     setState(() {
-                      _fixedDeadline = DateTime(
-                        pickedDate.year,
-                        pickedDate.month,
-                        pickedDate.day,
-                        pickedTime.hour,
-                        pickedTime.minute,
-                      );
+                      _fixedDeadline = selectedDeadline;
                     });
                   }
                 }

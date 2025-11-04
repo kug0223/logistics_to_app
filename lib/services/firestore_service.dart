@@ -15,6 +15,11 @@ class FirestoreService {
   final Map<String, List<ApplicationModel>> _applicationCache = {};
   final Map<String, List<WorkDetailModel>> _workDetailCache = {};
   final Map<String, Map<String, String>> _timeRangeCache = {};
+  // ⭐ TO 목록 캐시 추가!
+  List<TOModel>? _activeTOsCache;
+  List<TOModel>? _closedTOsCache;
+  DateTime? _activeTOsCacheTime;
+  DateTime? _closedTOsCacheTime;
   
   // 캐시 유효 시간 (5분)
   final Duration _cacheValidDuration = const Duration(minutes: 5);
@@ -1806,6 +1811,13 @@ class FirestoreService {
       _workDetailCache.clear();
       _timeRangeCache.clear();
       _cacheTimestamps.clear();
+
+      // ⭐⭐⭐ TO 목록 캐시도 삭제!
+      _activeTOsCache = null;
+      _closedTOsCache = null;
+      _activeTOsCacheTime = null;
+      _closedTOsCacheTime = null;
+      print('🗑️ TO 목록 캐시도 삭제 완료');
     }
   }
 
