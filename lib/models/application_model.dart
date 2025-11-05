@@ -12,9 +12,11 @@ class ApplicationModel {
   final String businessName; // 사업장명
   final String toTitle; // TO 제목
   final DateTime workDate; // 근무 날짜
+  final DateTime? workEndDate;       // ⭐ 종료일 (장기용)
+  final List<String>? workDays;      // ⭐ 근무 요일 (장기용)
   final String startTime; // 근무 시작 시간
   final String endTime; // 근무 종료 시간
-  
+ 
   final String uid; // 지원자 UID
   
   // 업무 유형 및 금액
@@ -38,6 +40,8 @@ class ApplicationModel {
     required this.businessName,
     required this.toTitle,
     required this.workDate,
+    this.workEndDate,      // ⭐ 추가
+    this.workDays,         // ⭐ 추가
     required this.startTime,
     required this.endTime,
     required this.uid,
@@ -63,6 +67,12 @@ class ApplicationModel {
       workDate: data['workDate'] != null
           ? (data['workDate'] as Timestamp).toDate()
           : DateTime.now(),
+      workEndDate: data['workEndDate'] != null
+          ? (data['workEndDate'] as Timestamp).toDate()
+          : null,  // ⭐
+      workDays: data['workDays'] != null
+          ? List<String>.from(data['workDays'])
+          : null,  // ⭐
       startTime: data['startTime'] ?? '',
       endTime: data['endTime'] ?? '',
       uid: data['uid'] ?? '',
@@ -98,6 +108,8 @@ class ApplicationModel {
       'businessName': businessName,
       'toTitle': toTitle,
       'workDate': Timestamp.fromDate(workDate),
+      'workEndDate': workEndDate != null ? Timestamp.fromDate(workEndDate!) : null,  // ⭐
+      'workDays': workDays,  // ⭐
       'startTime': startTime,
       'endTime': endTime,
       'uid': uid,
@@ -148,6 +160,28 @@ class ApplicationModel {
 
   /// 업무유형이 변경되었는지 여부
   bool get isWorkTypeChanged => originalWorkType != null;
+   // 장기 지원 여부
+  bool get isLongTermApplication => workEndDate != null;
+  
+  /// 근무 기간 표시 (단기: "11/15", 장기: "11/10~11/30")
+  String get workPeriodDisplay {
+    if (isLongTermApplication && workEndDate != null) {
+      return '${workDate.month}/${workDate.day}~${workEndDate!.month}/${workEndDate!.day}';
+    }
+    return '${workDate.month}/${workDate.day}';
+  }
+
+  /// 근무 요일 표시 (예: "주 5일 (월~금)")
+  String? get workDaysDisplay {
+    if (workDays == null || workDays!.isEmpty) return null;
+    
+    if (workDays!.length == 7) {
+      return '매일';
+    }
+    
+    return '주 ${workDays!.length}일 (${workDays!.join(', ')})';
+  }
+  
 
   /// 포맷팅된 금액 (예: "50,000원")
   String get formattedWage {
@@ -161,6 +195,8 @@ class ApplicationModel {
     String? businessName,
     String? toTitle,
     DateTime? workDate,
+    DateTime? workEndDate,     // ⭐
+    List<String>? workDays,    // ⭐
     String? startTime,
     String? endTime,
     String? uid,
@@ -181,6 +217,8 @@ class ApplicationModel {
       businessName: businessName ?? this.businessName,
       toTitle: toTitle ?? this.toTitle,
       workDate: workDate ?? this.workDate,
+      workEndDate: workEndDate ?? this.workEndDate,     // ⭐
+      workDays: workDays ?? this.workDays,               // ⭐
       startTime: startTime ?? this.startTime,
       endTime: endTime ?? this.endTime,
       uid: uid ?? this.uid,

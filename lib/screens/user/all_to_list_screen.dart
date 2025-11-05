@@ -4,7 +4,7 @@ import '../../models/to_model.dart';
 import '../../models/application_model.dart';
 import '../../services/firestore_service.dart';
 import '../../providers/user_provider.dart';
-import '../../widgets/to_card_widget.dart';
+import '../../widgets/user_to_card.dart';
 import '../../widgets/loading_widget.dart';
 import '../../utils/toast_helper.dart';
 import 'to_detail_screen.dart';
@@ -29,6 +29,7 @@ class _AllTOListScreenState extends State<AllTOListScreen> {
   List<ApplicationModel> _myApplications = [];
   List<String> _businessNames = []; // 사업장 목록 (필터용)
   bool _isLoading = true;
+  String? _selectedTOId; // ⭐ 선택된 TO ID
 
   @override
   void initState() {
@@ -95,6 +96,18 @@ class _AllTOListScreenState extends State<AllTOListScreen> {
       });
       ToastHelper.showError('TO 목록을 불러올 수 없습니다');
     }
+  }
+  /// ⭐ TO 선택/선택 해제
+  void _toggleTOSelection(String toId) {
+    setState(() {
+      if (_selectedTOId == toId) {
+        // 같은 카드 클릭 → 접기
+        _selectedTOId = null;
+      } else {
+        // 다른 카드 클릭 → 펼치기
+        _selectedTOId = toId;
+      }
+    });
   }
 
   /// ✅ 필터 적용 (업무유형 필터 제거)
@@ -164,57 +177,22 @@ class _AllTOListScreenState extends State<AllTOListScreen> {
                 ? const LoadingWidget(message: 'TO 목록을 불러오는 중...')
                 : _filteredTOList.isEmpty
                     ? _buildEmptyState()
-                    : RefreshIndicator(
+                    : RefreshIndicator(  // ⭐ 추가
                         onRefresh: _loadAllTOs,
-                        child: ListView.builder(
+                        child: ListView.builder(  // ⭐ 추가
                           padding: const EdgeInsets.all(16),
                           itemCount: _filteredTOList.length,
                           itemBuilder: (context, index) {
                             final to = _filteredTOList[index];
+                            final isSelected = _selectedTOId == to.id;
                             
-                            // ✅ 내 지원 상태 확인 (businessId + toTitle + workDate 비교)
-                            final myApp = _myApplications.firstWhere(
-                              (app) {
-                                // TO 날짜 정규화 (시간 제거)
-                                final toDate = DateTime(to.date.year, to.date.month, to.date.day);
-                                final appDate = DateTime(app.workDate.year, app.workDate.month, app.workDate.day);
-                                
-                                return app.businessId == to.businessId &&
-                                      app.toTitle == to.title &&
-                                      appDate.isAtSameMomentAs(toDate);
-                              },
-                              orElse: () => ApplicationModel(
-                                id: '',
-                                businessId: '',
-                                businessName: '',
-                                toTitle: '',
-                                workDate: DateTime.now(),
-                                startTime: '',
-                                endTime: '',
-                                uid: '',
-                                selectedWorkType: '',
-                                wage: 0,
-                                status: '',
-                                appliedAt: DateTime.now(),
-                              ),
-                            );
-                            
-                            final applicationStatus = myApp.id.isNotEmpty ? myApp.status : null;
-                            
-                            return TOCardWidget(
-                              key: ValueKey('${to.id}-$applicationStatus'),
+                            return UserTOCard(
                               to: to,
-                              applicationStatus: applicationStatus,
-                              onTap: () {
-                                Navigator.push(
-                                  context,
-                                  MaterialPageRoute(
-                                    builder: (context) => TODetailScreen(to: to),
-                                  ),
-                                );
-                              },
+                              isSelected: isSelected,
+                              onTap: () => _toggleTOSelection(to.id),
+                              myApplications: _myApplications,
                             );
-                          }
+                          },
                         ),
                       ),
           ),
@@ -222,6 +200,7 @@ class _AllTOListScreenState extends State<AllTOListScreen> {
       ),
     );
   }
+  
 
   /// ✅ 필터 섹션 (업무유형 필터 제거)
   Widget _buildFilterSection() {
