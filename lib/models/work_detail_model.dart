@@ -7,6 +7,7 @@ class WorkDetailModel {
   final String workType; // 업무 유형 (예: "분류", "피킹", "인덕션")
   final String workTypeIcon; // 업무 아이콘 (예: "📦")
   final String workTypeColor; // 업무 색상 (예: "#FF5733")
+  final String? workTypeBackgroundColor;
   final int wage; // 시급 또는 일급 (원)
   final int requiredCount; // 필요 인원
   final int currentCount; // 현재 확정된 인원
@@ -33,6 +34,7 @@ class WorkDetailModel {
     required this.workType,
     this.workTypeIcon = '📋',
     this.workTypeColor = '#2196F3',
+    this.workTypeBackgroundColor,
     required this.wage,
     required this.requiredCount,
     this.currentCount = 0,
@@ -67,6 +69,7 @@ class WorkDetailModel {
       workType: map['workType'] ?? '',
       workTypeIcon: map['workTypeIcon'] ?? '📋',
       workTypeColor: map['workTypeColor'] ?? '#2196F3',
+      workTypeBackgroundColor: map['workTypeBackgroundColor'],
       wage: map['wage'] ?? 0,
       requiredCount: map['requiredCount'] ?? 0,
       currentCount: map['currentCount'] ?? 0,
@@ -91,6 +94,7 @@ class WorkDetailModel {
       'workType': workType,
       'workTypeIcon': workTypeIcon,
       'workTypeColor': workTypeColor,
+      'workTypeBackgroundColor': workTypeBackgroundColor,
       'wage': wage,
       'requiredCount': requiredCount,
       'currentCount': currentCount,
@@ -120,6 +124,7 @@ class WorkDetailModel {
     String? workType,
     String? workTypeIcon,
     String? workTypeColor,
+    String? workTypeBackgroundColor,
     int? wage,
     int? requiredCount,
     int? currentCount,
@@ -141,6 +146,7 @@ class WorkDetailModel {
       workType: workType ?? this.workType,
       workTypeIcon: workTypeIcon ?? this.workTypeIcon,
       workTypeColor: workTypeColor ?? this.workTypeColor,
+      workTypeBackgroundColor: workTypeBackgroundColor ?? this.workTypeBackgroundColor,
       wage: wage ?? this.wage,
       requiredCount: requiredCount ?? this.requiredCount,
       currentCount: currentCount ?? this.currentCount,

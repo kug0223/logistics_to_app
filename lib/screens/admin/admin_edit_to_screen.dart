@@ -725,13 +725,15 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
                 width: 40,
                 height: 40,
                 decoration: BoxDecoration(
-                  color: FormatHelper.parseColor(work.workTypeColor),
+                  color: FormatHelper.parseColor(work.workTypeBackgroundColor ?? '#2196F3'), // ✅ 수정
                   borderRadius: BorderRadius.circular(8),
                 ),
                 child: Center(
                   child: WorkTypeIcon.buildFromString(
                     work.workTypeIcon,
-                    color: Colors.white,  // ✅ 간단하게 이것만!
+                    color: work.workTypeColor != null 
+                        ? FormatHelper.parseColor(work.workTypeColor) 
+                        : Colors.white, // ✅ 수정
                     size: 20,
                   ),
                 ),

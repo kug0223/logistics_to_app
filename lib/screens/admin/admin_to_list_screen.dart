@@ -32,7 +32,7 @@ import 'models/to_list_models.dart';
 // Local dialogs
 import 'dialogs/work_detail_management_dialog.dart';
 import 'dialogs/confirmed_list_dialog.dart';
-import 'dialogs/filter_dialog.dart';
+import '../../widgets/filter_dialog.dart';
 
 // Local Widgets
 import 'widgets/to_list_tabs.dart';
@@ -1560,13 +1560,15 @@ class _AdminTOListScreenState extends State<AdminTOListScreen> {
                 width: 28,
                 height: 28,
                 decoration: BoxDecoration(
-                  color: FormatHelper.parseColor(work.workTypeColor),
+                  color: FormatHelper.parseColor(work.workTypeBackgroundColor ?? '#2196F3'), // ✅ 수정
                   borderRadius: BorderRadius.circular(6),
                 ),
                 child: Center(
                   child: WorkTypeIcon.buildFromString(
                     work.workTypeIcon,
-                    color: Colors.white,
+                    color: work.workTypeColor != null 
+                        ? FormatHelper.parseColor(work.workTypeColor) 
+                        : Colors.white, // ✅ 수정
                     size: 14,
                   ),
                 ),

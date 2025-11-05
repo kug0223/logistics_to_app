@@ -81,17 +81,6 @@ class TOModel {
 
   /// Firestore 문서를 TOModel로 변환
   factory TOModel.fromMap(Map<String, dynamic> data, String documentId) {
-    // ⭐⭐⭐ 디버깅: 장기 TO만
-    if ((data['workDays'] as List?)?.isNotEmpty == true) {
-      print('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-      print('🔍 [fromMap] 장기 TO 파싱');
-      print('   ID: $documentId');
-      print('   제목: ${data['title']}');
-      print('   jobType 값: "${data['jobType']}"');
-      print('   jobType 타입: ${data['jobType'].runtimeType}');
-      print('   workDays: ${data['workDays']}');
-      print('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-    }
     return TOModel(
       id: documentId,
       businessId: data['businessId'] ?? '',

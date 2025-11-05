@@ -3,6 +3,7 @@ class WorkDetailInput {
   final String? workType;
   final String workTypeIcon;
   final String workTypeColor;
+  final String? workTypeBackgroundColor; // ✅ 추가
   final int? wage;
   final int? requiredCount;
   final String? startTime;
@@ -13,6 +14,7 @@ class WorkDetailInput {
     this.workType,
     this.workTypeIcon = 'work',
     this.workTypeColor = '#2196F3',
+    this.workTypeBackgroundColor, // ✅ 추가
     this.wage,
     this.requiredCount,
     this.startTime,
@@ -30,6 +32,9 @@ class WorkDetailInput {
   Map<String, dynamic> toMap() {
     return {
       'workType': workType!,
+      'workTypeIcon': workTypeIcon,
+      'workTypeColor': workTypeColor,
+      'workTypeBackgroundColor': workTypeBackgroundColor, // ✅ 추가
       'wage': wage!,
       'requiredCount': requiredCount!,
       'startTime': startTime!,

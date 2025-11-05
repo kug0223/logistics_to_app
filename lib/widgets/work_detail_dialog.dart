@@ -254,7 +254,8 @@ class WorkDetailDialog {
                     WorkDetailInput(
                       workType: selectedWorkType!.name,
                       workTypeIcon: selectedWorkType!.icon,
-                      workTypeColor: selectedWorkType!.backgroundColor ?? '#2196F3',
+                      workTypeColor: selectedWorkType!.color ?? '#FFFFFF', // ✅ 아이콘 색상
+                      workTypeBackgroundColor: selectedWorkType!.backgroundColor, // ✅ 배경 색상 추가!
                       wage: wage,
                       requiredCount: count,
                       startTime: startTime,

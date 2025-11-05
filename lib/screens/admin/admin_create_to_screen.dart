@@ -324,6 +324,7 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
           'workType': w.workType!,
           'workTypeIcon': w.workTypeIcon,
           'workTypeColor': w.workTypeColor,
+          'workTypeBackgroundColor': w.workTypeBackgroundColor,
           'wage': w.wage!,
           'requiredCount': w.requiredCount!,
           'startTime': w.startTime!,
@@ -1536,16 +1537,18 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
                   width: 40,
                   height: 40,
                   decoration: BoxDecoration(
-                    color: FormatHelper.parseColor(detail.workTypeColor),
+                    color: FormatHelper.parseColor(detail.workTypeBackgroundColor ?? '#2196F3'), // ✅ 수정
                     borderRadius: BorderRadius.circular(8),
                   ),
                   child: Center(
                     child: WorkTypeIcon.buildFromString(
-                      detail.workTypeIcon,  // ✅ 문자열 직접 전달
-                      color: Colors.white,
+                      detail.workTypeIcon,
+                      color: detail.workTypeColor != null 
+                          ? FormatHelper.parseColor(detail.workTypeColor) 
+                          : Colors.white, // ✅ 수정
                       size: 20,
                     ),
-                    ),
+                  ),
                 ),
                 const SizedBox(width: 12),
                 Expanded(

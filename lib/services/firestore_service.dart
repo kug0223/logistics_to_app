@@ -387,6 +387,7 @@ class FirestoreService {
           'workType': data['workType'],
           'workTypeIcon': data['workTypeIcon'],
           'workTypeColor': data['workTypeColor'],
+          'workTypeBackgroundColor': data['workTypeBackgroundColor'],
           'wage': data['wage'],
           'requiredCount': data['requiredCount'],
           'currentCount': 0,
@@ -1337,18 +1338,19 @@ class FirestoreService {
     required String endTime,
   }) async {
     try {
-      // 1. 중복 지원 확인
+      // 1. 중복 지원 확인 - ✅ selectedWorkType도 체크!
       final existingApp = await _firestore
           .collection('applications')
           .where('businessId', isEqualTo: businessId)
           .where('toTitle', isEqualTo: toTitle)
           .where('workDate', isEqualTo: Timestamp.fromDate(workDate))
           .where('uid', isEqualTo: uid)
+          .where('selectedWorkType', isEqualTo: selectedWorkType) // ✅ 추가!
           .limit(1)
           .get();
 
       if (existingApp.docs.isNotEmpty) {
-        ToastHelper.showWarning('이미 지원한 TO입니다.');
+        ToastHelper.showWarning('이미 지원한 업무입니다.'); // ✅ 메시지도 수정
         return false;
       }
 
@@ -1412,12 +1414,19 @@ class FirestoreService {
         },
       );
 
+      // ✅ 🔥 Batch commit 추가! (이게 없어서 지원서가 저장 안 됨!)
+      await batch.commit();
+      print('✅ Batch commit 완료');
+
       // ✅ 통계 재계산 (통합 로직 사용)
       print('📊 지원 생성 후 통계 재계산...');
       await recalculateTOStats(toId);
 
+      // ✅ 캐시 클리어 추가!
+      clearCache(toId: toId);
+      print('🗑️ 지원 후 캐시 클리어 완료');
+
       print('✅ 지원 완료: businessId=$businessId, toTitle=$toTitle, WorkType=$selectedWorkType');
-      ToastHelper.showSuccess('지원이 완료되었습니다!');
       return true;
     } catch (e) {
       print('❌ 지원 실패: $e');

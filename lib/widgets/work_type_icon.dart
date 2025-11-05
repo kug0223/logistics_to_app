@@ -117,4 +117,32 @@ class WorkTypeIcon {
 
     return iconMap[iconName] ?? Icons.work;
   }
+  /// 배경색 포함된 아이콘 렌더링 (공통)
+  static Widget buildWithBackground({
+    required String iconString,
+    String? iconColor,
+    String? backgroundColor,
+    double size = 20,
+    double containerSize = 36,
+  }) {
+    return Container(
+      width: containerSize,
+      height: containerSize,
+      decoration: BoxDecoration(
+        color: backgroundColor != null
+            ? FormatHelper.parseColor(backgroundColor)
+            : Colors.grey[200],
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Center(
+        child: buildFromString(
+          iconString,
+          color: iconColor != null
+              ? FormatHelper.parseColor(iconColor)
+              : Colors.white,
+          size: size,
+        ),
+      ),
+    );
+  }
 }
