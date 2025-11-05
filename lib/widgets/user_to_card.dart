@@ -69,6 +69,15 @@ class _UserTOCardState extends State<UserTOCard> {
   
   @override
   Widget build(BuildContext context) {
+    // ⭐ 디버깅 로그
+    print('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+    print('🎴 [UserTOCard] 카드 렌더링');
+    print('   제목: ${widget.to.title}');
+    print('   jobType: ${widget.to.jobType}');
+    print('   isShortTerm: ${widget.to.isShortTerm}');
+    print('   isLongTerm: ${widget.to.isLongTerm}');
+    print('   isSelected: ${widget.isSelected}');
+    print('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
     return Card(
       margin: EdgeInsets.only(bottom: 12),
       elevation: widget.isSelected ? 4 : 1,

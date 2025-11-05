@@ -49,7 +49,7 @@ class _AllTOListScreenState extends State<AllTOListScreen> {
       
       // ⚡ 병렬로 TO 목록과 내 지원 내역을 동시에 조회!
       final results = await Future.wait([
-        _firestoreService.getGroupMasterTOs(), // ✅ 대표 TO만!
+        _firestoreService.getAllTOs(), // ✅ 대표 TO만!
         uid != null 
             ? _firestoreService.getMyApplications(uid)
             : Future.value(<ApplicationModel>[]),
@@ -86,9 +86,11 @@ class _AllTOListScreenState extends State<AllTOListScreen> {
         _allTOList = toList;
         _myApplications = myApps;
         _businessNames = businessList;
-        _applyFilters(); // 필터 적용
         _isLoading = false;
       });
+
+      // ⭐ setState 밖에서 호출
+      _applyFilters();
     } catch (e) {
       print('❌ 에러 발생: $e');
       setState(() {
@@ -143,10 +145,9 @@ class _AllTOListScreenState extends State<AllTOListScreen> {
       return a.startTime.compareTo(b.startTime);
     });
 
-    setState(() {
-      _filteredTOList = filtered;
-    });
 
+    _filteredTOList = filtered;
+ 
     print('📊 필터 적용 결과: ${filtered.length}개 TO');
   }
 
