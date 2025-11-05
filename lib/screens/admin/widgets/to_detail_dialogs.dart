@@ -1,12 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
-import 'package:provider/provider.dart';
 import '../../../models/application_model.dart';
 import '../../../services/firestore_service.dart';
-import '../../../providers/user_provider.dart';
 import '../../../utils/toast_helper.dart';
-import '../../../utils/format_helper.dart';
-import '../../../widgets/work_type_icon.dart';
 import '../models/to_detail_models.dart';
 
 /// TO 상세 화면의 다이얼로그 모음
@@ -190,7 +186,7 @@ class TODetailDialogs {
                   const SizedBox(height: 8),
                   ...work.pendingApplicants.map((applicant) {
                     return _buildApplicantCard(applicant, onConfirm, onReject);
-                  }).toList(),
+                  }),
                   const SizedBox(height: 16),
                 ],
                 
@@ -200,7 +196,7 @@ class TODetailDialogs {
                   const SizedBox(height: 8),
                   ...work.confirmedApplicants.map((applicant) {
                     return _buildApplicantCard(applicant, onConfirm, onReject);
-                  }).toList(),
+                  }),
                   const SizedBox(height: 16),
                 ],
                 
@@ -210,7 +206,7 @@ class TODetailDialogs {
                   const SizedBox(height: 8),
                   ...work.rejectedApplicants.map((applicant) {
                     return _buildApplicantCard(applicant, onConfirm, onReject);
-                  }).toList(),
+                  }),
                 ],
               ],
             ),

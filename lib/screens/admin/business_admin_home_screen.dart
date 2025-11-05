@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../providers/user_provider.dart';
+import '../../providers/theme_provider.dart';
 import '../../services/auth_service.dart';
 import 'business_list_screen.dart';
 import '../../utils/toast_helper.dart';
@@ -20,7 +21,7 @@ class BusinessAdminHomeScreen extends StatelessWidget {
     return Consumer<UserProvider>(
       builder: (context, userProvider, _) {
         return Scaffold(
-          backgroundColor: Colors.blue[700],
+          backgroundColor: Theme.of(context).colorScheme.primary,
           body: SafeArea(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -64,6 +65,7 @@ class BusinessAdminHomeScreen extends StatelessWidget {
                               );
 
                               if (confirmed == true && context.mounted) {
+                                context.read<ThemeProvider>().reset();
                                 await userProvider.signOut();  // ✅ 이렇게 변경!
                                 // Navigator 코드는 전부 삭제 - AuthWrapper가 자동 처리
                               }

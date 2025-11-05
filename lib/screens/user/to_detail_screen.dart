@@ -11,9 +11,9 @@ class TODetailScreen extends StatefulWidget {
   final TOModel to;
 
   const TODetailScreen({
-    Key? key,
+    super.key,
     required this.to,
-  }) : super(key: key);
+  });
 
   @override
   State<TODetailScreen> createState() => _TODetailScreenState();

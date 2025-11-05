@@ -2667,41 +2667,92 @@ class FirestoreService {
     }
   }
 
-  /// 그룹 TO 전체 마감
+  /// 그룹 TO 전체 마감 (WorkDetails 포함)
   Future<bool> closeGroupTOs(String groupId, String adminUID) async {
     try {
+      print('🔒 [closeGroupTOs] 시작: $groupId');
+      
+      // 1. 그룹의 모든 TO 조회
       final snapshot = await _firestore
           .collection('tos')
           .where('groupId', isEqualTo: groupId)
           .get();
 
+      if (snapshot.docs.isEmpty) {
+        print('❌ 그룹 TO를 찾을 수 없음');
+        return false;
+      }
+
       final batch = _firestore.batch();
+      
+      // 2. 각 TO 마감
       for (var doc in snapshot.docs) {
         batch.update(doc.reference, {
           'isManualClosed': true,
           'closedAt': FieldValue.serverTimestamp(),
           'closedBy': adminUID,
         });
+        
+        print('   📝 TO 마감: ${doc.id}');
       }
 
       await batch.commit();
-      print('✅ 그룹 TO 전체 마감 완료: $groupId (${snapshot.docs.length}개)');
+      print('✅ TO 마감 완료: ${snapshot.docs.length}개');
+
+      // 3. ⭐ 각 TO의 모든 WorkDetails 마감
+      for (var doc in snapshot.docs) {
+        final workDetailsSnapshot = await _firestore
+            .collection('tos')
+            .doc(doc.id)
+            .collection('workDetails')
+            .get();
+
+        if (workDetailsSnapshot.docs.isNotEmpty) {
+          final workBatch = _firestore.batch();
+          
+          for (var workDoc in workDetailsSnapshot.docs) {
+            workBatch.update(workDoc.reference, {
+              'isManualClosed': true,
+              'closedAt': FieldValue.serverTimestamp(),
+              'closedBy': adminUID,
+            });
+          }
+          
+          await workBatch.commit();
+          print('   ✅ WorkDetails 마감: ${workDetailsSnapshot.docs.length}개');
+        }
+        
+        // 캐시 클리어
+        clearCache(toId: doc.id);
+      }
+
+      print('✅ 그룹 전체 마감 완료: $groupId');
       return true;
     } catch (e) {
-      print('❌ 그룹 TO 전체 마감 실패: $e');
+      print('❌ 그룹 마감 실패: $e');
       return false;
     }
   }
 
-  /// 그룹 TO 전체 재오픈
+  /// 그룹 TO 전체 재오픈 (WorkDetails 포함)
   Future<bool> reopenGroupTOs(String groupId, String adminUID) async {
     try {
+      print('🔓 [reopenGroupTOs] 시작: $groupId');
+      
+      // 1. 그룹의 모든 TO 조회
       final snapshot = await _firestore
           .collection('tos')
           .where('groupId', isEqualTo: groupId)
           .get();
 
+      if (snapshot.docs.isEmpty) {
+        print('❌ 그룹 TO를 찾을 수 없음');
+        return false;
+      }
+
       final batch = _firestore.batch();
+      
+      // 2. 각 TO 재오픈
       for (var doc in snapshot.docs) {
         batch.update(doc.reference, {
           'isManualClosed': false,
@@ -2711,14 +2762,40 @@ class FirestoreService {
       }
 
       await batch.commit();
-      // 🔥 각 TO의 캐시 초기화
+      print('✅ TO 재오픈 완료: ${snapshot.docs.length}개');
+
+      // 3. ⭐ 각 TO의 모든 WorkDetails 재오픈
       for (var doc in snapshot.docs) {
+        final workDetailsSnapshot = await _firestore
+            .collection('tos')
+            .doc(doc.id)
+            .collection('workDetails')
+            .get();
+
+        if (workDetailsSnapshot.docs.isNotEmpty) {
+          final workBatch = _firestore.batch();
+          
+          for (var workDoc in workDetailsSnapshot.docs) {
+            workBatch.update(workDoc.reference, {
+              'isManualClosed': false,
+              // closedAt, closedBy 필드 삭제
+              'closedAt': FieldValue.delete(),
+              'closedBy': FieldValue.delete(),
+            });
+          }
+          
+          await workBatch.commit();
+          print('   ✅ WorkDetails 재오픈: ${workDetailsSnapshot.docs.length}개');
+        }
+        
+        // 캐시 클리어
         clearCache(toId: doc.id);
       }
-      print('✅ 그룹 TO 전체 재오픈 완료: $groupId (${snapshot.docs.length}개)');
+
+      print('✅ 그룹 전체 재오픈 완료: $groupId');
       return true;
     } catch (e) {
-      print('❌ 그룹 TO 전체 재오픈 실패: $e');
+      print('❌ 그룹 재오픈 실패: $e');
       return false;
     }
   }

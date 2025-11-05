@@ -340,14 +340,14 @@ class TestDataHelper {
 
           if (deletedCount > 0) {
             await confirmedBatch.commit();
-            print('  ✅ TO ${toDoc.id}의 더미 확정 지원서 ${deletedCount}개 삭제');
+            print('  ✅ TO ${toDoc.id}의 더미 확정 지원서 $deletedCount개 삭제');
             confirmedDeleted += deletedCount;
           }
         }
       }
 
       if (confirmedDeleted > 0) {
-        print('✅ 총 confirmed_applications ${confirmedDeleted}개 삭제');
+        print('✅ 총 confirmed_applications $confirmedDeleted개 삭제');
         totalDeleted += confirmedDeleted;
       } else {
         print('   ℹ️  삭제할 confirmed_applications 없음');
@@ -370,7 +370,7 @@ class TestDataHelper {
         }
         
         print('');
-        print('✅ TO 통계 재계산 완료: ${recalculatedCount}/${affectedTOIds.length}개');
+        print('✅ TO 통계 재계산 완료: $recalculatedCount/${affectedTOIds.length}개');
       } else {
         print('📊 4단계: 영향받은 TO 없음 (통계 재계산 생략)');
       }
@@ -379,7 +379,7 @@ class TestDataHelper {
       print('🎉 ═══════════════════════════════════════');
       print('🎉 더미 데이터 삭제 완료!');
       print('🎉 ═══════════════════════════════════════');
-      print('   📊 총 ${totalDeleted}개 항목 삭제됨');
+      print('   📊 총 $totalDeleted개 항목 삭제됨');
       print('   🎯 영향받은 TO: ${affectedTOIds.length}개');
       print('');
       

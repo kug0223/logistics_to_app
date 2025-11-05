@@ -1,5 +1,4 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
-import '../utils/format_helper.dart';
 
 /// 사업장별 업무 유형 모델 (간소화 버전)
 class BusinessWorkTypeModel {

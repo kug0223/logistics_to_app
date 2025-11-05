@@ -12,7 +12,7 @@ import '../../utils/format_helper.dart';
 
 /// 업무 유형 관리 화면
 class WorkTypeManagementScreen extends StatefulWidget {
-  const WorkTypeManagementScreen({Key? key}) : super(key: key);
+  const WorkTypeManagementScreen({super.key});
 
   @override
   State<WorkTypeManagementScreen> createState() => _WorkTypeManagementScreenState();
@@ -362,7 +362,7 @@ class _WorkTypeManagementScreenState extends State<WorkTypeManagementScreen> {
       padding: const EdgeInsets.all(16),
       color: Colors.blue[50],
       child: DropdownButtonFormField<BusinessModel>(
-        value: _selectedBusiness,
+        initialValue: _selectedBusiness,
         decoration: InputDecoration(
           labelText: '사업장 선택',
           prefixIcon: const Icon(Icons.business),

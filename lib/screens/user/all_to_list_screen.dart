@@ -11,7 +11,7 @@ import 'to_detail_screen.dart';
 
 /// 전체 TO 목록 화면 (모든 사업장의 TO 조회) - 지원자용 신버전
 class AllTOListScreen extends StatefulWidget {
-  const AllTOListScreen({Key? key}) : super(key: key);
+  const AllTOListScreen({super.key});
 
   @override
   State<AllTOListScreen> createState() => _AllTOListScreenState();

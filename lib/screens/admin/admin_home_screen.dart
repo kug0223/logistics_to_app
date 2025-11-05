@@ -1,12 +1,13 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../providers/user_provider.dart';
+import '../../providers/theme_provider.dart';
 import 'all_businesses_screen.dart';  // ✅ 모든 사업장 조회 화면
 
 /// ✅ 최고관리자(SUPER_ADMIN) 홈 화면
 /// 중간관리자 홈과 동일한 레이아웃 (보라색 테마)
 class AdminHomeScreen extends StatelessWidget {
-  const AdminHomeScreen({Key? key}) : super(key: key);
+  const AdminHomeScreen({super.key});
 
   @override
   Widget build(BuildContext context) {
@@ -15,7 +16,7 @@ class AdminHomeScreen extends StatelessWidget {
         final user = userProvider.currentUser;
         
         return Scaffold(
-          backgroundColor: Colors.purple[700],
+          backgroundColor: Theme.of(context).colorScheme.primary,
           body: SafeArea(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -58,7 +59,8 @@ class AdminHomeScreen extends StatelessWidget {
                                 ),
                               );
 
-                              if (confirmed == true) {
+                              if (confirmed == true && context.mounted) {
+                                context.read<ThemeProvider>().reset();  // 🔥 추가!
                                 await userProvider.signOut();
                               }
                             },

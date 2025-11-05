@@ -38,6 +38,8 @@ class UserModel {
   // 편의 메서드: 관리자 권한이 있는지 (슈퍼 또는 사업장 관리자)
   bool get isAdmin => role == UserRole.SUPER_ADMIN || role == UserRole.BUSINESS_ADMIN;
 
+  String get roleString => _roleToString(role);
+
   // Firestore에서 데이터 가져올 때
   factory UserModel.fromMap(Map<String, dynamic> map, String uid) {
     // 기존 isAdmin 필드가 있는 경우 호환성 유지

@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 import 'package:flutter_localizations/flutter_localizations.dart'; 
 import 'firebase_options.dart';
 import 'providers/user_provider.dart';
+import 'providers/theme_provider.dart';
 import 'models/user_model.dart';
 
 // ⭐ 화면 import - 반드시 정확한 경로 확인!
@@ -11,6 +12,7 @@ import 'screens/auth/login_screen.dart';
 import 'screens/user/user_home_screen.dart';
 import 'screens/admin/admin_home_screen.dart';
 import 'screens/admin/business_admin_home_screen.dart';
+
 
 
 
@@ -34,30 +36,38 @@ class MyApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return ChangeNotifierProvider(
-      create: (_) {
-        print('📦 UserProvider 생성 중...');
-        final provider = UserProvider();
-        provider.initialize();
-        return provider;
-      },
-      child: MaterialApp(
-        title: 'AlFit(알핏)',
-        debugShowCheckedModeBanner: false,
-          localizationsDelegates: const [
-          GlobalMaterialLocalizations.delegate,
-          GlobalWidgetsLocalizations.delegate,
-          GlobalCupertinoLocalizations.delegate,
-        ],
-        supportedLocales: const [
-          Locale('ko', 'KR'),
-          Locale('en', 'US'),
-        ],
-        theme: ThemeData(
-          primarySwatch: Colors.blue,
-          useMaterial3: true,
+    return MultiProvider(  // 🔥 변경!
+      providers: [  // 🔥 변경!
+        ChangeNotifierProvider(
+          create: (_) {
+            print('📦 UserProvider 생성 중...');
+            final provider = UserProvider();
+            provider.initialize();
+            return provider;
+          },
         ),
-        home: const AuthWrapper(),
+        ChangeNotifierProvider(  // 🔥 추가!
+          create: (_) => ThemeProvider(),
+        ),
+      ],
+      child: Consumer<ThemeProvider>(  // 🔥 추가!
+        builder: (context, themeProvider, child) {
+          return MaterialApp(
+            title: 'AlFit(알핏)',
+            debugShowCheckedModeBanner: false,
+            localizationsDelegates: const [
+              GlobalMaterialLocalizations.delegate,
+              GlobalWidgetsLocalizations.delegate,
+              GlobalCupertinoLocalizations.delegate,
+            ],
+            supportedLocales: const [
+              Locale('ko', 'KR'),
+              Locale('en', 'US'),
+            ],
+            theme: themeProvider.theme,  // 🔥 변경!
+            home: const AuthWrapper(),
+          );
+        },
       ),
     );
   }
@@ -105,6 +115,9 @@ class AuthWrapper extends StatelessWidget {
           print('⚠️ currentUser가 null → LoginScreen');
           return const LoginScreen();
         }
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          context.read<ThemeProvider>().setRole(user.roleString);
+        });
 
         // 🎭 사용자 정보 출력
         print('\n===== 사용자 권한 정보 =====');

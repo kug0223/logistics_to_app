@@ -6,10 +6,10 @@ class TOListTabs extends StatelessWidget {
   final ValueChanged<String> onTabChanged;
 
   const TOListTabs({
-    Key? key,
+    super.key,
     required this.selectedTab,
     required this.onTabChanged,
-  }) : super(key: key);
+  });
 
   @override
   Widget build(BuildContext context) {

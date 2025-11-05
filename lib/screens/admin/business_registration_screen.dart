@@ -15,9 +15,9 @@ class BusinessRegistrationScreen extends StatefulWidget {
   final bool isFromSignUp;
   
   const BusinessRegistrationScreen({
-    Key? key,
+    super.key,
     this.isFromSignUp = false,
-  }) : super(key: key);
+  });
 
   @override
   State<BusinessRegistrationScreen> createState() => _BusinessRegistrationScreenState();

@@ -9,13 +9,13 @@ class FilterDialog extends StatefulWidget {
   final Function(DateTimeRange?) onDateRangeChanged;
 
   const FilterDialog({
-    Key? key,
+    super.key,
     this.selectedBusiness,
     this.selectedDateRange,
     required this.businessNames,
     required this.onBusinessChanged,
     required this.onDateRangeChanged,
-  }) : super(key: key);
+  });
 
   @override
   State<FilterDialog> createState() => _FilterDialogState();
@@ -82,7 +82,7 @@ class _FilterDialogState extends State<FilterDialog> {
                   _buildFilterSection(
                     title: '사업장',
                     child: DropdownButtonFormField<String?>(
-                      value: _tempBusiness,
+                      initialValue: _tempBusiness,
                       decoration: InputDecoration(
                         hintText: '전체',
                         contentPadding: const EdgeInsets.symmetric(

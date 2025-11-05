@@ -36,7 +36,7 @@ import 'dialogs/filter_dialog.dart';
 
 // Local Widgets
 import 'widgets/to_list_tabs.dart';
-import 'widgets/to_list_dialogs.dart';
+import 'dialogs/to_list_dialogs.dart';
 import 'widgets/work_applicants_dialog.dart';
 
 /// 관리자 TO 목록 화면 - 이중 토글 UI
@@ -895,6 +895,7 @@ class _AdminTOListScreenState extends State<AdminTOListScreen> {
                               ],
                             ),
                           ),
+                          if (masterTO.isShortTerm)
                           PopupMenuItem(
                             value: 'link',
                             child: Row(

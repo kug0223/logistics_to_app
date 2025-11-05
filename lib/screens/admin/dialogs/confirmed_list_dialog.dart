@@ -326,7 +326,7 @@ class ConfirmedListDialog {
                 ],
               ),
             );
-          }).toList(),
+          }),
         ],
       ),
     );

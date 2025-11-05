@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../providers/user_provider.dart';
-import '../../widgets/custom_button.dart';
+import '../../providers/theme_provider.dart';
 import 'my_applications_screen.dart';
 import 'all_to_list_screen.dart';
 
@@ -38,6 +38,7 @@ class UserHomeScreen extends StatelessWidget {
               );
 
               if (confirm == true && context.mounted) {
+                context.read<ThemeProvider>().reset();
                 context.read<UserProvider>().signOut();
               }
             },

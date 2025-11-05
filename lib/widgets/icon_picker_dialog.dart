@@ -250,7 +250,7 @@ class _IconPickerWidgetState extends State<_IconPickerWidget> {
             
             // 카테고리 드롭다운
             DropdownButtonFormField<String>(
-              value: _selectedCategory,
+              initialValue: _selectedCategory,
               decoration: const InputDecoration(
                 labelText: '카테고리',
                 border: OutlineInputBorder(),

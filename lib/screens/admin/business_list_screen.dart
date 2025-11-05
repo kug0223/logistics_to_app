@@ -10,7 +10,7 @@ import 'business_registration_screen.dart';  // ⭐ 같은 admin 폴더!
 
 /// 사업장 목록 화면 (관리자의 사업장 관리)
 class BusinessListScreen extends StatefulWidget {
-  const BusinessListScreen({Key? key}) : super(key: key);
+  const BusinessListScreen({super.key});
 
   @override
   State<BusinessListScreen> createState() => _BusinessListScreenState();

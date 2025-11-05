@@ -41,7 +41,7 @@ class WorkDetailDialog {
                   const Text('업무 유형', style: TextStyle(fontWeight: FontWeight.bold)),
                   const SizedBox(height: 8),
                   DropdownButtonFormField<BusinessWorkTypeModel>(
-                    value: selectedWorkType,
+                    initialValue: selectedWorkType,
                     decoration: const InputDecoration(
                       border: OutlineInputBorder(),
                       hintText: '업무 선택',
@@ -128,7 +128,7 @@ class WorkDetailDialog {
                     children: [
                       Expanded(
                         child: DropdownButtonFormField<String>(
-                          value: startTime,
+                          initialValue: startTime,
                           decoration: const InputDecoration(
                             border: OutlineInputBorder(),
                             hintText: '시작',
@@ -145,7 +145,7 @@ class WorkDetailDialog {
                       ),
                       Expanded(
                         child: DropdownButtonFormField<String>(
-                          value: endTime,
+                          initialValue: endTime,
                           decoration: const InputDecoration(
                             border: OutlineInputBorder(),
                             hintText: '종료',

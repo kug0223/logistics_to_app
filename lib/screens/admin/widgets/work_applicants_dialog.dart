@@ -16,11 +16,11 @@ class WorkApplicantsDialog extends StatefulWidget {
   final VoidCallback onChanged;
 
   const WorkApplicantsDialog({
-    Key? key,
+    super.key,
     required this.work,
     required this.toItem,
     required this.onChanged,
-  }) : super(key: key);
+  });
 
   @override
   State<WorkApplicantsDialog> createState() => _WorkApplicantsDialogState();
@@ -155,7 +155,7 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog> {
               Text('필요 인원: $requiredCount명'),
               Divider(height: 24),
               Text(
-                '${overflow}명이 초과됩니다.',
+                '$overflow명이 초과됩니다.',
                 style: TextStyle(
                   fontWeight: FontWeight.bold,
                   color: Colors.orange[700],
@@ -190,10 +190,10 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog> {
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text('${selectedCount}명을 승인하시겠습니까?'),
+              Text('$selectedCount명을 승인하시겠습니까?'),
               SizedBox(height: 12),
               Text(
-                '승인 후: ${afterConfirm}/${requiredCount}명',
+                '승인 후: $afterConfirm/$requiredCount명',
                 style: TextStyle(
                   fontSize: 13,
                   color: Colors.grey[600],
@@ -302,7 +302,7 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog> {
 
     return Dialog(
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-      child: Container(
+      child: SizedBox(
         width: MediaQuery.of(context).size.width * 0.9,
         height: MediaQuery.of(context).size.height * 0.8,
         child: Column(
@@ -608,7 +608,7 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog> {
             ],
           ),
           content: Text(
-            '이미 필요 인원($requiredCount명)이 충족되었습니다.\n그래도 ${userName}님을 승인하시겠습니까?',
+            '이미 필요 인원($requiredCount명)이 충족되었습니다.\n그래도 $userName님을 승인하시겠습니까?',
           ),
           actions: [
             TextButton(
@@ -637,7 +637,7 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog> {
         confirmedBy: adminUID,
       );
 
-      ToastHelper.showSuccess('${userName}님을 승인했습니다');
+      ToastHelper.showSuccess('$userName님을 승인했습니다');
       widget.onChanged();
       await _loadApplicants();
     } catch (e) {
@@ -661,7 +661,7 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog> {
         rejectedBy: adminUID,
       );
 
-      ToastHelper.showSuccess('${userName}님을 거절했습니다');
+      ToastHelper.showSuccess('$userName님을 거절했습니다');
       widget.onChanged();
       await _loadApplicants();
     } catch (e) {
