@@ -1,5 +1,5 @@
-import '../../../models/to_model.dart';
-import '../../../models/work_detail_model.dart';
+import '../core/to_model.dart';
+import '../core/work_detail_model.dart';
 
 /// 그룹 아이템 (대표 TO + 연결된 TO들)
 class TOGroupItem {
