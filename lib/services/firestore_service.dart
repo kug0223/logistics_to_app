@@ -1073,23 +1073,20 @@ class FirestoreService {
     }
   }
 
-  /// 여러 TO의 지원자를 한 번에 조회 (배치)
+  /// 여러 TO의 지원자를 한 번에 조회 (병렬 최적화!)
   Future<Map<String, List<ApplicationModel>>> getApplicationsByTOIds(List<String> toIds) async {
     try {
       if (toIds.isEmpty) return {};
       
-      Map<String, List<ApplicationModel>> result = {};
+      print('🔍 배치 지원자 조회 시작: ${toIds.length}개 TO (병렬 처리)');
       
-      // 각 TO별로 빈 리스트 초기화
-      for (var toId in toIds) {
-        result[toId] = [];
-      }
-      
-      // ✅ 각 TO별로 조회 (toId로는 직접 조회 불가능)
-      for (var toId in toIds) {
+      // ✅ 병렬로 각 TO의 지원서 조회
+      final futures = toIds.map((toId) async {
         // TO 정보 조회
         final toDoc = await _firestore.collection('tos').doc(toId).get();
-        if (!toDoc.exists) continue;
+        if (!toDoc.exists) {
+          return MapEntry(toId, <ApplicationModel>[]);
+        }
 
         final toData = toDoc.data()!;
         final businessId = toData['businessId'];
@@ -1104,13 +1101,18 @@ class FirestoreService {
             .where('workDate', isEqualTo: workDate)
             .get();
 
-        // 결과에 추가
-        result[toId] = snapshot.docs
+        final apps = snapshot.docs
             .map((doc) => ApplicationModel.fromFirestore(doc))
             .toList();
-      }
+        
+        return MapEntry(toId, apps);
+      }).toList();
       
-      print('✅ 배치 지원자 조회 완료: ${toIds.length}개 TO, ${result.values.fold(0, (sum, list) => sum + list.length)}명');
+      // ✅ 병렬 실행 완료 대기
+      final results = await Future.wait(futures);
+      final result = Map.fromEntries(results);
+      
+      print('✅ 배치 지원자 조회 완료 (병렬): ${toIds.length}개 TO, ${result.values.fold(0, (sum, list) => sum + list.length)}명');
       return result;
     } catch (e) {
       print('❌ 배치 지원자 조회 실패: $e');

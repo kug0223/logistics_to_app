@@ -115,27 +115,25 @@ class _AdminTOListScreenState extends State<AdminTOListScreen> {
           
           final workDetailsMap = batchResults[0] as Map<String, List<WorkDetailModel>>;
           final timeRange = batchResults[1] as Map<String, String>;
-          
-          // 각 TO 아이템 생성
+          // ✅ 2단계: 병렬로 지원서 일괄 조회!
+          final applicationsMap = await _firestoreService.getApplicationsByTOIds(toIds);
+
+          // ✅ 3단계: 각 TO 아이템 생성 (이미 조회된 데이터 사용!)
           List<TOItem> toItems = [];
           for (var to in groupTOs) {
-            final toWorkDetails = workDetailsMap[to.id] ?? [];            
-            // ✅ 변경: 실제 지원서 조회해서 계산
-            final apps = await _firestoreService.getApplicationsByTO(
-              to.businessId,
-              to.title,
-              to.date,
-            );
+            final toWorkDetails = workDetailsMap[to.id] ?? [];
+            final apps = applicationsMap[to.id] ?? [];  // 🔥 이미 조회된 데이터!
 
             int confirmed = apps.where((a) => a.status == 'CONFIRMED').length;
             int pending = apps.where((a) => a.status == 'PENDING').length;
-            // 🔥 NEW: totalRequired 실시간 계산
+            
+            // totalRequired 실시간 계산
             int totalRequired = 0;
             for (var work in toWorkDetails) {
               totalRequired += work.requiredCount;
             }
             
-            // 🔥 WorkDetail별 통계 계산
+            // WorkDetail별 통계 계산
             Map<String, Map<String, int>> workStats = {};
             for (var work in toWorkDetails) {
               final workApps = apps.where((a) => a.selectedWorkType == work.workType);
@@ -151,7 +149,7 @@ class _AdminTOListScreenState extends State<AdminTOListScreen> {
               confirmedCount: confirmed,
               pendingCount: pending,
               totalRequired: totalRequired,
-              workDetailStats: workStats, // 🔥 추가!
+              workDetailStats: workStats,
             ));
           }
           

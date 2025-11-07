@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../models/core/to_model.dart';
+import 'common/styled_container.dart';
 
 /// TO 정보를 표시하는 카드 위젯 - 신버전
 class TOCardWidget extends StatelessWidget {
@@ -213,120 +214,78 @@ class TOCardWidget extends StatelessWidget {
   /// ✅ 마감 배지 빌드 메서드
   Widget _buildDeadlineBadge() {
     if (to.isDeadlinePassed) {
-      // 마감됨 (빨간색)
-      return Container(
+      // ⭐ 변경: StyledBadge 사용
+      return StyledBadge(
+        label: '마감',
+        backgroundColor: Colors.red[50]!,
+        textColor: Colors.red[700]!,
+        icon: Icons.lock_clock,
+        fontSize: 12,
         padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-        decoration: BoxDecoration(
-          color: Colors.red[50],
-          borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: Colors.red.shade300),
-        ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(
-              Icons.lock_clock,
-              size: 14,
-              color: Colors.red[700],
-            ),
-            const SizedBox(width: 4),
-            Text(
-              '마감',
-              style: TextStyle(
-                fontSize: 12,
-                fontWeight: FontWeight.bold,
-                color: Colors.red[700],
-              ),
-            ),
-          ],
-        ),
       );
     } else {
-      // 마감 임박 (주황색) - 24시간 이내
       final hoursLeft = to.applicationDeadline.difference(DateTime.now()).inHours;
       
       if (hoursLeft <= 24) {
-        return Container(
+        // ⭐ 변경: StyledBadge 사용
+        return StyledBadge(
+          label: to.deadlineStatus,
+          backgroundColor: Colors.orange[50]!,
+          textColor: Colors.orange[700]!,
+          icon: Icons.access_alarm,
+          fontSize: 12,
           padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-          decoration: BoxDecoration(
-            color: Colors.orange[50],
-            borderRadius: BorderRadius.circular(12),
-            border: Border.all(color: Colors.orange.shade300),
-          ),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(
-                Icons.access_alarm,
-                size: 14,
-                color: Colors.orange[700],
-              ),
-              const SizedBox(width: 4),
-              Text(
-                to.deadlineStatus, // "3시간 남음"
-                style: TextStyle(
-                  fontSize: 12,
-                  fontWeight: FontWeight.bold,
-                  color: Colors.orange[700],
-                ),
-              ),
-            ],
-          ),
         );
       }
     }
     
-    return const SizedBox.shrink(); // 마감 임박 아니면 표시 안 함
+    return const SizedBox.shrink();
   }
 
   /// 지원 상태 배지
   Widget _buildStatusBadge() {
-    Color bgColor;
-    Color textColor;
-    String text;
-
+    // ⭐ 변경: StyledBadge 사용
     switch (applicationStatus) {
       case 'PENDING':
-        bgColor = Colors.orange.shade50;
-        textColor = Colors.orange.shade700;
-        text = '대기';
-        break;
-      case 'CONFIRMED':
-        bgColor = Colors.blue.shade50;
-        textColor = Colors.blue.shade700;
-        text = '확정';
-        break;
-      case 'REJECTED':
-        bgColor = Colors.red.shade50;
-        textColor = Colors.red.shade700;
-        text = '거절';
-        break;
-      case 'CANCELED':
-        bgColor = Colors.grey.shade100;
-        textColor = Colors.grey.shade600;
-        text = '취소';
-        break;
-      default:
-        bgColor = Colors.green.shade50;
-        textColor = Colors.green.shade700;
-        text = '지원 가능';
-    }
-
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-      decoration: BoxDecoration(
-        color: bgColor,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: textColor.withOpacity(0.3)),
-      ),
-      child: Text(
-        text,
-        style: TextStyle(
+        return StyledBadge(
+          label: '대기',
+          backgroundColor: Colors.orange.shade50,
+          textColor: Colors.orange.shade700,
           fontSize: 11,
-          fontWeight: FontWeight.bold,
-          color: textColor,
-        ),
-      ),
-    );
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+        );
+      case 'CONFIRMED':
+        return StyledBadge(
+          label: '확정',
+          backgroundColor: Colors.blue.shade50,
+          textColor: Colors.blue.shade700,
+          fontSize: 11,
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+        );
+      case 'REJECTED':
+        return StyledBadge(
+          label: '거절',
+          backgroundColor: Colors.red.shade50,
+          textColor: Colors.red.shade700,
+          fontSize: 11,
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+        );
+      case 'CANCELED':
+        return StyledBadge(
+          label: '취소',
+          backgroundColor: Colors.grey.shade100,
+          textColor: Colors.grey.shade600,
+          fontSize: 11,
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+        );
+      default:
+        return StyledBadge(
+          label: '지원 가능',
+          backgroundColor: Colors.green.shade50,
+          textColor: Colors.green.shade700,
+          fontSize: 11,
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+        );
+    }
   }
 }
