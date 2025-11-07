@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
-import '../../models/business_model.dart';
-import '../../widgets/loading_widget.dart';
+import '../../models/core/business_model.dart';
+import '../../widgets/common/loading_widget.dart';
+import '../../widgets/common/styled_container.dart';
 import '../../utils/toast_helper.dart';
+
 
 /// ✅ 모든 사업장 조회 화면 (최고관리자 전용)
 /// ownerId 필터 없이 모든 사업장 표시
@@ -176,28 +178,20 @@ class _AllBusinessesScreenState extends State<AllBusinessesScreen> {
                     ),
                   ),
                 ),
-                Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 8,
-                    vertical: 4,
-                  ),
-                  decoration: BoxDecoration(
-                    color: business.isApproved
-                        ? Colors.green[50]
-                        : Colors.orange[50],
-                    borderRadius: BorderRadius.circular(4),
-                  ),
-                  child: Text(
-                    business.isApproved ? '승인됨' : '대기중',
-                    style: TextStyle(
-                      color: business.isApproved
-                          ? Colors.green[700]
-                          : Colors.orange[700],
-                      fontSize: 12,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                ),
+                // ⭐ 변경: StyledBadge 사용
+                business.isApproved
+                    ? StyledBadge(
+                        label: '승인됨',
+                        backgroundColor: Colors.green[50]!,
+                        textColor: Colors.green[700]!,
+                        fontSize: 12,
+                      )
+                    : StyledBadge(
+                        label: '대기중',
+                        backgroundColor: Colors.orange[50]!,
+                        textColor: Colors.orange[700]!,
+                        fontSize: 12,
+                      ),
               ],
             ),
             const Divider(height: 24),

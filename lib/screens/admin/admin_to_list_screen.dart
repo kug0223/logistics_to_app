@@ -4,8 +4,8 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:provider/provider.dart';
 
 // Models
-import '../../models/to_model.dart';
-import '../../models/work_detail_model.dart';
+import '../../models/core/to_model.dart';
+import '../../models/core/work_detail_model.dart';
 
 // Services
 import '../../services/firestore_service.dart';
@@ -20,24 +20,26 @@ import '../../utils/format_helper.dart';
 import '../../utils/test_data_helper.dart';
 
 // Widgets
-import '../../widgets/loading_widget.dart';
+import '../../widgets/common/loading_widget.dart';
+import '../../widgets/common/styled_container.dart';
 import '../../widgets/work_type_icon.dart';
+
 
 // Screens
 import 'admin_create_to_screen.dart';
 import 'admin_edit_to_screen.dart';
 
 // Local Models
-import 'models/to_list_models.dart';
+import '../../models/ui/admin_to_list_ui_models.dart';
 // Local dialogs
 import 'dialogs/work_detail_management_dialog.dart';
 import 'dialogs/confirmed_list_dialog.dart';
-import '../../widgets/filter_dialog.dart';
+import '../../widgets/inputs/filter_dialog.dart';
 
 // Local Widgets
-import 'widgets/to_list_tabs.dart';
+import 'widgets/to_list_tab_bar.dart';
 import 'dialogs/to_list_dialogs.dart';
-import 'widgets/work_applicants_dialog.dart';
+import 'dialogs/work_applicants_dialog.dart';
 
 /// 관리자 TO 목록 화면 - 이중 토글 UI
 class AdminTOListScreen extends StatefulWidget {
@@ -480,6 +482,7 @@ class _AdminTOListScreenState extends State<AdminTOListScreen> {
         selectedBusiness: _selectedBusiness,
         selectedDateRange: _selectedDateRange,  // 🔥 DateTimeRange 전달
         businessNames: _businessNames,
+        isUserMode: true,
         onBusinessChanged: (value) {
           setState(() {
             _selectedBusiness = value;
@@ -679,7 +682,6 @@ class _AdminTOListScreenState extends State<AdminTOListScreen> {
                       
                       // ✅ 상태 배지
                       () {
-                        // 🔥 모든 개별 TO가 마감됐는지 확인
                         bool allClosed = groupItem.groupTOs.every((toItem) {
                           return toItem.workDetails.every((work) => 
                             work.isClosed || work.isTimeExpired || work.isFull
@@ -687,76 +689,26 @@ class _AdminTOListScreenState extends State<AdminTOListScreen> {
                         });
                         
                         if (allClosed) {
-                          return Container(
-                            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                            decoration: BoxDecoration(
-                              color: Colors.grey[50],
-                              borderRadius: BorderRadius.circular(12),
-                              border: Border.all(color: Colors.grey[600]!, width: 1.5),
-                            ),
-                            child: Row(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                Icon(Icons.lock, size: 12, color: Colors.grey[700]),
-                                const SizedBox(width: 4),
-                                Text(
-                                  '마감됨',
-                                  style: TextStyle(
-                                    fontSize: 11,
-                                    fontWeight: FontWeight.bold,
-                                    color: Colors.grey[700],
-                                  ),
-                                ),
-                              ],
-                            ),
+                          return StyledOutlineBadge(
+                            label: '마감됨',
+                            color: Colors.grey[600]!,
+                            backgroundColor: Colors.grey[50],
+                            icon: Icons.lock,
+                            fontSize: 11,
                           );
                         } else if (isFull) {
-                          return Container(
-                            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                            decoration: BoxDecoration(
-                              color: Colors.green[50],
-                              borderRadius: BorderRadius.circular(12),
-                              border: Border.all(color: Colors.green[600]!, width: 1.5),
-                            ),
-                            child: Row(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                Icon(Icons.check_circle, size: 12, color: Colors.green[600]),
-                                const SizedBox(width: 4),
-                                Text(
-                                  '인원충족',
-                                  style: TextStyle(
-                                    fontSize: 11,
-                                    fontWeight: FontWeight.bold,
-                                    color: Colors.green[700],
-                                  ),
-                                ),
-                              ],
-                            ),
+                          return StyledOutlineBadge(
+                            label: '인원충족',
+                            color: Colors.green[600]!,
+                            icon: Icons.check_circle,
+                            fontSize: 11,
                           );
                         } else {
-                          return Container(
-                            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                            decoration: BoxDecoration(
-                              color: Colors.blue[50],
-                              borderRadius: BorderRadius.circular(12),
-                              border: Border.all(color: Colors.blue[600]!, width: 1.5),
-                            ),
-                            child: Row(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                Icon(Icons.circle, size: 12, color: Colors.blue[600]),
-                                const SizedBox(width: 4),
-                                Text(
-                                  '진행중',
-                                  style: TextStyle(
-                                    fontSize: 11,
-                                    fontWeight: FontWeight.bold,
-                                    color: Colors.blue[700],
-                                  ),
-                                ),
-                              ],
-                            ),
+                          return StyledOutlineBadge(
+                            label: '진행중',
+                            color: Colors.blue[600]!,
+                            icon: Icons.circle,
+                            fontSize: 11,
                           );
                         }
                       }(),
@@ -1237,65 +1189,45 @@ class _AdminTOListScreenState extends State<AdminTOListScreen> {
                       
                       const SizedBox(width: 8),
                       
-                      // ✅ 상태 배지 (WorkDetail 기반으로 계산)
+                    // ✅ 상태 배지 (WorkDetail 기반으로 계산) - ⭐ StyledOutlineBadge 사용
                     () {
                       // 🔥 모든 WorkDetail이 마감됐는지 확인
                       final allWorksClosed = toItem.workDetails.every((work) => 
                         work.isClosed || work.isTimeExpired || work.isFull
                       );
                       
-                      Color bgColor;
-                      Color borderColor;
-                      Color textColor;
-                      IconData icon;
-                      String text;
-                      
                       if (allWorksClosed) {
                         // 마감됨
-                        bgColor = Colors.grey[300]!;
-                        borderColor = Colors.grey[600]!;
-                        textColor = Colors.grey[700]!;
-                        icon = Icons.lock;
-                        text = '마감됨';
+                        return StyledOutlineBadge(
+                          label: '마감됨',
+                          color: Colors.grey[600]!,
+                          backgroundColor: Colors.grey[300],
+                          icon: Icons.lock,
+                          fontSize: 10,
+                          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
+                          borderRadius: 10,
+                        );
                       } else if (isFull) {
                         // 인원충족
-                        bgColor = Colors.green[50]!;
-                        borderColor = Colors.green[600]!;
-                        textColor = Colors.green[700]!;
-                        icon = Icons.check_circle;
-                        text = '인원충족';
+                        return StyledOutlineBadge(
+                          label: '인원충족',
+                          color: Colors.green[600]!,
+                          icon: Icons.check_circle,
+                          fontSize: 10,
+                          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
+                          borderRadius: 10,
+                        );
                       } else {
                         // 진행중
-                        bgColor = Colors.blue[50]!;
-                        borderColor = Colors.blue[600]!;
-                        textColor = Colors.blue[700]!;
-                        icon = Icons.circle;
-                        text = '진행중';
+                        return StyledOutlineBadge(
+                          label: '진행중',
+                          color: Colors.blue[600]!,
+                          icon: Icons.circle,
+                          fontSize: 10,
+                          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
+                          borderRadius: 10,
+                        );
                       }
-                      
-                      return Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
-                        decoration: BoxDecoration(
-                          color: bgColor,
-                          borderRadius: BorderRadius.circular(10),
-                          border: Border.all(color: borderColor, width: 1.5),
-                        ),
-                        child: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Icon(icon, size: 10, color: textColor),
-                            const SizedBox(width: 3),
-                            Text(
-                              text,
-                              style: TextStyle(
-                                fontSize: 10,
-                                fontWeight: FontWeight.bold,
-                                color: textColor,
-                              ),
-                            ),
-                          ],
-                        ),
-                      );
                     }(),
                     ],
                   ),
@@ -2282,61 +2214,28 @@ class _AdminTOListScreenState extends State<AdminTOListScreen> {
   }
   /// 마감시간 표시 (업무별 마감 방식 반영)
   Widget _buildDeadlineBadge(TOModel to) {
-    // ⭐ FIXED_TIME 방식 (장기 근무)
     if (to.deadlineType == 'FIXED_TIME') {
-      return Container(
-        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-        decoration: BoxDecoration(
-          color: Colors.orange[50],
-          border: Border.all(color: Colors.orange[300]!),
-          borderRadius: BorderRadius.circular(4),
-        ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const Text('🕐', style: TextStyle(fontSize: 11)),
-            const SizedBox(width: 4),
-            Text(
-              DateFormat('MM/dd HH:mm').format(to.applicationDeadline),
-              style: TextStyle(
-                fontSize: 12,
-                color: Colors.orange[700],
-                fontWeight: FontWeight.bold,
-              ),
-            ),
-          ],
-        ),
+      // ⭐ 변경: StyledBadge 사용
+      return StyledBadge(
+        label: '🕐 ${DateFormat('MM/dd HH:mm').format(to.applicationDeadline)}',
+        backgroundColor: Colors.orange[50]!,
+        textColor: Colors.orange[700]!,
+        fontSize: 12,
+        borderRadius: 4,
       );
     }
     
-    // ⭐ HOURS_BEFORE 방식 (단기 알바)
     if (to.deadlineType == 'HOURS_BEFORE' && to.hoursBeforeStart != null) {
-      return Container(
-        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-        decoration: BoxDecoration(
-          color: Colors.orange[50],
-          border: Border.all(color: Colors.orange[300]!),
-          borderRadius: BorderRadius.circular(4),
-        ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const Text('🕐', style: TextStyle(fontSize: 11)),
-            const SizedBox(width: 4),
-            Text(
-              '각 업무 ${to.hoursBeforeStart}시간 전',
-              style: TextStyle(
-                fontSize: 12,
-                color: Colors.orange[700],
-                fontWeight: FontWeight.bold,
-              ),
-            ),
-          ],
-        ),
+      // ⭐ 변경: StyledBadge 사용
+      return StyledBadge(
+        label: '🕐 각 업무 ${to.hoursBeforeStart}시간 전',
+        backgroundColor: Colors.orange[50]!,
+        textColor: Colors.orange[700]!,
+        fontSize: 12,
+        borderRadius: 4,
       );
     }
     
-    // 마감시간이 없는 경우
     return const SizedBox.shrink();
   }
 

@@ -1,10 +1,11 @@
 import 'package:flutter/material.dart';
-import '../models/to_model.dart';
-import '../models/work_detail_model.dart';
-import '../models/application_model.dart';
-import '../services/firestore_service.dart';
+import '../../models/core/to_model.dart';
+import '../../models/core/work_detail_model.dart';
+import '../../models/core/application_model.dart';
+import '../../services/firestore_service.dart';
 import 'work_item_card.dart';
-import 'work_type_icon.dart';
+import '../work_type_icon.dart';
+import '../common/styled_container.dart';
 
 /// TO 카드 위젯 (공통 위젯)
 class UserTOCard extends StatefulWidget {
@@ -155,32 +156,36 @@ class _UserTOCardState extends State<UserTOCard> {
                     children: [
                       // 단기/장기 배지
                       if (widget.to.isShortTerm)
-                        _buildBadge(
+                        StyledBadge(
                           label: '단기',
                           backgroundColor: Colors.blue[100]!,
                           textColor: Colors.blue[700]!,
+                          fontSize: 11,
                         ),
                       if (widget.to.isLongTerm)
-                        _buildBadge(
+                        StyledBadge(
                           label: '장기',
                           backgroundColor: Colors.purple[100]!,
                           textColor: Colors.purple[700]!,
+                          fontSize: 11,
                         ),
-                      
+
                       // 마감임박 배지
                       if (widget.to.isDeadlineSoon)
-                        _buildBadge(
+                        StyledBadge(
                           label: '마감임박',
                           backgroundColor: Colors.orange[100]!,
                           textColor: Colors.orange[700]!,
+                          fontSize: 11,
                         ),
                       
                       // 지원완료 배지
                       if (_hasAppliedToTO)
-                        _buildBadge(
+                        StyledBadge(
                           label: '지원완료',
                           backgroundColor: Colors.green[100]!,
                           textColor: Colors.green[700]!,
+                          fontSize: 11,
                         ),
                     ],
                   ),

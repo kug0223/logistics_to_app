@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import '../models/business_work_type_model.dart';
+import '../models/core/business_work_type_model.dart';
 import '../utils/format_helper.dart';
 
 /// 업무 유형 아이콘/이모지 렌더링 유틸리티

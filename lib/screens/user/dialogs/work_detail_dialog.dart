@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import '../../../models/work_detail_model.dart';
+import '../../../models/core/work_detail_model.dart';
 import '../../../utils/format_helper.dart';
 
 /// 업무 상세 다이얼로그

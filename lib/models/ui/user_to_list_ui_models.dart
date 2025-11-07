@@ -1,6 +1,6 @@
-import '../../../models/to_model.dart';
-import '../../../models/work_detail_model.dart';
-import '../../../models/application_model.dart';
+import '../core/to_model.dart';
+import '../core/work_detail_model.dart';
+import '../core/application_model.dart';
 
 /// TO와 업무 상세를 함께 담는 모델
 class TOWithDetails {

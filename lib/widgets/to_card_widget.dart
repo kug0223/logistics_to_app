@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import '../models/to_model.dart';
+import '../models/core/to_model.dart';
 
 /// TO 정보를 표시하는 카드 위젯 - 신버전
 class TOCardWidget extends StatelessWidget {

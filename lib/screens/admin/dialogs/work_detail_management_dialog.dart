@@ -2,12 +2,13 @@ import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:intl/intl.dart';
 
-import '../../../models/work_detail_model.dart';
+import '../../../models/core/work_detail_model.dart';
 import '../../../services/firestore_service.dart';
 import '../../../utils/toast_helper.dart';
 import '../../../utils/format_helper.dart';
 import '../../../widgets/work_type_icon.dart';
-import '../models/to_list_models.dart';
+import '../../../models/ui/admin_to_list_ui_models.dart';
+import '../../../utils/dialog_helper.dart';
 
 class WorkDetailManagementDialog {
   final BuildContext context;
@@ -371,21 +372,14 @@ class WorkDetailManagementDialog {
           ),
         );
       
-      case 'FULL':  // 🔥 추가!
+      case 'FULL':
         return ElevatedButton.icon(
           onPressed: () {
-            showDialog(
-              context: context,
-              builder: (context) => AlertDialog(
-                title: const Text('알림'),
-                content: const Text('인원이 충족된 업무입니다.'),
-                actions: [
-                  TextButton(
-                    onPressed: () => Navigator.pop(context),
-                    child: const Text('확인'),
-                  ),
-                ],
-              ),
+            // ⭐ 변경: DialogHelper 사용
+            DialogHelper.showInfo(
+              context,
+              title: '알림',
+              message: '인원이 충족된 업무입니다.',
             );
           },
           icon: const Icon(Icons.check_circle, size: 16),
@@ -415,26 +409,16 @@ class WorkDetailManagementDialog {
 
   // 🔥 긴급모집 종료 메서드 추가
   Future<void> _handleBulkStopEmergency(List<WorkDetailModel> works) async {
-    final confirm = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('긴급모집 종료'),
-        content: Text('${works.length}개 업무의 긴급모집을 종료하시겠습니까?'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('취소'),
-          ),
-          ElevatedButton(
-            onPressed: () => Navigator.pop(context, true),
-            style: ElevatedButton.styleFrom(backgroundColor: Colors.orange),
-            child: const Text('종료'),
-          ),
-        ],
-      ),
+    // ⭐ 변경: DialogHelper 사용
+    final confirm = await DialogHelper.showConfirm(
+      context,
+      title: '긴급모집 종료',
+      message: '${works.length}개 업무의 긴급모집을 종료하시겠습니까?',
+      confirmText: '종료',
+      confirmColor: Colors.orange,
     );
-    
-    if (confirm == true) {
+
+    if (confirm) {
       for (var work in works) {
         await firestoreService.stopEmergencyRecruitment(
           toId: toItem.to.id,
@@ -482,26 +466,16 @@ class WorkDetailManagementDialog {
 
   // 일괄 처리
   Future<void> _handleBulkClose(List<WorkDetailModel> works) async {
-    final confirm = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('업무 마감'),
-        content: Text('${works.length}개 업무를 마감하시겠습니까?'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('취소'),
-          ),
-          ElevatedButton(
-            onPressed: () => Navigator.pop(context, true),
-            style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
-            child: const Text('마감'),
-          ),
-        ],
-      ),
+    // ⭐ 변경: DialogHelper 사용
+    final confirm = await DialogHelper.showConfirm(
+      context,
+      title: '업무 마감',
+      message: '${works.length}개 업무를 마감하시겠습니까?',
+      confirmText: '마감',
+      confirmColor: Colors.red,
     );
-    
-    if (confirm == true) {
+
+    if (confirm) {
       for (var work in works) {
         await firestoreService.closeWorkDetail(
           toId: toItem.to.id,
@@ -517,26 +491,16 @@ class WorkDetailManagementDialog {
   }
 
   Future<void> _handleBulkReopen(List<WorkDetailModel> works) async {
-    final confirm = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('업무 재오픈'),
-        content: Text('${works.length}개 업무를 재오픈하시겠습니까?'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('취소'),
-          ),
-          ElevatedButton(
-            onPressed: () => Navigator.pop(context, true),
-            style: ElevatedButton.styleFrom(backgroundColor: Colors.green),
-            child: const Text('재오픈'),
-          ),
-        ],
-      ),
+    // ⭐ 변경: DialogHelper 사용
+    final confirm = await DialogHelper.showConfirm(
+      context,
+      title: '업무 재오픈',
+      message: '${works.length}개 업무를 재오픈하시겠습니까?',
+      confirmText: '재오픈',
+      confirmColor: Colors.green,
     );
-    
-    if (confirm == true) {
+
+    if (confirm) {
       for (var work in works) {
         await firestoreService.reopenWorkDetail(
           toId: toItem.to.id,

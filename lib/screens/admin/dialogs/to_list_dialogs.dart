@@ -1,11 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
-import '../../../models/to_model.dart';
+import '../../../models/core/to_model.dart';
 import '../../../services/firestore_service.dart';
 import '../../../providers/user_provider.dart';
 import '../../../utils/toast_helper.dart';
-import '../models/to_list_models.dart';
+import '../../../models/ui/admin_to_list_ui_models.dart';
+import '../../../utils/dialog_helper.dart';
 
 /// TO 관련 다이얼로그 모음
 class TOListDialogs {
@@ -121,25 +122,10 @@ class TOListDialogs {
       }
     }
     
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: Text(title),
-        content: Text(content),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('취소'),
-          ),
-          ElevatedButton(
-            onPressed: () => Navigator.pop(context, true),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: Colors.red,
-            ),
-            child: const Text('삭제'),
-          ),
-        ],
-      ),
+    final confirmed = await DialogHelper.showDeleteConfirm(
+      context,
+      itemName: 'TO',
+      additionalMessage: content,
     );
     
     if (confirmed == true) {
@@ -159,32 +145,24 @@ class TOListDialogs {
       totalApplicants += toItem.confirmedCount + toItem.pendingCount;
     }
     
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('⚠️ 그룹 전체 삭제'),
-        content: Text(
-          '다음 그룹을 전체 삭제하시겠습니까?\n\n'
+    // ⭐ 변경: DialogHelper 사용
+    final confirmed = await DialogHelper.showDangerConfirm(
+      context,
+      title: '⚠️ 그룹 전체 삭제',
+      message: '다음 그룹을 전체 삭제하시겠습니까?\n\n'
           '🔗 ${masterTO.groupName}\n\n'
           '포함된 TO: ${groupItem.groupTOs.length}개\n'
           '⚠️ 총 $totalApplicants명의 지원자가 영향받습니다\n'
-          '⚠️ 이 작업은 되돌릴 수 없습니다'
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('취소'),
-          ),
-          ElevatedButton(
-            onPressed: () => Navigator.pop(context, true),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: Colors.red,
-            ),
-            child: const Text('전체 삭제'),
-          ),
-        ],
-      ),
+          '⚠️ 이 작업은 되돌릴 수 없습니다',
+      confirmText: '전체 삭제',
     );
+
+    if (confirmed) {
+      final success = await firestoreService.deleteGroupTOs(masterTO.groupId!);
+      if (success) {
+        onChanged();
+      }
+    }
     
     if (confirmed == true) {
       final success = await firestoreService.deleteGroupTOs(masterTO.groupId!);
@@ -203,40 +181,22 @@ class TOListDialogs {
       return;
     }
     
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Row(
-          children: [
-            Icon(Icons.link_off, color: Colors.orange),
-            SizedBox(width: 12),
-            Text('그룹 해제'),
-          ],
-        ),
-        content: Text(
-          '그룹: "${to.groupName}"에서\n다음 TO를 해제하시겠습니까?\n\n'
+    // ⭐ 변경: DialogHelper 사용
+    final confirmed = await DialogHelper.showConfirm(
+      context,
+      title: '그룹 해제',
+      message: '그룹: "${to.groupName}"에서\n다음 TO를 해제하시겠습니까?\n\n'
           '📋 ${DateFormat('MM/dd (E)', 'ko_KR').format(to.date)} ${to.title}\n\n'
           '✅ 독립 TO로 전환됩니다\n'
           '✅ 다른 그룹으로 재연결 가능\n'
-          '✅ 지원자 정보는 유지됩니다'
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('취소'),
-          ),
-          ElevatedButton(
-            onPressed: () => Navigator.pop(context, true),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: Colors.orange,
-            ),
-            child: const Text('해제'),
-          ),
-        ],
-      ),
+          '✅ 지원자 정보는 유지됩니다',
+      confirmText: '해제',
+      confirmColor: Colors.orange,
+      icon: Icons.link_off,
+      iconColor: Colors.orange,
     );
-    
-    if (confirmed == true) {
+
+    if (confirmed) {
       final success = await firestoreService.removeFromGroup(to.id);
       if (success) {
         onChanged();
@@ -246,64 +206,51 @@ class TOListDialogs {
 
   /// TO 마감 다이얼로그
   Future<void> showCloseTODialog(TOModel to) async {
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('TO 마감'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text('이 TO를 마감 처리하시겠습니까?'),
-            const SizedBox(height: 16),
-            Container(
-              padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(
-                color: Colors.orange[50],
-                borderRadius: BorderRadius.circular(8),
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    children: [
-                      Icon(Icons.info_outline, size: 16, color: Colors.orange[700]),
-                      const SizedBox(width: 8),
-                      const Text(
-                        '마감 후 변경사항',
-                        style: TextStyle(fontWeight: FontWeight.bold),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 8),
-                  const Text('• 더 이상 지원을 받을 수 없습니다', style: TextStyle(fontSize: 13)),
-                  const Text('• 확정된 지원자는 유지됩니다', style: TextStyle(fontSize: 13)),
-                  const Text('• 재오픈으로 다시 열 수 있습니다', style: TextStyle(fontSize: 13)),
-                ],
-              ),
+    // ⭐ 변경: DialogHelper 사용 (커스텀 콘텐츠)
+    final confirmed = await DialogHelper.showCustom<bool>(
+      context,
+      title: 'TO 마감',
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text('이 TO를 마감 처리하시겠습니까?'),
+          const SizedBox(height: 16),
+          Container(
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: Colors.orange[50],
+              borderRadius: BorderRadius.circular(8),
             ),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('취소'),
-          ),
-          ElevatedButton(
-            onPressed: () => Navigator.pop(context, true),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: Colors.orange,
-              foregroundColor: Colors.white,
+            child: const Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('• 더 이상 지원을 받을 수 없습니다', style: TextStyle(fontSize: 13)),
+                Text('• 재오픈으로 다시 활성화 가능합니다', style: TextStyle(fontSize: 13)),
+              ],
             ),
-            child: const Text('마감'),
           ),
         ],
       ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context, false),
+          child: const Text('취소'),
+        ),
+        ElevatedButton(
+          onPressed: () => Navigator.pop(context, true),
+          style: ElevatedButton.styleFrom(
+            backgroundColor: Colors.orange,
+            foregroundColor: Colors.white,
+          ),
+          child: const Text('마감'),
+        ),
+      ],
     );
 
     if (confirmed != true) return;
 
-    _showLoadingDialog('마감 처리 중...');
+    DialogHelper.showLoading(context, message: '처리 중...');
 
     try {
       final userProvider = Provider.of<UserProvider>(context, listen: false);
@@ -419,7 +366,7 @@ class TOListDialogs {
 
     if (confirmed != true) return;
 
-    _showLoadingDialog('재오픈 중...');
+    DialogHelper.showLoading(context, message: '재오픈 중...');
 
     try {
       final userProvider = Provider.of<UserProvider>(context, listen: false);
@@ -494,7 +441,7 @@ class TOListDialogs {
 
     if (confirmed != true) return;
 
-    _showLoadingDialog('그룹 마감 중...');
+    DialogHelper.showLoading(context, message: '그룹 마감 중...');
 
     try {
       final userProvider = Provider.of<UserProvider>(context, listen: false);
@@ -599,7 +546,7 @@ class TOListDialogs {
 
     if (confirmed != true) return;
 
-    _showLoadingDialog('그룹 재오픈 중...');
+    DialogHelper.showLoading(context, message: '그룹 재오픈 중...');
 
     try {
       final userProvider = Provider.of<UserProvider>(context, listen: false);
@@ -628,28 +575,6 @@ class TOListDialogs {
   // ========================================
   // Helper 메서드들
   // ========================================
-
-  void _showLoadingDialog(String message) {
-    showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder: (context) => Center(
-        child: Card(
-          child: Padding(
-            padding: const EdgeInsets.all(20),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                const CircularProgressIndicator(),
-                const SizedBox(height: 16),
-                Text(message),
-              ],
-            ),
-          ),
-        ),
-      ),
-    );
-  }
 
   void _showTimeExpiredDialog(TOModel to) {
     showDialog(

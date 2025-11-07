@@ -1,13 +1,14 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-import '../../../models/application_model.dart';
-import '../../../models/work_detail_model.dart';
+import '../../../models/core/application_model.dart';
+import '../../../models/core/work_detail_model.dart';
 import '../../../services/firestore_service.dart';
 import '../../../providers/user_provider.dart';
 import '../../../utils/toast_helper.dart';
 import '../../../utils/format_helper.dart';
 import '../../../widgets/work_type_icon.dart';
-import '../models/to_list_models.dart';
+import '../../../models/ui/admin_to_list_ui_models.dart';
+import '../../../utils/dialog_helper.dart';
 
 /// 업무별 지원자 관리 다이얼로그
 class WorkApplicantsDialog extends StatefulWidget {
@@ -181,40 +182,16 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog> {
 
       if (confirmed != true) return;
     } else {
-      // 🔥 정상 범위 내 승인
-      final confirmed = await showDialog<bool>(
-        context: context,
-        builder: (context) => AlertDialog(
-          title: Text('일괄 승인'),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text('$selectedCount명을 승인하시겠습니까?'),
-              SizedBox(height: 12),
-              Text(
-                '승인 후: $afterConfirm/$requiredCount명',
-                style: TextStyle(
-                  fontSize: 13,
-                  color: Colors.grey[600],
-                ),
-              ),
-            ],
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context, false),
-              child: Text('취소'),
-            ),
-            ElevatedButton(
-              onPressed: () => Navigator.pop(context, true),
-              child: Text('승인'),
-            ),
-          ],
-        ),
+      // ⭐ 변경: DialogHelper 사용
+      final confirmed = await DialogHelper.showConfirm(
+        context,
+        title: '일괄 승인',
+        message: '${_selectedIds.length}명을 승인하시겠습니까?',
+        confirmText: '승인',
+        confirmColor: Colors.green,
       );
 
-      if (confirmed != true) return;
+      if (!confirmed) return;
     }
 
     try {
@@ -247,26 +224,16 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog> {
       return;
     }
 
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: Text('일괄 거절'),
-        content: Text('${_selectedIds.length}명을 거절하시겠습니까?'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: Text('취소'),
-          ),
-          ElevatedButton(
-            onPressed: () => Navigator.pop(context, true),
-            style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
-            child: Text('거절'),
-          ),
-        ],
-      ),
+    // ⭐ 변경: DialogHelper 사용
+    final confirmed = await DialogHelper.showConfirm(
+      context,
+      title: '일괄 거절',
+      message: '${_selectedIds.length}명을 거절하시겠습니까?',
+      confirmText: '거절',
+      confirmColor: Colors.red,
     );
 
-    if (confirmed != true) return;
+    if (!confirmed) return;
 
     try {
       final userProvider = Provider.of<UserProvider>(context, listen: false);

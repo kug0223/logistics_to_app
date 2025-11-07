@@ -1,14 +1,15 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
-import '../../models/business_model.dart';
+import '../../models/core/business_model.dart';
 import '../../services/firestore_service.dart';
 import '../../providers/user_provider.dart';
 import '../../utils/constants.dart';
 import '../../utils/toast_helper.dart';
-import '../../widgets/daum_address_search.dart';
+import '../../widgets/inputs/daum_address_search.dart';
 import '../auth/login_screen.dart';
-import '../../widgets/loading_widget.dart';
+import '../../widgets/common/loading_widget.dart';
+import '../../utils/dialog_helper.dart';
 
 /// 사업장 등록 화면 (회원가입 후)
 class BusinessRegistrationScreen extends StatefulWidget {
@@ -231,26 +232,14 @@ class _BusinessRegistrationScreenState extends State<BusinessRegistrationScreen>
     return WillPopScope(
       onWillPop: () async {
         if (widget.isFromSignUp) {
-          // 회원가입 후라면 뒤로가기 방지
-          final confirmed = await showDialog<bool>(
-            context: context,
-            builder: (context) => AlertDialog(
-              title: const Text('등록 취소'),
-              content: const Text('사업장 등록을 취소하시겠습니까?\n로그인 화면으로 이동합니다.'),
-              actions: [
-                TextButton(
-                  onPressed: () => Navigator.pop(context, false),
-                  child: const Text('계속 등록'),
-                ),
-                TextButton(
-                  onPressed: () => Navigator.pop(context, true),
-                  child: const Text('취소', style: TextStyle(color: Colors.red)),
-                ),
-              ],
-            ),
+          // ⭐ 변경: DialogHelper 사용
+          final confirmed = await DialogHelper.showCancelConfirm(
+            context,
+            title: '등록 취소',
+            message: '사업장 등록을 취소하시겠습니까?\n로그인 화면으로 이동합니다.',
           );
 
-          if (confirmed == true && mounted) {
+          if (confirmed && mounted) {
             Navigator.pushAndRemoveUntil(
               context,
               MaterialPageRoute(builder: (context) => const LoginScreen()),

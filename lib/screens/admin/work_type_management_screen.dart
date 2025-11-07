@@ -1,11 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-import '../../models/business_work_type_model.dart';
-import '../../models/business_model.dart';
+import '../../models/core/business_work_type_model.dart';
+import '../../models/core/business_model.dart';
 import '../../services/firestore_service.dart';
 import '../../providers/user_provider.dart';
-import '../../widgets/loading_widget.dart';
-import '../../widgets/icon_picker_dialog.dart';
+import '../../widgets/common/loading_widget.dart';
+import '../../widgets/pickers/icon_picker_dialog.dart';
 import '../../widgets/work_type_icon.dart';
 import '../../utils/toast_helper.dart';
 import '../../utils/format_helper.dart';

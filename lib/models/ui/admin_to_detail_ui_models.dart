@@ -1,5 +1,5 @@
-import '../../../models/to_model.dart';
-import '../../../models/work_detail_model.dart';
+import '../core/to_model.dart';
+import '../core/work_detail_model.dart';
 
 /// 날짜별 TO 아이템
 class DateTOItem {

@@ -1,7 +1,7 @@
 // ✅ lib/models/application_model.dart 전체 수정
 
 import 'package:cloud_firestore/cloud_firestore.dart';
-import '../utils/format_helper.dart';
+import '../../utils/format_helper.dart';
 
 /// 지원서 모델 - 업무유형 선택 및 변경 이력 지원
 class ApplicationModel {

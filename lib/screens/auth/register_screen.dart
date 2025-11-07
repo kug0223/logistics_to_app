@@ -1,10 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:flutter/services.dart'; 
-import '../../models/user_model.dart';
+import '../../models/core/user_model.dart';
 import '../../providers/user_provider.dart';
 import '../../widgets/custom_button.dart';
-import '../../widgets/loading_widget.dart';
+import '../../widgets/common/loading_widget.dart';
 import '../admin/business_registration_screen.dart';
 
 class RegisterScreen extends StatefulWidget {

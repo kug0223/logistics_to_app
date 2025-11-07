@@ -1,11 +1,11 @@
 import 'package:flutter/material.dart';
-import '../models/work_detail_model.dart';
-import '../models/to_model.dart';
-import '../models/application_model.dart';
-import '../utils/format_helper.dart';
-import '../screens/user/dialogs/work_detail_dialog.dart';
-import '../screens/user/dialogs/apply_dialog.dart';
-import '../widgets/work_type_icon.dart';
+import '../../models/core/work_detail_model.dart';
+import '../../models/core/to_model.dart';
+import '../../models/core/application_model.dart';
+import '../../utils/format_helper.dart';
+import '../../screens/user/dialogs/work_detail_dialog.dart';
+import '../../screens/user/dialogs/apply_dialog.dart';
+import '../work_type_icon.dart';
 
 /// 업무 항목 카드 (공통 위젯) - StatefulWidget으로 변경
 class WorkItemCard extends StatefulWidget {

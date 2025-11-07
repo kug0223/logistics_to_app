@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 import '../../providers/user_provider.dart';
 import '../../providers/theme_provider.dart';
 import 'all_businesses_screen.dart';  // ✅ 모든 사업장 조회 화면
+import '../../utils/dialog_helper.dart';
 
 /// ✅ 최고관리자(SUPER_ADMIN) 홈 화면
 /// 중간관리자 홈과 동일한 레이아웃 (보라색 테마)
@@ -41,26 +42,11 @@ class AdminHomeScreen extends StatelessWidget {
                           IconButton(
                             icon: const Icon(Icons.logout, color: Colors.white),
                             onPressed: () async {
-                              final confirmed = await showDialog<bool>(
-                                context: context,
-                                builder: (context) => AlertDialog(
-                                  title: const Text('로그아웃'),
-                                  content: const Text('로그아웃 하시겠습니까?'),
-                                  actions: [
-                                    TextButton(
-                                      onPressed: () => Navigator.pop(context, false),
-                                      child: const Text('취소'),
-                                    ),
-                                    TextButton(
-                                      onPressed: () => Navigator.pop(context, true),
-                                      child: const Text('로그아웃'),
-                                    ),
-                                  ],
-                                ),
-                              );
+                              // ⭐ 변경: DialogHelper 사용
+                              final confirmed = await DialogHelper.showLogoutConfirm(context);
 
-                              if (confirmed == true && context.mounted) {
-                                context.read<ThemeProvider>().reset();  // 🔥 추가!
+                              if (confirmed && context.mounted) {
+                                context.read<ThemeProvider>().reset();
                                 await userProvider.signOut();
                               }
                             },

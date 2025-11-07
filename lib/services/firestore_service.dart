@@ -1,13 +1,13 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:intl/intl.dart';
-import '../models/user_model.dart';
-import '../models/to_model.dart';
-import '../models/application_model.dart';
-import '../models/business_model.dart';
-import '../models/work_type_model.dart';
-import '../models/work_detail_model.dart';
+import '../models/core/user_model.dart';
+import '../models/core/to_model.dart';
+import '../models/core/application_model.dart';
+import '../models/core/business_model.dart';
+import '../models/core/work_type_model.dart';
+import '../models/core/work_detail_model.dart';
 import '../utils/toast_helper.dart';
-import '../models/business_work_type_model.dart';
+import '../models/core/business_work_type_model.dart';
 
 class FirestoreService {
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;

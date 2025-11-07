@@ -1,12 +1,14 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-import '../../models/application_model.dart';
-import '../../models/to_model.dart';
+import '../../models/core/application_model.dart';
+import '../../models/core/to_model.dart';
 import '../../services/firestore_service.dart';
 import '../../providers/user_provider.dart';
-import '../../widgets/loading_widget.dart';
+import '../../widgets/common/loading_widget.dart';
+import '../../widgets/common/styled_container.dart';
 import '../../utils/toast_helper.dart';
 import 'package:intl/intl.dart';
+import '../../utils/dialog_helper.dart';
 
 /// 내 지원 내역 화면 - 신버전
 class MyApplicationsScreen extends StatefulWidget {
@@ -93,27 +95,13 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
       return;
     }
 
-    // 확인 다이얼로그
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('지원 취소'),
-        content: const Text('정말 지원을 취소하시겠습니까?'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('아니오'),
-          ),
-          TextButton(
-            onPressed: () => Navigator.pop(context, true),
-            style: TextButton.styleFrom(foregroundColor: Colors.red),
-            child: const Text('취소하기'),
-          ),
-        ],
-      ),
+    final confirmed = await DialogHelper.showCancelConfirm(
+      context,
+      title: '지원 취소',
+      message: '정말 지원을 취소하시겠습니까?',
     );
 
-    if (confirmed != true) return;
+    if (!confirmed) return;
 
     // 취소 처리
     final success = await _firestoreService.cancelApplication(applicationId, uid);
@@ -408,53 +396,49 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
 
   /// 상태 배지
   Widget _buildStatusBadge(String status) {
-    Color bgColor;
-    Color textColor;
-    String text;
-
+    // ⭐ 수정: StyledBadge 사용
     switch (status) {
       case 'PENDING':
-        bgColor = Colors.orange.shade50;
-        textColor = Colors.orange.shade700;
-        text = '대기중';
-        break;
-      case 'CONFIRMED':
-        bgColor = Colors.green.shade50;
-        textColor = Colors.green.shade700;
-        text = '확정';
-        break;
-      case 'REJECTED':
-        bgColor = Colors.red.shade50;
-        textColor = Colors.red.shade700;
-        text = '거절';
-        break;
-      case 'CANCELED':
-        bgColor = Colors.grey.shade100;
-        textColor = Colors.grey.shade600;
-        text = '취소';
-        break;
-      default:
-        bgColor = Colors.grey.shade100;
-        textColor = Colors.grey.shade600;
-        text = '알 수 없음';
-    }
-
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-      decoration: BoxDecoration(
-        color: bgColor,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: textColor.withOpacity(0.3)),
-      ),
-      child: Text(
-        text,
-        style: TextStyle(
+        return StyledBadge(
+          label: '대기중',
+          backgroundColor: Colors.orange.shade50,
+          textColor: Colors.orange.shade700,
           fontSize: 12,
-          fontWeight: FontWeight.bold,
-          color: textColor,
-        ),
-      ),
-    );
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+        );
+      case 'CONFIRMED':
+        return StyledBadge(
+          label: '확정',
+          backgroundColor: Colors.green.shade50,
+          textColor: Colors.green.shade700,
+          fontSize: 12,
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+        );
+      case 'REJECTED':
+        return StyledBadge(
+          label: '거절',
+          backgroundColor: Colors.red.shade50,
+          textColor: Colors.red.shade700,
+          fontSize: 12,
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+        );
+      case 'CANCELED':
+        return StyledBadge(
+          label: '취소',
+          backgroundColor: Colors.grey.shade100,
+          textColor: Colors.grey.shade600,
+          fontSize: 12,
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+        );
+      default:
+        return StyledBadge(
+          label: '알 수 없음',
+          backgroundColor: Colors.grey.shade100,
+          textColor: Colors.grey.shade600,
+          fontSize: 12,
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+        );
+    }
   }
 }
 

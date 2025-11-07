@@ -1,12 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 
-import '../../../models/work_detail_model.dart';
-import '../../../models/application_model.dart';
+import '../../../models/core/work_detail_model.dart';
+import '../../../models/core/application_model.dart';
 import '../../../services/firestore_service.dart';
 import '../../../utils/format_helper.dart';
 import '../../../widgets/work_type_icon.dart';
-import '../models/to_list_models.dart';
+import '../../../models/ui/admin_to_list_ui_models.dart';
 
 class ConfirmedListDialog {
   final BuildContext context;

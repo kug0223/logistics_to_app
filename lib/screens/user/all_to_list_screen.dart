@@ -1,13 +1,13 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-import '../../models/to_model.dart';
-import '../../models/application_model.dart';
+import '../../models/core/to_model.dart';
+import '../../models/core/application_model.dart';
 import '../../services/firestore_service.dart';
 import '../../providers/user_provider.dart';
-import '../../widgets/loading_widget.dart';
-import '../../widgets/user_to_card.dart';
+import '../../widgets/common/loading_widget.dart';
+import '../../widgets/cards/to_card_widget.dart';
 import '../../utils/toast_helper.dart';
-import '../../widgets/filter_dialog.dart';
+import '../../widgets/inputs/filter_dialog.dart';
 
 
 /// 전체 TO 목록 화면 (지원자용)

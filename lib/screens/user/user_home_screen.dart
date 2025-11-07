@@ -4,6 +4,7 @@ import '../../providers/user_provider.dart';
 import '../../providers/theme_provider.dart';
 import 'my_applications_screen.dart';
 import 'all_to_list_screen.dart';
+import '../../utils/dialog_helper.dart';
 
 class UserHomeScreen extends StatelessWidget {
   const UserHomeScreen({super.key});
@@ -14,30 +15,14 @@ class UserHomeScreen extends StatelessWidget {
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('물류센터 인력 관리'),
+        title: const Text('Alfit(알핏)'),
         actions: [
           IconButton(
             icon: const Icon(Icons.logout),
             onPressed: () async {
-              bool? confirm = await showDialog<bool>(
-                context: context,
-                builder: (context) => AlertDialog(
-                  title: const Text('로그아웃'),
-                  content: const Text('로그아웃 하시겠습니까?'),
-                  actions: [
-                    TextButton(
-                      onPressed: () => Navigator.pop(context, false),
-                      child: const Text('취소'),
-                    ),
-                    TextButton(
-                      onPressed: () => Navigator.pop(context, true),
-                      child: const Text('확인'),
-                    ),
-                  ],
-                ),
-              );
-
-              if (confirm == true && context.mounted) {
+              final confirmed = await DialogHelper.showLogoutConfirm(context);
+              
+              if (confirmed && context.mounted) {
                 context.read<ThemeProvider>().reset();
                 context.read<UserProvider>().signOut();
               }

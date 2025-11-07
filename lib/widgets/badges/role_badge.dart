@@ -1,7 +1,7 @@
 // lib/widgets/role_badge.dart
 
 import 'package:flutter/material.dart';
-import '../theme/role_theme.dart';
+import '../../theme/role_theme.dart';
 
 /// 사용자 역할을 표시하는 배지
 class RoleBadge extends StatelessWidget {

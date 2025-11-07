@@ -5,7 +5,7 @@ import 'package:flutter_localizations/flutter_localizations.dart';
 import 'firebase_options.dart';
 import 'providers/user_provider.dart';
 import 'providers/theme_provider.dart';
-import 'models/user_model.dart';
+import 'models/core/user_model.dart';
 
 // ⭐ 화면 import - 반드시 정확한 경로 확인!
 import 'screens/auth/login_screen.dart';

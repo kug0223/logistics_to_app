@@ -1,9 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
-import '../../../models/application_model.dart';
+import '../../../models/core/application_model.dart';
 import '../../../services/firestore_service.dart';
 import '../../../utils/toast_helper.dart';
-import '../models/to_detail_models.dart';
+import '../../../models/ui/admin_to_detail_ui_models.dart';
 
 /// TO 상세 화면의 다이얼로그 모음
 class TODetailDialogs {

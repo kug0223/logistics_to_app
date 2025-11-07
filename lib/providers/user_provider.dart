@@ -1,6 +1,6 @@
 import 'package:flutter/foundation.dart';
 import 'package:firebase_auth/firebase_auth.dart';
-import '../models/user_model.dart';
+import '../models/core/user_model.dart';
 import '../services/auth_service.dart';
 
 class UserProvider with ChangeNotifier {

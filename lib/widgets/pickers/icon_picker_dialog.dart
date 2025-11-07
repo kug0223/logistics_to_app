@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import '../utils/format_helper.dart';
+import '../../utils/format_helper.dart';
 
 /// 아이콘 아이템 클래스
 class IconItem {

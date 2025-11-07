@@ -1,12 +1,13 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
-import '../../models/business_model.dart';
+import '../../models/core/business_model.dart';
 import '../../services/firestore_service.dart';
 import '../../providers/user_provider.dart';
-import '../../widgets/loading_widget.dart';
+import '../../widgets/common/loading_widget.dart';
 import '../../utils/toast_helper.dart';
 import 'business_registration_screen.dart';  // ⭐ 같은 admin 폴더!
+import '../../widgets/common/styled_container.dart';
 
 /// 사업장 목록 화면 (관리자의 사업장 관리)
 class BusinessListScreen extends StatefulWidget {
@@ -342,35 +343,8 @@ class _BusinessListScreenState extends State<BusinessListScreen> {
 
   /// 승인 상태 표시
   Widget _buildApprovalStatus(bool isApproved) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-      decoration: BoxDecoration(
-        color: isApproved ? Colors.green[50] : Colors.orange[50],
-        borderRadius: BorderRadius.circular(20),
-        border: Border.all(
-          color: isApproved ? Colors.green : Colors.orange,
-          width: 1,
-        ),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(
-            isApproved ? Icons.check_circle : Icons.access_time,
-            size: 16,
-            color: isApproved ? Colors.green : Colors.orange,
-          ),
-          const SizedBox(width: 6),
-          Text(
-            isApproved ? '승인됨' : '승인 대기중',
-            style: TextStyle(
-              fontSize: 12,
-              fontWeight: FontWeight.w600,
-              color: isApproved ? Colors.green[800] : Colors.orange[800],
-            ),
-          ),
-        ],
-      ),
-    );
+  return isApproved
+      ? StatusBadge.success(label: '승인됨', icon: Icons.check_circle)
+      : StatusBadge.warning(label: '승인 대기중', icon: Icons.access_time);
   }
 }

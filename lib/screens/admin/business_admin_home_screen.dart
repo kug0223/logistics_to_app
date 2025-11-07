@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 import '../../providers/user_provider.dart';
 import '../../providers/theme_provider.dart';
 import '../../services/auth_service.dart';
+import '../../utils/dialog_helper.dart';
 import 'business_list_screen.dart';
 import '../../utils/toast_helper.dart';
 import 'admin_create_to_screen.dart';
@@ -46,28 +47,12 @@ class BusinessAdminHomeScreen extends StatelessWidget {
                           IconButton(
                             icon: const Icon(Icons.logout, color: Colors.white),
                             onPressed: () async {
-                              final confirmed = await showDialog<bool>(
-                                context: context,
-                                builder: (context) => AlertDialog(
-                                  title: const Text('로그아웃'),
-                                  content: const Text('로그아웃 하시겠습니까?'),
-                                  actions: [
-                                    TextButton(
-                                      onPressed: () => Navigator.pop(context, false),
-                                      child: const Text('취소'),
-                                    ),
-                                    TextButton(
-                                      onPressed: () => Navigator.pop(context, true),
-                                      child: const Text('로그아웃'),
-                                    ),
-                                  ],
-                                ),
-                              );
+                              // ⭐ 변경: DialogHelper 사용
+                              final confirmed = await DialogHelper.showLogoutConfirm(context);
 
-                              if (confirmed == true && context.mounted) {
+                              if (confirmed && context.mounted) {
                                 context.read<ThemeProvider>().reset();
-                                await userProvider.signOut();  // ✅ 이렇게 변경!
-                                // Navigator 코드는 전부 삭제 - AuthWrapper가 자동 처리
+                                await userProvider.signOut();
                               }
                             },
                           ),

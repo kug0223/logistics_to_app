@@ -2,16 +2,17 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:table_calendar/table_calendar.dart';
 import 'package:intl/intl.dart';
-import '../../models/business_model.dart';
-import '../../models/to_model.dart';
+import '../../models/core/business_model.dart';
+import '../../models/core/to_model.dart';
 import '../../services/firestore_service.dart';
 import '../../providers/user_provider.dart';
 import '../../utils/toast_helper.dart';
-import '../../models/business_work_type_model.dart';
-import '../../widgets/work_detail_dialog.dart';
+import '../../models/core/business_work_type_model.dart';
+import '../../widgets/pickers/work_detail_dialog.dart';
 import '../../models/work_detail_input.dart';
 import '../../widgets/work_type_icon.dart';
-import '../../utils/format_helper.dart'; 
+import '../../utils/format_helper.dart';
+import '../../widgets/common/styled_container.dart';
 
 
 // ============================================================
@@ -1269,46 +1270,23 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
 
   /// 단일 날짜 칩
   Widget _buildSingleDateChip(DateTime date) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-      decoration: BoxDecoration(
-        color: Colors.blue[700],
-        borderRadius: BorderRadius.circular(16),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Text(
-            '${date.month}/${date.day}',
-            style: const TextStyle(
-              color: Colors.white,
-              fontSize: 13,
-              fontWeight: FontWeight.w600,
-            ),
-          ),
-          const SizedBox(width: 6),
-          GestureDetector(
-            onTap: () {
-              setState(() {
-                _selectedDates.removeWhere((d) => _isSameDay(d, date));
-              });
-            },
-            child: Container(
-              padding: const EdgeInsets.all(3),
-              decoration: BoxDecoration(
-                color: Colors.white.withOpacity(0.3),
-                shape: BoxShape.circle,
-              ),
-              child: const Icon(Icons.close, size: 12, color: Colors.white),
-            ),
-          ),
-        ],
-      ),
+    // ⭐ 변경: StyledChip 사용
+    return StyledChip(
+      label: '${date.month}/${date.day}',
+      backgroundColor: Colors.blue[700]!,
+      textColor: Colors.white,
+      fontSize: 13,
+      onDelete: () {
+        setState(() {
+          _selectedDates.removeWhere((d) => _isSameDay(d, date));
+        });
+      },
     );
   }
 
   /// 날짜 범위 칩
   Widget _buildDateRangeChip(DateTime start, DateTime end, int count) {
+    // ⭐ 변경: 커스텀 칩 (StyledChip은 이런 복잡한 구조 지원 안 함)
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
       decoration: BoxDecoration(
@@ -1380,13 +1358,10 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
   /// 연속 여부 표시
   Widget _buildConsecutiveIndicator() {
     if (_isConsecutiveDates()) {
-      return Container(
-        padding: const EdgeInsets.all(8),
-        decoration: BoxDecoration(
-          color: Colors.green[50],
-          borderRadius: BorderRadius.circular(8),
-          border: Border.all(color: Colors.green[200]!),
-        ),
+      // ⭐ 변경: StyledInfoCard 사용
+      return StyledInfoCard(
+        backgroundColor: Colors.green[50]!,
+        borderColor: Colors.green[200]!,
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
@@ -1404,20 +1379,17 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
         ),
       );
     } else {
-      return Container(
-        padding: const EdgeInsets.all(8),
-        decoration: BoxDecoration(
-          color: Colors.orange[50],
-          borderRadius: BorderRadius.circular(8),
-          border: Border.all(color: Colors.orange[200]!),
-        ),
+      // ⭐ 변경: StyledInfoCard 사용
+      return StyledInfoCard(
+        backgroundColor: Colors.orange[50]!,
+        borderColor: Colors.orange[200]!,
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(Icons.info_outline, size: 16, color: Colors.orange[700]),
+            Icon(Icons.info, size: 16, color: Colors.orange[700]),
             const SizedBox(width: 6),
             Text(
-              '비연속 날짜 (${_groupConsecutiveDates().length}개 그룹)',
+              '연속되지 않은 날짜입니다',
               style: TextStyle(
                 fontSize: 12,
                 color: Colors.orange[900],

@@ -1,12 +1,12 @@
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import '../models/business_work_type_model.dart';
-import '../utils/toast_helper.dart';
-import '../utils/labor_standards.dart';
-import '../models/work_detail_input.dart'; 
-import '../widgets/work_type_icon.dart';
-import '../utils/format_helper.dart';
+import '../../models/core/business_work_type_model.dart';
+import '../../utils/toast_helper.dart';
+import '../../utils/labor_standards.dart';
+import '../../models/work_detail_input.dart'; 
+import '../work_type_icon.dart';
+import '../../utils/format_helper.dart';
 
 // ============================================================
 // 🎨 업무 추가 다이얼로그 (공통)
