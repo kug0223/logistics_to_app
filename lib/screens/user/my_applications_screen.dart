@@ -49,17 +49,20 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
       final applications = await _firestoreService.getMyApplications(uid);
       print('✅ 조회된 지원 내역: ${applications.length}개');
 
-      // ✅ 각 지원서에 대한 TO 정보 가져오기 (헬퍼 함수 사용)
-      List<_ApplicationWithTO> appWithTOs = [];
-      for (var app in applications) {
+      // ✅ 병렬로 TO 정보 가져오기 (최적화!)
+      final futures = applications.map((app) async {
         final to = await _firestoreService.getTOByApplication(app);
         if (to != null) {
-          appWithTOs.add(_ApplicationWithTO(
+          return _ApplicationWithTO(
             application: app,
             to: to,
-          ));
+          );
         }
-      }
+        return null;
+      }).toList();
+
+      final results = await Future.wait(futures);
+      final appWithTOs = results.whereType<_ApplicationWithTO>().toList();
 
       // 최신순 정렬
       appWithTOs.sort((a, b) => b.application.appliedAt.compareTo(a.application.appliedAt));

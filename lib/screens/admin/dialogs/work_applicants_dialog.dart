@@ -60,18 +60,18 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog> {
 
       filtered.sort((a, b) => b.appliedAt.compareTo(a.appliedAt));
 
-      // 🔥 각 지원자의 사용자 정보 조회
-      List<Map<String, dynamic>> applicantsWithUserInfo = [];
-      
-      for (var app in filtered) {
+      // ✅ 병렬로 사용자 정보 조회 (최적화!)
+      final futures = filtered.map((app) async {
         final user = await _firestoreService.getUser(app.uid);
-        applicantsWithUserInfo.add({
+        return {
           'application': app,
           'userName': user?.name ?? '이름 없음',
           'userPhone': user?.phone ?? '전화번호 없음',
           'userEmail': user?.email ?? '',
-        });
-      }
+        };
+      }).toList();
+
+      final applicantsWithUserInfo = await Future.wait(futures);
 
       setState(() {
         _applicants = applicantsWithUserInfo;
