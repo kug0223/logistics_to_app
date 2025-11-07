@@ -15,6 +15,10 @@ class FirestoreService {
   final Map<String, List<ApplicationModel>> _applicationCache = {};
   final Map<String, List<WorkDetailModel>> _workDetailCache = {};
   final Map<String, Map<String, String>> _timeRangeCache = {};
+  // 🔥 NEW: 사용자 정보 캐시 추가!
+  final Map<String, UserModel> _userCache = {};
+  final Map<String, DateTime> _userCacheTimestamps = {};
+  final Duration _userCacheValidDuration = const Duration(hours: 1);
   // ⭐ TO 목록 캐시 추가!
   List<TOModel>? _activeTOsCache;
   List<TOModel>? _closedTOsCache;
@@ -34,16 +38,40 @@ class FirestoreService {
     await _firestore.collection('users').doc(user.uid).set(user.toMap());
   }
 
-  /// 사용자 정보 조회
-  Future<UserModel?> getUser(String uid) async {
-    final doc = await _firestore.collection('users').doc(uid).get();
-    if (doc.exists) {
-      return UserModel.fromMap(
-        doc.data() as Map<String, dynamic>,
-        doc.id,
-      );
+  /// 사용자 정보 조회 (캐싱 적용!)
+  Future<UserModel?> getUser(String uid, {bool forceRefresh = false}) async {
+    try {
+      print('🔍 getUser 호출: $uid, forceRefresh=$forceRefresh');
+      
+      // 🔥 강제 새로고침이 아닐 때만 캐시 확인
+      if (!forceRefresh && _userCache.containsKey(uid)) {
+        final cacheTime = _userCacheTimestamps[uid];
+        if (cacheTime != null && DateTime.now().difference(cacheTime) < _userCacheValidDuration) {
+          print('📦 User 캐시 사용: $uid');
+          return _userCache[uid];
+        }
+      }
+      
+      print('🔄 User Firestore 조회: $uid');
+      final doc = await _firestore.collection('users').doc(uid).get();
+      
+      if (!doc.exists) {
+        print('❌ 사용자를 찾을 수 없습니다: $uid');
+        return null;
+      }
+      
+      final user = UserModel.fromMap(doc.data()!, doc.id);
+      
+      // ✅ 캐시 저장
+      _userCache[uid] = user;
+      _userCacheTimestamps[uid] = DateTime.now();
+      
+      print('✅ User 조회 완료: ${user.name}');
+      return user;
+    } catch (e) {
+      print('❌ 사용자 조회 실패: $e');
+      return null;
     }
-    return null;
   }
 
   /// 마지막 로그인 시간 업데이트
@@ -1768,17 +1796,13 @@ class FirestoreService {
   /// 업무 상세 정보 조회 (캐싱 적용)
   Future<List<WorkDetailModel>> getWorkDetails(String toId, {bool forceRefresh = false}) async {
     try {
-      print('🔍 getWorkDetails 호출: $toId, forceRefresh=$forceRefresh');
       // 🔥 강제 새로고침이 아닐 때만 캐시 확인
       if (!forceRefresh && _workDetailCache.containsKey(toId)) {
         final cacheTime = _cacheTimestamps['workDetail_$toId'];
         if (cacheTime != null && DateTime.now().difference(cacheTime) < _cacheValidDuration) {
-          print('📦 WorkDetails 캐시 사용: $toId');
           return _workDetailCache[toId]!;
         }
       }
-      
-      print('🔄 WorkDetails Firestore 조회: $toId');
       
       final snapshot = await _firestore
           .collection('tos')
@@ -1810,7 +1834,7 @@ class FirestoreService {
       _workDetailCache.remove(toId);
       _timeRangeCache.remove(toId);
       
-      // 🔥🔥🔥 타임스탬프도 삭제! (이게 핵심!)
+      // 타임스탬프도 삭제
       _cacheTimestamps.remove('application_$toId');
       _cacheTimestamps.remove('workDetail_$toId');
       _cacheTimestamps.remove('timeRange_$toId');
@@ -1823,12 +1847,17 @@ class FirestoreService {
       _timeRangeCache.clear();
       _cacheTimestamps.clear();
 
-      // ⭐⭐⭐ TO 목록 캐시도 삭제!
+      // TO 목록 캐시도 삭제
       _activeTOsCache = null;
       _closedTOsCache = null;
       _activeTOsCacheTime = null;
       _closedTOsCacheTime = null;
-      print('🗑️ TO 목록 캐시도 삭제 완료');
+      
+      // 🔥 NEW: 사용자 캐시도 삭제
+      _userCache.clear();
+      _userCacheTimestamps.clear();
+      
+      print('🗑️ 전체 캐시 삭제 완료 (사용자 포함)');
     }
   }
 
