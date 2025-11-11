@@ -33,6 +33,18 @@ class ApplicationModel {
   final DateTime appliedAt; // 지원 시각
   final DateTime? confirmedAt; // 확정 시각 (null 가능)
   final String? confirmedBy; // 확정한 사람 (SYSTEM 또는 관리자 UID)
+  // ⭐ Phase 2: 자동 취소 관련 필드
+  final DateTime? canceledAt;           // 취소 시각
+  final String? cancelReason;           // 'SCHEDULE_CONFLICT', 'USER_CANCELED'
+  final String? conflictingAppId;       // 충돌된 지원서 ID
+  final String? conflictingBusiness;    // 충돌된 사업장명
+  final String? conflictingTime;        // 충돌 시간대 "09:00~18:00"
+  
+  // ⭐ Phase 2: 메시지 시스템
+  final String? applicationMessage;     // 지원 시 지원자 메시지
+  final String? confirmMessage;         // 확정 시 관리자 메시지
+  final String? rejectMessage;          // 거절 시 관리자 메시지
+  final String? cancelMessage;          // 취소 시 관리자 메시지
 
   ApplicationModel({
     required this.id,
@@ -55,6 +67,17 @@ class ApplicationModel {
     required this.appliedAt,
     this.confirmedAt,
     this.confirmedBy,
+    // ⭐ Phase 2: 추가
+    this.canceledAt,
+    this.cancelReason,
+    this.conflictingAppId,
+    this.conflictingBusiness,
+    this.conflictingTime,
+    this.applicationMessage,
+    this.confirmMessage,
+    this.rejectMessage,
+    this.cancelMessage,
+    
   });
 
   /// Firestore 문서를 ApplicationModel로 변환
@@ -92,6 +115,18 @@ class ApplicationModel {
           ? (data['confirmedAt'] as Timestamp).toDate()
           : null,
       confirmedBy: data['confirmedBy'],
+      // ⭐ Phase 2: 추가
+      canceledAt: data['canceledAt'] != null
+          ? (data['canceledAt'] as Timestamp).toDate()
+          : null,
+      cancelReason: data['cancelReason'],
+      conflictingAppId: data['conflictingAppId'],
+      conflictingBusiness: data['conflictingBusiness'],
+      conflictingTime: data['conflictingTime'],
+      applicationMessage: data['applicationMessage'],
+      confirmMessage: data['confirmMessage'],
+      rejectMessage: data['rejectMessage'],
+      cancelMessage: data['cancelMessage'],
     );
   }
   
@@ -123,6 +158,16 @@ class ApplicationModel {
       'appliedAt': Timestamp.fromDate(appliedAt),
       'confirmedAt': confirmedAt != null ? Timestamp.fromDate(confirmedAt!) : null,
       'confirmedBy': confirmedBy,
+      // ⭐ Phase 2: 추가
+      'canceledAt': canceledAt != null ? Timestamp.fromDate(canceledAt!) : null,
+      'cancelReason': cancelReason,
+      'conflictingAppId': conflictingAppId,
+      'conflictingBusiness': conflictingBusiness,
+      'conflictingTime': conflictingTime,
+      'applicationMessage': applicationMessage,
+      'confirmMessage': confirmMessage,
+      'rejectMessage': rejectMessage,
+      'cancelMessage': cancelMessage,
     };
   }
 
@@ -188,6 +233,17 @@ class ApplicationModel {
     DateTime? appliedAt,
     DateTime? confirmedAt,
     String? confirmedBy,
+    // ⭐ Phase 2: 추가
+    DateTime? canceledAt,
+    String? cancelReason,
+    String? conflictingAppId,
+    String? conflictingBusiness,
+    String? conflictingTime,
+    String? applicationMessage,
+    String? confirmMessage,
+    String? rejectMessage,
+    String? cancelMessage,
+    
   }) {
     return ApplicationModel(
       id: id ?? this.id,
@@ -210,6 +266,16 @@ class ApplicationModel {
       appliedAt: appliedAt ?? this.appliedAt,
       confirmedAt: confirmedAt ?? this.confirmedAt,
       confirmedBy: confirmedBy ?? this.confirmedBy,
+      // ⭐ Phase 2: 추가
+      canceledAt: canceledAt ?? this.canceledAt,
+      cancelReason: cancelReason ?? this.cancelReason,
+      conflictingAppId: conflictingAppId ?? this.conflictingAppId,
+      conflictingBusiness: conflictingBusiness ?? this.conflictingBusiness,
+      conflictingTime: conflictingTime ?? this.conflictingTime,
+      applicationMessage: applicationMessage ?? this.applicationMessage,
+      confirmMessage: confirmMessage ?? this.confirmMessage,
+      rejectMessage: rejectMessage ?? this.rejectMessage,
+      cancelMessage: cancelMessage ?? this.cancelMessage,
     );
   }
 

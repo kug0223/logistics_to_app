@@ -1206,27 +1206,119 @@ class FirestoreService {
       return [];
     }
   }
-  /// 지원서 상태 업데이트 (승인/거절)
+  // ═══════════════════════════════════════════════════════════
+  // Phase 2: 충돌 방지 시스템
+  // ═══════════════════════════════════════════════════════════
+  
+  /// 시간이 겹치는지 체크
+  bool _hasTimeOverlap(String s1, String e1, String s2, String e2) {
+    final start1 = _timeToMinutes(s1);
+    final end1 = _timeToMinutes(e1);
+    final start2 = _timeToMinutes(s2);
+    final end2 = _timeToMinutes(e2);
+    
+    // 겹치지 않는 경우: end1 <= start2 || end2 <= start1
+    // 겹치는 경우: 위의 반대
+    return !(end1 <= start2 || end2 <= start1);
+  }
+  
+  /// 시간을 분 단위로 변환 (예: "09:30" → 570)
+  int _timeToMinutes(String time) {
+    final parts = time.split(':');
+    return int.parse(parts[0]) * 60 + int.parse(parts[1]);
+  }
+  
+  /// 충돌하는 지원서 찾기
+  Future<List<ApplicationModel>> findConflictingApplications({
+    required String uid,
+    required DateTime workDate,
+    required String startTime,
+    required String endTime,
+    required String excludeId,
+    String status = 'PENDING',
+  }) async {
+    try {
+      // 1. 같은 날짜의 모든 지원서 조회
+      final snapshot = await _firestore
+          .collection('applications')
+          .where('uid', isEqualTo: uid)
+          .where('workDate', isEqualTo: Timestamp.fromDate(workDate))
+          .where('status', isEqualTo: status)
+          .get();
+      
+      // 2. 시간대 겹침 필터링
+      final conflicts = <ApplicationModel>[];
+      
+      for (var doc in snapshot.docs) {
+        if (doc.id == excludeId) continue;
+        
+        final app = ApplicationModel.fromFirestore(doc);
+        
+        if (_hasTimeOverlap(startTime, endTime, app.startTime, app.endTime)) {
+          conflicts.add(app);
+        }
+      }
+      
+      print('✅ 충돌하는 지원서 ${conflicts.length}개 발견');
+      return conflicts;
+    } catch (e) {
+      print('❌ 충돌 지원서 조회 실패: $e');
+      return [];
+    }
+  }
+  
+  /// 확정된 근무 일정 조회
+  Future<List<ApplicationModel>> getConfirmedSchedules({
+    required String uid,
+    required DateTime workDate,
+  }) async {
+    try {
+      final snapshot = await _firestore
+          .collection('applications')
+          .where('uid', isEqualTo: uid)
+          .where('workDate', isEqualTo: Timestamp.fromDate(workDate))
+          .where('status', isEqualTo: 'CONFIRMED')
+          .get();
+      
+      return snapshot.docs
+          .map((doc) => ApplicationModel.fromFirestore(doc))
+          .toList();
+    } catch (e) {
+      print('❌ 확정 일정 조회 실패: $e');
+      return [];
+    }
+  }
+  /// 지원서 상태 업데이트 (승인/거절) - Phase 2: 자동 취소 추가
   Future<void> updateApplicationStatus({
     required String applicationId,
     required String status,
     String? confirmedBy,
     String? rejectedBy,
+    String? message,  // ⭐ Phase 2: 메시지 추가
   }) async {
     try {
+      // ⭐ Phase 2: 확정 시 충돌 처리
+      if (status == 'CONFIRMED') {
+        await _confirmWithConflictCheck(
+          applicationId: applicationId,
+          confirmedBy: confirmedBy,
+          message: message,
+        );
+        return;
+      }
+      
+      // 기존 로직 (거절 등)
       final updates = <String, dynamic>{
         'status': status,
       };
 
-      if (status == 'CONFIRMED') {
-        updates['confirmedAt'] = FieldValue.serverTimestamp();
-        if (confirmedBy != null) {
-          updates['confirmedBy'] = confirmedBy;
-        }
-      } else if (status == 'REJECTED') {
+      if (status == 'REJECTED') {
         updates['rejectedAt'] = FieldValue.serverTimestamp();
         if (rejectedBy != null) {
           updates['rejectedBy'] = rejectedBy;
+        }
+        if (message != null) {
+          updates['rejectMessage'] = message;  // ⭐ Phase 2
         }
       }
 
@@ -1238,6 +1330,84 @@ class FirestoreService {
       print('✅ 지원서 상태 업데이트: $status');
     } catch (e) {
       print('❌ 지원서 상태 업데이트 실패: $e');
+      rethrow;
+    }
+  }
+  
+  /// 확정 처리 + 충돌하는 지원 자동 취소
+  Future<void> _confirmWithConflictCheck({
+    required String applicationId,
+    String? confirmedBy,
+    String? message,
+  }) async {
+    try {
+      // 1. 확정할 지원서 조회
+      final appDoc = await _firestore
+          .collection('applications')
+          .doc(applicationId)
+          .get();
+      
+      if (!appDoc.exists) {
+        throw Exception('지원서를 찾을 수 없습니다');
+      }
+      
+      final appData = appDoc.data()!;
+      final app = ApplicationModel.fromMap(appData, appDoc.id);
+      
+      // 2. 충돌하는 대기중 지원서 찾기
+      final conflictingApps = await findConflictingApplications(
+        uid: app.uid,
+        workDate: app.workDate,
+        startTime: app.startTime,
+        endTime: app.endTime,
+        excludeId: applicationId,
+        status: 'PENDING',
+      );
+      
+      // 3. 배치로 처리
+      final batch = _firestore.batch();
+      
+      // 3-1. 확정 처리
+      final confirmUpdates = <String, dynamic>{
+        'status': 'CONFIRMED',
+        'confirmedAt': FieldValue.serverTimestamp(),
+      };
+      if (confirmedBy != null) {
+        confirmUpdates['confirmedBy'] = confirmedBy;
+      }
+      if (message != null) {
+        confirmUpdates['confirmMessage'] = message;  // ⭐ Phase 2
+      }
+      
+      batch.update(
+        _firestore.collection('applications').doc(applicationId),
+        confirmUpdates,
+      );
+      
+      // 3-2. 충돌하는 지원들 자동 취소
+      for (var conflictApp in conflictingApps) {
+        batch.update(
+          _firestore.collection('applications').doc(conflictApp.id),
+          {
+            'status': 'AUTO_CANCELED',  // ⭐ 새로운 상태
+            'canceledAt': FieldValue.serverTimestamp(),
+            'cancelReason': 'SCHEDULE_CONFLICT',
+            'conflictingAppId': applicationId,
+            'conflictingBusiness': app.businessName,
+            'conflictingTime': '${app.startTime}~${app.endTime}',
+          },
+        );
+      }
+      
+      await batch.commit();
+      
+      print('✅ 확정 완료 + ${conflictingApps.length}개 자동 취소');
+      
+      // 4. 알림 발송 (나중에 구현)
+      // TODO: Phase 2-D에서 구현
+      
+    } catch (e) {
+      print('❌ 확정 + 충돌 처리 실패: $e');
       rethrow;
     }
   }
@@ -1385,6 +1555,28 @@ class FirestoreService {
       if (existingApp.docs.isNotEmpty) {
         ToastHelper.showWarning('이미 지원한 업무입니다.'); // ✅ 메시지도 수정
         return false;
+      }
+      // ⭐ Phase 2-C: 확정된 근무와 충돌 체크
+      final confirmedSchedules = await getConfirmedSchedules(
+        uid: uid,
+        workDate: workDate,
+      );
+      
+      for (var schedule in confirmedSchedules) {
+        if (_hasTimeOverlap(
+          startTime,
+          endTime,
+          schedule.startTime,
+          schedule.endTime,
+        )) {
+          // ⚠️ 충돌 발견!
+          ToastHelper.showError(
+            '이미 ${schedule.startTime}~${schedule.endTime}에\n'
+            '${schedule.businessName}에서 확정된 근무가 있습니다.\n\n'
+            '해당 시간대에는 추가 지원이 불가능합니다.'
+          );
+          return false;
+        }
       }
 
       // 2. TO 문서 찾기
