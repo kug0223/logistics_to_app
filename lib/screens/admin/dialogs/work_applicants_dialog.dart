@@ -211,6 +211,8 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog> {
       
       await _loadApplicants();
       setState(() => _selectedIds.clear());
+
+      
     } catch (e) {
       print('❌ 일괄 승인 실패: $e');
       ToastHelper.showError('승인 처리에 실패했습니다');

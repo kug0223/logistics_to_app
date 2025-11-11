@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import '../../models/core/work_detail_model.dart';
 import '../../models/core/to_model.dart';
-import '../../models/core/application_model.dart';
 import '../../utils/format_helper.dart';
 import '../../screens/user/dialogs/work_detail_dialog.dart';
 import '../../screens/user/dialogs/apply_dialog.dart';

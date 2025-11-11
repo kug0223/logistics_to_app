@@ -5,6 +5,7 @@ import '../../providers/theme_provider.dart';
 import 'my_applications_screen.dart';
 import 'all_to_list_screen.dart';
 import '../../utils/dialog_helper.dart';
+import 'my_schedule_screen.dart';
 
 class UserHomeScreen extends StatelessWidget {
   const UserHomeScreen({super.key});
@@ -91,8 +92,8 @@ class UserHomeScreen extends StatelessWidget {
                     _buildMenuCard(
                       context,
                       icon: Icons.warehouse_rounded,
-                      title: 'TO 지원하기',
-                      subtitle: '물류센터 선택',
+                      title: '근무 지원하기',
+                      subtitle: '사업장 선택',
                       color: Colors.blue,
                       onTap: () {
                         Navigator.push(
@@ -105,16 +106,15 @@ class UserHomeScreen extends StatelessWidget {
                     ),
                     _buildMenuCard(
                       context,
-                      icon: Icons.assignment_outlined,
-                      title: '내 지원 내역',
-                      subtitle: '지원 현황 확인',
-                      color: Colors.green,
+                      icon: Icons.calendar_month,  // ⭐ assignment_outlined → calendar_month
+                      title: '근무 스케줄',  // ⭐ 변경
+                      subtitle: '일정 한눈에 보기',  // ⭐ 변경
+                      color: Colors.purple,  // ⭐ green → purple
                       onTap: () {
-                        // ✅ TODO 제거하고 실제 화면으로 이동!
                         Navigator.push(
                           context,
                           MaterialPageRoute(
-                            builder: (context) => const MyApplicationsScreen(),
+                            builder: (context) => const MyScheduleScreen(),  // ⭐ 변경
                           ),
                         );
                       },

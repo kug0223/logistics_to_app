@@ -13,10 +13,7 @@ class WorkDetailDialog {
       builder: (context) => AlertDialog(
         title: Row(
           children: [
-            if (work.workTypeIcon != null)
-              Text(work.workTypeIcon!, style: const TextStyle(fontSize: 24))
-            else
-              const Icon(Icons.work, size: 24),
+            Text(work.workTypeIcon!, style: const TextStyle(fontSize: 24)),
             const SizedBox(width: 8),
             Expanded(
               child: Text(

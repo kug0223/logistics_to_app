@@ -24,7 +24,7 @@ class _AllTOListScreenState extends State<AllTOListScreen> {
   // 필터 상태
   DateTimeRange? _selectedDateRange;
   String? _selectedBusiness;
-  String _jobTypeFilter = 'ALL'; // 'ALL', 'short', 'long_term'
+  final String _jobTypeFilter = 'ALL'; // 'ALL', 'short', 'long_term'
   
   // 데이터
   List<TOModel> _allTOList = [];

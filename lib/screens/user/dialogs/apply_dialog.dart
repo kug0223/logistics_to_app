@@ -155,8 +155,22 @@ class ApplyDialog {
           .get();
 
       if (snapshot.docs.isNotEmpty) {
-        ToastHelper.showWarning('이미 지원한 업무입니다.');
-        return false;
+        // ⭐ Phase 2: 취소된 지원인지 확인
+        final docData = snapshot.docs.first.data();
+        final status = docData['status'];
+        
+        print('🔍 apply_dialog 중복 체크: status = $status');
+        
+        if (status == 'CANCELED' || 
+            status == 'AUTO_CANCELED' || 
+            status == 'REJECTED') {
+          print('✅ 취소된 지원 → 재지원 허용');
+          // 계속 진행
+        } else {
+          print('❌ 유효한 지원 존재 (status: $status) → 차단');
+          ToastHelper.showWarning('이미 지원한 업무입니다.');
+          return false;
+        }
       }
 
       // 지원서 생성

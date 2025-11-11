@@ -1515,9 +1515,7 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
                   child: Center(
                     child: WorkTypeIcon.buildFromString(
                       detail.workTypeIcon,
-                      color: detail.workTypeColor != null 
-                          ? FormatHelper.parseColor(detail.workTypeColor) 
-                          : Colors.white, // ✅ 수정
+                      color: FormatHelper.parseColor(detail.workTypeColor), // ✅ 수정
                       size: 20,
                     ),
                   ),

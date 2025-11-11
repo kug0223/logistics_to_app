@@ -36,12 +36,15 @@ dependencies:
   intl: ^0.20.2
   http: ^1.2.2
   
-  # WebView (주소 검색용) ⭐ NEW!
+  # WebView (주소 검색용)
   webview_flutter: ^4.4.2
   
-  # ✅ NEW: 캘린더
+  # 캘린더
   table_calendar: ^3.1.2
-  
+
+  # URL 런처 (전화걸기, 지도 등) ⭐ 추가
+  url_launcher: ^6.3.1
+
 dev_dependencies:
   flutter_test:
     sdk: flutter

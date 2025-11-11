@@ -63,6 +63,11 @@ class BusinessModel {
           : null,
     );
   }
+  /// ⭐ Firestore DocumentSnapshot에서 변환 (추가!)
+  factory BusinessModel.fromFirestore(DocumentSnapshot doc) {
+    final data = doc.data() as Map<String, dynamic>;
+    return BusinessModel.fromMap(data, doc.id);
+  }
 
   // Firestore에 저장할 때
   Map<String, dynamic> toMap() {

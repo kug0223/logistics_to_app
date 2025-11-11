@@ -1,0 +1,340 @@
+import 'package:flutter/material.dart';
+import 'package:table_calendar/table_calendar.dart';
+import 'package:intl/intl.dart';
+import 'package:provider/provider.dart';
+import '../../models/core/application_model.dart';
+import '../../services/firestore_service.dart';
+import '../../providers/user_provider.dart';
+import '../../utils/toast_helper.dart';
+import '../../utils/calendar_helper.dart';
+import '../../widgets/common/loading_widget.dart';
+import '../../widgets/calendar/schedule_calendar.dart';
+import '../../widgets/calendar/monthly_stats_card.dart';
+import '../../widgets/calendar/day_schedule_list.dart';
+import '../../widgets/calendar/schedule_card.dart';
+
+
+/// 내 근무 스케줄 화면 (캘린더 뷰)
+class MyScheduleScreen extends StatefulWidget {
+  const MyScheduleScreen({super.key});
+
+  @override
+  State<MyScheduleScreen> createState() => _MyScheduleScreenState();
+}
+
+class _MyScheduleScreenState extends State<MyScheduleScreen> {
+  final FirestoreService _firestoreService = FirestoreService();
+  
+  // 캘린더 상태
+  DateTime _focusedDay = DateTime.now();
+  DateTime? _selectedDay;
+  
+  // 데이터
+  List<ApplicationModel> _applications = [];
+  bool _isLoading = true;
+  String _selectedFilter = 'ALL'; // ALL, CONFIRMED, PENDING
+  
+  @override
+  void initState() {
+    super.initState();
+    _selectedDay = _focusedDay;
+    _loadApplications();
+  }
+  
+  /// 지원 내역 로드
+  Future<void> _loadApplications() async {
+    setState(() => _isLoading = true);
+    
+    try {
+      final userProvider = Provider.of<UserProvider>(context, listen: false);
+      final uid = userProvider.currentUser?.uid;
+      
+      if (uid == null) {
+        ToastHelper.showError('로그인이 필요합니다.');
+        return;
+      }
+      
+      final applications = await _firestoreService.getMyApplications(uid);
+      
+      setState(() {
+        _applications = applications;
+        _isLoading = false;
+      });
+      
+      print('✅ 지원 내역 로드 완료: ${applications.length}개');
+    } catch (e) {
+      print('❌ 지원 내역 로드 실패: $e');
+      setState(() => _isLoading = false);
+      ToastHelper.showError('데이터를 불러오는데 실패했습니다.');
+    }
+  }
+  
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('내 근무 스케줄'),
+        backgroundColor: Colors.blue[700],
+        foregroundColor: Colors.white,
+        actions: [
+          _buildFilterButton(),
+          IconButton(
+            icon: const Icon(Icons.refresh),
+            onPressed: _loadApplications,
+          ),
+        ],
+      ),
+      body: _isLoading
+          ? const LoadingWidget(message: '일정을 불러오는 중...')
+          : CustomScrollView(
+              slivers: [
+                // 캘린더
+                SliverToBoxAdapter(
+                  child: ScheduleCalendar(
+                    focusedDay: _focusedDay,
+                    selectedDay: _selectedDay,
+                    applications: _applications,
+                    selectedFilter: _selectedFilter,
+                    onDaySelected: (selectedDay, focusedDay) {
+                      setState(() {
+                        _selectedDay = selectedDay;
+                        _focusedDay = focusedDay;
+                      });
+                    },
+                    onPageChanged: (focusedDay) {
+                      setState(() {
+                        _focusedDay = focusedDay;
+                      });
+                    },
+                  ),
+                ),
+                
+                // Divider
+                const SliverToBoxAdapter(
+                  child: Divider(height: 1),
+                ),
+                
+                // 월별 통계
+                SliverToBoxAdapter(
+                  child: MonthlyStatsCard(
+                    applications: _applications,
+                    focusedDay: _focusedDay,
+                  ),
+                ),
+                
+                // Divider
+                const SliverToBoxAdapter(
+                  child: Divider(height: 1),
+                ),
+                
+                // 선택한 날짜 표시
+                if (_selectedDay != null)
+                  SliverToBoxAdapter(
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
+                      color: Colors.blue[50],
+                      child: Row(
+                        children: [
+                          Icon(Icons.event, color: Colors.blue[700], size: 20),
+                          const SizedBox(width: 8),
+                          Text(
+                            DateFormat('yyyy년 M월 d일 (E)', 'ko_KR').format(_selectedDay!),
+                            style: TextStyle(
+                              fontSize: 16,
+                              fontWeight: FontWeight.bold,
+                              color: Colors.blue[900],
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                
+                // Divider
+                const SliverToBoxAdapter(
+                  child: Divider(height: 1),
+                ),
+                
+                // 일정 리스트
+                _buildSliverScheduleList(),
+              ],
+            ),
+    );
+  }
+
+  /// Sliver 일정 리스트
+  Widget _buildSliverScheduleList() {
+    if (_selectedDay == null) {
+      return SliverFillRemaining(
+        hasScrollBody: false,
+        child: Center(
+          child: Padding(
+            padding: const EdgeInsets.all(32),
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(Icons.touch_app, size: 64, color: Colors.grey[400]),
+                const SizedBox(height: 16),
+                Text(
+                  '날짜를 선택해주세요',
+                  style: TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.w600,
+                    color: Colors.grey[700],
+                  ),
+                  textAlign: TextAlign.center,
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  '캘린더에서 날짜를 클릭하면\n일정을 확인할 수 있습니다',
+                  style: TextStyle(
+                    fontSize: 14,
+                    color: Colors.grey[500],
+                  ),
+                  textAlign: TextAlign.center,
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+    }
+    
+    final events = CalendarHelper.getEventsForDay(
+      _selectedDay!,
+      _applications,
+      _selectedFilter,
+    );
+    
+    if (events.isEmpty) {
+      return SliverFillRemaining(
+        hasScrollBody: false,
+        child: Center(
+          child: Padding(
+            padding: const EdgeInsets.all(32),
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(Icons.event_busy, size: 64, color: Colors.grey[400]),
+                const SizedBox(height: 16),
+                Text(
+                  '이 날짜에는 일정이 없습니다',
+                  style: TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.w600,
+                    color: Colors.grey[700],
+                  ),
+                  textAlign: TextAlign.center,
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  '다른 날짜를 선택해보세요',
+                  style: TextStyle(
+                    fontSize: 14,
+                    color: Colors.grey[500],
+                  ),
+                  textAlign: TextAlign.center,
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+    }
+    
+    // 상태별 정렬
+    events.sort((a, b) {
+      final aOrder = _getStatusOrder(a.status);
+      final bOrder = _getStatusOrder(b.status);
+      return aOrder.compareTo(bOrder);
+    });
+    
+    return SliverPadding(
+      padding: const EdgeInsets.all(16),
+      sliver: SliverList(
+        delegate: SliverChildBuilderDelegate(
+          (context, index) {
+            return ScheduleCard(
+              application: events[index],
+              onChanged: _loadApplications,  // ⭐ 추가!
+            );
+          },
+          childCount: events.length,
+        ),
+      ),
+    );
+  }
+
+  /// 상태별 정렬 순서
+  int _getStatusOrder(String status) {
+    switch (status) {
+      case 'CONFIRMED':
+        return 1;
+      case 'PENDING':
+        return 2;
+      case 'REJECTED':
+        return 3;
+      case 'CANCELED':
+        return 4;
+      case 'AUTO_CANCELED':
+        return 5;
+      default:
+        return 6;
+    }
+  }
+  
+  /// 필터 버튼
+  Widget _buildFilterButton() {
+    return PopupMenuButton<String>(
+      icon: const Icon(Icons.filter_list),
+      onSelected: (value) {
+        setState(() {
+          _selectedFilter = value;
+        });
+      },
+      itemBuilder: (context) => [
+        PopupMenuItem(
+          value: 'ALL',
+          child: Row(
+            children: [
+              Icon(
+                Icons.list_alt,
+                color: _selectedFilter == 'ALL' ? Colors.blue : Colors.grey,
+              ),
+              const SizedBox(width: 8),
+              const Text('전체 보기'),
+            ],
+          ),
+        ),
+        PopupMenuItem(
+          value: 'CONFIRMED',
+          child: Row(
+            children: [
+              Icon(
+                Icons.check_circle,
+                color: _selectedFilter == 'CONFIRMED' ? Colors.green : Colors.grey,
+              ),
+              const SizedBox(width: 8),
+              const Text('확정만 보기'),
+            ],
+          ),
+        ),
+        PopupMenuItem(
+          value: 'PENDING',
+          child: Row(
+            children: [
+              Icon(
+                Icons.schedule,
+                color: _selectedFilter == 'PENDING' ? Colors.orange : Colors.grey,
+              ),
+              const SizedBox(width: 8),
+              const Text('대기만 보기'),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+}

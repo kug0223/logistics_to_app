@@ -731,9 +731,7 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
                 child: Center(
                   child: WorkTypeIcon.buildFromString(
                     work.workTypeIcon,
-                    color: work.workTypeColor != null 
-                        ? FormatHelper.parseColor(work.workTypeColor) 
-                        : Colors.white, // ✅ 수정
+                    color: FormatHelper.parseColor(work.workTypeColor), // ✅ 수정
                     size: 20,
                   ),
                 ),

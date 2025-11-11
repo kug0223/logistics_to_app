@@ -4,7 +4,6 @@ import '../../models/core/work_detail_model.dart';
 import '../../models/core/application_model.dart';
 import '../../services/firestore_service.dart';
 import 'work_item_card.dart';
-import '../work_type_icon.dart';
 import '../common/styled_container.dart';
 
 /// TO 카드 위젯 (공통 위젯)
@@ -82,6 +81,13 @@ class _UserTOCardState extends State<UserTOCard> {
 
   bool _hasAppliedToWork(String workType) {
     for (var app in widget.myApplications) {
+      // ⭐ Phase 2: 취소/거절된 지원은 제외
+      if (app.status == 'CANCELED' || 
+          app.status == 'AUTO_CANCELED' || 
+          app.status == 'REJECTED') {
+        continue;
+      }
+      
       final businessMatch = app.businessId == widget.to.businessId;
       final titleMatch = app.toTitle == widget.to.title;
       final dateMatch = app.workDate.year == widget.to.date.year &&
@@ -237,29 +243,6 @@ class _UserTOCardState extends State<UserTOCard> {
               ),
             ],
           ),
-        ),
-      ),
-    );
-  }
-
-  /// 배지 위젯
-  Widget _buildBadge({
-    required String label,
-    required Color backgroundColor,
-    required Color textColor,
-  }) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-      decoration: BoxDecoration(
-        color: backgroundColor,
-        borderRadius: BorderRadius.circular(4),
-      ),
-      child: Text(
-        label,
-        style: TextStyle(
-          fontSize: 11,
-          fontWeight: FontWeight.bold,
-          color: textColor,
         ),
       ),
     );

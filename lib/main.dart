@@ -1,7 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:provider/provider.dart';
-import 'package:flutter_localizations/flutter_localizations.dart'; 
+import 'package:flutter_localizations/flutter_localizations.dart';
+import 'package:intl/date_symbol_data_local.dart';
 import 'firebase_options.dart';
 import 'providers/user_provider.dart';
 import 'providers/theme_provider.dart';
@@ -18,7 +19,7 @@ import 'screens/admin/business_admin_home_screen.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  
+  await initializeDateFormatting('ko_KR', null);
   try {
     await Firebase.initializeApp(
       options: DefaultFirebaseOptions.currentPlatform,

@@ -182,6 +182,8 @@ class ApplicationModel {
         return '거절';
       case 'CANCELED':
         return '취소됨';
+      case 'AUTO_CANCELED':  // ⭐ 추가
+        return '자동 취소됨';
       default:
         return '알 수 없음';
     }
@@ -198,6 +200,8 @@ class ApplicationModel {
         return 0xFFEF4444; // 빨간색
       case 'CANCELED':
         return 0xFF6B7280; // 회색
+      case 'AUTO_CANCELED':  // ⭐ 추가
+        return 0xFFEF4444; // 빨간색
       default:
         return 0xFF9CA3AF; // 기본 회색
     }

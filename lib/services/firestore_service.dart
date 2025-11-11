@@ -1228,7 +1228,7 @@ class FirestoreService {
     return int.parse(parts[0]) * 60 + int.parse(parts[1]);
   }
   
-  /// 충돌하는 지원서 찾기
+  /// 충돌하는 지원서 찾기 (장기 공고 날짜 확장 포함)
   Future<List<ApplicationModel>> findConflictingApplications({
     required String uid,
     required DateTime workDate,
@@ -1238,15 +1238,14 @@ class FirestoreService {
     String status = 'PENDING',
   }) async {
     try {
-      // 1. 같은 날짜의 모든 지원서 조회
+      // 1. 해당 상태의 모든 지원서 조회
       final snapshot = await _firestore
           .collection('applications')
           .where('uid', isEqualTo: uid)
-          .where('workDate', isEqualTo: Timestamp.fromDate(workDate))
           .where('status', isEqualTo: status)
           .get();
       
-      // 2. 시간대 겹침 필터링
+      // 2. 날짜와 시간대 겹침 필터링
       final conflicts = <ApplicationModel>[];
       
       for (var doc in snapshot.docs) {
@@ -1254,6 +1253,10 @@ class FirestoreService {
         
         final app = ApplicationModel.fromFirestore(doc);
         
+        // 해당 날짜에 근무하는지 확인
+        if (!_isWorkingOnDate(app, workDate)) continue;
+        
+        // 시간대 겹침 확인
         if (_hasTimeOverlap(startTime, endTime, app.startTime, app.endTime)) {
           conflicts.add(app);
         }
@@ -1267,26 +1270,76 @@ class FirestoreService {
     }
   }
   
-  /// 확정된 근무 일정 조회
+  /// 확정된 근무 일정 조회 (장기 공고 날짜 확장 포함)
   Future<List<ApplicationModel>> getConfirmedSchedules({
     required String uid,
     required DateTime workDate,
   }) async {
     try {
+      // 1. 모든 확정된 지원서 조회
       final snapshot = await _firestore
           .collection('applications')
           .where('uid', isEqualTo: uid)
-          .where('workDate', isEqualTo: Timestamp.fromDate(workDate))
           .where('status', isEqualTo: 'CONFIRMED')
           .get();
       
-      return snapshot.docs
+      final allConfirmed = snapshot.docs
           .map((doc) => ApplicationModel.fromFirestore(doc))
           .toList();
+      
+      // 2. 해당 날짜와 겹치는 근무만 필터링
+      final relevantSchedules = <ApplicationModel>[];
+      
+      for (var app in allConfirmed) {
+        if (_isWorkingOnDate(app, workDate)) {
+          relevantSchedules.add(app);
+        }
+      }
+      
+      print('✅ ${workDate.month}/${workDate.day}에 확정된 근무: ${relevantSchedules.length}개');
+      return relevantSchedules;
     } catch (e) {
       print('❌ 확정 일정 조회 실패: $e');
       return [];
     }
+  }
+  
+  /// 특정 날짜에 근무하는지 확인 (장기 공고 고려)
+  bool _isWorkingOnDate(ApplicationModel app, DateTime targetDate) {
+    // 단기: workDate만 체크
+    if (!app.isLongTermApplication) {
+      return _isSameDate(app.workDate, targetDate);
+    }
+    
+    // 장기: 시작일~종료일 범위 + 근무 요일 체크
+    if (app.workEndDate == null) return false;
+    
+    // 날짜 범위 체크
+    final isInRange = !targetDate.isBefore(app.workDate) && 
+                      !targetDate.isAfter(app.workEndDate!);
+    
+    if (!isInRange) return false;
+    
+    // 근무 요일 체크
+    if (app.workDays == null || app.workDays!.isEmpty) {
+      return true; // 모든 날 근무
+    }
+    
+    final targetDayKorean = _getKoreanDayOfWeek(targetDate);
+    return app.workDays!.contains(targetDayKorean);
+  }
+  
+  /// 두 날짜가 같은지 비교 (시간 제외)
+  bool _isSameDate(DateTime date1, DateTime date2) {
+    return date1.year == date2.year &&
+           date1.month == date2.month &&
+           date1.day == date2.day;
+  }
+  
+  /// 요일을 한글로 변환
+  String _getKoreanDayOfWeek(DateTime date) {
+    const days = ['월', '화', '수', '목', '금', '토', '일'];
+    return days[date.weekday - 1];
   }
   /// 지원서 상태 업데이트 (승인/거절) - Phase 2: 자동 취소 추가
   Future<void> updateApplicationStatus({
@@ -1541,20 +1594,31 @@ class FirestoreService {
     String type = 'short',
   }) async {
     try {
-      // 1. 중복 지원 확인 - ✅ selectedWorkType도 체크!
+      // 1. 중복 지원 확인 - ⭐ Phase 2: 취소/거절된 지원은 제외
       final existingApp = await _firestore
           .collection('applications')
           .where('businessId', isEqualTo: businessId)
           .where('toTitle', isEqualTo: toTitle)
           .where('workDate', isEqualTo: Timestamp.fromDate(workDate))
           .where('uid', isEqualTo: uid)
-          .where('selectedWorkType', isEqualTo: selectedWorkType) // ✅ 추가!
+          .where('selectedWorkType', isEqualTo: selectedWorkType)
           .limit(1)
           .get();
 
       if (existingApp.docs.isNotEmpty) {
-        ToastHelper.showWarning('이미 지원한 업무입니다.'); // ✅ 메시지도 수정
-        return false;
+        final app = ApplicationModel.fromFirestore(existingApp.docs.first);
+        print('🔍 기존 지원서 발견: status = ${app.status}'); // ⭐ 디버그 로그
+        
+        // ⭐ 취소/거절된 지원은 다시 지원 가능
+        if (app.status == 'CANCELED' || 
+            app.status == 'AUTO_CANCELED' || 
+            app.status == 'REJECTED') {
+          print('✅ 이전 지원이 취소/거절됨 → 재지원 허용');
+          // 중복 체크 통과, 아래 로직 계속 진행
+        } else {
+          ToastHelper.showWarning('이미 지원한 업무입니다.');
+          return false;
+        }
       }
       // ⭐ Phase 2-C: 확정된 근무와 충돌 체크
       final confirmedSchedules = await getConfirmedSchedules(
@@ -2344,6 +2408,23 @@ class FirestoreService {
   // ═══════════════════════════════════════════════════════════
   // 사업장 관리 (Business Management)
   // ═══════════════════════════════════════════════════════════
+  
+  /// 사업장 ID로 조회
+  Future<BusinessModel?> getBusinessById(String businessId) async {
+    try {
+      final doc = await _firestore.collection('businesses').doc(businessId).get();
+      
+      if (!doc.exists) {
+        print('⚠️ 사업장을 찾을 수 없습니다: $businessId');
+        return null;
+      }
+      
+      return BusinessModel.fromFirestore(doc);
+    } catch (e) {
+      print('❌ 사업장 조회 실패: $e');
+      return null;
+    }
+  }
 
   /// 내 사업장 목록 조회
   Future<List<BusinessModel>> getMyBusiness(String ownerId) async {

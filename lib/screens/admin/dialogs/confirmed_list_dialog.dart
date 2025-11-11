@@ -261,9 +261,7 @@ class _ConfirmedListDialogWidgetState extends State<_ConfirmedListDialogWidget> 
                   child: Center(
                     child: WorkTypeIcon.buildFromString(
                       work.workTypeIcon,
-                      color: work.workTypeColor != null 
-                          ? FormatHelper.parseColor(work.workTypeColor) 
-                          : Colors.white,
+                      color: FormatHelper.parseColor(work.workTypeColor),
                       size: 16,
                     ),
                   ),
