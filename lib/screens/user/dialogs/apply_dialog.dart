@@ -170,6 +170,10 @@ class ApplyDialog {
         wage: work.wage,
         startTime: work.startTime,
         endTime: work.endTime,
+        // ⭐ Phase 1: 장기 공고 정보 추가
+        workEndDate: to.endDate,
+        workDays: to.workDays,
+        type: to.isLongTerm ? 'long_term' : 'short',
       );
 
       if (success) {

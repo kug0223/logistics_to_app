@@ -283,7 +283,50 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
               overflow: TextOverflow.ellipsis,
             ),
             
-            const Divider(height: 20),
+            // ⭐ Phase 1-B: 장기 공고 정보 표시
+            if (app.isLongTermApplication) ...[
+              const SizedBox(height: 8),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                decoration: BoxDecoration(
+                  color: Colors.purple[50],
+                  borderRadius: BorderRadius.circular(6),
+                  border: Border.all(color: Colors.purple[200]!),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(Icons.calendar_month, size: 16, color: Colors.purple[700]),
+                    const SizedBox(width: 6),
+                    Text(
+                      app.workPeriodDisplay,  // "11/1~11/30"
+                      style: TextStyle(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w600,
+                        color: Colors.purple[700],
+                      ),
+                    ),
+                    if (app.workDaysDisplay != null) ...[
+                      const SizedBox(width: 8),
+                      Text(
+                        '•',
+                        style: TextStyle(color: Colors.purple[400]),
+                      ),
+                      const SizedBox(width: 8),
+                      Text(
+                        app.workDaysDisplay!,  // "주 5일 (월~금)"
+                        style: TextStyle(
+                          fontSize: 13,
+                          color: Colors.purple[600],
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+            ],
+            
+            const SizedBox(height: 12),
             
             // 날짜 정보
             _buildInfoRow(

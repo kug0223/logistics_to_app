@@ -160,29 +160,7 @@ class ApplicationModel {
 
   /// 업무유형이 변경되었는지 여부
   bool get isWorkTypeChanged => originalWorkType != null;
-   // 장기 지원 여부
-  bool get isLongTermApplication => workEndDate != null;
   
-  /// 근무 기간 표시 (단기: "11/15", 장기: "11/10~11/30")
-  String get workPeriodDisplay {
-    if (isLongTermApplication && workEndDate != null) {
-      return '${workDate.month}/${workDate.day}~${workEndDate!.month}/${workEndDate!.day}';
-    }
-    return '${workDate.month}/${workDate.day}';
-  }
-
-  /// 근무 요일 표시 (예: "주 5일 (월~금)")
-  String? get workDaysDisplay {
-    if (workDays == null || workDays!.isEmpty) return null;
-    
-    if (workDays!.length == 7) {
-      return '매일';
-    }
-    
-    return '주 ${workDays!.length}일 (${workDays!.join(', ')})';
-  }
-  
-
   /// 포맷팅된 금액 (예: "50,000원")
   String get formattedWage {
     return FormatHelper.formatWage(wage);
@@ -240,5 +218,46 @@ class ApplicationModel {
     return 'ApplicationModel(id: $id, businessId: $businessId, toTitle: $toTitle, '
         'workDate: $workDate, uid: $uid, selectedWorkType: $selectedWorkType, '
         'wage: $wage, status: $status, isChanged: $isWorkTypeChanged)';
+  }
+  // ⭐ Phase 1-B: 장기 공고 표시용 헬퍼
+  
+  /// 장기 지원인지 확인
+  bool get isLongTermApplication {
+    return workEndDate != null || (workDays != null && workDays!.isNotEmpty);
+  }
+  
+  /// 근무 기간 표시 (예: "11/1~11/30")
+  String get workPeriodDisplay {
+    if (workEndDate == null) return '';
+    
+    final startStr = '${workDate.month}/${workDate.day}';
+    final endStr = '${workEndDate!.month}/${workEndDate!.day}';
+    return '$startStr~$endStr';
+  }
+  
+  /// 근무 요일 표시 (예: "주 5일 (월~금)" 또는 "주 3일 (월,수,금)")
+  String? get workDaysDisplay {
+    if (workDays == null || workDays!.isEmpty) return null;
+    
+    final count = workDays!.length;
+    final daysStr = workDays!.join(',');
+    
+    // 연속된 요일인지 확인 (월~금)
+    final weekDays = ['월', '화', '수', '목', '금', '토', '일'];
+    final indices = workDays!.map((day) => weekDays.indexOf(day)).toList()..sort();
+    
+    bool isContinuous = true;
+    for (int i = 1; i < indices.length; i++) {
+      if (indices[i] != indices[i - 1] + 1) {
+        isContinuous = false;
+        break;
+      }
+    }
+    
+    if (isContinuous && count > 1) {
+      return '주 $count일 (${workDays!.first}~${workDays!.last})';
+    } else {
+      return '주 $count일 ($daysStr)';
+    }
   }
 }

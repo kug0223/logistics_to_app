@@ -510,6 +510,43 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog> {
                 color: Colors.grey[600],
               ),
             ),
+            // ⭐ Phase 1-C: 장기 계약 정보 표시
+            if (app.isLongTermApplication) ...[
+              SizedBox(height: 6),
+              Container(
+                padding: EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                decoration: BoxDecoration(
+                  color: Colors.purple[50],
+                  borderRadius: BorderRadius.circular(4),
+                  border: Border.all(color: Colors.purple[200]!),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(Icons.event_note, size: 12, color: Colors.purple[700]),
+                    SizedBox(width: 4),
+                    Text(
+                      '장기: ${app.workPeriodDisplay}',
+                      style: TextStyle(
+                        fontSize: 11,
+                        fontWeight: FontWeight.w600,
+                        color: Colors.purple[700],
+                      ),
+                    ),
+                    if (app.workDaysDisplay != null) ...[
+                      SizedBox(width: 4),
+                      Text(
+                        '(${app.workDaysDisplay})',
+                        style: TextStyle(
+                          fontSize: 11,
+                          color: Colors.purple[600],
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+            ],
           ],
         ),
         trailing: !isPending

@@ -1165,7 +1165,6 @@ class FirestoreService {
       final results = await Future.wait(futures);
       
       final map = Map.fromEntries(results);
-      print('✅ 배치 WorkDetails 조회 완료: ${toIds.length}개 TO');
       return map;
     } catch (e) {
       print('❌ 배치 WorkDetails 조회 실패: $e');
@@ -1366,6 +1365,10 @@ class FirestoreService {
     required int wage,
     required String startTime,
     required String endTime,
+    // ⭐ Phase 1: 장기 공고 정보 추가
+    DateTime? workEndDate,
+    List<String>? workDays,
+    String type = 'short',
   }) async {
     try {
       // 1. 중복 지원 확인 - ✅ selectedWorkType도 체크!
@@ -1424,6 +1427,12 @@ class FirestoreService {
         'endTime': endTime,
         'status': 'PENDING',
         'appliedAt': FieldValue.serverTimestamp(),
+        // ⭐ Phase 1: 장기 공고 정보 추가
+        'type': type,
+        'workEndDate': workEndDate != null 
+            ? Timestamp.fromDate(workEndDate) 
+            : null,
+        'workDays': workDays,
       });
 
       // 4-2. TO 통계 업데이트
@@ -1819,7 +1828,6 @@ class FirestoreService {
       _workDetailCache[toId] = workDetails;
       _cacheTimestamps['workDetail_$toId'] = DateTime.now();
 
-      print('✅ WorkDetails 조회 완료: ${workDetails.length}개');
       return workDetails;
     } catch (e) {
       print('❌ WorkDetails 조회 실패: $e');
