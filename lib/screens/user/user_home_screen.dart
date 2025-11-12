@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../providers/user_provider.dart';
 import '../../providers/theme_provider.dart';
-import 'my_applications_screen.dart';
 import 'all_to_list_screen.dart';
 import '../../utils/dialog_helper.dart';
 import 'my_schedule_screen.dart';

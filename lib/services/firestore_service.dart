@@ -943,9 +943,24 @@ class FirestoreService {
         'endDate': FieldValue.delete(),
       });
       
-      // 2. 남은 그룹 TO 확인
-      final remainingTOs = await getTOsByGroup(groupId);  // 🔥 이 줄만 남김
-      
+      // 1. TO를 독립 TO로 변경
+      await _firestore.collection('tos').doc(toId).update({
+        'groupId': FieldValue.delete(),
+        'groupName': FieldValue.delete(),
+        'isGroupMaster': false,
+        'startDate': FieldValue.delete(),
+        'endDate': FieldValue.delete(),
+      });
+
+      // 2. 남은 그룹 TO 확인 (최신 데이터 다시 조회)
+      final remainingSnapshot = await _firestore
+          .collection('tos')
+          .where('groupId', isEqualTo: groupId)
+          .get();
+
+      final remainingTOs = remainingSnapshot.docs
+          .map((doc) => TOModel.fromMap(doc.data(), doc.id))
+          .toList();
       if (remainingTOs.length == 1) {
         // 마지막 TO도 독립 TO로 변경
         final lastTO = remainingTOs.first;

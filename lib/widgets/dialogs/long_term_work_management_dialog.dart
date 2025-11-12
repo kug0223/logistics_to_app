@@ -259,7 +259,7 @@ class _LongTermWorkManagementDialogState
         statusText = '퇴사 승인 대기중';
         final requestDate = DateFormat('M월 d일').format(app.resignRequestDate!);
         final daysLeft = 3 - DateTime.now().difference(app.resignRequestedAt!).inDays;
-        detailText = '$requestDate 퇴사 요청 (${daysLeft}일 후 자동 승인)';
+        detailText = '$requestDate 퇴사 요청 ($daysLeft일 후 자동 승인)';
         break;
       case 'REJECTED':
         bgColor = Colors.red[50]!;
@@ -304,16 +304,16 @@ class _LongTermWorkManagementDialogState
                     color: textColor,
                   ),
                 ),
-                if (detailText != null) ...[
-                  const SizedBox(height: 4),
-                  Text(
-                    detailText,
-                    style: TextStyle(
-                      fontSize: 12,
-                      color: textColor.withOpacity(0.8),
-                    ),
+                ...[
+                const SizedBox(height: 4),
+                Text(
+                  detailText,
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: textColor.withOpacity(0.8),
                   ),
-                ],
+                ),
+              ],
               ],
             ),
           ),

@@ -4,7 +4,6 @@ import '../../../models/core/application_model.dart';
 import '../../../services/firestore_service.dart';
 import '../../../utils/toast_helper.dart';
 import '../../../utils/dialog_helper.dart';
-import '../../../utils/format_helper.dart';
 
 /// 퇴사 요청 관리 다이얼로그 (관리자용)
 class ResignRequestManagementDialog extends StatefulWidget {
