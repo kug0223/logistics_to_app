@@ -1,13 +1,16 @@
 import 'package:flutter/material.dart';
 import 'package:table_calendar/table_calendar.dart';
 import 'package:intl/intl.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import '../../../models/core/to_model.dart';
 import '../../../models/core/application_model.dart';
 import '../../../services/firestore_service.dart';
 import '../../../widgets/common/loading_widget.dart';
 import '../../../utils/format_helper.dart';
+import '../dialogs/work_applicants_dialog.dart';
+import '../../../utils/toast_helper.dart';
 
-/// 캘린더 뷰 - 전체 TO 이력 표시
+/// 인력 관리 - 캘린더 뷰
 class WorkforceCalendarView extends StatefulWidget {
   final String businessId;
 
@@ -22,10 +25,10 @@ class WorkforceCalendarView extends StatefulWidget {
 
 class _WorkforceCalendarViewState extends State<WorkforceCalendarView> {
   final FirestoreService _firestoreService = FirestoreService();
-  
+
   DateTime _focusedDay = DateTime.now();
   DateTime? _selectedDay;
-  
+
   List<TOModel> _allTOs = [];
   List<ApplicationModel> _longTermApplications = [];
   bool _isLoading = true;
@@ -34,89 +37,108 @@ class _WorkforceCalendarViewState extends State<WorkforceCalendarView> {
   void initState() {
     super.initState();
     _selectedDay = _focusedDay;
-    _loadAllTOs();
+    _loadData();
   }
 
-  /// 모든 TO 로드 (과거 포함)
-  Future<void> _loadAllTOs() async {
+  /// 데이터 로드
+  Future<void> _loadData() async {
     setState(() => _isLoading = true);
 
     try {
-      // 활성 TO 조회
-      final activeTOs = await _firestoreService.getActiveTOsByBusinessId(
-        widget.businessId,
-      );
-      
-      // 마감된 TO 조회
-      final closedTOs = await _firestoreService.getClosedTOsByBusinessId(
-        widget.businessId,
-      );
+      final results = await Future.wait([
+        Future(() async {
+          // 진행중 + 마감 TO 모두 가져오기
+          final active = await _firestoreService.getActiveTOsByBusinessId(widget.businessId);
+          final closed = await _firestoreService.getClosedTOsByBusinessId(widget.businessId);
+          return [...active, ...closed];
+        }),
+        _firestoreService.getLongTermApplicationsByBusiness(widget.businessId),
+      ]);
 
-      // 고정 근무자 조회
-      final longTermApps = await _firestoreService
-          .getLongTermApplicationsByBusiness(widget.businessId);
+      final toList = results[0] as List<TOModel>;
+      final apps = results[1] as List<ApplicationModel>;
+
+      // 그룹 TO 시간 범위 계산
+      final groupTOs = toList.where((to) => to.isGrouped && to.groupId != null).toList();
+      if (groupTOs.isNotEmpty) {
+        await Future.wait(
+          groupTOs.map((to) => _calculateTimeRange(to)),
+        );
+      }
 
       setState(() {
-        _allTOs = [...activeTOs, ...closedTOs];
-        _longTermApplications = longTermApps;
+        _allTOs = toList;
+        _longTermApplications = apps.where((app) => app.status == 'CONFIRMED').toList();
         _isLoading = false;
       });
 
-      print('✅ 전체 TO: ${_allTOs.length}개, 고정근무: ${longTermApps.length}명');
+      print('✅ 캘린더 데이터 로드: TO ${toList.length}개, 장기 ${apps.length}개');
     } catch (e) {
-      print('❌ TO 로드 실패: $e');
+      print('❌ 데이터 로드 실패: $e');
       setState(() => _isLoading = false);
     }
   }
 
-  /// 특정 날짜의 TO 가져오기
+  /// 그룹 TO 시간 범위 계산
+  Future<void> _calculateTimeRange(TOModel to) async {
+    try {
+      final timeRange = await _firestoreService.calculateGroupTimeRange(to.groupId!);
+      if (timeRange.isNotEmpty) {
+        to.setTimeRange(timeRange['minStart']!, timeRange['maxEnd']!);
+      }
+    } catch (e) {
+      print('시간 범위 계산 실패: $e');
+    }
+  }
+
+  /// 특정 날짜의 TO 목록
   List<TOModel> _getTOsForDay(DateTime day) {
     return _allTOs.where((to) {
-      return to.date.year == day.year &&
-          to.date.month == day.month &&
-          to.date.day == day.day;
+      if (to.isLongTerm) {
+        // 장기 TO: startDate ~ endDate 범위 확인
+        if (to.startDate == null || to.endDate == null) return false;
+        final isInRange = !day.isBefore(to.startDate!) && !day.isAfter(to.endDate!);
+        if (!isInRange) return false;
+
+        // workDays 확인
+        if (to.workDays != null && to.workDays!.isNotEmpty) {
+          final weekdays = ['월', '화', '수', '목', '금', '토', '일'];
+          final dayOfWeek = weekdays[day.weekday - 1];
+          return to.workDays!.contains(dayOfWeek);
+        }
+        return true;
+      } else {
+        // 단기 TO: 날짜 일치
+        return DateUtils.isSameDay(to.date, day);
+      }
     }).toList();
   }
 
-  /// 특정 날짜의 고정 근무자 수
-  int _getLongTermWorkersForDay(DateTime day) {
-    return _longTermApplications.where((app) {
-      if (app.status != 'CONFIRMED') return false;
-      return _isWorkingOnDate(app, day);
-    }).length;
+  /// 장기 근무자가 해당 날짜에 근무하는지
+  bool _isWorkingOnDate(ApplicationModel app, DateTime date) {
+    if (app.workDays == null || app.workDays!.isEmpty) return true;
+    
+    final weekdays = ['월', '화', '수', '목', '금', '토', '일'];
+    final dayOfWeek = weekdays[date.weekday - 1];
+    return app.workDays!.contains(dayOfWeek);
   }
 
-  /// 장기 근무가 특정 날짜에 근무하는지 확인
-  bool _isWorkingOnDate(ApplicationModel app, DateTime targetDate) {
-    if (!app.isLongTermApplication) {
-      return _isSameDay(app.workDate, targetDate);
-    }
-
-    final endDate = app.actualResignDate ?? app.workEndDate;
-    if (endDate == null) return false;
-
-    final isInRange = !targetDate.isBefore(app.workDate) &&
-        !targetDate.isAfter(endDate);
-
-    if (!isInRange) return false;
-
-    if (app.workDays == null || app.workDays!.isEmpty) {
-      return true;
-    }
-
-    final targetDayKorean = _getKoreanDayOfWeek(targetDate);
-    return app.workDays!.contains(targetDayKorean);
-  }
-
-  bool _isSameDay(DateTime date1, DateTime date2) {
-    return date1.year == date2.year &&
-        date1.month == date2.month &&
-        date1.day == date2.day;
-  }
-
-  String _getKoreanDayOfWeek(DateTime date) {
-    const days = ['월', '화', '수', '목', '금', '토', '일'];
-    return days[date.weekday - 1];
+  /// 캘린더 이벤트 마커
+  List<dynamic> _getEventsForDay(DateTime day) {
+    final events = <String>[];
+    
+    // 단기 TO 확인
+    final hasSingleTO = _allTOs.any((to) => 
+      !to.isLongTerm && DateUtils.isSameDay(to.date, day)
+    );
+    
+    // 장기 TO 확인
+    final hasLongTO = _getTOsForDay(day).any((to) => to.isLongTerm);
+    
+    if (hasLongTO) events.add('long');
+    if (hasSingleTO) events.add('single');
+    
+    return events;
   }
 
   @override
@@ -131,38 +153,21 @@ class _WorkforceCalendarViewState extends State<WorkforceCalendarView> {
         SliverToBoxAdapter(
           child: _buildCalendar(),
         ),
-        
+
         const SliverToBoxAdapter(
           child: Divider(height: 1),
         ),
-        
+
         // 선택한 날짜 표시
         if (_selectedDay != null)
           SliverToBoxAdapter(
-            child: Container(
-              padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
-              color: Colors.blue[50],
-              child: Row(
-                children: [
-                  Icon(Icons.event, color: Colors.blue[700], size: 20),
-                  const SizedBox(width: 8),
-                  Text(
-                    DateFormat('yyyy년 M월 d일 (E)', 'ko_KR').format(_selectedDay!),
-                    style: TextStyle(
-                      fontSize: 16,
-                      fontWeight: FontWeight.bold,
-                      color: Colors.blue[900],
-                    ),
-                  ),
-                ],
-              ),
-            ),
+            child: _buildDateHeader(),
           ),
-        
+
         const SliverToBoxAdapter(
           child: Divider(height: 1),
         ),
-        
+
         // 선택한 날짜의 TO 목록
         _buildSliverDayTOList(),
       ],
@@ -178,25 +183,11 @@ class _WorkforceCalendarViewState extends State<WorkforceCalendarView> {
       focusedDay: _focusedDay,
       calendarFormat: CalendarFormat.month,
       
-      // 🔥 높이 조정 추가
+      // 높이 조정
       daysOfWeekHeight: 40,
       rowHeight: 48,
-      
-      headerStyle: HeaderStyle(
-        formatButtonVisible: false,
-        titleCentered: true,
-        titleTextFormatter: (date, locale) {
-          return DateFormat.yMMMM('ko_KR').format(date);
-        },
-        titleTextStyle: const TextStyle(
-          fontSize: 18,
-          fontWeight: FontWeight.bold,
-        ),
-      ),
-      
-      selectedDayPredicate: (day) {
-        return isSameDay(_selectedDay, day);
-      },
+
+      selectedDayPredicate: (day) => DateUtils.isSameDay(_selectedDay, day),
       
       onDaySelected: (selectedDay, focusedDay) {
         setState(() {
@@ -204,53 +195,54 @@ class _WorkforceCalendarViewState extends State<WorkforceCalendarView> {
           _focusedDay = focusedDay;
         });
       },
-      
+
       onPageChanged: (focusedDay) {
-        setState(() {
-          _focusedDay = focusedDay;
-        });
+        _focusedDay = focusedDay;
       },
-      
-      // 날짜별 마커
+
+      // 이벤트 마커
+      eventLoader: _getEventsForDay,
+
       calendarBuilders: CalendarBuilders(
         markerBuilder: (context, date, events) {
-          final tos = _getTOsForDay(date);
-          final longTermCount = _getLongTermWorkersForDay(date);
-          
-          if (tos.isEmpty && longTermCount == 0) {
-            return const SizedBox.shrink();
-          }
+          if (events.isEmpty) return null;
 
-          int totalRequired = tos.fold(0, (sum, to) => sum + to.totalRequired);
-          totalRequired += longTermCount;
-
-          // 지난 날짜 여부
-          final today = DateTime.now();
-          final isPast = date.isBefore(DateTime(today.year, today.month, today.day));
+          final hasLong = events.contains('long');
+          final hasSingle = events.contains('single');
 
           return Positioned(
             bottom: 4,
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
-              decoration: BoxDecoration(
-                color: isPast ? Colors.grey[400] : Colors.blue[600],
-                borderRadius: BorderRadius.circular(8),
-              ),
-              child: Text(
-                '$totalRequired',
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontSize: 10,
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                if (hasLong)
+                  Container(
+                    width: 6,
+                    height: 6,
+                    margin: const EdgeInsets.symmetric(horizontal: 1),
+                    decoration: const BoxDecoration(
+                      shape: BoxShape.circle,
+                      color: Colors.blue,
+                    ),
+                  ),
+                if (hasSingle)
+                  Container(
+                    width: 6,
+                    height: 6,
+                    margin: const EdgeInsets.symmetric(horizontal: 1),
+                    decoration: const BoxDecoration(
+                      shape: BoxShape.circle,
+                      color: Colors.orange,
+                    ),
+                  ),
+              ],
             ),
           );
         },
       ),
-      
+
       calendarStyle: CalendarStyle(
-        markersMaxCount: 1,
+        markersMaxCount: 2,
         todayDecoration: BoxDecoration(
           color: Colors.blue[300],
           shape: BoxShape.circle,
@@ -259,6 +251,66 @@ class _WorkforceCalendarViewState extends State<WorkforceCalendarView> {
           color: Colors.blue[700],
           shape: BoxShape.circle,
         ),
+      ),
+
+      headerStyle: const HeaderStyle(
+        formatButtonVisible: false,
+        titleCentered: true,
+      ),
+    );
+  }
+
+  /// 날짜 헤더
+  Widget _buildDateHeader() {
+    final isToday = DateUtils.isSameDay(_selectedDay, DateTime.now());
+    final isPast = _selectedDay!.isBefore(DateTime.now()) && !isToday;
+
+    String statusText = '';
+    Color statusColor = Colors.blue;
+
+    if (isPast) {
+      statusText = '과거 기록';
+      statusColor = Colors.grey;
+    } else if (isToday) {
+      statusText = '오늘';
+      statusColor = Colors.green;
+    } else {
+      statusText = '예정';
+      statusColor = Colors.blue;
+    }
+
+    return Container(
+      padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
+      color: statusColor.withOpacity(0.1),
+      child: Row(
+        children: [
+          Icon(Icons.event, color: statusColor, size: 20),
+          const SizedBox(width: 8),
+          Text(
+            DateFormat('yyyy년 M월 d일 (E)', 'ko_KR').format(_selectedDay!),
+            style: TextStyle(
+              fontSize: 16,
+              fontWeight: FontWeight.bold,
+              color: statusColor,
+            ),
+          ),
+          const Spacer(),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+            decoration: BoxDecoration(
+              color: statusColor,
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Text(
+              statusText,
+              style: const TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.bold,
+                color: Colors.white,
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -311,19 +363,27 @@ class _WorkforceCalendarViewState extends State<WorkforceCalendarView> {
       padding: const EdgeInsets.all(16),
       sliver: SliverList(
         delegate: SliverChildListDelegate([
+          // 단기 TO 섹션
+          if (dayTOs.where((to) => !to.isLongTerm).isNotEmpty) ...[
+            _buildSectionHeader('📦 단기 TO', dayTOs.where((to) => !to.isLongTerm).length),
+            const SizedBox(height: 12),
+            ...dayTOs.where((to) => !to.isLongTerm).map((to) => _buildTOCard(to)),
+            const SizedBox(height: 24),
+          ],
+
+          // 장기 TO 섹션
+          if (dayTOs.where((to) => to.isLongTerm).isNotEmpty) ...[
+            _buildSectionHeader('⭐ 장기 TO', dayTOs.where((to) => to.isLongTerm).length),
+            const SizedBox(height: 12),
+            ...dayTOs.where((to) => to.isLongTerm).map((to) => _buildTOCard(to)),
+            const SizedBox(height: 24),
+          ],
+
           // 고정 근무자 섹션
           if (longTermWorkers.isNotEmpty) ...[
             _buildSectionHeader('👷 고정 근무 출근 예정', longTermWorkers.length),
             const SizedBox(height: 12),
             _buildLongTermWorkersCard(longTermWorkers),
-            const SizedBox(height: 24),
-          ],
-
-          // TO 섹션
-          if (dayTOs.isNotEmpty) ...[
-            _buildSectionHeader('📦 TO 목록', dayTOs.length),
-            const SizedBox(height: 12),
-            ...dayTOs.map((to) => _buildTOCard(to)),
           ],
         ]),
       ),
@@ -337,7 +397,7 @@ class _WorkforceCalendarViewState extends State<WorkforceCalendarView> {
         Text(
           title,
           style: const TextStyle(
-            fontSize: 18,
+            fontSize: 16,
             fontWeight: FontWeight.bold,
           ),
         ),
@@ -361,69 +421,96 @@ class _WorkforceCalendarViewState extends State<WorkforceCalendarView> {
     );
   }
 
-  /// 고정 근무자 카드
-  Widget _buildLongTermWorkersCard(List<ApplicationModel> workers) {
+  /// TO 카드
+  Widget _buildTOCard(TOModel to) {
+    final fillRate = to.totalRequired > 0
+        ? (to.totalConfirmed / to.totalRequired * 100).toInt()
+        : 0;
+
+    Color statusColor;
+    if (fillRate >= 100) {
+      statusColor = Colors.green;
+    } else if (fillRate >= 50) {
+      statusColor = Colors.orange;
+    } else {
+      statusColor = Colors.red;
+    }
+
     return Card(
+      margin: const EdgeInsets.only(bottom: 12),
       elevation: 2,
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                Icon(Icons.people, color: Colors.green[700], size: 20),
-                const SizedBox(width: 8),
-                Text(
-                  '총 ${workers.length}명 출근',
-                  style: const TextStyle(
-                    fontSize: 16,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 12),
-            Wrap(
-              spacing: 8,
-              runSpacing: 8,
-              children: workers.take(10).map((app) {
-                return Chip(
-                  avatar: const Icon(Icons.person, size: 16),
-                  label: Text(
-                    '${app.selectedWorkType}',
-                    style: const TextStyle(fontSize: 12),
-                  ),
-                  backgroundColor: Colors.green[50],
-                );
-              }).toList(),
-            ),
-            if (workers.length > 10)
-              Padding(
-                padding: const EdgeInsets.only(top: 8),
-                child: Text(
-                  '외 ${workers.length - 10}명',
-                  style: TextStyle(
-                    fontSize: 12,
-                    color: Colors.grey[600],
-                  ),
+      child: InkWell(
+        onTap: () => _showApplicantsDialog(to),
+        borderRadius: BorderRadius.circular(12),
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // 제목
+              Text(
+                to.title,
+                style: const TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.bold,
                 ),
               ),
-          ],
+              const SizedBox(height: 8),
+
+              // 시간
+              Row(
+                children: [
+                  Icon(Icons.access_time, size: 14, color: Colors.grey[600]),
+                  const SizedBox(width: 8),
+                  Text(
+                    to.displayTimeRange.isNotEmpty
+                        ? to.displayTimeRange
+                        : '${to.startTime} ~ ${to.endTime}',
+                    style: TextStyle(
+                      fontSize: 13,
+                      color: Colors.grey[700],
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 12),
+
+              // 인원 현황
+              Row(
+                children: [
+                  Text(
+                    '${to.totalConfirmed}/${to.totalRequired}명',
+                    style: TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.bold,
+                      color: statusColor,
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: ClipRRect(
+                      borderRadius: BorderRadius.circular(4),
+                      child: LinearProgressIndicator(
+                        value: to.totalRequired > 0
+                            ? to.totalConfirmed / to.totalRequired
+                            : 0,
+                        backgroundColor: Colors.grey[200],
+                        valueColor: AlwaysStoppedAnimation<Color>(statusColor),
+                        minHeight: 8,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
         ),
       ),
     );
   }
 
-  /// TO 카드
-  Widget _buildTOCard(TOModel to) {
-    // 지난 TO 여부
-    final today = DateTime.now();
-    final isPast = to.date.isBefore(DateTime(today.year, today.month, today.day));
-    
-    // 마감 여부
-    final isClosed = to.isManualClosed;
-
+  /// 고정 근무자 카드
+  Widget _buildLongTermWorkersCard(List<ApplicationModel> workers) {
     return Card(
       margin: const EdgeInsets.only(bottom: 12),
       elevation: 2,
@@ -432,124 +519,67 @@ class _WorkforceCalendarViewState extends State<WorkforceCalendarView> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // 헤더
-            Row(
-              children: [
-                Expanded(
-                  child: Text(
-                    to.title,
-                    style: TextStyle(
-                      fontSize: 16,
-                      fontWeight: FontWeight.bold,
-                      color: isPast ? Colors.grey[600] : Colors.black,
-                    ),
-                  ),
-                ),
-                if (to.groupId != null)
-                  Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 8,
-                      vertical: 4,
-                    ),
-                    decoration: BoxDecoration(
-                      color: Colors.blue[50],
-                      borderRadius: BorderRadius.circular(4),
-                      border: Border.all(color: Colors.blue[300]!),
-                    ),
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Icon(Icons.folder, size: 12, color: Colors.blue[700]),
-                        const SizedBox(width: 4),
-                        Text(
-                          '그룹',
-                          style: TextStyle(
-                            fontSize: 11,
-                            fontWeight: FontWeight.bold,
-                            color: Colors.blue[900],
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-              ],
-            ),
-            const SizedBox(height: 8),
-
-           // 시간
-            Row(
-              children: [
-                Icon(Icons.access_time, size: 14, color: Colors.grey[600]),
-                const SizedBox(width: 8),
-                Text(
-                  to.displayTimeRange.isNotEmpty 
-                      ? to.displayTimeRange 
-                      : '${to.startTime} ~ ${to.endTime}',
-                  style: TextStyle(
-                    fontSize: 13,
-                    color: Colors.grey[700],
-                  ),
-                ),
-              ],
+            Text(
+              '총 ${workers.length}명 출근 예정',
+              style: const TextStyle(
+                fontSize: 14,
+                fontWeight: FontWeight.bold,
+              ),
             ),
             const SizedBox(height: 12),
-
-            // 인원 현황
-            Row(
-              children: [
-                Text(
-                  '인원: ${to.totalConfirmed}/${to.totalRequired}명',
-                  style: TextStyle(
-                    fontSize: 14,
-                    fontWeight: FontWeight.bold,
-                    color: isPast ? Colors.grey[600] : Colors.blue[700],
-                  ),
-                ),
-                const Spacer(),
-                if (isClosed)
-                  Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 8,
-                      vertical: 4,
-                    ),
-                    decoration: BoxDecoration(
-                      color: Colors.red[50],
-                      borderRadius: BorderRadius.circular(4),
-                      border: Border.all(color: Colors.red[300]!),
-                    ),
-                    child: Text(
-                      '마감',
-                      style: TextStyle(
-                        fontSize: 12,
-                        fontWeight: FontWeight.bold,
-                        color: Colors.red[900],
-                      ),
-                    ),
-                  ),
-                if (isPast && !isClosed)
-                  Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 8,
-                      vertical: 4,
-                    ),
-                    decoration: BoxDecoration(
-                      color: Colors.grey[200],
-                      borderRadius: BorderRadius.circular(4),
-                    ),
-                    child: Text(
-                      '완료',
-                      style: TextStyle(
-                        fontSize: 12,
-                        fontWeight: FontWeight.bold,
-                        color: Colors.grey[700],
-                      ),
-                    ),
-                  ),
-              ],
+            FutureBuilder<List<String>>(
+              future: _getUserNames(workers),
+              builder: (context, snapshot) {
+                if (!snapshot.hasData) {
+                  return const CircularProgressIndicator();
+                }
+                
+                return Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: snapshot.data!.map((name) {
+                    return Chip(
+                      label: Text(name),
+                      backgroundColor: Colors.blue[50],
+                    );
+                  }).toList(),
+                );
+              },
             ),
           ],
         ),
       ),
     );
+  }
+
+  /// 사용자 이름 조회
+  Future<List<String>> _getUserNames(List<ApplicationModel> apps) async {
+    final names = <String>[];
+    
+    for (var app in apps) {
+      try {
+        final userDoc = await FirebaseFirestore.instance
+            .collection('users')
+            .doc(app.uid)
+            .get();
+        
+        if (userDoc.exists) {
+          names.add(userDoc.data()?['name'] ?? '이름없음');
+        } else {
+          names.add('이름없음');
+        }
+      } catch (e) {
+        names.add('이름없음');
+      }
+    }
+    
+    return names;
+  }
+
+  /// 지원자 관리 다이얼로그
+  void _showApplicantsDialog(TOModel to) {
+    // TODO: TO 전체 지원자 관리 기능 구현 필요
+    // 현재는 업무별로만 관리 가능
+    ToastHelper.showInfo('TO를 클릭하여 업무별 지원자를 관리하세요');
   }
 }

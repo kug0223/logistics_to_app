@@ -9,8 +9,7 @@ import '../../utils/toast_helper.dart';
 import 'admin_create_to_screen.dart';
 import 'admin_to_list_screen.dart';
 import 'settings_screen.dart';
-import 'dialogs/resign_request_management_dialog.dart';
-import 'workforce_management_screen.dart';
+import 'integrated_workforce_screen.dart';
 
 /// 사업장 관리자 홈 화면 (USER 홈과 동일한 레이아웃)
 class BusinessAdminHomeScreen extends StatelessWidget {
@@ -146,41 +145,24 @@ class BusinessAdminHomeScreen extends StatelessWidget {
                         },
                         ),
 
-                        // 3. TO 관리
+                        // 3. 인력 관리 (통합)
                         _buildMenuCard(
                           context,
-                          icon: Icons.assignment_outlined,
-                          title: 'TO 관리',
-                          subtitle: '내 TO 조회',
-                          color: Colors.orange,
-                          onTap: () {
-                            Navigator.push(
-                              context,
-                              MaterialPageRoute(
-                                builder: (context) => const AdminTOListScreen(),
-                              ),
-                            );
-                          },
-                        ),
-
-                        // 4. 인력 관리
-                        _buildMenuCard(
-                          context,
-                          icon: Icons.people_outline,
+                          icon: Icons.groups,
                           title: '인력 관리',
-                          subtitle: '그룹/캘린더 뷰',
+                          subtitle: 'TO 관리 & 현황',
                           color: Colors.purple,
                           onTap: () {
                             Navigator.push(
                               context,
                               MaterialPageRoute(
-                                builder: (context) => const WorkforceManagementScreen(),
+                                builder: (context) => const IntegratedWorkforceScreen(),
                               ),
                             );
                           },
                         ),
 
-                        // 5. 통계
+                        // 4. 통계
                         _buildMenuCard(
                           context,
                           icon: Icons.bar_chart_outlined,
@@ -194,7 +176,7 @@ class BusinessAdminHomeScreen extends StatelessWidget {
                           },
                         ),
 
-                        // 6. 설정
+                        // 5. 설정
                         _buildMenuCard(
                           context,
                           icon: Icons.settings_outlined,
