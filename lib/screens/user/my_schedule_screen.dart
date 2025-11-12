@@ -12,6 +12,7 @@ import '../../widgets/calendar/schedule_calendar.dart';
 import '../../widgets/calendar/monthly_stats_card.dart';
 import '../../widgets/calendar/day_schedule_list.dart';
 import '../../widgets/calendar/schedule_card.dart';
+import '../../widgets/dialogs/long_term_work_management_dialog.dart';
 
 
 /// 내 근무 스케줄 화면 (캘린더 뷰)
@@ -79,6 +80,11 @@ class _MyScheduleScreenState extends State<MyScheduleScreen> {
         actions: [
           _buildFilterButton(),
           IconButton(
+            icon: const Icon(Icons.work),
+            onPressed: _showLongTermWorkManagement,
+            tooltip: '고정근무 관리',
+          ),
+          IconButton(
             icon: const Icon(Icons.refresh),
             onPressed: _loadApplications,
           ),
@@ -106,6 +112,25 @@ class _MyScheduleScreenState extends State<MyScheduleScreen> {
                         _focusedDay = focusedDay;
                       });
                     },
+                  ),
+                ),
+                // 🔥 Legend (범례) 추가
+                SliverToBoxAdapter(
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 16),
+                    color: Colors.grey[50],
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        _buildLegendItem(Colors.green[600]!, '단기 확정', isLongTerm: false),
+                        const SizedBox(width: 12),
+                        _buildLegendItem(Colors.green[400]!, '고정 확정', isLongTerm: true),
+                        const SizedBox(width: 12),
+                        _buildLegendItem(Colors.orange[600]!, '단기 대기', isLongTerm: false),
+                        const SizedBox(width: 12),
+                        _buildLegendItem(Colors.orange[400]!, '고정 대기', isLongTerm: true),
+                      ],
+                    ),
                   ),
                 ),
                 
@@ -335,6 +360,43 @@ class _MyScheduleScreenState extends State<MyScheduleScreen> {
           ),
         ),
       ],
+    );
+  }
+  /// Legend 아이템
+  Widget _buildLegendItem(Color color, String label, {required bool isLongTerm}) {
+    return Row(
+      children: [
+        isLongTerm
+            ? Icon(Icons.star, size: 10, color: color)
+            : Container(
+                width: 8,
+                height: 8,
+                decoration: BoxDecoration(
+                  color: color,
+                  shape: BoxShape.circle,
+                ),
+              ),
+        const SizedBox(width: 4),
+        Text(
+          label,
+          style: TextStyle(
+            fontSize: 11,
+            color: Colors.grey[700],
+          ),
+        ),
+      ],
+    );
+  }
+  /// 고정근무 관리 다이얼로그 표시
+  void _showLongTermWorkManagement() {
+    showDialog(
+      context: context,
+      builder: (context) => LongTermWorkManagementDialog(
+        applications: _applications,
+        onChanged: () {
+          _loadApplications();
+        },
+      ),
     );
   }
 }

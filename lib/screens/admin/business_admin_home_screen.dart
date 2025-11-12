@@ -9,6 +9,8 @@ import '../../utils/toast_helper.dart';
 import 'admin_create_to_screen.dart';
 import 'admin_to_list_screen.dart';
 import 'settings_screen.dart';
+import 'dialogs/resign_request_management_dialog.dart';
+import 'workforce_management_screen.dart';
 
 /// 사업장 관리자 홈 화면 (USER 홈과 동일한 레이아웃)
 class BusinessAdminHomeScreen extends StatelessWidget {
@@ -161,17 +163,19 @@ class BusinessAdminHomeScreen extends StatelessWidget {
                           },
                         ),
 
-                        // 4. 지원자 관리
+                        // 4. 인력 관리
                         _buildMenuCard(
                           context,
                           icon: Icons.people_outline,
-                          title: '지원자 관리',
-                          subtitle: '승인/거절',
+                          title: '인력 관리',
+                          subtitle: '그룹/캘린더 뷰',
                           color: Colors.purple,
                           onTap: () {
-                            // TODO: 지원자 관리 화면으로 이동
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              const SnackBar(content: Text('지원자 관리 화면 준비 중입니다')),
+                            Navigator.push(
+                              context,
+                              MaterialPageRoute(
+                                builder: (context) => const WorkforceManagementScreen(),
+                              ),
                             );
                           },
                         ),

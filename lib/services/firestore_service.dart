@@ -3482,5 +3482,250 @@ class FirestoreService {
       print('❌ 마이그레이션 실패: $e');
     }
   }
+  // ═══════════════════════════════════════════════════════════
+  // 🔥 Phase A: 퇴사 관리 시스템
+  // ═══════════════════════════════════════════════════════════
+
+  /// 퇴사 요청 (지원자용)
+  Future<bool> requestResignation({
+    required String applicationId,
+    required DateTime resignDate,
+  }) async {
+    try {
+      await _firestore.collection('applications').doc(applicationId).update({
+        'resignRequestedAt': Timestamp.fromDate(DateTime.now()),
+        'resignRequestDate': Timestamp.fromDate(resignDate),
+        'resignStatus': 'PENDING',
+      });
+
+      print('✅ 퇴사 요청 완료: $applicationId');
+      return true;
+    } catch (e) {
+      print('❌ 퇴사 요청 실패: $e');
+      return false;
+    }
+  }
+
+  /// 퇴사 요청 취소 (지원자용)
+  Future<bool> cancelResignRequest(String applicationId) async {
+    try {
+      await _firestore.collection('applications').doc(applicationId).update({
+        'resignRequestedAt': FieldValue.delete(),
+        'resignRequestDate': FieldValue.delete(),
+        'resignStatus': FieldValue.delete(),
+      });
+
+      print('✅ 퇴사 요청 취소 완료: $applicationId');
+      return true;
+    } catch (e) {
+      print('❌ 퇴사 요청 취소 실패: $e');
+      return false;
+    }
+  }
+
+  /// 퇴사 승인 (관리자용)
+  Future<bool> approveResignation({
+    required String applicationId,
+    required String adminUID,
+  }) async {
+    try {
+      final appDoc = await _firestore
+          .collection('applications')
+          .doc(applicationId)
+          .get();
+
+      if (!appDoc.exists) {
+        ToastHelper.showError('지원서를 찾을 수 없습니다.');
+        return false;
+      }
+
+      final appData = appDoc.data() as Map<String, dynamic>;
+      final resignDate = (appData['resignRequestDate'] as Timestamp).toDate();
+
+      await _firestore.collection('applications').doc(applicationId).update({
+        'resignStatus': 'APPROVED',
+        'resignApprovedAt': Timestamp.fromDate(DateTime.now()),
+        'resignApprovedBy': adminUID,
+        'actualResignDate': Timestamp.fromDate(resignDate),
+        'workEndDate': Timestamp.fromDate(resignDate), // 실제 종료일 업데이트
+      });
+
+      print('✅ 퇴사 승인 완료: $applicationId');
+      return true;
+    } catch (e) {
+      print('❌ 퇴사 승인 실패: $e');
+      return false;
+    }
+  }
+
+  /// 퇴사 거절 (관리자용)
+  Future<bool> rejectResignation({
+    required String applicationId,
+    required String adminUID,
+    required String rejectReason,
+  }) async {
+    try {
+      await _firestore.collection('applications').doc(applicationId).update({
+        'resignStatus': 'REJECTED',
+        'resignApprovedAt': Timestamp.fromDate(DateTime.now()),
+        'resignApprovedBy': adminUID,
+        'resignRejectReason': rejectReason,
+      });
+
+      print('✅ 퇴사 거절 완료: $applicationId');
+      return true;
+    } catch (e) {
+      print('❌ 퇴사 거절 실패: $e');
+      return false;
+    }
+  }
+
+  /// 퇴사 자동 승인 처리 (Cloud Function에서 호출)
+  Future<bool> autoApproveResignation(String applicationId) async {
+    try {
+      final appDoc = await _firestore
+          .collection('applications')
+          .doc(applicationId)
+          .get();
+
+      if (!appDoc.exists) return false;
+
+      final appData = appDoc.data() as Map<String, dynamic>;
+      
+      // 이미 처리된 경우 스킵
+      if (appData['resignStatus'] != 'PENDING') return false;
+
+      final resignDate = (appData['resignRequestDate'] as Timestamp).toDate();
+
+      await _firestore.collection('applications').doc(applicationId).update({
+        'resignStatus': 'AUTO_APPROVED',
+        'resignApprovedAt': Timestamp.fromDate(DateTime.now()),
+        'resignApprovedBy': 'SYSTEM',
+        'actualResignDate': Timestamp.fromDate(resignDate),
+        'workEndDate': Timestamp.fromDate(resignDate),
+      });
+
+      print('✅ 퇴사 자동 승인 완료: $applicationId');
+      return true;
+    } catch (e) {
+      print('❌ 퇴사 자동 승인 실패: $e');
+      return false;
+    }
+  }
+  /// 퇴사 요청 목록 조회 (관리자용)
+  Future<List<ApplicationModel>> getResignRequests(String businessId) async {
+    try {
+      final snapshot = await _firestore
+          .collection('applications')
+          .where('businessId', isEqualTo: businessId)
+          .where('status', isEqualTo: 'CONFIRMED')
+          .where('resignStatus', isEqualTo: 'PENDING')
+          .get();
+
+      final applications = snapshot.docs
+          .map((doc) => ApplicationModel.fromFirestore(doc))
+          .where((app) => app.isLongTermApplication) // 장기 근무만
+          .toList();
+
+      print('✅ 퇴사 요청 ${applications.length}건 조회');
+      return applications;
+    } catch (e) {
+      print('❌ 퇴사 요청 조회 실패: $e');
+      return [];
+    }
+  }
+  /// 장기 근무 지원자 조회 (사업장별)
+  Future<List<ApplicationModel>> getLongTermApplicationsByBusiness(
+    String businessId,
+  ) async {
+    try {
+      final snapshot = await _firestore
+          .collection('applications')
+          .where('businessId', isEqualTo: businessId)
+          .where('status', isEqualTo: 'CONFIRMED')
+          .get();
+
+      final applications = snapshot.docs
+          .map((doc) => ApplicationModel.fromFirestore(doc))
+          .where((app) => app.isLongTermApplication)
+          .toList();
+
+      print('✅ 장기 근무 지원자 조회: ${applications.length}명');
+      return applications;
+    } catch (e) {
+      print('❌ 장기 근무 지원자 조회 실패: $e');
+      return [];
+    }
+  }
+  /// 활성 TO 조회 (사업장별) - 캐싱 적용
+  Future<List<TOModel>> getActiveTOsByBusinessId(String businessId) async {
+    try {
+      // 캐시 확인
+      if (_activeTOsCache != null && _activeTOsCacheTime != null) {
+        final cacheAge = DateTime.now().difference(_activeTOsCacheTime!);
+        if (cacheAge < _cacheValidDuration) {
+          print('✅ 활성 TO 캐시 사용');
+          return _activeTOsCache!
+              .where((to) => to.businessId == businessId)
+              .toList();
+        }
+      }
+
+      final snapshot = await _firestore
+          .collection('tos')
+          .where('businessId', isEqualTo: businessId)
+          .get();
+
+      final toList = snapshot.docs
+          .map((doc) => TOModel.fromMap(doc.data(), doc.id))
+          .toList();
+
+      // 캐시 저장
+      _activeTOsCache = toList;
+      _activeTOsCacheTime = DateTime.now();
+
+      print('✅ 활성 TO 조회: ${toList.length}개');
+      return toList;
+    } catch (e) {
+      print('❌ 활성 TO 조회 실패: $e');
+      return [];
+    }
+  }
+
+  /// 마감된 TO 조회 (사업장별) - 이미 있음, 사업장 필터 추가
+  Future<List<TOModel>> getClosedTOsByBusinessId(String businessId) async {
+    try {
+      // 캐시 확인
+      if (_closedTOsCache != null && _closedTOsCacheTime != null) {
+        final cacheAge = DateTime.now().difference(_closedTOsCacheTime!);
+        if (cacheAge < _cacheValidDuration) {
+          print('✅ 마감 TO 캐시 사용');
+          return _closedTOsCache!
+              .where((to) => to.businessId == businessId)
+              .toList();
+        }
+      }
+
+      final snapshot = await _firestore
+          .collection('tos')
+          .where('businessId', isEqualTo: businessId)
+          .where('isManualClosed', isEqualTo: true)
+          .get();
+
+      final toList = snapshot.docs
+          .map((doc) => TOModel.fromMap(doc.data(), doc.id))
+          .toList();
+
+      // 캐시 저장
+      _closedTOsCache = toList;
+      _closedTOsCacheTime = DateTime.now();
+
+      print('✅ 마감 TO 조회: ${toList.length}개');
+      return toList;
+    } catch (e) {
+      print('❌ 마감 TO 조회 실패: $e');
+      return [];
+    }
+  }
 
 }

@@ -508,4 +508,14 @@ class TOModel {
     if (isFull) return 0xFF4CAF50; // 초록색
     return 0xFF9E9E9E; // 회색
   }
+  /// 그룹 날짜 범위 표시 (예: "11/15 ~ 11/17 (3일)")
+  String? get groupDateRangeDisplay {
+    if (!isGroupMaster || startDate == null || endDate == null) return null;
+    
+    final start = '${startDate!.month}/${startDate!.day}';
+    final end = '${endDate!.month}/${endDate!.day}';
+    final days = endDate!.difference(startDate!).inDays + 1;
+    
+    return '$start ~ $end ($days일)';
+  }
 }

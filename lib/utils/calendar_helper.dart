@@ -2,32 +2,88 @@ import '../models/core/application_model.dart';
 
 /// 캘린더 관련 헬퍼 함수
 class CalendarHelper {
-  /// 특정 날짜의 지원 내역 가져오기
+  /// 특정 날짜의 지원 내역 가져오기 (장기 근무 확장 포함)
   static List<ApplicationModel> getEventsForDay(
     DateTime day,
     List<ApplicationModel> applications,
     String selectedFilter,
   ) {
-    return applications.where((app) {
-      // 날짜만 비교 (시간 제외)
-      final isSameDay = app.workDate.year == day.year &&
-                       app.workDate.month == day.month &&
-                       app.workDate.day == day.day;
-      
-      if (!isSameDay) return false;
-      
-      // 필터 적용
-      if (selectedFilter == 'CONFIRMED') {
-        return app.status == 'CONFIRMED';
-      } else if (selectedFilter == 'PENDING') {
-        return app.status == 'PENDING';
+    final result = <ApplicationModel>[];
+    
+    for (var app in applications) {
+      // 1. 단기 근무: workDate와 비교
+      if (!app.isLongTermApplication) {
+        if (_isSameDay(app.workDate, day)) {
+          if (_passesFilter(app, selectedFilter)) {
+            result.add(app);
+          }
+        }
       }
-      
-      // ALL: 취소/거절 제외
-      return app.status != 'CANCELED' && 
-             app.status != 'REJECTED' &&
-             app.status != 'AUTO_CANCELED';
-    }).toList();
+      // 2. 장기 근무: 근무 기간 + 요일 체크
+      else {
+        if (_isWorkingOnDate(app, day)) {
+          if (_passesFilter(app, selectedFilter)) {
+            result.add(app);
+          }
+        }
+      }
+    }
+    
+    return result;
+  }
+  
+  /// 장기 근무가 특정 날짜에 근무하는지 확인
+  static bool _isWorkingOnDate(ApplicationModel app, DateTime targetDate) {
+    // 확정되지 않은 장기 근무는 지원일에만 표시
+    if (app.status != 'CONFIRMED') {
+      return _isSameDay(app.workDate, targetDate);
+    }
+    
+    // 확정된 장기 근무: 근무 기간 + 요일 체크
+    // 🔥 actualResignDate(실제 퇴사일)가 있으면 그 날짜까지만
+    final endDate = app.actualResignDate ?? app.workEndDate;
+    if (endDate == null) return false;
+    
+    // 날짜 범위 체크
+    final isInRange = !targetDate.isBefore(app.workDate) && 
+                      !targetDate.isAfter(endDate);
+    
+    if (!isInRange) return false;
+    
+    // 근무 요일 체크
+    if (app.workDays == null || app.workDays!.isEmpty) {
+      return true; // 모든 날 근무
+    }
+    
+    final targetDayKorean = _getKoreanDayOfWeek(targetDate);
+    return app.workDays!.contains(targetDayKorean);
+  }
+  
+  /// 두 날짜가 같은지 비교 (시간 제외)
+  static bool _isSameDay(DateTime date1, DateTime date2) {
+    return date1.year == date2.year &&
+           date1.month == date2.month &&
+           date1.day == date2.day;
+  }
+  
+  /// 요일을 한글로 변환
+  static String _getKoreanDayOfWeek(DateTime date) {
+    const days = ['월', '화', '수', '목', '금', '토', '일'];
+    return days[date.weekday - 1];
+  }
+  
+  /// 필터 통과 여부
+  static bool _passesFilter(ApplicationModel app, String selectedFilter) {
+    if (selectedFilter == 'CONFIRMED') {
+      return app.status == 'CONFIRMED';
+    } else if (selectedFilter == 'PENDING') {
+      return app.status == 'PENDING';
+    }
+    
+    // ALL: 취소/거절 제외
+    return app.status != 'CANCELED' && 
+           app.status != 'REJECTED' &&
+           app.status != 'AUTO_CANCELED';
   }
   
   /// 이번 달 데이터 필터링

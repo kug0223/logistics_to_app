@@ -46,6 +46,15 @@ class ApplicationModel {
   final String? rejectMessage;          // 거절 시 관리자 메시지
   final String? cancelMessage;          // 취소 시 관리자 메시지
 
+  // 🔥 Phase A: 퇴사 관리 시스템
+  final DateTime? resignRequestedAt;    // 퇴사 요청 시각
+  final DateTime? resignRequestDate;    // 퇴사 희망일
+  final String? resignStatus;           // 'PENDING', 'APPROVED', 'REJECTED', 'AUTO_APPROVED'
+  final DateTime? resignApprovedAt;     // 승인/거절 시각
+  final String? resignApprovedBy;       // 승인/거절자 UID
+  final String? resignRejectReason;     // 거절 사유
+  final DateTime? actualResignDate;     // 실제 퇴사일 (승인된 날짜)
+
   ApplicationModel({
     required this.id,
     required this.businessId,
@@ -77,6 +86,14 @@ class ApplicationModel {
     this.confirmMessage,
     this.rejectMessage,
     this.cancelMessage,
+    // 🔥 Phase A: 퇴사 관리
+    this.resignRequestedAt,
+    this.resignRequestDate,
+    this.resignStatus,
+    this.resignApprovedAt,
+    this.resignApprovedBy,
+    this.resignRejectReason,
+    this.actualResignDate,
     
   });
 
@@ -127,6 +144,22 @@ class ApplicationModel {
       confirmMessage: data['confirmMessage'],
       rejectMessage: data['rejectMessage'],
       cancelMessage: data['cancelMessage'],
+      // 🔥 Phase A: 퇴사 관리
+      resignRequestedAt: data['resignRequestedAt'] != null
+          ? (data['resignRequestedAt'] as Timestamp).toDate()
+          : null,
+      resignRequestDate: data['resignRequestDate'] != null
+          ? (data['resignRequestDate'] as Timestamp).toDate()
+          : null,
+      resignStatus: data['resignStatus'],
+      resignApprovedAt: data['resignApprovedAt'] != null
+          ? (data['resignApprovedAt'] as Timestamp).toDate()
+          : null,
+      resignApprovedBy: data['resignApprovedBy'],
+      resignRejectReason: data['resignRejectReason'],
+      actualResignDate: data['actualResignDate'] != null
+          ? (data['actualResignDate'] as Timestamp).toDate()
+          : null,
     );
   }
   
@@ -168,6 +201,14 @@ class ApplicationModel {
       'confirmMessage': confirmMessage,
       'rejectMessage': rejectMessage,
       'cancelMessage': cancelMessage,
+      // 🔥 Phase A: 퇴사 관리
+      'resignRequestedAt': resignRequestedAt != null ? Timestamp.fromDate(resignRequestedAt!) : null,
+      'resignRequestDate': resignRequestDate != null ? Timestamp.fromDate(resignRequestDate!) : null,
+      'resignStatus': resignStatus,
+      'resignApprovedAt': resignApprovedAt != null ? Timestamp.fromDate(resignApprovedAt!) : null,
+      'resignApprovedBy': resignApprovedBy,
+      'resignRejectReason': resignRejectReason,
+      'actualResignDate': actualResignDate != null ? Timestamp.fromDate(actualResignDate!) : null,
     };
   }
 
@@ -247,6 +288,15 @@ class ApplicationModel {
     String? confirmMessage,
     String? rejectMessage,
     String? cancelMessage,
+    // 🔥 Phase A: 퇴사 관리
+    DateTime? resignRequestedAt,
+    DateTime? resignRequestDate,
+    String? resignStatus,
+    DateTime? resignApprovedAt,
+    String? resignApprovedBy,
+    String? resignRejectReason,
+    DateTime? actualResignDate,
+    
     
   }) {
     return ApplicationModel(
@@ -280,6 +330,14 @@ class ApplicationModel {
       confirmMessage: confirmMessage ?? this.confirmMessage,
       rejectMessage: rejectMessage ?? this.rejectMessage,
       cancelMessage: cancelMessage ?? this.cancelMessage,
+      // 🔥 Phase A: 퇴사 관리
+      resignRequestedAt: resignRequestedAt ?? this.resignRequestedAt,
+      resignRequestDate: resignRequestDate ?? this.resignRequestDate,
+      resignStatus: resignStatus ?? this.resignStatus,
+      resignApprovedAt: resignApprovedAt ?? this.resignApprovedAt,
+      resignApprovedBy: resignApprovedBy ?? this.resignApprovedBy,
+      resignRejectReason: resignRejectReason ?? this.resignRejectReason,
+      actualResignDate: actualResignDate ?? this.actualResignDate,
     );
   }
 
