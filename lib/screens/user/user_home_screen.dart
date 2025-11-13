@@ -5,6 +5,7 @@ import '../../providers/theme_provider.dart';
 import 'all_to_list_screen.dart';
 import '../../utils/dialog_helper.dart';
 import 'my_schedule_screen.dart';
+import 'attendance_check_screen.dart';
 
 class UserHomeScreen extends StatelessWidget {
   const UserHomeScreen({super.key});
@@ -125,9 +126,12 @@ class UserHomeScreen extends StatelessWidget {
                       subtitle: '근무 시간 기록',
                       color: Colors.purple,
                       onTap: () {
-                        // TODO: 출퇴근 체크 화면으로 이동
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(content: Text('준비 중입니다')),
+                        // ⭐ 출퇴근 체크 화면으로 이동
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (context) => const AttendanceCheckScreen(),
+                          ),
                         );
                       },
                     ),

@@ -20,6 +20,9 @@ class BusinessModel {
   final bool isApproved;         // 슈퍼관리자 승인 여부
   final DateTime createdAt;
   final DateTime? updatedAt;
+  // ⭐ 출퇴근 설정 추가
+  final String attendanceType;   // "gps" | "beacon" | "manual"
+  final int gpsRadius;            // GPS 반경 (미터)
 
   BusinessModel({
     required this.id,
@@ -38,6 +41,8 @@ class BusinessModel {
     this.isApproved = false,
     required this.createdAt,
     this.updatedAt,
+    this.attendanceType = 'gps',
+    this.gpsRadius = 100,  // ⭐ 기본값 100m
   });
 
   // Firestore에서 데이터 가져올 때
@@ -61,6 +66,8 @@ class BusinessModel {
       updatedAt: map['updatedAt'] != null 
           ? (map['updatedAt'] as Timestamp).toDate() 
           : null,
+      attendanceType: map['attendanceType'] ?? 'gps',
+      gpsRadius: map['gpsRadius'] ?? 100,
     );
   }
   /// ⭐ Firestore DocumentSnapshot에서 변환 (추가!)
@@ -87,6 +94,8 @@ class BusinessModel {
       'isApproved': isApproved,
       'createdAt': Timestamp.fromDate(createdAt),
       'updatedAt': updatedAt != null ? Timestamp.fromDate(updatedAt!) : null,
+      'attendanceType': attendanceType,
+      'gpsRadius': gpsRadius,
     };
   }
 

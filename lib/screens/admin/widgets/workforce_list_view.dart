@@ -274,6 +274,32 @@ class _WorkforceListViewState extends State<WorkforceListView> {
     return Column(
       children: [
         _buildTabBar(),
+        // ⭐ 마감됨 탭 안내 메시지
+          if (_selectedTab == 'CLOSED')
+            Container(
+              padding: const EdgeInsets.all(12),
+              margin: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: Colors.blue[50],
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: Colors.blue[200]!),
+              ),
+              child: Row(
+                children: [
+                  Icon(Icons.info_outline, color: Colors.blue[700], size: 20),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      '최근 마감된 5개만 표시됩니다. 이전 마감은 캘린더를 이용하세요.',
+                      style: TextStyle(
+                        color: Colors.blue[700],
+                        fontSize: 13,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
         Expanded(child: _buildTOList()),
       ],
     );

@@ -1,14 +1,20 @@
 import 'package:flutter/material.dart';
 import 'package:table_calendar/table_calendar.dart';
 import 'package:intl/intl.dart';
+import 'package:provider/provider.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 
 // Models
 import '../../../models/core/to_model.dart';
 import '../../../models/core/work_detail_model.dart';
+import '../../../models/core/application_model.dart';
 import '../../../models/ui/admin_to_list_ui_models.dart';
 
 // Services
 import '../../../services/firestore_service.dart';
+
+// Providers
+import '../../../providers/user_provider.dart';  // ⭐ 추가
 
 // Utils
 import '../../../utils/toast_helper.dart';
@@ -18,6 +24,7 @@ import '../../../widgets/common/loading_widget.dart';
 
 // Dialogs
 import '../dialogs/to_list_dialogs.dart';
+import '../dialogs/attendance_status_dialog.dart';
 
 // Local Widgets
 import 'to_group_card.dart';
@@ -43,6 +50,9 @@ class _WorkforceCalendarViewState extends State<WorkforceCalendarView> {
   // 이중 토글 상태
   final Set<String> _expandedGroups = {};
   final Set<String> _expandedTOs = {};
+  // ⭐ 인원현황 관련
+  bool _hasConfirmedWorkers = false;
+  bool _isCheckingWorkers = false;
 
   @override
   void initState() {
@@ -54,6 +64,10 @@ class _WorkforceCalendarViewState extends State<WorkforceCalendarView> {
       onChanged: _loadData,
     );
     _loadData();
+    // ⭐ 초기 날짜의 확정 인원 체크
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _checkConfirmedWorkers(_selectedDay!);
+    });
   }
 
   /// 데이터 로드 (ListView와 동일한 로직)
@@ -263,6 +277,23 @@ class _WorkforceCalendarViewState extends State<WorkforceCalendarView> {
         SliverToBoxAdapter(
           child: _buildCalendar(),
         ),
+        // ⭐ 범례 추가!
+        SliverToBoxAdapter(
+          child: Container(
+            padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 16),
+            color: Colors.grey[50],
+            child: Wrap(
+              alignment: WrapAlignment.center,
+              spacing: 16,
+              runSpacing: 8,
+              children: [
+                _buildLegendItem(Theme.of(context).primaryColor, '단기 진행중', isLongTerm: false),
+                _buildLegendItem(Colors.amber[700]!, '장기 진행중', isLongTerm: true),
+                _buildLegendItem(Colors.grey[400]!, '과거/마감', isLongTerm: false),
+              ],
+            ),
+          ),
+        ),
 
         const SliverToBoxAdapter(
           child: Divider(height: 1),
@@ -306,6 +337,8 @@ class _WorkforceCalendarViewState extends State<WorkforceCalendarView> {
           _expandedGroups.clear();
           _expandedTOs.clear();
         });
+        // ⭐ 확정 인원 체크
+        _checkConfirmedWorkers(selectedDay);
       },
 
       onPageChanged: (focusedDay) {
@@ -323,31 +356,38 @@ class _WorkforceCalendarViewState extends State<WorkforceCalendarView> {
 
           final hasLong = events.contains('long');
           final hasSingle = events.contains('single');
+          
+          // ⭐ 날짜가 지났거나 마감된 공고인지 확인
+          final dayGroupItems = _getGroupItemsForDay(date);
+          final isPastOrClosed = date.isBefore(DateTime.now().subtract(const Duration(days: 1))) ||
+              dayGroupItems.every((item) => item.masterTO.isManualClosed);
+
+          // ⭐ 회색 또는 기본 색상
+          final Color shortColor = isPastOrClosed ? Colors.grey[400]! : Theme.of(context).primaryColor;
+          final Color longColor = isPastOrClosed ? Colors.grey[400]! : Colors.amber[700]!;
 
           return Positioned(
             bottom: 4,
             child: Row(
               mainAxisSize: MainAxisSize.min,
               children: [
-                if (hasLong)
-                  Container(
-                    width: 6,
-                    height: 6,
-                    margin: const EdgeInsets.symmetric(horizontal: 1),
-                    decoration: const BoxDecoration(
-                      shape: BoxShape.circle,
-                      color: Colors.blue,
-                    ),
-                  ),
+                // ⭐ 단기 TO: 원형
                 if (hasSingle)
                   Container(
-                    width: 6,
-                    height: 6,
-                    margin: const EdgeInsets.symmetric(horizontal: 1),
-                    decoration: const BoxDecoration(
+                    width: 7,
+                    height: 7,
+                    margin: const EdgeInsets.symmetric(horizontal: 1.5),
+                    decoration: BoxDecoration(
                       shape: BoxShape.circle,
-                      color: Colors.orange,
+                      color: shortColor,
                     ),
+                  ),
+                // ⭐ 장기 TO: 별표
+                if (hasLong)
+                  Icon(
+                    Icons.star,
+                    size: 10,
+                    color: longColor,
                   ),
               ],
             ),
@@ -408,6 +448,21 @@ class _WorkforceCalendarViewState extends State<WorkforceCalendarView> {
               color: statusColor,
             ),
           ),
+          
+          // ⭐ 인원현황 버튼 추가
+          const SizedBox(width: 12),
+          ElevatedButton.icon(
+            onPressed: _hasConfirmedWorkers ? _showAttendancePopup : null,
+            icon: const Icon(Icons.groups, size: 18),
+            label: const Text('인원현황'),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: _hasConfirmedWorkers ? Colors.blue : Colors.grey,
+              foregroundColor: Colors.white,
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              textStyle: const TextStyle(fontSize: 13),
+            ),
+          ),
+          
           const Spacer(),
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
@@ -524,5 +579,150 @@ class _WorkforceCalendarViewState extends State<WorkforceCalendarView> {
         _expandedTOs.add(toId);
       }
     });
+  }
+
+  /// 범례 아이템
+  Widget _buildLegendItem(Color color, String label, {required bool isLongTerm}) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        isLongTerm
+            ? Icon(Icons.star, size: 10, color: color)
+            : Container(
+                width: 8,
+                height: 8,
+                decoration: BoxDecoration(
+                  color: color,
+                  shape: BoxShape.circle,
+                ),
+              ),
+        const SizedBox(width: 4),
+        Text(
+          label,
+          style: TextStyle(
+            fontSize: 11,
+            color: Colors.grey[700],
+          ),
+        ),
+      ],
+    );
+  }
+  /// ⭐ 확정 인원 체크
+  Future<void> _checkConfirmedWorkers(DateTime date) async {
+    setState(() => _isCheckingWorkers = true);
+
+    try {
+      final userProvider = Provider.of<UserProvider>(context, listen: false);
+      final businessId = userProvider.currentUser?.businessId;
+
+      if (businessId == null) {
+        setState(() {
+          _hasConfirmedWorkers = false;
+          _isCheckingWorkers = false;
+        });
+        return;
+      }
+
+      final confirmedWorkers = await _getConfirmedWorkersForDate(date, businessId);
+
+      setState(() {
+        _hasConfirmedWorkers = confirmedWorkers.isNotEmpty;
+        _isCheckingWorkers = false;
+      });
+    } catch (e) {
+      print('❌ 확정 인원 체크 실패: $e');
+      setState(() {
+        _hasConfirmedWorkers = false;
+        _isCheckingWorkers = false;
+      });
+    }
+  }
+
+  /// ⭐ 해당 날짜의 확정 근무자 조회
+  Future<List<ApplicationModel>> _getConfirmedWorkersForDate(
+    DateTime date,
+    String businessId,
+  ) async {
+    final dateStart = DateTime(date.year, date.month, date.day);
+
+    try {
+      final snapshot = await FirebaseFirestore.instance
+          .collection('applications')
+          .where('businessId', isEqualTo: businessId)
+          .where('status', isEqualTo: 'CONFIRMED')
+          .get();
+
+      final allConfirmed = snapshot.docs
+          .map((doc) => ApplicationModel.fromFirestore(doc))
+          .toList();
+
+      // 단기 + 장기 필터링
+      final result = allConfirmed.where((app) {
+        // 단기 근무
+        if (!app.isLongTermApplication) {
+          return DateUtils.isSameDay(app.workDate, dateStart);
+        }
+        
+        // 장기 근무
+        if (app.workEndDate == null) return false;
+
+        // 기간 체크
+        if (dateStart.isBefore(app.workDate) || dateStart.isAfter(app.workEndDate!)) {
+          return false;
+        }
+
+        // 요일 체크
+        if (app.workDays == null || app.workDays!.isEmpty) {
+          return true; // 매일 근무
+        }
+
+        final weekdays = ['월', '화', '수', '목', '금', '토', '일'];
+        final dayWeekday = weekdays[date.weekday - 1];
+
+        return app.workDays!.contains(dayWeekday);
+      }).toList();
+
+      return result;
+    } catch (e) {
+      print('❌ 확정 근무자 조회 실패: $e');
+      return [];
+    }
+  }
+  /// ⭐ 인원현황 팝업 표시
+  Future<void> _showAttendancePopup() async {
+    if (_selectedDay == null) return;
+
+    final userProvider = Provider.of<UserProvider>(context, listen: false);
+    final uid = userProvider.currentUser?.uid;
+
+    if (uid == null) {
+      ToastHelper.showError('로그인 정보를 찾을 수 없습니다');
+      return;
+    }
+
+    try {
+      // ⭐ 관리자의 모든 사업장 조회
+      final businesses = await _firestoreService.getMyBusiness(uid);
+
+      if (businesses.isEmpty) {
+        ToastHelper.showError('등록된 사업장이 없습니다');
+        return;
+      }
+
+      final businessIds = businesses.map((b) => b.id).toList();
+      final currentBusinessId = userProvider.currentUser?.businessId;
+
+      await showDialog(
+        context: context,
+        builder: (context) => AttendanceStatusDialog(
+          date: _selectedDay!,
+          businessIds: businessIds,
+          initialBusinessId: currentBusinessId,
+        ),
+      );
+    } catch (e) {
+      print('❌ 사업장 조회 실패: $e');
+      ToastHelper.showError('사업장 정보를 불러올 수 없습니다');
+    }
   }
 }

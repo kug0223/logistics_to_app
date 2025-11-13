@@ -39,6 +39,7 @@ class CalendarHelper {
       return _isSameDay(app.workDate, targetDate);
     }
     
+    
     // 확정된 장기 근무: 근무 기간 + 요일 체크
     // 🔥 actualResignDate(실제 퇴사일)가 있으면 그 날짜까지만
     final endDate = app.actualResignDate ?? app.workEndDate;
@@ -97,9 +98,12 @@ class CalendarHelper {
     }).toList();
   }
   
-  /// 확정 근무 수 계산
+  /// 확정 근무 수 계산 (단기만 카운트, 장기 제외)
   static int getConfirmedCount(List<ApplicationModel> applications) {
-    return applications.where((app) => app.status == 'CONFIRMED').length;
+    return applications.where((app) => 
+      app.status == 'CONFIRMED' && 
+      !app.isLongTermApplication  // ⭐ 장기 근무 제외
+    ).length;
   }
   
   /// 대기 중 수 계산

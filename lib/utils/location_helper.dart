@@ -1,0 +1,162 @@
+import 'package:geolocator/geolocator.dart';
+import 'package:permission_handler/permission_handler.dart';
+import 'dart:math' show cos, sqrt, asin;
+
+/// GPS 위치 및 권한 관리 헬퍼
+class LocationHelper {
+  /// GPS 권한 확인 및 요청
+  static Future<bool> checkAndRequestPermission() async {
+    try {
+      // 1. 위치 서비스 활성화 확인
+      bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
+      if (!serviceEnabled) {
+        print('⚠️ 위치 서비스가 비활성화되어 있습니다.');
+        return false;
+      }
+
+      // 2. 권한 상태 확인
+      LocationPermission permission = await Geolocator.checkPermission();
+      
+      // 3. 권한이 거부된 경우 요청
+      if (permission == LocationPermission.denied) {
+        permission = await Geolocator.requestPermission();
+        if (permission == LocationPermission.denied) {
+          print('❌ 위치 권한이 거부되었습니다.');
+          return false;
+        }
+      }
+
+      // 4. 영구 거부된 경우
+      if (permission == LocationPermission.deniedForever) {
+        print('❌ 위치 권한이 영구적으로 거부되었습니다.');
+        return false;
+      }
+
+      print('✅ 위치 권한 확인 완료');
+      return true;
+    } catch (e) {
+      print('❌ 위치 권한 확인 실패: $e');
+      return false;
+    }
+  }
+
+  /// 현재 위치 가져오기
+  static Future<Position?> getCurrentPosition() async {
+    try {
+      // 권한 확인
+      final hasPermission = await checkAndRequestPermission();
+      if (!hasPermission) {
+        return null;
+      }
+
+      // 현재 위치 가져오기
+      final position = await Geolocator.getCurrentPosition(
+        desiredAccuracy: LocationAccuracy.high,
+        timeLimit: const Duration(seconds: 10),
+      );
+
+      print('✅ 현재 위치: ${position.latitude}, ${position.longitude}');
+      return position;
+    } catch (e) {
+      print('❌ 위치 가져오기 실패: $e');
+      return null;
+    }
+  }
+
+  /// 두 지점 간 거리 계산 (미터)
+  static double calculateDistance({
+    required double lat1,
+    required double lon1,
+    required double lat2,
+    required double lon2,
+  }) {
+    const p = 0.017453292519943295; // Math.PI / 180
+    final a = 0.5 -
+        cos((lat2 - lat1) * p) / 2 +
+        cos(lat1 * p) * cos(lat2 * p) * (1 - cos((lon2 - lon1) * p)) / 2;
+
+    final distance = 12742000 * asin(sqrt(a)); // 2 * R; R = 6371 km
+    return distance; // 미터 단위
+  }
+
+  /// 사업장 반경 내에 있는지 확인
+  static bool isWithinRadius({
+    required double currentLat,
+    required double currentLon,
+    required double businessLat,
+    required double businessLon,
+    double radiusInMeters = 100.0,
+  }) {
+    final distance = calculateDistance(
+      lat1: currentLat,
+      lon1: currentLon,
+      lat2: businessLat,
+      lon2: businessLon,
+    );
+
+    print('📍 사업장과의 거리: ${distance.toStringAsFixed(1)}m (기준: ${radiusInMeters}m)');
+    return distance <= radiusInMeters;
+  }
+
+  /// 앱 설정 열기
+  static Future<void> openAppSettings() async {
+    await Geolocator.openAppSettings();
+  }
+
+  /// 위치 설정 열기
+  static Future<void> openLocationSettings() async {
+    await Geolocator.openLocationSettings();
+  }
+
+  /// 거리를 읽기 쉬운 형태로 변환
+  static String formatDistance(double meters) {
+    if (meters < 1000) {
+      return '${meters.toStringAsFixed(0)}m';
+    } else {
+      return '${(meters / 1000).toStringAsFixed(1)}km';
+    }
+  }
+
+  /// 위치 정확도 체크
+  static Future<bool> isAccuracyGood() async {
+    try {
+      final position = await Geolocator.getCurrentPosition(
+        desiredAccuracy: LocationAccuracy.high,
+      );
+
+      // 정확도가 50m 이하면 양호
+      final isGood = position.accuracy <= 50;
+      print('📍 위치 정확도: ${position.accuracy.toStringAsFixed(1)}m ${isGood ? "✅" : "⚠️"}');
+      
+      return isGood;
+    } catch (e) {
+      print('❌ 정확도 체크 실패: $e');
+      return false;
+    }
+  }
+
+  /// 권한 상태 메시지
+  static String getPermissionMessage(LocationPermission permission) {
+    switch (permission) {
+      case LocationPermission.denied:
+        return '위치 권한이 거부되었습니다.\n출퇴근 체크를 위해 위치 권한이 필요합니다.';
+      case LocationPermission.deniedForever:
+        return '위치 권한이 영구적으로 거부되었습니다.\n설정에서 권한을 허용해주세요.';
+      case LocationPermission.whileInUse:
+      case LocationPermission.always:
+        return '위치 권한이 허용되었습니다.';
+      default:
+        return '위치 권한 상태를 확인할 수 없습니다.';
+    }
+  }
+
+  /// 실시간 위치 스트림 (선택적)
+  static Stream<Position> getPositionStream() {
+    return Geolocator.getPositionStream(
+      locationSettings: const LocationSettings(
+        accuracy: LocationAccuracy.high,
+        distanceFilter: 10, // 10m 이동 시 업데이트
+      ),
+    );
+  }
+}
