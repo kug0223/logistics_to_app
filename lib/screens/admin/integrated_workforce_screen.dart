@@ -149,8 +149,8 @@ class _IntegratedWorkforceScreenState extends State<IntegratedWorkforceScreen> {
         ],
       ),
       body: _isCalendarView
-          ? WorkforceCalendarView(businessId: _selectedBusinessId!)
-          : const WorkforceListView(), // ✅ businessId 파라미터 제거!
+          ? const WorkforceCalendarView() // ✅ businessId 파라미터 제거!
+          : const WorkforceListView(),
     );
   }
 
