@@ -48,8 +48,6 @@ class _IntegratedWorkforceScreenState extends State<IntegratedWorkforceScreen> {
       return Scaffold(
         appBar: AppBar(
           title: const Text('인력 관리'),
-          backgroundColor: Colors.blue[700],
-          foregroundColor: Colors.white,
         ),
         body: Center(
           child: Column(
@@ -73,8 +71,6 @@ class _IntegratedWorkforceScreenState extends State<IntegratedWorkforceScreen> {
     return Scaffold(
       appBar: AppBar(
         title: Text(_isCalendarView ? '인력 관리 - 캘린더' : '인력 관리 - 목록'),
-        backgroundColor: Colors.blue[700],
-        foregroundColor: Colors.white,
         actions: [
           // 퇴사 요청 알림 아이콘
           FutureBuilder<int>(
@@ -122,7 +118,7 @@ class _IntegratedWorkforceScreenState extends State<IntegratedWorkforceScreen> {
           Container(
             margin: const EdgeInsets.only(right: 8),
             decoration: BoxDecoration(
-              color: Colors.white.withOpacity(0.2),
+              color: Theme.of(context).primaryColor.withOpacity(0.2),
               borderRadius: BorderRadius.circular(8),
             ),
             child: Row(
@@ -154,7 +150,7 @@ class _IntegratedWorkforceScreenState extends State<IntegratedWorkforceScreen> {
       ),
       body: _isCalendarView
           ? WorkforceCalendarView(businessId: _selectedBusinessId!)
-          : WorkforceListView(businessId: _selectedBusinessId!),
+          : const WorkforceListView(), // ✅ businessId 파라미터 제거!
     );
   }
 
@@ -179,7 +175,7 @@ class _IntegratedWorkforceScreenState extends State<IntegratedWorkforceScreen> {
             Icon(
               icon,
               size: 18,
-              color: isSelected ? Colors.blue[700] : Colors.white,
+              color: isSelected ? Theme.of(context).primaryColor : Colors.white,
             ),
             const SizedBox(width: 4),
             Text(
@@ -187,7 +183,7 @@ class _IntegratedWorkforceScreenState extends State<IntegratedWorkforceScreen> {
               style: TextStyle(
                 fontSize: 13,
                 fontWeight: FontWeight.bold,
-                color: isSelected ? Colors.blue[700] : Colors.white,
+                color: isSelected ? Theme.of(context).primaryColor : Colors.white,
               ),
             ),
           ],
