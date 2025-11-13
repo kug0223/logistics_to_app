@@ -1,23 +1,30 @@
 import 'package:flutter/material.dart';
 import 'package:table_calendar/table_calendar.dart';
 import 'package:intl/intl.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
+
+// Models
 import '../../../models/core/to_model.dart';
-import '../../../models/core/application_model.dart';
+import '../../../models/core/work_detail_model.dart';
+import '../../../models/ui/admin_to_list_ui_models.dart';
+
+// Services
 import '../../../services/firestore_service.dart';
-import '../../../widgets/common/loading_widget.dart';
-import '../../../utils/format_helper.dart';
-import '../dialogs/work_applicants_dialog.dart';
+
+// Utils
 import '../../../utils/toast_helper.dart';
 
-/// 인력 관리 - 캘린더 뷰
-class WorkforceCalendarView extends StatefulWidget {
-  final String businessId;
+// Widgets
+import '../../../widgets/common/loading_widget.dart';
 
-  const WorkforceCalendarView({
-    super.key,
-    required this.businessId,
-  });
+// Dialogs
+import '../dialogs/to_list_dialogs.dart';
+
+// Local Widgets
+import 'to_group_card.dart';
+
+/// 인력 관리 - 캘린더 뷰 (리팩토링 완료)
+class WorkforceCalendarView extends StatefulWidget {
+  const WorkforceCalendarView({super.key});
 
   @override
   State<WorkforceCalendarView> createState() => _WorkforceCalendarViewState();
@@ -25,115 +32,218 @@ class WorkforceCalendarView extends StatefulWidget {
 
 class _WorkforceCalendarViewState extends State<WorkforceCalendarView> {
   final FirestoreService _firestoreService = FirestoreService();
+  late TOListDialogs _dialogs;
 
   DateTime _focusedDay = DateTime.now();
   DateTime? _selectedDay;
 
-  List<TOModel> _allTOs = [];
-  List<ApplicationModel> _longTermApplications = [];
+  List<TOGroupItem> _allGroupItems = [];
   bool _isLoading = true;
+
+  // 이중 토글 상태
+  final Set<String> _expandedGroups = {};
+  final Set<String> _expandedTOs = {};
 
   @override
   void initState() {
     super.initState();
     _selectedDay = _focusedDay;
+    _dialogs = TOListDialogs(
+      context: context,
+      firestoreService: _firestoreService,
+      onChanged: _loadData,
+    );
     _loadData();
   }
 
-  /// 데이터 로드
+  /// 데이터 로드 (ListView와 동일한 로직)
   Future<void> _loadData() async {
     setState(() => _isLoading = true);
 
     try {
-      final results = await Future.wait([
-        Future(() async {
-          // 진행중 + 마감 TO 모두 가져오기
-          final active = await _firestoreService.getActiveTOsByBusinessId(widget.businessId);
-          final closed = await _firestoreService.getClosedTOsByBusinessId(widget.businessId);
-          return [...active, ...closed];
-        }),
-        _firestoreService.getLongTermApplicationsByBusiness(widget.businessId),
-      ]);
+      // 진행중 + 마감 TO 모두 가져오기
+      final active = await _firestoreService.getActiveTOs();
+      final closed = await _firestoreService.getClosedTOs();
+      final allTOs = [...active, ...closed];
 
-      final toList = results[0] as List<TOModel>;
-      final apps = results[1] as List<ApplicationModel>;
+      List<TOGroupItem> groupItems = [];
+      
+      for (var masterTO in allTOs) {
+        if (masterTO.isGrouped && masterTO.groupId != null) {
+          final groupTOs = await _firestoreService.getTOsByGroup(masterTO.groupId!);
+          final toIds = groupTOs.map((to) => to.id).toList();
+          
+          final batchResults = await Future.wait([
+            _firestoreService.getWorkDetailsBatch(toIds, forceRefresh: true),
+            _firestoreService.calculateGroupTimeRange(masterTO.groupId!, forceRefresh: true),
+          ]);
+          
+          final workDetailsMap = batchResults[0] as Map<String, List<WorkDetailModel>>;
+          final timeRange = batchResults[1] as Map<String, String>;
+          final applicationsMap = await _firestoreService.getApplicationsByTOIds(toIds);
 
-      // 그룹 TO 시간 범위 계산
-      final groupTOs = toList.where((to) => to.isGrouped && to.groupId != null).toList();
-      if (groupTOs.isNotEmpty) {
-        await Future.wait(
-          groupTOs.map((to) => _calculateTimeRange(to)),
-        );
+          List<TOItem> toItems = [];
+          for (var to in groupTOs) {
+            final toWorkDetails = workDetailsMap[to.id] ?? [];
+            final apps = applicationsMap[to.id] ?? [];
+
+            int confirmed = apps.where((a) => a.status == 'CONFIRMED').length;
+            int pending = apps.where((a) => a.status == 'PENDING').length;
+            
+            int totalRequired = 0;
+            for (var work in toWorkDetails) {
+              totalRequired += work.requiredCount;
+            }
+            
+            Map<String, Map<String, int>> workStats = {};
+            for (var work in toWorkDetails) {
+              final workApps = apps.where((a) => a.selectedWorkType == work.workType);
+              workStats[work.workType] = {
+                'confirmed': workApps.where((a) => a.status == 'CONFIRMED').length,
+                'pending': workApps.where((a) => a.status == 'PENDING').length,
+              };
+            }
+
+            toItems.add(TOItem(
+              to: to,
+              workDetails: toWorkDetails,
+              confirmedCount: confirmed,
+              pendingCount: pending,
+              totalRequired: totalRequired,
+              workDetailStats: workStats,
+            ));
+          }
+          
+          masterTO.setTimeRange(timeRange['minStart']!, timeRange['maxEnd']!);
+          
+          groupItems.add(TOGroupItem(
+            masterTO: masterTO,
+            groupTOs: toItems,
+            isGrouped: true,
+          ));
+          
+        } else {
+          final workDetails = await _firestoreService.getWorkDetails(
+            masterTO.id,
+            forceRefresh: true
+          );
+          
+          if (workDetails.isNotEmpty) {
+            String? minStart;
+            String? maxEnd;
+            
+            for (var work in workDetails) {
+              if (minStart == null || work.startTime.compareTo(minStart) < 0) {
+                minStart = work.startTime;
+              }
+              if (maxEnd == null || work.endTime.compareTo(maxEnd) > 0) {
+                maxEnd = work.endTime;
+              }
+            }
+            
+            if (minStart != null && maxEnd != null) {
+              masterTO.setTimeRange(minStart, maxEnd);
+            }
+          }
+          
+          final apps = await _firestoreService.getApplicationsByTO(
+            masterTO.businessId,
+            masterTO.title,
+            masterTO.date,
+          );
+          
+          Map<String, Map<String, int>> workStats = {};
+          for (var work in workDetails) {
+            final workApps = apps.where((a) => a.selectedWorkType == work.workType);            
+            workStats[work.workType] = {
+              'confirmed': workApps.where((a) => a.status == 'CONFIRMED').length,
+              'pending': workApps.where((a) => a.status == 'PENDING').length,
+            };
+          }
+          
+          int totalConfirmed = 0;
+          int totalPending = 0;
+          for (var stats in workStats.values) {
+            totalConfirmed += stats['confirmed'] as int;
+            totalPending += stats['pending'] as int;
+          }
+          
+          int totalRequired = 0;
+          for (var work in workDetails) {
+            totalRequired += work.requiredCount;
+          }
+          
+          groupItems.add(TOGroupItem(
+            masterTO: masterTO.copyWith(totalRequired: totalRequired),
+            groupTOs: [
+              TOItem(
+                to: masterTO.copyWith(totalRequired: totalRequired),
+                workDetails: workDetails,
+                confirmedCount: totalConfirmed,
+                pendingCount: totalPending,
+                totalRequired: totalRequired,
+                workDetailStats: workStats,
+              ),
+            ],
+            isGrouped: false,
+          ));
+        }
       }
 
       setState(() {
-        _allTOs = toList;
-        _longTermApplications = apps.where((app) => app.status == 'CONFIRMED').toList();
+        _allGroupItems = groupItems;
         _isLoading = false;
       });
 
-      print('✅ 캘린더 데이터 로드: TO ${toList.length}개, 장기 ${apps.length}개');
+      print('✅ 캘린더 데이터 로드: ${groupItems.length}개 그룹');
     } catch (e) {
       print('❌ 데이터 로드 실패: $e');
       setState(() => _isLoading = false);
+      ToastHelper.showError('데이터를 불러오는데 실패했습니다.');
     }
   }
 
-  /// 그룹 TO 시간 범위 계산
-  Future<void> _calculateTimeRange(TOModel to) async {
-    try {
-      final timeRange = await _firestoreService.calculateGroupTimeRange(to.groupId!);
-      if (timeRange.isNotEmpty) {
-        to.setTimeRange(timeRange['minStart']!, timeRange['maxEnd']!);
-      }
-    } catch (e) {
-      print('시간 범위 계산 실패: $e');
-    }
-  }
-
-  /// 특정 날짜의 TO 목록
-  List<TOModel> _getTOsForDay(DateTime day) {
-    return _allTOs.where((to) {
-      if (to.isLongTerm) {
+  /// 특정 날짜의 TO 그룹 목록
+  List<TOGroupItem> _getGroupItemsForDay(DateTime day) {
+    return _allGroupItems.where((groupItem) {
+      final masterTO = groupItem.masterTO;
+      
+      if (masterTO.isLongTerm) {
         // 장기 TO: startDate ~ endDate 범위 확인
-        if (to.startDate == null || to.endDate == null) return false;
-        final isInRange = !day.isBefore(to.startDate!) && !day.isAfter(to.endDate!);
+        if (masterTO.startDate == null || masterTO.endDate == null) return false;
+        final isInRange = !day.isBefore(masterTO.startDate!) && !day.isAfter(masterTO.endDate!);
         if (!isInRange) return false;
 
         // workDays 확인
-        if (to.workDays != null && to.workDays!.isNotEmpty) {
+        if (masterTO.workDays != null && masterTO.workDays!.isNotEmpty) {
           final weekdays = ['월', '화', '수', '목', '금', '토', '일'];
           final dayOfWeek = weekdays[day.weekday - 1];
-          return to.workDays!.contains(dayOfWeek);
+          return masterTO.workDays!.contains(dayOfWeek);
         }
         return true;
+      } else if (groupItem.isGrouped) {
+        // 그룹 TO: 그룹 내 TO 중 하나라도 해당 날짜면 표시
+        return groupItem.groupTOs.any((toItem) => 
+          DateUtils.isSameDay(toItem.to.date, day)
+        );
       } else {
-        // 단기 TO: 날짜 일치
-        return DateUtils.isSameDay(to.date, day);
+        // 단일 TO: 날짜 일치
+        return DateUtils.isSameDay(masterTO.date, day);
       }
     }).toList();
-  }
-
-  /// 장기 근무자가 해당 날짜에 근무하는지
-  bool _isWorkingOnDate(ApplicationModel app, DateTime date) {
-    if (app.workDays == null || app.workDays!.isEmpty) return true;
-    
-    final weekdays = ['월', '화', '수', '목', '금', '토', '일'];
-    final dayOfWeek = weekdays[date.weekday - 1];
-    return app.workDays!.contains(dayOfWeek);
   }
 
   /// 캘린더 이벤트 마커
   List<dynamic> _getEventsForDay(DateTime day) {
     final events = <String>[];
     
-    // 단기 TO 확인
-    final hasSingleTO = _allTOs.any((to) => 
-      !to.isLongTerm && DateUtils.isSameDay(to.date, day)
-    );
+    final dayGroupItems = _getGroupItemsForDay(day);
     
     // 장기 TO 확인
-    final hasLongTO = _getTOsForDay(day).any((to) => to.isLongTerm);
+    final hasLongTO = dayGroupItems.any((item) => item.masterTO.isLongTerm);
+    
+    // 단기 TO 확인
+    final hasSingleTO = dayGroupItems.any((item) => !item.masterTO.isLongTerm);
     
     if (hasLongTO) events.add('long');
     if (hasSingleTO) events.add('single');
@@ -158,7 +268,7 @@ class _WorkforceCalendarViewState extends State<WorkforceCalendarView> {
           child: Divider(height: 1),
         ),
 
-        // 선택한 날짜 표시
+        // 선택한 날짜 헤더
         if (_selectedDay != null)
           SliverToBoxAdapter(
             child: _buildDateHeader(),
@@ -183,7 +293,6 @@ class _WorkforceCalendarViewState extends State<WorkforceCalendarView> {
       focusedDay: _focusedDay,
       calendarFormat: CalendarFormat.month,
       
-      // 높이 조정
       daysOfWeekHeight: 40,
       rowHeight: 48,
 
@@ -193,11 +302,16 @@ class _WorkforceCalendarViewState extends State<WorkforceCalendarView> {
         setState(() {
           _selectedDay = selectedDay;
           _focusedDay = focusedDay;
+          // 날짜 변경 시 토글 초기화
+          _expandedGroups.clear();
+          _expandedTOs.clear();
         });
       },
 
       onPageChanged: (focusedDay) {
-        _focusedDay = focusedDay;
+        setState(() {
+          _focusedDay = focusedDay;
+        });
       },
 
       // 이벤트 마커
@@ -244,11 +358,11 @@ class _WorkforceCalendarViewState extends State<WorkforceCalendarView> {
       calendarStyle: CalendarStyle(
         markersMaxCount: 2,
         todayDecoration: BoxDecoration(
-          color: Colors.blue[300],
+          color: Theme.of(context).primaryColor.withOpacity(0.5),
           shape: BoxShape.circle,
         ),
         selectedDecoration: BoxDecoration(
-          color: Colors.blue[700],
+          color: Theme.of(context).primaryColor,
           shape: BoxShape.circle,
         ),
       ),
@@ -266,7 +380,7 @@ class _WorkforceCalendarViewState extends State<WorkforceCalendarView> {
     final isPast = _selectedDay!.isBefore(DateTime.now()) && !isToday;
 
     String statusText = '';
-    Color statusColor = Colors.blue;
+    Color statusColor = Theme.of(context).primaryColor;
 
     if (isPast) {
       statusText = '과거 기록';
@@ -276,7 +390,7 @@ class _WorkforceCalendarViewState extends State<WorkforceCalendarView> {
       statusColor = Colors.green;
     } else {
       statusText = '예정';
-      statusColor = Colors.blue;
+      statusColor = Theme.of(context).primaryColor;
     }
 
     return Container(
@@ -332,22 +446,19 @@ class _WorkforceCalendarViewState extends State<WorkforceCalendarView> {
       );
     }
 
-    final dayTOs = _getTOsForDay(_selectedDay!);
-    final longTermWorkers = _longTermApplications.where((app) {
-      return app.status == 'CONFIRMED' && _isWorkingOnDate(app, _selectedDay!);
-    }).toList();
+    final dayGroupItems = _getGroupItemsForDay(_selectedDay!);
 
-    if (dayTOs.isEmpty && longTermWorkers.isEmpty) {
+    if (dayGroupItems.isEmpty) {
       return SliverFillRemaining(
         hasScrollBody: false,
         child: Center(
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              Icon(Icons.event_busy, size: 64, color: Colors.grey[400]),
+              Icon(Icons.event_busy, size: 80, color: Colors.grey[300]),
               const SizedBox(height: 16),
               Text(
-                '이 날짜에는 TO가 없습니다',
+                '이 날짜에 등록된 TO가 없습니다',
                 style: TextStyle(
                   fontSize: 16,
                   color: Colors.grey[600],
@@ -362,224 +473,56 @@ class _WorkforceCalendarViewState extends State<WorkforceCalendarView> {
     return SliverPadding(
       padding: const EdgeInsets.all(16),
       sliver: SliverList(
-        delegate: SliverChildListDelegate([
-          // 단기 TO 섹션
-          if (dayTOs.where((to) => !to.isLongTerm).isNotEmpty) ...[
-            _buildSectionHeader('📦 단기 TO', dayTOs.where((to) => !to.isLongTerm).length),
-            const SizedBox(height: 12),
-            ...dayTOs.where((to) => !to.isLongTerm).map((to) => _buildTOCard(to)),
-            const SizedBox(height: 24),
-          ],
-
-          // 장기 TO 섹션
-          if (dayTOs.where((to) => to.isLongTerm).isNotEmpty) ...[
-            _buildSectionHeader('⭐ 장기 TO', dayTOs.where((to) => to.isLongTerm).length),
-            const SizedBox(height: 12),
-            ...dayTOs.where((to) => to.isLongTerm).map((to) => _buildTOCard(to)),
-            const SizedBox(height: 24),
-          ],
-
-          // 고정 근무자 섹션
-          if (longTermWorkers.isNotEmpty) ...[
-            _buildSectionHeader('👷 고정 근무 출근 예정', longTermWorkers.length),
-            const SizedBox(height: 12),
-            _buildLongTermWorkersCard(longTermWorkers),
-          ],
-        ]),
-      ),
-    );
-  }
-
-  /// 섹션 헤더
-  Widget _buildSectionHeader(String title, int count) {
-    return Row(
-      children: [
-        Text(
-          title,
-          style: const TextStyle(
-            fontSize: 16,
-            fontWeight: FontWeight.bold,
-          ),
-        ),
-        const SizedBox(width: 8),
-        Container(
-          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-          decoration: BoxDecoration(
-            color: Colors.blue[100],
-            borderRadius: BorderRadius.circular(12),
-          ),
-          child: Text(
-            '$count',
-            style: TextStyle(
-              fontSize: 12,
-              fontWeight: FontWeight.bold,
-              color: Colors.blue[900],
-            ),
-          ),
-        ),
-      ],
-    );
-  }
-
-  /// TO 카드
-  Widget _buildTOCard(TOModel to) {
-    final fillRate = to.totalRequired > 0
-        ? (to.totalConfirmed / to.totalRequired * 100).toInt()
-        : 0;
-
-    Color statusColor;
-    if (fillRate >= 100) {
-      statusColor = Colors.green;
-    } else if (fillRate >= 50) {
-      statusColor = Colors.orange;
-    } else {
-      statusColor = Colors.red;
-    }
-
-    return Card(
-      margin: const EdgeInsets.only(bottom: 12),
-      elevation: 2,
-      child: InkWell(
-        onTap: () => _showApplicantsDialog(to),
-        borderRadius: BorderRadius.circular(12),
-        child: Padding(
-          padding: const EdgeInsets.all(16),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              // 제목
-              Text(
-                to.title,
-                style: const TextStyle(
-                  fontSize: 16,
-                  fontWeight: FontWeight.bold,
+        delegate: SliverChildBuilderDelegate(
+          (context, index) {
+            final groupItem = dayGroupItems[index];
+            return Padding(
+              padding: const EdgeInsets.only(bottom: 16),
+              child: TOGroupCard(
+                groupItem: groupItem,
+                firestoreService: _firestoreService,
+                dialogs: _dialogs,
+                allGroupItems: _allGroupItems,
+                onChanged: _loadData,
+                isExpanded: _expandedGroups.contains(
+                  groupItem.masterTO.groupId ?? groupItem.masterTO.id
                 ),
+                expandedTOs: _expandedTOs,
+                onToggleExpand: () => _handleGroupToggle(groupItem),
+                onToggleTOExpand: _handleTOToggle,
               ),
-              const SizedBox(height: 8),
-
-              // 시간
-              Row(
-                children: [
-                  Icon(Icons.access_time, size: 14, color: Colors.grey[600]),
-                  const SizedBox(width: 8),
-                  Text(
-                    to.displayTimeRange.isNotEmpty
-                        ? to.displayTimeRange
-                        : '${to.startTime} ~ ${to.endTime}',
-                    style: TextStyle(
-                      fontSize: 13,
-                      color: Colors.grey[700],
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 12),
-
-              // 인원 현황
-              Row(
-                children: [
-                  Text(
-                    '${to.totalConfirmed}/${to.totalRequired}명',
-                    style: TextStyle(
-                      fontSize: 14,
-                      fontWeight: FontWeight.bold,
-                      color: statusColor,
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: ClipRRect(
-                      borderRadius: BorderRadius.circular(4),
-                      child: LinearProgressIndicator(
-                        value: to.totalRequired > 0
-                            ? to.totalConfirmed / to.totalRequired
-                            : 0,
-                        backgroundColor: Colors.grey[200],
-                        valueColor: AlwaysStoppedAnimation<Color>(statusColor),
-                        minHeight: 8,
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ],
-          ),
+            );
+          },
+          childCount: dayGroupItems.length,
         ),
       ),
     );
   }
 
-  /// 고정 근무자 카드
-  Widget _buildLongTermWorkersCard(List<ApplicationModel> workers) {
-    return Card(
-      margin: const EdgeInsets.only(bottom: 12),
-      elevation: 2,
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              '총 ${workers.length}명 출근 예정',
-              style: const TextStyle(
-                fontSize: 14,
-                fontWeight: FontWeight.bold,
-              ),
-            ),
-            const SizedBox(height: 12),
-            FutureBuilder<List<String>>(
-              future: _getUserNames(workers),
-              builder: (context, snapshot) {
-                if (!snapshot.hasData) {
-                  return const CircularProgressIndicator();
-                }
-                
-                return Wrap(
-                  spacing: 8,
-                  runSpacing: 8,
-                  children: snapshot.data!.map((name) {
-                    return Chip(
-                      label: Text(name),
-                      backgroundColor: Colors.blue[50],
-                    );
-                  }).toList(),
-                );
-              },
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  /// 사용자 이름 조회
-  Future<List<String>> _getUserNames(List<ApplicationModel> apps) async {
-    final names = <String>[];
-    
-    for (var app in apps) {
-      try {
-        final userDoc = await FirebaseFirestore.instance
-            .collection('users')
-            .doc(app.uid)
-            .get();
-        
-        if (userDoc.exists) {
-          names.add(userDoc.data()?['name'] ?? '이름없음');
-        } else {
-          names.add('이름없음');
-        }
-      } catch (e) {
-        names.add('이름없음');
+  /// 그룹 토글 핸들러
+  void _handleGroupToggle(TOGroupItem groupItem) {
+    setState(() {
+      final key = groupItem.masterTO.groupId ?? groupItem.masterTO.id;
+      if (_expandedGroups.contains(key)) {
+        _expandedGroups.remove(key);
+        _expandedTOs.clear();
+      } else {
+        _expandedGroups.clear();
+        _expandedTOs.clear();
+        _expandedGroups.add(key);
       }
-    }
-    
-    return names;
+    });
   }
 
-  /// 지원자 관리 다이얼로그
-  void _showApplicantsDialog(TOModel to) {
-    // TODO: TO 전체 지원자 관리 기능 구현 필요
-    // 현재는 업무별로만 관리 가능
-    ToastHelper.showInfo('TO를 클릭하여 업무별 지원자를 관리하세요');
+  /// TO 토글 핸들러
+  void _handleTOToggle(String toId) {
+    setState(() {
+      if (_expandedTOs.contains(toId)) {
+        _expandedTOs.remove(toId);
+      } else {
+        _expandedTOs.clear();
+        _expandedTOs.add(toId);
+      }
+    });
   }
 }
