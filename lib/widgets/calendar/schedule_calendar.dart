@@ -56,11 +56,7 @@ class ScheduleCalendar extends StatelessWidget {
         return isSameDay(selectedDay, day);
       },
       onDaySelected: onDaySelected,
-      onPageChanged: onPageChanged,
-      
-      eventLoader: (day) {
-        return CalendarHelper.getEventsForDay(day, applications, selectedFilter);
-      },
+      onPageChanged: onPageChanged,      
       
       // ⭐ 커스텀 마커 빌더 (상태별 색상 + 단기/장기 구분)
       calendarBuilders: CalendarBuilders(
@@ -85,11 +81,21 @@ class ScheduleCalendar extends StatelessWidget {
             final hasShortConfirmed = shortTermApps.any((app) => app.status == 'CONFIRMED');
             final hasLongConfirmed = longTermApps.any((app) => app.status == 'CONFIRMED');
             
+            // ⭐ 휴무일 체크
+            final hasLeaveDay = longTermApps.any((app) => 
+              app.status == 'CONFIRMED' && app.isLeaveDateOn(date)
+            );
+            
             if (hasShortConfirmed) {
               markers.add(_buildMarker(Colors.green[600]!, isLongTerm: false));
             }
             if (hasLongConfirmed) {
-              markers.add(_buildMarker(Colors.green[400]!, isLongTerm: true));
+              if (hasLeaveDay) {
+                // ⭐ 휴무일은 회색 마커
+                markers.add(_buildMarker(Colors.grey[400]!, isLongTerm: true));
+              } else {
+                markers.add(_buildMarker(Colors.green[400]!, isLongTerm: true));
+              }
             }
           }
           

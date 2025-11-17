@@ -9,6 +9,7 @@ import '../models/core/work_detail_model.dart';
 import '../utils/toast_helper.dart';
 import '../models/core/business_work_type_model.dart';
 import '../models/core/attendance_model.dart';
+import '../models/core/schedule_change_request_model.dart';
 
 class FirestoreService {
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
@@ -73,6 +74,10 @@ class FirestoreService {
       print('❌ 사용자 조회 실패: $e');
       return null;
     }
+  }
+  /// UID로 사용자 조회 (별칭 메서드)
+  Future<UserModel?> getUserByUID(String uid) async {
+    return getUser(uid);
   }
 
   /// 마지막 로그인 시간 업데이트
@@ -1161,6 +1166,27 @@ class FirestoreService {
     } catch (e) {
       print('❌ 배치 지원자 조회 실패: $e');
       return {};
+    }
+  }
+  /// 사업장별 지원자 목록 조회
+  Future<List<ApplicationModel>> getApplicationsByBusinessId(String businessId) async {
+    try {
+      print('📋 사업장별 지원서 조회 시작: $businessId');
+      
+      final snapshot = await _firestore
+          .collection('applications')
+          .where('businessId', isEqualTo: businessId)
+          .get();
+
+      final applications = snapshot.docs
+          .map((doc) => ApplicationModel.fromMap(doc.data(), doc.id))
+          .toList();
+
+      print('✅ 사업장별 지원서 조회 완료: ${applications.length}개');
+      return applications;
+    } catch (e) {
+      print('❌ 사업장별 지원서 조회 실패: $e');
+      return [];
     }
   }
 
@@ -4043,6 +4069,280 @@ class FirestoreService {
     } catch (e) {
       print('❌ 출근 기록 조회 실패: $e');
       return [];
+    }
+  }
+  // ═══════════════════════════════════════════════════════════
+  // 스케줄 변경 요청 관리 (Schedule Change Request Management)
+  // ═══════════════════════════════════════════════════════════
+
+  /// 스케줄 변경 요청 생성
+  Future<String?> createScheduleChangeRequest(ScheduleChangeRequestModel request) async {
+    try {
+      final docRef = await _firestore.collection('schedule_change_requests').add(request.toMap());
+      print('✅ 스케줄 변경 요청 생성 완료: ${docRef.id}');
+      return docRef.id;
+    } catch (e) {
+      print('❌ 스케줄 변경 요청 생성 실패: $e');
+      return null;
+    }
+  }
+
+  /// 사업장의 대기중인 스케줄 변경 요청 조회
+  Future<List<ScheduleChangeRequestModel>> getPendingScheduleChangeRequests(String businessId) async {
+    try {
+      final snapshot = await _firestore
+          .collection('schedule_change_requests')
+          .where('businessId', isEqualTo: businessId)
+          .where('status', isEqualTo: 'PENDING')
+          .orderBy('requestedAt', descending: true)
+          .get();
+
+      return snapshot.docs
+          .map((doc) => ScheduleChangeRequestModel.fromMap(doc.data(), doc.id))
+          .toList();
+    } catch (e) {
+      print('❌ 대기중인 스케줄 변경 요청 조회 실패: $e');
+      return [];
+    }
+  }
+
+  /// 사업장의 모든 스케줄 변경 요청 조회
+  Future<List<ScheduleChangeRequestModel>> getAllScheduleChangeRequests(String businessId) async {
+    try {
+      final snapshot = await _firestore
+          .collection('schedule_change_requests')
+          .where('businessId', isEqualTo: businessId)
+          .orderBy('requestedAt', descending: true)
+          .get();
+
+      return snapshot.docs
+          .map((doc) => ScheduleChangeRequestModel.fromMap(doc.data(), doc.id))
+          .toList();
+    } catch (e) {
+      print('❌ 스케줄 변경 요청 조회 실패: $e');
+      return [];
+    }
+  }
+
+  /// 지원자의 스케줄 변경 요청 조회
+  Future<List<ScheduleChangeRequestModel>> getMyScheduleChangeRequests(String applicantUid) async {
+    try {
+      final snapshot = await _firestore
+          .collection('schedule_change_requests')
+          .where('applicantUid', isEqualTo: applicantUid)
+          .orderBy('requestedAt', descending: true)
+          .get();
+
+      return snapshot.docs
+          .map((doc) => ScheduleChangeRequestModel.fromMap(doc.data(), doc.id))
+          .toList();
+    } catch (e) {
+      print('❌ 내 스케줄 변경 요청 조회 실패: $e');
+      return [];
+    }
+  }
+
+  /// 스케줄 변경 요청 승인
+  Future<bool> approveScheduleChangeRequest({
+    required String requestId,
+    required String approverUid,
+  }) async {
+    try {
+      // 1. 요청 정보 조회
+      final requestDoc = await _firestore
+          .collection('schedule_change_requests')
+          .doc(requestId)
+          .get();
+
+      if (!requestDoc.exists) {
+        print('❌ 요청을 찾을 수 없음');
+        return false;
+      }
+
+      final request = ScheduleChangeRequestModel.fromMap(requestDoc.data()!, requestId);
+
+      // 2. 요청 상태 업데이트
+      await _firestore.collection('schedule_change_requests').doc(requestId).update({
+        'status': 'APPROVED',
+        'respondedByUid': approverUid,
+        'respondedAt': FieldValue.serverTimestamp(),
+      });
+
+      // 3. ApplicationModel의 leaveDates 또는 extraWorkDates 업데이트
+      final appSnapshot = await _firestore
+          .collection('applications')
+          .doc(request.applicationId)
+          .get();
+
+      if (appSnapshot.exists) {
+        final appData = appSnapshot.data()!;
+        
+        if (request.isLeaveRequest || request.isNoWorkRequest) {
+          // 휴무/미출근 → leaveDates에 추가
+          List<DateTime> leaveDates = [];
+          if (appData['leaveDates'] != null) {
+            leaveDates = (appData['leaveDates'] as List)
+                .map((e) => (e as Timestamp).toDate())
+                .toList();
+          }
+          
+          if (!leaveDates.any((d) => 
+              d.year == request.targetDate.year &&
+              d.month == request.targetDate.month &&
+              d.day == request.targetDate.day)) {
+            leaveDates.add(request.targetDate);
+          }
+
+          await _firestore.collection('applications').doc(request.applicationId).update({
+            'leaveDates': leaveDates.map((e) => Timestamp.fromDate(e)).toList(),
+          });
+        } else if (request.isExtraWorkRequest) {
+          // 추가 근무 → extraWorkDates에 추가
+          List<DateTime> extraWorkDates = [];
+          if (appData['extraWorkDates'] != null) {
+            extraWorkDates = (appData['extraWorkDates'] as List)
+                .map((e) => (e as Timestamp).toDate())
+                .toList();
+          }
+          
+          if (!extraWorkDates.any((d) => 
+              d.year == request.targetDate.year &&
+              d.month == request.targetDate.month &&
+              d.day == request.targetDate.day)) {
+            extraWorkDates.add(request.targetDate);
+          }
+
+          await _firestore.collection('applications').doc(request.applicationId).update({
+            'extraWorkDates': extraWorkDates.map((e) => Timestamp.fromDate(e)).toList(),
+          });
+        }
+      }
+
+      print('✅ 스케줄 변경 요청 승인 완료: $requestId');
+      return true;
+    } catch (e) {
+      print('❌ 스케줄 변경 요청 승인 실패: $e');
+      return false;
+    }
+  }
+
+  /// 스케줄 변경 요청 거절
+  Future<bool> rejectScheduleChangeRequest({
+    required String requestId,
+    required String rejectorUid,
+    String? rejectReason,
+  }) async {
+    try {
+      await _firestore.collection('schedule_change_requests').doc(requestId).update({
+        'status': 'REJECTED',
+        'respondedByUid': rejectorUid,
+        'respondedAt': FieldValue.serverTimestamp(),
+        'rejectReason': rejectReason,
+      });
+
+      print('✅ 스케줄 변경 요청 거절 완료: $requestId');
+      return true;
+    } catch (e) {
+      print('❌ 스케줄 변경 요청 거절 실패: $e');
+      return false;
+    }
+  }
+
+  /// 스케줄 변경 요청 취소
+  Future<bool> cancelScheduleChangeRequest({
+    required String requestId,
+    required String canceledByUid,
+  }) async {
+    try {
+      // 1. 요청 정보 조회
+      final requestDoc = await _firestore
+          .collection('schedule_change_requests')
+          .doc(requestId)
+          .get();
+
+      if (!requestDoc.exists) {
+        print('❌ 요청을 찾을 수 없음');
+        return false;
+      }
+
+      final request = ScheduleChangeRequestModel.fromMap(requestDoc.data()!, requestId);
+
+      // 2. 승인된 요청이면 ApplicationModel에서도 제거
+      if (request.isApproved) {
+        final appSnapshot = await _firestore
+            .collection('applications')
+            .doc(request.applicationId)
+            .get();
+
+        if (appSnapshot.exists) {
+          final appData = appSnapshot.data()!;
+          
+          if (request.isLeaveRequest || request.isNoWorkRequest) {
+            // leaveDates에서 제거
+            List<DateTime> leaveDates = [];
+            if (appData['leaveDates'] != null) {
+              leaveDates = (appData['leaveDates'] as List)
+                  .map((e) => (e as Timestamp).toDate())
+                  .toList();
+            }
+            
+            leaveDates.removeWhere((d) => 
+                d.year == request.targetDate.year &&
+                d.month == request.targetDate.month &&
+                d.day == request.targetDate.day);
+
+            await _firestore.collection('applications').doc(request.applicationId).update({
+              'leaveDates': leaveDates.map((e) => Timestamp.fromDate(e)).toList(),
+            });
+          } else if (request.isExtraWorkRequest) {
+            // extraWorkDates에서 제거
+            List<DateTime> extraWorkDates = [];
+            if (appData['extraWorkDates'] != null) {
+              extraWorkDates = (appData['extraWorkDates'] as List)
+                  .map((e) => (e as Timestamp).toDate())
+                  .toList();
+            }
+            
+            extraWorkDates.removeWhere((d) => 
+                d.year == request.targetDate.year &&
+                d.month == request.targetDate.month &&
+                d.day == request.targetDate.day);
+
+            await _firestore.collection('applications').doc(request.applicationId).update({
+              'extraWorkDates': extraWorkDates.map((e) => Timestamp.fromDate(e)).toList(),
+            });
+          }
+        }
+      }
+
+      // 3. 요청 상태 업데이트
+      await _firestore.collection('schedule_change_requests').doc(requestId).update({
+        'status': 'CANCELED',
+        'respondedByUid': canceledByUid,
+        'respondedAt': FieldValue.serverTimestamp(),
+      });
+
+      print('✅ 스케줄 변경 요청 취소 완료: $requestId');
+      return true;
+    } catch (e) {
+      print('❌ 스케줄 변경 요청 취소 실패: $e');
+      return false;
+    }
+  }
+
+  /// 대기중인 요청 개수 조회
+  Future<int> getPendingScheduleChangeRequestCount(String businessId) async {
+    try {
+      final snapshot = await _firestore
+          .collection('schedule_change_requests')
+          .where('businessId', isEqualTo: businessId)
+          .where('status', isEqualTo: 'PENDING')
+          .get();
+
+      return snapshot.docs.length;
+    } catch (e) {
+      print('❌ 대기중인 요청 개수 조회 실패: $e');
+      return 0;
     }
   }
 }

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
 import '../../models/core/application_model.dart';
+import '../../models/core/schedule_change_request_model.dart';
 import '../../services/firestore_service.dart';
 import '../../providers/user_provider.dart';
 import '../../utils/toast_helper.dart';
@@ -11,6 +12,8 @@ import '../../widgets/calendar/schedule_calendar.dart';
 import '../../widgets/calendar/monthly_stats_card.dart';
 import '../../widgets/calendar/schedule_card.dart';
 import '../../widgets/dialogs/long_term_work_management_dialog.dart';
+import 'dialogs/my_requests_dialog.dart';
+
 
 
 /// 내 근무 스케줄 화면 (캘린더 뷰)
@@ -32,6 +35,8 @@ class _MyScheduleScreenState extends State<MyScheduleScreen> {
   List<ApplicationModel> _applications = [];
   bool _isLoading = true;
   String _selectedFilter = 'ALL'; // ALL, CONFIRMED, PENDING
+  // ⭐ 추가
+  int _pendingRequestCount = 0;
   
   @override
   void initState() {
@@ -72,21 +77,60 @@ class _MyScheduleScreenState extends State<MyScheduleScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('내 근무 스케줄'),
-        backgroundColor: Colors.blue[700],
-        foregroundColor: Colors.white,
+        title: const Text('내 스케줄'),
         actions: [
-          _buildFilterButton(),
-          IconButton(
-            icon: const Icon(Icons.work),
-            onPressed: _showLongTermWorkManagement,
-            tooltip: '고정근무 관리',
-          ),
-          IconButton(
-            icon: const Icon(Icons.refresh),
-            onPressed: _loadApplications,
-          ),
-        ],
+        // 알림 아이콘
+        FutureBuilder<int>(
+          future: _getPendingRequestCount(),
+          builder: (context, snapshot) {
+            final count = snapshot.data ?? 0;
+            return Stack(
+              children: [
+                IconButton(
+                  icon: const Icon(Icons.notifications),
+                  onPressed: _showMyRequestsDialog,
+                  tooltip: '내 알림',
+                ),
+                if (count > 0)
+                  Positioned(
+                    right: 8,
+                    top: 8,
+                    child: Container(
+                      padding: const EdgeInsets.all(4),
+                      decoration: const BoxDecoration(
+                        color: Colors.red,
+                        shape: BoxShape.circle,
+                      ),
+                      constraints: const BoxConstraints(
+                        minWidth: 16,
+                        minHeight: 16,
+                      ),
+                      child: Text(
+                        '$count',
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 10,
+                          fontWeight: FontWeight.bold,
+                        ),
+                        textAlign: TextAlign.center,
+                      ),
+                    ),
+                  ),
+              ],
+            );
+          },
+        ),
+        _buildFilterButton(),
+        IconButton(
+          icon: const Icon(Icons.work),
+          onPressed: _showLongTermWorkManagement,
+          tooltip: '고정근무 관리',
+        ),
+        IconButton(
+          icon: const Icon(Icons.refresh),
+          onPressed: _loadApplications,
+        ),
+      ],
       ),
       body: _isLoading
           ? const LoadingWidget(message: '일정을 불러오는 중...')
@@ -110,6 +154,21 @@ class _MyScheduleScreenState extends State<MyScheduleScreen> {
                         _focusedDay = focusedDay;
                       });
                     },
+                    
+                  ),
+                ),
+          
+                
+                // Divider
+                const SliverToBoxAdapter(
+                  child: Divider(height: 1),
+                ),
+                
+                // 월별 통계
+                SliverToBoxAdapter(
+                  child: MonthlyStatsCard(
+                    applications: _applications,
+                    focusedDay: _focusedDay,
                   ),
                 ),
                 // 🔥 Legend (범례) 추가
@@ -124,6 +183,8 @@ class _MyScheduleScreenState extends State<MyScheduleScreen> {
                         const SizedBox(width: 12),
                         _buildLegendItem(Colors.green[400]!, '고정 확정', isLongTerm: true),
                         const SizedBox(width: 12),
+                        _buildLegendItem(Colors.grey[400]!, '휴무일', isLongTerm: true),  // ⭐ 추가
+                        const SizedBox(width: 12),
                         _buildLegendItem(Colors.orange[600]!, '단기 대기', isLongTerm: false),
                         const SizedBox(width: 12),
                         _buildLegendItem(Colors.orange[400]!, '고정 대기', isLongTerm: true),
@@ -131,19 +192,7 @@ class _MyScheduleScreenState extends State<MyScheduleScreen> {
                     ),
                   ),
                 ),
-                
-                // Divider
-                const SliverToBoxAdapter(
-                  child: Divider(height: 1),
-                ),
-                
-                // 월별 통계
-                SliverToBoxAdapter(
-                  child: MonthlyStatsCard(
-                    applications: _applications,
-                    focusedDay: _focusedDay,
-                  ),
-                ),
+
                 
                 // Divider
                 const SliverToBoxAdapter(
@@ -282,6 +331,7 @@ class _MyScheduleScreenState extends State<MyScheduleScreen> {
             return ScheduleCard(
               application: events[index],
               onChanged: _loadApplications,  // ⭐ 추가!
+              selectedDay: _selectedDay,
             );
           },
           childCount: events.length,
@@ -392,6 +442,47 @@ class _MyScheduleScreenState extends State<MyScheduleScreen> {
       builder: (context) => LongTermWorkManagementDialog(
         applications: _applications,
         onChanged: () {
+          _loadApplications();
+        },
+      ),
+    );
+  }
+  /// ⭐ 대기중인 요청 개수 조회
+  Future<int> _getPendingRequestCount() async {
+    final userProvider = context.read<UserProvider>();
+    final uid = userProvider.currentUser?.uid;
+    
+    if (uid == null) return 0;
+    
+    try {
+      final requests = await _firestoreService.getMyScheduleChangeRequests(uid);
+      final pending = requests.where((r) => 
+        r.isPending && r.isAdminRequest
+      ).length;
+      
+      return pending;
+    } catch (e) {
+      print('❌ 대기중인 요청 개수 조회 실패: $e');
+      return 0;
+    }
+  }
+
+  /// ⭐ 내 요청 목록 다이얼로그
+  Future<void> _showMyRequestsDialog() async {
+    final userProvider = context.read<UserProvider>();
+    final uid = userProvider.currentUser?.uid;
+    
+    if (uid == null) {
+      ToastHelper.showError('사용자 정보를 찾을 수 없습니다');
+      return;
+    }
+    
+    showDialog(
+      context: context,
+      builder: (context) => MyRequestsDialog(
+        applicantUid: uid,
+        onChanged: () {
+          setState(() {});
           _loadApplications();
         },
       ),

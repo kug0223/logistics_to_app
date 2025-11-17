@@ -13,7 +13,7 @@ subadmin123!@#
 
 
 git add .
-git commit -m "전체구조 재구성진행 251113-4"
+git commit -m "전체구조 재구성진행 251117-2"
 git push
 
 flutter clean

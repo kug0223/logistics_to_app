@@ -49,6 +49,9 @@ class ApplicationModel {
   // 🔥 Phase A: 퇴사 관리 시스템
   final DateTime? resignRequestedAt;    // 퇴사 요청 시각
   final DateTime? resignRequestDate;    // 퇴사 희망일
+  // 🔥 Phase B: 스케줄 변경 관리
+  final List<DateTime>? leaveDates;      // 승인된 휴무 날짜들
+  final List<DateTime>? extraWorkDates;  // 승인된 추가 근무 날짜들
   final String? resignStatus;           // 'PENDING', 'APPROVED', 'REJECTED', 'AUTO_APPROVED'
   final DateTime? resignApprovedAt;     // 승인/거절 시각
   final String? resignApprovedBy;       // 승인/거절자 UID
@@ -94,6 +97,9 @@ class ApplicationModel {
     this.resignApprovedBy,
     this.resignRejectReason,
     this.actualResignDate,
+    // ⭐ 여기에 추가
+    this.leaveDates,
+    this.extraWorkDates,
     
   });
 
@@ -160,6 +166,17 @@ class ApplicationModel {
       actualResignDate: data['actualResignDate'] != null
           ? (data['actualResignDate'] as Timestamp).toDate()
           : null,
+      // ⭐ 여기에 추가
+      leaveDates: data['leaveDates'] != null
+          ? (data['leaveDates'] as List)
+              .map((e) => (e as Timestamp).toDate())
+              .toList()
+          : null,
+      extraWorkDates: data['extraWorkDates'] != null
+          ? (data['extraWorkDates'] as List)
+              .map((e) => (e as Timestamp).toDate())
+              .toList()
+          : null,
     );
   }
   
@@ -209,6 +226,9 @@ class ApplicationModel {
       'resignApprovedBy': resignApprovedBy,
       'resignRejectReason': resignRejectReason,
       'actualResignDate': actualResignDate != null ? Timestamp.fromDate(actualResignDate!) : null,
+      // ⭐ 여기에 추가
+      'leaveDates': leaveDates?.map((e) => Timestamp.fromDate(e)).toList(),
+      'extraWorkDates': extraWorkDates?.map((e) => Timestamp.fromDate(e)).toList(),
     };
   }
 
@@ -296,7 +316,8 @@ class ApplicationModel {
     String? resignApprovedBy,
     String? resignRejectReason,
     DateTime? actualResignDate,
-    
+    List<DateTime>? leaveDates,
+    List<DateTime>? extraWorkDates,
     
   }) {
     return ApplicationModel(
@@ -338,6 +359,8 @@ class ApplicationModel {
       resignApprovedBy: resignApprovedBy ?? this.resignApprovedBy,
       resignRejectReason: resignRejectReason ?? this.resignRejectReason,
       actualResignDate: actualResignDate ?? this.actualResignDate,
+      leaveDates: leaveDates ?? this.leaveDates,
+      extraWorkDates: extraWorkDates ?? this.extraWorkDates,
     );
   }
 
@@ -387,5 +410,24 @@ class ApplicationModel {
     } else {
       return '주 $count일 ($daysStr)';
     }
+  }
+  // ⭐ 특정 날짜가 휴무일인지 확인
+  bool isLeaveDateOn(DateTime date) {
+    if (leaveDates == null || leaveDates!.isEmpty) return false;
+    
+    return leaveDates!.any((leaveDate) =>
+        leaveDate.year == date.year &&
+        leaveDate.month == date.month &&
+        leaveDate.day == date.day);
+  }
+  
+  // ⭐ 특정 날짜가 추가 근무일인지 확인
+  bool isExtraWorkDateOn(DateTime date) {
+    if (extraWorkDates == null || extraWorkDates!.isEmpty) return false;
+    
+    return extraWorkDates!.any((extraDate) =>
+        extraDate.year == date.year &&
+        extraDate.month == date.month &&
+        extraDate.day == date.day);
   }
 }

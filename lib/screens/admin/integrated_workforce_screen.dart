@@ -8,8 +8,10 @@ import '../../services/firestore_service.dart';
 import 'widgets/workforce_list_view.dart';
 import 'widgets/workforce_calendar_view.dart';
 import 'dialogs/resign_request_management_dialog.dart';
+import 'dialogs/fixed_worker_management_dialog.dart';
 import '../../utils/test_data_helper.dart';
 import '../../models/core/to_model.dart';
+
 
 
 /// 통합 인력 관리 화면 (TO 관리 + 캘린더)
@@ -100,19 +102,21 @@ class _IntegratedWorkforceScreenState extends State<IntegratedWorkforceScreen> {
             onPressed: _showDummyDataDialog,
             tooltip: '테스트 데이터',
           ),
-          // 퇴사 요청 알림 아이콘
-          FutureBuilder<int>(
-            future: _getResignRequestCount(),
+          // ⭐ 고정근무자 관리 아이콘 (퇴사 요청 + 스케줄 변경)
+          FutureBuilder<Map<String, int>>(
+            future: _getFixedWorkerManagementCounts(),
             builder: (context, snapshot) {
-              final count = snapshot.data ?? 0;
+              final counts = snapshot.data ?? {'resign': 0, 'schedule': 0};
+              final totalCount = counts['resign']! + counts['schedule']!;
+              
               return Stack(
                 children: [
                   IconButton(
-                    icon: const Icon(Icons.exit_to_app),
-                    onPressed: _showResignRequestManagement,
-                    tooltip: '퇴사 요청',
+                    icon: const Icon(Icons.manage_accounts),
+                    onPressed: _showFixedWorkerManagement,
+                    tooltip: '고정근무자 관리',
                   ),
-                  if (count > 0)
+                  if (totalCount > 0)
                     Positioned(
                       right: 8,
                       top: 8,
@@ -127,7 +131,7 @@ class _IntegratedWorkforceScreenState extends State<IntegratedWorkforceScreen> {
                           minHeight: 16,
                         ),
                         child: Text(
-                          '$count',
+                          '$totalCount',
                           style: const TextStyle(
                             color: Colors.white,
                             fontSize: 10,
@@ -219,36 +223,44 @@ class _IntegratedWorkforceScreenState extends State<IntegratedWorkforceScreen> {
       ),
     );
   }
-
-  /// 퇴사 요청 개수 조회
-  Future<int> _getResignRequestCount() async {
-    if (_selectedBusinessId == null) return 0;
-    
-    try {
-      final requests = await _firestoreService.getResignRequests(_selectedBusinessId!);
-      return requests.length;
-    } catch (e) {
-      return 0;
-    }
+  /// ⭐ 고정근무자 관리 관련 개수 조회
+Future<Map<String, int>> _getFixedWorkerManagementCounts() async {
+  if (_selectedBusinessId == null) {
+    return {'resign': 0, 'schedule': 0};
   }
-
-  /// 퇴사 요청 관리 다이얼로그 표시
-  void _showResignRequestManagement() {
-    if (_selectedBusinessId == null) {
-      ToastHelper.showWarning('사업장 정보를 찾을 수 없습니다.');
-      return;
-    }
+  
+  try {
+    final resignCount = await _firestoreService.getResignRequests(_selectedBusinessId!);
+    final scheduleCount = await _firestoreService.getPendingScheduleChangeRequestCount(_selectedBusinessId!);
     
-    showDialog(
-      context: context,
-      builder: (context) => ResignRequestManagementDialog(
-        businessId: _selectedBusinessId!,
-        onChanged: () {
-          setState(() {}); // 배지 업데이트
-        },
-      ),
-    );
+    return {
+      'resign': resignCount.length,
+      'schedule': scheduleCount,
+    };
+  } catch (e) {
+    print('❌ 개수 조회 실패: $e');
+    return {'resign': 0, 'schedule': 0};
   }
+}
+
+/// ⭐ 고정근무자 관리 다이얼로그 표시
+void _showFixedWorkerManagement() {
+  if (_selectedBusinessId == null) {
+    ToastHelper.showWarning('사업장 정보를 찾을 수 없습니다.');
+    return;
+  }
+  
+  showDialog(
+    context: context,
+    builder: (context) => FixedWorkerManagementDialog(
+      businessId: _selectedBusinessId!,
+      onChanged: () {
+        setState(() {}); // 배지 업데이트
+      },
+    ),
+  );
+ }
+
   /// ⭐ 더미 데이터 다이얼로그
   Future<void> _showDummyDataDialog() async {
     if (_selectedBusinessId == null) {
@@ -336,7 +348,7 @@ class _IntegratedWorkforceScreenState extends State<IntegratedWorkforceScreen> {
       ),
     );
   }
- /// ⭐ TO 선택하여 지원자 생성 다이얼로그
+  /// ⭐ TO 선택하여 지원자 생성 다이얼로그 (진행중인 TO만)
   Future<void> _showCreateApplicantsDialog() async {
     // ⭐ 사업장이 여러 개면 선택하도록
     String? targetBusinessId = _selectedBusinessId;
@@ -348,23 +360,23 @@ class _IntegratedWorkforceScreenState extends State<IntegratedWorkforceScreen> {
     
     print('🔍 [DummyData] 선택된 사업장: $targetBusinessId');
     
-    // 1. 활성 TO 목록 조회
+    // 1. ✅ 진행중인 TO만 조회
     final activeTOs = await _firestoreService.getActiveTOs();
     
-    print('   활성 TO: ${activeTOs.length}개');
+    print('   진행중 TO: ${activeTOs.length}개');
     
     if (activeTOs.isEmpty) {
-      ToastHelper.showWarning('활성화된 TO가 없습니다.');
+      ToastHelper.showWarning('진행중인 TO가 없습니다.');
       return;
     }
 
     // 내 사업장 TO만 필터링
     final myTOs = activeTOs.where((to) => to.businessId == targetBusinessId).toList();
     
-    print('   내 사업장 TO: ${myTOs.length}개');
+    print('   내 사업장 진행중 TO: ${myTOs.length}개');
     
     if (myTOs.isEmpty) {
-      ToastHelper.showWarning('내 사업장의 활성 TO가 없습니다.');
+      ToastHelper.showWarning('내 사업장의 진행중인 TO가 없습니다.');
       return;
     }
 
@@ -394,16 +406,18 @@ class _IntegratedWorkforceScreenState extends State<IntegratedWorkforceScreen> {
     // 날짜순 정렬
     allSelectableTOs.sort((a, b) => a.date.compareTo(b.date));
 
-    TOModel? selectedTO = allSelectableTOs.isNotEmpty ? allSelectableTOs.first : null;  // ⭐ 초기값 설정
-    final confirmedController = TextEditingController(text: '5');
-    final pendingController = TextEditingController(text: '3');
+    TOModel? selectedTO = allSelectableTOs.isNotEmpty ? allSelectableTOs.first : null;
+    
+    final confirmedController = TextEditingController();
+    final pendingController = TextEditingController();
 
     final result = await showDialog<bool>(
       context: context,
       builder: (context) => StatefulBuilder(
         builder: (context, setState) => AlertDialog(
-          title: const Text('TO에 지원자 추가'),
-          content: SingleChildScrollView(
+          title: const Text('지원자 생성'),
+          content: SizedBox(
+            width: MediaQuery.of(context).size.width * 0.8,
             child: Column(
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -417,17 +431,16 @@ class _IntegratedWorkforceScreenState extends State<IntegratedWorkforceScreen> {
                 Container(
                   padding: const EdgeInsets.symmetric(horizontal: 12),
                   decoration: BoxDecoration(
-                    border: Border.all(color: Colors.grey),
+                    border: Border.all(color: Colors.grey[300]!),
                     borderRadius: BorderRadius.circular(8),
                   ),
                   child: DropdownButtonHideUnderline(
                     child: DropdownButton<TOModel>(
                       isExpanded: true,
-                      hint: const Text('TO를 선택하세요'),
                       value: selectedTO,
                       items: allSelectableTOs.map((to) {
-                        final dateStr = DateFormat('MM/dd (E)', 'ko_KR').format(to.date);
-                        final timeStr = to.isGrouped && to.groupId != null 
+                        final dateStr = DateFormat('M/d (E)', 'ko_KR').format(to.date);
+                        final timeStr = to.isGrouped 
                             ? '(그룹)' 
                             : '';
                         return DropdownMenuItem(

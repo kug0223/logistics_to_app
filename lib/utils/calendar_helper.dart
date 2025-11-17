@@ -39,7 +39,6 @@ class CalendarHelper {
       return _isSameDay(app.workDate, targetDate);
     }
     
-    
     // 확정된 장기 근무: 근무 기간 + 요일 체크
     // 🔥 actualResignDate(실제 퇴사일)가 있으면 그 날짜까지만
     final endDate = app.actualResignDate ?? app.workEndDate;
@@ -50,6 +49,26 @@ class CalendarHelper {
                       !targetDate.isAfter(endDate);
     
     if (!isInRange) return false;
+    
+    // ⭐ 휴무일 체크 (leaveDates) - 표시는 하되 휴무 상태로
+    if (app.leaveDates != null && app.leaveDates!.isNotEmpty) {
+      final isLeaveDay = app.leaveDates!.any((leaveDate) =>
+          leaveDate.year == targetDate.year &&
+          leaveDate.month == targetDate.month &&
+          leaveDate.day == targetDate.day);
+      
+      if (isLeaveDay) return true; // ⭐ 변경: true로 반환 (표시는 함)
+    }
+    
+    // ⭐ 추가 근무일 체크 (extraWorkDates)
+    if (app.extraWorkDates != null && app.extraWorkDates!.isNotEmpty) {
+      final isExtraWorkDay = app.extraWorkDates!.any((extraDate) =>
+          extraDate.year == targetDate.year &&
+          extraDate.month == targetDate.month &&
+          extraDate.day == targetDate.day);
+      
+      if (isExtraWorkDay) return true;
+    }
     
     // 근무 요일 체크
     if (app.workDays == null || app.workDays!.isEmpty) {

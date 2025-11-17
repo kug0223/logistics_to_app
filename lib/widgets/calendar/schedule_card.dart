@@ -4,16 +4,22 @@ import '../../utils/dialog_helper.dart';
 import '../../services/firestore_service.dart';
 import '../../utils/toast_helper.dart';
 import '../dialogs/schedule_detail_dialog.dart';
+import '../../models/core/schedule_change_request_model.dart';
+import 'package:intl/intl.dart';
+import 'package:provider/provider.dart';
+import '../../providers/user_provider.dart';
 
 /// 개별 일정 카드
 class ScheduleCard extends StatelessWidget {
   final ApplicationModel application;
   final VoidCallback? onChanged;  // ⭐ 추가
+  final DateTime? selectedDay;
   
   const ScheduleCard({
     super.key,
     required this.application,
     this.onChanged,
+    this.selectedDay, 
   });
   
   @override
@@ -65,6 +71,56 @@ class ScheduleCard extends StatelessWidget {
                 ),
                 
                 const SizedBox(height: 12),
+                // ⭐ 휴무/추가근무 표시
+                if (selectedDay != null && application.isLongTermApplication) ...[
+                  if (application.isLeaveDateOn(selectedDay!))
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                      decoration: BoxDecoration(
+                        color: Colors.grey[300],
+                        borderRadius: BorderRadius.circular(4),
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(Icons.block, size: 14, color: Colors.grey[700]),
+                          const SizedBox(width: 4),
+                          Text(
+                            '휴무일',
+                            style: TextStyle(
+                              fontSize: 12,
+                              fontWeight: FontWeight.bold,
+                              color: Colors.grey[700],
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  if (application.isExtraWorkDateOn(selectedDay!))
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                      decoration: BoxDecoration(
+                        color: Colors.green[100],
+                        borderRadius: BorderRadius.circular(4),
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(Icons.add_circle, size: 14, color: Colors.green[700]),
+                          const SizedBox(width: 4),
+                          Text(
+                            '추가 근무일',
+                            style: TextStyle(
+                              fontSize: 12,
+                              fontWeight: FontWeight.bold,
+                              color: Colors.green[700],
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  const SizedBox(height: 8),
+                ],
                 
                 // 시간 정보
                 Row(
@@ -156,13 +212,22 @@ class ScheduleCard extends StatelessWidget {
                       
                       const SizedBox(width: 8),
                       
-                      // 취소 버튼
+                      // 취소/휴무 버튼
                       Expanded(
                         child: OutlinedButton.icon(
                           onPressed: () => _handleCancel(context),
-                          icon: const Icon(Icons.cancel_outlined, size: 18),
+                          icon: Icon(
+                            application.isLongTermApplication && application.status == 'CONFIRMED'
+                                ? Icons.beach_access  // 장기 확정: 휴무 아이콘
+                                : Icons.cancel_outlined,  // 그 외: 취소 아이콘
+                            size: 18,
+                          ),
                           label: Text(
-                            application.status == 'CONFIRMED' ? '취소 요청' : '지원 취소'
+                            application.isLongTermApplication && application.status == 'CONFIRMED'
+                                ? '휴무 요청'  // ⭐ 장기 확정: 휴무 요청
+                                : application.status == 'CONFIRMED'
+                                    ? '취소 요청'  // 단기 확정: 취소 요청
+                                    : '지원 취소'  // 대기중: 지원 취소
                           ),
                           style: OutlinedButton.styleFrom(
                             foregroundColor: Colors.red,
@@ -193,6 +258,13 @@ class ScheduleCard extends StatelessWidget {
   Future<void> _handleCancel(BuildContext context) async {
     final firestoreService = FirestoreService();
     
+    // ⭐ 장기 근무 확정 → 휴무 요청
+    if (application.isLongTermApplication && application.status == 'CONFIRMED') {
+      await _showLeaveRequestDialog(context);
+      return;
+    }
+    
+    // 단기 근무 확정 → 취소 요청
     if (application.status == 'CONFIRMED') {
       // ⭐ 확정된 경우 - 패널티 경고 후 취소 가능
       final confirmed = await showDialog<bool>(
@@ -387,6 +459,95 @@ class ScheduleCard extends StatelessWidget {
         ],
       ),
     );
+  }
+  /// ⭐ 휴무 요청 다이얼로그 (장기 근무용)
+  Future<void> _showLeaveRequestDialog(BuildContext context) async {
+    if (selectedDay == null) {
+      ToastHelper.showWarning('날짜 정보를 찾을 수 없습니다');
+      return;
+    }
+
+    final reasonController = TextEditingController();
+    
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Row(
+          children: [
+            Icon(Icons.beach_access, color: Colors.orange),
+            SizedBox(width: 8),
+            Text('휴무 요청'),
+          ],
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              '${DateFormat('yyyy년 M월 d일 (E)', 'ko_KR').format(selectedDay!)}',
+              style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+            ),
+            const SizedBox(height: 8),
+            Text('${application.toTitle} - ${application.selectedWorkType}'),
+            const Divider(height: 24),
+            const Text('휴무 사유', style: TextStyle(fontWeight: FontWeight.bold)),
+            const SizedBox(height: 8),
+            TextField(
+              controller: reasonController,
+              decoration: const InputDecoration(
+                hintText: '휴무 사유를 입력하세요',
+                border: OutlineInputBorder(),
+              ),
+              maxLines: 3,
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('취소'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(context, true),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.orange,
+            ),
+            child: const Text('요청'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed != true) return;
+
+    // 휴무 요청 생성
+    final firestoreService = FirestoreService();
+    
+    final request = ScheduleChangeRequestModel(
+      id: '',
+      businessId: application.businessId,
+      applicationId: application.id,
+      applicantUid: application.uid,
+      applicantName: '', // ⚠️ 실제 구현 시 UserProvider에서 가져와야 함
+      targetDate: DateTime(selectedDay!.year, selectedDay!.month, selectedDay!.day),
+      requestType: RequestType.LEAVE,
+      requestedBy: RequesterType.APPLICANT,
+      requestedByUid: application.uid,
+      requestedAt: DateTime.now(),
+      reason: reasonController.text.trim().isEmpty 
+          ? null 
+          : reasonController.text.trim(),
+      wageAmount: application.wage,
+    );
+
+    final requestId = await firestoreService.createScheduleChangeRequest(request);
+
+    if (requestId != null && context.mounted) {
+      ToastHelper.showSuccess('휴무 요청이 전송되었습니다');
+      onChanged?.call();
+    } else {
+      ToastHelper.showError('휴무 요청 실패');
+    }
   }
 }
 
