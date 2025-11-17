@@ -97,48 +97,88 @@ class _WorkItemCardState extends State<WorkItemCard> {
             ],
           ),
 
-          const SizedBox(height: 6),
+          const SizedBox(height: 4),
 
-          // ⭐ 금액
-          Row(
-            children: [
-              Icon(Icons.attach_money, size: 14, color: Colors.green[600]),
-              const SizedBox(width: 4),
-              Text(
-                FormatHelper.formatWage(widget.work.wage),
-                style: TextStyle(
-                  fontSize: 14,
-                  fontWeight: FontWeight.bold,
-                  color: Colors.green[700],
-                ),
-              ),
-            ],
+          // ⭐ 금액 + 마감시간 (반응형)
+          LayoutBuilder(
+            builder: (context, constraints) {
+              // 마감시간 텍스트
+              final deadlineText = widget.work.applicationDeadline != null
+                  ? '마감: ${DateFormat('M/d HH:mm').format(widget.work.applicationDeadline!)}'
+                  : widget.to.deadlineType == 'HOURS_BEFORE' && widget.to.hoursBeforeStart != null
+                      ? '마감: ${widget.to.hoursBeforeStart}시간 전'
+                      : null;
+              
+              // 좁은 화면이면 세로로 배치
+              if (constraints.maxWidth < 300 && deadlineText != null) {
+                return Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    // 금액
+                    Row(
+                      children: [
+                        Icon(Icons.attach_money, size: 14, color: Colors.green[600]),
+                        const SizedBox(width: 4),
+                        Text(
+                          FormatHelper.formatWage(widget.work.wage),
+                          style: TextStyle(
+                            fontSize: 14,
+                            fontWeight: FontWeight.bold,
+                            color: Colors.green[700],
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 4),
+                    // 마감시간
+                    Row(
+                      children: [
+                        Icon(Icons.alarm, size: 13, color: Colors.orange[600]),
+                        const SizedBox(width: 4),
+                        Text(
+                          deadlineText,
+                          style: TextStyle(
+                            fontSize: 11,
+                            color: Colors.orange[700],
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                );
+              }
+              
+              // 넓은 화면이면 한 줄로 배치
+              return Row(
+                children: [
+                  Icon(Icons.attach_money, size: 14, color: Colors.green[600]),
+                  const SizedBox(width: 4),
+                  Text(
+                    FormatHelper.formatWage(widget.work.wage),
+                    style: TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.green[700],
+                    ),
+                  ),
+                  if (deadlineText != null) ...[
+                    const Spacer(),
+                    Icon(Icons.alarm, size: 13, color: Colors.orange[600]),
+                    const SizedBox(width: 4),
+                    Text(
+                      deadlineText,
+                      style: TextStyle(
+                        fontSize: 11,
+                        color: Colors.orange[700],
+                      ),
+                    ),
+                  ],
+                ],
+              );
+            },
           ),
 
-          // ⭐ 마감시간
-          if (widget.work.applicationDeadline != null ||
-              (widget.to.deadlineType == 'HOURS_BEFORE' && widget.to.hoursBeforeStart != null)) ...[
-            const SizedBox(height: 4),
-            Row(
-              children: [
-                Icon(Icons.alarm, size: 13, color: Colors.orange[600]),
-                const SizedBox(width: 4),
-                Text(
-                  widget.work.applicationDeadline != null
-                      ? '마감: ${DateFormat('M/d HH:mm').format(widget.work.applicationDeadline!)}'
-                      : '마감: ${widget.to.hoursBeforeStart}시간 전',
-                  style: TextStyle(
-                    fontSize: 11,
-                    color: Colors.orange[700],
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-              ],
-            ),
-          ],
-
-          const SizedBox(height: 6),
-
+          const SizedBox(height: 4),
 
           // 모집 인원
           Row(

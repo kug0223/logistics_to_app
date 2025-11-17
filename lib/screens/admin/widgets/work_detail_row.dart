@@ -175,6 +175,7 @@ class WorkDetailRow extends StatelessWidget {
             ],
           ),
           const SizedBox(height: 8),
+          // ⭐ 시간/금액 (한 줄)
           Row(
             children: [
               Icon(Icons.access_time, size: 14, color: Colors.grey[600]),
@@ -194,8 +195,13 @@ class WorkDetailRow extends StatelessWidget {
                   color: Theme.of(context).primaryColor,
                 ),
               ),
-              if (toItem.to.deadlineType == 'HOURS_BEFORE') ...[
-                const Spacer(),
+            ],
+          ),
+          // ⭐ 마감시간 (별도 줄)
+          if (toItem.to.deadlineType == 'HOURS_BEFORE') ...[
+            const SizedBox(height: 4),
+            Row(
+              children: [
                 Icon(Icons.alarm, size: 13, color: Colors.orange[600]),
                 const SizedBox(width: 4),
                 Text(
@@ -207,8 +213,8 @@ class WorkDetailRow extends StatelessWidget {
                   ),
                 ),
               ],
-            ],
-          ),
+            ),
+          ],
           const SizedBox(height: 6),
           Row(
             children: [

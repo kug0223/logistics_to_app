@@ -557,31 +557,40 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog> {
             if (app.isLongTermApplication) ...[
               SizedBox(height: 6),
               Container(
-                padding: EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                padding: EdgeInsets.all(8),
                 decoration: BoxDecoration(
                   color: Colors.purple[50],
                   borderRadius: BorderRadius.circular(4),
                   border: Border.all(color: Colors.purple[200]!),
                 ),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Icon(Icons.event_note, size: 12, color: Colors.purple[700]),
-                    SizedBox(width: 4),
-                    Text(
-                      '장기: ${app.workPeriodDisplay}',
-                      style: TextStyle(
-                        fontSize: 11,
-                        fontWeight: FontWeight.w600,
-                        color: Colors.purple[700],
-                      ),
+                    // 첫 줄: 아이콘 + 근무 기간
+                    Row(
+                      children: [
+                        Icon(Icons.event_note, size: 12, color: Colors.purple[700]),
+                        SizedBox(width: 4),
+                        Flexible(
+                          child: Text(
+                            '장기: ${app.workPeriodDisplay}',
+                            style: TextStyle(
+                              fontSize: 11,
+                              fontWeight: FontWeight.w600,
+                              color: Colors.purple[700],
+                            ),
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                      ],
                     ),
+                    // 둘째 줄: 근무 요일
                     if (app.workDaysDisplay != null) ...[
-                      SizedBox(width: 4),
+                      SizedBox(height: 2),
                       Text(
-                        '(${app.workDaysDisplay})',
+                        app.workDaysDisplay!,
                         style: TextStyle(
-                          fontSize: 11,
+                          fontSize: 10,
                           color: Colors.purple[600],
                         ),
                       ),
