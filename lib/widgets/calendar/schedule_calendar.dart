@@ -57,6 +57,9 @@ class ScheduleCalendar extends StatelessWidget {
       },
       onDaySelected: onDaySelected,
       onPageChanged: onPageChanged,      
+      eventLoader: (day) {
+        return CalendarHelper.getEventsForDay(day, applications, selectedFilter);
+      },
       
       // ⭐ 커스텀 마커 빌더 (상태별 색상 + 단기/장기 구분)
       calendarBuilders: CalendarBuilders(

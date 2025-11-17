@@ -4345,4 +4345,15 @@ class FirestoreService {
       return 0;
     }
   }
+  /// 지원서 업데이트
+  Future<bool> updateApplication(String applicationId, Map<String, dynamic> data) async {
+    try {
+      await _firestore.collection('applications').doc(applicationId).update(data);
+      print('✅ 지원서 업데이트 완료: $applicationId');
+      return true;
+    } catch (e) {
+      print('❌ 지원서 업데이트 실패: $e');
+      return false;
+    }
+  }
 }

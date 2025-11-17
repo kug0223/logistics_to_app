@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
 import '../../../models/core/application_model.dart';
 import '../../../models/core/work_detail_model.dart';
@@ -8,7 +9,10 @@ import '../../../utils/toast_helper.dart';
 import '../../../utils/format_helper.dart';
 import '../../../widgets/work_type_icon.dart';
 import '../../../models/ui/admin_to_list_ui_models.dart';
+import '../../../models/core/user_model.dart';
 import '../../../utils/dialog_helper.dart';
+
+
 
 /// 업무별 지원자 관리 다이얼로그
 class WorkApplicantsDialog extends StatefulWidget {
@@ -62,9 +66,10 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog> {
 
       // ✅ 병렬로 사용자 정보 조회 (최적화!)
       final futures = filtered.map((app) async {
-        final user = await _firestoreService.getUser(app.uid);
+        final user = await _firestoreService.getUserByUID(app.uid);
         return {
           'application': app,
+          'user': user,  // ⭐ UserModel 전체 저장
           'userName': user?.name ?? '이름 없음',
           'userPhone': user?.phone ?? '전화번호 없음',
           'userEmail': user?.email ?? '',
@@ -425,36 +430,59 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog> {
                 decoration: BoxDecoration(
                   border: Border(top: BorderSide(color: Colors.grey[300]!)),
                 ),
-                child: Row(
-                  children: [
-                    Text(
-                      '선택: ${_selectedIds.length}명',
-                      style: TextStyle(
-                        fontSize: 14,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                    Spacer(),
-                    ElevatedButton.icon(
-                      onPressed: _selectedIds.isEmpty ? null : _rejectSelected,
-                      icon: Icon(Icons.close, size: 18),
-                      label: Text('일괄 거절'),
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: Colors.red,
-                        foregroundColor: Colors.white,
-                      ),
-                    ),
-                    SizedBox(width: 12),
-                    ElevatedButton.icon(
-                      onPressed: _selectedIds.isEmpty ? null : _approveSelected,
-                      icon: Icon(Icons.check, size: 18),
-                      label: Text('일괄 승인'),
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: Colors.blue,
-                        foregroundColor: Colors.white,
-                      ),
-                    ),
-                  ],
+                child: LayoutBuilder(
+                  builder: (context, constraints) {
+                    // 넓이가 좁으면 버튼을 작게
+                    final isNarrow = constraints.maxWidth < 400;
+                    
+                    return Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      alignment: WrapAlignment.spaceBetween,
+                      crossAxisAlignment: WrapCrossAlignment.center,
+                      children: [
+                        Text(
+                          '선택: ${_selectedIds.length}명',
+                          style: TextStyle(
+                            fontSize: 14,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                        Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            ElevatedButton.icon(
+                              onPressed: _selectedIds.isEmpty ? null : _rejectSelected,
+                              icon: Icon(Icons.close, size: isNarrow ? 16 : 18),
+                              label: Text(isNarrow ? '거절' : '일괄 거절'),
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: Colors.red,
+                                foregroundColor: Colors.white,
+                                padding: EdgeInsets.symmetric(
+                                  horizontal: isNarrow ? 12 : 16,
+                                  vertical: isNarrow ? 8 : 12,
+                                ),
+                              ),
+                            ),
+                            SizedBox(width: 8),
+                            ElevatedButton.icon(
+                              onPressed: _selectedIds.isEmpty ? null : _approveSelected,
+                              icon: Icon(Icons.check, size: isNarrow ? 16 : 18),
+                              label: Text(isNarrow ? '승인' : '일괄 승인'),
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: Colors.blue,
+                                foregroundColor: Colors.white,
+                                padding: EdgeInsets.symmetric(
+                                  horizontal: isNarrow ? 12 : 16,
+                                  vertical: isNarrow ? 8 : 12,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ],
+                    );
+                  },
                 ),
               ),
           ],
@@ -466,11 +494,24 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog> {
   /// 지원자 카드
   Widget _buildApplicantCard(Map<String, dynamic> item, bool isPending) {
     final app = item['application'] as ApplicationModel;
+    final user = item['user'] as UserModel?;
     final userName = item['userName'] as String;
     final userPhone = item['userPhone'] as String;
     
     final isSelected = _selectedIds.contains(app.id);
     final timeAgo = _getTimeAgo(app.appliedAt);
+
+    // ⭐ 이름 + 나이 + 성별
+    String displayName = userName;
+    if (user != null) {
+      final List<String> extras = [];
+      if (user.age != null) extras.add('${user.age}세');
+      if (user.gender != null) extras.add(user.gender!);
+      
+      if (extras.isNotEmpty) {
+        displayName += ' (${extras.join(', ')})';
+      }
+    }
 
     return Container(
       margin: EdgeInsets.only(bottom: 8),
@@ -490,7 +531,7 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog> {
               )
             : Icon(Icons.check_circle, color: Colors.green[600]),
         title: Text(
-          userName,
+          displayName,  // ⭐ "김철수 (35세, 남성)"
           style: TextStyle(
             fontWeight: FontWeight.bold,
             fontSize: 15,
@@ -551,40 +592,11 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog> {
             ],
           ],
         ),
-        trailing: !isPending
-            ? null
-            : PopupMenuButton<String>(
-                icon: Icon(Icons.more_vert, size: 20),
-                onSelected: (value) async {
-                  if (value == 'approve') {
-                    await _approveSingle(item);
-                  } else if (value == 'reject') {
-                    await _rejectSingle(item);
-                  }
-                },
-                itemBuilder: (context) => [
-                  PopupMenuItem(
-                    value: 'approve',
-                    child: Row(
-                      children: [
-                        Icon(Icons.check, size: 18, color: Colors.green),
-                        SizedBox(width: 8),
-                        Text('승인'),
-                      ],
-                    ),
-                  ),
-                  PopupMenuItem(
-                    value: 'reject',
-                    child: Row(
-                      children: [
-                        Icon(Icons.close, size: 18, color: Colors.red),
-                        SizedBox(width: 8),
-                        Text('거절'),
-                      ],
-                    ),
-                  ),
-                ],
-              ),
+        trailing: IconButton(
+          icon: Icon(Icons.info_outline, size: 20, color: Colors.blue[700]),
+          onPressed: () => _showApplicantDetail(item),
+          tooltip: '상세 정보',
+        ),
       ),
     );
   }
@@ -685,5 +697,111 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog> {
     if (diff.inHours < 24) return '${diff.inHours}시간 전';
     if (diff.inDays < 7) return '${diff.inDays}일 전';
     return '${(diff.inDays / 7).floor()}주 전';
+  }
+  /// 지원자 상세 정보
+  void _showApplicantDetail(Map<String, dynamic> item) {
+    final app = item['application'] as ApplicationModel;
+    final user = item['user'] as UserModel?;
+
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text('${user?.name ?? '이름 없음'} - 상세 정보'),
+        content: SingleChildScrollView(
+          child: SizedBox(
+            width: double.maxFinite,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                _buildDetailRow('이름', user?.name ?? '-'),
+                _buildDetailRow('나이', user?.age != null ? '${user!.age}세' : '-'),
+                _buildDetailRow('성별', user?.gender ?? '-'),
+                _buildDetailRow('연락처', user?.phone ?? '-'),
+                if (user?.address != null)
+                  _buildDetailRow('주소', '${user!.address}${user.detailAddress != null ? ' ${user.detailAddress}' : ''}'),
+                Divider(height: 24),
+                _buildDetailRow('지원 시각', DateFormat('yyyy-MM-dd HH:mm').format(app.appliedAt)),
+                _buildDetailRow('상태', _getStatusText(app.status)),
+                if (user?.bio != null) ...[
+                  Divider(height: 24),
+                  Text('자기소개', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
+                  SizedBox(height: 8),
+                  Text(user!.bio!),
+                ],
+                Divider(height: 24),
+                Text('근무 통계', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
+                SizedBox(height: 8),
+                _buildDetailRow('총 근무', '${user?.totalWorkDays ?? 0}일'),
+                _buildDetailRow('평균 평점', '${user?.averageRating.toStringAsFixed(1) ?? '0.0'}점'),
+                _buildDetailRow('무단결근', '${user?.noShowCount ?? 0}회'),
+                _buildDetailRow('지각', '${user?.lateCount ?? 0}회'),
+              ],
+            ),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: Text('닫기'),
+          ),
+          if (app.status == 'PENDING') ...[
+            TextButton(
+              onPressed: () {
+                Navigator.pop(context);
+                _rejectSingle(item);
+              },
+              style: TextButton.styleFrom(foregroundColor: Colors.red),
+              child: Text('거절'),
+            ),
+            ElevatedButton(
+              onPressed: () {
+                Navigator.pop(context);
+                _approveSingle(item);
+              },
+              style: ElevatedButton.styleFrom(backgroundColor: Colors.green),
+              child: Text('승인'),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _buildDetailRow(String label, String value) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SizedBox(
+            width: 70,
+            child: Text(
+              label,
+              style: TextStyle(
+                color: Colors.grey[600],
+                fontSize: 13,
+              ),
+            ),
+          ),
+          Expanded(
+            child: Text(
+              value,
+              style: TextStyle(fontSize: 14),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  String _getStatusText(String status) {
+    switch (status) {
+      case 'PENDING': return '대기중';
+      case 'CONFIRMED': return '확정';
+      case 'REJECTED': return '거절됨';
+      case 'CANCELED': return '취소됨';
+      default: return status;
+    }
   }
 }

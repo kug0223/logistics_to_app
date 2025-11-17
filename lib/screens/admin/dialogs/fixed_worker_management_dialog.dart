@@ -512,23 +512,7 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
             _buildStatusChip(notification.status),
           ],
         ),
-        trailing: notification.isPending
-            ? Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  IconButton(
-                    icon: const Icon(Icons.close, color: Colors.red),
-                    onPressed: () => _handleReject(notification),
-                    tooltip: '거절',
-                  ),
-                  IconButton(
-                    icon: const Icon(Icons.check, color: Colors.green),
-                    onPressed: () => _handleApprove(notification),
-                    tooltip: '승인',
-                  ),
-                ],
-              )
-            : null,
+        trailing: null, 
         onTap: () => _showNotificationDetail(notification),
       ),
     );
@@ -581,27 +565,50 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
       context: context,
       builder: (context) => AlertDialog(
         title: Text(notification.requestTypeLabel),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            _buildInfoRow('근무자', notification.applicantName),
-            _buildInfoRow('대상 날짜', DateFormat('yyyy년 M월 d일 (E)', 'ko_KR').format(notification.targetDate)),
-            _buildInfoRow('요청 시각', DateFormat('M/d HH:mm').format(notification.requestedAt)),
-            if (notification.reason != null)
-              _buildInfoRow('요청 사유', notification.reason!),
-            _buildInfoRow('상태', notification.statusLabel),
-            if (notification.respondedAt != null)
-              _buildInfoRow('처리 시각', DateFormat('M/d HH:mm').format(notification.respondedAt!)),
-            if (notification.rejectReason != null)
-              _buildInfoRow('거절 사유', notification.rejectReason!),
-          ],
+        content: SingleChildScrollView(  // ⭐ 추가
+          child: SizedBox(  // ⭐ 추가
+            width: double.maxFinite,  // ⭐ 추가
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                _buildInfoRow('근무자', notification.applicantName),
+                _buildInfoRow('대상 날짜', DateFormat('yyyy년 M월 d일 (E)', 'ko_KR').format(notification.targetDate)),
+                _buildInfoRow('요청 시각', DateFormat('M/d HH:mm').format(notification.requestedAt)),
+                if (notification.reason != null)
+                  _buildInfoRow('요청 사유', notification.reason!),
+                _buildInfoRow('상태', notification.statusLabel),
+                if (notification.respondedAt != null)
+                  _buildInfoRow('처리 시각', DateFormat('M/d HH:mm').format(notification.respondedAt!)),
+                if (notification.rejectReason != null)
+                  _buildInfoRow('거절 사유', notification.rejectReason!),
+              ],
+            ),
+          ),
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context),
             child: const Text('닫기'),
           ),
+          if (notification.isPending) ...[
+            TextButton(
+              onPressed: () {
+                Navigator.pop(context);
+                _handleReject(notification);
+              },
+              style: TextButton.styleFrom(foregroundColor: Colors.red),
+              child: const Text('거절'),
+            ),
+            ElevatedButton(
+              onPressed: () {
+                Navigator.pop(context);
+                _handleApprove(notification);
+              },
+              style: ElevatedButton.styleFrom(backgroundColor: Colors.green),
+              child: const Text('승인'),
+            ),
+          ],
         ],
       ),
     );
@@ -609,45 +616,57 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
 
   /// 승인 처리
   Future<void> _handleApprove(ScheduleChangeRequestModel notification) async {
-    final userProvider = context.read<UserProvider>();
-    final uid = userProvider.currentUser?.uid;
-
-    if (uid == null) return;
-
-    final success = await _firestoreService.approveScheduleChangeRequest(
-      requestId: notification.id,
-      approverUid: uid,
-    );
-
-    if (success) {
-      ToastHelper.showSuccess('승인되었습니다');
-      await _loadNotifications();
-      widget.onChanged();
-    } else {
-      ToastHelper.showError('승인 실패');
-    }
-  }
-
-  /// 거절 처리
-  Future<void> _handleReject(ScheduleChangeRequestModel notification) async {
-    final userProvider = context.read<UserProvider>();
-    final uid = userProvider.currentUser?.uid;
-
-    if (uid == null) return;
-
-    final reasonController = TextEditingController();
-
+    // ⭐ 승인 확인 다이얼로그
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('거절 사유'),
-        content: TextField(
-          controller: reasonController,
-          decoration: const InputDecoration(
-            hintText: '거절 사유를 입력하세요 (선택)',
-            border: OutlineInputBorder(),
-          ),
-          maxLines: 3,
+        title: const Row(
+          children: [
+            Icon(Icons.check_circle, color: Colors.green),
+            SizedBox(width: 8),
+            Text('요청 승인'),
+          ],
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              '${notification.applicantName}님의 ${notification.requestTypeLabel}을 승인하시겠습니까?',
+              style: const TextStyle(fontSize: 16),
+            ),
+            const SizedBox(height: 12),
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: Colors.blue[50],
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: Colors.blue[200]!),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Icon(Icons.info_outline, color: Colors.blue[700], size: 18),
+                      const SizedBox(width: 6),
+                      Text(
+                        '요청 정보',
+                        style: TextStyle(
+                          fontWeight: FontWeight.bold,
+                          color: Colors.blue[900],
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  Text('• 대상 날짜: ${DateFormat('yyyy년 M월 d일 (E)', 'ko_KR').format(notification.targetDate)}'),
+                  if (notification.reason != null)
+                    Text('• 요청 사유: ${notification.reason}'),
+                ],
+              ),
+            ),
+          ],
         ),
         actions: [
           TextButton(
@@ -656,6 +675,129 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
           ),
           ElevatedButton(
             onPressed: () => Navigator.pop(context, true),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.green,
+            ),
+            child: const Text('승인'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed != true) return;
+
+    // ⭐ 사용자 정보 가져오기
+    final userProvider = context.read<UserProvider>();
+    final uid = userProvider.currentUser?.uid;
+
+    if (uid == null) {
+      ToastHelper.showError('사용자 정보를 찾을 수 없습니다');
+      return;
+    }
+
+    // 실제 승인 처리
+    try {
+      final success = await _firestoreService.approveScheduleChangeRequest(
+        requestId: notification.id,
+        approverUid: uid,
+      );
+
+      if (success && mounted) {
+        ToastHelper.showSuccess('요청이 승인되었습니다');
+        await _loadNotifications();
+        widget.onChanged();
+      } else if (mounted) {
+        ToastHelper.showError('승인 실패');
+      }
+    } catch (e) {
+      print('❌ 승인 실패: $e');
+      if (mounted) {
+        ToastHelper.showError('승인 실패: $e');
+      }
+    }
+  }
+
+  /// 거절 처리
+  Future<void> _handleReject(ScheduleChangeRequestModel notification) async {
+    final reasonController = TextEditingController();
+
+    // ⭐ 거절 사유 입력 다이얼로그
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Row(
+          children: [
+            Icon(Icons.cancel, color: Colors.red),
+            SizedBox(width: 8),
+            Text('요청 거절'),
+          ],
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              '${notification.applicantName}님의 ${notification.requestTypeLabel}을 거절하시겠습니까?',
+              style: const TextStyle(fontSize: 16),
+            ),
+            const SizedBox(height: 12),
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: Colors.orange[50],
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: Colors.orange[200]!),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Icon(Icons.info_outline, color: Colors.orange[700], size: 18),
+                      const SizedBox(width: 6),
+                      Text(
+                        '요청 정보',
+                        style: TextStyle(
+                          fontWeight: FontWeight.bold,
+                          color: Colors.orange[900],
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  Text('• 대상 날짜: ${DateFormat('yyyy년 M월 d일 (E)', 'ko_KR').format(notification.targetDate)}'),
+                  if (notification.reason != null)
+                    Text('• 요청 사유: ${notification.reason}'),
+                ],
+              ),
+            ),
+            const SizedBox(height: 16),
+            const Text(
+              '거절 사유',
+              style: TextStyle(fontWeight: FontWeight.bold),
+            ),
+            const SizedBox(height: 8),
+            TextField(
+              controller: reasonController,
+              decoration: const InputDecoration(
+                hintText: '거절 사유를 입력하세요',
+                border: OutlineInputBorder(),
+              ),
+              maxLines: 3,
+              autofocus: true,
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('취소'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(context, true),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.red,
+            ),
             child: const Text('거절'),
           ),
         ],
@@ -664,20 +806,41 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
 
     if (confirmed != true) return;
 
-    final success = await _firestoreService.rejectScheduleChangeRequest(
-      requestId: notification.id,
-      rejectorUid: uid,
-      rejectReason: reasonController.text.trim().isEmpty 
-          ? null 
-          : reasonController.text.trim(),
-    );
+    final reason = reasonController.text.trim();
+    if (reason.isEmpty) {
+      ToastHelper.showWarning('거절 사유를 입력해주세요');
+      return;
+    }
 
-    if (success) {
-      ToastHelper.showSuccess('거절되었습니다');
-      await _loadNotifications();
-      widget.onChanged();
-    } else {
-      ToastHelper.showError('거절 실패');
+    // ⭐ 사용자 정보 가져오기
+    final userProvider = context.read<UserProvider>();
+    final uid = userProvider.currentUser?.uid;
+
+    if (uid == null) {
+      ToastHelper.showError('사용자 정보를 찾을 수 없습니다');
+      return;
+    }
+
+    // 실제 거절 처리
+    try {
+      final success = await _firestoreService.rejectScheduleChangeRequest(
+        requestId: notification.id,
+        rejectorUid: uid,
+        rejectReason: reason,
+      );
+
+      if (success && mounted) {
+        ToastHelper.showSuccess('요청이 거절되었습니다');
+        await _loadNotifications();
+        widget.onChanged();
+      } else if (mounted) {
+        ToastHelper.showError('거절 실패');
+      }
+    } catch (e) {
+      print('❌ 거절 실패: $e');
+      if (mounted) {
+        ToastHelper.showError('거절 실패: $e');
+      }
     }
   }
   /// ⭐ 미출근 요청 다이얼로그

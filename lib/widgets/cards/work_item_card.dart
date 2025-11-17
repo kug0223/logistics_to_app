@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:intl/intl.dart';
 import '../../models/core/work_detail_model.dart';
 import '../../models/core/to_model.dart';
 import '../../utils/format_helper.dart';
@@ -83,8 +84,8 @@ class _WorkItemCardState extends State<WorkItemCard> {
           ),
           
           const SizedBox(height: 8),
-          
-          // 시간 + 금액
+
+          // ⭐ 시간
           Row(
             children: [
               Icon(Icons.access_time, size: 14, color: Colors.grey[600]),
@@ -93,7 +94,14 @@ class _WorkItemCardState extends State<WorkItemCard> {
                 '${widget.work.startTime}~${widget.work.endTime}',
                 style: const TextStyle(fontSize: 13),
               ),
-              const SizedBox(width: 16),
+            ],
+          ),
+
+          const SizedBox(height: 6),
+
+          // ⭐ 금액
+          Row(
+            children: [
               Icon(Icons.attach_money, size: 14, color: Colors.green[600]),
               const SizedBox(width: 4),
               Text(
@@ -106,9 +114,32 @@ class _WorkItemCardState extends State<WorkItemCard> {
               ),
             ],
           ),
-          
-          const SizedBox(height: 4),
-          
+
+          // ⭐ 마감시간
+          if (widget.work.applicationDeadline != null ||
+              (widget.to.deadlineType == 'HOURS_BEFORE' && widget.to.hoursBeforeStart != null)) ...[
+            const SizedBox(height: 4),
+            Row(
+              children: [
+                Icon(Icons.alarm, size: 13, color: Colors.orange[600]),
+                const SizedBox(width: 4),
+                Text(
+                  widget.work.applicationDeadline != null
+                      ? '마감: ${DateFormat('M/d HH:mm').format(widget.work.applicationDeadline!)}'
+                      : '마감: ${widget.to.hoursBeforeStart}시간 전',
+                  style: TextStyle(
+                    fontSize: 11,
+                    color: Colors.orange[700],
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ],
+            ),
+          ],
+
+          const SizedBox(height: 6),
+
+
           // 모집 인원
           Row(
             children: [

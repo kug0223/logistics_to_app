@@ -171,25 +171,30 @@ class _MyScheduleScreenState extends State<MyScheduleScreen> {
                     focusedDay: _focusedDay,
                   ),
                 ),
-                // 🔥 Legend (범례) 추가
+                // 🔥 Legend (범례) 추가 - 반응형
                 SliverToBoxAdapter(
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 16),
-                    color: Colors.grey[50],
-                    child: Row(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        _buildLegendItem(Colors.green[600]!, '단기 확정', isLongTerm: false),
-                        const SizedBox(width: 12),
-                        _buildLegendItem(Colors.green[400]!, '고정 확정', isLongTerm: true),
-                        const SizedBox(width: 12),
-                        _buildLegendItem(Colors.grey[400]!, '휴무일', isLongTerm: true),  // ⭐ 추가
-                        const SizedBox(width: 12),
-                        _buildLegendItem(Colors.orange[600]!, '단기 대기', isLongTerm: false),
-                        const SizedBox(width: 12),
-                        _buildLegendItem(Colors.orange[400]!, '고정 대기', isLongTerm: true),
-                      ],
-                    ),
+                  child: LayoutBuilder(
+                    builder: (context, constraints) {
+                      final isSmall = constraints.maxWidth < 400;
+                      final isVerySmall = constraints.maxWidth < 350;
+                      
+                      return Container(
+                        padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 16),
+                        color: Colors.grey[50],
+                        child: Wrap(  // ⭐ Row → Wrap 변경 (자동 줄바꿈)
+                          alignment: WrapAlignment.center,
+                          spacing: isVerySmall ? 6 : (isSmall ? 8 : 12),
+                          runSpacing: 4,  // 줄바꿈 시 간격
+                          children: [
+                            _buildLegendItem(Colors.green[600]!, '단기 확정', isLongTerm: false, isSmall: isVerySmall),
+                            _buildLegendItem(Colors.green[400]!, '고정 확정', isLongTerm: true, isSmall: isVerySmall),
+                            _buildLegendItem(Colors.grey[400]!, '휴무일', isLongTerm: true, isSmall: isVerySmall),
+                            _buildLegendItem(Colors.orange[600]!, '단기 대기', isLongTerm: false, isSmall: isVerySmall),
+                            _buildLegendItem(Colors.orange[400]!, '고정 대기', isLongTerm: true, isSmall: isVerySmall),
+                          ],
+                        ),
+                      );
+                    },
                   ),
                 ),
 
@@ -411,26 +416,25 @@ class _MyScheduleScreenState extends State<MyScheduleScreen> {
     );
   }
   /// Legend 아이템
-  Widget _buildLegendItem(Color color, String label, {required bool isLongTerm}) {
+  Widget _buildLegendItem(Color color, String label, {required bool isLongTerm, bool isSmall = false}) {
     return Row(
+      mainAxisSize: MainAxisSize.min,
       children: [
-        isLongTerm
-            ? Icon(Icons.star, size: 10, color: color)
-            : Container(
-                width: 8,
-                height: 8,
-                decoration: BoxDecoration(
-                  color: color,
-                  shape: BoxShape.circle,
-                ),
-              ),
-        const SizedBox(width: 4),
+        if (isLongTerm)
+          Icon(Icons.star, size: isSmall ? 6 : 8, color: color)
+        else
+          Container(
+            width: isSmall ? 5 : 7,
+            height: isSmall ? 5 : 7,
+            decoration: BoxDecoration(
+              color: color,
+              shape: BoxShape.circle,
+            ),
+          ),
+        SizedBox(width: isSmall ? 3 : 4),
         Text(
           label,
-          style: TextStyle(
-            fontSize: 11,
-            color: Colors.grey[700],
-          ),
+          style: TextStyle(fontSize: isSmall ? 9 : 11),
         ),
       ],
     );

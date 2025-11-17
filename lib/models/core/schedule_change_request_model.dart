@@ -7,6 +7,8 @@ enum RequestType {
   LEAVE,        // 지원자 → 관리자: 휴무 요청
   NO_WORK,      // 관리자 → 지원자: 미출근 요청
   EXTRA_WORK,   // 관리자 → 지원자: 추가 근무 요청
+  CANCEL_LEAVE,    // ⭐ 지원자 → 관리자: 휴무 취소 요청
+  CANCEL_EXTRA,    // ⭐ 지원자 → 관리자: 추가근무 취소 요청
 }
 
 /// 요청 상태
@@ -107,6 +109,10 @@ class ScheduleChangeRequestModel {
         return '미출근 요청';
       case RequestType.EXTRA_WORK:
         return '추가 근무 요청';
+      case RequestType.CANCEL_LEAVE:      // ⭐ 추가
+        return '휴무 취소 요청';
+      case RequestType.CANCEL_EXTRA:      // ⭐ 추가
+        return '추가근무 취소 요청';
     }
   }
 
@@ -180,6 +186,8 @@ class ScheduleChangeRequestModel {
       case 'LEAVE': return RequestType.LEAVE;
       case 'NO_WORK': return RequestType.NO_WORK;
       case 'EXTRA_WORK': return RequestType.EXTRA_WORK;
+      case 'CANCEL_LEAVE': return RequestType.CANCEL_LEAVE;  // ⭐ 추가
+      case 'CANCEL_EXTRA': return RequestType.CANCEL_EXTRA;  // ⭐ 추가
       default: return RequestType.LEAVE;
     }
   }
@@ -189,6 +197,8 @@ class ScheduleChangeRequestModel {
       case RequestType.LEAVE: return 'LEAVE';
       case RequestType.NO_WORK: return 'NO_WORK';
       case RequestType.EXTRA_WORK: return 'EXTRA_WORK';
+      case RequestType.CANCEL_LEAVE: return 'CANCEL_LEAVE';  // ⭐ 추가
+      case RequestType.CANCEL_EXTRA: return 'CANCEL_EXTRA';  // ⭐ 추가
     }
   }
 
