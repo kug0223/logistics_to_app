@@ -338,7 +338,6 @@ class _IconPickerWidget extends StatefulWidget {
 }
 
 class _IconPickerWidgetState extends State<_IconPickerWidget> {
-  final TextEditingController _searchController = TextEditingController();
   List<IconItem> _filteredIcons = [];
   dynamic _selectedIcon;
   Color? _selectedIconColor;
@@ -397,34 +396,21 @@ class _IconPickerWidgetState extends State<_IconPickerWidget> {
     }
     
     _filteredIcons = widget.allIcons.where((icon) => icon.isPopular).toList();
-    _searchController.addListener(_filterIcons);
   }
 
   @override
   void dispose() {
-    _searchController.dispose();
     super.dispose();
   }
 
   void _filterIcons() {
-    final query = _searchController.text.toLowerCase().trim();
-    
     setState(() {
-      if (query.isEmpty && _selectedCategory == '전체 (인기)') {
+      if (_selectedCategory == '전체 (인기)') {
         _filteredIcons = widget.allIcons.where((icon) => icon.isPopular).toList();
-      } else if (query.isEmpty) {
+      } else {
         _filteredIcons = widget.allIcons
             .where((icon) => icon.category == _selectedCategory)
             .toList();
-      } else if (_selectedCategory == '전체 (인기)') {
-        _filteredIcons = widget.allIcons.where((icon) {
-          return icon.keywords.any((keyword) => keyword.contains(query));
-        }).toList();
-      } else {
-        _filteredIcons = widget.allIcons.where((icon) {
-          return icon.category == _selectedCategory &&
-                 icon.keywords.any((keyword) => keyword.contains(query));
-        }).toList();
       }
     });
   }
@@ -437,26 +423,7 @@ class _IconPickerWidgetState extends State<_IconPickerWidget> {
         width: double.maxFinite,
         height: ResponsiveHelper.dialogHeight(context),
         child: Column(
-          children: [
-            // 검색창
-            TextField(
-              controller: _searchController,
-              decoration: InputDecoration(
-                hintText: '검색 (예: 입고, 배송, 커피)',
-                prefixIcon: const Icon(Icons.search),
-                suffixIcon: _searchController.text.isNotEmpty
-                    ? IconButton(
-                        icon: const Icon(Icons.clear),
-                        onPressed: () {
-                          _searchController.clear();
-                        },
-                      )
-                    : null,
-                border: const OutlineInputBorder(),
-              ),
-            ),
-            SizedBox(height: ResponsiveHelper.spacing(context, 12)),
-            
+          children: [            
             // 카테고리 드롭다운
             DropdownButtonFormField<String>(
               value: _selectedCategory,
@@ -543,100 +510,129 @@ class _IconPickerWidgetState extends State<_IconPickerWidget> {
                     ),
             ),
             
-            // Material 아이콘 색상 선택
-            if (_selectedIcon != null && _selectedIcon is IconData) ...[
-              SizedBox(height: ResponsiveHelper.spacing(context, 12)),
-              Text(
-                '아이콘 색상', 
-                style: ResponsiveHelper.bodyStyle(context).copyWith(
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
-              SizedBox(height: ResponsiveHelper.spacing(context, 8)),
-              Wrap(
-                spacing: ResponsiveHelper.spacing(context, 8),
-                runSpacing: ResponsiveHelper.spacing(context, 8),
-                children: _predefinedColors.map((colorHex) {
-                  final isSelected = _selectedIconColor != null && 
-                                    '#${_selectedIconColor!.value.toRadixString(16).padLeft(8, '0').substring(2)}' == colorHex;
-                  final isWhite = colorHex == '#FFFFFF';
-                  return InkWell(
-                    onTap: () {
-                      setState(() {
-                        _selectedIconColor = FormatHelper.parseColor(colorHex);
-                      });
-                    },
-                    child: Container(
-                      width: ResponsiveHelper.iconSize(context, 32),
-                      height: ResponsiveHelper.iconSize(context, 32),
-                      decoration: BoxDecoration(
-                        color: FormatHelper.parseColor(colorHex),
-                        shape: BoxShape.circle,
-                        border: Border.all(
-                          color: isSelected 
-                              ? Colors.black 
-                              : (isWhite ? Colors.grey : Theme.of(context).dividerColor),
-                          width: isSelected ? 2 : 1,
-                        ),
-                      ),
-                      child: isSelected 
-                          ? Icon(
-                              Icons.check, 
-                              color: isWhite ? Colors.black : Colors.white,
-                              size: ResponsiveHelper.iconSize(context, 16),
-                            ) 
-                          : null,
-                    ),
-                  );
-                }).toList(),
-              ),
-            ],
-            
-            // 배경색 선택
+            // ⭐ 색상 설정을 ExpansionTile로 접기
             if (_selectedIcon != null) ...[
               SizedBox(height: ResponsiveHelper.spacing(context, 12)),
-              Text(
-                '배경색', 
-                style: ResponsiveHelper.bodyStyle(context).copyWith(
-                  fontWeight: FontWeight.bold,
+              ExpansionTile(
+                title: Text(
+                  '색상 설정',
+                  style: ResponsiveHelper.bodyStyle(context).copyWith(
+                    fontWeight: FontWeight.bold,
+                  ),
                 ),
-              ),
-              SizedBox(height: ResponsiveHelper.spacing(context, 8)),
-              Wrap(
-                spacing: ResponsiveHelper.spacing(context, 8),
-                runSpacing: ResponsiveHelper.spacing(context, 8),
-                children: _predefinedColors.map((colorHex) {
-                  final isSelected = _selectedBackgroundColor == colorHex;
-                  final isWhite = colorHex == '#FFFFFF';
-                  return InkWell(
-                    onTap: () {
-                      setState(() {
-                        _selectedBackgroundColor = colorHex;
-                      });
-                    },
-                    child: Container(
-                      width: ResponsiveHelper.iconSize(context, 32),
-                      height: ResponsiveHelper.iconSize(context, 32),
-                      decoration: BoxDecoration(
-                        color: FormatHelper.parseColor(colorHex),
-                        shape: BoxShape.circle,
-                        border: Border.all(
-                          color: isSelected 
-                              ? Colors.black 
-                              : (isWhite ? Colors.grey : Theme.of(context).dividerColor),
-                          width: isSelected ? 2 : 1,
-                        ),
+                initiallyExpanded: false,  // 기본 접힘
+                children: [
+                  // Material 아이콘 색상 (Material 아이콘일 때만)
+                  if (_selectedIcon is IconData) ...[
+                    Padding(
+                      padding: EdgeInsets.symmetric(horizontal: 16),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            '아이콘 색상',
+                            style: ResponsiveHelper.smallStyle(context).copyWith(
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                          SizedBox(height: ResponsiveHelper.spacing(context, 8)),
+                          Wrap(
+                            spacing: ResponsiveHelper.spacing(context, 8),
+                            runSpacing: ResponsiveHelper.spacing(context, 8),
+                            children: _predefinedColors.map((colorHex) {
+                              final isSelected = _selectedIconColor != null && 
+                                                '#${_selectedIconColor!.value.toRadixString(16).padLeft(8, '0').substring(2)}' == colorHex;
+                              final isWhite = colorHex == '#FFFFFF';
+                              return InkWell(
+                                onTap: () {
+                                  setState(() {
+                                    _selectedIconColor = FormatHelper.parseColor(colorHex);
+                                  });
+                                },
+                                child: Container(
+                                  width: ResponsiveHelper.iconSize(context, 32),
+                                  height: ResponsiveHelper.iconSize(context, 32),
+                                  decoration: BoxDecoration(
+                                    color: FormatHelper.parseColor(colorHex),
+                                    shape: BoxShape.circle,
+                                    border: Border.all(
+                                      color: isSelected 
+                                          ? Colors.black 
+                                          : (isWhite ? Colors.grey : Theme.of(context).dividerColor),
+                                      width: isSelected ? 2 : 1,
+                                    ),
+                                  ),
+                                  child: isSelected 
+                                      ? Icon(
+                                          Icons.check, 
+                                          color: isWhite ? Colors.black : Colors.white,
+                                          size: ResponsiveHelper.iconSize(context, 16),
+                                        ) 
+                                      : null,
+                                ),
+                              );
+                            }).toList(),
+                          ),
+                          SizedBox(height: ResponsiveHelper.spacing(context, 16)),
+                        ],
                       ),
-                      child: isSelected 
-                          ? Icon(
-                              Icons.check, 
-                              color: isWhite ? Colors.black : Colors.white,
-                              size: ResponsiveHelper.iconSize(context, 16),
-                            ) 
-                          : null,
                     ),
-                  );
-                }).toList(),
+                  ],
+                  
+                  // 배경색
+                  Padding(
+                    padding: EdgeInsets.symmetric(horizontal: 16),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          '배경색',
+                          style: ResponsiveHelper.smallStyle(context).copyWith(
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                        SizedBox(height: ResponsiveHelper.spacing(context, 8)),
+                        Wrap(
+                          spacing: ResponsiveHelper.spacing(context, 8),
+                          runSpacing: ResponsiveHelper.spacing(context, 8),
+                          children: _predefinedColors.map((colorHex) {
+                            final isSelected = _selectedBackgroundColor == colorHex;
+                            final isWhite = colorHex == '#FFFFFF';
+                            return InkWell(
+                              onTap: () {
+                                setState(() {
+                                  _selectedBackgroundColor = colorHex;
+                                });
+                              },
+                              child: Container(
+                                width: ResponsiveHelper.iconSize(context, 32),
+                                height: ResponsiveHelper.iconSize(context, 32),
+                                decoration: BoxDecoration(
+                                  color: FormatHelper.parseColor(colorHex),
+                                  shape: BoxShape.circle,
+                                  border: Border.all(
+                                    color: isSelected 
+                                        ? Colors.black 
+                                        : (isWhite ? Colors.grey : Theme.of(context).dividerColor),
+                                    width: isSelected ? 2 : 1,
+                                  ),
+                                ),
+                                child: isSelected 
+                                    ? Icon(
+                                        Icons.check, 
+                                        color: isWhite ? Colors.black : Colors.white,
+                                        size: ResponsiveHelper.iconSize(context, 16),
+                                      ) 
+                                    : null,
+                              ),
+                            );
+                          }).toList(),
+                        ),
+                        SizedBox(height: ResponsiveHelper.spacing(context, 8)),
+                      ],
+                    ),
+                  ),
+                ],
               ),
             ],
           ],

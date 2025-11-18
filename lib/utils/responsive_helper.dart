@@ -102,8 +102,8 @@ class ResponsiveHelper {
   }
   static double dialogHeight(BuildContext context) {
     final size = MediaQuery.of(context).size;
-    if (size.width < 600) return 500.0;  // 모바일
-    if (size.width < 1200) return 550.0; // 태블릿
-    return 600.0;                         // 데스크톱
+    if (size.width < 600) return 600.0;  // 500 → 600 (100px 증가)
+    if (size.width < 1200) return 650.0; // 550 → 650 (100px 증가)
+    return 700.0;                         // 600 → 700 (100px 증가)
   }
 }
