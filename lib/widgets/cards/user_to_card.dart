@@ -3,7 +3,7 @@ import '../../models/core/to_model.dart';
 import '../../models/core/work_detail_model.dart';
 import '../../models/core/application_model.dart';
 import '../../services/firestore_service.dart';
-import 'work_item_card.dart';
+import 'user_work_detail.dart';
 import '../common/styled_container.dart';
 import '../../utils/responsive_helper.dart';
 

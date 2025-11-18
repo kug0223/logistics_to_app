@@ -23,7 +23,7 @@ import '../../screens/admin/dialogs/to_list_dialogs.dart';
 
 // Local Widgets
 import 'admin_to_item_card.dart';
-import '../../screens/admin/widgets/work_detail_row.dart';
+import 'admin_work_detail.dart';
 
 /// TO 그룹 카드 (그룹 TO 또는 단일 TO)
 class TOGroupCard extends StatefulWidget {

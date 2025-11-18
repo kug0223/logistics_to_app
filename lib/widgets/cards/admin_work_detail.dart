@@ -5,25 +5,26 @@ import 'package:provider/provider.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 
 // Models
-import '../../../models/core/work_detail_model.dart';
-import '../../../models/core/to_model.dart';
-import '../../../models/ui/admin_to_list_ui_models.dart';
+import '../../models/core/work_detail_model.dart';
+import '../../models/core/to_model.dart';
+import '../../models/ui/admin_to_list_ui_models.dart';
 
 // Services
-import '../../../services/firestore_service.dart';
+import '../../services/firestore_service.dart';
 
 // Providers
-import '../../../providers/user_provider.dart';
+import '../../providers/user_provider.dart';
 
 // Utils
-import '../../../utils/toast_helper.dart';
-import '../../../utils/format_helper.dart';
+import '../../utils/toast_helper.dart';
+import '../../utils/format_helper.dart';
+import '../../utils/responsive_helper.dart';  // ⭐ 추가
 
 // Widgets
-import '../../../widgets/work_type_icon.dart';
+import '../work_type_icon.dart';
 
 // Dialogs
-import '../dialogs/work_applicants_dialog.dart';
+import '../../screens/admin/dialogs/work_applicants_dialog.dart';
 
 /// 업무 상세 행 위젯 (재사용 가능)
 class WorkDetailRow extends StatelessWidget {
@@ -49,8 +50,11 @@ class WorkDetailRow extends StatelessWidget {
     final workStatus = _getWorkStatus(work, confirmedCount);
     
     return Container(
-      margin: const EdgeInsets.only(bottom: 8, left: 24),
-      padding: const EdgeInsets.all(12),
+      margin: EdgeInsets.only(  // ⭐ const 제거
+        bottom: ResponsiveHelper.spacing(context, 8),  // ⭐ 변경
+        left: ResponsiveHelper.spacing(context, 24),  // ⭐ 변경
+      ),
+      padding: ResponsiveHelper.cardPadding(context),  // ⭐ 변경
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(6),
@@ -62,8 +66,8 @@ class WorkDetailRow extends StatelessWidget {
           Row(
             children: [
               Container(
-                width: 28,
-                height: 28,
+                width: ResponsiveHelper.iconSize(context, 28),  // ⭐ 변경
+                height: ResponsiveHelper.iconSize(context, 28),  // ⭐ 변경
                 decoration: BoxDecoration(
                   color: FormatHelper.parseColor(work.workTypeBackgroundColor ?? '#2196F3'),
                   borderRadius: BorderRadius.circular(6),
@@ -72,22 +76,25 @@ class WorkDetailRow extends StatelessWidget {
                   child: WorkTypeIcon.buildFromString(
                     work.workTypeIcon,
                     color: FormatHelper.parseColor(work.workTypeColor),
-                    size: 14,
+                    size: ResponsiveHelper.iconSize(context, 14),  // ⭐ 변경
                   ),
                 ),
               ),
-              const SizedBox(width: 8),
+              SizedBox(width: ResponsiveHelper.spacing(context, 8)),  // ⭐ 변경
               Expanded(
                 child: Text(
                   work.workType,
-                  style: const TextStyle(
-                    fontSize: 15,
+                  style: ResponsiveHelper.bodyStyle(context).copyWith(  // ⭐ 변경
                     fontWeight: FontWeight.bold,
                   ),
                 ),
               ),
               PopupMenuButton<String>(
-                icon: Icon(Icons.more_vert, size: 20, color: Colors.grey[600]),
+                icon: Icon(
+                  Icons.more_vert,
+                  size: ResponsiveHelper.iconSize(context, 20),  // ⭐ 변경
+                  color: Colors.grey[600],
+                ),
                 padding: EdgeInsets.zero,
                 onSelected: (value) => _handleWorkDetailMenu(context, value, work, toItem),
                 itemBuilder: (context) {
@@ -100,8 +107,12 @@ class WorkDetailRow extends StatelessWidget {
                       value: 'manage',
                       child: Row(
                         children: [
-                          Icon(Icons.people, size: 18, color: Colors.blue[700]),
-                          const SizedBox(width: 8),
+                          Icon(
+                            Icons.people,
+                            size: ResponsiveHelper.iconSize(context, 18),  // ⭐ 변경
+                            color: Colors.blue[700],
+                          ),
+                          SizedBox(width: ResponsiveHelper.spacing(context, 8)),  // ⭐ 변경
                           const Text('지원자 관리'),
                         ],
                       ),
@@ -113,8 +124,12 @@ class WorkDetailRow extends StatelessWidget {
                         value: 'expired',
                         child: Row(
                           children: [
-                            Icon(Icons.schedule, size: 18, color: Colors.grey[400]),
-                            const SizedBox(width: 8),
+                            Icon(
+                              Icons.schedule,
+                              size: ResponsiveHelper.iconSize(context, 18),  // ⭐ 변경
+                              color: Colors.grey[400],
+                            ),
+                            SizedBox(width: ResponsiveHelper.spacing(context, 8)),  // ⭐ 변경
                             Text(
                               '시간 만료됨',
                               style: TextStyle(color: Colors.grey[400]),
@@ -127,8 +142,12 @@ class WorkDetailRow extends StatelessWidget {
                         value: 'reopen',
                         child: Row(
                           children: [
-                            Icon(Icons.lock_open, size: 18, color: Colors.green[700]),
-                            const SizedBox(width: 8),
+                            Icon(
+                              Icons.lock_open,
+                              size: ResponsiveHelper.iconSize(context, 18),  // ⭐ 변경
+                              color: Colors.green[700],
+                            ),
+                            SizedBox(width: ResponsiveHelper.spacing(context, 8)),  // ⭐ 변경
                             const Text('업무 재오픈'),
                           ],
                         ),
@@ -138,8 +157,12 @@ class WorkDetailRow extends StatelessWidget {
                         value: 'close',
                         child: Row(
                           children: [
-                            Icon(Icons.block, size: 18, color: Colors.red[700]),
-                            const SizedBox(width: 8),
+                            Icon(
+                              Icons.block,
+                              size: ResponsiveHelper.iconSize(context, 18),  // ⭐ 변경
+                              color: Colors.red[700],
+                            ),
+                            SizedBox(width: ResponsiveHelper.spacing(context, 8)),  // ⭐ 변경
                             const Text('업무 마감'),
                           ],
                         ),
@@ -151,8 +174,12 @@ class WorkDetailRow extends StatelessWidget {
                           value: 'emergency_start',
                           child: Row(
                             children: [
-                              Icon(Icons.warning, size: 18, color: Colors.orange[700]),
-                              const SizedBox(width: 8),
+                              Icon(
+                                Icons.warning,
+                                size: ResponsiveHelper.iconSize(context, 18),  // ⭐ 변경
+                                color: Colors.orange[700],
+                              ),
+                              SizedBox(width: ResponsiveHelper.spacing(context, 8)),  // ⭐ 변경
                               const Text('긴급 모집 시작'),
                             ],
                           ),
@@ -162,8 +189,12 @@ class WorkDetailRow extends StatelessWidget {
                           value: 'emergency_stop',
                           child: Row(
                             children: [
-                              Icon(Icons.check_circle, size: 18, color: Colors.green[700]),
-                              const SizedBox(width: 8),
+                              Icon(
+                                Icons.check_circle,
+                                size: ResponsiveHelper.iconSize(context, 18),  // ⭐ 변경
+                                color: Colors.green[700],
+                              ),
+                              SizedBox(width: ResponsiveHelper.spacing(context, 8)),  // ⭐ 변경
                               const Text('긴급 모집 종료'),
                             ],
                           ),
@@ -174,52 +205,69 @@ class WorkDetailRow extends StatelessWidget {
               ),
             ],
           ),
-          const SizedBox(height: 8),
+          SizedBox(height: ResponsiveHelper.spacing(context, 8)),  // ⭐ 변경
           // ⭐ 시간/금액 (한 줄)
           Row(
             children: [
-              Icon(Icons.access_time, size: 14, color: Colors.grey[600]),
-              const SizedBox(width: 4),
+              Icon(
+                Icons.access_time,
+                size: ResponsiveHelper.iconSize(context, 14),  // ⭐ 변경
+                color: Colors.grey[600],
+              ),
+              SizedBox(width: ResponsiveHelper.spacing(context, 4)),  // ⭐ 변경
               Text(
                 '${work.startTime}~${work.endTime}',
-                style: TextStyle(fontSize: 13, color: Colors.grey[700]),
+                style: ResponsiveHelper.smallStyle(  // ⭐ 변경
+                  context,
+                  color: Colors.grey[700],
+                ),
               ),
-              const SizedBox(width: 12),
-              Icon(Icons.payments, size: 14, color: Colors.grey[600]),
-              const SizedBox(width: 4),
+              SizedBox(width: ResponsiveHelper.spacing(context, 12)),  // ⭐ 변경
+              Icon(
+                Icons.payments,
+                size: ResponsiveHelper.iconSize(context, 14),  // ⭐ 변경
+                color: Colors.grey[600],
+              ),
+              SizedBox(width: ResponsiveHelper.spacing(context, 4)),  // ⭐ 변경
               Text(
                 '${NumberFormat('#,###').format(work.wage)}원',
-                style: TextStyle(
-                  fontSize: 13,
-                  fontWeight: FontWeight.w600,
+                style: ResponsiveHelper.smallStyle(  // ⭐ 변경
+                  context,
                   color: Theme.of(context).primaryColor,
-                ),
+                ).copyWith(fontWeight: FontWeight.w600),
               ),
             ],
           ),
           // ⭐ 마감시간 (별도 줄)
           if (toItem.to.deadlineType == 'HOURS_BEFORE') ...[
-            const SizedBox(height: 4),
+            SizedBox(height: ResponsiveHelper.spacing(context, 4)),  // ⭐ 변경
             Row(
               children: [
-                Icon(Icons.alarm, size: 13, color: Colors.orange[600]),
-                const SizedBox(width: 4),
+                Icon(
+                  Icons.alarm,
+                  size: ResponsiveHelper.iconSize(context, 13),  // ⭐ 변경
+                  color: Colors.orange[600],
+                ),
+                SizedBox(width: ResponsiveHelper.spacing(context, 4)),  // ⭐ 변경
                 Text(
                   '마감: ${_calculateDeadline(toItem.to, work)}까지',
-                  style: TextStyle(
-                    fontSize: 11,
-                    fontWeight: FontWeight.w600,
+                  style: ResponsiveHelper.tinyStyle(  // ⭐ 변경
+                    context,
                     color: Colors.orange[700],
+                    fontWeight: FontWeight.w600,
                   ),
                 ),
               ],
             ),
           ],
-          const SizedBox(height: 6),
+          SizedBox(height: ResponsiveHelper.spacing(context, 6)),  // ⭐ 변경
           Row(
             children: [
               Container(
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                padding: EdgeInsets.symmetric(  // ⭐ const 제거
+                  horizontal: ResponsiveHelper.spacing(context, 8),  // ⭐ 변경
+                  vertical: ResponsiveHelper.spacing(context, 4),  // ⭐ 변경
+                ),
                 decoration: BoxDecoration(
                   color: work.isFull ? Colors.green[50] : Theme.of(context).primaryColor.withOpacity(0.1),
                   borderRadius: BorderRadius.circular(12),
@@ -230,23 +278,29 @@ class WorkDetailRow extends StatelessWidget {
                 child: Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    const Text('👥', style: TextStyle(fontSize: 11)),
-                    const SizedBox(width: 4),
+                    Text(
+                      '👥',
+                      style: ResponsiveHelper.tinyStyle(context),  // ⭐ 변경
+                    ),
+                    SizedBox(width: ResponsiveHelper.spacing(context, 4)),  // ⭐ 변경
                     Text(
                       '확정 $confirmedCount/${work.requiredCount}명',
-                      style: TextStyle(
-                        fontSize: 11,
-                        fontWeight: FontWeight.bold,
+                      style: ResponsiveHelper.tinyStyle(  // ⭐ 변경
+                        context,
                         color: work.isFull ? Colors.green[700] : Theme.of(context).primaryColor,
+                        fontWeight: FontWeight.bold,
                       ),
                     ),
                   ],
                 ),
               ),
-              const SizedBox(width: 8),
+              SizedBox(width: ResponsiveHelper.spacing(context, 8)),  // ⭐ 변경
               if (pendingCount > 0)
                 Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                  padding: EdgeInsets.symmetric(  // ⭐ const 제거
+                    horizontal: ResponsiveHelper.spacing(context, 8),  // ⭐ 변경
+                    vertical: ResponsiveHelper.spacing(context, 4),  // ⭐ 변경
+                  ),
                   decoration: BoxDecoration(
                     color: Colors.orange[50],
                     borderRadius: BorderRadius.circular(12),
@@ -255,14 +309,17 @@ class WorkDetailRow extends StatelessWidget {
                   child: Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      const Text('⏳', style: TextStyle(fontSize: 11)),
-                      const SizedBox(width: 4),
+                      Text(
+                        '⏳',
+                        style: ResponsiveHelper.tinyStyle(context),  // ⭐ 변경
+                      ),
+                      SizedBox(width: ResponsiveHelper.spacing(context, 4)),  // ⭐ 변경
                       Text(
                         '대기 $pendingCount명',
-                        style: TextStyle(
-                          fontSize: 11,
-                          fontWeight: FontWeight.bold,
+                        style: ResponsiveHelper.tinyStyle(  // ⭐ 변경
+                          context,
                           color: Colors.orange[700],
+                          fontWeight: FontWeight.bold,
                         ),
                       ),
                     ],
@@ -270,17 +327,20 @@ class WorkDetailRow extends StatelessWidget {
                 ),
               const Spacer(),
               Container(
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                padding: EdgeInsets.symmetric(  // ⭐ const 제거
+                  horizontal: ResponsiveHelper.spacing(context, 8),  // ⭐ 변경
+                  vertical: ResponsiveHelper.spacing(context, 4),  // ⭐ 변경
+                ),
                 decoration: BoxDecoration(
                   color: workStatus['color'],
                   borderRadius: BorderRadius.circular(4),
                 ),
                 child: Text(
                   workStatus['label'],
-                  style: const TextStyle(
-                    fontSize: 11,
-                    fontWeight: FontWeight.bold,
+                  style: ResponsiveHelper.tinyStyle(  // ⭐ 변경
+                    context,
                     color: Colors.white,
+                    fontWeight: FontWeight.bold,
                   ),
                 ),
               ),
