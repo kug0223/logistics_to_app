@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import '../../../models/core/work_detail_model.dart';
 import '../../../utils/format_helper.dart';
+import '../../../utils/responsive_helper.dart';  // ⭐ 추가
 
 /// 업무 상세 다이얼로그
 class WorkDetailDialog {
@@ -13,12 +14,17 @@ class WorkDetailDialog {
       builder: (context) => AlertDialog(
         title: Row(
           children: [
-            Text(work.workTypeIcon, style: const TextStyle(fontSize: 24)),
-            const SizedBox(width: 8),
+            Text(
+              work.workTypeIcon, 
+              style: TextStyle(
+                fontSize: ResponsiveHelper.getFontSize(context, 24),
+              ),
+            ),
+            SizedBox(width: ResponsiveHelper.spacing(context, 8)),
             Expanded(
               child: Text(
                 work.workType,
-                style: const TextStyle(fontSize: 18),
+                style: ResponsiveHelper.subtitleStyle(context),
               ),
             ),
           ],
@@ -29,19 +35,22 @@ class WorkDetailDialog {
             mainAxisSize: MainAxisSize.min,
             children: [
               _buildInfoRow(
+                context: context,
                 icon: Icons.access_time,
                 label: '근무 시간',
                 value: '${work.startTime} ~ ${work.endTime}',
               ),
-              const SizedBox(height: 12),
+              SizedBox(height: ResponsiveHelper.spacing(context, 12)),
               _buildInfoRow(
+                context: context,
                 icon: Icons.attach_money,
                 label: '급여',
                 value: FormatHelper.formatWage(work.wage),
                 valueColor: Colors.green[700],
               ),
-              const SizedBox(height: 12),
+              SizedBox(height: ResponsiveHelper.spacing(context, 12)),
               _buildInfoRow(
+                context: context,
                 icon: Icons.people,
                 label: '모집 인원',
                 value: '${work.requiredCount}명',
@@ -49,10 +58,11 @@ class WorkDetailDialog {
               // TODO: WorkDetailModel에 description 필드 추가 필요
               /* 
               if (work.description != null && work.description!.isNotEmpty) ...[
-                const SizedBox(height: 12),
+                SizedBox(height: ResponsiveHelper.spacing(context, 12)),
                 const Divider(),
-                const SizedBox(height: 12),
+                SizedBox(height: ResponsiveHelper.spacing(context, 12)),
                 _buildInfoRow(
+                  context: context,
                   icon: Icons.description,
                   label: '상세 설명',
                   value: work.description!,
@@ -73,6 +83,7 @@ class WorkDetailDialog {
   }
 
   static Widget _buildInfoRow({
+    required BuildContext context,  // ⭐ 추가
     required IconData icon,
     required String label,
     required String value,
@@ -81,28 +92,31 @@ class WorkDetailDialog {
     return Row(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Icon(icon, size: 20, color: Colors.grey[600]),
-        const SizedBox(width: 8),
+        Icon(
+          icon, 
+          size: ResponsiveHelper.iconSize(context, 20), 
+          color: Colors.grey[600]
+        ),
+        SizedBox(width: ResponsiveHelper.spacing(context, 8)),
         Expanded(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(
                 label,
-                style: TextStyle(
-                  fontSize: 12,
+                style: ResponsiveHelper.smallStyle(
+                  context,
                   color: Colors.grey[600],
                   fontWeight: FontWeight.w500,
                 ),
               ),
-              const SizedBox(height: 4),
+              SizedBox(height: ResponsiveHelper.spacing(context, 4)),
               Text(
                 value,
-                style: TextStyle(
-                  fontSize: 14,
-                  fontWeight: FontWeight.bold,
+                style: ResponsiveHelper.bodyStyle(
+                  context,
                   color: valueColor ?? Colors.black87,
-                ),
+                ).copyWith(fontWeight: FontWeight.bold),
               ),
             ],
           ),

@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../../utils/responsive_helper.dart';  // ⭐ 추가
 
 /// 공통 스타일 컨테이너 위젯 모음
 /// 
@@ -19,7 +20,7 @@ class StyledBadge extends StatelessWidget {
   final Color backgroundColor;
   final Color textColor;
   final IconData? icon;
-  final double fontSize;
+  final double? fontSize;  // ⭐ nullable로 변경
   final EdgeInsets? padding;
   final double borderRadius;
   
@@ -29,15 +30,20 @@ class StyledBadge extends StatelessWidget {
     required this.backgroundColor,
     required this.textColor,
     this.icon,
-    this.fontSize = 12,
+    this.fontSize,  // ⭐ 기본값 제거
     this.padding,
     this.borderRadius = 12,
   });
 
   @override
   Widget build(BuildContext context) {
+    final effectiveFontSize = fontSize ?? ResponsiveHelper.getFontSize(context, 12);
+    
     return Container(
-      padding: padding ?? const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      padding: padding ?? EdgeInsets.symmetric(
+        horizontal: ResponsiveHelper.spacing(context, 8),
+        vertical: ResponsiveHelper.spacing(context, 4),
+      ),
       decoration: BoxDecoration(
         color: backgroundColor,
         borderRadius: BorderRadius.circular(borderRadius),
@@ -46,13 +52,17 @@ class StyledBadge extends StatelessWidget {
         mainAxisSize: MainAxisSize.min,
         children: [
           if (icon != null) ...[
-            Icon(icon, size: fontSize + 2, color: textColor),
-            const SizedBox(width: 4),
+            Icon(
+              icon, 
+              size: ResponsiveHelper.iconSize(context, effectiveFontSize + 2), 
+              color: textColor
+            ),
+            SizedBox(width: ResponsiveHelper.spacing(context, 4)),
           ],
           Text(
             label,
             style: TextStyle(
-              fontSize: fontSize,
+              fontSize: effectiveFontSize,
               fontWeight: FontWeight.bold,
               color: textColor,
             ),
@@ -77,7 +87,7 @@ class StyledOutlineBadge extends StatelessWidget {
   final Color color;
   final Color? backgroundColor;
   final IconData? icon;
-  final double fontSize;
+  final double? fontSize;  // ⭐ nullable로 변경
   final EdgeInsets? padding;
   final double borderRadius;
   final double borderWidth;
@@ -88,7 +98,7 @@ class StyledOutlineBadge extends StatelessWidget {
     required this.color,
     this.backgroundColor,
     this.icon,
-    this.fontSize = 11,
+    this.fontSize,  // ⭐ 기본값 제거
     this.padding,
     this.borderRadius = 12,
     this.borderWidth = 1.5,
@@ -96,8 +106,13 @@ class StyledOutlineBadge extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final effectiveFontSize = fontSize ?? ResponsiveHelper.getFontSize(context, 11);
+    
     return Container(
-      padding: padding ?? const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      padding: padding ?? EdgeInsets.symmetric(
+        horizontal: ResponsiveHelper.spacing(context, 8),
+        vertical: ResponsiveHelper.spacing(context, 4),
+      ),
       decoration: BoxDecoration(
         color: backgroundColor ?? color.withOpacity(0.1),
         borderRadius: BorderRadius.circular(borderRadius),
@@ -107,13 +122,17 @@ class StyledOutlineBadge extends StatelessWidget {
         mainAxisSize: MainAxisSize.min,
         children: [
           if (icon != null) ...[
-            Icon(icon, size: fontSize + 1, color: color),
-            const SizedBox(width: 4),
+            Icon(
+              icon, 
+              size: ResponsiveHelper.iconSize(context, effectiveFontSize + 1), 
+              color: color
+            ),
+            SizedBox(width: ResponsiveHelper.spacing(context, 4)),
           ],
           Text(
             label,
             style: TextStyle(
-              fontSize: fontSize,
+              fontSize: effectiveFontSize,
               fontWeight: FontWeight.bold,
               color: color,
             ),
@@ -141,7 +160,7 @@ class StyledChip extends StatelessWidget {
   final Color textColor;
   final VoidCallback? onDelete;
   final IconData? icon;
-  final double fontSize;
+  final double? fontSize;  // ⭐ nullable로 변경
   final EdgeInsets? padding;
   final double borderRadius;
   
@@ -152,15 +171,20 @@ class StyledChip extends StatelessWidget {
     required this.textColor,
     this.onDelete,
     this.icon,
-    this.fontSize = 13,
+    this.fontSize,  // ⭐ 기본값 제거
     this.padding,
     this.borderRadius = 16,
   });
 
   @override
   Widget build(BuildContext context) {
+    final effectiveFontSize = fontSize ?? ResponsiveHelper.getFontSize(context, 13);
+    
     return Container(
-      padding: padding ?? const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      padding: padding ?? EdgeInsets.symmetric(
+        horizontal: ResponsiveHelper.spacing(context, 10),
+        vertical: ResponsiveHelper.spacing(context, 6),
+      ),
       decoration: BoxDecoration(
         color: backgroundColor,
         borderRadius: BorderRadius.circular(borderRadius),
@@ -169,28 +193,36 @@ class StyledChip extends StatelessWidget {
         mainAxisSize: MainAxisSize.min,
         children: [
           if (icon != null) ...[
-            Icon(icon, size: fontSize - 1, color: textColor),
-            const SizedBox(width: 6),
+            Icon(
+              icon, 
+              size: ResponsiveHelper.iconSize(context, effectiveFontSize - 1), 
+              color: textColor
+            ),
+            SizedBox(width: ResponsiveHelper.spacing(context, 6)),
           ],
           Text(
             label,
             style: TextStyle(
               color: textColor,
-              fontSize: fontSize,
+              fontSize: effectiveFontSize,
               fontWeight: FontWeight.w600,
             ),
           ),
           if (onDelete != null) ...[
-            const SizedBox(width: 6),
+            SizedBox(width: ResponsiveHelper.spacing(context, 6)),
             GestureDetector(
               onTap: onDelete,
               child: Container(
-                padding: const EdgeInsets.all(3),
+                padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 3)),
                 decoration: BoxDecoration(
                   color: Colors.white.withOpacity(0.3),
                   shape: BoxShape.circle,
                 ),
-                child: Icon(Icons.close, size: 12, color: textColor),
+                child: Icon(
+                  Icons.close, 
+                  size: ResponsiveHelper.iconSize(context, 12), 
+                  color: textColor
+                ),
               ),
             ),
           ],
@@ -231,7 +263,7 @@ class StyledInfoCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: padding ?? const EdgeInsets.all(8),
+      padding: padding ?? ResponsiveHelper.cardPadding(context),
       decoration: BoxDecoration(
         color: backgroundColor,
         borderRadius: BorderRadius.circular(borderRadius),
@@ -256,8 +288,8 @@ class StyledIconContainer extends StatelessWidget {
   final IconData icon;
   final Color backgroundColor;
   final Color iconColor;
-  final double size;
-  final double iconSize;
+  final double? size;  // ⭐ nullable로 변경
+  final double? iconSize;  // ⭐ nullable로 변경
   final BoxShape shape;
   final double borderRadius;
   
@@ -266,17 +298,20 @@ class StyledIconContainer extends StatelessWidget {
     required this.icon,
     required this.backgroundColor,
     required this.iconColor,
-    this.size = 40,
-    this.iconSize = 24,
+    this.size,  // ⭐ 기본값 제거
+    this.iconSize,  // ⭐ 기본값 제거
     this.shape = BoxShape.circle,
     this.borderRadius = 8,
   });
 
   @override
   Widget build(BuildContext context) {
+    final effectiveSize = size ?? ResponsiveHelper.iconSize(context, 40);
+    final effectiveIconSize = iconSize ?? ResponsiveHelper.iconSize(context, 24);
+    
     return Container(
-      width: size,
-      height: size,
+      width: effectiveSize,
+      height: effectiveSize,
       decoration: BoxDecoration(
         color: backgroundColor,
         shape: shape == BoxShape.circle ? BoxShape.circle : BoxShape.rectangle,
@@ -285,7 +320,7 @@ class StyledIconContainer extends StatelessWidget {
       child: Center(
         child: Icon(
           icon,
-          size: iconSize,
+          size: effectiveIconSize,
           color: iconColor,
         ),
       ),

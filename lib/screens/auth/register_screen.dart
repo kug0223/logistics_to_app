@@ -1,10 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-import 'package:flutter/services.dart'; 
+import 'package:flutter/services.dart';
 import '../../models/core/user_model.dart';
 import '../../providers/user_provider.dart';
 import '../../widgets/custom_button.dart';
 import '../../widgets/common/loading_widget.dart';
+import '../../utils/responsive_helper.dart';  // ⭐ 추가
 import '../admin/business_registration_screen.dart';
 
 class RegisterScreen extends StatefulWidget {
@@ -36,7 +37,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
     _emailController.dispose();
     _passwordController.dispose();
     _confirmPasswordController.dispose();
-    _phoneController.dispose(); 
+    _phoneController.dispose();
     super.dispose();
   }
 
@@ -99,7 +100,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
         title: Row(
           children: [
             Icon(Icons.business, color: Colors.blue[700]),
-            const SizedBox(width: 12),
+            SizedBox(width: ResponsiveHelper.spacing(context, 12)),
             const Text('사업장 등록'),
           ],
         ),
@@ -107,13 +108,13 @@ class _RegisterScreenState extends State<RegisterScreen> {
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text(
+            Text(
               '사업장 관리자는 사업장 정보가 필요합니다.',
-              style: TextStyle(fontSize: 16),
+              style: ResponsiveHelper.subtitleStyle(context),
             ),
-            const SizedBox(height: 12),
+            SizedBox(height: ResponsiveHelper.spacing(context, 12)),
             Container(
-              padding: const EdgeInsets.all(12),
+              padding: ResponsiveHelper.cardPadding(context),
               decoration: BoxDecoration(
                 color: Colors.blue[50],
                 borderRadius: BorderRadius.circular(8),
@@ -123,22 +124,25 @@ class _RegisterScreenState extends State<RegisterScreen> {
                 children: [
                   Text(
                     '지금 등록하기',
-                    style: TextStyle(
-                      fontWeight: FontWeight.bold,
+                    style: ResponsiveHelper.bodyStyle(
+                      context,
                       color: Colors.blue[900],
-                    ),
+                    ).copyWith(fontWeight: FontWeight.bold),
                   ),
-                  const SizedBox(height: 4),
+                  SizedBox(height: ResponsiveHelper.spacing(context, 4)),
                   Text(
                     '• TO를 바로 생성할 수 있습니다\n• 지원자를 바로 관리할 수 있습니다',
-                    style: TextStyle(fontSize: 13, color: Colors.grey[700]),
+                    style: ResponsiveHelper.smallStyle(
+                      context,
+                      color: Colors.grey[700],
+                    ),
                   ),
                 ],
               ),
             ),
-            const SizedBox(height: 8),
+            SizedBox(height: ResponsiveHelper.spacing(context, 8)),
             Container(
-              padding: const EdgeInsets.all(12),
+              padding: ResponsiveHelper.cardPadding(context),
               decoration: BoxDecoration(
                 color: Colors.grey[100],
                 borderRadius: BorderRadius.circular(8),
@@ -148,15 +152,18 @@ class _RegisterScreenState extends State<RegisterScreen> {
                 children: [
                   Text(
                     '나중에 등록하기',
-                    style: TextStyle(
-                      fontWeight: FontWeight.bold,
+                    style: ResponsiveHelper.bodyStyle(
+                      context,
                       color: Colors.grey[900],
-                    ),
+                    ).copyWith(fontWeight: FontWeight.bold),
                   ),
-                  const SizedBox(height: 4),
+                  SizedBox(height: ResponsiveHelper.spacing(context, 4)),
                   Text(
                     '• 로그인 후 홈 화면에서 등록 가능\n• TO 생성은 사업장 등록 후 가능',
-                    style: TextStyle(fontSize: 13, color: Colors.grey[700]),
+                    style: ResponsiveHelper.smallStyle(
+                      context,
+                      color: Colors.grey[700],
+                    ),
                   ),
                 ],
               ),
@@ -170,11 +177,16 @@ class _RegisterScreenState extends State<RegisterScreen> {
               _registerUserAndGoToBusinessRegistration();
             },
             style: TextButton.styleFrom(
-              padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+              padding: EdgeInsets.symmetric(
+                horizontal: ResponsiveHelper.spacing(context, 24),
+                vertical: ResponsiveHelper.spacing(context, 12),
+              ),
             ),
-            child: const Text(
+            child: Text(
               '지금 등록하기',
-              style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+              style: ResponsiveHelper.subtitleStyle(
+                context,
+              ).copyWith(fontWeight: FontWeight.bold),
             ),
           ),
           OutlinedButton(
@@ -183,11 +195,14 @@ class _RegisterScreenState extends State<RegisterScreen> {
               _registerUser();
             },
             style: OutlinedButton.styleFrom(
-              padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+              padding: EdgeInsets.symmetric(
+                horizontal: ResponsiveHelper.spacing(context, 24),
+                vertical: ResponsiveHelper.spacing(context, 12),
+              ),
             ),
-            child: const Text(
+            child: Text(
               '나중에 등록하기',
-              style: TextStyle(fontSize: 16),
+              style: ResponsiveHelper.subtitleStyle(context),
             ),
           ),
         ],
@@ -203,7 +218,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
       email: _emailController.text.trim(),
       password: _passwordController.text,
       name: _nameController.text.trim(),
-      phone: _phoneController.text.trim(), 
+      phone: _phoneController.text.trim(),
       role: _selectedRole!,
     );
 
@@ -262,7 +277,9 @@ class _RegisterScreenState extends State<RegisterScreen> {
                 onStepCancel: _onStepCancel,
                 controlsBuilder: (context, details) {
                   return Padding(
-                    padding: const EdgeInsets.only(top: 24.0),
+                    padding: EdgeInsets.only(
+                      top: ResponsiveHelper.spacing(context, 24),
+                    ),
                     child: Row(
                       children: [
                         if (_currentStep == 0)
@@ -278,7 +295,9 @@ class _RegisterScreenState extends State<RegisterScreen> {
                             child: OutlinedButton(
                               onPressed: details.onStepCancel,
                               style: OutlinedButton.styleFrom(
-                                padding: const EdgeInsets.symmetric(vertical: 16),
+                                padding: EdgeInsets.symmetric(
+                                  vertical: ResponsiveHelper.spacing(context, 16),
+                                ),
                                 shape: RoundedRectangleBorder(
                                   borderRadius: BorderRadius.circular(8),
                                 ),
@@ -286,7 +305,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
                               child: const Text('이전'),
                             ),
                           ),
-                          const SizedBox(width: 12),
+                          SizedBox(width: ResponsiveHelper.spacing(context, 12)),
                           Expanded(
                             child: CustomButton(
                               text: '선택하기',
@@ -309,42 +328,15 @@ class _RegisterScreenState extends State<RegisterScreen> {
                     content: Form(
                       key: _formKey,
                       child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.stretch,
                         children: [
-                          const SizedBox(height: 16),
+                          SizedBox(height: ResponsiveHelper.spacing(context, 16)),
                           
-                          // 안내 문구
-                          Container(
-                            padding: const EdgeInsets.all(16),
-                            decoration: BoxDecoration(
-                              color: Colors.blue[50],
-                              borderRadius: BorderRadius.circular(8),
-                            ),
-                            child: Row(
-                              children: [
-                                Icon(Icons.info_outline, color: Colors.blue[700]),
-                                const SizedBox(width: 12),
-                                Expanded(
-                                  child: Text(
-                                    '기본 정보를 입력해주세요',
-                                    style: TextStyle(
-                                      fontSize: 14,
-                                      color: Colors.blue[700],
-                                    ),
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                          const SizedBox(height: 24),
-
-                          // 이름 입력
+                          // 이름
                           TextFormField(
                             controller: _nameController,
                             decoration: InputDecoration(
                               labelText: '이름',
-                              hintText: '홍길동',
-                              prefixIcon: const Icon(Icons.person_outline),
+                              prefixIcon: const Icon(Icons.person),
                               border: OutlineInputBorder(
                                 borderRadius: BorderRadius.circular(8),
                               ),
@@ -355,22 +347,18 @@ class _RegisterScreenState extends State<RegisterScreen> {
                               if (value == null || value.isEmpty) {
                                 return '이름을 입력해주세요';
                               }
-                              if (value.length < 2) {
-                                return '이름은 2자 이상이어야 합니다';
-                              }
                               return null;
                             },
                           ),
-                          const SizedBox(height: 16),
-
-                          // 이메일 입력
+                          SizedBox(height: ResponsiveHelper.spacing(context, 16)),
+                          
+                          // 이메일
                           TextFormField(
                             controller: _emailController,
                             keyboardType: TextInputType.emailAddress,
                             decoration: InputDecoration(
                               labelText: '이메일',
-                              hintText: 'example@email.com',
-                              prefixIcon: const Icon(Icons.email_outlined),
+                              prefixIcon: const Icon(Icons.email),
                               border: OutlineInputBorder(
                                 borderRadius: BorderRadius.circular(8),
                               ),
@@ -382,31 +370,31 @@ class _RegisterScreenState extends State<RegisterScreen> {
                                 return '이메일을 입력해주세요';
                               }
                               if (!value.contains('@')) {
-                                return '유효한 이메일을 입력해주세요';
+                                return '올바른 이메일 형식이 아닙니다';
                               }
                               return null;
                             },
                           ),
-                          const SizedBox(height: 16),
+                          SizedBox(height: ResponsiveHelper.spacing(context, 16)),
                           
-                          // ✅ NEW: 전화번호 입력 (여기에 추가!)
+                          // 전화번호
                           TextFormField(
                             controller: _phoneController,
                             keyboardType: TextInputType.phone,
+                            inputFormatters: [
+                              FilteringTextInputFormatter.digitsOnly,
+                              LengthLimitingTextInputFormatter(11),
+                            ],
                             decoration: InputDecoration(
                               labelText: '전화번호',
-                              hintText: '010-0000-0000',
-                              prefixIcon: const Icon(Icons.phone_outlined),
+                              hintText: '01012345678',
+                              prefixIcon: const Icon(Icons.phone),
                               border: OutlineInputBorder(
                                 borderRadius: BorderRadius.circular(8),
                               ),
                               filled: true,
                               fillColor: Colors.grey[50],
                             ),
-                            inputFormatters: [
-                              FilteringTextInputFormatter.allow(RegExp(r'[0-9-]')),
-                              LengthLimitingTextInputFormatter(13), // 010-0000-0000
-                            ],
                             validator: (value) {
                               if (value == null || value.isEmpty) {
                                 return '전화번호를 입력해주세요';
@@ -417,16 +405,16 @@ class _RegisterScreenState extends State<RegisterScreen> {
                               return null;
                             },
                           ),
-                          const SizedBox(height: 16),
-
-                          // 비밀번호 입력
+                          SizedBox(height: ResponsiveHelper.spacing(context, 16)),
+                          
+                          // 비밀번호
                           TextFormField(
                             controller: _passwordController,
                             obscureText: _obscurePassword,
                             decoration: InputDecoration(
                               labelText: '비밀번호',
-                              hintText: '6자 이상 입력',
-                              prefixIcon: const Icon(Icons.lock_outline),
+                              hintText: '6자 이상',
+                              prefixIcon: const Icon(Icons.lock),
                               suffixIcon: IconButton(
                                 icon: Icon(
                                   _obscurePassword
@@ -455,15 +443,14 @@ class _RegisterScreenState extends State<RegisterScreen> {
                               return null;
                             },
                           ),
-                          const SizedBox(height: 16),
-
+                          SizedBox(height: ResponsiveHelper.spacing(context, 16)),
+                          
                           // 비밀번호 확인
                           TextFormField(
                             controller: _confirmPasswordController,
                             obscureText: _obscureConfirmPassword,
                             decoration: InputDecoration(
                               labelText: '비밀번호 확인',
-                              hintText: '비밀번호 재입력',
                               prefixIcon: const Icon(Icons.lock_outline),
                               suffixIcon: IconButton(
                                 icon: Icon(
@@ -493,7 +480,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
                               return null;
                             },
                           ),
-                          const SizedBox(height: 16),
+                          SizedBox(height: ResponsiveHelper.spacing(context, 16)),
                         ],
                       ),
                     ),
@@ -508,11 +495,11 @@ class _RegisterScreenState extends State<RegisterScreen> {
                     content: Column(
                       crossAxisAlignment: CrossAxisAlignment.stretch,
                       children: [
-                        const SizedBox(height: 16),
+                        SizedBox(height: ResponsiveHelper.spacing(context, 16)),
                         
                         // 안내 문구
                         Container(
-                          padding: const EdgeInsets.all(16),
+                          padding: ResponsiveHelper.cardPadding(context),
                           decoration: BoxDecoration(
                             color: Colors.amber[50],
                             borderRadius: BorderRadius.circular(8),
@@ -520,13 +507,12 @@ class _RegisterScreenState extends State<RegisterScreen> {
                           child: Row(
                             children: [
                               Icon(Icons.help_outline, color: Colors.amber[700]),
-                              const SizedBox(width: 12),
+                              SizedBox(width: ResponsiveHelper.spacing(context, 12)),
                               Expanded(
                                 child: Text(
                                   '어떻게 이용하시나요?',
-                                  style: TextStyle(
-                                    fontSize: 16,
-                                    fontWeight: FontWeight.bold,
+                                  style: ResponsiveHelper.bodyStyle(
+                                    context,
                                     color: Colors.amber[900],
                                   ),
                                 ),
@@ -534,55 +520,37 @@ class _RegisterScreenState extends State<RegisterScreen> {
                             ],
                           ),
                         ),
-                        const SizedBox(height: 24),
-
-                        // 일반 지원자 카드
+                        SizedBox(height: ResponsiveHelper.spacing(context, 24)),
+                        
+                        // 지원자 선택
                         _buildRoleCard(
+                          context: context,
                           role: UserRole.USER,
                           icon: Icons.person,
-                          title: '일반 지원자',
-                          description: 'TO에 지원하고 싶어요',
+                          title: '지원자로 이용',
+                          description: 'TO에 지원하고 일정을 관리합니다',
+                          color: Colors.green,
                           features: [
-                            'TO 지원하기',
-                            '내 지원 내역 확인',
-                            '출퇴근 체크',
+                            'TO 검색 및 지원',
+                            '나의 일정 관리',
+                            '지원 내역 확인',
                           ],
-                          color: Colors.blue,
                         ),
+                        SizedBox(height: ResponsiveHelper.spacing(context, 16)),
                         
-                        const SizedBox(height: 16),
-
-                        // 사업장 관리자 카드
+                        // 사업장 관리자 선택
                         _buildRoleCard(
+                          context: context,
                           role: UserRole.BUSINESS_ADMIN,
-                          icon: Icons.business,
-                          title: '사업장 관리자',
-                          description: 'TO를 등록하고 싶어요',
+                          icon: Icons.business_center,
+                          title: '사업장 관리자로 이용',
+                          description: 'TO를 생성하고 지원자를 관리합니다',
+                          color: Colors.blue,
                           features: [
                             'TO 생성 및 관리',
                             '지원자 승인/거절',
-                            '사업장 정보 관리',
+                            '인력 현황 파악',
                           ],
-                          color: Colors.green,
-                        ),
-                        
-                        const SizedBox(height: 24),
-
-                        // 약관 동의 안내
-                        Container(
-                          padding: const EdgeInsets.all(12),
-                          decoration: BoxDecoration(
-                            color: Colors.grey[100],
-                            borderRadius: BorderRadius.circular(8),
-                          ),
-                          child: Text(
-                            '회원가입 시 개인정보 처리방침 및\n서비스 이용약관에 동의하게 됩니다.',
-                            textAlign: TextAlign.center,
-                            style: TextStyle(
-                              fontSize: 12,
-                              color: Colors.grey[700],
-                            ),
-                          ),
                         ),
                       ],
                     ),
@@ -596,14 +564,15 @@ class _RegisterScreenState extends State<RegisterScreen> {
     );
   }
 
-  // 역할 선택 카드 위젯
+  /// 역할 선택 카드
   Widget _buildRoleCard({
+    required BuildContext context,
     required UserRole role,
     required IconData icon,
     required String title,
     required String description,
-    required List<String> features,
     required Color color,
+    required List<String> features,
   }) {
     final isSelected = _selectedRole == role;
     
@@ -615,43 +584,35 @@ class _RegisterScreenState extends State<RegisterScreen> {
       },
       borderRadius: BorderRadius.circular(12),
       child: Container(
-        padding: const EdgeInsets.all(20),
+        padding: ResponsiveHelper.cardPadding(context),
         decoration: BoxDecoration(
           color: isSelected ? color.withOpacity(0.1) : Colors.white,
+          borderRadius: BorderRadius.circular(12),
           border: Border.all(
             color: isSelected ? color : Colors.grey[300]!,
             width: isSelected ? 2 : 1,
           ),
-          borderRadius: BorderRadius.circular(12),
-          boxShadow: isSelected
-              ? [
-                  BoxShadow(
-                    color: color.withOpacity(0.2),
-                    blurRadius: 8,
-                    offset: const Offset(0, 2),
-                  ),
-                ]
-              : null,
         ),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
+            // 아이콘과 제목
             Row(
               children: [
                 // 아이콘
                 Container(
-                  padding: const EdgeInsets.all(12),
+                  padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 12)),
                   decoration: BoxDecoration(
-                    color: isSelected ? color : color.withOpacity(0.2),
-                    borderRadius: BorderRadius.circular(8),
+                    color: isSelected ? color : Colors.grey[200],
+                    shape: BoxShape.circle,
                   ),
                   child: Icon(
                     icon,
                     color: isSelected ? Colors.white : color,
-                    size: 28,
+                    size: ResponsiveHelper.iconSize(context, 28),
                   ),
                 ),
-                const SizedBox(width: 16),
+                SizedBox(width: ResponsiveHelper.spacing(context, 16)),
                 
                 // 제목과 설명
                 Expanded(
@@ -660,17 +621,16 @@ class _RegisterScreenState extends State<RegisterScreen> {
                     children: [
                       Text(
                         title,
-                        style: TextStyle(
-                          fontSize: 18,
-                          fontWeight: FontWeight.bold,
+                        style: ResponsiveHelper.subtitleStyle(
+                          context,
                           color: isSelected ? color : Colors.black87,
                         ),
                       ),
-                      const SizedBox(height: 4),
+                      SizedBox(height: ResponsiveHelper.spacing(context, 4)),
                       Text(
                         description,
-                        style: TextStyle(
-                          fontSize: 14,
+                        style: ResponsiveHelper.bodyStyle(
+                          context,
                           color: Colors.grey[600],
                         ),
                       ),
@@ -683,36 +643,38 @@ class _RegisterScreenState extends State<RegisterScreen> {
                   Icon(
                     Icons.check_circle,
                     color: color,
-                    size: 28,
+                    size: ResponsiveHelper.iconSize(context, 28),
                   )
                 else
                   Icon(
                     Icons.radio_button_unchecked,
                     color: Colors.grey[400],
-                    size: 28,
+                    size: ResponsiveHelper.iconSize(context, 28),
                   ),
               ],
             ),
             
-            const SizedBox(height: 16),
+            SizedBox(height: ResponsiveHelper.spacing(context, 16)),
             const Divider(),
-            const SizedBox(height: 12),
+            SizedBox(height: ResponsiveHelper.spacing(context, 12)),
             
             // 기능 목록
             ...features.map((feature) => Padding(
-              padding: const EdgeInsets.only(bottom: 8),
+              padding: EdgeInsets.only(
+                bottom: ResponsiveHelper.spacing(context, 8),
+              ),
               child: Row(
                 children: [
                   Icon(
                     Icons.check,
-                    size: 16,
+                    size: ResponsiveHelper.iconSize(context, 16),
                     color: isSelected ? color : Colors.grey[600],
                   ),
-                  const SizedBox(width: 8),
+                  SizedBox(width: ResponsiveHelper.spacing(context, 8)),
                   Text(
                     feature,
-                    style: TextStyle(
-                      fontSize: 14,
+                    style: ResponsiveHelper.bodyStyle(
+                      context,
                       color: isSelected ? Colors.black87 : Colors.grey[700],
                     ),
                   ),

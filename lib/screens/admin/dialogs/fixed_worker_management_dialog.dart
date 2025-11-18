@@ -7,6 +7,7 @@ import '../../../models/core/user_model.dart';
 import '../../../services/firestore_service.dart';
 import '../../../providers/user_provider.dart';
 import '../../../utils/toast_helper.dart';
+import '../../../utils/responsive_helper.dart';
 import '../../../widgets/common/loading_widget.dart';
 
 /// 고정근무자 관리 다이얼로그 (탭 구조)
@@ -315,8 +316,13 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
                 const Divider(height: 24),
                 
                 // 근무 이력
-                const Text('📊 근무 이력', style: TextStyle(fontWeight: FontWeight.bold)),
-                const SizedBox(height: 8),
+                Text(
+                  '📊 근무 이력', 
+                  style: ResponsiveHelper.bodyStyle(context).copyWith(
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+                SizedBox(height: ResponsiveHelper.spacing(context, 8)),
                 _buildInfoRow('총 근무', user != null ? '${user.totalWorkDays}일 (${user.totalWorkHours}시간)' : '-'),
                 _buildInfoRow('평균 평점', user != null && user.averageRating > 0
                     ? '⭐ ${user.averageRating.toStringAsFixed(1)} (${user.reviewCount}개)'
@@ -326,8 +332,13 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
                 const Divider(height: 24),
                 
                 // 계약 정보
-                const Text('💼 계약 정보', style: TextStyle(fontWeight: FontWeight.bold)),
-                const SizedBox(height: 8),
+                Text(
+                  '💼 계약 정보', 
+                  style: ResponsiveHelper.bodyStyle(context).copyWith(
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+                SizedBox(height: ResponsiveHelper.spacing(context, 8)),
                 _buildInfoRow('업무', '${app.selectedWorkType} · 시급 ${NumberFormat('#,###').format(app.wage)}원'),
                 _buildInfoRow('계약 기간', 
                     '${DateFormat('yyyy.MM.dd').format(app.workDate)} ~ ${DateFormat('yyyy.MM.dd').format(app.workEndDate!)}'),
@@ -335,9 +346,14 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
                 
                 if (user?.bio != null && user!.bio!.isNotEmpty) ...[
                   const Divider(height: 24),
-                  const Text('📝 자기소개', style: TextStyle(fontWeight: FontWeight.bold)),
-                  const SizedBox(height: 8),
-                  Text(user.bio!, style: const TextStyle(fontSize: 14)),
+                  Text(
+                    '📝 자기소개', 
+                    style: ResponsiveHelper.bodyStyle(context).copyWith(
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                  SizedBox(height: ResponsiveHelper.spacing(context, 8)),
+                  Text(user.bio!, style: ResponsiveHelper.bodyStyle(context)),
                 ],
               ],
             ),
@@ -356,38 +372,42 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
                   Navigator.pop(context);
                   _showExtraWorkRequestDialog(app);
                 },
-                icon: const Icon(Icons.add_circle, size: 20),
+                icon: Icon(Icons.add_circle, size: ResponsiveHelper.iconSize(context, 20)),
                 label: const Text('추가 근무 요청'),
                 style: ElevatedButton.styleFrom(
                   backgroundColor: Colors.green,
-                  padding: const EdgeInsets.symmetric(vertical: 14),
+                  padding: EdgeInsets.symmetric(
+                    vertical: ResponsiveHelper.spacing(context, 14),
+                  ),
                 ),
               ),
-              
-              const SizedBox(height: 8),
-              
-              // 미출근 요청 (빨강)
+
+              SizedBox(height: ResponsiveHelper.spacing(context, 8)),
+
               OutlinedButton.icon(
                 onPressed: () {
                   Navigator.pop(context);
                   _showNoWorkRequestDialog(app);
                 },
-                icon: const Icon(Icons.block, size: 20),
+                icon: Icon(Icons.block, size: ResponsiveHelper.iconSize(context, 20)),
                 label: const Text('미출근 요청'),
                 style: OutlinedButton.styleFrom(
                   foregroundColor: Colors.red,
                   side: const BorderSide(color: Colors.red),
-                  padding: const EdgeInsets.symmetric(vertical: 14),
+                  padding: EdgeInsets.symmetric(
+                    vertical: ResponsiveHelper.spacing(context, 14),
+                  ),
                 ),
               ),
-              
-              const SizedBox(height: 8),
-              
-              // 닫기 (회색)
+
+              SizedBox(height: ResponsiveHelper.spacing(context, 8)),
+
               TextButton(
                 onPressed: () => Navigator.pop(context),
                 style: TextButton.styleFrom(
-                  padding: const EdgeInsets.symmetric(vertical: 14),
+                  padding: EdgeInsets.symmetric(
+                    vertical: ResponsiveHelper.spacing(context, 14),
+                  ),
                 ),
                 child: const Text('닫기'),
               ),
@@ -402,11 +422,12 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
   /// 정보 행
   Widget _buildInfoRow(String label, String value) {
     return Padding(
-      padding: const EdgeInsets.only(bottom: 8),
+      padding: EdgeInsets.only(
+        bottom: ResponsiveHelper.spacing(context, 8),
+      ),
       child: LayoutBuilder(
         builder: (context, constraints) {
-          // 화면 너비에 따라 라벨 너비 조정
-          final labelWidth = constraints.maxWidth < 300 ? 70.0 : 80.0;
+          final labelWidth = constraints.maxWidth < 300 ? 60.0 : 80.0;
           
           return Row(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -415,20 +436,18 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
                 width: labelWidth,
                 child: Text(
                   label,
-                  style: TextStyle(
+                  style: ResponsiveHelper.smallStyle(
+                    context,
                     color: Colors.grey[600],
-                    fontSize: constraints.maxWidth < 300 ? 12 : 13,
                   ),
-                  overflow: TextOverflow.ellipsis,
                 ),
               ),
               Expanded(
                 child: Text(
                   value,
-                  style: TextStyle(
-                    fontSize: constraints.maxWidth < 300 ? 13 : 14,
+                  style: ResponsiveHelper.bodyStyle(context).copyWith(
+                    fontWeight: FontWeight.w500,
                   ),
-                  softWrap: true,
                 ),
               ),
             ],
@@ -633,11 +652,11 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
           children: [
             Text(
               '${notification.applicantName}님의 ${notification.requestTypeLabel}을 승인하시겠습니까?',
-              style: const TextStyle(fontSize: 16),
+              style: ResponsiveHelper.subtitleStyle(context),
             ),
-            const SizedBox(height: 12),
+            SizedBox(height: ResponsiveHelper.spacing(context, 12)),
             Container(
-              padding: const EdgeInsets.all(12),
+              padding: ResponsiveHelper.cardPadding(context),
               decoration: BoxDecoration(
                 color: Colors.blue[50],
                 borderRadius: BorderRadius.circular(8),
@@ -648,8 +667,12 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
                 children: [
                   Row(
                     children: [
-                      Icon(Icons.info_outline, color: Colors.blue[700], size: 18),
-                      const SizedBox(width: 6),
+                      Icon(
+                        Icons.info_outline, 
+                        color: Colors.blue[700], 
+                        size: ResponsiveHelper.iconSize(context, 18)
+                      ),
+                      SizedBox(width: ResponsiveHelper.spacing(context, 6)),
                       Text(
                         '요청 정보',
                         style: TextStyle(
@@ -738,11 +761,11 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
           children: [
             Text(
               '${notification.applicantName}님의 ${notification.requestTypeLabel}을 거절하시겠습니까?',
-              style: const TextStyle(fontSize: 16),
+              style: ResponsiveHelper.subtitleStyle(context),
             ),
-            const SizedBox(height: 12),
+            SizedBox(height: ResponsiveHelper.spacing(context, 12)),
             Container(
-              padding: const EdgeInsets.all(12),
+              padding: ResponsiveHelper.cardPadding(context),
               decoration: BoxDecoration(
                 color: Colors.orange[50],
                 borderRadius: BorderRadius.circular(8),
@@ -753,8 +776,12 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
                 children: [
                   Row(
                     children: [
-                      Icon(Icons.info_outline, color: Colors.orange[700], size: 18),
-                      const SizedBox(width: 6),
+                      Icon(
+                        Icons.info_outline, 
+                        color: Colors.orange[700], 
+                        size: ResponsiveHelper.iconSize(context, 18)
+                      ),
+                      SizedBox(width: ResponsiveHelper.spacing(context, 6)),
                       Text(
                         '요청 정보',
                         style: TextStyle(
@@ -771,12 +798,14 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
                 ],
               ),
             ),
-            const SizedBox(height: 16),
-            const Text(
+           SizedBox(height: ResponsiveHelper.spacing(context, 16)),
+            Text(
               '거절 사유',
-              style: TextStyle(fontWeight: FontWeight.bold),
+              style: ResponsiveHelper.bodyStyle(context).copyWith(
+                fontWeight: FontWeight.bold,
+              ),
             ),
-            const SizedBox(height: 8),
+            SizedBox(height: ResponsiveHelper.spacing(context, 8)),
             TextField(
               controller: reasonController,
               decoration: const InputDecoration(
@@ -912,32 +941,41 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
           children: [
             Text(
               '${DateFormat('yyyy년 M월 d일 (E)', 'ko_KR').format(selectedDate)}',
-              style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+              style: ResponsiveHelper.subtitleStyle(
+                context,
+              ).copyWith(fontWeight: FontWeight.bold),
             ),
-            const SizedBox(height: 8),
+            SizedBox(height: ResponsiveHelper.spacing(context, 8)),
             Text('근무자: ${app.uid}'),
             const Divider(height: 24),
             Container(
-              padding: const EdgeInsets.all(12),
+              padding: ResponsiveHelper.cardPadding(context),
               decoration: BoxDecoration(
                 color: Colors.orange[50],
                 borderRadius: BorderRadius.circular(8),
-                border: Border.all(color: Colors.orange[300]!),
+                border: Border.all(color: Colors.orange[200]!),
               ),
               child: Row(
                 children: [
-                  Icon(Icons.info_outline, color: Colors.orange[700], size: 20),
-                  const SizedBox(width: 8),
+                  Icon(
+                    Icons.info_outline, 
+                    color: Colors.orange[700], 
+                    size: ResponsiveHelper.iconSize(context, 20)
+                  ),
+                  SizedBox(width: ResponsiveHelper.spacing(context, 8)),
                   Expanded(
                     child: Text(
                       '해당 날짜에 근무하지 않아도 됨을 알립니다',
-                      style: TextStyle(fontSize: 13, color: Colors.orange[900]),
+                      style: ResponsiveHelper.smallStyle(
+                        context,
+                        color: Colors.orange[900],
+                      ),
                     ),
                   ),
                 ],
               ),
             ),
-            const SizedBox(height: 16),
+            SizedBox(height: ResponsiveHelper.spacing(context, 16)),
             const Text('요청 사유', style: TextStyle(fontWeight: FontWeight.bold)),
             const SizedBox(height: 8),
             TextField(
@@ -1090,14 +1128,16 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
           children: [
             Text(
               '${DateFormat('yyyy년 M월 d일 (E)', 'ko_KR').format(selectedDate)}',
-              style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+              style: ResponsiveHelper.subtitleStyle(
+                context,
+              ).copyWith(fontWeight: FontWeight.bold),
             ),
-            const SizedBox(height: 8),
+            SizedBox(height: ResponsiveHelper.spacing(context, 8)),
             Text('근무자: ${app.uid}'),
             Text('추가 급여: ${NumberFormat('#,###').format(app.wage)}원'),
             const Divider(height: 24),
             Container(
-              padding: const EdgeInsets.all(12),
+              padding: ResponsiveHelper.cardPadding(context),
               decoration: BoxDecoration(
                 color: Colors.green[50],
                 borderRadius: BorderRadius.circular(8),
@@ -1105,20 +1145,32 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
               ),
               child: Row(
                 children: [
-                  Icon(Icons.info_outline, color: Colors.green[700], size: 20),
-                  const SizedBox(width: 8),
+                  Icon(
+                    Icons.info_outline, 
+                    color: Colors.green[700], 
+                    size: ResponsiveHelper.iconSize(context, 20)
+                  ),
+                  SizedBox(width: ResponsiveHelper.spacing(context, 8)),
                   Expanded(
                     child: Text(
                       '해당 날짜에 추가 근무를 요청합니다',
-                      style: TextStyle(fontSize: 13, color: Colors.green[900]),
+                      style: ResponsiveHelper.smallStyle(
+                        context,
+                        color: Colors.green[900],
+                      ),
                     ),
                   ),
                 ],
               ),
             ),
-            const SizedBox(height: 16),
-            const Text('요청 사유', style: TextStyle(fontWeight: FontWeight.bold)),
-            const SizedBox(height: 8),
+            SizedBox(height: ResponsiveHelper.spacing(context, 16)),
+            Text(
+              '요청 사유', 
+              style: ResponsiveHelper.bodyStyle(context).copyWith(
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+            SizedBox(height: ResponsiveHelper.spacing(context, 8)),
             TextField(
               controller: reasonController,
               decoration: const InputDecoration(
