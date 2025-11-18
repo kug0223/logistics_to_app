@@ -3,6 +3,7 @@ import 'package:intl/intl.dart';
 import '../../models/core/work_detail_model.dart';
 import '../../models/core/to_model.dart';
 import '../../utils/format_helper.dart';
+import '../../utils/responsive_helper.dart';  // ⭐ 추가
 import '../../screens/user/dialogs/work_detail_dialog.dart';
 import '../../screens/user/dialogs/apply_dialog.dart';
 import '../work_type_icon.dart';
@@ -27,7 +28,7 @@ class WorkItemCard extends StatefulWidget {
 }
 
 class _WorkItemCardState extends State<WorkItemCard> {
-  late bool _localHasApplied; // ✅ 로컬 상태 추가
+  late bool _localHasApplied;
 
   @override
   void initState() {
@@ -38,7 +39,6 @@ class _WorkItemCardState extends State<WorkItemCard> {
   @override
   void didUpdateWidget(WorkItemCard oldWidget) {
     super.didUpdateWidget(oldWidget);
-    // ✅ props가 바뀌면 로컬 상태도 업데이트
     if (oldWidget.hasApplied != widget.hasApplied) {
       _localHasApplied = widget.hasApplied;
     }
@@ -47,8 +47,8 @@ class _WorkItemCardState extends State<WorkItemCard> {
   @override
   Widget build(BuildContext context) {
     return Container(
-      margin: const EdgeInsets.only(bottom: 12),
-      padding: const EdgeInsets.all(12),
+      margin: EdgeInsets.only(bottom: ResponsiveHelper.spacing(context, 12)),  // ⭐ 변경
+      padding: ResponsiveHelper.cardPadding(context),  // ⭐ 변경
       decoration: BoxDecoration(
         color: Colors.grey[50],
         borderRadius: BorderRadius.circular(8),
@@ -60,22 +60,20 @@ class _WorkItemCardState extends State<WorkItemCard> {
           // 🔥 업무명 (공통 위젯 사용)
           Row(
             children: [
-              // ✅ 공통 위젯으로 아이콘 + 배경색 처리
               WorkTypeIcon.buildWithBackground(
                 iconString: widget.work.workTypeIcon ?? 'work',
                 iconColor: widget.work.workTypeColor,
                 backgroundColor: widget.work.workTypeBackgroundColor,
-                size: 18,
-                containerSize: 36,
+                size: ResponsiveHelper.iconSize(context, 18),  // ⭐ 변경
+                containerSize: ResponsiveHelper.iconSize(context, 36),  // ⭐ 변경
               ),
               
-              const SizedBox(width: 12),
+              SizedBox(width: ResponsiveHelper.spacing(context, 12)),  // ⭐ 변경
               
               Expanded(
                 child: Text(
                   widget.work.workType,
-                  style: const TextStyle(
-                    fontSize: 15,
+                  style: ResponsiveHelper.bodyStyle(context).copyWith(  // ⭐ 변경
                     fontWeight: FontWeight.bold,
                   ),
                 ),
@@ -83,33 +81,35 @@ class _WorkItemCardState extends State<WorkItemCard> {
             ],
           ),
           
-          const SizedBox(height: 8),
+          SizedBox(height: ResponsiveHelper.spacing(context, 8)),  // ⭐ 변경
 
           // ⭐ 시간
           Row(
             children: [
-              Icon(Icons.access_time, size: 14, color: Colors.grey[600]),
-              const SizedBox(width: 4),
+              Icon(
+                Icons.access_time,
+                size: ResponsiveHelper.iconSize(context, 14),  // ⭐ 변경
+                color: Colors.grey[600],
+              ),
+              SizedBox(width: ResponsiveHelper.spacing(context, 4)),  // ⭐ 변경
               Text(
                 '${widget.work.startTime}~${widget.work.endTime}',
-                style: const TextStyle(fontSize: 13),
+                style: ResponsiveHelper.smallStyle(context),  // ⭐ 변경
               ),
             ],
           ),
 
-          const SizedBox(height: 4),
+          SizedBox(height: ResponsiveHelper.spacing(context, 4)),  // ⭐ 변경
 
           // ⭐ 금액 + 마감시간 (반응형)
           LayoutBuilder(
             builder: (context, constraints) {
-              // 마감시간 텍스트
               final deadlineText = widget.work.applicationDeadline != null
                   ? '마감: ${DateFormat('M/d HH:mm').format(widget.work.applicationDeadline!)}'
                   : widget.to.deadlineType == 'HOURS_BEFORE' && widget.to.hoursBeforeStart != null
                       ? '마감: ${widget.to.hoursBeforeStart}시간 전'
                       : null;
               
-              // 좁은 화면이면 세로로 배치
               if (constraints.maxWidth < 300 && deadlineText != null) {
                 return Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -117,28 +117,35 @@ class _WorkItemCardState extends State<WorkItemCard> {
                     // 금액
                     Row(
                       children: [
-                        Icon(Icons.attach_money, size: 14, color: Colors.green[600]),
-                        const SizedBox(width: 4),
+                        Icon(
+                          Icons.attach_money,
+                          size: ResponsiveHelper.iconSize(context, 14),  // ⭐ 변경
+                          color: Colors.green[600],
+                        ),
+                        SizedBox(width: ResponsiveHelper.spacing(context, 4)),  // ⭐ 변경
                         Text(
                           FormatHelper.formatWage(widget.work.wage),
-                          style: TextStyle(
-                            fontSize: 14,
-                            fontWeight: FontWeight.bold,
+                          style: ResponsiveHelper.bodyStyle(  // ⭐ 변경
+                            context,
                             color: Colors.green[700],
-                          ),
+                          ).copyWith(fontWeight: FontWeight.bold),
                         ),
                       ],
                     ),
-                    const SizedBox(height: 4),
+                    SizedBox(height: ResponsiveHelper.spacing(context, 4)),  // ⭐ 변경
                     // 마감시간
                     Row(
                       children: [
-                        Icon(Icons.alarm, size: 13, color: Colors.orange[600]),
-                        const SizedBox(width: 4),
+                        Icon(
+                          Icons.alarm,
+                          size: ResponsiveHelper.iconSize(context, 13),  // ⭐ 변경
+                          color: Colors.orange[600],
+                        ),
+                        SizedBox(width: ResponsiveHelper.spacing(context, 4)),  // ⭐ 변경
                         Text(
                           deadlineText,
-                          style: TextStyle(
-                            fontSize: 11,
+                          style: ResponsiveHelper.tinyStyle(  // ⭐ 변경
+                            context,
                             color: Colors.orange[700],
                           ),
                         ),
@@ -151,24 +158,31 @@ class _WorkItemCardState extends State<WorkItemCard> {
               // 넓은 화면이면 한 줄로 배치
               return Row(
                 children: [
-                  Icon(Icons.attach_money, size: 14, color: Colors.green[600]),
-                  const SizedBox(width: 4),
+                  Icon(
+                    Icons.attach_money,
+                    size: ResponsiveHelper.iconSize(context, 14),  // ⭐ 변경
+                    color: Colors.green[600],
+                  ),
+                  SizedBox(width: ResponsiveHelper.spacing(context, 4)),  // ⭐ 변경
                   Text(
                     FormatHelper.formatWage(widget.work.wage),
-                    style: TextStyle(
-                      fontSize: 14,
-                      fontWeight: FontWeight.bold,
+                    style: ResponsiveHelper.bodyStyle(  // ⭐ 변경
+                      context,
                       color: Colors.green[700],
-                    ),
+                    ).copyWith(fontWeight: FontWeight.bold),
                   ),
                   if (deadlineText != null) ...[
                     const Spacer(),
-                    Icon(Icons.alarm, size: 13, color: Colors.orange[600]),
-                    const SizedBox(width: 4),
+                    Icon(
+                      Icons.alarm,
+                      size: ResponsiveHelper.iconSize(context, 13),  // ⭐ 변경
+                      color: Colors.orange[600],
+                    ),
+                    SizedBox(width: ResponsiveHelper.spacing(context, 4)),  // ⭐ 변경
                     Text(
                       deadlineText,
-                      style: TextStyle(
-                        fontSize: 11,
+                      style: ResponsiveHelper.tinyStyle(  // ⭐ 변경
+                        context,
                         color: Colors.orange[700],
                       ),
                     ),
@@ -178,21 +192,25 @@ class _WorkItemCardState extends State<WorkItemCard> {
             },
           ),
 
-          const SizedBox(height: 4),
+          SizedBox(height: ResponsiveHelper.spacing(context, 4)),  // ⭐ 변경
 
           // 모집 인원
           Row(
             children: [
-              Icon(Icons.people, size: 14, color: Colors.grey[600]),
-              const SizedBox(width: 4),
+              Icon(
+                Icons.people,
+                size: ResponsiveHelper.iconSize(context, 14),  // ⭐ 변경
+                color: Colors.grey[600],
+              ),
+              SizedBox(width: ResponsiveHelper.spacing(context, 4)),  // ⭐ 변경
               Text(
                 '${widget.work.requiredCount}명 모집',
-                style: const TextStyle(fontSize: 13),
+                style: ResponsiveHelper.smallStyle(context),  // ⭐ 변경
               ),
             ],
           ),
           
-          const SizedBox(height: 12),
+          SizedBox(height: ResponsiveHelper.spacing(context, 12)),  // ⭐ 변경
           
           // 버튼들
           Row(
@@ -206,22 +224,27 @@ class _WorkItemCardState extends State<WorkItemCard> {
                       work: widget.work,
                     );
                   },
-                  icon: const Icon(Icons.info_outline, size: 16),
+                  icon: Icon(
+                    Icons.info_outline,
+                    size: ResponsiveHelper.iconSize(context, 16),  // ⭐ 변경
+                  ),
                   label: const Text('자세히'),
                   style: OutlinedButton.styleFrom(
-                    padding: const EdgeInsets.symmetric(vertical: 8),
+                    padding: EdgeInsets.symmetric(  // ⭐ const 제거
+                      vertical: ResponsiveHelper.spacing(context, 8),  // ⭐ 변경
+                    ),
                     side: BorderSide(color: Colors.grey[400]!),
                   ),
                 ),
               ),
               
-              const SizedBox(width: 8),
+              SizedBox(width: ResponsiveHelper.spacing(context, 8)),  // ⭐ 변경
               
               // 지원하기 버튼
               Expanded(
                 flex: 2,
                 child: ElevatedButton.icon(
-                  onPressed: _localHasApplied || widget.work.isClosed || widget.work.isTimeExpired // ✅ 추가!
+                  onPressed: _localHasApplied || widget.work.isClosed || widget.work.isTimeExpired
                       ? null
                       : () async {
                           final success = await ApplyDialog.show(
@@ -231,7 +254,6 @@ class _WorkItemCardState extends State<WorkItemCard> {
                             onSuccess: widget.onApplySuccess,
                           );
                           
-                          // ✅ 지원 성공 시 로컬 상태 즉시 업데이트
                           if (success && mounted) {
                             setState(() {
                               _localHasApplied = true;
@@ -239,8 +261,8 @@ class _WorkItemCardState extends State<WorkItemCard> {
                           }
                         },
                   icon: Icon(
-                    _localHasApplied ? Icons.check : Icons.send, // ✅ 로컬 상태 사용
-                    size: 16,
+                    _localHasApplied ? Icons.check : Icons.send,
+                    size: ResponsiveHelper.iconSize(context, 16),  // ⭐ 변경
                   ),
                   label: Text(
                     _localHasApplied 
@@ -250,8 +272,10 @@ class _WorkItemCardState extends State<WorkItemCard> {
                             : '지원하기'
                   ),
                   style: ElevatedButton.styleFrom(
-                    padding: const EdgeInsets.symmetric(vertical: 8),
-                    backgroundColor: _localHasApplied ? Colors.grey : null, // ✅ 로컬 상태 사용
+                    padding: EdgeInsets.symmetric(  // ⭐ const 제거
+                      vertical: ResponsiveHelper.spacing(context, 8),  // ⭐ 변경
+                    ),
+                    backgroundColor: _localHasApplied ? Colors.grey : null,
                   ),
                 ),
               ),

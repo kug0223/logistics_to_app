@@ -20,7 +20,7 @@ import '../../../widgets/inputs/filter_dialog.dart';
 import '../dialogs/to_list_dialogs.dart';
 
 // Local Widgets
-import 'to_group_card.dart';
+import '../../../widgets/cards/admin_to_group_card.dart';
 
 /// 인력 관리 - 리스트 뷰 (리팩토링 완료)
 class WorkforceListView extends StatefulWidget {

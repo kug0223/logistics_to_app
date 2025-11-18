@@ -270,16 +270,22 @@ class _IconPickerWidgetState extends State<_IconPickerWidget> {
             ),
             const SizedBox(height: 12),
             
-            // 아이콘 그리드
+            // 아이콘 그리드 - 반응형
             Expanded(
               child: _filteredIcons.isEmpty
                   ? const Center(child: Text('검색 결과가 없습니다'))
-                  : GridView.builder(
-                      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                        crossAxisCount: 6,
-                        mainAxisSpacing: 8,
-                        crossAxisSpacing: 8,
-                      ),
+                  : LayoutBuilder(  // ⭐ 추가
+                      builder: (context, constraints) {  // ⭐ 추가
+                        // ⭐ 화면 크기에 따라 열 개수 조정
+                        final width = constraints.maxWidth;
+                        final crossAxisCount = width < 300 ? 4 : width < 400 ? 5 : 6;
+                        
+                        return GridView.builder(
+                          gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(  // ⭐ const 제거
+                            crossAxisCount: crossAxisCount,  // ⭐ 반응형
+                            mainAxisSpacing: 8,
+                            crossAxisSpacing: 8,
+                          ),
                       itemCount: _filteredIcons.length,
                       itemBuilder: (context, index) {
                         final iconItem = _filteredIcons[index];
@@ -316,10 +322,12 @@ class _IconPickerWidgetState extends State<_IconPickerWidget> {
                                     ),
                             ),
                           ),
-                        );
-                      },
-                    ),
-            ),
+                        );  // ⭐ InkWell 닫기
+                      },  // ⭐ itemBuilder 닫기
+                    );  // ⭐ GridView.builder 닫기
+                  },  // ⭐ LayoutBuilder의 builder 닫기
+                ),  // ⭐ LayoutBuilder 닫기
+              ),  // ⭐ Expanded 닫기
             
             // ✅ Material 아이콘 색상 선택 (Material 아이콘일 때만)
             if (_selectedIcon != null && _selectedIcon is IconData) ...[
