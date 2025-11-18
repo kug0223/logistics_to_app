@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../../../utils/responsive_helper.dart';  // ⭐ 추가
 
 /// TO 목록 탭 위젯 (진행중/마감됨)
 class TOListTabs extends StatelessWidget {
@@ -14,8 +15,10 @@ class TOListTabs extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      margin: const EdgeInsets.symmetric(horizontal: 16),
-      padding: const EdgeInsets.all(4),
+      margin: EdgeInsets.symmetric(
+        horizontal: ResponsiveHelper.spacing(context, 16),
+      ),
+      padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 4)),
       decoration: BoxDecoration(
         color: Colors.grey[200],
         borderRadius: BorderRadius.circular(12),
@@ -30,7 +33,9 @@ class TOListTabs extends StatelessWidget {
                 }
               },
               child: Container(
-                padding: const EdgeInsets.symmetric(vertical: 12),
+                padding: EdgeInsets.symmetric(
+                  vertical: ResponsiveHelper.spacing(context, 12),
+                ),
                 decoration: BoxDecoration(
                   color: selectedTab == 'ACTIVE' ? const Color(0xFF1E88E5) : Colors.transparent,
                   borderRadius: BorderRadius.circular(10),
@@ -47,8 +52,7 @@ class TOListTabs extends StatelessWidget {
                 child: Text(
                   '진행중',
                   textAlign: TextAlign.center,
-                  style: TextStyle(
-                    fontSize: 15,
+                  style: ResponsiveHelper.subtitleStyle(context).copyWith(
                     fontWeight: FontWeight.w600,
                     color: selectedTab == 'ACTIVE' ? Colors.white : const Color(0xFF757575),
                   ),
@@ -64,7 +68,9 @@ class TOListTabs extends StatelessWidget {
                 }
               },
               child: Container(
-                padding: const EdgeInsets.symmetric(vertical: 12),
+                padding: EdgeInsets.symmetric(
+                  vertical: ResponsiveHelper.spacing(context, 12),
+                ),
                 decoration: BoxDecoration(
                   color: selectedTab == 'CLOSED' ? const Color(0xFF1E88E5) : Colors.transparent,
                   borderRadius: BorderRadius.circular(10),
@@ -81,8 +87,7 @@ class TOListTabs extends StatelessWidget {
                 child: Text(
                   '마감됨',
                   textAlign: TextAlign.center,
-                  style: TextStyle(
-                    fontSize: 15,
+                  style: ResponsiveHelper.subtitleStyle(context).copyWith(
                     fontWeight: FontWeight.w600,
                     color: selectedTab == 'CLOSED' ? Colors.white : const Color(0xFF757575),
                   ),

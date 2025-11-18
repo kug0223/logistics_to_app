@@ -102,22 +102,27 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
   @override
   Widget build(BuildContext context) {
     return Dialog(
-    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-    child: Container(
-      width: MediaQuery.of(context).size.width * 0.92,  // ⭐ 0.9 → 0.92
-      height: MediaQuery.of(context).size.height * 0.8,
-      constraints: const BoxConstraints(maxWidth: 500),
-        padding: const EdgeInsets.all(16),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      child: Container(
+        width: MediaQuery.of(context).size.width * 0.92,
+        height: MediaQuery.of(context).size.height * 0.8,
+        constraints: const BoxConstraints(maxWidth: 500),
+        padding: ResponsiveHelper.cardPadding(context),  // ⭐ 변경
         child: Column(
           children: [
             // 헤더
             Row(
               children: [
-                const Icon(Icons.manage_accounts, size: 28),
-                const SizedBox(width: 12),
-                const Text(
+                Icon(
+                  Icons.manage_accounts, 
+                  size: ResponsiveHelper.iconSize(context, 28),  // ⭐ 변경
+                ),
+                SizedBox(width: ResponsiveHelper.spacing(context, 12)),  // ⭐ 변경
+                Text(
                   '고정근무자 관리',
-                  style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+                  style: ResponsiveHelper.titleStyle(context).copyWith(  // ⭐ 수정
+                    fontWeight: FontWeight.bold,
+                  ),
                 ),
                 const Spacer(),
                 IconButton(
@@ -127,12 +132,12 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
               ],
             ),
             
-            const Divider(height: 24),
+            Divider(height: ResponsiveHelper.spacing(context, 24)),  // ⭐ 변경
 
             TabBar(
               controller: _tabController,
               labelColor: Theme.of(context).primaryColor,
-              unselectedLabelColor: Colors.grey,
+              unselectedLabelColor: Theme.of(context).disabledColor,
               indicatorColor: Theme.of(context).primaryColor,
               tabs: [
                 Tab(
@@ -153,21 +158,21 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
               ],
             ),
 
-                        // 탭 뷰
-                        Expanded(
-                          child: TabBarView(
-                            controller: _tabController,
-                            children: [
-                              _buildWorkersTab(),
-                              _buildNotificationsTab(),
-                            ],
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                );
-              }
+            // 탭 뷰
+            Expanded(
+              child: TabBarView(
+                controller: _tabController,
+                children: [
+                  _buildWorkersTab(),
+                  _buildNotificationsTab(),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
 
   /// 고정근무자 탭
   Widget _buildWorkersTab() {
@@ -180,11 +185,18 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Icon(Icons.people_outline, size: 64, color: Colors.grey[400]),
-            const SizedBox(height: 16),
+            Icon(
+              Icons.people_outline, 
+              size: ResponsiveHelper.iconSize(context, 64),  // ⭐ 변경
+              color: Theme.of(context).disabledColor,
+            ),
+            SizedBox(height: ResponsiveHelper.spacing(context, 16)),  // ⭐ 변경
             Text(
               '고정근무자가 없습니다',
-              style: TextStyle(fontSize: 16, color: Colors.grey[600]),
+              style: ResponsiveHelper.subtitleStyle(  // ⭐ 변경
+                context,
+                color: Theme.of(context).textTheme.bodySmall?.color,
+              ),
             ),
           ],
         ),
@@ -192,7 +204,9 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
     }
 
     return ListView.builder(
-      padding: const EdgeInsets.symmetric(vertical: 16),
+      padding: EdgeInsets.symmetric(  // ⭐ const 제거
+        vertical: ResponsiveHelper.spacing(context, 16),  // ⭐ 변경
+      ),
       itemCount: _fixedWorkers.length,
       itemBuilder: (context, index) {
         final app = _fixedWorkers[index];
@@ -211,13 +225,15 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
         final phone = user?.phone ?? '전화번호 없음';
 
         return Card(
-          margin: const EdgeInsets.only(bottom: 12),
+          margin: EdgeInsets.only(  // ⭐ const 제거
+            bottom: ResponsiveHelper.spacing(context, 12),  // ⭐ 변경
+          ),
           child: ListTile(
             leading: CircleAvatar(
               backgroundColor: Theme.of(context).primaryColor.withOpacity(0.2),
               child: Text(
                 name.isNotEmpty ? name[0] : '?',
-                style: TextStyle(
+                style: ResponsiveHelper.bodyStyle(context).copyWith(  // ⭐ 변경
                   color: Theme.of(context).primaryColor,
                   fontWeight: FontWeight.bold,
                 ),
@@ -225,7 +241,9 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
             ),
             title: Text(
               name,
-              style: const TextStyle(fontWeight: FontWeight.bold),
+              style: ResponsiveHelper.bodyStyle(context).copyWith(  // ⭐ 변경
+                fontWeight: FontWeight.bold,
+              ),
             ),
             subtitle: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -233,7 +251,10 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
                 Text('${app.selectedWorkType} · ${_formatWorkDays(app.workDays)}'),
                 Text(
                   '${DateFormat('M/d').format(app.workDate)} ~ ${DateFormat('M/d').format(app.workEndDate!)}',
-                  style: TextStyle(fontSize: 12, color: Colors.grey[600]),
+                  style: ResponsiveHelper.tinyStyle(  // ⭐ 변경
+                    context,
+                    color: Theme.of(context).textTheme.bodySmall?.color,
+                  ),
                 ),
               ],
             ),
@@ -262,7 +283,7 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
         title: Row(
           children: [
             const Icon(Icons.person),
-            const SizedBox(width: 8),
+            SizedBox(width: ResponsiveHelper.spacing(context, 8)),  // ⭐ 변경
             const Text('근무자 상세 정보'),
           ],
         ),
@@ -281,16 +302,21 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
                 _buildInfoRow('연락처', user?.phone ?? '전화번호 없음'),
                 _buildInfoRow('주소', user?.address ?? '-'),
                 
-                const Divider(height: 24),
+                Divider(height: ResponsiveHelper.spacing(context, 24)),  // ⭐ 변경
                 
                 // 급여 정보
-                const Text('💳 급여 정보', style: TextStyle(fontWeight: FontWeight.bold)),
-                const SizedBox(height: 8),
+                Text(
+                  '💳 급여 정보', 
+                  style: ResponsiveHelper.bodyStyle(context).copyWith(  // ⭐ 변경
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+                SizedBox(height: ResponsiveHelper.spacing(context, 8)),  // ⭐ 변경
                 _buildInfoRow('은행', user?.bankName ?? '-'),
                 _buildInfoRow('계좌번호', user?.accountNumber ?? '-'),
                 _buildInfoRow('예금주', user?.accountHolder ?? '-'),
                 
-                const Divider(height: 24),
+                Divider(height: ResponsiveHelper.spacing(context, 24)),  // ⭐ 변경
                 
                 // 신분증 인증
                 Row(
@@ -298,22 +324,22 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
                     Icon(
                       user?.isIdVerified == true ? Icons.verified : Icons.warning,
                       color: user?.isIdVerified == true ? Colors.green : Colors.orange,
-                      size: 20,
+                      size: ResponsiveHelper.iconSize(context, 20),  // ⭐ 변경
                     ),
-                    const SizedBox(width: 8),
+                    SizedBox(width: ResponsiveHelper.spacing(context, 8)),  // ⭐ 변경
                     Text(
                       user?.isIdVerified == true 
                           ? '신분증 인증 완료 (${user?.idCardVerifiedAt != null ? DateFormat('yyyy.MM.dd').format(user!.idCardVerifiedAt!) : '-'})'
                           : '신분증 미인증',
-                      style: TextStyle(
+                      style: ResponsiveHelper.smallStyle(  // ⭐ 변경
+                        context,
                         color: user?.isIdVerified == true ? Colors.green : Colors.orange,
-                        fontSize: 13,
                       ),
                     ),
                   ],
                 ),
                 
-                const Divider(height: 24),
+                Divider(height: ResponsiveHelper.spacing(context, 24)),  // ⭐ 변경
                 
                 // 근무 이력
                 Text(
@@ -329,7 +355,7 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
                     : '-'),
                 _buildInfoRow('무단결근', user != null ? '${user.noShowCount}회 · 지각: ${user.lateCount}회' : '-'),
                 
-                const Divider(height: 24),
+                Divider(height: ResponsiveHelper.spacing(context, 24)),  // ⭐ 변경
                 
                 // 계약 정보
                 Text(
@@ -345,7 +371,7 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
                 _buildInfoRow('근무 요일', _formatWorkDays(app.workDays)),
                 
                 if (user?.bio != null && user!.bio!.isNotEmpty) ...[
-                  const Divider(height: 24),
+                  Divider(height: ResponsiveHelper.spacing(context, 24)),  // ⭐ 변경
                   Text(
                     '📝 자기소개', 
                     style: ResponsiveHelper.bodyStyle(context).copyWith(
@@ -360,61 +386,61 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
           ),
         ),
         actions: [
-        // 버튼들을 Column으로 세로 배치
-        SizedBox(
-          width: double.infinity,
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              // 추가 근무 요청 (초록)
-              ElevatedButton.icon(
-                onPressed: () {
-                  Navigator.pop(context);
-                  _showExtraWorkRequestDialog(app);
-                },
-                icon: Icon(Icons.add_circle, size: ResponsiveHelper.iconSize(context, 20)),
-                label: const Text('추가 근무 요청'),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: Colors.green,
-                  padding: EdgeInsets.symmetric(
-                    vertical: ResponsiveHelper.spacing(context, 14),
+          // 버튼들을 Column으로 세로 배치
+          SizedBox(
+            width: double.infinity,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                // 추가 근무 요청 (초록)
+                ElevatedButton.icon(
+                  onPressed: () {
+                    Navigator.pop(context);
+                    _showExtraWorkRequestDialog(app);
+                  },
+                  icon: Icon(Icons.add_circle, size: ResponsiveHelper.iconSize(context, 20)),
+                  label: const Text('추가 근무 요청'),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.green,
+                    padding: EdgeInsets.symmetric(
+                      vertical: ResponsiveHelper.spacing(context, 14),
+                    ),
                   ),
                 ),
-              ),
 
-              SizedBox(height: ResponsiveHelper.spacing(context, 8)),
+                SizedBox(height: ResponsiveHelper.spacing(context, 8)),
 
-              OutlinedButton.icon(
-                onPressed: () {
-                  Navigator.pop(context);
-                  _showNoWorkRequestDialog(app);
-                },
-                icon: Icon(Icons.block, size: ResponsiveHelper.iconSize(context, 20)),
-                label: const Text('미출근 요청'),
-                style: OutlinedButton.styleFrom(
-                  foregroundColor: Colors.red,
-                  side: const BorderSide(color: Colors.red),
-                  padding: EdgeInsets.symmetric(
-                    vertical: ResponsiveHelper.spacing(context, 14),
+                OutlinedButton.icon(
+                  onPressed: () {
+                    Navigator.pop(context);
+                    _showNoWorkRequestDialog(app);
+                  },
+                  icon: Icon(Icons.block, size: ResponsiveHelper.iconSize(context, 20)),
+                  label: const Text('미출근 요청'),
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: Colors.red,
+                    side: const BorderSide(color: Colors.red),
+                    padding: EdgeInsets.symmetric(
+                      vertical: ResponsiveHelper.spacing(context, 14),
+                    ),
                   ),
                 ),
-              ),
 
-              SizedBox(height: ResponsiveHelper.spacing(context, 8)),
+                SizedBox(height: ResponsiveHelper.spacing(context, 8)),
 
-              TextButton(
-                onPressed: () => Navigator.pop(context),
-                style: TextButton.styleFrom(
-                  padding: EdgeInsets.symmetric(
-                    vertical: ResponsiveHelper.spacing(context, 14),
+                TextButton(
+                  onPressed: () => Navigator.pop(context),
+                  style: TextButton.styleFrom(
+                    padding: EdgeInsets.symmetric(
+                      vertical: ResponsiveHelper.spacing(context, 14),
+                    ),
                   ),
+                  child: const Text('닫기'),
                 ),
-                child: const Text('닫기'),
-              ),
-            ],
+              ],
+            ),
           ),
-        ),
-      ],
+        ],
       ),
     );
   }
@@ -438,7 +464,7 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
                   label,
                   style: ResponsiveHelper.smallStyle(
                     context,
-                    color: Colors.grey[600],
+                    color: Theme.of(context).textTheme.bodySmall?.color,
                   ),
                 ),
               ),
@@ -468,11 +494,18 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Icon(Icons.notifications_none, size: 64, color: Colors.grey[400]),
-            const SizedBox(height: 16),
+            Icon(
+              Icons.notifications_none, 
+              size: ResponsiveHelper.iconSize(context, 64),  // ⭐ 변경
+              color: Theme.of(context).disabledColor,
+            ),
+            SizedBox(height: ResponsiveHelper.spacing(context, 16)),  // ⭐ 변경
             Text(
               '알림이 없습니다',
-              style: TextStyle(fontSize: 16, color: Colors.grey[600]),
+              style: ResponsiveHelper.subtitleStyle(  // ⭐ 변경
+                context,
+                color: Theme.of(context).textTheme.bodySmall?.color,
+              ),
             ),
           ],
         ),
@@ -480,7 +513,9 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
     }
 
     return ListView.builder(
-      padding: const EdgeInsets.symmetric(vertical: 16),
+      padding: EdgeInsets.symmetric(  // ⭐ const 제거
+        vertical: ResponsiveHelper.spacing(context, 16),  // ⭐ 변경
+      ),
       itemCount: _notifications.length,
       itemBuilder: (context, index) {
         final notification = _notifications[index];
@@ -506,7 +541,9 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
     }
 
     return Card(
-      margin: const EdgeInsets.only(bottom: 12),
+      margin: EdgeInsets.only(  // ⭐ const 제거
+        bottom: ResponsiveHelper.spacing(context, 12),  // ⭐ 변경
+      ),
       child: ListTile(
         leading: CircleAvatar(
           backgroundColor: iconColor.withOpacity(0.2),
@@ -514,7 +551,9 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
         ),
         title: Text(
           '${notification.requestTypeLabel} - ${notification.applicantName}',
-          style: const TextStyle(fontWeight: FontWeight.bold),
+          style: ResponsiveHelper.bodyStyle(context).copyWith(  // ⭐ 변경
+            fontWeight: FontWeight.bold,
+          ),
         ),
         subtitle: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -523,11 +562,14 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
             if (notification.reason != null)
               Text(
                 notification.reason!,
-                style: TextStyle(fontSize: 12, color: Colors.grey[600]),
+                style: ResponsiveHelper.tinyStyle(  // ⭐ 변경
+                  context,
+                  color: Theme.of(context).textTheme.bodySmall?.color,
+                ),
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
               ),
-            const SizedBox(height: 4),
+            SizedBox(height: ResponsiveHelper.spacing(context, 4)),  // ⭐ 변경
             _buildStatusChip(notification.status),
           ],
         ),
@@ -562,18 +604,20 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
     }
 
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      padding: EdgeInsets.symmetric(
+        horizontal: ResponsiveHelper.spacing(context, 8),  // ⭐ 변경
+        vertical: ResponsiveHelper.spacing(context, 4),  // ⭐ 변경
+      ),
       decoration: BoxDecoration(
         color: color.withOpacity(0.2),
         borderRadius: BorderRadius.circular(12),
       ),
       child: Text(
         label,
-        style: TextStyle(
+        style: ResponsiveHelper.tinyStyle(  // ⭐ 변경
+          context,
           color: color,
-          fontSize: 12,
-          fontWeight: FontWeight.bold,
-        ),
+        ).copyWith(fontWeight: FontWeight.bold),
       ),
     );
   }
@@ -584,9 +628,9 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
       context: context,
       builder: (context) => AlertDialog(
         title: Text(notification.requestTypeLabel),
-        content: SingleChildScrollView(  // ⭐ 추가
-          child: SizedBox(  // ⭐ 추가
-            width: double.maxFinite,  // ⭐ 추가
+        content: SingleChildScrollView(
+          child: SizedBox(
+            width: double.maxFinite,
             child: Column(
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -635,15 +679,14 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
 
   /// 승인 처리
   Future<void> _handleApprove(ScheduleChangeRequestModel notification) async {
-    // ⭐ 승인 확인 다이얼로그
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Row(
+        title: Row(
           children: [
-            Icon(Icons.check_circle, color: Colors.green),
-            SizedBox(width: 8),
-            Text('요청 승인'),
+            const Icon(Icons.check_circle, color: Colors.green),
+            SizedBox(width: ResponsiveHelper.spacing(context, 8)),  // ⭐ 변경
+            const Text('요청 승인'),
           ],
         ),
         content: Column(
@@ -658,9 +701,9 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
             Container(
               padding: ResponsiveHelper.cardPadding(context),
               decoration: BoxDecoration(
-                color: Colors.blue[50],
+                color: Theme.of(context).primaryColor.withOpacity(0.1),
                 borderRadius: BorderRadius.circular(8),
-                border: Border.all(color: Colors.blue[200]!),
+                border: Border.all(color: Theme.of(context).primaryColor.withOpacity(0.3)),
               ),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -669,20 +712,20 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
                     children: [
                       Icon(
                         Icons.info_outline, 
-                        color: Colors.blue[700], 
+                        color: Theme.of(context).primaryColor,
                         size: ResponsiveHelper.iconSize(context, 18)
                       ),
                       SizedBox(width: ResponsiveHelper.spacing(context, 6)),
                       Text(
                         '요청 정보',
-                        style: TextStyle(
+                        style: ResponsiveHelper.bodyStyle(context).copyWith(
                           fontWeight: FontWeight.bold,
-                          color: Colors.blue[900],
+                          color: Theme.of(context).primaryColor,
                         ),
                       ),
                     ],
                   ),
-                  const SizedBox(height: 8),
+                  SizedBox(height: ResponsiveHelper.spacing(context, 8)),
                   Text('• 대상 날짜: ${DateFormat('yyyy년 M월 d일 (E)', 'ko_KR').format(notification.targetDate)}'),
                   if (notification.reason != null)
                     Text('• 요청 사유: ${notification.reason}'),
@@ -709,7 +752,6 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
 
     if (confirmed != true) return;
 
-    // ⭐ 사용자 정보 가져오기
     final userProvider = context.read<UserProvider>();
     final uid = userProvider.currentUser?.uid;
 
@@ -718,7 +760,6 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
       return;
     }
 
-    // 실제 승인 처리
     try {
       final success = await _firestoreService.approveScheduleChangeRequest(
         requestId: notification.id,
@@ -744,15 +785,14 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
   Future<void> _handleReject(ScheduleChangeRequestModel notification) async {
     final reasonController = TextEditingController();
 
-    // ⭐ 거절 사유 입력 다이얼로그
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Row(
+        title: Row(
           children: [
-            Icon(Icons.cancel, color: Colors.red),
-            SizedBox(width: 8),
-            Text('요청 거절'),
+            const Icon(Icons.cancel, color: Colors.red),
+            SizedBox(width: ResponsiveHelper.spacing(context, 8)),  // ⭐ 변경
+            const Text('요청 거절'),
           ],
         ),
         content: Column(
@@ -767,9 +807,9 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
             Container(
               padding: ResponsiveHelper.cardPadding(context),
               decoration: BoxDecoration(
-                color: Colors.orange[50],
+                color: Colors.orange.withOpacity(0.1),
                 borderRadius: BorderRadius.circular(8),
-                border: Border.all(color: Colors.orange[200]!),
+                border: Border.all(color: Colors.orange.withOpacity(0.3)),
               ),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -778,27 +818,27 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
                     children: [
                       Icon(
                         Icons.info_outline, 
-                        color: Colors.orange[700], 
+                        color: Colors.orange,
                         size: ResponsiveHelper.iconSize(context, 18)
                       ),
                       SizedBox(width: ResponsiveHelper.spacing(context, 6)),
                       Text(
                         '요청 정보',
-                        style: TextStyle(
+                        style: ResponsiveHelper.bodyStyle(context).copyWith(
                           fontWeight: FontWeight.bold,
-                          color: Colors.orange[900],
+                          color: Colors.orange,
                         ),
                       ),
                     ],
                   ),
-                  const SizedBox(height: 8),
+                  SizedBox(height: ResponsiveHelper.spacing(context, 8)),
                   Text('• 대상 날짜: ${DateFormat('yyyy년 M월 d일 (E)', 'ko_KR').format(notification.targetDate)}'),
                   if (notification.reason != null)
                     Text('• 요청 사유: ${notification.reason}'),
                 ],
               ),
             ),
-           SizedBox(height: ResponsiveHelper.spacing(context, 16)),
+            SizedBox(height: ResponsiveHelper.spacing(context, 16)),
             Text(
               '거절 사유',
               style: ResponsiveHelper.bodyStyle(context).copyWith(
@@ -841,7 +881,6 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
       return;
     }
 
-    // ⭐ 사용자 정보 가져오기
     final userProvider = context.read<UserProvider>();
     final uid = userProvider.currentUser?.uid;
 
@@ -850,7 +889,6 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
       return;
     }
 
-    // 실제 거절 처리
     try {
       final success = await _firestoreService.rejectScheduleChangeRequest(
         requestId: notification.id,
@@ -872,9 +910,9 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
       }
     }
   }
-  /// ⭐ 미출근 요청 다이얼로그
+
+  /// 미출근 요청 다이얼로그
   Future<void> _showNoWorkRequestDialog(ApplicationModel app) async {
-    // 날짜 선택
     final DateTime? selectedDate = await showDatePicker(
       context: context,
       initialDate: DateTime.now(),
@@ -891,7 +929,6 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
         );
       },
       selectableDayPredicate: (DateTime date) {
-        // 해당 날짜가 근무일인지 확인
         final workStart = DateTime(app.workDate.year, app.workDate.month, app.workDate.day);
         final workEnd = DateTime(app.workEndDate!.year, app.workEndDate!.month, app.workEndDate!.day);
         final targetDate = DateTime(date.year, date.month, date.day);
@@ -900,7 +937,6 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
           return false;
         }
         
-        // 요일 체크
         if (app.workDays != null && app.workDays!.isNotEmpty) {
           final weekdays = ['월', '화', '수', '목', '금', '토', '일'];
           final dayOfWeek = weekdays[date.weekday - 1];
@@ -909,7 +945,6 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
           }
         }
         
-        // 이미 휴무 처리된 날짜는 제외
         if (app.leaveDates != null) {
           final alreadyLeave = app.leaveDates!.any((d) =>
               d.year == date.year && d.month == date.month && d.day == date.day);
@@ -922,17 +957,16 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
 
     if (selectedDate == null) return;
 
-    // 사유 입력
     final reasonController = TextEditingController();
     
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Row(
+        title: Row(
           children: [
-            Icon(Icons.block, color: Colors.red),
-            SizedBox(width: 8),
-            Text('미출근 요청'),
+            const Icon(Icons.block, color: Colors.red),
+            SizedBox(width: ResponsiveHelper.spacing(context, 8)),  // ⭐ 변경
+            const Text('미출근 요청'),
           ],
         ),
         content: Column(
@@ -941,25 +975,25 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
           children: [
             Text(
               '${DateFormat('yyyy년 M월 d일 (E)', 'ko_KR').format(selectedDate)}',
-              style: ResponsiveHelper.subtitleStyle(
-                context,
-              ).copyWith(fontWeight: FontWeight.bold),
+              style: ResponsiveHelper.subtitleStyle(context).copyWith(
+                fontWeight: FontWeight.bold,
+              ),
             ),
             SizedBox(height: ResponsiveHelper.spacing(context, 8)),
             Text('근무자: ${app.uid}'),
-            const Divider(height: 24),
+            Divider(height: ResponsiveHelper.spacing(context, 24)),  // ⭐ 변경
             Container(
               padding: ResponsiveHelper.cardPadding(context),
               decoration: BoxDecoration(
-                color: Colors.orange[50],
+                color: Colors.orange.withOpacity(0.1),
                 borderRadius: BorderRadius.circular(8),
-                border: Border.all(color: Colors.orange[200]!),
+                border: Border.all(color: Colors.orange.withOpacity(0.3)),
               ),
               child: Row(
                 children: [
                   Icon(
                     Icons.info_outline, 
-                    color: Colors.orange[700], 
+                    color: Colors.orange,
                     size: ResponsiveHelper.iconSize(context, 20)
                   ),
                   SizedBox(width: ResponsiveHelper.spacing(context, 8)),
@@ -968,7 +1002,7 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
                       '해당 날짜에 근무하지 않아도 됨을 알립니다',
                       style: ResponsiveHelper.smallStyle(
                         context,
-                        color: Colors.orange[900],
+                        color: Colors.orange,
                       ),
                     ),
                   ),
@@ -976,8 +1010,13 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
               ),
             ),
             SizedBox(height: ResponsiveHelper.spacing(context, 16)),
-            const Text('요청 사유', style: TextStyle(fontWeight: FontWeight.bold)),
-            const SizedBox(height: 8),
+            Text(
+              '요청 사유', 
+              style: ResponsiveHelper.bodyStyle(context).copyWith(
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+            SizedBox(height: ResponsiveHelper.spacing(context, 8)),
             TextField(
               controller: reasonController,
               decoration: const InputDecoration(
@@ -1004,7 +1043,6 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
 
     if (confirmed != true) return;
 
-    // 요청 생성
     final userProvider = context.read<UserProvider>();
     final adminUid = userProvider.currentUser?.uid;
     final adminName = userProvider.currentUser?.name;
@@ -1014,7 +1052,6 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
       return;
     }
 
-    // 근무자 정보 조회
     final worker = await _firestoreService.getUserByUID(app.uid);
     final workerName = worker?.name ?? '이름 없음';
 
@@ -1046,9 +1083,8 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
     }
   }
 
-  /// ⭐ 추가 근무 요청 다이얼로그
+  /// 추가 근무 요청 다이얼로그
   Future<void> _showExtraWorkRequestDialog(ApplicationModel app) async {
-    // 날짜 선택
     final DateTime? selectedDate = await showDatePicker(
       context: context,
       initialDate: DateTime.now(),
@@ -1065,61 +1101,56 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
         );
       },
       selectableDayPredicate: (DateTime date) {
-      // 근무 기간 내여야 함
-      final workStart = DateTime(app.workDate.year, app.workDate.month, app.workDate.day);
-      final workEnd = DateTime(app.workEndDate!.year, app.workEndDate!.month, app.workEndDate!.day);
-      final targetDate = DateTime(date.year, date.month, date.day);
-      
-      if (targetDate.isBefore(workStart) || targetDate.isAfter(workEnd)) {
-        return false;
-      }
-      
-      // ⭐ 원래 근무일인지 확인
-      bool isOriginalWorkDay = false;
-      if (app.workDays != null && app.workDays!.isNotEmpty) {
-        final weekdays = ['월', '화', '수', '목', '금', '토', '일'];
-        final dayOfWeek = weekdays[date.weekday - 1];
-        isOriginalWorkDay = app.workDays!.contains(dayOfWeek);
-      } else {
-        isOriginalWorkDay = true; // workDays 없으면 매일 근무
-      }
-      
-      // ⭐ 원래 근무일이면서 휴무 처리된 날짜는 선택 가능
-      if (isOriginalWorkDay) {
-        if (app.leaveDates != null) {
-          final isLeaveDay = app.leaveDates!.any((d) =>
-              d.year == date.year && d.month == date.month && d.day == date.day);
-          if (isLeaveDay) {
-            return true; // 휴무일은 추가 근무 요청 가능
-          }
+        final workStart = DateTime(app.workDate.year, app.workDate.month, app.workDate.day);
+        final workEnd = DateTime(app.workEndDate!.year, app.workEndDate!.month, app.workEndDate!.day);
+        final targetDate = DateTime(date.year, date.month, date.day);
+        
+        if (targetDate.isBefore(workStart) || targetDate.isAfter(workEnd)) {
+          return false;
         }
-        return false; // 정상 근무일은 추가 근무 요청 불가
-      }
-      
-      // 이미 추가 근무로 등록된 날짜는 제외
-      if (app.extraWorkDates != null) {
-        final alreadyExtra = app.extraWorkDates!.any((d) =>
-            d.year == date.year && d.month == date.month && d.day == date.day);
-        if (alreadyExtra) return false;
-      }
-      
-      return true; // 원래 근무일이 아닌 날만 선택 가능
-    },
+        
+        bool isOriginalWorkDay = false;
+        if (app.workDays != null && app.workDays!.isNotEmpty) {
+          final weekdays = ['월', '화', '수', '목', '금', '토', '일'];
+          final dayOfWeek = weekdays[date.weekday - 1];
+          isOriginalWorkDay = app.workDays!.contains(dayOfWeek);
+        } else {
+          isOriginalWorkDay = true;
+        }
+        
+        if (isOriginalWorkDay) {
+          if (app.leaveDates != null) {
+            final isLeaveDay = app.leaveDates!.any((d) =>
+                d.year == date.year && d.month == date.month && d.day == date.day);
+            if (isLeaveDay) {
+              return true;
+            }
+          }
+          return false;
+        }
+        
+        if (app.extraWorkDates != null) {
+          final alreadyExtra = app.extraWorkDates!.any((d) =>
+              d.year == date.year && d.month == date.month && d.day == date.day);
+          if (alreadyExtra) return false;
+        }
+        
+        return true;
+      },
     );
 
     if (selectedDate == null) return;
 
-    // 사유 입력
     final reasonController = TextEditingController();
     
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Row(
+        title: Row(
           children: [
-            Icon(Icons.add_circle, color: Colors.green),
-            SizedBox(width: 8),
-            Text('추가 근무 요청'),
+            const Icon(Icons.add_circle, color: Colors.green),
+            SizedBox(width: ResponsiveHelper.spacing(context, 8)),  // ⭐ 변경
+            const Text('추가 근무 요청'),
           ],
         ),
         content: Column(
@@ -1128,26 +1159,26 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
           children: [
             Text(
               '${DateFormat('yyyy년 M월 d일 (E)', 'ko_KR').format(selectedDate)}',
-              style: ResponsiveHelper.subtitleStyle(
-                context,
-              ).copyWith(fontWeight: FontWeight.bold),
+              style: ResponsiveHelper.subtitleStyle(context).copyWith(
+                fontWeight: FontWeight.bold,
+              ),
             ),
             SizedBox(height: ResponsiveHelper.spacing(context, 8)),
             Text('근무자: ${app.uid}'),
             Text('추가 급여: ${NumberFormat('#,###').format(app.wage)}원'),
-            const Divider(height: 24),
+            Divider(height: ResponsiveHelper.spacing(context, 24)),  // ⭐ 변경
             Container(
               padding: ResponsiveHelper.cardPadding(context),
               decoration: BoxDecoration(
-                color: Colors.green[50],
+                color: Colors.green.withOpacity(0.1),
                 borderRadius: BorderRadius.circular(8),
-                border: Border.all(color: Colors.green[300]!),
+                border: Border.all(color: Colors.green.withOpacity(0.5)),
               ),
               child: Row(
                 children: [
                   Icon(
                     Icons.info_outline, 
-                    color: Colors.green[700], 
+                    color: Colors.green,
                     size: ResponsiveHelper.iconSize(context, 20)
                   ),
                   SizedBox(width: ResponsiveHelper.spacing(context, 8)),
@@ -1156,7 +1187,7 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
                       '해당 날짜에 추가 근무를 요청합니다',
                       style: ResponsiveHelper.smallStyle(
                         context,
-                        color: Colors.green[900],
+                        color: Colors.green,
                       ),
                     ),
                   ),
@@ -1197,7 +1228,6 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
 
     if (confirmed != true) return;
 
-    // 요청 생성
     final userProvider = context.read<UserProvider>();
     final adminUid = userProvider.currentUser?.uid;
     final adminName = userProvider.currentUser?.name;
@@ -1207,7 +1237,6 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
       return;
     }
 
-    // 근무자 정보 조회
     final worker = await _firestoreService.getUserByUID(app.uid);
     final workerName = worker?.name ?? '이름 없음';
 

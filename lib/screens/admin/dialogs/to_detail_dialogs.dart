@@ -3,6 +3,7 @@ import 'package:intl/intl.dart';
 import '../../../models/core/application_model.dart';
 import '../../../services/firestore_service.dart';
 import '../../../utils/toast_helper.dart';
+import '../../../utils/responsive_helper.dart';  // ⭐ 추가
 import '../../../models/ui/admin_to_detail_ui_models.dart';
 
 /// TO 상세 화면의 다이얼로그 모음
@@ -45,12 +46,12 @@ class TODetailDialogs {
       builder: (context) => AlertDialog(
         title: Row(
           children: [
-            const Icon(Icons.list_alt, color: Colors.blue),
-            const SizedBox(width: 12),
+            Icon(Icons.list_alt, color: Theme.of(context).primaryColor),
+            SizedBox(width: ResponsiveHelper.spacing(context, 12)),  // ⭐ 변경
             Expanded(
               child: Text(
                 '${dateFormat.format(date)} 확정 명단 (${confirmedList.length}명)',
-                style: const TextStyle(fontSize: 18),
+                style: ResponsiveHelper.titleStyle(context),  // ⭐ 변경
               ),
             ),
           ],
@@ -58,12 +59,15 @@ class TODetailDialogs {
         content: SizedBox(
           width: double.maxFinite,
           child: confirmedList.isEmpty
-              ? const Center(
+              ? Center(
                   child: Padding(
-                    padding: EdgeInsets.all(32),
+                    padding: ResponsiveHelper.cardPadding(context),  // ⭐ 변경
                     child: Text(
                       '확정된 지원자가 없습니다',
-                      style: TextStyle(color: Colors.grey),
+                      style: ResponsiveHelper.bodyStyle(  // ⭐ 변경
+                        context,
+                        color: Theme.of(context).disabledColor,
+                      ),
                     ),
                   ),
                 )
@@ -73,15 +77,19 @@ class TODetailDialogs {
                   itemBuilder: (context, index) {
                     final applicant = confirmedList[index];
                     return Card(
-                      margin: const EdgeInsets.only(bottom: 8),
+                      margin: EdgeInsets.only(  // ⭐ const 제거
+                        bottom: ResponsiveHelper.spacing(context, 8),  // ⭐ 변경
+                      ),
                       child: ListTile(
                         leading: CircleAvatar(
-                          backgroundColor: Colors.green[100],
-                          child: Icon(Icons.person, color: Colors.green[700]),
+                          backgroundColor: Colors.green.withOpacity(0.2),
+                          child: Icon(Icons.person, color: Colors.green),
                         ),
                         title: Text(
                           applicant['userName'],
-                          style: const TextStyle(fontWeight: FontWeight.bold),
+                          style: ResponsiveHelper.bodyStyle(context).copyWith(  // ⭐ 변경
+                            fontWeight: FontWeight.bold,
+                          ),
                         ),
                         subtitle: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
@@ -128,12 +136,12 @@ class TODetailDialogs {
       builder: (context) => AlertDialog(
         title: Row(
           children: [
-            const Icon(Icons.people, color: Colors.blue),
-            const SizedBox(width: 12),
+            Icon(Icons.people, color: Theme.of(context).primaryColor),
+            SizedBox(width: ResponsiveHelper.spacing(context, 12)),  // ⭐ 변경
             Expanded(
               child: Text(
                 '${work.workDetail.workType} 지원자 (${work.totalApplicants}명)',
-                style: const TextStyle(fontSize: 18),
+                style: ResponsiveHelper.titleStyle(context),  // ⭐ 변경
               ),
             ),
           ],
@@ -147,63 +155,69 @@ class TODetailDialogs {
               children: [
                 // 업무 정보
                 Container(
-                  padding: const EdgeInsets.all(12),
+                  padding: ResponsiveHelper.cardPadding(context),  // ⭐ 변경
                   decoration: BoxDecoration(
-                    color: Colors.blue[50],
+                    color: Theme.of(context).primaryColor.withOpacity(0.1),
                     borderRadius: BorderRadius.circular(8),
                   ),
                   child: Row(
                     children: [
-                      Icon(Icons.access_time, size: 16, color: Colors.blue[700]),
-                      const SizedBox(width: 8),
+                      Icon(
+                        Icons.access_time, 
+                        size: ResponsiveHelper.iconSize(context, 16),  // ⭐ 변경
+                        color: Theme.of(context).primaryColor,
+                      ),
+                      SizedBox(width: ResponsiveHelper.spacing(context, 8)),  // ⭐ 변경
                       Text(
                         '${work.workDetail.startTime}~${work.workDetail.endTime}',
-                        style: TextStyle(
-                          fontSize: 14,
-                          color: Colors.blue[900],
-                          fontWeight: FontWeight.w600,
-                        ),
+                        style: ResponsiveHelper.bodyStyle(  // ⭐ 변경
+                          context,
+                          color: Theme.of(context).primaryColor,
+                        ).copyWith(fontWeight: FontWeight.w600),
                       ),
-                      const SizedBox(width: 16),
-                      Icon(Icons.attach_money, size: 16, color: Colors.blue[700]),
-                      const SizedBox(width: 8),
+                      SizedBox(width: ResponsiveHelper.spacing(context, 16)),  // ⭐ 변경
+                      Icon(
+                        Icons.attach_money, 
+                        size: ResponsiveHelper.iconSize(context, 16),  // ⭐ 변경
+                        color: Theme.of(context).primaryColor,
+                      ),
+                      SizedBox(width: ResponsiveHelper.spacing(context, 8)),  // ⭐ 변경
                       Text(
                         work.workDetail.formattedWage,
-                        style: TextStyle(
-                          fontSize: 14,
-                          color: Colors.blue[900],
-                          fontWeight: FontWeight.w600,
-                        ),
+                        style: ResponsiveHelper.bodyStyle(  // ⭐ 변경
+                          context,
+                          color: Theme.of(context).primaryColor,
+                        ).copyWith(fontWeight: FontWeight.w600),
                       ),
                     ],
                   ),
                 ),
-                const SizedBox(height: 16),
+                SizedBox(height: ResponsiveHelper.spacing(context, 16)),  // ⭐ 변경
                 
                 // 대기 중
                 if (work.pendingApplicants.isNotEmpty) ...[
                   _buildSectionHeader('⏳ 대기 중', Colors.orange, work.pendingApplicants.length),
-                  const SizedBox(height: 8),
+                  SizedBox(height: ResponsiveHelper.spacing(context, 8)),  // ⭐ 변경
                   ...work.pendingApplicants.map((applicant) {
                     return _buildApplicantCard(applicant, onConfirm, onReject);
                   }),
-                  const SizedBox(height: 16),
+                  SizedBox(height: ResponsiveHelper.spacing(context, 16)),  // ⭐ 변경
                 ],
                 
                 // 확정
                 if (work.confirmedApplicants.isNotEmpty) ...[
                   _buildSectionHeader('✅ 확정', Colors.green, work.confirmedApplicants.length),
-                  const SizedBox(height: 8),
+                  SizedBox(height: ResponsiveHelper.spacing(context, 8)),  // ⭐ 변경
                   ...work.confirmedApplicants.map((applicant) {
                     return _buildApplicantCard(applicant, onConfirm, onReject);
                   }),
-                  const SizedBox(height: 16),
+                  SizedBox(height: ResponsiveHelper.spacing(context, 16)),  // ⭐ 변경
                 ],
                 
                 // 거절
                 if (work.rejectedApplicants.isNotEmpty) ...[
                   _buildSectionHeader('❌ 거절', Colors.red, work.rejectedApplicants.length),
-                  const SizedBox(height: 8),
+                  SizedBox(height: ResponsiveHelper.spacing(context, 8)),  // ⭐ 변경
                   ...work.rejectedApplicants.map((applicant) {
                     return _buildApplicantCard(applicant, onConfirm, onReject);
                   }),
@@ -231,7 +245,10 @@ class TODetailDialogs {
     return Row(
       children: [
         Container(
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+          padding: EdgeInsets.symmetric(
+            horizontal: ResponsiveHelper.spacing(context, 12),  // ⭐ 변경
+            vertical: ResponsiveHelper.spacing(context, 6),  // ⭐ 변경
+          ),
           decoration: BoxDecoration(
             color: color.withOpacity(0.1),
             borderRadius: BorderRadius.circular(6),
@@ -241,20 +258,18 @@ class TODetailDialogs {
             children: [
               Text(
                 title,
-                style: TextStyle(
-                  fontSize: 14,
-                  fontWeight: FontWeight.bold,
+                style: ResponsiveHelper.bodyStyle(  // ⭐ 변경
+                  context,
                   color: color,
-                ),
+                ).copyWith(fontWeight: FontWeight.bold),
               ),
-              const SizedBox(width: 8),
+              SizedBox(width: ResponsiveHelper.spacing(context, 8)),  // ⭐ 변경
               Text(
                 '$count명',
-                style: TextStyle(
-                  fontSize: 14,
-                  fontWeight: FontWeight.bold,
+                style: ResponsiveHelper.bodyStyle(  // ⭐ 변경
+                  context,
                   color: color,
-                ),
+                ).copyWith(fontWeight: FontWeight.bold),
               ),
             ],
           ),
@@ -293,9 +308,11 @@ class TODetailDialogs {
     }
 
     return Card(
-      margin: const EdgeInsets.only(bottom: 8),
+      margin: EdgeInsets.only(  // ⭐ const 제거
+        bottom: ResponsiveHelper.spacing(context, 8),  // ⭐ 변경
+      ),
       child: Padding(
-        padding: const EdgeInsets.all(12),
+        padding: ResponsiveHelper.cardPadding(context),  // ⭐ 변경
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -305,8 +322,7 @@ class TODetailDialogs {
                 Expanded(
                   child: Text(
                     applicant['userName'],
-                    style: const TextStyle(
-                      fontSize: 15,
+                    style: ResponsiveHelper.bodyStyle(context).copyWith(  // ⭐ 변경
                       fontWeight: FontWeight.bold,
                     ),
                   ),
@@ -314,7 +330,10 @@ class TODetailDialogs {
                 
                 // 상태 배지
                 Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                  padding: EdgeInsets.symmetric(
+                    horizontal: ResponsiveHelper.spacing(context, 8),  // ⭐ 변경
+                    vertical: ResponsiveHelper.spacing(context, 4),  // ⭐ 변경
+                  ),
                   decoration: BoxDecoration(
                     color: statusColor.withOpacity(0.1),
                     borderRadius: BorderRadius.circular(4),
@@ -322,45 +341,52 @@ class TODetailDialogs {
                   ),
                   child: Text(
                     statusText,
-                    style: TextStyle(
-                      fontSize: 11,
-                      fontWeight: FontWeight.bold,
+                    style: ResponsiveHelper.tinyStyle(  // ⭐ 변경
+                      context,
                       color: statusColor,
-                    ),
+                    ).copyWith(fontWeight: FontWeight.bold),
                   ),
                 ),
               ],
             ),
             
-            const SizedBox(height: 8),
+            SizedBox(height: ResponsiveHelper.spacing(context, 8)),  // ⭐ 변경
             
             // 연락처
             Row(
               children: [
-                Icon(Icons.phone, size: 14, color: Colors.grey[600]),
-                const SizedBox(width: 6),
+                Icon(
+                  Icons.phone, 
+                  size: ResponsiveHelper.iconSize(context, 14),  // ⭐ 변경
+                  color: Theme.of(context).textTheme.bodySmall?.color,
+                ),
+                SizedBox(width: ResponsiveHelper.spacing(context, 6)),  // ⭐ 변경
                 Text(
                   applicant['userPhone'],
-                  style: TextStyle(
-                    fontSize: 13,
-                    color: Colors.grey[700],
+                  style: ResponsiveHelper.smallStyle(  // ⭐ 변경
+                    context,
+                    color: Theme.of(context).textTheme.bodyMedium?.color,
                   ),
                 ),
               ],
             ),
             
-            const SizedBox(height: 4),
+            SizedBox(height: ResponsiveHelper.spacing(context, 4)),  // ⭐ 변경
             
             // 지원 시간
             Row(
               children: [
-                Icon(Icons.access_time, size: 14, color: Colors.grey[600]),
-                const SizedBox(width: 6),
+                Icon(
+                  Icons.access_time, 
+                  size: ResponsiveHelper.iconSize(context, 14),  // ⭐ 변경
+                  color: Theme.of(context).textTheme.bodySmall?.color,
+                ),
+                SizedBox(width: ResponsiveHelper.spacing(context, 6)),  // ⭐ 변경
                 Text(
                   '지원: ${DateFormat('MM/dd HH:mm', 'ko_KR').format(app.appliedAt)}',
-                  style: TextStyle(
-                    fontSize: 12,
-                    color: Colors.grey[600],
+                  style: ResponsiveHelper.tinyStyle(  // ⭐ 변경
+                    context,
+                    color: Theme.of(context).textTheme.bodySmall?.color,
                   ),
                 ),
               ],
@@ -368,7 +394,7 @@ class TODetailDialogs {
 
             // 버튼 (대기 중인 경우만)
             if (app.status == 'PENDING') ...[
-              const SizedBox(height: 12),
+              SizedBox(height: ResponsiveHelper.spacing(context, 12)),  // ⭐ 변경
               Row(
                 children: [
                   Expanded(
@@ -377,7 +403,10 @@ class TODetailDialogs {
                         Navigator.pop(context);
                         onReject(applicant['applicationId']);
                       },
-                      icon: const Icon(Icons.close, size: 18),
+                      icon: Icon(
+                        Icons.close, 
+                        size: ResponsiveHelper.iconSize(context, 18),  // ⭐ 변경
+                      ),
                       label: const Text('거절'),
                       style: OutlinedButton.styleFrom(
                         foregroundColor: Colors.red,
@@ -385,14 +414,17 @@ class TODetailDialogs {
                       ),
                     ),
                   ),
-                  const SizedBox(width: 8),
+                  SizedBox(width: ResponsiveHelper.spacing(context, 8)),  // ⭐ 변경
                   Expanded(
                     child: ElevatedButton.icon(
                       onPressed: () {
                         Navigator.pop(context);
                         onConfirm(applicant['applicationId']);
                       },
-                      icon: const Icon(Icons.check, size: 18),
+                      icon: Icon(
+                        Icons.check, 
+                        size: ResponsiveHelper.iconSize(context, 18),  // ⭐ 변경
+                      ),
                       label: const Text('승인'),
                       style: ElevatedButton.styleFrom(
                         backgroundColor: Colors.green,

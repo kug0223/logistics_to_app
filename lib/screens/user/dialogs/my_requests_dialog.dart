@@ -7,6 +7,7 @@ import '../../../models/core/schedule_change_request_model.dart';
 import '../../../services/firestore_service.dart';
 import '../../../providers/user_provider.dart';
 import '../../../utils/toast_helper.dart';
+import '../../../utils/responsive_helper.dart';  // ⭐ 추가
 import '../../../widgets/common/loading_widget.dart';
 
 /// 내 스케줄 변경 요청 다이얼로그
@@ -60,17 +61,20 @@ class _MyRequestsDialogState extends State<MyRequestsDialog> {
         width: MediaQuery.of(context).size.width * 0.92,
         height: MediaQuery.of(context).size.height * 0.7,
         constraints: const BoxConstraints(maxWidth: 500),
-        padding: const EdgeInsets.all(16),
+        padding: ResponsiveHelper.cardPadding(context),  // ⭐ 변경
         child: Column(
           children: [
             // 헤더
             Row(
               children: [
-                const Icon(Icons.notifications, size: 28),
-                const SizedBox(width: 12),
-                const Text(
+                Icon(
+                  Icons.notifications, 
+                  size: ResponsiveHelper.iconSize(context, 28),  // ⭐ 변경
+                ),
+                SizedBox(width: ResponsiveHelper.spacing(context, 12)),  // ⭐ 변경
+                Text(
                   '내 알림',
-                  style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+                  style: ResponsiveHelper.titleStyle(context),  // ⭐ 변경
                 ),
                 const Spacer(),
                 IconButton(
@@ -80,7 +84,7 @@ class _MyRequestsDialogState extends State<MyRequestsDialog> {
               ],
             ),
             
-            const Divider(height: 24),
+            Divider(height: ResponsiveHelper.spacing(context, 24)),  // ⭐ 변경
 
             // 요청 목록
             Expanded(
@@ -107,11 +111,18 @@ class _MyRequestsDialogState extends State<MyRequestsDialog> {
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          Icon(Icons.notifications_none, size: 64, color: Colors.grey[400]),
-          const SizedBox(height: 16),
+          Icon(
+            Icons.notifications_none, 
+            size: ResponsiveHelper.iconSize(context, 64),  // ⭐ 변경
+            color: Theme.of(context).disabledColor,
+          ),
+          SizedBox(height: ResponsiveHelper.spacing(context, 16)),  // ⭐ 변경
           Text(
             '알림이 없습니다',
-            style: TextStyle(fontSize: 16, color: Colors.grey[600]),
+            style: ResponsiveHelper.subtitleStyle(  // ⭐ 변경
+              context,
+              color: Theme.of(context).textTheme.bodySmall?.color,
+            ),
           ),
         ],
       ),
@@ -135,7 +146,9 @@ class _MyRequestsDialogState extends State<MyRequestsDialog> {
     }
 
     return Card(
-      margin: const EdgeInsets.only(bottom: 12),
+      margin: EdgeInsets.only(  // ⭐ const 제거
+        bottom: ResponsiveHelper.spacing(context, 12),  // ⭐ 변경
+      ),
       child: ListTile(
         leading: CircleAvatar(
           backgroundColor: iconColor.withOpacity(0.2),
@@ -143,7 +156,9 @@ class _MyRequestsDialogState extends State<MyRequestsDialog> {
         ),
         title: Text(
           request.requestTypeLabel,
-          style: const TextStyle(fontWeight: FontWeight.bold),
+          style: ResponsiveHelper.bodyStyle(context).copyWith(  // ⭐ 변경
+            fontWeight: FontWeight.bold,
+          ),
         ),
         subtitle: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -152,11 +167,14 @@ class _MyRequestsDialogState extends State<MyRequestsDialog> {
             if (request.reason != null)
               Text(
                 request.reason!,
-                style: TextStyle(fontSize: 12, color: Colors.grey[600]),
+                style: ResponsiveHelper.tinyStyle(  // ⭐ 변경
+                  context,
+                  color: Theme.of(context).textTheme.bodySmall?.color,
+                ),
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
               ),
-            const SizedBox(height: 4),
+            SizedBox(height: ResponsiveHelper.spacing(context, 4)),  // ⭐ 변경
             _buildStatusChip(request.status),
           ],
         ),
@@ -213,18 +231,20 @@ class _MyRequestsDialogState extends State<MyRequestsDialog> {
     }
 
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      padding: EdgeInsets.symmetric(
+        horizontal: ResponsiveHelper.spacing(context, 8),  // ⭐ 변경
+        vertical: ResponsiveHelper.spacing(context, 4),  // ⭐ 변경
+      ),
       decoration: BoxDecoration(
         color: color.withOpacity(0.2),
         borderRadius: BorderRadius.circular(12),
       ),
       child: Text(
         label,
-        style: TextStyle(
+        style: ResponsiveHelper.tinyStyle(  // ⭐ 변경
+          context,
           color: color,
-          fontSize: 12,
-          fontWeight: FontWeight.bold,
-        ),
+        ).copyWith(fontWeight: FontWeight.bold),
       ),
     );
   }
@@ -269,7 +289,9 @@ class _MyRequestsDialogState extends State<MyRequestsDialog> {
   /// 정보 행
   Widget _buildInfoRow(String label, String value) {
     return Padding(
-      padding: const EdgeInsets.only(bottom: 8),
+      padding: EdgeInsets.only(  // ⭐ const 제거
+        bottom: ResponsiveHelper.spacing(context, 8),  // ⭐ 변경
+      ),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -277,13 +299,16 @@ class _MyRequestsDialogState extends State<MyRequestsDialog> {
             width: 80,
             child: Text(
               label,
-              style: TextStyle(color: Colors.grey[600], fontSize: 13),
+              style: ResponsiveHelper.smallStyle(  // ⭐ 변경
+                context,
+                color: Theme.of(context).textTheme.bodySmall?.color,
+              ),
             ),
           ),
           Expanded(
             child: Text(
               value,
-              style: const TextStyle(fontSize: 14),
+              style: ResponsiveHelper.bodyStyle(context),  // ⭐ 변경
               softWrap: true,
             ),
           ),

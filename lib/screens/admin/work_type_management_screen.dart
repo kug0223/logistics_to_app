@@ -9,6 +9,7 @@ import '../../widgets/pickers/icon_picker_dialog.dart';
 import '../../widgets/work_type_icon.dart';
 import '../../utils/toast_helper.dart';
 import '../../utils/format_helper.dart';
+import '../../utils/responsive_helper.dart';  // ⭐ 추가
 
 /// 업무 유형 관리 화면
 class WorkTypeManagementScreen extends StatefulWidget {
@@ -305,7 +306,7 @@ class _WorkTypeManagementScreenState extends State<WorkTypeManagementScreen> {
     return Scaffold(
       appBar: AppBar(
         title: const Text('업무 유형 관리'),
-        backgroundColor: Colors.blue[700],
+        backgroundColor: Theme.of(context).primaryColor,
         actions: [
           IconButton(
             icon: const Icon(Icons.add),
@@ -337,20 +338,19 @@ class _WorkTypeManagementScreenState extends State<WorkTypeManagementScreen> {
   Widget _buildBusinessSelector() {
     if (_myBusinesses.length == 1) {
       return Container(
-        padding: const EdgeInsets.all(16),
-        color: Colors.blue[50],
+        padding: ResponsiveHelper.cardPadding(context),  // ⭐ 변경
+        color: Theme.of(context).primaryColor.withOpacity(0.1),
         child: Row(
           children: [
-            Icon(Icons.business, color: Colors.blue[700]),
-            const SizedBox(width: 12),
+            Icon(Icons.business, color: Theme.of(context).primaryColor),
+            SizedBox(width: ResponsiveHelper.spacing(context, 12)),  // ⭐ 변경
             Expanded(
               child: Text(
                 _selectedBusiness?.name ?? '',
-                style: TextStyle(
-                  fontSize: 16,
-                  fontWeight: FontWeight.bold,
-                  color: Colors.blue[900],
-                ),
+                style: ResponsiveHelper.subtitleStyle(  // ⭐ 변경
+                  context,
+                  color: Theme.of(context).primaryColor,
+                ).copyWith(fontWeight: FontWeight.bold),
               ),
             ),
           ],
@@ -359,8 +359,8 @@ class _WorkTypeManagementScreenState extends State<WorkTypeManagementScreen> {
     }
 
     return Container(
-      padding: const EdgeInsets.all(16),
-      color: Colors.blue[50],
+      padding: ResponsiveHelper.cardPadding(context),  // ⭐ 변경
+      color: Theme.of(context).primaryColor.withOpacity(0.1),
       child: DropdownButtonFormField<BusinessModel>(
         initialValue: _selectedBusiness,
         decoration: InputDecoration(
@@ -396,11 +396,18 @@ class _WorkTypeManagementScreenState extends State<WorkTypeManagementScreen> {
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          Icon(Icons.business_outlined, size: 80, color: Colors.grey[400]),
-          const SizedBox(height: 16),
+          Icon(
+            Icons.business_outlined, 
+            size: ResponsiveHelper.iconSize(context, 80),  // ⭐ 변경
+            color: Theme.of(context).disabledColor,
+          ),
+          SizedBox(height: ResponsiveHelper.spacing(context, 16)),  // ⭐ 변경
           Text(
             '등록된 사업장이 없습니다',
-            style: TextStyle(fontSize: 18, color: Colors.grey[600]),
+            style: ResponsiveHelper.titleStyle(  // ⭐ 변경
+              context,
+              color: Theme.of(context).textTheme.bodySmall?.color,
+            ),
           ),
         ],
       ),
@@ -413,16 +420,26 @@ class _WorkTypeManagementScreenState extends State<WorkTypeManagementScreen> {
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          Icon(Icons.work_outline, size: 80, color: Colors.grey[400]),
-          const SizedBox(height: 16),
+          Icon(
+            Icons.work_outline, 
+            size: ResponsiveHelper.iconSize(context, 80),  // ⭐ 변경
+            color: Theme.of(context).disabledColor,
+          ),
+          SizedBox(height: ResponsiveHelper.spacing(context, 16)),  // ⭐ 변경
           Text(
             '등록된 업무 유형이 없습니다',
-            style: TextStyle(fontSize: 18, color: Colors.grey[600]),
+            style: ResponsiveHelper.titleStyle(  // ⭐ 변경
+              context,
+              color: Theme.of(context).textTheme.bodySmall?.color,
+            ),
           ),
-          const SizedBox(height: 8),
+          SizedBox(height: ResponsiveHelper.spacing(context, 8)),  // ⭐ 변경
           Text(
             '상단의 + 버튼을 눌러 업무 유형을 추가하세요',
-            style: TextStyle(fontSize: 14, color: Colors.grey[500]),
+            style: ResponsiveHelper.bodyStyle(  // ⭐ 변경
+              context,
+              color: Theme.of(context).disabledColor,
+            ),
           ),
         ],
       ),
@@ -432,7 +449,7 @@ class _WorkTypeManagementScreenState extends State<WorkTypeManagementScreen> {
   /// 업무 유형 리스트
   Widget _buildWorkTypeList() {
     return ListView.builder(
-      padding: const EdgeInsets.all(16),
+      padding: ResponsiveHelper.cardPadding(context),  // ⭐ 변경
       itemCount: _workTypes.length,
       itemBuilder: (context, index) {
         final workType = _workTypes[index];
@@ -440,32 +457,40 @@ class _WorkTypeManagementScreenState extends State<WorkTypeManagementScreen> {
         final isLast = index == _workTypes.length - 1;
 
         return Card(
-          margin: const EdgeInsets.only(bottom: 12),
+          margin: EdgeInsets.only(  // ⭐ const 제거
+            bottom: ResponsiveHelper.spacing(context, 12),  // ⭐ 변경
+          ),
           child: ListTile(
-            contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+            contentPadding: EdgeInsets.symmetric(  // ⭐ const 제거
+              horizontal: ResponsiveHelper.spacing(context, 16),  // ⭐ 변경
+              vertical: ResponsiveHelper.spacing(context, 8),  // ⭐ 변경
+            ),
             // ✅ 아이콘 (공통 위젯 사용)
             leading: Container(
-              width: 48,
-              height: 48,
+              width: ResponsiveHelper.iconSize(context, 48),  // ⭐ 변경
+              height: ResponsiveHelper.iconSize(context, 48),  // ⭐ 변경
               decoration: BoxDecoration(
                 color: FormatHelper.parseColor(workType.backgroundColor),
                 borderRadius: BorderRadius.circular(8),
               ),
               child: Center(
-                child: WorkTypeIcon.build(workType, size: 24),
+                child: WorkTypeIcon.build(
+                  workType, 
+                  size: ResponsiveHelper.iconSize(context, 24),  // ⭐ 변경
+                ),
               ),
             ),
             // 이름 및 순서
             title: Text(
               workType.name,
-              style: const TextStyle(
-                fontSize: 16,
-                fontWeight: FontWeight.bold,
-              ),
+              style: ResponsiveHelper.subtitleStyle(context),  // ⭐ 변경
             ),
             subtitle: Text(
               '순서: ${index + 1}',
-              style: TextStyle(color: Colors.grey[600]),
+              style: ResponsiveHelper.smallStyle(  // ⭐ 변경
+                context,
+                color: Theme.of(context).textTheme.bodySmall?.color,
+              ),
             ),
             // 관리 버튼들
             trailing: Row(
@@ -475,7 +500,9 @@ class _WorkTypeManagementScreenState extends State<WorkTypeManagementScreen> {
                 IconButton(
                   icon: Icon(
                     Icons.arrow_upward,
-                    color: isFirst ? Colors.grey[300] : Colors.blue[700],
+                    color: isFirst 
+                        ? Theme.of(context).disabledColor 
+                        : Theme.of(context).primaryColor,
                   ),
                   onPressed: isFirst ? null : () => _moveUp(index),
                   tooltip: '위로',
@@ -484,20 +511,22 @@ class _WorkTypeManagementScreenState extends State<WorkTypeManagementScreen> {
                 IconButton(
                   icon: Icon(
                     Icons.arrow_downward,
-                    color: isLast ? Colors.grey[300] : Colors.blue[700],
+                    color: isLast 
+                        ? Theme.of(context).disabledColor 
+                        : Theme.of(context).primaryColor,
                   ),
                   onPressed: isLast ? null : () => _moveDown(index),
                   tooltip: '아래로',
                 ),
                 // 수정
                 IconButton(
-                  icon: Icon(Icons.edit, color: Colors.orange[700]),
+                  icon: Icon(Icons.edit, color: Colors.orange),
                   onPressed: () => _showEditDialog(workType),
                   tooltip: '수정',
                 ),
                 // 삭제
                 IconButton(
-                  icon: Icon(Icons.delete, color: Colors.red[700]),
+                  icon: Icon(Icons.delete, color: Colors.red),
                   onPressed: () => _confirmDelete(workType),
                   tooltip: '삭제',
                 ),

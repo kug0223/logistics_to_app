@@ -2,8 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../providers/user_provider.dart';
 import '../../providers/theme_provider.dart';
-import 'all_businesses_screen.dart';
+import 'admin_all_businesses_screen.dart';
 import '../../utils/dialog_helper.dart';
+import '../../utils/responsive_helper.dart';
 
 /// 최고관리자(SUPER_ADMIN) 홈 화면 - 반응형 (항상 2열)
 class AdminHomeScreen extends StatelessWidget {

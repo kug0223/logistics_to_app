@@ -105,11 +105,11 @@ class _UserTOCardState extends State<UserTOCard> {
 
   @override
   Widget build(BuildContext context) {
-    final scale = ResponsiveHelper.getScale(context);  // ⭐ 추가
-    
     return Card(
       elevation: widget.isSelected ? 4 : 2,
-      margin: EdgeInsets.only(bottom: 12 * scale),  // ⭐ const 제거
+      margin: EdgeInsets.only(
+        bottom: ResponsiveHelper.spacing(context, 12),
+      ),
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(12),
         side: BorderSide(
@@ -140,7 +140,6 @@ class _UserTOCardState extends State<UserTOCard> {
                   Expanded(
                     child: Row(
                       children: [
-                        // 바꾸기:
                         Icon(
                           Icons.business,
                           size: ResponsiveHelper.iconSize(context, 16),
@@ -170,14 +169,14 @@ class _UserTOCardState extends State<UserTOCard> {
                           label: '단기',
                           backgroundColor: Colors.blue[100]!,
                           textColor: Colors.blue[700]!,
-                          fontSize: 11,
+                          fontSize: ResponsiveHelper.getFontSize(context, 11),
                         ),
                       if (widget.to.isLongTerm)
                         StyledBadge(
                           label: '장기',
                           backgroundColor: Colors.purple[100]!,
                           textColor: Colors.purple[700]!,
-                          fontSize: 11,
+                          fontSize: ResponsiveHelper.getFontSize(context, 11),
                         ),
 
                       // 마감임박 배지
@@ -186,7 +185,7 @@ class _UserTOCardState extends State<UserTOCard> {
                           label: '마감임박',
                           backgroundColor: Colors.orange[100]!,
                           textColor: Colors.orange[700]!,
-                          fontSize: 11,
+                          fontSize: ResponsiveHelper.getFontSize(context, 11),
                         ),
                       
                       // 지원완료 배지
@@ -195,7 +194,7 @@ class _UserTOCardState extends State<UserTOCard> {
                           label: '지원완료',
                           backgroundColor: Colors.green[100]!,
                           textColor: Colors.green[700]!,
-                          fontSize: 11,
+                          fontSize: ResponsiveHelper.getFontSize(context, 11),
                         ),
                     ],
                   ),
@@ -214,7 +213,7 @@ class _UserTOCardState extends State<UserTOCard> {
               
               // 🔥 세 번째 줄: 날짜 (장기/단기 구분)
               Row(
-                crossAxisAlignment: CrossAxisAlignment.start,  // ⭐ 추가
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Icon(
                     Icons.calendar_today,
@@ -223,7 +222,7 @@ class _UserTOCardState extends State<UserTOCard> {
                   ),
                   SizedBox(width: ResponsiveHelper.spacing(context, 6)),
                   Expanded(
-                    child: Column(  // ⭐ Text → Column으로 변경
+                    child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         // 날짜
@@ -231,14 +230,14 @@ class _UserTOCardState extends State<UserTOCard> {
                           widget.to.isLongTerm && widget.to.endDate != null
                               ? '${widget.to.date.month}/${widget.to.date.day} ~ ${widget.to.endDate!.month}/${widget.to.endDate!.day}'
                               : '${widget.to.date.month}/${widget.to.date.day} (${_getWeekday(widget.to.date)})',
-                          style: ResponsiveHelper.bodyStyle(context),  // ⭐ 반응형
+                          style: ResponsiveHelper.bodyStyle(context),
                         ),
                         // 장기 TO일 때만 근무일 표시
                         if (widget.to.isLongTerm) ...[
-                          SizedBox(height: ResponsiveHelper.spacing(context, 2)),  // ⭐ 반응형 간격
+                          SizedBox(height: ResponsiveHelper.spacing(context, 2)),
                           Text(
-                            widget.to.workDaysLabel ?? '',  // ⭐ 예: '주6일 (토 휴무)'
-                            style: ResponsiveHelper.smallStyle(  // ⭐ 반응형 작은 글씨
+                            widget.to.workDaysLabel ?? '',
+                            style: ResponsiveHelper.smallStyle(
                               context,
                               color: Colors.grey[600],
                             ),
@@ -276,18 +275,21 @@ class _UserTOCardState extends State<UserTOCard> {
   /// 업무 목록
   Widget _buildWorkDetailsList() {
     if (_isLoadingWorkDetails) {
-      return const Center(
+      return Center(
         child: Padding(
-          padding: const EdgeInsets.all(16),
-          child: CircularProgressIndicator(),
+          padding: ResponsiveHelper.cardPadding(context),
+          child: const CircularProgressIndicator(),
         ),
       );
     }
 
     if (_workDetails.isEmpty) {
-      return const Text(
+      return Text(
         '업무 정보가 없습니다',
-        style: TextStyle(color: Colors.grey),
+        style: ResponsiveHelper.bodyStyle(
+          context,
+          color: Colors.grey,
+        ),
       );
     }
 

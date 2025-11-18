@@ -1,9 +1,9 @@
-
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../../models/core/business_work_type_model.dart';
 import '../../utils/toast_helper.dart';
 import '../../utils/labor_standards.dart';
+import '../../utils/responsive_helper.dart';  // ⭐ 추가
 import '../../models/work_detail_input.dart'; 
 import '../work_type_icon.dart';
 import '../../utils/format_helper.dart';
@@ -17,7 +17,6 @@ class WorkDetailDialog {
   static Future<WorkDetailInput?> showAddDialog({
     required BuildContext context,
     required List<BusinessWorkTypeModel> businessWorkTypes,
-    
   }) async {
     BusinessWorkTypeModel? selectedWorkType;
     String selectedWageType = 'hourly';
@@ -38,8 +37,13 @@ class WorkDetailDialog {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   // 업무 유형 선택
-                  const Text('업무 유형', style: TextStyle(fontWeight: FontWeight.bold)),
-                  const SizedBox(height: 8),
+                  Text(
+                    '업무 유형', 
+                    style: ResponsiveHelper.bodyStyle(context).copyWith(  // ⭐ 변경
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                  SizedBox(height: ResponsiveHelper.spacing(context, 8)),  // ⭐ 변경
                   DropdownButtonFormField<BusinessWorkTypeModel>(
                     initialValue: selectedWorkType,
                     decoration: const InputDecoration(
@@ -52,8 +56,8 @@ class WorkDetailDialog {
                         child: Row(
                           children: [
                             Container(
-                              width: 32,
-                              height: 32,
+                              width: ResponsiveHelper.iconSize(context, 32),  // ⭐ 변경
+                              height: ResponsiveHelper.iconSize(context, 32),  // ⭐ 변경
                               decoration: BoxDecoration(
                                 color: FormatHelper.parseColor(workType.backgroundColor ?? '#2196F3'),
                                 shape: BoxShape.circle,
@@ -62,7 +66,7 @@ class WorkDetailDialog {
                                 child: WorkTypeIcon.buildSmall(workType),
                               ),
                             ),
-                            const SizedBox(width: 12),
+                            SizedBox(width: ResponsiveHelper.spacing(context, 12)),  // ⭐ 변경
                             Text(workType.name),
                           ],
                         ),
@@ -72,15 +76,21 @@ class WorkDetailDialog {
                       setDialogState(() => selectedWorkType = value);
                     },
                   ),
-                  const SizedBox(height: 16),
+                  SizedBox(height: ResponsiveHelper.spacing(context, 16)),  // ⭐ 변경
                   
                   // ✅ 급여 타입 선택
-                  const Text('급여 타입', style: TextStyle(fontWeight: FontWeight.bold)),
-                  const SizedBox(height: 8),
+                  Text(
+                    '급여 타입', 
+                    style: ResponsiveHelper.bodyStyle(context).copyWith(  // ⭐ 변경
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                  SizedBox(height: ResponsiveHelper.spacing(context, 8)),  // ⭐ 변경
                   Row(
                     children: [
                       Expanded(
                         child: _buildWageTypeButton(
+                          context: context,  // ⭐ 추가
                           label: '시급',
                           value: 'hourly',
                           selectedValue: selectedWageType,
@@ -91,9 +101,10 @@ class WorkDetailDialog {
                           },
                         ),
                       ),
-                      const SizedBox(width: 8),
+                      SizedBox(width: ResponsiveHelper.spacing(context, 8)),  // ⭐ 변경
                       Expanded(
                         child: _buildWageTypeButton(
+                          context: context,  // ⭐ 추가
                           label: '일급',
                           value: 'daily',
                           selectedValue: selectedWageType,
@@ -104,9 +115,10 @@ class WorkDetailDialog {
                           },
                         ),
                       ),
-                      const SizedBox(width: 8),
+                      SizedBox(width: ResponsiveHelper.spacing(context, 8)),  // ⭐ 변경
                       Expanded(
                         child: _buildWageTypeButton(
+                          context: context,  // ⭐ 추가
                           label: '월급',
                           value: 'monthly',
                           selectedValue: selectedWageType,
@@ -119,11 +131,16 @@ class WorkDetailDialog {
                       ),
                     ],
                   ),
-                  const SizedBox(height: 16),
+                  SizedBox(height: ResponsiveHelper.spacing(context, 16)),  // ⭐ 변경
 
                   // 근무 시간
-                  const Text('근무 시간', style: TextStyle(fontWeight: FontWeight.bold)),
-                  const SizedBox(height: 8),
+                  Text(
+                    '근무 시간', 
+                    style: ResponsiveHelper.bodyStyle(context).copyWith(  // ⭐ 변경
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                  SizedBox(height: ResponsiveHelper.spacing(context, 8)),  // ⭐ 변경
                   Row(
                     children: [
                       Expanded(
@@ -139,9 +156,14 @@ class WorkDetailDialog {
                           onChanged: (value) => setDialogState(() => startTime = value),
                         ),
                       ),
-                      const Padding(
-                        padding: EdgeInsets.symmetric(horizontal: 8),
-                        child: Text('~', style: TextStyle(fontSize: 18)),
+                      Padding(
+                        padding: EdgeInsets.symmetric(  // ⭐ const 제거
+                          horizontal: ResponsiveHelper.spacing(context, 8),  // ⭐ 변경
+                        ),
+                        child: Text(
+                          '~', 
+                          style: ResponsiveHelper.titleStyle(context),  // ⭐ 변경
+                        ),
                       ),
                       Expanded(
                         child: DropdownButtonFormField<String>(
@@ -158,14 +180,16 @@ class WorkDetailDialog {
                       ),
                     ],
                   ),
-                  const SizedBox(height: 16),
+                  SizedBox(height: ResponsiveHelper.spacing(context, 16)),  // ⭐ 변경
 
                   // 급여 입력
                   Text(
                     _getWageLabelFromType(selectedWageType),
-                    style: const TextStyle(fontWeight: FontWeight.bold),
+                    style: ResponsiveHelper.bodyStyle(context).copyWith(  // ⭐ 변경
+                      fontWeight: FontWeight.bold,
+                    ),
                   ),
-                  const SizedBox(height: 8),
+                  SizedBox(height: ResponsiveHelper.spacing(context, 8)),  // ⭐ 변경
                   TextFormField(
                     controller: wageController,
                     keyboardType: TextInputType.number,
@@ -202,11 +226,16 @@ class WorkDetailDialog {
                           : null,
                     ),
                   ),
-                  const SizedBox(height: 16),
+                  SizedBox(height: ResponsiveHelper.spacing(context, 16)),  // ⭐ 변경
 
                   // 필요 인원
-                  const Text('필요 인원', style: TextStyle(fontWeight: FontWeight.bold)),
-                  const SizedBox(height: 8),
+                  Text(
+                    '필요 인원', 
+                    style: ResponsiveHelper.bodyStyle(context).copyWith(  // ⭐ 변경
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                  SizedBox(height: ResponsiveHelper.spacing(context, 8)),  // ⭐ 변경
                   TextFormField(
                     controller: countController,
                     keyboardType: TextInputType.number,
@@ -254,8 +283,8 @@ class WorkDetailDialog {
                     WorkDetailInput(
                       workType: selectedWorkType!.name,
                       workTypeIcon: selectedWorkType!.icon,
-                      workTypeColor: selectedWorkType!.color ?? '#FFFFFF', // ✅ 아이콘 색상
-                      workTypeBackgroundColor: selectedWorkType!.backgroundColor, // ✅ 배경 색상 추가!
+                      workTypeColor: selectedWorkType!.color ?? '#FFFFFF',
+                      workTypeBackgroundColor: selectedWorkType!.backgroundColor,
                       wage: wage,
                       requiredCount: count,
                       startTime: startTime,
@@ -277,7 +306,7 @@ class WorkDetailDialog {
   // 🛠️ 헬퍼 함수들
   // ============================================================
 
-    /// 급여 타입에 따른 라벨 반환
+  /// 급여 타입에 따른 라벨 반환
   static String _getWageLabelFromType(String wageType) {
     switch (wageType) {
       case 'hourly':
@@ -293,6 +322,7 @@ class WorkDetailDialog {
 
   /// 급여 타입 선택 버튼
   static Widget _buildWageTypeButton({
+    required BuildContext context,  // ⭐ 추가
     required String label,
     required String value,
     required String selectedValue,
@@ -303,11 +333,17 @@ class WorkDetailDialog {
     return InkWell(
       onTap: onTap,
       child: Container(
-        padding: const EdgeInsets.symmetric(vertical: 12),
+        padding: EdgeInsets.symmetric(  // ⭐ const 제거
+          vertical: ResponsiveHelper.spacing(context, 12),  // ⭐ 변경
+        ),
         decoration: BoxDecoration(
-          color: isSelected ? Colors.blue[50] : Colors.grey[100],
+          color: isSelected 
+              ? Theme.of(context).primaryColor.withOpacity(0.1)
+              : Theme.of(context).colorScheme.surface,
           border: Border.all(
-            color: isSelected ? Colors.blue : Colors.grey[300]!,
+            color: isSelected 
+                ? Theme.of(context).primaryColor
+                : Theme.of(context).dividerColor,
             width: 2,
           ),
           borderRadius: BorderRadius.circular(8),
@@ -315,10 +351,13 @@ class WorkDetailDialog {
         child: Center(
           child: Text(
             label,
-            style: TextStyle(
-              fontSize: 14,
+            style: ResponsiveHelper.bodyStyle(  // ⭐ 변경
+              context,
+              color: isSelected 
+                  ? Theme.of(context).primaryColor
+                  : Theme.of(context).textTheme.bodyMedium?.color,
+            ).copyWith(
               fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
-              color: isSelected ? Colors.blue : Colors.grey[700],
             ),
           ),
         ),

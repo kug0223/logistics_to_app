@@ -132,7 +132,10 @@ class WorkDetailRow extends StatelessWidget {
                             SizedBox(width: ResponsiveHelper.spacing(context, 8)),  // ⭐ 변경
                             Text(
                               '시간 만료됨',
-                              style: TextStyle(color: Colors.grey[400]),
+                              style: ResponsiveHelper.bodyStyle(
+                                context,
+                                color: Colors.grey[400],
+                              ),
                             ),
                           ],
                         ),

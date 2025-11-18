@@ -7,6 +7,7 @@ import '../../services/firestore_service.dart';
 import '../../providers/user_provider.dart';
 import '../../utils/toast_helper.dart';
 import '../../utils/calendar_helper.dart';
+import '../../utils/responsive_helper.dart';  // ⭐ 추가
 import '../../widgets/common/loading_widget.dart';
 import '../../widgets/calendar/schedule_calendar.dart';
 import '../../widgets/calendar/monthly_stats_card.dart';
@@ -79,58 +80,58 @@ class _MyScheduleScreenState extends State<MyScheduleScreen> {
       appBar: AppBar(
         title: const Text('내 스케줄'),
         actions: [
-        // 알림 아이콘
-        FutureBuilder<int>(
-          future: _getPendingRequestCount(),
-          builder: (context, snapshot) {
-            final count = snapshot.data ?? 0;
-            return Stack(
-              children: [
-                IconButton(
-                  icon: const Icon(Icons.notifications),
-                  onPressed: _showMyRequestsDialog,
-                  tooltip: '내 알림',
-                ),
-                if (count > 0)
-                  Positioned(
-                    right: 8,
-                    top: 8,
-                    child: Container(
-                      padding: const EdgeInsets.all(4),
-                      decoration: const BoxDecoration(
-                        color: Colors.red,
-                        shape: BoxShape.circle,
-                      ),
-                      constraints: const BoxConstraints(
-                        minWidth: 16,
-                        minHeight: 16,
-                      ),
-                      child: Text(
-                        '$count',
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontSize: 10,
-                          fontWeight: FontWeight.bold,
+          // 알림 아이콘
+          FutureBuilder<int>(
+            future: _getPendingRequestCount(),
+            builder: (context, snapshot) {
+              final count = snapshot.data ?? 0;
+              return Stack(
+                children: [
+                  IconButton(
+                    icon: const Icon(Icons.notifications),
+                    onPressed: _showMyRequestsDialog,
+                    tooltip: '내 알림',
+                  ),
+                  if (count > 0)
+                    Positioned(
+                      right: 8,
+                      top: 8,
+                      child: Container(
+                        padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 4)),
+                        decoration: const BoxDecoration(
+                          color: Colors.red,
+                          shape: BoxShape.circle,
                         ),
-                        textAlign: TextAlign.center,
+                        constraints: BoxConstraints(
+                          minWidth: ResponsiveHelper.spacing(context, 16),
+                          minHeight: ResponsiveHelper.spacing(context, 16),
+                        ),
+                        child: Text(
+                          '$count',
+                          style: ResponsiveHelper.tinyStyle(
+                            context,
+                            color: Colors.white,
+                            fontWeight: FontWeight.bold,
+                          ),
+                          textAlign: TextAlign.center,
+                        ),
                       ),
                     ),
-                  ),
-              ],
-            );
-          },
-        ),
-        _buildFilterButton(),
-        IconButton(
-          icon: const Icon(Icons.work),
-          onPressed: _showLongTermWorkManagement,
-          tooltip: '고정근무 관리',
-        ),
-        IconButton(
-          icon: const Icon(Icons.refresh),
-          onPressed: _loadApplications,
-        ),
-      ],
+                ],
+              );
+            },
+          ),
+          _buildFilterButton(),
+          IconButton(
+            icon: const Icon(Icons.work),
+            onPressed: _showLongTermWorkManagement,
+            tooltip: '고정근무 관리',
+          ),
+          IconButton(
+            icon: const Icon(Icons.refresh),
+            onPressed: _loadApplications,
+          ),
+        ],
       ),
       body: _isLoading
           ? const LoadingWidget(message: '일정을 불러오는 중...')
@@ -154,7 +155,6 @@ class _MyScheduleScreenState extends State<MyScheduleScreen> {
                         _focusedDay = focusedDay;
                       });
                     },
-                    
                   ),
                 ),
           
@@ -179,12 +179,15 @@ class _MyScheduleScreenState extends State<MyScheduleScreen> {
                       final isVerySmall = constraints.maxWidth < 350;
                       
                       return Container(
-                        padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 16),
+                        padding: EdgeInsets.symmetric(
+                          vertical: ResponsiveHelper.spacing(context, 8),
+                          horizontal: ResponsiveHelper.spacing(context, 16),
+                        ),
                         color: Colors.grey[50],
-                        child: Wrap(  // ⭐ Row → Wrap 변경 (자동 줄바꿈)
+                        child: Wrap(
                           alignment: WrapAlignment.center,
                           spacing: isVerySmall ? 6 : (isSmall ? 8 : 12),
-                          runSpacing: 4,  // 줄바꿈 시 간격
+                          runSpacing: 4,
                           children: [
                             _buildLegendItem(Colors.green[600]!, '단기 확정', isLongTerm: false, isSmall: isVerySmall),
                             _buildLegendItem(Colors.green[400]!, '고정 확정', isLongTerm: true, isSmall: isVerySmall),
@@ -208,17 +211,23 @@ class _MyScheduleScreenState extends State<MyScheduleScreen> {
                 if (_selectedDay != null)
                   SliverToBoxAdapter(
                     child: Container(
-                      padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
+                      padding: EdgeInsets.symmetric(
+                        vertical: ResponsiveHelper.spacing(context, 12),
+                        horizontal: ResponsiveHelper.spacing(context, 16),
+                      ),
                       color: Colors.blue[50],
                       child: Row(
                         children: [
-                          Icon(Icons.event, color: Colors.blue[700], size: 20),
-                          const SizedBox(width: 8),
+                          Icon(
+                            Icons.event, 
+                            color: Colors.blue[700], 
+                            size: ResponsiveHelper.iconSize(context, 20)
+                          ),
+                          SizedBox(width: ResponsiveHelper.spacing(context, 8)),
                           Text(
                             DateFormat('yyyy년 M월 d일 (E)', 'ko_KR').format(_selectedDay!),
-                            style: TextStyle(
-                              fontSize: 16,
-                              fontWeight: FontWeight.bold,
+                            style: ResponsiveHelper.subtitleStyle(
+                              context,
                               color: Colors.blue[900],
                             ),
                           ),
@@ -246,27 +255,30 @@ class _MyScheduleScreenState extends State<MyScheduleScreen> {
         hasScrollBody: false,
         child: Center(
           child: Padding(
-            padding: const EdgeInsets.all(32),
+            padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 32)),
             child: Column(
               mainAxisAlignment: MainAxisAlignment.center,
               mainAxisSize: MainAxisSize.min,
               children: [
-                Icon(Icons.touch_app, size: 64, color: Colors.grey[400]),
-                const SizedBox(height: 16),
+                Icon(
+                  Icons.touch_app, 
+                  size: ResponsiveHelper.iconSize(context, 64), 
+                  color: Colors.grey[400]
+                ),
+                SizedBox(height: ResponsiveHelper.spacing(context, 16)),
                 Text(
                   '날짜를 선택해주세요',
-                  style: TextStyle(
-                    fontSize: 16,
-                    fontWeight: FontWeight.w600,
+                  style: ResponsiveHelper.subtitleStyle(
+                    context,
                     color: Colors.grey[700],
-                  ),
+                  ).copyWith(fontWeight: FontWeight.w600),
                   textAlign: TextAlign.center,
                 ),
-                const SizedBox(height: 8),
+                SizedBox(height: ResponsiveHelper.spacing(context, 8)),
                 Text(
                   '캘린더에서 날짜를 클릭하면\n일정을 확인할 수 있습니다',
-                  style: TextStyle(
-                    fontSize: 14,
+                  style: ResponsiveHelper.bodyStyle(
+                    context,
                     color: Colors.grey[500],
                   ),
                   textAlign: TextAlign.center,
@@ -289,27 +301,30 @@ class _MyScheduleScreenState extends State<MyScheduleScreen> {
         hasScrollBody: false,
         child: Center(
           child: Padding(
-            padding: const EdgeInsets.all(32),
+            padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 32)),
             child: Column(
               mainAxisAlignment: MainAxisAlignment.center,
               mainAxisSize: MainAxisSize.min,
               children: [
-                Icon(Icons.event_busy, size: 64, color: Colors.grey[400]),
-                const SizedBox(height: 16),
+                Icon(
+                  Icons.event_busy, 
+                  size: ResponsiveHelper.iconSize(context, 64), 
+                  color: Colors.grey[400]
+                ),
+                SizedBox(height: ResponsiveHelper.spacing(context, 16)),
                 Text(
                   '이 날짜에는 일정이 없습니다',
-                  style: TextStyle(
-                    fontSize: 16,
-                    fontWeight: FontWeight.w600,
+                  style: ResponsiveHelper.subtitleStyle(
+                    context,
                     color: Colors.grey[700],
-                  ),
+                  ).copyWith(fontWeight: FontWeight.w600),
                   textAlign: TextAlign.center,
                 ),
-                const SizedBox(height: 8),
+                SizedBox(height: ResponsiveHelper.spacing(context, 8)),
                 Text(
                   '다른 날짜를 선택해보세요',
-                  style: TextStyle(
-                    fontSize: 14,
+                  style: ResponsiveHelper.bodyStyle(
+                    context,
                     color: Colors.grey[500],
                   ),
                   textAlign: TextAlign.center,
@@ -329,13 +344,13 @@ class _MyScheduleScreenState extends State<MyScheduleScreen> {
     });
     
     return SliverPadding(
-      padding: const EdgeInsets.all(16),
+      padding: ResponsiveHelper.cardPadding(context),
       sliver: SliverList(
         delegate: SliverChildBuilderDelegate(
           (context, index) {
             return ScheduleCard(
               application: events[index],
-              onChanged: _loadApplications,  // ⭐ 추가!
+              onChanged: _loadApplications,
               selectedDay: _selectedDay,
             );
           },
@@ -381,7 +396,7 @@ class _MyScheduleScreenState extends State<MyScheduleScreen> {
                 Icons.list_alt,
                 color: _selectedFilter == 'ALL' ? Colors.blue : Colors.grey,
               ),
-              const SizedBox(width: 8),
+              SizedBox(width: ResponsiveHelper.spacing(context, 8)),
               const Text('전체 보기'),
             ],
           ),
@@ -394,7 +409,7 @@ class _MyScheduleScreenState extends State<MyScheduleScreen> {
                 Icons.check_circle,
                 color: _selectedFilter == 'CONFIRMED' ? Colors.green : Colors.grey,
               ),
-              const SizedBox(width: 8),
+              SizedBox(width: ResponsiveHelper.spacing(context, 8)),
               const Text('확정만 보기'),
             ],
           ),
@@ -407,7 +422,7 @@ class _MyScheduleScreenState extends State<MyScheduleScreen> {
                 Icons.schedule,
                 color: _selectedFilter == 'PENDING' ? Colors.orange : Colors.grey,
               ),
-              const SizedBox(width: 8),
+              SizedBox(width: ResponsiveHelper.spacing(context, 8)),
               const Text('대기만 보기'),
             ],
           ),
@@ -415,6 +430,7 @@ class _MyScheduleScreenState extends State<MyScheduleScreen> {
       ],
     );
   }
+
   /// Legend 아이템
   Widget _buildLegendItem(Color color, String label, {required bool isLongTerm, bool isSmall = false}) {
     return Row(
@@ -439,6 +455,7 @@ class _MyScheduleScreenState extends State<MyScheduleScreen> {
       ],
     );
   }
+
   /// 고정근무 관리 다이얼로그 표시
   void _showLongTermWorkManagement() {
     showDialog(
@@ -451,6 +468,7 @@ class _MyScheduleScreenState extends State<MyScheduleScreen> {
       ),
     );
   }
+
   /// ⭐ 대기중인 요청 개수 조회
   Future<int> _getPendingRequestCount() async {
     final userProvider = context.read<UserProvider>();

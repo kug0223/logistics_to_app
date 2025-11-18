@@ -1,8 +1,9 @@
 import 'package:flutter/material.dart';
+import '../../utils/responsive_helper.dart';  // ⭐ 추가
 
 class CustomButton extends StatelessWidget {
   final String text;
-  final VoidCallback? onPressed; // ✅ nullable로 변경
+  final VoidCallback? onPressed;
   final Color? color;
   final Color? textColor;
   final bool isLoading;
@@ -27,7 +28,7 @@ class CustomButton extends StatelessWidget {
 
     return SizedBox(
       width: double.infinity,
-      height: 50,
+      height: ResponsiveHelper.buttonHeight(context),  // ⭐ 변경 (50 → 반응형)
       child: isOutlined
           ? OutlinedButton(
               onPressed: isLoading ? null : onPressed,
@@ -37,7 +38,7 @@ class CustomButton extends StatelessWidget {
                   borderRadius: BorderRadius.circular(8),
                 ),
               ),
-              child: _buildButtonChild(buttonColor),
+              child: _buildButtonChild(context, buttonColor),  // ⭐ context 추가
             )
           : ElevatedButton(
               onPressed: isLoading ? null : onPressed,
@@ -49,16 +50,16 @@ class CustomButton extends StatelessWidget {
                 ),
                 elevation: 2,
               ),
-              child: _buildButtonChild(buttonTextColor),
+              child: _buildButtonChild(context, buttonTextColor),  // ⭐ context 추가
             ),
     );
   }
 
-  Widget _buildButtonChild(Color color) {
+  Widget _buildButtonChild(BuildContext context, Color color) {  // ⭐ context 추가
     if (isLoading) {
       return SizedBox(
-        height: 20,
-        width: 20,
+        height: ResponsiveHelper.iconSize(context, 20),  // ⭐ 변경
+        width: ResponsiveHelper.iconSize(context, 20),  // ⭐ 변경
         child: CircularProgressIndicator(
           strokeWidth: 2,
           valueColor: AlwaysStoppedAnimation<Color>(color),
@@ -70,12 +71,11 @@ class CustomButton extends StatelessWidget {
       return Row(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          Icon(icon, size: 20),
-          const SizedBox(width: 8),
+          Icon(icon, size: ResponsiveHelper.iconSize(context, 20)),  // ⭐ 변경
+          SizedBox(width: ResponsiveHelper.spacing(context, 8)),  // ⭐ 변경
           Text(
             text,
-            style: TextStyle(
-              fontSize: 16,
+            style: ResponsiveHelper.subtitleStyle(context).copyWith(  // ⭐ 변경
               fontWeight: FontWeight.bold,
               color: color,
             ),
@@ -86,8 +86,7 @@ class CustomButton extends StatelessWidget {
 
     return Text(
       text,
-      style: TextStyle(
-        fontSize: 16,
+      style: ResponsiveHelper.subtitleStyle(context).copyWith(  // ⭐ 변경
         fontWeight: FontWeight.bold,
         color: color,
       ),

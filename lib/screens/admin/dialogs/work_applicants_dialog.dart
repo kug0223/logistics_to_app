@@ -7,6 +7,7 @@ import '../../../services/firestore_service.dart';
 import '../../../providers/user_provider.dart';
 import '../../../utils/toast_helper.dart';
 import '../../../utils/format_helper.dart';
+import '../../../utils/responsive_helper.dart';  // ⭐ 추가
 import '../../../widgets/work_type_icon.dart';
 import '../../../models/ui/admin_to_list_ui_models.dart';
 import '../../../models/core/user_model.dart';
@@ -147,8 +148,8 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog> {
         builder: (context) => AlertDialog(
           title: Row(
             children: [
-              Icon(Icons.warning, color: Colors.orange[700]),
-              SizedBox(width: 8),
+              Icon(Icons.warning, color: Theme.of(context).colorScheme.error),
+              SizedBox(width: ResponsiveHelper.spacing(context, 8)),
               Text('인원 초과'),
             ],
           ),
@@ -159,15 +160,15 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog> {
               Text('현재 확정: $currentConfirmed명'),
               Text('선택 인원: $selectedCount명'),
               Text('필요 인원: $requiredCount명'),
-              Divider(height: 24),
+              Divider(height: ResponsiveHelper.spacing(context, 24)),
               Text(
                 '$overflow명이 초과됩니다.',
-                style: TextStyle(
+                style: ResponsiveHelper.bodyStyle(context).copyWith(
                   fontWeight: FontWeight.bold,
-                  color: Colors.orange[700],
+                  color: Theme.of(context).colorScheme.error,
                 ),
               ),
-              SizedBox(height: 8),
+              SizedBox(height: ResponsiveHelper.spacing(context, 8)),
               Text('그래도 승인하시겠습니까?'),
             ],
           ),
@@ -178,7 +179,9 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog> {
             ),
             ElevatedButton(
               onPressed: () => Navigator.pop(context, true),
-              style: ElevatedButton.styleFrom(backgroundColor: Colors.orange),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Theme.of(context).colorScheme.error,
+              ),
               child: Text('초과 승인'),
             ),
           ],
@@ -187,7 +190,6 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog> {
 
       if (confirmed != true) return;
     } else {
-      // ⭐ 변경: DialogHelper 사용
       final confirmed = await DialogHelper.showConfirm(
         context,
         title: '일괄 승인',
@@ -231,7 +233,6 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog> {
       return;
     }
 
-    // ⭐ 변경: DialogHelper 사용
     final confirmed = await DialogHelper.showConfirm(
       context,
       title: '일괄 거절',
@@ -283,9 +284,9 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog> {
           children: [
             // 헤더
             Container(
-              padding: EdgeInsets.all(16),
+              padding: ResponsiveHelper.cardPadding(context),
               decoration: BoxDecoration(
-                color: Colors.blue[50],
+                color: Theme.of(context).primaryColor.withOpacity(0.1),
                 borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
               ),
               child: Row(
@@ -293,26 +294,23 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog> {
                   WorkTypeIcon.buildFromString(
                     widget.work.workTypeIcon,
                     color: FormatHelper.parseColor(widget.work.workTypeColor),
-                    size: 24,
+                    size: ResponsiveHelper.iconSize(context, 24),
                   ),
-                  SizedBox(width: 12),
+                  SizedBox(width: ResponsiveHelper.spacing(context, 12)),
                   Expanded(
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text(
                           '${widget.work.workType} - 지원자 관리',
-                          style: TextStyle(
-                            fontSize: 18,
-                            fontWeight: FontWeight.bold,
-                          ),
+                          style: ResponsiveHelper.titleStyle(context),
                         ),
-                        SizedBox(height: 4),
+                        SizedBox(height: ResponsiveHelper.spacing(context, 4)),
                         Text(
                           '${widget.work.startTime}~${widget.work.endTime} | ${widget.work.formattedWage}',
-                          style: TextStyle(
-                            fontSize: 13,
-                            color: Colors.grey[700],
+                          style: ResponsiveHelper.smallStyle(
+                            context,
+                            color: Theme.of(context).textTheme.bodySmall?.color,
                           ),
                         ),
                       ],
@@ -329,9 +327,16 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog> {
             // 전체 선택 + 통계
             if (pendingApplicants.isNotEmpty)
               Container(
-                padding: EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                padding: EdgeInsets.symmetric(
+                  horizontal: ResponsiveHelper.spacing(context, 16),
+                  vertical: ResponsiveHelper.spacing(context, 12),
+                ),
                 decoration: BoxDecoration(
-                  border: Border(bottom: BorderSide(color: Colors.grey[300]!)),
+                  border: Border(
+                    bottom: BorderSide(
+                      color: Theme.of(context).dividerColor,
+                    ),
+                  ),
                 ),
                 child: Row(
                   children: [
@@ -341,23 +346,25 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog> {
                     ),
                     Text(
                       '전체 선택',
-                      style: TextStyle(fontWeight: FontWeight.w600),
+                      style: ResponsiveHelper.bodyStyle(context).copyWith(
+                        fontWeight: FontWeight.w600,
+                      ),
                     ),
                     Spacer(),
                     Text(
                       '대기: ${pendingApplicants.length}명',
-                      style: TextStyle(
-                        color: Colors.orange[700],
-                        fontWeight: FontWeight.bold,
-                      ),
+                      style: ResponsiveHelper.bodyStyle(
+                        context,
+                        color: Colors.orange,
+                      ).copyWith(fontWeight: FontWeight.bold),
                     ),
-                    SizedBox(width: 12),
+                    SizedBox(width: ResponsiveHelper.spacing(context, 12)),
                     Text(
                       '확정: ${confirmedApplicants.length}/${widget.work.requiredCount}명',
-                      style: TextStyle(
-                        color: Colors.blue[700],
-                        fontWeight: FontWeight.bold,
-                      ),
+                      style: ResponsiveHelper.bodyStyle(
+                        context,
+                        color: Theme.of(context).primaryColor,
+                      ).copyWith(fontWeight: FontWeight.bold),
                     ),
                   ],
                 ),
@@ -372,49 +379,51 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog> {
                           child: Column(
                             mainAxisAlignment: MainAxisAlignment.center,
                             children: [
-                              Icon(Icons.inbox, size: 64, color: Colors.grey[400]),
-                              SizedBox(height: 16),
+                              Icon(
+                                Icons.inbox, 
+                                size: ResponsiveHelper.iconSize(context, 64),
+                                color: Theme.of(context).disabledColor,
+                              ),
+                              SizedBox(height: ResponsiveHelper.spacing(context, 16)),
                               Text(
                                 '지원자가 없습니다',
-                                style: TextStyle(
-                                  fontSize: 16,
-                                  color: Colors.grey[600],
+                                style: ResponsiveHelper.subtitleStyle(
+                                  context,
+                                  color: Theme.of(context).textTheme.bodySmall?.color,
                                 ),
                               ),
                             ],
                           ),
                         )
                       : ListView(
-                          padding: EdgeInsets.all(16),
+                          padding: ResponsiveHelper.cardPadding(context),
                           children: [
                             // 대기 중 지원자
                             if (pendingApplicants.isNotEmpty) ...[
                               Text(
                                 '⏳ 대기 중 (${pendingApplicants.length}명)',
-                                style: TextStyle(
-                                  fontSize: 14,
-                                  fontWeight: FontWeight.bold,
-                                  color: Colors.orange[700],
-                                ),
+                                style: ResponsiveHelper.bodyStyle(
+                                  context,
+                                  color: Colors.orange,
+                                ).copyWith(fontWeight: FontWeight.bold),
                               ),
-                              SizedBox(height: 8),
+                              SizedBox(height: ResponsiveHelper.spacing(context, 8)),
                               ...pendingApplicants.map((item) => 
                                 _buildApplicantCard(item, true)
                               ),
-                              SizedBox(height: 24),
+                              SizedBox(height: ResponsiveHelper.spacing(context, 24)),
                             ],
 
                             // 확정된 지원자
                             if (confirmedApplicants.isNotEmpty) ...[
                               Text(
                                 '✅ 확정됨 (${confirmedApplicants.length}명)',
-                                style: TextStyle(
-                                  fontSize: 14,
-                                  fontWeight: FontWeight.bold,
-                                  color: Colors.green[700],
-                                ),
+                                style: ResponsiveHelper.bodyStyle(
+                                  context,
+                                  color: Colors.green,
+                                ).copyWith(fontWeight: FontWeight.bold),
                               ),
-                              SizedBox(height: 8),
+                              SizedBox(height: ResponsiveHelper.spacing(context, 8)),
                               ...confirmedApplicants.map((item) => 
                                 _buildApplicantCard(item, false)
                               ),
@@ -426,9 +435,11 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog> {
             // 하단 버튼
             if (pendingApplicants.isNotEmpty)
               Container(
-                padding: EdgeInsets.all(16),
+                padding: ResponsiveHelper.cardPadding(context),
                 decoration: BoxDecoration(
-                  border: Border(top: BorderSide(color: Colors.grey[300]!)),
+                  border: Border(
+                    top: BorderSide(color: Theme.of(context).dividerColor),
+                  ),
                 ),
                 child: LayoutBuilder(
                   builder: (context, constraints) {
@@ -436,15 +447,14 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog> {
                     final isNarrow = constraints.maxWidth < 400;
                     
                     return Wrap(
-                      spacing: 8,
-                      runSpacing: 8,
+                      spacing: ResponsiveHelper.spacing(context, 8),
+                      runSpacing: ResponsiveHelper.spacing(context, 8),
                       alignment: WrapAlignment.spaceBetween,
                       crossAxisAlignment: WrapCrossAlignment.center,
                       children: [
                         Text(
                           '선택: ${_selectedIds.length}명',
-                          style: TextStyle(
-                            fontSize: 14,
+                          style: ResponsiveHelper.bodyStyle(context).copyWith(
                             fontWeight: FontWeight.bold,
                           ),
                         ),
@@ -453,28 +463,52 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog> {
                           children: [
                             ElevatedButton.icon(
                               onPressed: _selectedIds.isEmpty ? null : _rejectSelected,
-                              icon: Icon(Icons.close, size: isNarrow ? 16 : 18),
+                              icon: Icon(
+                                Icons.close, 
+                                size: ResponsiveHelper.iconSize(
+                                  context, 
+                                  isNarrow ? 16 : 18,
+                                ),
+                              ),
                               label: Text(isNarrow ? '거절' : '일괄 거절'),
                               style: ElevatedButton.styleFrom(
                                 backgroundColor: Colors.red,
                                 foregroundColor: Colors.white,
                                 padding: EdgeInsets.symmetric(
-                                  horizontal: isNarrow ? 12 : 16,
-                                  vertical: isNarrow ? 8 : 12,
+                                  horizontal: ResponsiveHelper.spacing(
+                                    context, 
+                                    isNarrow ? 12 : 16,
+                                  ),
+                                  vertical: ResponsiveHelper.spacing(
+                                    context, 
+                                    isNarrow ? 8 : 12,
+                                  ),
                                 ),
                               ),
                             ),
-                            SizedBox(width: 8),
+                            SizedBox(width: ResponsiveHelper.spacing(context, 8)),
                             ElevatedButton.icon(
                               onPressed: _selectedIds.isEmpty ? null : _approveSelected,
-                              icon: Icon(Icons.check, size: isNarrow ? 16 : 18),
+                              icon: Icon(
+                                Icons.check, 
+                                size: ResponsiveHelper.iconSize(
+                                  context, 
+                                  isNarrow ? 16 : 18,
+                                ),
+                              ),
                               label: Text(isNarrow ? '승인' : '일괄 승인'),
                               style: ElevatedButton.styleFrom(
-                                backgroundColor: Colors.blue,
+                                backgroundColor: Theme.of(context).primaryColor,
                                 foregroundColor: Colors.white,
                                 padding: EdgeInsets.symmetric(
-                                  horizontal: isNarrow ? 12 : 16,
-                                  vertical: isNarrow ? 8 : 12,
+                                  horizontal: ResponsiveHelper.spacing(
+                                    context, 
+                                    isNarrow ? 12 : 16,
+                                  ),
+                                  vertical: ResponsiveHelper.spacing(
+                                    context, 
+                                    isNarrow ? 8 : 12,
+                                  ),
                                 ),
                               ),
                             ),
@@ -514,11 +548,15 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog> {
     }
 
     return Container(
-      margin: EdgeInsets.only(bottom: 8),
+      margin: EdgeInsets.only(bottom: ResponsiveHelper.spacing(context, 8)),
       decoration: BoxDecoration(
-        color: isSelected ? Colors.blue[50] : Colors.white,
+        color: isSelected 
+            ? Theme.of(context).primaryColor.withOpacity(0.1) 
+            : Theme.of(context).cardColor,
         border: Border.all(
-          color: isSelected ? Colors.blue[300]! : Colors.grey[300]!,
+          color: isSelected 
+              ? Theme.of(context).primaryColor 
+              : Theme.of(context).dividerColor,
           width: isSelected ? 2 : 1,
         ),
         borderRadius: BorderRadius.circular(8),
@@ -529,39 +567,38 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog> {
                 value: isSelected,
                 onChanged: (_) => _toggleSelect(app.id),
               )
-            : Icon(Icons.check_circle, color: Colors.green[600]),
+            : Icon(Icons.check_circle, color: Colors.green),
         title: Text(
-          displayName,  // ⭐ "김철수 (35세, 남성)"
-          style: TextStyle(
+          displayName,
+          style: ResponsiveHelper.bodyStyle(context).copyWith(
             fontWeight: FontWeight.bold,
-            fontSize: 15,
           ),
         ),
         subtitle: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            SizedBox(height: 4),
+            SizedBox(height: ResponsiveHelper.spacing(context, 4)),
             Text(
               userPhone,
-              style: TextStyle(fontSize: 13),
+              style: ResponsiveHelper.smallStyle(context),
             ),
-            SizedBox(height: 4),
+            SizedBox(height: ResponsiveHelper.spacing(context, 4)),
             Text(
               '$timeAgo 지원',
-              style: TextStyle(
-                fontSize: 12,
-                color: Colors.grey[600],
+              style: ResponsiveHelper.tinyStyle(
+                context,
+                color: Theme.of(context).textTheme.bodySmall?.color,
               ),
             ),
             // ⭐ Phase 1-C: 장기 계약 정보 표시
             if (app.isLongTermApplication) ...[
-              SizedBox(height: 6),
+              SizedBox(height: ResponsiveHelper.spacing(context, 6)),
               Container(
-                padding: EdgeInsets.all(8),
+                padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 8)),
                 decoration: BoxDecoration(
-                  color: Colors.purple[50],
+                  color: Colors.purple.withOpacity(0.1),
                   borderRadius: BorderRadius.circular(4),
-                  border: Border.all(color: Colors.purple[200]!),
+                  border: Border.all(color: Colors.purple.withOpacity(0.3)),
                 ),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -569,16 +606,19 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog> {
                     // 첫 줄: 아이콘 + 근무 기간
                     Row(
                       children: [
-                        Icon(Icons.event_note, size: 12, color: Colors.purple[700]),
-                        SizedBox(width: 4),
+                        Icon(
+                          Icons.event_note, 
+                          size: ResponsiveHelper.iconSize(context, 12),
+                          color: Colors.purple,
+                        ),
+                        SizedBox(width: ResponsiveHelper.spacing(context, 4)),
                         Flexible(
                           child: Text(
                             '장기: ${app.workPeriodDisplay}',
-                            style: TextStyle(
-                              fontSize: 11,
-                              fontWeight: FontWeight.w600,
-                              color: Colors.purple[700],
-                            ),
+                            style: ResponsiveHelper.tinyStyle(
+                              context,
+                              color: Colors.purple,
+                            ).copyWith(fontWeight: FontWeight.w600),
                             overflow: TextOverflow.ellipsis,
                           ),
                         ),
@@ -586,12 +626,12 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog> {
                     ),
                     // 둘째 줄: 근무 요일
                     if (app.workDaysDisplay != null) ...[
-                      SizedBox(height: 2),
+                      SizedBox(height: ResponsiveHelper.spacing(context, 2)),
                       Text(
                         app.workDaysDisplay!,
-                        style: TextStyle(
-                          fontSize: 10,
-                          color: Colors.purple[600],
+                        style: ResponsiveHelper.tinyStyle(
+                          context,
+                          color: Colors.purple,
                         ),
                       ),
                     ],
@@ -602,7 +642,11 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog> {
           ],
         ),
         trailing: IconButton(
-          icon: Icon(Icons.info_outline, size: 20, color: Colors.blue[700]),
+          icon: Icon(
+            Icons.info_outline, 
+            size: ResponsiveHelper.iconSize(context, 20),
+            color: Theme.of(context).primaryColor,
+          ),
           onPressed: () => _showApplicantDetail(item),
           tooltip: '상세 정보',
         ),
@@ -629,8 +673,8 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog> {
         builder: (context) => AlertDialog(
           title: Row(
             children: [
-              Icon(Icons.warning, color: Colors.orange[700]),
-              SizedBox(width: 8),
+              Icon(Icons.warning, color: Theme.of(context).colorScheme.error),
+              SizedBox(width: ResponsiveHelper.spacing(context, 8)),
               Text('인원 초과'),
             ],
           ),
@@ -644,7 +688,9 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog> {
             ),
             ElevatedButton(
               onPressed: () => Navigator.pop(context, true),
-              style: ElevatedButton.styleFrom(backgroundColor: Colors.orange),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Theme.of(context).colorScheme.error,
+              ),
               child: Text('초과 승인'),
             ),
           ],
@@ -707,6 +753,7 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog> {
     if (diff.inDays < 7) return '${diff.inDays}일 전';
     return '${(diff.inDays / 7).floor()}주 전';
   }
+  
   /// 지원자 상세 정보
   void _showApplicantDetail(Map<String, dynamic> item) {
     final app = item['application'] as ApplicationModel;
@@ -729,18 +776,28 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog> {
                 _buildDetailRow('연락처', user?.phone ?? '-'),
                 if (user?.address != null)
                   _buildDetailRow('주소', '${user!.address}${user.detailAddress != null ? ' ${user.detailAddress}' : ''}'),
-                Divider(height: 24),
+                Divider(height: ResponsiveHelper.spacing(context, 24)),
                 _buildDetailRow('지원 시각', DateFormat('yyyy-MM-dd HH:mm').format(app.appliedAt)),
                 _buildDetailRow('상태', _getStatusText(app.status)),
                 if (user?.bio != null) ...[
-                  Divider(height: 24),
-                  Text('자기소개', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
-                  SizedBox(height: 8),
+                  Divider(height: ResponsiveHelper.spacing(context, 24)),
+                  Text(
+                    '자기소개', 
+                    style: ResponsiveHelper.bodyStyle(context).copyWith(
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                  SizedBox(height: ResponsiveHelper.spacing(context, 8)),
                   Text(user!.bio!),
                 ],
-                Divider(height: 24),
-                Text('근무 통계', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
-                SizedBox(height: 8),
+                Divider(height: ResponsiveHelper.spacing(context, 24)),
+                Text(
+                  '근무 통계', 
+                  style: ResponsiveHelper.bodyStyle(context).copyWith(
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+                SizedBox(height: ResponsiveHelper.spacing(context, 8)),
                 _buildDetailRow('총 근무', '${user?.totalWorkDays ?? 0}일'),
                 _buildDetailRow('평균 평점', '${user?.averageRating.toStringAsFixed(1) ?? '0.0'}점'),
                 _buildDetailRow('무단결근', '${user?.noShowCount ?? 0}회'),
@@ -779,7 +836,7 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog> {
 
   Widget _buildDetailRow(String label, String value) {
     return Padding(
-      padding: const EdgeInsets.only(bottom: 8),
+      padding: EdgeInsets.only(bottom: ResponsiveHelper.spacing(context, 8)),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -787,16 +844,16 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog> {
             width: 70,
             child: Text(
               label,
-              style: TextStyle(
-                color: Colors.grey[600],
-                fontSize: 13,
+              style: ResponsiveHelper.smallStyle(
+                context,
+                color: Theme.of(context).textTheme.bodySmall?.color,
               ),
             ),
           ),
           Expanded(
             child: Text(
               value,
-              style: TextStyle(fontSize: 14),
+              style: ResponsiveHelper.bodyStyle(context),
             ),
           ),
         ],

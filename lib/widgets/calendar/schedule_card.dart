@@ -4,6 +4,7 @@ import '../../models/core/application_model.dart';
 import '../../utils/dialog_helper.dart';
 import '../../services/firestore_service.dart';
 import '../../utils/toast_helper.dart';
+import '../../utils/responsive_helper.dart';  // ⭐ 추가
 import '../dialogs/schedule_detail_dialog.dart';
 import '../../models/core/schedule_change_request_model.dart';
 import 'package:intl/intl.dart';
@@ -13,7 +14,7 @@ import '../../providers/user_provider.dart';
 /// 개별 일정 카드
 class ScheduleCard extends StatelessWidget {
   final ApplicationModel application;
-  final VoidCallback? onChanged;  // ⭐ 추가
+  final VoidCallback? onChanged;
   final DateTime? selectedDay;
   
   const ScheduleCard({
@@ -28,7 +29,9 @@ class ScheduleCard extends StatelessWidget {
     final statusInfo = _getStatusInfo(application.status);
     
     return Card(
-      margin: const EdgeInsets.only(bottom: 12),
+      margin: EdgeInsets.only(
+        bottom: ResponsiveHelper.spacing(context, 12),
+      ),
       elevation: application.status == 'CONFIRMED' ? 3 : 1,
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(12),
@@ -37,7 +40,7 @@ class ScheduleCard extends StatelessWidget {
             : BorderSide.none,
       ),
       child: InkWell(
-        onTap: () => _showDetailDialog(context),  // ⭐ 카드 클릭
+        onTap: () => _showDetailDialog(context),
         borderRadius: BorderRadius.circular(12),
         child: Container(
           decoration: application.status == 'CONFIRMED'
@@ -51,7 +54,7 @@ class ScheduleCard extends StatelessWidget {
                 )
               : null,
           child: Padding(
-            padding: const EdgeInsets.all(16),
+            padding: ResponsiveHelper.cardPadding(context),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
@@ -61,21 +64,18 @@ class ScheduleCard extends StatelessWidget {
                     Expanded(
                       child: Text(
                         application.businessName,
-                        style: const TextStyle(
-                          fontSize: 16,
-                          fontWeight: FontWeight.bold,
-                        ),
+                        style: ResponsiveHelper.subtitleStyle(context),
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                       ),
                     ),
-                    _buildStatusBadge(statusInfo),
+                    _buildStatusBadge(context, statusInfo),
                   ],
                 ),
                 
                 // ⭐ 두 번째 줄: 휴무/추가근무/요청 배지들
                 if (selectedDay != null && application.isLongTermApplication) ...[
-                  const SizedBox(height: 6),
+                  SizedBox(height: ResponsiveHelper.spacing(context, 6)),
                   Wrap(
                     spacing: 6,
                     runSpacing: 4,
@@ -83,6 +83,7 @@ class ScheduleCard extends StatelessWidget {
                       // 휴무 배지
                       if (application.isLeaveDateOn(selectedDay!))
                         _buildSmallBadge(
+                          context,
                           icon: Icons.block,
                           label: '휴무',
                           color: Colors.grey,
@@ -91,6 +92,7 @@ class ScheduleCard extends StatelessWidget {
                       // 추가근무 배지
                       if (application.isExtraWorkDateOn(selectedDay!))
                         _buildSmallBadge(
+                          context,
                           icon: Icons.add_circle,
                           label: '추가근무',
                           color: Colors.green,
@@ -126,6 +128,7 @@ class ScheduleCard extends StatelessWidget {
                           }
                           
                           return _buildSmallBadge(
+                            context,
                             icon: icon,
                             label: label,
                             color: color,
@@ -137,57 +140,68 @@ class ScheduleCard extends StatelessWidget {
                   ),
                 ],
                 
-                const SizedBox(height: 12),
+                SizedBox(height: ResponsiveHelper.spacing(context, 12)),
                 
                 // 시간 정보
                 Row(
                   children: [
-                    Icon(Icons.access_time, size: 16, color: Colors.grey[600]),
-                    const SizedBox(width: 6),
+                    Icon(
+                      Icons.access_time, 
+                      size: ResponsiveHelper.iconSize(context, 16), 
+                      color: Colors.grey[600]
+                    ),
+                    SizedBox(width: ResponsiveHelper.spacing(context, 6)),
                     Text(
                       '${application.startTime} ~ ${application.endTime}',
-                      style: const TextStyle(fontSize: 14),
+                      style: ResponsiveHelper.bodyStyle(context),
                     ),
                   ],
                 ),
                 
-                const SizedBox(height: 8),
+                SizedBox(height: ResponsiveHelper.spacing(context, 8)),
                 
                 // 업무 유형
                 Row(
                   children: [
-                    Icon(Icons.work_outline, size: 16, color: Colors.grey[600]),
-                    const SizedBox(width: 6),
+                    Icon(
+                      Icons.work_outline, 
+                      size: ResponsiveHelper.iconSize(context, 16), 
+                      color: Colors.grey[600]
+                    ),
+                    SizedBox(width: ResponsiveHelper.spacing(context, 6)),
                     Text(
                       application.selectedWorkType,
-                      style: const TextStyle(fontSize: 14),
+                      style: ResponsiveHelper.bodyStyle(context),
                     ),
                   ],
                 ),
                 
-                const SizedBox(height: 8),
+                SizedBox(height: ResponsiveHelper.spacing(context, 8)),
                 
                 // 금액
                 Row(
                   children: [
-                    Icon(Icons.attach_money, size: 16, color: Colors.green[600]),
-                    const SizedBox(width: 6),
+                    Icon(
+                      Icons.attach_money, 
+                      size: ResponsiveHelper.iconSize(context, 16), 
+                      color: Colors.green[600]
+                    ),
+                    SizedBox(width: ResponsiveHelper.spacing(context, 6)),
                     Text(
                       application.formattedWage,
-                      style: TextStyle(
-                        fontSize: 14,
-                        fontWeight: FontWeight.bold,
+                      style: ResponsiveHelper.bodyStyle(
+                        context,
                         color: Colors.green[700],
-                      ),
+                      ).copyWith(fontWeight: FontWeight.bold),
                     ),
                   ],
                 ),
                 
                 // 장기 근무 정보
                 if (application.isLongTermApplication) ...[
-                  const SizedBox(height: 12),
+                  SizedBox(height: ResponsiveHelper.spacing(context, 12)),
                   Container(
-                    padding: const EdgeInsets.all(8),
+                    padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 8)),
                     decoration: BoxDecoration(
                       color: Colors.purple[50],
                       borderRadius: BorderRadius.circular(6),
@@ -195,12 +209,16 @@ class ScheduleCard extends StatelessWidget {
                     ),
                     child: Row(
                       children: [
-                        Icon(Icons.calendar_month, size: 14, color: Colors.purple[700]),
-                        const SizedBox(width: 6),
+                        Icon(
+                          Icons.calendar_month, 
+                          size: ResponsiveHelper.iconSize(context, 14), 
+                          color: Colors.purple[700]
+                        ),
+                        SizedBox(width: ResponsiveHelper.spacing(context, 6)),
                         Text(
                           '${application.workPeriodDisplay} ${application.workDaysDisplay ?? ""}',
-                          style: TextStyle(
-                            fontSize: 12,
+                          style: ResponsiveHelper.smallStyle(
+                            context,
                             color: Colors.purple[700],
                           ),
                         ),
@@ -211,14 +229,17 @@ class ScheduleCard extends StatelessWidget {
                 
                 // ⭐ 액션 버튼들
                 if (application.status == 'PENDING' || application.status == 'CONFIRMED') ...[
-                  const SizedBox(height: 12),
+                  SizedBox(height: ResponsiveHelper.spacing(context, 12)),
                   Row(
                     children: [
                       // 상세 보기 버튼
                       Expanded(
                         child: OutlinedButton.icon(
                           onPressed: () => _showDetailDialog(context),
-                          icon: const Icon(Icons.info_outline, size: 18),
+                          icon: Icon(
+                            Icons.info_outline, 
+                            size: ResponsiveHelper.iconSize(context, 18)
+                          ),
                           label: const Text('상세 정보'),
                           style: OutlinedButton.styleFrom(
                             foregroundColor: Colors.blue,
@@ -227,7 +248,7 @@ class ScheduleCard extends StatelessWidget {
                         ),
                       ),
                       
-                      const SizedBox(width: 8),
+                      SizedBox(width: ResponsiveHelper.spacing(context, 8)),
                       
                       // ⭐ 취소/휴무 버튼 (요청 대기중 상태 확인)
                       Expanded(
@@ -243,8 +264,11 @@ class ScheduleCard extends StatelessWidget {
                             // ⭐ 대기중인 요청이 있으면
                             if (hasPendingRequest) {
                               return OutlinedButton.icon(
-                                onPressed: null,  // 비활성화
-                                icon: const Icon(Icons.schedule, size: 18),
+                                onPressed: null,
+                                icon: Icon(
+                                  Icons.schedule, 
+                                  size: ResponsiveHelper.iconSize(context, 18)
+                                ),
                                 label: const Text('요청 대기중'),
                                 style: OutlinedButton.styleFrom(
                                   foregroundColor: Colors.grey,
@@ -261,18 +285,18 @@ class ScheduleCard extends StatelessWidget {
                                 selectedDay != null && 
                                 application.isLongTermApplication && 
                                 application.isLeaveDateOn(selectedDay!)
-                                    ? Icons.refresh  // 휴무 취소 아이콘
+                                    ? Icons.refresh
                                 // 추가근무일인 경우
                                 : selectedDay != null && 
                                   application.isLongTermApplication && 
                                   application.isExtraWorkDateOn(selectedDay!)
-                                    ? Icons.remove_circle_outline  // 추가근무 취소 아이콘
+                                    ? Icons.remove_circle_outline
                                 // 일반 장기 확정
                                 : application.isLongTermApplication && application.status == 'CONFIRMED'
-                                    ? Icons.beach_access  // 휴무 요청 아이콘
+                                    ? Icons.beach_access
                                 // 그 외
-                                : Icons.cancel_outlined,  // 취소 아이콘
-                                size: 18,
+                                : Icons.cancel_outlined,
+                                size: ResponsiveHelper.iconSize(context, 18),
                               ),
                               label: Text(
                                 // 휴무일인 경우
@@ -298,8 +322,8 @@ class ScheduleCard extends StatelessWidget {
                                 foregroundColor: selectedDay != null && 
                                                 application.isLongTermApplication && 
                                                 application.isLeaveDateOn(selectedDay!)
-                                    ? Colors.green  // 휴무 취소는 초록색
-                                    : Colors.red,   // 나머지는 빨간색
+                                    ? Colors.green
+                                    : Colors.red,
                                 side: BorderSide(
                                   color: selectedDay != null && 
                                         application.isLongTermApplication && 
@@ -365,8 +389,12 @@ class ScheduleCard extends StatelessWidget {
         builder: (context) => AlertDialog(
           title: Row(
             children: [
-              Icon(Icons.warning_amber_rounded, color: Colors.orange[700], size: 28),
-              const SizedBox(width: 8),
+              Icon(
+                Icons.warning_amber_rounded, 
+                color: Colors.orange[700], 
+                size: ResponsiveHelper.iconSize(context, 28)
+              ),
+              SizedBox(width: ResponsiveHelper.spacing(context, 8)),
               const Text('확정 근무 취소'),
             ],
           ),
@@ -374,16 +402,15 @@ class ScheduleCard extends StatelessWidget {
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const Text(
+              Text(
                 '확정된 근무를 취소하시겠습니까?',
-                style: TextStyle(
-                  fontSize: 16,
+                style: ResponsiveHelper.subtitleStyle(context).copyWith(
                   fontWeight: FontWeight.bold,
                 ),
               ),
-              const SizedBox(height: 16),
+              SizedBox(height: ResponsiveHelper.spacing(context, 16)),
               Container(
-                padding: const EdgeInsets.all(12),
+                padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 12)),
                 decoration: BoxDecoration(
                   color: Colors.red[50],
                   borderRadius: BorderRadius.circular(8),
@@ -394,37 +421,39 @@ class ScheduleCard extends StatelessWidget {
                   children: [
                     Row(
                       children: [
-                        Icon(Icons.error_outline, color: Colors.red[700], size: 20),
-                        const SizedBox(width: 6),
+                        Icon(
+                          Icons.error_outline, 
+                          color: Colors.red[700], 
+                          size: ResponsiveHelper.iconSize(context, 20)
+                        ),
+                        SizedBox(width: ResponsiveHelper.spacing(context, 6)),
                         Text(
                           '⚠️ 주의사항',
-                          style: TextStyle(
-                            fontSize: 14,
-                            fontWeight: FontWeight.bold,
+                          style: ResponsiveHelper.bodyStyle(
+                            context,
                             color: Colors.red[900],
-                          ),
+                          ).copyWith(fontWeight: FontWeight.bold),
                         ),
                       ],
                     ),
-                    const SizedBox(height: 8),
+                    SizedBox(height: ResponsiveHelper.spacing(context, 8)),
                     Text(
                       '• 확정 취소 시 패널티가 부과될 수 있습니다.\n'
                       '• 반복적인 취소는 향후 지원에 불이익이 있을 수 있습니다.\n'
                       '• 부득이한 사유가 있는 경우 관리자에게 먼저 연락해주세요.',
-                      style: TextStyle(
-                        fontSize: 13,
+                      style: ResponsiveHelper.smallStyle(
+                        context,
                         color: Colors.red[800],
-                        height: 1.5,
-                      ),
+                      ).copyWith(height: 1.5),
                     ),
                   ],
                 ),
               ),
-              const SizedBox(height: 12),
+              SizedBox(height: ResponsiveHelper.spacing(context, 12)),
               Text(
                 '그래도 취소하시겠습니까?',
-                style: TextStyle(
-                  fontSize: 14,
+                style: ResponsiveHelper.bodyStyle(
+                  context,
                   color: Colors.grey[700],
                 ),
               ),
@@ -481,6 +510,7 @@ class ScheduleCard extends StatelessWidget {
       }
     }
   }
+
   /// 상태 정보 가져오기
   _StatusInfo _getStatusInfo(String status) {
     switch (status) {
@@ -524,9 +554,12 @@ class ScheduleCard extends StatelessWidget {
   }
   
   /// 상태 배지
-  Widget _buildStatusBadge(_StatusInfo info) {
+  Widget _buildStatusBadge(BuildContext context, _StatusInfo info) {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      padding: EdgeInsets.symmetric(
+        horizontal: ResponsiveHelper.spacing(context, 10),
+        vertical: ResponsiveHelper.spacing(context, 6),
+      ),
       decoration: BoxDecoration(
         color: info.color[50],
         borderRadius: BorderRadius.circular(6),
@@ -537,22 +570,22 @@ class ScheduleCard extends StatelessWidget {
         children: [
           Icon(
             info.icon,
-            size: 14,
+            size: ResponsiveHelper.iconSize(context, 14),
             color: info.color[700],
           ),
-          const SizedBox(width: 4),
+          SizedBox(width: ResponsiveHelper.spacing(context, 4)),
           Text(
             info.text,
-            style: TextStyle(
-              fontSize: 12,
-              fontWeight: FontWeight.bold,
+            style: ResponsiveHelper.smallStyle(
+              context,
               color: info.color[700],
-            ),
+            ).copyWith(fontWeight: FontWeight.bold),
           ),
         ],
       ),
     );
   }
+
   /// ⭐ 휴무 요청 다이얼로그 (장기 근무용)
   Future<void> _showLeaveRequestDialog(BuildContext context) async {
     if (selectedDay == null) {
@@ -565,11 +598,11 @@ class ScheduleCard extends StatelessWidget {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Row(
+        title: Row(
           children: [
-            Icon(Icons.beach_access, color: Colors.orange),
-            SizedBox(width: 8),
-            Text('휴무 요청'),
+            const Icon(Icons.beach_access, color: Colors.orange),
+            SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+            const Text('휴무 요청'),
           ],
         ),
         content: Column(
@@ -577,14 +610,19 @@ class ScheduleCard extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
-              '${DateFormat('yyyy년 M월 d일 (E)', 'ko_KR').format(selectedDay!)}',
-              style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+              DateFormat('yyyy년 M월 d일 (E)', 'ko_KR').format(selectedDay!),
+              style: ResponsiveHelper.subtitleStyle(context)
+                  .copyWith(fontWeight: FontWeight.bold),
             ),
-            const SizedBox(height: 8),
+            SizedBox(height: ResponsiveHelper.spacing(context, 8)),
             Text('${application.toTitle} - ${application.selectedWorkType}'),
-            const Divider(height: 24),
-            const Text('휴무 사유', style: TextStyle(fontWeight: FontWeight.bold)),
-            const SizedBox(height: 8),
+            Divider(height: ResponsiveHelper.spacing(context, 24)),
+            Text(
+              '휴무 사유',
+              style: ResponsiveHelper.bodyStyle(context)
+                  .copyWith(fontWeight: FontWeight.bold),
+            ),
+            SizedBox(height: ResponsiveHelper.spacing(context, 8)),
             TextField(
               controller: reasonController,
               decoration: const InputDecoration(
@@ -621,7 +659,7 @@ class ScheduleCard extends StatelessWidget {
       businessId: application.businessId,
       applicationId: application.id,
       applicantUid: application.uid,
-      applicantName: '', // ⚠️ 실제 구현 시 UserProvider에서 가져와야 함
+      applicantName: '',
       targetDate: DateTime(selectedDay!.year, selectedDay!.month, selectedDay!.day),
       requestType: RequestType.LEAVE,
       requestedBy: RequesterType.APPLICANT,
@@ -642,6 +680,7 @@ class ScheduleCard extends StatelessWidget {
       ToastHelper.showError('휴무 요청 실패');
     }
   }
+
   /// ⭐ 추가근무일 취소 요청 (관리자 승인 필요)
   Future<void> _cancelExtraWorkDay(BuildContext context) async {
     final reasonController = TextEditingController();
@@ -649,11 +688,11 @@ class ScheduleCard extends StatelessWidget {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Row(
+        title: Row(
           children: [
-            Icon(Icons.remove_circle_outline, color: Colors.orange),
-            SizedBox(width: 8),
-            Text('추가근무 취소 요청'),
+            const Icon(Icons.remove_circle_outline, color: Colors.orange),
+            SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+            const Text('추가근무 취소 요청'),
           ],
         ),
         content: Column(
@@ -661,14 +700,15 @@ class ScheduleCard extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
-              '${DateFormat('yyyy년 M월 d일 (E)', 'ko_KR').format(selectedDay!)}',
-              style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+              DateFormat('yyyy년 M월 d일 (E)', 'ko_KR').format(selectedDay!),
+              style: ResponsiveHelper.subtitleStyle(context)
+                  .copyWith(fontWeight: FontWeight.bold),
             ),
-            const SizedBox(height: 8),
+            SizedBox(height: ResponsiveHelper.spacing(context, 8)),
             const Text('추가 근무를 취소하시겠습니까?'),
-            const SizedBox(height: 16),
+            SizedBox(height: ResponsiveHelper.spacing(context, 16)),
             Container(
-              padding: const EdgeInsets.all(12),
+              padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 12)),
               decoration: BoxDecoration(
                 color: Colors.blue[50],
                 borderRadius: BorderRadius.circular(8),
@@ -676,20 +716,31 @@ class ScheduleCard extends StatelessWidget {
               ),
               child: Row(
                 children: [
-                  Icon(Icons.info_outline, color: Colors.blue[700], size: 20),
-                  const SizedBox(width: 8),
+                  Icon(
+                    Icons.info_outline, 
+                    color: Colors.blue[700], 
+                    size: ResponsiveHelper.iconSize(context, 20)
+                  ),
+                  SizedBox(width: ResponsiveHelper.spacing(context, 8)),
                   Expanded(
                     child: Text(
                       '관리자 승인 후 추가 근무가 취소됩니다.',
-                      style: TextStyle(fontSize: 13, color: Colors.blue[900]),
+                      style: ResponsiveHelper.smallStyle(
+                        context,
+                        color: Colors.blue[900],
+                      ),
                     ),
                   ),
                 ],
               ),
             ),
-            const SizedBox(height: 16),
-            const Text('취소 사유', style: TextStyle(fontWeight: FontWeight.bold)),
-            const SizedBox(height: 8),
+            SizedBox(height: ResponsiveHelper.spacing(context, 16)),
+            Text(
+              '취소 사유',
+              style: ResponsiveHelper.bodyStyle(context)
+                  .copyWith(fontWeight: FontWeight.bold),
+            ),
+            SizedBox(height: ResponsiveHelper.spacing(context, 8)),
             TextField(
               controller: reasonController,
               decoration: const InputDecoration(
@@ -726,9 +777,9 @@ class ScheduleCard extends StatelessWidget {
       businessId: application.businessId,
       applicationId: application.id,
       applicantUid: application.uid,
-      applicantName: '', // UserProvider에서 가져오기
+      applicantName: '',
       targetDate: DateTime(selectedDay!.year, selectedDay!.month, selectedDay!.day),
-      requestType: RequestType.CANCEL_EXTRA,  // ⭐ 추가근무 취소 요청
+      requestType: RequestType.CANCEL_EXTRA,
       requestedBy: RequesterType.APPLICANT,
       requestedByUid: application.uid,
       requestedAt: DateTime.now(),
@@ -747,6 +798,7 @@ class ScheduleCard extends StatelessWidget {
       ToastHelper.showError('요청 실패');
     }
   }
+
   /// ⭐ 휴무일 취소 요청 (관리자 승인 필요)
   Future<void> _cancelLeaveDay(BuildContext context) async {
     final reasonController = TextEditingController();
@@ -754,11 +806,11 @@ class ScheduleCard extends StatelessWidget {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Row(
+        title: Row(
           children: [
-            Icon(Icons.refresh, color: Colors.green),
-            SizedBox(width: 8),
-            Text('휴무 취소 요청'),
+            const Icon(Icons.refresh, color: Colors.green),
+            SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+            const Text('휴무 취소 요청'),
           ],
         ),
         content: Column(
@@ -766,14 +818,15 @@ class ScheduleCard extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
-              '${DateFormat('yyyy년 M월 d일 (E)', 'ko_KR').format(selectedDay!)}',
-              style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+              DateFormat('yyyy년 M월 d일 (E)', 'ko_KR').format(selectedDay!),
+              style: ResponsiveHelper.subtitleStyle(context)
+                  .copyWith(fontWeight: FontWeight.bold),
             ),
-            const SizedBox(height: 8),
+            SizedBox(height: ResponsiveHelper.spacing(context, 8)),
             const Text('휴무를 취소하고 출근하시겠습니까?'),
-            const SizedBox(height: 16),
+            SizedBox(height: ResponsiveHelper.spacing(context, 16)),
             Container(
-              padding: const EdgeInsets.all(12),
+              padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 12)),
               decoration: BoxDecoration(
                 color: Colors.blue[50],
                 borderRadius: BorderRadius.circular(8),
@@ -781,20 +834,31 @@ class ScheduleCard extends StatelessWidget {
               ),
               child: Row(
                 children: [
-                  Icon(Icons.info_outline, color: Colors.blue[700], size: 20),
-                  const SizedBox(width: 8),
+                  Icon(
+                    Icons.info_outline, 
+                    color: Colors.blue[700], 
+                    size: ResponsiveHelper.iconSize(context, 20)
+                  ),
+                  SizedBox(width: ResponsiveHelper.spacing(context, 8)),
                   Expanded(
                     child: Text(
                       '관리자 승인 후 정상 출근으로 변경됩니다.',
-                      style: TextStyle(fontSize: 13, color: Colors.blue[900]),
+                      style: ResponsiveHelper.smallStyle(
+                        context,
+                        color: Colors.blue[900],
+                      ),
                     ),
                   ),
                 ],
               ),
             ),
-            const SizedBox(height: 16),
-            const Text('취소 사유', style: TextStyle(fontWeight: FontWeight.bold)),
-            const SizedBox(height: 8),
+            SizedBox(height: ResponsiveHelper.spacing(context, 16)),
+            Text(
+              '취소 사유',
+              style: ResponsiveHelper.bodyStyle(context)
+                  .copyWith(fontWeight: FontWeight.bold),
+            ),
+            SizedBox(height: ResponsiveHelper.spacing(context, 8)),
             TextField(
               controller: reasonController,
               decoration: const InputDecoration(
@@ -831,9 +895,9 @@ class ScheduleCard extends StatelessWidget {
       businessId: application.businessId,
       applicationId: application.id,
       applicantUid: application.uid,
-      applicantName: '', // UserProvider에서 가져오기
+      applicantName: '',
       targetDate: DateTime(selectedDay!.year, selectedDay!.month, selectedDay!.day),
-      requestType: RequestType.CANCEL_LEAVE,  // ⭐ 휴무 취소 요청
+      requestType: RequestType.CANCEL_LEAVE,
       requestedBy: RequesterType.APPLICANT,
       requestedByUid: application.uid,
       requestedAt: DateTime.now(),
@@ -852,6 +916,7 @@ class ScheduleCard extends StatelessWidget {
       ToastHelper.showError('요청 실패');
     }
   }
+
   /// ⭐ 해당 날짜에 대기중인 요청이 있는지 확인
   Future<bool> _hasPendingRequest(DateTime date) async {
     final request = await _getPendingRequest(date);
@@ -879,32 +944,40 @@ class ScheduleCard extends StatelessWidget {
       return null;
     }
   }
+
   /// 작은 배지 위젯
-  Widget _buildSmallBadge({
+  Widget _buildSmallBadge(
+    BuildContext context, {
     required IconData icon,
     required String label,
     required Color color,
     bool outlined = false,
   }) {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      padding: EdgeInsets.symmetric(
+        horizontal: ResponsiveHelper.spacing(context, 8),
+        vertical: ResponsiveHelper.spacing(context, 4),
+      ),
       decoration: BoxDecoration(
-        color: outlined ? color.withOpacity(0.1) : color.withOpacity(0.3),  // ✅ 수정
+        color: outlined ? color.withOpacity(0.1) : color.withOpacity(0.3),
         borderRadius: BorderRadius.circular(6),
         border: outlined ? Border.all(color: color.withOpacity(0.5)) : null,
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(icon, size: 12, color: color),  // ✅ 수정
-          const SizedBox(width: 4),
+          Icon(
+            icon, 
+            size: ResponsiveHelper.iconSize(context, 12), 
+            color: color
+          ),
+          SizedBox(width: ResponsiveHelper.spacing(context, 4)),
           Text(
             label,
-            style: TextStyle(
-              fontSize: 11,
-              fontWeight: FontWeight.bold,
-              color: color,  // ✅ 수정
-            ),
+            style: ResponsiveHelper.tinyStyle(
+              context,
+              color: color,
+            ).copyWith(fontWeight: FontWeight.bold),
           ),
         ],
       ),

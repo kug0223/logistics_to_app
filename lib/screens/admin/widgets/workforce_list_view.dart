@@ -11,6 +11,7 @@ import '../../../services/firestore_service.dart';
 
 // Utils
 import '../../../utils/toast_helper.dart';
+import '../../../utils/responsive_helper.dart';  // ⭐ 추가
 
 // Widgets
 import '../../../widgets/common/loading_widget.dart';
@@ -275,31 +276,35 @@ class _WorkforceListViewState extends State<WorkforceListView> {
       children: [
         _buildTabBar(),
         // ⭐ 마감됨 탭 안내 메시지
-          if (_selectedTab == 'CLOSED')
-            Container(
-              padding: const EdgeInsets.all(12),
-              margin: const EdgeInsets.all(16),
-              decoration: BoxDecoration(
-                color: Colors.blue[50],
-                borderRadius: BorderRadius.circular(8),
-                border: Border.all(color: Colors.blue[200]!),
-              ),
-              child: Row(
-                children: [
-                  Icon(Icons.info_outline, color: Colors.blue[700], size: 20),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: Text(
-                      '최근 마감된 5개만 표시됩니다. 이전 마감은 캘린더를 이용하세요.',
-                      style: TextStyle(
-                        color: Colors.blue[700],
-                        fontSize: 13,
-                      ),
+        if (_selectedTab == 'CLOSED')
+          Container(
+            padding: ResponsiveHelper.cardPadding(context),
+            margin: ResponsiveHelper.cardPadding(context),
+            decoration: BoxDecoration(
+              color: Colors.blue[50],
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(color: Colors.blue[200]!),
+            ),
+            child: Row(
+              children: [
+                Icon(
+                  Icons.info_outline, 
+                  color: Colors.blue[700], 
+                  size: ResponsiveHelper.iconSize(context, 20)
+                ),
+                SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+                Expanded(
+                  child: Text(
+                    '최근 마감된 5개만 표시됩니다. 이전 마감은 캘린더를 이용하세요.',
+                    style: ResponsiveHelper.smallStyle(
+                      context,
+                      color: Colors.blue[700],
                     ),
                   ),
-                ],
-              ),
+                ),
+              ],
             ),
+          ),
         Expanded(child: _buildTOList()),
       ],
     );
@@ -308,12 +313,12 @@ class _WorkforceListViewState extends State<WorkforceListView> {
   /// 탭바 + 필터
   Widget _buildTabBar() {
     return Container(
-      padding: const EdgeInsets.all(16),
+      padding: ResponsiveHelper.cardPadding(context),
       child: Row(
         children: [
           Expanded(
             child: Container(
-              padding: const EdgeInsets.all(4),
+              padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 4)),
               decoration: BoxDecoration(
                 color: Colors.grey[200],
                 borderRadius: BorderRadius.circular(12),
@@ -326,7 +331,7 @@ class _WorkforceListViewState extends State<WorkforceListView> {
               ),
             ),
           ),
-          const SizedBox(width: 8),
+          SizedBox(width: ResponsiveHelper.spacing(context, 8)),
           _buildFilterButton(),
         ],
       ),
@@ -349,7 +354,9 @@ class _WorkforceListViewState extends State<WorkforceListView> {
         }
       },
       child: Container(
-        padding: const EdgeInsets.symmetric(vertical: 12),
+        padding: EdgeInsets.symmetric(
+          vertical: ResponsiveHelper.spacing(context, 12),
+        ),
         decoration: BoxDecoration(
           color: isSelected ? Theme.of(context).primaryColor : Colors.transparent,
           borderRadius: BorderRadius.circular(10),
@@ -366,8 +373,7 @@ class _WorkforceListViewState extends State<WorkforceListView> {
         child: Text(
           label,
           textAlign: TextAlign.center,
-          style: TextStyle(
-            fontSize: 15,
+          style: ResponsiveHelper.subtitleStyle(context).copyWith(
             fontWeight: FontWeight.w600,
             color: isSelected ? Colors.white : Colors.grey[600],
           ),
@@ -393,20 +399,20 @@ class _WorkforceListViewState extends State<WorkforceListView> {
             right: 8,
             top: 8,
             child: Container(
-              padding: const EdgeInsets.all(4),
+              padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 4)),
               decoration: BoxDecoration(
                 color: Theme.of(context).primaryColor,
                 shape: BoxShape.circle,
               ),
-              constraints: const BoxConstraints(
-                minWidth: 16,
-                minHeight: 16,
+              constraints: BoxConstraints(
+                minWidth: ResponsiveHelper.spacing(context, 16),
+                minHeight: ResponsiveHelper.spacing(context, 16),
               ),
               child: Text(
                 '${_getActiveFilterCount()}',
-                style: const TextStyle(
+                style: ResponsiveHelper.tinyStyle(
+                  context,
                   color: Colors.white,
-                  fontSize: 10,
                   fontWeight: FontWeight.bold,
                 ),
                 textAlign: TextAlign.center,
@@ -461,12 +467,14 @@ class _WorkforceListViewState extends State<WorkforceListView> {
     return RefreshIndicator(
       onRefresh: _loadTOsWithStats,
       child: ListView.builder(
-        padding: const EdgeInsets.all(16),
+        padding: ResponsiveHelper.cardPadding(context),
         itemCount: _filteredGroupItems.length,
         itemBuilder: (context, index) {
           final groupItem = _filteredGroupItems[index];
           return Padding(
-            padding: const EdgeInsets.only(bottom: 16),
+            padding: EdgeInsets.only(
+              bottom: ResponsiveHelper.spacing(context, 16),
+            ),
             child: TOGroupCard(
               groupItem: groupItem,
               firestoreService: _firestoreService,
@@ -490,8 +498,8 @@ class _WorkforceListViewState extends State<WorkforceListView> {
   Widget _buildEmptyState() {
     return Center(
       child: Container(
-        margin: const EdgeInsets.all(40),
-        padding: const EdgeInsets.all(40),
+        margin: EdgeInsets.all(ResponsiveHelper.spacing(context, 40)),
+        padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 40)),
         decoration: BoxDecoration(
           color: Theme.of(context).primaryColor.withOpacity(0.1),
           borderRadius: BorderRadius.circular(20),
@@ -501,22 +509,24 @@ class _WorkforceListViewState extends State<WorkforceListView> {
           children: [
             Icon(
               Icons.inbox,
-              size: 80,
+              size: ResponsiveHelper.iconSize(context, 80),
               color: Theme.of(context).primaryColor.withOpacity(0.3),
             ),
-            const SizedBox(height: 20),
+            SizedBox(height: ResponsiveHelper.spacing(context, 20)),
             Text(
               '조건에 맞는 TO가 없습니다',
-              style: TextStyle(
-                fontSize: 18,
-                fontWeight: FontWeight.bold,
+              style: ResponsiveHelper.titleStyle(
+                context,
                 color: Colors.grey[800],
               ),
             ),
-            const SizedBox(height: 8),
+            SizedBox(height: ResponsiveHelper.spacing(context, 8)),
             Text(
               '필터를 변경하거나 새로운 TO를 생성하세요',
-              style: TextStyle(fontSize: 14, color: Colors.grey[600]),
+              style: ResponsiveHelper.bodyStyle(
+                context,
+                color: Colors.grey[600],
+              ),
               textAlign: TextAlign.center,
             ),
           ],

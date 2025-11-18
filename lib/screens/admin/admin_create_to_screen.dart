@@ -12,7 +12,10 @@ import '../../widgets/pickers/work_detail_dialog.dart';
 import '../../models/work_detail_input.dart';
 import '../../widgets/work_type_icon.dart';
 import '../../utils/format_helper.dart';
+import '../../utils/responsive_helper.dart';
 import '../../widgets/common/styled_container.dart';
+
+
 
 
 // ============================================================
@@ -640,7 +643,7 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
               Icon(Icons.business_outlined, size: 80, color: Colors.grey[400]),
-              const SizedBox(height: 16),
+              SizedBox(height: ResponsiveHelper.spacing(context, 16)),
               Text(
                 '등록된 사업장이 없습니다',
                 style: TextStyle(fontSize: 18, color: Colors.grey[600]),
@@ -659,24 +662,24 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
       body: Form(
         key: _formKey,
         child: ListView(
-          padding: const EdgeInsets.all(16),
+          padding: ResponsiveHelper.cardPadding(context),
           children: [
             _buildBusinessSelector(),
-            const SizedBox(height: 16),
+            SizedBox(height: ResponsiveHelper.spacing(context, 16)),
             _buildJobTypeSelector(),
-            const SizedBox(height: 16),
+            SizedBox(height: ResponsiveHelper.spacing(context, 16)),
             _buildTitleInput(),
-            const SizedBox(height: 16),
+            SizedBox(height: ResponsiveHelper.spacing(context, 16)),
             _buildDateSelector(),
-            const SizedBox(height: 16),
+            SizedBox(height: ResponsiveHelper.spacing(context, 16)),
             _buildWorkDetailsSection(),
-            const SizedBox(height: 16),
+            SizedBox(height: ResponsiveHelper.spacing(context, 16)),
             _buildDeadlineSelector(),
-            const SizedBox(height: 16),
+            SizedBox(height: ResponsiveHelper.spacing(context, 16)),
             _buildDescriptionInput(),
-            const SizedBox(height: 24),
+            SizedBox(height: ResponsiveHelper.spacing(context, 24)),
             _buildGroupLinkSection(),
-            const SizedBox(height: 24),
+            SizedBox(height: ResponsiveHelper.spacing(context, 24)),
             _buildCreateButton(),
           ],
         ),
@@ -698,7 +701,7 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
 
     return Card(
       child: Padding(
-        padding: const EdgeInsets.all(16),
+        padding: ResponsiveHelper.cardPadding(context),
         child: DropdownButtonFormField<BusinessModel>(
           initialValue: _selectedBusiness,
           decoration: InputDecoration(
@@ -730,15 +733,15 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
   Widget _buildJobTypeSelector() {
     return Card(
       child: Padding(
-        padding: const EdgeInsets.all(16),
+        padding: ResponsiveHelper.cardPadding(context),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text(
+            Text(
               '근무 유형',
-              style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+              style: ResponsiveHelper.subtitleStyle(context),
             ),
-            const SizedBox(height: 12),
+            SizedBox(height: ResponsiveHelper.spacing(context, 12)),
             Row(
               children: [
                 Expanded(
@@ -748,7 +751,7 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
                     icon: Icons.today,
                   ),
                 ),
-                const SizedBox(width: 12),
+                SizedBox(width: ResponsiveHelper.spacing(context, 12)),
                 Expanded(
                   child: _buildJobTypeChip(
                     label: '1개월 이상',
@@ -773,7 +776,9 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
     return GestureDetector(
       onTap: () => setState(() => _selectedJobType = value),
       child: Container(
-        padding: const EdgeInsets.symmetric(vertical: 12),
+        padding: EdgeInsets.symmetric(
+          vertical: ResponsiveHelper.spacing(context, 12),
+        ),
         decoration: BoxDecoration(
           color: isSelected ? Colors.blue[700] : Colors.grey[200],
           borderRadius: BorderRadius.circular(8),
@@ -781,13 +786,16 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
         child: Row(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Icon(icon, color: isSelected ? Colors.white : Colors.grey[700], size: 20),
-            const SizedBox(width: 8),
+            Icon(
+              icon, 
+              color: isSelected ? Colors.white : Colors.grey[700], 
+              size: ResponsiveHelper.iconSize(context, 20)
+            ),
+            SizedBox(width: ResponsiveHelper.spacing(context, 8)),
             Text(
               label,
-              style: TextStyle(
+              style: ResponsiveHelper.subtitleStyle(context).copyWith(
                 color: isSelected ? Colors.white : Colors.grey[700],
-                fontWeight: FontWeight.bold,
               ),
             ),
           ],
@@ -802,7 +810,7 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
     
     return Card(
       child: Padding(
-        padding: const EdgeInsets.all(16),
+        padding: ResponsiveHelper.cardPadding(context),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -827,9 +835,9 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
             
             // 🔥 2개 이상 날짜 선택 시 그룹명 입력
             if (isGroupTO) ...[
-              const SizedBox(height: 16),
+              SizedBox(height: ResponsiveHelper.spacing(context, 16)),
               Container(
-                padding: const EdgeInsets.all(12),
+                padding: ResponsiveHelper.cardPadding(context),
                 decoration: BoxDecoration(
                   color: Colors.blue[50],
                   borderRadius: BorderRadius.circular(8),
@@ -840,29 +848,36 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
                   children: [
                     Row(
                       children: [
-                        Icon(Icons.link, size: 18, color: Colors.blue[700]),
-                        const SizedBox(width: 8),
+                        Icon(
+                          Icons.link, 
+                          size: ResponsiveHelper.iconSize(context, 18), 
+                          color: Colors.blue[700]
+                        ),
+                        SizedBox(width: ResponsiveHelper.spacing(context, 8)),
                         Text(
                           '그룹 TO 생성 (${_selectedDates.length}일)',
-                          style: TextStyle(
-                            fontSize: 14,
-                            fontWeight: FontWeight.bold,
+                          style: ResponsiveHelper.bodyStyle(
+                            context,
                             color: Colors.blue[900],
-                          ),
+                          ).copyWith(fontWeight: FontWeight.bold),
                         ),
                       ],
                     ),
                     if (!_isConsecutiveDates()) ...[
-                      const SizedBox(height: 8),
+                      SizedBox(height: ResponsiveHelper.spacing(context, 8)),
                       Row(
                         children: [
-                          Icon(Icons.info_outline, size: 16, color: Colors.orange[700]),
-                          const SizedBox(width: 6),
+                          Icon(
+                            Icons.info_outline, 
+                            size: ResponsiveHelper.iconSize(context, 16), 
+                            color: Colors.orange[700]
+                          ),
+                          SizedBox(width: ResponsiveHelper.spacing(context, 6)),
                           Expanded(
                             child: Text(
                               '비연속 날짜도 하나의 그룹으로 묶입니다',
-                              style: TextStyle(
-                                fontSize: 12,
+                              style: ResponsiveHelper.smallStyle(
+                                context,
                                 color: Colors.orange[900],
                               ),
                             ),
@@ -870,20 +885,27 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
                         ],
                       ),
                     ],
-                    const SizedBox(height: 12),
+                    SizedBox(height: ResponsiveHelper.spacing(context, 12)),
                     TextFormField(
                       controller: _groupNameController,
                       decoration: InputDecoration(
                         labelText: '그룹명 (선택)',
                         hintText: '예: 11월 파트타임 모음',
-                        prefixIcon: Icon(Icons.folder_open, color: Colors.blue[700]),
+                        prefixIcon: Icon(
+                          Icons.folder_open, 
+                          color: Colors.blue[700],
+                          size: ResponsiveHelper.iconSize(context, 24),
+                        ),
                         border: OutlineInputBorder(
                           borderRadius: BorderRadius.circular(8),
                         ),
                         filled: true,
                         fillColor: Colors.white,
                         helperText: '비워두면 자동으로 생성됩니다',
-                        helperStyle: TextStyle(fontSize: 12, color: Colors.grey[600]),
+                        helperStyle: ResponsiveHelper.smallStyle(
+                          context,
+                          color: Colors.grey[600],
+                        ),
                       ),
                     ),
                   ],
@@ -911,36 +933,39 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
   Widget _buildCalendarDateSelector() {
     return Card(
       child: Padding(
-        padding: const EdgeInsets.all(16),
+        padding: ResponsiveHelper.cardPadding(context),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                const Text(
+                Text(
                   '근무 날짜 선택',
-                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                  style: ResponsiveHelper.subtitleStyle(context),
                 ),
                 TextButton.icon(
                   onPressed: _selectedDates.isNotEmpty ? _clearAllDates : null,
-                  icon: const Icon(Icons.clear_all, size: 18),
+                  icon: Icon(
+                    Icons.clear_all, 
+                    size: ResponsiveHelper.iconSize(context, 18)
+                  ),
                   label: const Text('전체 해제'),
                 ),
               ],
             ),
-            const SizedBox(height: 8),
+            SizedBox(height: ResponsiveHelper.spacing(context, 8)),
             
             // 선택된 날짜 요약
             if (_selectedDates.isNotEmpty) ...[
               _buildDateSummary(),
-              const SizedBox(height: 12),
+              SizedBox(height: ResponsiveHelper.spacing(context, 12)),
             ],
 
             // 30일 제한 경고
             if (_selectedDates.length >= 30) ...[
               Container(
-                padding: const EdgeInsets.all(12),
+                padding: ResponsiveHelper.cardPadding(context),
                 decoration: BoxDecoration(
                   color: Colors.orange[50],
                   borderRadius: BorderRadius.circular(8),
@@ -948,18 +973,25 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
                 ),
                 child: Row(
                   children: [
-                    Icon(Icons.warning_amber, color: Colors.orange[700], size: 20),
-                    const SizedBox(width: 8),
+                    Icon(
+                      Icons.warning_amber, 
+                      color: Colors.orange[700], 
+                      size: ResponsiveHelper.iconSize(context, 20)
+                    ),
+                    SizedBox(width: ResponsiveHelper.spacing(context, 8)),
                     Expanded(
                       child: Text(
                         '단기 알바는 최대 30일까지 선택 가능합니다',
-                        style: TextStyle(fontSize: 13, color: Colors.orange[900]),
+                        style: ResponsiveHelper.smallStyle(
+                          context,
+                          color: Colors.orange[900],
+                        ),
                       ),
                     ),
                   ],
                 ),
               ),
-              const SizedBox(height: 12),
+              SizedBox(height: ResponsiveHelper.spacing(context, 12)),
             ],
 
             // 캘린더 펼치기/접기
@@ -975,7 +1007,7 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
 
             // 캘린더
             if (_isCalendarExpanded) ...[
-              const SizedBox(height: 12),
+              SizedBox(height: ResponsiveHelper.spacing(context, 12)),
               TableCalendar(
                 locale: 'ko_KR', // ✅ 이 줄 추가!
                 firstDay: DateTime.now(),
@@ -1015,16 +1047,16 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
   Widget _buildWeekdaySelector() {
     return Card(
       child: Padding(
-        padding: const EdgeInsets.all(16),
+        padding: ResponsiveHelper.cardPadding(context),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             // ⭐ 시작일/종료일 선택 추가
-            const Text(
+           Text(
               '계약 기간',
-              style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+              style: ResponsiveHelper.subtitleStyle(context),
             ),
-            const SizedBox(height: 12),
+            SizedBox(height: ResponsiveHelper.spacing(context, 12)),
             Row(
               children: [
                 Expanded(
@@ -1044,9 +1076,9 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
                     },
                   ),
                 ),
-                const SizedBox(width: 12),
+                SizedBox(width: ResponsiveHelper.spacing(context, 12)),
                 const Icon(Icons.arrow_forward, color: Colors.grey),
-                const SizedBox(width: 12),
+                SizedBox(width: ResponsiveHelper.spacing(context, 12)),
                 Expanded(
                   child: _buildDateField(
                     label: '종료일',
@@ -1067,31 +1099,34 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
               ],
             ),
             
-            const SizedBox(height: 24),
+            SizedBox(height: ResponsiveHelper.spacing(context, 24)),
             const Divider(),
-            const SizedBox(height: 16),
+            SizedBox(height: ResponsiveHelper.spacing(context, 16)),
             
             // 기존 요일 선택
-            const Text(
+            Text(
               '근무 요일 선택',
-              style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+              style: ResponsiveHelper.subtitleStyle(context),
             ),
-            const SizedBox(height: 8),
+            SizedBox(height: ResponsiveHelper.spacing(context, 8)),
             Text(
               '※ 매주 반복되는 근무 요일을 선택하세요',
-              style: TextStyle(fontSize: 13, color: Colors.grey[600]),
+              style: ResponsiveHelper.smallStyle(
+                context,
+                color: Colors.grey[600],
+              ),
             ),
-            const SizedBox(height: 16),
+            SizedBox(height: ResponsiveHelper.spacing(context, 16)),
             
             // 요일 버튼들
             _buildWeekdayButtons(),
             
-            const SizedBox(height: 16),
+            SizedBox(height: ResponsiveHelper.spacing(context, 16)),
             
             // 선택 요약
             if (_selectedWeekdays.isNotEmpty) ...[
               Container(
-                padding: const EdgeInsets.all(12),
+                padding: ResponsiveHelper.cardPadding(context),
                 decoration: BoxDecoration(
                   color: Colors.green[50],
                   borderRadius: BorderRadius.circular(8),
@@ -1102,22 +1137,28 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
                   children: [
                     Row(
                       children: [
-                        Icon(Icons.check_circle, color: Colors.green[700], size: 18),
-                        const SizedBox(width: 8),
+                        Icon(
+                          Icons.check_circle, 
+                          color: Colors.green[700], 
+                          size: ResponsiveHelper.iconSize(context, 18)
+                        ),
+                        SizedBox(width: ResponsiveHelper.spacing(context, 8)),
                         Text(
                           '주 ${_selectedWeekdays.length}일 근무',
-                          style: TextStyle(
-                            fontSize: 14,
-                            fontWeight: FontWeight.bold,
+                          style: ResponsiveHelper.bodyStyle(
+                            context,
                             color: Colors.green[900],
-                          ),
+                          ).copyWith(fontWeight: FontWeight.bold),
                         ),
                       ],
                     ),
-                    const SizedBox(height: 8),
+                    SizedBox(height: ResponsiveHelper.spacing(context, 8)),
                     Text(
                       '선택된 요일: ${_selectedWeekdays.join(', ')}',
-                      style: TextStyle(fontSize: 13, color: Colors.green[800]),
+                      style: ResponsiveHelper.smallStyle(
+                        context,
+                        color: Colors.green[800],
+                      ),
                     ),
                   ],
                 ),
@@ -1136,7 +1177,7 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
     return InkWell(
       onTap: onTap,
       child: Container(
-        padding: const EdgeInsets.all(12),
+        padding: ResponsiveHelper.cardPadding(context),
         decoration: BoxDecoration(
           border: Border.all(color: Colors.grey[300]!),
           borderRadius: BorderRadius.circular(8),
@@ -1146,16 +1187,17 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
           children: [
             Text(
               label,
-              style: TextStyle(fontSize: 12, color: Colors.grey[600]),
+              style: ResponsiveHelper.smallStyle(
+                context,
+                color: Colors.grey[600],
+              ),
             ),
-            const SizedBox(height: 4),
+            SizedBox(height: ResponsiveHelper.spacing(context, 4)),
             Text(
               date != null
                   ? DateFormat('yyyy-MM-dd').format(date)
                   : '선택하세요',
-              style: TextStyle(
-                fontSize: 16,
-                fontWeight: FontWeight.bold,
+              style: ResponsiveHelper.subtitleStyle(context).copyWith(
                 color: date != null ? Colors.black : Colors.grey[400],
               ),
             ),
@@ -1204,9 +1246,7 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
                 child: Center(
                   child: Text(
                     day,
-                    style: TextStyle(
-                      fontSize: 16,
-                      fontWeight: FontWeight.bold,
+                    style: ResponsiveHelper.subtitleStyle(context).copyWith(
                       color: isSelected ? Colors.white : Colors.grey[700],
                     ),
                   ),
@@ -1224,7 +1264,7 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
     final groups = _groupConsecutiveDates();
 
     return Container(
-      padding: const EdgeInsets.all(12),
+      padding: ResponsiveHelper.cardPadding(context),
       decoration: BoxDecoration(
         color: Colors.blue[50],
         borderRadius: BorderRadius.circular(8),
@@ -1235,19 +1275,22 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
         children: [
           Row(
             children: [
-              Icon(Icons.calendar_today, size: 16, color: Colors.blue[700]),
-              const SizedBox(width: 8),
+              Icon(
+                Icons.calendar_today, 
+                size: ResponsiveHelper.iconSize(context, 16), 
+                color: Colors.blue[700]
+              ),
+              SizedBox(width: ResponsiveHelper.spacing(context, 8)),
               Text(
                 '선택된 날짜: ${_selectedDates.length}일',
-                style: TextStyle(
-                  fontSize: 14,
-                  fontWeight: FontWeight.bold,
+                style: ResponsiveHelper.bodyStyle(
+                  context,
                   color: Colors.blue[900],
-                ),
+                ).copyWith(fontWeight: FontWeight.bold),
               ),
             ],
           ),
-          const SizedBox(height: 8),
+          SizedBox(height: ResponsiveHelper.spacing(context, 8)),
           Wrap(
             spacing: 8,
             runSpacing: 8,
@@ -1260,7 +1303,7 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
             }).toList(),
           ),
           if (!_isConsecutiveDates()) ...[
-            const SizedBox(height: 8),
+            SizedBox(height: ResponsiveHelper.spacing(context, 8)),
             _buildConsecutiveIndicator(),
           ],
         ],
@@ -1288,7 +1331,10 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
   Widget _buildDateRangeChip(DateTime start, DateTime end, int count) {
     // ⭐ 변경: 커스텀 칩 (StyledChip은 이런 복잡한 구조 지원 안 함)
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      padding: EdgeInsets.symmetric(
+        horizontal: ResponsiveHelper.spacing(context, 10),
+        vertical: ResponsiveHelper.spacing(context, 6),
+      ),
       decoration: BoxDecoration(
         color: Colors.blue[700],
         borderRadius: BorderRadius.circular(16),
@@ -1298,41 +1344,44 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
         children: [
           Text(
             '${start.month}/${start.day}',
-            style: const TextStyle(
-              color: Colors.white,
-              fontSize: 13,
+            style: ResponsiveHelper.smallStyle(context, color: Colors.white).copyWith(
               fontWeight: FontWeight.w600,
             ),
           ),
-          const Padding(
-            padding: EdgeInsets.symmetric(horizontal: 4),
-            child: Icon(Icons.arrow_forward, size: 12, color: Colors.white),
+          Padding(
+            padding: EdgeInsets.symmetric(
+              horizontal: ResponsiveHelper.spacing(context, 4),
+            ),
+            child: Icon(
+              Icons.arrow_forward, 
+              size: ResponsiveHelper.iconSize(context, 12), 
+              color: Colors.white
+            ),
           ),
           Text(
             '${end.month}/${end.day}',
-            style: const TextStyle(
-              color: Colors.white,
-              fontSize: 13,
+            style: ResponsiveHelper.smallStyle(context, color: Colors.white).copyWith(
               fontWeight: FontWeight.w600,
             ),
           ),
-          const SizedBox(width: 6),
+          SizedBox(width: ResponsiveHelper.spacing(context, 6)),
           Container(
-            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+            padding: EdgeInsets.symmetric(
+              horizontal: ResponsiveHelper.spacing(context, 6),
+              vertical: ResponsiveHelper.spacing(context, 2),
+            ),
             decoration: BoxDecoration(
               color: Colors.white.withOpacity(0.3),
               borderRadius: BorderRadius.circular(10),
             ),
             child: Text(
               '$count일',
-              style: const TextStyle(
-                color: Colors.white,
-                fontSize: 11,
+              style: ResponsiveHelper.tinyStyle(context, color: Colors.white).copyWith(
                 fontWeight: FontWeight.bold,
               ),
             ),
           ),
-          const SizedBox(width: 6),
+          SizedBox(width: ResponsiveHelper.spacing(context, 6)),
           GestureDetector(
             onTap: () {
               setState(() {
@@ -1365,12 +1414,16 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(Icons.check_circle, size: 16, color: Colors.green[700]),
-            const SizedBox(width: 6),
+            Icon(
+              Icons.check_circle, 
+              size: ResponsiveHelper.iconSize(context, 16), 
+              color: Colors.green[700]
+            ),
+            SizedBox(width: ResponsiveHelper.spacing(context, 6)),
             Text(
               '연속된 날짜입니다',
-              style: TextStyle(
-                fontSize: 12,
+              style: ResponsiveHelper.smallStyle(
+                context,
                 color: Colors.green[900],
                 fontWeight: FontWeight.w500,
               ),
@@ -1386,12 +1439,16 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(Icons.info, size: 16, color: Colors.orange[700]),
-            const SizedBox(width: 6),
+            Icon(
+              Icons.info, 
+              size: ResponsiveHelper.iconSize(context, 16), 
+              color: Colors.orange[700]
+            ),
+            SizedBox(width: ResponsiveHelper.spacing(context, 6)),
             Text(
               '연속되지 않은 날짜입니다',
-              style: TextStyle(
-                fontSize: 12,
+              style: ResponsiveHelper.smallStyle(
+                context,
                 color: Colors.orange[900],
                 fontWeight: FontWeight.w500,
               ),
@@ -1440,16 +1497,16 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
   Widget _buildWorkDetailsSection() {
     return Card(
       child: Padding(
-        padding: const EdgeInsets.all(16),
+        padding: ResponsiveHelper.cardPadding(context),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                const Text(
+                Text(
                   '업무 상세',
-                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                  style: ResponsiveHelper.subtitleStyle(context),
                 ),
                 ElevatedButton.icon(
                   onPressed: _businessWorkTypes.isEmpty
@@ -1461,12 +1518,18 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
                           }
                           _showAddWorkDetailDialog();
                         },
-                  icon: const Icon(Icons.add, size: 18),
+                  icon: Icon(
+                    Icons.add, 
+                    size: ResponsiveHelper.iconSize(context, 18)
+                  ),
                   label: const Text('업무 추가'),
                   style: ElevatedButton.styleFrom(
                     backgroundColor: Colors.green[600],
                     foregroundColor: Colors.white,
-                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                    padding: EdgeInsets.symmetric(
+                      horizontal: ResponsiveHelper.spacing(context, 16),
+                      vertical: ResponsiveHelper.spacing(context, 12),
+                    ),
                     shape: RoundedRectangleBorder(
                       borderRadius: BorderRadius.circular(8),
                     ),
@@ -1475,14 +1538,14 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
               ],
             ),
             if (_businessWorkTypes.isEmpty) ...[
-              const SizedBox(height: 12),
+              SizedBox(height: ResponsiveHelper.spacing(context, 12)),
               Text(
                 '업무 유형을 먼저 등록해주세요',
                 style: TextStyle(color: Colors.grey[600]),
               ),
             ],
             if (_workDetails.isNotEmpty) ...[
-              const SizedBox(height: 16),
+              SizedBox(height: ResponsiveHelper.spacing(context, 16)),
               ..._workDetails.asMap().entries.map((entry) {
                 return _buildWorkDetailCard(entry.key, entry.value);
               }),
@@ -1496,10 +1559,12 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
   /// 업무 상세 카드
   Widget _buildWorkDetailCard(int index, WorkDetailInput detail) {
     return Card(
-      margin: const EdgeInsets.only(bottom: 12),
+      margin: EdgeInsets.only(
+        bottom: ResponsiveHelper.spacing(context, 12),
+      ),
       color: Colors.grey[50],
       child: Padding(
-        padding: const EdgeInsets.all(12),
+        padding: ResponsiveHelper.cardPadding(context),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -1516,25 +1581,22 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
                     child: WorkTypeIcon.buildFromString(
                       detail.workTypeIcon,
                       color: FormatHelper.parseColor(detail.workTypeColor), // ✅ 수정
-                      size: 20,
+                      size: ResponsiveHelper.iconSize(context, 20),
                     ),
                   ),
                 ),
-                const SizedBox(width: 12),
+                SizedBox(width: ResponsiveHelper.spacing(context, 12)),
                 Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
                         detail.workType ?? '업무',
-                        style: const TextStyle(
-                          fontSize: 16,
-                          fontWeight: FontWeight.bold,
-                        ),
+                        style: ResponsiveHelper.subtitleStyle(context),
                       ),
                       Text(
                         '${detail.startTime} ~ ${detail.endTime}',
-                        style: TextStyle(fontSize: 13, color: Colors.grey[600]),
+                        style: ResponsiveHelper.subtitleStyle(context),
                       ),
                     ],
                   ),
@@ -1554,17 +1616,17 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
                     children: [
                       Text(
                         _getWageLabelFromType(detail.wageType),  // ✅ 수정됨
-                        style: TextStyle(fontSize: 12, color: Colors.grey[600]),
+                        style: ResponsiveHelper.smallStyle(
+                          context,
+                          color: Colors.grey[600],
+                        ),
                       ),
                       Text(
                         '${detail.wage?.toString().replaceAllMapped(
                               RegExp(r'(\d{1,3})(?=(\d{3})+(?!\d))'),
                               (m) => '${m[1]},',
                             )}원',
-                        style: const TextStyle(
-                          fontSize: 16,
-                          fontWeight: FontWeight.bold,
-                        ),
+                        style: ResponsiveHelper.subtitleStyle(context),
                       ),
                     ],
                   ),
@@ -1575,14 +1637,14 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
                     children: [
                       Text(
                         '필요 인원',
-                        style: TextStyle(fontSize: 12, color: Colors.grey[600]),
+                        style: ResponsiveHelper.smallStyle(
+                          context,
+                          color: Colors.grey[600],
+                        ),
                       ),
                       Text(
                         '${detail.requiredCount}명',
-                        style: const TextStyle(
-                          fontSize: 16,
-                          fontWeight: FontWeight.bold,
-                        ),
+                        style: ResponsiveHelper.subtitleStyle(context),
                       ),
                     ],
                   ),
@@ -1611,35 +1673,36 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
     return Card(
       color: Colors.white,
       child: Padding(
-        padding: const EdgeInsets.all(16),
+        padding: ResponsiveHelper.cardPadding(context),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text(
+            Text(
               '지원 마감 설정',
-              style: TextStyle(
-                fontSize: 16,
-                fontWeight: FontWeight.bold,
-              ),
+              style: ResponsiveHelper.subtitleStyle(context),
             ),
-            const SizedBox(height: 12),
+            SizedBox(height: ResponsiveHelper.spacing(context, 12)),
             
             // 🔥 설명
             Container(
-              padding: const EdgeInsets.all(12),
+              padding: ResponsiveHelper.cardPadding(context),
               decoration: BoxDecoration(
                 color: Colors.blue[50],
                 borderRadius: BorderRadius.circular(8),
               ),
               child: Row(
                 children: [
-                  Icon(Icons.info_outline, color: Colors.blue[700], size: 20),
-                  const SizedBox(width: 8),
+                  Icon(
+                    Icons.info_outline, 
+                    color: Colors.blue[700], 
+                    size: ResponsiveHelper.iconSize(context, 20)
+                  ),
+                  SizedBox(width: ResponsiveHelper.spacing(context, 8)),
                   Expanded(
                     child: Text(
                       '각 업무별로 시작 시간 기준으로 자동 마감됩니다',
-                      style: TextStyle(
-                        fontSize: 13,
+                      style: ResponsiveHelper.smallStyle(
+                        context,
                         color: Colors.blue[900],
                       ),
                     ),
@@ -1648,16 +1711,18 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
               ),
             ),
             
-            const SizedBox(height: 16),
+            SizedBox(height: ResponsiveHelper.spacing(context, 16)),
             
             // 시간 선택
             Row(
               children: [
-                const Text(
+                Text(
                   '업무 시작',
-                  style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold),
+                  style: ResponsiveHelper.bodyStyle(context).copyWith(
+                    fontWeight: FontWeight.bold,
+                  ),
                 ),
-                const SizedBox(width: 16),
+                SizedBox(width: ResponsiveHelper.spacing(context, 16)),
                 DropdownButton<int>(
                   value: _hoursBeforeStart,
                   items: List.generate(24, (index) => index + 1)
@@ -1672,8 +1737,11 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
                     });
                   },
                 ),
-                const SizedBox(width: 8),
-                const Text('마감', style: TextStyle(fontSize: 14)),
+                SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+                Text(
+                  '마감', 
+                  style: ResponsiveHelper.bodyStyle(context)
+                ),
               ],
             ),
           ],
@@ -1688,35 +1756,36 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
     return Card(
       color: Colors.white,
       child: Padding(
-        padding: const EdgeInsets.all(16),
+        padding: ResponsiveHelper.cardPadding(context),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text(
+           Text(
               '지원 마감 설정',
-              style: TextStyle(
-                fontSize: 16,
-                fontWeight: FontWeight.bold,
-              ),
+              style: ResponsiveHelper.subtitleStyle(context),
             ),
-            const SizedBox(height: 12),
+            SizedBox(height: ResponsiveHelper.spacing(context, 12)),
             
             Container(
-              padding: const EdgeInsets.all(12),
+              padding: ResponsiveHelper.cardPadding(context),
               decoration: BoxDecoration(
                 color: Colors.orange[50],
                 borderRadius: BorderRadius.circular(8),
               ),
               child: Row(
                 children: [
-                  Icon(Icons.info_outline, color: Colors.orange[700], size: 20),
-                  const SizedBox(width: 8),
+                  Icon(
+                    Icons.info_outline, 
+                    color: Colors.orange[700], 
+                    size: ResponsiveHelper.iconSize(context, 20)
+                  ),
+                  SizedBox(width: ResponsiveHelper.spacing(context, 8)),
                   Expanded(
                     child: Text(
                       '지원 마감 날짜와 시간을 직접 설정하세요',
-                      style: TextStyle(
-                        fontSize: 13,
-                        color: Colors.orange[900],
+                      style: ResponsiveHelper.smallStyle(
+                        context,
+                        color: Colors.orange[900],  // 오렌지 배경에 맞춤
                       ),
                     ),
                   ),
@@ -1724,7 +1793,7 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
               ),
             ),
             
-            const SizedBox(height: 16),
+            SizedBox(height: ResponsiveHelper.spacing(context, 16)),
             
             // 날짜+시간 선택 버튼
             InkWell(
@@ -1779,7 +1848,7 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
                 }
               },
               child: Container(
-                padding: const EdgeInsets.all(16),
+                padding: ResponsiveHelper.cardPadding(context),
                 decoration: BoxDecoration(
                   border: Border.all(color: Colors.grey[300]!),
                   borderRadius: BorderRadius.circular(8),
@@ -1792,16 +1861,17 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
                       children: [
                         Text(
                           '마감 일시',
-                          style: TextStyle(fontSize: 12, color: Colors.grey[600]),
+                          style: ResponsiveHelper.smallStyle(
+                            context,
+                            color: Colors.grey[600],
+                          ),
                         ),
-                        const SizedBox(height: 4),
+                        SizedBox(height: ResponsiveHelper.spacing(context, 4)),
                         Text(
                           _fixedDeadline != null
                               ? DateFormat('yyyy-MM-dd HH:mm').format(_fixedDeadline!)
                               : '날짜와 시간을 선택하세요',
-                          style: TextStyle(
-                            fontSize: 16,
-                            fontWeight: FontWeight.bold,
+                          style: ResponsiveHelper.subtitleStyle(context).copyWith(
                             color: _fixedDeadline != null ? Colors.black : Colors.grey[400],
                           ),
                         ),
@@ -1839,8 +1909,10 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
       final deadline = startDateTime.subtract(Duration(hours: _hoursBeforeStart));
       
       return Container(
-        margin: const EdgeInsets.only(top: 8),
-        padding: const EdgeInsets.all(12),
+        margin: EdgeInsets.only(
+          top: ResponsiveHelper.spacing(context, 8),
+        ),
+        padding: ResponsiveHelper.cardPadding(context),
         decoration: BoxDecoration(
           color: Colors.blue[50],
           borderRadius: BorderRadius.circular(8),
@@ -1851,14 +1923,17 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
           children: [
             Text(
               '${DateFormat('MM/dd (E)', 'ko_KR').format(earliestDate)} $firstWorkStart 근무',
-              style: TextStyle(fontSize: 11, color: Colors.grey[700]),
+              style: ResponsiveHelper.tinyStyle(
+                context,
+                color: Colors.grey[700],
+              ),
             ),
             Text(
               '→ 마감: ${DateFormat('MM/dd (E) HH:mm', 'ko_KR').format(deadline)}',
-              style: TextStyle(
-                fontSize: 11,
-                fontWeight: FontWeight.bold,
+              style: ResponsiveHelper.tinyStyle(
+                context,
                 color: Colors.blue[700],
+                fontWeight: FontWeight.bold,
               ),
             ),
           ],
@@ -1873,7 +1948,7 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
   Widget _buildDescriptionInput() {
     return Card(
       child: Padding(
-        padding: const EdgeInsets.all(16),
+        padding: ResponsiveHelper.cardPadding(context),
         child: TextFormField(
           controller: _descriptionController,
           maxLines: 4,
@@ -1896,7 +1971,7 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
     
     return Card(
       child: Padding(
-        padding: const EdgeInsets.all(16),
+        padding: ResponsiveHelper.cardPadding(context),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -1919,20 +1994,18 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
                     children: [
                       Text(
                         '기존 공고와 연결하기',
-                        style: TextStyle(
-                          fontSize: 16,
-                          fontWeight: FontWeight.bold,
-                          color: isDisabled ? Colors.grey[400] : Colors.black,  // ⭐ 수정
+                        style: ResponsiveHelper.subtitleStyle(context).copyWith(
+                          color: isDisabled ? Colors.grey[400] : Colors.black,
                         ),
                       ),
                       if (isDisabled) ...[  // ⭐ 수정
-                        const SizedBox(height: 4),
+                        SizedBox(height: ResponsiveHelper.spacing(context, 4)),
                         Text(
                           isLongTerm 
                             ? '장기 근무는 다른 공고와 연결할 수 없습니다'  // ⭐ 새 메시지
                             : '그룹 TO는 다른 공고와 연결할 수 없습니다',
-                          style: TextStyle(
-                            fontSize: 12,
+                          style: ResponsiveHelper.smallStyle(
+                            context,
                             color: Colors.grey[600],
                           ),
                         ),
@@ -1945,7 +2018,7 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
             
             // 🔥 그룹 TO일 때는 드롭다운 숨김
             if (_linkToExisting && !isDisabled) ...[
-              const SizedBox(height: 12),
+              SizedBox(height: ResponsiveHelper.spacing(context, 12)),
               if (_isLoadingRecentTOs)
                 const Center(child: CircularProgressIndicator())
               else if (_myRecentTOs.isEmpty)
@@ -2011,10 +2084,12 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
                   strokeWidth: 2,
                 ),
               )
-            : const Text(
-                'TO 생성',
-                style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+            : Text(
+              'TO 생성',
+              style: ResponsiveHelper.subtitleStyle(context).copyWith(
+                color: Colors.white,  // 버튼 텍스트는 흰색
               ),
+            ),
       ),
     );
   }

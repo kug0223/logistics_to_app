@@ -9,6 +9,7 @@ import '../../models/core/business_work_type_model.dart';
 import '../../services/firestore_service.dart';
 import '../../providers/user_provider.dart';
 import '../../utils/toast_helper.dart';
+import '../../utils/responsive_helper.dart';  // ⭐ 추가
 import '../../widgets/common/loading_widget.dart';
 import '../../widgets/pickers/work_detail_dialog.dart';
 import '../../widgets/work_type_icon.dart';
@@ -53,7 +54,7 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
     _descriptionController = TextEditingController(text: widget.to.description ?? '');
     
     _hoursBeforeStart = widget.to.hoursBeforeStart ?? 2;
-    _fixedDeadline = widget.to.isLongTerm ? widget.to.applicationDeadline : null;  // ⭐ 추가!
+    _fixedDeadline = widget.to.isLongTerm ? widget.to.applicationDeadline : null;
     
     _loadData();
   }
@@ -76,13 +77,13 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
         _firestoreService.getBusinessWorkTypes(widget.to.businessId),
       ]);
 
-      setState(() {  // 🔥 여기서 setState 확인!
+      setState(() {
         _workDetails = results[0] as List<WorkDetailModel>;
         _businessWorkTypes = results[1] as List<BusinessWorkTypeModel>;
         _isLoading = false;
       });
       
-      print('✅ _loadData 완료: ${_workDetails.length}개 업무');  // 🔥 로그 추가
+      print('✅ _loadData 완료: ${_workDetails.length}개 업무');
     } catch (e) {
       print('❌ 데이터 로드 실패: $e');
       ToastHelper.showError('데이터를 불러오는데 실패했습니다');
@@ -108,7 +109,7 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
       final updates = <String, dynamic>{
         'title': _titleController.text.trim(),
         'description': _descriptionController.text.trim(),
-        'hoursBeforeStart': _hoursBeforeStart,  // ✅ 항상 저장
+        'hoursBeforeStart': _hoursBeforeStart,
       };
       
       // 🔥 시간 변경 시 마감 상태 초기화
@@ -199,7 +200,6 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
           workDetail: newWork,
         );
         ToastHelper.showSuccess('업무가 추가되었습니다');
-        // ✅ 아래 2줄 추가
         setState(() {
           _workDetails.add(newWork.copyWith(id: addedWorkId));
         });
@@ -229,8 +229,13 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   // 시작 시간
-                  const Text('시작 시간', style: TextStyle(fontWeight: FontWeight.bold)),
-                  const SizedBox(height: 8),
+                  Text(
+                    '시작 시간', 
+                    style: ResponsiveHelper.bodyStyle(context).copyWith(  // ⭐ 변경
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                  SizedBox(height: ResponsiveHelper.spacing(context, 8)),  // ⭐ 변경
                   DropdownButtonFormField<String>(
                     initialValue: startTime,
                     decoration: const InputDecoration(
@@ -248,11 +253,16 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
                       });
                     },
                   ),
-                  const SizedBox(height: 16),
+                  SizedBox(height: ResponsiveHelper.spacing(context, 16)),  // ⭐ 변경
 
                   // 종료 시간
-                  const Text('종료 시간', style: TextStyle(fontWeight: FontWeight.bold)),
-                  const SizedBox(height: 8),
+                  Text(
+                    '종료 시간', 
+                    style: ResponsiveHelper.bodyStyle(context).copyWith(  // ⭐ 변경
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                  SizedBox(height: ResponsiveHelper.spacing(context, 8)),  // ⭐ 변경
                   DropdownButtonFormField<String>(
                     initialValue: endTime,
                     decoration: const InputDecoration(
@@ -270,11 +280,16 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
                       });
                     },
                   ),
-                  const SizedBox(height: 16),
+                  SizedBox(height: ResponsiveHelper.spacing(context, 16)),  // ⭐ 변경
 
                   // 금액
-                  const Text('금액 (원)', style: TextStyle(fontWeight: FontWeight.bold)),
-                  const SizedBox(height: 8),
+                  Text(
+                    '금액 (원)', 
+                    style: ResponsiveHelper.bodyStyle(context).copyWith(  // ⭐ 변경
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                  SizedBox(height: ResponsiveHelper.spacing(context, 8)),  // ⭐ 변경
                   TextField(
                     controller: wageController,
                     keyboardType: TextInputType.number,
@@ -283,11 +298,16 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
                     ),
                     inputFormatters: [FilteringTextInputFormatter.digitsOnly],
                   ),
-                  const SizedBox(height: 16),
+                  SizedBox(height: ResponsiveHelper.spacing(context, 16)),  // ⭐ 변경
 
                   // 필요 인원
-                  const Text('필요 인원', style: TextStyle(fontWeight: FontWeight.bold)),
-                  const SizedBox(height: 8),
+                  Text(
+                    '필요 인원', 
+                    style: ResponsiveHelper.bodyStyle(context).copyWith(  // ⭐ 변경
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                  SizedBox(height: ResponsiveHelper.spacing(context, 8)),  // ⭐ 변경
                   TextField(
                     controller: countController,
                     keyboardType: TextInputType.number,
@@ -318,7 +338,6 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
                     return;
                   }
 
-                  // ✅ 확정 인원보다 적게 축소 불가
                   if (count < work.currentCount) {
                     ToastHelper.showError(
                       '필요 인원은 확정 인원(${work.currentCount}명)보다 작을 수 없습니다'
@@ -342,7 +361,6 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
     );
 
     if (result != null) {
-      // 🔥 로컬 상태만 업데이트 (Firestore는 저장 버튼 클릭 시!)
       setState(() {
         final index = _workDetails.indexWhere((w) => w.id == work.id);
         if (index != -1) {
@@ -409,7 +427,6 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
           workDetailId: work.id,
         );
         ToastHelper.showSuccess('업무가 삭제되었습니다');
-        // ✅ 아래 2줄 추가
         setState(() {
           _workDetails.removeWhere((w) => w.id == work.id);
         });
@@ -425,16 +442,15 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
     return Scaffold(
       appBar: AppBar(
         title: const Text('수정'),
-        backgroundColor: Colors.blue[700],
+        backgroundColor: Theme.of(context).primaryColor,
         actions: [
           if (!_isSaving)
             TextButton(
               onPressed: _saveChanges,
-              child: const Text(
+              child: Text(
                 '저장',
-                style: TextStyle(
+                style: ResponsiveHelper.subtitleStyle(context).copyWith(  // ⭐ 변경
                   color: Colors.white,
-                  fontSize: 16,
                   fontWeight: FontWeight.bold,
                 ),
               ),
@@ -446,7 +462,7 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
           : _isSaving
               ? const LoadingWidget(message: '저장 중...')
               : SingleChildScrollView(
-                  padding: const EdgeInsets.all(16),
+                  padding: ResponsiveHelper.cardPadding(context),  // ⭐ 변경
                   child: Form(
                     key: _formKey,
                     child: Column(
@@ -454,19 +470,19 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
                       children: [
                         // 날짜 표시 (수정 불가)
                         _buildDateSection(),
-                        const SizedBox(height: 24),
+                        SizedBox(height: ResponsiveHelper.spacing(context, 24)),  // ⭐ 변경
 
                         // 제목
                         _buildTitleSection(),
-                        const SizedBox(height: 24),
+                        SizedBox(height: ResponsiveHelper.spacing(context, 24)),  // ⭐ 변경
 
                         // 업무 목록
                         _buildWorkDetailsSection(),
-                        const SizedBox(height: 24),
+                        SizedBox(height: ResponsiveHelper.spacing(context, 24)),  // ⭐ 변경
 
                         // 지원 마감
                         _buildDeadlineSection(),
-                        const SizedBox(height: 24),
+                        SizedBox(height: ResponsiveHelper.spacing(context, 24)),  // ⭐ 변경
 
                         // 설명
                         _buildDescriptionSection(),
@@ -476,7 +492,6 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
                 ),
     );
   }
-
   /// 날짜 섹션 (수정 불가)
   Widget _buildDateSection() {
     // ⭐ 올해면 연도 생략, 다른 해면 연도 표시
@@ -488,62 +503,66 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
     );
     return Card(
       child: Padding(
-        padding: const EdgeInsets.all(16),
+        padding: ResponsiveHelper.cardPadding(context),  // ⭐ 변경
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Row(
               children: [
-                Icon(Icons.info_outline, color: Colors.blue[700], size: 20),
-                const SizedBox(width: 8),
-                const Text(
+                Icon(
+                  Icons.info_outline, 
+                  color: Theme.of(context).primaryColor,
+                  size: ResponsiveHelper.iconSize(context, 20),  // ⭐ 변경
+                ),
+                SizedBox(width: ResponsiveHelper.spacing(context, 8)),  // ⭐ 변경
+                Text(
                   '근무 정보',
-                  style: TextStyle(
-                    fontSize: 16,
-                    fontWeight: FontWeight.bold,
-                  ),
+                  style: ResponsiveHelper.subtitleStyle(context),  // ⭐ 변경
                 ),
               ],
             ),
-            const SizedBox(height: 12),
+            SizedBox(height: ResponsiveHelper.spacing(context, 12)),  // ⭐ 변경
             
             // ⭐ 채용 유형 표시
             Container(
-              padding: const EdgeInsets.all(12),
+              padding: ResponsiveHelper.cardPadding(context),  // ⭐ 변경
               decoration: BoxDecoration(
-                color: widget.to.isLongTerm ? Colors.purple[50] : Colors.blue[50],
+                color: widget.to.isLongTerm 
+                    ? Colors.purple.withOpacity(0.1)
+                    : Theme.of(context).primaryColor.withOpacity(0.1),
                 borderRadius: BorderRadius.circular(8),
                 border: Border.all(
-                  color: widget.to.isLongTerm ? Colors.purple[200]! : Colors.blue[200]!,
+                  color: widget.to.isLongTerm 
+                      ? Colors.purple.withOpacity(0.3)
+                      : Theme.of(context).primaryColor.withOpacity(0.3),
                 ),
               ),
               child: Row(
                 children: [
                   Icon(
                     widget.to.isLongTerm ? Icons.event_repeat : Icons.event,
-                    color: widget.to.isLongTerm ? Colors.purple[700] : Colors.blue[700],
-                    size: 20,
+                    color: widget.to.isLongTerm ? Colors.purple : Theme.of(context).primaryColor,
+                    size: ResponsiveHelper.iconSize(context, 20),  // ⭐ 변경
                   ),
-                  const SizedBox(width: 12),
+                  SizedBox(width: ResponsiveHelper.spacing(context, 12)),  // ⭐ 변경
                   Text(
-                    widget.to.jobTypeLabel,  // "단기 알바" or "1개월+ 계약직"
-                    style: TextStyle(
-                      fontSize: 15,
-                      color: widget.to.isLongTerm ? Colors.purple[900] : Colors.blue[900],
-                      fontWeight: FontWeight.bold,
-                    ),
+                    widget.to.jobTypeLabel,
+                    style: ResponsiveHelper.bodyStyle(  // ⭐ 변경
+                      context,
+                      color: widget.to.isLongTerm ? Colors.purple : Theme.of(context).primaryColor,
+                    ).copyWith(fontWeight: FontWeight.bold),
                   ),
                 ],
               ),
             ),
             
-            const SizedBox(height: 12),
+            SizedBox(height: ResponsiveHelper.spacing(context, 12)),  // ⭐ 변경
             
             // ⭐ 날짜 표시 (단기/장기 분기)
             Container(
-              padding: const EdgeInsets.all(12),
+              padding: ResponsiveHelper.cardPadding(context),  // ⭐ 변경
               decoration: BoxDecoration(
-                color: Colors.grey[100],
+                color: Theme.of(context).colorScheme.surface,
                 borderRadius: BorderRadius.circular(8),
               ),
               child: Column(
@@ -551,8 +570,12 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
                 children: [
                   Row(
                     children: [
-                      Icon(Icons.calendar_today, color: Colors.grey[700], size: 20),
-                      const SizedBox(width: 12),
+                      Icon(
+                        Icons.calendar_today, 
+                        color: Theme.of(context).textTheme.bodyMedium?.color,
+                        size: ResponsiveHelper.iconSize(context, 20),  // ⭐ 변경
+                      ),
+                      SizedBox(width: ResponsiveHelper.spacing(context, 12)),  // ⭐ 변경
                       Expanded(
                         child: widget.to.isLongTerm
                           ? Column(
@@ -560,27 +583,25 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
                               children: [
                                 Text(
                                   '계약 기간',
-                                  style: TextStyle(
-                                    fontSize: 12,
-                                    color: Colors.grey[600],
+                                  style: ResponsiveHelper.tinyStyle(  // ⭐ 변경
+                                    context,
+                                    color: Theme.of(context).textTheme.bodySmall?.color,
                                   ),
                                 ),
-                                const SizedBox(height: 4),
+                                SizedBox(height: ResponsiveHelper.spacing(context, 4)),  // ⭐ 변경
                                 Text(
                                   widget.to.longTermPeriodWithDays,
-                                  style: TextStyle(
-                                    fontSize: 15,
-                                    color: Colors.grey[800],
-                                    fontWeight: FontWeight.w500,
-                                  ),
+                                  style: ResponsiveHelper.bodyStyle(  // ⭐ 변경
+                                    context,
+                                  ).copyWith(fontWeight: FontWeight.w500),
                                 ),
                                 if (widget.to.workDays != null && widget.to.workDays!.isNotEmpty) ...[
-                                  const SizedBox(height: 4),
+                                  SizedBox(height: ResponsiveHelper.spacing(context, 4)),  // ⭐ 변경
                                   Text(
                                     widget.to.workDaysLabel,
-                                    style: TextStyle(
-                                      fontSize: 13,
-                                      color: Colors.grey[700],
+                                    style: ResponsiveHelper.smallStyle(  // ⭐ 변경
+                                      context,
+                                      color: Theme.of(context).textTheme.bodyMedium?.color,
                                     ),
                                   ),
                                 ],
@@ -588,11 +609,10 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
                             )
                           : Text(
                               dateFormat.format(widget.to.date),
-                              style: TextStyle(
-                                fontSize: 15,
-                                color: Colors.grey[700],
-                                fontWeight: FontWeight.w500,
-                              ),
+                              style: ResponsiveHelper.bodyStyle(  // ⭐ 변경
+                                context,
+                                color: Theme.of(context).textTheme.bodyMedium?.color,
+                              ).copyWith(fontWeight: FontWeight.w500),
                             ),
                       ),
                     ],
@@ -601,12 +621,12 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
               ),
             ),
             
-            const SizedBox(height: 8),
+            SizedBox(height: ResponsiveHelper.spacing(context, 8)),  // ⭐ 변경
             Text(
               '⚠️ ${widget.to.isLongTerm ? "계약 기간과 근무 요일" : "날짜"}은(는) 수정할 수 없습니다. 변경하려면 TO를 삭제 후 다시 생성하세요.',
-              style: TextStyle(
-                fontSize: 12,
-                color: Colors.orange[700],
+              style: ResponsiveHelper.tinyStyle(  // ⭐ 변경
+                context,
+                color: Colors.orange,
               ),
             ),
           ],
@@ -619,18 +639,15 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
   Widget _buildTitleSection() {
     return Card(
       child: Padding(
-        padding: const EdgeInsets.all(16),
+        padding: ResponsiveHelper.cardPadding(context),  // ⭐ 변경
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text(
+            Text(
               'TO 제목',
-              style: TextStyle(
-                fontSize: 16,
-                fontWeight: FontWeight.bold,
-              ),
+              style: ResponsiveHelper.subtitleStyle(context),  // ⭐ 변경
             ),
-            const SizedBox(height: 12),
+            SizedBox(height: ResponsiveHelper.spacing(context, 12)),  // ⭐ 변경
             TextFormField(
               controller: _titleController,
               decoration: InputDecoration(
@@ -657,7 +674,7 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
   Widget _buildWorkDetailsSection() {
     return Card(
       child: Padding(
-        padding: const EdgeInsets.all(16),
+        padding: ResponsiveHelper.cardPadding(context),  // ⭐ 변경
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -666,33 +683,30 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
               children: [
                 Text(
                   '업무 목록 (${_workDetails.length}개)',
-                  style: const TextStyle(
-                    fontSize: 16,
-                    fontWeight: FontWeight.bold,
-                  ),
+                  style: ResponsiveHelper.subtitleStyle(context),  // ⭐ 변경
                 ),
                 ElevatedButton.icon(
                   onPressed: _showAddWorkDialog,
-                  icon: const Icon(Icons.add, size: 18),
+                  icon: Icon(Icons.add, size: ResponsiveHelper.iconSize(context, 18)),  // ⭐ 변경
                   label: const Text('업무 추가'),
                   style: ElevatedButton.styleFrom(
-                    backgroundColor: Colors.green[600],
+                    backgroundColor: Colors.green,
                     foregroundColor: Colors.white,
                   ),
                 ),
               ],
             ),
-            const SizedBox(height: 16),
+            SizedBox(height: ResponsiveHelper.spacing(context, 16)),  // ⭐ 변경
 
             if (_workDetails.isEmpty)
               Center(
                 child: Padding(
-                  padding: const EdgeInsets.all(24),
+                  padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 24)),  // ⭐ 변경
                   child: Text(
                     '등록된 업무가 없습니다',
-                    style: TextStyle(
-                      color: Colors.grey[600],
-                      fontSize: 14,
+                    style: ResponsiveHelper.bodyStyle(  // ⭐ 변경
+                      context,
+                      color: Theme.of(context).textTheme.bodySmall?.color,
                     ),
                   ),
                 ),
@@ -708,12 +722,14 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
   /// 업무 카드
   Widget _buildWorkCard(WorkDetailModel work) {
     return Container(
-      margin: const EdgeInsets.only(bottom: 12),
-      padding: const EdgeInsets.all(12),
+      margin: EdgeInsets.only(  // ⭐ const 제거
+        bottom: ResponsiveHelper.spacing(context, 12),  // ⭐ 변경
+      ),
+      padding: ResponsiveHelper.cardPadding(context),  // ⭐ 변경
       decoration: BoxDecoration(
-        color: Colors.grey[50],
+        color: Theme.of(context).colorScheme.surface,
         borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: Colors.grey[300]!),
+        border: Border.all(color: Theme.of(context).dividerColor),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -722,21 +738,21 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
             children: [
               // 아이콘
               Container(
-                width: 40,
-                height: 40,
+                width: ResponsiveHelper.iconSize(context, 40),  // ⭐ 변경
+                height: ResponsiveHelper.iconSize(context, 40),  // ⭐ 변경
                 decoration: BoxDecoration(
-                  color: FormatHelper.parseColor(work.workTypeBackgroundColor ?? '#2196F3'), // ✅ 수정
+                  color: FormatHelper.parseColor(work.workTypeBackgroundColor ?? '#2196F3'),
                   borderRadius: BorderRadius.circular(8),
                 ),
                 child: Center(
                   child: WorkTypeIcon.buildFromString(
                     work.workTypeIcon,
-                    color: FormatHelper.parseColor(work.workTypeColor), // ✅ 수정
-                    size: 20,
+                    color: FormatHelper.parseColor(work.workTypeColor),
+                    size: ResponsiveHelper.iconSize(context, 20),  // ⭐ 변경
                   ),
                 ),
               ),
-              const SizedBox(width: 12),
+              SizedBox(width: ResponsiveHelper.spacing(context, 12)),  // ⭐ 변경
               
               // 업무명
               Expanded(
@@ -745,17 +761,14 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
                   children: [
                     Text(
                       work.workType,
-                      style: const TextStyle(
-                        fontSize: 16,
-                        fontWeight: FontWeight.bold,
-                      ),
+                      style: ResponsiveHelper.subtitleStyle(context),  // ⭐ 변경
                     ),
-                    const SizedBox(height: 4),
+                    SizedBox(height: ResponsiveHelper.spacing(context, 4)),  // ⭐ 변경
                     Text(
                       '${work.timeRange} | ${work.formattedWage}',
-                      style: TextStyle(
-                        fontSize: 13,
-                        color: Colors.grey[700],
+                      style: ResponsiveHelper.smallStyle(  // ⭐ 변경
+                        context,
+                        color: Theme.of(context).textTheme.bodyMedium?.color,
                       ),
                     ),
                   ],
@@ -766,14 +779,20 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
               Row(
                 children: [
                   IconButton(
-                    icon: const Icon(Icons.edit, size: 20),
-                    color: Colors.orange[700],
+                    icon: Icon(
+                      Icons.edit, 
+                      size: ResponsiveHelper.iconSize(context, 20),  // ⭐ 변경
+                    ),
+                    color: Colors.orange,
                     onPressed: () => _showEditWorkDialog(work),
                     tooltip: '수정',
                   ),
                   IconButton(
-                    icon: const Icon(Icons.delete, size: 20),
-                    color: work.currentCount > 0 ? Colors.grey : Colors.red[700],
+                    icon: Icon(
+                      Icons.delete, 
+                      size: ResponsiveHelper.iconSize(context, 20),  // ⭐ 변경
+                    ),
+                    color: work.currentCount > 0 ? Colors.grey : Colors.red,
                     onPressed: work.currentCount > 0 ? null : () => _deleteWork(work),
                     tooltip: work.currentCount > 0 ? '지원자가 있어 삭제 불가' : '삭제',
                   ),
@@ -781,35 +800,41 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
               ),
             ],
           ),
-          const SizedBox(height: 8),
+          SizedBox(height: ResponsiveHelper.spacing(context, 8)),  // ⭐ 변경
           
           // 인원 정보
           Row(
             children: [
-              Icon(Icons.people, size: 16, color: Colors.grey[600]),
-              const SizedBox(width: 4),
+              Icon(
+                Icons.people, 
+                size: ResponsiveHelper.iconSize(context, 16),  // ⭐ 변경
+                color: Theme.of(context).textTheme.bodySmall?.color,
+              ),
+              SizedBox(width: ResponsiveHelper.spacing(context, 4)),  // ⭐ 변경
               Text(
                 '확정: ${work.currentCount}/${work.requiredCount}명',
-                style: TextStyle(
-                  fontSize: 13,
-                  color: Colors.grey[700],
+                style: ResponsiveHelper.smallStyle(  // ⭐ 변경
+                  context,
+                  color: Theme.of(context).textTheme.bodyMedium?.color,
                 ),
               ),
               if (work.currentCount > 0) ...[
-                const SizedBox(width: 8),
+                SizedBox(width: ResponsiveHelper.spacing(context, 8)),  // ⭐ 변경
                 Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                  padding: EdgeInsets.symmetric(
+                    horizontal: ResponsiveHelper.spacing(context, 6),  // ⭐ 변경
+                    vertical: ResponsiveHelper.spacing(context, 2),  // ⭐ 변경
+                  ),
                   decoration: BoxDecoration(
-                    color: Colors.orange[50],
+                    color: Colors.orange.withOpacity(0.1),
                     borderRadius: BorderRadius.circular(4),
                   ),
                   child: Text(
                     '지원자 있음',
-                    style: TextStyle(
-                      fontSize: 11,
-                      color: Colors.orange[700],
-                      fontWeight: FontWeight.bold,
-                    ),
+                    style: ResponsiveHelper.tinyStyle(  // ⭐ 변경
+                      context,
+                      color: Colors.orange,
+                    ).copyWith(fontWeight: FontWeight.bold),
                   ),
                 ),
               ],
@@ -819,44 +844,44 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
       ),
     );
   }
-
   /// 지원 마감 섹션
   Widget _buildDeadlineSection() {
     return Card(
       child: Padding(
-        padding: const EdgeInsets.all(16),
+        padding: ResponsiveHelper.cardPadding(context),  // ⭐ 변경
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text(
+            Text(
               '지원 마감 설정',
-              style: TextStyle(
-                fontSize: 16,
-                fontWeight: FontWeight.bold,
-              ),
+              style: ResponsiveHelper.subtitleStyle(context),  // ⭐ 변경
             ),
-            const SizedBox(height: 12),
+            SizedBox(height: ResponsiveHelper.spacing(context, 12)),  // ⭐ 변경
             
             // ⭐ 단기/장기 분기
             if (widget.to.isLongTerm) ...[
               // 🟣 장기 TO: 고정 시간 선택
               Container(
-                padding: const EdgeInsets.all(12),
+                padding: ResponsiveHelper.cardPadding(context),  // ⭐ 변경
                 decoration: BoxDecoration(
-                  color: Colors.purple[50],
+                  color: Colors.purple.withOpacity(0.1),
                   borderRadius: BorderRadius.circular(8),
-                  border: Border.all(color: Colors.purple[200]!),
+                  border: Border.all(color: Colors.purple.withOpacity(0.3)),
                 ),
                 child: Row(
                   children: [
-                    Icon(Icons.event_available, color: Colors.purple[700], size: 20),
-                    const SizedBox(width: 8),
+                    Icon(
+                      Icons.event_available, 
+                      color: Colors.purple,
+                      size: ResponsiveHelper.iconSize(context, 20),  // ⭐ 변경
+                    ),
+                    SizedBox(width: ResponsiveHelper.spacing(context, 8)),  // ⭐ 변경
                     Expanded(
                       child: Text(
                         '모든 업무가 동일한 마감 시간을 사용합니다',
-                        style: TextStyle(
-                          fontSize: 13,
-                          color: Colors.purple[900],
+                        style: ResponsiveHelper.smallStyle(  // ⭐ 변경
+                          context,
+                          color: Colors.purple,
                         ),
                       ),
                     ),
@@ -864,7 +889,7 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
                 ),
               ),
               
-              const SizedBox(height: 16),
+              SizedBox(height: ResponsiveHelper.spacing(context, 16)),  // ⭐ 변경
               
               // ⭐ 마감 시간 선택
               InkWell(
@@ -878,7 +903,7 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
                     context: context,
                     initialDate: initialDate,
                     firstDate: now,
-                    lastDate: widget.to.endDate ?? now.add(const Duration(days: 365)),  // ⭐ 이미 맞게 되어 있음!
+                    lastDate: widget.to.endDate ?? now.add(const Duration(days: 365)),
                     locale: const Locale('ko', 'KR'),
                   );
                   
@@ -897,7 +922,6 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
                         selectedTime.minute,
                       );
                       
-                      // ⭐ 검증 추가!
                       if (widget.to.endDate != null) {
                         final endDateTime = DateTime(
                           widget.to.endDate!.year,
@@ -920,40 +944,40 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
                   }
                 },
                 child: Container(
-                  padding: const EdgeInsets.all(16),
+                  padding: ResponsiveHelper.cardPadding(context),  // ⭐ 변경
                   decoration: BoxDecoration(
-                    border: Border.all(color: Colors.grey[300]!),
+                    border: Border.all(color: Theme.of(context).dividerColor),
                     borderRadius: BorderRadius.circular(8),
                   ),
                   child: Row(
                     children: [
-                      Icon(Icons.access_time, color: Colors.purple[700]),
-                      const SizedBox(width: 12),
+                      Icon(Icons.access_time, color: Colors.purple),
+                      SizedBox(width: ResponsiveHelper.spacing(context, 12)),  // ⭐ 변경
                       Expanded(
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            const Text(
+                            Text(
                               '지원 마감 일시',
-                              style: TextStyle(
-                                fontSize: 12,
-                                color: Colors.grey,
+                              style: ResponsiveHelper.tinyStyle(  // ⭐ 변경
+                                context,
+                                color: Theme.of(context).disabledColor,
                               ),
                             ),
-                            const SizedBox(height: 4),
+                            SizedBox(height: ResponsiveHelper.spacing(context, 4)),  // ⭐ 변경
                             Text(
                               DateFormat('yyyy년 MM월 dd일 HH:mm', 'ko_KR').format(
                                 _fixedDeadline ?? widget.to.applicationDeadline
                               ),
-                              style: const TextStyle(
-                                fontSize: 16,
-                                fontWeight: FontWeight.bold,
-                              ),
+                              style: ResponsiveHelper.subtitleStyle(context),  // ⭐ 변경
                             ),
                           ],
                         ),
                       ),
-                      const Icon(Icons.arrow_forward_ios, size: 16),
+                      Icon(
+                        Icons.arrow_forward_ios, 
+                        size: ResponsiveHelper.iconSize(context, 16),  // ⭐ 변경
+                      ),
                     ],
                   ),
                 ),
@@ -962,21 +986,25 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
             ] else ...[
               // 🔵 단기 TO: N시간 전 설정
               Container(
-                padding: const EdgeInsets.all(12),
+                padding: ResponsiveHelper.cardPadding(context),  // ⭐ 변경
                 decoration: BoxDecoration(
-                  color: Colors.blue[50],
+                  color: Theme.of(context).primaryColor.withOpacity(0.1),
                   borderRadius: BorderRadius.circular(8),
                 ),
                 child: Row(
                   children: [
-                    Icon(Icons.info_outline, color: Colors.blue[700], size: 20),
-                    const SizedBox(width: 8),
+                    Icon(
+                      Icons.info_outline, 
+                      color: Theme.of(context).primaryColor,
+                      size: ResponsiveHelper.iconSize(context, 20),  // ⭐ 변경
+                    ),
+                    SizedBox(width: ResponsiveHelper.spacing(context, 8)),  // ⭐ 변경
                     Expanded(
                       child: Text(
                         '각 업무별로 시작 시간 기준으로 자동 마감됩니다',
-                        style: TextStyle(
-                          fontSize: 13,
-                          color: Colors.blue[900],
+                        style: ResponsiveHelper.smallStyle(  // ⭐ 변경
+                          context,
+                          color: Theme.of(context).primaryColor,
                         ),
                       ),
                     ),
@@ -984,16 +1012,18 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
                 ),
               ),
               
-              const SizedBox(height: 16),
+              SizedBox(height: ResponsiveHelper.spacing(context, 16)),  // ⭐ 변경
               
               // 시간 선택
               Row(
                 children: [
-                  const Text(
+                  Text(
                     '업무 시작',
-                    style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold),
+                    style: ResponsiveHelper.bodyStyle(context).copyWith(  // ⭐ 변경
+                      fontWeight: FontWeight.bold,
+                    ),
                   ),
-                  const SizedBox(width: 16),
+                  SizedBox(width: ResponsiveHelper.spacing(context, 16)),  // ⭐ 변경
                   DropdownButton<int>(
                     value: _hoursBeforeStart,
                     items: List.generate(24, (index) => index + 1)
@@ -1008,8 +1038,11 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
                       });
                     },
                   ),
-                  const SizedBox(width: 8),
-                  const Text('마감', style: TextStyle(fontSize: 14)),
+                  SizedBox(width: ResponsiveHelper.spacing(context, 8)),  // ⭐ 변경
+                  Text(
+                    '마감', 
+                    style: ResponsiveHelper.bodyStyle(context),  // ⭐ 변경
+                  ),
                 ],
               ),
             ],
@@ -1023,18 +1056,15 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
   Widget _buildDescriptionSection() {
     return Card(
       child: Padding(
-        padding: const EdgeInsets.all(16),
+        padding: ResponsiveHelper.cardPadding(context),  // ⭐ 변경
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text(
+            Text(
               '설명',
-              style: TextStyle(
-                fontSize: 16,
-                fontWeight: FontWeight.bold,
-              ),
+              style: ResponsiveHelper.subtitleStyle(context),  // ⭐ 변경
             ),
-            const SizedBox(height: 12),
+            SizedBox(height: ResponsiveHelper.spacing(context, 12)),  // ⭐ 변경
             TextField(
               controller: _descriptionController,
               decoration: InputDecoration(

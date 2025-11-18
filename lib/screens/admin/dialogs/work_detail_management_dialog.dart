@@ -6,6 +6,7 @@ import '../../../models/core/work_detail_model.dart';
 import '../../../services/firestore_service.dart';
 import '../../../utils/toast_helper.dart';
 import '../../../utils/format_helper.dart';
+import '../../../utils/responsive_helper.dart';  // ⭐ 추가
 import '../../../widgets/work_type_icon.dart';
 import '../../../models/ui/admin_to_list_ui_models.dart';
 import '../../../utils/dialog_helper.dart';
@@ -61,8 +62,8 @@ class WorkDetailManagementDialog {
           return AlertDialog(
             title: Row(
               children: [
-                Icon(Icons.task_alt, color: Colors.purple[600]),
-                const SizedBox(width: 8),
+                Icon(Icons.task_alt, color: Colors.purple),
+                SizedBox(width: ResponsiveHelper.spacing(context, 8)),  // ⭐ 변경
                 const Text('업무별 마감 관리'),
               ],
             ),
@@ -78,7 +79,7 @@ class WorkDetailManagementDialog {
                     selectedWorkDetails,
                     setDialogState,
                   ),
-                  const SizedBox(height: 12),
+                  SizedBox(height: ResponsiveHelper.spacing(context, 12)),  // ⭐ 변경
                   
                   ..._buildWorkDetailCards(
                     selectedWorkDetails,
@@ -122,9 +123,9 @@ class WorkDetailManagementDialog {
     StateSetter setState,
   ) {
     return Container(
-      padding: const EdgeInsets.all(12),
+      padding: ResponsiveHelper.cardPadding(context),  // ⭐ 변경
       decoration: BoxDecoration(
-        color: Colors.grey[100],
+        color: Theme.of(context).colorScheme.surface,
         borderRadius: BorderRadius.circular(8),
       ),
       child: Row(
@@ -151,28 +152,26 @@ class WorkDetailManagementDialog {
               children: [
                 Text(
                   selectedStatus == null ? '전체 선택' : '같은 상태만 선택',
-                  style: const TextStyle(
+                  style: ResponsiveHelper.bodyStyle(context).copyWith(  // ⭐ 변경
                     fontWeight: FontWeight.bold,
-                    fontSize: 14,
                   ),
                 ),
                 if (selectedStatus != null)
                   Text(
                     _getStatusLabel(selectedStatus),
-                    style: TextStyle(
-                      fontSize: 11,
+                    style: ResponsiveHelper.tinyStyle(  // ⭐ 변경
+                      context,
                       color: _getStatusColor(selectedStatus),
-                      fontWeight: FontWeight.bold,
-                    ),
+                    ).copyWith(fontWeight: FontWeight.bold),
                   ),
               ],
             ),
           ),
           Text(
             '${selectedWorkDetails.length}/${selectedStatus == null ? toItem.workDetails.length : selectableWorks.length}개 선택',
-            style: TextStyle(
-              fontSize: 12,
-              color: Colors.grey[600],
+            style: ResponsiveHelper.tinyStyle(  // ⭐ 변경
+              context,
+              color: Theme.of(context).textTheme.bodySmall?.color,
             ),
           ),
         ],
@@ -198,17 +197,19 @@ class WorkDetailManagementDialog {
       return Opacity(
         opacity: isEnabled ? 1.0 : 0.4,
         child: Container(
-          margin: const EdgeInsets.only(bottom: 8),
-          padding: const EdgeInsets.all(12),
+          margin: EdgeInsets.only(bottom: ResponsiveHelper.spacing(context, 8)),  // ⭐ 변경
+          padding: ResponsiveHelper.cardPadding(context),  // ⭐ 변경
           decoration: BoxDecoration(
-            color: isSelected ? Colors.blue[50] : Colors.white,
+            color: isSelected 
+                ? Theme.of(context).primaryColor.withOpacity(0.1)
+                : Theme.of(context).cardColor,
             borderRadius: BorderRadius.circular(8),
             border: Border.all(
               color: isSelected 
-                ? Colors.blue[300]! 
+                ? Theme.of(context).primaryColor
                 : isEnabled 
-                  ? Colors.grey[300]! 
-                  : Colors.grey[200]!,
+                  ? Theme.of(context).dividerColor
+                  : Theme.of(context).disabledColor,
               width: isSelected ? 2 : 1,
             ),
           ),
@@ -230,8 +231,8 @@ class WorkDetailManagementDialog {
               ),
               
               Container(
-                width: 32,
-                height: 32,
+                width: ResponsiveHelper.iconSize(context, 32),  // ⭐ 변경
+                height: ResponsiveHelper.iconSize(context, 32),  // ⭐ 변경
                 decoration: BoxDecoration(
                   color: FormatHelper.parseColor(work.workTypeColor),
                   borderRadius: BorderRadius.circular(6),
@@ -240,11 +241,11 @@ class WorkDetailManagementDialog {
                   child: WorkTypeIcon.buildFromString(
                     work.workTypeIcon,
                     color: Colors.white,
-                    size: 16,
+                    size: ResponsiveHelper.iconSize(context, 16),  // ⭐ 변경
                   ),
                 ),
               ),
-              const SizedBox(width: 12),
+              SizedBox(width: ResponsiveHelper.spacing(context, 12)),  // ⭐ 변경
               
               Expanded(
                 child: Column(
@@ -252,17 +253,16 @@ class WorkDetailManagementDialog {
                   children: [
                     Text(
                       work.workType,
-                      style: const TextStyle(
+                      style: ResponsiveHelper.bodyStyle(context).copyWith(  // ⭐ 변경
                         fontWeight: FontWeight.bold,
-                        fontSize: 14,
                       ),
                     ),
-                    const SizedBox(height: 4),
+                    SizedBox(height: ResponsiveHelper.spacing(context, 4)),  // ⭐ 변경
                     Text(
                       '${work.startTime}~${work.endTime} | ${NumberFormat('#,###').format(work.wage)}원',
-                      style: TextStyle(
-                        fontSize: 11,
-                        color: Colors.grey[600],
+                      style: ResponsiveHelper.tinyStyle(  // ⭐ 변경
+                        context,
+                        color: Theme.of(context).textTheme.bodySmall?.color,
                       ),
                     ),
                   ],
@@ -273,7 +273,10 @@ class WorkDetailManagementDialog {
                 crossAxisAlignment: CrossAxisAlignment.end,
                 children: [
                   Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
+                    padding: EdgeInsets.symmetric(
+                      horizontal: ResponsiveHelper.spacing(context, 6),  // ⭐ 변경
+                      vertical: ResponsiveHelper.spacing(context, 3),  // ⭐ 변경
+                    ),
                     decoration: BoxDecoration(
                       color: _getStatusColor(workStatus).withOpacity(0.1),
                       borderRadius: BorderRadius.circular(8),
@@ -283,28 +286,25 @@ class WorkDetailManagementDialog {
                     ),
                     child: Text(
                       _getStatusLabel(workStatus),
-                      style: TextStyle(
-                        fontSize: 10,
-                        fontWeight: FontWeight.bold,
+                      style: ResponsiveHelper.tinyStyle(  // ⭐ 변경
+                        context,
                         color: _getStatusColor(workStatus),
-                      ),
+                      ).copyWith(fontWeight: FontWeight.bold),
                     ),
                   ),
-                  const SizedBox(height: 4),
+                  SizedBox(height: ResponsiveHelper.spacing(context, 4)),  // ⭐ 변경
                   Text(
                     '확정 $confirmed/${work.requiredCount}명',
-                    style: TextStyle(
-                      fontSize: 11,
-                      fontWeight: FontWeight.bold,
-                      color: Colors.grey[700],
-                    ),
+                    style: ResponsiveHelper.tinyStyle(  // ⭐ 변경
+                      context,
+                    ).copyWith(fontWeight: FontWeight.bold),
                   ),
                   if (pending > 0)
                     Text(
                       '대기 $pending명',
-                      style: TextStyle(
-                        fontSize: 11,
-                        color: Colors.orange[700],
+                      style: ResponsiveHelper.tinyStyle(  // ⭐ 변경
+                        context,
+                        color: Colors.orange,
                       ),
                     ),
                 ],
@@ -328,7 +328,7 @@ class WorkDetailManagementDialog {
       case 'ACTIVE':
         return ElevatedButton.icon(
           onPressed: () => _handleBulkClose(selectedWorks),
-          icon: const Icon(Icons.lock, size: 16),
+          icon: Icon(Icons.lock, size: ResponsiveHelper.iconSize(context, 16)),  // ⭐ 변경
           label: Text('${selectedWorks.length}개 마감'),
           style: ElevatedButton.styleFrom(
             backgroundColor: Colors.red,
@@ -339,7 +339,7 @@ class WorkDetailManagementDialog {
       case 'CLOSED':
         return ElevatedButton.icon(
           onPressed: () => _handleBulkReopen(selectedWorks),
-          icon: const Icon(Icons.lock_open, size: 16),
+          icon: Icon(Icons.lock_open, size: ResponsiveHelper.iconSize(context, 16)),  // ⭐ 변경
           label: Text('${selectedWorks.length}개 재오픈'),
           style: ElevatedButton.styleFrom(
             backgroundColor: Colors.green,
@@ -347,7 +347,7 @@ class WorkDetailManagementDialog {
           ),
         );
       
-      case 'TIME_EXPIRED':  // 🔥 추가!
+      case 'TIME_EXPIRED':
         return ElevatedButton.icon(
           onPressed: () {
             showDialog(
@@ -364,10 +364,10 @@ class WorkDetailManagementDialog {
               ),
             );
           },
-          icon: const Icon(Icons.schedule, size: 16),
+          icon: Icon(Icons.schedule, size: ResponsiveHelper.iconSize(context, 16)),  // ⭐ 변경
           label: Text('시간 만료 (${selectedWorks.length})'),
           style: ElevatedButton.styleFrom(
-            backgroundColor: Colors.grey[400],
+            backgroundColor: Theme.of(context).disabledColor,
             foregroundColor: Colors.white,
           ),
         );
@@ -375,25 +375,24 @@ class WorkDetailManagementDialog {
       case 'FULL':
         return ElevatedButton.icon(
           onPressed: () {
-            // ⭐ 변경: DialogHelper 사용
             DialogHelper.showInfo(
               context,
               title: '알림',
               message: '인원이 충족된 업무입니다.',
             );
           },
-          icon: const Icon(Icons.check_circle, size: 16),
+          icon: Icon(Icons.check_circle, size: ResponsiveHelper.iconSize(context, 16)),  // ⭐ 변경
           label: Text('인원충족 (${selectedWorks.length})'),
           style: ElevatedButton.styleFrom(
-            backgroundColor: Colors.green[400],
+            backgroundColor: Colors.green,
             foregroundColor: Colors.white,
           ),
         );
       
-      case 'EMERGENCY':  // 🔥 추가!
+      case 'EMERGENCY':
         return ElevatedButton.icon(
           onPressed: () => _handleBulkStopEmergency(selectedWorks),
-          icon: const Icon(Icons.warning_amber, size: 16),
+          icon: Icon(Icons.warning_amber, size: ResponsiveHelper.iconSize(context, 16)),  // ⭐ 변경
           label: Text('긴급모집 종료 (${selectedWorks.length})'),
           style: ElevatedButton.styleFrom(
             backgroundColor: Colors.orange,
@@ -409,7 +408,6 @@ class WorkDetailManagementDialog {
 
   // 🔥 긴급모집 종료 메서드 추가
   Future<void> _handleBulkStopEmergency(List<WorkDetailModel> works) async {
-    // ⭐ 변경: DialogHelper 사용
     final confirm = await DialogHelper.showConfirm(
       context,
       title: '긴급모집 종료',
@@ -455,18 +453,17 @@ class WorkDetailManagementDialog {
 
   Color _getStatusColor(String status) {
     switch (status) {
-      case 'TIME_EXPIRED': return Colors.grey[600]!;
-      case 'CLOSED': return Colors.grey[600]!;
-      case 'EMERGENCY': return Colors.red[600]!;
-      case 'FULL': return Colors.green[600]!;
-      case 'ACTIVE': return Colors.blue[600]!;
-      default: return Colors.grey[600]!;
+      case 'TIME_EXPIRED': return Colors.grey;
+      case 'CLOSED': return Colors.grey;
+      case 'EMERGENCY': return Colors.red;
+      case 'FULL': return Colors.green;
+      case 'ACTIVE': return Colors.blue;
+      default: return Colors.grey;
     }
   }
 
   // 일괄 처리
   Future<void> _handleBulkClose(List<WorkDetailModel> works) async {
-    // ⭐ 변경: DialogHelper 사용
     final confirm = await DialogHelper.showConfirm(
       context,
       title: '업무 마감',
@@ -491,7 +488,6 @@ class WorkDetailManagementDialog {
   }
 
   Future<void> _handleBulkReopen(List<WorkDetailModel> works) async {
-    // ⭐ 변경: DialogHelper 사용
     final confirm = await DialogHelper.showConfirm(
       context,
       title: '업무 재오픈',

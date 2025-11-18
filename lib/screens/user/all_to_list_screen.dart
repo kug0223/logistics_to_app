@@ -7,6 +7,7 @@ import '../../providers/user_provider.dart';
 import '../../widgets/common/loading_widget.dart';
 import '../../widgets/cards/user_to_card.dart';
 import '../../utils/toast_helper.dart';
+import '../../utils/responsive_helper.dart';  // ⭐ 추가
 import '../../widgets/inputs/filter_dialog.dart';
 
 
@@ -44,7 +45,7 @@ class _AllTOListScreenState extends State<AllTOListScreen> {
 
   /// 전체 TO 목록 로드
   Future<void> _loadAllTOs() async {
-    print('🔄 _loadAllTOs 호출됨!'); // ✅ 디버깅 로그
+    print('🔄 _loadAllTOs 호출됨!');
     setState(() => _isLoading = true);
 
     try {
@@ -190,12 +191,14 @@ class _AllTOListScreenState extends State<AllTOListScreen> {
       _filteredTOList = filtered;
     });
   }
+  
   /// TO 선택/해제
   void _toggleTOSelection(String toId) {
     setState(() {
       _selectedTOId = _selectedTOId == toId ? null : toId;
     });
   }
+  
   /// ✅ 내 지원 내역만 새로고침 (TO 목록은 유지)
   Future<void> _refreshMyApplications() async {
     try {
@@ -258,7 +261,7 @@ class _AllTOListScreenState extends State<AllTOListScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-        appBar: AppBar(
+      appBar: AppBar(
         title: const Text('지원하기'),
         actions: [
           // 필터 버튼
@@ -271,20 +274,21 @@ class _AllTOListScreenState extends State<AllTOListScreen> {
                     right: 0,
                     top: 0,
                     child: Container(
-                      padding: const EdgeInsets.all(2),
-                      decoration: BoxDecoration(
+                      padding: EdgeInsets.all(  // ⭐ const 제거
+                        ResponsiveHelper.spacing(context, 2),  // ⭐ 변경
+                      ),
+                      decoration: const BoxDecoration(
                         color: Colors.red,
                         shape: BoxShape.circle,
                       ),
-                      constraints: const BoxConstraints(
-                        minWidth: 16,
-                        minHeight: 16,
+                      constraints: BoxConstraints(
+                        minWidth: ResponsiveHelper.iconSize(context, 16),  // ⭐ 변경
+                        minHeight: ResponsiveHelper.iconSize(context, 16),  // ⭐ 변경
                       ),
                       child: Text(
                         '${_getActiveFilterCount()}',
-                        style: const TextStyle(
+                        style: ResponsiveHelper.tinyStyle(context).copyWith(  // ⭐ 변경
                           color: Colors.white,
-                          fontSize: 10,
                           fontWeight: FontWeight.bold,
                         ),
                         textAlign: TextAlign.center,
@@ -299,28 +303,28 @@ class _AllTOListScreenState extends State<AllTOListScreen> {
         ],
       ),
       body: _isLoading
-      ? const LoadingWidget(message: 'TO 목록을 불러오는 중...')
-      : _filteredTOList.isEmpty
-          ? _buildEmptyState()
-          : RefreshIndicator(
-              onRefresh: _loadAllTOs,
-              child: ListView.builder(
-                padding: const EdgeInsets.all(16),
-                itemCount: _filteredTOList.length,
-                itemBuilder: (context, index) {
-                  final to = _filteredTOList[index];
-                  final isSelected = _selectedTOId == to.id;
-                  
-                  return UserTOCard(
-                    to: to,
-                    isSelected: isSelected,
-                    onTap: () => _toggleTOSelection(to.id),
-                    myApplications: _myApplications,
-                    onApplySuccess: _refreshMyApplications,
-                  );
-                },
-              ),
-            ),
+          ? const LoadingWidget(message: 'TO 목록을 불러오는 중...')
+          : _filteredTOList.isEmpty
+              ? _buildEmptyState()
+              : RefreshIndicator(
+                  onRefresh: _loadAllTOs,
+                  child: ListView.builder(
+                    padding: ResponsiveHelper.cardPadding(context),  // ⭐ 변경
+                    itemCount: _filteredTOList.length,
+                    itemBuilder: (context, index) {
+                      final to = _filteredTOList[index];
+                      final isSelected = _selectedTOId == to.id;
+                      
+                      return UserTOCard(
+                        to: to,
+                        isSelected: isSelected,
+                        onTap: () => _toggleTOSelection(to.id),
+                        myApplications: _myApplications,
+                        onApplySuccess: _refreshMyApplications,
+                      );
+                    },
+                  ),
+                ),
     );
   }
 
@@ -330,24 +334,29 @@ class _AllTOListScreenState extends State<AllTOListScreen> {
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          Icon(Icons.search_off, size: 80, color: Colors.grey[400]),
-          const SizedBox(height: 16),
+          Icon(
+            Icons.search_off, 
+            size: ResponsiveHelper.iconSize(context, 80),  // ⭐ 변경
+            color: Theme.of(context).disabledColor,
+          ),
+          SizedBox(height: ResponsiveHelper.spacing(context, 16)),  // ⭐ 변경
           Text(
             '조건에 맞는 TO가 없습니다',
-            style: TextStyle(
-              fontSize: 18,
-              color: Colors.grey[600],
-              fontWeight: FontWeight.w500,
-            ),
+            style: ResponsiveHelper.titleStyle(  // ⭐ 변경
+              context,
+              color: Theme.of(context).textTheme.bodySmall?.color,
+            ).copyWith(fontWeight: FontWeight.w500),
           ),
-          const SizedBox(height: 8),
+          SizedBox(height: ResponsiveHelper.spacing(context, 8)),  // ⭐ 변경
           Text(
             '필터를 변경하거나 새로고침해보세요',
-            style: TextStyle(fontSize: 14, color: Colors.grey[500]),
+            style: ResponsiveHelper.bodyStyle(  // ⭐ 변경
+              context,
+              color: Theme.of(context).disabledColor,
+            ),
           ),
         ],
       ),
     );
   }
-
 }

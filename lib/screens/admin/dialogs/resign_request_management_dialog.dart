@@ -3,6 +3,7 @@ import 'package:intl/intl.dart';
 import '../../../models/core/application_model.dart';
 import '../../../services/firestore_service.dart';
 import '../../../utils/toast_helper.dart';
+import '../../../utils/responsive_helper.dart';  // ⭐ 추가
 import '../../../utils/dialog_helper.dart';
 
 /// 퇴사 요청 관리 다이얼로그 (관리자용)
@@ -80,9 +81,9 @@ class _ResignRequestManagementDialogState
           children: [
             // 헤더
             Container(
-              padding: const EdgeInsets.all(16),
+              padding: ResponsiveHelper.cardPadding(context),  // ⭐ 변경
               decoration: BoxDecoration(
-                color: Colors.blue[700],
+                color: Theme.of(context).primaryColor,
                 borderRadius: const BorderRadius.only(
                   topLeft: Radius.circular(4),
                   topRight: Radius.circular(4),
@@ -91,12 +92,10 @@ class _ResignRequestManagementDialogState
               child: Row(
                 children: [
                   const Icon(Icons.exit_to_app, color: Colors.white),
-                  const SizedBox(width: 12),
-                  const Text(
+                  SizedBox(width: ResponsiveHelper.spacing(context, 12)),  // ⭐ 변경
+                  Text(
                     '퇴사 요청 관리',
-                    style: TextStyle(
-                      fontSize: 18,
-                      fontWeight: FontWeight.bold,
+                    style: ResponsiveHelper.titleStyle(context).copyWith(  // ⭐ 변경
                       color: Colors.white,
                     ),
                   ),
@@ -116,7 +115,7 @@ class _ResignRequestManagementDialogState
                   : _requests.isEmpty
                       ? _buildEmptyState()
                       : ListView.builder(
-                          padding: const EdgeInsets.all(16),
+                          padding: ResponsiveHelper.cardPadding(context),  // ⭐ 변경
                           itemCount: _requests.length,
                           itemBuilder: (context, index) {
                             return _buildRequestCard(_requests[index]);
@@ -135,13 +134,17 @@ class _ResignRequestManagementDialogState
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          Icon(Icons.inbox, size: 64, color: Colors.grey[400]),
-          const SizedBox(height: 16),
+          Icon(
+            Icons.inbox, 
+            size: ResponsiveHelper.iconSize(context, 64),  // ⭐ 변경
+            color: Theme.of(context).disabledColor,
+          ),
+          SizedBox(height: ResponsiveHelper.spacing(context, 16)),  // ⭐ 변경
           Text(
             '퇴사 요청이 없습니다',
-            style: TextStyle(
-              fontSize: 16,
-              color: Colors.grey[600],
+            style: ResponsiveHelper.subtitleStyle(  // ⭐ 변경
+              context,
+              color: Theme.of(context).textTheme.bodySmall?.color,
             ),
           ),
         ],
@@ -156,17 +159,19 @@ class _ResignRequestManagementDialogState
     final isUrgent = daysLeft <= 1;
 
     return Card(
-      margin: const EdgeInsets.only(bottom: 12),
+      margin: EdgeInsets.only(  // ⭐ const 제거
+        bottom: ResponsiveHelper.spacing(context, 12),  // ⭐ 변경
+      ),
       elevation: 2,
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(12),
         side: BorderSide(
-          color: isUrgent ? Colors.red[300]! : Colors.grey[300]!,
+          color: isUrgent ? Colors.red.withOpacity(0.5) : Theme.of(context).dividerColor,
           width: isUrgent ? 2 : 1,
         ),
       ),
       child: Padding(
-        padding: const EdgeInsets.all(16),
+        padding: ResponsiveHelper.cardPadding(context),  // ⭐ 변경
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -174,32 +179,31 @@ class _ResignRequestManagementDialogState
             Row(
               children: [
                 CircleAvatar(
-                  backgroundColor: Colors.blue[100],
+                  backgroundColor: Theme.of(context).primaryColor.withOpacity(0.2),
                   child: Text(
                     item.userName[0],
-                    style: TextStyle(
-                      color: Colors.blue[900],
+                    style: ResponsiveHelper.bodyStyle(context).copyWith(  // ⭐ 변경
+                      color: Theme.of(context).primaryColor,
                       fontWeight: FontWeight.bold,
                     ),
                   ),
                 ),
-                const SizedBox(width: 12),
+                SizedBox(width: ResponsiveHelper.spacing(context, 12)),  // ⭐ 변경
                 Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
                         item.userName,
-                        style: const TextStyle(
-                          fontSize: 16,
+                        style: ResponsiveHelper.subtitleStyle(context).copyWith(  // ⭐ 변경
                           fontWeight: FontWeight.bold,
                         ),
                       ),
                       Text(
                         item.userPhone,
-                        style: TextStyle(
-                          fontSize: 13,
-                          color: Colors.grey[600],
+                        style: ResponsiveHelper.smallStyle(  // ⭐ 변경
+                          context,
+                          color: Theme.of(context).textTheme.bodySmall?.color,
                         ),
                       ),
                     ],
@@ -208,53 +212,56 @@ class _ResignRequestManagementDialogState
                 // 긴급 배지
                 if (isUrgent)
                   Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 8,
-                      vertical: 4,
+                    padding: EdgeInsets.symmetric(
+                      horizontal: ResponsiveHelper.spacing(context, 8),  // ⭐ 변경
+                      vertical: ResponsiveHelper.spacing(context, 4),  // ⭐ 변경
                     ),
                     decoration: BoxDecoration(
-                      color: Colors.red[50],
+                      color: Colors.red.withOpacity(0.1),
                       borderRadius: BorderRadius.circular(4),
-                      border: Border.all(color: Colors.red[300]!),
+                      border: Border.all(color: Colors.red.withOpacity(0.5)),
                     ),
                     child: Row(
                       mainAxisSize: MainAxisSize.min,
                       children: [
-                        Icon(Icons.warning, size: 14, color: Colors.red[700]),
-                        const SizedBox(width: 4),
+                        Icon(
+                          Icons.warning, 
+                          size: ResponsiveHelper.iconSize(context, 14),  // ⭐ 변경
+                          color: Colors.red,
+                        ),
+                        SizedBox(width: ResponsiveHelper.spacing(context, 4)),  // ⭐ 변경
                         Text(
                           '긴급',
-                          style: TextStyle(
-                            fontSize: 12,
-                            fontWeight: FontWeight.bold,
-                            color: Colors.red[700],
-                          ),
+                          style: ResponsiveHelper.tinyStyle(  // ⭐ 변경
+                            context,
+                            color: Colors.red,
+                          ).copyWith(fontWeight: FontWeight.bold),
                         ),
                       ],
                     ),
                   ),
               ],
             ),
-            const SizedBox(height: 16),
+            SizedBox(height: ResponsiveHelper.spacing(context, 16)),  // ⭐ 변경
 
             // 근무 정보
             Container(
-              padding: const EdgeInsets.all(12),
+              padding: ResponsiveHelper.cardPadding(context),  // ⭐ 변경
               decoration: BoxDecoration(
-                color: Colors.grey[50],
+                color: Theme.of(context).colorScheme.surface,
                 borderRadius: BorderRadius.circular(8),
               ),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   _buildInfoRow(Icons.business, '사업장', app.businessName),
-                  const SizedBox(height: 8),
+                  SizedBox(height: ResponsiveHelper.spacing(context, 8)),  // ⭐ 변경
                   _buildInfoRow(
                     Icons.calendar_today,
                     '근무 기간',
                     app.workPeriodDisplay,
                   ),
-                  const SizedBox(height: 8),
+                  SizedBox(height: ResponsiveHelper.spacing(context, 8)),  // ⭐ 변경
                   if (app.workDaysDisplay != null)
                     _buildInfoRow(
                       Icons.event_repeat,
@@ -264,73 +271,78 @@ class _ResignRequestManagementDialogState
                 ],
               ),
             ),
-            const SizedBox(height: 12),
+            SizedBox(height: ResponsiveHelper.spacing(context, 12)),  // ⭐ 변경
 
             // 퇴사 요청 정보
             Container(
-              padding: const EdgeInsets.all(12),
+              padding: ResponsiveHelper.cardPadding(context),  // ⭐ 변경
               decoration: BoxDecoration(
-                color: Colors.orange[50],
+                color: Colors.orange.withOpacity(0.1),
                 borderRadius: BorderRadius.circular(8),
-                border: Border.all(color: Colors.orange[200]!),
+                border: Border.all(color: Colors.orange.withOpacity(0.3)),
               ),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Row(
                     children: [
-                      Icon(Icons.exit_to_app,
-                          size: 16, color: Colors.orange[700]),
-                      const SizedBox(width: 8),
+                      Icon(
+                        Icons.exit_to_app,
+                        size: ResponsiveHelper.iconSize(context, 16),  // ⭐ 변경
+                        color: Colors.orange,
+                      ),
+                      SizedBox(width: ResponsiveHelper.spacing(context, 8)),  // ⭐ 변경
                       Text(
                         '퇴사 희망일: ${DateFormat('yyyy년 M월 d일').format(app.resignRequestDate!)}',
-                        style: TextStyle(
-                          fontSize: 14,
-                          fontWeight: FontWeight.bold,
-                          color: Colors.orange[900],
-                        ),
+                        style: ResponsiveHelper.bodyStyle(  // ⭐ 변경
+                          context,
+                          color: Colors.orange,
+                        ).copyWith(fontWeight: FontWeight.bold),
                       ),
                     ],
                   ),
-                  const SizedBox(height: 8),
+                  SizedBox(height: ResponsiveHelper.spacing(context, 8)),  // ⭐ 변경
                   Row(
                     children: [
-                      Icon(Icons.schedule, size: 16, color: Colors.orange[700]),
-                      const SizedBox(width: 8),
+                      Icon(
+                        Icons.schedule, 
+                        size: ResponsiveHelper.iconSize(context, 16),  // ⭐ 변경
+                        color: Colors.orange,
+                      ),
+                      SizedBox(width: ResponsiveHelper.spacing(context, 8)),  // ⭐ 변경
                       Text(
                         '요청일: ${DateFormat('M월 d일 HH:mm').format(app.resignRequestedAt!)}',
-                        style: TextStyle(
-                          fontSize: 13,
-                          color: Colors.orange[800],
+                        style: ResponsiveHelper.smallStyle(  // ⭐ 변경
+                          context,
+                          color: Colors.orange,
                         ),
                       ),
                     ],
                   ),
-                  const SizedBox(height: 8),
+                  SizedBox(height: ResponsiveHelper.spacing(context, 8)),  // ⭐ 변경
                   Row(
                     children: [
                       Icon(
                         isUrgent ? Icons.warning : Icons.info_outline,
-                        size: 16,
-                        color: isUrgent ? Colors.red[700] : Colors.orange[700],
+                        size: ResponsiveHelper.iconSize(context, 16),  // ⭐ 변경
+                        color: isUrgent ? Colors.red : Colors.orange,
                       ),
-                      const SizedBox(width: 8),
+                      SizedBox(width: ResponsiveHelper.spacing(context, 8)),  // ⭐ 변경
                       Text(
                         daysLeft > 0
                             ? '$daysLeft일 후 자동 승인'
                             : '오늘 자정 자동 승인',
-                        style: TextStyle(
-                          fontSize: 13,
-                          fontWeight: FontWeight.bold,
-                          color: isUrgent ? Colors.red[700] : Colors.orange[800],
-                        ),
+                        style: ResponsiveHelper.smallStyle(  // ⭐ 변경
+                          context,
+                          color: isUrgent ? Colors.red : Colors.orange,
+                        ).copyWith(fontWeight: FontWeight.bold),
                       ),
                     ],
                   ),
                 ],
               ),
             ),
-            const SizedBox(height: 16),
+            SizedBox(height: ResponsiveHelper.spacing(context, 16)),  // ⭐ 변경
 
             // 승인/거절 버튼
             Row(
@@ -346,7 +358,7 @@ class _ResignRequestManagementDialogState
                     ),
                   ),
                 ),
-                const SizedBox(width: 12),
+                SizedBox(width: ResponsiveHelper.spacing(context, 12)),  // ⭐ 변경
                 Expanded(
                   child: ElevatedButton.icon(
                     onPressed: () => _handleApprove(item),
@@ -370,20 +382,23 @@ class _ResignRequestManagementDialogState
   Widget _buildInfoRow(IconData icon, String label, String value) {
     return Row(
       children: [
-        Icon(icon, size: 14, color: Colors.grey[600]),
-        const SizedBox(width: 8),
+        Icon(
+          icon, 
+          size: ResponsiveHelper.iconSize(context, 14),  // ⭐ 변경
+          color: Theme.of(context).textTheme.bodySmall?.color,
+        ),
+        SizedBox(width: ResponsiveHelper.spacing(context, 8)),  // ⭐ 변경
         Text(
           '$label: ',
-          style: TextStyle(
-            fontSize: 13,
-            color: Colors.grey[600],
+          style: ResponsiveHelper.smallStyle(  // ⭐ 변경
+            context,
+            color: Theme.of(context).textTheme.bodySmall?.color,
           ),
         ),
         Expanded(
           child: Text(
             value,
-            style: const TextStyle(
-              fontSize: 13,
+            style: ResponsiveHelper.smallStyle(context).copyWith(  // ⭐ 변경
               fontWeight: FontWeight.w600,
             ),
           ),
@@ -442,12 +457,12 @@ class _ResignRequestManagementDialogState
           children: [
             Text(
               '${item.userName}님의 퇴사 요청을 거절하는 이유를 입력해주세요.',
-              style: TextStyle(
-                fontSize: 14,
-                color: Colors.grey[700],
+              style: ResponsiveHelper.bodyStyle(  // ⭐ 변경
+                context,
+                color: Theme.of(context).textTheme.bodyMedium?.color,
               ),
             ),
-            const SizedBox(height: 16),
+            SizedBox(height: ResponsiveHelper.spacing(context, 16)),  // ⭐ 변경
             TextField(
               controller: reasonController,
               maxLines: 3,

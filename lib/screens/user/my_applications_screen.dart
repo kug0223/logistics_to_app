@@ -10,6 +10,7 @@ import '../../widgets/common/styled_container.dart';
 import '../../utils/toast_helper.dart';
 import 'package:intl/intl.dart';
 import '../../utils/dialog_helper.dart';
+import '../../utils/responsive_helper.dart';  // ⭐ 추가
 
 
 /// 내 지원 내역 화면 - 신버전
@@ -144,7 +145,7 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
                     : RefreshIndicator(
                         onRefresh: _loadApplications,
                         child: ListView.builder(
-                          padding: const EdgeInsets.all(16),
+                          padding: ResponsiveHelper.cardPadding(context),
                           itemCount: _filteredApplications.length,
                           itemBuilder: (context, index) {
                             final item = _filteredApplications[index];
@@ -161,30 +162,34 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
   /// 필터 섹션
   Widget _buildFilterSection() {
     return Container(
-      padding: const EdgeInsets.symmetric(vertical: 12),
+      padding: EdgeInsets.symmetric(
+        vertical: ResponsiveHelper.spacing(context, 12),
+      ),
       color: Colors.grey[100],
       child: ScrollConfiguration(
         behavior: ScrollConfiguration.of(context).copyWith(
           dragDevices: {
             PointerDeviceKind.touch,
-            PointerDeviceKind.mouse, // ⭐ 마우스 드래그 활성화
+            PointerDeviceKind.mouse,
           },
         ),
         child: SingleChildScrollView(
           scrollDirection: Axis.horizontal,
-          padding: const EdgeInsets.symmetric(horizontal: 16),
+          padding: EdgeInsets.symmetric(
+            horizontal: ResponsiveHelper.spacing(context, 16),
+          ),
           child: Row(
             children: [
               _buildFilterChip('전체', 'ALL'),
-              const SizedBox(width: 8),
+              SizedBox(width: ResponsiveHelper.spacing(context, 8)),
               _buildFilterChip('대기중', 'PENDING'),
-              const SizedBox(width: 8),
+              SizedBox(width: ResponsiveHelper.spacing(context, 8)),
               _buildFilterChip('확정', 'CONFIRMED'),
-              const SizedBox(width: 8),
+              SizedBox(width: ResponsiveHelper.spacing(context, 8)),
               _buildFilterChip('거절', 'REJECTED'),
-              const SizedBox(width: 8),
+              SizedBox(width: ResponsiveHelper.spacing(context, 8)),
               _buildFilterChip('취소', 'CANCELED'),
-              const SizedBox(width: 8),
+              SizedBox(width: ResponsiveHelper.spacing(context, 8)),
             ],
           ),
         ),
@@ -230,7 +235,7 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
       child: FilterChip(
         avatar: Icon(
           icon,
-          size: 16, // ⭐ 18 → 16으로 축소
+          size: ResponsiveHelper.iconSize(context, 16),
           color: isSelected ? color[700] : color[400],
         ),
         label: Text(label),
@@ -247,13 +252,15 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
           width: isSelected ? 2 : 1,
         ),
         checkmarkColor: color[700],
-        labelStyle: TextStyle(
+        labelStyle: ResponsiveHelper.smallStyle(context).copyWith(
           color: isSelected ? color[900] : Colors.grey[700],
           fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
-          fontSize: 13, // ⭐ 폰트 크기 명시
         ),
-        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 6), // ⭐ 8 → 6으로 축소
-        materialTapTargetSize: MaterialTapTargetSize.shrinkWrap, // ⭐ 추가
+        padding: EdgeInsets.symmetric(
+          horizontal: ResponsiveHelper.spacing(context, 6),
+          vertical: ResponsiveHelper.spacing(context, 6),
+        ),
+        materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
         elevation: isSelected ? 2 : 0,
         shadowColor: color[200],
       ),
@@ -268,23 +275,22 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
         children: [
           Icon(
             Icons.assignment_outlined,
-            size: 80,
+            size: ResponsiveHelper.iconSize(context, 80),
             color: Colors.grey[400],
           ),
-          const SizedBox(height: 16),
+          SizedBox(height: ResponsiveHelper.spacing(context, 16)),
           Text(
             _selectedFilter == 'ALL' ? '지원 내역이 없습니다' : '해당 상태의 지원이 없습니다',
-            style: TextStyle(
-              fontSize: 18,
+            style: ResponsiveHelper.titleStyle(
+              context,
               color: Colors.grey[600],
-              fontWeight: FontWeight.w500,
-            ),
+            ).copyWith(fontWeight: FontWeight.w500),
           ),
-          const SizedBox(height: 8),
+          SizedBox(height: ResponsiveHelper.spacing(context, 8)),
           Text(
             'TO에 지원해보세요!',
-            style: TextStyle(
-              fontSize: 14,
+            style: ResponsiveHelper.bodyStyle(
+              context,
               color: Colors.grey[500],
             ),
           ),
@@ -292,30 +298,32 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
       ),
     );
   }
+
   /// ✅ 지원서 카드 (업무유형 + 금액 표시)
   Widget _buildApplicationCard(_ApplicationWithTO item) {
     final app = item.application;
     final to = item.to;
     final dateFormat = DateFormat('yyyy년 M월 d일');
     
-    // ⭐ Phase 4-2: 확정 여부 확인
     final isConfirmed = app.status == 'CONFIRMED';
 
     return Card(
-      margin: const EdgeInsets.only(bottom: 16),
-      elevation: isConfirmed ? 4 : 2, // ⭐ 확정되면 그림자 강화
+      margin: EdgeInsets.only(
+        bottom: ResponsiveHelper.spacing(context, 16),
+      ),
+      elevation: isConfirmed ? 4 : 2,
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(12),
         side: BorderSide(
           color: isConfirmed ? Colors.green[300]! : Colors.transparent,
-          width: isConfirmed ? 2 : 0, // ⭐ 확정되면 테두리
+          width: isConfirmed ? 2 : 0,
         ),
       ),
       child: Container(
         decoration: BoxDecoration(
           borderRadius: BorderRadius.circular(12),
           gradient: isConfirmed
-              ? LinearGradient( // ⭐ 확정되면 그라데이션 배경
+              ? LinearGradient(
                   colors: [
                     Colors.green[50]!,
                     Colors.white,
@@ -326,14 +334,14 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
               : null,
         ),
         child: Padding(
-          padding: const EdgeInsets.all(16),
+          padding: ResponsiveHelper.cardPadding(context),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              // ⭐ Phase 4-2: 확정 배너
+              // 확정 배너
               if (isConfirmed) ...[
                 _buildConfirmedBanner(),
-                const SizedBox(height: 12),
+                SizedBox(height: ResponsiveHelper.spacing(context, 12)),
               ],
               
               // 1행: 사업장명 + 상태 배지
@@ -343,10 +351,7 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
                   Expanded(
                     child: Text(
                       to.businessName,
-                      style: const TextStyle(
-                        fontSize: 18,
-                        fontWeight: FontWeight.bold,
-                      ),
+                      style: ResponsiveHelper.titleStyle(context),
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                     ),
@@ -355,25 +360,27 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
                 ],
               ),
               
-              const SizedBox(height: 8),
+              SizedBox(height: ResponsiveHelper.spacing(context, 8)),
               
               // TO 제목
               Text(
                 to.title,
-                style: TextStyle(
-                  fontSize: 15,
-                  fontWeight: FontWeight.w600,
+                style: ResponsiveHelper.subtitleStyle(
+                  context,
                   color: Colors.grey[800],
-                ),
+                ).copyWith(fontWeight: FontWeight.w600),
                 maxLines: 2,
                 overflow: TextOverflow.ellipsis,
               ),
               
-              // ⭐ Phase 1-B: 장기 공고 정보 표시
+              // 장기 공고 정보 표시
               if (app.isLongTermApplication) ...[
-                const SizedBox(height: 8),
+                SizedBox(height: ResponsiveHelper.spacing(context, 8)),
                 Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                  padding: EdgeInsets.symmetric(
+                    horizontal: ResponsiveHelper.spacing(context, 10),
+                    vertical: ResponsiveHelper.spacing(context, 6),
+                  ),
                   decoration: BoxDecoration(
                     color: Colors.purple[50],
                     borderRadius: BorderRadius.circular(6),
@@ -382,27 +389,31 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
                   child: Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      Icon(Icons.calendar_month, size: 16, color: Colors.purple[700]),
-                      const SizedBox(width: 6),
+                      Icon(
+                        Icons.calendar_month, 
+                        size: ResponsiveHelper.iconSize(context, 16), 
+                        color: Colors.purple[700]
+                      ),
+                      SizedBox(width: ResponsiveHelper.spacing(context, 6)),
                       Text(
-                        app.workPeriodDisplay,  // "11/1~11/30"
-                        style: TextStyle(
-                          fontSize: 13,
-                          fontWeight: FontWeight.w600,
+                        app.workPeriodDisplay,
+                        style: ResponsiveHelper.smallStyle(
+                          context,
                           color: Colors.purple[700],
+                          fontWeight: FontWeight.w600,
                         ),
                       ),
                       if (app.workDaysDisplay != null) ...[
-                        const SizedBox(width: 8),
+                        SizedBox(width: ResponsiveHelper.spacing(context, 8)),
                         Text(
                           '•',
                           style: TextStyle(color: Colors.purple[400]),
                         ),
-                        const SizedBox(width: 8),
+                        SizedBox(width: ResponsiveHelper.spacing(context, 8)),
                         Text(
-                          app.workDaysDisplay!,  // "주 5일 (월~금)"
-                          style: TextStyle(
-                            fontSize: 13,
+                          app.workDaysDisplay!,
+                          style: ResponsiveHelper.smallStyle(
+                            context,
                             color: Colors.purple[600],
                           ),
                         ),
@@ -412,7 +423,7 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
                 ),
               ],
               
-              const SizedBox(height: 12),
+              SizedBox(height: ResponsiveHelper.spacing(context, 12)),
               
               // 날짜 정보
               _buildInfoRow(
@@ -420,7 +431,7 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
                 '근무일',
                 '${dateFormat.format(to.date)} (${to.weekday})',
               ),
-              const SizedBox(height: 8),
+              SizedBox(height: ResponsiveHelper.spacing(context, 8)),
               
               // 시간 정보
               _buildInfoRow(
@@ -428,20 +439,20 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
                 '근무시간',
                 to.timeRange,
               ),
-              const SizedBox(height: 8),
+              SizedBox(height: ResponsiveHelper.spacing(context, 8)),
               
-              // ✅ 업무유형 + 금액
+              // 업무유형 + 금액
               _buildInfoRow(
                 Icons.work_outline,
                 '지원 업무',
                 '${app.selectedWorkType} | ${app.formattedWage}',
               ),
               
-              // ✅ 업무유형 변경 이력 표시
+              // 업무유형 변경 이력 표시
               if (app.isWorkTypeChanged) ...[
-                const SizedBox(height: 8),
+                SizedBox(height: ResponsiveHelper.spacing(context, 8)),
                 Container(
-                  padding: const EdgeInsets.all(8),
+                  padding: ResponsiveHelper.cardPadding(context),
                   decoration: BoxDecoration(
                     color: Colors.orange[50],
                     borderRadius: BorderRadius.circular(8),
@@ -449,13 +460,17 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
                   ),
                   child: Row(
                     children: [
-                      Icon(Icons.info_outline, size: 16, color: Colors.orange[700]),
-                      const SizedBox(width: 8),
+                      Icon(
+                        Icons.info_outline, 
+                        size: ResponsiveHelper.iconSize(context, 16), 
+                        color: Colors.orange[700]
+                      ),
+                      SizedBox(width: ResponsiveHelper.spacing(context, 8)),
                       Expanded(
                         child: Text(
                           '업무 변경: ${app.originalWorkType} → ${app.selectedWorkType}',
-                          style: TextStyle(
-                            fontSize: 12,
+                          style: ResponsiveHelper.smallStyle(
+                            context,
                             color: Colors.orange[900],
                             fontWeight: FontWeight.w600,
                           ),
@@ -466,31 +481,34 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
                 ),
               ],
               
-              const SizedBox(height: 12),
+              SizedBox(height: ResponsiveHelper.spacing(context, 12)),
               
               // 지원 날짜
               Text(
                 '지원일: ${DateFormat('yyyy.MM.dd HH:mm').format(app.appliedAt)}',
-                style: TextStyle(
-                  fontSize: 12,
+                style: ResponsiveHelper.smallStyle(
+                  context,
                   color: Colors.grey[600],
                 ),
               ),
               
-              // ⭐ Phase 4: 자동 취소 상세 정보
+              // 자동 취소 상세 정보
               if (app.status == 'AUTO_CANCELED' && app.conflictingBusiness != null) ...[
-                const SizedBox(height: 12),
+                SizedBox(height: ResponsiveHelper.spacing(context, 12)),
                 _buildConflictInfoCard(app),
               ],
               
               // 취소 버튼 (대기중일 때만)
               if (app.status == 'PENDING') ...[
-                const SizedBox(height: 12),
+                SizedBox(height: ResponsiveHelper.spacing(context, 12)),
                 SizedBox(
                   width: double.infinity,
                   child: OutlinedButton.icon(
                     onPressed: () => _cancelApplication(app.id),
-                    icon: const Icon(Icons.cancel_outlined, size: 18),
+                    icon: Icon(
+                      Icons.cancel_outlined, 
+                      size: ResponsiveHelper.iconSize(context, 18)
+                    ),
                     label: const Text('지원 취소'),
                     style: OutlinedButton.styleFrom(
                       foregroundColor: Colors.red,
@@ -505,10 +523,14 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
       ),
     );
   }
+
   /// Phase 4-2: 확정 근무 배너
   Widget _buildConfirmedBanner() {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      padding: EdgeInsets.symmetric(
+        horizontal: ResponsiveHelper.spacing(context, 12),
+        vertical: ResponsiveHelper.spacing(context, 10),
+      ),
       decoration: BoxDecoration(
         gradient: LinearGradient(
           colors: [Colors.green[400]!, Colors.green[600]!],
@@ -527,54 +549,54 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
       child: Row(
         children: [
           Container(
-            padding: const EdgeInsets.all(6),
+            padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 6)),
             decoration: BoxDecoration(
               color: Colors.white.withOpacity(0.3),
               borderRadius: BorderRadius.circular(6),
             ),
-            child: const Icon(
+            child: Icon(
               Icons.check_circle,
-              size: 20,
+              size: ResponsiveHelper.iconSize(context, 20),
               color: Colors.white,
             ),
           ),
-          const SizedBox(width: 10),
-          const Expanded(
+          SizedBox(width: ResponsiveHelper.spacing(context, 10)),
+          Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
                   '✨ 확정된 근무입니다',
-                  style: TextStyle(
-                    fontSize: 14,
-                    fontWeight: FontWeight.bold,
+                  style: ResponsiveHelper.bodyStyle(
+                    context,
                     color: Colors.white,
-                  ),
+                  ).copyWith(fontWeight: FontWeight.bold),
                 ),
-                SizedBox(height: 2),
+                SizedBox(height: ResponsiveHelper.spacing(context, 2)),
                 Text(
                   '근무 당일 출퇴근 체크를 잊지 마세요!',
-                  style: TextStyle(
-                    fontSize: 11,
+                  style: ResponsiveHelper.tinyStyle(
+                    context,
                     color: Colors.white,
                   ),
                 ),
               ],
             ),
           ),
-          const Icon(
+          Icon(
             Icons.arrow_forward_ios,
-            size: 16,
+            size: ResponsiveHelper.iconSize(context, 16),
             color: Colors.white,
           ),
         ],
       ),
     );
   }
+
   /// 자동 취소 충돌 정보 카드
   Widget _buildConflictInfoCard(ApplicationModel app) {
     return Container(
-      padding: const EdgeInsets.all(12),
+      padding: ResponsiveHelper.cardPadding(context),
       decoration: BoxDecoration(
         color: Colors.orange[50],
         borderRadius: BorderRadius.circular(8),
@@ -587,36 +609,35 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
           Row(
             children: [
               Container(
-                padding: const EdgeInsets.all(6),
+                padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 6)),
                 decoration: BoxDecoration(
                   color: Colors.orange[100],
                   borderRadius: BorderRadius.circular(6),
                 ),
                 child: Icon(
                   Icons.schedule_outlined,
-                  size: 18,
+                  size: ResponsiveHelper.iconSize(context, 18),
                   color: Colors.orange[700],
                 ),
               ),
-              const SizedBox(width: 8),
+              SizedBox(width: ResponsiveHelper.spacing(context, 8)),
               Expanded(
                 child: Text(
                   '시간 충돌로 자동 취소됨',
-                  style: TextStyle(
-                    fontSize: 14,
-                    fontWeight: FontWeight.bold,
+                  style: ResponsiveHelper.bodyStyle(
+                    context,
                     color: Colors.orange[800],
-                  ),
+                  ).copyWith(fontWeight: FontWeight.bold),
                 ),
               ),
             ],
           ),
           
-          const SizedBox(height: 10),
+          SizedBox(height: ResponsiveHelper.spacing(context, 10)),
           
           // 충돌한 공고 정보
           Container(
-            padding: const EdgeInsets.all(10),
+            padding: ResponsiveHelper.cardPadding(context),
             decoration: BoxDecoration(
               color: Colors.white,
               borderRadius: BorderRadius.circular(6),
@@ -627,36 +648,44 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
               children: [
                 Row(
                   children: [
-                    Icon(Icons.business, size: 14, color: Colors.grey[600]),
-                    const SizedBox(width: 6),
+                    Icon(
+                      Icons.business, 
+                      size: ResponsiveHelper.iconSize(context, 14), 
+                      color: Colors.grey[600]
+                    ),
+                    SizedBox(width: ResponsiveHelper.spacing(context, 6)),
                     Expanded(
                       child: Text(
                         app.conflictingBusiness!,
-                        style: const TextStyle(
-                          fontSize: 13,
+                        style: ResponsiveHelper.smallStyle(
+                          context,
                           fontWeight: FontWeight.w600,
                         ),
                       ),
                     ),
                   ],
                 ),
-                const SizedBox(height: 6),
+                SizedBox(height: ResponsiveHelper.spacing(context, 6)),
                 Row(
                   children: [
-                    Icon(Icons.access_time, size: 14, color: Colors.grey[600]),
-                    const SizedBox(width: 6),
+                    Icon(
+                      Icons.access_time, 
+                      size: ResponsiveHelper.iconSize(context, 14), 
+                      color: Colors.grey[600]
+                    ),
+                    SizedBox(width: ResponsiveHelper.spacing(context, 6)),
                     Text(
                       app.conflictingTime ?? '시간 정보 없음',
-                      style: TextStyle(
-                        fontSize: 13,
+                      style: ResponsiveHelper.smallStyle(
+                        context,
                         color: Colors.grey[700],
                       ),
                     ),
-                    const SizedBox(width: 8),
+                    SizedBox(width: ResponsiveHelper.spacing(context, 8)),
                     Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 8,
-                        vertical: 2,
+                      padding: EdgeInsets.symmetric(
+                        horizontal: ResponsiveHelper.spacing(context, 8),
+                        vertical: ResponsiveHelper.spacing(context, 2),
                       ),
                       decoration: BoxDecoration(
                         color: Colors.green[50],
@@ -665,10 +694,10 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
                       ),
                       child: Text(
                         '확정됨',
-                        style: TextStyle(
-                          fontSize: 11,
-                          fontWeight: FontWeight.bold,
+                        style: ResponsiveHelper.tinyStyle(
+                          context,
                           color: Colors.green[700],
+                          fontWeight: FontWeight.bold,
                         ),
                       ),
                     ),
@@ -678,18 +707,22 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
             ),
           ),
           
-          const SizedBox(height: 10),
+          SizedBox(height: ResponsiveHelper.spacing(context, 10)),
           
           // 안내 문구
           Row(
             children: [
-              Icon(Icons.info_outline, size: 14, color: Colors.orange[600]),
-              const SizedBox(width: 6),
+              Icon(
+                Icons.info_outline, 
+                size: ResponsiveHelper.iconSize(context, 14), 
+                color: Colors.orange[600]
+              ),
+              SizedBox(width: ResponsiveHelper.spacing(context, 6)),
               Expanded(
                 child: Text(
                   '위 근무가 확정되어 자동으로 취소되었습니다.',
-                  style: TextStyle(
-                    fontSize: 12,
+                  style: ResponsiveHelper.smallStyle(
+                    context,
                     color: Colors.grey[700],
                   ),
                 ),
@@ -697,26 +730,30 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
             ],
           ),
           
-          const SizedBox(height: 8),
+          SizedBox(height: ResponsiveHelper.spacing(context, 8)),
           
           // 재지원 안내
           Container(
-            padding: const EdgeInsets.all(8),
+            padding: ResponsiveHelper.cardPadding(context),
             decoration: BoxDecoration(
               color: Colors.blue[50],
               borderRadius: BorderRadius.circular(6),
             ),
             child: Row(
               children: [
-                Icon(Icons.touch_app, size: 14, color: Colors.blue[700]),
-                const SizedBox(width: 6),
+                Icon(
+                  Icons.touch_app, 
+                  size: ResponsiveHelper.iconSize(context, 14), 
+                  color: Colors.blue[700]
+                ),
+                SizedBox(width: ResponsiveHelper.spacing(context, 6)),
                 Expanded(
                   child: Text(
                     '다른 시간대 공고에는 다시 지원 가능합니다',
-                    style: TextStyle(
-                      fontSize: 12,
-                      fontWeight: FontWeight.w500,
+                    style: ResponsiveHelper.smallStyle(
+                      context,
                       color: Colors.blue[800],
+                      fontWeight: FontWeight.w500,
                     ),
                   ),
                 ),
@@ -732,21 +769,24 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
   Widget _buildInfoRow(IconData icon, String label, String value) {
     return Row(
       children: [
-        Icon(icon, size: 16, color: Colors.grey[600]),
-        const SizedBox(width: 8),
+        Icon(
+          icon, 
+          size: ResponsiveHelper.iconSize(context, 16), 
+          color: Colors.grey[600]
+        ),
+        SizedBox(width: ResponsiveHelper.spacing(context, 8)),
         Text(
           '$label: ',
-          style: TextStyle(
-            fontSize: 14,
-            fontWeight: FontWeight.w600,
+          style: ResponsiveHelper.bodyStyle(
+            context,
             color: Colors.grey[700],
-          ),
+          ).copyWith(fontWeight: FontWeight.w600),
         ),
         Expanded(
           child: Text(
             value,
-            style: const TextStyle(
-              fontSize: 14,
+            style: ResponsiveHelper.bodyStyle(
+              context,
               color: Colors.black87,
             ),
           ),
@@ -757,55 +797,72 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
 
   /// 상태 배지
   Widget _buildStatusBadge(String status) {
-    // ⭐ 수정: StyledBadge 사용
     switch (status) {
       case 'PENDING':
         return StyledBadge(
           label: '대기중',
           backgroundColor: Colors.orange.shade50,
           textColor: Colors.orange.shade700,
-          fontSize: 12,
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+          fontSize: ResponsiveHelper.getFontSize(context, 12),
+          padding: EdgeInsets.symmetric(
+            horizontal: ResponsiveHelper.spacing(context, 12),
+            vertical: ResponsiveHelper.spacing(context, 6),
+          ),
         );
       case 'CONFIRMED':
         return StyledBadge(
           label: '확정',
           backgroundColor: Colors.green.shade50,
           textColor: Colors.green.shade700,
-          fontSize: 12,
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+          fontSize: ResponsiveHelper.getFontSize(context, 12),
+          padding: EdgeInsets.symmetric(
+            horizontal: ResponsiveHelper.spacing(context, 12),
+            vertical: ResponsiveHelper.spacing(context, 6),
+          ),
         );
       case 'REJECTED':
         return StyledBadge(
           label: '거절',
           backgroundColor: Colors.red.shade50,
           textColor: Colors.red.shade700,
-          fontSize: 12,
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+          fontSize: ResponsiveHelper.getFontSize(context, 12),
+          padding: EdgeInsets.symmetric(
+            horizontal: ResponsiveHelper.spacing(context, 12),
+            vertical: ResponsiveHelper.spacing(context, 6),
+          ),
         );
       case 'CANCELED':
         return StyledBadge(
           label: '취소',
           backgroundColor: Colors.grey.shade100,
           textColor: Colors.grey.shade600,
-          fontSize: 12,
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+          fontSize: ResponsiveHelper.getFontSize(context, 12),
+          padding: EdgeInsets.symmetric(
+            horizontal: ResponsiveHelper.spacing(context, 12),
+            vertical: ResponsiveHelper.spacing(context, 6),
+          ),
         );
-      case 'AUTO_CANCELED':  // ⭐ 추가
+      case 'AUTO_CANCELED':
         return StyledBadge(
           label: '자동 취소',
           backgroundColor: Colors.orange.shade50,
           textColor: Colors.orange.shade700,
-          fontSize: 12,
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+          fontSize: ResponsiveHelper.getFontSize(context, 12),
+          padding: EdgeInsets.symmetric(
+            horizontal: ResponsiveHelper.spacing(context, 12),
+            vertical: ResponsiveHelper.spacing(context, 6),
+          ),
         );
       default:
         return StyledBadge(
           label: '알 수 없음',
           backgroundColor: Colors.grey.shade100,
           textColor: Colors.grey.shade600,
-          fontSize: 12,
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+          fontSize: ResponsiveHelper.getFontSize(context, 12),
+          padding: EdgeInsets.symmetric(
+            horizontal: ResponsiveHelper.spacing(context, 12),
+            vertical: ResponsiveHelper.spacing(context, 6),
+          ),
         );
     }
   }

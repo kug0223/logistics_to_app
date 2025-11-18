@@ -4,6 +4,7 @@ import '../../models/core/business_model.dart';
 import '../../widgets/common/loading_widget.dart';
 import '../../widgets/common/styled_container.dart';
 import '../../utils/toast_helper.dart';
+import '../../utils/responsive_helper.dart';  // ⭐ 추가
 
 
 /// ✅ 모든 사업장 조회 화면 (최고관리자 전용)
@@ -94,7 +95,7 @@ class _AllBusinessesScreenState extends State<AllBusinessesScreen> {
     return Scaffold(
       appBar: AppBar(
         title: const Text('전체 사업장 관리'),
-        backgroundColor: Colors.purple[700],
+        backgroundColor: Colors.purple,
         actions: [
           IconButton(
             icon: const Icon(Icons.refresh),
@@ -119,17 +120,16 @@ class _AllBusinessesScreenState extends State<AllBusinessesScreen> {
         children: [
           Icon(
             Icons.business_outlined,
-            size: 80,
-            color: Colors.grey[400],
+            size: ResponsiveHelper.iconSize(context, 80),  // ⭐ 변경
+            color: Theme.of(context).disabledColor,
           ),
-          const SizedBox(height: 16),
+          SizedBox(height: ResponsiveHelper.spacing(context, 16)),  // ⭐ 변경
           Text(
             '등록된 사업장이 없습니다',
-            style: TextStyle(
-              fontSize: 18,
-              color: Colors.grey[600],
-              fontWeight: FontWeight.w500,
-            ),
+            style: ResponsiveHelper.titleStyle(  // ⭐ 변경
+              context,
+              color: Theme.of(context).textTheme.bodySmall?.color,
+            ).copyWith(fontWeight: FontWeight.w500),
           ),
         ],
       ),
@@ -141,7 +141,7 @@ class _AllBusinessesScreenState extends State<AllBusinessesScreen> {
     return RefreshIndicator(
       onRefresh: _loadAllBusinesses,
       child: ListView.builder(
-        padding: const EdgeInsets.all(16),
+        padding: ResponsiveHelper.cardPadding(context),  // ⭐ 변경
         itemCount: _businesses.length,
         itemBuilder: (context, index) {
           final item = _businesses[index];
@@ -156,13 +156,15 @@ class _AllBusinessesScreenState extends State<AllBusinessesScreen> {
     final business = item.business;
     
     return Card(
-      margin: const EdgeInsets.only(bottom: 16),
+      margin: EdgeInsets.only(  // ⭐ const 제거
+        bottom: ResponsiveHelper.spacing(context, 16),  // ⭐ 변경
+      ),
       elevation: 2,
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(12),
       ),
       child: Padding(
-        padding: const EdgeInsets.all(16),
+        padding: ResponsiveHelper.cardPadding(context),  // ⭐ 변경
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -172,29 +174,26 @@ class _AllBusinessesScreenState extends State<AllBusinessesScreen> {
                 Expanded(
                   child: Text(
                     business.name,
-                    style: const TextStyle(
-                      fontSize: 18,
-                      fontWeight: FontWeight.bold,
-                    ),
+                    style: ResponsiveHelper.titleStyle(context),  // ⭐ 변경
                   ),
                 ),
                 // ⭐ 변경: StyledBadge 사용
                 business.isApproved
                     ? StyledBadge(
                         label: '승인됨',
-                        backgroundColor: Colors.green[50]!,
-                        textColor: Colors.green[700]!,
-                        fontSize: 12,
+                        backgroundColor: Colors.green.withOpacity(0.1),
+                        textColor: Colors.green,
+                        fontSize: ResponsiveHelper.tinyStyle(context).fontSize!,  // ⭐ 변경
                       )
                     : StyledBadge(
                         label: '대기중',
-                        backgroundColor: Colors.orange[50]!,
-                        textColor: Colors.orange[700]!,
-                        fontSize: 12,
+                        backgroundColor: Colors.orange.withOpacity(0.1),
+                        textColor: Colors.orange,
+                        fontSize: ResponsiveHelper.tinyStyle(context).fontSize!,  // ⭐ 변경
                       ),
               ],
             ),
-            const Divider(height: 24),
+            Divider(height: ResponsiveHelper.spacing(context, 24)),  // ⭐ 변경
 
             // 소유자 정보
             _buildInfoRow(
@@ -203,16 +202,16 @@ class _AllBusinessesScreenState extends State<AllBusinessesScreen> {
               value: '${item.ownerName}${item.ownerEmail.isNotEmpty ? " (${item.ownerEmail})" : ""}',
               color: Colors.purple,
             ),
-            const SizedBox(height: 12),
+            SizedBox(height: ResponsiveHelper.spacing(context, 12)),  // ⭐ 변경
 
             // 사업자등록번호
             _buildInfoRow(
               icon: Icons.numbers,
               label: '사업자등록번호',
               value: business.formattedBusinessNumber,
-              color: Colors.blue,
+              color: Theme.of(context).primaryColor,
             ),
-            const SizedBox(height: 12),
+            SizedBox(height: ResponsiveHelper.spacing(context, 12)),  // ⭐ 변경
 
             // 업종
             _buildInfoRow(
@@ -221,7 +220,7 @@ class _AllBusinessesScreenState extends State<AllBusinessesScreen> {
               value: '${business.category} / ${business.subCategory}',
               color: Colors.green,
             ),
-            const SizedBox(height: 12),
+            SizedBox(height: ResponsiveHelper.spacing(context, 12)),  // ⭐ 변경
 
             // 주소
             _buildInfoRow(
@@ -233,7 +232,7 @@ class _AllBusinessesScreenState extends State<AllBusinessesScreen> {
 
             // 연락처 (있을 경우)
             if (business.phone != null) ...[
-              const SizedBox(height: 12),
+              SizedBox(height: ResponsiveHelper.spacing(context, 12)),  // ⭐ 변경
               _buildInfoRow(
                 icon: Icons.phone,
                 label: '연락처',
@@ -244,30 +243,30 @@ class _AllBusinessesScreenState extends State<AllBusinessesScreen> {
 
             // 설명 (있을 경우)
             if (business.description != null && business.description!.isNotEmpty) ...[
-              const SizedBox(height: 12),
+              SizedBox(height: ResponsiveHelper.spacing(context, 12)),  // ⭐ 변경
               Container(
-                padding: const EdgeInsets.all(12),
+                padding: ResponsiveHelper.cardPadding(context),  // ⭐ 변경
                 decoration: BoxDecoration(
-                  color: Colors.grey[100],
+                  color: Theme.of(context).colorScheme.surface,
                   borderRadius: BorderRadius.circular(8),
                 ),
                 child: Text(
                   business.description!,
-                  style: TextStyle(
-                    fontSize: 14,
-                    color: Colors.grey[700],
+                  style: ResponsiveHelper.bodyStyle(  // ⭐ 변경
+                    context,
+                    color: Theme.of(context).textTheme.bodyMedium?.color,
                   ),
                 ),
               ),
             ],
 
             // 등록일
-            const SizedBox(height: 12),
+            SizedBox(height: ResponsiveHelper.spacing(context, 12)),  // ⭐ 변경
             Text(
               '등록일: ${_formatDate(business.createdAt)}',
-              style: TextStyle(
-                fontSize: 12,
-                color: Colors.grey[600],
+              style: ResponsiveHelper.tinyStyle(  // ⭐ 변경
+                context,
+                color: Theme.of(context).textTheme.bodySmall?.color,
               ),
             ),
           ],
@@ -286,12 +285,19 @@ class _AllBusinessesScreenState extends State<AllBusinessesScreen> {
     return Row(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Icon(icon, size: 18, color: color),
-        const SizedBox(width: 8),
+        Icon(
+          icon, 
+          size: ResponsiveHelper.iconSize(context, 18),  // ⭐ 변경
+          color: color,
+        ),
+        SizedBox(width: ResponsiveHelper.spacing(context, 8)),  // ⭐ 변경
         Expanded(
           child: RichText(
             text: TextSpan(
-              style: TextStyle(fontSize: 14, color: Colors.grey[800]),
+              style: ResponsiveHelper.bodyStyle(  // ⭐ 변경
+                context,
+                color: Theme.of(context).textTheme.bodyMedium?.color,
+              ),
               children: [
                 TextSpan(
                   text: '$label: ',

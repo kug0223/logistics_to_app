@@ -63,9 +63,9 @@ class _TOItemCardState extends State<TOItemCard> {
     });
 
     return Container(
-      margin: EdgeInsets.only(  // ⭐ const 제거
-        bottom: ResponsiveHelper.spacing(context, 8),  // ⭐ 변경
-        left: ResponsiveHelper.spacing(context, 12),  // ⭐ 변경
+      margin: EdgeInsets.only(
+        bottom: ResponsiveHelper.spacing(context, 8),
+        left: ResponsiveHelper.spacing(context, 12),
       ),
       decoration: BoxDecoration(
         color: widget.isExpanded ? Theme.of(context).primaryColor.withOpacity(0.1) : Colors.grey[50],
@@ -80,7 +80,7 @@ class _TOItemCardState extends State<TOItemCard> {
           InkWell(
             onTap: widget.onToggleExpand,
             child: Padding(
-              padding: ResponsiveHelper.cardPadding(context),  // ⭐ 변경
+              padding: ResponsiveHelper.cardPadding(context),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
@@ -88,37 +88,37 @@ class _TOItemCardState extends State<TOItemCard> {
                     children: [
                       Text(
                         dateFormat.format(to.date),
-                        style: ResponsiveHelper.smallStyle(  // ⭐ 변경
+                        style: ResponsiveHelper.smallStyle(
                           context,
                           color: Colors.grey[700],
                           fontWeight: FontWeight.w600,
                         ),
                       ),
-                      SizedBox(width: ResponsiveHelper.spacing(context, 12)),  // ⭐ 변경
+                      SizedBox(width: ResponsiveHelper.spacing(context, 12)),
                       Expanded(
                         child: Text(
                           to.title,
-                          style: ResponsiveHelper.bodyStyle(  // ⭐ 변경
+                          style: ResponsiveHelper.bodyStyle(
                             context,
                             color: Colors.grey[800],
                           ).copyWith(fontWeight: FontWeight.bold),
                           overflow: TextOverflow.ellipsis,
                         ),
                       ),
-                      SizedBox(width: ResponsiveHelper.spacing(context, 8)),  // ⭐ 변경
+                      SizedBox(width: ResponsiveHelper.spacing(context, 8)),
                       _buildStatusBadge(context, isFull),
                     ],
                   ),
-                  SizedBox(height: ResponsiveHelper.spacing(context, 8)),  // ⭐ 변경
+                  SizedBox(height: ResponsiveHelper.spacing(context, 8)),
                   Row(
-                    crossAxisAlignment: CrossAxisAlignment.start,  // ⭐ 추가
+                    crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Icon(
                         Icons.calendar_today,
-                        size: ResponsiveHelper.iconSize(context, 14),  // ⭐ 변경
+                        size: ResponsiveHelper.iconSize(context, 14),
                         color: Colors.grey[600],
                       ),
-                      SizedBox(width: ResponsiveHelper.spacing(context, 6)),  // ⭐ 변경
+                      SizedBox(width: ResponsiveHelper.spacing(context, 6)),
                       Expanded(
                         child: to.isLongTerm 
                           ? Column(
@@ -126,16 +126,16 @@ class _TOItemCardState extends State<TOItemCard> {
                               children: [
                                 Text(
                                   to.longTermPeriodWithDays,
-                                  style: ResponsiveHelper.smallStyle(  // ⭐ 변경
+                                  style: ResponsiveHelper.smallStyle(
                                     context,
                                     color: Colors.grey[700],
                                   ),
                                 ),
                                 if (to.workDays != null && to.workDays!.isNotEmpty) ...[
-                                  SizedBox(height: ResponsiveHelper.spacing(context, 2)),  // ⭐ 변경
+                                  SizedBox(height: ResponsiveHelper.spacing(context, 2)),
                                   Text(
                                     to.workDaysLabel,
-                                    style: ResponsiveHelper.tinyStyle(  // ⭐ 변경
+                                    style: ResponsiveHelper.tinyStyle(
                                       context,
                                       color: Colors.grey[600],
                                     ),
@@ -145,29 +145,29 @@ class _TOItemCardState extends State<TOItemCard> {
                             )
                           : Text(
                               dateFormat.format(to.date),
-                              style: ResponsiveHelper.smallStyle(  // ⭐ 변경
+                              style: ResponsiveHelper.smallStyle(
                                 context,
                                 color: Colors.grey[700],
                               ),
                             ),
                       ),
-                      SizedBox(width: ResponsiveHelper.spacing(context, 8)),  // ⭐ Spacer 대신
+                      SizedBox(width: ResponsiveHelper.spacing(context, 8)),
                       _buildDeadlineBadge(context, to),
                     ],
                   ),
-                  SizedBox(height: ResponsiveHelper.spacing(context, 8)),  // ⭐ 변경
+                  SizedBox(height: ResponsiveHelper.spacing(context, 8)),
                   Row(
                     children: [
                       _buildStatsBadge(context, isFull),
-                      SizedBox(width: ResponsiveHelper.spacing(context, 8)),  // ⭐ 변경
+                      SizedBox(width: ResponsiveHelper.spacing(context, 8)),
                       if (widget.toItem.pendingCount > 0)
                         _buildPendingBadge(context),
                       const Spacer(),
                       _buildPopupMenu(context),
-                      SizedBox(width: ResponsiveHelper.spacing(context, 4)),  // ⭐ 변경
+                      SizedBox(width: ResponsiveHelper.spacing(context, 4)),
                       Icon(
                         widget.isExpanded ? Icons.expand_less : Icons.expand_more,
-                        size: ResponsiveHelper.iconSize(context, 20),  // ⭐ 변경
+                        size: ResponsiveHelper.iconSize(context, 20),
                         color: Colors.grey[600],
                       ),
                     ],
@@ -179,19 +179,19 @@ class _TOItemCardState extends State<TOItemCard> {
           if (widget.isExpanded) ...[
             const Divider(height: 1),
             Padding(
-              padding: ResponsiveHelper.cardPadding(context),  // ⭐ 변경
+              padding: ResponsiveHelper.cardPadding(context),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
                     '업무 상세',
-                    style: ResponsiveHelper.smallStyle(  // ⭐ 변경
+                    style: ResponsiveHelper.smallStyle(
                       context,
                       color: Colors.grey[700],
                       fontWeight: FontWeight.bold,
                     ),
                   ),
-                  SizedBox(height: ResponsiveHelper.spacing(context, 8)),  // ⭐ 변경
+                  SizedBox(height: ResponsiveHelper.spacing(context, 8)),
                   ...widget.toItem.workDetails.map((work) {
                     final stats = widget.toItem.workDetailStats?[work.workType];
                     final confirmed = stats?['confirmed'] ?? 0;
@@ -227,10 +227,10 @@ class _TOItemCardState extends State<TOItemCard> {
         color: Colors.grey[600]!,
         backgroundColor: Colors.grey[300],
         icon: Icons.lock,
-        fontSize: ResponsiveHelper.getFontSize(context, 10),  // ⭐ 변경
-        padding: EdgeInsets.symmetric(  // ⭐ const 제거
-          horizontal: ResponsiveHelper.spacing(context, 6),  // ⭐ 변경
-          vertical: ResponsiveHelper.spacing(context, 3),  // ⭐ 변경
+        fontSize: ResponsiveHelper.getFontSize(context, 10),
+        padding: EdgeInsets.symmetric(
+          horizontal: ResponsiveHelper.spacing(context, 6),
+          vertical: ResponsiveHelper.spacing(context, 3),
         ),
         borderRadius: 10,
       );
@@ -239,10 +239,10 @@ class _TOItemCardState extends State<TOItemCard> {
         label: '인원충족',
         color: Colors.green[600]!,
         icon: Icons.check_circle,
-        fontSize: ResponsiveHelper.getFontSize(context, 10),  // ⭐ 변경
-        padding: EdgeInsets.symmetric(  // ⭐ const 제거
-          horizontal: ResponsiveHelper.spacing(context, 6),  // ⭐ 변경
-          vertical: ResponsiveHelper.spacing(context, 3),  // ⭐ 변경
+        fontSize: ResponsiveHelper.getFontSize(context, 10),
+        padding: EdgeInsets.symmetric(
+          horizontal: ResponsiveHelper.spacing(context, 6),
+          vertical: ResponsiveHelper.spacing(context, 3),
         ),
         borderRadius: 10,
       );
@@ -251,10 +251,10 @@ class _TOItemCardState extends State<TOItemCard> {
         label: '진행중',
         color: Theme.of(context).primaryColor,
         icon: Icons.circle,
-        fontSize: ResponsiveHelper.getFontSize(context, 10),  // ⭐ 변경
-        padding: EdgeInsets.symmetric(  // ⭐ const 제거
-          horizontal: ResponsiveHelper.spacing(context, 6),  // ⭐ 변경
-          vertical: ResponsiveHelper.spacing(context, 3),  // ⭐ 변경
+        fontSize: ResponsiveHelper.getFontSize(context, 10),
+        padding: EdgeInsets.symmetric(
+          horizontal: ResponsiveHelper.spacing(context, 6),
+          vertical: ResponsiveHelper.spacing(context, 3),
         ),
         borderRadius: 10,
       );
@@ -268,7 +268,7 @@ class _TOItemCardState extends State<TOItemCard> {
         label: '🕐 ${DateFormat('MM/dd HH:mm').format(to.applicationDeadline)}',
         backgroundColor: Colors.orange[50]!,
         textColor: Colors.orange[700]!,
-        fontSize: ResponsiveHelper.getFontSize(context, 12),  // ⭐ 변경
+        fontSize: ResponsiveHelper.getFontSize(context, 12),
         borderRadius: 4,
       );
     }
@@ -278,7 +278,7 @@ class _TOItemCardState extends State<TOItemCard> {
         label: '🕐 각 업무 ${to.hoursBeforeStart}시간 전',
         backgroundColor: Colors.orange[50]!,
         textColor: Colors.orange[700]!,
-        fontSize: ResponsiveHelper.getFontSize(context, 12),  // ⭐ 변경
+        fontSize: ResponsiveHelper.getFontSize(context, 12),
         borderRadius: 4,
       );
     }
@@ -289,9 +289,9 @@ class _TOItemCardState extends State<TOItemCard> {
   /// 통계 배지
   Widget _buildStatsBadge(BuildContext context, bool isFull) {
     return Container(
-      padding: EdgeInsets.symmetric(  // ⭐ const 제거
-        horizontal: ResponsiveHelper.spacing(context, 8),  // ⭐ 변경
-        vertical: ResponsiveHelper.spacing(context, 4),  // ⭐ 변경
+      padding: EdgeInsets.symmetric(
+        horizontal: ResponsiveHelper.spacing(context, 8),
+        vertical: ResponsiveHelper.spacing(context, 4),
       ),
       decoration: BoxDecoration(
         color: isFull 
@@ -309,12 +309,12 @@ class _TOItemCardState extends State<TOItemCard> {
         children: [
           Text(
             '👥',
-            style: ResponsiveHelper.tinyStyle(context),  // ⭐ 변경
+            style: ResponsiveHelper.tinyStyle(context),
           ),
-          SizedBox(width: ResponsiveHelper.spacing(context, 4)),  // ⭐ 변경
+          SizedBox(width: ResponsiveHelper.spacing(context, 4)),
           Text(
             '확정 ${widget.toItem.confirmedCount}/${widget.toItem.totalRequired}명',
-            style: ResponsiveHelper.tinyStyle(  // ⭐ 변경
+            style: ResponsiveHelper.tinyStyle(
               context,
               color: isFull 
                 ? Colors.green[700] 
@@ -330,9 +330,9 @@ class _TOItemCardState extends State<TOItemCard> {
   /// 대기 인원 배지
   Widget _buildPendingBadge(BuildContext context) {
     return Container(
-      padding: EdgeInsets.symmetric(  // ⭐ const 제거
-        horizontal: ResponsiveHelper.spacing(context, 8),  // ⭐ 변경
-        vertical: ResponsiveHelper.spacing(context, 4),  // ⭐ 변경
+      padding: EdgeInsets.symmetric(
+        horizontal: ResponsiveHelper.spacing(context, 8),
+        vertical: ResponsiveHelper.spacing(context, 4),
       ),
       decoration: BoxDecoration(
         color: Colors.orange[50],
@@ -344,12 +344,12 @@ class _TOItemCardState extends State<TOItemCard> {
         children: [
           Text(
             '⏳',
-            style: ResponsiveHelper.tinyStyle(context),  // ⭐ 변경
+            style: ResponsiveHelper.tinyStyle(context),
           ),
-          SizedBox(width: ResponsiveHelper.spacing(context, 4)),  // ⭐ 변경
+          SizedBox(width: ResponsiveHelper.spacing(context, 4)),
           Text(
             '대기 ${widget.toItem.pendingCount}명',
-            style: ResponsiveHelper.tinyStyle(  // ⭐ 변경
+            style: ResponsiveHelper.tinyStyle(
               context,
               color: Colors.orange[700],
               fontWeight: FontWeight.bold,
@@ -365,7 +365,7 @@ class _TOItemCardState extends State<TOItemCard> {
     return PopupMenuButton<String>(
       icon: Icon(
         Icons.more_vert,
-        size: ResponsiveHelper.iconSize(context, 20),  // ⭐ 변경
+        size: ResponsiveHelper.iconSize(context, 20),
         color: Colors.grey[700],
       ),
       padding: EdgeInsets.zero,
@@ -378,10 +378,10 @@ class _TOItemCardState extends State<TOItemCard> {
             children: [
               Icon(
                 Icons.edit,
-                size: ResponsiveHelper.iconSize(context, 18),  // ⭐ 변경
+                size: ResponsiveHelper.iconSize(context, 18),
                 color: Colors.orange[700],
               ),
-              SizedBox(width: ResponsiveHelper.spacing(context, 12)),  // ⭐ 변경
+              SizedBox(width: ResponsiveHelper.spacing(context, 12)),
               const Text('수정'),
             ],
           ),
@@ -392,10 +392,10 @@ class _TOItemCardState extends State<TOItemCard> {
             children: [
               Icon(
                 Icons.delete,
-                size: ResponsiveHelper.iconSize(context, 18),  // ⭐ 변경
+                size: ResponsiveHelper.iconSize(context, 18),
                 color: Colors.red[700],
               ),
-              SizedBox(width: ResponsiveHelper.spacing(context, 12)),  // ⭐ 변경
+              SizedBox(width: ResponsiveHelper.spacing(context, 12)),
               const Text('삭제'),
             ],
           ),
@@ -406,10 +406,10 @@ class _TOItemCardState extends State<TOItemCard> {
             children: [
               Icon(
                 Icons.link_off,
-                size: ResponsiveHelper.iconSize(context, 18),  // ⭐ 변경
+                size: ResponsiveHelper.iconSize(context, 18),
                 color: Colors.orange[700],
               ),
-              SizedBox(width: ResponsiveHelper.spacing(context, 12)),  // ⭐ 변경
+              SizedBox(width: ResponsiveHelper.spacing(context, 12)),
               const Text('그룹 해제'),
             ],
           ),
@@ -420,10 +420,10 @@ class _TOItemCardState extends State<TOItemCard> {
             children: [
               Icon(
                 Icons.check_circle_outline,
-                size: ResponsiveHelper.iconSize(context, 18),  // ⭐ 변경
+                size: ResponsiveHelper.iconSize(context, 18),
                 color: Colors.green[600],
               ),
-              SizedBox(width: ResponsiveHelper.spacing(context, 12)),  // ⭐ 변경
+              SizedBox(width: ResponsiveHelper.spacing(context, 12)),
               const Text('확정명단'),
             ],
           ),
@@ -434,10 +434,10 @@ class _TOItemCardState extends State<TOItemCard> {
             children: [
               Icon(
                 Icons.task_alt,
-                size: ResponsiveHelper.iconSize(context, 18),  // ⭐ 변경
+                size: ResponsiveHelper.iconSize(context, 18),
                 color: Colors.purple[600],
               ),
-              SizedBox(width: ResponsiveHelper.spacing(context, 12)),  // ⭐ 변경
+              SizedBox(width: ResponsiveHelper.spacing(context, 12)),
               const Text('업무별 마감'),
             ],
           ),

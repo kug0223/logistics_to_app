@@ -3,6 +3,7 @@ import 'package:table_calendar/table_calendar.dart';
 import 'package:intl/intl.dart';
 import '../../models/core/application_model.dart';
 import '../../utils/calendar_helper.dart';
+import '../../utils/responsive_helper.dart';  // ⭐ 추가
 
 /// 근무 스케줄 캘린더 위젯
 class ScheduleCalendar extends StatelessWidget {
@@ -33,10 +34,10 @@ class ScheduleCalendar extends StatelessWidget {
       calendarFormat: CalendarFormat.month,
       
       // ⭐ 요일 행 높이 증가
-      daysOfWeekHeight: 40,  // 기본값 16 → 40으로 증가
+      daysOfWeekHeight: 40,
       
-      // ⭐ 날짜 셀 높이도 조정 (선택)
-      rowHeight: 48,  // 기본값보다 조금 증가
+      // ⭐ 날짜 셀 높이도 조정
+      rowHeight: 48,
       
       headerStyle: HeaderStyle(
         formatButtonVisible: false,
@@ -44,10 +45,7 @@ class ScheduleCalendar extends StatelessWidget {
         titleTextFormatter: (date, locale) {
           return DateFormat.yMMMM('ko_KR').format(date);
         },
-        titleTextStyle: const TextStyle(
-          fontSize: 18,
-          fontWeight: FontWeight.bold,
-        ),
+        titleTextStyle: ResponsiveHelper.titleStyle(context),
         leftChevronIcon: const Icon(Icons.chevron_left),
         rightChevronIcon: const Icon(Icons.chevron_right),
       ),

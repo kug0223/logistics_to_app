@@ -5,6 +5,7 @@ import '../../services/firestore_service.dart';
 import '../../utils/toast_helper.dart';
 import '../../utils/dialog_helper.dart';
 import '../../utils/format_helper.dart';
+import '../../utils/responsive_helper.dart';  // ⭐ 추가
 
 /// 고정근무 관리 다이얼로그
 class LongTermWorkManagementDialog extends StatefulWidget {
@@ -42,9 +43,9 @@ class _LongTermWorkManagementDialogState
           children: [
             // 헤더
             Container(
-              padding: const EdgeInsets.all(16),
+              padding: ResponsiveHelper.cardPadding(context),  // ⭐ 변경
               decoration: BoxDecoration(
-                color: Colors.blue[700],
+                color: Theme.of(context).primaryColor,
                 borderRadius: const BorderRadius.only(
                   topLeft: Radius.circular(4),
                   topRight: Radius.circular(4),
@@ -53,12 +54,10 @@ class _LongTermWorkManagementDialogState
               child: Row(
                 children: [
                   const Icon(Icons.work, color: Colors.white),
-                  const SizedBox(width: 12),
-                  const Text(
+                  SizedBox(width: ResponsiveHelper.spacing(context, 12)),  // ⭐ 변경
+                  Text(
                     '고정근무 관리',
-                    style: TextStyle(
-                      fontSize: 18,
-                      fontWeight: FontWeight.bold,
+                    style: ResponsiveHelper.titleStyle(context).copyWith(  // ⭐ 변경
                       color: Colors.white,
                     ),
                   ),
@@ -76,7 +75,7 @@ class _LongTermWorkManagementDialogState
               child: longTermWorks.isEmpty
                   ? _buildEmptyState()
                   : ListView.builder(
-                      padding: const EdgeInsets.all(16),
+                      padding: ResponsiveHelper.cardPadding(context),  // ⭐ 변경
                       itemCount: longTermWorks.length,
                       itemBuilder: (context, index) {
                         return _buildWorkCard(longTermWorks[index]);
@@ -95,13 +94,17 @@ class _LongTermWorkManagementDialogState
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          Icon(Icons.work_off, size: 64, color: Colors.grey[400]),
-          const SizedBox(height: 16),
+          Icon(
+            Icons.work_off, 
+            size: ResponsiveHelper.iconSize(context, 64),  // ⭐ 변경
+            color: Theme.of(context).disabledColor,
+          ),
+          SizedBox(height: ResponsiveHelper.spacing(context, 16)),  // ⭐ 변경
           Text(
             '확정된 고정근무가 없습니다',
-            style: TextStyle(
-              fontSize: 16,
-              color: Colors.grey[600],
+            style: ResponsiveHelper.subtitleStyle(  // ⭐ 변경
+              context,
+              color: Theme.of(context).textTheme.bodySmall?.color,
             ),
           ),
         ],
@@ -116,30 +119,33 @@ class _LongTermWorkManagementDialogState
     final isRejected = app.resignStatus == 'REJECTED';
 
     return Card(
-      margin: const EdgeInsets.only(bottom: 12),
+      margin: EdgeInsets.only(  // ⭐ const 제거
+        bottom: ResponsiveHelper.spacing(context, 12),  // ⭐ 변경
+      ),
       elevation: 2,
       child: Padding(
-        padding: const EdgeInsets.all(16),
+        padding: ResponsiveHelper.cardPadding(context),  // ⭐ 변경
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             // 사업장명
             Row(
               children: [
-                Icon(Icons.business, size: 18, color: Colors.blue[700]),
-                const SizedBox(width: 8),
+                Icon(
+                  Icons.business, 
+                  size: ResponsiveHelper.iconSize(context, 18),  // ⭐ 변경
+                  color: Theme.of(context).primaryColor,
+                ),
+                SizedBox(width: ResponsiveHelper.spacing(context, 8)),  // ⭐ 변경
                 Expanded(
                   child: Text(
                     app.businessName,
-                    style: const TextStyle(
-                      fontSize: 16,
-                      fontWeight: FontWeight.bold,
-                    ),
+                    style: ResponsiveHelper.subtitleStyle(context),  // ⭐ 변경
                   ),
                 ),
               ],
             ),
-            const SizedBox(height: 12),
+            SizedBox(height: ResponsiveHelper.spacing(context, 12)),  // ⭐ 변경
 
             // 근무 기간
             _buildInfoRow(
@@ -147,7 +153,7 @@ class _LongTermWorkManagementDialogState
               '근무 기간',
               app.workPeriodDisplay,
             ),
-            const SizedBox(height: 8),
+            SizedBox(height: ResponsiveHelper.spacing(context, 8)),  // ⭐ 변경
 
             // 근무 요일
             if (app.workDaysDisplay != null)
@@ -156,7 +162,7 @@ class _LongTermWorkManagementDialogState
                 '근무 요일',
                 app.workDaysDisplay!,
               ),
-            const SizedBox(height: 8),
+            SizedBox(height: ResponsiveHelper.spacing(context, 8)),  // ⭐ 변경
 
             // 근무 시간
             _buildInfoRow(
@@ -164,7 +170,7 @@ class _LongTermWorkManagementDialogState
               '근무 시간',
               '${app.startTime} ~ ${app.endTime}',
             ),
-            const SizedBox(height: 8),
+            SizedBox(height: ResponsiveHelper.spacing(context, 8)),  // ⭐ 변경
 
             // 업무 유형 & 급여
             Row(
@@ -188,11 +194,11 @@ class _LongTermWorkManagementDialogState
 
             // 퇴사 요청 상태 표시
             if (hasResignRequest) ...[
-              const SizedBox(height: 16),
+              SizedBox(height: ResponsiveHelper.spacing(context, 16)),  // ⭐ 변경
               _buildResignStatusBanner(app),
             ],
 
-            const SizedBox(height: 16),
+            SizedBox(height: ResponsiveHelper.spacing(context, 16)),  // ⭐ 변경
 
             // 버튼
             if (isPending)
@@ -253,8 +259,8 @@ class _LongTermWorkManagementDialogState
 
     switch (app.resignStatus) {
       case 'PENDING':
-        bgColor = Colors.orange[50]!;
-        textColor = Colors.orange[900]!;
+        bgColor = Colors.orange.withOpacity(0.1);
+        textColor = Colors.orange;
         icon = Icons.schedule;
         statusText = '퇴사 승인 대기중';
         final requestDate = DateFormat('M월 d일').format(app.resignRequestDate!);
@@ -262,16 +268,16 @@ class _LongTermWorkManagementDialogState
         detailText = '$requestDate 퇴사 요청 ($daysLeft일 후 자동 승인)';
         break;
       case 'REJECTED':
-        bgColor = Colors.red[50]!;
-        textColor = Colors.red[900]!;
+        bgColor = Colors.red.withOpacity(0.1);
+        textColor = Colors.red;
         icon = Icons.cancel;
         statusText = '퇴사 요청 거절됨';
         detailText = app.resignRejectReason ?? '사유 없음';
         break;
       case 'APPROVED':
       case 'AUTO_APPROVED':
-        bgColor = Colors.green[50]!;
-        textColor = Colors.green[900]!;
+        bgColor = Colors.green.withOpacity(0.1);
+        textColor = Colors.green;
         icon = Icons.check_circle;
         statusText = app.resignStatus == 'AUTO_APPROVED' ? '퇴사 자동 승인됨' : '퇴사 승인됨';
         final resignDate = DateFormat('M월 d일').format(app.actualResignDate!);
@@ -282,7 +288,7 @@ class _LongTermWorkManagementDialogState
     }
 
     return Container(
-      padding: const EdgeInsets.all(12),
+      padding: ResponsiveHelper.cardPadding(context),  // ⭐ 변경
       decoration: BoxDecoration(
         color: bgColor,
         borderRadius: BorderRadius.circular(8),
@@ -290,30 +296,33 @@ class _LongTermWorkManagementDialogState
       ),
       child: Row(
         children: [
-          Icon(icon, color: textColor, size: 20),
-          const SizedBox(width: 12),
+          Icon(
+            icon, 
+            color: textColor, 
+            size: ResponsiveHelper.iconSize(context, 20),  // ⭐ 변경
+          ),
+          SizedBox(width: ResponsiveHelper.spacing(context, 12)),  // ⭐ 변경
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
                   statusText,
-                  style: TextStyle(
-                    fontSize: 14,
-                    fontWeight: FontWeight.bold,
+                  style: ResponsiveHelper.bodyStyle(  // ⭐ 변경
+                    context,
                     color: textColor,
-                  ),
+                  ).copyWith(fontWeight: FontWeight.bold),
                 ),
-                ...[
-                const SizedBox(height: 4),
-                Text(
-                  detailText,
-                  style: TextStyle(
-                    fontSize: 12,
-                    color: textColor.withOpacity(0.8),
+                if (detailText != null) ...[
+                  SizedBox(height: ResponsiveHelper.spacing(context, 4)),  // ⭐ 변경
+                  Text(
+                    detailText,
+                    style: ResponsiveHelper.tinyStyle(  // ⭐ 변경
+                      context,
+                      color: textColor.withOpacity(0.8),
+                    ),
                   ),
-                ),
-              ],
+                ],
               ],
             ),
           ),
@@ -326,20 +335,23 @@ class _LongTermWorkManagementDialogState
   Widget _buildInfoRow(IconData icon, String label, String value) {
     return Row(
       children: [
-        Icon(icon, size: 16, color: Colors.grey[600]),
-        const SizedBox(width: 8),
+        Icon(
+          icon, 
+          size: ResponsiveHelper.iconSize(context, 16),  // ⭐ 변경
+          color: Theme.of(context).textTheme.bodySmall?.color,
+        ),
+        SizedBox(width: ResponsiveHelper.spacing(context, 8)),  // ⭐ 변경
         Text(
           '$label: ',
-          style: TextStyle(
-            fontSize: 13,
-            color: Colors.grey[600],
+          style: ResponsiveHelper.smallStyle(  // ⭐ 변경
+            context,
+            color: Theme.of(context).textTheme.bodySmall?.color,
           ),
         ),
         Expanded(
           child: Text(
             value,
-            style: const TextStyle(
-              fontSize: 13,
+            style: ResponsiveHelper.smallStyle(context).copyWith(  // ⭐ 변경
               fontWeight: FontWeight.w600,
             ),
           ),
@@ -361,7 +373,7 @@ class _LongTermWorkManagementDialogState
         return Theme(
           data: Theme.of(context).copyWith(
             colorScheme: ColorScheme.light(
-              primary: Colors.blue[700]!,
+              primary: Theme.of(context).primaryColor,
             ),
           ),
           child: child!,

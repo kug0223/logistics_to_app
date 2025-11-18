@@ -94,4 +94,16 @@ class ResponsiveHelper {
     final scale = getScale(context);
     return baseSize * scale;
   }
+  static double buttonHeight(BuildContext context) {
+    final size = MediaQuery.of(context).size;
+    if (size.width < 600) return 48.0;  // 모바일
+    if (size.width < 1200) return 52.0; // 태블릿
+    return 56.0;                         // 데스크톱
+  }
+  static double dialogHeight(BuildContext context) {
+    final size = MediaQuery.of(context).size;
+    if (size.width < 600) return 500.0;  // 모바일
+    if (size.width < 1200) return 550.0; // 태블릿
+    return 600.0;                         // 데스크톱
+  }
 }

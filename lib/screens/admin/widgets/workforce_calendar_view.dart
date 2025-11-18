@@ -14,10 +14,11 @@ import '../../../models/ui/admin_to_list_ui_models.dart';
 import '../../../services/firestore_service.dart';
 
 // Providers
-import '../../../providers/user_provider.dart';  // ⭐ 추가
+import '../../../providers/user_provider.dart';
 
 // Utils
 import '../../../utils/toast_helper.dart';
+import '../../../utils/responsive_helper.dart';  // ⭐ 추가
 
 // Widgets
 import '../../../widgets/common/loading_widget.dart';
@@ -280,7 +281,10 @@ class _WorkforceCalendarViewState extends State<WorkforceCalendarView> {
         // ⭐ 범례 추가!
         SliverToBoxAdapter(
           child: Container(
-            padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 16),
+            padding: EdgeInsets.symmetric(
+              vertical: ResponsiveHelper.spacing(context, 10),
+              horizontal: ResponsiveHelper.spacing(context, 16),
+            ),
             color: Colors.grey[50],
             child: Wrap(
               alignment: WrapAlignment.center,
@@ -434,48 +438,63 @@ class _WorkforceCalendarViewState extends State<WorkforceCalendarView> {
     }
 
     return Container(
-      padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
+      padding: EdgeInsets.symmetric(
+        vertical: ResponsiveHelper.spacing(context, 12),
+        horizontal: ResponsiveHelper.spacing(context, 16),
+      ),
       color: statusColor.withOpacity(0.1),
       child: Row(
         children: [
-          Icon(Icons.event, color: statusColor, size: 20),
-          const SizedBox(width: 8),
+          Icon(
+            Icons.event, 
+            color: statusColor, 
+            size: ResponsiveHelper.iconSize(context, 20)
+          ),
+          SizedBox(width: ResponsiveHelper.spacing(context, 8)),
           Text(
             DateFormat('yyyy년 M월 d일 (E)', 'ko_KR').format(_selectedDay!),
-            style: TextStyle(
-              fontSize: 16,
+            style: ResponsiveHelper.subtitleStyle(context).copyWith(
               fontWeight: FontWeight.bold,
               color: statusColor,
             ),
           ),
           
           // ⭐ 인원현황 버튼 추가
-          const SizedBox(width: 12),
+          SizedBox(width: ResponsiveHelper.spacing(context, 12)),
           ElevatedButton.icon(
             onPressed: _hasConfirmedWorkers ? _showAttendancePopup : null,
-            icon: const Icon(Icons.groups, size: 18),
+            icon: Icon(
+              Icons.groups, 
+              size: ResponsiveHelper.iconSize(context, 18)
+            ),
             label: const Text('인원현황'),
             style: ElevatedButton.styleFrom(
               backgroundColor: _hasConfirmedWorkers ? Colors.blue : Colors.grey,
               foregroundColor: Colors.white,
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-              textStyle: const TextStyle(fontSize: 13),
+              padding: EdgeInsets.symmetric(
+                horizontal: ResponsiveHelper.spacing(context, 12),
+                vertical: ResponsiveHelper.spacing(context, 8),
+              ),
+              textStyle: ResponsiveHelper.smallStyle(context),
             ),
           ),
           
           const Spacer(),
           Container(
-            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+            padding: EdgeInsets.symmetric(
+              horizontal: ResponsiveHelper.spacing(context, 8),
+              vertical: ResponsiveHelper.spacing(context, 4),
+            ),
             decoration: BoxDecoration(
               color: statusColor,
               borderRadius: BorderRadius.circular(12),
             ),
             child: Text(
               statusText,
-              style: const TextStyle(
-                fontSize: 12,
-                fontWeight: FontWeight.bold,
+              style: ResponsiveHelper.smallStyle(
+                context,
                 color: Colors.white,
+                fontWeight: FontWeight.bold,
               ),
             ),
           ),
@@ -492,8 +511,8 @@ class _WorkforceCalendarViewState extends State<WorkforceCalendarView> {
         child: Center(
           child: Text(
             '날짜를 선택해주세요',
-            style: TextStyle(
-              fontSize: 16,
+            style: ResponsiveHelper.subtitleStyle(
+              context,
               color: Colors.grey[600],
             ),
           ),
@@ -510,12 +529,16 @@ class _WorkforceCalendarViewState extends State<WorkforceCalendarView> {
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              Icon(Icons.event_busy, size: 80, color: Colors.grey[300]),
-              const SizedBox(height: 16),
+              Icon(
+                Icons.event_busy, 
+                size: ResponsiveHelper.iconSize(context, 80), 
+                color: Colors.grey[300]
+              ),
+              SizedBox(height: ResponsiveHelper.spacing(context, 16)),
               Text(
                 '이 날짜에 등록된 TO가 없습니다',
-                style: TextStyle(
-                  fontSize: 16,
+                style: ResponsiveHelper.subtitleStyle(
+                  context,
                   color: Colors.grey[600],
                 ),
               ),
@@ -526,13 +549,15 @@ class _WorkforceCalendarViewState extends State<WorkforceCalendarView> {
     }
 
     return SliverPadding(
-      padding: const EdgeInsets.all(16),
+      padding: ResponsiveHelper.cardPadding(context),
       sliver: SliverList(
         delegate: SliverChildBuilderDelegate(
           (context, index) {
             final groupItem = dayGroupItems[index];
             return Padding(
-              padding: const EdgeInsets.only(bottom: 16),
+              padding: EdgeInsets.only(
+                bottom: ResponsiveHelper.spacing(context, 16),
+              ),
               child: TOGroupCard(
                 groupItem: groupItem,
                 firestoreService: _firestoreService,
@@ -596,17 +621,18 @@ class _WorkforceCalendarViewState extends State<WorkforceCalendarView> {
                   shape: BoxShape.circle,
                 ),
               ),
-        const SizedBox(width: 4),
+        SizedBox(width: ResponsiveHelper.spacing(context, 4)),
         Text(
           label,
-          style: TextStyle(
-            fontSize: 11,
+          style: ResponsiveHelper.tinyStyle(
+            context,
             color: Colors.grey[700],
           ),
         ),
       ],
     );
   }
+
   /// ⭐ 확정 인원 체크
   Future<void> _checkConfirmedWorkers(DateTime date) async {
     setState(() => _isCheckingWorkers = true);
@@ -688,6 +714,7 @@ class _WorkforceCalendarViewState extends State<WorkforceCalendarView> {
       return [];
     }
   }
+
   /// ⭐ 인원현황 팝업 표시
   Future<void> _showAttendancePopup() async {
     if (_selectedDay == null) return;

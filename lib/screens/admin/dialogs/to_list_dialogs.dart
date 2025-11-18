@@ -5,6 +5,7 @@ import '../../../models/core/to_model.dart';
 import '../../../services/firestore_service.dart';
 import '../../../providers/user_provider.dart';
 import '../../../utils/toast_helper.dart';
+import '../../../utils/responsive_helper.dart';  // ⭐ 추가
 import '../../../models/ui/admin_to_list_ui_models.dart';
 import '../../../utils/dialog_helper.dart';
 
@@ -29,11 +30,11 @@ class TOListDialogs {
     final result = await showDialog<String>(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Row(
+        title: Row(
           children: [
-            Icon(Icons.edit, color: Colors.blue),
-            SizedBox(width: 12),
-            Text('그룹명 수정'),
+            Icon(Icons.edit, color: Theme.of(context).primaryColor),
+            SizedBox(width: ResponsiveHelper.spacing(context, 12)),  // ⭐ 변경
+            const Text('그룹명 수정'),
           ],
         ),
         content: Column(
@@ -42,9 +43,12 @@ class TOListDialogs {
           children: [
             Text(
               '그룹에 속한 모든 TO의 이름이 변경됩니다',
-              style: TextStyle(fontSize: 14, color: Colors.grey[600]),
+              style: ResponsiveHelper.bodyStyle(  // ⭐ 변경
+                context,
+                color: Theme.of(context).textTheme.bodySmall?.color,
+              ),
             ),
-            const SizedBox(height: 16),
+            SizedBox(height: ResponsiveHelper.spacing(context, 16)),  // ⭐ 변경
             TextField(
               controller: controller,
               decoration: InputDecoration(
@@ -145,7 +149,6 @@ class TOListDialogs {
       totalApplicants += toItem.confirmedCount + toItem.pendingCount;
     }
     
-    // ⭐ 변경: DialogHelper 사용
     final confirmed = await DialogHelper.showDangerConfirm(
       context,
       title: '⚠️ 그룹 전체 삭제',
@@ -163,13 +166,6 @@ class TOListDialogs {
         onChanged();
       }
     }
-    
-    if (confirmed == true) {
-      final success = await firestoreService.deleteGroupTOs(masterTO.groupId!);
-      if (success) {
-        onChanged();
-      }
-    }
   }
 
   /// 그룹 해제 다이얼로그
@@ -181,7 +177,6 @@ class TOListDialogs {
       return;
     }
     
-    // ⭐ 변경: DialogHelper 사용
     final confirmed = await DialogHelper.showConfirm(
       context,
       title: '그룹 해제',
@@ -206,7 +201,6 @@ class TOListDialogs {
 
   /// TO 마감 다이얼로그
   Future<void> showCloseTODialog(TOModel to) async {
-    // ⭐ 변경: DialogHelper 사용 (커스텀 콘텐츠)
     final confirmed = await DialogHelper.showCustom<bool>(
       context,
       title: 'TO 마감',
@@ -215,18 +209,24 @@ class TOListDialogs {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           const Text('이 TO를 마감 처리하시겠습니까?'),
-          const SizedBox(height: 16),
+          SizedBox(height: ResponsiveHelper.spacing(context, 16)),  // ⭐ 변경
           Container(
-            padding: const EdgeInsets.all(12),
+            padding: ResponsiveHelper.cardPadding(context),  // ⭐ 변경
             decoration: BoxDecoration(
-              color: Colors.orange[50],
+              color: Colors.orange.withOpacity(0.1),
               borderRadius: BorderRadius.circular(8),
             ),
-            child: const Column(
+            child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text('• 더 이상 지원을 받을 수 없습니다', style: TextStyle(fontSize: 13)),
-                Text('• 재오픈으로 다시 활성화 가능합니다', style: TextStyle(fontSize: 13)),
+                Text(
+                  '• 더 이상 지원을 받을 수 없습니다', 
+                  style: ResponsiveHelper.smallStyle(context),  // ⭐ 변경
+                ),
+                Text(
+                  '• 재오픈으로 다시 활성화 가능합니다', 
+                  style: ResponsiveHelper.smallStyle(context),  // ⭐ 변경
+                ),
               ],
             ),
           ),
@@ -291,39 +291,43 @@ class TOListDialogs {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             const Text('이 TO를 다시 오픈하시겠습니까?'),
-            const SizedBox(height: 16),
+            SizedBox(height: ResponsiveHelper.spacing(context, 16)),  // ⭐ 변경
             
             if (isFull) ...[
               Container(
-                padding: const EdgeInsets.all(12),
+                padding: ResponsiveHelper.cardPadding(context),  // ⭐ 변경
                 decoration: BoxDecoration(
-                  color: Colors.orange[50],
+                  color: Colors.orange.withOpacity(0.1),
                   borderRadius: BorderRadius.circular(8),
-                  border: Border.all(color: Colors.orange[300]!),
+                  border: Border.all(color: Colors.orange.withOpacity(0.3)),
                 ),
                 child: Row(
                   children: [
-                    Icon(Icons.warning_amber, color: Colors.orange[700], size: 20),
-                    const SizedBox(width: 8),
+                    Icon(
+                      Icons.warning_amber, 
+                      color: Colors.orange,
+                      size: ResponsiveHelper.iconSize(context, 20),  // ⭐ 변경
+                    ),
+                    SizedBox(width: ResponsiveHelper.spacing(context, 8)),  // ⭐ 변경
                     Expanded(
                       child: Text(
                         '⚠️ 이미 인원이 충족된 TO입니다.\n추가 지원자를 받으시겠습니까?',
-                        style: TextStyle(
-                          fontSize: 12,
-                          color: Colors.orange[800],
+                        style: ResponsiveHelper.tinyStyle(  // ⭐ 변경
+                          context,
+                          color: Colors.orange,
                         ),
                       ),
                     ),
                   ],
                 ),
               ),
-              const SizedBox(height: 16),
+              SizedBox(height: ResponsiveHelper.spacing(context, 16)),  // ⭐ 변경
             ],
             
             Container(
-              padding: const EdgeInsets.all(12),
+              padding: ResponsiveHelper.cardPadding(context),  // ⭐ 변경
               decoration: BoxDecoration(
-                color: Colors.green[50],
+                color: Colors.green.withOpacity(0.1),
                 borderRadius: BorderRadius.circular(8),
               ),
               child: Column(
@@ -331,17 +335,29 @@ class TOListDialogs {
                 children: [
                   Row(
                     children: [
-                      Icon(Icons.info_outline, size: 16, color: Colors.green[700]),
-                      const SizedBox(width: 8),
-                      const Text(
+                      Icon(
+                        Icons.info_outline, 
+                        size: ResponsiveHelper.iconSize(context, 16),  // ⭐ 변경
+                        color: Colors.green,
+                      ),
+                      SizedBox(width: ResponsiveHelper.spacing(context, 8)),  // ⭐ 변경
+                      Text(
                         '재오픈 후 변경사항',
-                        style: TextStyle(fontWeight: FontWeight.bold),
+                        style: ResponsiveHelper.bodyStyle(context).copyWith(  // ⭐ 변경
+                          fontWeight: FontWeight.bold,
+                        ),
                       ),
                     ],
                   ),
-                  const SizedBox(height: 8),
-                  const Text('• 지원자가 다시 지원할 수 있습니다', style: TextStyle(fontSize: 13)),
-                  const Text('• 기존 확정 지원자는 유지됩니다', style: TextStyle(fontSize: 13)),
+                  SizedBox(height: ResponsiveHelper.spacing(context, 8)),  // ⭐ 변경
+                  Text(
+                    '• 지원자가 다시 지원할 수 있습니다', 
+                    style: ResponsiveHelper.smallStyle(context),  // ⭐ 변경
+                  ),
+                  Text(
+                    '• 기존 확정 지원자는 유지됩니다', 
+                    style: ResponsiveHelper.smallStyle(context),  // ⭐ 변경
+                  ),
                 ],
               ),
             ),
@@ -400,11 +416,11 @@ class TOListDialogs {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text('그룹 "${groupItem.masterTO.groupName}"의 모든 TO를 마감하시겠습니까?'),
-            const SizedBox(height: 16),
+            SizedBox(height: ResponsiveHelper.spacing(context, 16)),  // ⭐ 변경
             Container(
-              padding: const EdgeInsets.all(12),
+              padding: ResponsiveHelper.cardPadding(context),  // ⭐ 변경
               decoration: BoxDecoration(
-                color: Colors.orange[50],
+                color: Colors.orange.withOpacity(0.1),
                 borderRadius: BorderRadius.circular(8),
               ),
               child: Column(
@@ -412,11 +428,19 @@ class TOListDialogs {
                 children: [
                   Text(
                     '포함된 TO: ${groupItem.groupTOs.length}개',
-                    style: const TextStyle(fontWeight: FontWeight.bold),
+                    style: ResponsiveHelper.bodyStyle(context).copyWith(  // ⭐ 변경
+                      fontWeight: FontWeight.bold,
+                    ),
                   ),
-                  const SizedBox(height: 8),
-                  const Text('• 모든 TO가 마감됩니다', style: TextStyle(fontSize: 13)),
-                  const Text('• 더 이상 지원을 받을 수 없습니다', style: TextStyle(fontSize: 13)),
+                  SizedBox(height: ResponsiveHelper.spacing(context, 8)),  // ⭐ 변경
+                  Text(
+                    '• 모든 TO가 마감됩니다', 
+                    style: ResponsiveHelper.smallStyle(context),  // ⭐ 변경
+                  ),
+                  Text(
+                    '• 더 이상 지원을 받을 수 없습니다', 
+                    style: ResponsiveHelper.smallStyle(context),  // ⭐ 변경
+                  ),
                 ],
               ),
             ),
@@ -477,8 +501,8 @@ class TOListDialogs {
         builder: (context) => AlertDialog(
           title: Row(
             children: [
-              Icon(Icons.error_outline, color: Colors.red[700]),
-              const SizedBox(width: 8),
+              Icon(Icons.error_outline, color: Colors.red),
+              SizedBox(width: ResponsiveHelper.spacing(context, 8)),  // ⭐ 변경
               const Text('재오픈 불가'),
             ],
           ),
@@ -505,11 +529,11 @@ class TOListDialogs {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text('그룹 "${groupItem.masterTO.groupName}"의 모든 TO를 재오픈하시겠습니까?'),
-            const SizedBox(height: 16),
+            SizedBox(height: ResponsiveHelper.spacing(context, 16)),  // ⭐ 변경
             Container(
-              padding: const EdgeInsets.all(12),
+              padding: ResponsiveHelper.cardPadding(context),  // ⭐ 변경
               decoration: BoxDecoration(
-                color: Colors.green[50],
+                color: Colors.green.withOpacity(0.1),
                 borderRadius: BorderRadius.circular(8),
               ),
               child: Column(
@@ -517,11 +541,19 @@ class TOListDialogs {
                 children: [
                   Text(
                     '포함된 TO: ${groupItem.groupTOs.length}개',
-                    style: const TextStyle(fontWeight: FontWeight.bold),
+                    style: ResponsiveHelper.bodyStyle(context).copyWith(  // ⭐ 변경
+                      fontWeight: FontWeight.bold,
+                    ),
                   ),
-                  const SizedBox(height: 8),
-                  const Text('• 모든 TO가 재오픈됩니다', style: TextStyle(fontSize: 13)),
-                  const Text('• 지원자가 다시 지원할 수 있습니다', style: TextStyle(fontSize: 13)),
+                  SizedBox(height: ResponsiveHelper.spacing(context, 8)),  // ⭐ 변경
+                  Text(
+                    '• 모든 TO가 재오픈됩니다', 
+                    style: ResponsiveHelper.smallStyle(context),  // ⭐ 변경
+                  ),
+                  Text(
+                    '• 지원자가 다시 지원할 수 있습니다', 
+                    style: ResponsiveHelper.smallStyle(context),  // ⭐ 변경
+                  ),
                 ],
               ),
             ),
@@ -582,8 +614,8 @@ class TOListDialogs {
       builder: (context) => AlertDialog(
         title: Row(
           children: [
-            Icon(Icons.error_outline, color: Colors.red[700]),
-            const SizedBox(width: 8),
+            Icon(Icons.error_outline, color: Colors.red),
+            SizedBox(width: ResponsiveHelper.spacing(context, 8)),  // ⭐ 변경
             const Text('재오픈 불가'),
           ],
         ),
@@ -591,44 +623,54 @@ class TOListDialogs {
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text(
+            Text(
               '근무 시작 시간이 지난 TO는 재오픈할 수 없습니다.',
-              style: TextStyle(fontWeight: FontWeight.bold),
+              style: ResponsiveHelper.bodyStyle(context).copyWith(  // ⭐ 변경
+                fontWeight: FontWeight.bold,
+              ),
             ),
-            const SizedBox(height: 16),
+            SizedBox(height: ResponsiveHelper.spacing(context, 16)),  // ⭐ 변경
             Container(
-              padding: const EdgeInsets.all(12),
+              padding: ResponsiveHelper.cardPadding(context),  // ⭐ 변경
               decoration: BoxDecoration(
-                color: Colors.red[50],
+                color: Colors.red.withOpacity(0.1),
                 borderRadius: BorderRadius.circular(8),
-                border: Border.all(color: Colors.red[200]!),
+                border: Border.all(color: Colors.red.withOpacity(0.3)),
               ),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Row(
                     children: [
-                      Icon(Icons.calendar_today, size: 16, color: Colors.red[700]),
-                      const SizedBox(width: 8),
+                      Icon(
+                        Icons.calendar_today, 
+                        size: ResponsiveHelper.iconSize(context, 16),  // ⭐ 변경
+                        color: Colors.red,
+                      ),
+                      SizedBox(width: ResponsiveHelper.spacing(context, 8)),  // ⭐ 변경
                       Text(
                         '근무일: ${DateFormat('yyyy-MM-dd (E)', 'ko_KR').format(to.date)}',
-                        style: TextStyle(
-                          fontSize: 13,
-                          color: Colors.red[900],
+                        style: ResponsiveHelper.smallStyle(  // ⭐ 변경
+                          context,
+                          color: Colors.red,
                         ),
                       ),
                     ],
                   ),
-                  const SizedBox(height: 4),
+                  SizedBox(height: ResponsiveHelper.spacing(context, 4)),  // ⭐ 변경
                   Row(
                     children: [
-                      Icon(Icons.access_time, size: 16, color: Colors.red[700]),
-                      const SizedBox(width: 8),
+                      Icon(
+                        Icons.access_time, 
+                        size: ResponsiveHelper.iconSize(context, 16),  // ⭐ 변경
+                        color: Colors.red,
+                      ),
+                      SizedBox(width: ResponsiveHelper.spacing(context, 8)),  // ⭐ 변경
                       Text(
                         '근무 시간: ${to.startTime} ~ ${to.endTime}',
-                        style: TextStyle(
-                          fontSize: 13,
-                          color: Colors.red[900],
+                        style: ResponsiveHelper.smallStyle(  // ⭐ 변경
+                          context,
+                          color: Colors.red,
                         ),
                       ),
                     ],
@@ -636,12 +678,12 @@ class TOListDialogs {
                 ],
               ),
             ),
-            const SizedBox(height: 16),
+            SizedBox(height: ResponsiveHelper.spacing(context, 16)),  // ⭐ 변경
             Text(
               '💡 새로운 날짜로 TO를 생성하세요.',
-              style: TextStyle(
-                fontSize: 14,
-                color: Colors.grey[700],
+              style: ResponsiveHelper.bodyStyle(  // ⭐ 변경
+                context,
+                color: Theme.of(context).textTheme.bodySmall?.color,
               ),
             ),
           ],
@@ -655,6 +697,7 @@ class TOListDialogs {
       ),
     );
   }
+  
   /// 그룹 연결 다이얼로그 (기존 그룹 또는 새 그룹 생성)
   Future<void> showReconnectToGroupDialog(TOItem toItem, List<TOGroupItem> allGroups) async {
     final to = toItem.to;
@@ -676,11 +719,11 @@ class TOListDialogs {
       context: context,
       builder: (context) => StatefulBuilder(
         builder: (context, setState) => AlertDialog(
-          title: const Row(
+          title: Row(
             children: [
-              Icon(Icons.link, color: Colors.blue),
-              SizedBox(width: 12),
-              Text('그룹 연결'),
+              Icon(Icons.link, color: Theme.of(context).primaryColor),
+              SizedBox(width: ResponsiveHelper.spacing(context, 12)),  // ⭐ 변경
+              const Text('그룹 연결'),
             ],
           ),
           content: SingleChildScrollView(
@@ -691,9 +734,9 @@ class TOListDialogs {
                 Text(
                   '다음 TO를 그룹에 연결합니다:\n\n'
                   '📋 ${DateFormat('MM/dd (E)', 'ko_KR').format(to.date)} ${to.title}',
-                  style: const TextStyle(fontSize: 14),
+                  style: ResponsiveHelper.bodyStyle(context),  // ⭐ 변경
                 ),
-                const SizedBox(height: 20),
+                SizedBox(height: ResponsiveHelper.spacing(context, 20)),  // ⭐ 변경
                 
                 // 옵션 1: 기존 그룹에 연결
                 RadioListTile<String>(
@@ -708,21 +751,25 @@ class TOListDialogs {
                 ),
                 
                 if (selectedOption == 'existing') ...[
-                  const SizedBox(height: 8),
+                  SizedBox(height: ResponsiveHelper.spacing(context, 8)),  // ⭐ 변경
                   if (availableGroups.isEmpty)
                     Padding(
-                      padding: const EdgeInsets.only(left: 16),
+                      padding: EdgeInsets.only(
+                        left: ResponsiveHelper.spacing(context, 16),  // ⭐ 변경
+                      ),
                       child: Text(
                         '연결 가능한 그룹이 없습니다',
-                        style: TextStyle(
-                          fontSize: 13,
-                          color: Colors.grey[600],
+                        style: ResponsiveHelper.smallStyle(  // ⭐ 변경
+                          context,
+                          color: Theme.of(context).textTheme.bodySmall?.color,
                         ),
                       ),
                     )
                   else
                     Padding(
-                      padding: const EdgeInsets.only(left: 16),
+                      padding: EdgeInsets.only(
+                        left: ResponsiveHelper.spacing(context, 16),  // ⭐ 변경
+                      ),
                       child: DropdownButtonFormField<String>(
                         initialValue: selectedGroupId,
                         decoration: const InputDecoration(
@@ -736,7 +783,7 @@ class TOListDialogs {
                             value: master.groupId,
                             child: Text(
                               '${master.groupName} (${master.businessName})',
-                              style: const TextStyle(fontSize: 13),
+                              style: ResponsiveHelper.smallStyle(context),  // ⭐ 변경
                             ),
                           );
                         }).toList(),
@@ -747,7 +794,7 @@ class TOListDialogs {
                     ),
                 ],
                 
-                const SizedBox(height: 16),
+                SizedBox(height: ResponsiveHelper.spacing(context, 16)),  // ⭐ 변경
                 
                 // 옵션 2: 새 그룹 생성
                 RadioListTile<String>(
@@ -762,9 +809,11 @@ class TOListDialogs {
                 ),
                 
                 if (selectedOption == 'new') ...[
-                  const SizedBox(height: 8),
+                  SizedBox(height: ResponsiveHelper.spacing(context, 8)),  // ⭐ 변경
                   Padding(
-                    padding: const EdgeInsets.only(left: 16),
+                    padding: EdgeInsets.only(
+                      left: ResponsiveHelper.spacing(context, 16),  // ⭐ 변경
+                    ),
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
@@ -777,27 +826,35 @@ class TOListDialogs {
                             isDense: true,
                           ),
                         ),
-                        const SizedBox(height: 12),
+                        SizedBox(height: ResponsiveHelper.spacing(context, 12)),  // ⭐ 변경
                         Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                          padding: EdgeInsets.symmetric(
+                            horizontal: ResponsiveHelper.spacing(context, 12),  // ⭐ 변경
+                            vertical: ResponsiveHelper.spacing(context, 10),  // ⭐ 변경
+                          ),
                           decoration: BoxDecoration(
-                            color: Colors.blue[50],
+                            color: Theme.of(context).primaryColor.withOpacity(0.1),
                             borderRadius: BorderRadius.circular(8),
-                            border: Border.all(color: Colors.blue[200]!),
+                            border: Border.all(
+                              color: Theme.of(context).primaryColor.withOpacity(0.3),
+                            ),
                           ),
                           child: Row(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              Icon(Icons.info_outline, size: 16, color: Colors.blue[700]),
-                              const SizedBox(width: 8),
+                              Icon(
+                                Icons.info_outline, 
+                                size: ResponsiveHelper.iconSize(context, 16),  // ⭐ 변경
+                                color: Theme.of(context).primaryColor,
+                              ),
+                              SizedBox(width: ResponsiveHelper.spacing(context, 8)),  // ⭐ 변경
                               Expanded(
                                 child: Text(
                                   '이 TO가 새 그룹의 대표가 됩니다.\n나중에 다른 TO를 이 그룹에 추가할 수 있습니다.',
-                                  style: TextStyle(
-                                    fontSize: 11,
-                                    color: Colors.grey[700],
-                                    height: 1.4,
-                                  ),
+                                  style: ResponsiveHelper.tinyStyle(  // ⭐ 변경
+                                    context,
+                                    color: Theme.of(context).textTheme.bodySmall?.color,
+                                  ).copyWith(height: 1.4),
                                 ),
                               ),
                             ],

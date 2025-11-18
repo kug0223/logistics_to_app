@@ -136,7 +136,7 @@ class _TOGroupCardState extends State<TOGroupCard> {
                           ],
                         ),
                       ),
-                      const SizedBox(width: 8),
+                      SizedBox(width: ResponsiveHelper.spacing(context, 8)),
                       // 장기/단기 배지
                       Container(
                         padding: EdgeInsets.symmetric(
@@ -283,7 +283,7 @@ class _TOGroupCardState extends State<TOGroupCard> {
                                   style: ResponsiveHelper.bodyStyle(context, color: Colors.grey[700]),
                                 ),
                                 if (masterTO.workDays != null && masterTO.workDays!.isNotEmpty) ...[
-                                  const SizedBox(height: 2),
+                                  SizedBox(height: ResponsiveHelper.spacing(context, 2)),
                                   Text(
                                     masterTO.workDaysLabel,
                                     style: ResponsiveHelper.smallStyle(context, color: Colors.grey[600]),
@@ -404,7 +404,7 @@ class _TOGroupCardState extends State<TOGroupCard> {
           if (widget.isExpanded && !widget.groupItem.isGrouped) ...[
             const Divider(height: 1),
             Padding(
-              padding: const EdgeInsets.all(12),
+              padding: ResponsiveHelper.cardPadding(context),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
@@ -454,21 +454,21 @@ class _TOGroupCardState extends State<TOGroupCard> {
         color: Colors.grey[600]!,
         backgroundColor: Colors.grey[50],
         icon: Icons.lock,
-        fontSize: 11,
+        fontSize: ResponsiveHelper.getFontSize(context, 11),
       );
     } else if (isFull) {
       return StyledOutlineBadge(
         label: '인원충족',
         color: Colors.green[600]!,
         icon: Icons.check_circle,
-        fontSize: 11,
+        fontSize: ResponsiveHelper.getFontSize(context, 11),
       );
     } else {
       return StyledOutlineBadge(
         label: '진행중',
         color: Theme.of(context).primaryColor,
         icon: Icons.circle,
-        fontSize: 11,
+        fontSize: ResponsiveHelper.getFontSize(context, 11),
       );
     }
   }
@@ -480,7 +480,7 @@ class _TOGroupCardState extends State<TOGroupCard> {
         label: '🕐 ${DateFormat('MM/dd HH:mm').format(masterTO.applicationDeadline)}',
         backgroundColor: Colors.orange[50]!,
         textColor: Colors.orange[700]!,
-        fontSize: 12,
+        fontSize: ResponsiveHelper.getFontSize(context, 12),
         borderRadius: 4,
       );
     }
@@ -490,7 +490,7 @@ class _TOGroupCardState extends State<TOGroupCard> {
         label: '🕐 각 업무 ${masterTO.hoursBeforeStart}시간 전',
         backgroundColor: Colors.orange[50]!,
         textColor: Colors.orange[700]!,
-        fontSize: 12,
+        fontSize: ResponsiveHelper.getFontSize(context, 12),
         borderRadius: 4,
       );
     }
@@ -503,7 +503,11 @@ class _TOGroupCardState extends State<TOGroupCard> {
     final masterTO = widget.groupItem.masterTO;
     
     return PopupMenuButton<String>(
-      icon: Icon(Icons.more_vert, size: 20, color: Colors.grey[700]),
+      icon: Icon(
+        Icons.more_vert, 
+        size: ResponsiveHelper.iconSize(context, 20), 
+        color: Colors.grey[700]
+      ),
       padding: EdgeInsets.zero,
       tooltip: '메뉴',
       onSelected: (value) => _handleSingleTOMenuAction(context, value),
@@ -512,8 +516,12 @@ class _TOGroupCardState extends State<TOGroupCard> {
           value: 'edit',
           child: Row(
             children: [
-              Icon(Icons.edit, size: 18, color: Colors.orange[600]),
-              const SizedBox(width: 12),
+              Icon(
+                Icons.edit, 
+                size: ResponsiveHelper.iconSize(context, 18), 
+                color: Colors.orange[600]
+              ),
+              SizedBox(width: ResponsiveHelper.spacing(context, 12)),
               const Text('수정'),
             ],
           ),
@@ -523,7 +531,7 @@ class _TOGroupCardState extends State<TOGroupCard> {
           child: Row(
             children: [
               Icon(Icons.delete, size: 18, color: Colors.red[600]),
-              const SizedBox(width: 12),
+              SizedBox(width: ResponsiveHelper.spacing(context, 12)),
               const Text('삭제'),
             ],
           ),
@@ -534,7 +542,7 @@ class _TOGroupCardState extends State<TOGroupCard> {
             child: Row(
               children: [
                 Icon(Icons.link, size: 18, color: Colors.blue[600]),
-                const SizedBox(width: 12),
+                SizedBox(width: ResponsiveHelper.spacing(context, 12)),
                 const Text('그룹 연결'),
               ],
             ),
@@ -544,7 +552,7 @@ class _TOGroupCardState extends State<TOGroupCard> {
           child: Row(
             children: [
               Icon(Icons.check_circle_outline, size: 18, color: Colors.green[600]),
-              const SizedBox(width: 12),
+              SizedBox(width: ResponsiveHelper.spacing(context, 12)),
               const Text('확정명단'),
             ],
           ),
@@ -554,7 +562,7 @@ class _TOGroupCardState extends State<TOGroupCard> {
           child: Row(
             children: [
               Icon(Icons.assignment_turned_in, size: 18, color: Colors.purple[600]),
-              const SizedBox(width: 12),
+              SizedBox(width: ResponsiveHelper.spacing(context, 12)),
               const Text('업무별 마감'),
             ],
           ),
@@ -568,7 +576,11 @@ class _TOGroupCardState extends State<TOGroupCard> {
     final masterTO = widget.groupItem.masterTO;
     
     return PopupMenuButton<String>(
-      icon: Icon(Icons.more_vert, size: 20, color: Colors.grey[700]),
+      icon: Icon(
+        Icons.more_vert, 
+        size: ResponsiveHelper.iconSize(context, 20), 
+        color: Colors.grey[700]
+      ),
       padding: EdgeInsets.zero,
       tooltip: '메뉴',
       onSelected: (value) => _handleGroupTOMenuAction(context, value),
@@ -578,7 +590,7 @@ class _TOGroupCardState extends State<TOGroupCard> {
           child: Row(
             children: [
               Icon(Icons.edit, size: 18, color: Colors.blue[600]),
-              const SizedBox(width: 12),
+              SizedBox(width: ResponsiveHelper.spacing(context, 12)),
               const Text('그룹명 수정'),
             ],
           ),
@@ -592,7 +604,7 @@ class _TOGroupCardState extends State<TOGroupCard> {
                 size: 18,
                 color: masterTO.isClosed ? Colors.green[600] : Colors.orange[600],
               ),
-              const SizedBox(width: 12),
+              SizedBox(width: ResponsiveHelper.spacing(context, 12)),
               Text(masterTO.isClosed ? '그룹 재오픈' : '그룹 마감'),
             ],
           ),
@@ -602,7 +614,7 @@ class _TOGroupCardState extends State<TOGroupCard> {
           child: Row(
             children: [
               Icon(Icons.delete_forever, size: 18, color: Colors.red[600]),
-              const SizedBox(width: 12),
+              SizedBox(width: ResponsiveHelper.spacing(context, 12)),
               const Text('그룹 전체 삭제'),
             ],
           ),
