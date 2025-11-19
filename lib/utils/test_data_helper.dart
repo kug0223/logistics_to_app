@@ -1,4 +1,4 @@
-// lib/utils/test_data_helper.dart (장기 TO 지원 개선 버전)
+// lib/utils/test_data_helper.dart (UserModel 개선 버전)
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'dart:math';
@@ -85,7 +85,18 @@ class TestDataHelper {
     return '$year$month$day-$genderCode$random6digits';
   }
 
-  /// ⭐ 디테일한 더미 지원자 생성
+  /// ⭐ 나이 계산
+  static int _calculateAge(DateTime birthDate) {
+    final now = DateTime.now();
+    int age = now.year - birthDate.year;
+    if (now.month < birthDate.month ||
+        (now.month == birthDate.month && now.day < birthDate.day)) {
+      age--;
+    }
+    return age;
+  }
+
+  /// ⭐ 개선된 더미 지원자 생성 - 새로운 UserModel 필드 포함
   static Future<List<String>> createDummyApplicants(int count) async {
     print('');
     print('👥 ═══════════════════════════════════════');
@@ -103,75 +114,76 @@ class TestDataHelper {
       
       final uid = 'dummy_user_${DateTime.now().millisecondsSinceEpoch}_$i';
       final phone = '010-${_random.nextInt(9000) + 1000}-${_random.nextInt(9000) + 1000}';
-      final email = 'dummy$i@alfit.test';
+      final email = 'dummy$i@ALfit.test';
       
       // ━━━ 성별 & 생년월일 ━━━
       final gender = _random.nextBool() ? '남성' : '여성';
-      final age = 20 + _random.nextInt(36); // 20~55세
-      final birthDate = DateTime.now().subtract(
-        Duration(days: age * 365 + _random.nextInt(365))
-      );
       
-      // ━━━ 주민등록번호 생성 ━━━
+      // 나이: 20~55세
+      final age = _random.nextInt(35) + 20;
+      final birthYear = DateTime.now().year - age;
+      final birthMonth = _random.nextInt(12) + 1;
+      final birthDay = _random.nextInt(28) + 1; // 안전하게 1~28일
+      final birthDate = DateTime(birthYear, birthMonth, birthDay);
+      
+      // ⭐ 주민번호 생성
       final residentNumber = _generateResidentNumber(birthDate, gender);
       
       // ━━━ 주소 ━━━
       final address = _addresses[_random.nextInt(_addresses.length)];
-      final detailAddress = '${_random.nextInt(300) + 1}번지 '
-          '${_random.nextInt(20) + 1}동 ${_random.nextInt(1000) + 101}호';
+      final detailAddress = '${_random.nextInt(999) + 1}호';
       
-      // ━━━ 은행 정보 ━━━
+      // ━━━ 급여 계좌 ━━━
       final bankName = _banks[_random.nextInt(_banks.length)];
-      final accountNumber = '${_random.nextInt(900) + 100}-'
-          '${_random.nextInt(90000) + 10000}-'
-          '${_random.nextInt(90000) + 10000}';
+      final accountNumber = '${_random.nextInt(900) + 100}-${_random.nextInt(9000) + 1000}-${_random.nextInt(9000) + 1000}';
       final accountHolder = name;
       
-      // ━━━ 선호 업무 ━━━
-      final preferredCount = _random.nextInt(3) + 1; // 1~3개
-      final shuffled = List<String>.from(_allWorkTypes)..shuffle();
+      // ━━━ 프로필 ━━━
+      final bioTemplate = _bioTemplates[_random.nextInt(_bioTemplates.length)];
+      final bio = bioTemplate.contains('{}') 
+          ? bioTemplate.replaceFirst('{}', '${_random.nextInt(5) + 1}')
+          : bioTemplate;
+      
+      // 선호 업무 (1~3개)
+      final preferredCount = _random.nextInt(3) + 1;
+      final shuffled = List.from(_allWorkTypes)..shuffle(_random);
       final preferredWorkTypes = shuffled.take(preferredCount).toList();
       
-      // ━━━ 자기소개 ━━━
-      final bioTemplate = _bioTemplates[_random.nextInt(_bioTemplates.length)];
-      final bio = bioTemplate.replaceAll('{}', '${_random.nextInt(5) + 1}');
-      
-      // ━━━ 근무 통계 (랜덤) ━━━
+      // ━━━ 근무 이력 ━━━
       final totalWorkDays = _random.nextInt(100);
-      final totalWorkHours = totalWorkDays * 8 + _random.nextInt(totalWorkDays * 2);
+      final totalWorkHours = totalWorkDays * (_random.nextInt(4) + 6); // 6~9시간
       final averageRating = totalWorkDays > 0 
-          ? double.parse((3.5 + _random.nextDouble() * 1.5).toStringAsFixed(2)) // 3.5~5.0
+          ? (_random.nextDouble() * 2 + 3).clamp(3.0, 5.0) 
           : 0.0;
       final reviewCount = totalWorkDays > 0 
-          ? _random.nextInt(totalWorkDays ~/ 3) + 1 
+          ? (totalWorkDays * 0.3).round() 
           : 0;
-      final noShowCount = _random.nextInt(3); // 0~2회
-      final lateCount = _random.nextInt(5);   // 0~4회
+      final noShowCount = _random.nextInt(3);
+      final lateCount = _random.nextInt(5);
       
-      // ━━━ 신분증 인증 (70% 확률로 인증됨) ━━━
-      final isIdVerified = _random.nextDouble() > 0.3;
-
       // ━━━ Firestore에 저장 ━━━
       await _firestore.collection('users').doc(uid).set({
-        'uid': uid,
+        // 기본 정보
         'name': name,
         'email': email,
         'phone': phone,
         'role': 'USER',
         'createdAt': FieldValue.serverTimestamp(),
+        'lastLoginAt': FieldValue.serverTimestamp(),
         
-        // 필수 개인정보
+        // ⭐ 주민번호 기반 정보
         'gender': gender,
         'birthDate': Timestamp.fromDate(birthDate),
-        'residentNumber': residentNumber, // ⚠️ 실제론 암호화 필요
+        'residentNumber': residentNumber, // ⚠️ 실제론 암호화 필요!
+        
+        // 주소
         'address': address,
         'detailAddress': detailAddress,
         
-        // 신분증
-        'isIdVerified': isIdVerified,
-        'idCardVerifiedAt': isIdVerified 
-            ? FieldValue.serverTimestamp() 
-            : null,
+        // 신분증 정보 (더미는 null)
+        'idCardImageUrl': null,
+        'idCardVerifiedAt': null,
+        'isIdVerified': false,
         
         // 급여 정보
         'bankName': bankName,
@@ -179,7 +191,9 @@ class TestDataHelper {
         'accountHolder': accountHolder,
         
         // 프로필
+        'profileImageUrl': null,
         'bio': bio,
+        'skills': null,
         'preferredWorkTypes': preferredWorkTypes,
         
         // 통계
@@ -192,7 +206,10 @@ class TestDataHelper {
         
         // 상태
         'isAvailable': true,
+        'unavailableReason': null,
+        'availableFrom': null,
         'isBlacklisted': false,
+        'blacklistReason': null,
         
         'isDummy': true,  // ⭐ 더미 데이터 표시
       });
@@ -200,15 +217,17 @@ class TestDataHelper {
       uids.add(uid);
       
       // ━━━ 로그 출력 ━━━
+      final calculatedAge = _calculateAge(birthDate);
       final trustScore = _calculateTrustScore(
         totalWorkDays, averageRating, noShowCount, lateCount
       );
       
-      print('  ✅ $name ($gender, ${age}세)');
+      print('  ✅ $name ($gender, ${calculatedAge}세)');
+      print('     🆔 $residentNumber');
       print('     📞 $phone');
-      print('     🏠 $address');
-      print('     💳 $bankName $accountNumber');
-      print('     ⭐ 평점: $averageRating (${reviewCount}개) | 신뢰도: $trustScore점');
+      print('     🏠 $address $detailAddress');
+      print('     💳 $bankName $accountNumber ($accountHolder)');
+      print('     ⭐ 평점: ${averageRating.toStringAsFixed(1)} (${reviewCount}개) | 신뢰도: $trustScore점');
       print('     💼 선호: ${preferredWorkTypes.join(", ")}');
       print('     📊 근무: ${totalWorkDays}일 (${totalWorkHours}시간)');
       print('');
@@ -222,7 +241,7 @@ class TestDataHelper {
     return uids;
   }
 
-  /// 신뢰도 점수 계산 (간이 버전)
+  /// 신뢰도 점수 계산
   static int _calculateTrustScore(
     int totalWorkDays, 
     double averageRating, 
@@ -244,7 +263,7 @@ class TestDataHelper {
     return score.clamp(0, 100);
   }
 
-  /// ⭐ 특정 TO에 더미 지원서 생성 (장기 TO 지원 개선!)
+  /// ⭐ 특정 TO에 더미 지원서 생성
   static Future<void> createDummyApplications({
     required String toId,
     required List<String> workTypes,
@@ -271,15 +290,6 @@ class TestDataHelper {
     }
 
     final toData = toDoc.data()!;
-
-    // ⭐ TO 데이터 전체 출력
-    print('📋 TO 데이터:');
-    print('   jobType: ${toData['jobType']}');
-    print('   workEndDate: ${toData['workEndDate']}');
-    print('   endDate: ${toData['endDate']}');  // ⭐ 추가!
-    print('   workDays: ${toData['workDays']}');
-    print('');
-
     final businessId = toData['businessId'];
     final businessName = toData['businessName'];
     final toTitle = toData['title'];
@@ -287,13 +297,10 @@ class TestDataHelper {
     final startTime = toData['startTime'];
     final endTime = toData['endTime'];
 
-    // ⭐ 장기 TO 정보 추가
+    // 장기 TO 정보
     final jobType = toData['jobType'] ?? 'short';
     final isLongTerm = jobType == 'long_term';
-
-    // ⭐ 수정: endDate를 workEndDate로 사용!
-    final workEndDate = toData['endDate'] as Timestamp?;  // workEndDate 대신 endDate!
-
+    final workEndDate = toData['endDate'] as Timestamp?;
     final workDays = toData['workDays'] as List?;
 
     if (isLongTerm) {
@@ -333,7 +340,7 @@ class TestDataHelper {
       final workDetail = workDetails[_random.nextInt(workDetails.length)];
       final workData = workDetail.data();
       
-      // ⭐ 지원서 데이터 생성 (장기 TO 필드 포함!)
+      // 지원서 데이터 생성
       final applicationData = <String, dynamic>{
         'businessId': businessId,
         'businessName': businessName,
@@ -349,65 +356,189 @@ class TestDataHelper {
         'confirmedAt': isConfirmed ? now : null,
         'isDummy': true,
         
-        // ⭐ 장기 TO 필드 추가
+        // 장기 TO 필드
         'type': jobType,
       };
       
-      // ⭐ 장기 TO인 경우 추가 필드 (필수!)
-      if (isLongTerm) {
-        // workEndDate는 장기 TO의 필수 필드
-        if (workEndDate != null) {
-          applicationData['workEndDate'] = workEndDate;
-        } else {
-          // workEndDate가 없으면 경고
-          print('⚠️  장기 TO인데 workEndDate가 null입니다!');
-        }
+      // 장기 TO인 경우 추가 필드
+      if (isLongTerm && workEndDate != null) {
+        applicationData['isLongTermApplication'] = true;
+        applicationData['workEndDate'] = workEndDate;
         
-        // workDays 복사
         if (workDays != null && workDays.isNotEmpty) {
-          applicationData['workDays'] = List.from(workDays);  // ⭐ List.from으로 복사
+          applicationData['workDays'] = workDays;
         }
       }
-      // applications 컬렉션에 지원서 생성
-      final appRef = await _firestore.collection('applications').add(applicationData);
       
-      createdAppIds.add(appRef.id);
+      final appDoc = await _firestore.collection('applications').add(applicationData);
+      createdAppIds.add(appDoc.id);
       
-      // 확정인 경우 confirmed_applications 서브컬렉션에도 추가
-      if (isConfirmed) {
-        await _firestore
-            .collection('tos')
-            .doc(toId)
-            .collection('confirmed_applications')
-            .doc(appRef.id)
-            .set({
-          'uid': uid,
-          'selectedWorkType': workData['workType'],
-          'wage': workData['wage'],
-          'confirmedAt': now,
-        });
-      }
+      print('  ${isConfirmed ? "✅" : "⏳"} $uid → ${workData['workType']} (${workData['wage']}원)');
     }
-    
-    print('');
-    print('✅ 지원서 생성 완료:');
-    print('   총 ${createdAppIds.length}개 생성됨');
-    if (isLongTerm) {
-      print('   📌 장기 계약 지원서로 생성됨');
-    }
-    print('');
 
+    print('');
+    print('🎉 지원서 ${createdAppIds.length}개 생성 완료!');
+    
     // 5. TO 통계 재계산
     print('📊 TO 통계 재계산 중...');
     final success = await _firestoreService.recalculateTOStats(toId);
-    _firestoreService.clearCache(toId: toId);
-    
     if (success) {
-      print('✅ TO 통계 재계산 완료!');
+      print('✅ TO 통계 재계산 완료');
     } else {
       print('⚠️  TO 통계 재계산 실패');
     }
     print('');
+  }
+
+  /// 더미 출근 데이터 생성
+  static Future<void> createDummyAttendance({
+    required String businessId,
+    required DateTime date,
+  }) async {
+    print('');
+    print('🕐 ═══════════════════════════════════════');
+    print('🕐 더미 출근 데이터 생성 시작...');
+    print('🕐 ═══════════════════════════════════════');
+    print('   날짜: ${date.year}-${date.month}-${date.day}');
+    print('   사업장: $businessId');
+    print('');
+
+    try {
+      final dateStart = DateTime(date.year, date.month, date.day);
+      
+      // 해당 사업장의 확정 지원서 조회
+      final confirmedSnapshot = await _firestore
+          .collection('applications')
+          .where('businessId', isEqualTo: businessId)
+          .where('status', isEqualTo: 'CONFIRMED')
+          .get();
+
+      print('📋 확정 지원서: ${confirmedSnapshot.docs.length}개');
+
+      // 오늘 근무 대상 필터링
+      final todayWorkers = confirmedSnapshot.docs.where((doc) {
+        final data = doc.data();
+        final workDate = (data['workDate'] as Timestamp).toDate();
+        final isLongTerm = data['type'] == 'long_term' || data['isLongTermApplication'] == true;
+
+        if (!isLongTerm) {
+          // 단기: 날짜 일치
+          return dateStart.year == workDate.year &&
+                 dateStart.month == workDate.month &&
+                 dateStart.day == workDate.day;
+        }
+
+        // 장기: 기간 + 요일 체크
+        final workEndDate = data['workEndDate'] as Timestamp?;
+        if (workEndDate == null) return false;
+
+        final endDate = workEndDate.toDate();
+        if (dateStart.isBefore(workDate) || dateStart.isAfter(endDate)) {
+          return false;
+        }
+
+        final workDays = data['workDays'] as List?;
+        if (workDays == null || workDays.isEmpty) return true;
+
+        final weekdays = ['월', '화', '수', '목', '금', '토', '일'];
+        final dayOfWeek = weekdays[date.weekday - 1];
+
+        return workDays.contains(dayOfWeek);
+      }).toList();
+
+      print('📅 오늘 근무 대상: ${todayWorkers.length}명');
+      print('');
+
+      if (todayWorkers.isEmpty) {
+        print('⚠️  해당 날짜에 근무하는 확정 인원이 없습니다.');
+        return;
+      }
+
+      int checkedInCount = 0;
+      int checkedOutCount = 0;
+
+      for (var appDoc in todayWorkers) {
+        final appData = appDoc.data();
+        final appId = appDoc.id;
+        final uid = appData['uid'];
+        final startTime = appData['startTime'];
+        final endTime = appData['endTime'];
+
+        // 70% 확률로 출근
+        if (_random.nextDouble() > 0.7) continue;
+
+        // 출근 시간 생성
+        final startParts = startTime.split(':');
+        final startHour = int.parse(startParts[0]);
+        final startMinute = int.parse(startParts[1]);
+
+        final checkInTime = DateTime(
+          date.year,
+          date.month,
+          date.day,
+          startHour,
+          startMinute + _random.nextInt(30) - 15, // ±15분
+        );
+
+        // 50% 확률로 퇴근
+        DateTime? checkOutTime;
+        if (_random.nextBool()) {
+          final endParts = endTime.split(':');
+          final endHour = int.parse(endParts[0]);
+          final endMinute = int.parse(endParts[1]);
+
+          checkOutTime = DateTime(
+            date.year,
+            date.month,
+            date.day,
+            endHour,
+            endMinute + _random.nextInt(30) - 15,
+          );
+          checkedOutCount++;
+        }
+
+        // GPS 좌표 (랜덤)
+        final latitude = 37.5 + _random.nextDouble() * 0.1;
+        final longitude = 127.0 + _random.nextDouble() * 0.1;
+
+        // Firestore 저장
+        await _firestore.collection('attendance').add({
+          'applicationId': appId,
+          'uid': uid,
+          'businessId': businessId,
+          'date': Timestamp.fromDate(dateStart),
+          'checkInTime': Timestamp.fromDate(checkInTime),
+          'checkOutTime': checkOutTime != null 
+              ? Timestamp.fromDate(checkOutTime) 
+              : null,
+          'checkInLatitude': latitude,
+          'checkInLongitude': longitude,
+          'checkOutLatitude': checkOutTime != null ? latitude : null,
+          'checkOutLongitude': checkOutTime != null ? longitude : null,
+          'isDummy': true,
+        });
+
+        checkedInCount++;
+      }
+
+      print('');
+      print('🎉 ═══════════════════════════════════════');
+      print('🎉 더미 출근 데이터 생성 완료!');
+      print('🎉 ═══════════════════════════════════════');
+      print('   출근 완료: $checkedInCount명');
+      print('   퇴근 완료: $checkedOutCount명');
+      print('   미출근: ${todayWorkers.length - checkedInCount}명');
+      print('');
+    } catch (e, stackTrace) {
+      print('');
+      print('❌ ═══════════════════════════════════════');
+      print('❌ 더미 출근 데이터 생성 실패!');
+      print('❌ ═══════════════════════════════════════');
+      print('에러: $e');
+      print('스택 트레이스: $stackTrace');
+      print('');
+      rethrow;
+    }
   }
 
   /// 모든 더미 데이터 삭제
@@ -471,32 +602,18 @@ class TestDataHelper {
       print('   더미 applications: ${dummyApps.length}개');
 
       if (dummyApps.isNotEmpty) {
-        for (var doc in dummyApps) {
-          final data = doc.data();
-          final businessId = data['businessId'];
-          final toTitle = data['toTitle'];
-          final workDate = data['workDate'] as Timestamp?;
-          
-          if (businessId != null && toTitle != null && workDate != null) {
-            final toSnapshot = await _firestore
-                .collection('tos')
-                .where('businessId', isEqualTo: businessId)
-                .where('title', isEqualTo: toTitle)
-                .where('date', isEqualTo: workDate)
-                .limit(1)
-                .get();
-            
-            if (toSnapshot.docs.isNotEmpty) {
-              affectedTOIds.add(toSnapshot.docs.first.id);
-            }
-          }
-        }
-        
         for (int i = 0; i < dummyApps.length; i += 500) {
           final batch = _firestore.batch();
           final chunk = dummyApps.skip(i).take(500);
           
           for (var doc in chunk) {
+            final data = doc.data();
+            final businessId = data['businessId'];
+            if (businessId != null) {
+              // TO ID 추적 (나중에 통계 재계산)
+              affectedTOIds.add(businessId);
+            }
+            
             batch.delete(doc.reference);
           }
           
@@ -510,23 +627,12 @@ class TestDataHelper {
 
       print('');
 
-      // 3. TO 통계 재계산
-      if (affectedTOIds.isNotEmpty) {
-        print('📊 3단계: TO 통계 재계산 중... (${affectedTOIds.length}개 TO)');
-        
-        int recalculatedCount = 0;
-        for (var toId in affectedTOIds) {
-          final success = await _firestoreService.recalculateTOStats(toId);
-          _firestoreService.clearCache(toId: toId);
-          if (success) recalculatedCount++;
-        }
-        
-        print('✅ TO 통계 재계산 완료: $recalculatedCount/${affectedTOIds.length}개');
-      }
+      // 3. 더미 출근 데이터 삭제
+      await clearDummyAttendance();
 
       print('');
       print('🎉 ═══════════════════════════════════════');
-      print('🎉 더미 데이터 삭제 완료!');
+      print('🎉 모든 더미 데이터 삭제 완료!');
       print('🎉 ═══════════════════════════════════════');
       print('   📊 총 $totalDeleted개 항목 삭제됨');
       print('   🎯 영향받은 TO: ${affectedTOIds.length}개');
@@ -544,151 +650,9 @@ class TestDataHelper {
     }
   }
 
-  /// 더미 출근 데이터 생성
-  static Future<void> createDummyAttendance({
-    required String businessId,
-    required DateTime date,
-  }) async {
-    print('');
-    print('🕐 ═══════════════════════════════════════');
-    print('🕐 더미 출근 데이터 생성 시작...');
-    print('🕐 ═══════════════════════════════════════');
-    print('   날짜: ${date.year}-${date.month}-${date.day}');
-    print('   사업장: $businessId');
-    print('');
-
-    try {
-      final dateStart = DateTime(date.year, date.month, date.day);
-      
-      final confirmedSnapshot = await _firestore
-          .collection('applications')
-          .where('businessId', isEqualTo: businessId)
-          .where('status', isEqualTo: 'CONFIRMED')
-          .get();
-
-      print('📋 확정 지원서: ${confirmedSnapshot.docs.length}개');
-
-      final todayWorkers = confirmedSnapshot.docs.where((doc) {
-        final data = doc.data();
-        final workDate = (data['workDate'] as Timestamp).toDate();
-        final isLongTerm = data['type'] == 'long_term' || data['isLongTermApplication'] == true;
-
-        if (!isLongTerm) {
-          return dateStart.year == workDate.year &&
-                 dateStart.month == workDate.month &&
-                 dateStart.day == workDate.day;
-        }
-
-        final workEndDate = data['workEndDate'] as Timestamp?;
-        if (workEndDate == null) return false;
-
-        final endDate = workEndDate.toDate();
-        if (dateStart.isBefore(workDate) || dateStart.isAfter(endDate)) {
-          return false;
-        }
-
-        final workDays = data['workDays'] as List?;
-        if (workDays == null || workDays.isEmpty) return true;
-
-        final weekdays = ['월', '화', '수', '목', '금', '토', '일'];
-        final dayOfWeek = weekdays[date.weekday - 1];
-
-        return workDays.contains(dayOfWeek);
-      }).toList();
-
-      print('📅 오늘 근무 대상: ${todayWorkers.length}명');
-      print('');
-
-      if (todayWorkers.isEmpty) {
-        print('⚠️  해당 날짜에 근무하는 확정 인원이 없습니다.');
-        return;
-      }
-
-      int checkedInCount = 0;
-      int checkedOutCount = 0;
-
-      for (var doc in todayWorkers) {
-        final data = doc.data();
-        final uid = data['uid'];
-        final appId = doc.id;
-        
-        // 70% 확률로 출근
-        if (_random.nextDouble() > 0.7) continue;
-
-        // 출근 시간 (08:00 ~ 09:30 사이)
-        final checkInHour = 8 + _random.nextInt(2);
-        final checkInMinute = _random.nextInt(60);
-        final checkInTime = '$checkInHour:${checkInMinute.toString().padLeft(2, '0')}';
-
-        // 50% 확률로 퇴근
-        final shouldCheckOut = _random.nextBool();
-        String? checkOutTime;
-        double? workHours;
-
-        if (shouldCheckOut) {
-          final checkOutHour = 17 + _random.nextInt(3);
-          final checkOutMinute = _random.nextInt(60);
-          checkOutTime = '$checkOutHour:${checkOutMinute.toString().padLeft(2, '0')}';
-          workHours = (checkOutHour - checkInHour) + (checkOutMinute - checkInMinute) / 60.0;
-        }
-
-        await _firestore.collection('attendance').add({
-          'applicationId': appId,
-          'uid': uid,
-          'businessId': businessId,
-          'workDate': Timestamp.fromDate(dateStart),
-          'checkIn': checkInTime,
-          'checkInLat': 37.5665 + _random.nextDouble() * 0.01,
-          'checkInLng': 126.9780 + _random.nextDouble() * 0.01,
-          'checkInMethod': 'gps',
-          'checkOut': checkOutTime,
-          'checkOutLat': checkOutTime != null ? 37.5665 + _random.nextDouble() * 0.01 : null,
-          'checkOutLng': checkOutTime != null ? 126.9780 + _random.nextDouble() * 0.01 : null,
-          'checkOutMethod': checkOutTime != null ? 'gps' : null,
-          'status': 'present',
-          'workHours': workHours,
-          'isModified': false,
-          'modifyRequested': false,
-          'createdAt': Timestamp.now(),
-          'isDummy': true,
-        });
-
-        if (shouldCheckOut) {
-          print('   🏠 $uid - 출근 $checkInTime, 퇴근 $checkOutTime');
-          checkedOutCount++;
-        } else {
-          print('   ✅ $uid - 출근 $checkInTime');
-        }
-        checkedInCount++;
-      }
-
-      print('');
-      print('🎉 ═══════════════════════════════════════');
-      print('🎉 더미 출근 데이터 생성 완료!');
-      print('🎉 ═══════════════════════════════════════');
-      print('   출근 완료: $checkedInCount명');
-      print('   퇴근 완료: $checkedOutCount명');
-      print('   미출근: ${todayWorkers.length - checkedInCount}명');
-      print('');
-    } catch (e, stackTrace) {
-      print('');
-      print('❌ ═══════════════════════════════════════');
-      print('❌ 더미 출근 데이터 생성 실패!');
-      print('❌ ═══════════════════════════════════════');
-      print('에러: $e');
-      print('스택 트레이스: $stackTrace');
-      print('');
-      rethrow;
-    }
-  }
-
   /// 더미 출근 데이터 삭제
   static Future<void> clearDummyAttendance() async {
-    print('');
-    print('🗑️ ═══════════════════════════════════════');
-    print('🗑️ 더미 출근 데이터 삭제 시작...');
-    print('🗑️ ═══════════════════════════════════════');
-    print('');
+    print('📋 3단계: 더미 출근 데이터(attendance) 삭제 중...');
 
     try {
       final allAttendanceSnapshot = await _firestore.collection('attendance').get();
@@ -716,10 +680,6 @@ class TestDataHelper {
       } else {
         print('   ℹ️  삭제할 더미 attendance 없음');
       }
-
-      print('');
-      print('🎉 더미 출근 데이터 삭제 완료!');
-      print('');
     } catch (e) {
       print('❌ 더미 출근 데이터 삭제 실패: $e');
       rethrow;

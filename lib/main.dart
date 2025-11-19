@@ -13,7 +13,7 @@ import 'screens/auth/login_screen.dart';
 import 'screens/user/user_home_screen.dart';
 import 'screens/super_admin/super_admin_home_screen.dart';
 import 'screens/business_admin/business_admin_home_screen.dart';
-
+import 'screens/splash_screen.dart';
 
 
 
@@ -54,7 +54,7 @@ class MyApp extends StatelessWidget {
       child: Consumer<ThemeProvider>(  // 🔥 추가!
         builder: (context, themeProvider, child) {
           return MaterialApp(
-            title: 'AlFit(알핏)',
+            title: 'ALfit(알핏)',
             debugShowCheckedModeBanner: false,
             localizationsDelegates: const [
               GlobalMaterialLocalizations.delegate,
@@ -66,7 +66,7 @@ class MyApp extends StatelessWidget {
               Locale('en', 'US'),
             ],
             theme: themeProvider.theme,  // 🔥 변경!
-            home: const AuthWrapper(),
+            home: const SplashScreen(),
           );
         },
       ),

@@ -1,0 +1,30 @@
+<svg width="1200" height="420" viewBox="0 0 1200 420" xmlns="http://www.w3.org/2000/svg">
+  <!-- ALfit -->
+  <text 
+    x="100" 
+    y="240" 
+    font-family="Arial, sans-serif" 
+    font-size="140" 
+    font-weight="800" 
+    fill="#1976D2" 
+    letter-spacing="4"
+  >
+    ALfit
+  </text>
+  
+  <!-- 작은 연결점 -->
+  <circle cx="280" cy="210" r="10" fill="#2196F3"/>
+  
+  <!-- 태그라인 -->
+  <text 
+    x="105" 
+    y="310" 
+    font-family="Arial, sans-serif" 
+    font-size="32" 
+    font-weight="400" 
+    fill="#0D47A1" 
+    letter-spacing="6"
+  >
+    나에게 딱 맞는 알바
+  </text>
+</svg>

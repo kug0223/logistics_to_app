@@ -4,129 +4,203 @@ import '../../providers/user_provider.dart';
 import '../../providers/theme_provider.dart';
 import '../../services/auth_service.dart';
 import '../../utils/dialog_helper.dart';
+import '../../utils/responsive_helper.dart';
 import 'business_list_screen.dart';
 import '../../utils/toast_helper.dart';
 import 'to_management/create_to_screen.dart';
 import 'settings_screen.dart';
 import 'workforce_management/integrated_workforce_screen.dart';
 
-/// 사업장 관리자 홈 화면 - 반응형 (항상 2열)
+/// 사업장 관리자 홈 화면 - 세련된 디자인
 class BusinessAdminHomeScreen extends StatelessWidget {
   const BusinessAdminHomeScreen({super.key});
 
   @override
   Widget build(BuildContext context) {
     final authService = AuthService();
+    final theme = Theme.of(context);
 
     return Consumer<UserProvider>(
       builder: (context, userProvider, _) {
         return Scaffold(
-          backgroundColor: Theme.of(context).colorScheme.primary,
-          body: SafeArea(
-            child: LayoutBuilder(  // ⭐ 전체를 LayoutBuilder로 감싸기
-              builder: (context, constraints) {
-                final screenWidth = MediaQuery.of(context).size.width;
-                final scale = screenWidth < 360 ? 0.85 : screenWidth < 400 ? 0.9 : 1.0;
-                final spacing = screenWidth < 360 ? 12.0 : 16.0;
-                
-                return Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    // 상단 헤더 - 반응형
-                    Container(
-                      padding: EdgeInsets.all(24 * scale),  // ⭐ 스케일 적용
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Row(
-                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                            children: [
-                              Text(
-                                '사업장 관리자',
-                                style: TextStyle(
-                                  color: Colors.white,
-                                  fontSize: 16 * scale,
-                                  fontWeight: FontWeight.w500,
+          body: Container(
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+                colors: [
+                  theme.primaryColor,
+                  theme.primaryColor.withOpacity(0.85),
+                ],
+              ),
+            ),
+            child: SafeArea(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  // 상단 헤더
+                  Padding(
+                    padding: EdgeInsets.symmetric(
+                      horizontal: ResponsiveHelper.spacing(context, 24),
+                      vertical: ResponsiveHelper.spacing(context, 20),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        // 상단 바 (역할 + 로그아웃)
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            // ALfit 로고 + 역할
+                            Row(
+                              children: [
+                                // ALfit 로고
+                                Text(
+                                  'ALfit',
+                                  style: TextStyle(
+                                    color: Colors.white,
+                                    fontSize: ResponsiveHelper.titleStyle(context).fontSize! * 1.3,
+                                    fontWeight: FontWeight.w800,
+                                    letterSpacing: 1.5,
+                                  ),
                                 ),
-                              ),
-                              IconButton(
-                                icon: const Icon(Icons.logout, color: Colors.white),
-                                iconSize: 24 * scale,  // ⭐ 아이콘 크기
-                                padding: EdgeInsets.all(8 * scale),
-                                constraints: BoxConstraints(
-                                  minWidth: 40 * scale,
-                                  minHeight: 40 * scale,
+                                SizedBox(width: ResponsiveHelper.spacing(context, 6)),
+                                Container(
+                                  width: ResponsiveHelper.spacing(context, 8),
+                                  height: ResponsiveHelper.spacing(context, 8),
+                                  decoration: BoxDecoration(
+                                    color: Colors.white.withOpacity(0.8),
+                                    shape: BoxShape.circle,
+                                  ),
                                 ),
-                                onPressed: () async {
+                                SizedBox(width: ResponsiveHelper.spacing(context, 12)),
+                                // 역할 뱃지
+                                Container(
+                                  padding: EdgeInsets.symmetric(
+                                    horizontal: ResponsiveHelper.spacing(context, 10),
+                                    vertical: ResponsiveHelper.spacing(context, 5),
+                                  ),
+                                  decoration: BoxDecoration(
+                                    color: Colors.white.withOpacity(0.2),
+                                    borderRadius: BorderRadius.circular(16),
+                                  ),
+                                  child: Row(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      Icon(
+                                        Icons.business,
+                                        color: Colors.white,
+                                        size: ResponsiveHelper.iconSize(context, 14),
+                                      ),
+                                      SizedBox(width: ResponsiveHelper.spacing(context, 4)),
+                                      Text(
+                                        '사업장',
+                                        style: ResponsiveHelper.tinyStyle(
+                                          context,
+                                          color: Colors.white,
+                                        ).copyWith(
+                                          fontWeight: FontWeight.w600,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ],
+                            ),
+                            
+                            // 로그아웃 버튼
+                            Material(
+                              color: Colors.white.withOpacity(0.2),
+                              borderRadius: BorderRadius.circular(12),
+                              child: InkWell(
+                                onTap: () async {
                                   final confirmed = await DialogHelper.showLogoutConfirm(context);
-
                                   if (confirmed && context.mounted) {
                                     context.read<ThemeProvider>().reset();
                                     await userProvider.signOut();
                                   }
                                 },
+                                borderRadius: BorderRadius.circular(12),
+                                child: Padding(
+                                  padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 8)),
+                                  child: Icon(
+                                    Icons.logout,
+                                    color: Colors.white,
+                                    size: ResponsiveHelper.iconSize(context, 24),
+                                  ),
+                                ),
                               ),
-                            ],
-                          ),
-                          SizedBox(height: 8 * scale),
-                          Text(
-                            '안녕하세요 👋',
-                            style: TextStyle(
-                              color: Colors.white,
-                              fontSize: 20 * scale,
-                              fontWeight: FontWeight.bold,
                             ),
-                          ),
-                          SizedBox(height: 8 * scale),
-                          Text(
-                            '${userProvider.currentUser?.name ?? '관리자'}님',
-                            style: TextStyle(
-                              color: Colors.white,
-                              fontSize: 24 * scale,
-                              fontWeight: FontWeight.bold,
-                            ),
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                          SizedBox(height: 4 * scale),
-                          Text(
-                            userProvider.currentUser?.email ?? '',
-                            style: TextStyle(
-                              color: Colors.white.withOpacity(0.9),
-                              fontSize: 14 * scale,
-                            ),
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                        ],
-                      ),
-                    ),
-                    SizedBox(height: 32 * scale),  // ⭐ 스케일 적용
-
-                    // 메뉴 카드들 - 항상 2열, 크기만 반응형
-                    Expanded(
-                      child: Container(
-                        decoration: BoxDecoration(
-                          color: Colors.grey[50],
-                          borderRadius: const BorderRadius.only(
-                            topLeft: Radius.circular(32),
-                            topRight: Radius.circular(32),
+                          ],
+                        ),
+                        
+                        SizedBox(height: ResponsiveHelper.spacing(context, 24)),
+                        
+                        // 인사말
+                        Text(
+                          '안녕하세요! 👋',
+                          style: ResponsiveHelper.bodyStyle(
+                            context,
+                            color: Colors.white.withOpacity(0.95),
                           ),
                         ),
-                        padding: EdgeInsets.all(24 * scale),  // ⭐ 스케일 적용
+                        
+                        SizedBox(height: ResponsiveHelper.spacing(context, 8)),
+                        
+                        // 사용자 이름
+                        Text(
+                          '${userProvider.currentUser?.name ?? '관리자'}님',
+                          style: ResponsiveHelper.titleStyle(context).copyWith(
+                            color: Colors.white,
+                            fontSize: ResponsiveHelper.titleStyle(context).fontSize! * 1.5,
+                            fontWeight: FontWeight.bold,
+                          ),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                        
+                        SizedBox(height: ResponsiveHelper.spacing(context, 4)),
+                        
+                        // 이메일
+                        Text(
+                          userProvider.currentUser?.email ?? '',
+                          style: ResponsiveHelper.smallStyle(
+                            context,
+                            color: Colors.white.withOpacity(0.9),
+                          ),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ],
+                    ),
+                  ),
+                  
+                  SizedBox(height: ResponsiveHelper.spacing(context, 24)),
+
+                  // 메뉴 카드 영역
+                  Expanded(
+                    child: Container(
+                      decoration: BoxDecoration(
+                        color: Colors.grey[50],
+                        borderRadius: const BorderRadius.only(
+                          topLeft: Radius.circular(32),
+                          topRight: Radius.circular(32),
+                        ),
+                      ),
+                      child: Padding(
+                        padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 20)),
                         child: GridView.count(
-                          crossAxisCount: 2,  // ⭐ 항상 2열 고정
-                          crossAxisSpacing: spacing,
-                          mainAxisSpacing: spacing,
+                          crossAxisCount: 2,
+                          crossAxisSpacing: ResponsiveHelper.spacing(context, 16),
+                          mainAxisSpacing: ResponsiveHelper.spacing(context, 16),
                           children: [
                             // 1. 사업장 관리
                             _buildMenuCard(
                               context,
-                              scale: scale,  // ⭐ scale 전달
                               icon: Icons.business_rounded,
                               title: '사업장 관리',
                               subtitle: '내 사업장 목록',
-                              color: Colors.blue,
+                              color: theme.primaryColor,
                               onTap: () {
                                 Navigator.push(
                                   context,
@@ -140,11 +214,10 @@ class BusinessAdminHomeScreen extends StatelessWidget {
                             // 2. TO 생성
                             _buildMenuCard(
                               context,
-                              scale: scale,
                               icon: Icons.add_circle_outline,
                               title: 'TO 생성',
                               subtitle: '새 근무 등록',
-                              color: Colors.green,
+                              color: theme.primaryColor.withOpacity(0.8),
                               onTap: () async {
                                 final result = await Navigator.push(
                                   context,
@@ -162,11 +235,10 @@ class BusinessAdminHomeScreen extends StatelessWidget {
                             // 3. 인력 관리 (통합)
                             _buildMenuCard(
                               context,
-                              scale: scale,
                               icon: Icons.groups,
                               title: '인력 관리',
                               subtitle: 'TO 관리 & 현황',
-                              color: Colors.purple,
+                              color: theme.primaryColor.withOpacity(0.7),
                               onTap: () {
                                 Navigator.push(
                                   context,
@@ -180,11 +252,10 @@ class BusinessAdminHomeScreen extends StatelessWidget {
                             // 4. 통계
                             _buildMenuCard(
                               context,
-                              scale: scale,
                               icon: Icons.bar_chart_outlined,
                               title: '통계',
                               subtitle: 'TO 현황',
-                              color: Colors.teal,
+                              color: theme.primaryColor.withOpacity(0.6),
                               onTap: () {
                                 ScaffoldMessenger.of(context).showSnackBar(
                                   const SnackBar(content: Text('통계 화면 준비 중입니다')),
@@ -195,11 +266,10 @@ class BusinessAdminHomeScreen extends StatelessWidget {
                             // 5. 설정
                             _buildMenuCard(
                               context,
-                              scale: scale,
                               icon: Icons.settings_outlined,
                               title: '설정',
                               subtitle: '앱 설정',
-                              color: Colors.grey,
+                              color: Colors.grey[600]!,
                               onTap: () {
                                 Navigator.push(
                                   context,
@@ -213,9 +283,9 @@ class BusinessAdminHomeScreen extends StatelessWidget {
                         ),
                       ),
                     ),
-                  ],
-                );
-              },
+                  ),
+                ],
+              ),
             ),
           ),
         );
@@ -223,10 +293,9 @@ class BusinessAdminHomeScreen extends StatelessWidget {
     );
   }
 
-  /// 반응형 메뉴 카드
+  /// 세련된 메뉴 카드 (단색 버전)
   Widget _buildMenuCard(
     BuildContext context, {
-    required double scale,  // ⭐ scale 파라미터 추가
     required IconData icon,
     required String title,
     required String subtitle,
@@ -234,56 +303,66 @@ class BusinessAdminHomeScreen extends StatelessWidget {
     required VoidCallback onTap,
   }) {
     return Card(
-      elevation: 2,
+      elevation: 3,
+      shadowColor: Colors.black.withOpacity(0.1),
       shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(12),
+        borderRadius: BorderRadius.circular(20),
       ),
       child: InkWell(
         onTap: onTap,
-        borderRadius: BorderRadius.circular(12),
-        child: Padding(
-          padding: EdgeInsets.all(16 * scale),
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              // 아이콘
-              Container(
-                padding: EdgeInsets.all(16 * scale),
-                decoration: BoxDecoration(
-                  color: color.withOpacity(0.1),
-                  borderRadius: BorderRadius.circular(12),
+        borderRadius: BorderRadius.circular(20),
+        child: Container(
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(20),
+          ),
+          child: Padding(
+            padding: ResponsiveHelper.cardPadding(context),
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                // 아이콘
+                Container(
+                  padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 16)),
+                  decoration: BoxDecoration(
+                    color: color.withOpacity(0.1),
+                    shape: BoxShape.circle,
+                  ),
+                  child: Icon(
+                    icon,
+                    size: ResponsiveHelper.iconSize(context, 32),
+                    color: color,
+                  ),
                 ),
-                child: Icon(
-                  icon,
-                  size: 32 * scale,
-                  color: color,
+                
+                SizedBox(height: ResponsiveHelper.spacing(context, 12)),
+                
+                // 제목
+                Text(
+                  title,
+                  style: ResponsiveHelper.subtitleStyle(context).copyWith(
+                    fontWeight: FontWeight.bold,
+                  ),
+                  textAlign: TextAlign.center,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
                 ),
-              ),
-              SizedBox(height: 12 * scale),
-              // 제목
-              Text(
-                title,
-                style: TextStyle(
-                  fontSize: 16 * scale,
-                  fontWeight: FontWeight.bold,
+                
+                SizedBox(height: ResponsiveHelper.spacing(context, 4)),
+                
+                // 부제목
+                Text(
+                  subtitle,
+                  style: ResponsiveHelper.smallStyle(
+                    context,
+                    color: Colors.grey[600],
+                  ),
+                  textAlign: TextAlign.center,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
                 ),
-                textAlign: TextAlign.center,
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
-              ),
-              SizedBox(height: 4 * scale),
-              // 부제목
-              Text(
-                subtitle,
-                style: TextStyle(
-                  fontSize: 12 * scale,
-                  color: Colors.grey[600],
-                ),
-                textAlign: TextAlign.center,
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
-              ),
-            ],
+              ],
+            ),
           ),
         ),
       ),

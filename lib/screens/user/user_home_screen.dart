@@ -2,111 +2,168 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../providers/user_provider.dart';
 import '../../providers/theme_provider.dart';
-import 'all_to_list_screen.dart';
 import '../../utils/dialog_helper.dart';
+import '../../utils/responsive_helper.dart';
+import 'all_to_list_screen.dart';
 import 'my_schedule_screen.dart';
 import 'attendance_check_screen.dart';
 import 'my_schedule_requests_screen.dart';
 
+/// 일반 사용자 홈 화면 - 세련된 디자인
 class UserHomeScreen extends StatelessWidget {
   const UserHomeScreen({super.key});
 
   @override
   Widget build(BuildContext context) {
     final userProvider = context.watch<UserProvider>();
+    final theme = Theme.of(context);
 
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('Alfit(알핏)'),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.logout),
-            onPressed: () async {
-              final confirmed = await DialogHelper.showLogoutConfirm(context);
-              
-              if (confirmed && context.mounted) {
-                context.read<ThemeProvider>().reset();
-                context.read<UserProvider>().signOut();
-              }
-            },
+      body: Container(
+        decoration: BoxDecoration(
+          gradient: LinearGradient(
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+            colors: [
+              theme.primaryColor,
+              theme.primaryColor.withOpacity(0.85),
+            ],
           ),
-        ],
-      ),
-      body: SafeArea(
-        child: LayoutBuilder(  // ⭐ 전체를 LayoutBuilder로 감싸기
-          builder: (context, constraints) {
-            final screenWidth = MediaQuery.of(context).size.width;
-            final scale = screenWidth < 360 ? 0.85 : screenWidth < 400 ? 0.9 : 1.0;
-            final spacing = screenWidth < 360 ? 12.0 : 16.0;
-            
-            return Padding(
-              padding: EdgeInsets.all(24.0 * scale),  // ⭐ 패딩도 스케일 적용
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  // 환영 메시지 - 반응형
-                  Container(
-                    padding: EdgeInsets.all(20 * scale),  // ⭐ 스케일 적용
-                    decoration: BoxDecoration(
-                      gradient: LinearGradient(
-                        colors: [
-                          Theme.of(context).primaryColor,
-                          Theme.of(context).primaryColor.withOpacity(0.7),
-                        ],
-                      ),
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
+        ),
+        child: SafeArea(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              // 상단 헤더
+              Padding(
+                padding: EdgeInsets.symmetric(
+                  horizontal: ResponsiveHelper.spacing(context, 24),
+                  vertical: ResponsiveHelper.spacing(context, 16),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    // 맨 위 바 (ALfit 로고 + 로그아웃)
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
-                        Text(
-                          '안녕하세요! 👋',
-                          style: TextStyle(
-                            color: Colors.white,
-                            fontSize: 20 * scale,
-                            fontWeight: FontWeight.bold,
-                          ),
+                        // ALfit 로고
+                        Row(
+                          children: [
+                            Text(
+                              'ALfit',
+                              style: TextStyle(
+                                color: Colors.white,
+                                fontSize: ResponsiveHelper.titleStyle(context).fontSize! * 1.3,
+                                fontWeight: FontWeight.w800,
+                                letterSpacing: 1.5,
+                              ),
+                            ),
+                            SizedBox(width: ResponsiveHelper.spacing(context, 6)),
+                            Container(
+                              width: ResponsiveHelper.spacing(context, 8),
+                              height: ResponsiveHelper.spacing(context, 8),
+                              decoration: BoxDecoration(
+                                color: Colors.white.withOpacity(0.8),
+                                shape: BoxShape.circle,
+                              ),
+                            ),
+                          ],
                         ),
-                        SizedBox(height: 8 * scale),
-                        Text(
-                          '${userProvider.currentUser?.name ?? '사용자'}님',
-                          style: TextStyle(
-                            color: Colors.white,
-                            fontSize: 24 * scale,
-                            fontWeight: FontWeight.bold,
+                        
+                        // 로그아웃 버튼
+                        Material(
+                          color: Colors.white.withOpacity(0.2),
+                          borderRadius: BorderRadius.circular(12),
+                          child: InkWell(
+                            onTap: () async {
+                              final confirmed = await DialogHelper.showLogoutConfirm(context);
+                              if (confirmed && context.mounted) {
+                                context.read<ThemeProvider>().reset();
+                                await userProvider.signOut();
+                              }
+                            },
+                            borderRadius: BorderRadius.circular(12),
+                            child: Padding(
+                              padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 8)),
+                              child: Icon(
+                                Icons.logout,
+                                color: Colors.white,
+                                size: ResponsiveHelper.iconSize(context, 24),
+                              ),
+                            ),
                           ),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                        SizedBox(height: 4 * scale),
-                        Text(
-                          userProvider.currentUser?.email ?? '',
-                          style: TextStyle(
-                            color: Colors.white.withOpacity(0.9),
-                            fontSize: 14 * scale,
-                          ),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
                         ),
                       ],
                     ),
-                  ),
-                  SizedBox(height: 32 * scale),  // ⭐ 스케일 적용
+                    
+                    SizedBox(height: ResponsiveHelper.spacing(context, 24)),
+                    
+                    // 인사말
+                    Text(
+                      '안녕하세요! 👋',
+                      style: ResponsiveHelper.bodyStyle(
+                        context,
+                        color: Colors.white.withOpacity(0.95),
+                      ),
+                    ),
+                    
+                    SizedBox(height: ResponsiveHelper.spacing(context, 8)),
+                    
+                    // 사용자 이름
+                    Text(
+                      '${userProvider.currentUser?.name ?? '사용자'}님',
+                      style: ResponsiveHelper.titleStyle(context).copyWith(
+                        color: Colors.white,
+                        fontSize: ResponsiveHelper.titleStyle(context).fontSize! * 1.5,
+                        fontWeight: FontWeight.bold,
+                      ),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    
+                    SizedBox(height: ResponsiveHelper.spacing(context, 4)),
+                    
+                    // 이메일
+                    Text(
+                      userProvider.currentUser?.email ?? '',
+                      style: ResponsiveHelper.smallStyle(
+                        context,
+                        color: Colors.white.withOpacity(0.9),
+                      ),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ],
+                ),
+              ),
+              
+              SizedBox(height: ResponsiveHelper.spacing(context, 24)),
 
-                  // 메뉴 카드들 - 항상 2열, 크기만 반응형
-                  Expanded(
+              // 메뉴 카드 영역
+              Expanded(
+                child: Container(
+                  decoration: BoxDecoration(
+                    color: Colors.grey[50],
+                    borderRadius: const BorderRadius.only(
+                      topLeft: Radius.circular(32),
+                      topRight: Radius.circular(32),
+                    ),
+                  ),
+                  child: Padding(
+                    padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 20)),
                     child: GridView.count(
-                      crossAxisCount: 2,  // ⭐ 항상 2열 고정
-                      crossAxisSpacing: spacing,
-                      mainAxisSpacing: spacing,
+                      crossAxisCount: 2,
+                      crossAxisSpacing: ResponsiveHelper.spacing(context, 16),
+                      mainAxisSpacing: ResponsiveHelper.spacing(context, 16),
                       children: [
+                        // 1. 근무 지원하기
                         _buildMenuCard(
                           context,
-                          scale: scale,  // ⭐ scale 전달
                           icon: Icons.warehouse_rounded,
                           title: '근무 지원하기',
                           subtitle: '사업장 선택',
-                          color: Colors.blue,
+                          color: theme.primaryColor,
                           onTap: () {
                             Navigator.push(
                               context,
@@ -116,13 +173,14 @@ class UserHomeScreen extends StatelessWidget {
                             );
                           },
                         ),
+
+                        // 2. 근무 스케줄
                         _buildMenuCard(
                           context,
-                          scale: scale,
                           icon: Icons.calendar_month,
                           title: '근무 스케줄',
                           subtitle: '일정 한눈에 보기',
-                          color: Colors.purple,
+                          color: theme.primaryColor.withOpacity(0.8),
                           onTap: () {
                             Navigator.push(
                               context,
@@ -132,13 +190,14 @@ class UserHomeScreen extends StatelessWidget {
                             );
                           },
                         ),
+
+                        // 3. 출퇴근 체크
                         _buildMenuCard(
                           context,
-                          scale: scale,
                           icon: Icons.access_time_outlined,
                           title: '출퇴근 체크',
                           subtitle: '근무 시간 기록',
-                          color: Colors.purple,
+                          color: theme.primaryColor.withOpacity(0.7),
                           onTap: () {
                             Navigator.push(
                               context,
@@ -148,39 +207,14 @@ class UserHomeScreen extends StatelessWidget {
                             );
                           },
                         ),
+
+                        // 4. 내 요청 내역
                         _buildMenuCard(
                           context,
-                          scale: scale,
-                          icon: Icons.person_outline,
-                          title: '내 정보',
-                          subtitle: '프로필 확인',
-                          color: Colors.orange,
-                          onTap: () {
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              const SnackBar(content: Text('준비 중입니다')),
-                            );
-                          },
-                        ),
-                        _buildMenuCard(
-                          context,
-                          scale: scale,
-                          icon: Icons.settings_outlined,
-                          title: '설정',
-                          subtitle: '앱 설정',
-                          color: Colors.grey,
-                          onTap: () {
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              const SnackBar(content: Text('준비 중입니다')),
-                            );
-                          },
-                        ),
-                        _buildMenuCard(  // ⭐ 신규 추가!
-                          context,
-                          scale: scale,
                           icon: Icons.edit_calendar,
                           title: '내 요청 내역',
                           subtitle: '스케줄 변경 요청',
-                          color: Colors.teal,
+                          color: theme.primaryColor.withOpacity(0.6),
                           onTap: () {
                             Navigator.push(
                               context,
@@ -190,22 +224,49 @@ class UserHomeScreen extends StatelessWidget {
                             );
                           },
                         ),
+
+                        // 5. 내 정보
+                        _buildMenuCard(
+                          context,
+                          icon: Icons.person_outline,
+                          title: '내 정보',
+                          subtitle: '프로필 확인',
+                          color: theme.primaryColor.withOpacity(0.5),
+                          onTap: () {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              const SnackBar(content: Text('준비 중입니다')),
+                            );
+                          },
+                        ),
+
+                        // 6. 설정
+                        _buildMenuCard(
+                          context,
+                          icon: Icons.settings_outlined,
+                          title: '설정',
+                          subtitle: '앱 설정',
+                          color: Colors.grey[600]!,
+                          onTap: () {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              const SnackBar(content: Text('준비 중입니다')),
+                            );
+                          },
+                        ),
                       ],
                     ),
                   ),
-                ],
+                ),
               ),
-            );
-          },
+            ],
+          ),
         ),
       ),
     );
   }
 
-  // 반응형 메뉴 카드
+  /// 세련된 메뉴 카드 (단색 버전)
   Widget _buildMenuCard(
     BuildContext context, {
-    required double scale,  // ⭐ scale 파라미터 추가
     required IconData icon,
     required String title,
     required String subtitle,
@@ -213,53 +274,66 @@ class UserHomeScreen extends StatelessWidget {
     required VoidCallback onTap,
   }) {
     return Card(
-      elevation: 2,
+      elevation: 3,
+      shadowColor: Colors.black.withOpacity(0.1),
       shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(12),
+        borderRadius: BorderRadius.circular(20),
       ),
       child: InkWell(
         onTap: onTap,
-        borderRadius: BorderRadius.circular(12),
-        child: Padding(
-          padding: EdgeInsets.all(16.0 * scale),
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Container(
-                padding: EdgeInsets.all(12 * scale),
-                decoration: BoxDecoration(
-                  color: color.withOpacity(0.1),
-                  shape: BoxShape.circle,
+        borderRadius: BorderRadius.circular(20),
+        child: Container(
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(20),
+          ),
+          child: Padding(
+            padding: ResponsiveHelper.cardPadding(context),
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                // 아이콘
+                Container(
+                  padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 16)),
+                  decoration: BoxDecoration(
+                    color: color.withOpacity(0.1),
+                    shape: BoxShape.circle,
+                  ),
+                  child: Icon(
+                    icon,
+                    size: ResponsiveHelper.iconSize(context, 32),
+                    color: color,
+                  ),
                 ),
-                child: Icon(
-                  icon,
-                  size: 32 * scale,
-                  color: color,
+                
+                SizedBox(height: ResponsiveHelper.spacing(context, 12)),
+                
+                // 제목
+                Text(
+                  title,
+                  style: ResponsiveHelper.subtitleStyle(context).copyWith(
+                    fontWeight: FontWeight.bold,
+                  ),
+                  textAlign: TextAlign.center,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
                 ),
-              ),
-              SizedBox(height: 12 * scale),
-              Text(
-                title,
-                textAlign: TextAlign.center,
-                style: TextStyle(
-                  fontSize: 16 * scale,
-                  fontWeight: FontWeight.bold,
+                
+                SizedBox(height: ResponsiveHelper.spacing(context, 4)),
+                
+                // 부제목
+                Text(
+                  subtitle,
+                  style: ResponsiveHelper.smallStyle(
+                    context,
+                    color: Colors.grey[600],
+                  ),
+                  textAlign: TextAlign.center,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
                 ),
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
-              ),
-              SizedBox(height: 4 * scale),
-              Text(
-                subtitle,
-                textAlign: TextAlign.center,
-                style: TextStyle(
-                  fontSize: 12 * scale,
-                  color: Colors.grey[600],
-                ),
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
-              ),
-            ],
+              ],
+            ),
           ),
         ),
       ),

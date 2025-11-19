@@ -82,6 +82,16 @@ class ResponsiveHelper {
       fontWeight: fontWeight,
     );
   }
+  /// 반응형 텍스트 스타일 - 캡션 (힌트, 설명 등)
+  static TextStyle captionStyle(BuildContext context, {Color? color, FontWeight? fontWeight}) {
+    final scale = getScale(context);
+    return TextStyle(
+      fontSize: 11 * scale,
+      color: color ?? Colors.grey[600],
+      fontWeight: fontWeight,
+      height: 1.4,
+    );
+  }
   
   /// 반응형 아이콘 크기
   static double iconSize(BuildContext context, double baseSize) {
@@ -105,5 +115,19 @@ class ResponsiveHelper {
     if (size.width < 600) return 600.0;  // 500 → 600 (100px 증가)
     if (size.width < 1200) return 650.0; // 550 → 650 (100px 증가)
     return 700.0;                         // 600 → 700 (100px 증가)
+  }
+  /// 화면 전체 패딩 (좌우)
+  static EdgeInsets screenPadding(BuildContext context) {
+    final width = MediaQuery.of(context).size.width;
+    
+    if (width < 360) {
+      return const EdgeInsets.symmetric(horizontal: 16, vertical: 20);
+    } else if (width < 600) {
+      return const EdgeInsets.symmetric(horizontal: 24, vertical: 24);
+    } else if (width < 1200) {
+      return const EdgeInsets.symmetric(horizontal: 40, vertical: 32);
+    } else {
+      return const EdgeInsets.symmetric(horizontal: 60, vertical: 40);
+    }
   }
 }

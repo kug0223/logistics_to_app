@@ -21,7 +21,7 @@ class UserProvider with ChangeNotifier {
   bool get isUser => _currentUser?.isUser ?? false;
   String? get businessId => _currentUser?.businessId;
 
-  // ✅ 초기화 - Firebase Auth 상태 리스닝 (에러 처리 개선)
+  // 초기화 - Firebase Auth 상태 리스닝
   void initialize() {
     _authService.authStateChanges.listen((User? firebaseUser) async {
       if (firebaseUser != null) {
@@ -31,7 +31,6 @@ class UserProvider with ChangeNotifier {
         notifyListeners();
       }
     }, onError: (error) {
-      // ✅ Auth 상태 변경 중 에러 처리
       print('❌ Auth 상태 변경 에러: $error');
       if (error.toString().contains('invalid-user-token') || 
           error.toString().contains('user-token-expired')) {
@@ -41,12 +40,11 @@ class UserProvider with ChangeNotifier {
     });
   }
 
-  // ✅ 사용자 데이터 로드 (에러 처리 개선)
+  // 사용자 데이터 로드
   Future<void> _loadUserData(String uid) async {
     try {
       _currentUser = await _authService.getUserData(uid);
       
-      // 테스트용 로그
       if (_currentUser != null) {
         print('📋 ===== 사용자 권한 정보 =====');
         print('📧 이메일: ${_currentUser!.email}');
@@ -67,7 +65,6 @@ class UserProvider with ChangeNotifier {
       print('❌ 사용자 데이터 로드 실패: $e');
       _error = e.toString();
       
-      // ✅ 특정 에러 코드 처리
       if (e.toString().contains('invalid-user-token') || 
           e.toString().contains('user-token-expired') ||
           e.toString().contains('user-not-found')) {
@@ -87,13 +84,23 @@ class UserProvider with ChangeNotifier {
     }
   }
 
-  // ✅ 회원가입 (role 파라미터 추가)
+  // ⭐ 개선된 회원가입 - 주민번호 기반 + 서류 업로드
   Future<bool> signUp({
-    required String email,
+    required String username,
+    required String userEmail,      // ⭐ email → userEmail
     required String password,
     required String name,
     String? phone,
-    required UserRole role, // ✅ 역할 파라미터
+    required UserRole role,
+    String? businessId,
+    // ⭐ 주민번호 기반 필드
+    String? gender,
+    DateTime? birthDate,
+    String? residentNumber,
+    // ⭐ 서류 업로드 필드
+    String? idCardImageUrl,           // 신분증 앞면 (지원자)
+    String? bankbookImageUrl,         // 통장 사본 (지원자)
+    String? businessLicenseImageUrl,  // 사업자등록증 (사업자)
   }) async {
     try {
       _isLoading = true;
@@ -101,11 +108,20 @@ class UserProvider with ChangeNotifier {
       notifyListeners();
 
       final user = await _authService.signUp(
-        email: email,
+        username: username, 
+        userEmail: userEmail,       // ⭐ 변경
         password: password,
         name: name,
         phone: phone,
-        role: role, // ✅ 역할 전달
+        role: role,
+        businessId: businessId,
+        // ⭐ 추가 필드 전달
+        gender: gender,
+        birthDate: birthDate,
+        residentNumber: residentNumber,
+        idCardImageUrl: idCardImageUrl,
+        bankbookImageUrl: bankbookImageUrl,
+        businessLicenseImageUrl: businessLicenseImageUrl,
       );
 
       if (user != null) {
@@ -123,15 +139,14 @@ class UserProvider with ChangeNotifier {
     }
   }
 
-  // ✅ 로그인 (에러 처리 개선)
-  Future<bool> signIn(String email, String password) async {
+  // 로그인
+  Future<bool> signIn(String username, String password) async {
     try {
       _isLoading = true;
       _error = null;
       notifyListeners();
 
-      final user = await _authService.signIn(email, password);
-      
+      final user = await _authService.signIn(username, password);
       if (user != null) {
         _currentUser = user;
         print('✅ 로그인 성공: ${user.email}');
@@ -144,7 +159,7 @@ class UserProvider with ChangeNotifier {
       _error = e.toString();
       print('❌ 로그인 실패: $e');
       
-      // ✅ 사용자 친화적인 에러 메시지
+      // 사용자 친화적인 에러 메시지
       if (e.toString().contains('user-not-found')) {
         _error = '등록되지 않은 이메일입니다';
       } else if (e.toString().contains('wrong-password')) {
@@ -162,7 +177,7 @@ class UserProvider with ChangeNotifier {
     }
   }
 
-  // ✅ 로그아웃 (에러 처리 개선)
+  // 로그아웃
   Future<void> signOut() async {
     try {
       await _authService.signOut();

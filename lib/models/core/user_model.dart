@@ -12,7 +12,9 @@ enum UserRole {
 class UserModel {
   // ━━━ 기본 인증 정보 ━━━
   final String uid;
-  final String email;
+  final String username;
+  final String email;              // ⚠️ 이건 systemEmail로 사용됨
+  final String? userEmail;         // ⭐ 실제 이메일 추가
   final UserRole role;
   final String? businessId;  // 사업장 관리자의 경우 사업장 ID
   final DateTime? createdAt;
@@ -60,8 +62,10 @@ class UserModel {
 
   UserModel({
     required this.uid,
+    required this.username,
     required this.name,
-    required this.email,
+    required this.email,           // systemEmail
+    this.userEmail,                // ⭐ 추가
     this.phone,
     required this.role,
     this.businessId,
@@ -165,8 +169,10 @@ class UserModel {
 
     return UserModel(
       uid: uid,
+      username: map['username'] ?? '',
       name: map['name'] ?? '',
-      email: map['email'] ?? '',
+      email: map['email'] ?? '',           // systemEmail
+      userEmail: map['userEmail'],         // ⭐ 추가
       phone: map['phone'],
       role: role,
       businessId: map['businessId'],
@@ -207,8 +213,10 @@ class UserModel {
   /// Firestore에 저장할 때
   Map<String, dynamic> toMap() {
     return {
+      'username': username,
       'name': name,
-      'email': email,
+      'email': email,              // systemEmail
+      'userEmail': userEmail,      // ⭐ 추가
       'phone': phone,
       'role': _roleToString(role),
       'businessId': businessId,
@@ -279,8 +287,10 @@ class UserModel {
   /// copyWith 메서드 (사용자 정보 업데이트 시 편리)
   UserModel copyWith({
     String? uid,
+    String? username,
     String? name,
     String? email,
+    String? userEmail,             // ⭐ 추가
     String? phone,
     UserRole? role,
     String? businessId,
@@ -315,8 +325,10 @@ class UserModel {
   }) {
     return UserModel(
       uid: uid ?? this.uid,
+      username: username ?? this.username,
       name: name ?? this.name,
       email: email ?? this.email,
+      userEmail: userEmail ?? this.userEmail,  // ⭐ 추가
       phone: phone ?? this.phone,
       role: role ?? this.role,
       businessId: businessId ?? this.businessId,

@@ -1,4 +1,4 @@
-name: alfit
+name: ALfit
 description: "나에게 딱 맞는 알바 매칭 플랫폼"
 publish_to: 'none'
 
@@ -27,6 +27,7 @@ dependencies:
   cupertino_icons: ^1.0.8
   fluttertoast: ^8.2.8
   loading_animation_widget: ^1.2.1
+  flutter_svg: ^2.0.10+1  # ⭐ 추가: SVG 로고 표시용
   
   # 위치/GPS
   geolocator: ^13.0.2
@@ -42,7 +43,7 @@ dependencies:
   # 캘린더
   table_calendar: ^3.1.2
 
-  # URL 런처 (전화걸기, 지도 등) ⭐ 추가
+  # URL 런처 (전화걸기, 지도 등)
   url_launcher: ^6.3.1
 
 dev_dependencies:
@@ -52,3 +53,8 @@ dev_dependencies:
 
 flutter:
   uses-material-design: true
+  
+  # ⭐ 추가: 로고 파일 경로
+  assets:
+    - assets/images/logo_splash_light.svg
+    - assets/images/logo_splash_dark.svg
