@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import '../../utils/responsive_helper.dart';  // ⭐ 추가
+import '../../../utils/responsive_helper.dart';  // ⭐ 추가
 
 class CustomButton extends StatelessWidget {
   final String text;

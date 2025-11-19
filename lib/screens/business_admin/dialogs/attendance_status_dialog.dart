@@ -11,11 +11,12 @@ import '../../../services/firestore_service.dart';
 
 // Utils
 import '../../../utils/toast_helper.dart';
+import '../../../utils/responsive_helper.dart';  // ⭐ 추가
 
 // Widgets
 import '../../../widgets/common/loading_widget.dart';
 
-/// 인원현황 다이얼로그
+/// 인원현황 다이얼로그 - 완전 반응형 + 테마 적용
 class AttendanceStatusDialog extends StatefulWidget {
   final DateTime date;
   final List<String> businessIds; 
@@ -50,7 +51,7 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
     _loadData();
   }
   
-  /// ⭐ 사업장명 조회
+  /// 사업장명 조회
   Future<void> _loadBusinessNames() async {
     try {
       final snapshot = await FirebaseFirestore.instance
@@ -84,7 +85,8 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
       final attendanceMap = await _getAttendanceRecords(
         confirmedWorkers.map((app) => app.id).toList(),
       );
-      // ⭐ 3. 사용자 이름 조회
+      
+      // 3. 사용자 이름 조회
       final userNameMap = await _getUserNames(
         confirmedWorkers.map((app) => app.uid).toSet().toList(),
       );
@@ -106,11 +108,17 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
   Future<List<ApplicationModel>> _getConfirmedWorkersForDate() async {
     final dateStart = DateTime(widget.date.year, widget.date.month, widget.date.day);
 
+    print('🔍 [인원현황] 조회 시작');
+    print('   날짜: ${DateFormat('yyyy-MM-dd').format(dateStart)}');
+    print('   사업장: $_selectedBusinessId');
+
     final snapshot = await FirebaseFirestore.instance
         .collection('applications')
-        .where('businessId', isEqualTo: _selectedBusinessId)  // ⭐ 변경
+        .where('businessId', isEqualTo: _selectedBusinessId)
         .where('status', isEqualTo: 'CONFIRMED')
         .get();
+
+    print('   📋 전체 확정 지원서: ${snapshot.docs.length}개');
 
     final allConfirmed = snapshot.docs
         .map((doc) => ApplicationModel.fromFirestore(doc))
@@ -118,30 +126,57 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
 
     // 단기 + 장기 필터링
     final result = allConfirmed.where((app) {
+      print('   ━━━━━━━━━━━━━━━━━━━━');
+      print('   📄 지원서: ${app.id}');
+      print('      - isLongTermApplication: ${app.isLongTermApplication}');
+      print('      - workDate: ${DateFormat('yyyy-MM-dd').format(app.workDate)}');
+      
       // 단기 근무
       if (!app.isLongTermApplication) {
-        return DateUtils.isSameDay(app.workDate, dateStart);
+        final isSame = DateUtils.isSameDay(app.workDate, dateStart);
+        print('      → 단기: ${isSame ? "✅ 포함" : "❌ 제외"}');
+        return isSame;
       }
 
       // 장기 근무
-      if (app.workEndDate == null) return false;
+      print('      - workEndDate: ${app.workEndDate}');
+      print('      - workDays: ${app.workDays}');
+      
+      if (app.workEndDate == null) {
+        print('      → 장기: workEndDate null, ❌ 제외');
+        return false;
+      }
 
       // 기간 체크
-      if (dateStart.isBefore(app.workDate) || dateStart.isAfter(app.workEndDate!)) {
+      final isInRange = !dateStart.isBefore(app.workDate) && 
+                      !dateStart.isAfter(app.workEndDate!);
+      
+      print('      - 기간 체크: $isInRange');
+      
+      if (!isInRange) {
+        print('      → 장기: 기간 밖, ❌ 제외');
         return false;
       }
 
       // 요일 체크
       if (app.workDays == null || app.workDays!.isEmpty) {
+        print('      → 장기: 매일 근무, ✅ 포함');
         return true; // 매일 근무
       }
 
       final weekdays = ['월', '화', '수', '목', '금', '토', '일'];
       final dayWeekday = weekdays[widget.date.weekday - 1];
+      final hasDay = app.workDays!.contains(dayWeekday);
 
-      return app.workDays!.contains(dayWeekday);
+      print('      - 오늘 요일: $dayWeekday');
+      print('      - 근무 요일: ${app.workDays}');
+      print('      → 장기: ${hasDay ? "✅ 포함" : "❌ 제외"}');
+
+      return hasDay;
     }).toList();
 
+    print('   ━━━━━━━━━━━━━━━━━━━━');
+    print('   ✅ 최종 결과: ${result.length}명');
     return result;
   }
 
@@ -171,6 +206,7 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
 
     return attendanceMap;
   }
+  
   /// 사용자 이름 조회
   Future<Map<String, String>> _getUserNames(List<String> uids) async {
     if (uids.isEmpty) return {};
@@ -209,11 +245,11 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            // 헤더
+            // ⭐ 헤더 (반응형 + 테마)
             Container(
-              padding: const EdgeInsets.all(20),
+              padding: ResponsiveHelper.cardPadding(context),
               decoration: BoxDecoration(
-                color: Colors.blue[700],
+                color: Theme.of(context).primaryColor,  // ⭐ 테마 색상
                 borderRadius: const BorderRadius.only(
                   topLeft: Radius.circular(16),
                   topRight: Radius.circular(16),
@@ -224,30 +260,40 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
                 children: [
                   Row(
                     children: [
-                      const Icon(Icons.groups, color: Colors.white, size: 28),
-                      const SizedBox(width: 12),
+                      Icon(
+                        Icons.groups, 
+                        color: Colors.white, 
+                        size: ResponsiveHelper.iconSize(context, 28),  // ⭐ 반응형
+                      ),
+                      SizedBox(width: ResponsiveHelper.spacing(context, 12)),
                       Expanded(
                         child: Text(
                           '$dateStr 인원 현황',
-                          style: const TextStyle(
-                            fontSize: 18,
+                          style: ResponsiveHelper.titleStyle(context).copyWith(  // ⭐ 반응형
                             fontWeight: FontWeight.bold,
                             color: Colors.white,
                           ),
                         ),
                       ),
                       IconButton(
-                        icon: const Icon(Icons.close, color: Colors.white),
+                        icon: Icon(
+                          Icons.close, 
+                          color: Colors.white,
+                          size: ResponsiveHelper.iconSize(context, 24),  // ⭐ 반응형
+                        ),
                         onPressed: () => Navigator.pop(context),
                       ),
                     ],
                   ),
                   
-                  // ⭐ 사업장 선택 드롭다운
+                  // ⭐ 사업장 선택 드롭다운 (반응형)
                   if (widget.businessIds.length > 1) ...[
-                    const SizedBox(height: 12),
+                    SizedBox(height: ResponsiveHelper.spacing(context, 12)),
                     Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+                      padding: EdgeInsets.symmetric(
+                        horizontal: ResponsiveHelper.spacing(context, 12),
+                        vertical: ResponsiveHelper.spacing(context, 4),
+                      ),
                       decoration: BoxDecoration(
                         color: Colors.white.withOpacity(0.2),
                         borderRadius: BorderRadius.circular(8),
@@ -257,19 +303,27 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
                         child: DropdownButton<String>(
                           isExpanded: true,
                           value: _selectedBusinessId,
-                          dropdownColor: Colors.blue[800],
-                          style: const TextStyle(
+                          dropdownColor: Theme.of(context).primaryColor.withOpacity(0.9),  // ⭐ 테마
+                          style: ResponsiveHelper.bodyStyle(  // ⭐ 반응형
+                            context,
                             color: Colors.white,
-                            fontSize: 14,
                           ),
-                          icon: const Icon(Icons.arrow_drop_down, color: Colors.white),
+                          icon: Icon(
+                            Icons.arrow_drop_down, 
+                            color: Colors.white,
+                            size: ResponsiveHelper.iconSize(context, 24),  // ⭐ 반응형
+                          ),
                           items: widget.businessIds.map((id) {
                             return DropdownMenuItem(
                               value: id,
                               child: Row(
                                 children: [
-                                  const Icon(Icons.business, color: Colors.white, size: 16),
-                                  const SizedBox(width: 8),
+                                  Icon(
+                                    Icons.business, 
+                                    color: Colors.white, 
+                                    size: ResponsiveHelper.iconSize(context, 16),  // ⭐ 반응형
+                                  ),
+                                  SizedBox(width: ResponsiveHelper.spacing(context, 8)),
                                   Text(_businessNameMap[id] ?? 'Loading...'),
                                 ],
                               ),
@@ -291,21 +345,21 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
               ),
             ),
 
-            // 내용
+            // ⭐ 내용 (반응형)
             Expanded(
               child: _isLoading
                   ? const LoadingWidget(message: '인원현황 조회 중...')
                   : SingleChildScrollView(
-                      padding: const EdgeInsets.all(20),
+                      padding: ResponsiveHelper.cardPadding(context),  // ⭐ 반응형
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           // 전체 통계
                           _buildOverallStats(),
 
-                          const SizedBox(height: 24),
+                          SizedBox(height: ResponsiveHelper.spacing(context, 24)),
                           const Divider(),
-                          const SizedBox(height: 24),
+                          SizedBox(height: ResponsiveHelper.spacing(context, 24)),
 
                           // 업무별 인원
                           _buildWorkTypeGroups(),
@@ -314,12 +368,12 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
                     ),
             ),
 
-            // 닫기 버튼
+            // ⭐ 닫기 버튼 (반응형 + 테마)
             Container(
-              padding: const EdgeInsets.all(16),
+              padding: ResponsiveHelper.cardPadding(context),  // ⭐ 반응형
               decoration: BoxDecoration(
                 border: Border(
-                  top: BorderSide(color: Colors.grey[300]!),
+                  top: BorderSide(color: Theme.of(context).dividerColor),  // ⭐ 테마
                 ),
               ),
               child: SizedBox(
@@ -327,9 +381,17 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
                 child: ElevatedButton(
                   onPressed: () => Navigator.pop(context),
                   style: ElevatedButton.styleFrom(
-                    padding: const EdgeInsets.symmetric(vertical: 14),
+                    padding: EdgeInsets.symmetric(
+                      vertical: ResponsiveHelper.spacing(context, 14),  // ⭐ 반응형
+                    ),
                   ),
-                  child: const Text('닫기'),
+                  child: Text(
+                    '닫기',
+                    style: ResponsiveHelper.bodyStyle(context).copyWith(  // ⭐ 반응형
+                      color: Colors.white,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
                 ),
               ),
             ),
@@ -339,7 +401,7 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
     );
   }
 
-  /// 전체 통계
+  /// ⭐ 전체 통계 (반응형 + 테마)
   Widget _buildOverallStats() {
     final total = _confirmedWorkers.length;
     final checkedIn =
@@ -351,29 +413,34 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
     final checkedInPercentage = total > 0 ? (checkedIn / total * 100).round() : 0;
 
     return Container(
-      padding: const EdgeInsets.all(16),
+      padding: ResponsiveHelper.cardPadding(context),  // ⭐ 반응형
       decoration: BoxDecoration(
-        color: Colors.blue[50],
+        color: Theme.of(context).primaryColor.withOpacity(0.1),  // ⭐ 테마
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: Colors.blue[200]!),
+        border: Border.all(
+          color: Theme.of(context).primaryColor.withOpacity(0.3),  // ⭐ 테마
+        ),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
             children: [
-              Icon(Icons.assessment, color: Colors.blue[700], size: 24),
-              const SizedBox(width: 8),
-              const Text(
+              Icon(
+                Icons.assessment, 
+                color: Theme.of(context).primaryColor,  // ⭐ 테마
+                size: ResponsiveHelper.iconSize(context, 24),  // ⭐ 반응형
+              ),
+              SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+              Text(
                 '전체 통계',
-                style: TextStyle(
-                  fontSize: 16,
+                style: ResponsiveHelper.subtitleStyle(context).copyWith(  // ⭐ 반응형
                   fontWeight: FontWeight.bold,
                 ),
               ),
             ],
           ),
-          const SizedBox(height: 16),
+          SizedBox(height: ResponsiveHelper.spacing(context, 16)),
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceAround,
             children: [
@@ -409,7 +476,7 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
     );
   }
 
-  /// 통계 아이템
+  /// ⭐ 통계 아이템 (반응형)
   Widget _buildStatItem({
     required String label,
     required String value,
@@ -419,20 +486,23 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
   }) {
     return Column(
       children: [
-        Icon(icon, color: color[600], size: 28),
-        const SizedBox(height: 4),
+        Icon(
+          icon, 
+          color: color[600], 
+          size: ResponsiveHelper.iconSize(context, 28),  // ⭐ 반응형
+        ),
+        SizedBox(height: ResponsiveHelper.spacing(context, 4)),
         Text(
           label,
-          style: TextStyle(
-            fontSize: 11,
-            color: Colors.grey[600],
+          style: ResponsiveHelper.tinyStyle(  // ⭐ 반응형
+            context,
+            color: Theme.of(context).textTheme.bodySmall?.color,  // ⭐ 테마
           ),
         ),
-        const SizedBox(height: 2),
+        SizedBox(height: ResponsiveHelper.spacing(context, 2)),
         Text(
           value,
-          style: TextStyle(
-            fontSize: 15,
+          style: ResponsiveHelper.bodyStyle(context).copyWith(  // ⭐ 반응형
             fontWeight: FontWeight.bold,
             color: color[700],
           ),
@@ -440,8 +510,8 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
         if (subValue != null)
           Text(
             subValue,
-            style: TextStyle(
-              fontSize: 11,
+            style: ResponsiveHelper.tinyStyle(  // ⭐ 반응형
+              context,
               color: color[600],
             ),
           ),
@@ -449,7 +519,7 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
     );
   }
 
-  /// 업무별 그룹
+  /// ⭐ 업무별 그룹 (반응형)
   Widget _buildWorkTypeGroups() {
     // 업무 유형별로 그룹화
     final Map<String, List<ApplicationModel>> workTypeGroups = {};
@@ -463,12 +533,15 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
     }
 
     if (workTypeGroups.isEmpty) {
-      return const Center(
+      return Center(
         child: Padding(
-          padding: EdgeInsets.all(40.0),
+          padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 40)),  // ⭐ 반응형
           child: Text(
             '확정된 근무자가 없습니다',
-            style: TextStyle(color: Colors.grey),
+            style: ResponsiveHelper.bodyStyle(  // ⭐ 반응형
+              context,
+              color: Theme.of(context).disabledColor,  // ⭐ 테마
+            ),
           ),
         ),
       );
@@ -478,14 +551,16 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: workTypeGroups.entries.map((entry) {
         return Padding(
-          padding: const EdgeInsets.only(bottom: 20),
+          padding: EdgeInsets.only(
+            bottom: ResponsiveHelper.spacing(context, 20),  // ⭐ 반응형
+          ),
           child: _buildWorkTypeGroup(entry.key, entry.value),
         );
       }).toList(),
     );
   }
 
-  /// 업무 유형 그룹
+  /// ⭐ 업무 유형 그룹 (반응형 + 테마)
   Widget _buildWorkTypeGroup(String workType, List<ApplicationModel> workers) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -493,18 +568,21 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
         // 업무 유형 헤더
         Row(
           children: [
-            Icon(Icons.work, color: Colors.blue[700], size: 20),
-            const SizedBox(width: 8),
+            Icon(
+              Icons.work, 
+              color: Theme.of(context).primaryColor,  // ⭐ 테마
+              size: ResponsiveHelper.iconSize(context, 20),  // ⭐ 반응형
+            ),
+            SizedBox(width: ResponsiveHelper.spacing(context, 8)),
             Text(
               '$workType (${workers.length}명)',
-              style: const TextStyle(
-                fontSize: 15,
+              style: ResponsiveHelper.bodyStyle(context).copyWith(  // ⭐ 반응형
                 fontWeight: FontWeight.bold,
               ),
             ),
           ],
         ),
-        const SizedBox(height: 12),
+        SizedBox(height: ResponsiveHelper.spacing(context, 12)),
 
         // 근무자 목록
         ...workers.map((app) => _buildWorkerItem(app)),
@@ -512,7 +590,7 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
     );
   }
 
-  /// 근무자 아이템
+  /// ⭐ 근무자 아이템 (반응형 + 테마)
   Widget _buildWorkerItem(ApplicationModel app) {
     final attendance = _attendanceMap[app.id];
     final hasCheckedIn = attendance?.checkIn != null;
@@ -541,17 +619,23 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
     }
 
     return Container(
-      margin: const EdgeInsets.only(bottom: 8),
-      padding: const EdgeInsets.all(12),
+      margin: EdgeInsets.only(
+        bottom: ResponsiveHelper.spacing(context, 8),  // ⭐ 반응형
+      ),
+      padding: ResponsiveHelper.cardPadding(context),  // ⭐ 반응형
       decoration: BoxDecoration(
-        color: Colors.grey[50],
+        color: Theme.of(context).cardColor,  // ⭐ 테마
         borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: Colors.grey[300]!),
+        border: Border.all(color: Theme.of(context).dividerColor),  // ⭐ 테마
       ),
       child: Row(
         children: [
-          Icon(icon, color: iconColor, size: 20),
-          const SizedBox(width: 12),
+          Icon(
+            icon, 
+            color: iconColor, 
+            size: ResponsiveHelper.iconSize(context, 20),  // ⭐ 반응형
+          ),
+          SizedBox(width: ResponsiveHelper.spacing(context, 12)),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -560,42 +644,41 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
                   children: [
                     Text(
                       _userNameMap[app.uid] ?? 'Unknown',
-                      style: const TextStyle(
-                        fontSize: 14,
+                      style: ResponsiveHelper.bodyStyle(context).copyWith(  // ⭐ 반응형
                         fontWeight: FontWeight.bold,
                       ),
                     ),
-                    const SizedBox(width: 8),
+                    SizedBox(width: ResponsiveHelper.spacing(context, 8)),
                     Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 6,
-                        vertical: 2,
+                      padding: EdgeInsets.symmetric(
+                        horizontal: ResponsiveHelper.spacing(context, 6),  // ⭐ 반응형
+                        vertical: ResponsiveHelper.spacing(context, 2),
                       ),
                       decoration: BoxDecoration(
                         color: app.isLongTermApplication
                             ? Colors.purple[100]
-                            : Colors.blue[100],
+                            : Theme.of(context).primaryColor.withOpacity(0.2),  // ⭐ 테마
                         borderRadius: BorderRadius.circular(4),
                       ),
                       child: Text(
                         app.isLongTermApplication ? '장기' : '단기',
-                        style: TextStyle(
-                          fontSize: 10,
+                        style: ResponsiveHelper.tinyStyle(  // ⭐ 반응형
+                          context,
                           color: app.isLongTermApplication
                               ? Colors.purple[700]
-                              : Colors.blue[700],
+                              : Theme.of(context).primaryColor,  // ⭐ 테마
                         ),
                       ),
                     ),
                   ],
                 ),
                 if (timeText != null) ...[
-                  const SizedBox(height: 4),
+                  SizedBox(height: ResponsiveHelper.spacing(context, 4)),
                   Text(
                     timeText,
-                    style: TextStyle(
-                      fontSize: 12,
-                      color: Colors.grey[600],
+                    style: ResponsiveHelper.smallStyle(  // ⭐ 반응형
+                      context,
+                      color: Theme.of(context).textTheme.bodySmall?.color,  // ⭐ 테마
                     ),
                   ),
                 ],
@@ -603,15 +686,18 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
             ),
           ),
           Container(
-            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+            padding: EdgeInsets.symmetric(
+              horizontal: ResponsiveHelper.spacing(context, 8),  // ⭐ 반응형
+              vertical: ResponsiveHelper.spacing(context, 4),
+            ),
             decoration: BoxDecoration(
               color: iconColor.withOpacity(0.1),
               borderRadius: BorderRadius.circular(4),
             ),
             child: Text(
               statusText,
-              style: TextStyle(
-                fontSize: 12,
+              style: ResponsiveHelper.smallStyle(  // ⭐ 반응형
+                context,
                 fontWeight: FontWeight.bold,
                 color: iconColor,
               ),

@@ -10,30 +10,9 @@ import '../utils/toast_helper.dart';
 import '../models/core/business_work_type_model.dart';
 import '../models/core/attendance_model.dart';
 import '../models/core/schedule_change_request_model.dart';
-// ⭐ 새로 추가!
-import 'repositories/user_repository.dart';
-import 'repositories/business_repository.dart';
-import 'repositories/to_repository.dart';
-import 'repositories/application_repository.dart';
-import 'repositories/attendance_repository.dart';
 
 class FirestoreService {
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
-  // ⭐ Repository 인스턴스 추가
-  late final UserRepository _userRepo;
-  late final BusinessRepository _businessRepo;
-  late final TORepository _toRepo;
-  late final ApplicationRepository _applicationRepo;
-  late final AttendanceRepository _attendanceRepo;
-  
-  // ⭐ 생성자 추가
-  FirestoreService() {
-    _userRepo = UserRepository();
-    _businessRepo = BusinessRepository();
-    _toRepo = TORepository();
-    _applicationRepo = ApplicationRepository();
-    _attendanceRepo = AttendanceRepository();
-  }
   // ✅ 캐시 추가
   final Map<String, List<ApplicationModel>> _applicationCache = {};
   final Map<String, List<WorkDetailModel>> _workDetailCache = {};
@@ -53,42 +32,90 @@ class FirestoreService {
   final Map<String, DateTime> _cacheTimestamps = {};
 
   // ═══════════════════════════════════════════════════════════
-  // 사용자 관리 (User Management) - Repository 위임
+  // 사용자 관리 (User Management)
   // ═══════════════════════════════════════════════════════════
-
+  
   /// 사용자 정보 저장
   Future<void> saveUser(UserModel user) async {
-    return _userRepo.saveUser(user);
+    await _firestore.collection('users').doc(user.uid).set(user.toMap());
   }
 
-  /// 사용자 정보 조회
+  /// 사용자 정보 조회 (캐싱 적용!)
   Future<UserModel?> getUser(String uid, {bool forceRefresh = false}) async {
-    return _userRepo.getUser(uid, forceRefresh: forceRefresh);
+    try {
+      print('🔍 getUser 호출: $uid, forceRefresh=$forceRefresh');
+      
+      // 🔥 강제 새로고침이 아닐 때만 캐시 확인
+      if (!forceRefresh && _userCache.containsKey(uid)) {
+        final cacheTime = _userCacheTimestamps[uid];
+        if (cacheTime != null && DateTime.now().difference(cacheTime) < _userCacheValidDuration) {
+          print('📦 User 캐시 사용: $uid');
+          return _userCache[uid];
+        }
+      }
+      
+      print('🔄 User Firestore 조회: $uid');
+      final doc = await _firestore.collection('users').doc(uid).get();
+      
+      if (!doc.exists) {
+        print('❌ 사용자를 찾을 수 없습니다: $uid');
+        return null;
+      }
+      
+      final user = UserModel.fromMap(doc.data()!, doc.id);
+      
+      // ✅ 캐시 저장
+      _userCache[uid] = user;
+      _userCacheTimestamps[uid] = DateTime.now();
+      
+      print('✅ User 조회 완료: ${user.name}');
+      return user;
+    } catch (e) {
+      print('❌ 사용자 조회 실패: $e');
+      return null;
+    }
   }
-
   /// UID로 사용자 조회 (별칭 메서드)
   Future<UserModel?> getUserByUID(String uid) async {
-    return _userRepo.getUser(uid);
+    return getUser(uid);
   }
 
   /// 마지막 로그인 시간 업데이트
   Future<void> updateLastLogin(String uid) async {
-    return _userRepo.updateLastLogin(uid);
+    await _firestore.collection('users').doc(uid).update({
+      'lastLoginAt': FieldValue.serverTimestamp(),
+    });
   }
 
   // ═══════════════════════════════════════════════════════════
-  // TO 관리 - 기본 CRUD (TO Basic Operations) - Repository 위임
+  // TO 관리 - 기본 CRUD (TO Basic Operations)
   // ═══════════════════════════════════════════════════════════
 
   /// 단일 TO 조회
   Future<TOModel?> getTO(String toId) async {
-    return _toRepo.getTO(toId);
+    try {
+      final doc = await _firestore.collection('tos').doc(toId).get();
+      
+      if (doc.exists) {
+        return TOModel.fromMap(doc.data()!, doc.id);
+      }
+      return null;
+    } catch (e) {
+      print('❌ [FirestoreService] TO 조회 실패: $e');
+      return null;
+    }
   }
 
   /// TO 수정
   Future<void> updateTO(String toId, Map<String, dynamic> updates) async {
-    await _toRepo.updateTO(toId, updates);
-    clearCache(toId: toId); // ⭐ 캐시는 여기서 처리
+    try {
+      await _firestore.collection('tos').doc(toId).update(updates);
+      clearCache(toId: toId);  // ✅ 캐시 초기화
+      print('✅ [FirestoreService] TO 수정 완료');
+    } catch (e) {
+      print('❌ [FirestoreService] TO 수정 실패: $e');
+      rethrow;
+    }
   }
 
   /// TO 삭제 전 확인 (지원자 수 체크)
@@ -109,7 +136,7 @@ class FirestoreService {
     }
   }
 
-  /// TO 삭제 - 복잡한 로직은 그대로 유지
+  /// TO 삭제 (단일 또는 그룹 TO 하나)
   Future<bool> deleteTO(String toId) async {
     try {
       final toDoc = await getTO(toId);
@@ -145,19 +172,22 @@ class FirestoreService {
         
         // 대표 TO 삭제인 경우
         if (toDoc.isGroupMaster && groupTOs.length > 1) {
+          // 다음 TO를 대표로 지정
           final nextTO = groupTOs.firstWhere((to) => to.id != toId);
           await _firestore.collection('tos').doc(nextTO.id).update({
             'isGroupMaster': true,
           });
           
+          // 날짜 범위 재계산
           await _updateGroupDateRange(toDoc.groupId!);
         }
       }
       
       // 4. TO 문서 삭제
       await _firestore.collection('tos').doc(toId).delete();
-      clearCache(toId: toId);
-      
+
+      clearCache(toId: toId);  // ✅ 캐시 초기화
+
       print('✅ TO 삭제 완료: $toId');
       ToastHelper.showSuccess('TO가 삭제되었습니다.');
       return true;
@@ -169,17 +199,59 @@ class FirestoreService {
   }
 
   // ═══════════════════════════════════════════════════════════
-  // TO 조회 - 다양한 조건별 (TO Query Operations) - Repository 위임
+  // TO 조회 - 다양한 조건별 (TO Query Operations)
   // ═══════════════════════════════════════════════════════════
 
-  /// 모든 TO 조회
+  /// 모든 TO 조회 (지원자용, 최고관리자용)
   Future<List<TOModel>> getAllTOs() async {
-    return _toRepo.getAllTOs();
+    try {
+      print('🔍 [FirestoreService] 전체 TO 조회 시작...');
+
+      final snapshot = await _firestore
+          .collection('tos')
+          .orderBy('date', descending: false)
+          .get();
+
+      final toList = snapshot.docs
+          .map((doc) => TOModel.fromMap(doc.data(), doc.id))
+          .toList();
+
+      // 오늘 날짜 이전 TO 제외
+      final today = DateTime.now();
+      final filteredList = toList.where((to) {
+        return to.date.isAfter(today.subtract(const Duration(days: 1)));
+      }).toList();
+
+      print('✅ [FirestoreService] 전체 TO 조회 완료: ${filteredList.length}개 (오늘 이후)');
+      return filteredList;
+    } catch (e) {
+      print('❌ [FirestoreService] 전체 TO 조회 실패: $e');
+      return [];
+    }
   }
 
-  /// 사업장별 TO 조회
+  /// 특정 사업장의 TO 조회 (사업장 관리자용)
   Future<List<TOModel>> getTOsByBusiness(String businessId) async {
-    return _toRepo.getTOsByBusiness(businessId);
+    try {
+      print('🔍 [FirestoreService] 사업장 TO 조회 시작...');
+      print('   businessId: $businessId');
+
+      final snapshot = await _firestore
+          .collection('tos')
+          .where('businessId', isEqualTo: businessId)
+          .orderBy('date', descending: false)
+          .get();
+
+      final toList = snapshot.docs
+          .map((doc) => TOModel.fromMap(doc.data(), doc.id))
+          .toList();
+
+      print('✅ [FirestoreService] 조회 완료: ${toList.length}개');
+      return toList;
+    } catch (e) {
+      print('❌ [FirestoreService] 사업장 TO 조회 실패: $e');
+      return [];
+    }
   }
 
   /// 대표 TO만 조회 (그룹 TO는 대표만, 일반 TO는 전체)
@@ -387,7 +459,26 @@ class FirestoreService {
 
   /// 그룹별 TO 조회
   Future<List<TOModel>> getTOsByGroup(String groupId) async {
-    return _toRepo.getTOsByGroup(groupId);
+    try {
+      print('🔍 [FirestoreService] 그룹 TO 조회 시작...');
+      print('   그룹 ID: $groupId');
+
+      final snapshot = await _firestore
+          .collection('tos')
+          .where('groupId', isEqualTo: groupId)
+          .orderBy('date', descending: false)
+          .get();
+
+      final toList = snapshot.docs
+          .map((doc) => TOModel.fromMap(doc.data(), doc.id))
+          .toList();
+
+      print('✅ [FirestoreService] 그룹 TO 조회 완료: ${toList.length}개');
+      return toList;
+    } catch (e) {
+      print('❌ [FirestoreService] 그룹 TO 조회 실패: $e');
+      return [];
+    }
   }
 
   /// 그룹 TO 일괄 생성 (날짜 범위)
@@ -996,12 +1087,39 @@ class FirestoreService {
   }
 
   // ═══════════════════════════════════════════════════════════
-  // 지원서 관리 (Application Management) - Repository 위임
+  // 지원서 관리 (Application Management)
   // ═══════════════════════════════════════════════════════════
 
   /// TO별 지원자 목록 조회
   Future<List<ApplicationModel>> getApplicationsByTOId(String toId) async {
-    return _applicationRepo.getApplicationsByTOId(toId);
+    try {
+      // 1. TO 정보 조회
+      final toDoc = await _firestore.collection('tos').doc(toId).get();
+      if (!toDoc.exists) {
+        print('❌ TO를 찾을 수 없습니다: $toId');
+        return [];
+      }
+
+      final toData = toDoc.data()!;
+      final businessId = toData['businessId'];
+      final toTitle = toData['title'];
+      final workDate = toData['date'] as Timestamp;
+
+      // 2. businessId, toTitle, workDate로 지원서 조회
+      final snapshot = await _firestore
+          .collection('applications')
+          .where('businessId', isEqualTo: businessId)
+          .where('toTitle', isEqualTo: toTitle)
+          .where('workDate', isEqualTo: workDate)
+          .get();
+
+      return snapshot.docs
+          .map((doc) => ApplicationModel.fromFirestore(doc))
+          .toList();
+    } catch (e) {
+      print('❌ 지원자 목록 조회 실패: $e');
+      return [];
+    }
   }
 
   /// 여러 TO의 지원자를 한 번에 조회 (병렬 최적화!)
@@ -1050,9 +1168,26 @@ class FirestoreService {
       return {};
     }
   }
-  /// 사업장별 지원서 조회
+  /// 사업장별 지원자 목록 조회
   Future<List<ApplicationModel>> getApplicationsByBusinessId(String businessId) async {
-    return _applicationRepo.getApplicationsByBusinessId(businessId);
+    try {
+      print('📋 사업장별 지원서 조회 시작: $businessId');
+      
+      final snapshot = await _firestore
+          .collection('applications')
+          .where('businessId', isEqualTo: businessId)
+          .get();
+
+      final applications = snapshot.docs
+          .map((doc) => ApplicationModel.fromMap(doc.data(), doc.id))
+          .toList();
+
+      print('✅ 사업장별 지원서 조회 완료: ${applications.length}개');
+      return applications;
+    } catch (e) {
+      print('❌ 사업장별 지원서 조회 실패: $e');
+      return [];
+    }
   }
 
   /// 여러 TO의 WorkDetails를 한 번에 조회 (병렬)
@@ -1400,7 +1535,20 @@ class FirestoreService {
 
   /// 내 지원 내역 조회
   Future<List<ApplicationModel>> getMyApplications(String uid) async {
-    return _applicationRepo.getMyApplications(uid);
+    try {
+      final snapshot = await _firestore
+          .collection('applications')
+          .where('uid', isEqualTo: uid)
+          .orderBy('appliedAt', descending: true)
+          .get();
+
+      return snapshot.docs
+          .map((doc) => ApplicationModel.fromFirestore(doc))
+          .toList();
+    } catch (e) {
+      print('내 지원 내역 조회 실패: $e');
+      return [];
+    }
   }
 
   /// TO별 지원자 목록 + 사용자 정보 조회 (관리자용)
@@ -1949,32 +2097,40 @@ class FirestoreService {
   }
 
   // ═══════════════════════════════════════════════════════════
-  // WorkDetail 관리 - Repository 위임
+  // 업무 상세 정보 관리 (Work Details Management)
   // ═══════════════════════════════════════════════════════════
 
-  /// WorkDetail 조회 (캐싱 포함)
+  /// 업무 상세 정보 조회 (캐싱 적용)
   Future<List<WorkDetailModel>> getWorkDetails(String toId, {bool forceRefresh = false}) async {
-    // ⭐ 캐시 로직은 여기서 유지
-    if (!forceRefresh) {
-      final cacheKey = 'workDetails_$toId';
-      if (_workDetailCache.containsKey(cacheKey)) {
-        final cacheTime = _cacheTimestamps[cacheKey];
-        if (cacheTime != null && 
-            DateTime.now().difference(cacheTime) < _cacheValidDuration) {
-          print('📦 WorkDetail 캐시 사용: $toId');
-          return _workDetailCache[cacheKey]!;
+    try {
+      // 🔥 강제 새로고침이 아닐 때만 캐시 확인
+      if (!forceRefresh && _workDetailCache.containsKey(toId)) {
+        final cacheTime = _cacheTimestamps['workDetail_$toId'];
+        if (cacheTime != null && DateTime.now().difference(cacheTime) < _cacheValidDuration) {
+          return _workDetailCache[toId]!;
         }
       }
+      
+      final snapshot = await _firestore
+          .collection('tos')
+          .doc(toId)
+          .collection('workDetails')
+          .orderBy('order')
+          .get();
+
+      final workDetails = snapshot.docs
+          .map((doc) => WorkDetailModel.fromMap(doc.data(), doc.id))
+          .toList();
+
+      // ✅ 캐시 저장
+      _workDetailCache[toId] = workDetails;
+      _cacheTimestamps['workDetail_$toId'] = DateTime.now();
+
+      return workDetails;
+    } catch (e) {
+      print('❌ WorkDetails 조회 실패: $e');
+      return [];
     }
-    
-    // Repository 호출
-    final workDetails = await _toRepo.getWorkDetails(toId);
-    
-    // 캐시 저장
-    _workDetailCache['workDetails_$toId'] = workDetails;
-    _cacheTimestamps['workDetails_$toId'] = DateTime.now();
-    
-    return workDetails;
   }
   /// 캐시 초기화 (TO 수정/삭제 시 호출)
   void clearCache({String? toId}) {
@@ -2049,20 +2205,35 @@ class FirestoreService {
   }
 
   /// WorkDetail 추가
-  Future<String> addWorkDetail({
+  Future<String> addWorkDetail({  // ✅ void → String
     required String toId,
     required WorkDetailModel workDetail,
   }) async {
-    final workDetailId = await _toRepo.addWorkDetail(
-      toId: toId,
-      workDetail: workDetail,
-    );
-    
-    // 캐시 초기화
-    _workDetailCache.remove('workDetails_$toId');
-    _cacheTimestamps.remove('workDetails_$toId');
-    
-    return workDetailId;
+    try {
+      final docRef = await _firestore  // ✅ await 추가하고 변수에 저장
+          .collection('tos')
+          .doc(toId)
+          .collection('workDetails')
+          .add({
+        'workType': workDetail.workType,
+        'workTypeIcon': workDetail.workTypeIcon,
+        'workTypeColor': workDetail.workTypeColor,
+        'wage': workDetail.wage,
+        'requiredCount': workDetail.requiredCount,
+        'currentCount': 0,
+        'pendingCount': 0,
+        'startTime': workDetail.startTime,
+        'endTime': workDetail.endTime,
+        'order': workDetail.order,
+        'createdAt': FieldValue.serverTimestamp(),
+      });
+
+      print('✅ [FirestoreService] WorkDetail 추가 완료: ${docRef.id}');
+      return docRef.id;  // ✅ ID 반환
+    } catch (e) {
+      print('❌ [FirestoreService] WorkDetail 추가 실패: $e');
+      rethrow;
+    }
   }
 
   /// WorkDetail 수정
@@ -2071,15 +2242,19 @@ class FirestoreService {
     required String workDetailId,
     required Map<String, dynamic> updates,
   }) async {
-    await _toRepo.updateWorkDetail(
-      toId: toId,
-      workDetailId: workDetailId,
-      updates: updates,
-    );
-    
-    // 캐시 초기화
-    _workDetailCache.remove('workDetails_$toId');
-    _cacheTimestamps.remove('workDetails_$toId');
+    try {
+      await _firestore
+          .collection('tos')
+          .doc(toId)
+          .collection('workDetails')
+          .doc(workDetailId)
+          .update(updates);
+
+      print('✅ [FirestoreService] WorkDetail 수정 완료');
+    } catch (e) {
+      print('❌ [FirestoreService] WorkDetail 수정 실패: $e');
+      rethrow;
+    }
   }
 
   /// WorkDetail 삭제
@@ -2087,14 +2262,19 @@ class FirestoreService {
     required String toId,
     required String workDetailId,
   }) async {
-    await _toRepo.deleteWorkDetail(
-      toId: toId,
-      workDetailId: workDetailId,
-    );
-    
-    // 캐시 초기화
-    _workDetailCache.remove('workDetails_$toId');
-    _cacheTimestamps.remove('workDetails_$toId');
+    try {
+      await _firestore
+          .collection('tos')
+          .doc(toId)
+          .collection('workDetails')
+          .doc(workDetailId)
+          .delete();
+
+      print('✅ [FirestoreService] WorkDetail 삭제 완료');
+    } catch (e) {
+      print('❌ [FirestoreService] WorkDetail 삭제 실패: $e');
+      rethrow;
+    }
   }
   
   /// WorkDetail 마감
@@ -2268,22 +2448,62 @@ class FirestoreService {
   }
 
   // ═══════════════════════════════════════════════════════════
-  // 사업장 관리 (Business Management) - Repository 위임
+  // 사업장 관리 (Business Management)
   // ═══════════════════════════════════════════════════════════
-
+  
   /// 사업장 ID로 조회
   Future<BusinessModel?> getBusinessById(String businessId) async {
-    return _businessRepo.getBusinessById(businessId);
+    try {
+      final doc = await _firestore.collection('businesses').doc(businessId).get();
+      
+      if (!doc.exists) {
+        print('⚠️ 사업장을 찾을 수 없습니다: $businessId');
+        return null;
+      }
+      
+      return BusinessModel.fromFirestore(doc);
+    } catch (e) {
+      print('❌ 사업장 조회 실패: $e');
+      return null;
+    }
   }
 
   /// 내 사업장 목록 조회
   Future<List<BusinessModel>> getMyBusiness(String ownerId) async {
-    return _businessRepo.getMyBusinesses(ownerId);
+    try {
+      print('🔍 [FirestoreService] 내 사업장 조회 시작...');
+      print('   ownerId: $ownerId');
+
+      final snapshot = await _firestore
+          .collection('businesses')
+          .where('ownerId', isEqualTo: ownerId)
+          .where('isApproved', isEqualTo: true)
+          .orderBy('createdAt', descending: true)
+          .get();
+
+      final businesses = snapshot.docs
+          .map((doc) => BusinessModel.fromMap(doc.data(), doc.id))
+          .toList();
+
+      print('✅ [FirestoreService] 조회 완료: ${businesses.length}개');
+      return businesses;
+    } catch (e) {
+      print('❌ [FirestoreService] 내 사업장 조회 실패: $e');
+      return [];
+    }
   }
 
   /// 사업장 생성
   Future<String?> createBusiness(BusinessModel business) async {
-    return _businessRepo.createBusiness(business);
+    try {
+      DocumentReference docRef = await _firestore
+          .collection('businesses')
+          .add(business.toMap());
+      return docRef.id;
+    } catch (e) {
+      print('사업장 생성 실패: $e');
+      return null;
+    }
   }
 
   // ═══════════════════════════════════════════════════════════
@@ -2377,67 +2597,73 @@ class FirestoreService {
     }
   }
 
-  // ========== 업무 유형 관리 (Business Work Types) - Repository 위임 ==========
+  // ═══════════════════════════════════════════════════════════
+  // 사업장별 업무 유형 관리 (Business Work Type Management)
+  // ═══════════════════════════════════════════════════════════
 
-  /// 사업장의 업무 유형 조회
+  /// 특정 사업장의 업무 유형 목록 조회
   Future<List<BusinessWorkTypeModel>> getBusinessWorkTypes(String businessId) async {
-    return _businessRepo.getBusinessWorkTypes(businessId);
+    try {
+      final snapshot = await _firestore
+          .collection('businesses')
+          .doc(businessId)
+          .collection('workTypes')
+          .where('isActive', isEqualTo: true)
+          .orderBy('displayOrder')
+          .get();
+
+      final workTypes = snapshot.docs
+          .map((doc) => BusinessWorkTypeModel.fromMap(doc.data(), doc.id))
+          .toList();
+
+      print('🔍 Firestore 조회: ${workTypes.length}개');
+      return workTypes;
+    } catch (e) {
+      print('❌ getBusinessWorkTypes 오류: $e');
+      return [];
+    }
   }
 
-  /// 업무 유형 생성 (Repository 직접 위임)
-  Future<String?> createBusinessWorkType({
-    required String businessId,
-    required BusinessWorkTypeModel workType,
-  }) async {
-    return _businessRepo.createBusinessWorkType(
-      businessId: businessId,
-      workType: workType,
-    );
-  }
-
-  /// 업무 유형 추가 (화면에서 개별 파라미터로 호출)
+  /// 업무 유형 추가
   Future<String?> addBusinessWorkType({
     required String businessId,
     required String name,
     required String icon,
     String? color,
     String? backgroundColor,
+    String wageType = 'hourly',
     int? displayOrder,
   }) async {
     try {
-      // 1. displayOrder 자동 설정
+      print('🔍 [FirestoreService] 업무 유형 추가...');
+
+      // displayOrder 자동 설정 (기존 개수 + 1)
       final existingTypes = await getBusinessWorkTypes(businessId);
       final order = displayOrder ?? existingTypes.length;
 
-      // 2. BusinessWorkTypeModel 생성
       final workType = BusinessWorkTypeModel(
         id: '',
         businessId: businessId,
         name: name,
         icon: icon,
         color: color,
-        backgroundColor: backgroundColor,
+        backgroundColor: backgroundColor, 
         displayOrder: order,
         isActive: true,
         createdAt: DateTime.now(),
       );
 
-      // 3. Repository를 통해 저장
-      final workTypeId = await _businessRepo.createBusinessWorkType(
-        businessId: businessId,
-        workType: workType,
-      );
-      
-      // ⭐ Service에서 토스트 표시
-      if (workTypeId != null) {
-        ToastHelper.showSuccess('업무 유형이 추가되었습니다');
-      } else {
-        ToastHelper.showError('업무 유형 추가에 실패했습니다');
-      }
-      
-      return workTypeId;
+      final docRef = await _firestore
+          .collection('businesses')
+          .doc(businessId)
+          .collection('workTypes')
+          .add(workType.toMap());
+
+      print('✅ [FirestoreService] 업무 유형 추가 완료: ${docRef.id}');
+      ToastHelper.showSuccess('업무 유형이 추가되었습니다');
+      return docRef.id;
     } catch (e) {
-      print('❌ 업무 유형 추가 실패: $e');
+      print('❌ [FirestoreService] 업무 유형 추가 실패: $e');
       ToastHelper.showError('업무 유형 추가에 실패했습니다');
       return null;
     }
@@ -2451,28 +2677,49 @@ class FirestoreService {
     String? icon,
     String? color,
     String? backgroundColor,
+    String? wageType,
     int? displayOrder,
     bool showToast = true,
   }) async {
-    final success = await _businessRepo.updateBusinessWorkType(
-      businessId: businessId,
-      workTypeId: workTypeId,
-      name: name,
-      icon: icon,
-      color: color,
-      backgroundColor: backgroundColor,
-      displayOrder: displayOrder,
-      showToast: false,  // ⭐ Repository에서는 토스트 안 띄움
-    );
-    
-    // ⭐ Service에서 토스트 표시
-    if (success && showToast) {
-      ToastHelper.showSuccess('업무 유형이 수정되었습니다');
-    } else if (!success && showToast) {
-      ToastHelper.showError('업무 유형 수정에 실패했습니다');
+    try {
+      print('🔍 [FirestoreService] 업무 유형 수정...');
+
+      final updates = <String, dynamic>{};
+      if (name != null) updates['name'] = name;
+      if (icon != null) updates['icon'] = icon;
+      if (color != null) updates['color'] = color;
+      if (backgroundColor != null) updates['backgroundColor'] = backgroundColor;
+      if (displayOrder != null) updates['displayOrder'] = displayOrder;
+      if (wageType != null) updates['wageType'] = wageType;
+
+      if (updates.isEmpty) {
+        print('⚠️ 수정할 내용이 없습니다');
+        return false;
+      }
+
+      await _firestore
+          .collection('businesses')
+          .doc(businessId)
+          .collection('workTypes')
+          .doc(workTypeId)
+          .update(updates);
+
+      print('✅ [FirestoreService] 업무 유형 수정 완료');
+      
+      if (showToast) {
+        ToastHelper.showSuccess('업무 유형이 수정되었습니다');
+      }
+      
+      return true;
+    } catch (e) {
+      print('❌ [FirestoreService] 업무 유형 수정 실패: $e');
+      
+      if (showToast) {
+        ToastHelper.showError('업무 유형 수정에 실패했습니다');
+      }
+      
+      return false;
     }
-    
-    return success;
   }
 
   /// 업무 유형 삭제 (소프트 삭제)
@@ -2480,48 +2727,138 @@ class FirestoreService {
     required String businessId,
     required String workTypeId,
   }) async {
-    final success = await _businessRepo.deleteBusinessWorkType(
-      businessId: businessId,
-      workTypeId: workTypeId,
-    );
-    
-    // ⭐ Service에서 토스트 표시
-    if (success) {
+    try {
+      print('🔍 [FirestoreService] 업무 유형 삭제...');
+
+      await _firestore
+          .collection('businesses')
+          .doc(businessId)
+          .collection('workTypes')
+          .doc(workTypeId)
+          .update({'isActive': false});
+
+      print('✅ [FirestoreService] 업무 유형 삭제 완료');
       ToastHelper.showSuccess('업무 유형이 삭제되었습니다');
-    } else {
+      return true;
+    } catch (e) {
+      print('❌ [FirestoreService] 업무 유형 삭제 실패: $e');
       ToastHelper.showError('업무 유형 삭제에 실패했습니다');
+      return false;
     }
-    
-    return success;
   }
 
-  /// 업무 유형 순서 변경
+  /// 업무 유형 순서 변경 (여러 개 일괄 업데이트)
   Future<bool> reorderBusinessWorkTypes({
     required String businessId,
     required List<String> workTypeIds,
   }) async {
-    // ⭐ Repository는 토스트를 보여주지 않음
-    final success = await _businessRepo.reorderBusinessWorkTypes(
-      businessId: businessId,
-      workTypeIds: workTypeIds,
-    );
-    
-    // ⭐ Service에서만 1번 토스트 표시
-    if (success) {
+    try {
+      print('🔍 [FirestoreService] 업무 유형 순서 변경...');
+
+      final batch = _firestore.batch();
+
+      for (int i = 0; i < workTypeIds.length; i++) {
+        final docRef = _firestore
+            .collection('businesses')
+            .doc(businessId)
+            .collection('workTypes')
+            .doc(workTypeIds[i]);
+
+        batch.update(docRef, {'displayOrder': i});
+      }
+
+      await batch.commit();
+
+      print('✅ [FirestoreService] 순서 변경 완료');
       ToastHelper.showSuccess('순서가 변경되었습니다');
-    } else {
+      return true;
+    } catch (e) {
+      print('❌ [FirestoreService] 순서 변경 실패: $e');
       ToastHelper.showError('순서 변경에 실패했습니다');
+      return false;
     }
-    
-    return success;
   }
   // ═══════════════════════════════════════════════════════════
   // ✅ Phase 4: TO 마감 관리 (TO Status Management)
   // ═══════════════════════════════════════════════════════════
 
-  /// 진행중인 TO 조회
+  /// 진행중인 TO 목록 조회 (대표 TO + 단일 TO)
   Future<List<TOModel>> getActiveTOs() async {
-    return _toRepo.getActiveTOs();
+    try {
+      final snapshot = await _firestore
+          .collection('tos')
+          .orderBy('date', descending: false)
+          .get();
+
+      final allTOs = snapshot.docs
+          .map((doc) => TOModel.fromMap(doc.data(), doc.id))
+          .toList();
+
+      // 1. 대표 TO 또는 단일 TO만 필터링
+      final masterOrSingleTOs = allTOs.where((to) {
+        if (to.groupId != null) {
+          return to.isGroupMaster;
+        }
+        return true;
+      }).toList();
+
+      // 2. 진행중인 것만 필터링
+      List<TOModel> activeTOs = [];
+      
+      for (var masterTO in masterOrSingleTOs) {
+        if (masterTO.isManualClosed) continue; // 🔥 수동 마감 제외
+        
+        // 그룹 TO인 경우
+        if (masterTO.groupId != null) {
+          final groupTOs = allTOs.where((to) => to.groupId == masterTO.groupId).toList();
+          
+          // 🔥 모든 TO의 모든 WorkDetail이 마감됐는지 확인
+          bool allClosed = true;
+          
+          for (var to in groupTOs) {
+            if (to.isManualClosed) continue; // 개별 TO가 수동 마감된 경우 스킵
+            
+            final workDetails = await getWorkDetails(to.id);
+            
+            // 하나라도 진행중이면 그룹 전체가 진행중
+            for (var work in workDetails) {
+              if (!work.isClosed && !work.isTimeExpired && !work.isFull) {
+                allClosed = false;
+                break;
+              }
+            }
+            
+            if (!allClosed) break;
+          }
+          
+          // 하나라도 진행중이면 포함
+          if (!allClosed) {
+            activeTOs.add(masterTO);
+          }
+        } 
+        // 단일 TO인 경우
+        else {
+          final workDetails = await getWorkDetails(masterTO.id);
+          
+          // 🔥 모든 WorkDetail이 마감됐는지 확인
+          bool allClosed = workDetails.isNotEmpty && 
+            workDetails.every((work) => 
+              work.isClosed || work.isTimeExpired || work.isFull
+            );
+          
+          // 하나라도 진행중이면 포함
+          if (!allClosed) {
+            activeTOs.add(masterTO);
+          }
+        }
+      }
+
+      print('✅ 진행중 TO 조회: ${activeTOs.length}개 (그룹 대표 + 단일 TO)');
+      return activeTOs;
+    } catch (e) {
+      print('❌ 진행중 TO 조회 실패: $e');
+      return [];
+    }
   }
 
   // 🔥 시간 초과 체크 헬퍼 함수
@@ -2569,9 +2906,95 @@ class FirestoreService {
     return false;
   }
 
-  /// 마감된 TO 조회
+  /// 마감된 TO 목록 조회 (대표 TO + 단일 TO)
   Future<List<TOModel>> getClosedTOs() async {
-    return _toRepo.getClosedTOs();
+    try {
+      // 1. 모든 TO 가져오기
+      final snapshot = await _firestore
+          .collection('tos')
+          .orderBy('date', descending: false)
+          .get();
+
+      final allTOs = snapshot.docs
+          .map((doc) => TOModel.fromMap(doc.data(), doc.id))
+          .toList();
+
+      // 2. 대표 TO 또는 단일 TO만 필터링
+      final masterOrSingleTOs = allTOs.where((to) {
+        if (to.groupId != null) {
+          return to.isGroupMaster;
+        }
+        return true;
+      }).toList();
+
+      // 3. 마감된 것만 필터링
+      List<TOModel> closedTOs = [];
+      
+      for (var masterTO in masterOrSingleTOs) {
+        // 수동 마감된 경우 무조건 포함
+        if (masterTO.isManualClosed) {
+          closedTOs.add(masterTO);
+          continue;
+        }
+        
+        // 그룹 TO인 경우
+        if (masterTO.groupId != null) {
+          final groupTOs = allTOs.where((to) => to.groupId == masterTO.groupId).toList();
+          
+          // 🔥 모든 TO의 모든 WorkDetail이 마감됐는지 확인
+          bool allClosed = true;
+          
+          for (var to in groupTOs) {
+            final workDetails = await getWorkDetails(to.id);
+            
+            // 하나라도 진행중이면 그룹은 마감 아님
+            for (var work in workDetails) {
+              if (!work.isClosed && !work.isTimeExpired && !work.isFull) {
+                allClosed = false;
+                break;
+              }
+            }
+            
+            if (!allClosed) break;
+          }
+          
+          // 모두 마감됐으면 포함
+          if (allClosed) {
+            closedTOs.add(masterTO);
+          }
+        } 
+        // 단일 TO인 경우
+        else {
+          final workDetails = await getWorkDetails(masterTO.id);
+          
+          // 🔥 모든 WorkDetail이 마감됐는지 확인
+          bool allClosed = workDetails.isNotEmpty && 
+            workDetails.every((work) => 
+              work.isClosed || work.isTimeExpired || work.isFull
+            );
+          
+          // 모두 마감됐으면 포함
+          if (allClosed) {
+            closedTOs.add(masterTO);
+          }
+        }
+      }
+
+      // 4. 최근 마감 순으로 정렬
+      closedTOs.sort((a, b) {
+        final aDate = a.closedAt ?? a.date;
+        final bDate = b.closedAt ?? b.date;
+        return bDate.compareTo(aDate);
+      });
+      final recentClosedTOs = closedTOs.take(5).toList();
+
+      // ⭐ 로그 수정
+      print('✅ 마감된 TO 조회: ${recentClosedTOs.length}개 (전체 ${closedTOs.length}개 중)');
+      return recentClosedTOs;  // ⭐ 변경
+    } catch (e) {
+      print('❌ 마감된 TO 조회 실패: $e');
+      return [];
+    }
   }
 
   /// TO 수동 마감
@@ -2582,6 +3005,7 @@ class FirestoreService {
         'closedAt': FieldValue.serverTimestamp(),
         'closedBy': adminUID,
       });
+      clearCache(toId: toId);
 
       print('✅ TO 수동 마감 완료: $toId');
       return true;
@@ -3349,7 +3773,7 @@ class FirestoreService {
     }
   }
   // ═══════════════════════════════════════════════════════════
-  // 🕐 출근 관리 (Attendance Management) - Repository 위임
+  // 🕐 출근 관리 (Attendance Management)
   // ═══════════════════════════════════════════════════════════
 
   /// 출근 체크
@@ -3364,17 +3788,63 @@ class FirestoreService {
     required double longitude,
     String method = 'gps',
   }) async {
-    return _attendanceRepo.checkIn(
-      applicationId: applicationId,
-      userId: userId,
-      businessId: businessId,
-      businessName: businessName,
-      workDate: workDate,
-      workType: workType,
-      latitude: latitude,
-      longitude: longitude,
-      method: method,
-    );
+    try {
+      print('🕐 [checkIn] 출근 체크 시작...');
+      print('   applicationId: $applicationId');
+      print('   workDate: $workDate');
+      
+      // 1. 오늘 이미 출근했는지 확인
+      final todayStart = DateTime(workDate.year, workDate.month, workDate.day);
+      final todayEnd = todayStart.add(const Duration(days: 1));
+      
+      final existing = await _firestore
+          .collection('attendance')
+          .where('userId', isEqualTo: userId)
+          .where('workDate', isGreaterThanOrEqualTo: Timestamp.fromDate(todayStart))
+          .where('workDate', isLessThan: Timestamp.fromDate(todayEnd))
+          .where('applicationId', isEqualTo: applicationId)
+          .limit(1)
+          .get();
+      
+      if (existing.docs.isNotEmpty) {
+        final existingData = existing.docs.first.data();
+        if (existingData['checkIn'] != null) {
+          print('⚠️ 이미 출근 완료');
+          throw Exception('오늘 이미 출근하셨습니다.');
+        }
+      }
+      
+      // 2. 출근 시간
+      final now = DateTime.now();
+      final checkInTime = '${now.hour.toString().padLeft(2, '0')}:${now.minute.toString().padLeft(2, '0')}:${now.second.toString().padLeft(2, '0')}';
+      
+      // 3. 출근 기록 생성
+      final attendanceData = {
+        'applicationId': applicationId,
+        'userId': userId,
+        'businessId': businessId,
+        'businessName': businessName,
+        'workDate': Timestamp.fromDate(workDate),
+        'workType': workType,
+        'checkIn': checkInTime,
+        'checkInLat': latitude,
+        'checkInLng': longitude,
+        'checkInMethod': method,
+        'checkInTime': FieldValue.serverTimestamp(),
+        'status': 'present', // 기본값
+        'isModified': false,
+        'modifyRequested': false,
+        'createdAt': FieldValue.serverTimestamp(),
+      };
+      
+      final docRef = await _firestore.collection('attendance').add(attendanceData);
+      
+      print('✅ 출근 체크 완료: ${docRef.id}');
+      return docRef.id;
+    } catch (e) {
+      print('❌ 출근 체크 실패: $e');
+      rethrow;
+    }
   }
 
   /// 퇴근 체크
@@ -3384,15 +3854,53 @@ class FirestoreService {
     required double longitude,
     String method = 'gps',
   }) async {
-    return _attendanceRepo.checkOut(
-      attendanceId: attendanceId,
-      latitude: latitude,
-      longitude: longitude,
-      method: method,
-    );
+    try {
+      print('🕐 [checkOut] 퇴근 체크 시작...');
+      print('   attendanceId: $attendanceId');
+      
+      // 1. 출근 기록 조회
+      final doc = await _firestore
+          .collection('attendance')
+          .doc(attendanceId)
+          .get();
+      
+      if (!doc.exists) {
+        throw Exception('출근 기록을 찾을 수 없습니다.');
+      }
+      
+      final data = doc.data()!;
+      if (data['checkOut'] != null) {
+        throw Exception('이미 퇴근하셨습니다.');
+      }
+      
+      // 2. 퇴근 시간
+      final now = DateTime.now();
+      final checkOutTime = '${now.hour.toString().padLeft(2, '0')}:${now.minute.toString().padLeft(2, '0')}:${now.second.toString().padLeft(2, '0')}';
+      
+      // 3. 근무 시간 계산
+      final checkInTime = data['checkIn'] as String;
+      final workHours = _calculateWorkHours(checkInTime, checkOutTime);
+      
+      // 4. 퇴근 기록 저장
+      await _firestore.collection('attendance').doc(attendanceId).update({
+        'checkOut': checkOutTime,
+        'checkOutLat': latitude,
+        'checkOutLng': longitude,
+        'checkOutMethod': method,
+        'checkOutTime': FieldValue.serverTimestamp(),
+        'workHours': workHours,
+        'updatedAt': FieldValue.serverTimestamp(),
+      });
+      
+      print('✅ 퇴근 체크 완료');
+      return true;
+    } catch (e) {
+      print('❌ 퇴근 체크 실패: $e');
+      rethrow;
+    }
   }
 
-  /// 근무 시간 계산 헬퍼 (private)
+  /// 근무 시간 계산 (시:분:초 → 시간)
   double _calculateWorkHours(String checkIn, String checkOut) {
     try {
       final inParts = checkIn.split(':');
@@ -3545,10 +4053,24 @@ class FirestoreService {
     required String businessId,
     required DateTime date,
   }) async {
-    return _attendanceRepo.getAttendanceByDate(
-      businessId: businessId,
-      date: date,
-    );
+    try {
+      final dateStart = DateTime(date.year, date.month, date.day);
+      final dateEnd = dateStart.add(const Duration(days: 1));
+      
+      final snapshot = await _firestore
+          .collection('attendance')
+          .where('businessId', isEqualTo: businessId)
+          .where('workDate', isGreaterThanOrEqualTo: Timestamp.fromDate(dateStart))
+          .where('workDate', isLessThan: Timestamp.fromDate(dateEnd))
+          .get();
+      
+      return snapshot.docs
+          .map((doc) => AttendanceModel.fromFirestore(doc))
+          .toList();
+    } catch (e) {
+      print('❌ 출근 기록 조회 실패: $e');
+      return [];
+    }
   }
   // ═══════════════════════════════════════════════════════════
   // 스케줄 변경 요청 관리 (Schedule Change Request Management)
@@ -3826,6 +4348,13 @@ class FirestoreService {
   }
   /// 지원서 업데이트
   Future<bool> updateApplication(String applicationId, Map<String, dynamic> data) async {
-    return _applicationRepo.updateApplication(applicationId, data);
+    try {
+      await _firestore.collection('applications').doc(applicationId).update(data);
+      print('✅ 지원서 업데이트 완료: $applicationId');
+      return true;
+    } catch (e) {
+      print('❌ 지원서 업데이트 실패: $e');
+      return false;
+    }
   }
 }

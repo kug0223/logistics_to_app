@@ -1,8 +1,8 @@
 import 'package:flutter/material.dart';
-import '../../models/core/application_model.dart';
-import '../../utils/calendar_helper.dart';
-import '../../utils/responsive_helper.dart';  // ⭐ 추가
-import 'schedule_card.dart';
+import '../../../models/core/application_model.dart';
+import '../../../utils/calendar_helper.dart';
+import '../../../utils/responsive_helper.dart';  // ⭐ 추가
+import '../../calendar/schedule_card.dart';
 
 /// 선택한 날짜의 일정 리스트
 class DayScheduleList extends StatelessWidget {

@@ -2,19 +2,20 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:intl/intl.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
-import '../../providers/user_provider.dart';
-import '../../utils/toast_helper.dart';
-import '../../services/firestore_service.dart';
-import 'widgets/workforce_list_view.dart';
-import 'widgets/workforce_calendar_view.dart';
-import 'dialogs/resign_request_management_dialog.dart';
-import 'dialogs/fixed_worker_management_dialog.dart';
-import '../../utils/test_data_helper.dart';
-import '../../models/core/to_model.dart';
+import '../../../providers/user_provider.dart';
+import '../../../utils/toast_helper.dart';
+import '../../../utils/responsive_helper.dart';  // ⭐ 추가
+import '../../../services/firestore_service.dart';
+import 'workforce_list_view.dart';
+import 'workforce_calendar_view.dart';
+import '../dialogs/resign_request_management_dialog.dart';
+import '../dialogs/fixed_worker_management_dialog.dart';
+import '../../../utils/test_data_helper.dart';
+import '../../../models/core/to_model.dart';
 
 
 
-/// 통합 인력 관리 화면 (TO 관리 + 캘린더)
+/// 통합 인력 관리 화면 (TO 관리 + 캘린더) - 완전 반응형 + 테마 적용
 class IntegratedWorkforceScreen extends StatefulWidget {
   const IntegratedWorkforceScreen({super.key});
 
@@ -25,17 +26,17 @@ class IntegratedWorkforceScreen extends StatefulWidget {
 
 class _IntegratedWorkforceScreenState extends State<IntegratedWorkforceScreen> {
   final FirestoreService _firestoreService = FirestoreService();
-  List<String> _allBusinessIds = [];  // ⭐ 모든 사업장 ID
+  List<String> _allBusinessIds = [];
   String? _selectedBusinessId;
   bool _isCalendarView = false;
 
   @override
   void initState() {
     super.initState();
-    _loadBusinessIds();  // ⭐ 변경
+    _loadBusinessIds();
   }
 
-  /// ⭐ 관리자의 모든 사업장 ID 로드
+  /// 관리자의 모든 사업장 ID 로드
   Future<void> _loadBusinessIds() async {
     try {
       final userProvider = context.read<UserProvider>();
@@ -46,7 +47,6 @@ class _IntegratedWorkforceScreenState extends State<IntegratedWorkforceScreen> {
         return;
       }
 
-      // 내가 관리하는 모든 사업장 조회
       final businesses = await _firestoreService.getMyBusiness(uid);
 
       if (businesses.isEmpty) {
@@ -77,13 +77,17 @@ class _IntegratedWorkforceScreenState extends State<IntegratedWorkforceScreen> {
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              Icon(Icons.business_center, size: 64, color: Colors.grey[400]),
-              const SizedBox(height: 16),
+              Icon(
+                Icons.business_center, 
+                size: ResponsiveHelper.iconSize(context, 64),  // ⭐ 반응형
+                color: Theme.of(context).disabledColor,  // ⭐ 테마
+              ),
+              SizedBox(height: ResponsiveHelper.spacing(context, 16)),
               Text(
                 '등록된 사업장이 없습니다',
-                style: TextStyle(
-                  fontSize: 16,
-                  color: Colors.grey[600],
+                style: ResponsiveHelper.subtitleStyle(  // ⭐ 반응형
+                  context,
+                  color: Theme.of(context).textTheme.bodySmall?.color,  // ⭐ 테마
                 ),
               ),
             ],
@@ -96,13 +100,17 @@ class _IntegratedWorkforceScreenState extends State<IntegratedWorkforceScreen> {
       appBar: AppBar(
         title: Text(_isCalendarView ? '인력 관리 - 캘린더' : '인력 관리 - 목록'),
         actions: [
-          // ⭐ 더미 데이터 버튼
+          // ⭐ 더미 데이터 버튼 (반응형)
           IconButton(
-            icon: const Icon(Icons.science),
+            icon: Icon(
+              Icons.science,
+              size: ResponsiveHelper.iconSize(context, 24),  // ⭐ 반응형
+            ),
             onPressed: _showDummyDataDialog,
             tooltip: '테스트 데이터',
           ),
-          // ⭐ 고정근무자 관리 아이콘 (퇴사 요청 + 스케줄 변경)
+          
+          // ⭐ 고정근무자 관리 아이콘
           FutureBuilder<Map<String, int>>(
             future: _getFixedWorkerManagementCounts(),
             builder: (context, snapshot) {
@@ -112,29 +120,31 @@ class _IntegratedWorkforceScreenState extends State<IntegratedWorkforceScreen> {
               return Stack(
                 children: [
                   IconButton(
-                    icon: const Icon(Icons.manage_accounts),
+                    icon: Icon(
+                      Icons.manage_accounts,
+                      size: ResponsiveHelper.iconSize(context, 24),  // ⭐ 반응형
+                    ),
                     onPressed: _showFixedWorkerManagement,
                     tooltip: '고정근무자 관리',
                   ),
                   if (totalCount > 0)
                     Positioned(
-                      right: 8,
-                      top: 8,
+                      right: ResponsiveHelper.spacing(context, 8),  // ⭐ 반응형
+                      top: ResponsiveHelper.spacing(context, 8),
                       child: Container(
-                        padding: const EdgeInsets.all(4),
-                        decoration: const BoxDecoration(
-                          color: Colors.red,
+                        padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 4)),  // ⭐ 반응형
+                        decoration: BoxDecoration(
+                          color: Theme.of(context).colorScheme.error,  // ⭐ 테마
                           shape: BoxShape.circle,
                         ),
-                        constraints: const BoxConstraints(
-                          minWidth: 16,
-                          minHeight: 16,
+                        constraints: BoxConstraints(
+                          minWidth: ResponsiveHelper.iconSize(context, 16),  // ⭐ 반응형
+                          minHeight: ResponsiveHelper.iconSize(context, 16),
                         ),
                         child: Text(
                           '$totalCount',
-                          style: const TextStyle(
+                          style: ResponsiveHelper.tinyStyle(context).copyWith(  // ⭐ 반응형
                             color: Colors.white,
-                            fontSize: 10,
                             fontWeight: FontWeight.bold,
                           ),
                           textAlign: TextAlign.center,
@@ -146,11 +156,11 @@ class _IntegratedWorkforceScreenState extends State<IntegratedWorkforceScreen> {
             },
           ),
           
-          // 리스트/캘린더 토글
+          // ⭐ 리스트/캘린더 토글 (반응형 + 테마)
           Container(
-            margin: const EdgeInsets.only(right: 8),
+            margin: EdgeInsets.only(right: ResponsiveHelper.spacing(context, 8)),  // ⭐ 반응형
             decoration: BoxDecoration(
-              color: Theme.of(context).primaryColor.withOpacity(0.2),
+              color: Theme.of(context).primaryColor.withOpacity(0.2),  // ⭐ 테마
               borderRadius: BorderRadius.circular(8),
             ),
             child: Row(
@@ -182,11 +192,11 @@ class _IntegratedWorkforceScreenState extends State<IntegratedWorkforceScreen> {
       ),
       body: _isCalendarView
           ? const WorkforceCalendarView()
-            : const WorkforceListView(),
+          : const WorkforceListView(),
     );
   }
 
-  /// 토글 버튼
+  /// ⭐ 토글 버튼 (반응형 + 테마)
   Widget _buildToggleButton({
     required IconData icon,
     required String label,
@@ -196,7 +206,10 @@ class _IntegratedWorkforceScreenState extends State<IntegratedWorkforceScreen> {
     return InkWell(
       onTap: onTap,
       child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        padding: EdgeInsets.symmetric(
+          horizontal: ResponsiveHelper.spacing(context, 12),  // ⭐ 반응형
+          vertical: ResponsiveHelper.spacing(context, 8),
+        ),
         decoration: BoxDecoration(
           color: isSelected ? Colors.white : Colors.transparent,
           borderRadius: BorderRadius.circular(6),
@@ -206,16 +219,15 @@ class _IntegratedWorkforceScreenState extends State<IntegratedWorkforceScreen> {
           children: [
             Icon(
               icon,
-              size: 18,
-              color: isSelected ? Theme.of(context).primaryColor : Colors.white,
+              size: ResponsiveHelper.iconSize(context, 18),  // ⭐ 반응형
+              color: isSelected ? Theme.of(context).primaryColor : Colors.white,  // ⭐ 테마
             ),
-            const SizedBox(width: 4),
+            SizedBox(width: ResponsiveHelper.spacing(context, 4)),
             Text(
               label,
-              style: TextStyle(
-                fontSize: 13,
+              style: ResponsiveHelper.smallStyle(context).copyWith(  // ⭐ 반응형
                 fontWeight: FontWeight.bold,
-                color: isSelected ? Theme.of(context).primaryColor : Colors.white,
+                color: isSelected ? Theme.of(context).primaryColor : Colors.white,  // ⭐ 테마
               ),
             ),
           ],
@@ -223,45 +235,46 @@ class _IntegratedWorkforceScreenState extends State<IntegratedWorkforceScreen> {
       ),
     );
   }
-  /// ⭐ 고정근무자 관리 관련 개수 조회
-Future<Map<String, int>> _getFixedWorkerManagementCounts() async {
-  if (_selectedBusinessId == null) {
-    return {'resign': 0, 'schedule': 0};
-  }
   
-  try {
-    final resignCount = await _firestoreService.getResignRequests(_selectedBusinessId!);
-    final scheduleCount = await _firestoreService.getPendingScheduleChangeRequestCount(_selectedBusinessId!);
+  /// 고정근무자 관리 관련 개수 조회
+  Future<Map<String, int>> _getFixedWorkerManagementCounts() async {
+    if (_selectedBusinessId == null) {
+      return {'resign': 0, 'schedule': 0};
+    }
     
-    return {
-      'resign': resignCount.length,
-      'schedule': scheduleCount,
-    };
-  } catch (e) {
-    print('❌ 개수 조회 실패: $e');
-    return {'resign': 0, 'schedule': 0};
+    try {
+      final resignCount = await _firestoreService.getResignRequests(_selectedBusinessId!);
+      final scheduleCount = await _firestoreService.getPendingScheduleChangeRequestCount(_selectedBusinessId!);
+      
+      return {
+        'resign': resignCount.length,
+        'schedule': scheduleCount,
+      };
+    } catch (e) {
+      print('❌ 개수 조회 실패: $e');
+      return {'resign': 0, 'schedule': 0};
+    }
   }
-}
 
-/// ⭐ 고정근무자 관리 다이얼로그 표시
-void _showFixedWorkerManagement() {
-  if (_selectedBusinessId == null) {
-    ToastHelper.showWarning('사업장 정보를 찾을 수 없습니다.');
-    return;
+  /// 고정근무자 관리 다이얼로그 표시
+  void _showFixedWorkerManagement() {
+    if (_selectedBusinessId == null) {
+      ToastHelper.showWarning('사업장 정보를 찾을 수 없습니다.');
+      return;
+    }
+    
+    showDialog(
+      context: context,
+      builder: (context) => FixedWorkerManagementDialog(
+        businessId: _selectedBusinessId!,
+        onChanged: () {
+          setState(() {});
+        },
+      ),
+    );
   }
-  
-  showDialog(
-    context: context,
-    builder: (context) => FixedWorkerManagementDialog(
-      businessId: _selectedBusinessId!,
-      onChanged: () {
-        setState(() {}); // 배지 업데이트
-      },
-    ),
-  );
- }
 
-  /// ⭐ 더미 데이터 다이얼로그
+  /// ⭐ 더미 데이터 다이얼로그 (반응형 + 테마)
   Future<void> _showDummyDataDialog() async {
     if (_selectedBusinessId == null) {
       ToastHelper.showError('사업장이 선택되지 않았습니다.');
@@ -271,28 +284,50 @@ void _showFixedWorkerManagement() {
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Row(
+        title: Row(
           children: [
-            Icon(Icons.science, color: Colors.orange),
-            SizedBox(width: 8),
-            Text('테스트 데이터 관리'),
+            Icon(
+              Icons.science, 
+              color: Colors.orange,
+              size: ResponsiveHelper.iconSize(context, 24),  // ⭐ 반응형
+            ),
+            SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+            Text(
+              '테스트 데이터 관리',
+              style: ResponsiveHelper.titleStyle(context),  // ⭐ 반응형
+            ),
           ],
         ),
         content: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text(
+            Text(
               '개발/테스트용 더미 데이터를 관리합니다.',
-              style: TextStyle(fontSize: 14, color: Colors.grey),
+              style: ResponsiveHelper.bodyStyle(  // ⭐ 반응형
+                context,
+                color: Theme.of(context).textTheme.bodySmall?.color,  // ⭐ 테마
+              ),
             ),
-            const SizedBox(height: 16),
+            SizedBox(height: ResponsiveHelper.spacing(context, 16)),
             
-            // TO 선택하여 지원자 생성
+            // ⭐ TO 선택하여 지원자 생성
             ListTile(
-              leading: const Icon(Icons.group_add, color: Colors.blue),
-              title: const Text('TO에 지원자 추가'),
-              subtitle: const Text('TO 선택 → 확정/대기 인원 생성'),
+              leading: Icon(
+                Icons.group_add, 
+                color: Theme.of(context).primaryColor,  // ⭐ 테마
+                size: ResponsiveHelper.iconSize(context, 24),  // ⭐ 반응형
+              ),
+              title: Text(
+                'TO에 지원자 추가',
+                style: ResponsiveHelper.bodyStyle(context).copyWith(  // ⭐ 반응형
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+              subtitle: Text(
+                'TO 선택 → 확정/대기 인원 생성',
+                style: ResponsiveHelper.smallStyle(context),  // ⭐ 반응형
+              ),
               onTap: () async {
                 Navigator.pop(context);
                 await _showCreateApplicantsDialog();
@@ -301,11 +336,23 @@ void _showFixedWorkerManagement() {
             
             const Divider(),
             
-            // 출근 데이터 생성
+            // ⭐ 출근 데이터 생성
             ListTile(
-              leading: const Icon(Icons.add_circle, color: Colors.green),
-              title: const Text('오늘 출근 데이터 생성'),
-              subtitle: const Text('확정 인원의 70% 출근 처리'),
+              leading: Icon(
+                Icons.add_circle, 
+                color: Colors.green,
+                size: ResponsiveHelper.iconSize(context, 24),  // ⭐ 반응형
+              ),
+              title: Text(
+                '오늘 출근 데이터 생성',
+                style: ResponsiveHelper.bodyStyle(context).copyWith(  // ⭐ 반응형
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+              subtitle: Text(
+                '확정 인원의 70% 출근 처리',
+                style: ResponsiveHelper.smallStyle(context),  // ⭐ 반응형
+              ),
               onTap: () async {
                 Navigator.pop(context);
                 await _createTodayAttendance();
@@ -314,11 +361,23 @@ void _showFixedWorkerManagement() {
             
             const Divider(),
             
-            // 출근 데이터 삭제
+            // ⭐ 출근 데이터 삭제
             ListTile(
-              leading: const Icon(Icons.delete_sweep, color: Colors.orange),
-              title: const Text('출근 데이터 삭제'),
-              subtitle: const Text('모든 더미 출근 기록 삭제'),
+              leading: Icon(
+                Icons.delete_sweep, 
+                color: Colors.orange,
+                size: ResponsiveHelper.iconSize(context, 24),  // ⭐ 반응형
+              ),
+              title: Text(
+                '출근 데이터 삭제',
+                style: ResponsiveHelper.bodyStyle(context).copyWith(  // ⭐ 반응형
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+              subtitle: Text(
+                '모든 더미 출근 기록 삭제',
+                style: ResponsiveHelper.smallStyle(context),  // ⭐ 반응형
+              ),
               onTap: () async {
                 Navigator.pop(context);
                 await _clearAttendanceData();
@@ -327,11 +386,23 @@ void _showFixedWorkerManagement() {
             
             const Divider(),
             
-            // 지원자 데이터 삭제
+            // ⭐ 지원자 데이터 삭제
             ListTile(
-              leading: const Icon(Icons.delete_forever, color: Colors.red),
-              title: const Text('모든 더미 데이터 삭제'),
-              subtitle: const Text('지원자 + 지원서 + 출근 기록'),
+              leading: Icon(
+                Icons.delete_forever, 
+                color: Theme.of(context).colorScheme.error,  // ⭐ 테마
+                size: ResponsiveHelper.iconSize(context, 24),  // ⭐ 반응형
+              ),
+              title: Text(
+                '모든 더미 데이터 삭제',
+                style: ResponsiveHelper.bodyStyle(context).copyWith(  // ⭐ 반응형
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+              subtitle: Text(
+                '지원자 + 지원서 + 출근 기록',
+                style: ResponsiveHelper.smallStyle(context),  // ⭐ 반응형
+              ),
               onTap: () async {
                 Navigator.pop(context);
                 await _clearAllDummyData();
@@ -348,19 +419,18 @@ void _showFixedWorkerManagement() {
       ),
     );
   }
-  /// ⭐ TO 선택하여 지원자 생성 다이얼로그 (진행중인 TO만)
+  
+  /// ⭐ TO 선택하여 지원자 생성 다이얼로그 (반응형 + 테마)
   Future<void> _showCreateApplicantsDialog() async {
-    // ⭐ 사업장이 여러 개면 선택하도록
     String? targetBusinessId = _selectedBusinessId;
     
     if (_allBusinessIds.length > 1) {
       targetBusinessId = await _selectBusinessForDummyData();
-      if (targetBusinessId == null) return; // 취소
+      if (targetBusinessId == null) return;
     }
     
     print('🔍 [DummyData] 선택된 사업장: $targetBusinessId');
     
-    // 1. ✅ 진행중인 TO만 조회
     final activeTOs = await _firestoreService.getActiveTOs();
     
     print('   진행중 TO: ${activeTOs.length}개');
@@ -370,7 +440,6 @@ void _showFixedWorkerManagement() {
       return;
     }
 
-    // 내 사업장 TO만 필터링
     final myTOs = activeTOs.where((to) => to.businessId == targetBusinessId).toList();
     
     print('   내 사업장 진행중 TO: ${myTOs.length}개');
@@ -380,19 +449,16 @@ void _showFixedWorkerManagement() {
       return;
     }
 
-    // 2. 그룹 TO 확장 (개별 TO들 포함)
     List<TOModel> allSelectableTOs = [];
     
     for (var masterTO in myTOs) {
       print('   📋 TO 체크: ${masterTO.title} (그룹: ${masterTO.isGrouped})');
       
       if (masterTO.isGrouped && masterTO.groupId != null) {
-        // 그룹 TO → 그룹 내 모든 TO 가져오기
         final groupTOs = await _firestoreService.getTOsByGroup(masterTO.groupId!);
         print('      그룹 TO: ${groupTOs.length}개');
         allSelectableTOs.addAll(groupTOs);
       } else {
-        // 단일 TO
         allSelectableTOs.add(masterTO);
       }
     }
@@ -403,7 +469,6 @@ void _showFixedWorkerManagement() {
       return;
     }
 
-    // 날짜순 정렬
     allSelectableTOs.sort((a, b) => a.date.compareTo(b.date));
 
     TOModel? selectedTO = allSelectableTOs.isNotEmpty ? allSelectableTOs.first : null;
@@ -415,7 +480,10 @@ void _showFixedWorkerManagement() {
       context: context,
       builder: (context) => StatefulBuilder(
         builder: (context, setState) => AlertDialog(
-          title: const Text('지원자 생성'),
+          title: Text(
+            '지원자 생성',
+            style: ResponsiveHelper.titleStyle(context),  // ⭐ 반응형
+          ),
           content: SizedBox(
             width: MediaQuery.of(context).size.width * 0.8,
             child: Column(
@@ -423,26 +491,29 @@ void _showFixedWorkerManagement() {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 // TO 선택
-                const Text(
+                Text(
                   'TO 선택',
-                  style: TextStyle(fontWeight: FontWeight.bold),
+                  style: ResponsiveHelper.bodyStyle(context).copyWith(  // ⭐ 반응형
+                    fontWeight: FontWeight.bold,
+                  ),
                 ),
-                const SizedBox(height: 8),
+                SizedBox(height: ResponsiveHelper.spacing(context, 8)),
                 Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 12),
+                  padding: EdgeInsets.symmetric(
+                    horizontal: ResponsiveHelper.spacing(context, 12),  // ⭐ 반응형
+                  ),
                   decoration: BoxDecoration(
-                    border: Border.all(color: Colors.grey[300]!),
+                    border: Border.all(color: Theme.of(context).dividerColor),  // ⭐ 테마
                     borderRadius: BorderRadius.circular(8),
                   ),
                   child: DropdownButtonHideUnderline(
                     child: DropdownButton<TOModel>(
                       isExpanded: true,
                       value: selectedTO,
+                      style: ResponsiveHelper.bodyStyle(context),  // ⭐ 반응형
                       items: allSelectableTOs.map((to) {
                         final dateStr = DateFormat('M/d (E)', 'ko_KR').format(to.date);
-                        final timeStr = to.isGrouped 
-                            ? '(그룹)' 
-                            : '';
+                        final timeStr = to.isGrouped ? '(그룹)' : '';
                         return DropdownMenuItem(
                           value: to,
                           child: Text(
@@ -460,59 +531,80 @@ void _showFixedWorkerManagement() {
                   ),
                 ),
                 
-                const SizedBox(height: 24),
+                SizedBox(height: ResponsiveHelper.spacing(context, 24)),
                 
                 // 확정 인원
-                const Text(
+                Text(
                   '확정 인원',
-                  style: TextStyle(fontWeight: FontWeight.bold),
+                  style: ResponsiveHelper.bodyStyle(context).copyWith(  // ⭐ 반응형
+                    fontWeight: FontWeight.bold,
+                  ),
                 ),
-                const SizedBox(height: 8),
+                SizedBox(height: ResponsiveHelper.spacing(context, 8)),
                 TextField(
                   controller: confirmedController,
                   keyboardType: TextInputType.number,
-                  decoration: const InputDecoration(
+                  style: ResponsiveHelper.bodyStyle(context),  // ⭐ 반응형
+                  decoration: InputDecoration(
                     border: OutlineInputBorder(),
                     suffixText: '명',
                     hintText: '0',
+                    hintStyle: ResponsiveHelper.bodyStyle(  // ⭐ 반응형
+                      context,
+                      color: Theme.of(context).hintColor,  // ⭐ 테마
+                    ),
                   ),
                 ),
                 
-                const SizedBox(height: 16),
+                SizedBox(height: ResponsiveHelper.spacing(context, 16)),
                 
                 // 대기 인원
-                const Text(
+                Text(
                   '대기 인원',
-                  style: TextStyle(fontWeight: FontWeight.bold),
+                  style: ResponsiveHelper.bodyStyle(context).copyWith(  // ⭐ 반응형
+                    fontWeight: FontWeight.bold,
+                  ),
                 ),
-                const SizedBox(height: 8),
+                SizedBox(height: ResponsiveHelper.spacing(context, 8)),
                 TextField(
                   controller: pendingController,
                   keyboardType: TextInputType.number,
-                  decoration: const InputDecoration(
+                  style: ResponsiveHelper.bodyStyle(context),  // ⭐ 반응형
+                  decoration: InputDecoration(
                     border: OutlineInputBorder(),
                     suffixText: '명',
                     hintText: '0',
+                    hintStyle: ResponsiveHelper.bodyStyle(  // ⭐ 반응형
+                      context,
+                      color: Theme.of(context).hintColor,  // ⭐ 테마
+                    ),
                   ),
                 ),
                 
-                const SizedBox(height: 16),
+                SizedBox(height: ResponsiveHelper.spacing(context, 16)),
                 
                 // 안내
                 Container(
-                  padding: const EdgeInsets.all(12),
+                  padding: ResponsiveHelper.cardPadding(context),  // ⭐ 반응형
                   decoration: BoxDecoration(
-                    color: Colors.blue.withOpacity(0.1),
+                    color: Theme.of(context).primaryColor.withOpacity(0.1),  // ⭐ 테마
                     borderRadius: BorderRadius.circular(8),
                   ),
-                  child: const Row(
+                  child: Row(
                     children: [
-                      Icon(Icons.info_outline, size: 20, color: Colors.blue),
-                      SizedBox(width: 8),
+                      Icon(
+                        Icons.info_outline, 
+                        size: ResponsiveHelper.iconSize(context, 20),  // ⭐ 반응형
+                        color: Theme.of(context).primaryColor,  // ⭐ 테마
+                      ),
+                      SizedBox(width: ResponsiveHelper.spacing(context, 8)),
                       Expanded(
                         child: Text(
                           '업무 유형별로 랜덤 배분됩니다',
-                          style: TextStyle(fontSize: 13, color: Colors.blue),
+                          style: ResponsiveHelper.smallStyle(  // ⭐ 반응형
+                            context,
+                            color: Theme.of(context).primaryColor,  // ⭐ 테마
+                          ),
                         ),
                       ),
                     ],
@@ -539,7 +631,6 @@ void _showFixedWorkerManagement() {
 
     if (result != true || selectedTO == null) return;
 
-    // 지원자 생성
     try {
       final confirmedCount = int.tryParse(confirmedController.text) ?? 0;
       final pendingCount = int.tryParse(pendingController.text) ?? 0;
@@ -551,7 +642,6 @@ void _showFixedWorkerManagement() {
 
       ToastHelper.showInfo('지원자 생성 중...');
 
-      // WorkDetails 조회
       final workDetails = await _firestoreService.getWorkDetails(selectedTO!.id);
       final workTypes = workDetails.map((wd) => wd.workType).toList();
 
@@ -564,7 +654,6 @@ void _showFixedWorkerManagement() {
 
       ToastHelper.showSuccess('지원자가 생성되었습니다!');
 
-      // ⭐ 캐시 클리어 및 화면 새로고침
       _firestoreService.clearCache(toId: selectedTO!.id);
       
       if (mounted) {
@@ -576,7 +665,7 @@ void _showFixedWorkerManagement() {
     }
   }
 
-  /// ⭐ 오늘 출근 데이터 생성
+  /// 오늘 출근 데이터 생성
   Future<void> _createTodayAttendance() async {
     try {
       ToastHelper.showInfo('출근 데이터 생성 중...');
@@ -588,7 +677,6 @@ void _showFixedWorkerManagement() {
       
       ToastHelper.showSuccess('출근 데이터가 생성되었습니다!');
       
-      // ⭐ 캐시 클리어 및 화면 새로고침
       _firestoreService.clearCache();
       
       if (mounted) {
@@ -600,7 +688,7 @@ void _showFixedWorkerManagement() {
     }
   }
 
-  /// ⭐ 출근 데이터 삭제
+  /// 출근 데이터 삭제
   Future<void> _clearAttendanceData() async {
     final confirmed = await showDialog<bool>(
       context: context,
@@ -614,7 +702,9 @@ void _showFixedWorkerManagement() {
           ),
           TextButton(
             onPressed: () => Navigator.pop(context, true),
-            style: TextButton.styleFrom(foregroundColor: Colors.red),
+            style: TextButton.styleFrom(
+              foregroundColor: Theme.of(context).colorScheme.error,  // ⭐ 테마
+            ),
             child: const Text('삭제'),
           ),
         ],
@@ -630,7 +720,6 @@ void _showFixedWorkerManagement() {
       
       ToastHelper.showSuccess('출근 데이터가 삭제되었습니다!');
       
-      // ⭐ 캐시 클리어 및 화면 새로고침
       _firestoreService.clearCache();
       
       if (mounted) {
@@ -642,7 +731,7 @@ void _showFixedWorkerManagement() {
     }
   }
 
-  /// ⭐ 모든 더미 데이터 삭제
+  /// 모든 더미 데이터 삭제
   Future<void> _clearAllDummyData() async {
     final confirmed = await showDialog<bool>(
       context: context,
@@ -659,7 +748,9 @@ void _showFixedWorkerManagement() {
           ),
           TextButton(
             onPressed: () => Navigator.pop(context, true),
-            style: TextButton.styleFrom(foregroundColor: Colors.red),
+            style: TextButton.styleFrom(
+              foregroundColor: Theme.of(context).colorScheme.error,  // ⭐ 테마
+            ),
             child: const Text('삭제'),
           ),
         ],
@@ -676,7 +767,6 @@ void _showFixedWorkerManagement() {
       
       ToastHelper.showSuccess('모든 더미 데이터가 삭제되었습니다!');
       
-      // ⭐ 캐시 클리어 및 화면 새로고침
       _firestoreService.clearCache();
       
       if (mounted) {
@@ -687,9 +777,9 @@ void _showFixedWorkerManagement() {
       ToastHelper.showError('더미 데이터 삭제 실패: $e');
     }
   }
-  /// ⭐ 더미 데이터용 사업장 선택
+  
+  /// ⭐ 더미 데이터용 사업장 선택 (반응형 + 테마)
   Future<String?> _selectBusinessForDummyData() async {
-    // 사업장 이름 조회
     final businessNames = <String, String>{};
     
     try {
@@ -709,13 +799,23 @@ void _showFixedWorkerManagement() {
     return await showDialog<String>(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('사업장 선택'),
+        title: Text(
+          '사업장 선택',
+          style: ResponsiveHelper.titleStyle(context),  // ⭐ 반응형
+        ),
         content: Column(
           mainAxisSize: MainAxisSize.min,
           children: _allBusinessIds.map((id) {
             return ListTile(
-              leading: const Icon(Icons.business),
-              title: Text(businessNames[id] ?? id),
+              leading: Icon(
+                Icons.business,
+                size: ResponsiveHelper.iconSize(context, 24),  // ⭐ 반응형
+                color: Theme.of(context).primaryColor,  // ⭐ 테마
+              ),
+              title: Text(
+                businessNames[id] ?? id,
+                style: ResponsiveHelper.bodyStyle(context),  // ⭐ 반응형
+              ),
               onTap: () => Navigator.pop(context, id),
             );
           }).toList(),

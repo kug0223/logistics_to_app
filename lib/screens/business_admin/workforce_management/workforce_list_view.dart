@@ -21,7 +21,7 @@ import '../../../widgets/inputs/filter_dialog.dart';
 import '../dialogs/to_list_dialogs.dart';
 
 // Local Widgets
-import '../../../widgets/cards/admin_to_group_card.dart';
+import '../../../widgets/admin/cards/admin_to_group_card.dart';
 
 /// 인력 관리 - 리스트 뷰 (리팩토링 완료)
 class WorkforceListView extends StatefulWidget {
@@ -221,11 +221,13 @@ class _WorkforceListViewState extends State<WorkforceListView> {
   void _applyFilters() {
     setState(() {
       _filteredGroupItems = _allGroupItems.where((groupItem) {
+        // 1. 사업장 필터
         if (_selectedBusiness != null && 
             groupItem.masterTO.businessName != _selectedBusiness) {
           return false;
         }
         
+        // 2. 날짜 필터
         if (_selectedDateRange != null) {
           final filterStart = DateTime(
             _selectedDateRange!.start.year,
@@ -239,27 +241,17 @@ class _WorkforceListViewState extends State<WorkforceListView> {
             23, 59, 59,
           );
           
+          // 그룹 TO인 경우
           if (groupItem.isGrouped) {
             final hasMatchingDate = groupItem.groupTOs.any((toItem) {
-              final toDate = DateTime(
-                toItem.to.date.year,
-                toItem.to.date.month,
-                toItem.to.date.day,
-              );
-              return toDate.isAfter(filterStart.subtract(const Duration(days: 1))) &&
-                    toDate.isBefore(filterEnd.add(const Duration(days: 1)));
+              return _isDateInRange(toItem.to, filterStart, filterEnd);
             });
             
             if (!hasMatchingDate) return false;
-          } else {
-            final toDate = DateTime(
-              groupItem.masterTO.date.year,
-              groupItem.masterTO.date.month,
-              groupItem.masterTO.date.day,
-            );
-            
-            if (!(toDate.isAfter(filterStart.subtract(const Duration(days: 1))) &&
-                  toDate.isBefore(filterEnd.add(const Duration(days: 1))))) {
+          } 
+          // 단일 TO인 경우
+          else {
+            if (!_isDateInRange(groupItem.masterTO, filterStart, filterEnd)) {
               return false;
             }
           }
@@ -268,6 +260,52 @@ class _WorkforceListViewState extends State<WorkforceListView> {
         return true;
       }).toList();
     });
+  }
+
+  /// ⭐ 날짜 범위 체크 (장기/단기 공고 모두 고려)
+  bool _isDateInRange(TOModel to, DateTime filterStart, DateTime filterEnd) {
+    // 단기 공고
+    if (!to.isLongTerm) {
+      final toDate = DateTime(
+        to.date.year,
+        to.date.month,
+        to.date.day,
+      );
+      
+      return toDate.isAfter(filterStart.subtract(const Duration(days: 1))) &&
+            toDate.isBefore(filterEnd.add(const Duration(days: 1)));
+    }
+    
+    // 장기 공고
+    if (to.endDate == null) {
+      // endDate가 없으면 date만 체크
+      final toDate = DateTime(
+        to.date.year,
+        to.date.month,
+        to.date.day,
+      );
+      
+      return toDate.isAfter(filterStart.subtract(const Duration(days: 1))) &&
+            toDate.isBefore(filterEnd.add(const Duration(days: 1)));
+    }
+    
+    // 장기 공고 기간 체크
+    final toStart = DateTime(
+      to.date.year,
+      to.date.month,
+      to.date.day,
+    );
+    
+    final toEnd = DateTime(
+      to.endDate!.year,
+      to.endDate!.month,
+      to.endDate!.day,
+    );
+    
+    // 필터 범위와 TO 기간이 겹치는지 확인
+    // 겹치지 않는 경우: filterEnd < toStart OR filterStart > toEnd
+    // 겹치는 경우: 위의 반대
+    return !(filterEnd.isBefore(toStart) || filterStart.isAfter(toEnd));
   }
 
   @override

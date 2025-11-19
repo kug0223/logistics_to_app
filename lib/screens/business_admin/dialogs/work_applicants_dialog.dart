@@ -7,7 +7,7 @@ import '../../../services/firestore_service.dart';
 import '../../../providers/user_provider.dart';
 import '../../../utils/toast_helper.dart';
 import '../../../utils/format_helper.dart';
-import '../../../utils/responsive_helper.dart';  // ⭐ 추가
+import '../../../utils/responsive_helper.dart';
 import '../../../widgets/work_type_icon.dart';
 import '../../../models/ui/admin_to_list_ui_models.dart';
 import '../../../models/core/user_model.dart';
@@ -15,7 +15,7 @@ import '../../../utils/dialog_helper.dart';
 
 
 
-/// 업무별 지원자 관리 다이얼로그
+/// 업무별 지원자 관리 다이얼로그 - 좁은 화면 레이아웃 개선
 class WorkApplicantsDialog extends StatefulWidget {
   final WorkDetailModel work;
   final TOItem toItem;
@@ -70,7 +70,7 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog> {
         final user = await _firestoreService.getUserByUID(app.uid);
         return {
           'application': app,
-          'user': user,  // ⭐ UserModel 전체 저장
+          'user': user,
           'userName': user?.name ?? '이름 없음',
           'userPhone': user?.phone ?? '전화번호 없음',
           'userEmail': user?.email ?? '',
@@ -525,7 +525,7 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog> {
     );
   }
 
-  /// 지원자 카드
+  /// ⭐ 지원자 카드 - 좁은 화면 레이아웃 개선
   Widget _buildApplicantCard(Map<String, dynamic> item, bool isPending) {
     final app = item['application'] as ApplicationModel;
     final user = item['user'] as UserModel?;
@@ -535,17 +535,9 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog> {
     final isSelected = _selectedIds.contains(app.id);
     final timeAgo = _getTimeAgo(app.appliedAt);
 
-    // ⭐ 이름 + 나이 + 성별
-    String displayName = userName;
-    if (user != null) {
-      final List<String> extras = [];
-      if (user.age != null) extras.add('${user.age}세');
-      if (user.gender != null) extras.add(user.gender!);
-      
-      if (extras.isNotEmpty) {
-        displayName += ' (${extras.join(', ')})';
-      }
-    }
+    // ⭐ 화면 크기 체크
+    final screenWidth = MediaQuery.of(context).size.width;
+    final isNarrow = screenWidth < 400;
 
     return Container(
       margin: EdgeInsets.only(bottom: ResponsiveHelper.spacing(context, 8)),
@@ -561,97 +553,160 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog> {
         ),
         borderRadius: BorderRadius.circular(8),
       ),
-      child: ListTile(
-        leading: isPending
-            ? Checkbox(
-                value: isSelected,
-                onChanged: (_) => _toggleSelect(app.id),
-              )
-            : Icon(Icons.check_circle, color: Colors.green),
-        title: Text(
-          displayName,
-          style: ResponsiveHelper.bodyStyle(context).copyWith(
-            fontWeight: FontWeight.bold,
-          ),
-        ),
-        subtitle: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            SizedBox(height: ResponsiveHelper.spacing(context, 4)),
-            Text(
-              userPhone,
-              style: ResponsiveHelper.smallStyle(context),
-            ),
-            SizedBox(height: ResponsiveHelper.spacing(context, 4)),
-            Text(
-              '$timeAgo 지원',
-              style: ResponsiveHelper.tinyStyle(
-                context,
-                color: Theme.of(context).textTheme.bodySmall?.color,
-              ),
-            ),
-            // ⭐ Phase 1-C: 장기 계약 정보 표시
-            if (app.isLongTermApplication) ...[
-              SizedBox(height: ResponsiveHelper.spacing(context, 6)),
-              Container(
-                padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 8)),
-                decoration: BoxDecoration(
-                  color: Colors.purple.withOpacity(0.1),
-                  borderRadius: BorderRadius.circular(4),
-                  border: Border.all(color: Colors.purple.withOpacity(0.3)),
+      child: InkWell(
+        onTap: isPending ? () => _toggleSelect(app.id) : null,
+        borderRadius: BorderRadius.circular(8),
+        child: Padding(
+          padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 12)),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // ⭐ 왼쪽: 체크박스 또는 아이콘
+              if (isPending)
+                Checkbox(
+                  value: isSelected,
+                  onChanged: (_) => _toggleSelect(app.id),
+                )
+              else
+                Icon(
+                  Icons.check_circle, 
+                  color: Colors.green,
+                  size: ResponsiveHelper.iconSize(context, 24),
                 ),
+              
+              SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+              
+              // ⭐ 중앙: 지원자 정보 (Expanded로 감싸서 공간 확보)
+              Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    // 첫 줄: 아이콘 + 근무 기간
+                    // 이름과 나이/성별 (한 줄에 표시, 넘치면 ellipsis)
                     Row(
                       children: [
-                        Icon(
-                          Icons.event_note, 
-                          size: ResponsiveHelper.iconSize(context, 12),
-                          color: Colors.purple,
-                        ),
-                        SizedBox(width: ResponsiveHelper.spacing(context, 4)),
                         Flexible(
                           child: Text(
-                            '장기: ${app.workPeriodDisplay}',
-                            style: ResponsiveHelper.tinyStyle(
-                              context,
-                              color: Colors.purple,
-                            ).copyWith(fontWeight: FontWeight.w600),
+                            userName,
+                            style: ResponsiveHelper.bodyStyle(context).copyWith(
+                              fontWeight: FontWeight.bold,
+                            ),
                             overflow: TextOverflow.ellipsis,
+                            maxLines: 1,
                           ),
                         ),
+                        // 나이/성별 정보
+                        if (user != null && (user.age != null || user.gender != null)) ...[
+                          SizedBox(width: ResponsiveHelper.spacing(context, 6)),
+                          Text(
+                            _buildUserInfo(user),
+                            style: ResponsiveHelper.smallStyle(
+                              context,
+                              color: Theme.of(context).textTheme.bodySmall?.color,
+                            ),
+                          ),
+                        ],
                       ],
                     ),
-                    // 둘째 줄: 근무 요일
-                    if (app.workDaysDisplay != null) ...[
-                      SizedBox(height: ResponsiveHelper.spacing(context, 2)),
-                      Text(
-                        app.workDaysDisplay!,
-                        style: ResponsiveHelper.tinyStyle(
-                          context,
-                          color: Colors.purple,
+                    
+                    SizedBox(height: ResponsiveHelper.spacing(context, 4)),
+                    
+                    // 전화번호
+                    Text(
+                      userPhone,
+                      style: ResponsiveHelper.smallStyle(context),
+                    ),
+                    
+                    SizedBox(height: ResponsiveHelper.spacing(context, 4)),
+                    
+                    // 지원 시간
+                    Text(
+                      '$timeAgo 지원',
+                      style: ResponsiveHelper.tinyStyle(
+                        context,
+                        color: Theme.of(context).textTheme.bodySmall?.color,
+                      ),
+                    ),
+                    
+                    // ⭐ 장기 계약 정보 표시
+                    if (app.isLongTermApplication) ...[
+                      SizedBox(height: ResponsiveHelper.spacing(context, 6)),
+                      Container(
+                        padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 8)),
+                        decoration: BoxDecoration(
+                          color: Colors.purple.withOpacity(0.1),
+                          borderRadius: BorderRadius.circular(4),
+                          border: Border.all(color: Colors.purple.withOpacity(0.3)),
+                        ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Row(
+                              children: [
+                                Icon(
+                                  Icons.event_note, 
+                                  size: ResponsiveHelper.iconSize(context, 12),
+                                  color: Colors.purple,
+                                ),
+                                SizedBox(width: ResponsiveHelper.spacing(context, 4)),
+                                Flexible(
+                                  child: Text(
+                                    '장기: ${app.workPeriodDisplay}',
+                                    style: ResponsiveHelper.tinyStyle(
+                                      context,
+                                      color: Colors.purple,
+                                    ).copyWith(fontWeight: FontWeight.w600),
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                ),
+                              ],
+                            ),
+                            if (app.workDaysDisplay != null) ...[
+                              SizedBox(height: ResponsiveHelper.spacing(context, 2)),
+                              Text(
+                                app.workDaysDisplay!,
+                                style: ResponsiveHelper.tinyStyle(
+                                  context,
+                                  color: Colors.purple,
+                                ),
+                              ),
+                            ],
+                          ],
                         ),
                       ),
                     ],
                   ],
                 ),
               ),
+              
+              // ⭐ 오른쪽: 상세보기 아이콘 (작게)
+              SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+              IconButton(
+                icon: Icon(
+                  Icons.info_outline, 
+                  size: ResponsiveHelper.iconSize(context, isNarrow ? 18 : 20),
+                  color: Theme.of(context).primaryColor,
+                ),
+                padding: EdgeInsets.zero,
+                constraints: BoxConstraints(
+                  minWidth: ResponsiveHelper.iconSize(context, isNarrow ? 32 : 36),
+                  minHeight: ResponsiveHelper.iconSize(context, isNarrow ? 32 : 36),
+                ),
+                onPressed: () => _showApplicantDetail(item),
+                tooltip: '상세',
+              ),
             ],
-          ],
-        ),
-        trailing: IconButton(
-          icon: Icon(
-            Icons.info_outline, 
-            size: ResponsiveHelper.iconSize(context, 20),
-            color: Theme.of(context).primaryColor,
           ),
-          onPressed: () => _showApplicantDetail(item),
-          tooltip: '상세 정보',
         ),
       ),
     );
+  }
+
+  /// ⭐ 사용자 추가 정보 문자열 생성 (나이, 성별)
+  String _buildUserInfo(UserModel user) {
+    final List<String> info = [];
+    if (user.age != null) info.add('${user.age}세');
+    if (user.gender != null) info.add(user.gender!);
+    return '(${info.join(', ')})';
   }
 
   /// 개별 승인 (인원 체크 추가!)

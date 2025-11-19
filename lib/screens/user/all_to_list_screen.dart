@@ -5,7 +5,7 @@ import '../../models/core/application_model.dart';
 import '../../services/firestore_service.dart';
 import '../../providers/user_provider.dart';
 import '../../widgets/common/loading_widget.dart';
-import '../../widgets/cards/user_to_card.dart';
+import '../../widgets/user/cards/user_to_card.dart';
 import '../../utils/toast_helper.dart';
 import '../../utils/responsive_helper.dart';  // ⭐ 추가
 import '../../widgets/inputs/filter_dialog.dart';

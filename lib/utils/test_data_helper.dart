@@ -1,4 +1,4 @@
-// lib/utils/test_data_helper.dart (확장 버전)
+// lib/utils/test_data_helper.dart (장기 TO 지원 개선 버전)
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'dart:math';
@@ -244,7 +244,7 @@ class TestDataHelper {
     return score.clamp(0, 100);
   }
 
-  /// 특정 TO에 더미 지원서 생성
+  /// ⭐ 특정 TO에 더미 지원서 생성 (장기 TO 지원 개선!)
   static Future<void> createDummyApplications({
     required String toId,
     required List<String> workTypes,
@@ -271,12 +271,41 @@ class TestDataHelper {
     }
 
     final toData = toDoc.data()!;
+
+    // ⭐ TO 데이터 전체 출력
+    print('📋 TO 데이터:');
+    print('   jobType: ${toData['jobType']}');
+    print('   workEndDate: ${toData['workEndDate']}');
+    print('   endDate: ${toData['endDate']}');  // ⭐ 추가!
+    print('   workDays: ${toData['workDays']}');
+    print('');
+
     final businessId = toData['businessId'];
     final businessName = toData['businessName'];
     final toTitle = toData['title'];
     final date = (toData['date'] as Timestamp).toDate();
     final startTime = toData['startTime'];
     final endTime = toData['endTime'];
+
+    // ⭐ 장기 TO 정보 추가
+    final jobType = toData['jobType'] ?? 'short';
+    final isLongTerm = jobType == 'long_term';
+
+    // ⭐ 수정: endDate를 workEndDate로 사용!
+    final workEndDate = toData['endDate'] as Timestamp?;  // workEndDate 대신 endDate!
+
+    final workDays = toData['workDays'] as List?;
+
+    if (isLongTerm) {
+      print('📌 장기 TO 감지!');
+      if (workEndDate != null) {
+        final endDate = workEndDate.toDate();
+        print('   근무 기간: ${date.year}-${date.month}-${date.day} ~ ${endDate.year}-${endDate.month}-${endDate.day}');
+      }
+      if (workDays != null && workDays.isNotEmpty) {
+        print('   근무 요일: ${workDays.join(", ")}');
+      }
+    }
 
     // 3. WorkDetails 조회
     final workDetailsSnapshot = await _firestore
@@ -304,8 +333,8 @@ class TestDataHelper {
       final workDetail = workDetails[_random.nextInt(workDetails.length)];
       final workData = workDetail.data();
       
-      // applications 컬렉션에 지원서 생성
-      final appRef = await _firestore.collection('applications').add({
+      // ⭐ 지원서 데이터 생성 (장기 TO 필드 포함!)
+      final applicationData = <String, dynamic>{
         'businessId': businessId,
         'businessName': businessName,
         'toTitle': toTitle,
@@ -319,7 +348,28 @@ class TestDataHelper {
         'appliedAt': now,
         'confirmedAt': isConfirmed ? now : null,
         'isDummy': true,
-      });
+        
+        // ⭐ 장기 TO 필드 추가
+        'type': jobType,
+      };
+      
+      // ⭐ 장기 TO인 경우 추가 필드 (필수!)
+      if (isLongTerm) {
+        // workEndDate는 장기 TO의 필수 필드
+        if (workEndDate != null) {
+          applicationData['workEndDate'] = workEndDate;
+        } else {
+          // workEndDate가 없으면 경고
+          print('⚠️  장기 TO인데 workEndDate가 null입니다!');
+        }
+        
+        // workDays 복사
+        if (workDays != null && workDays.isNotEmpty) {
+          applicationData['workDays'] = List.from(workDays);  // ⭐ List.from으로 복사
+        }
+      }
+      // applications 컬렉션에 지원서 생성
+      final appRef = await _firestore.collection('applications').add(applicationData);
       
       createdAppIds.add(appRef.id);
       
@@ -342,6 +392,9 @@ class TestDataHelper {
     print('');
     print('✅ 지원서 생성 완료:');
     print('   총 ${createdAppIds.length}개 생성됨');
+    if (isLongTerm) {
+      print('   📌 장기 계약 지원서로 생성됨');
+    }
     print('');
 
     // 5. TO 통계 재계산
@@ -518,7 +571,7 @@ class TestDataHelper {
       final todayWorkers = confirmedSnapshot.docs.where((doc) {
         final data = doc.data();
         final workDate = (data['workDate'] as Timestamp).toDate();
-        final isLongTerm = data['type'] == 'long_term';
+        final isLongTerm = data['type'] == 'long_term' || data['isLongTermApplication'] == true;
 
         if (!isLongTerm) {
           return dateStart.year == workDate.year &&
@@ -557,6 +610,7 @@ class TestDataHelper {
       for (var doc in todayWorkers) {
         final data = doc.data();
         final uid = data['uid'];
+        final appId = doc.id;
         
         // 70% 확률로 출근
         if (_random.nextDouble() > 0.7) continue;
@@ -579,17 +633,18 @@ class TestDataHelper {
         }
 
         await _firestore.collection('attendance').add({
+          'applicationId': appId,
           'uid': uid,
           'businessId': businessId,
-          'date': Timestamp.fromDate(dateStart),
-          'checkInTime': checkInTime,
+          'workDate': Timestamp.fromDate(dateStart),
+          'checkIn': checkInTime,
           'checkInLat': 37.5665 + _random.nextDouble() * 0.01,
           'checkInLng': 126.9780 + _random.nextDouble() * 0.01,
           'checkInMethod': 'gps',
+          'checkOut': checkOutTime,
           'checkOutLat': checkOutTime != null ? 37.5665 + _random.nextDouble() * 0.01 : null,
           'checkOutLng': checkOutTime != null ? 126.9780 + _random.nextDouble() * 0.01 : null,
           'checkOutMethod': checkOutTime != null ? 'gps' : null,
-          'checkOutTime': checkOutTime,
           'status': 'present',
           'workHours': workHours,
           'isModified': false,

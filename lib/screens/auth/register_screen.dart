@@ -3,10 +3,10 @@ import 'package:provider/provider.dart';
 import 'package:flutter/services.dart';
 import '../../models/core/user_model.dart';
 import '../../providers/user_provider.dart';
-import '../../widgets/custom_button.dart';
+import '../../widgets/buttons/custom_button.dart';
 import '../../widgets/common/loading_widget.dart';
 import '../../utils/responsive_helper.dart';  // ⭐ 추가
-import '../admin/business_registration_screen.dart';
+import '../business_admin/business_registration_screen.dart';
 
 class RegisterScreen extends StatefulWidget {
   const RegisterScreen({super.key});

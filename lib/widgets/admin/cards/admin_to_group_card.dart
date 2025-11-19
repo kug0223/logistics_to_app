@@ -2,25 +2,25 @@ import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 
 // Models
-import '../../models/ui/admin_to_list_ui_models.dart';
+import '../../../models/ui/admin_to_list_ui_models.dart';
 
 // Services
-import '../../services/firestore_service.dart';
+import '../../../services/firestore_service.dart';
 
 // Utils
-import '../../utils/toast_helper.dart';
-import '../../utils/responsive_helper.dart';
+import '../../../utils/toast_helper.dart';
+import '../../../utils/responsive_helper.dart';
 
 // Widgets
-import '../common/styled_container.dart';
+import '../../common/styled_container.dart';
 
 // Screens
-import '../../screens/admin/admin_edit_to_screen.dart';
+import '../../../screens/business_admin/to_management/edit_to_screen.dart';
 
 // Dialogs
-import '../../screens/admin/dialogs/confirmed_list_dialog.dart';
-import '../../screens/admin/dialogs/work_detail_management_dialog.dart';
-import '../../screens/admin/dialogs/to_list_dialogs.dart';
+import '../../../screens/business_admin/dialogs/confirmed_list_dialog.dart';
+import '../../../screens/business_admin/dialogs/work_detail_management_dialog.dart';
+import '../../../screens/business_admin/dialogs/to_list_dialogs.dart';
 
 // Local Widgets
 import 'admin_to_item_card.dart';
@@ -200,9 +200,7 @@ class _TOGroupCardState extends State<TOGroupCard> {
                             ],
                           ),
                         ),
-                        SizedBox(height: ResponsiveHelper.spacing(context, 10)),
-                      ],
-                      if (masterTO.groupName == null) ...[
+                      ] else ...[
                         Container(
                           padding: EdgeInsets.symmetric(
                             horizontal: ResponsiveHelper.spacing(context, 10),
@@ -234,6 +232,12 @@ class _TOGroupCardState extends State<TOGroupCard> {
                           ),
                         ),
                       ],
+                      const Spacer(),  // ⭐ 이 줄 추가!
+                      // ⭐ 더보기 메뉴 추가!
+                      if (widget.groupItem.isGrouped)
+                        _buildGroupTOMenu(context)
+                      else
+                        _buildSingleTOMenu(context),
                     ],
                   ),
                   

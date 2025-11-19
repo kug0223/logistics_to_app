@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../providers/user_provider.dart';
-import '../../widgets/custom_button.dart';
+import '../../widgets/buttons/custom_button.dart';
 import '../../widgets/common/loading_widget.dart';
 import 'register_screen.dart';
 

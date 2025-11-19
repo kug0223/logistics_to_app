@@ -10,7 +10,7 @@ import '../../utils/calendar_helper.dart';
 import '../../utils/responsive_helper.dart';  // ⭐ 추가
 import '../../widgets/common/loading_widget.dart';
 import '../../widgets/calendar/schedule_calendar.dart';
-import '../../widgets/calendar/monthly_stats_card.dart';
+import '../../widgets/user/cards/monthly_stats_card.dart';
 import '../../widgets/calendar/schedule_card.dart';
 import '../../widgets/dialogs/long_term_work_management_dialog.dart';
 import 'dialogs/my_requests_dialog.dart';

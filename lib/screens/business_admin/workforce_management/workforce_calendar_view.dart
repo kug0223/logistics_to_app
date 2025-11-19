@@ -28,7 +28,7 @@ import '../dialogs/to_list_dialogs.dart';
 import '../dialogs/attendance_status_dialog.dart';
 
 // Local Widgets
-import '../../../widgets/cards/admin_to_group_card.dart';
+import '../../../widgets/admin/cards/admin_to_group_card.dart';
 
 /// 인력 관리 - 캘린더 뷰 (리팩토링 완료)
 class WorkforceCalendarView extends StatefulWidget {

@@ -5,26 +5,26 @@ import 'package:provider/provider.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 
 // Models
-import '../../models/core/work_detail_model.dart';
-import '../../models/core/to_model.dart';
-import '../../models/ui/admin_to_list_ui_models.dart';
+import '../../../models/core/work_detail_model.dart';
+import '../../../models/core/to_model.dart';
+import '../../../models/ui/admin_to_list_ui_models.dart';
 
 // Services
-import '../../services/firestore_service.dart';
+import '../../../services/firestore_service.dart';
 
 // Providers
-import '../../providers/user_provider.dart';
+import '../../../providers/user_provider.dart';
 
 // Utils
-import '../../utils/toast_helper.dart';
-import '../../utils/format_helper.dart';
-import '../../utils/responsive_helper.dart';  // ⭐ 추가
+import '../../../utils/toast_helper.dart';
+import '../../../utils/format_helper.dart';
+import '../../../utils/responsive_helper.dart';  // ⭐ 추가
 
 // Widgets
-import '../work_type_icon.dart';
+import '../../work_type_icon.dart';
 
 // Dialogs
-import '../../screens/admin/dialogs/work_applicants_dialog.dart';
+import '../../../screens/business_admin/dialogs/work_applicants_dialog.dart';
 
 /// 업무 상세 행 위젯 (재사용 가능)
 class WorkDetailRow extends StatelessWidget {

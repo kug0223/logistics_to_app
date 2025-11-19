@@ -11,8 +11,8 @@ import 'models/core/user_model.dart';
 // ⭐ 화면 import - 반드시 정확한 경로 확인!
 import 'screens/auth/login_screen.dart';
 import 'screens/user/user_home_screen.dart';
-import 'screens/admin/admin_home_screen.dart';
-import 'screens/admin/business_admin_home_screen.dart';
+import 'screens/super_admin/super_admin_home_screen.dart';
+import 'screens/business_admin/business_admin_home_screen.dart';
 
 
 
