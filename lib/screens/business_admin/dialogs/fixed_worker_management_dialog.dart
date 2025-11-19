@@ -27,37 +27,28 @@ class FixedWorkerManagementDialog extends StatefulWidget {
 
 class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialog>
     with SingleTickerProviderStateMixin {
-  late TabController _tabController;
   final FirestoreService _firestoreService = FirestoreService();
 
   // 고정근무자 목록
   List<ApplicationModel> _fixedWorkers = [];
   bool _isLoadingWorkers = true;
 
-  // 알림 목록
-  List<ScheduleChangeRequestModel> _notifications = [];
-  bool _isLoadingNotifications = true;
-  int _pendingCount = 0;
-
   @override
   void initState() {
     super.initState();
-    _tabController = TabController(length: 2, vsync: this);
+    // 알림 탭 제거 - 고정근무자 탭만 사용
     _loadData();
   }
 
   @override
   void dispose() {
-    _tabController.dispose();
+    // TabController 제거됨
     super.dispose();
   }
 
   /// 데이터 로드
   Future<void> _loadData() async {
-    await Future.wait([
-      _loadFixedWorkers(),
-      _loadNotifications(),
-    ]);
+    await _loadFixedWorkers();
   }
 
   /// 고정근무자 로드
@@ -85,20 +76,6 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
     }
   }
 
-  /// 알림 로드
-  Future<void> _loadNotifications() async {
-    setState(() => _isLoadingNotifications = true);
-
-    try {
-      _notifications = await _firestoreService.getAllScheduleChangeRequests(widget.businessId);
-      _pendingCount = await _firestoreService.getPendingScheduleChangeRequestCount(widget.businessId);
-    } catch (e) {
-      print('❌ 알림 로드 실패: $e');
-    } finally {
-      setState(() => _isLoadingNotifications = false);
-    }
-  }
-
   @override
   Widget build(BuildContext context) {
     return Dialog(
@@ -107,7 +84,7 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
         width: MediaQuery.of(context).size.width * 0.92,
         height: MediaQuery.of(context).size.height * 0.8,
         constraints: const BoxConstraints(maxWidth: 500),
-        padding: ResponsiveHelper.cardPadding(context),  // ⭐ 변경
+        padding: ResponsiveHelper.cardPadding(context),
         child: Column(
           children: [
             // 헤더
@@ -115,12 +92,12 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
               children: [
                 Icon(
                   Icons.manage_accounts, 
-                  size: ResponsiveHelper.iconSize(context, 28),  // ⭐ 변경
+                  size: ResponsiveHelper.iconSize(context, 28),
                 ),
-                SizedBox(width: ResponsiveHelper.spacing(context, 12)),  // ⭐ 변경
+                SizedBox(width: ResponsiveHelper.spacing(context, 12)),
                 Text(
                   '고정근무자 관리',
-                  style: ResponsiveHelper.titleStyle(context).copyWith(  // ⭐ 수정
+                  style: ResponsiveHelper.titleStyle(context).copyWith(
                     fontWeight: FontWeight.bold,
                   ),
                 ),
@@ -132,41 +109,35 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
               ],
             ),
             
-            Divider(height: ResponsiveHelper.spacing(context, 24)),  // ⭐ 변경
+            Divider(height: ResponsiveHelper.spacing(context, 24)),
 
-            TabBar(
-              controller: _tabController,
-              labelColor: Theme.of(context).primaryColor,
-              unselectedLabelColor: Theme.of(context).disabledColor,
-              indicatorColor: Theme.of(context).primaryColor,
-              tabs: [
-                Tab(
-                  icon: Badge(
-                    label: Text('${_fixedWorkers.length}'),
-                    child: const Icon(Icons.people),
-                  ),
-                  text: '고정근무자',
-                ),
-                Tab(
-                  icon: Badge(
-                    isLabelVisible: _pendingCount > 0,
-                    label: Text('$_pendingCount'),
-                    child: const Icon(Icons.notifications),
-                  ),
-                  text: '알림',
-                ),
-              ],
-            ),
-
-            // 탭 뷰
-            Expanded(
-              child: TabBarView(
-                controller: _tabController,
+            // 고정근무자 수 표시
+            Padding(
+              padding: EdgeInsets.only(
+                bottom: ResponsiveHelper.spacing(context, 12),
+              ),
+              child: Row(
                 children: [
-                  _buildWorkersTab(),
-                  _buildNotificationsTab(),
+                  Icon(
+                    Icons.people,
+                    size: ResponsiveHelper.iconSize(context, 20),
+                    color: Theme.of(context).primaryColor,
+                  ),
+                  SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+                  Text(
+                    '총 ${_fixedWorkers.length}명',
+                    style: ResponsiveHelper.bodyStyle(context).copyWith(
+                      fontWeight: FontWeight.bold,
+                      color: Theme.of(context).primaryColor,
+                    ),
+                  ),
                 ],
               ),
+            ),
+
+            // 고정근무자 목록
+            Expanded(
+              child: _buildWorkersTab(),
             ),
           ],
         ),
@@ -483,439 +454,63 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
     );
   }
 
-  /// 알림 탭
-  Widget _buildNotificationsTab() {
-    if (_isLoadingNotifications) {
-      return const LoadingWidget(message: '알림 로딩 중...');
-    }
-
-    if (_notifications.isEmpty) {
-      return Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(
-              Icons.notifications_none, 
-              size: ResponsiveHelper.iconSize(context, 64),  // ⭐ 변경
-              color: Theme.of(context).disabledColor,
-            ),
-            SizedBox(height: ResponsiveHelper.spacing(context, 16)),  // ⭐ 변경
-            Text(
-              '알림이 없습니다',
-              style: ResponsiveHelper.subtitleStyle(  // ⭐ 변경
-                context,
-                color: Theme.of(context).textTheme.bodySmall?.color,
-              ),
-            ),
-          ],
-        ),
-      );
-    }
-
-    return ListView.builder(
-      padding: EdgeInsets.symmetric(  // ⭐ const 제거
-        vertical: ResponsiveHelper.spacing(context, 16),  // ⭐ 변경
-      ),
-      itemCount: _notifications.length,
-      itemBuilder: (context, index) {
-        final notification = _notifications[index];
-        return _buildNotificationCard(notification);
-      },
-    );
-  }
-
-  /// 알림 카드
-  Widget _buildNotificationCard(ScheduleChangeRequestModel notification) {
-    IconData icon;
-    Color iconColor;
-    
-    if (notification.isLeaveRequest) {
-      icon = Icons.beach_access;
-      iconColor = Colors.orange;
-    } else if (notification.isNoWorkRequest) {
-      icon = Icons.block;
-      iconColor = Colors.red;
-    } else {
-      icon = Icons.add_circle;
-      iconColor = Colors.green;
-    }
-
-    return Card(
-      margin: EdgeInsets.only(  // ⭐ const 제거
-        bottom: ResponsiveHelper.spacing(context, 12),  // ⭐ 변경
-      ),
-      child: ListTile(
-        leading: CircleAvatar(
-          backgroundColor: iconColor.withOpacity(0.2),
-          child: Icon(icon, color: iconColor),
-        ),
-        title: Text(
-          '${notification.requestTypeLabel} - ${notification.applicantName}',
-          style: ResponsiveHelper.bodyStyle(context).copyWith(  // ⭐ 변경
-            fontWeight: FontWeight.bold,
-          ),
-        ),
-        subtitle: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(DateFormat('M월 d일 (E)', 'ko_KR').format(notification.targetDate)),
-            if (notification.reason != null)
-              Text(
-                notification.reason!,
-                style: ResponsiveHelper.tinyStyle(  // ⭐ 변경
-                  context,
-                  color: Theme.of(context).textTheme.bodySmall?.color,
-                ),
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-              ),
-            SizedBox(height: ResponsiveHelper.spacing(context, 4)),  // ⭐ 변경
-            _buildStatusChip(notification.status),
-          ],
-        ),
-        trailing: null, 
-        onTap: () => _showNotificationDetail(notification),
-      ),
-    );
-  }
-
-  /// 상태 칩
-  Widget _buildStatusChip(RequestStatus status) {
-    Color color;
-    String label;
-
-    switch (status) {
-      case RequestStatus.PENDING:
-        color = Colors.orange;
-        label = '대기중';
-        break;
-      case RequestStatus.APPROVED:
-        color = Colors.green;
-        label = '승인됨';
-        break;
-      case RequestStatus.REJECTED:
-        color = Colors.red;
-        label = '거절됨';
-        break;
-      case RequestStatus.CANCELED:
-        color = Colors.grey;
-        label = '취소됨';
-        break;
-    }
-
-    return Container(
-      padding: EdgeInsets.symmetric(
-        horizontal: ResponsiveHelper.spacing(context, 8),  // ⭐ 변경
-        vertical: ResponsiveHelper.spacing(context, 4),  // ⭐ 변경
-      ),
-      decoration: BoxDecoration(
-        color: color.withOpacity(0.2),
-        borderRadius: BorderRadius.circular(12),
-      ),
-      child: Text(
-        label,
-        style: ResponsiveHelper.tinyStyle(  // ⭐ 변경
-          context,
-          color: color,
-        ).copyWith(fontWeight: FontWeight.bold),
-      ),
-    );
-  }
-
-  /// 알림 상세
-  void _showNotificationDetail(ScheduleChangeRequestModel notification) {
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: Text(notification.requestTypeLabel),
-        content: SingleChildScrollView(
-          child: SizedBox(
-            width: double.maxFinite,
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                _buildInfoRow('근무자', notification.applicantName),
-                _buildInfoRow('대상 날짜', DateFormat('yyyy년 M월 d일 (E)', 'ko_KR').format(notification.targetDate)),
-                _buildInfoRow('요청 시각', DateFormat('M/d HH:mm').format(notification.requestedAt)),
-                if (notification.reason != null)
-                  _buildInfoRow('요청 사유', notification.reason!),
-                _buildInfoRow('상태', notification.statusLabel),
-                if (notification.respondedAt != null)
-                  _buildInfoRow('처리 시각', DateFormat('M/d HH:mm').format(notification.respondedAt!)),
-                if (notification.rejectReason != null)
-                  _buildInfoRow('거절 사유', notification.rejectReason!),
-              ],
-            ),
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('닫기'),
-          ),
-          if (notification.isPending) ...[
-            TextButton(
-              onPressed: () {
-                Navigator.pop(context);
-                _handleReject(notification);
-              },
-              style: TextButton.styleFrom(foregroundColor: Colors.red),
-              child: const Text('거절'),
-            ),
-            ElevatedButton(
-              onPressed: () {
-                Navigator.pop(context);
-                _handleApprove(notification);
-              },
-              style: ElevatedButton.styleFrom(backgroundColor: Colors.green),
-              child: const Text('승인'),
-            ),
-          ],
-        ],
-      ),
-    );
-  }
-
-  /// 승인 처리
-  Future<void> _handleApprove(ScheduleChangeRequestModel notification) async {
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: Row(
-          children: [
-            const Icon(Icons.check_circle, color: Colors.green),
-            SizedBox(width: ResponsiveHelper.spacing(context, 8)),  // ⭐ 변경
-            const Text('요청 승인'),
-          ],
-        ),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              '${notification.applicantName}님의 ${notification.requestTypeLabel}을 승인하시겠습니까?',
-              style: ResponsiveHelper.subtitleStyle(context),
-            ),
-            SizedBox(height: ResponsiveHelper.spacing(context, 12)),
-            Container(
-              padding: ResponsiveHelper.cardPadding(context),
-              decoration: BoxDecoration(
-                color: Theme.of(context).primaryColor.withOpacity(0.1),
-                borderRadius: BorderRadius.circular(8),
-                border: Border.all(color: Theme.of(context).primaryColor.withOpacity(0.3)),
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    children: [
-                      Icon(
-                        Icons.info_outline, 
-                        color: Theme.of(context).primaryColor,
-                        size: ResponsiveHelper.iconSize(context, 18)
-                      ),
-                      SizedBox(width: ResponsiveHelper.spacing(context, 6)),
-                      Text(
-                        '요청 정보',
-                        style: ResponsiveHelper.bodyStyle(context).copyWith(
-                          fontWeight: FontWeight.bold,
-                          color: Theme.of(context).primaryColor,
-                        ),
-                      ),
-                    ],
-                  ),
-                  SizedBox(height: ResponsiveHelper.spacing(context, 8)),
-                  Text('• 대상 날짜: ${DateFormat('yyyy년 M월 d일 (E)', 'ko_KR').format(notification.targetDate)}'),
-                  if (notification.reason != null)
-                    Text('• 요청 사유: ${notification.reason}'),
-                ],
-              ),
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('취소'),
-          ),
-          ElevatedButton(
-            onPressed: () => Navigator.pop(context, true),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: Colors.green,
-            ),
-            child: const Text('승인'),
-          ),
-        ],
-      ),
-    );
-
-    if (confirmed != true) return;
-
-    final userProvider = context.read<UserProvider>();
-    final uid = userProvider.currentUser?.uid;
-
-    if (uid == null) {
-      ToastHelper.showError('사용자 정보를 찾을 수 없습니다');
-      return;
-    }
-
-    try {
-      final success = await _firestoreService.approveScheduleChangeRequest(
-        requestId: notification.id,
-        approverUid: uid,
-      );
-
-      if (success && mounted) {
-        ToastHelper.showSuccess('요청이 승인되었습니다');
-        await _loadNotifications();
-        widget.onChanged();
-      } else if (mounted) {
-        ToastHelper.showError('승인 실패');
-      }
-    } catch (e) {
-      print('❌ 승인 실패: $e');
-      if (mounted) {
-        ToastHelper.showError('승인 실패: $e');
-      }
-    }
-  }
-
-  /// 거절 처리
-  Future<void> _handleReject(ScheduleChangeRequestModel notification) async {
-    final reasonController = TextEditingController();
-
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: Row(
-          children: [
-            const Icon(Icons.cancel, color: Colors.red),
-            SizedBox(width: ResponsiveHelper.spacing(context, 8)),  // ⭐ 변경
-            const Text('요청 거절'),
-          ],
-        ),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              '${notification.applicantName}님의 ${notification.requestTypeLabel}을 거절하시겠습니까?',
-              style: ResponsiveHelper.subtitleStyle(context),
-            ),
-            SizedBox(height: ResponsiveHelper.spacing(context, 12)),
-            Container(
-              padding: ResponsiveHelper.cardPadding(context),
-              decoration: BoxDecoration(
-                color: Colors.orange.withOpacity(0.1),
-                borderRadius: BorderRadius.circular(8),
-                border: Border.all(color: Colors.orange.withOpacity(0.3)),
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    children: [
-                      Icon(
-                        Icons.info_outline, 
-                        color: Colors.orange,
-                        size: ResponsiveHelper.iconSize(context, 18)
-                      ),
-                      SizedBox(width: ResponsiveHelper.spacing(context, 6)),
-                      Text(
-                        '요청 정보',
-                        style: ResponsiveHelper.bodyStyle(context).copyWith(
-                          fontWeight: FontWeight.bold,
-                          color: Colors.orange,
-                        ),
-                      ),
-                    ],
-                  ),
-                  SizedBox(height: ResponsiveHelper.spacing(context, 8)),
-                  Text('• 대상 날짜: ${DateFormat('yyyy년 M월 d일 (E)', 'ko_KR').format(notification.targetDate)}'),
-                  if (notification.reason != null)
-                    Text('• 요청 사유: ${notification.reason}'),
-                ],
-              ),
-            ),
-            SizedBox(height: ResponsiveHelper.spacing(context, 16)),
-            Text(
-              '거절 사유',
-              style: ResponsiveHelper.bodyStyle(context).copyWith(
-                fontWeight: FontWeight.bold,
-              ),
-            ),
-            SizedBox(height: ResponsiveHelper.spacing(context, 8)),
-            TextField(
-              controller: reasonController,
-              decoration: const InputDecoration(
-                hintText: '거절 사유를 입력하세요',
-                border: OutlineInputBorder(),
-              ),
-              maxLines: 3,
-              autofocus: true,
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('취소'),
-          ),
-          ElevatedButton(
-            onPressed: () => Navigator.pop(context, true),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: Colors.red,
-            ),
-            child: const Text('거절'),
-          ),
-        ],
-      ),
-    );
-
-    if (confirmed != true) return;
-
-    final reason = reasonController.text.trim();
-    if (reason.isEmpty) {
-      ToastHelper.showWarning('거절 사유를 입력해주세요');
-      return;
-    }
-
-    final userProvider = context.read<UserProvider>();
-    final uid = userProvider.currentUser?.uid;
-
-    if (uid == null) {
-      ToastHelper.showError('사용자 정보를 찾을 수 없습니다');
-      return;
-    }
-
-    try {
-      final success = await _firestoreService.rejectScheduleChangeRequest(
-        requestId: notification.id,
-        rejectorUid: uid,
-        rejectReason: reason,
-      );
-
-      if (success && mounted) {
-        ToastHelper.showSuccess('요청이 거절되었습니다');
-        await _loadNotifications();
-        widget.onChanged();
-      } else if (mounted) {
-        ToastHelper.showError('거절 실패');
-      }
-    } catch (e) {
-      print('❌ 거절 실패: $e');
-      if (mounted) {
-        ToastHelper.showError('거절 실패: $e');
-      }
-    }
-  }
-
   /// 미출근 요청 다이얼로그
   Future<void> _showNoWorkRequestDialog(ApplicationModel app) async {
+    // ⭐ 선택 가능한 첫 날짜 찾기
+    DateTime? findFirstSelectableDate() {
+      final now = DateTime.now();
+      final workStart = DateTime(app.workDate.year, app.workDate.month, app.workDate.day);
+      final workEnd = DateTime(app.workEndDate!.year, app.workEndDate!.month, app.workEndDate!.day);
+      
+      // 오늘부터 시작해서 선택 가능한 날짜 찾기
+      DateTime checkDate = now.isAfter(workStart) ? now : workStart;
+      
+      for (int i = 0; i < 365; i++) {
+        final targetDate = DateTime(checkDate.year, checkDate.month, checkDate.day);
+        
+        // 근무 기간 체크
+        if (targetDate.isBefore(workStart) || targetDate.isAfter(workEnd)) {
+          checkDate = checkDate.add(const Duration(days: 1));
+          continue;
+        }
+        
+        // 근무 요일 체크
+        if (app.workDays != null && app.workDays!.isNotEmpty) {
+          final weekdays = ['월', '화', '수', '목', '금', '토', '일'];
+          final dayOfWeek = weekdays[checkDate.weekday - 1];
+          if (!app.workDays!.contains(dayOfWeek)) {
+            checkDate = checkDate.add(const Duration(days: 1));
+            continue;
+          }
+        }
+        
+        // 이미 휴무 처리된 날짜 체크
+        if (app.leaveDates != null) {
+          final alreadyLeave = app.leaveDates!.any((d) =>
+              d.year == checkDate.year && d.month == checkDate.month && d.day == checkDate.day);
+          if (alreadyLeave) {
+            checkDate = checkDate.add(const Duration(days: 1));
+            continue;
+          }
+        }
+        
+        // 선택 가능한 날짜 발견!
+        return checkDate;
+      }
+      
+      return null;
+    }
+
+    final initialDate = findFirstSelectableDate();
+
+    if (initialDate == null) {
+      ToastHelper.showWarning('미출근 요청 가능한 날짜가 없습니다');
+      return;
+    }
+
     final DateTime? selectedDate = await showDatePicker(
       context: context,
-      initialDate: DateTime.now(),
+      initialDate: initialDate,  // ⭐ 수정!
       firstDate: DateTime.now(),
       lastDate: app.workEndDate ?? DateTime.now().add(const Duration(days: 365)),
       builder: (context, child) {
@@ -1076,7 +671,6 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
 
     if (requestId != null) {
       ToastHelper.showSuccess('미출근 요청이 전송되었습니다');
-      await _loadNotifications();
       widget.onChanged();
     } else {
       ToastHelper.showError('미출근 요청 실패');
@@ -1085,9 +679,76 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
 
   /// 추가 근무 요청 다이얼로그
   Future<void> _showExtraWorkRequestDialog(ApplicationModel app) async {
+    // ⭐ 선택 가능한 첫 날짜 찾기
+    DateTime? findFirstSelectableDate() {
+      final now = DateTime.now();
+      final workStart = DateTime(app.workDate.year, app.workDate.month, app.workDate.day);
+      final workEnd = DateTime(app.workEndDate!.year, app.workEndDate!.month, app.workEndDate!.day);
+      
+      // 오늘부터 시작해서 선택 가능한 날짜 찾기
+      DateTime checkDate = now.isAfter(workStart) ? now : workStart;
+      
+      for (int i = 0; i < 365; i++) {
+        final targetDate = DateTime(checkDate.year, checkDate.month, checkDate.day);
+        
+        // 근무 기간 체크
+        if (targetDate.isBefore(workStart) || targetDate.isAfter(workEnd)) {
+          checkDate = checkDate.add(const Duration(days: 1));
+          continue;
+        }
+        
+        // 원래 근무일 여부 확인
+        bool isOriginalWorkDay = false;
+        if (app.workDays != null && app.workDays!.isNotEmpty) {
+          final weekdays = ['월', '화', '수', '목', '금', '토', '일'];
+          final dayOfWeek = weekdays[checkDate.weekday - 1];
+          isOriginalWorkDay = app.workDays!.contains(dayOfWeek);
+        } else {
+          isOriginalWorkDay = true;
+        }
+        
+        // 원래 근무일인 경우
+        if (isOriginalWorkDay) {
+          // 휴무 처리된 날만 선택 가능
+          if (app.leaveDates != null) {
+            final isLeaveDay = app.leaveDates!.any((d) =>
+                d.year == checkDate.year && d.month == checkDate.month && d.day == checkDate.day);
+            if (isLeaveDay) {
+              return checkDate;
+            }
+          }
+          checkDate = checkDate.add(const Duration(days: 1));
+          continue;
+        }
+        
+        // 원래 근무일이 아닌 경우
+        // 이미 추가 근무 처리된 날짜 체크
+        if (app.extraWorkDates != null) {
+          final alreadyExtra = app.extraWorkDates!.any((d) =>
+              d.year == checkDate.year && d.month == checkDate.month && d.day == checkDate.day);
+          if (alreadyExtra) {
+            checkDate = checkDate.add(const Duration(days: 1));
+            continue;
+          }
+        }
+        
+        // 선택 가능한 날짜 발견!
+        return checkDate;
+      }
+      
+      return null;
+    }
+
+    final initialDate = findFirstSelectableDate();
+
+    if (initialDate == null) {
+      ToastHelper.showWarning('추가 근무 요청 가능한 날짜가 없습니다');
+      return;
+    }
+
     final DateTime? selectedDate = await showDatePicker(
       context: context,
-      initialDate: DateTime.now(),
+      initialDate: initialDate,  // ⭐ 수정!
       firstDate: DateTime.now(),
       lastDate: app.workEndDate ?? DateTime.now().add(const Duration(days: 365)),
       builder: (context, child) {
@@ -1261,7 +922,6 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
 
     if (requestId != null) {
       ToastHelper.showSuccess('추가 근무 요청이 전송되었습니다');
-      await _loadNotifications();
       widget.onChanged();
     } else {
       ToastHelper.showError('추가 근무 요청 실패');

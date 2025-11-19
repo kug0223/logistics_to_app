@@ -6,6 +6,7 @@ import 'all_to_list_screen.dart';
 import '../../utils/dialog_helper.dart';
 import 'my_schedule_screen.dart';
 import 'attendance_check_screen.dart';
+import 'my_schedule_requests_screen.dart';
 
 class UserHomeScreen extends StatelessWidget {
   const UserHomeScreen({super.key});
@@ -170,6 +171,22 @@ class UserHomeScreen extends StatelessWidget {
                           onTap: () {
                             ScaffoldMessenger.of(context).showSnackBar(
                               const SnackBar(content: Text('준비 중입니다')),
+                            );
+                          },
+                        ),
+                        _buildMenuCard(  // ⭐ 신규 추가!
+                          context,
+                          scale: scale,
+                          icon: Icons.edit_calendar,
+                          title: '내 요청 내역',
+                          subtitle: '스케줄 변경 요청',
+                          color: Colors.teal,
+                          onTap: () {
+                            Navigator.push(
+                              context,
+                              MaterialPageRoute(
+                                builder: (context) => const MyScheduleRequestsScreen(),
+                              ),
                             );
                           },
                         ),

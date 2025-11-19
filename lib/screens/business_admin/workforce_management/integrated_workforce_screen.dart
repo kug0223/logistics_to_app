@@ -12,7 +12,7 @@ import '../dialogs/resign_request_management_dialog.dart';
 import '../dialogs/fixed_worker_management_dialog.dart';
 import '../../../utils/test_data_helper.dart';
 import '../../../models/core/to_model.dart';
-
+import '../dialogs/schedule_request_management_dialog.dart';
 
 
 /// 통합 인력 관리 화면 (TO 관리 + 캘린더) - 완전 반응형 + 테마 적용
@@ -98,7 +98,7 @@ class _IntegratedWorkforceScreenState extends State<IntegratedWorkforceScreen> {
 
     return Scaffold(
       appBar: AppBar(
-        title: Text(_isCalendarView ? '인력 관리 - 캘린더' : '인력 관리 - 목록'),
+        title: Text(_isCalendarView ? '공고-캘린더' : '공고-리스트'),
         actions: [
           // ⭐ 더미 데이터 버튼 (반응형)
           IconButton(
@@ -108,6 +108,53 @@ class _IntegratedWorkforceScreenState extends State<IntegratedWorkforceScreen> {
             ),
             onPressed: _showDummyDataDialog,
             tooltip: '테스트 데이터',
+          ),
+          
+          // ⭐ 스케줄 변경 요청 관리 버튼 (신규 추가!)
+          FutureBuilder<int>(
+            future: _firestoreService.getPendingScheduleChangeRequestCount(_selectedBusinessId ?? ''),
+            builder: (context, snapshot) {
+              final count = snapshot.data ?? 0;
+              
+              return Stack(
+                children: [
+                  IconButton(
+                    icon: Icon(
+                      Icons.edit_calendar,
+                      size: ResponsiveHelper.iconSize(context, 24),
+                    ),
+                    onPressed: _showScheduleRequestManagement,
+                    tooltip: '스케줄 변경 요청',
+                  ),
+                  if (count > 0)
+                    Positioned(
+                      right: 8,
+                      top: 8,
+                      child: Container(
+                        padding: EdgeInsets.all(
+                          ResponsiveHelper.spacing(context, 4),
+                        ),
+                        decoration: const BoxDecoration(
+                          color: Colors.red,
+                          shape: BoxShape.circle,
+                        ),
+                        constraints: BoxConstraints(
+                          minWidth: ResponsiveHelper.iconSize(context, 16),
+                          minHeight: ResponsiveHelper.iconSize(context, 16),
+                        ),
+                        child: Text(
+                          '$count',
+                          style: ResponsiveHelper.tinyStyle(context).copyWith(
+                            color: Colors.white,
+                            fontWeight: FontWeight.bold,
+                          ),
+                          textAlign: TextAlign.center,
+                        ),
+                      ),
+                    ),
+                ],
+              );
+            },
           ),
           
           // ⭐ 고정근무자 관리 아이콘
@@ -266,6 +313,23 @@ class _IntegratedWorkforceScreenState extends State<IntegratedWorkforceScreen> {
     showDialog(
       context: context,
       builder: (context) => FixedWorkerManagementDialog(
+        businessId: _selectedBusinessId!,
+        onChanged: () {
+          setState(() {});
+        },
+      ),
+    );
+  }
+  /// 스케줄 변경 요청 관리 다이얼로그 표시
+  void _showScheduleRequestManagement() {
+    if (_selectedBusinessId == null) {
+      ToastHelper.showWarning('사업장 정보를 찾을 수 없습니다.');
+      return;
+    }
+    
+    showDialog(
+      context: context,
+      builder: (context) => ScheduleRequestManagementDialog(
         businessId: _selectedBusinessId!,
         onChanged: () {
           setState(() {});
