@@ -4,14 +4,14 @@ import '../../models/core/application_model.dart';
 import '../../utils/dialog_helper.dart';
 import '../../services/firestore_service.dart';
 import '../../utils/toast_helper.dart';
-import '../../utils/responsive_helper.dart';  // ⭐ 추가
+import '../../utils/responsive_helper.dart';
 import '../dialogs/schedule_detail_dialog.dart';
 import '../../models/core/schedule_change_request_model.dart';
 import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
 import '../../providers/user_provider.dart';
 
-/// 개별 일정 카드
+/// ✨ 개별 일정 카드 (세련된 디자인)
 class ScheduleCard extends StatelessWidget {
   final ApplicationModel application;
   final VoidCallback? onChanged;
@@ -27,323 +27,469 @@ class ScheduleCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final statusInfo = _getStatusInfo(application.status);
+    final theme = Theme.of(context);
     
-    return Card(
+    return Container(
       margin: EdgeInsets.only(
         bottom: ResponsiveHelper.spacing(context, 12),
       ),
-      elevation: application.status == 'CONFIRMED' ? 3 : 1,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(12),
-        side: application.status == 'CONFIRMED'
-            ? BorderSide(color: Colors.green[300]!, width: 2)
-            : BorderSide.none,
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(20),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.05),
+            blurRadius: 10,
+            offset: const Offset(0, 4),
+          ),
+        ],
+        // ✨ 확정된 경우 테두리 강조
+        border: application.status == 'CONFIRMED'
+            ? Border.all(color: Colors.green[300]!, width: 2)
+            : null,
       ),
-      child: InkWell(
-        onTap: () => _showDetailDialog(context),
-        borderRadius: BorderRadius.circular(12),
-        child: Container(
-          decoration: application.status == 'CONFIRMED'
-              ? BoxDecoration(
-                  borderRadius: BorderRadius.circular(12),
-                  gradient: LinearGradient(
-                    colors: [Colors.green[50]!, Colors.white],
-                    begin: Alignment.topLeft,
-                    end: Alignment.bottomRight,
-                  ),
-                )
-              : null,
-          child: Padding(
-            padding: ResponsiveHelper.cardPadding(context),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                // ⭐ 첫 줄: 사업장명 + 상태
-                Row(
-                  children: [
-                    Expanded(
-                      child: Text(
-                        application.businessName,
-                        style: ResponsiveHelper.subtitleStyle(context),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                      ),
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          onTap: () => _showDetailDialog(context),
+          borderRadius: BorderRadius.circular(20),
+          child: Container(
+            // ✨ 확정된 경우 은은한 그라데이션
+            decoration: application.status == 'CONFIRMED'
+                ? BoxDecoration(
+                    borderRadius: BorderRadius.circular(20),
+                    gradient: LinearGradient(
+                      colors: [
+                        Colors.green[50]!.withOpacity(0.3),
+                        Colors.white,
+                      ],
+                      begin: Alignment.topLeft,
+                      end: Alignment.bottomRight,
                     ),
-                    _buildStatusBadge(context, statusInfo),
-                  ],
-                ),
-                
-                // ⭐ 두 번째 줄: 휴무/추가근무/요청 배지들
-                if (selectedDay != null && application.isLongTermApplication) ...[
-                  SizedBox(height: ResponsiveHelper.spacing(context, 6)),
-                  Wrap(
-                    spacing: 6,
-                    runSpacing: 4,
+                  )
+                : null,
+            child: Padding(
+              padding: ResponsiveHelper.cardPadding(context),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  // ✨ 첫 줄: 사업장명 + 상태 배지
+                  Row(
                     children: [
-                      // 휴무 배지
-                      if (application.isLeaveDateOn(selectedDay!))
-                        _buildSmallBadge(
-                          context,
-                          icon: Icons.block,
-                          label: '휴무',
-                          color: Colors.grey,
+                      // 사업장명
+                      Expanded(
+                        child: Row(
+                          children: [
+                            Container(
+                              padding: EdgeInsets.all(
+                                ResponsiveHelper.spacing(context, 8),
+                              ),
+                              decoration: BoxDecoration(
+                                color: theme.primaryColor.withOpacity(0.1),
+                                borderRadius: BorderRadius.circular(10),
+                              ),
+                              child: Icon(
+                                Icons.business,
+                                size: ResponsiveHelper.iconSize(context, 20),
+                                color: theme.primaryColor,
+                              ),
+                            ),
+                            SizedBox(width: ResponsiveHelper.spacing(context, 12)),
+                            Expanded(
+                              child: Text(
+                                application.businessName,
+                                style: ResponsiveHelper.subtitleStyle(context).copyWith(
+                                  fontWeight: FontWeight.bold,
+                                ),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                          ],
                         ),
-                      
-                      // 추가근무 배지
-                      if (application.isExtraWorkDateOn(selectedDay!))
-                        _buildSmallBadge(
-                          context,
-                          icon: Icons.add_circle,
-                          label: '추가근무',
-                          color: Colors.green,
-                        ),
-                      
-                      // 요청 대기중 배지
-                      FutureBuilder<ScheduleChangeRequestModel?>(
-                        future: _getPendingRequest(selectedDay!),
-                        builder: (context, snapshot) {
-                          if (!snapshot.hasData || snapshot.data == null) {
-                            return const SizedBox.shrink();
-                          }
-                          
-                          final request = snapshot.data!;
-                          String label;
-                          Color color;
-                          IconData icon;
-                          
-                          if (request.requestType == RequestType.LEAVE) {
-                            label = '휴무요청중';
-                            color = Colors.orange;
-                            icon = Icons.beach_access;
-                          } else if (request.requestType == RequestType.CANCEL_LEAVE) {
-                            label = '휴무취소중';
-                            color = Colors.blue;
-                            icon = Icons.refresh;
-                          } else if (request.requestType == RequestType.CANCEL_EXTRA) {
-                            label = '근무취소중';
-                            color = Colors.red;
-                            icon = Icons.remove_circle_outline;
-                          } else {
-                            return const SizedBox.shrink();
-                          }
-                          
-                          return _buildSmallBadge(
-                            context,
-                            icon: icon,
-                            label: label,
-                            color: color,
-                            outlined: true,
-                          );
-                        },
                       ),
+                      SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+                      _buildStatusBadge(context, statusInfo),
                     ],
                   ),
-                ],
-                
-                SizedBox(height: ResponsiveHelper.spacing(context, 12)),
-                
-                // 시간 정보
-                Row(
-                  children: [
-                    Icon(
-                      Icons.access_time, 
-                      size: ResponsiveHelper.iconSize(context, 16), 
-                      color: Colors.grey[600]
-                    ),
-                    SizedBox(width: ResponsiveHelper.spacing(context, 6)),
-                    Text(
-                      '${application.startTime} ~ ${application.endTime}',
-                      style: ResponsiveHelper.bodyStyle(context),
-                    ),
-                  ],
-                ),
-                
-                SizedBox(height: ResponsiveHelper.spacing(context, 8)),
-                
-                // 업무 유형
-                Row(
-                  children: [
-                    Icon(
-                      Icons.work_outline, 
-                      size: ResponsiveHelper.iconSize(context, 16), 
-                      color: Colors.grey[600]
-                    ),
-                    SizedBox(width: ResponsiveHelper.spacing(context, 6)),
-                    Text(
-                      application.selectedWorkType,
-                      style: ResponsiveHelper.bodyStyle(context),
-                    ),
-                  ],
-                ),
-                
-                SizedBox(height: ResponsiveHelper.spacing(context, 8)),
-                
-                // 금액
-                Row(
-                  children: [
-                    Icon(
-                      Icons.attach_money, 
-                      size: ResponsiveHelper.iconSize(context, 16), 
-                      color: Colors.green[600]
-                    ),
-                    SizedBox(width: ResponsiveHelper.spacing(context, 6)),
-                    Text(
-                      application.formattedWage,
-                      style: ResponsiveHelper.bodyStyle(
-                        context,
-                        color: Colors.green[700],
-                      ).copyWith(fontWeight: FontWeight.bold),
-                    ),
-                  ],
-                ),
-                
-                // 장기 근무 정보
-                if (application.isLongTermApplication) ...[
-                  SizedBox(height: ResponsiveHelper.spacing(context, 12)),
-                  Container(
-                    padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 8)),
-                    decoration: BoxDecoration(
-                      color: Colors.purple[50],
-                      borderRadius: BorderRadius.circular(6),
-                      border: Border.all(color: Colors.purple[200]!),
-                    ),
-                    child: Row(
+                  
+                  // ✨ 두 번째 줄: 휴무/추가근무/요청 배지들
+                  if (selectedDay != null && application.isLongTermApplication) ...[
+                    SizedBox(height: ResponsiveHelper.spacing(context, 12)),
+                    Wrap(
+                      spacing: 6,
+                      runSpacing: 4,
                       children: [
-                        Icon(
-                          Icons.calendar_month, 
-                          size: ResponsiveHelper.iconSize(context, 14), 
-                          color: Colors.purple[700]
-                        ),
-                        SizedBox(width: ResponsiveHelper.spacing(context, 6)),
-                        Text(
-                          '${application.workPeriodDisplay} ${application.workDaysDisplay ?? ""}',
-                          style: ResponsiveHelper.smallStyle(
+                        // 휴무 배지
+                        if (application.isLeaveDateOn(selectedDay!))
+                          _buildSmallBadge(
                             context,
-                            color: Colors.purple[700],
+                            icon: Icons.block,
+                            label: '휴무',
+                            color: Colors.grey,
+                          ),
+                        
+                        // 추가근무 배지
+                        if (application.isExtraWorkDateOn(selectedDay!))
+                          _buildSmallBadge(
+                            context,
+                            icon: Icons.add_circle,
+                            label: '추가근무',
+                            color: Colors.green,
+                          ),
+                        
+                        // 요청 대기중 배지
+                        FutureBuilder<ScheduleChangeRequestModel?>(
+                          future: _getPendingRequest(selectedDay!),
+                          builder: (context, snapshot) {
+                            if (!snapshot.hasData || snapshot.data == null) {
+                              return const SizedBox.shrink();
+                            }
+                            
+                            final request = snapshot.data!;
+                            String label;
+                            Color color;
+                            IconData icon;
+                            
+                            if (request.requestType == RequestType.LEAVE) {
+                              label = '휴무요청중';
+                              color = Colors.orange;
+                              icon = Icons.beach_access;
+                            } else if (request.requestType == RequestType.CANCEL_LEAVE) {
+                              label = '휴무취소중';
+                              color = Colors.blue;
+                              icon = Icons.refresh;
+                            } else if (request.requestType == RequestType.CANCEL_EXTRA) {
+                              label = '근무취소중';
+                              color = Colors.red;
+                              icon = Icons.remove_circle_outline;
+                            } else {
+                              return const SizedBox.shrink();
+                            }
+                            
+                            return _buildSmallBadge(
+                              context,
+                              icon: icon,
+                              label: label,
+                              color: color,
+                              outlined: true,
+                            );
+                          },
+                        ),
+                      ],
+                    ),
+                  ],
+                  
+                  SizedBox(height: ResponsiveHelper.spacing(context, 16)),
+                  
+                  // ✨ 정보 섹션 (아이콘 + 텍스트)
+                  _buildInfoRow(
+                    context,
+                    icon: Icons.access_time,
+                    label: '근무시간',
+                    value: '${application.startTime} ~ ${application.endTime}',
+                    iconColor: Colors.blue[600]!,
+                  ),
+                  
+                  SizedBox(height: ResponsiveHelper.spacing(context, 10)),
+                  
+                  _buildInfoRow(
+                    context,
+                    icon: Icons.work_outline,
+                    label: '업무유형',
+                    value: application.selectedWorkType,
+                    iconColor: Colors.purple[600]!,
+                  ),
+                  
+                  SizedBox(height: ResponsiveHelper.spacing(context, 10)),
+                  
+                  _buildInfoRow(
+                    context,
+                    icon: Icons.payments,
+                    label: '급여',
+                    value: application.formattedWage,
+                    iconColor: Colors.green[600]!,
+                    valueColor: Colors.green[700]!,
+                    valueBold: true,
+                  ),
+                  
+                  // ✨ 장기 근무 정보
+                  if (application.isLongTermApplication) ...[
+                    SizedBox(height: ResponsiveHelper.spacing(context, 16)),
+                    Container(
+                      padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 12)),
+                      decoration: BoxDecoration(
+                        gradient: LinearGradient(
+                          colors: [
+                            Colors.purple[50]!,
+                            Colors.purple[50]!.withOpacity(0.3),
+                          ],
+                        ),
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(color: Colors.purple[200]!),
+                      ),
+                      child: Row(
+                        children: [
+                          Container(
+                            padding: EdgeInsets.all(
+                              ResponsiveHelper.spacing(context, 8),
+                            ),
+                            decoration: BoxDecoration(
+                              color: Colors.purple[100],
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                            child: Icon(
+                              Icons.calendar_month,
+                              size: ResponsiveHelper.iconSize(context, 18),
+                              color: Colors.purple[700],
+                            ),
+                          ),
+                          SizedBox(width: ResponsiveHelper.spacing(context, 12)),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  '고정 근무',
+                                  style: ResponsiveHelper.tinyStyle(
+                                    context,
+                                    color: Colors.purple[900],
+                                  ).copyWith(fontWeight: FontWeight.bold),
+                                ),
+                                SizedBox(height: ResponsiveHelper.spacing(context, 2)),
+                                Text(
+                                  '${application.workPeriodDisplay} ${application.workDaysDisplay ?? ""}',
+                                  style: ResponsiveHelper.smallStyle(
+                                    context,
+                                    color: Colors.purple[700],
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                  
+                  // ✨ 액션 버튼들
+                  if (application.status == 'PENDING' || application.status == 'CONFIRMED') ...[
+                    SizedBox(height: ResponsiveHelper.spacing(context, 16)),
+                    
+                    // 구분선
+                    Divider(
+                      height: 1,
+                      color: Colors.grey[200],
+                    ),
+                    
+                    SizedBox(height: ResponsiveHelper.spacing(context, 12)),
+                    
+                    Row(
+                      children: [
+                        // 상세 보기 버튼
+                        Expanded(
+                          child: OutlinedButton(
+                            onPressed: () => _showDetailDialog(context),
+                            style: OutlinedButton.styleFrom(
+                              foregroundColor: theme.primaryColor,
+                              side: BorderSide(color: theme.primaryColor),
+                              padding: EdgeInsets.symmetric(
+                                vertical: ResponsiveHelper.spacing(context, 12),
+                              ),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(12),
+                              ),
+                            ),
+                            child: Row(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                Icon(
+                                  Icons.info_outline,
+                                  size: ResponsiveHelper.iconSize(context, 18),
+                                ),
+                                SizedBox(width: ResponsiveHelper.spacing(context, 6)),
+                                Text(
+                                  '상세 정보',
+                                  style: ResponsiveHelper.bodyStyle(context).copyWith(
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                        
+                        SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+                        
+                        // ⭐ 취소/휴무 버튼 (요청 대기중 상태 확인)
+                        Expanded(
+                          child: FutureBuilder<bool>(
+                            future: selectedDay != null && 
+                                    application.isLongTermApplication && 
+                                    application.status == 'CONFIRMED'
+                                ? _hasPendingRequest(selectedDay!)
+                                : Future.value(false),
+                            builder: (context, snapshot) {
+                              final hasPendingRequest = snapshot.data ?? false;
+                              
+                              // ⭐ 대기중인 요청이 있으면
+                              if (hasPendingRequest) {
+                                return OutlinedButton(
+                                  onPressed: null,
+                                  style: OutlinedButton.styleFrom(
+                                    foregroundColor: Colors.grey,
+                                    side: const BorderSide(color: Colors.grey),
+                                    padding: EdgeInsets.symmetric(
+                                      vertical: ResponsiveHelper.spacing(context, 12),
+                                    ),
+                                    shape: RoundedRectangleBorder(
+                                      borderRadius: BorderRadius.circular(12),
+                                    ),
+                                  ),
+                                  child: Row(
+                                    mainAxisAlignment: MainAxisAlignment.center,
+                                    children: [
+                                      Icon(
+                                        Icons.schedule,
+                                        size: ResponsiveHelper.iconSize(context, 18),
+                                      ),
+                                      SizedBox(width: ResponsiveHelper.spacing(context, 6)),
+                                      Text(
+                                        '요청 대기중',
+                                        style: ResponsiveHelper.bodyStyle(context).copyWith(
+                                          fontWeight: FontWeight.bold,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                );
+                              }
+                              
+                              // ⭐ 일반 버튼
+                              final isLeaveDay = selectedDay != null && 
+                                  application.isLongTermApplication && 
+                                  application.isLeaveDateOn(selectedDay!);
+                              
+                              final isExtraWorkDay = selectedDay != null && 
+                                  application.isLongTermApplication && 
+                                  application.isExtraWorkDateOn(selectedDay!);
+                              
+                              final buttonColor = isLeaveDay ? Colors.green : Colors.red;
+                              
+                              IconData buttonIcon;
+                              String buttonText;
+                              
+                              if (isLeaveDay) {
+                                buttonIcon = Icons.refresh;
+                                buttonText = '휴무 취소';
+                              } else if (isExtraWorkDay) {
+                                buttonIcon = Icons.remove_circle_outline;
+                                buttonText = '근무 취소';
+                              } else if (application.isLongTermApplication && application.status == 'CONFIRMED') {
+                                buttonIcon = Icons.beach_access;
+                                buttonText = '휴무 요청';
+                              } else if (application.status == 'CONFIRMED') {
+                                buttonIcon = Icons.cancel_outlined;
+                                buttonText = '취소 요청';
+                              } else {
+                                buttonIcon = Icons.cancel_outlined;
+                                buttonText = '지원 취소';
+                              }
+                              
+                              return OutlinedButton(
+                                onPressed: () => _handleCancel(context),
+                                style: OutlinedButton.styleFrom(
+                                  foregroundColor: buttonColor,
+                                  side: BorderSide(color: buttonColor),
+                                  padding: EdgeInsets.symmetric(
+                                    vertical: ResponsiveHelper.spacing(context, 12),
+                                  ),
+                                  shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(12),
+                                  ),
+                                ),
+                                child: Row(
+                                  mainAxisAlignment: MainAxisAlignment.center,
+                                  children: [
+                                    Icon(
+                                      buttonIcon,
+                                      size: ResponsiveHelper.iconSize(context, 18),
+                                    ),
+                                    SizedBox(width: ResponsiveHelper.spacing(context, 6)),
+                                    Text(
+                                      buttonText,
+                                      style: ResponsiveHelper.bodyStyle(context).copyWith(
+                                        fontWeight: FontWeight.bold,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              );
+                            },
                           ),
                         ),
                       ],
                     ),
-                  ),
+                  ],
                 ],
-                
-                // ⭐ 액션 버튼들
-                if (application.status == 'PENDING' || application.status == 'CONFIRMED') ...[
-                  SizedBox(height: ResponsiveHelper.spacing(context, 12)),
-                  Row(
-                    children: [
-                      // 상세 보기 버튼
-                      Expanded(
-                        child: OutlinedButton.icon(
-                          onPressed: () => _showDetailDialog(context),
-                          icon: Icon(
-                            Icons.info_outline, 
-                            size: ResponsiveHelper.iconSize(context, 18)
-                          ),
-                          label: const Text('상세 정보'),
-                          style: OutlinedButton.styleFrom(
-                            foregroundColor: Colors.blue,
-                            side: const BorderSide(color: Colors.blue),
-                          ),
-                        ),
-                      ),
-                      
-                      SizedBox(width: ResponsiveHelper.spacing(context, 8)),
-                      
-                      // ⭐ 취소/휴무 버튼 (요청 대기중 상태 확인)
-                      Expanded(
-                        child: FutureBuilder<bool>(
-                          future: selectedDay != null && 
-                                  application.isLongTermApplication && 
-                                  application.status == 'CONFIRMED'
-                              ? _hasPendingRequest(selectedDay!)
-                              : Future.value(false),
-                          builder: (context, snapshot) {
-                            final hasPendingRequest = snapshot.data ?? false;
-                            
-                            // ⭐ 대기중인 요청이 있으면
-                            if (hasPendingRequest) {
-                              return OutlinedButton.icon(
-                                onPressed: null,
-                                icon: Icon(
-                                  Icons.schedule, 
-                                  size: ResponsiveHelper.iconSize(context, 18)
-                                ),
-                                label: const Text('요청 대기중'),
-                                style: OutlinedButton.styleFrom(
-                                  foregroundColor: Colors.grey,
-                                  side: const BorderSide(color: Colors.grey),
-                                ),
-                              );
-                            }
-                            
-                            // ⭐ 일반 버튼
-                            return OutlinedButton.icon(
-                              onPressed: () => _handleCancel(context),
-                              icon: Icon(
-                                // 휴무일인 경우
-                                selectedDay != null && 
-                                application.isLongTermApplication && 
-                                application.isLeaveDateOn(selectedDay!)
-                                    ? Icons.refresh
-                                // 추가근무일인 경우
-                                : selectedDay != null && 
-                                  application.isLongTermApplication && 
-                                  application.isExtraWorkDateOn(selectedDay!)
-                                    ? Icons.remove_circle_outline
-                                // 일반 장기 확정
-                                : application.isLongTermApplication && application.status == 'CONFIRMED'
-                                    ? Icons.beach_access
-                                // 그 외
-                                : Icons.cancel_outlined,
-                                size: ResponsiveHelper.iconSize(context, 18),
-                              ),
-                              label: Text(
-                                // 휴무일인 경우
-                                selectedDay != null && 
-                                application.isLongTermApplication && 
-                                application.isLeaveDateOn(selectedDay!)
-                                    ? '휴무 취소'
-                                // 추가근무일인 경우
-                                : selectedDay != null && 
-                                  application.isLongTermApplication && 
-                                  application.isExtraWorkDateOn(selectedDay!)
-                                    ? '근무 취소'
-                                // 일반 장기 확정
-                                : application.isLongTermApplication && application.status == 'CONFIRMED'
-                                    ? '휴무 요청'
-                                // 단기 확정
-                                : application.status == 'CONFIRMED'
-                                    ? '취소 요청'
-                                // 대기중
-                                : '지원 취소'
-                              ),
-                              style: OutlinedButton.styleFrom(
-                                foregroundColor: selectedDay != null && 
-                                                application.isLongTermApplication && 
-                                                application.isLeaveDateOn(selectedDay!)
-                                    ? Colors.green
-                                    : Colors.red,
-                                side: BorderSide(
-                                  color: selectedDay != null && 
-                                        application.isLongTermApplication && 
-                                        application.isLeaveDateOn(selectedDay!)
-                                      ? Colors.green
-                                      : Colors.red,
-                                ),
-                              ),
-                            );
-                          },
-                        ),
-                      ),
-                    ],
-                  ),
-                ],
-              ],
+              ),
             ),
           ),
         ),
       ),
+    );
+  }
+  
+  /// ✨ 정보 행 위젯
+  Widget _buildInfoRow(
+    BuildContext context, {
+    required IconData icon,
+    required String label,
+    required String value,
+    required Color iconColor,
+    Color? valueColor,
+    bool valueBold = false,
+  }) {
+    return Row(
+      children: [
+        Container(
+          padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 6)),
+          decoration: BoxDecoration(
+            color: iconColor.withOpacity(0.1),
+            borderRadius: BorderRadius.circular(8),
+          ),
+          child: Icon(
+            icon,
+            size: ResponsiveHelper.iconSize(context, 16),
+            color: iconColor,
+          ),
+        ),
+        SizedBox(width: ResponsiveHelper.spacing(context, 12)),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                label,
+                style: ResponsiveHelper.tinyStyle(
+                  context,
+                  color: Colors.grey[600],
+                ),
+              ),
+              SizedBox(height: ResponsiveHelper.spacing(context, 2)),
+              Text(
+                value,
+                style: ResponsiveHelper.bodyStyle(
+                  context,
+                  color: valueColor ?? Colors.grey[800],
+                ).copyWith(
+                  fontWeight: valueBold ? FontWeight.bold : FontWeight.normal,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
     );
   }
   
@@ -387,6 +533,9 @@ class ScheduleCard extends StatelessWidget {
       final confirmed = await showDialog<bool>(
         context: context,
         builder: (context) => AlertDialog(
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(20),
+          ),
           title: Row(
             children: [
               Icon(
@@ -413,7 +562,7 @@ class ScheduleCard extends StatelessWidget {
                 padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 12)),
                 decoration: BoxDecoration(
                   color: Colors.red[50],
-                  borderRadius: BorderRadius.circular(8),
+                  borderRadius: BorderRadius.circular(12),
                   border: Border.all(color: Colors.red[200]!),
                 ),
                 child: Column(
@@ -469,6 +618,9 @@ class ScheduleCard extends StatelessWidget {
               style: ElevatedButton.styleFrom(
                 backgroundColor: Colors.red,
                 foregroundColor: Colors.white,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
               ),
               child: const Text('취소하기'),
             ),
@@ -553,30 +705,35 @@ class ScheduleCard extends StatelessWidget {
     }
   }
   
-  /// 상태 배지
+  /// ✨ 상태 배지 (더 세련되게)
   Widget _buildStatusBadge(BuildContext context, _StatusInfo info) {
     return Container(
       padding: EdgeInsets.symmetric(
-        horizontal: ResponsiveHelper.spacing(context, 10),
-        vertical: ResponsiveHelper.spacing(context, 6),
+        horizontal: ResponsiveHelper.spacing(context, 12),
+        vertical: ResponsiveHelper.spacing(context, 8),
       ),
       decoration: BoxDecoration(
-        color: info.color[50],
-        borderRadius: BorderRadius.circular(6),
-        border: Border.all(color: info.color[300]!),
+        gradient: LinearGradient(
+          colors: [
+            info.color[100]!,
+            info.color[50]!,
+          ],
+        ),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: info.color[300]!, width: 1.5),
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
           Icon(
             info.icon,
-            size: ResponsiveHelper.iconSize(context, 14),
+            size: ResponsiveHelper.iconSize(context, 16),
             color: info.color[700],
           ),
-          SizedBox(width: ResponsiveHelper.spacing(context, 4)),
+          SizedBox(width: ResponsiveHelper.spacing(context, 6)),
           Text(
             info.text,
-            style: ResponsiveHelper.smallStyle(
+            style: ResponsiveHelper.bodyStyle(
               context,
               color: info.color[700],
             ).copyWith(fontWeight: FontWeight.bold),
@@ -598,6 +755,9 @@ class ScheduleCard extends StatelessWidget {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(20),
+        ),
         title: Row(
           children: [
             const Icon(Icons.beach_access, color: Colors.orange),
@@ -642,6 +802,9 @@ class ScheduleCard extends StatelessWidget {
             onPressed: () => Navigator.pop(context, true),
             style: ElevatedButton.styleFrom(
               backgroundColor: Colors.orange,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(12),
+              ),
             ),
             child: const Text('요청'),
           ),
@@ -688,6 +851,9 @@ class ScheduleCard extends StatelessWidget {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(20),
+        ),
         title: Row(
           children: [
             const Icon(Icons.remove_circle_outline, color: Colors.orange),
@@ -711,7 +877,7 @@ class ScheduleCard extends StatelessWidget {
               padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 12)),
               decoration: BoxDecoration(
                 color: Colors.blue[50],
-                borderRadius: BorderRadius.circular(8),
+                borderRadius: BorderRadius.circular(12),
                 border: Border.all(color: Colors.blue[300]!),
               ),
               child: Row(
@@ -760,6 +926,9 @@ class ScheduleCard extends StatelessWidget {
             onPressed: () => Navigator.pop(context, true),
             style: ElevatedButton.styleFrom(
               backgroundColor: Colors.red,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(12),
+              ),
             ),
             child: const Text('요청'),
           ),
@@ -806,6 +975,9 @@ class ScheduleCard extends StatelessWidget {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(20),
+        ),
         title: Row(
           children: [
             const Icon(Icons.refresh, color: Colors.green),
@@ -829,7 +1001,7 @@ class ScheduleCard extends StatelessWidget {
               padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 12)),
               decoration: BoxDecoration(
                 color: Colors.blue[50],
-                borderRadius: BorderRadius.circular(8),
+                borderRadius: BorderRadius.circular(12),
                 border: Border.all(color: Colors.blue[300]!),
               ),
               child: Row(
@@ -878,6 +1050,9 @@ class ScheduleCard extends StatelessWidget {
             onPressed: () => Navigator.pop(context, true),
             style: ElevatedButton.styleFrom(
               backgroundColor: Colors.green,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(12),
+              ),
             ),
             child: const Text('요청'),
           ),
@@ -959,8 +1134,8 @@ class ScheduleCard extends StatelessWidget {
         vertical: ResponsiveHelper.spacing(context, 4),
       ),
       decoration: BoxDecoration(
-        color: outlined ? color.withOpacity(0.1) : color.withOpacity(0.3),
-        borderRadius: BorderRadius.circular(6),
+        color: outlined ? color.withOpacity(0.1) : color.withOpacity(0.15),
+        borderRadius: BorderRadius.circular(8),
         border: outlined ? Border.all(color: color.withOpacity(0.5)) : null,
       ),
       child: Row(
@@ -969,14 +1144,14 @@ class ScheduleCard extends StatelessWidget {
           Icon(
             icon, 
             size: ResponsiveHelper.iconSize(context, 12), 
-            color: color
+            color: color is MaterialColor ? color[700] : color
           ),
           SizedBox(width: ResponsiveHelper.spacing(context, 4)),
           Text(
             label,
             style: ResponsiveHelper.tinyStyle(
               context,
-              color: color,
+              color: color is MaterialColor ? color[700] : color
             ).copyWith(fontWeight: FontWeight.bold),
           ),
         ],

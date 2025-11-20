@@ -7,7 +7,7 @@ import '../../services/firestore_service.dart';
 import '../../providers/user_provider.dart';
 import '../../utils/toast_helper.dart';
 import '../../utils/calendar_helper.dart';
-import '../../utils/responsive_helper.dart';  // ⭐ 추가
+import '../../utils/responsive_helper.dart';
 import '../../widgets/common/loading_widget.dart';
 import '../../widgets/calendar/schedule_calendar.dart';
 import '../../widgets/user/cards/monthly_stats_card.dart';
@@ -15,9 +15,7 @@ import '../../widgets/calendar/schedule_card.dart';
 import '../../widgets/dialogs/long_term_work_management_dialog.dart';
 import 'dialogs/my_requests_dialog.dart';
 
-
-
-/// 내 근무 스케줄 화면 (캘린더 뷰)
+/// ✨ 내 근무 스케줄 화면 (홈 화면 디자인 통일)
 class MyScheduleScreen extends StatefulWidget {
   const MyScheduleScreen({super.key});
 
@@ -36,8 +34,6 @@ class _MyScheduleScreenState extends State<MyScheduleScreen> {
   List<ApplicationModel> _applications = [];
   bool _isLoading = true;
   String _selectedFilter = 'ALL'; // ALL, CONFIRMED, PENDING
-  // ⭐ 추가
-  int _pendingRequestCount = 0;
   
   @override
   void initState() {
@@ -76,175 +72,384 @@ class _MyScheduleScreenState extends State<MyScheduleScreen> {
   
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('내 스케줄'),
-        actions: [
-          // 알림 아이콘
-          FutureBuilder<int>(
-            future: _getPendingRequestCount(),
-            builder: (context, snapshot) {
-              final count = snapshot.data ?? 0;
-              return Stack(
-                children: [
-                  IconButton(
-                    icon: const Icon(Icons.notifications),
-                    onPressed: _showMyRequestsDialog,
-                    tooltip: '내 알림',
+      // AppBar 제거 - 전체 화면 사용
+      body: Container(
+        decoration: BoxDecoration(
+          gradient: LinearGradient(
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+            colors: [
+              theme.primaryColor,
+              theme.primaryColor.withOpacity(0.85),
+            ],
+          ),
+        ),
+        child: SafeArea(
+          child: Column(
+            children: [
+              // ✨ 상단 헤더 영역 (그라데이션)
+              _buildHeader(theme),
+              
+              // ✨ 하단 컨텐츠 영역 (둥근 흰색 카드)
+              Expanded(
+                child: Container(
+                  decoration: BoxDecoration(
+                    color: Colors.grey[50],
+                    borderRadius: const BorderRadius.only(
+                      topLeft: Radius.circular(32),
+                      topRight: Radius.circular(32),
+                    ),
                   ),
-                  if (count > 0)
-                    Positioned(
-                      right: 8,
-                      top: 8,
-                      child: Container(
-                        padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 4)),
-                        decoration: const BoxDecoration(
-                          color: Colors.red,
+                  child: _isLoading
+                      ? const LoadingWidget(message: '일정을 불러오는 중...')
+                      : _buildContent(),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// ✨ 상단 헤더 (그라데이션 영역)
+  Widget _buildHeader(ThemeData theme) {
+    return Padding(
+      padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 20)),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // 첫 번째 줄: 뒤로가기 + 제목 + 액션들
+          Row(
+            children: [
+              // 뒤로가기 버튼
+              IconButton(
+                icon: const Icon(Icons.arrow_back, color: Colors.white),
+                onPressed: () => Navigator.pop(context),
+                padding: EdgeInsets.zero,
+                constraints: const BoxConstraints(),
+              ),
+              
+              SizedBox(width: ResponsiveHelper.spacing(context, 12)),
+              
+              // 제목
+              Expanded(
+                child: Text(
+                  '내 스케줄',
+                  style: ResponsiveHelper.titleStyle(context).copyWith(
+                    color: Colors.white,
+                    fontSize: ResponsiveHelper.titleStyle(context).fontSize! * 1.3,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ),
+              
+              // 알림 아이콘 (배지 포함)
+              FutureBuilder<int>(
+                future: _getPendingRequestCount(),
+                builder: (context, snapshot) {
+                  final count = snapshot.data ?? 0;
+                  return Stack(
+                    children: [
+                      Container(
+                        decoration: BoxDecoration(
+                          color: Colors.white.withOpacity(0.2),
                           shape: BoxShape.circle,
                         ),
-                        constraints: BoxConstraints(
-                          minWidth: ResponsiveHelper.spacing(context, 16),
-                          minHeight: ResponsiveHelper.spacing(context, 16),
+                        child: IconButton(
+                          icon: const Icon(Icons.notifications_outlined, color: Colors.white),
+                          onPressed: _showMyRequestsDialog,
+                          tooltip: '내 알림',
                         ),
-                        child: Text(
-                          '$count',
-                          style: ResponsiveHelper.tinyStyle(
-                            context,
-                            color: Colors.white,
-                            fontWeight: FontWeight.bold,
+                      ),
+                      if (count > 0)
+                        Positioned(
+                          right: 8,
+                          top: 8,
+                          child: Container(
+                            padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 4)),
+                            decoration: const BoxDecoration(
+                              color: Colors.red,
+                              shape: BoxShape.circle,
+                            ),
+                            constraints: BoxConstraints(
+                              minWidth: ResponsiveHelper.spacing(context, 18),
+                              minHeight: ResponsiveHelper.spacing(context, 18),
+                            ),
+                            child: Text(
+                              '$count',
+                              style: ResponsiveHelper.tinyStyle(
+                                context,
+                                color: Colors.white,
+                                fontWeight: FontWeight.bold,
+                              ),
+                              textAlign: TextAlign.center,
+                            ),
                           ),
-                          textAlign: TextAlign.center,
                         ),
-                      ),
-                    ),
-                ],
-              );
-            },
-          ),
-          _buildFilterButton(),
-          IconButton(
-            icon: const Icon(Icons.work),
-            onPressed: _showLongTermWorkManagement,
-            tooltip: '고정근무 관리',
-          ),
-          IconButton(
-            icon: const Icon(Icons.refresh),
-            onPressed: _loadApplications,
-          ),
-        ],
-      ),
-      body: _isLoading
-          ? const LoadingWidget(message: '일정을 불러오는 중...')
-          : CustomScrollView(
-              slivers: [
-                // 캘린더
-                SliverToBoxAdapter(
-                  child: ScheduleCalendar(
-                    focusedDay: _focusedDay,
-                    selectedDay: _selectedDay,
-                    applications: _applications,
-                    selectedFilter: _selectedFilter,
-                    onDaySelected: (selectedDay, focusedDay) {
-                      setState(() {
-                        _selectedDay = selectedDay;
-                        _focusedDay = focusedDay;
-                      });
-                    },
-                    onPageChanged: (focusedDay) {
-                      setState(() {
-                        _focusedDay = focusedDay;
-                      });
-                    },
-                  ),
+                    ],
+                  );
+                },
+              ),
+              
+              // 고정근무 관리
+              Container(
+                decoration: BoxDecoration(
+                  color: Colors.white.withOpacity(0.2),
+                  shape: BoxShape.circle,
                 ),
-          
-                
-                // Divider
-                const SliverToBoxAdapter(
-                  child: Divider(height: 1),
+                child: IconButton(
+                  icon: const Icon(Icons.work_outline, color: Colors.white),
+                  onPressed: _showLongTermWorkManagement,
+                  tooltip: '고정근무 관리',
                 ),
-                
-                // 월별 통계
-                SliverToBoxAdapter(
-                  child: MonthlyStatsCard(
-                    applications: _applications,
-                    focusedDay: _focusedDay,
-                  ),
+              ),
+              
+              // 필터 버튼
+              Container(
+                decoration: BoxDecoration(
+                  color: Colors.white.withOpacity(0.2),
+                  shape: BoxShape.circle,
                 ),
-                // 🔥 Legend (범례) 추가 - 반응형
-                SliverToBoxAdapter(
-                  child: LayoutBuilder(
-                    builder: (context, constraints) {
-                      final isSmall = constraints.maxWidth < 400;
-                      final isVerySmall = constraints.maxWidth < 350;
-                      
-                      return Container(
-                        padding: EdgeInsets.symmetric(
-                          vertical: ResponsiveHelper.spacing(context, 8),
-                          horizontal: ResponsiveHelper.spacing(context, 16),
-                        ),
-                        color: Colors.grey[50],
-                        child: Wrap(
-                          alignment: WrapAlignment.center,
-                          spacing: isVerySmall ? 6 : (isSmall ? 8 : 12),
-                          runSpacing: 4,
-                          children: [
-                            _buildLegendItem(Colors.green[600]!, '단기 확정', isLongTerm: false, isSmall: isVerySmall),
-                            _buildLegendItem(Colors.green[400]!, '고정 확정', isLongTerm: true, isSmall: isVerySmall),
-                            _buildLegendItem(Colors.grey[400]!, '휴무일', isLongTerm: true, isSmall: isVerySmall),
-                            _buildLegendItem(Colors.orange[600]!, '단기 대기', isLongTerm: false, isSmall: isVerySmall),
-                            _buildLegendItem(Colors.orange[400]!, '고정 대기', isLongTerm: true, isSmall: isVerySmall),
-                          ],
-                        ),
-                      );
-                    },
-                  ),
-                ),
-
-                
-                // Divider
-                const SliverToBoxAdapter(
-                  child: Divider(height: 1),
-                ),
-                
-                // 선택한 날짜 표시
-                if (_selectedDay != null)
-                  SliverToBoxAdapter(
-                    child: Container(
-                      padding: EdgeInsets.symmetric(
-                        vertical: ResponsiveHelper.spacing(context, 12),
-                        horizontal: ResponsiveHelper.spacing(context, 16),
-                      ),
-                      color: Colors.blue[50],
+                child: PopupMenuButton<String>(
+                  icon: const Icon(Icons.filter_list, color: Colors.white),
+                  onSelected: (value) {
+                    setState(() {
+                      _selectedFilter = value;
+                    });
+                  },
+                  itemBuilder: (context) => [
+                    PopupMenuItem(
+                      value: 'ALL',
                       child: Row(
                         children: [
                           Icon(
-                            Icons.event, 
-                            color: Colors.blue[700], 
-                            size: ResponsiveHelper.iconSize(context, 20)
+                            Icons.list_alt,
+                            color: _selectedFilter == 'ALL' ? theme.primaryColor : Colors.grey,
                           ),
                           SizedBox(width: ResponsiveHelper.spacing(context, 8)),
-                          Text(
-                            DateFormat('yyyy년 M월 d일 (E)', 'ko_KR').format(_selectedDay!),
-                            style: ResponsiveHelper.subtitleStyle(
-                              context,
-                              color: Colors.blue[900],
-                            ),
-                          ),
+                          const Text('전체 보기'),
                         ],
                       ),
                     ),
-                  ),
-                
-                // Divider
-                const SliverToBoxAdapter(
-                  child: Divider(height: 1),
+                    PopupMenuItem(
+                      value: 'CONFIRMED',
+                      child: Row(
+                        children: [
+                          Icon(
+                            Icons.check_circle,
+                            color: _selectedFilter == 'CONFIRMED' ? Colors.green : Colors.grey,
+                          ),
+                          SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+                          const Text('확정만 보기'),
+                        ],
+                      ),
+                    ),
+                    PopupMenuItem(
+                      value: 'PENDING',
+                      child: Row(
+                        children: [
+                          Icon(
+                            Icons.schedule,
+                            color: _selectedFilter == 'PENDING' ? Colors.orange : Colors.grey,
+                          ),
+                          SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+                          const Text('대기만 보기'),
+                        ],
+                      ),
+                    ),
+                  ],
                 ),
-                
-                // 일정 리스트
-                _buildSliverScheduleList(),
+              ),
+              
+              // 새로고침
+              Container(
+                decoration: BoxDecoration(
+                  color: Colors.white.withOpacity(0.2),
+                  shape: BoxShape.circle,
+                ),
+                child: IconButton(
+                  icon: const Icon(Icons.refresh, color: Colors.white),
+                  onPressed: _loadApplications,
+                  tooltip: '새로고침',
+                ),
+              ),
+            ],
+          ),
+          
+          SizedBox(height: ResponsiveHelper.spacing(context, 8)),
+          
+          // 두 번째 줄: 현재 월 표시
+          Text(
+            DateFormat('yyyy년 M월', 'ko_KR').format(_focusedDay),
+            style: ResponsiveHelper.bodyStyle(
+              context,
+              color: Colors.white.withOpacity(0.9),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// ✨ 컨텐츠 영역 (스크롤 가능)
+  Widget _buildContent() {
+    return CustomScrollView(
+      slivers: [
+        // 캘린더
+        SliverToBoxAdapter(
+          child: Container(
+            margin: EdgeInsets.all(ResponsiveHelper.spacing(context, 16)),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(20),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withOpacity(0.05),
+                  blurRadius: 10,
+                  offset: const Offset(0, 4),
+                ),
               ],
             ),
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(20),
+              child: ScheduleCalendar(
+                focusedDay: _focusedDay,
+                selectedDay: _selectedDay,
+                applications: _applications,
+                selectedFilter: _selectedFilter,
+                onDaySelected: (selectedDay, focusedDay) {
+                  setState(() {
+                    _selectedDay = selectedDay;
+                    _focusedDay = focusedDay;
+                  });
+                },
+                onPageChanged: (focusedDay) {
+                  setState(() {
+                    _focusedDay = focusedDay;
+                  });
+                },
+              ),
+            ),
+          ),
+        ),
+        
+        // 월별 통계 카드
+        SliverToBoxAdapter(
+          child: Container(
+            margin: EdgeInsets.symmetric(
+              horizontal: ResponsiveHelper.spacing(context, 16),
+              vertical: ResponsiveHelper.spacing(context, 8),
+            ),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(20),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withOpacity(0.05),
+                  blurRadius: 10,
+                  offset: const Offset(0, 4),
+                ),
+              ],
+            ),
+            child: MonthlyStatsCard(
+              applications: _applications,
+              focusedDay: _focusedDay,
+            ),
+          ),
+        ),
+        
+        // 범례 (Legend)
+        SliverToBoxAdapter(
+          child: Container(
+            margin: EdgeInsets.symmetric(
+              horizontal: ResponsiveHelper.spacing(context, 16),
+              vertical: ResponsiveHelper.spacing(context, 8),
+            ),
+            padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 12)),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(16),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withOpacity(0.03),
+                  blurRadius: 6,
+                  offset: const Offset(0, 2),
+                ),
+              ],
+            ),
+            child: LayoutBuilder(
+              builder: (context, constraints) {
+                final isSmall = constraints.maxWidth < 400;
+                final isVerySmall = constraints.maxWidth < 350;
+                
+                return Wrap(
+                  alignment: WrapAlignment.center,
+                  spacing: isVerySmall ? 6 : (isSmall ? 8 : 12),
+                  runSpacing: 4,
+                  children: [
+                    _buildLegendItem(Colors.green[600]!, '단기 확정', isLongTerm: false, isSmall: isVerySmall),
+                    _buildLegendItem(Colors.green[400]!, '고정 확정', isLongTerm: true, isSmall: isVerySmall),
+                    _buildLegendItem(Colors.grey[400]!, '휴무일', isLongTerm: true, isSmall: isVerySmall),
+                    _buildLegendItem(Colors.orange[600]!, '단기 대기', isLongTerm: false, isSmall: isVerySmall),
+                    _buildLegendItem(Colors.orange[400]!, '고정 대기', isLongTerm: true, isSmall: isVerySmall),
+                  ],
+                );
+              },
+            ),
+          ),
+        ),
+        
+        // 선택한 날짜 헤더
+        if (_selectedDay != null)
+          SliverToBoxAdapter(
+            child: Container(
+              margin: EdgeInsets.only(
+                left: ResponsiveHelper.spacing(context, 16),
+                right: ResponsiveHelper.spacing(context, 16),
+                top: ResponsiveHelper.spacing(context, 8),
+              ),
+              padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 12)),
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  colors: [
+                    Theme.of(context).primaryColor.withOpacity(0.1),
+                    Theme.of(context).primaryColor.withOpacity(0.05),
+                  ],
+                ),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Row(
+                children: [
+                  Icon(
+                    Icons.event,
+                    color: Theme.of(context).primaryColor,
+                    size: ResponsiveHelper.iconSize(context, 20),
+                  ),
+                  SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+                  Text(
+                    DateFormat('yyyy년 M월 d일 (E)', 'ko_KR').format(_selectedDay!),
+                    style: ResponsiveHelper.subtitleStyle(
+                      context,
+                      color: Theme.of(context).primaryColor,
+                    ).copyWith(fontWeight: FontWeight.bold),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        
+        // 일정 리스트
+        _buildSliverScheduleList(),
+        
+        // 하단 여백
+        SliverToBoxAdapter(
+          child: SizedBox(height: ResponsiveHelper.spacing(context, 16)),
+        ),
+      ],
     );
   }
 
@@ -261,9 +466,9 @@ class _MyScheduleScreenState extends State<MyScheduleScreen> {
               mainAxisSize: MainAxisSize.min,
               children: [
                 Icon(
-                  Icons.touch_app, 
-                  size: ResponsiveHelper.iconSize(context, 64), 
-                  color: Colors.grey[400]
+                  Icons.touch_app,
+                  size: ResponsiveHelper.iconSize(context, 64),
+                  color: Colors.grey[400],
                 ),
                 SizedBox(height: ResponsiveHelper.spacing(context, 16)),
                 Text(
@@ -307,9 +512,9 @@ class _MyScheduleScreenState extends State<MyScheduleScreen> {
               mainAxisSize: MainAxisSize.min,
               children: [
                 Icon(
-                  Icons.event_busy, 
-                  size: ResponsiveHelper.iconSize(context, 64), 
-                  color: Colors.grey[400]
+                  Icons.event_busy,
+                  size: ResponsiveHelper.iconSize(context, 64),
+                  color: Colors.grey[400],
                 ),
                 SizedBox(height: ResponsiveHelper.spacing(context, 16)),
                 Text(
@@ -344,7 +549,10 @@ class _MyScheduleScreenState extends State<MyScheduleScreen> {
     });
     
     return SliverPadding(
-      padding: ResponsiveHelper.cardPadding(context),
+      padding: EdgeInsets.symmetric(
+        horizontal: ResponsiveHelper.spacing(context, 16),
+        vertical: ResponsiveHelper.spacing(context, 8),
+      ),
       sliver: SliverList(
         delegate: SliverChildBuilderDelegate(
           (context, index) {
@@ -377,59 +585,6 @@ class _MyScheduleScreenState extends State<MyScheduleScreen> {
         return 6;
     }
   }
-  
-  /// 필터 버튼
-  Widget _buildFilterButton() {
-    return PopupMenuButton<String>(
-      icon: const Icon(Icons.filter_list),
-      onSelected: (value) {
-        setState(() {
-          _selectedFilter = value;
-        });
-      },
-      itemBuilder: (context) => [
-        PopupMenuItem(
-          value: 'ALL',
-          child: Row(
-            children: [
-              Icon(
-                Icons.list_alt,
-                color: _selectedFilter == 'ALL' ? Colors.blue : Colors.grey,
-              ),
-              SizedBox(width: ResponsiveHelper.spacing(context, 8)),
-              const Text('전체 보기'),
-            ],
-          ),
-        ),
-        PopupMenuItem(
-          value: 'CONFIRMED',
-          child: Row(
-            children: [
-              Icon(
-                Icons.check_circle,
-                color: _selectedFilter == 'CONFIRMED' ? Colors.green : Colors.grey,
-              ),
-              SizedBox(width: ResponsiveHelper.spacing(context, 8)),
-              const Text('확정만 보기'),
-            ],
-          ),
-        ),
-        PopupMenuItem(
-          value: 'PENDING',
-          child: Row(
-            children: [
-              Icon(
-                Icons.schedule,
-                color: _selectedFilter == 'PENDING' ? Colors.orange : Colors.grey,
-              ),
-              SizedBox(width: ResponsiveHelper.spacing(context, 8)),
-              const Text('대기만 보기'),
-            ],
-          ),
-        ),
-      ],
-    );
-  }
 
   /// Legend 아이템
   Widget _buildLegendItem(Color color, String label, {required bool isLongTerm, bool isSmall = false}) {
@@ -450,7 +605,10 @@ class _MyScheduleScreenState extends State<MyScheduleScreen> {
         SizedBox(width: isSmall ? 3 : 4),
         Text(
           label,
-          style: TextStyle(fontSize: isSmall ? 9 : 11),
+          style: TextStyle(
+            fontSize: isSmall ? 9 : 11,
+            color: Colors.grey[700],
+          ),
         ),
       ],
     );
@@ -469,7 +627,7 @@ class _MyScheduleScreenState extends State<MyScheduleScreen> {
     );
   }
 
-  /// ⭐ 대기중인 요청 개수 조회
+  /// 대기중인 요청 개수 조회
   Future<int> _getPendingRequestCount() async {
     final userProvider = context.read<UserProvider>();
     final uid = userProvider.currentUser?.uid;
@@ -489,7 +647,7 @@ class _MyScheduleScreenState extends State<MyScheduleScreen> {
     }
   }
 
-  /// ⭐ 내 요청 목록 다이얼로그
+  /// 내 요청 목록 다이얼로그
   Future<void> _showMyRequestsDialog() async {
     final userProvider = context.read<UserProvider>();
     final uid = userProvider.currentUser?.uid;

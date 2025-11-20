@@ -344,8 +344,8 @@ class _WorkforceCalendarViewState extends State<WorkforceCalendarView> {
       focusedDay: _focusedDay,
       calendarFormat: CalendarFormat.month,
       
-      daysOfWeekHeight: 40,
-      rowHeight: 48,
+      daysOfWeekHeight: 30,
+      rowHeight: 40,
 
       selectedDayPredicate: (day) => DateUtils.isSameDay(_selectedDay, day),
       
@@ -387,7 +387,7 @@ class _WorkforceCalendarViewState extends State<WorkforceCalendarView> {
           final Color longColor = isPastOrClosed ? Colors.grey[400]! : Colors.amber[700]!;
 
           return Positioned(
-            bottom: 4,
+            bottom: 3,
             child: Row(
               mainAxisSize: MainAxisSize.min,
               children: [
@@ -427,9 +427,11 @@ class _WorkforceCalendarViewState extends State<WorkforceCalendarView> {
         ),
       ),
 
-      headerStyle: const HeaderStyle(
+      headerStyle: HeaderStyle(
         formatButtonVisible: false,
         titleCentered: true,
+        titleTextStyle: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+        headerPadding: EdgeInsets.symmetric(vertical: 8),
       ),
     );
   }

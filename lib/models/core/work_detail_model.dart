@@ -9,6 +9,7 @@ class WorkDetailModel {
   final String workTypeColor; // 업무 색상 (예: "#FF5733")
   final String? workTypeBackgroundColor;
   final int wage; // 시급 또는 일급 (원)
+  final String wageType;
   final int requiredCount; // 필요 인원
   final int currentCount; // 현재 확정된 인원
   final String startTime; // 시작 시간 (예: "09:00")
@@ -36,6 +37,7 @@ class WorkDetailModel {
     this.workTypeColor = '#2196F3',
     this.workTypeBackgroundColor,
     required this.wage,
+    this.wageType = 'hourly',
     required this.requiredCount,
     this.currentCount = 0,
     required this.startTime,
@@ -96,6 +98,7 @@ class WorkDetailModel {
       'workTypeColor': workTypeColor,
       'workTypeBackgroundColor': workTypeBackgroundColor,
       'wage': wage,
+      'wageType': wageType,
       'requiredCount': requiredCount,
       'currentCount': currentCount,
       'startTime': startTime,
@@ -126,6 +129,7 @@ class WorkDetailModel {
     String? workTypeColor,
     String? workTypeBackgroundColor,
     int? wage,
+    String? wageType,
     int? requiredCount,
     int? currentCount,
     String? startTime,
@@ -148,6 +152,7 @@ class WorkDetailModel {
       workTypeColor: workTypeColor ?? this.workTypeColor,
       workTypeBackgroundColor: workTypeBackgroundColor ?? this.workTypeBackgroundColor,
       wage: wage ?? this.wage,
+      wageType: wageType ?? this.wageType,
       requiredCount: requiredCount ?? this.requiredCount,
       currentCount: currentCount ?? this.currentCount,
       startTime: startTime ?? this.startTime,
@@ -180,6 +185,19 @@ class WorkDetailModel {
       RegExp(r'(\d{1,3})(?=(\d{3})+(?!\d))'),
       (Match m) => '${m[1]},',
     )}원';
+  }
+  /// ⭐ 추가! 급여 타입 라벨 (예: "시급")
+  String get wageTypeLabel {
+    switch (wageType) {
+      case 'hourly':
+        return '시급';
+      case 'daily':
+        return '일급';
+      case 'monthly':
+        return '월급';
+      default:
+        return '급여';
+    }
   }
 
   /// 인원 정보 문자열 (예: "3/5명")

@@ -36,6 +36,7 @@ class WorkDetailInput {
       'workTypeColor': workTypeColor,
       'workTypeBackgroundColor': workTypeBackgroundColor, // ✅ 추가
       'wage': wage!,
+      'wageType': wageType,
       'requiredCount': requiredCount!,
       'startTime': startTime!,
       'endTime': endTime!,

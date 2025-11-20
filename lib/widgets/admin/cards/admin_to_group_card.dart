@@ -26,7 +26,7 @@ import '../../../screens/business_admin/dialogs/to_list_dialogs.dart';
 import 'admin_to_item_card.dart';
 import 'admin_work_detail.dart';
 
-/// TO 그룹 카드 (그룹 TO 또는 단일 TO)
+/// ✨ TO 그룹 카드 (세련된 디자인 - 최종)
 class TOGroupCard extends StatefulWidget {
   final TOGroupItem groupItem;
   final FirestoreService firestoreService;
@@ -60,6 +60,7 @@ class _TOGroupCardState extends State<TOGroupCard> {
   Widget build(BuildContext context) {
     final masterTO = widget.groupItem.masterTO;
     final dateFormat = DateFormat('MM/dd (E)', 'ko_KR');
+    final theme = Theme.of(context);
     
     // 전체 통계 계산
     int totalConfirmed = 0;
@@ -81,439 +82,648 @@ class _TOGroupCardState extends State<TOGroupCard> {
       });
     });
 
-    return Card(
-      elevation: widget.isExpanded ? 4 : 2,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(12),
-        side: BorderSide(
-          color: widget.isExpanded 
-              ? Theme.of(context).primaryColor
-              : (isFull ? Colors.green[200]! : Colors.grey[200]!),
-          width: widget.isExpanded ? 2 : (isFull ? 2 : 1),
-        ),
+    return Container(
+      margin: EdgeInsets.only(
+        bottom: ResponsiveHelper.spacing(context, 12),
       ),
-      child: Column(
-        children: [
-          // 헤더 (클릭 가능)
-          InkWell(
-            onTap: widget.onToggleExpand,
-            child: Padding(
-              padding: ResponsiveHelper.cardPadding(context),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  // 첫 줄: 사업장 + 근무유형 + 상태
-                  Row(
-                    children: [
-                      // 사업장명
-                      Container(
-                        padding: EdgeInsets.symmetric(
-                          horizontal: ResponsiveHelper.spacing(context, 10),
-                          vertical: ResponsiveHelper.spacing(context, 5),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(20),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.08),  // ✅ 0.05 → 0.08
+            blurRadius: 12,  // ✅ 10 → 12
+            offset: const Offset(0, 2),
+            spreadRadius: 1,  // ✅ 추가!
+          ),
+        ],
+        // ✨ 펼쳐진 경우 또는 인원 충족 시 테두리 강조
+        border: widget.isExpanded
+            ? Border.all(color: theme.primaryColor, width: 2)
+            : isFull
+                ? Border.all(color: Colors.green[300]!, width: 2)
+                : null,
+      ),
+      child: Material(
+        color: Colors.transparent,
+        child: Column(
+          children: [
+            // ✨ 헤더 (클릭 가능)
+            InkWell(
+              onTap: widget.onToggleExpand,
+              borderRadius: const BorderRadius.only(
+                topLeft: Radius.circular(20),
+                topRight: Radius.circular(20),
+              ),
+              child: Container(
+                // ✨ 펼쳐진 경우 은은한 그라데이션
+                decoration: widget.isExpanded
+                    ? BoxDecoration(
+                        gradient: LinearGradient(
+                          colors: [
+                            theme.primaryColor.withOpacity(0.05),
+                            Colors.white,
+                          ],
+                          begin: Alignment.topLeft,
+                          end: Alignment.bottomRight,
                         ),
+                        borderRadius: const BorderRadius.only(
+                          topLeft: Radius.circular(20),
+                          topRight: Radius.circular(20),
+                        ),
+                      )
+                    : null,
+                child: Padding(
+                  padding: ResponsiveHelper.cardPadding(context),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      // ✨ 첫 줄: 사업장 + 장기/단기 배지
+                      Row(
+                        children: [
+                          // 사업장명 (아이콘 + 배경)
+                          Expanded(
+                            child: Row(
+                              children: [
+                                Container(
+                                  padding: EdgeInsets.all(
+                                    ResponsiveHelper.spacing(context, 8),
+                                  ),
+                                  decoration: BoxDecoration(
+                                    gradient: LinearGradient(
+                                      colors: [
+                                        theme.primaryColor,
+                                        theme.primaryColor.withOpacity(0.85),
+                                      ],
+                                    ),
+                                    borderRadius: BorderRadius.circular(10),
+                                  ),
+                                  child: Icon(
+                                    Icons.business,
+                                    size: ResponsiveHelper.iconSize(context, 18),
+                                    color: Colors.white,
+                                  ),
+                                ),
+                                SizedBox(width: ResponsiveHelper.spacing(context, 10)),
+                                Expanded(
+                                  child: Text(
+                                    masterTO.businessName,
+                                    style: ResponsiveHelper.subtitleStyle(context).copyWith(
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                          
+                          SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+                          
+                          // ✅ 장기/단기 배지
+                          Container(
+                            padding: EdgeInsets.symmetric(
+                              horizontal: ResponsiveHelper.spacing(context, 10),
+                              vertical: ResponsiveHelper.spacing(context, 6),
+                            ),
+                            decoration: BoxDecoration(
+                              gradient: LinearGradient(
+                                colors: masterTO.isLongTerm
+                                    ? [Colors.purple[100]!, Colors.purple[50]!]
+                                    : [Colors.blue[100]!, Colors.blue[50]!],
+                              ),
+                              borderRadius: BorderRadius.circular(10),
+                              border: Border.all(
+                                color: masterTO.isLongTerm
+                                    ? Colors.purple[300]!
+                                    : Colors.blue[300]!,
+                                width: 1.5,
+                              ),
+                            ),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Icon(
+                                  masterTO.isLongTerm ? Icons.calendar_month : Icons.today,
+                                  size: ResponsiveHelper.iconSize(context, 14),
+                                  color: masterTO.isLongTerm
+                                      ? Colors.purple[700]
+                                      : Colors.blue[700],
+                                ),
+                                SizedBox(width: ResponsiveHelper.spacing(context, 4)),
+                                Text(
+                                  masterTO.jobTypeLabel,
+                                  style: ResponsiveHelper.smallStyle(
+                                    context,
+                                    fontWeight: FontWeight.bold,
+                                    color: masterTO.isLongTerm
+                                        ? Colors.purple[700]
+                                        : Colors.blue[700],
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ),
+                      
+                      SizedBox(height: ResponsiveHelper.spacing(context, 12)),
+                      
+                      // ✨ 둘째 줄: 그룹명/단일공고 + 메뉴만!
+                      Row(
+                        children: [
+                          // 그룹명 또는 단일공고
+                          Expanded(
+                            child: masterTO.groupName != null
+                                ? _buildGroupNameBadge(context, masterTO.groupName!)
+                                : _buildSingleTOBadge(context),
+                          ),
+                          
+                          SizedBox(width: ResponsiveHelper.spacing(context, 4)),
+                          
+                          // 메뉴 버튼
+                          Container(
+                            decoration: BoxDecoration(
+                              color: theme.primaryColor.withOpacity(0.1),
+                              shape: BoxShape.circle,
+                            ),
+                            child: widget.groupItem.isGrouped
+                                ? _buildGroupTOMenu(context)
+                                : _buildSingleTOMenu(context),
+                          ),
+                        ],
+                      ),
+                      
+                      // 단일 TO 제목
+                      if (masterTO.groupName == null) ...[
+                        SizedBox(height: ResponsiveHelper.spacing(context, 12)),
+                        Text(
+                          masterTO.title,
+                          style: ResponsiveHelper.subtitleStyle(context).copyWith(
+                            fontWeight: FontWeight.bold,
+                            color: Colors.grey[900],
+                          ),
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ],
+
+                      SizedBox(height: ResponsiveHelper.spacing(context, 16)),
+                      
+                      // ✨ 날짜 및 시간 정보 섹션
+                      Container(
+                        padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 12)),
                         decoration: BoxDecoration(
-                          color: Theme.of(context).primaryColor,
-                          borderRadius: BorderRadius.circular(6),
+                          color: Colors.grey[50],
+                          borderRadius: BorderRadius.circular(12),
                         ),
                         child: Row(
-                          mainAxisSize: MainAxisSize.min,
                           children: [
-                            Icon(
-                              Icons.business,
-                              size: ResponsiveHelper.iconSize(context, 14),
-                              color: Colors.white,
-                            ),
-                            SizedBox(width: ResponsiveHelper.spacing(context, 6)),
-                            Text(
-                              masterTO.businessName,
-                              style: ResponsiveHelper.smallStyle(
-                                context,
-                                color: Colors.white,
-                                fontWeight: FontWeight.bold,
+                            Container(
+                              padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 6)),
+                              decoration: BoxDecoration(
+                                color: Colors.blue[100],
+                                borderRadius: BorderRadius.circular(8),
                               ),
-                              overflow: TextOverflow.ellipsis,
-                            ),
-                          ],
-                        ),
-                      ),
-                      SizedBox(width: ResponsiveHelper.spacing(context, 8)),
-                      // 장기/단기 배지
-                      Container(
-                        padding: EdgeInsets.symmetric(
-                          horizontal: ResponsiveHelper.spacing(context, 8),
-                          vertical: ResponsiveHelper.spacing(context, 4),
-                        ),
-                        decoration: BoxDecoration(
-                          color: masterTO.isLongTerm ? Colors.purple[50] : Colors.blue[50],
-                          borderRadius: BorderRadius.circular(6),
-                          border: Border.all(
-                            color: masterTO.isLongTerm ? Colors.purple[300]! : Colors.blue[300]!,
-                          ),
-                        ),
-                        child: Text(
-                          masterTO.jobTypeLabel,
-                          style: ResponsiveHelper.smallStyle(
-                            context,
-                            fontWeight: FontWeight.bold,
-                            color: masterTO.isLongTerm ? Colors.purple[700] : Colors.blue[700],
-                          ),
-                        ),
-                      ),
-                      const Spacer(),
-                      // 상태 배지
-                      _buildStatusBadge(context, isFull),
-                    ],
-                  ),
-                  SizedBox(height: ResponsiveHelper.spacing(context, 10)),
-                  
-                  // 둘째 줄: 그룹명/단일공고 + 메뉴
-                  Row(
-                    children: [
-                      // 그룹명 또는 단일공고 배지
-                      if (masterTO.groupName != null) ...[
-                        Container(
-                          padding: EdgeInsets.symmetric(
-                            horizontal: ResponsiveHelper.spacing(context, 10),
-                            vertical: ResponsiveHelper.spacing(context, 6),
-                          ),
-                          decoration: BoxDecoration(
-                            color: Colors.green[50],
-                            borderRadius: BorderRadius.circular(8),
-                            border: Border.all(color: Colors.green[300]!, width: 1.5),
-                          ),
-                          child: Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Icon(
-                                Icons.folder_open,
-                                size: ResponsiveHelper.iconSize(context, 16),
-                                color: Colors.green[700],
-                              ),
-                              SizedBox(width: ResponsiveHelper.spacing(context, 6)),
-                              Text(
-                                masterTO.groupName!,
-                                style: ResponsiveHelper.bodyStyle(
-                                  context,
-                                  color: Colors.green[800],
-                                ).copyWith(fontWeight: FontWeight.bold),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ] else ...[
-                        Container(
-                          padding: EdgeInsets.symmetric(
-                            horizontal: ResponsiveHelper.spacing(context, 10),
-                            vertical: ResponsiveHelper.spacing(context, 6),
-                          ),
-                          decoration: BoxDecoration(
-                            color: Colors.blue[50],
-                            borderRadius: BorderRadius.circular(8),
-                            border: Border.all(color: Colors.blue[300]!, width: 1.5),
-                          ),
-                          child: Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Icon(
-                                Icons.work_outline,
+                              child: Icon(
+                                Icons.calendar_today,
                                 size: ResponsiveHelper.iconSize(context, 16),
                                 color: Colors.blue[700],
                               ),
-                              SizedBox(width: ResponsiveHelper.spacing(context, 6)),
-                              Text(
-                                '단일 공고',
-                                style: ResponsiveHelper.smallStyle(
-                                  context,
-                                  color: Colors.blue[800],
-                                  fontWeight: FontWeight.bold,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ],
-                      const Spacer(),  // ⭐ 이 줄 추가!
-                      // ⭐ 더보기 메뉴 추가!
-                      if (widget.groupItem.isGrouped)
-                        _buildGroupTOMenu(context)
-                      else
-                        _buildSingleTOMenu(context),
-                    ],
-                  ),
-                  
-                  // 단일 TO 제목
-                  if (masterTO.groupName == null) ...[
-                    SizedBox(height: ResponsiveHelper.spacing(context, 8)),
-                    Text(
-                      masterTO.title,
-                      style: ResponsiveHelper.subtitleStyle(context),
-                    ),
-                  ],
-
-                  SizedBox(height: ResponsiveHelper.spacing(context, 12)),
-                  
-                  // 날짜 및 시간 정보
-                  Row(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Icon(
-                        Icons.calendar_today,
-                        size: ResponsiveHelper.iconSize(context, 16),
-                        color: Colors.grey[600],
-                      ),
-                      SizedBox(width: ResponsiveHelper.spacing(context, 6)),
-                      Expanded(
-                        child: masterTO.isLongTerm
-                          ? Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(
-                                  masterTO.longTermPeriodWithDays,
-                                  style: ResponsiveHelper.bodyStyle(context).copyWith(
-                                    color: Colors.grey[700],
-                                  ),
-                                ),
-                                if (masterTO.workDays != null && masterTO.workDays!.isNotEmpty) ...[
-                                  SizedBox(height: ResponsiveHelper.spacing(context, 2)),
-                                  Text(
-                                    masterTO.workDaysLabel,
-                                    style: ResponsiveHelper.smallStyle(
-                                      context,
-                                      color: Colors.grey[600],
+                            ),
+                            SizedBox(width: ResponsiveHelper.spacing(context, 12)),
+                            Expanded(
+                              child: masterTO.isLongTerm
+                                  ? Column(
+                                      crossAxisAlignment: CrossAxisAlignment.start,
+                                      children: [
+                                        Text(
+                                          masterTO.longTermPeriodWithDays,
+                                          style: ResponsiveHelper.bodyStyle(context).copyWith(
+                                            fontWeight: FontWeight.w600,
+                                          ),
+                                        ),
+                                        if (masterTO.workDays != null &&
+                                            masterTO.workDays!.isNotEmpty) ...[
+                                          SizedBox(height: ResponsiveHelper.spacing(context, 4)),
+                                          Text(
+                                            masterTO.workDaysLabel,
+                                            style: ResponsiveHelper.smallStyle(
+                                              context,
+                                              color: Colors.grey[600],
+                                            ),
+                                          ),
+                                        ],
+                                      ],
+                                    )
+                                  : Text(
+                                      widget.groupItem.isGrouped
+                                          ? '${dateFormat.format(masterTO.date)} 외 ${widget.groupItem.groupTOs.length - 1}일'
+                                          : dateFormat.format(masterTO.date),
+                                      style: ResponsiveHelper.bodyStyle(context).copyWith(
+                                        fontWeight: FontWeight.w600,
+                                      ),
                                     ),
-                                  ),
-                                ],
-                              ],
-                            )
-                          : Text(
-                              widget.groupItem.isGrouped
-                                  ? '${dateFormat.format(masterTO.date)} 외 ${widget.groupItem.groupTOs.length - 1}일'
-                                  : dateFormat.format(masterTO.date),
-                              style: ResponsiveHelper.bodyStyle(context).copyWith(
-                                color: Colors.grey[700],
-                              ),
                             ),
-                      ),
-                      // 단일 TO인 경우 마감시간
-                      if (!widget.groupItem.isGrouped) ...[
-                        SizedBox(width: ResponsiveHelper.spacing(context, 8)),
-                        _buildDeadlineBadge(context, masterTO),
-                      ],
-                    ],
-                  ),
-
-                  SizedBox(height: ResponsiveHelper.spacing(context, 12)),
-
-                  // 통계
-                  Row(
-                    children: [  
-                      Container(
-                        padding: EdgeInsets.symmetric(
-                          horizontal: ResponsiveHelper.spacing(context, 8),
-                          vertical: ResponsiveHelper.spacing(context, 4),
-                        ),
-                        decoration: BoxDecoration(
-                          color: isFull 
-                            ? Colors.green[50] 
-                            : Theme.of(context).primaryColor.withOpacity(0.1),
-                          borderRadius: BorderRadius.circular(12),
-                          border: Border.all(
-                            color: isFull 
-                              ? Colors.green[200]! 
-                              : Theme.of(context).primaryColor.withOpacity(0.3),
-                          ),
-                        ),
-                        child: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Text(
-                              '👥',
-                              style: ResponsiveHelper.tinyStyle(context),
-                            ),
-                            SizedBox(width: ResponsiveHelper.spacing(context, 4)),
-                            Text(
-                              '확정 $totalConfirmed/$totalRequired명',
-                              style: ResponsiveHelper.tinyStyle(
-                                context,
-                                color: isFull 
-                                  ? Colors.green[700] 
-                                  : Theme.of(context).primaryColor,
-                                fontWeight: FontWeight.bold,
-                              ),
-                            ),
+                            // 단일 TO인 경우 마감시간
+                            if (!widget.groupItem.isGrouped)
+                              _buildDeadlineBadge(context, masterTO),
                           ],
                         ),
                       ),
-                      SizedBox(width: ResponsiveHelper.spacing(context, 8)),
-                      if (totalPending > 0)
-                        Container(
-                          padding: EdgeInsets.symmetric(
-                            horizontal: ResponsiveHelper.spacing(context, 8),
-                            vertical: ResponsiveHelper.spacing(context, 4),
-                          ),
-                          decoration: BoxDecoration(
-                            color: Colors.orange[50],
-                            borderRadius: BorderRadius.circular(12),
-                            border: Border.all(color: Colors.orange[200]!),
-                          ),
-                          child: Row(
+
+                      SizedBox(height: ResponsiveHelper.spacing(context, 16)),
+
+                      // ✅ 통계 섹션 + 상태 배지
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,  // ✅ 추가!
+                        children: [
+                          // 왼쪽 그룹: 확정 + 대기
+                          Row(
                             mainAxisSize: MainAxisSize.min,
                             children: [
-                              Text(
-                                '⏳',
-                                style: ResponsiveHelper.tinyStyle(context),
-                              ),
-                              SizedBox(width: ResponsiveHelper.spacing(context, 4)),
-                              Text(
-                                '대기 $totalPending명',
-                                style: ResponsiveHelper.tinyStyle(
-                                  context,
-                                  color: Colors.orange[700],
-                                  fontWeight: FontWeight.bold,
+                              // 확정 인원
+                              Container(
+                                padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 10)),
+                                decoration: BoxDecoration(
+                                  gradient: LinearGradient(
+                                    colors: isFull
+                                        ? [Colors.green[50]!, Colors.green[50]!.withOpacity(0.3)]
+                                        : [
+                                            theme.primaryColor.withOpacity(0.1),
+                                            theme.primaryColor.withOpacity(0.05)
+                                          ],
+                                  ),
+                                  borderRadius: BorderRadius.circular(12),
+                                  border: Border.all(
+                                    color: isFull
+                                        ? Colors.green[300]!
+                                        : theme.primaryColor.withOpacity(0.3),
+                                    width: 1.5,
+                                  ),
+                                ),
+                                child: Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    Icon(
+                                      Icons.people,
+                                      size: ResponsiveHelper.iconSize(context, 16),
+                                      color: isFull ? Colors.green[700] : theme.primaryColor,
+                                    ),
+                                    SizedBox(width: ResponsiveHelper.spacing(context, 6)),
+                                    Text(
+                                      '확정 ',
+                                      style: ResponsiveHelper.smallStyle(
+                                        context,
+                                        color: isFull ? Colors.green[700] : theme.primaryColor,
+                                      ),
+                                    ),
+                                    Text(
+                                      '$totalConfirmed/$totalRequired',
+                                      style: ResponsiveHelper.bodyStyle(
+                                        context,
+                                        color: isFull ? Colors.green[700] : theme.primaryColor,
+                                      ).copyWith(fontWeight: FontWeight.bold),
+                                    ),
+                                  ],
                                 ),
                               ),
+                              
+                              if (totalPending > 0) ...[
+                                SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+                                // 대기 인원
+                                Container(
+                                  padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 10)),
+                                  decoration: BoxDecoration(
+                                    gradient: LinearGradient(
+                                      colors: [
+                                        Colors.orange[50]!,
+                                        Colors.orange[50]!.withOpacity(0.3)
+                                      ],
+                                    ),
+                                    borderRadius: BorderRadius.circular(12),
+                                    border: Border.all(
+                                      color: Colors.orange[300]!,
+                                      width: 1.5,
+                                    ),
+                                  ),
+                                  child: Row(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      Icon(
+                                        Icons.schedule,
+                                        size: ResponsiveHelper.iconSize(context, 16),
+                                        color: Colors.orange[700],
+                                      ),
+                                      SizedBox(width: ResponsiveHelper.spacing(context, 6)),
+                                      Text(
+                                        '대기 ',
+                                        style: ResponsiveHelper.smallStyle(
+                                          context,
+                                          color: Colors.orange[700],
+                                        ),
+                                      ),
+                                      Text(
+                                        '$totalPending',
+                                        style: ResponsiveHelper.bodyStyle(
+                                          context,
+                                          color: Colors.orange[700],
+                                        ).copyWith(fontWeight: FontWeight.bold),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ],
                             ],
                           ),
-                        ),
-                      const Spacer()
+                          
+                          // 오른쪽: 상태 배지
+                          _buildStatusBadge(context, isFull),
+                        ],
+                      ),
                     ],
                   ),
-                ],
+                ),
               ),
+            ),
+            
+            // 펼쳐진 경우: 그룹 TO 목록
+            if (widget.isExpanded && widget.groupItem.isGrouped) ...[
+              Divider(height: 1, color: Colors.grey[200]),
+              Padding(
+                padding: ResponsiveHelper.cardPadding(context),
+                child: Column(
+                  children: widget.groupItem.groupTOs.map((toItem) {
+                    return TOItemCard(
+                      toItem: toItem,
+                      groupItem: widget.groupItem,
+                      firestoreService: widget.firestoreService,
+                      dialogs: widget.dialogs,
+                      onChanged: widget.onChanged,
+                      isExpanded: widget.expandedTOs.contains(toItem.to.id),
+                      onToggleExpand: () => widget.onToggleTOExpand(toItem.to.id),
+                    );
+                  }).toList(),
+                ),
+              ),
+            ],
+            
+            // 펼쳐진 경우: 단일 TO 업무 상세
+            if (widget.isExpanded && !widget.groupItem.isGrouped) ...[
+              Divider(height: 1, color: Colors.grey[200]),
+              Container(
+                padding: ResponsiveHelper.cardPadding(context),
+                decoration: BoxDecoration(
+                  color: Colors.grey[50],
+                  borderRadius: const BorderRadius.only(
+                    bottomLeft: Radius.circular(20),
+                    bottomRight: Radius.circular(20),
+                  ),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Container(
+                          padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 6)),
+                          decoration: BoxDecoration(
+                            color: theme.primaryColor.withOpacity(0.1),
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          child: Icon(
+                            Icons.assignment,
+                            size: ResponsiveHelper.iconSize(context, 16),
+                            color: theme.primaryColor,
+                          ),
+                        ),
+                        SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+                        Text(
+                          '업무 상세',
+                          style: ResponsiveHelper.subtitleStyle(context).copyWith(
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ],
+                    ),
+                    SizedBox(height: ResponsiveHelper.spacing(context, 12)),
+                    ...widget.groupItem.groupTOs.first.workDetails.map((work) {
+                      final stats =
+                          widget.groupItem.groupTOs.first.workDetailStats?[work.workType];
+                      final confirmed = stats?['confirmed'] ?? 0;
+                      final pending = stats?['pending'] ?? 0;
+
+                      return WorkDetailRow(
+                        work: work,
+                        confirmedCount: confirmed,
+                        pendingCount: pending,
+                        toItem: widget.groupItem.groupTOs.first,
+                        firestoreService: widget.firestoreService,
+                        onChanged: widget.onChanged,
+                      );
+                    }),
+                  ],
+                ),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// ✨ 그룹명 배지
+  Widget _buildGroupNameBadge(BuildContext context, String groupName) {
+    return Container(
+      padding: EdgeInsets.symmetric(
+        horizontal: ResponsiveHelper.spacing(context, 12),
+        vertical: ResponsiveHelper.spacing(context, 8),
+      ),
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          colors: [Colors.green[100]!, Colors.green[50]!],
+        ),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: Colors.green[300]!, width: 1.5),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(
+            Icons.folder_open,
+            size: ResponsiveHelper.iconSize(context, 18),
+            color: Colors.green[700],
+          ),
+          SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+          Flexible(
+            child: Text(
+              groupName,
+              style: ResponsiveHelper.bodyStyle(
+                context,
+                color: Colors.green[800],
+              ).copyWith(fontWeight: FontWeight.bold),
+              overflow: TextOverflow.ellipsis,
             ),
           ),
-          
-          // 펼쳐진 경우: 그룹 TO 목록
-          if (widget.isExpanded && widget.groupItem.isGrouped) ...[
-            const Divider(height: 1),
-            Padding(
-              padding: ResponsiveHelper.cardPadding(context),
-              child: Column(
-                children: widget.groupItem.groupTOs.map((toItem) {
-                  return TOItemCard(
-                    toItem: toItem,
-                    groupItem: widget.groupItem,
-                    firestoreService: widget.firestoreService,
-                    dialogs: widget.dialogs,
-                    onChanged: widget.onChanged,
-                    isExpanded: widget.expandedTOs.contains(toItem.to.id),
-                    onToggleExpand: () => widget.onToggleTOExpand(toItem.to.id),
-                  );
-                }).toList(),
-              ),
-            ),
-          ],
-          
-          // 펼쳐진 경우: 단일 TO 업무 상세
-          if (widget.isExpanded && !widget.groupItem.isGrouped) ...[
-            const Divider(height: 1),
-            Padding(
-              padding: ResponsiveHelper.cardPadding(context),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    '업무 상세',
-                    style: ResponsiveHelper.smallStyle(
-                      context,
-                      color: Colors.grey[700],
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-                  SizedBox(height: ResponsiveHelper.spacing(context, 8)),
-                  ...widget.groupItem.groupTOs.first.workDetails.map((work) {
-                    final stats = widget.groupItem.groupTOs.first.workDetailStats?[work.workType];
-                    final confirmed = stats?['confirmed'] ?? 0;
-                    final pending = stats?['pending'] ?? 0;
-                    
-                    return WorkDetailRow(
-                      work: work,
-                      confirmedCount: confirmed,
-                      pendingCount: pending,
-                      toItem: widget.groupItem.groupTOs.first,
-                      firestoreService: widget.firestoreService,
-                      onChanged: widget.onChanged,
-                    );
-                  }),
-                ],
-              ),
-            ),
-          ],
         ],
       ),
     );
   }
 
-  /// 상태 배지
+  /// ✨ 단일 공고 배지
+  Widget _buildSingleTOBadge(BuildContext context) {
+    return Container(
+      padding: EdgeInsets.symmetric(
+        horizontal: ResponsiveHelper.spacing(context, 12),
+        vertical: ResponsiveHelper.spacing(context, 8),
+      ),
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          colors: [Colors.blue[100]!, Colors.blue[50]!],
+        ),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: Colors.blue[300]!, width: 1.5),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(
+            Icons.work_outline,
+            size: ResponsiveHelper.iconSize(context, 18),
+            color: Colors.blue[700],
+          ),
+          SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+          Text(
+            '단일 공고',
+            style: ResponsiveHelper.bodyStyle(
+              context,
+              color: Colors.blue[800],
+            ).copyWith(fontWeight: FontWeight.bold),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// ✨ 상태 배지 (더 세련되게)
   Widget _buildStatusBadge(BuildContext context, bool isFull) {
     bool allClosed = widget.groupItem.groupTOs.every((toItem) {
-      return toItem.workDetails.every((work) => 
-        work.isClosed || work.isTimeExpired || work.isFull
-      );
+      return toItem.workDetails.every((work) =>
+          work.isClosed || work.isTimeExpired || work.isFull);
     });
-    
+
+    IconData icon;
+    String label;
+    Color color;
+
     if (allClosed) {
-      return StyledOutlineBadge(
-        label: '마감됨',
-        color: Colors.grey[600]!,
-        backgroundColor: Colors.grey[50],
-        icon: Icons.lock,
-        fontSize: ResponsiveHelper.getFontSize(context, 11),
-      );
+      icon = Icons.lock;
+      label = '마감됨';
+      color = Colors.grey[600]!;
     } else if (isFull) {
-      return StyledOutlineBadge(
-        label: '인원충족',
-        color: Colors.green[600]!,
-        icon: Icons.check_circle,
-        fontSize: ResponsiveHelper.getFontSize(context, 11),
-      );
+      icon = Icons.check_circle;
+      label = '인원충족';
+      color = Colors.green[600]!;
     } else {
-      return StyledOutlineBadge(
-        label: '진행중',
-        color: Theme.of(context).primaryColor,
-        icon: Icons.circle,
-        fontSize: ResponsiveHelper.getFontSize(context, 11),
-      );
+      icon = Icons.circle;
+      label = '진행중';
+      color = Theme.of(context).primaryColor;
     }
+
+    return Container(
+      padding: EdgeInsets.symmetric(
+        horizontal: ResponsiveHelper.spacing(context, 10),
+        vertical: ResponsiveHelper.spacing(context, 6),
+      ),
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          colors: [
+            color.withOpacity(0.2),
+            color.withOpacity(0.1),
+          ],
+        ),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: color.withOpacity(0.5), width: 1.5),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(
+            icon,
+            size: ResponsiveHelper.iconSize(context, 14),
+            color: color,
+          ),
+          SizedBox(width: ResponsiveHelper.spacing(context, 4)),
+          Text(
+            label,
+            style: ResponsiveHelper.smallStyle(
+              context,
+              color: color,
+            ).copyWith(fontWeight: FontWeight.bold),
+          ),
+        ],
+      ),
+    );
   }
 
   /// 마감시간 배지
   Widget _buildDeadlineBadge(BuildContext context, masterTO) {
+    String label;
     if (masterTO.deadlineType == 'FIXED_TIME') {
-      return StyledBadge(
-        label: '🕐 ${DateFormat('MM/dd HH:mm').format(masterTO.applicationDeadline)}',
-        backgroundColor: Colors.orange[50]!,
-        textColor: Colors.orange[700]!,
-        fontSize: ResponsiveHelper.getFontSize(context, 12),
-        borderRadius: 4,
-      );
+      label = '마감 ${DateFormat('MM/dd HH:mm').format(masterTO.applicationDeadline)}';
+    } else if (masterTO.deadlineType == 'HOURS_BEFORE' &&
+        masterTO.hoursBeforeStart != null) {
+      label = '${masterTO.hoursBeforeStart}시간 전';
+    } else {
+      return const SizedBox.shrink();
     }
-    
-    if (masterTO.deadlineType == 'HOURS_BEFORE' && masterTO.hoursBeforeStart != null) {
-      return StyledBadge(
-        label: '🕐 각 업무 ${masterTO.hoursBeforeStart}시간 전',
-        backgroundColor: Colors.orange[50]!,
-        textColor: Colors.orange[700]!,
-        fontSize: ResponsiveHelper.getFontSize(context, 12),
-        borderRadius: 4,
-      );
-    }
-    
-    return const SizedBox.shrink();
+
+    return Container(
+      padding: EdgeInsets.symmetric(
+        horizontal: ResponsiveHelper.spacing(context, 8),
+        vertical: ResponsiveHelper.spacing(context, 4),
+      ),
+      decoration: BoxDecoration(
+        color: Colors.orange[100],
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: Colors.orange[300]!),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(
+            Icons.access_time,
+            size: ResponsiveHelper.iconSize(context, 12),
+            color: Colors.orange[700],
+          ),
+          SizedBox(width: ResponsiveHelper.spacing(context, 4)),
+          Text(
+            label,
+            style: ResponsiveHelper.tinyStyle(
+              context,
+              color: Colors.orange[700],
+            ).copyWith(fontWeight: FontWeight.bold),
+          ),
+        ],
+      ),
+    );
   }
 
   /// 단일 TO 메뉴
   Widget _buildSingleTOMenu(BuildContext context) {
     final masterTO = widget.groupItem.masterTO;
-    
+
     return PopupMenuButton<String>(
       icon: Icon(
-        Icons.more_vert, 
-        size: ResponsiveHelper.iconSize(context, 20), 
-        color: Colors.grey[700]
+        Icons.more_vert,
+        size: ResponsiveHelper.iconSize(context, 20),
+        color: Theme.of(context).primaryColor,
       ),
       padding: EdgeInsets.zero,
       tooltip: '메뉴',
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(12),
+      ),
       onSelected: (value) => _handleSingleTOMenuAction(context, value),
       itemBuilder: (context) => [
         PopupMenuItem(
@@ -521,9 +731,9 @@ class _TOGroupCardState extends State<TOGroupCard> {
           child: Row(
             children: [
               Icon(
-                Icons.edit, 
-                size: ResponsiveHelper.iconSize(context, 18), 
-                color: Colors.orange[600]
+                Icons.edit,
+                size: ResponsiveHelper.iconSize(context, 18),
+                color: Colors.orange[600],
               ),
               SizedBox(width: ResponsiveHelper.spacing(context, 12)),
               const Text('수정'),
@@ -535,9 +745,9 @@ class _TOGroupCardState extends State<TOGroupCard> {
           child: Row(
             children: [
               Icon(
-                Icons.delete, 
-                size: ResponsiveHelper.iconSize(context, 18), 
-                color: Colors.red[600]
+                Icons.delete,
+                size: ResponsiveHelper.iconSize(context, 18),
+                color: Colors.red[600],
               ),
               SizedBox(width: ResponsiveHelper.spacing(context, 12)),
               const Text('삭제'),
@@ -550,9 +760,9 @@ class _TOGroupCardState extends State<TOGroupCard> {
             child: Row(
               children: [
                 Icon(
-                  Icons.link, 
-                  size: ResponsiveHelper.iconSize(context, 18), 
-                  color: Colors.blue[600]
+                  Icons.link,
+                  size: ResponsiveHelper.iconSize(context, 18),
+                  color: Colors.blue[600],
                 ),
                 SizedBox(width: ResponsiveHelper.spacing(context, 12)),
                 const Text('그룹 연결'),
@@ -564,9 +774,9 @@ class _TOGroupCardState extends State<TOGroupCard> {
           child: Row(
             children: [
               Icon(
-                Icons.check_circle_outline, 
-                size: ResponsiveHelper.iconSize(context, 18), 
-                color: Colors.green[600]
+                Icons.check_circle_outline,
+                size: ResponsiveHelper.iconSize(context, 18),
+                color: Colors.green[600],
               ),
               SizedBox(width: ResponsiveHelper.spacing(context, 12)),
               const Text('확정명단'),
@@ -578,9 +788,9 @@ class _TOGroupCardState extends State<TOGroupCard> {
           child: Row(
             children: [
               Icon(
-                Icons.assignment_turned_in, 
-                size: ResponsiveHelper.iconSize(context, 18), 
-                color: Colors.purple[600]
+                Icons.assignment_turned_in,
+                size: ResponsiveHelper.iconSize(context, 18),
+                color: Colors.purple[600],
               ),
               SizedBox(width: ResponsiveHelper.spacing(context, 12)),
               const Text('업무별 마감'),
@@ -594,15 +804,18 @@ class _TOGroupCardState extends State<TOGroupCard> {
   /// 그룹 TO 메뉴
   Widget _buildGroupTOMenu(BuildContext context) {
     final masterTO = widget.groupItem.masterTO;
-    
+
     return PopupMenuButton<String>(
       icon: Icon(
-        Icons.more_vert, 
-        size: ResponsiveHelper.iconSize(context, 20), 
-        color: Colors.grey[700]
+        Icons.more_vert,
+        size: ResponsiveHelper.iconSize(context, 20),
+        color: Theme.of(context).primaryColor,
       ),
       padding: EdgeInsets.zero,
       tooltip: '메뉴',
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(12),
+      ),
       onSelected: (value) => _handleGroupTOMenuAction(context, value),
       itemBuilder: (context) => [
         PopupMenuItem(
@@ -610,9 +823,9 @@ class _TOGroupCardState extends State<TOGroupCard> {
           child: Row(
             children: [
               Icon(
-                Icons.edit, 
-                size: ResponsiveHelper.iconSize(context, 18), 
-                color: Colors.blue[600]
+                Icons.edit,
+                size: ResponsiveHelper.iconSize(context, 18),
+                color: Colors.blue[600],
               ),
               SizedBox(width: ResponsiveHelper.spacing(context, 12)),
               const Text('그룹명 수정'),
@@ -638,9 +851,9 @@ class _TOGroupCardState extends State<TOGroupCard> {
           child: Row(
             children: [
               Icon(
-                Icons.delete_forever, 
-                size: ResponsiveHelper.iconSize(context, 18), 
-                color: Colors.red[600]
+                Icons.delete_forever,
+                size: ResponsiveHelper.iconSize(context, 18),
+                color: Colors.red[600],
               ),
               SizedBox(width: ResponsiveHelper.spacing(context, 12)),
               const Text('그룹 전체 삭제'),
@@ -652,9 +865,10 @@ class _TOGroupCardState extends State<TOGroupCard> {
   }
 
   /// 단일 TO 메뉴 액션
-  Future<void> _handleSingleTOMenuAction(BuildContext context, String value) async {
+  Future<void> _handleSingleTOMenuAction(
+      BuildContext context, String value) async {
     final masterTO = widget.groupItem.masterTO;
-    
+
     switch (value) {
       case 'edit':
         final result = await Navigator.push(
@@ -668,18 +882,18 @@ class _TOGroupCardState extends State<TOGroupCard> {
           widget.onChanged();
         }
         break;
-        
+
       case 'delete':
         widget.dialogs.showDeleteTODialog(widget.groupItem.groupTOs.first);
         break;
-        
+
       case 'link':
         widget.dialogs.showReconnectToGroupDialog(
           widget.groupItem.groupTOs.first,
           widget.allGroupItems,
         );
         break;
-        
+
       case 'confirmedList':
         ConfirmedListDialog(
           context: context,
@@ -687,7 +901,7 @@ class _TOGroupCardState extends State<TOGroupCard> {
           firestoreService: widget.firestoreService,
         ).show();
         break;
-        
+
       case 'manageWorkDetails':
         WorkDetailManagementDialog(
           context: context,
@@ -700,22 +914,23 @@ class _TOGroupCardState extends State<TOGroupCard> {
   }
 
   /// 그룹 TO 메뉴 액션
-  Future<void> _handleGroupTOMenuAction(BuildContext context, String value) async {
+  Future<void> _handleGroupTOMenuAction(
+      BuildContext context, String value) async {
     final masterTO = widget.groupItem.masterTO;
-    
+
     switch (value) {
       case 'editGroupName':
         widget.dialogs.showEditGroupNameDialog(masterTO);
         break;
-        
+
       case 'closeGroup':
         widget.dialogs.showCloseGroupDialog(widget.groupItem);
         break;
-        
+
       case 'reopenGroup':
         widget.dialogs.showReopenGroupDialog(widget.groupItem);
         break;
-        
+
       case 'deleteGroup':
         widget.dialogs.showDeleteGroupDialog(widget.groupItem);
         break;

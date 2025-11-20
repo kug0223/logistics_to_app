@@ -33,8 +33,8 @@ class ScheduleCalendar extends StatelessWidget {
       focusedDay: focusedDay,
       calendarFormat: CalendarFormat.month,
       
-      daysOfWeekHeight: 40,
-      rowHeight: 48,
+      daysOfWeekHeight: 30,
+      rowHeight: 40,
       
       selectedDayPredicate: (day) => DateUtils.isSameDay(selectedDay, day),
       
@@ -119,7 +119,7 @@ class ScheduleCalendar extends StatelessWidget {
           }
           
           return Positioned(
-            bottom: 4,  // ← workforce_calendar_view와 동일한 위치
+            bottom: 3,  // ← workforce_calendar_view와 동일한 위치
             child: Row(
               mainAxisSize: MainAxisSize.min,
               children: markers,
@@ -142,9 +142,11 @@ class ScheduleCalendar extends StatelessWidget {
       ),
       
       // ✨ workforce_calendar_view와 동일한 헤더
-      headerStyle: const HeaderStyle(
+      headerStyle: HeaderStyle(
         formatButtonVisible: false,
         titleCentered: true,
+        titleTextStyle: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+        headerPadding: EdgeInsets.symmetric(vertical: 8),
       ),
     );
   }
