@@ -18,12 +18,16 @@ class RegisterScreen extends StatefulWidget {
 
 class _RegisterScreenState extends State<RegisterScreen> {
   int _currentStep = 0;
+  // State 변수 추가
+  int _passwordStrength = 0; // 0: 약함, 1: 보통, 2: 강함
   
   // Step 1: 기본 정보
   final _usernameController = TextEditingController();
   bool _isCheckingUsername = false;
   bool _isUsernameAvailable = false;
   String? _usernameError;
+  String _currentUsername = '';
+  String _currentEmail = '';
   final _formKey = GlobalKey<FormState>();
   final _nameController = TextEditingController();
   final _residentNumber1Controller = TextEditingController(); // 앞 6자리
@@ -44,6 +48,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
   // 주민번호로 파싱된 정보
   DateTime? _parsedBirthDate;
   String? _parsedGender;
+  String? _residentNumberError;
 
   // Step 2: 역할 선택
   UserRole? _selectedRole;
@@ -73,30 +78,95 @@ class _RegisterScreenState extends State<RegisterScreen> {
     
     if (rn1.length == 6 && rn2.length >= 1) {
       try {
-        // 생년월일 파싱
         int year = int.parse(rn1.substring(0, 2));
         int month = int.parse(rn1.substring(2, 4));
         int day = int.parse(rn1.substring(4, 6));
         int genderCode = int.parse(rn2[0]);
         
-        // 1900년대/2000년대 구분
+        // 1차: 성별 코드 유효성 체크
+        if (genderCode < 1 || genderCode > 4) {
+          setState(() {
+            _parsedBirthDate = null;
+            _parsedGender = null;
+            _residentNumberError = '뒷자리는 1~4만 가능합니다';  // ⭐
+          });
+          return;
+        }
+        
+        // 2차: 연도와 성별 코드 매칭 검증
         if (genderCode == 1 || genderCode == 2) {
+          // 1, 2 = 1900년대생
           year += 1900;
         } else if (genderCode == 3 || genderCode == 4) {
+          // 3, 4 = 2000년대생
+          final currentYear = DateTime.now().year;
+          final twoDigitCurrentYear = currentYear % 100;
+          
+          if (year > twoDigitCurrentYear) {
+            setState(() {
+              _parsedBirthDate = null;
+              _parsedGender = null;
+              _residentNumberError = '2000년대생은 00~${twoDigitCurrentYear.toString().padLeft(2, '0')}년생만 가능합니다';  // ⭐
+            });
+            return;
+          }
           year += 2000;
         }
         
-        _parsedBirthDate = DateTime(year, month, day);
+        // ⭐ 추가: 1900년대생인데 3,4 사용한 경우
+        if ((genderCode == 3 || genderCode == 4) && year < 2000) {
+          setState(() {
+            _parsedBirthDate = null;
+            _parsedGender = null;
+            _residentNumberError = '${year}년생은 뒷자리 1 또는 2를 사용해야 합니다';
+          });
+          return;
+        }
         
-        // 성별 파싱 (1,3=남성, 2,4=여성)
+        // ⭐ 추가: 2000년대생인데 1,2 사용한 경우
+        if ((genderCode == 1 || genderCode == 2) && year >= 2000) {
+          setState(() {
+            _parsedBirthDate = null;
+            _parsedGender = null;
+            _residentNumberError = '${year}년생은 뒷자리 3 또는 4를 사용해야 합니다';
+          });
+          return;
+        }
+        
+        // 3차: 날짜 유효성 체크
+        try {
+          _parsedBirthDate = DateTime(year, month, day);
+        } catch (e) {
+          setState(() {
+            _parsedBirthDate = null;
+            _parsedGender = null;
+            _residentNumberError = '존재하지 않는 날짜입니다 ($year년 $month월 $day일)';  // ⭐
+          });
+          return;
+        }
+        
+        // ⭐ 성공!
         _parsedGender = (genderCode == 1 || genderCode == 3) ? '남성' : '여성';
+        setState(() {
+          _residentNumberError = null;  // ⭐ 에러 초기화
+        });
         
         print('✅ 주민번호 파싱 성공: $_parsedBirthDate, $_parsedGender');
       } catch (e) {
         print('❌ 주민번호 파싱 실패: $e');
+        setState(() {
+          _parsedBirthDate = null;
+          _parsedGender = null;
+          _residentNumberError = '올바른 주민번호를 입력해주세요';  // ⭐
+        });
+      }
+    } else {
+      // ⭐ 입력 불완전
+      setState(() {
         _parsedBirthDate = null;
         _parsedGender = null;
-      }
+        _residentNumberError = null;  // 입력 중에는 에러 안 보임
+      });
     }
   }
 
@@ -305,6 +375,49 @@ class _RegisterScreenState extends State<RegisterScreen> {
       );
       Navigator.pop(context);
     }
+  }
+  
+  // 비밀번호 강도 체크 함수
+  void _checkPasswordStrength(String password) {
+    // ⭐ 비어있으면 0으로 초기화
+    if (password.isEmpty) {
+      setState(() => _passwordStrength = 0);
+      return;
+    }
+    int strength = 0;
+    
+    if (password.length >= 8) strength++;
+    if (RegExp(r'[a-zA-Z]').hasMatch(password) && RegExp(r'[0-9]').hasMatch(password)) strength++;
+    if (RegExp(r'[!@#$%^&*(),.?":{}|<>]').hasMatch(password)) strength++;
+    
+    setState(() => _passwordStrength = strength);
+  }
+  // 비밀번호 검증강화
+  String? _validatePassword(String? value) {
+    if (value == null || value.isEmpty) {
+      return '비밀번호를 입력해주세요';
+    }
+    
+    if (value.length < 8) {
+      return '비밀번호는 8자 이상이어야 합니다';
+    }
+    
+    // 영문 포함 체크
+    if (!RegExp(r'[a-zA-Z]').hasMatch(value)) {
+      return '영문을 포함해야 합니다';
+    }
+    
+    // 숫자 포함 체크
+    if (!RegExp(r'[0-9]').hasMatch(value)) {
+      return '숫자를 포함해야 합니다';
+    }
+    
+    // 특수문자 포함 체크 (선택사항 - 더 강력한 보안)
+    if (!RegExp(r'[!@#$%^&*(),.?":{}|<>]').hasMatch(value)) {
+      return '특수문자를 포함해야 합니다';
+    }
+    
+    return null;
   }
 
   // 사업장 관리자: 회원가입 후 사업장 등록 화면으로
@@ -558,33 +671,57 @@ class _RegisterScreenState extends State<RegisterScreen> {
               label: '아이디',
               hint: '영문소문자, 숫자 (4-20자)',
               icon: Icons.account_circle_outlined,
-              suffixIcon: _isCheckingUsername
-                  ? SizedBox(
-                      width: 20,
-                      height: 20,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    )
-                  : _usernameController.text.length >= 4
-                      ? Icon(
-                          _isUsernameAvailable ? Icons.check_circle : Icons.cancel,
-                          color: _isUsernameAvailable ? Colors.green : Colors.red,
+              suffixIcon: _currentUsername.isEmpty
+                  ? null
+                  : _isCheckingUsername
+                      ? SizedBox(
+                          width: 20,
+                          height: 20,
+                          child: CircularProgressIndicator(strokeWidth: 2),
                         )
-                      : null,
+                      : _isUsernameAvailable
+                          ? Icon(
+                              Icons.check_circle,
+                              color: Colors.green,
+                              size: ResponsiveHelper.iconSize(context, 24),
+                            )
+                          : TextButton(
+                              onPressed: () {
+                                final username = _usernameController.text.trim();
+                                if (username.length >= 4 && RegExp(r'^[a-z0-9_]+$').hasMatch(username)) {
+                                  _checkUsername();
+                                } else {
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    const SnackBar(
+                                      content: Text('아이디를 올바르게 입력해주세요\n(영문 소문자, 숫자, _ / 4자 이상)'),
+                                      duration: Duration(seconds: 2),
+                                    ),
+                                  );
+                                }
+                              },
+                              child: Text(
+                                '중복확인',
+                                style: ResponsiveHelper.smallStyle(
+                                  context,
+                                  color: Theme.of(context).primaryColor,
+                                ),
+                              ),
+                            ),
               validator: (value) {
                 if (value == null || value.isEmpty) return '아이디를 입력해주세요';
                 if (value.length < 4) return '4자 이상 입력해주세요';
                 if (!RegExp(r'^[a-z0-9_]+$').hasMatch(value)) {
                   return '영문 소문자, 숫자, _만 사용 가능';
                 }
-                if (!_isUsernameAvailable) return '사용 불가능한 아이디입니다';
+                if (!_isUsernameAvailable) return '중복 확인을 해주세요';
                 return null;
               },
               onChanged: (value) {
-                if (value.length >= 4) {
-                  _checkUsername();
-                } else {
-                  setState(() => _isUsernameAvailable = false);
-                }
+                setState(() {
+                  _currentUsername = value;
+                  _isUsernameAvailable = false;
+                  _usernameError = null;
+                });
               },
             ),
             SizedBox(height: ResponsiveHelper.spacing(context, 16)),
@@ -622,7 +759,16 @@ class _RegisterScreenState extends State<RegisterScreen> {
                       }
                       return null;
                     },
-                    onChanged: (_) => _parseResidentNumber(),
+                    onChanged: (value) {
+                      if (value.length != 6) {
+                        setState(() {
+                          _parsedBirthDate = null;
+                          _parsedGender = null;
+                        });
+                      } else {
+                        _parseResidentNumber();
+                      }
+                    },
                   ),
                 ),
                 Padding(
@@ -650,9 +796,25 @@ class _RegisterScreenState extends State<RegisterScreen> {
                     ),
                     validator: (value) {
                       if (value == null || value.isEmpty) return '필수';
+                      
+                      // ⭐ validator에서는 간단하게만
+                      final genderCode = int.tryParse(value);
+                      if (genderCode == null || genderCode < 1 || genderCode > 4) {
+                        return null; // ⭐ 여기서는 에러 안 냄 (밑에서 표시)
+                      }
+                      
                       return null;
                     },
-                    onChanged: (_) => _parseResidentNumber(),
+                    onChanged: (value) {
+                      if (value.isEmpty) {
+                        setState(() {
+                          _parsedBirthDate = null;
+                          _parsedGender = null;
+                        });
+                      } else {
+                        _parseResidentNumber();
+                      }
+                    },
                   ),
                 ),
                 Padding(
@@ -663,9 +825,10 @@ class _RegisterScreenState extends State<RegisterScreen> {
                 ),
               ],
             ),
-            
-            // 파싱된 정보 표시
-            if (_parsedBirthDate != null && _parsedGender != null)
+
+            // 파싱 결과 표시 (성공 또는 오류)
+            if (_residentNumber1Controller.text.length == 6 && 
+                _residentNumber2Controller.text.isNotEmpty)
               Padding(
                 padding: EdgeInsets.only(
                   top: ResponsiveHelper.spacing(context, 8),
@@ -676,22 +839,34 @@ class _RegisterScreenState extends State<RegisterScreen> {
                     bottom: ResponsiveHelper.spacing(context, 8),
                   ),
                   decoration: BoxDecoration(
-                    color: Colors.green[50],
+                    color: _parsedBirthDate != null && _parsedGender != null
+                        ? Colors.green[50]
+                        : Colors.red[50],
                     borderRadius: BorderRadius.circular(8),
                   ),
                   child: Row(
                     children: [
                       Icon(
-                        Icons.check_circle,
-                        color: Colors.green[700],
+                        _parsedBirthDate != null && _parsedGender != null
+                            ? Icons.check_circle
+                            : Icons.error_outline,
+                        color: _parsedBirthDate != null && _parsedGender != null
+                            ? Colors.green[700]
+                            : Colors.red[700],
                         size: ResponsiveHelper.iconSize(context, 18),
                       ),
                       SizedBox(width: ResponsiveHelper.spacing(context, 8)),
-                      Text(
-                        '생년월일: ${_parsedBirthDate!.year}.${_parsedBirthDate!.month}.${_parsedBirthDate!.day} / 성별: $_parsedGender',
-                        style: ResponsiveHelper.smallStyle(
-                          context,
-                          color: Colors.green[900],
+                      Expanded(
+                        child: Text(
+                          _parsedBirthDate != null && _parsedGender != null
+                              ? '생년월일: ${_parsedBirthDate!.year}.${_parsedBirthDate!.month}.${_parsedBirthDate!.day} / 성별: $_parsedGender'
+                              : _residentNumberError ?? '올바른 주민번호를 입력해주세요',  // ⭐ 변경!
+                          style: ResponsiveHelper.smallStyle(
+                            context,
+                            color: _parsedBirthDate != null && _parsedGender != null
+                                ? Colors.green[900]
+                                : Colors.red[900],
+                          ),
                         ),
                       ),
                     ],
@@ -705,30 +880,40 @@ class _RegisterScreenState extends State<RegisterScreen> {
             _buildTextField(
               controller: _emailController,
               label: '이메일',
-              hint: 'example@email.com',
+              hint: 'your@email.com',
               icon: Icons.email_outlined,
               keyboardType: TextInputType.emailAddress,
-              enabled: !_isEmailVerified,
-              suffixIcon: !_isEmailVerified
-                  ? TextButton(
-                      onPressed: _sendEmailVerification,
-                      child: Text(
-                        _isEmailSent ? '재발송' : '인증',
-                        style: ResponsiveHelper.smallStyle(
-                          context,
-                          color: Theme.of(context).primaryColor,
+              suffixIcon: _currentEmail.isEmpty  // ⭐ 변경!
+                  ? null
+                  : !_isEmailVerified
+                      ? TextButton(
+                          onPressed: _sendEmailVerification,
+                          child: Text(
+                            _isEmailSent ? '재발송' : '인증',
+                            style: ResponsiveHelper.smallStyle(
+                              context,
+                              color: Theme.of(context).primaryColor,
+                            ),
+                          ),
+                        )
+                      : Icon(
+                          Icons.check_circle,
+                          color: Colors.green[600],
+                          size: ResponsiveHelper.iconSize(context, 24),
                         ),
-                      ),
-                    )
-                  : Icon(
-                      Icons.check_circle,
-                      color: Colors.green[600],
-                      size: ResponsiveHelper.iconSize(context, 24),
-                    ),
               validator: (value) {
                 if (value == null || value.isEmpty) return '이메일을 입력해주세요';
                 if (!value.contains('@')) return '올바른 이메일 형식이 아닙니다';
+                if (!_isEmailVerified) return '이메일 인증을 완료해주세요';
                 return null;
+              },
+              onChanged: (value) {
+                // ⭐ 이메일이 변경되면 상태 업데이트 + 인증 초기화
+                setState(() {
+                  _currentEmail = value;  // ⭐ 추가!
+                  _isEmailSent = false;
+                  _isEmailVerified = false;
+                });
               },
             ),
             
@@ -784,7 +969,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
             _buildTextField(
               controller: _passwordController,
               label: '비밀번호',
-              hint: '6자 이상 입력',
+              hint: '영문+숫자+특수문자 8자 이상',  // ⭐ 힌트 변경
               icon: Icons.lock_outline,
               obscureText: _obscurePassword,
               suffixIcon: IconButton(
@@ -795,15 +980,56 @@ class _RegisterScreenState extends State<RegisterScreen> {
                 ),
                 onPressed: () => setState(() => _obscurePassword = !_obscurePassword),
               ),
-              validator: (value) {
-                if (value == null || value.isEmpty) return '비밀번호를 입력해주세요';
-                if (value.length < 6) return '비밀번호는 6자 이상이어야 합니다';
-                return null;
+              validator: _validatePassword,  // ⭐ 새 함수 사용
+              onChanged: (value) {
+                _checkPasswordStrength(value);  // ⭐ 강도 체크
               },
             ),
-            
+            // 비밀번호 강도 표시 (TextField 아래에 추가)
+            if (_passwordStrength > 0) ...[
+              SizedBox(height: ResponsiveHelper.spacing(context, 8)),
+              Row(
+                children: [
+                  Expanded(
+                    child: LinearProgressIndicator(
+                      value: _passwordStrength / 3,
+                      backgroundColor: Colors.grey[300],
+                      color: _passwordStrength == 0
+                          ? Colors.red
+                          : _passwordStrength == 1
+                              ? Colors.orange
+                              : _passwordStrength == 2
+                                  ? Colors.yellow
+                                  : Colors.green,
+                      minHeight: 4,
+                    ),
+                  ),
+                  SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+                  Text(
+                    _passwordStrength == 0
+                        ? '약함'
+                        : _passwordStrength == 1
+                            ? '보통'
+                            : _passwordStrength == 2
+                                ? '강함'
+                                : '매우 강함',
+                    style: ResponsiveHelper.smallStyle(
+                      context,
+                      color: _passwordStrength == 0
+                          ? Colors.red
+                          : _passwordStrength == 1
+                              ? Colors.orange
+                              : _passwordStrength == 2
+                                  ? Colors.yellow[700]
+                                  : Colors.green,
+                    ),
+                  ),
+                ],
+              ),
+            ],
+
             SizedBox(height: ResponsiveHelper.spacing(context, 16)),
-            
+
             // 비밀번호 확인
             _buildTextField(
               controller: _confirmPasswordController,
@@ -1283,6 +1509,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
         ),
       ),
       validator: validator,
+      onChanged: onChanged,
     );
   }
 

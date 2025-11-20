@@ -53,8 +53,3 @@ dev_dependencies:
 
 flutter:
   uses-material-design: true
-  
-  # ⭐ 추가: 로고 파일 경로
-  assets:
-    - assets/images/logo_splash_light.svg
-    - assets/images/logo_splash_dark.svg

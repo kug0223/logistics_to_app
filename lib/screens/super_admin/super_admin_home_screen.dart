@@ -158,7 +158,7 @@ class AdminHomeScreen extends StatelessWidget {
                         
                         // 이메일
                         Text(
-                          user?.email ?? '',
+                          user?.userEmail ?? '',
                           style: ResponsiveHelper.smallStyle(
                             context,
                             color: Colors.white.withOpacity(0.9),
