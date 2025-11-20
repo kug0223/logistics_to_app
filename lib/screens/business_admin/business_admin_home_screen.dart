@@ -163,7 +163,7 @@ class BusinessAdminHomeScreen extends StatelessWidget {
                         
                         // 이메일
                         Text(
-                          userProvider.currentUser?.email ?? '',
+                          userProvider.currentUser?.userEmail ?? '',
                           style: ResponsiveHelper.smallStyle(
                             context,
                             color: Colors.white.withOpacity(0.9),

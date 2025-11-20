@@ -9,15 +9,17 @@ import '../work_type_icon.dart';
 import '../../utils/format_helper.dart';
 
 // ============================================================
-// 🎨 업무 추가 다이얼로그 (공통)
+// 🎨 업무 추가 다이얼로그 (세련된 디자인)
 // ============================================================
 
 class WorkDetailDialog {
-  /// 업무 추가 다이얼로그 표시
+  /// ✨ 업무 추가 다이얼로그 표시
   static Future<WorkDetailInput?> showAddDialog({
     required BuildContext context,
     required List<BusinessWorkTypeModel> businessWorkTypes,
   }) async {
+    final theme = Theme.of(context);
+    
     BusinessWorkTypeModel? selectedWorkType;
     String selectedWageType = 'hourly';
     String? startTime;
@@ -29,282 +31,877 @@ class WorkDetailDialog {
       context: context,
       builder: (context) => StatefulBuilder(
         builder: (context, setDialogState) {
-          return AlertDialog(
-            title: const Text('업무 추가'),
-            content: SingleChildScrollView(
+          return Dialog(
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(24),
+            ),
+            child: Container(
+              constraints: BoxConstraints(
+                maxWidth: 500,
+                maxHeight: MediaQuery.of(context).size.height * 0.85,
+              ),
               child: Column(
                 mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  // 업무 유형 선택
-                  Text(
-                    '업무 유형', 
-                    style: ResponsiveHelper.bodyStyle(context).copyWith(
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-                  SizedBox(height: ResponsiveHelper.spacing(context, 8)),
-                  DropdownButtonFormField<BusinessWorkTypeModel>(
-                    isExpanded: true,
-                    initialValue: selectedWorkType,
-                    decoration: const InputDecoration(
-                      border: OutlineInputBorder(),
-                      hintText: '업무 선택',
-                    ),
-                    items: businessWorkTypes.map((workType) {
-                      return DropdownMenuItem<BusinessWorkTypeModel>(
-                        value: workType,
-                        child: Row(
-                          children: [
-                            Container(
-                              width: ResponsiveHelper.iconSize(context, 32),
-                              height: ResponsiveHelper.iconSize(context, 32),
-                              decoration: BoxDecoration(
-                                color: FormatHelper.parseColor(workType.backgroundColor ?? '#2196F3'),
-                                shape: BoxShape.circle,
-                              ),
-                              child: Center(
-                                child: WorkTypeIcon.buildSmall(workType),
-                              ),
-                            ),
-                            SizedBox(width: ResponsiveHelper.spacing(context, 12)),
-                            Flexible(
-                              child: Text(
-                                workType.name,
-                                overflow: TextOverflow.ellipsis,
-                                maxLines: 1,
-                              ),
-                            ),
-                          ],
-                        ),
-                      );
-                    }).toList(),
-                    onChanged: (value) {
-                      setDialogState(() => selectedWorkType = value);
-                    },
-                  ),
-                  SizedBox(height: ResponsiveHelper.spacing(context, 16)),
+                  // ✨ 세련된 헤더
+                  _buildHeader(context, theme),
                   
-                  // ✅ 급여 타입 선택
-                  Text(
-                    '급여 타입', 
-                    style: ResponsiveHelper.bodyStyle(context).copyWith(
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-                  SizedBox(height: ResponsiveHelper.spacing(context, 8)),
-                  Row(
-                    children: [
-                      Expanded(
-                        child: _buildWageTypeButton(
-                          context: context,
-                          label: '시급',
-                          value: 'hourly',
-                          selectedValue: selectedWageType,
-                          onTap: () {
-                            setDialogState(() {
-                              selectedWageType = 'hourly';
-                            });
-                          },
-                        ),
-                      ),
-                      SizedBox(width: ResponsiveHelper.spacing(context, 8)),
-                      Expanded(
-                        child: _buildWageTypeButton(
-                          context: context,
-                          label: '일급',
-                          value: 'daily',
-                          selectedValue: selectedWageType,
-                          onTap: () {
-                            setDialogState(() {
-                              selectedWageType = 'daily';
-                            });
-                          },
-                        ),
-                      ),
-                      SizedBox(width: ResponsiveHelper.spacing(context, 8)),
-                      Expanded(
-                        child: _buildWageTypeButton(
-                          context: context,
-                          label: '월급',
-                          value: 'monthly',
-                          selectedValue: selectedWageType,
-                          onTap: () {
-                            setDialogState(() {
-                              selectedWageType = 'monthly';
-                            });
-                          },
-                        ),
-                      ),
-                    ],
-                  ),
-                  SizedBox(height: ResponsiveHelper.spacing(context, 16)),
-
-                  // 근무 시간
-                  Text(
-                    '근무 시간', 
-                    style: ResponsiveHelper.bodyStyle(context).copyWith(
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-                  SizedBox(height: ResponsiveHelper.spacing(context, 8)),
-                  Row(
-                    children: [
-                      Expanded(
-                        child: DropdownButtonFormField<String>(
-                          initialValue: startTime,
-                          decoration: const InputDecoration(
-                            border: OutlineInputBorder(),
-                            hintText: '시작',
+                  // ✨ 메인 컨텐츠
+                  Flexible(
+                    child: SingleChildScrollView(
+                      padding: ResponsiveHelper.cardPadding(context),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          // 업무 유형 선택
+                          _buildWorkTypeSection(
+                            context,
+                            theme,
+                            businessWorkTypes,
+                            selectedWorkType,
+                            setDialogState,
+                            (newWorkType) {  // ⭐ 콜백 함수 추가
+                              selectedWorkType = newWorkType;
+                            },
                           ),
-                          items: FormatHelper.generateTimeList().map((time) {
-                            return DropdownMenuItem(value: time, child: Text(time));
-                          }).toList(),
-                          onChanged: (value) => setDialogState(() => startTime = value),
-                        ),
-                      ),
-                      Padding(
-                        padding: EdgeInsets.symmetric(
-                          horizontal: ResponsiveHelper.spacing(context, 8),
-                        ),
-                        child: Text(
-                          '~', 
-                          style: ResponsiveHelper.titleStyle(context),
-                        ),
-                      ),
-                      Expanded(
-                        child: DropdownButtonFormField<String>(
-                          initialValue: endTime,
-                          decoration: const InputDecoration(
-                            border: OutlineInputBorder(),
-                            hintText: '종료',
+                          SizedBox(height: ResponsiveHelper.spacing(context, 24)),
+                          
+                          // 급여 타입 선택
+                          _buildWageTypeSection(
+                            context,
+                            theme,
+                            selectedWageType,
+                            setDialogState,
+                            (newType) {  // ⭐ 콜백 함수 추가
+                              selectedWageType = newType;
+                            },
                           ),
-                          items: FormatHelper.generateTimeList().map((time) {
-                            return DropdownMenuItem(value: time, child: Text(time));
-                          }).toList(),
-                          onChanged: (value) => setDialogState(() => endTime = value),
-                        ),
+                          SizedBox(height: ResponsiveHelper.spacing(context, 24)),
+                          
+                          // 근무 시간
+                          _buildTimeSection(
+                            context,
+                            theme,
+                            startTime,
+                            endTime,
+                            setDialogState,
+                            (newTime) {  // ⭐ 시작 시간 콜백
+                              startTime = newTime;
+                            },
+                            (newTime) {  // ⭐ 종료 시간 콜백
+                              endTime = newTime;
+                            },
+                          ),
+                          SizedBox(height: ResponsiveHelper.spacing(context, 24)),
+                          
+                          // 급여 입력
+                          _buildWageSection(
+                            context,
+                            theme,
+                            selectedWageType,
+                            wageController,
+                          ),
+                          SizedBox(height: ResponsiveHelper.spacing(context, 24)),
+                          
+                          // 필요 인원
+                          _buildCountSection(
+                            context,
+                            theme,
+                            countController,
+                          ),
+                        ],
                       ),
-                    ],
-                  ),
-                  SizedBox(height: ResponsiveHelper.spacing(context, 16)),
-
-                  // 급여 입력
-                  Text(
-                    _getWageLabelFromType(selectedWageType),
-                    style: ResponsiveHelper.bodyStyle(context).copyWith(
-                      fontWeight: FontWeight.bold,
                     ),
                   ),
-                  SizedBox(height: ResponsiveHelper.spacing(context, 8)),
-                  TextFormField(
-                    controller: wageController,
-                    keyboardType: TextInputType.number,
-                    inputFormatters: [
-                      FilteringTextInputFormatter.digitsOnly,
-                      // ✅ 천단위 콤마 포맷터
-                      TextInputFormatter.withFunction((oldValue, newValue) {
-                        if (newValue.text.isEmpty) {
-                          return newValue;
-                        }
-                        
-                        final number = int.tryParse(newValue.text.replaceAll(',', ''));
-                        if (number == null) {
-                          return oldValue;
-                        }
-                        
-                        final formatted = number.toString().replaceAllMapped(
-                          RegExp(r'(\d{1,3})(?=(\d{3})+(?!\d))'),
-                          (Match m) => '${m[1]},',
-                        );
-                        
-                        return TextEditingValue(
-                          text: formatted,
-                          selection: TextSelection.collapsed(offset: formatted.length),
-                        );
-                      }),
-                    ],
-                    decoration: InputDecoration(
-                      border: const OutlineInputBorder(),
-                      hintText: '금액을 입력하세요.',
-                      suffixText: '원',
-                      helperText: selectedWageType == 'hourly'
-                          ? '2025년 최저시급: ${LaborStandards.formatCurrencyWithUnit(LaborStandards.currentMinimumWage)}'
-                          : null,
-                    ),
-                  ),
-                  SizedBox(height: ResponsiveHelper.spacing(context, 16)),
-
-                  // 필요 인원
-                  Text(
-                    '필요 인원', 
-                    style: ResponsiveHelper.bodyStyle(context).copyWith(
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-                  SizedBox(height: ResponsiveHelper.spacing(context, 8)),
-                  TextFormField(
-                    controller: countController,
-                    keyboardType: TextInputType.number,
-                    inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-                    decoration: const InputDecoration(
-                      border: OutlineInputBorder(),
-                      hintText: '필요 인원 수 입력하세요.',
-                      suffixText: '명',
-                    ),
+                  
+                  // ✨ 액션 버튼들
+                  _buildActionButtons(
+                    context,
+                    theme,
+                    selectedWorkType,
+                    startTime,
+                    endTime,
+                    wageController,
+                    countController,
+                    selectedWageType,
                   ),
                 ],
               ),
             ),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.pop(context),
-                child: const Text('취소'),
-              ),
-              ElevatedButton(
-                onPressed: () {
-                  if (selectedWorkType == null ||
-                      startTime == null ||
-                      endTime == null ||
-                      wageController.text.isEmpty ||
-                      countController.text.isEmpty) {
-                    ToastHelper.showError('모든 정보를 입력해주세요');
-                    return;
-                  }
-
-                  final wage = int.tryParse(wageController.text.replaceAll(',', ''));
-                  final count = int.tryParse(countController.text);
-
-                  if (wage == null || wage <= 0) {
-                    ToastHelper.showError('유효한 급여를 입력해주세요');
-                    return;
-                  }
-
-                  if (count == null || count <= 0) {
-                    ToastHelper.showError('유효한 인원 수를 입력해주세요');
-                    return;
-                  }
-
-                  Navigator.pop(
-                    context,
-                    WorkDetailInput(
-                      workType: selectedWorkType!.name,
-                      workTypeIcon: selectedWorkType!.icon,
-                      workTypeColor: selectedWorkType!.color ?? '#FFFFFF',
-                      workTypeBackgroundColor: selectedWorkType!.backgroundColor,
-                      wage: wage,
-                      requiredCount: count,
-                      startTime: startTime,
-                      endTime: endTime,
-                      wageType: selectedWageType,
-                    ),
-                  );
-                },
-                child: const Text('추가'),
-              ),
-            ],
           );
         },
+      ),
+    );
+  }
+
+  // ============================================================
+  // 🎨 UI 섹션 빌더들
+  // ============================================================
+
+  /// ✨ 세련된 헤더
+  static Widget _buildHeader(BuildContext context, ThemeData theme) {
+    return Container(
+      padding: ResponsiveHelper.cardPadding(context),
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [
+            theme.primaryColor,
+            theme.primaryColor.withOpacity(0.8),
+          ],
+        ),
+        borderRadius: const BorderRadius.only(
+          topLeft: Radius.circular(24),
+          topRight: Radius.circular(24),
+        ),
+      ),
+      child: Row(
+        children: [
+          Container(
+            padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 12)),
+            decoration: BoxDecoration(
+              color: Colors.white.withOpacity(0.2),
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Icon(
+              Icons.work_outline,
+              color: Colors.white,
+              size: ResponsiveHelper.iconSize(context, 24),
+            ),
+          ),
+          SizedBox(width: ResponsiveHelper.spacing(context, 16)),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  '업무 추가',
+                  style: ResponsiveHelper.titleStyle(context).copyWith(
+                    color: Colors.white,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+                SizedBox(height: ResponsiveHelper.spacing(context, 4)),
+                Text(
+                  '새로운 업무를 추가하세요',
+                  style: ResponsiveHelper.smallStyle(context).copyWith(
+                    color: Colors.white.withOpacity(0.9),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          Material(
+            color: Colors.white.withOpacity(0.2),
+            borderRadius: BorderRadius.circular(8),
+            child: InkWell(
+              onTap: () => Navigator.pop(context),
+              borderRadius: BorderRadius.circular(8),
+              child: Padding(
+                padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 8)),
+                child: Icon(
+                  Icons.close,
+                  color: Colors.white,
+                  size: ResponsiveHelper.iconSize(context, 20),
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// ✨ 업무 유형 선택 섹션 (콜백 추가)
+  static Widget _buildWorkTypeSection(
+    BuildContext context,
+    ThemeData theme,
+    List<BusinessWorkTypeModel> businessWorkTypes,
+    BusinessWorkTypeModel? selectedWorkType,
+    StateSetter setDialogState,
+    Function(BusinessWorkTypeModel?) onWorkTypeChanged,  // ⭐ 콜백 추가
+  ) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Container(
+              padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 8)),
+              decoration: BoxDecoration(
+                color: theme.primaryColor.withOpacity(0.1),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Icon(
+                Icons.category,
+                size: ResponsiveHelper.iconSize(context, 18),
+                color: theme.primaryColor,
+              ),
+            ),
+            SizedBox(width: ResponsiveHelper.spacing(context, 12)),
+            Text(
+              '업무 유형',
+              style: ResponsiveHelper.subtitleStyle(context).copyWith(
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+          ],
+        ),
+        SizedBox(height: ResponsiveHelper.spacing(context, 12)),
+        Container(
+          decoration: BoxDecoration(
+            color: Colors.grey[50],
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(
+              color: selectedWorkType != null 
+                  ? theme.primaryColor 
+                  : Colors.grey[300]!,
+              width: selectedWorkType != null ? 2 : 1,
+            ),
+          ),
+          child: DropdownButtonFormField<BusinessWorkTypeModel>(
+            isExpanded: true,
+            value: selectedWorkType,
+            decoration: InputDecoration(
+              border: InputBorder.none,
+              contentPadding: ResponsiveHelper.cardPadding(context),
+              hintText: '업무를 선택하세요',
+              hintStyle: ResponsiveHelper.bodyStyle(
+                context,
+                color: Colors.grey[400],
+              ),
+            ),
+            items: businessWorkTypes.map((workType) {
+              return DropdownMenuItem<BusinessWorkTypeModel>(
+                value: workType,
+                child: Row(
+                  children: [
+                    Container(
+                      width: ResponsiveHelper.iconSize(context, 36),
+                      height: ResponsiveHelper.iconSize(context, 36),
+                      decoration: BoxDecoration(
+                        color: FormatHelper.parseColor(
+                          workType.backgroundColor ?? '#2196F3'
+                        ),
+                        borderRadius: BorderRadius.circular(8),
+                        boxShadow: [
+                          BoxShadow(
+                            color: FormatHelper.parseColor(
+                              workType.color ?? '#FFFFFF'
+                            ).withOpacity(0.3),
+                            blurRadius: 4,
+                            offset: const Offset(0, 2),
+                          ),
+                        ],
+                      ),
+                      child: Center(
+                        child: WorkTypeIcon.buildSmall(workType),
+                      ),
+                    ),
+                    SizedBox(width: ResponsiveHelper.spacing(context, 12)),
+                    Flexible(
+                      child: Text(
+                        workType.name,
+                        overflow: TextOverflow.ellipsis,
+                        maxLines: 1,
+                        style: ResponsiveHelper.bodyStyle(context).copyWith(
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              );
+            }).toList(),
+            onChanged: (value) {
+              setDialogState(() => onWorkTypeChanged(value));  // ⭐ 콜백 호출
+            },
+          ),
+        ),
+      ],
+    );
+  }
+
+  /// ✨ 급여 타입 선택 섹션 (수정됨)
+  static Widget _buildWageTypeSection(
+    BuildContext context,
+    ThemeData theme,
+    String selectedWageType,
+    StateSetter setDialogState,
+    Function(String) onWageTypeChanged,  // ⭐ 콜백 추가
+  ) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Container(
+              padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 8)),
+              decoration: BoxDecoration(
+                color: Colors.green.withOpacity(0.1),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Icon(
+                Icons.payments,
+                size: ResponsiveHelper.iconSize(context, 18),
+                color: Colors.green[700],
+              ),
+            ),
+            SizedBox(width: ResponsiveHelper.spacing(context, 12)),
+            Text(
+              '급여 타입',
+              style: ResponsiveHelper.subtitleStyle(context).copyWith(
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+          ],
+        ),
+        SizedBox(height: ResponsiveHelper.spacing(context, 12)),
+        Row(
+          children: [
+            Expanded(
+              child: _buildWageTypeButton(
+                context: context,
+                theme: theme,
+                label: '시급',
+                value: 'hourly',
+                icon: Icons.access_time,
+                selectedValue: selectedWageType,
+                onTap: () {
+                  setDialogState(() {
+                    onWageTypeChanged('hourly');  // ⭐ 콜백 호출
+                  });
+                },
+              ),
+            ),
+            SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+            Expanded(
+              child: _buildWageTypeButton(
+                context: context,
+                theme: theme,
+                label: '일급',
+                value: 'daily',
+                icon: Icons.today,
+                selectedValue: selectedWageType,
+                onTap: () {
+                  setDialogState(() {
+                    onWageTypeChanged('daily');  // ⭐ 콜백 호출
+                  });
+                },
+              ),
+            ),
+            SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+            Expanded(
+              child: _buildWageTypeButton(
+                context: context,
+                theme: theme,
+                label: '월급',
+                value: 'monthly',
+                icon: Icons.calendar_month,
+                selectedValue: selectedWageType,
+                onTap: () {
+                  setDialogState(() {
+                    onWageTypeChanged('monthly');  // ⭐ 콜백 호출
+                  });
+                },
+              ),
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+
+  /// ✨ 근무 시간 섹션 (레이아웃 개선 + 콜백)
+  static Widget _buildTimeSection(
+    BuildContext context,
+    ThemeData theme,
+    String? startTime,
+    String? endTime,
+    StateSetter setDialogState,
+    Function(String?) onStartTimeChanged,  // ⭐ 콜백 추가
+    Function(String?) onEndTimeChanged,    // ⭐ 콜백 추가
+  ) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Container(
+              padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 8)),
+              decoration: BoxDecoration(
+                color: Colors.blue.withOpacity(0.1),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Icon(
+                Icons.schedule,
+                size: ResponsiveHelper.iconSize(context, 18),
+                color: Colors.blue[700],
+              ),
+            ),
+            SizedBox(width: ResponsiveHelper.spacing(context, 12)),
+            Text(
+              '근무 시간',
+              style: ResponsiveHelper.subtitleStyle(context).copyWith(
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+          ],
+        ),
+        SizedBox(height: ResponsiveHelper.spacing(context, 12)),
+        
+        // ✅ 세로 레이아웃으로 변경 (공간 확보)
+        Column(
+          children: [
+            // 시작 시간
+            Container(
+              decoration: BoxDecoration(
+                color: Colors.grey[50],
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(
+                  color: startTime != null 
+                      ? theme.primaryColor 
+                      : Colors.grey[300]!,
+                  width: startTime != null ? 2 : 1,
+                ),
+              ),
+              child: DropdownButtonFormField<String>(
+                value: startTime,
+                isExpanded: true,
+                decoration: InputDecoration(
+                  border: InputBorder.none,
+                  contentPadding: EdgeInsets.symmetric(
+                    horizontal: ResponsiveHelper.spacing(context, 16),
+                    vertical: ResponsiveHelper.spacing(context, 12),
+                  ),
+                  hintText: '시작 시간 선택',
+                  hintStyle: ResponsiveHelper.smallStyle(
+                    context,
+                    color: Colors.grey[400],
+                  ),
+                  prefixIcon: Icon(
+                    Icons.play_arrow,
+                    color: theme.primaryColor,
+                    size: ResponsiveHelper.iconSize(context, 20),
+                  ),
+                ),
+                style: ResponsiveHelper.bodyStyle(context),
+                items: FormatHelper.generateTimeList().map((time) {
+                  return DropdownMenuItem(
+                    value: time,
+                    child: Text(time),
+                  );
+                }).toList(),
+                onChanged: (value) => setDialogState(() => onStartTimeChanged(value)),  // ⭐ 콜백 호출
+              ),
+            ),
+            
+            // 화살표
+            Padding(
+              padding: EdgeInsets.symmetric(
+                vertical: ResponsiveHelper.spacing(context, 8),
+              ),
+              child: Icon(
+                Icons.arrow_downward,
+                color: theme.primaryColor,
+                size: ResponsiveHelper.iconSize(context, 20),
+              ),
+            ),
+            
+            // 종료 시간
+            Container(
+              decoration: BoxDecoration(
+                color: Colors.grey[50],
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(
+                  color: endTime != null 
+                      ? theme.primaryColor 
+                      : Colors.grey[300]!,
+                  width: endTime != null ? 2 : 1,
+                ),
+              ),
+              child: DropdownButtonFormField<String>(
+                value: endTime,
+                isExpanded: true,
+                decoration: InputDecoration(
+                  border: InputBorder.none,
+                  contentPadding: EdgeInsets.symmetric(
+                    horizontal: ResponsiveHelper.spacing(context, 16),
+                    vertical: ResponsiveHelper.spacing(context, 12),
+                  ),
+                  hintText: '종료 시간 선택',
+                  hintStyle: ResponsiveHelper.smallStyle(
+                    context,
+                    color: Colors.grey[400],
+                  ),
+                  prefixIcon: Icon(
+                    Icons.stop,
+                    color: theme.primaryColor,
+                    size: ResponsiveHelper.iconSize(context, 20),
+                  ),
+                ),
+                style: ResponsiveHelper.bodyStyle(context),
+                items: FormatHelper.generateTimeList().map((time) {
+                  return DropdownMenuItem(
+                    value: time,
+                    child: Text(time),
+                  );
+                }).toList(),
+                onChanged: (value) => setDialogState(() => onEndTimeChanged(value)),  // ⭐ 콜백 호출
+              ),
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+
+  /// ✨ 급여 입력 섹션
+  static Widget _buildWageSection(
+    BuildContext context,
+    ThemeData theme,
+    String selectedWageType,
+    TextEditingController wageController,
+  ) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Container(
+              padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 8)),
+              decoration: BoxDecoration(
+                color: Colors.amber.withOpacity(0.1),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Icon(
+                Icons.currency_exchange,
+                size: ResponsiveHelper.iconSize(context, 18),
+                color: Colors.amber[700],
+              ),
+            ),
+            SizedBox(width: ResponsiveHelper.spacing(context, 12)),
+            Text(
+              _getWageLabelFromType(selectedWageType),
+              style: ResponsiveHelper.subtitleStyle(context).copyWith(
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+          ],
+        ),
+        SizedBox(height: ResponsiveHelper.spacing(context, 12)),
+        TextFormField(
+          controller: wageController,
+          keyboardType: TextInputType.number,
+          style: ResponsiveHelper.bodyStyle(context).copyWith(
+            fontWeight: FontWeight.bold,
+            fontSize: ResponsiveHelper.getFontSize(context, 16),
+          ),
+          inputFormatters: [
+            FilteringTextInputFormatter.digitsOnly,
+            TextInputFormatter.withFunction((oldValue, newValue) {
+              if (newValue.text.isEmpty) {
+                return newValue;
+              }
+              
+              final number = int.tryParse(newValue.text.replaceAll(',', ''));
+              if (number == null) {
+                return oldValue;
+              }
+              
+              final formatted = number.toString().replaceAllMapped(
+                RegExp(r'(\d{1,3})(?=(\d{3})+(?!\d))'),
+                (Match m) => '${m[1]},',
+              );
+              
+              return TextEditingValue(
+                text: formatted,
+                selection: TextSelection.collapsed(offset: formatted.length),
+              );
+            }),
+          ],
+          decoration: InputDecoration(
+            filled: true,
+            fillColor: Colors.grey[50],
+            hintText: '금액을 입력하세요',
+            hintStyle: ResponsiveHelper.bodyStyle(
+              context,
+              color: Colors.grey[400],
+            ),
+            suffixText: '원',
+            suffixStyle: ResponsiveHelper.bodyStyle(context).copyWith(
+              fontWeight: FontWeight.bold,
+              color: Colors.green[700],
+            ),
+            prefixIcon: Icon(
+              Icons.attach_money,
+              color: theme.primaryColor,
+              size: ResponsiveHelper.iconSize(context, 24),
+            ),
+            border: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(12),
+              borderSide: BorderSide(color: Colors.grey[300]!),
+            ),
+            enabledBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(12),
+              borderSide: BorderSide(color: Colors.grey[300]!),
+            ),
+            focusedBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(12),
+              borderSide: BorderSide(color: theme.primaryColor, width: 2),
+            ),
+          ),
+        ),
+        if (selectedWageType == 'hourly') ...[
+          SizedBox(height: ResponsiveHelper.spacing(context, 8)),
+          Container(
+            padding: ResponsiveHelper.cardPadding(context),
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                colors: [
+                  Colors.blue[50]!,
+                  Colors.blue[100]!,
+                ],
+              ),
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: Row(
+              children: [
+                Icon(
+                  Icons.info_outline,
+                  size: ResponsiveHelper.iconSize(context, 16),
+                  color: Colors.blue[700],
+                ),
+                SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+                Expanded(
+                  child: Text(
+                    '2025년 최저시급: ${LaborStandards.formatCurrencyWithUnit(LaborStandards.currentMinimumWage)}',
+                    style: ResponsiveHelper.smallStyle(
+                      context,
+                      color: Colors.blue[900],
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ],
+    );
+  }
+
+  /// ✨ 필요 인원 섹션
+  static Widget _buildCountSection(
+    BuildContext context,
+    ThemeData theme,
+    TextEditingController countController,
+  ) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Container(
+              padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 8)),
+              decoration: BoxDecoration(
+                color: Colors.purple.withOpacity(0.1),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Icon(
+                Icons.people,
+                size: ResponsiveHelper.iconSize(context, 18),
+                color: Colors.purple[700],
+              ),
+            ),
+            SizedBox(width: ResponsiveHelper.spacing(context, 12)),
+            Text(
+              '필요 인원',
+              style: ResponsiveHelper.subtitleStyle(context).copyWith(
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+          ],
+        ),
+        SizedBox(height: ResponsiveHelper.spacing(context, 12)),
+        TextFormField(
+          controller: countController,
+          keyboardType: TextInputType.number,
+          style: ResponsiveHelper.bodyStyle(context).copyWith(
+            fontWeight: FontWeight.bold,
+            fontSize: ResponsiveHelper.getFontSize(context, 16),
+          ),
+          inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+          decoration: InputDecoration(
+            filled: true,
+            fillColor: Colors.grey[50],
+            hintText: '필요한 인원 수를 입력하세요',
+            hintStyle: ResponsiveHelper.bodyStyle(
+              context,
+              color: Colors.grey[400],
+            ),
+            suffixText: '명',
+            suffixStyle: ResponsiveHelper.bodyStyle(context).copyWith(
+              fontWeight: FontWeight.bold,
+              color: Colors.purple[700],
+            ),
+            prefixIcon: Icon(
+              Icons.group_add,
+              color: theme.primaryColor,
+              size: ResponsiveHelper.iconSize(context, 24),
+            ),
+            border: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(12),
+              borderSide: BorderSide(color: Colors.grey[300]!),
+            ),
+            enabledBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(12),
+              borderSide: BorderSide(color: Colors.grey[300]!),
+            ),
+            focusedBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(12),
+              borderSide: BorderSide(color: theme.primaryColor, width: 2),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  /// ✨ 액션 버튼들
+  static Widget _buildActionButtons(
+    BuildContext context,
+    ThemeData theme,
+    BusinessWorkTypeModel? selectedWorkType,
+    String? startTime,
+    String? endTime,
+    TextEditingController wageController,
+    TextEditingController countController,
+    String selectedWageType,
+  ) {
+    return Container(
+      padding: ResponsiveHelper.cardPadding(context),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        border: Border(
+          top: BorderSide(color: Colors.grey[200]!),
+        ),
+      ),
+      child: Row(
+        children: [
+          Expanded(
+            child: OutlinedButton(
+              onPressed: () => Navigator.pop(context),
+              style: OutlinedButton.styleFrom(
+                padding: EdgeInsets.symmetric(
+                  vertical: ResponsiveHelper.spacing(context, 16),
+                ),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                side: BorderSide(color: Colors.grey[300]!),
+              ),
+              child: Text(
+                '취소',
+                style: ResponsiveHelper.bodyStyle(context).copyWith(
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+            ),
+          ),
+          SizedBox(width: ResponsiveHelper.spacing(context, 12)),
+          Expanded(
+            flex: 2,
+            child: Container(
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                  colors: [
+                    theme.primaryColor,
+                    theme.primaryColor.withOpacity(0.8),
+                  ],
+                ),
+                borderRadius: BorderRadius.circular(12),
+                boxShadow: [
+                  BoxShadow(
+                    color: theme.primaryColor.withOpacity(0.4),
+                    blurRadius: 8,
+                    offset: const Offset(0, 4),
+                  ),
+                ],
+              ),
+              child: Material(
+                color: Colors.transparent,
+                child: InkWell(
+                  onTap: () {
+                    if (selectedWorkType == null ||
+                        startTime == null ||
+                        endTime == null ||
+                        wageController.text.isEmpty ||
+                        countController.text.isEmpty) {
+                      ToastHelper.showError('모든 정보를 입력해주세요');
+                      return;
+                    }
+
+                    final wage = int.tryParse(wageController.text.replaceAll(',', ''));
+                    final count = int.tryParse(countController.text);
+
+                    if (wage == null || wage <= 0) {
+                      ToastHelper.showError('유효한 급여를 입력해주세요');
+                      return;
+                    }
+
+                    if (count == null || count <= 0) {
+                      ToastHelper.showError('유효한 인원 수를 입력해주세요');
+                      return;
+                    }
+
+                    Navigator.pop(
+                      context,
+                      WorkDetailInput(
+                        workType: selectedWorkType!.name,
+                        workTypeIcon: selectedWorkType.icon,
+                        workTypeColor: selectedWorkType.color ?? '#FFFFFF',
+                        workTypeBackgroundColor: selectedWorkType.backgroundColor,
+                        wage: wage,
+                        requiredCount: count,
+                        startTime: startTime,
+                        endTime: endTime,
+                        wageType: selectedWageType,
+                      ),
+                    );
+                  },
+                  borderRadius: BorderRadius.circular(12),
+                  child: Padding(
+                    padding: EdgeInsets.symmetric(
+                      vertical: ResponsiveHelper.spacing(context, 16),
+                    ),
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Icon(
+                          Icons.add_circle_outline,
+                          color: Colors.white,
+                          size: ResponsiveHelper.iconSize(context, 20),
+                        ),
+                        SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+                        Text(
+                          '업무 추가',
+                          style: ResponsiveHelper.bodyStyle(context).copyWith(
+                            color: Colors.white,
+                            fontWeight: FontWeight.bold,
+                            fontSize: ResponsiveHelper.getFontSize(context, 16),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -327,46 +924,69 @@ class WorkDetailDialog {
     }
   }
 
-  /// 급여 타입 선택 버튼
+  /// ✨ 급여 타입 선택 버튼
   static Widget _buildWageTypeButton({
     required BuildContext context,
+    required ThemeData theme,
     required String label,
     required String value,
+    required IconData icon,
     required String selectedValue,
     required VoidCallback onTap,
   }) {
     final isSelected = value == selectedValue;
     
-    return InkWell(
+    return GestureDetector(
       onTap: onTap,
       child: Container(
         padding: EdgeInsets.symmetric(
-          vertical: ResponsiveHelper.spacing(context, 12),
+          vertical: ResponsiveHelper.spacing(context, 14),
         ),
         decoration: BoxDecoration(
-          color: isSelected 
-              ? Theme.of(context).primaryColor.withOpacity(0.1)
-              : Theme.of(context).colorScheme.surface,
+          gradient: isSelected
+              ? LinearGradient(
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                  colors: [
+                    theme.primaryColor,
+                    theme.primaryColor.withOpacity(0.8),
+                  ],
+                )
+              : null,
+          color: isSelected ? null : Colors.white,
           border: Border.all(
             color: isSelected 
-                ? Theme.of(context).primaryColor
-                : Theme.of(context).dividerColor,
-            width: 2,
+                ? theme.primaryColor
+                : Colors.grey[300]!,
+            width: isSelected ? 2 : 1,
           ),
-          borderRadius: BorderRadius.circular(8),
+          borderRadius: BorderRadius.circular(12),
+          boxShadow: isSelected
+              ? [
+                  BoxShadow(
+                    color: theme.primaryColor.withOpacity(0.3),
+                    blurRadius: 8,
+                    offset: const Offset(0, 4),
+                  ),
+                ]
+              : null,
         ),
-        child: Center(
-          child: Text(
-            label,
-            style: ResponsiveHelper.bodyStyle(
-              context,
-              color: isSelected 
-                  ? Theme.of(context).primaryColor
-                  : Theme.of(context).textTheme.bodyMedium?.color,
-            ).copyWith(
-              fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+        child: Column(
+          children: [
+            Icon(
+              icon,
+              color: isSelected ? Colors.white : Colors.grey[600],
+              size: ResponsiveHelper.iconSize(context, 20),
             ),
-          ),
+            SizedBox(height: ResponsiveHelper.spacing(context, 4)),
+            Text(
+              label,
+              style: ResponsiveHelper.smallStyle(context).copyWith(
+                color: isSelected ? Colors.white : Colors.grey[700],
+                fontWeight: isSelected ? FontWeight.bold : FontWeight.w600,
+              ),
+            ),
+          ],
         ),
       ),
     );

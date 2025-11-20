@@ -18,7 +18,7 @@ import '../../../providers/user_provider.dart';
 
 // Utils
 import '../../../utils/toast_helper.dart';
-import '../../../utils/responsive_helper.dart';  // ⭐ 추가
+import '../../../utils/responsive_helper.dart';
 
 // Widgets
 import '../../../widgets/common/loading_widget.dart';
@@ -30,7 +30,7 @@ import '../dialogs/attendance_status_dialog.dart';
 // Local Widgets
 import '../../../widgets/admin/cards/admin_to_group_card.dart';
 
-/// 인력 관리 - 캘린더 뷰 (리팩토링 완료)
+/// 인력 관리 - 캘린더 뷰 (business_admin_home_screen 스타일 통일)
 class WorkforceCalendarView extends StatefulWidget {
   const WorkforceCalendarView({super.key});
 
@@ -278,25 +278,9 @@ class _WorkforceCalendarViewState extends State<WorkforceCalendarView> {
         SliverToBoxAdapter(
           child: _buildCalendar(),
         ),
-        // ⭐ 범례 추가!
+        // ✨ 범례 - 세련된 디자인
         SliverToBoxAdapter(
-          child: Container(
-            padding: EdgeInsets.symmetric(
-              vertical: ResponsiveHelper.spacing(context, 10),
-              horizontal: ResponsiveHelper.spacing(context, 16),
-            ),
-            color: Colors.grey[50],
-            child: Wrap(
-              alignment: WrapAlignment.center,
-              spacing: 16,
-              runSpacing: 8,
-              children: [
-                _buildLegendItem(Theme.of(context).primaryColor, '단기 진행중', isLongTerm: false),
-                _buildLegendItem(Colors.amber[700]!, '장기 진행중', isLongTerm: true),
-                _buildLegendItem(Colors.grey[400]!, '과거/마감', isLongTerm: false),
-              ],
-            ),
-          ),
+          child: _buildLegendSection(),
         ),
 
         const SliverToBoxAdapter(
@@ -316,6 +300,38 @@ class _WorkforceCalendarViewState extends State<WorkforceCalendarView> {
         // 선택한 날짜의 TO 목록
         _buildSliverDayTOList(),
       ],
+    );
+  }
+
+  /// ✨ 범례 섹션 - 그라데이션 박스
+  Widget _buildLegendSection() {
+    final theme = Theme.of(context);
+    
+    return Container(
+      padding: EdgeInsets.symmetric(
+        vertical: ResponsiveHelper.spacing(context, 12),
+        horizontal: ResponsiveHelper.spacing(context, 16),
+      ),
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [
+            theme.primaryColor.withOpacity(0.05),
+            theme.primaryColor.withOpacity(0.02),
+          ],
+        ),
+      ),
+      child: Wrap(
+        alignment: WrapAlignment.center,
+        spacing: ResponsiveHelper.spacing(context, 20),
+        runSpacing: ResponsiveHelper.spacing(context, 8),
+        children: [
+          _buildLegendItem(theme.primaryColor, '단기 진행중', isLongTerm: false),
+          _buildLegendItem(Colors.amber[700]!, '장기 진행중', isLongTerm: true),
+          _buildLegendItem(Colors.grey[400]!, '과거/마감', isLongTerm: false),
+        ],
+      ),
     );
   }
 
@@ -418,39 +434,62 @@ class _WorkforceCalendarViewState extends State<WorkforceCalendarView> {
     );
   }
 
-  /// 날짜 헤더
+  /// ✨ 날짜 헤더 - 그라데이션 배경
   Widget _buildDateHeader() {
+    final theme = Theme.of(context);
     final isToday = DateUtils.isSameDay(_selectedDay, DateTime.now());
     final isPast = _selectedDay!.isBefore(DateTime.now()) && !isToday;
 
     String statusText = '';
-    Color statusColor = Theme.of(context).primaryColor;
+    Color statusColor = theme.primaryColor;
 
     if (isPast) {
-      statusText = '과거 기록';
+      statusText = '과거';
       statusColor = Colors.grey;
     } else if (isToday) {
       statusText = '오늘';
       statusColor = Colors.green;
     } else {
       statusText = '예정';
-      statusColor = Theme.of(context).primaryColor;
+      statusColor = theme.primaryColor;
     }
 
     return Container(
       padding: EdgeInsets.symmetric(
-        vertical: ResponsiveHelper.spacing(context, 12),
+        vertical: ResponsiveHelper.spacing(context, 14),
         horizontal: ResponsiveHelper.spacing(context, 16),
       ),
-      color: statusColor.withOpacity(0.1),
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [
+            statusColor.withOpacity(0.12),
+            statusColor.withOpacity(0.06),
+          ],
+        ),
+        border: Border(
+          bottom: BorderSide(
+            color: statusColor.withOpacity(0.3),
+            width: 1.5,
+          ),
+        ),
+      ),
       child: Row(
         children: [
-          Icon(
-            Icons.event, 
-            color: statusColor, 
-            size: ResponsiveHelper.iconSize(context, 20)
+          Container(
+            padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 8)),
+            decoration: BoxDecoration(
+              color: statusColor.withOpacity(0.15),
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: Icon(
+              Icons.event,
+              color: statusColor,
+              size: ResponsiveHelper.iconSize(context, 20),
+            ),
           ),
-          SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+          SizedBox(width: ResponsiveHelper.spacing(context, 12)),
           Text(
             DateFormat('yyyy년 M월 d일 (E)', 'ko_KR').format(_selectedDay!),
             style: ResponsiveHelper.subtitleStyle(context).copyWith(
@@ -459,35 +498,87 @@ class _WorkforceCalendarViewState extends State<WorkforceCalendarView> {
             ),
           ),
           
-          // ⭐ 인원현황 버튼 추가
-          SizedBox(width: ResponsiveHelper.spacing(context, 12)),
-          ElevatedButton.icon(
-            onPressed: _hasConfirmedWorkers ? _showAttendancePopup : null,
-            icon: Icon(
-              Icons.groups, 
-              size: ResponsiveHelper.iconSize(context, 18)
+          const Spacer(),
+          
+          // ✨ 인원현황 버튼 - 테마 기반
+          Container(
+            decoration: BoxDecoration(
+              gradient: _hasConfirmedWorkers
+                  ? LinearGradient(
+                      colors: [
+                        theme.primaryColor,
+                        theme.primaryColor.withOpacity(0.85),
+                      ],
+                    )
+                  : null,
+              color: _hasConfirmedWorkers ? null : Colors.grey[300],
+              borderRadius: BorderRadius.circular(12),
+              boxShadow: _hasConfirmedWorkers
+                  ? [
+                      BoxShadow(
+                        color: theme.primaryColor.withOpacity(0.3),
+                        blurRadius: 6,
+                        offset: const Offset(0, 2),
+                      ),
+                    ]
+                  : null,
             ),
-            label: const Text('인원현황'),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: _hasConfirmedWorkers ? Colors.blue : Colors.grey,
-              foregroundColor: Colors.white,
-              padding: EdgeInsets.symmetric(
-                horizontal: ResponsiveHelper.spacing(context, 12),
-                vertical: ResponsiveHelper.spacing(context, 8),
+            child: Material(
+              color: Colors.transparent,
+              child: InkWell(
+                onTap: _hasConfirmedWorkers ? _showAttendancePopup : null,
+                borderRadius: BorderRadius.circular(12),
+                child: Padding(
+                  padding: EdgeInsets.symmetric(
+                    horizontal: ResponsiveHelper.spacing(context, 14),
+                    vertical: ResponsiveHelper.spacing(context, 10),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(
+                        Icons.groups,
+                        size: ResponsiveHelper.iconSize(context, 18),
+                        color: _hasConfirmedWorkers ? Colors.white : Colors.grey[600],
+                      ),
+                      SizedBox(width: ResponsiveHelper.spacing(context, 6)),
+                      Text(
+                        '인원현황',
+                        style: ResponsiveHelper.smallStyle(context).copyWith(
+                          color: _hasConfirmedWorkers ? Colors.white : Colors.grey[600],
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
               ),
-              textStyle: ResponsiveHelper.smallStyle(context),
             ),
           ),
           
-          const Spacer(),
+          SizedBox(width: ResponsiveHelper.spacing(context, 12)),
+          
+          // 상태 배지
           Container(
             padding: EdgeInsets.symmetric(
-              horizontal: ResponsiveHelper.spacing(context, 8),
-              vertical: ResponsiveHelper.spacing(context, 4),
+              horizontal: ResponsiveHelper.spacing(context, 12),
+              vertical: ResponsiveHelper.spacing(context, 6),
             ),
             decoration: BoxDecoration(
-              color: statusColor,
+              gradient: LinearGradient(
+                colors: [
+                  statusColor,
+                  statusColor.withOpacity(0.85),
+                ],
+              ),
               borderRadius: BorderRadius.circular(12),
+              boxShadow: [
+                BoxShadow(
+                  color: statusColor.withOpacity(0.3),
+                  blurRadius: 4,
+                  offset: const Offset(0, 2),
+                ),
+              ],
             ),
             child: Text(
               statusText,
@@ -606,30 +697,45 @@ class _WorkforceCalendarViewState extends State<WorkforceCalendarView> {
     });
   }
 
-  /// 범례 아이템
+  /// ✨ 범례 아이템 - 세련된 스타일
   Widget _buildLegendItem(Color color, String label, {required bool isLongTerm}) {
-    return Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        isLongTerm
-            ? Icon(Icons.star, size: 10, color: color)
-            : Container(
-                width: 8,
-                height: 8,
-                decoration: BoxDecoration(
-                  color: color,
-                  shape: BoxShape.circle,
-                ),
-              ),
-        SizedBox(width: ResponsiveHelper.spacing(context, 4)),
-        Text(
-          label,
-          style: ResponsiveHelper.tinyStyle(
-            context,
-            color: Colors.grey[700],
-          ),
+    return Container(
+      padding: EdgeInsets.symmetric(
+        horizontal: ResponsiveHelper.spacing(context, 10),
+        vertical: ResponsiveHelper.spacing(context, 6),
+      ),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(
+          color: color.withOpacity(0.3),
+          width: 1,
         ),
-      ],
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          isLongTerm
+              ? Icon(Icons.star, size: 12, color: color)
+              : Container(
+                  width: 10,
+                  height: 10,
+                  decoration: BoxDecoration(
+                    color: color,
+                    shape: BoxShape.circle,
+                  ),
+                ),
+          SizedBox(width: ResponsiveHelper.spacing(context, 6)),
+          Text(
+            label,
+            style: ResponsiveHelper.tinyStyle(
+              context,
+              color: Colors.grey[800],
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+        ],
+      ),
     );
   }
 

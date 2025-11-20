@@ -9,9 +9,9 @@ import '../../widgets/pickers/icon_picker_dialog.dart';
 import '../../widgets/work_type_icon.dart';
 import '../../utils/toast_helper.dart';
 import '../../utils/format_helper.dart';
-import '../../utils/responsive_helper.dart';  // ⭐ 추가
+import '../../utils/responsive_helper.dart';
 
-/// 업무 유형 관리 화면
+/// ✨ 세련된 업무 유형 관리 화면
 class WorkTypeManagementScreen extends StatefulWidget {
   const WorkTypeManagementScreen({super.key});
 
@@ -94,7 +94,7 @@ class _WorkTypeManagementScreenState extends State<WorkTypeManagementScreen> {
     }
   }
 
-  /// 업무 유형 추가 다이얼로그
+  /// ✨ 세련된 업무 유형 추가 다이얼로그
   Future<void> _showAddDialog() async {
     if (_selectedBusiness == null) {
       ToastHelper.showWarning('사업장을 먼저 선택해주세요');
@@ -108,31 +108,159 @@ class _WorkTypeManagementScreenState extends State<WorkTypeManagementScreen> {
 
     // 2. 이름 입력
     final nameController = TextEditingController();
+    final theme = Theme.of(context);
     
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) {
-        return AlertDialog(
-          title: const Text('업무 유형 정보'),
-          content: TextField(
-            controller: nameController,
-            decoration: const InputDecoration(
-              labelText: '이름',
-              hintText: '예: 피킹, 패킹',
-              border: OutlineInputBorder(),
-            ),
-            autofocus: true,
+        return Dialog(
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(24),
           ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context, false),
-              child: const Text('취소'),
+          child: Container(
+            constraints: BoxConstraints(
+              maxWidth: 400,
             ),
-            ElevatedButton(
-              onPressed: () => Navigator.pop(context, true),
-              child: const Text('추가'),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                // ✨ 헤더
+                Container(
+                  padding: ResponsiveHelper.cardPadding(context),
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(
+                      colors: [
+                        theme.primaryColor,
+                        theme.primaryColor.withOpacity(0.8),
+                      ],
+                    ),
+                    borderRadius: const BorderRadius.only(
+                      topLeft: Radius.circular(24),
+                      topRight: Radius.circular(24),
+                    ),
+                  ),
+                  child: Row(
+                    children: [
+                      Container(
+                        padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 12)),
+                        decoration: BoxDecoration(
+                          color: Colors.white.withOpacity(0.2),
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        child: Icon(
+                          Icons.add_circle_outline,
+                          color: Colors.white,
+                          size: ResponsiveHelper.iconSize(context, 24),
+                        ),
+                      ),
+                      SizedBox(width: ResponsiveHelper.spacing(context, 16)),
+                      Expanded(
+                        child: Text(
+                          '업무 유형 추가',
+                          style: ResponsiveHelper.titleStyle(context).copyWith(
+                            color: Colors.white,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                // ✨ 컨텐츠
+                Padding(
+                  padding: ResponsiveHelper.cardPadding(context),
+                  child: TextField(
+                    controller: nameController,
+                    decoration: InputDecoration(
+                      labelText: '업무 유형 이름',
+                      hintText: '예: 피킹, 패킹, 검수',
+                      prefixIcon: Icon(Icons.label, color: theme.primaryColor),
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      filled: true,
+                      fillColor: Colors.grey[50],
+                    ),
+                    autofocus: true,
+                  ),
+                ),
+                // ✨ 버튼
+                Padding(
+                  padding: ResponsiveHelper.cardPadding(context),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: OutlinedButton(
+                          onPressed: () => Navigator.pop(context, false),
+                          style: OutlinedButton.styleFrom(
+                            padding: EdgeInsets.symmetric(
+                              vertical: ResponsiveHelper.spacing(context, 16),
+                            ),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                          ),
+                          child: Text('취소'),
+                        ),
+                      ),
+                      SizedBox(width: ResponsiveHelper.spacing(context, 12)),
+                      Expanded(
+                        flex: 2,
+                        child: Container(
+                          decoration: BoxDecoration(
+                            gradient: LinearGradient(
+                              colors: [
+                                theme.primaryColor,
+                                theme.primaryColor.withOpacity(0.8),
+                              ],
+                            ),
+                            borderRadius: BorderRadius.circular(12),
+                            boxShadow: [
+                              BoxShadow(
+                                color: theme.primaryColor.withOpacity(0.4),
+                                blurRadius: 8,
+                                offset: const Offset(0, 4),
+                              ),
+                            ],
+                          ),
+                          child: Material(
+                            color: Colors.transparent,
+                            child: InkWell(
+                              onTap: () => Navigator.pop(context, true),
+                              borderRadius: BorderRadius.circular(12),
+                              child: Padding(
+                                padding: EdgeInsets.symmetric(
+                                  vertical: ResponsiveHelper.spacing(context, 16),
+                                ),
+                                child: Row(
+                                  mainAxisAlignment: MainAxisAlignment.center,
+                                  children: [
+                                    Icon(
+                                      Icons.check_circle,
+                                      color: Colors.white,
+                                      size: ResponsiveHelper.iconSize(context, 20),
+                                    ),
+                                    SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+                                    Text(
+                                      '추가',
+                                      style: ResponsiveHelper.bodyStyle(context).copyWith(
+                                        color: Colors.white,
+                                        fontWeight: FontWeight.bold,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
             ),
-          ],
+          ),
         );
       },
     );
@@ -153,7 +281,7 @@ class _WorkTypeManagementScreenState extends State<WorkTypeManagementScreen> {
     }
   }
 
-  /// 업무 유형 수정 다이얼로그
+  /// ✨ 세련된 업무 유형 수정 다이얼로그
   Future<void> _showEditDialog(BusinessWorkTypeModel workType) async {
     if (_selectedBusiness == null) return;
 
@@ -168,31 +296,159 @@ class _WorkTypeManagementScreenState extends State<WorkTypeManagementScreen> {
 
     // 2. 이름 입력
     final nameController = TextEditingController(text: workType.name);
+    final theme = Theme.of(context);
     
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) {
-        return AlertDialog(
-          title: const Text('업무 유형 수정'),
-          content: TextField(
-            controller: nameController,
-            decoration: const InputDecoration(
-              labelText: '이름',
-              hintText: '예: 피킹, 패킹',
-              border: OutlineInputBorder(),
-            ),
-            autofocus: true,
+        return Dialog(
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(24),
           ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context, false),
-              child: const Text('취소'),
+          child: Container(
+            constraints: BoxConstraints(
+              maxWidth: 400,
             ),
-            ElevatedButton(
-              onPressed: () => Navigator.pop(context, true),
-              child: const Text('수정'),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                // ✨ 헤더
+                Container(
+                  padding: ResponsiveHelper.cardPadding(context),
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(
+                      colors: [
+                        Colors.orange,
+                        Colors.orange.withOpacity(0.8),
+                      ],
+                    ),
+                    borderRadius: const BorderRadius.only(
+                      topLeft: Radius.circular(24),
+                      topRight: Radius.circular(24),
+                    ),
+                  ),
+                  child: Row(
+                    children: [
+                      Container(
+                        padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 12)),
+                        decoration: BoxDecoration(
+                          color: Colors.white.withOpacity(0.2),
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        child: Icon(
+                          Icons.edit,
+                          color: Colors.white,
+                          size: ResponsiveHelper.iconSize(context, 24),
+                        ),
+                      ),
+                      SizedBox(width: ResponsiveHelper.spacing(context, 16)),
+                      Expanded(
+                        child: Text(
+                          '업무 유형 수정',
+                          style: ResponsiveHelper.titleStyle(context).copyWith(
+                            color: Colors.white,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                // ✨ 컨텐츠
+                Padding(
+                  padding: ResponsiveHelper.cardPadding(context),
+                  child: TextField(
+                    controller: nameController,
+                    decoration: InputDecoration(
+                      labelText: '업무 유형 이름',
+                      hintText: '예: 피킹, 패킹, 검수',
+                      prefixIcon: Icon(Icons.label, color: Colors.orange),
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      filled: true,
+                      fillColor: Colors.grey[50],
+                    ),
+                    autofocus: true,
+                  ),
+                ),
+                // ✨ 버튼
+                Padding(
+                  padding: ResponsiveHelper.cardPadding(context),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: OutlinedButton(
+                          onPressed: () => Navigator.pop(context, false),
+                          style: OutlinedButton.styleFrom(
+                            padding: EdgeInsets.symmetric(
+                              vertical: ResponsiveHelper.spacing(context, 16),
+                            ),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                          ),
+                          child: Text('취소'),
+                        ),
+                      ),
+                      SizedBox(width: ResponsiveHelper.spacing(context, 12)),
+                      Expanded(
+                        flex: 2,
+                        child: Container(
+                          decoration: BoxDecoration(
+                            gradient: LinearGradient(
+                              colors: [
+                                Colors.orange,
+                                Colors.orange.withOpacity(0.8),
+                              ],
+                            ),
+                            borderRadius: BorderRadius.circular(12),
+                            boxShadow: [
+                              BoxShadow(
+                                color: Colors.orange.withOpacity(0.4),
+                                blurRadius: 8,
+                                offset: const Offset(0, 4),
+                              ),
+                            ],
+                          ),
+                          child: Material(
+                            color: Colors.transparent,
+                            child: InkWell(
+                              onTap: () => Navigator.pop(context, true),
+                              borderRadius: BorderRadius.circular(12),
+                              child: Padding(
+                                padding: EdgeInsets.symmetric(
+                                  vertical: ResponsiveHelper.spacing(context, 16),
+                                ),
+                                child: Row(
+                                  mainAxisAlignment: MainAxisAlignment.center,
+                                  children: [
+                                    Icon(
+                                      Icons.check_circle,
+                                      color: Colors.white,
+                                      size: ResponsiveHelper.iconSize(context, 20),
+                                    ),
+                                    SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+                                    Text(
+                                      '수정',
+                                      style: ResponsiveHelper.bodyStyle(context).copyWith(
+                                        color: Colors.white,
+                                        fontWeight: FontWeight.bold,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
             ),
-          ],
+          ),
         );
       },
     );
@@ -214,27 +470,181 @@ class _WorkTypeManagementScreenState extends State<WorkTypeManagementScreen> {
     }
   }
 
-  /// 삭제 확인 다이얼로그
+  /// ✨ 세련된 삭제 확인 다이얼로그
   Future<void> _confirmDelete(BusinessWorkTypeModel workType) async {
     if (_selectedBusiness == null) return;
 
     final confirmed = await showDialog<bool>(
       context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('업무 유형 삭제'),
-        content: Text('${workType.name}을(를) 삭제하시겠습니까?'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('취소'),
+      builder: (context) {
+        return Dialog(
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(24),
           ),
-          TextButton(
-            onPressed: () => Navigator.pop(context, true),
-            style: TextButton.styleFrom(foregroundColor: Colors.red),
-            child: const Text('삭제'),
+          child: Container(
+            constraints: BoxConstraints(
+              maxWidth: 400,
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                // ✨ 헤더
+                Container(
+                  padding: ResponsiveHelper.cardPadding(context),
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(
+                      colors: [
+                        Colors.red,
+                        Colors.red.withOpacity(0.8),
+                      ],
+                    ),
+                    borderRadius: const BorderRadius.only(
+                      topLeft: Radius.circular(24),
+                      topRight: Radius.circular(24),
+                    ),
+                  ),
+                  child: Row(
+                    children: [
+                      Container(
+                        padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 12)),
+                        decoration: BoxDecoration(
+                          color: Colors.white.withOpacity(0.2),
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        child: Icon(
+                          Icons.warning_rounded,
+                          color: Colors.white,
+                          size: ResponsiveHelper.iconSize(context, 24),
+                        ),
+                      ),
+                      SizedBox(width: ResponsiveHelper.spacing(context, 16)),
+                      Expanded(
+                        child: Text(
+                          '업무 유형 삭제',
+                          style: ResponsiveHelper.titleStyle(context).copyWith(
+                            color: Colors.white,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                // ✨ 컨텐츠
+                Padding(
+                  padding: ResponsiveHelper.cardPadding(context),
+                  child: Column(
+                    children: [
+                      Icon(
+                        Icons.delete_forever,
+                        size: ResponsiveHelper.iconSize(context, 64),
+                        color: Colors.red.withOpacity(0.5),
+                      ),
+                      SizedBox(height: ResponsiveHelper.spacing(context, 16)),
+                      Text(
+                        '정말로 삭제하시겠습니까?',
+                        style: ResponsiveHelper.subtitleStyle(context).copyWith(
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                      SizedBox(height: ResponsiveHelper.spacing(context, 8)),
+                      Text(
+                        '${workType.name}',
+                        style: ResponsiveHelper.bodyStyle(context).copyWith(
+                          color: Theme.of(context).primaryColor,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                      SizedBox(height: ResponsiveHelper.spacing(context, 8)),
+                      Text(
+                        '삭제된 데이터는 복구할 수 없습니다',
+                        style: ResponsiveHelper.smallStyle(
+                          context,
+                          color: Colors.red,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                // ✨ 버튼
+                Padding(
+                  padding: ResponsiveHelper.cardPadding(context),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        flex: 2,
+                        child: OutlinedButton(
+                          onPressed: () => Navigator.pop(context, false),
+                          style: OutlinedButton.styleFrom(
+                            padding: EdgeInsets.symmetric(
+                              vertical: ResponsiveHelper.spacing(context, 16),
+                            ),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                          ),
+                          child: Text('취소'),
+                        ),
+                      ),
+                      SizedBox(width: ResponsiveHelper.spacing(context, 12)),
+                      Expanded(
+                        child: Container(
+                          decoration: BoxDecoration(
+                            gradient: LinearGradient(
+                              colors: [
+                                Colors.red,
+                                Colors.red.withOpacity(0.8),
+                              ],
+                            ),
+                            borderRadius: BorderRadius.circular(12),
+                            boxShadow: [
+                              BoxShadow(
+                                color: Colors.red.withOpacity(0.4),
+                                blurRadius: 8,
+                                offset: const Offset(0, 4),
+                              ),
+                            ],
+                          ),
+                          child: Material(
+                            color: Colors.transparent,
+                            child: InkWell(
+                              onTap: () => Navigator.pop(context, true),
+                              borderRadius: BorderRadius.circular(12),
+                              child: Padding(
+                                padding: EdgeInsets.symmetric(
+                                  vertical: ResponsiveHelper.spacing(context, 16),
+                                ),
+                                child: Row(
+                                  mainAxisAlignment: MainAxisAlignment.center,
+                                  children: [
+                                    Icon(
+                                      Icons.delete,
+                                      color: Colors.white,
+                                      size: ResponsiveHelper.iconSize(context, 20),
+                                    ),
+                                    SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+                                    Text(
+                                      '삭제',
+                                      style: ResponsiveHelper.bodyStyle(context).copyWith(
+                                        color: Colors.white,
+                                        fontWeight: FontWeight.bold,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
           ),
-        ],
-      ),
+        );
+      },
     );
 
     if (confirmed == true) {
@@ -303,54 +713,98 @@ class _WorkTypeManagementScreenState extends State<WorkTypeManagementScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    
     return Scaffold(
+      // ✨ 깔끔한 단색 AppBar
       appBar: AppBar(
-        title: const Text('업무 유형 관리'),
-        backgroundColor: Theme.of(context).primaryColor,
+        title: Text('업무 유형 관리'),
         actions: [
           IconButton(
-            icon: const Icon(Icons.add),
+            icon: Icon(Icons.add_circle_outline),
             onPressed: _selectedBusiness != null ? _showAddDialog : null,
             tooltip: '업무 유형 추가',
           ),
         ],
       ),
-      body: _isLoadingBusinesses
-          ? const LoadingWidget(message: '사업장 정보를 불러오는 중...')
-          : _myBusinesses.isEmpty
-              ? _buildNoBusinessState()
-              : Column(
-                  children: [
-                    _buildBusinessSelector(),
-                    Expanded(
-                      child: _isLoading
-                          ? const LoadingWidget(message: '업무 유형을 불러오는 중...')
-                          : _workTypes.isEmpty
-                              ? _buildEmptyState()
-                              : _buildWorkTypeList(),
-                    ),
-                  ],
-                ),
+      // ✨ 연한 회색 배경 (카드와 대비)
+      body: Container(
+        color: Colors.grey[50],
+        child: _isLoadingBusinesses
+            ? const LoadingWidget(message: '사업장 정보를 불러오는 중...')
+            : _myBusinesses.isEmpty
+                ? _buildNoBusinessState()
+                : Column(
+                    children: [
+                      _buildBusinessSelector(),
+                      Expanded(
+                        child: _isLoading
+                            ? const LoadingWidget(message: '업무 유형을 불러오는 중...')
+                            : _workTypes.isEmpty
+                                ? _buildEmptyState()
+                                : _buildWorkTypeList(),
+                      ),
+                    ],
+                  ),
+      ),
     );
   }
 
-  /// 사업장 선택 드롭다운
+  /// ✨ 세련된 사업장 선택기
   Widget _buildBusinessSelector() {
+    final theme = Theme.of(context);
+    
     if (_myBusinesses.length == 1) {
       return Container(
-        padding: ResponsiveHelper.cardPadding(context),  // ⭐ 변경
-        color: Theme.of(context).primaryColor.withOpacity(0.1),
+        margin: ResponsiveHelper.cardPadding(context),
+        padding: ResponsiveHelper.cardPadding(context),
+        decoration: BoxDecoration(
+          gradient: LinearGradient(
+            colors: [
+              theme.primaryColor.withOpacity(0.1),
+              theme.primaryColor.withOpacity(0.05),
+            ],
+          ),
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(
+            color: theme.primaryColor.withOpacity(0.3),
+          ),
+        ),
         child: Row(
           children: [
-            Icon(Icons.business, color: Theme.of(context).primaryColor),
-            SizedBox(width: ResponsiveHelper.spacing(context, 12)),  // ⭐ 변경
+            Container(
+              padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 12)),
+              decoration: BoxDecoration(
+                color: theme.primaryColor.withOpacity(0.1),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Icon(
+                Icons.business,
+                color: theme.primaryColor,
+                size: ResponsiveHelper.iconSize(context, 24),
+              ),
+            ),
+            SizedBox(width: ResponsiveHelper.spacing(context, 16)),
             Expanded(
-              child: Text(
-                _selectedBusiness?.name ?? '',
-                style: ResponsiveHelper.subtitleStyle(  // ⭐ 변경
-                  context,
-                  color: Theme.of(context).primaryColor,
-                ).copyWith(fontWeight: FontWeight.bold),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    '현재 사업장',
+                    style: ResponsiveHelper.smallStyle(
+                      context,
+                      color: theme.textTheme.bodySmall?.color,
+                    ),
+                  ),
+                  SizedBox(height: ResponsiveHelper.spacing(context, 4)),
+                  Text(
+                    _selectedBusiness?.name ?? '',
+                    style: ResponsiveHelper.subtitleStyle(context).copyWith(
+                      color: theme.primaryColor,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ],
               ),
             ),
           ],
@@ -359,18 +813,29 @@ class _WorkTypeManagementScreenState extends State<WorkTypeManagementScreen> {
     }
 
     return Container(
-      padding: ResponsiveHelper.cardPadding(context),  // ⭐ 변경
-      color: Theme.of(context).primaryColor.withOpacity(0.1),
+      margin: ResponsiveHelper.cardPadding(context),
+      padding: ResponsiveHelper.cardPadding(context),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.grey.withOpacity(0.1),
+            blurRadius: 8,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
       child: DropdownButtonFormField<BusinessModel>(
-        initialValue: _selectedBusiness,
+        value: _selectedBusiness,
         decoration: InputDecoration(
           labelText: '사업장 선택',
-          prefixIcon: const Icon(Icons.business),
+          prefixIcon: Icon(Icons.business, color: theme.primaryColor),
           border: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(8),
+            borderRadius: BorderRadius.circular(12),
           ),
           filled: true,
-          fillColor: Colors.white,
+          fillColor: Colors.grey[50],
         ),
         items: _myBusinesses.map((business) {
           return DropdownMenuItem(
@@ -390,23 +855,39 @@ class _WorkTypeManagementScreenState extends State<WorkTypeManagementScreen> {
     );
   }
 
-  /// 사업장 없음 상태
+  /// ✨ 세련된 사업장 없음 상태
   Widget _buildNoBusinessState() {
+    final theme = Theme.of(context);
+    
     return Center(
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          Icon(
-            Icons.business_outlined, 
-            size: ResponsiveHelper.iconSize(context, 80),  // ⭐ 변경
-            color: Theme.of(context).disabledColor,
+          Container(
+            padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 24)),
+            decoration: BoxDecoration(
+              color: theme.primaryColor.withOpacity(0.1),
+              shape: BoxShape.circle,
+            ),
+            child: Icon(
+              Icons.business_outlined,
+              size: ResponsiveHelper.iconSize(context, 80),
+              color: theme.primaryColor.withOpacity(0.5),
+            ),
           ),
-          SizedBox(height: ResponsiveHelper.spacing(context, 16)),  // ⭐ 변경
+          SizedBox(height: ResponsiveHelper.spacing(context, 24)),
           Text(
             '등록된 사업장이 없습니다',
-            style: ResponsiveHelper.titleStyle(  // ⭐ 변경
+            style: ResponsiveHelper.titleStyle(context).copyWith(
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+          SizedBox(height: ResponsiveHelper.spacing(context, 8)),
+          Text(
+            '사업장을 먼저 등록해주세요',
+            style: ResponsiveHelper.bodyStyle(
               context,
-              color: Theme.of(context).textTheme.bodySmall?.color,
+              color: theme.textTheme.bodySmall?.color,
             ),
           ),
         ],
@@ -414,31 +895,39 @@ class _WorkTypeManagementScreenState extends State<WorkTypeManagementScreen> {
     );
   }
 
-  /// 업무 유형 없음 상태
+  /// ✨ 세련된 업무 유형 없음 상태
   Widget _buildEmptyState() {
+    final theme = Theme.of(context);
+    
     return Center(
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          Icon(
-            Icons.work_outline, 
-            size: ResponsiveHelper.iconSize(context, 80),  // ⭐ 변경
-            color: Theme.of(context).disabledColor,
-          ),
-          SizedBox(height: ResponsiveHelper.spacing(context, 16)),  // ⭐ 변경
-          Text(
-            '등록된 업무 유형이 없습니다',
-            style: ResponsiveHelper.titleStyle(  // ⭐ 변경
-              context,
-              color: Theme.of(context).textTheme.bodySmall?.color,
+          Container(
+            padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 24)),
+            decoration: BoxDecoration(
+              color: theme.primaryColor.withOpacity(0.1),
+              shape: BoxShape.circle,
+            ),
+            child: Icon(
+              Icons.work_outline,
+              size: ResponsiveHelper.iconSize(context, 80),
+              color: theme.primaryColor.withOpacity(0.5),
             ),
           ),
-          SizedBox(height: ResponsiveHelper.spacing(context, 8)),  // ⭐ 변경
+          SizedBox(height: ResponsiveHelper.spacing(context, 24)),
+          Text(
+            '등록된 업무 유형이 없습니다',
+            style: ResponsiveHelper.titleStyle(context).copyWith(
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+          SizedBox(height: ResponsiveHelper.spacing(context, 8)),
           Text(
             '상단의 + 버튼을 눌러 업무 유형을 추가하세요',
-            style: ResponsiveHelper.bodyStyle(  // ⭐ 변경
+            style: ResponsiveHelper.bodyStyle(
               context,
-              color: Theme.of(context).disabledColor,
+              color: theme.textTheme.bodySmall?.color,
             ),
           ),
         ],
@@ -446,87 +935,122 @@ class _WorkTypeManagementScreenState extends State<WorkTypeManagementScreen> {
     );
   }
 
-  /// 업무 유형 리스트
+  /// ✨ 세련된 업무 유형 리스트
   Widget _buildWorkTypeList() {
+    final theme = Theme.of(context);
+    
     return ListView.builder(
-      padding: ResponsiveHelper.cardPadding(context),  // ⭐ 변경
+      padding: ResponsiveHelper.cardPadding(context),
       itemCount: _workTypes.length,
       itemBuilder: (context, index) {
         final workType = _workTypes[index];
         final isFirst = index == 0;
         final isLast = index == _workTypes.length - 1;
 
-        return Card(
-          margin: EdgeInsets.only(  // ⭐ const 제거
-            bottom: ResponsiveHelper.spacing(context, 12),  // ⭐ 변경
+        return Container(
+          margin: EdgeInsets.only(
+            bottom: ResponsiveHelper.spacing(context, 16),
+          ),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(20),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.grey.withOpacity(0.15),
+                blurRadius: 15,
+                offset: const Offset(0, 4),
+              ),
+            ],
           ),
           child: ListTile(
-            contentPadding: EdgeInsets.symmetric(  // ⭐ const 제거
-              horizontal: ResponsiveHelper.spacing(context, 16),  // ⭐ 변경
-              vertical: ResponsiveHelper.spacing(context, 8),  // ⭐ 변경
+            contentPadding: EdgeInsets.symmetric(
+              horizontal: ResponsiveHelper.spacing(context, 20),
+              vertical: ResponsiveHelper.spacing(context, 12),
             ),
-            // ✅ 아이콘 (공통 위젯 사용)
+            // ✨ 아이콘
             leading: Container(
-              width: ResponsiveHelper.iconSize(context, 48),  // ⭐ 변경
-              height: ResponsiveHelper.iconSize(context, 48),  // ⭐ 변경
+              width: ResponsiveHelper.iconSize(context, 56),
+              height: ResponsiveHelper.iconSize(context, 56),
               decoration: BoxDecoration(
-                color: FormatHelper.parseColor(workType.backgroundColor),
-                borderRadius: BorderRadius.circular(8),
+                gradient: LinearGradient(
+                  colors: [
+                    FormatHelper.parseColor(workType.backgroundColor ?? '#2196F3'),
+                    FormatHelper.parseColor(workType.backgroundColor ?? '#2196F3').withOpacity(0.8),
+                  ],
+                ),
+                borderRadius: BorderRadius.circular(16),
+                boxShadow: [
+                  BoxShadow(
+                    color: FormatHelper.parseColor(workType.backgroundColor ?? '#2196F3').withOpacity(0.3),
+                    blurRadius: 8,
+                    offset: const Offset(0, 4),
+                  ),
+                ],
               ),
               child: Center(
                 child: WorkTypeIcon.build(
-                  workType, 
-                  size: ResponsiveHelper.iconSize(context, 24),  // ⭐ 변경
+                  workType,
+                  size: ResponsiveHelper.iconSize(context, 28),
                 ),
               ),
             ),
-            // 이름 및 순서
+            // ✨ 이름 및 순서
             title: Text(
               workType.name,
-              style: ResponsiveHelper.subtitleStyle(context),  // ⭐ 변경
-            ),
-            subtitle: Text(
-              '순서: ${index + 1}',
-              style: ResponsiveHelper.smallStyle(  // ⭐ 변경
-                context,
-                color: Theme.of(context).textTheme.bodySmall?.color,
+              style: ResponsiveHelper.subtitleStyle(context).copyWith(
+                fontWeight: FontWeight.bold,
               ),
             ),
-            // 관리 버튼들
+            subtitle: Container(
+              margin: EdgeInsets.only(top: ResponsiveHelper.spacing(context, 4)),
+              padding: EdgeInsets.symmetric(
+                horizontal: ResponsiveHelper.spacing(context, 8),
+                vertical: ResponsiveHelper.spacing(context, 4),
+              ),
+              decoration: BoxDecoration(
+                color: theme.primaryColor.withOpacity(0.1),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Text(
+                '순서: ${index + 1}',
+                style: ResponsiveHelper.smallStyle(
+                  context,
+                  color: theme.primaryColor,
+                ).copyWith(fontWeight: FontWeight.bold),
+              ),
+            ),
+            // ✨ 관리 버튼들
             trailing: Row(
               mainAxisSize: MainAxisSize.min,
               children: [
                 // 위로 이동
-                IconButton(
-                  icon: Icon(
-                    Icons.arrow_upward,
-                    color: isFirst 
-                        ? Theme.of(context).disabledColor 
-                        : Theme.of(context).primaryColor,
-                  ),
+                _buildActionButton(
+                  icon: Icons.arrow_upward,
+                  color: isFirst ? Colors.grey : theme.primaryColor,
                   onPressed: isFirst ? null : () => _moveUp(index),
                   tooltip: '위로',
                 ),
+                SizedBox(width: ResponsiveHelper.spacing(context, 4)),
                 // 아래로 이동
-                IconButton(
-                  icon: Icon(
-                    Icons.arrow_downward,
-                    color: isLast 
-                        ? Theme.of(context).disabledColor 
-                        : Theme.of(context).primaryColor,
-                  ),
+                _buildActionButton(
+                  icon: Icons.arrow_downward,
+                  color: isLast ? Colors.grey : theme.primaryColor,
                   onPressed: isLast ? null : () => _moveDown(index),
                   tooltip: '아래로',
                 ),
+                SizedBox(width: ResponsiveHelper.spacing(context, 4)),
                 // 수정
-                IconButton(
-                  icon: Icon(Icons.edit, color: Colors.orange),
+                _buildActionButton(
+                  icon: Icons.edit,
+                  color: Colors.orange,
                   onPressed: () => _showEditDialog(workType),
                   tooltip: '수정',
                 ),
+                SizedBox(width: ResponsiveHelper.spacing(context, 4)),
                 // 삭제
-                IconButton(
-                  icon: Icon(Icons.delete, color: Colors.red),
+                _buildActionButton(
+                  icon: Icons.delete,
+                  color: Colors.red,
                   onPressed: () => _confirmDelete(workType),
                   tooltip: '삭제',
                 ),
@@ -535,6 +1059,32 @@ class _WorkTypeManagementScreenState extends State<WorkTypeManagementScreen> {
           ),
         );
       },
+    );
+  }
+
+  /// ✨ 세련된 액션 버튼
+  Widget _buildActionButton({
+    required IconData icon,
+    required Color color,
+    required VoidCallback? onPressed,
+    required String tooltip,
+  }) {
+    return Container(
+      decoration: BoxDecoration(
+        color: onPressed != null ? color.withOpacity(0.1) : Colors.grey[100],
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: IconButton(
+        icon: Icon(icon, size: ResponsiveHelper.iconSize(context, 20)),
+        color: onPressed != null ? color : Colors.grey,
+        onPressed: onPressed,
+        tooltip: tooltip,
+        padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 8)),
+        constraints: BoxConstraints(
+          minWidth: ResponsiveHelper.iconSize(context, 36),
+          minHeight: ResponsiveHelper.iconSize(context, 36),
+        ),
+      ),
     );
   }
 }

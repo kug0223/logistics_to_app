@@ -1,19 +1,23 @@
 지원자
-user@test.com
+user_test
 user123!@#
 
+ayoung22
+user123!@#
+
+
 최고관리자
-admin@test.com
+admin_test
 admin123!@#
 
 중간관리자
-subadmin@test.com
+subadmin_test
 subadmin123!@#
 
 ALfit
 
 git add .
-git commit -m "전체적리팩토링 251119-4"
+git commit -m "디자인리팩토링 251120-1"
 git push
 
 flutter clean
@@ -33,7 +37,7 @@ lib의 모든 하위 폴더와 파일구조
 색상 하드코딩 금지!"
 코드 생성할때 반응형으로 작성할것!(프로젝트파일 확인)
 
-"홈 화면들을 로그인 화면처럼 세련되게 만들어줘
+"화면들을 각 역할 별 화면처럼 세련되게 만들어줘
 
 디자인 요구사항:
 1. ResponsiveHelper 필수 사용 (하드코딩 금지)
@@ -44,3 +48,23 @@ lib의 모든 하위 폴더와 파일구조
 6. 큰 아이콘 + 명확한 버튼
 7. 반응형 (모든 화면 크기)
 
+현재 확립된 디자인 패턴:
+🏠 홈 화면 계열 (business_admin_home_screen)
+
+✅ 그라데이션 배경 (상단: 테마색 → 하단: 테마색 85%)
+✅ 흰색 텍스트
+✅ 둥근 카드 (24px)
+
+📄 목록/내용 화면 계열 (integrated_workforce_screen)
+
+✅ 단색 AppBar (테마색)
+✅ 흰색 body 배경
+✅ 깔끔한 IconButton
+✅ 탭/토글: 반투명 컨테이너 + 흰색 선택 효과
+
+🎨 공통 규칙
+
+✅ ResponsiveHelper 필수
+✅ Theme.of(context) 사용
+✅ 색상 하드코딩 금지
+✅ 일관된 둥근 모서리 (8~24px)

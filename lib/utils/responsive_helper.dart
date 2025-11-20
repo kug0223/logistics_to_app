@@ -35,31 +35,32 @@ class ResponsiveHelper {
   }
   
   /// 반응형 텍스트 스타일 - 큰 제목 (사업장명 등)
-  static TextStyle titleStyle(BuildContext context, {Color? color}) {
+  static TextStyle titleStyle(BuildContext context, {Color? color, FontWeight? fontWeight}) {
     final scale = getScale(context);
     return TextStyle(
       fontSize: 18 * scale,
-      fontWeight: FontWeight.bold,
+      fontWeight: fontWeight ?? FontWeight.bold,
       color: color,
     );
   }
   
   /// 반응형 텍스트 스타일 - 중간 제목 (TO 제목 등)
-  static TextStyle subtitleStyle(BuildContext context, {Color? color}) {
+  static TextStyle subtitleStyle(BuildContext context, {Color? color, FontWeight? fontWeight}) {
     final scale = getScale(context);
     return TextStyle(
       fontSize: 16 * scale,
-      fontWeight: FontWeight.bold,
+      fontWeight: fontWeight ?? FontWeight.bold,
       color: color ?? Colors.black87,
     );
   }
   
   /// 반응형 텍스트 스타일 - 본문 (날짜, 정보 등)
-  static TextStyle bodyStyle(BuildContext context, {Color? color}) {
+  static TextStyle bodyStyle(BuildContext context, {Color? color, FontWeight? fontWeight}) {
     final scale = getScale(context);
     return TextStyle(
       fontSize: 14 * scale,
       color: color ?? Colors.grey[700],
+      fontWeight: fontWeight,
     );
   }
   
@@ -72,7 +73,7 @@ class ResponsiveHelper {
       fontWeight: fontWeight,
     );
   }
-  
+
   /// 반응형 텍스트 스타일 - 매우 작은 텍스트 (통계 등)
   static TextStyle tinyStyle(BuildContext context, {Color? color, FontWeight? fontWeight}) {
     final scale = getScale(context);
@@ -81,7 +82,7 @@ class ResponsiveHelper {
       color: color ?? Colors.grey[600],
       fontWeight: fontWeight,
     );
-  }
+}
   /// 반응형 텍스트 스타일 - 캡션 (힌트, 설명 등)
   static TextStyle captionStyle(BuildContext context, {Color? color, FontWeight? fontWeight}) {
     final scale = getScale(context);

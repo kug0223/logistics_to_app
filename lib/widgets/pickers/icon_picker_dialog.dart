@@ -2,24 +2,22 @@ import 'package:flutter/material.dart';
 import '../../utils/format_helper.dart';
 import '../../utils/responsive_helper.dart';
 
-/// 아이콘 아이템 클래스
+/// 🎨 세련된 아이콘 아이템 클래스
 class IconItem {
-  final dynamic icon;
+  final IconData icon;
+  final String label;
   final List<String> keywords;
   final String category;
-  final bool isMaterial;
-  final bool isPopular;
   
   IconItem({
     required this.icon,
+    required this.label,
     required this.keywords,
     required this.category,
-    this.isMaterial = false,
-    this.isPopular = false,
   });
 }
 
-/// 아이콘 선택 다이얼로그
+/// ✨ 세련된 아이콘 선택 다이얼로그
 class IconPickerDialog {
   /// 아이콘 선택 다이얼로그 표시
   static Future<Map<String, dynamic>?> show({
@@ -28,12 +26,12 @@ class IconPickerDialog {
     String? initialIconColor,
     String? initialBackgroundColor,
   }) async {
-    final allIcons = _getAllIcons();
+    final theme = Theme.of(context);
     
     return await showDialog<Map<String, dynamic>>(
       context: context,
       builder: (context) => _IconPickerWidget(
-        allIcons: allIcons,
+        theme: theme,
         initialIcon: initialIcon,
         initialIconColor: initialIconColor,
         initialBackgroundColor: initialBackgroundColor,
@@ -41,293 +39,177 @@ class IconPickerDialog {
     );
   }
 
-  /// 모든 아이콘 목록 반환 (대폭 확장!)
-  static List<IconItem> _getAllIcons() {
+  /// 🎯 세련된 Material Icons 컬렉션 (호환성 개선)
+  static List<IconItem> getAllIcons() {
     return [
-      // ========== 물류/배송 카테고리 (50개+) ==========
-      IconItem(icon: '📦', keywords: ['box', '상자', '박스', '포장'], category: '물류/배송', isPopular: true),
-      IconItem(icon: '🚚', keywords: ['truck', '트럭', '배송', '운송'], category: '물류/배송', isPopular: true),
-      IconItem(icon: '📋', keywords: ['clipboard', '목록', '리스트'], category: '물류/배송', isPopular: true),
-      IconItem(icon: '✅', keywords: ['check', '체크', '완료'], category: '물류/배송', isPopular: true),
-      IconItem(icon: Icons.inventory, keywords: ['inventory', '재고', '창고'], category: '물류/배송', isMaterial: true, isPopular: true),
-      IconItem(icon: Icons.local_shipping, keywords: ['shipping', '배송', '운송'], category: '물류/배송', isMaterial: true, isPopular: true),
-      IconItem(icon: '📪', keywords: ['mailbox', '우편함', '메일'], category: '물류/배송'),
-      IconItem(icon: '📬', keywords: ['mailbox', '우편함', '메일'], category: '물류/배송'),
-      IconItem(icon: '📮', keywords: ['postbox', '우체통', '우편'], category: '물류/배송'),
-      IconItem(icon: '📫', keywords: ['mailbox', '우편함'], category: '물류/배송'),
-      IconItem(icon: '📭', keywords: ['mailbox', '빈우편함'], category: '물류/배송'),
-      IconItem(icon: '🚛', keywords: ['truck', '대형트럭', '운송'], category: '물류/배송'),
-      IconItem(icon: '🚐', keywords: ['van', '밴', '배송'], category: '물류/배송'),
-      IconItem(icon: '🏭', keywords: ['factory', '공장', '제조'], category: '물류/배송'),
-      IconItem(icon: '🏗️', keywords: ['construction', '건설', '공사'], category: '물류/배송'),
-      IconItem(icon: '⚙️', keywords: ['gear', '톱니바퀴', '설정'], category: '물류/배송'),
-      IconItem(icon: '🔧', keywords: ['wrench', '렌치', '수리'], category: '물류/배송'),
-      IconItem(icon: '🔨', keywords: ['hammer', '망치', '작업'], category: '물류/배송'),
-      IconItem(icon: '⚒️', keywords: ['tools', '도구', '작업'], category: '물류/배송'),
-      IconItem(icon: '🛠️', keywords: ['tools', '도구', '수리'], category: '물류/배송'),
-      IconItem(icon: '📊', keywords: ['chart', '차트', '통계'], category: '물류/배송'),
-      IconItem(icon: '📈', keywords: ['chart', '상승', '그래프'], category: '물류/배송'),
-      IconItem(icon: '📉', keywords: ['chart', '하락', '그래프'], category: '물류/배송'),
-      IconItem(icon: '🎯', keywords: ['target', '타겟', '목표'], category: '물류/배송'),
-      IconItem(icon: '✔️', keywords: ['check', '체크', '확인'], category: '물류/배송'),
-      IconItem(icon: '☑️', keywords: ['checkbox', '체크박스'], category: '물류/배송'),
-      IconItem(icon: Icons.warehouse, keywords: ['warehouse', '창고', '보관'], category: '물류/배송', isMaterial: true),
-      IconItem(icon: Icons.archive, keywords: ['archive', '보관', '아카이브'], category: '물류/배송', isMaterial: true),
-      IconItem(icon: Icons.inbox, keywords: ['inbox', '입고', '받은편지함'], category: '물류/배송', isMaterial: true),
-      IconItem(icon: Icons.unarchive, keywords: ['unarchive', '출고'], category: '물류/배송', isMaterial: true),
-      IconItem(icon: Icons.category, keywords: ['category', '분류'], category: '물류/배송', isMaterial: true),
-      IconItem(icon: Icons.check_box, keywords: ['checkbox', '체크'], category: '물류/배송', isMaterial: true),
-      IconItem(icon: Icons.check_circle, keywords: ['check', '완료'], category: '물류/배송', isMaterial: true),
-      IconItem(icon: Icons.verified, keywords: ['verified', '검증'], category: '물류/배송', isMaterial: true),
-      IconItem(icon: Icons.task_alt, keywords: ['task', '작업', '완료'], category: '물류/배송', isMaterial: true),
-      IconItem(icon: Icons.fact_check, keywords: ['check', '검사'], category: '물류/배송', isMaterial: true),
-      IconItem(icon: Icons.inventory_2, keywords: ['inventory', '재고2'], category: '물류/배송', isMaterial: true),
-      IconItem(icon: Icons.fire_truck, keywords: ['truck', '소방차'], category: '물류/배송', isMaterial: true),
-      IconItem(icon: Icons.delivery_dining, keywords: ['delivery', '배달'], category: '물류/배송', isMaterial: true),
-      IconItem(icon: Icons.airport_shuttle, keywords: ['shuttle', '셔틀'], category: '물류/배송', isMaterial: true),
-      IconItem(icon: Icons.garage, keywords: ['garage', '차고'], category: '물류/배송', isMaterial: true),
-      IconItem(icon: Icons.factory, keywords: ['factory', '공장'], category: '물류/배송', isMaterial: true),
-      IconItem(icon: Icons.precision_manufacturing, keywords: ['manufacturing', '제조'], category: '물류/배송', isMaterial: true),
-      IconItem(icon: Icons.engineering, keywords: ['engineering', '엔지니어링'], category: '물류/배송', isMaterial: true),
-      IconItem(icon: Icons.schedule, keywords: ['schedule', '일정'], category: '물류/배송', isMaterial: true),
-      IconItem(icon: Icons.today, keywords: ['today', '오늘'], category: '물류/배송', isMaterial: true),
-      IconItem(icon: Icons.event, keywords: ['event', '이벤트'], category: '물류/배송', isMaterial: true),
-      IconItem(icon: Icons.calendar_month, keywords: ['calendar', '달력'], category: '물류/배송', isMaterial: true),
-      IconItem(icon: Icons.qr_code_scanner, keywords: ['qr', '스캔', 'barcode'], category: '물류/배송', isMaterial: true),
-      IconItem(icon: Icons.qr_code, keywords: ['qr', 'code'], category: '물류/배송', isMaterial: true),
-      IconItem(icon: Icons.production_quantity_limits, keywords: ['quantity', '수량'], category: '물류/배송', isMaterial: true),
+      // ========== 📦 물류/배송 카테고리 ==========
+      IconItem(icon: Icons.inventory_2, label: '재고관리', keywords: ['inventory', '재고', '창고'], category: '물류/배송'),
+      IconItem(icon: Icons.warehouse, label: '창고', keywords: ['warehouse', '창고', '보관'], category: '물류/배송'),
+      IconItem(icon: Icons.local_shipping, label: '배송', keywords: ['shipping', '배송', '트럭'], category: '물류/배송'),
+      IconItem(icon: Icons.arrow_downward, label: '입고', keywords: ['move', 'down', '입고'], category: '물류/배송'),
+      IconItem(icon: Icons.arrow_upward, label: '출고', keywords: ['move', 'up', '출고'], category: '물류/배송'),
+      IconItem(icon: Icons.category, label: '분류', keywords: ['category', '분류', '카테고리'], category: '물류/배송'),
+      IconItem(icon: Icons.qr_code_scanner, label: 'QR스캔', keywords: ['qr', '스캔', 'barcode'], category: '물류/배송'),
+      IconItem(icon: Icons.qr_code, label: 'QR코드', keywords: ['qr', 'code', '코드'], category: '물류/배송'),
+      IconItem(icon: Icons.assignment_turned_in, label: '검수완료', keywords: ['check', '검수', '완료'], category: '물류/배송'),
+      IconItem(icon: Icons.checklist, label: '체크리스트', keywords: ['checklist', '목록', '체크'], category: '물류/배송'),
+      IconItem(icon: Icons.list_alt, label: '목록', keywords: ['list', '목록', '리스트'], category: '물류/배송'),
+      IconItem(icon: Icons.fact_check, label: '검사', keywords: ['fact', 'check', '검사'], category: '물류/배송'),
+      IconItem(icon: Icons.production_quantity_limits, label: '수량제한', keywords: ['quantity', '수량'], category: '물류/배송'),
+      IconItem(icon: Icons.precision_manufacturing, label: '제조', keywords: ['manufacturing', '제조'], category: '물류/배송'),
+      IconItem(icon: Icons.settings_input_component, label: '컴포넌트', keywords: ['component', '부품'], category: '물류/배송'),
+      IconItem(icon: Icons.agriculture, label: '농업', keywords: ['agriculture', '농업'], category: '물류/배송'),
+      IconItem(icon: Icons.fire_truck, label: '트럭', keywords: ['truck', '트럭'], category: '물류/배송'),
+      IconItem(icon: Icons.airport_shuttle, label: '셔틀', keywords: ['shuttle', '셔틀'], category: '물류/배송'),
+      IconItem(icon: Icons.delivery_dining, label: '배달', keywords: ['delivery', '배달'], category: '물류/배송'),
+      IconItem(icon: Icons.home_work, label: '작업장', keywords: ['work', '작업장', '진열'], category: '물류/배송'),
       
-      // ========== 음식/음료 카테고리 (40개+) ==========
-      IconItem(icon: '☕', keywords: ['coffee', '커피', '음료'], category: '음식/음료', isPopular: true),
-      IconItem(icon: '🍕', keywords: ['pizza', '피자'], category: '음식/음료', isPopular: true),
-      IconItem(icon: '🍔', keywords: ['burger', '햄버거'], category: '음식/음료'),
-      IconItem(icon: '🍟', keywords: ['fries', '감자튀김'], category: '음식/음료'),
-      IconItem(icon: '🍜', keywords: ['ramen', '라면', '국수'], category: '음식/음료'),
-      IconItem(icon: '🍱', keywords: ['bento', '도시락'], category: '음식/음료'),
-      IconItem(icon: '🍺', keywords: ['beer', '맥주', '술'], category: '음식/음료'),
-      IconItem(icon: '🍰', keywords: ['cake', '케이크', '디저트'], category: '음식/음료'),
-      IconItem(icon: '🍪', keywords: ['cookie', '쿠키', '과자'], category: '음식/음료'),
-      IconItem(icon: '🍩', keywords: ['donut', '도넛'], category: '음식/음료'),
-      IconItem(icon: '🍫', keywords: ['chocolate', '초콜릿'], category: '음식/음료'),
-      IconItem(icon: '🍬', keywords: ['candy', '사탕'], category: '음식/음료'),
-      IconItem(icon: '🍭', keywords: ['lollipop', '막대사탕'], category: '음식/음료'),
-      IconItem(icon: '🍮', keywords: ['custard', '푸딩'], category: '음식/음료'),
-      IconItem(icon: '🍯', keywords: ['honey', '꿀'], category: '음식/음료'),
-      IconItem(icon: '🥛', keywords: ['milk', '우유'], category: '음식/음료'),
-      IconItem(icon: '🧃', keywords: ['juice', '주스'], category: '음식/음료'),
-      IconItem(icon: '🧋', keywords: ['bubble', 'tea', '버블티'], category: '음식/음료'),
-      IconItem(icon: '🍵', keywords: ['tea', '차', '녹차'], category: '음식/음료'),
-      IconItem(icon: '🍶', keywords: ['sake', '사케', '술'], category: '음식/음료'),
-      IconItem(icon: '🍷', keywords: ['wine', '와인'], category: '음식/음료'),
-      IconItem(icon: '🍸', keywords: ['cocktail', '칵테일'], category: '음식/음료'),
-      IconItem(icon: '🍹', keywords: ['drink', '음료', '주스'], category: '음식/음료'),
-      IconItem(icon: '🥤', keywords: ['soda', '탄산', '음료'], category: '음식/음료'),
-      IconItem(icon: '🍞', keywords: ['bread', '빵'], category: '음식/음료'),
-      IconItem(icon: '🥐', keywords: ['croissant', '크루아상'], category: '음식/음료'),
-      IconItem(icon: '🥖', keywords: ['baguette', '바게트'], category: '음식/음료'),
-      IconItem(icon: '🥨', keywords: ['pretzel', '프레첼'], category: '음식/음료'),
-      IconItem(icon: '🥯', keywords: ['bagel', '베이글'], category: '음식/음료'),
-      IconItem(icon: '🥞', keywords: ['pancake', '팬케이크'], category: '음식/음료'),
-      IconItem(icon: '🧇', keywords: ['waffle', '와플'], category: '음식/음료'),
-      IconItem(icon: '🧀', keywords: ['cheese', '치즈'], category: '음식/음료'),
-      IconItem(icon: '🍖', keywords: ['meat', '고기'], category: '음식/음료'),
-      IconItem(icon: '🍗', keywords: ['chicken', '치킨'], category: '음식/음료'),
-      IconItem(icon: '🥩', keywords: ['steak', '스테이크'], category: '음식/음료'),
-      IconItem(icon: '🥓', keywords: ['bacon', '베이컨'], category: '음식/음료'),
-      IconItem(icon: '🍝', keywords: ['pasta', '파스타'], category: '음식/음료'),
-      IconItem(icon: '🍛', keywords: ['curry', '카레'], category: '음식/음료'),
-      IconItem(icon: '🍲', keywords: ['pot', '냄비', '스튜'], category: '음식/음료'),
-      IconItem(icon: Icons.restaurant, keywords: ['restaurant', '식당'], category: '음식/음료', isMaterial: true),
-      IconItem(icon: Icons.restaurant_menu, keywords: ['menu', '메뉴'], category: '음식/음료', isMaterial: true),
-      IconItem(icon: Icons.fastfood, keywords: ['fastfood', '패스트푸드'], category: '음식/음료', isMaterial: true),
-      IconItem(icon: Icons.local_cafe, keywords: ['cafe', '카페'], category: '음식/음료', isMaterial: true),
-      IconItem(icon: Icons.local_bar, keywords: ['bar', '바'], category: '음식/음료', isMaterial: true),
-      IconItem(icon: Icons.local_pizza, keywords: ['pizza', '피자'], category: '음식/음료', isMaterial: true),
-      IconItem(icon: Icons.local_dining, keywords: ['dining', '식사'], category: '음식/음료', isMaterial: true),
-      IconItem(icon: Icons.lunch_dining, keywords: ['lunch', '점심'], category: '음식/음료', isMaterial: true),
-      IconItem(icon: Icons.dinner_dining, keywords: ['dinner', '저녁'], category: '음식/음료', isMaterial: true),
-      IconItem(icon: Icons.breakfast_dining, keywords: ['breakfast', '아침'], category: '음식/음료', isMaterial: true),
-      IconItem(icon: Icons.set_meal, keywords: ['meal', '식사'], category: '음식/음료', isMaterial: true),
+      // ========== 🍕 음식/음료 카테고리 ==========
+      IconItem(icon: Icons.restaurant, label: '식당', keywords: ['restaurant', '식당', '음식'], category: '음식/음료'),
+      IconItem(icon: Icons.local_cafe, label: '카페', keywords: ['cafe', '카페', '커피'], category: '음식/음료'),
+      IconItem(icon: Icons.coffee, label: '커피', keywords: ['coffee', '커피'], category: '음식/음료'),
+      IconItem(icon: Icons.local_pizza, label: '피자', keywords: ['pizza', '피자'], category: '음식/음료'),
+      IconItem(icon: Icons.fastfood, label: '패스트푸드', keywords: ['fastfood', '햄버거'], category: '음식/음료'),
+      IconItem(icon: Icons.ramen_dining, label: '라면', keywords: ['ramen', '라면', '국수'], category: '음식/음료'),
+      IconItem(icon: Icons.lunch_dining, label: '점심', keywords: ['lunch', '점심', '식사'], category: '음식/음료'),
+      IconItem(icon: Icons.dinner_dining, label: '저녁', keywords: ['dinner', '저녁'], category: '음식/음료'),
+      IconItem(icon: Icons.breakfast_dining, label: '아침', keywords: ['breakfast', '아침'], category: '음식/음료'),
+      IconItem(icon: Icons.brunch_dining, label: '브런치', keywords: ['brunch', '브런치'], category: '음식/음료'),
+      IconItem(icon: Icons.liquor, label: '주류', keywords: ['liquor', '술', '주류'], category: '음식/음료'),
+      IconItem(icon: Icons.local_bar, label: '바', keywords: ['bar', '바', '술집'], category: '음식/음료'),
+      IconItem(icon: Icons.icecream, label: '아이스크림', keywords: ['icecream', '아이스크림'], category: '음식/음료'),
+      IconItem(icon: Icons.cake, label: '케이크', keywords: ['cake', '케이크', '디저트'], category: '음식/음료'),
+      IconItem(icon: Icons.cookie, label: '쿠키', keywords: ['cookie', '쿠키'], category: '음식/음료'),
+      IconItem(icon: Icons.bakery_dining, label: '베이커리', keywords: ['bakery', '빵', '베이커리'], category: '음식/음료'),
+      IconItem(icon: Icons.takeout_dining, label: '테이크아웃', keywords: ['takeout', '포장'], category: '음식/음료'),
+      IconItem(icon: Icons.dining, label: '식사', keywords: ['dining', '식사'], category: '음식/음료'),
+      IconItem(icon: Icons.kitchen, label: '주방', keywords: ['kitchen', '주방'], category: '음식/음료'),
+      IconItem(icon: Icons.egg_alt, label: '계란', keywords: ['egg', '계란'], category: '음식/음료'),
       
-      // ========== 청소/관리 카테고리 (35개+) ==========
-      IconItem(icon: '🧹', keywords: ['broom', '빗자루', '청소'], category: '청소/관리', isPopular: true),
-      IconItem(icon: Icons.cleaning_services, keywords: ['cleaning', '청소'], category: '청소/관리', isMaterial: true, isPopular: true),
-      IconItem(icon: '🧽', keywords: ['sponge', '스펀지'], category: '청소/관리'),
-      IconItem(icon: '🧴', keywords: ['bottle', '병', '세제'], category: '청소/관리'),
-      IconItem(icon: '🧺', keywords: ['basket', '바구니', '세탁'], category: '청소/관리'),
-      IconItem(icon: '🧼', keywords: ['soap', '비누'], category: '청소/관리'),
-      IconItem(icon: '🪣', keywords: ['bucket', '양동이'], category: '청소/관리'),
-      IconItem(icon: '🪠', keywords: ['plunger', '뚫어뻥'], category: '청소/관리'),
-      IconItem(icon: '🧯', keywords: ['extinguisher', '소화기'], category: '청소/관리'),
-      IconItem(icon: '🗑️', keywords: ['trash', '쓰레기통'], category: '청소/관리'),
-      IconItem(icon: '♻️', keywords: ['recycle', '재활용'], category: '청소/관리'),
-      IconItem(icon: '🚮', keywords: ['litter', '쓰레기'], category: '청소/관리'),
-      IconItem(icon: '💧', keywords: ['water', '물'], category: '청소/관리'),
-      IconItem(icon: '💦', keywords: ['water', '물', '청소'], category: '청소/관리'),
-      IconItem(icon: '🌊', keywords: ['wave', '물결', '세척'], category: '청소/관리'),
-      IconItem(icon: Icons.delete, keywords: ['delete', '삭제'], category: '청소/관리', isMaterial: true),
-      IconItem(icon: Icons.delete_outline, keywords: ['delete', '삭제'], category: '청소/관리', isMaterial: true),
-      IconItem(icon: Icons.delete_forever, keywords: ['delete', '영구삭제'], category: '청소/관리', isMaterial: true),
-      IconItem(icon: Icons.delete_sweep, keywords: ['sweep', '청소'], category: '청소/관리', isMaterial: true),
-      IconItem(icon: Icons.restore_from_trash, keywords: ['restore', '복원'], category: '청소/관리', isMaterial: true),
-      IconItem(icon: Icons.recycling, keywords: ['recycle', '재활용'], category: '청소/관리', isMaterial: true),
-      IconItem(icon: Icons.water_drop, keywords: ['water', '물'], category: '청소/관리', isMaterial: true),
-      IconItem(icon: Icons.water, keywords: ['water', '물'], category: '청소/관리', isMaterial: true),
-      IconItem(icon: Icons.waves, keywords: ['waves', '물결'], category: '청소/관리', isMaterial: true),
-      IconItem(icon: Icons.shower, keywords: ['shower', '샤워'], category: '청소/관리', isMaterial: true),
-      IconItem(icon: Icons.bathtub, keywords: ['bathtub', '욕조'], category: '청소/관리', isMaterial: true),
-      IconItem(icon: Icons.wash, keywords: ['wash', '세탁'], category: '청소/관리', isMaterial: true),
-      IconItem(icon: Icons.dry_cleaning, keywords: ['dry', 'cleaning', '드라이'], category: '청소/관리', isMaterial: true),
-      IconItem(icon: Icons.local_laundry_service, keywords: ['laundry', '세탁'], category: '청소/관리', isMaterial: true),
-      IconItem(icon: Icons.soap, keywords: ['soap', '비누'], category: '청소/관리', isMaterial: true),
-      IconItem(icon: Icons.sanitizer, keywords: ['sanitizer', '소독'], category: '청소/관리', isMaterial: true),
-      IconItem(icon: Icons.clean_hands, keywords: ['clean', 'hands', '손세척'], category: '청소/관리', isMaterial: true),
-      IconItem(icon: Icons.eco, keywords: ['eco', '친환경'], category: '청소/관리', isMaterial: true),
-      IconItem(icon: Icons.home_repair_service, keywords: ['repair', '수리'], category: '청소/관리', isMaterial: true),
-      IconItem(icon: Icons.plumbing, keywords: ['plumbing', '배관'], category: '청소/관리', isMaterial: true),
+      // ========== 🧹 청소/관리 카테고리 ==========
+      IconItem(icon: Icons.cleaning_services, label: '청소', keywords: ['cleaning', '청소'], category: '청소/관리'),
+      IconItem(icon: Icons.sanitizer, label: '소독', keywords: ['sanitizer', '소독', '살균'], category: '청소/관리'),
+      IconItem(icon: Icons.clean_hands, label: '손세척', keywords: ['clean', 'hands', '손세척'], category: '청소/관리'),
+      IconItem(icon: Icons.shower, label: '샤워', keywords: ['shower', '샤워'], category: '청소/관리'),
+      IconItem(icon: Icons.bathtub, label: '욕조', keywords: ['bathtub', '욕조'], category: '청소/관리'),
+      IconItem(icon: Icons.wash, label: '세탁', keywords: ['wash', '세탁', '빨래'], category: '청소/관리'),
+      IconItem(icon: Icons.dry_cleaning, label: '드라이클리닝', keywords: ['dry', 'cleaning', '드라이'], category: '청소/관리'),
+      IconItem(icon: Icons.local_laundry_service, label: '세탁소', keywords: ['laundry', '세탁소'], category: '청소/관리'),
+      IconItem(icon: Icons.soap, label: '비누', keywords: ['soap', '비누'], category: '청소/관리'),
+      IconItem(icon: Icons.water_drop, label: '물방울', keywords: ['water', '물'], category: '청소/관리'),
+      IconItem(icon: Icons.waves, label: '물결', keywords: ['waves', '물결'], category: '청소/관리'),
+      IconItem(icon: Icons.delete_sweep, label: '청소', keywords: ['sweep', '청소'], category: '청소/관리'),
+      IconItem(icon: Icons.recycling, label: '재활용', keywords: ['recycle', '재활용'], category: '청소/관리'),
+      IconItem(icon: Icons.eco, label: '친환경', keywords: ['eco', '친환경'], category: '청소/관리'),
+      IconItem(icon: Icons.delete, label: '삭제', keywords: ['delete', '삭제', '쓰레기'], category: '청소/관리'),
+      IconItem(icon: Icons.restore_from_trash, label: '복원', keywords: ['restore', '복원'], category: '청소/관리'),
+      IconItem(icon: Icons.cleaning_services, label: '청소도구', keywords: ['clean', '청소도구'], category: '청소/관리'),
+      IconItem(icon: Icons.hvac, label: '환기', keywords: ['hvac', '환기'], category: '청소/관리'),
+      IconItem(icon: Icons.air, label: '공기', keywords: ['air', '공기'], category: '청소/관리'),
+      IconItem(icon: Icons.window, label: '창문', keywords: ['window', '창문'], category: '청소/관리'),
       
-      // ========== 도구/작업 카테고리 (40개+) ==========
-      IconItem(icon: '🔧', keywords: ['wrench', '렌치', '수리'], category: '도구/작업', isPopular: true),
-      IconItem(icon: '🔨', keywords: ['hammer', '망치'], category: '도구/작업'),
-      IconItem(icon: '⚙️', keywords: ['gear', '톱니바퀴'], category: '도구/작업'),
-      IconItem(icon: '🛠️', keywords: ['tools', '도구'], category: '도구/작업'),
-      IconItem(icon: '⚒️', keywords: ['hammer', '도구'], category: '도구/작업'),
-      IconItem(icon: '🔩', keywords: ['nut', '너트', '볼트'], category: '도구/작업'),
-      IconItem(icon: '⚡', keywords: ['electric', '전기'], category: '도구/작업'),
-      IconItem(icon: '🔌', keywords: ['plug', '플러그'], category: '도구/작업'),
-      IconItem(icon: '💡', keywords: ['bulb', '전구', '아이디어'], category: '도구/작업'),
-      IconItem(icon: '🔦', keywords: ['flashlight', '손전등'], category: '도구/작업'),
-      IconItem(icon: '🪛', keywords: ['screwdriver', '드라이버'], category: '도구/작업'),
-      IconItem(icon: '🪚', keywords: ['saw', '톱'], category: '도구/작업'),
-      IconItem(icon: '🪜', keywords: ['ladder', '사다리'], category: '도구/작업'),
-      IconItem(icon: '🧰', keywords: ['toolbox', '공구함'], category: '도구/작업'),
-      IconItem(icon: '🔗', keywords: ['link', '연결'], category: '도구/작업'),
-      IconItem(icon: '⛓️', keywords: ['chain', '체인'], category: '도구/작업'),
-      IconItem(icon: '🧲', keywords: ['magnet', '자석'], category: '도구/작업'),
-      IconItem(icon: '🗜️', keywords: ['clamp', '클램프'], category: '도구/작업'),
-      IconItem(icon: Icons.build, keywords: ['build', '제작'], category: '도구/작업', isMaterial: true),
-      IconItem(icon: Icons.handyman, keywords: ['handyman', '수리공'], category: '도구/작업', isMaterial: true),
-      IconItem(icon: Icons.construction, keywords: ['construction', '건설'], category: '도구/작업', isMaterial: true),
-      IconItem(icon: Icons.carpenter, keywords: ['carpenter', '목수'], category: '도구/작업', isMaterial: true),
-      IconItem(icon: Icons.hardware, keywords: ['hardware', '하드웨어'], category: '도구/작업', isMaterial: true),
-      IconItem(icon: Icons.settings, keywords: ['settings', '설정'], category: '도구/작업', isMaterial: true),
-      IconItem(icon: Icons.settings_applications, keywords: ['settings', '앱설정'], category: '도구/작업', isMaterial: true),
-      IconItem(icon: Icons.tune, keywords: ['tune', '조정'], category: '도구/작업', isMaterial: true),
-      IconItem(icon: Icons.build_circle, keywords: ['build', '제작'], category: '도구/작업', isMaterial: true),
-      IconItem(icon: Icons.home_repair_service, keywords: ['repair', '수리'], category: '도구/작업', isMaterial: true),
-      IconItem(icon: Icons.electrical_services, keywords: ['electrical', '전기'], category: '도구/작업', isMaterial: true),
-      IconItem(icon: Icons.power, keywords: ['power', '전원'], category: '도구/작업', isMaterial: true),
-      IconItem(icon: Icons.flash_on, keywords: ['flash', '번개'], category: '도구/작업', isMaterial: true),
-      IconItem(icon: Icons.lightbulb, keywords: ['lightbulb', '전구'], category: '도구/작업', isMaterial: true),
-      IconItem(icon: Icons.lightbulb_outline, keywords: ['light', '전구'], category: '도구/작업', isMaterial: true),
-      IconItem(icon: Icons.tips_and_updates, keywords: ['tips', '팁'], category: '도구/작업', isMaterial: true),
-      IconItem(icon: Icons.design_services, keywords: ['design', '디자인'], category: '도구/작업', isMaterial: true),
-      IconItem(icon: Icons.architecture, keywords: ['architecture', '건축'], category: '도구/작업', isMaterial: true),
-      IconItem(icon: Icons.roofing, keywords: ['roofing', '지붕'], category: '도구/작업', isMaterial: true),
-      IconItem(icon: Icons.foundation, keywords: ['foundation', '기초'], category: '도구/작업', isMaterial: true),
-      IconItem(icon: Icons.fence, keywords: ['fence', '울타리'], category: '도구/작업', isMaterial: true),
-      IconItem(icon: Icons.stairs, keywords: ['stairs', '계단'], category: '도구/작업', isMaterial: true),
-      IconItem(icon: Icons.meeting_room, keywords: ['door', '문'], category: '도구/작업', isMaterial: true),
-      IconItem(icon: Icons.window, keywords: ['window', '창문'], category: '도구/작업', isMaterial: true),
+      // ========== 🔧 도구/작업 카테고리 ==========
+      IconItem(icon: Icons.construction, label: '건설', keywords: ['construction', '건설', '공사'], category: '도구/작업'),
+      IconItem(icon: Icons.handyman, label: '수리공', keywords: ['handyman', '수리공'], category: '도구/작업'),
+      IconItem(icon: Icons.build, label: '제작', keywords: ['build', '제작', '만들기'], category: '도구/작업'),
+      IconItem(icon: Icons.carpenter, label: '목수', keywords: ['carpenter', '목수'], category: '도구/작업'),
+      IconItem(icon: Icons.home_repair_service, label: '수리', keywords: ['repair', '수리'], category: '도구/작업'),
+      IconItem(icon: Icons.plumbing, label: '배관', keywords: ['plumbing', '배관'], category: '도구/작업'),
+      IconItem(icon: Icons.electrical_services, label: '전기', keywords: ['electrical', '전기'], category: '도구/작업'),
+      IconItem(icon: Icons.engineering, label: '엔지니어링', keywords: ['engineering', '엔지니어링'], category: '도구/작업'),
+      IconItem(icon: Icons.architecture, label: '건축', keywords: ['architecture', '건축'], category: '도구/작업'),
+      IconItem(icon: Icons.design_services, label: '디자인', keywords: ['design', '디자인'], category: '도구/작업'),
+      IconItem(icon: Icons.hardware, label: '하드웨어', keywords: ['hardware', '하드웨어'], category: '도구/작업'),
+      IconItem(icon: Icons.settings, label: '설정', keywords: ['settings', '설정'], category: '도구/작업'),
+      IconItem(icon: Icons.tune, label: '조정', keywords: ['tune', '조정'], category: '도구/작업'),
+      IconItem(icon: Icons.power, label: '전원', keywords: ['power', '전원'], category: '도구/작업'),
+      IconItem(icon: Icons.lightbulb, label: '전구', keywords: ['lightbulb', '전구'], category: '도구/작업'),
+      IconItem(icon: Icons.roofing, label: '지붕', keywords: ['roofing', '지붕'], category: '도구/작업'),
+      IconItem(icon: Icons.foundation, label: '기초', keywords: ['foundation', '기초'], category: '도구/작업'),
+      IconItem(icon: Icons.fence, label: '울타리', keywords: ['fence', '울타리'], category: '도구/작업'),
+      IconItem(icon: Icons.stairs, label: '계단', keywords: ['stairs', '계단'], category: '도구/작업'),
+      IconItem(icon: Icons.meeting_room, label: '문', keywords: ['door', '문'], category: '도구/작업'),
       
-      // ========== 사무/문서 카테고리 (35개+) ==========
-      IconItem(icon: '📝', keywords: ['memo', '메모', '작성'], category: '사무/문서', isPopular: true),
-      IconItem(icon: '📄', keywords: ['document', '문서'], category: '사무/문서'),
-      IconItem(icon: '📊', keywords: ['chart', '차트'], category: '사무/문서'),
-      IconItem(icon: '📋', keywords: ['clipboard', '클립보드'], category: '사무/문서'),
-      IconItem(icon: '📌', keywords: ['pin', '핀'], category: '사무/문서'),
-      IconItem(icon: '📍', keywords: ['pin', '위치'], category: '사무/문서'),
-      IconItem(icon: '✏️', keywords: ['pencil', '연필'], category: '사무/문서'),
-      IconItem(icon: '✒️', keywords: ['pen', '펜'], category: '사무/문서'),
-      IconItem(icon: '🖊️', keywords: ['pen', '볼펜'], category: '사무/문서'),
-      IconItem(icon: '🖋️', keywords: ['pen', '만년필'], category: '사무/문서'),
-      IconItem(icon: '🖍️', keywords: ['crayon', '크레용'], category: '사무/문서'),
-      IconItem(icon: '📏', keywords: ['ruler', '자'], category: '사무/문서'),
-      IconItem(icon: '📐', keywords: ['triangle', '삼각자'], category: '사무/문서'),
-      IconItem(icon: '📁', keywords: ['folder', '폴더'], category: '사무/문서'),
-      IconItem(icon: '📂', keywords: ['folder', '열린폴더'], category: '사무/문서'),
-      IconItem(icon: '📃', keywords: ['page', '페이지'], category: '사무/문서'),
-      IconItem(icon: '📑', keywords: ['tabs', '탭'], category: '사무/문서'),
-      IconItem(icon: '📓', keywords: ['notebook', '노트'], category: '사무/문서'),
-      IconItem(icon: '📔', keywords: ['notebook', '노트'], category: '사무/문서'),
-      IconItem(icon: '📕', keywords: ['book', '책'], category: '사무/문서'),
-      IconItem(icon: '📖', keywords: ['book', '책'], category: '사무/문서'),
-      IconItem(icon: '📗', keywords: ['book', '녹색책'], category: '사무/문서'),
-      IconItem(icon: '📘', keywords: ['book', '파란책'], category: '사무/문서'),
-      IconItem(icon: '📙', keywords: ['book', '주황책'], category: '사무/문서'),
-      IconItem(icon: Icons.assignment, keywords: ['assignment', '과제'], category: '사무/문서', isMaterial: true),
-      IconItem(icon: Icons.description, keywords: ['description', '설명'], category: '사무/문서', isMaterial: true),
-      IconItem(icon: Icons.article, keywords: ['article', '기사'], category: '사무/문서', isMaterial: true),
-      IconItem(icon: Icons.note, keywords: ['note', '노트'], category: '사무/문서', isMaterial: true),
-      IconItem(icon: Icons.notes, keywords: ['notes', '노트'], category: '사무/문서', isMaterial: true),
-      IconItem(icon: Icons.sticky_note_2, keywords: ['sticky', '포스트잇'], category: '사무/문서', isMaterial: true),
-      IconItem(icon: Icons.edit_note, keywords: ['edit', '편집'], category: '사무/문서', isMaterial: true),
-      IconItem(icon: Icons.folder, keywords: ['folder', '폴더'], category: '사무/문서', isMaterial: true),
-      IconItem(icon: Icons.folder_open, keywords: ['folder', '열린폴더'], category: '사무/문서', isMaterial: true),
-      IconItem(icon: Icons.folder_copy, keywords: ['copy', '복사'], category: '사무/문서', isMaterial: true),
-      IconItem(icon: Icons.folder_shared, keywords: ['shared', '공유'], category: '사무/문서', isMaterial: true),
-      IconItem(icon: Icons.insert_drive_file, keywords: ['file', '파일'], category: '사무/문서', isMaterial: true),
-      IconItem(icon: Icons.file_copy, keywords: ['copy', '복사'], category: '사무/문서', isMaterial: true),
-      IconItem(icon: Icons.file_present, keywords: ['present', '발표'], category: '사무/문서', isMaterial: true),
-      IconItem(icon: Icons.feed, keywords: ['feed', '피드'], category: '사무/문서', isMaterial: true),
-      IconItem(icon: Icons.summarize, keywords: ['summarize', '요약'], category: '사무/문서', isMaterial: true),
-      IconItem(icon: Icons.receipt_long, keywords: ['receipt', '영수증'], category: '사무/문서', isMaterial: true),
-      IconItem(icon: Icons.request_quote, keywords: ['quote', '견적'], category: '사무/문서', isMaterial: true),
+      // ========== 📝 사무/문서 카테고리 ==========
+      IconItem(icon: Icons.assignment, label: '과제', keywords: ['assignment', '과제', '업무'], category: '사무/문서'),
+      IconItem(icon: Icons.description, label: '문서', keywords: ['description', '문서', '설명'], category: '사무/문서'),
+      IconItem(icon: Icons.article, label: '기사', keywords: ['article', '기사', '글'], category: '사무/문서'),
+      IconItem(icon: Icons.note, label: '노트', keywords: ['note', '노트', '메모'], category: '사무/문서'),
+      IconItem(icon: Icons.sticky_note_2, label: '포스트잇', keywords: ['sticky', '포스트잇'], category: '사무/문서'),
+      IconItem(icon: Icons.edit_note, label: '편집', keywords: ['edit', '편집'], category: '사무/문서'),
+      IconItem(icon: Icons.folder, label: '폴더', keywords: ['folder', '폴더'], category: '사무/문서'),
+      IconItem(icon: Icons.folder_open, label: '열린폴더', keywords: ['folder', 'open', '열림'], category: '사무/문서'),
+      IconItem(icon: Icons.insert_drive_file, label: '파일', keywords: ['file', '파일'], category: '사무/문서'),
+      IconItem(icon: Icons.file_copy, label: '복사', keywords: ['copy', '복사'], category: '사무/문서'),
+      IconItem(icon: Icons.summarize, label: '요약', keywords: ['summarize', '요약'], category: '사무/문서'),
+      IconItem(icon: Icons.receipt_long, label: '영수증', keywords: ['receipt', '영수증'], category: '사무/문서'),
+      IconItem(icon: Icons.request_quote, label: '견적', keywords: ['quote', '견적'], category: '사무/문서'),
+      IconItem(icon: Icons.print, label: '인쇄', keywords: ['print', '인쇄'], category: '사무/문서'),
+      IconItem(icon: Icons.scanner, label: '스캔', keywords: ['scanner', '스캔'], category: '사무/문서'),
+      IconItem(icon: Icons.create, label: '작성', keywords: ['create', '작성', '쓰기'], category: '사무/문서'),
+      IconItem(icon: Icons.edit, label: '수정', keywords: ['edit', '수정'], category: '사무/문서'),
+      IconItem(icon: Icons.draw, label: '그리기', keywords: ['draw', '그리기'], category: '사무/문서'),
+      IconItem(icon: Icons.text_fields, label: '텍스트', keywords: ['text', '텍스트'], category: '사무/문서'),
+      IconItem(icon: Icons.format_list_bulleted, label: '목록', keywords: ['list', '목록'], category: '사무/문서'),
       
-      // ========== 기타 카테고리 (30개+) ==========
-      IconItem(icon: '⭐', keywords: ['star', '별', '즐겨찾기'], category: '기타'),
-      IconItem(icon: '❤️', keywords: ['heart', '하트', '좋아요'], category: '기타'),
-      IconItem(icon: '👍', keywords: ['thumbsup', '좋아요'], category: '기타'),
-      IconItem(icon: '🎯', keywords: ['target', '타겟', '목표'], category: '기타'),
-      IconItem(icon: '🏆', keywords: ['trophy', '트로피', '우승'], category: '기타'),
-      IconItem(icon: '🎖️', keywords: ['medal', '메달'], category: '기타'),
-      IconItem(icon: '🥇', keywords: ['gold', '금메달'], category: '기타'),
-      IconItem(icon: '🥈', keywords: ['silver', '은메달'], category: '기타'),
-      IconItem(icon: '🥉', keywords: ['bronze', '동메달'], category: '기타'),
-      IconItem(icon: '⚡', keywords: ['lightning', '번개', '빠름'], category: '기타'),
-      IconItem(icon: '🔥', keywords: ['fire', '불', '인기'], category: '기타'),
-      IconItem(icon: '💯', keywords: ['hundred', '백점', '완벽'], category: '기타'),
-      IconItem(icon: '✨', keywords: ['sparkle', '반짝'], category: '기타'),
-      IconItem(icon: '💎', keywords: ['diamond', '다이아몬드'], category: '기타'),
-      IconItem(icon: '👑', keywords: ['crown', '왕관'], category: '기타'),
-      IconItem(icon: '🎉', keywords: ['party', '파티', '축하'], category: '기타'),
-      IconItem(icon: '🎊', keywords: ['confetti', '축하'], category: '기타'),
-      IconItem(icon: '🎈', keywords: ['balloon', '풍선'], category: '기타'),
-      IconItem(icon: '🎁', keywords: ['gift', '선물'], category: '기타'),
-      IconItem(icon: '🔔', keywords: ['bell', '벨', '알림'], category: '기타'),
-      IconItem(icon: '🔕', keywords: ['mute', '음소거'], category: '기타'),
-      IconItem(icon: '⏰', keywords: ['alarm', '알람'], category: '기타'),
-      IconItem(icon: '⏱️', keywords: ['stopwatch', '스톱워치'], category: '기타'),
-      IconItem(icon: '⏲️', keywords: ['timer', '타이머'], category: '기타'),
-      IconItem(icon: '📞', keywords: ['phone', '전화'], category: '기타'),
-      IconItem(icon: '📱', keywords: ['mobile', '휴대폰'], category: '기타'),
-      IconItem(icon: '💻', keywords: ['computer', '컴퓨터'], category: '기타'),
-      IconItem(icon: '⌨️', keywords: ['keyboard', '키보드'], category: '기타'),
-      IconItem(icon: '🖱️', keywords: ['mouse', '마우스'], category: '기타'),
-      IconItem(icon: '🖥️', keywords: ['desktop', '데스크톱'], category: '기타'),
-      IconItem(icon: Icons.work, keywords: ['work', '일', '업무'], category: '기타', isMaterial: true),
-      IconItem(icon: Icons.star, keywords: ['star', '별'], category: '기타', isMaterial: true),
-      IconItem(icon: Icons.star_outline, keywords: ['star', '별'], category: '기타', isMaterial: true),
-      IconItem(icon: Icons.favorite, keywords: ['favorite', '좋아요'], category: '기타', isMaterial: true),
-      IconItem(icon: Icons.thumb_up, keywords: ['thumbup', '좋아요'], category: '기타', isMaterial: true),
-      IconItem(icon: Icons.emoji_events, keywords: ['trophy', '트로피'], category: '기타', isMaterial: true),
-      IconItem(icon: Icons.celebration, keywords: ['celebration', '축하'], category: '기타', isMaterial: true),
-      IconItem(icon: Icons.notifications, keywords: ['notifications', '알림'], category: '기타', isMaterial: true),
-      IconItem(icon: Icons.alarm, keywords: ['alarm', '알람'], category: '기타', isMaterial: true),
-      IconItem(icon: Icons.phone, keywords: ['phone', '전화'], category: '기타', isMaterial: true),
+      // ========== ⏰ 시간/일정 카테고리 ==========
+      IconItem(icon: Icons.schedule, label: '스케줄', keywords: ['schedule', '스케줄', '일정'], category: '시간/일정'),
+      IconItem(icon: Icons.access_time, label: '시간', keywords: ['time', '시간'], category: '시간/일정'),
+      IconItem(icon: Icons.alarm, label: '알람', keywords: ['alarm', '알람'], category: '시간/일정'),
+      IconItem(icon: Icons.timer, label: '타이머', keywords: ['timer', '타이머'], category: '시간/일정'),
+      IconItem(icon: Icons.today, label: '오늘', keywords: ['today', '오늘'], category: '시간/일정'),
+      IconItem(icon: Icons.event, label: '이벤트', keywords: ['event', '이벤트'], category: '시간/일정'),
+      IconItem(icon: Icons.calendar_month, label: '달력', keywords: ['calendar', '달력'], category: '시간/일정'),
+      IconItem(icon: Icons.calendar_today, label: '오늘날짜', keywords: ['calendar', '오늘'], category: '시간/일정'),
+      IconItem(icon: Icons.date_range, label: '기간', keywords: ['date', 'range', '기간'], category: '시간/일정'),
+      IconItem(icon: Icons.watch_later, label: '나중에', keywords: ['watch', 'later', '나중'], category: '시간/일정'),
+      IconItem(icon: Icons.update, label: '업데이트', keywords: ['update', '업데이트'], category: '시간/일정'),
+      IconItem(icon: Icons.history, label: '기록', keywords: ['history', '기록', '히스토리'], category: '시간/일정'),
+      IconItem(icon: Icons.pending, label: '대기중', keywords: ['pending', '대기'], category: '시간/일정'),
+      IconItem(icon: Icons.hourglass_bottom, label: '모래시계', keywords: ['hourglass', '모래시계'], category: '시간/일정'),
+      IconItem(icon: Icons.timelapse, label: '타임랩스', keywords: ['timelapse', '타임랩스'], category: '시간/일정'),
+      
+      // ========== 👥 사람/팀 카테고리 ==========
+      IconItem(icon: Icons.person, label: '사람', keywords: ['person', '사람', '개인'], category: '사람/팀'),
+      IconItem(icon: Icons.group, label: '그룹', keywords: ['group', '그룹', '팀'], category: '사람/팀'),
+      IconItem(icon: Icons.people, label: '사람들', keywords: ['people', '사람들'], category: '사람/팀'),
+      IconItem(icon: Icons.groups, label: '여러그룹', keywords: ['groups', '그룹들'], category: '사람/팀'),
+      IconItem(icon: Icons.supervisor_account, label: '관리자', keywords: ['supervisor', '관리자'], category: '사람/팀'),
+      IconItem(icon: Icons.badge, label: '배지', keywords: ['badge', '배지', '신분증'], category: '사람/팀'),
+      IconItem(icon: Icons.contact_page, label: '연락처', keywords: ['contact', '연락처'], category: '사람/팀'),
+      IconItem(icon: Icons.account_circle, label: '계정', keywords: ['account', '계정'], category: '사람/팀'),
+      IconItem(icon: Icons.manage_accounts, label: '계정관리', keywords: ['manage', '관리'], category: '사람/팀'),
+      IconItem(icon: Icons.admin_panel_settings, label: '관리자패널', keywords: ['admin', '관리자'], category: '사람/팀'),
+      
+      // ========== ✅ 상태/액션 카테고리 ==========
+      IconItem(icon: Icons.check_circle, label: '완료', keywords: ['check', '완료', '체크'], category: '상태/액션'),
+      IconItem(icon: Icons.verified, label: '검증완료', keywords: ['verified', '검증'], category: '상태/액션'),
+      IconItem(icon: Icons.task_alt, label: '작업완료', keywords: ['task', '작업'], category: '상태/액션'),
+      IconItem(icon: Icons.done_all, label: '모두완료', keywords: ['done', '완료'], category: '상태/액션'),
+      IconItem(icon: Icons.pending_actions, label: '대기중', keywords: ['pending', '대기'], category: '상태/액션'),
+      IconItem(icon: Icons.error, label: '에러', keywords: ['error', '에러', '오류'], category: '상태/액션'),
+      IconItem(icon: Icons.warning, label: '경고', keywords: ['warning', '경고'], category: '상태/액션'),
+      IconItem(icon: Icons.info, label: '정보', keywords: ['info', '정보'], category: '상태/액션'),
+      IconItem(icon: Icons.help, label: '도움말', keywords: ['help', '도움말'], category: '상태/액션'),
+      IconItem(icon: Icons.cancel, label: '취소', keywords: ['cancel', '취소'], category: '상태/액션'),
+      IconItem(icon: Icons.close, label: '닫기', keywords: ['close', '닫기'], category: '상태/액션'),
+      IconItem(icon: Icons.add, label: '추가', keywords: ['add', '추가', '더하기'], category: '상태/액션'),
+      IconItem(icon: Icons.remove, label: '제거', keywords: ['remove', '제거', '빼기'], category: '상태/액션'),
+      IconItem(icon: Icons.refresh, label: '새로고침', keywords: ['refresh', '새로고침'], category: '상태/액션'),
+      IconItem(icon: Icons.sync, label: '동기화', keywords: ['sync', '동기화'], category: '상태/액션'),
     ];
   }
 }
 
-/// 아이콘 선택 위젯
+/// ✨ 세련된 아이콘 선택 위젯
 class _IconPickerWidget extends StatefulWidget {
-  final List<IconItem> allIcons;
+  final ThemeData theme;
   final String? initialIcon;
   final String? initialIconColor;
   final String? initialBackgroundColor;
 
   const _IconPickerWidget({
-    required this.allIcons,
+    required this.theme,
     this.initialIcon,
     this.initialIconColor,
     this.initialBackgroundColor,
@@ -338,320 +220,691 @@ class _IconPickerWidget extends StatefulWidget {
 }
 
 class _IconPickerWidgetState extends State<_IconPickerWidget> {
+  late List<IconItem> _allIcons;
   List<IconItem> _filteredIcons = [];
-  dynamic _selectedIcon;
-  Color? _selectedIconColor;
+  IconData? _selectedIcon;
+  Color _selectedIconColor = Colors.white;
   String _selectedBackgroundColor = '#2196F3';
-  String _selectedCategory = '전체 (인기)';
+  String _selectedCategory = '전체';
+  final TextEditingController _searchController = TextEditingController();
+  final ScrollController _categoryScrollController = ScrollController(); // ⭐ 추가
 
   final List<String> _categories = [
-    '전체 (인기)',
+    '전체',
     '물류/배송',
     '음식/음료',
     '청소/관리',
     '도구/작업',
     '사무/문서',
-    '기타',
+    '시간/일정',
+    '사람/팀',
+    '상태/액션',
   ];
 
   final List<String> _predefinedColors = [
-    '#FFFFFF', // ⭐ 흰색 추가!
-    '#F44336', // Red
-    '#2196F3', // Blue (default)
-    '#FFEB3B', // Yellow
-    '#000000', // Black
+    '#FFFFFF', // 흰색
+    '#000000', // 검정
+    '#F44336', // 빨강
+    '#2196F3', // 파랑
+    '#4CAF50', // 초록
+    '#FFC107', // 노랑
+    '#9C27B0', // 보라
+    '#FF9800', // 주황
   ];
 
   @override
   void initState() {
     super.initState();
-    
+    _allIcons = IconPickerDialog.getAllIcons();
     _selectedBackgroundColor = widget.initialBackgroundColor ?? '#2196F3';
+    
     if (widget.initialIconColor != null) {
       _selectedIconColor = FormatHelper.parseColor(widget.initialIconColor!);
     }
     
-    if (widget.initialIcon != null) {
-      final matchingIcon = widget.allIcons.firstWhere(
-        (icon) => icon.icon.toString() == widget.initialIcon,
-        orElse: () => widget.allIcons.first,
-      );
-      _selectedIcon = matchingIcon.icon;
+    if (widget.initialIcon != null && widget.initialIcon!.startsWith('material:')) {
+      final codePoint = int.tryParse(widget.initialIcon!.substring(9));
+      if (codePoint != null) {
+        _selectedIcon = IconData(codePoint, fontFamily: 'MaterialIcons');
+      }
     }
     
-    _filteredIcons = widget.allIcons.where((icon) => icon.isPopular).toList();
+    _filterIcons();
   }
 
   @override
   void dispose() {
+    _searchController.dispose();
+    _categoryScrollController.dispose(); // ⭐ 추가
     super.dispose();
   }
 
   void _filterIcons() {
     setState(() {
-      if (_selectedCategory == '전체 (인기)') {
-        _filteredIcons = widget.allIcons.where((icon) => icon.isPopular).toList();
-      } else {
-        _filteredIcons = widget.allIcons
-            .where((icon) => icon.category == _selectedCategory)
-            .toList();
+      var filtered = _allIcons;
+      
+      // 카테고리 필터
+      if (_selectedCategory != '전체') {
+        filtered = filtered.where((icon) => icon.category == _selectedCategory).toList();
       }
+      
+      // 검색 필터
+      if (_searchController.text.isNotEmpty) {
+        final query = _searchController.text.toLowerCase();
+        filtered = filtered.where((icon) {
+          return icon.label.toLowerCase().contains(query) ||
+                 icon.keywords.any((keyword) => keyword.toLowerCase().contains(query));
+        }).toList();
+      }
+      
+      _filteredIcons = filtered;
     });
   }
 
   @override
   Widget build(BuildContext context) {
-    return AlertDialog(
-      title: const Text('아이콘 선택'),
-      content: SizedBox(
-        width: double.maxFinite,
-        height: ResponsiveHelper.dialogHeight(context),
+    return Dialog(
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(24),
+      ),
+      child: Container(
+        constraints: BoxConstraints(
+          maxWidth: 600,
+          maxHeight: MediaQuery.of(context).size.height * 0.9,
+        ),
         child: Column(
-          children: [            
-            // 카테고리 드롭다운
-            DropdownButtonFormField<String>(
-              value: _selectedCategory,
-              decoration: const InputDecoration(
-                labelText: '카테고리',
-                border: OutlineInputBorder(),
-              ),
-              items: _categories.map((category) {
-                return DropdownMenuItem(
-                  value: category,
-                  child: Text(category),
-                );
-              }).toList(),
-              onChanged: (value) {
-                setState(() {
-                  _selectedCategory = value!;
-                  _filterIcons();
-                });
-              },
-            ),
-            SizedBox(height: ResponsiveHelper.spacing(context, 12)),
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            // ✨ 세련된 헤더
+            _buildHeader(),
             
-            // 아이콘 그리드 - 반응형
+            // ✨ 메인 컨텐츠 (스크롤 가능)
             Expanded(
-              child: _filteredIcons.isEmpty
-                  ? const Center(child: Text('검색 결과가 없습니다'))
-                  : LayoutBuilder(
-                      builder: (context, constraints) {
-                        final width = constraints.maxWidth;
-                        final crossAxisCount = width < 300 ? 4 : width < 400 ? 5 : 6;
-                        
-                        return GridView.builder(
-                          gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-                            crossAxisCount: crossAxisCount,
-                            mainAxisSpacing: ResponsiveHelper.spacing(context, 8),
-                            crossAxisSpacing: ResponsiveHelper.spacing(context, 8),
-                          ),
-                          itemCount: _filteredIcons.length,
-                          itemBuilder: (context, index) {
-                            final iconItem = _filteredIcons[index];
-                            final isSelected = _selectedIcon == iconItem.icon;
-                            
-                            return InkWell(
-                              onTap: () {
-                                setState(() {
-                                  _selectedIcon = iconItem.icon;
-                                  _selectedIconColor = iconItem.isMaterial ? Colors.white : null;
-                                });
-                              },
-                              child: Container(
-                                decoration: BoxDecoration(
-                                  color: isSelected 
-                                      ? FormatHelper.parseColor(_selectedBackgroundColor) 
-                                      : Theme.of(context).colorScheme.surface,
-                                  border: Border.all(
-                                    color: isSelected 
-                                        ? Theme.of(context).primaryColor
-                                        : Theme.of(context).dividerColor,
-                                    width: isSelected ? 2 : 1,
-                                  ),
-                                  borderRadius: BorderRadius.circular(8),
-                                ),
-                                child: Center(
-                                  child: iconItem.isMaterial
-                                      ? Icon(
-                                          iconItem.icon as IconData,
-                                          color: isSelected 
-                                              ? (_selectedIconColor ?? Colors.white)
-                                              : Theme.of(context).textTheme.bodyMedium?.color,
-                                          size: ResponsiveHelper.iconSize(context, 28),
-                                        )
-                                      : Text(
-                                          iconItem.icon.toString(),
-                                          style: TextStyle(
-                                            fontSize: ResponsiveHelper.iconSize(context, 28),
-                                          ),
-                                        ),
-                                ),
-                              ),
-                            );
-                          },
-                        );
-                      },
-                    ),
+              child: SingleChildScrollView(
+                child: Column(
+                  children: [
+                    // ✨ 검색바
+                    _buildSearchBar(),
+                    
+                    // ✨ 색상 설정 (선택시에만 표시) - 상단으로 이동!
+                    if (_selectedIcon != null) _buildColorSettings(),
+                    
+                    // ✨ 카테고리 탭
+                    _buildCategoryTabs(),
+                    
+                    // ✨ 아이콘 그리드
+                    _buildIconGrid(),
+                  ],
+                ),
+              ),
             ),
             
-            // ⭐ 색상 설정을 ExpansionTile로 접기
-            if (_selectedIcon != null) ...[
-              SizedBox(height: ResponsiveHelper.spacing(context, 12)),
-              ExpansionTile(
-                title: Text(
-                  '색상 설정',
-                  style: ResponsiveHelper.bodyStyle(context).copyWith(
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-                initiallyExpanded: false,  // 기본 접힘
-                children: [
-                  // Material 아이콘 색상 (Material 아이콘일 때만)
-                  if (_selectedIcon is IconData) ...[
-                    Padding(
-                      padding: EdgeInsets.symmetric(horizontal: 16),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            '아이콘 색상',
-                            style: ResponsiveHelper.smallStyle(context).copyWith(
-                              fontWeight: FontWeight.bold,
-                            ),
-                          ),
-                          SizedBox(height: ResponsiveHelper.spacing(context, 8)),
-                          Wrap(
-                            spacing: ResponsiveHelper.spacing(context, 8),
-                            runSpacing: ResponsiveHelper.spacing(context, 8),
-                            children: _predefinedColors.map((colorHex) {
-                              final isSelected = _selectedIconColor != null && 
-                                                '#${_selectedIconColor!.value.toRadixString(16).padLeft(8, '0').substring(2)}' == colorHex;
-                              final isWhite = colorHex == '#FFFFFF';
-                              return InkWell(
-                                onTap: () {
-                                  setState(() {
-                                    _selectedIconColor = FormatHelper.parseColor(colorHex);
-                                  });
-                                },
-                                child: Container(
-                                  width: ResponsiveHelper.iconSize(context, 32),
-                                  height: ResponsiveHelper.iconSize(context, 32),
-                                  decoration: BoxDecoration(
-                                    color: FormatHelper.parseColor(colorHex),
-                                    shape: BoxShape.circle,
-                                    border: Border.all(
-                                      color: isSelected 
-                                          ? Colors.black 
-                                          : (isWhite ? Colors.grey : Theme.of(context).dividerColor),
-                                      width: isSelected ? 2 : 1,
-                                    ),
-                                  ),
-                                  child: isSelected 
-                                      ? Icon(
-                                          Icons.check, 
-                                          color: isWhite ? Colors.black : Colors.white,
-                                          size: ResponsiveHelper.iconSize(context, 16),
-                                        ) 
-                                      : null,
-                                ),
-                              );
-                            }).toList(),
-                          ),
-                          SizedBox(height: ResponsiveHelper.spacing(context, 16)),
-                        ],
-                      ),
-                    ),
-                  ],
-                  
-                  // 배경색
-                  Padding(
-                    padding: EdgeInsets.symmetric(horizontal: 16),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          '배경색',
-                          style: ResponsiveHelper.smallStyle(context).copyWith(
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                        SizedBox(height: ResponsiveHelper.spacing(context, 8)),
-                        Wrap(
-                          spacing: ResponsiveHelper.spacing(context, 8),
-                          runSpacing: ResponsiveHelper.spacing(context, 8),
-                          children: _predefinedColors.map((colorHex) {
-                            final isSelected = _selectedBackgroundColor == colorHex;
-                            final isWhite = colorHex == '#FFFFFF';
-                            return InkWell(
-                              onTap: () {
-                                setState(() {
-                                  _selectedBackgroundColor = colorHex;
-                                });
-                              },
-                              child: Container(
-                                width: ResponsiveHelper.iconSize(context, 32),
-                                height: ResponsiveHelper.iconSize(context, 32),
-                                decoration: BoxDecoration(
-                                  color: FormatHelper.parseColor(colorHex),
-                                  shape: BoxShape.circle,
-                                  border: Border.all(
-                                    color: isSelected 
-                                        ? Colors.black 
-                                        : (isWhite ? Colors.grey : Theme.of(context).dividerColor),
-                                    width: isSelected ? 2 : 1,
-                                  ),
-                                ),
-                                child: isSelected 
-                                    ? Icon(
-                                        Icons.check, 
-                                        color: isWhite ? Colors.black : Colors.white,
-                                        size: ResponsiveHelper.iconSize(context, 16),
-                                      ) 
-                                    : null,
-                              ),
-                            );
-                          }).toList(),
-                        ),
-                        SizedBox(height: ResponsiveHelper.spacing(context, 8)),
-                      ],
-                    ),
-                  ),
-                ],
-              ),
-            ],
+            // ✨ 액션 버튼
+            _buildActionButtons(),
           ],
         ),
       ),
-      actions: [
-        TextButton(
-          onPressed: () => Navigator.pop(context),
-          child: const Text('취소'),
+    );
+  }
+
+  /// ✨ 세련된 헤더
+  Widget _buildHeader() {
+    return Container(
+      padding: ResponsiveHelper.cardPadding(context),
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [
+            widget.theme.primaryColor,
+            widget.theme.primaryColor.withOpacity(0.8),
+          ],
         ),
-        ElevatedButton(
-          onPressed: _selectedIcon == null
-              ? null
-              : () {
-                  String iconString;
-                  if (_selectedIcon is IconData) {
-                    iconString = 'material:${_selectedIcon.codePoint}';
-                  } else {
-                    iconString = _selectedIcon.toString();
-                  }
-                  
-                  String? colorHex;
-                  if (_selectedIconColor != null) {
-                    colorHex = '#${_selectedIconColor!.value.toRadixString(16).padLeft(8, '0').substring(2)}';
-                  }
-                  
-                  Navigator.pop(context, {
-                    'icon': iconString,
-                    'iconColor': colorHex,
-                    'backgroundColor': _selectedBackgroundColor,
-                  });
-                },
-          child: const Text('선택'),
+        borderRadius: const BorderRadius.only(
+          topLeft: Radius.circular(24),
+          topRight: Radius.circular(24),
         ),
-      ],
+      ),
+      child: Row(
+        children: [
+          Container(
+            padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 12)),
+            decoration: BoxDecoration(
+              color: Colors.white.withOpacity(0.2),
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Icon(
+              Icons.auto_awesome,
+              color: Colors.white,
+              size: ResponsiveHelper.iconSize(context, 24),
+            ),
+          ),
+          SizedBox(width: ResponsiveHelper.spacing(context, 16)),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  '아이콘 선택',
+                  style: ResponsiveHelper.titleStyle(context).copyWith(
+                    color: Colors.white,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+                SizedBox(height: ResponsiveHelper.spacing(context, 4)),
+                Text(
+                  '${_filteredIcons.length}개 아이콘',
+                  style: ResponsiveHelper.smallStyle(context).copyWith(
+                    color: Colors.white.withOpacity(0.9),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          Material(
+            color: Colors.white.withOpacity(0.2),
+            borderRadius: BorderRadius.circular(8),
+            child: InkWell(
+              onTap: () => Navigator.pop(context),
+              borderRadius: BorderRadius.circular(8),
+              child: Padding(
+                padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 8)),
+                child: Icon(
+                  Icons.close,
+                  color: Colors.white,
+                  size: ResponsiveHelper.iconSize(context, 20),
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// ✨ 검색바
+  Widget _buildSearchBar() {
+    return Padding(
+      padding: ResponsiveHelper.cardPadding(context),
+      child: TextField(
+        controller: _searchController,
+        decoration: InputDecoration(
+          hintText: '아이콘 검색...',
+          prefixIcon: Icon(Icons.search, color: widget.theme.primaryColor),
+          suffixIcon: _searchController.text.isNotEmpty
+              ? IconButton(
+                  icon: const Icon(Icons.clear),
+                  onPressed: () {
+                    _searchController.clear();
+                    _filterIcons();
+                  },
+                )
+              : null,
+          border: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(12),
+          ),
+          filled: true,
+          fillColor: Colors.grey[100],
+        ),
+        onChanged: (_) => _filterIcons(),
+      ),
+    );
+  }
+
+  /// ✨ 카테고리 탭 (화살표 버튼 추가)
+  Widget _buildCategoryTabs() {
+    return Container(
+      height: 56,
+      padding: EdgeInsets.symmetric(
+        vertical: ResponsiveHelper.spacing(context, 8),
+      ),
+      child: Row(
+        children: [
+          // ⭐ 왼쪽 화살표
+          IconButton(
+            icon: Icon(Icons.chevron_left, color: widget.theme.primaryColor),
+            onPressed: () {
+              _categoryScrollController.animateTo(
+                _categoryScrollController.offset - 150,
+                duration: const Duration(milliseconds: 300),
+                curve: Curves.easeInOut,
+              );
+            },
+          ),
+          // 카테고리 목록
+          Expanded(
+            child: ListView.builder(
+              controller: _categoryScrollController,
+              scrollDirection: Axis.horizontal,
+              itemCount: _categories.length,
+              itemBuilder: (context, index) {
+                final category = _categories[index];
+                final isSelected = _selectedCategory == category;
+                
+                return Padding(
+                  padding: EdgeInsets.only(
+                    right: ResponsiveHelper.spacing(context, 8),
+                  ),
+                  child: Material(
+                    color: isSelected
+                        ? widget.theme.primaryColor
+                        : Colors.grey[200],
+                    borderRadius: BorderRadius.circular(20),
+                    child: InkWell(
+                      onTap: () {
+                        setState(() {
+                          _selectedCategory = category;
+                          _filterIcons();
+                        });
+                      },
+                      borderRadius: BorderRadius.circular(20),
+                      child: Padding(
+                        padding: EdgeInsets.symmetric(
+                          horizontal: ResponsiveHelper.spacing(context, 16),
+                          vertical: ResponsiveHelper.spacing(context, 8),
+                        ),
+                        child: Text(
+                          category,
+                          style: ResponsiveHelper.bodyStyle(context).copyWith(
+                            color: isSelected ? Colors.white : Colors.grey[700],
+                            fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                );
+              },
+            ),
+          ),
+          // ⭐ 오른쪽 화살표
+          IconButton(
+            icon: Icon(Icons.chevron_right, color: widget.theme.primaryColor),
+            onPressed: () {
+              _categoryScrollController.animateTo(
+                _categoryScrollController.offset + 150,
+                duration: const Duration(milliseconds: 300),
+                curve: Curves.easeInOut,
+              );
+            },
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// ✨ 아이콘 그리드 (반응형 복구)
+  Widget _buildIconGrid() {
+    if (_filteredIcons.isEmpty) {
+      return Container(
+        height: 200,
+        child: Center(
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(
+                Icons.search_off,
+                size: ResponsiveHelper.iconSize(context, 64),
+                color: Colors.grey[400],
+              ),
+              SizedBox(height: ResponsiveHelper.spacing(context, 16)),
+              Text(
+                '검색 결과가 없습니다',
+                style: ResponsiveHelper.bodyStyle(context).copyWith(
+                  color: Colors.grey[600],
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+    
+    // ⭐ 그리드 높이 계산 (반응형)
+    final iconSize = ResponsiveHelper.iconSize(context, 56);
+    final gapSize = ResponsiveHelper.spacing(context, 8);
+    final labelHeight = 30.0;
+    final rows = (_filteredIcons.length / 5).ceil();
+    final itemHeight = iconSize + gapSize + labelHeight;
+    final mainSpacing = ResponsiveHelper.spacing(context, 8);
+    final gridHeight = (rows * itemHeight) + (rows - 1) * mainSpacing + 16.0;
+    
+    return Container(
+      height: gridHeight,
+      padding: EdgeInsets.symmetric(
+        horizontal: ResponsiveHelper.spacing(context, 16),
+        vertical: ResponsiveHelper.spacing(context, 8),
+      ),
+      child: GridView.builder(
+        physics: const NeverScrollableScrollPhysics(),
+        gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+          crossAxisCount: 5,
+          mainAxisSpacing: ResponsiveHelper.spacing(context, 8),
+          crossAxisSpacing: ResponsiveHelper.spacing(context, 8),
+          mainAxisExtent: itemHeight,
+        ),
+        itemCount: _filteredIcons.length,
+        itemBuilder: (context, index) {
+          final iconItem = _filteredIcons[index];
+          final isSelected = _selectedIcon == iconItem.icon;
+          
+          return GestureDetector(
+            onTap: () {
+              setState(() {
+                _selectedIcon = iconItem.icon;
+              });
+            },
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                // 아이콘
+                Container(
+                  width: ResponsiveHelper.iconSize(context, 56),
+                  height: ResponsiveHelper.iconSize(context, 56),
+                  decoration: BoxDecoration(
+                    gradient: isSelected
+                        ? LinearGradient(
+                            colors: [
+                              FormatHelper.parseColor(_selectedBackgroundColor),
+                              FormatHelper.parseColor(_selectedBackgroundColor).withOpacity(0.8),
+                            ],
+                          )
+                        : null,
+                    color: isSelected ? null : Colors.grey[100],
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(
+                      color: isSelected
+                          ? widget.theme.primaryColor
+                          : Colors.grey[300]!,
+                      width: isSelected ? 2 : 1,
+                    ),
+                    boxShadow: isSelected
+                        ? [
+                            BoxShadow(
+                              color: widget.theme.primaryColor.withOpacity(0.3),
+                              blurRadius: 8,
+                              offset: const Offset(0, 4),
+                            ),
+                          ]
+                        : null,
+                  ),
+                  child: Icon(
+                    iconItem.icon,
+                    color: isSelected ? _selectedIconColor : Colors.grey[700],
+                    size: ResponsiveHelper.iconSize(context, 28),
+                  ),
+                ),
+                SizedBox(height: ResponsiveHelper.spacing(context, 8)),
+                // 라벨 (고정 높이)
+                SizedBox(
+                  height: 30,
+                  child: Center(
+                    child: Text(
+                      iconItem.label,
+                      style: ResponsiveHelper.tinyStyle(context).copyWith(
+                        color: isSelected ? widget.theme.primaryColor : Colors.grey[600],
+                        fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+                        fontSize: ResponsiveHelper.getFontSize(context, 10),
+                      ),
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      textAlign: TextAlign.center,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          );
+        },
+      ),
+    );
+  }
+
+  /// ✨ 색상 설정 (ExpansionTile - 접을 수 있음)
+  Widget _buildColorSettings() {
+    return Container(
+      margin: EdgeInsets.symmetric(
+        horizontal: ResponsiveHelper.spacing(context, 16),
+        vertical: ResponsiveHelper.spacing(context, 8),
+      ),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: Colors.grey[300]!),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.grey.withOpacity(0.1),
+            blurRadius: 4,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+      child: ExpansionTile(
+        initiallyExpanded: false, // ⭐ 기본 접힘
+        title: Row(
+          children: [
+            Icon(
+              Icons.palette,
+              color: widget.theme.primaryColor,
+              size: ResponsiveHelper.iconSize(context, 20),
+            ),
+            SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+            Text(
+              '색상 설정',
+              style: ResponsiveHelper.bodyStyle(context).copyWith(
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+          ],
+        ),
+        children: [
+          Padding(
+            padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 16)),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // 아이콘 색상
+                Text(
+                  '아이콘 색상',
+                  style: ResponsiveHelper.smallStyle(context).copyWith(
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+                SizedBox(height: ResponsiveHelper.spacing(context, 8)),
+                Wrap(
+                  spacing: ResponsiveHelper.spacing(context, 10),
+                  runSpacing: ResponsiveHelper.spacing(context, 8),
+                  children: _predefinedColors.map((colorHex) {
+                    final color = FormatHelper.parseColor(colorHex);
+                    final isSelected = _selectedIconColor.value == color.value;
+                    
+                    return GestureDetector(
+                      onTap: () {
+                        setState(() {
+                          _selectedIconColor = color;
+                        });
+                      },
+                      child: Container(
+                        width: ResponsiveHelper.iconSize(context, 36),
+                        height: ResponsiveHelper.iconSize(context, 36),
+                        decoration: BoxDecoration(
+                          color: color,
+                          shape: BoxShape.circle,
+                          border: Border.all(
+                            color: isSelected ? widget.theme.primaryColor : Colors.grey[400]!,
+                            width: isSelected ? 3 : 1,
+                          ),
+                          boxShadow: isSelected
+                              ? [
+                                  BoxShadow(
+                                    color: widget.theme.primaryColor.withOpacity(0.3),
+                                    blurRadius: 8,
+                                  ),
+                                ]
+                              : null,
+                        ),
+                        child: isSelected
+                            ? Icon(
+                                Icons.check,
+                                color: colorHex == '#FFFFFF' ? Colors.black : Colors.white,
+                                size: ResponsiveHelper.iconSize(context, 18),
+                              )
+                            : null,
+                      ),
+                    );
+                  }).toList(),
+                ),
+                SizedBox(height: ResponsiveHelper.spacing(context, 16)),
+                
+                // 배경색
+                Text(
+                  '배경색',
+                  style: ResponsiveHelper.smallStyle(context).copyWith(
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+                SizedBox(height: ResponsiveHelper.spacing(context, 8)),
+                Wrap(
+                  spacing: ResponsiveHelper.spacing(context, 10),
+                  runSpacing: ResponsiveHelper.spacing(context, 8),
+                  children: _predefinedColors.map((colorHex) {
+                    final color = FormatHelper.parseColor(colorHex);
+                    final isSelected = _selectedBackgroundColor == colorHex;
+                    
+                    return GestureDetector(
+                      onTap: () {
+                        setState(() {
+                          _selectedBackgroundColor = colorHex;
+                        });
+                      },
+                      child: Container(
+                        width: ResponsiveHelper.iconSize(context, 36),
+                        height: ResponsiveHelper.iconSize(context, 36),
+                        decoration: BoxDecoration(
+                          color: color,
+                          shape: BoxShape.circle,
+                          border: Border.all(
+                            color: isSelected ? widget.theme.primaryColor : Colors.grey[400]!,
+                            width: isSelected ? 3 : 1,
+                          ),
+                          boxShadow: isSelected
+                              ? [
+                                  BoxShadow(
+                                    color: widget.theme.primaryColor.withOpacity(0.3),
+                                    blurRadius: 8,
+                                  ),
+                                ]
+                              : null,
+                        ),
+                        child: isSelected
+                            ? Icon(
+                                Icons.check,
+                                color: colorHex == '#FFFFFF' ? Colors.black : Colors.white,
+                                size: ResponsiveHelper.iconSize(context, 18),
+                              )
+                            : null,
+                      ),
+                    );
+                  }).toList(),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// ✨ 액션 버튼
+  Widget _buildActionButtons() {
+    return Container(
+      padding: ResponsiveHelper.cardPadding(context),
+      child: Row(
+        children: [
+          Expanded(
+            child: OutlinedButton(
+              onPressed: () => Navigator.pop(context),
+              style: OutlinedButton.styleFrom(
+                padding: EdgeInsets.symmetric(
+                  vertical: ResponsiveHelper.spacing(context, 16),
+                ),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
+              ),
+              child: Text(
+                '취소',
+                style: ResponsiveHelper.bodyStyle(context).copyWith(
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+            ),
+          ),
+          SizedBox(width: ResponsiveHelper.spacing(context, 12)),
+          Expanded(
+            flex: 2,
+            child: Container(
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  colors: [
+                    widget.theme.primaryColor,
+                    widget.theme.primaryColor.withOpacity(0.8),
+                  ],
+                ),
+                borderRadius: BorderRadius.circular(12),
+                boxShadow: [
+                  BoxShadow(
+                    color: widget.theme.primaryColor.withOpacity(0.4),
+                    blurRadius: 8,
+                    offset: const Offset(0, 4),
+                  ),
+                ],
+              ),
+              child: Material(
+                color: Colors.transparent,
+                child: InkWell(
+                  onTap: _selectedIcon == null
+                      ? null
+                      : () {
+                          final iconString = 'material:${_selectedIcon!.codePoint}';
+                          final colorHex = '#${_selectedIconColor.value.toRadixString(16).padLeft(8, '0').substring(2)}';
+                          
+                          Navigator.pop(context, {
+                            'icon': iconString,
+                            'iconColor': colorHex,
+                            'backgroundColor': _selectedBackgroundColor,
+                          });
+                        },
+                  borderRadius: BorderRadius.circular(12),
+                  child: Padding(
+                    padding: EdgeInsets.symmetric(
+                      vertical: ResponsiveHelper.spacing(context, 16),
+                    ),
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Icon(
+                          Icons.check_circle,
+                          color: Colors.white,
+                          size: ResponsiveHelper.iconSize(context, 20),
+                        ),
+                        SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+                        Text(
+                          '선택 완료',
+                          style: ResponsiveHelper.bodyStyle(context).copyWith(
+                            color: Colors.white,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
     );
   }
 }

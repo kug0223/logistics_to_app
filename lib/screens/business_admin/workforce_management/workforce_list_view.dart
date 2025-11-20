@@ -11,7 +11,7 @@ import '../../../services/firestore_service.dart';
 
 // Utils
 import '../../../utils/toast_helper.dart';
-import '../../../utils/responsive_helper.dart';  // ⭐ 추가
+import '../../../utils/responsive_helper.dart';
 
 // Widgets
 import '../../../widgets/common/loading_widget.dart';
@@ -23,7 +23,7 @@ import '../dialogs/to_list_dialogs.dart';
 // Local Widgets
 import '../../../widgets/admin/cards/admin_to_group_card.dart';
 
-/// 인력 관리 - 리스트 뷰 (리팩토링 완료)
+/// 인력 관리 - 리스트 뷰 (business_admin_home_screen 스타일 통일)
 class WorkforceListView extends StatefulWidget {
   const WorkforceListView({super.key});
 
@@ -315,41 +315,69 @@ class _WorkforceListViewState extends State<WorkforceListView> {
         _buildTabBar(),
         // ⭐ 마감됨 탭 안내 메시지
         if (_selectedTab == 'CLOSED')
-          Container(
-            padding: ResponsiveHelper.cardPadding(context),
-            margin: ResponsiveHelper.cardPadding(context),
-            decoration: BoxDecoration(
-              color: Colors.blue[50],
-              borderRadius: BorderRadius.circular(8),
-              border: Border.all(color: Colors.blue[200]!),
-            ),
-            child: Row(
-              children: [
-                Icon(
-                  Icons.info_outline, 
-                  color: Colors.blue[700], 
-                  size: ResponsiveHelper.iconSize(context, 20)
-                ),
-                SizedBox(width: ResponsiveHelper.spacing(context, 8)),
-                Expanded(
-                  child: Text(
-                    '최근 마감된 5개만 표시됩니다. 이전 마감은 캘린더를 이용하세요.',
-                    style: ResponsiveHelper.smallStyle(
-                      context,
-                      color: Colors.blue[700],
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          ),
+          _buildClosedTabNotice(),
         Expanded(child: _buildTOList()),
       ],
     );
   }
 
-  /// 탭바 + 필터
+  /// ✨ 마감됨 탭 안내 메시지 - 테마 기반
+  Widget _buildClosedTabNotice() {
+    final theme = Theme.of(context);
+    
+    return Container(
+      padding: ResponsiveHelper.cardPadding(context),
+      margin: EdgeInsets.symmetric(
+        horizontal: ResponsiveHelper.spacing(context, 16),
+      ),
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [
+            theme.primaryColor.withOpacity(0.1),
+            theme.primaryColor.withOpacity(0.05),
+          ],
+        ),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(
+          color: theme.primaryColor.withOpacity(0.3),
+          width: 1.5,
+        ),
+      ),
+      child: Row(
+        children: [
+          Container(
+            padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 8)),
+            decoration: BoxDecoration(
+              color: theme.primaryColor.withOpacity(0.15),
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: Icon(
+              Icons.info_outline,
+              color: theme.primaryColor,
+              size: ResponsiveHelper.iconSize(context, 20),
+            ),
+          ),
+          SizedBox(width: ResponsiveHelper.spacing(context, 12)),
+          Expanded(
+            child: Text(
+              '최근 마감된 5개만 표시됩니다. 이전 마감은 캘린더를 이용하세요.',
+              style: ResponsiveHelper.smallStyle(
+                context,
+                color: theme.primaryColor.withOpacity(0.9),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// ✨ 탭바 + 필터 (business_admin_home_screen 스타일)
   Widget _buildTabBar() {
+    final theme = Theme.of(context);
+    
     return Container(
       padding: ResponsiveHelper.cardPadding(context),
       child: Row(
@@ -358,26 +386,39 @@ class _WorkforceListViewState extends State<WorkforceListView> {
             child: Container(
               padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 4)),
               decoration: BoxDecoration(
-                color: Colors.grey[200],
-                borderRadius: BorderRadius.circular(12),
+                gradient: LinearGradient(
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                  colors: [
+                    theme.primaryColor.withOpacity(0.08),
+                    theme.primaryColor.withOpacity(0.05),
+                  ],
+                ),
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(
+                  color: theme.primaryColor.withOpacity(0.2),
+                  width: 1.5,
+                ),
               ),
               child: Row(
                 children: [
-                  Expanded(child: _buildTab('ACTIVE', '진행중')),
-                  Expanded(child: _buildTab('CLOSED', '마감됨')),
+                  Expanded(child: _buildTab('ACTIVE', '진행중', Icons.play_circle_outline)),
+                  SizedBox(width: ResponsiveHelper.spacing(context, 4)),
+                  Expanded(child: _buildTab('CLOSED', '마감됨', Icons.check_circle_outline)),
                 ],
               ),
             ),
           ),
-          SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+          SizedBox(width: ResponsiveHelper.spacing(context, 12)),
           _buildFilterButton(),
         ],
       ),
     );
   }
 
-  /// 탭 버튼
-  Widget _buildTab(String tab, String label) {
+  /// ✨ 탭 버튼 - 그라데이션 스타일
+  Widget _buildTab(String tab, String label, IconData icon) {
+    final theme = Theme.of(context);
     final isSelected = _selectedTab == tab;
     
     return GestureDetector(
@@ -396,68 +437,119 @@ class _WorkforceListViewState extends State<WorkforceListView> {
           vertical: ResponsiveHelper.spacing(context, 12),
         ),
         decoration: BoxDecoration(
-          color: isSelected ? Theme.of(context).primaryColor : Colors.transparent,
-          borderRadius: BorderRadius.circular(10),
+          gradient: isSelected
+              ? LinearGradient(
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                  colors: [
+                    theme.primaryColor,
+                    theme.primaryColor.withOpacity(0.85),
+                  ],
+                )
+              : null,
+          color: isSelected ? null : Colors.transparent,
+          borderRadius: BorderRadius.circular(12),
           boxShadow: isSelected
               ? [
                   BoxShadow(
-                    color: Theme.of(context).primaryColor.withOpacity(0.3),
+                    color: theme.primaryColor.withOpacity(0.4),
                     blurRadius: 8,
-                    offset: const Offset(0, 2),
+                    offset: const Offset(0, 3),
                   ),
                 ]
               : null,
         ),
-        child: Text(
-          label,
-          textAlign: TextAlign.center,
-          style: ResponsiveHelper.subtitleStyle(context).copyWith(
-            fontWeight: FontWeight.w600,
-            color: isSelected ? Colors.white : Colors.grey[600],
-          ),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(
+              icon,
+              size: ResponsiveHelper.iconSize(context, 18),
+              color: isSelected ? Colors.white : theme.primaryColor.withOpacity(0.7),
+            ),
+            SizedBox(width: ResponsiveHelper.spacing(context, 6)),
+            Text(
+              label,
+              style: ResponsiveHelper.subtitleStyle(context).copyWith(
+                fontWeight: FontWeight.bold,
+                color: isSelected ? Colors.white : theme.primaryColor.withOpacity(0.7),
+              ),
+            ),
+          ],
         ),
       ),
     );
   }
 
-  /// 필터 버튼
+  /// ✨ 필터 버튼 - 세련된 배지
   Widget _buildFilterButton() {
-    return Stack(
-      children: [
-        IconButton(
-          icon: Icon(
-            Icons.filter_list,
-            color: _hasActiveFilters() ? Theme.of(context).primaryColor : Colors.grey[700],
-          ),
-          onPressed: _showFilterDialog,
-          tooltip: '필터',
-        ),
-        if (_hasActiveFilters())
-          Positioned(
-            right: 8,
-            top: 8,
-            child: Container(
-              padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 4)),
-              decoration: BoxDecoration(
-                color: Theme.of(context).primaryColor,
-                shape: BoxShape.circle,
+    final theme = Theme.of(context);
+    final hasFilters = _hasActiveFilters();
+    
+    return Material(
+      color: hasFilters
+          ? theme.primaryColor.withOpacity(0.1)
+          : Colors.transparent,
+      borderRadius: BorderRadius.circular(12),
+      child: InkWell(
+        onTap: _showFilterDialog,
+        borderRadius: BorderRadius.circular(12),
+        child: Container(
+          padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 12)),
+          child: Stack(
+            clipBehavior: Clip.none,
+            children: [
+              Icon(
+                Icons.filter_list,
+                color: hasFilters ? theme.primaryColor : Colors.grey[600],
+                size: ResponsiveHelper.iconSize(context, 24),
               ),
-              constraints: BoxConstraints(
-                minWidth: ResponsiveHelper.spacing(context, 16),
-                minHeight: ResponsiveHelper.spacing(context, 16),
-              ),
-              child: Text(
-                '${_getActiveFilterCount()}',
-                style: ResponsiveHelper.tinyStyle(
-                  context,
-                  color: Colors.white,
-                  fontWeight: FontWeight.bold,
+              if (hasFilters)
+                Positioned(
+                  right: -6,
+                  top: -6,
+                  child: Container(
+                    padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 4)),
+                    decoration: BoxDecoration(
+                      gradient: LinearGradient(
+                        colors: [
+                          theme.primaryColor,
+                          theme.primaryColor.withOpacity(0.8),
+                        ],
+                      ),
+                      shape: BoxShape.circle,
+                      border: Border.all(
+                        color: Colors.white,
+                        width: 2,
+                      ),
+                      boxShadow: [
+                        BoxShadow(
+                          color: theme.primaryColor.withOpacity(0.4),
+                          blurRadius: 4,
+                          offset: const Offset(0, 2),
+                        ),
+                      ],
+                    ),
+                    constraints: BoxConstraints(
+                      minWidth: ResponsiveHelper.spacing(context, 18),
+                      minHeight: ResponsiveHelper.spacing(context, 18),
+                    ),
+                    child: Center(
+                      child: Text(
+                        '${_getActiveFilterCount()}',
+                        style: ResponsiveHelper.tinyStyle(
+                          context,
+                          color: Colors.white,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ),
+                  ),
                 ),
-                textAlign: TextAlign.center,
-              ),
-            ),
+            ],
           ),
-      ],
+        ),
+      ),
     );
   }
 
@@ -492,7 +584,7 @@ class _WorkforceListViewState extends State<WorkforceListView> {
     );
   }
 
-  /// TO 목록
+  /// ✨ TO 목록
   Widget _buildTOList() {
     if (_isLoading) {
       return const LoadingWidget(message: 'TO 목록을 불러오는 중...');
@@ -532,33 +624,53 @@ class _WorkforceListViewState extends State<WorkforceListView> {
     );
   }
 
-  /// 빈 상태
+  /// ✨ 빈 상태 - 세련된 디자인
   Widget _buildEmptyState() {
+    final theme = Theme.of(context);
+    
     return Center(
       child: Container(
         margin: EdgeInsets.all(ResponsiveHelper.spacing(context, 40)),
         padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 40)),
         decoration: BoxDecoration(
-          color: Theme.of(context).primaryColor.withOpacity(0.1),
-          borderRadius: BorderRadius.circular(20),
+          gradient: LinearGradient(
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+            colors: [
+              theme.primaryColor.withOpacity(0.08),
+              theme.primaryColor.withOpacity(0.04),
+            ],
+          ),
+          borderRadius: BorderRadius.circular(24),
+          border: Border.all(
+            color: theme.primaryColor.withOpacity(0.2),
+            width: 1.5,
+          ),
         ),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(
-              Icons.inbox,
-              size: ResponsiveHelper.iconSize(context, 80),
-              color: Theme.of(context).primaryColor.withOpacity(0.3),
-            ),
-            SizedBox(height: ResponsiveHelper.spacing(context, 20)),
-            Text(
-              '조건에 맞는 TO가 없습니다',
-              style: ResponsiveHelper.titleStyle(
-                context,
-                color: Colors.grey[800],
+            Container(
+              padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 20)),
+              decoration: BoxDecoration(
+                color: theme.primaryColor.withOpacity(0.1),
+                shape: BoxShape.circle,
+              ),
+              child: Icon(
+                Icons.inbox_outlined,
+                size: ResponsiveHelper.iconSize(context, 64),
+                color: theme.primaryColor.withOpacity(0.4),
               ),
             ),
-            SizedBox(height: ResponsiveHelper.spacing(context, 8)),
+            SizedBox(height: ResponsiveHelper.spacing(context, 24)),
+            Text(
+              '조건에 맞는 TO가 없습니다',
+              style: ResponsiveHelper.titleStyle(context).copyWith(
+                fontWeight: FontWeight.bold,
+                color: theme.primaryColor.withOpacity(0.8),
+              ),
+            ),
+            SizedBox(height: ResponsiveHelper.spacing(context, 12)),
             Text(
               '필터를 변경하거나 새로운 TO를 생성하세요',
               style: ResponsiveHelper.bodyStyle(
