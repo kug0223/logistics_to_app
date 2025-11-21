@@ -119,6 +119,9 @@ class AuthService {
     String? gender,
     DateTime? birthDate,
     String? residentNumber,
+    // 주소 기반 필드
+    String? address,           
+    String? detailAddress,     
     // ⭐ 서류 업로드 필드
     String? idCardImageUrl,           // 신분증 앞면 (지원자)
     String? bankbookImageUrl,         // 통장 사본 (지원자)
@@ -150,6 +153,9 @@ class AuthService {
           gender: gender,
           birthDate: birthDate,
           residentNumber: residentNumber,
+          // ⭐ 주소 추가!
+          address: address,                    // ⭐ 추가
+          detailAddress: detailAddress,        // ⭐ 추가
           // ⭐ 서류 이미지
           idCardImageUrl: idCardImageUrl,
           // TODO: bankbookImageUrl, businessLicenseImageUrl는 

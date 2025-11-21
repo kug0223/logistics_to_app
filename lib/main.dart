@@ -13,7 +13,7 @@ import 'screens/auth/login_screen.dart';
 import 'screens/user/user_home_screen.dart';
 import 'screens/super_admin/super_admin_home_screen.dart';
 import 'screens/business_admin/business_admin_home_screen.dart';
-import 'screens/splash_screen.dart';
+import 'screens/common/splash_screen.dart';
 
 
 

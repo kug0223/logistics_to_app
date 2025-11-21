@@ -27,7 +27,7 @@ dependencies:
   cupertino_icons: ^1.0.8
   fluttertoast: ^8.2.8
   loading_animation_widget: ^1.2.1
-  flutter_svg: ^2.0.10+1  # ⭐ 추가: SVG 로고 표시용
+  flutter_svg: ^2.0.10+1
   
   # 위치/GPS
   geolocator: ^13.0.2
@@ -45,6 +45,12 @@ dependencies:
 
   # URL 런처 (전화걸기, 지도 등)
   url_launcher: ^6.3.1
+  
+  # 이미지 선택 (회원가입 서류 업로드용)
+  image_picker: ^1.0.7
+  
+  # OCR (텍스트 인식 - 신분증/서류 검증용)
+  google_mlkit_text_recognition: ^0.15.0
 
 dev_dependencies:
   flutter_test:

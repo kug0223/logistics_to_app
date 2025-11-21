@@ -8,6 +8,7 @@ import 'all_to_list_screen.dart';
 import 'my_schedule_screen.dart';
 import 'attendance_check_screen.dart';
 import 'my_schedule_requests_screen.dart';
+import '../common/settings_screen.dart';
 
 /// 일반 사용자 홈 화면 - 세련된 디자인
 class UserHomeScreen extends StatelessWidget {
@@ -225,21 +226,7 @@ class UserHomeScreen extends StatelessWidget {
                           },
                         ),
 
-                        // 5. 내 정보
-                        _buildMenuCard(
-                          context,
-                          icon: Icons.person_outline,
-                          title: '내 정보',
-                          subtitle: '프로필 확인',
-                          color: theme.primaryColor.withOpacity(0.5),
-                          onTap: () {
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              const SnackBar(content: Text('준비 중입니다')),
-                            );
-                          },
-                        ),
-
-                        // 6. 설정
+                        // 5. 설정
                         _buildMenuCard(
                           context,
                           icon: Icons.settings_outlined,
@@ -247,8 +234,11 @@ class UserHomeScreen extends StatelessWidget {
                           subtitle: '앱 설정',
                           color: Colors.grey[600]!,
                           onTap: () {
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              const SnackBar(content: Text('준비 중입니다')),
+                            Navigator.push(
+                              context,
+                              MaterialPageRoute(
+                                builder: (context) => const SettingsScreen(),
+                              ),
                             );
                           },
                         ),

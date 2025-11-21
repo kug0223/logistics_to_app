@@ -1,12 +1,20 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:flutter/services.dart';
+import 'package:image_picker/image_picker.dart';
 import '../../models/core/user_model.dart';
 import '../../providers/user_provider.dart';
 import '../../widgets/common/loading_widget.dart';
 import '../../utils/responsive_helper.dart';
 import '../../services/auth_service.dart';
 import '../business_admin/business_registration_screen.dart';
+import '../../widgets/inputs/daum_address_search.dart';
+import '../../utils/ocr_verification_helper.dart';
+import '../../widgets/dialogs/ocr_verification_dialog.dart';
+import '../../utils/document_upload_helper.dart';
+
+
+import 'package:flutter/foundation.dart' show kIsWeb;
 
 /// 개선된 회원가입 화면 - 주민번호 기반 + 이메일 인증 + 서류 업로드
 class RegisterScreen extends StatefulWidget {
@@ -17,10 +25,13 @@ class RegisterScreen extends StatefulWidget {
 }
 
 class _RegisterScreenState extends State<RegisterScreen> {
+  final TextEditingController _accountNumberController = TextEditingController();
+  String? _selectedBank;
+
   int _currentStep = 0;
   // State 변수 추가
   int _passwordStrength = 0; // 0: 약함, 1: 보통, 2: 강함
-  
+  AutovalidateMode _autovalidateMode = AutovalidateMode.disabled;
   // Step 1: 기본 정보
   final _usernameController = TextEditingController();
   bool _isCheckingUsername = false;
@@ -44,6 +55,10 @@ class _RegisterScreenState extends State<RegisterScreen> {
   bool _isEmailSent = false;
   bool _isEmailVerified = false;
   String? _verificationCode; // 실제로는 서버에서 생성/확인
+
+  // ⭐ 주소 정보 추가 (여기!)
+  final _addressController = TextEditingController();
+  final _detailAddressController = TextEditingController();
   
   // 주민번호로 파싱된 정보
   DateTime? _parsedBirthDate;
@@ -52,6 +67,12 @@ class _RegisterScreenState extends State<RegisterScreen> {
 
   // Step 2: 역할 선택
   UserRole? _selectedRole;
+
+  // ⭐ Step 3: 사업장 관리자 추가 정보
+  final _businessNumberController = TextEditingController();
+  final _businessNameController = TextEditingController();
+  final _ceoNameController = TextEditingController();
+  String? _businessLicenseImagePath;
   
   // Step 3: 추가 정보 (선택)
   String? _idCardImagePath;
@@ -68,6 +89,9 @@ class _RegisterScreenState extends State<RegisterScreen> {
     _passwordController.dispose();
     _confirmPasswordController.dispose();
     _phoneController.dispose();
+    _addressController.dispose();        // ⭐ 추가
+    _detailAddressController.dispose();  // ⭐ 추가
+    _accountNumberController.dispose();
     super.dispose();
   }
 
@@ -212,6 +236,24 @@ class _RegisterScreenState extends State<RegisterScreen> {
       );
     }
   }
+  /// 주소 검색
+  Future<void> _searchAddress() async {
+    final result = await DaumAddressService.searchAddress(context);
+    
+    if (result != null) {
+      setState(() {
+        _addressController.text = result.fullAddress;
+      });
+      
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('주소가 입력되었습니다'),
+          backgroundColor: Colors.green[600],
+          duration: Duration(seconds: 2),
+        ),
+      );
+    }
+  }
 
   // Step 검증
   bool _validateStep1() {
@@ -253,6 +295,11 @@ class _RegisterScreenState extends State<RegisterScreen> {
     if (_currentStep == 0) {
       if (_validateStep1()) {
         setState(() => _currentStep = 1);
+      } else {
+        // ⭐ 검증 실패 시 실시간 검증 활성화
+        setState(() {
+          _autovalidateMode = AutovalidateMode.onUserInteraction;
+        });
       }
     } else if (_currentStep == 1) {
       if (_validateStep2()) {
@@ -364,6 +411,8 @@ class _RegisterScreenState extends State<RegisterScreen> {
       birthDate: _parsedBirthDate,
       residentNumber: '${_residentNumber1Controller.text}-${_residentNumber2Controller.text}******',
       idCardImageUrl: _idCardImagePath,
+      address: _addressController.text.trim(),                    // ⭐ 추가
+      detailAddress: _detailAddressController.text.trim(),        // ⭐ 추가
     );
 
     if (success && mounted) {
@@ -434,6 +483,8 @@ class _RegisterScreenState extends State<RegisterScreen> {
       gender: _parsedGender,
       birthDate: _parsedBirthDate,
       residentNumber: '${_residentNumber1Controller.text}-${_residentNumber2Controller.text}******',
+      address: _addressController.text.trim(),                    // ⭐ 추가
+      detailAddress: _detailAddressController.text.trim(),        // ⭐ 추가
     );
 
     if (success && mounted) {
@@ -512,6 +563,134 @@ class _RegisterScreenState extends State<RegisterScreen> {
         },
       ),
     );
+  }
+  // ============================================================
+  // 📸 이미지 업로드 - 카메라/갤러리 선택 (개선 버전)
+  // ============================================================
+
+  /// 🎯 이미지 소스 선택 다이얼로그 (모바일만)
+  Future<ImageSource?> _showImageSourceDialog() async {
+    return await showDialog<ImageSource>(
+      context: context,
+      builder: (context) => AlertDialog(
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(20),
+        ),
+        title: Row(
+          children: [
+            Icon(
+              Icons.add_photo_alternate,
+              color: Theme.of(context).primaryColor,
+            ),
+            SizedBox(width: ResponsiveHelper.spacing(context, 12)),
+            Text(
+              '이미지 선택',
+              style: ResponsiveHelper.subtitleStyle(context),
+            ),
+          ],
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            // 📷 카메라
+            ListTile(
+              leading: Container(
+                padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 8)),
+                decoration: BoxDecoration(
+                  color: Colors.blue.withOpacity(0.1),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Icon(
+                  Icons.camera_alt,
+                  color: Colors.blue[700],
+                  size: ResponsiveHelper.iconSize(context, 24),
+                ),
+              ),
+              title: Text(
+                '카메라로 촬영',
+                style: ResponsiveHelper.bodyStyle(context),
+              ),
+              onTap: () => Navigator.pop(context, ImageSource.camera),
+            ),
+            SizedBox(height: ResponsiveHelper.spacing(context, 8)),
+            // 🖼️ 갤러리
+            ListTile(
+              leading: Container(
+                padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 8)),
+                decoration: BoxDecoration(
+                  color: Colors.green.withOpacity(0.1),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Icon(
+                  Icons.photo_library,
+                  color: Colors.green[700],
+                  size: ResponsiveHelper.iconSize(context, 24),
+                ),
+              ),
+              title: Text(
+                '갤러리에서 선택',
+                style: ResponsiveHelper.bodyStyle(context),
+              ),
+              onTap: () => Navigator.pop(context, ImageSource.gallery),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: Text('취소'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// 📸 사업자등록증 이미지 선택 (간소화 버전)
+  Future<void> _pickBusinessLicenseImage() async {
+    final imagePath = await DocumentUploadHelper.pickAndVerifyBusinessLicense(
+      context,
+      businessNumber: _businessNumberController.text.trim().isEmpty 
+          ? null 
+          : _businessNumberController.text.trim(),
+      ceoName: _ceoNameController.text.trim().isEmpty 
+          ? null 
+          : _ceoNameController.text.trim(),
+    );
+    
+    if (imagePath != null) {
+      setState(() => _businessLicenseImagePath = imagePath);
+    }
+  }
+
+  /// 📸 신분증 이미지 선택 (주민번호 검증 포함)
+  Future<void> _pickIdCardImage() async {
+    // 주민번호 앞 7자리 조합 (예: "990101-1")
+    String? residentNumber;
+    if (_residentNumber1Controller.text.isNotEmpty && 
+        _residentNumber2Controller.text.isNotEmpty) {
+      residentNumber = '${_residentNumber1Controller.text}-${_residentNumber2Controller.text[0]}';
+    }
+    
+    final imagePath = await DocumentUploadHelper.pickAndVerifyIdCard(
+      context,
+      _nameController.text.trim(),
+      expectedResidentNumber: residentNumber,
+    );
+    
+    if (imagePath != null) {
+      setState(() => _idCardImagePath = imagePath);
+    }
+  }
+  /// 📸 통장사본 이미지 선택
+  Future<void> _pickBankbookImage() async {
+    final imagePath = await DocumentUploadHelper.pickAndVerifyBankbook(
+      context,
+      _nameController.text.trim(),
+    );
+    
+    if (imagePath != null) {
+      setState(() => _bankbookImagePath = imagePath);
+    }
   }
 
   /// 헤더
@@ -649,6 +828,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
       ),
       child: Form(
         key: _formKey,
+        autovalidateMode: _autovalidateMode,
         child: Column(
           children: [
             // 이름
@@ -964,6 +1144,59 @@ class _RegisterScreenState extends State<RegisterScreen> {
             ),
             
             SizedBox(height: ResponsiveHelper.spacing(context, 16)),
+
+            // ⭐ 주소 (웹: 수동입력 / 모바일: 다음 API)
+            if (kIsWeb) ...[
+              // 🌐 웹 환경: 수동 입력
+              _buildTextField(
+                controller: _addressController,
+                label: '주소',
+                hint: '주소를 직접 입력해주세요 (임시)',
+                icon: Icons.location_on_outlined,
+                validator: (value) {
+                  if (value == null || value.isEmpty) return '주소를 입력해주세요';
+                  return null;
+                },
+              ),
+            ] else ...[
+              // 📱 모바일 환경: 다음 주소 검색
+              _buildTextField(
+                controller: _addressController,
+                label: '주소',
+                hint: '주소 검색 버튼을 눌러주세요',
+                icon: Icons.location_on_outlined,
+                readOnly: true,
+                onTap: _searchAddress,
+                suffixIcon: IconButton(
+                  icon: Icon(
+                    Icons.search,
+                    color: Theme.of(context).primaryColor,
+                    size: ResponsiveHelper.iconSize(context, 24),
+                  ),
+                  onPressed: _searchAddress,
+                ),
+                validator: (value) {
+                  if (value == null || value.isEmpty) return '주소를 입력해주세요';
+                  return null;
+                },
+              ),
+            ],
+
+            SizedBox(height: ResponsiveHelper.spacing(context, 16)),
+
+            // ⭐ 상세 주소
+            _buildTextField(
+              controller: _detailAddressController,
+              label: '상세 주소',
+              hint: '동/호수 등 상세 주소',
+              icon: Icons.home_outlined,
+              validator: (value) {
+                // 상세주소는 선택사항
+                return null;
+              },
+            ),
+
+            SizedBox(height: ResponsiveHelper.spacing(context, 16)),
             
             // 비밀번호
             _buildTextField(
@@ -1093,281 +1326,822 @@ class _RegisterScreenState extends State<RegisterScreen> {
           role: UserRole.USER,
           icon: Icons.person,
           title: '지원자로 이용',
-          description: 'TO에 지원하고 일정을 관리합니다',
+          description: '공고에 지원하고 일정을 관리합니다',
           color: Colors.green[600]!,
-          features: ['TO 검색 및 지원', '나의 일정 관리', '지원 내역 확인'],
+          features: ['공고 검색 및 지원', '나의 근무일정 관리', '지원 내역 확인'],
         ),
         SizedBox(height: ResponsiveHelper.spacing(context, 16)),
         _buildRoleCard(
           role: UserRole.BUSINESS_ADMIN,
           icon: Icons.business_center,
           title: '사업장 관리자로 이용',
-          description: 'TO를 생성하고 지원자를 관리합니다',
+          description: '공고를 생성하고 지원자를 관리합니다',
           color: Colors.blue[600]!,
-          features: ['TO 생성 및 관리', '지원자 승인/거절', '인력 현황 파악'],
+          features: ['공고 생성 및 관리', '지원자 승인/거절', '인력 현황 파악'],
         ),
       ],
     );
   }
 
-  /// Step 3-A: 지원자 추가 정보 (신분증, 통장사본)
+  /// Step 3-A: 지원자 추가 정보 (통장 정보 추가 버전)
   Widget _buildStep3UserDocuments() {
     final theme = Theme.of(context);
     
-    return Column(
-      children: [
-        // 안내 문구
-        Container(
-          padding: ResponsiveHelper.cardPadding(context),
-          decoration: BoxDecoration(
-            color: Colors.green[50],
-            borderRadius: BorderRadius.circular(16),
-            border: Border.all(color: Colors.green[200]!),
-          ),
-          child: Column(
-            children: [
-              Row(
-                children: [
-                  Icon(
-                    Icons.person_outline,
-                    color: Colors.green[700],
-                    size: ResponsiveHelper.iconSize(context, 28),
-                  ),
-                  SizedBox(width: ResponsiveHelper.spacing(context, 12)),
-                  Expanded(
-                    child: Text(
-                      '지원자 필수 서류',
-                      style: ResponsiveHelper.subtitleStyle(context).copyWith(
-                        color: Colors.green[900],
-                        fontWeight: FontWeight.bold,
+    return SingleChildScrollView(
+      child: Column(
+        children: [
+          // 📢 상단 안내 카드
+          Container(
+            padding: ResponsiveHelper.cardPadding(context),
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                colors: [Colors.blue[50]!, Colors.blue[100]!],
+              ),
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(color: Colors.blue[200]!, width: 2),
+            ),
+            child: Column(
+              children: [
+                Row(
+                  children: [
+                    Container(
+                      padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 12)),
+                      decoration: BoxDecoration(
+                        color: Colors.blue[600],
+                        shape: BoxShape.circle,
+                      ),
+                      child: Icon(
+                        Icons.info_outline,
+                        color: Colors.white,
+                        size: ResponsiveHelper.iconSize(context, 28),
                       ),
                     ),
-                  ),
-                ],
-              ),
-              SizedBox(height: ResponsiveHelper.spacing(context, 12)),
-              Text(
-                '• 소득신고 및 급여 지급을 위해 필요한 정보입니다.\n'
-                '• TO 지원 및 근무 확정 시 필수로 제출해야 합니다.\n'
-                '• 지금 등록하시면 TO 지원이 더 빠르게 진행됩니다.',
-                style: ResponsiveHelper.smallStyle(
-                  context,
-                  color: Colors.grey[700],
+                    SizedBox(width: ResponsiveHelper.spacing(context, 16)),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            '서류 제출 안내',
+                            style: ResponsiveHelper.subtitleStyle(context).copyWith(
+                              fontWeight: FontWeight.bold,
+                              color: Colors.blue[900],
+                            ),
+                          ),
+                          SizedBox(height: ResponsiveHelper.spacing(context, 4)),
+                          Text(
+                            '본인 명의 서류만 인증 가능합니다',
+                            style: ResponsiveHelper.smallStyle(
+                              context,
+                              color: Colors.blue[700],
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
                 ),
-              ),
-            ],
-          ),
-        ),
-        
-        SizedBox(height: ResponsiveHelper.spacing(context, 24)),
-        
-        // 신분증 업로드
-        _buildDocumentUploadCard(
-          title: '신분증 앞면',
-          description: '주민등록증 또는 운전면허증 앞면을 촬영해주세요',
-          icon: Icons.badge_outlined,
-          imagePath: _idCardImagePath,
-          color: Colors.blue[600]!,
-          onTap: () {
-            // TODO: 이미지 선택 구현
-            ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(content: Text('신분증 업로드 기능 구현 예정')),
-            );
-          },
-        ),
-        
-        SizedBox(height: ResponsiveHelper.spacing(context, 16)),
-        
-        // 통장사본 업로드
-        _buildDocumentUploadCard(
-          title: '통장 사본',
-          description: '급여를 받을 통장의 사본을 촬영해주세요\n(은행명, 계좌번호, 예금주명이 보이도록)',
-          icon: Icons.account_balance_outlined,
-          imagePath: _bankbookImagePath,
-          color: Colors.green[600]!,
-          onTap: () {
-            // TODO: 이미지 선택 구현
-            ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(content: Text('통장 사본 업로드 기능 구현 예정')),
-            );
-          },
-        ),
-        
-        SizedBox(height: ResponsiveHelper.spacing(context, 24)),
-        
-        // 나중에 하기 안내
-        Container(
-          padding: ResponsiveHelper.cardPadding(context),
-          decoration: BoxDecoration(
-            color: Colors.grey[100],
-            borderRadius: BorderRadius.circular(12),
-          ),
-          child: Row(
-            children: [
-              Icon(
-                Icons.info_outline,
-                color: Colors.grey[600],
-                size: ResponsiveHelper.iconSize(context, 20),
-              ),
-              SizedBox(width: ResponsiveHelper.spacing(context, 12)),
-              Expanded(
-                child: Text(
-                  '지금 등록하지 않으셔도 됩니다.\n프로필에서 언제든지 추가하실 수 있습니다.',
-                  style: ResponsiveHelper.smallStyle(
-                    context,
-                    color: Colors.grey[700],
+                SizedBox(height: ResponsiveHelper.spacing(context, 16)),
+                Container(
+                  padding: ResponsiveHelper.cardPadding(context),
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      _buildNoticeItem(
+                        '✓ 신분증과 통장의 이름이 일치해야 합니다',
+                        Colors.blue[900]!,
+                      ),
+                      SizedBox(height: ResponsiveHelper.spacing(context, 8)),
+                      _buildNoticeItem(
+                        '✓ 신분증 주민번호가 입력한 정보와 일치해야 합니다',
+                        Colors.blue[900]!,
+                      ),
+                      SizedBox(height: ResponsiveHelper.spacing(context, 8)),
+                      _buildNoticeItem(
+                        '✓ 통장사본의 예금주가 본인 이름과 일치해야 합니다',
+                        Colors.blue[900]!,
+                      ),
+                      SizedBox(height: ResponsiveHelper.spacing(context, 12)),
+                      Divider(),
+                      SizedBox(height: ResponsiveHelper.spacing(context, 8)),
+                      Row(
+                        children: [
+                          Icon(
+                            Icons.camera_alt,
+                            size: ResponsiveHelper.iconSize(context, 18),
+                            color: Colors.orange[700],
+                          ),
+                          SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+                          Expanded(
+                            child: Text(
+                              '선명한 사진을 촬영해주세요 (흐림/반사 주의)',
+                              style: ResponsiveHelper.smallStyle(
+                                context,
+                                color: Colors.orange[900],
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
                   ),
                 ),
-              ),
-            ],
+              ],
+            ),
+          ),
+          
+          SizedBox(height: ResponsiveHelper.spacing(context, 24)),
+          
+          // 📸 신분증 업로드
+          _buildIdCardUploadCard(),
+          
+          SizedBox(height: ResponsiveHelper.spacing(context, 24)),
+          
+          // 💳 통장 정보 카드 (NEW!)
+          _buildBankInfoCard(),
+          
+          SizedBox(height: ResponsiveHelper.spacing(context, 24)),
+          
+          // ✨ 나중에 하기 안내
+          Container(
+            padding: ResponsiveHelper.cardPadding(context),
+            decoration: BoxDecoration(
+              color: Colors.grey[100],
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Row(
+              children: [
+                Icon(
+                  Icons.info_outline,
+                  color: Colors.grey[600],
+                  size: ResponsiveHelper.iconSize(context, 20),
+                ),
+                SizedBox(width: ResponsiveHelper.spacing(context, 12)),
+                Expanded(
+                  child: Text(
+                    '지금 등록하지 않으셔도 됩니다.\n설정 > 내 정보에서 언제든지 추가하실 수 있습니다.',
+                    style: ResponsiveHelper.smallStyle(
+                      context,
+                      color: Colors.grey[700],
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ⭐ 안내 항목 빌더 (새로 추가)
+  Widget _buildNoticeItem(String text, Color color) {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Padding(
+          padding: EdgeInsets.only(top: 2),
+          child: Icon(
+            Icons.check_circle,
+            size: ResponsiveHelper.iconSize(context, 16),
+            color: color,
+          ),
+        ),
+        SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+        Expanded(
+          child: Text(
+            text,
+            style: ResponsiveHelper.smallStyle(context, color: color),
           ),
         ),
       ],
     );
   }
 
-  /// Step 3-B: 사업장 관리자 추가 정보 (사업자등록증)
+  // ⭐ 신분증 업로드 카드 (새로 추가)
+  Widget _buildIdCardUploadCard() {
+    return Container(
+      padding: ResponsiveHelper.cardPadding(context),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: Colors.grey[300]!),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.05),
+            blurRadius: 10,
+            offset: Offset(0, 2),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(
+                Icons.badge,
+                color: Theme.of(context).primaryColor,
+                size: ResponsiveHelper.iconSize(context, 24),
+              ),
+              SizedBox(width: ResponsiveHelper.spacing(context, 12)),
+              Text(
+                '신분증 앞면',
+                style: ResponsiveHelper.bodyStyle(context).copyWith(
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+              Spacer(),
+              if (_idCardImagePath != null)
+                Icon(
+                  Icons.check_circle,
+                  color: Colors.green[600],
+                  size: ResponsiveHelper.iconSize(context, 24),
+                ),
+            ],
+          ),
+          SizedBox(height: ResponsiveHelper.spacing(context, 16)),
+          InkWell(
+            onTap: _pickIdCardImage,
+            borderRadius: BorderRadius.circular(12),
+            child: Container(
+              height: ResponsiveHelper.spacing(context, 120),
+              decoration: BoxDecoration(
+                color: Colors.grey[100],
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(
+                  color: _idCardImagePath != null 
+                      ? Colors.green[300]! 
+                      : Colors.grey[300]!,
+                  width: 2,
+                ),
+              ),
+              child: Center(
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Icon(
+                      _idCardImagePath != null 
+                          ? Icons.check_circle_outline 
+                          : Icons.add_photo_alternate,
+                      size: ResponsiveHelper.iconSize(context, 48),
+                      color: _idCardImagePath != null 
+                          ? Colors.green[600] 
+                          : Colors.grey[400],
+                    ),
+                    SizedBox(height: ResponsiveHelper.spacing(context, 8)),
+                    Text(
+                      _idCardImagePath != null 
+                          ? '신분증 업로드 완료 (재촬영하려면 터치)'
+                          : '신분증 사진 업로드',
+                      style: ResponsiveHelper.smallStyle(
+                        context,
+                        color: _idCardImagePath != null 
+                            ? Colors.green[700] 
+                            : Colors.grey[600],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ⭐ 통장 정보 카드 (NEW!)
+  Widget _buildBankInfoCard() {
+    return Container(
+      padding: ResponsiveHelper.cardPadding(context),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: Colors.grey[300]!),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.05),
+            blurRadius: 10,
+            offset: Offset(0, 2),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // 제목
+          Row(
+            children: [
+              Icon(
+                Icons.account_balance_wallet,
+                color: Theme.of(context).primaryColor,
+                size: ResponsiveHelper.iconSize(context, 24),
+              ),
+              SizedBox(width: ResponsiveHelper.spacing(context, 12)),
+              Text(
+                '급여 통장 정보',
+                style: ResponsiveHelper.bodyStyle(context).copyWith(
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ],
+          ),
+          SizedBox(height: ResponsiveHelper.spacing(context, 16)),
+          
+          // 🏦 은행 선택
+          DropdownButtonFormField<String>(
+            value: _selectedBank,
+            decoration: InputDecoration(
+              labelText: '은행',
+              prefixIcon: Icon(Icons.account_balance),
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(12),
+              ),
+              enabledBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(12),
+                borderSide: BorderSide(color: Colors.grey[300]!),
+              ),
+              focusedBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(12),
+                borderSide: BorderSide(
+                  color: Theme.of(context).primaryColor,
+                  width: 2,
+                ),
+              ),
+            ),
+            items: [
+              'KB국민은행',
+              '신한은행',
+              'NH농협은행',
+              '우리은행',
+              '하나은행',
+              'IBK기업은행',
+              'SC제일은행',
+              '씨티은행',
+              '카카오뱅크',
+              '토스뱅크',
+              'KEB하나은행',
+              '경남은행',
+              '광주은행',
+              '대구은행',
+              '부산은행',
+              '전북은행',
+              '제주은행',
+              '케이뱅크',
+              '새마을금고',
+              '신협',
+              '저축은행',
+              '우체국',
+            ].map((bank) => DropdownMenuItem(
+              value: bank,
+              child: Text(bank),
+            )).toList(),
+            onChanged: (value) {
+              setState(() => _selectedBank = value);
+            },
+          ),
+          SizedBox(height: ResponsiveHelper.spacing(context, 16)),
+          
+          // 💳 계좌번호 입력
+          TextFormField(
+            controller: _accountNumberController,
+            keyboardType: TextInputType.number,
+            decoration: InputDecoration(
+              labelText: '계좌번호',
+              hintText: '- 없이 숫자만 입력',
+              prefixIcon: Icon(Icons.credit_card),
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(12),
+              ),
+              enabledBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(12),
+                borderSide: BorderSide(color: Colors.grey[300]!),
+              ),
+              focusedBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(12),
+                borderSide: BorderSide(
+                  color: Theme.of(context).primaryColor,
+                  width: 2,
+                ),
+              ),
+            ),
+          ),
+          SizedBox(height: ResponsiveHelper.spacing(context, 12)),
+          
+          // 💡 예금주 안내
+          Container(
+            padding: ResponsiveHelper.cardPadding(context).copyWith(
+              top: ResponsiveHelper.spacing(context, 12),
+              bottom: ResponsiveHelper.spacing(context, 12),
+            ),
+            decoration: BoxDecoration(
+              color: Colors.green.withOpacity(0.1),
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: Colors.green.withOpacity(0.3)),
+            ),
+            child: Row(
+              children: [
+                Icon(
+                  Icons.info_outline,
+                  color: Colors.green[700],
+                  size: ResponsiveHelper.iconSize(context, 18),
+                ),
+                SizedBox(width: ResponsiveHelper.spacing(context, 12)),
+                Expanded(
+                  child: Text(
+                    '예금주: ${_nameController.text.isEmpty ? "(이름 입력 필요)" : _nameController.text}',
+                    style: ResponsiveHelper.smallStyle(
+                      context,
+                      color: Colors.green[900],
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          SizedBox(height: ResponsiveHelper.spacing(context, 16)),
+          
+          // 📸 통장사본 업로드
+          InkWell(
+            onTap: _pickBankbookImage,
+            borderRadius: BorderRadius.circular(12),
+            child: Container(
+              height: ResponsiveHelper.spacing(context, 120),
+              decoration: BoxDecoration(
+                color: Colors.grey[100],
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(
+                  color: _bankbookImagePath != null 
+                      ? Colors.green[300]! 
+                      : Colors.grey[300]!,
+                  width: 2,
+                ),
+              ),
+              child: Center(
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Icon(
+                      _bankbookImagePath != null 
+                          ? Icons.check_circle_outline 
+                          : Icons.add_photo_alternate,
+                      size: ResponsiveHelper.iconSize(context, 48),
+                      color: _bankbookImagePath != null 
+                          ? Colors.green[600] 
+                          : Colors.grey[400],
+                    ),
+                    SizedBox(height: ResponsiveHelper.spacing(context, 8)),
+                    Text(
+                      _bankbookImagePath != null 
+                          ? '통장사본 업로드 완료'
+                          : '통장사본 사진 업로드',
+                      style: ResponsiveHelper.smallStyle(
+                        context,
+                        color: _bankbookImagePath != null 
+                            ? Colors.green[700] 
+                            : Colors.grey[600],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Step 3-B: 사업장 관리자 추가 정보 (완전 개선 버전)
   Widget _buildStep3BusinessDocuments() {
     final theme = Theme.of(context);
     
-    return Column(
-      children: [
-        // 안내 문구
-        Container(
-          padding: ResponsiveHelper.cardPadding(context),
-          decoration: BoxDecoration(
-            color: Colors.blue[50],
-            borderRadius: BorderRadius.circular(16),
-            border: Border.all(color: Colors.blue[200]!),
-          ),
-          child: Column(
-            children: [
-              Row(
-                children: [
-                  Icon(
-                    Icons.business_center,
-                    color: Colors.blue[700],
-                    size: ResponsiveHelper.iconSize(context, 28),
-                  ),
-                  SizedBox(width: ResponsiveHelper.spacing(context, 12)),
-                  Expanded(
-                    child: Text(
-                      '사업장 관리자 서류',
-                      style: ResponsiveHelper.subtitleStyle(context).copyWith(
-                        color: Colors.blue[900],
-                        fontWeight: FontWeight.bold,
+    return SingleChildScrollView(
+      child: Column(
+        children: [
+          // ✨ 안내 헤더
+          Container(
+            padding: ResponsiveHelper.cardPadding(context),
+            decoration: BoxDecoration(
+              color: theme.primaryColor.withOpacity(0.1),
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(
+                color: theme.primaryColor.withOpacity(0.3),
+              ),
+            ),
+            child: Column(
+              children: [
+                Row(
+                  children: [
+                    Icon(
+                      Icons.business_center,
+                      color: theme.primaryColor,
+                      size: ResponsiveHelper.iconSize(context, 28),
+                    ),
+                    SizedBox(width: ResponsiveHelper.spacing(context, 12)),
+                    Expanded(
+                      child: Text(
+                        '사업장 관리자 정보',
+                        style: ResponsiveHelper.subtitleStyle(context).copyWith(
+                          color: theme.primaryColor,
+                          fontWeight: FontWeight.bold,
+                        ),
                       ),
                     ),
-                  ),
-                ],
-              ),
-              SizedBox(height: ResponsiveHelper.spacing(context, 12)),
-              Text(
-                '• 사업장 정보 확인을 위해 필요한 서류입니다.\n'
-                '• TO 생성 및 지원자 관리를 위해 필수입니다.\n'
-                '• 지금 등록하시면 바로 사업장을 운영할 수 있습니다.',
-                style: ResponsiveHelper.smallStyle(
-                  context,
-                  color: Colors.grey[700],
+                  ],
                 ),
-              ),
-            ],
+                SizedBox(height: ResponsiveHelper.spacing(context, 12)),
+                Text(
+                  '• TO 생성 및 지원자 관리를 위한 정보입니다.\n'
+                  '• 지금 입력하시면 사업장 등록이 더 빠릅니다.\n'
+                  '• 모든 항목은 선택사항입니다.',
+                  style: ResponsiveHelper.smallStyle(
+                    context,
+                    color: theme.textTheme.bodySmall?.color,
+                  ),
+                ),
+              ],
+            ),
           ),
-        ),
-        
-        SizedBox(height: ResponsiveHelper.spacing(context, 24)),
-        
-        // 사업자등록증 업로드
-        _buildDocumentUploadCard(
-          title: '사업자등록증',
-          description: '사업자등록증을 촬영하거나 파일을 선택해주세요\n(사업자번호, 상호명, 대표자명이 보이도록)',
-          icon: Icons.business,
-          imagePath: _idCardImagePath, // TODO: _businessLicenseImagePath로 변경
-          color: Colors.blue[600]!,
-          onTap: () {
-            // TODO: 이미지 선택 구현
-            ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(content: Text('사업자등록증 업로드 기능 구현 예정')),
-            );
+          
+          SizedBox(height: ResponsiveHelper.spacing(context, 24)),
+          
+          // ✨ 입력 카드 섹션
+          Container(
+            padding: ResponsiveHelper.cardPadding(context),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(24),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withOpacity(0.08),
+                  blurRadius: 20,
+                  offset: const Offset(0, 4),
+                ),
+              ],
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // 📝 사업자등록번호
+                _buildBusinessNumberField(),
+                
+                SizedBox(height: ResponsiveHelper.spacing(context, 16)),
+                
+                // 📝 상호명
+                _buildTextField(
+                  controller: _businessNameController,
+                  label: '상호명',
+                  hint: '예: 홍길동 물류센터',
+                  icon: Icons.store_outlined,
+                  validator: (value) {
+                    // 선택사항이지만 입력했다면 최소 2자
+                    if (value != null && value.isNotEmpty && value.length < 2) {
+                      return '2자 이상 입력해주세요';
+                    }
+                    return null;
+                  },
+                ),
+                
+                SizedBox(height: ResponsiveHelper.spacing(context, 16)),
+                
+                // 📝 대표자명 (기본값: 회원가입 이름)
+                _buildCEONameField(),
+              ],
+            ),
+          ),
+          
+          SizedBox(height: ResponsiveHelper.spacing(context, 24)),
+          
+          // ✨ 서류 업로드 섹션
+          Text(
+            '사업자등록증',
+            style: ResponsiveHelper.subtitleStyle(context).copyWith(
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+          SizedBox(height: ResponsiveHelper.spacing(context, 12)),
+          
+          _buildDocumentUploadCard(
+            title: '사업자등록증',
+            description: '사업자등록증을 촬영하거나 파일을 선택해주세요\n(사업자번호, 상호명, 대표자명이 보이도록)',
+            icon: Icons.business,
+            imagePath: _businessLicenseImagePath,
+            color: theme.primaryColor,
+            onTap: _pickBusinessLicenseImage,
+          ),
+          
+          SizedBox(height: ResponsiveHelper.spacing(context, 24)),
+          
+          // ✨ 나중에 하기 안내
+          Container(
+            padding: ResponsiveHelper.cardPadding(context),
+            decoration: BoxDecoration(
+              color: Colors.grey[100],
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Row(
+              children: [
+                Icon(
+                  Icons.info_outline,
+                  color: Colors.grey[600],
+                  size: ResponsiveHelper.iconSize(context, 20),
+                ),
+                SizedBox(width: ResponsiveHelper.spacing(context, 12)),
+                Expanded(
+                  child: Text(
+                    '지금 등록하지 않으셔도 됩니다.\n설정 > 내 정보에서 언제든지 추가하실 수 있습니다.',
+                    style: ResponsiveHelper.smallStyle(
+                      context,
+                      color: Colors.grey[700],
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// 📝 사업자등록번호 입력 필드 (자동 포맷)
+  Widget _buildBusinessNumberField() {
+    final theme = Theme.of(context);
+    
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        TextFormField(
+          controller: _businessNumberController,
+          keyboardType: TextInputType.number,
+          inputFormatters: [
+            FilteringTextInputFormatter.digitsOnly,
+            LengthLimitingTextInputFormatter(10),
+          ],
+          style: ResponsiveHelper.bodyStyle(context),
+          decoration: InputDecoration(
+            labelText: '사업자등록번호',
+            hintText: '0000000000',
+            hintStyle: ResponsiveHelper.smallStyle(
+              context,
+              color: Colors.grey[400],
+            ),
+            prefixIcon: Icon(
+              Icons.badge_outlined,
+              color: theme.primaryColor,
+              size: ResponsiveHelper.iconSize(context, 24),
+            ),
+            border: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(12),
+              borderSide: BorderSide(color: Colors.grey[300]!),
+            ),
+            enabledBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(12),
+              borderSide: BorderSide(color: Colors.grey[300]!),
+            ),
+            focusedBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(12),
+              borderSide: BorderSide(color: theme.primaryColor, width: 2),
+            ),
+            filled: true,
+            fillColor: Colors.grey[50],
+            contentPadding: EdgeInsets.symmetric(
+              horizontal: ResponsiveHelper.spacing(context, 16),
+              vertical: ResponsiveHelper.spacing(context, 18),
+            ),
+          ),
+          validator: (value) {
+            // 선택사항이지만 입력했다면 10자리
+            if (value != null && value.isNotEmpty && value.length != 10) {
+              return '10자리를 입력해주세요';
+            }
+            return null;
+          },
+          onChanged: (value) {
+            // 실시간 포맷 표시는 하지 않음 (입력 방해)
+            // 대신 저장할 때 포맷팅
           },
         ),
         
-        SizedBox(height: ResponsiveHelper.spacing(context, 24)),
-        
-        // 추가 정보 안내
-        Container(
-          padding: ResponsiveHelper.cardPadding(context),
-          decoration: BoxDecoration(
-            color: Colors.amber[50],
-            borderRadius: BorderRadius.circular(12),
-            border: Border.all(color: Colors.amber[200]!),
-          ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                children: [
-                  Icon(
-                    Icons.lightbulb_outline,
-                    color: Colors.amber[700],
-                    size: ResponsiveHelper.iconSize(context, 20),
-                  ),
-                  SizedBox(width: ResponsiveHelper.spacing(context, 8)),
-                  Text(
-                    '다음 단계',
-                    style: ResponsiveHelper.subtitleStyle(context).copyWith(
-                      color: Colors.amber[900],
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-                ],
+        // 포맷 미리보기
+        if (_businessNumberController.text.length == 10)
+          Padding(
+            padding: EdgeInsets.only(
+              top: ResponsiveHelper.spacing(context, 8),
+              left: ResponsiveHelper.spacing(context, 16),
+            ),
+            child: Text(
+              '형식: ${_formatBusinessNumber(_businessNumberController.text)}',
+              style: ResponsiveHelper.tinyStyle(
+                context,
+                color: Colors.green[700],
               ),
-              SizedBox(height: ResponsiveHelper.spacing(context, 8)),
-              Text(
-                '회원가입 완료 후 사업장 상세 정보를 입력하실 수 있습니다:\n'
-                '• 사업장 주소 및 연락처\n'
-                '• 업종 및 상세 업무 내용\n'
-                '• 근무 조건 및 급여 정보',
-                style: ResponsiveHelper.smallStyle(
-                  context,
-                  color: Colors.grey[700],
-                ),
-              ),
-            ],
+            ),
           ),
-        ),
-        
-        SizedBox(height: ResponsiveHelper.spacing(context, 16)),
-        
-        // 나중에 하기 안내
-        Container(
-          padding: ResponsiveHelper.cardPadding(context),
-          decoration: BoxDecoration(
-            color: Colors.grey[100],
-            borderRadius: BorderRadius.circular(12),
-          ),
-          child: Row(
-            children: [
-              Icon(
-                Icons.info_outline,
-                color: Colors.grey[600],
-                size: ResponsiveHelper.iconSize(context, 20),
-              ),
-              SizedBox(width: ResponsiveHelper.spacing(context, 12)),
-              Expanded(
-                child: Text(
-                  '지금 등록하지 않으셔도 됩니다.\n로그인 후 사업장 등록 화면에서 입력하실 수 있습니다.',
-                  style: ResponsiveHelper.smallStyle(
+      ],
+    );
+  }
+
+  /// 📝 대표자명 필드 (기본값: 회원가입 이름)
+  Widget _buildCEONameField() {
+    final theme = Theme.of(context);
+    
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Expanded(
+              child: TextFormField(
+                controller: _ceoNameController,
+                style: ResponsiveHelper.bodyStyle(context),
+                decoration: InputDecoration(
+                  labelText: '대표자명',
+                  hintText: '예: 홍길동',
+                  hintStyle: ResponsiveHelper.smallStyle(
                     context,
-                    color: Colors.grey[700],
+                    color: Colors.grey[400],
+                  ),
+                  prefixIcon: Icon(
+                    Icons.person_outline,
+                    color: theme.primaryColor,
+                    size: ResponsiveHelper.iconSize(context, 24),
+                  ),
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                    borderSide: BorderSide(color: Colors.grey[300]!),
+                  ),
+                  enabledBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                    borderSide: BorderSide(color: Colors.grey[300]!),
+                  ),
+                  focusedBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                    borderSide: BorderSide(color: theme.primaryColor, width: 2),
+                  ),
+                  filled: true,
+                  fillColor: Colors.grey[50],
+                  contentPadding: EdgeInsets.symmetric(
+                    horizontal: ResponsiveHelper.spacing(context, 16),
+                    vertical: ResponsiveHelper.spacing(context, 18),
                   ),
                 ),
+                validator: (value) {
+                  // 선택사항이지만 입력했다면 최소 2자
+                  if (value != null && value.isNotEmpty && value.length < 2) {
+                    return '2자 이상 입력해주세요';
+                  }
+                  return null;
+                },
               ),
-            ],
+            ),
+            SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+            TextButton.icon(
+              onPressed: () {
+                setState(() {
+                  _ceoNameController.text = _nameController.text;
+                });
+              },
+              icon: Icon(
+                Icons.sync,
+                size: ResponsiveHelper.iconSize(context, 18),
+              ),
+              label: Text(
+                '이름 가져오기',
+                style: ResponsiveHelper.smallStyle(context),
+              ),
+            ),
+          ],
+        ),
+        Padding(
+          padding: EdgeInsets.only(
+            top: ResponsiveHelper.spacing(context, 8),
+            left: ResponsiveHelper.spacing(context, 16),
+          ),
+          child: Text(
+            '💡 회원가입 시 입력한 이름을 자동으로 가져올 수 있습니다',
+            style: ResponsiveHelper.tinyStyle(
+              context,
+              color: Colors.grey[600],
+            ),
           ),
         ),
       ],
     );
+  }
+
+  /// 🔧 사업자등록번호 포맷팅 (000-00-00000)
+  String _formatBusinessNumber(String value) {
+    final digits = value.replaceAll(RegExp(r'\D'), '');
+    if (digits.length != 10) return value;
+    
+    return '${digits.substring(0, 3)}-${digits.substring(3, 5)}-${digits.substring(5, 10)}';
   }
 
   /// 서류 업로드 카드
@@ -1459,6 +2233,8 @@ class _RegisterScreenState extends State<RegisterScreen> {
     List<TextInputFormatter>? inputFormatters,
     bool obscureText = false,
     bool enabled = true,
+    bool readOnly = false,        // ⭐ 추가
+    VoidCallback? onTap,          // ⭐ 추가
     Widget? suffixIcon,
     String? Function(String?)? validator,
     void Function(String)? onChanged,
@@ -1471,6 +2247,8 @@ class _RegisterScreenState extends State<RegisterScreen> {
       inputFormatters: inputFormatters,
       obscureText: obscureText,
       enabled: enabled,
+      readOnly: readOnly,           // ⭐ 추가
+      onTap: onTap,   
       style: ResponsiveHelper.bodyStyle(context),
       decoration: InputDecoration(
         labelText: label,

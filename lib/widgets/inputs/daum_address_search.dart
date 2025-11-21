@@ -2,9 +2,7 @@
 // daum_address_search.dart (메인 파일)
 // ============================================
 import 'package:flutter/material.dart';
-
-// ✅ 플랫폼별 조건부 import
-import 'daum_address_search_web.dart' if (dart.library.io) 'daum_address_search_mobile.dart';
+import 'daum_address_search_mobile.dart';
 
 /// 다음 주소 검색 결과
 class AddressResult {
@@ -25,10 +23,10 @@ class AddressResult {
   });
 }
 
-/// 다음 주소 검색 서비스 (플랫폼 자동 선택)
+/// 다음 주소 검색 서비스 (모바일 전용)
 class DaumAddressService {
   static Future<AddressResult?> searchAddress(BuildContext context) async {
-    // ✅ 플랫폼에 따라 자동으로 구현체 선택
+    // 모바일 구현체 직접 호출
     return DaumAddressSearchImpl.searchAddress(context);
   }
 }

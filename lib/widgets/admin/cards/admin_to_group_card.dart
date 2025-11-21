@@ -102,7 +102,10 @@ class _TOGroupCardState extends State<TOGroupCard> {
             ? Border.all(color: theme.primaryColor, width: 2)
             : isFull
                 ? Border.all(color: Colors.green[300]!, width: 2)
-                : null,
+                : Border.all(
+                  color: Colors.grey[200]!,  // ⭐ 추가
+                  width: 1,
+                ),
       ),
       child: Material(
         color: Colors.transparent,

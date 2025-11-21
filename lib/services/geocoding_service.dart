@@ -1,0 +1,85 @@
+// lib/services/geocoding_service.dart
+
+import 'dart:convert';
+import 'package:http/http.dart' as http;
+
+class GeocodingService {
+  // ⚠️ TODO: Kakao REST API 키를 입력하세요
+  // https://developers.kakao.com 에서 발급
+  static const String _kakaoRestApiKey = 'e92e01cbd8ecf4c54c9035d1eef1bd36';
+  
+  /// 주소로 GPS 좌표 조회 (Kakao Local API)
+  static Future<Map<String, double>?> getCoordinatesFromAddress(String address) async {
+    try {
+      print('🗺️ [Geocoding] 주소 → GPS 변환 시작...');
+      print('   주소: $address');
+      
+      final encodedAddress = Uri.encodeComponent(address);
+      final url = Uri.parse(
+        'https://dapi.kakao.com/v2/local/search/address.json?query=$encodedAddress'
+      );
+      
+      final response = await http.get(
+        url,
+        headers: {
+          'Authorization': 'KakaoAK $_kakaoRestApiKey',
+        },
+      );
+      
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body);
+        
+        if (data['documents'] != null && data['documents'].isNotEmpty) {
+          final doc = data['documents'][0];
+          
+          // 도로명 주소 우선, 없으면 지번 주소
+          final addressData = doc['road_address'] ?? doc['address'];
+          
+          if (addressData != null) {
+            final latitude = double.parse(addressData['y']);
+            final longitude = double.parse(addressData['x']);
+            
+            print('✅ [Geocoding] 좌표 변환 성공!');
+            print('   위도: $latitude');
+            print('   경도: $longitude');
+            
+            return {
+              'latitude': latitude,
+              'longitude': longitude,
+            };
+          }
+        }
+        
+        print('❌ [Geocoding] 주소에 대한 좌표를 찾을 수 없습니다.');
+        return null;
+      } else if (response.statusCode == 401) {
+        print('❌ [Geocoding] API 키 인증 실패 (401)');
+        print('   Kakao REST API 키를 확인하세요!');
+        return null;
+      } else {
+        print('❌ [Geocoding] API 호출 실패: ${response.statusCode}');
+        return null;
+      }
+    } catch (e) {
+      print('❌ [Geocoding] 에러 발생: $e');
+      return null;
+    }
+  }
+  
+  /// 여러 주소를 한 번에 변환
+  static Future<List<Map<String, double>?>> getCoordinatesFromAddresses(
+    List<String> addresses,
+  ) async {
+    final results = <Map<String, double>?>[];
+    
+    for (final address in addresses) {
+      final coords = await getCoordinatesFromAddress(address);
+      results.add(coords);
+      
+      // API 요청 제한을 고려한 딜레이
+      await Future.delayed(const Duration(milliseconds: 100));
+    }
+    
+    return results;
+  }
+}

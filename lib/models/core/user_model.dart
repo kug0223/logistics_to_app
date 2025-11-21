@@ -38,6 +38,7 @@ class UserModel {
   final String? bankName;               // 은행명
   final String? accountNumber;          // 계좌번호 (⚠️ 실제론 암호화 필요!)
   final String? accountHolder;          // 예금주
+  final String? bankbookImageUrl;
   
   // ━━━ 프로필 & 경력 ━━━
   final String? profileImageUrl;        // 프로필 사진 URL
@@ -83,6 +84,7 @@ class UserModel {
     this.bankName,
     this.accountNumber,
     this.accountHolder,
+    this.bankbookImageUrl,
     this.profileImageUrl,
     this.bio,
     this.skills,
@@ -190,6 +192,7 @@ class UserModel {
       bankName: map['bankName'],
       accountNumber: map['accountNumber'],
       accountHolder: map['accountHolder'],
+      bankbookImageUrl: map['bankbookImageUrl'],
       profileImageUrl: map['profileImageUrl'],
       bio: map['bio'],
       skills: map['skills'] != null ? List<String>.from(map['skills']) : null,
@@ -236,6 +239,7 @@ class UserModel {
       'bankName': bankName,
       'accountNumber': accountNumber, // ⚠️ 실제론 암호화 필요!
       'accountHolder': accountHolder,
+      'bankbookImageUrl': bankbookImageUrl, 
       'profileImageUrl': profileImageUrl,
       'bio': bio,
       'skills': skills,
@@ -307,6 +311,7 @@ class UserModel {
     String? bankName,
     String? accountNumber,
     String? accountHolder,
+    String? bankbookImageUrl,
     String? profileImageUrl,
     String? bio,
     List<String>? skills,
@@ -345,6 +350,7 @@ class UserModel {
       bankName: bankName ?? this.bankName,
       accountNumber: accountNumber ?? this.accountNumber,
       accountHolder: accountHolder ?? this.accountHolder,
+      bankbookImageUrl: bankbookImageUrl ?? this.bankbookImageUrl,
       profileImageUrl: profileImageUrl ?? this.profileImageUrl,
       bio: bio ?? this.bio,
       skills: skills ?? this.skills,

@@ -54,7 +54,7 @@ class ALfitSplashLogo extends StatelessWidget {
           
           // 태그라인
           Text(
-            '나에게 딱 맞는 알바',
+            '나에게 딱 맞는 알바, 알핏!',
             style: TextStyle(
               fontSize: width * 0.052, // 반응형 크기
               fontWeight: FontWeight.w400,

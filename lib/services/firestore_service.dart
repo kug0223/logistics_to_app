@@ -4357,4 +4357,18 @@ class FirestoreService {
       return false;
     }
   }
+  Future<void> updateUserDocument(String uid, Map<String, dynamic> data) async {
+    try {
+      await _firestore.collection('users').doc(uid).update(data);
+      
+      // 캐시 무효화
+      _userCache.remove(uid);
+      _userCacheTimestamps.remove(uid);
+      
+      print('✅ 사용자 정보 업데이트 완료: $uid');
+    } catch (e) {
+      print('❌ 사용자 정보 업데이트 실패: $e');
+      rethrow;
+    }
+  }
 }

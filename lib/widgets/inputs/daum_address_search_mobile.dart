@@ -1,118 +1,219 @@
 // ============================================
-// daum_address_search_mobile.dart (Android/iOS) - 수동 입력으로 변경
+// daum_address_search_mobile.dart (Android/iOS) - GPS 좌표 추가
 // ============================================
 import 'package:flutter/material.dart';
+import 'package:webview_flutter/webview_flutter.dart';
+import 'dart:convert';
 import 'daum_address_search.dart';
+import '../../services/geocoding_service.dart';  // ⭐ 추가
 
-/// Mobile 플랫폼 구현체 - 수동 입력 다이얼로그
+/// Mobile 플랫폼 구현체 - WebView로 다음 주소 API 연동
 class DaumAddressSearchImpl {
   static Future<AddressResult?> searchAddress(BuildContext context) async {
-    return _showManualInputDialog(context);
+    return _showDaumPostcodeWebView(context);
   }
 
-  /// Android/iOS용 수동 입력 다이얼로그
-  static Future<AddressResult?> _showManualInputDialog(BuildContext context) async {
-    final addressController = TextEditingController();
-    final zoneController = TextEditingController();
+  /// 다음 우편번호 서비스 WebView
+  static Future<AddressResult?> _showDaumPostcodeWebView(BuildContext context) async {
+    AddressResult? result;
     
     return showDialog<AddressResult>(
       context: context,
-      builder: (context) => AlertDialog(
-        title: Row(
-          children: [
-            const Icon(Icons.location_on, color: Colors.blue),
-            const SizedBox(width: 8),
-            const Text('주소 입력'),
-          ],
+      builder: (context) => Dialog(
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(16),
         ),
-        content: SingleChildScrollView(
+        child: Container(
+          height: MediaQuery.of(context).size.height * 0.8,
+          padding: const EdgeInsets.all(16),
           child: Column(
-            mainAxisSize: MainAxisSize.min,
             children: [
-              TextField(
-                controller: zoneController,
-                decoration: const InputDecoration(
-                  labelText: '우편번호',
-                  hintText: '예: 06000',
-                  prefixIcon: Icon(Icons.markunread_mailbox),
-                  border: OutlineInputBorder(),
-                ),
-                keyboardType: TextInputType.number,
-                maxLength: 6,
-              ),
-              const SizedBox(height: 16),
-              TextField(
-                controller: addressController,
-                decoration: const InputDecoration(
-                  labelText: '주소',
-                  hintText: '예: 서울특별시 강남구 테헤란로 123',
-                  prefixIcon: Icon(Icons.home),
-                  border: OutlineInputBorder(),
-                ),
-                maxLines: 3,
-              ),
-              const SizedBox(height: 16),
-              Container(
-                padding: const EdgeInsets.all(12),
-                decoration: BoxDecoration(
-                  color: Colors.blue[50],
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: Row(
-                  children: [
-                    Icon(Icons.info_outline, color: Colors.blue[700], size: 20),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: Text(
-                        'Android에서는 수동 입력만 가능합니다.\n웹 브라우저에서는 자동 검색이 지원됩니다.',
-                        style: TextStyle(
-                          fontSize: 12,
-                          color: Colors.grey[700],
-                        ),
-                      ),
+              // 헤더
+              Row(
+                children: [
+                  Container(
+                    padding: const EdgeInsets.all(8),
+                    decoration: BoxDecoration(
+                      color: Colors.blue.shade50,
+                      borderRadius: BorderRadius.circular(8),
                     ),
-                  ],
+                    child: Icon(
+                      Icons.location_on,
+                      color: Colors.blue.shade700,
+                      size: 24,
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  const Text(
+                    '주소 검색',
+                    style: TextStyle(
+                      fontSize: 20,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                  const Spacer(),
+                  IconButton(
+                    onPressed: () => Navigator.pop(context),
+                    icon: const Icon(Icons.close),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 16),
+              // WebView
+              Expanded(
+                child: _DaumPostcodeWebView(
+                  onAddressSelected: (selectedResult) async {
+                    // ⭐ GPS 좌표 자동 획득
+                    final coords = await GeocodingService.getCoordinatesFromAddress(
+                      selectedResult.fullAddress,
+                    );
+                    
+                    // GPS 좌표 추가
+                    result = AddressResult(
+                      fullAddress: selectedResult.fullAddress,
+                      roadAddress: selectedResult.roadAddress,
+                      jibunAddress: selectedResult.jibunAddress,
+                      zonecode: selectedResult.zonecode,
+                      latitude: coords?['latitude'],   // ⭐ GPS 좌표
+                      longitude: coords?['longitude'], // ⭐ GPS 좌표
+                    );
+                    
+                    Navigator.pop(context, result);
+                  },
                 ),
               ),
             ],
           ),
         ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('취소'),
-          ),
-          ElevatedButton(
-            onPressed: () {
-              if (addressController.text.trim().isEmpty) {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(
-                    content: Text('주소를 입력해주세요'),
-                    backgroundColor: Colors.red,
-                  ),
-                );
-                return;
-              }
-              
-              final result = AddressResult(
-                fullAddress: addressController.text.trim(),
-                roadAddress: addressController.text.trim(),
-                jibunAddress: '',
-                zonecode: zoneController.text.trim(),
-                latitude: null,
-                longitude: null,
-              );
-              
-              Navigator.pop(context, result);
-            },
-            style: ElevatedButton.styleFrom(
-              backgroundColor: Colors.blue,
-              foregroundColor: Colors.white,
-            ),
-            child: const Text('확인'),
-          ),
-        ],
       ),
+    );
+  }
+}
+
+/// 다음 우편번호 서비스 WebView 위젯
+class _DaumPostcodeWebView extends StatefulWidget {
+  final Function(AddressResult) onAddressSelected;
+
+  const _DaumPostcodeWebView({
+    required this.onAddressSelected,
+  });
+
+  @override
+  State<_DaumPostcodeWebView> createState() => _DaumPostcodeWebViewState();
+}
+
+class _DaumPostcodeWebViewState extends State<_DaumPostcodeWebView> {
+  late final WebViewController _controller;
+  bool _isLoading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _initWebView();
+  }
+
+  void _initWebView() {
+    _controller = WebViewController()
+      ..setJavaScriptMode(JavaScriptMode.unrestricted)
+      ..setBackgroundColor(Colors.white)
+      ..addJavaScriptChannel(
+        'handleAddress',
+        onMessageReceived: (JavaScriptMessage message) {
+          _handleAddressData(message.message);
+        },
+      )
+      ..setNavigationDelegate(
+        NavigationDelegate(
+          onPageFinished: (String url) {
+            setState(() => _isLoading = false);
+          },
+        ),
+      )
+      ..loadHtmlString(_getPostcodeHTML(), baseUrl: 'https://localhost');
+  }
+
+  /// 주소 데이터 처리
+  void _handleAddressData(String jsonString) {
+    try {
+      final data = jsonDecode(jsonString);
+      
+      final result = AddressResult(
+        fullAddress: data['address'] ?? '',
+        roadAddress: data['roadAddress'] ?? data['address'] ?? '',
+        jibunAddress: data['jibunAddress'] ?? '',
+        zonecode: data['zonecode'] ?? '',
+        latitude: null,  // 나중에 Geocoding으로 채움
+        longitude: null,
+      );
+      
+      widget.onAddressSelected(result);
+    } catch (e) {
+      print('❌ 주소 데이터 파싱 실패: $e');
+    }
+  }
+
+  /// 다음 우편번호 서비스 HTML
+  String _getPostcodeHTML() {
+    return '''
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>다음 주소 검색</title>
+    <style>
+        * { margin: 0; padding: 0; }
+        body { width: 100%; height: 100vh; }
+        #container { width: 100%; height: 100%; }
+    </style>
+    <script src="https://t1.daumcdn.net/mapjsapi/bundle/postcode/prod/postcode.v2.js"></script>
+</head>
+<body>
+    <div id="container"></div>
+    <script>
+        // 다음 우편번호 서비스 실행
+        new daum.Postcode({
+            oncomplete: function(data) {
+                // 선택한 주소 데이터를 Flutter로 전달
+                const result = {
+                    address: data.address,
+                    roadAddress: data.roadAddress || data.address,
+                    jibunAddress: data.jibunAddress || '',
+                    zonecode: data.zonecode
+                };
+                
+                // Flutter로 메시지 전송
+                handleAddress.postMessage(JSON.stringify(result));
+            },
+            width: '100%',
+            height: '100%'
+        }).embed(document.getElementById('container'));
+    </script>
+</body>
+</html>
+    ''';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Stack(
+      children: [
+        WebViewWidget(controller: _controller),
+        if (_isLoading)
+          Container(
+            color: Colors.white,
+            child: const Center(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  CircularProgressIndicator(),
+                  SizedBox(height: 16),
+                  Text('주소 검색 로딩 중...'),
+                ],
+              ),
+            ),
+          ),
+      ],
     );
   }
 }

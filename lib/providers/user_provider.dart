@@ -2,6 +2,7 @@ import 'package:flutter/foundation.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import '../models/core/user_model.dart';
 import '../services/auth_service.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 
 class UserProvider with ChangeNotifier {
   final AuthService _authService = AuthService();
@@ -97,6 +98,9 @@ class UserProvider with ChangeNotifier {
     String? gender,
     DateTime? birthDate,
     String? residentNumber,
+    // ⭐ 주소 추가!
+    String? address,           // ⭐ 추가
+    String? detailAddress,     // ⭐ 추가
     // ⭐ 서류 업로드 필드
     String? idCardImageUrl,           // 신분증 앞면 (지원자)
     String? bankbookImageUrl,         // 통장 사본 (지원자)
@@ -119,6 +123,8 @@ class UserProvider with ChangeNotifier {
         gender: gender,
         birthDate: birthDate,
         residentNumber: residentNumber,
+        address: address,                    // ⭐ 추가
+        detailAddress: detailAddress,        // ⭐ 추가
         idCardImageUrl: idCardImageUrl,
         bankbookImageUrl: bankbookImageUrl,
         businessLicenseImageUrl: businessLicenseImageUrl,
@@ -198,5 +204,25 @@ class UserProvider with ChangeNotifier {
   void clearError() {
     _error = null;
     notifyListeners();
+  }
+  Future<void> refreshCurrentUser() async {
+    if (_currentUser != null) {
+      try {
+        final doc = await FirebaseFirestore.instance
+            .collection('users')
+            .doc(_currentUser!.uid)
+            .get();
+        
+        if (doc.exists) {
+          _currentUser = UserModel.fromMap(
+            doc.data() as Map<String, dynamic>,
+            doc.id,
+          );
+          notifyListeners();
+        }
+      } catch (e) {
+        print('❌ 사용자 정보 새로고침 실패: $e');
+      }
+    }
   }
 }

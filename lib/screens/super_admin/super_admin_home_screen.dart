@@ -5,6 +5,7 @@ import '../../providers/theme_provider.dart';
 import 'all_businesses_screen.dart';
 import '../../utils/dialog_helper.dart';
 import '../../utils/responsive_helper.dart';
+import '../common/settings_screen.dart';
 
 /// 최고관리자(SUPER_ADMIN) 홈 화면 - 세련된 디자인
 class AdminHomeScreen extends StatelessWidget {
@@ -256,8 +257,11 @@ class AdminHomeScreen extends StatelessWidget {
                               subtitle: '시스템 설정',
                               color: Colors.grey[600]!,
                               onTap: () {
-                                ScaffoldMessenger.of(context).showSnackBar(
-                                  const SnackBar(content: Text('설정 기능은 준비 중입니다')),
+                                Navigator.push(
+                                  context,
+                                  MaterialPageRoute(
+                                    builder: (context) => const SettingsScreen(),
+                                  ),
                                 );
                               },
                             ),

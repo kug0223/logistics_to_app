@@ -8,7 +8,7 @@ import '../../utils/responsive_helper.dart';
 import 'business_list_screen.dart';
 import '../../utils/toast_helper.dart';
 import 'to_management/create_to_screen.dart';
-import 'settings_screen.dart';
+import '../common/settings_screen.dart';
 import 'workforce_management/integrated_workforce_screen.dart';
 
 /// 사업장 관리자 홈 화면 - 세련된 디자인
