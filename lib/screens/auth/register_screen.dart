@@ -7,15 +7,17 @@ import '../../providers/user_provider.dart';
 import '../../widgets/common/loading_widget.dart';
 import '../../utils/responsive_helper.dart';
 import '../../services/auth_service.dart';
+import '../../services/storage_service.dart';  // ✅ 추가
 import '../../widgets/inputs/daum_address_search.dart';
 import '../../utils/ocr_verification_helper.dart';
 import '../../widgets/dialogs/ocr_verification_dialog.dart';
 import '../../utils/document_upload_helper.dart';
+import '../../utils/toast_helper.dart';  // ✅ 추가
 import '../business_admin/business_form_screen.dart';
 
 import 'package:flutter/foundation.dart' show kIsWeb;
 
-/// 개선된 회원가입 화면 - 자동 스크롤 + 여백 최적화
+/// 개선된 회원가입 화면 - 자동 스크롤 + 여백 최적화 + Storage 업로드
 class RegisterScreen extends StatefulWidget {
   const RegisterScreen({super.key});
 
@@ -24,6 +26,9 @@ class RegisterScreen extends StatefulWidget {
 }
 
 class _RegisterScreenState extends State<RegisterScreen> {
+  // ✅ Storage 서비스 추가
+  final StorageService _storageService = StorageService();
+  
   final TextEditingController _accountNumberController = TextEditingController();
   String? _selectedBank;
 
@@ -31,7 +36,10 @@ class _RegisterScreenState extends State<RegisterScreen> {
   int _passwordStrength = 0;
   AutovalidateMode _autovalidateMode = AutovalidateMode.disabled;
   
-  // ✅ 스크롤 컨트롤러 추가
+  // ✅ 중복 제출 방지 플래그 추가
+  bool _isSubmitting = false;
+  
+  // 스크롤 컨트롤러
   final ScrollController _scrollController = ScrollController();
   
   // Step 1: 기본 정보
@@ -79,7 +87,8 @@ class _RegisterScreenState extends State<RegisterScreen> {
   // Step 3: 추가 정보 (선택)
   String? _idCardImagePath;
   String? _bankbookImagePath;
-  // 기존 컨트롤러 선언 아래에 추가
+  
+  // FocusNode 선언
   final _nameFocus = FocusNode();
   final _usernameFocus = FocusNode();
   final _residentNumber1Focus = FocusNode();
@@ -121,6 +130,9 @@ class _RegisterScreenState extends State<RegisterScreen> {
     _confirmPasswordFocus.dispose();
     super.dispose();
   }
+  // ============================================================
+  // 🔧 핵심 함수들
+  // ============================================================
 
   /// 주민번호로 생년월일과 성별 파싱
   void _parseResidentNumber() {
@@ -212,7 +224,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
     }
   }
 
-  /// 이메일 인증 코드 발송
+  /// ✅ 이메일 인증 코드 발송 (포커스 추가)
   Future<void> _sendEmailVerification() async {
     if (_emailController.text.isEmpty || !_emailController.text.contains('@')) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -230,9 +242,16 @@ class _RegisterScreenState extends State<RegisterScreen> {
         duration: const Duration(seconds: 5),
       ),
     );
+    
+    // ✅ 인증번호 입력칸으로 포커스 이동
+    Future.delayed(const Duration(milliseconds: 300), () {
+      if (mounted) {
+        _emailCodeFocus.requestFocus();
+      }
+    });
   }
 
-  /// 이메일 인증 코드 확인
+  /// ✅ 이메일 인증 코드 확인 (포커스 추가)
   void _verifyEmailCode() {
     if (_emailCodeController.text == _verificationCode) {
       setState(() => _isEmailVerified = true);
@@ -242,6 +261,13 @@ class _RegisterScreenState extends State<RegisterScreen> {
           backgroundColor: Colors.green,
         ),
       );
+      
+      // ✅ 전화번호 필드로 포커스 이동
+      Future.delayed(const Duration(milliseconds: 300), () {
+        if (mounted) {
+          _phoneFocus.requestFocus();
+        }
+      });
     } else {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
@@ -252,11 +278,11 @@ class _RegisterScreenState extends State<RegisterScreen> {
     }
   }
 
-  /// 주소 검색
+  /// ✅ 주소 검색 (포커스 추가)
   Future<void> _searchAddress() async {
     final result = await DaumAddressService.searchAddress(context);
     
-    if (result != null) {
+    if (result != null && mounted) {
       setState(() {
         _addressController.text = result.fullAddress;
       });
@@ -268,6 +294,13 @@ class _RegisterScreenState extends State<RegisterScreen> {
           duration: Duration(seconds: 2),
         ),
       );
+      
+      // ✅ 상세주소 필드로 포커스 이동
+      Future.delayed(const Duration(milliseconds: 300), () {
+        if (mounted) {
+          _detailAddressFocus.requestFocus();
+        }
+      });
     }
   }
 
@@ -311,7 +344,6 @@ class _RegisterScreenState extends State<RegisterScreen> {
     if (_currentStep == 0) {
       if (_validateStep1()) {
         setState(() => _currentStep = 1);
-        // ✅ 스텝 변경 시 스크롤 맨 위로
         _scrollToTop();
       } else {
         setState(() {
@@ -337,7 +369,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
     }
   }
   
-  /// ✅ 스크롤 맨 위로
+  /// 스크롤 맨 위로
   void _scrollToTop() {
     if (_scrollController.hasClients) {
       _scrollController.animateTo(
@@ -356,6 +388,9 @@ class _RegisterScreenState extends State<RegisterScreen> {
       _showBusinessRegistrationDialog();
     }
   }
+  // ============================================================
+  // 📝 회원가입 로직 (Storage 업로드 포함)
+  // ============================================================
 
   // 사업장 등록 선택 다이얼로그
   void _showBusinessRegistrationDialog() {
@@ -509,40 +544,100 @@ class _RegisterScreenState extends State<RegisterScreen> {
     );
   }
 
+  /// ✅ 회원가입 (Storage 업로드 추가 + 중복 제출 방지)
   Future<void> _registerUser() async {
+    // ✅ 중복 제출 방지
+    if (_isSubmitting) return;
+    setState(() => _isSubmitting = true);
+    
     final userProvider = context.read<UserProvider>();
     
-    final success = await userProvider.signUp(
-      username: _usernameController.text.trim(),
-      userEmail: _emailController.text.trim(),
-      password: _passwordController.text,
-      name: _nameController.text.trim(),
-      phone: _phoneController.text.trim(),
-      role: _selectedRole!,
-      gender: _parsedGender,
-      birthDate: _parsedBirthDate,
-      residentNumber: '${_residentNumber1Controller.text}-${_residentNumber2Controller.text}******',
-      idCardImageUrl: _idCardImagePath,
-      address: _addressController.text.trim(),
-      detailAddress: _detailAddressController.text.trim(),
-      // ✅ 사업자 정보 추가 (BUSINESS_ADMIN인 경우)
-      businessNumber: _selectedRole == UserRole.BUSINESS_ADMIN 
-          ? _businessNumberController.text.replaceAll('-', '') 
-          : null,
-      businessName: _selectedRole == UserRole.BUSINESS_ADMIN 
-          ? _businessNameController.text.trim() 
-          : null,
+    try {
+      // ✅ 이미지 업로드 (있는 경우에만)
+      String? idCardImageUrl;
+      String? bankbookImageUrl;
+      String? businessLicenseImageUrl;
       
-    );
-
-    if (success && mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: const Text('회원가입이 완료되었습니다! 로그인해주세요.'),
-          backgroundColor: Colors.green[600],
-        ),
+      // 임시 UID 생성 (실제 가입 전 업로드용)
+      final tempId = DateTime.now().millisecondsSinceEpoch.toString();
+      
+      // 신분증 업로드
+      if (_idCardImagePath != null && !kIsWeb) {
+        ToastHelper.showInfo('신분증 업로드 중...');
+        final storagePath = 'users/temp_$tempId/idCard_$tempId.jpg';
+        idCardImageUrl = await _storageService.uploadImage(_idCardImagePath!, storagePath);
+        if (idCardImageUrl == null) {
+          print('⚠️ 신분증 업로드 실패 - 계속 진행');
+        }
+      }
+      
+      // 통장사본 업로드
+      if (_bankbookImagePath != null && !kIsWeb) {
+        ToastHelper.showInfo('통장사본 업로드 중...');
+        final storagePath = 'users/temp_$tempId/bankbook_$tempId.jpg';
+        bankbookImageUrl = await _storageService.uploadImage(_bankbookImagePath!, storagePath);
+        if (bankbookImageUrl == null) {
+          print('⚠️ 통장사본 업로드 실패 - 계속 진행');
+        }
+      }
+      
+      // 사업자등록증 업로드 (BUSINESS_ADMIN인 경우)
+      if (_businessLicenseImagePath != null && _selectedRole == UserRole.BUSINESS_ADMIN && !kIsWeb) {
+        ToastHelper.showInfo('사업자등록증 업로드 중...');
+        final storagePath = 'users/temp_$tempId/businessLicense_$tempId.jpg';
+        businessLicenseImageUrl = await _storageService.uploadImage(_businessLicenseImagePath!, storagePath);
+        if (businessLicenseImageUrl == null) {
+          print('⚠️ 사업자등록증 업로드 실패 - 계속 진행');
+        }
+      }
+      
+      // ✅ 회원가입 실행 (URL 전달)
+      final success = await userProvider.signUp(
+        username: _usernameController.text.trim(),
+        userEmail: _emailController.text.trim(),
+        password: _passwordController.text,
+        name: _nameController.text.trim(),
+        phone: _phoneController.text.trim(),
+        role: _selectedRole!,
+        gender: _parsedGender,
+        birthDate: _parsedBirthDate,
+        residentNumber: '${_residentNumber1Controller.text}-${_residentNumber2Controller.text}******',
+        address: _addressController.text.trim(),
+        detailAddress: _detailAddressController.text.trim(),
+        // ✅ Storage URL 전달 (로컬 경로 대신)
+        idCardImageUrl: idCardImageUrl,
+        bankbookImageUrl: bankbookImageUrl,
+        businessLicenseImageUrl: businessLicenseImageUrl,
+        // ✅ 통장 정보 추가
+        bankName: _selectedBank,
+        accountNumber: _accountNumberController.text.trim().isEmpty 
+            ? null 
+            : _accountNumberController.text.trim(),
+        // 사업자 정보 (BUSINESS_ADMIN인 경우)
+        businessNumber: _selectedRole == UserRole.BUSINESS_ADMIN 
+            ? _businessNumberController.text.replaceAll('-', '') 
+            : null,
+        businessName: _selectedRole == UserRole.BUSINESS_ADMIN 
+            ? _businessNameController.text.trim() 
+            : null,
       );
-      Navigator.pop(context);
+
+      if (success && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: const Text('회원가입이 완료되었습니다! 로그인해주세요.'),
+            backgroundColor: Colors.green[600],
+          ),
+        );
+        Navigator.pop(context);
+      }
+    } catch (e) {
+      print('❌ 회원가입 실패: $e');
+      ToastHelper.showError('회원가입에 실패했습니다');
+    } finally {
+      if (mounted) {
+        setState(() => _isSubmitting = false);
+      }
     }
   }
   
@@ -586,35 +681,57 @@ class _RegisterScreenState extends State<RegisterScreen> {
     return null;
   }
 
-  // 사업장 관리자: 회원가입 후 사업장 등록 화면으로
+  /// ✅ 사업장 관리자: 회원가입 후 사업장 등록 화면으로 (Storage 업로드 추가)
   Future<void> _registerUserAndGoToBusinessRegistration() async {
+    // ✅ 중복 제출 방지
+    if (_isSubmitting) return;
+    setState(() => _isSubmitting = true);
+    
     final userProvider = context.read<UserProvider>();
     
-    final success = await userProvider.signUp(
-      username: _usernameController.text.trim(),
-      userEmail: _emailController.text.trim(),
-      password: _passwordController.text,
-      name: _nameController.text.trim(),
-      phone: _phoneController.text.trim(),
-      role: UserRole.BUSINESS_ADMIN,
-      gender: _parsedGender,
-      birthDate: _parsedBirthDate,
-      residentNumber: '${_residentNumber1Controller.text}-${_residentNumber2Controller.text}******',
-      address: _addressController.text.trim(),
-      detailAddress: _detailAddressController.text.trim(),
-      // ✅ 사업자 정보 추가
-      businessNumber: _businessNumberController.text.replaceAll('-', ''),
-      businessName: _businessNameController.text.trim(),
-      // businessLicenseImageUrl은 나중에 Storage 업로드 후 저장
-    );
-
-    if (success && mounted) {
-      Navigator.pushReplacement(
-        context,
-        MaterialPageRoute(
-          builder: (context) => const BusinessFormScreen(isFromSignUp: true),
-        ),
+    try {
+      // ✅ 사업자등록증 업로드
+      String? businessLicenseImageUrl;
+      final tempId = DateTime.now().millisecondsSinceEpoch.toString();
+      
+      if (_businessLicenseImagePath != null && !kIsWeb) {
+        ToastHelper.showInfo('사업자등록증 업로드 중...');
+        final storagePath = 'users/temp_$tempId/businessLicense_$tempId.jpg';
+        businessLicenseImageUrl = await _storageService.uploadImage(_businessLicenseImagePath!, storagePath);
+      }
+      
+      final success = await userProvider.signUp(
+        username: _usernameController.text.trim(),
+        userEmail: _emailController.text.trim(),
+        password: _passwordController.text,
+        name: _nameController.text.trim(),
+        phone: _phoneController.text.trim(),
+        role: UserRole.BUSINESS_ADMIN,
+        gender: _parsedGender,
+        birthDate: _parsedBirthDate,
+        residentNumber: '${_residentNumber1Controller.text}-${_residentNumber2Controller.text}******',
+        address: _addressController.text.trim(),
+        detailAddress: _detailAddressController.text.trim(),
+        businessNumber: _businessNumberController.text.replaceAll('-', ''),
+        businessName: _businessNameController.text.trim(),
+        businessLicenseImageUrl: businessLicenseImageUrl,
       );
+
+      if (success && mounted) {
+        Navigator.pushReplacement(
+          context,
+          MaterialPageRoute(
+            builder: (context) => const BusinessFormScreen(isFromSignUp: true),
+          ),
+        );
+      }
+    } catch (e) {
+      print('❌ 회원가입 실패: $e');
+      ToastHelper.showError('회원가입에 실패했습니다');
+    } finally {
+      if (mounted) {
+        setState(() => _isSubmitting = false);
+      }
     }
   }
 
@@ -640,19 +757,22 @@ class _RegisterScreenState extends State<RegisterScreen> {
       _usernameError = exists ? '이미 사용중인 아이디입니다' : null;
     });
   }
+  // ============================================================
+  // 🎨 Build 메서드 + 이미지 업로드
+  // ============================================================
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     
     return Scaffold(
-      // ✅ 키보드가 올라와도 레이아웃 자동 조정
       resizeToAvoidBottomInset: true,
       body: Consumer<UserProvider>(
         builder: (context, userProvider, _) {
           return LoadingOverlay(
-            isLoading: userProvider.isLoading,
-            message: '회원가입 중...',
+            // ✅ 중복 제출 상태도 로딩에 포함
+            isLoading: userProvider.isLoading || _isSubmitting,
+            message: _isSubmitting ? '서류 업로드 중...' : '회원가입 중...',
             child: Container(
               decoration: BoxDecoration(
                 gradient: LinearGradient(
@@ -673,7 +793,6 @@ class _RegisterScreenState extends State<RegisterScreen> {
                     Expanded(
                       child: SingleChildScrollView(
                         controller: _scrollController,
-                        // ✅ 키보드 올라올 때 자동 스크롤 개선
                         keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
                         padding: EdgeInsets.symmetric(
                           horizontal: ResponsiveHelper.spacing(context, 20),
@@ -691,10 +810,6 @@ class _RegisterScreenState extends State<RegisterScreen> {
       ),
     );
   }
-
-  // ============================================================
-  // 📸 이미지 업로드
-  // ============================================================
 
   /// 이미지 소스 선택 다이얼로그
   Future<ImageSource?> _showImageSourceDialog() async {
@@ -812,14 +927,21 @@ class _RegisterScreenState extends State<RegisterScreen> {
     final imagePath = await DocumentUploadHelper.pickAndVerifyBankbook(
       context,
       _nameController.text.trim(),
+      expectedAccountNumber: _accountNumberController.text.trim().isEmpty 
+          ? null 
+          : _accountNumberController.text.trim(),
+      expectedBankName: _selectedBank,
     );
     
     if (imagePath != null) {
       setState(() => _bankbookImagePath = imagePath);
     }
   }
+  // ============================================================
+  // 🔧 헤더, 진행바, 단계 컨텐츠
+  // ============================================================
 
-  /// 헤더 (✅ 여백 최적화)
+  /// 헤더
   Widget _buildHeader() {
     final theme = Theme.of(context);
     
@@ -872,7 +994,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
     );
   }
 
-  /// 진행 표시기 (✅ 여백 최적화)
+  /// 진행 표시기
   Widget _buildProgressBar() {
     final theme = Theme.of(context);
     
@@ -934,8 +1056,10 @@ class _RegisterScreenState extends State<RegisterScreen> {
         return Container();
     }
   }
+  // ============================================================
+  // 📝 Step 1: 기본 정보 입력
+  // ============================================================
 
-  /// Step 1: 기본 정보 (✅ 키보드 네비게이션 완성)
   Widget _buildStep1BasicInfo() {
     return Container(
       padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 12)),
@@ -1086,7 +1210,6 @@ class _RegisterScreenState extends State<RegisterScreen> {
                         });
                       } else {
                         _parseResidentNumber();
-                        // ✅ 6자리 입력 완료 시 자동으로 다음 필드로 이동
                         _residentNumber2Focus.requestFocus();
                       }
                     },
@@ -1125,10 +1248,6 @@ class _RegisterScreenState extends State<RegisterScreen> {
                     ),
                     validator: (value) {
                       if (value == null || value.isEmpty) return '필수';
-                      final genderCode = int.tryParse(value);
-                      if (genderCode == null || genderCode < 1 || genderCode > 4) {
-                        return null;
-                      }
                       return null;
                     },
                     onChanged: (value) {
@@ -1139,7 +1258,6 @@ class _RegisterScreenState extends State<RegisterScreen> {
                         });
                       } else {
                         _parseResidentNumber();
-                        // ✅ 1자리 입력 완료 시 자동으로 다음 필드로 이동
                         _emailFocus.requestFocus();
                       }
                     },
@@ -1203,7 +1321,6 @@ class _RegisterScreenState extends State<RegisterScreen> {
               ),
             
             SizedBox(height: ResponsiveHelper.spacing(context, 12)),
-            
             // 이메일
             _buildTextField(
               controller: _emailController,
@@ -1455,8 +1572,10 @@ class _RegisterScreenState extends State<RegisterScreen> {
       ),
     );
   }
+  // ============================================================
+  // 📝 Step 2: 역할 선택
+  // ============================================================
 
-  /// Step 2: 역할 선택
   Widget _buildStep2RoleSelection() {
     return Column(
       children: [
@@ -1507,8 +1626,10 @@ class _RegisterScreenState extends State<RegisterScreen> {
       ],
     );
   }
+  // ============================================================
+  // 📝 Step 3-A: 지원자 추가 정보
+  // ============================================================
 
-  /// Step 3-A: 지원자 추가 정보 (✅ 여백 최적화)
   Widget _buildStep3UserDocuments() {
     return Column(
       children: [
@@ -1642,7 +1763,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
     );
   }
 
-  // 신분증 업로드 카드 (✅ 여백 최적화)
+  // 신분증 업로드 카드
   Widget _buildIdCardUploadCard() {
     return Container(
       padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 12)),
@@ -1735,7 +1856,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
     );
   }
 
-  // 통장 정보 카드 (✅ 여백 최적화)
+  // 통장 정보 카드
   Widget _buildBankInfoCard() {
     return Container(
       padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 12)),
@@ -1901,8 +2022,10 @@ class _RegisterScreenState extends State<RegisterScreen> {
       ),
     );
   }
+  // ============================================================
+  // 📝 Step 3-B: 사업장 관리자 추가 정보
+  // ============================================================
 
-  /// Step 3-B: 사업장 관리자 추가 정보 (✅ 여백 최적화)
   Widget _buildStep3BusinessDocuments() {
     final theme = Theme.of(context);
     
@@ -2184,6 +2307,9 @@ class _RegisterScreenState extends State<RegisterScreen> {
     
     return '${digits.substring(0, 3)}-${digits.substring(3, 5)}-${digits.substring(5, 10)}';
   }
+  // ============================================================
+  // 🔧 공통 위젯들
+  // ============================================================
 
   /// 서류 업로드 카드
   Widget _buildDocumentUploadCard({
@@ -2263,7 +2389,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
     );
   }
 
-  /// 텍스트 필드 빌더 (✅ 여백 최적화)
+  /// 텍스트 필드 빌더
   Widget _buildTextField({
     required TextEditingController controller,
     required String label,
@@ -2278,9 +2404,9 @@ class _RegisterScreenState extends State<RegisterScreen> {
     Widget? suffixIcon,
     String? Function(String?)? validator,
     void Function(String)? onChanged,
-    TextInputAction? textInputAction,           // ✅ 추가
-    void Function(String)? onFieldSubmitted,    // ✅ 추가
-    FocusNode? focusNode,                       // ✅ 추가
+    TextInputAction? textInputAction,
+    void Function(String)? onFieldSubmitted,
+    FocusNode? focusNode,
   }) {
     final theme = Theme.of(context);
     
@@ -2293,8 +2419,8 @@ class _RegisterScreenState extends State<RegisterScreen> {
       enabled: enabled,
       readOnly: readOnly,
       onTap: onTap,
-      textInputAction: textInputAction,        // ✅ 추가
-      onFieldSubmitted: onFieldSubmitted,      // ✅ 추가
+      textInputAction: textInputAction,
+      onFieldSubmitted: onFieldSubmitted,
       style: ResponsiveHelper.bodyStyle(context),
       decoration: InputDecoration(
         labelText: label,
@@ -2338,7 +2464,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
     );
   }
 
-  /// 역할 선택 카드 (✅ 여백 최적화)
+  /// 역할 선택 카드
   Widget _buildRoleCard({
     required UserRole role,
     required IconData icon,
@@ -2449,7 +2575,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
     );
   }
 
-  /// 하단 버튼 (✅ 여백 최적화)
+  /// 하단 버튼
   Widget _buildBottomButton() {
     final theme = Theme.of(context);
     final userProvider = context.watch<UserProvider>();
@@ -2457,7 +2583,8 @@ class _RegisterScreenState extends State<RegisterScreen> {
     return Padding(
       padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 16)),
       child: ElevatedButton(
-        onPressed: userProvider.isLoading ? null : _onStepContinue,
+        // ✅ 중복 제출 방지
+        onPressed: (userProvider.isLoading || _isSubmitting) ? null : _onStepContinue,
         style: ElevatedButton.styleFrom(
           backgroundColor: theme.primaryColor,
           foregroundColor: Colors.white,

@@ -252,11 +252,13 @@ class DocumentUploadHelper {
     }
   }
   
-  /// 💳 통장사본 업로드 + OCR 검증
+  /// 💳 통장사본 업로드 + OCR 검증 (계좌번호, 은행명 추가)
   static Future<String?> pickAndVerifyBankbook(
     BuildContext context,
-    String expectedName,
-  ) async {
+    String expectedName, {
+    String? expectedAccountNumber,
+    String? expectedBankName,
+  }) async {
     try {
       final ImagePicker picker = ImagePicker();
       ImageSource? source;
@@ -281,9 +283,12 @@ class DocumentUploadHelper {
       
       _showLoadingDialog(context, '통장사본 확인 중...');
       
-      final result = await OcrVerificationHelper.verifyBankbookName(
+      // ✅ 새로운 verifyBankbook 함수 호출 (계좌번호, 은행명 포함)
+      final result = await OcrVerificationHelper.verifyBankbook(
         image.path,
         expectedName,
+        expectedAccountNumber: expectedAccountNumber,
+        expectedBankName: expectedBankName,
       );
       
       if (!context.mounted) return null;
@@ -297,28 +302,64 @@ class DocumentUploadHelper {
         );
         
         if (retry) {
-          return await pickAndVerifyBankbook(context, expectedName);
+          return await pickAndVerifyBankbook(
+            context, 
+            expectedName,
+            expectedAccountNumber: expectedAccountNumber,
+            expectedBankName: expectedBankName,
+          );
         }
         return null;
       }
       
+      // ✅ 검증 성공
       if (result['isValid'] && result['confidence'] >= 0.6) {
+        // 성공 메시지 구성
+        String extractedInfo = '예금주: $expectedName';
+        if (expectedAccountNumber != null && expectedAccountNumber.isNotEmpty) {
+          extractedInfo += '\n계좌번호: $expectedAccountNumber';
+        }
+        if (expectedBankName != null && expectedBankName.isNotEmpty) {
+          extractedInfo += '\n은행: $expectedBankName';
+        }
+        
         await OcrVerificationDialog.showSuccess(
           context: context,
           documentType: '통장사본',
-          extractedInfo: '예금주: $expectedName',
+          extractedInfo: extractedInfo,
           confidence: result['confidence'],
         );
         
         return image.path;
         
       } else {
+        // ✅ 검증 실패 - 상세 이유 표시
+        String reason = '';
+        
+        if (!result['isNameValid']) {
+          reason += '• 예금주명이 일치하지 않습니다\n';
+        }
+        if (expectedAccountNumber != null && 
+            expectedAccountNumber.isNotEmpty && 
+            !result['isAccountValid']) {
+          reason += '• 계좌번호가 일치하지 않습니다\n';
+          reason += '  입력: $expectedAccountNumber\n';
+          reason += '  인식: ${result['extractedAccountNumber']}\n';
+        }
+        if (expectedBankName != null && 
+            expectedBankName.isNotEmpty && 
+            !result['isBankValid']) {
+          reason += '• 은행명이 일치하지 않습니다\n';
+        }
+        
+        reason += '\n사진이 선명하게 보이도록 다시 촬영해주세요';
+        
         final continueAnyway = await OcrVerificationDialog.showWarning(
           context: context,
           documentType: '통장사본',
-          expectedInfo: expectedName,
-          extractedInfo: result['extractedName'],
-          reason: '예금주명이 명확하게 보이도록 다시 촬영해주세요',
+          expectedInfo: '$expectedName${expectedAccountNumber != null ? '\n$expectedAccountNumber' : ''}${expectedBankName != null ? '\n$expectedBankName' : ''}',
+          extractedInfo: '${result['extractedName']}${result['extractedAccountNumber'].isNotEmpty ? '\n${result['extractedAccountNumber']}' : ''}${result['extractedBankName'].isNotEmpty ? '\n${result['extractedBankName']}' : ''}',
+          reason: reason,
         );
         
         return continueAnyway ? image.path : null;

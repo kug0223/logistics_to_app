@@ -6,10 +6,6 @@ import 'package:google_mlkit_text_recognition/google_mlkit_text_recognition.dart
 class OcrVerificationHelper {
   
   /// 📸 신분증 이름 + 주민번호 검증
-  /// 
-  /// [imagePath]: 신분증 이미지 경로
-  /// [expectedName]: 예상 이름 (예: "홍길동")
-  /// [expectedResidentNumber]: 예상 주민번호 앞7자리 (예: "990101-1")
   static Future<Map<String, dynamic>> verifyIdCardName(
     String imagePath,
     String expectedName, {
@@ -25,34 +21,29 @@ class OcrVerificationHelper {
       final rawText = recognizedText.text;
       print('📄 [신분증 OCR] 원본: $rawText');
       
-      // 공백/특수문자 제거 후 비교
       final cleanedOcr = _cleanText(rawText);
       final cleanedExpected = _cleanText(expectedName);
       
       print('📄 [신분증 OCR] 정제됨: $cleanedOcr');
       print('📄 [신분증 OCR] 예상 이름: $cleanedExpected');
       
-      // 이름 검증
       final isNameValid = cleanedOcr.contains(cleanedExpected);
       
-      // 주민번호 검증 (선택사항)
       bool isResidentNumberValid = true;
       String? extractedResidentNumber;
       
       if (expectedResidentNumber != null && expectedResidentNumber.isNotEmpty) {
-        // 주민번호 패턴 찾기: 6자리-1자리 또는 6자리 1자리
         final residentPattern = RegExp(r'(\d{6})[-\s]?(\d)');
         final matches = residentPattern.allMatches(rawText);
         
         if (matches.isNotEmpty) {
           final match = matches.first;
-          final front = match.group(1); // 앞 6자리
-          final back = match.group(2);  // 뒷 1자리
+          final front = match.group(1);
+          final back = match.group(2);
           extractedResidentNumber = '$front-$back';
           
           print('📄 [신분증 OCR] 추출된 주민번호: $extractedResidentNumber');
           
-          // 예상 주민번호와 비교
           final cleanedExtracted = extractedResidentNumber.replaceAll(RegExp(r'\D'), '');
           final cleanedExpectedRN = expectedResidentNumber.replaceAll(RegExp(r'\D'), '');
           
@@ -60,23 +51,20 @@ class OcrVerificationHelper {
           
           print('📄 [신분증 OCR] 주민번호 검증: ${isResidentNumberValid ? "✅" : "❌"}');
         } else {
-          // 주민번호를 찾지 못함
           isResidentNumberValid = false;
           print('📄 [신분증 OCR] 주민번호 인식 실패');
         }
       }
       
-      // 종합 검증
       final isValid = isNameValid && isResidentNumberValid;
       
-      // 신뢰도 계산
       double confidence = 0.0;
       if (isNameValid && isResidentNumberValid) {
         confidence = 1.0;
       } else if (isNameValid) {
-        confidence = 0.6; // 이름만 맞음
+        confidence = 0.6;
       } else if (isResidentNumberValid) {
-        confidence = 0.5; // 주민번호만 맞음
+        confidence = 0.5;
       }
       
       return {
@@ -106,11 +94,18 @@ class OcrVerificationHelper {
     }
   }
   
-  /// 💳 통장사본 예금주명 검증
-  static Future<Map<String, dynamic>> verifyBankbookName(
+  /// 💳 통장사본 검증 (예금주 + 계좌번호 + 은행명)
+  /// 
+  /// [imagePath]: 통장사본 이미지 경로
+  /// [expectedName]: 예상 예금주명
+  /// [expectedAccountNumber]: 예상 계좌번호 (선택)
+  /// [expectedBankName]: 예상 은행명 (선택)
+  static Future<Map<String, dynamic>> verifyBankbook(
     String imagePath,
-    String expectedName,
-  ) async {
+    String expectedName, {
+    String? expectedAccountNumber,
+    String? expectedBankName,
+  }) async {
     TextRecognizer? textRecognizer;
     
     try {
@@ -121,44 +116,79 @@ class OcrVerificationHelper {
       final rawText = recognizedText.text;
       print('📄 [통장사본 OCR] 원본: $rawText');
       
-      // "예금주" 키워드 근처에서 이름 찾기
-      final List<String> lines = [];
-      for (TextBlock block in recognizedText.blocks) {
-        lines.add(block.text);
-      }
+      // ✅ 예금주명 추출
+      String? extractedName = _extractAccountHolder(rawText, recognizedText);
       
-      String? extractedName;
+      // ✅ 계좌번호 추출
+      String? extractedAccountNumber = _extractAccountNumber(rawText);
       
-      for (int i = 0; i < lines.length; i++) {
-        if (lines[i].contains('예금주') || lines[i].contains('계좌주')) {
-          final currentLine = _cleanText(lines[i]);
-          final nextLine = i + 1 < lines.length ? _cleanText(lines[i + 1]) : '';
-          
-          extractedName = currentLine.replaceAll('예금주', '').replaceAll('계좌주', '').trim();
-          if (extractedName.isEmpty && nextLine.isNotEmpty) {
-            extractedName = nextLine;
-          }
-          break;
-        }
-      }
-      
-      final cleanedOcr = _cleanText(rawText);
-      final cleanedExpected = _cleanText(expectedName);
+      // ✅ 은행명 추출
+      String? extractedBankName = _extractBankName(rawText);
       
       print('📄 [통장사본 OCR] 추출된 예금주: $extractedName');
-      print('📄 [통장사본 OCR] 예상: $cleanedExpected');
+      print('📄 [통장사본 OCR] 추출된 계좌번호: $extractedAccountNumber');
+      print('📄 [통장사본 OCR] 추출된 은행명: $extractedBankName');
+      print('📄 [통장사본 OCR] 예상 예금주: $expectedName');
       
-      final isValid = cleanedOcr.contains(cleanedExpected);
+      // ✅ 검증
+      final cleanedOcr = _cleanText(rawText);
+      final cleanedExpectedName = _cleanText(expectedName);
       
-      double confidence = 0.0;
-      if (isValid) {
-        confidence = (extractedName == cleanedExpected) ? 1.0 : 0.7;
+      // 1. 예금주명 검증 (전체 텍스트에서 이름 포함 여부)
+      final isNameValid = cleanedOcr.contains(cleanedExpectedName);
+      print('📄 [통장사본 OCR] 예금주 검증: ${isNameValid ? "✅" : "❌"}');
+      
+      // 2. 계좌번호 검증 (선택)
+      bool isAccountValid = true;
+      if (expectedAccountNumber != null && expectedAccountNumber.isNotEmpty) {
+        final cleanedExpectedAccount = expectedAccountNumber.replaceAll(RegExp(r'\D'), '');
+        final cleanedExtractedAccount = (extractedAccountNumber ?? '').replaceAll(RegExp(r'\D'), '');
+        isAccountValid = cleanedExtractedAccount == cleanedExpectedAccount;
+        print('📄 [통장사본 OCR] 계좌번호 검증: $cleanedExtractedAccount == $cleanedExpectedAccount → ${isAccountValid ? "✅" : "❌"}');
       }
+      
+      // 3. 은행명 검증 (선택)
+      bool isBankValid = true;
+      if (expectedBankName != null && expectedBankName.isNotEmpty) {
+        final cleanedExpectedBank = _cleanText(expectedBankName);
+        final cleanedExtractedBank = _cleanText(extractedBankName ?? '');
+        // 은행명이 포함되어 있으면 OK (예: "하나은행" in "하나멤버스")
+        isBankValid = cleanedOcr.contains(cleanedExpectedBank) ||
+                      cleanedExtractedBank.contains(cleanedExpectedBank);
+        print('📄 [통장사본 OCR] 은행명 검증: ${isBankValid ? "✅" : "❌"}');
+      }
+      
+      // 종합 검증
+      final isValid = isNameValid; // 예금주명은 필수
+      
+      // 신뢰도 계산
+      double confidence = 0.0;
+      int validCount = 0;
+      int totalCount = 1; // 예금주명은 필수
+      
+      if (isNameValid) validCount++;
+      
+      if (expectedAccountNumber != null && expectedAccountNumber.isNotEmpty) {
+        totalCount++;
+        if (isAccountValid) validCount++;
+      }
+      
+      if (expectedBankName != null && expectedBankName.isNotEmpty) {
+        totalCount++;
+        if (isBankValid) validCount++;
+      }
+      
+      confidence = validCount / totalCount;
       
       return {
         'isValid': isValid,
+        'isNameValid': isNameValid,
+        'isAccountValid': isAccountValid,
+        'isBankValid': isBankValid,
         'confidence': confidence,
         'extractedName': extractedName ?? '',
+        'extractedAccountNumber': extractedAccountNumber ?? '',
+        'extractedBankName': extractedBankName ?? '',
         'rawText': rawText,
       };
       
@@ -166,14 +196,170 @@ class OcrVerificationHelper {
       print('❌ [통장사본 OCR] 실패: $e');
       return {
         'isValid': false,
+        'isNameValid': false,
+        'isAccountValid': false,
+        'isBankValid': false,
         'confidence': 0.0,
         'extractedName': '',
+        'extractedAccountNumber': '',
+        'extractedBankName': '',
         'rawText': '',
         'error': e.toString(),
       };
     } finally {
       textRecognizer?.close();
     }
+  }
+  
+  /// 💳 통장사본 예금주명만 검증 (기존 호환용)
+  static Future<Map<String, dynamic>> verifyBankbookName(
+    String imagePath,
+    String expectedName,
+  ) async {
+    return verifyBankbook(imagePath, expectedName);
+  }
+  
+  /// ✅ 예금주명 추출
+  static String? _extractAccountHolder(String rawText, RecognizedText recognizedText) {
+    final lines = rawText.split('\n');
+    
+    // 1. "예금주" 키워드 근처에서 찾기
+    for (int i = 0; i < lines.length; i++) {
+      final line = lines[i];
+      if (line.contains('예금주') || line.contains('계좌주')) {
+        // 같은 줄에서 이름 추출 (예: "예금주: 홍길동")
+        final colonIndex = line.indexOf(':');
+        if (colonIndex != -1) {
+          final afterColon = line.substring(colonIndex + 1).trim();
+          final nameMatch = RegExp(r'[가-힣]{2,5}').firstMatch(afterColon);
+          if (nameMatch != null) {
+            return nameMatch.group(0);
+          }
+        }
+        
+        // 다음 줄에서 이름 찾기
+        if (i + 1 < lines.length) {
+          final nextLine = lines[i + 1].trim();
+          final nameMatch = RegExp(r'^[가-힣]{2,5}$').firstMatch(nextLine);
+          if (nameMatch != null) {
+            return nameMatch.group(0);
+          }
+        }
+      }
+    }
+    
+    // 2. 첫 번째 줄이 한글 이름(2-5자)인 경우
+    if (lines.isNotEmpty) {
+      final firstLine = lines[0].trim();
+      if (RegExp(r'^[가-힣]{2,5}$').hasMatch(firstLine)) {
+        return firstLine;
+      }
+    }
+    
+    // 3. 블록 단위로 스캔 - 단독 한글 이름 찾기
+    for (TextBlock block in recognizedText.blocks) {
+      final text = block.text.trim();
+      // 한글 2-5자리 이름만 있는 블록
+      if (RegExp(r'^[가-힣]{2,5}$').hasMatch(text)) {
+        // "님", "은행" 등 제외
+        if (!text.contains('님') && !text.contains('은행') && 
+            !text.contains('과목') && !text.contains('통장')) {
+          return text;
+        }
+      }
+    }
+    
+    // 4. 전체 텍스트에서 첫 번째 한글 이름 패턴 찾기
+    final namePattern = RegExp(r'([가-힣]{2,5})(?:\s|님|$)');
+    final matches = namePattern.allMatches(rawText);
+    for (final match in matches) {
+      final name = match.group(1);
+      if (name != null && 
+          !name.contains('은행') && 
+          !name.contains('통장') &&
+          !name.contains('과목') &&
+          !name.contains('계좌')) {
+        return name;
+      }
+    }
+    
+    return null;
+  }
+  
+  /// ✅ 계좌번호 추출
+  static String? _extractAccountNumber(String rawText) {
+    // 1. "계좌번호" 키워드 근처에서 찾기
+    final lines = rawText.split('\n');
+    for (final line in lines) {
+      if (line.contains('계좌번호') || line.contains('계좌 번호')) {
+        // 숫자와 하이픈으로 된 계좌번호 패턴
+        final accountPattern = RegExp(r'[\d]+[-\s]*[\d]+[-\s]*[\d]+');
+        final match = accountPattern.firstMatch(line);
+        if (match != null) {
+          return match.group(0)?.replaceAll(' ', '');
+        }
+      }
+    }
+    
+    // 2. 일반적인 계좌번호 패턴 (하이픈으로 구분된 숫자들)
+    // 예: 288-910548-10807, 1234-56-789012
+    final patterns = [
+      RegExp(r'(\d{3,4})[-\s](\d{4,6})[-\s](\d{4,6})'),  // 3-4-5 또는 4-6-5
+      RegExp(r'(\d{2,4})[-\s](\d{2,4})[-\s](\d{4,7})'),  // 일반 패턴
+    ];
+    
+    for (final pattern in patterns) {
+      final match = pattern.firstMatch(rawText);
+      if (match != null) {
+        final g1 = match.group(1) ?? '';
+        final g2 = match.group(2) ?? '';
+        final g3 = match.group(3) ?? '';
+        return '$g1-$g2-$g3';
+      }
+    }
+    
+    return null;
+  }
+  
+  /// ✅ 은행명 추출
+  static String? _extractBankName(String rawText) {
+    // 주요 은행 목록
+    final banks = [
+      'KB국민은행', '국민은행',
+      '신한은행',
+      'NH농협은행', '농협은행', '농협',
+      '우리은행',
+      '하나은행',
+      'IBK기업은행', '기업은행',
+      'SC제일은행', '제일은행',
+      '카카오뱅크',
+      '토스뱅크',
+      '케이뱅크', 'K뱅크',
+      '새마을금고',
+      '우체국', '우체국예금',
+      '수협', '수협은행',
+      '대구은행',
+      '부산은행',
+      '경남은행',
+      '광주은행',
+      '전북은행',
+      '제주은행',
+    ];
+    
+    for (final bank in banks) {
+      if (rawText.contains(bank)) {
+        return bank;
+      }
+    }
+    
+    // 일반적인 "XX은행" 패턴
+    final bankPattern = RegExp(r'([가-힣]+은행)');
+    final match = bankPattern.firstMatch(rawText);
+    if (match != null) {
+      return match.group(1);
+    }
+    
+    return null;
   }
   
   /// 🏢 사업자등록증 검증
@@ -192,16 +378,12 @@ class OcrVerificationHelper {
       final rawText = recognizedText.text;
       print('📄 [사업자등록증 OCR] 원본: $rawText');
       
-      // ✅ 사업자번호 추출 (법인등록번호 제외)
       String? extractedNumber = _extractBusinessNumber(rawText);
-      
-      // ✅ 대표자명 추출
       String? extractedName = _extractCeoName(rawText);
       
       print('📄 [사업자등록증 OCR] 추출된 번호: $extractedNumber');
       print('📄 [사업자등록증 OCR] 추출된 대표자: $extractedName');
       
-      // 검증
       bool isValidNumber = false;
       bool isValidName = false;
       
@@ -220,7 +402,6 @@ class OcrVerificationHelper {
         print('📄 [사업자등록증 OCR] 이름 비교: $cleanedExtracted vs $cleanedExpected → $isValidName');
       }
       
-      // 신뢰도 계산
       double confidence = 0.0;
       if (isValidNumber && isValidName) confidence = 1.0;
       else if (isValidNumber || isValidName) confidence = 0.6;
@@ -249,18 +430,16 @@ class OcrVerificationHelper {
       textRecognizer?.close();
     }
   }
+  
   /// ✅ 사업자등록번호 추출 (법인등록번호 제외)
   static String? _extractBusinessNumber(String text) {
-    // 1. "등록번호 : 000-00-00000" 패턴 찾기 (법인등록번호 라인 제외)
     final lines = text.split('\n');
     
     for (final line in lines) {
-      // "법인등록번호" 라인은 건너뛰기
       if (line.contains('법인') && line.contains('등록')) {
         continue;
       }
       
-      // "등록번호" 키워드가 있는 라인에서 추출
       if (line.contains('등록번호') || line.contains('등 록 번 호')) {
         final regExp = RegExp(r'(\d{3})[-\s]?(\d{2})[-\s]?(\d{5})');
         final match = regExp.firstMatch(line);
@@ -273,13 +452,10 @@ class OcrVerificationHelper {
       }
     }
     
-    // 2. 전체 텍스트에서 000-00-00000 패턴 찾기 (10자리만)
     final regExp = RegExp(r'(\d{3})[-\s]?(\d{2})[-\s]?(\d{5})');
     for (final match in regExp.allMatches(text)) {
       final number = '${match.group(1)}${match.group(2)}${match.group(3)}';
-      // 13자리(법인등록번호) 아닌 10자리만
       if (number.length == 10) {
-        // 법인등록번호 패턴(6-7)이 아닌지 확인
         final fullMatch = match.group(0) ?? '';
         if (!fullMatch.contains(RegExp(r'\d{6}[-\s]?\d{7}'))) {
           return number;
@@ -297,16 +473,13 @@ class OcrVerificationHelper {
     for (int i = 0; i < lines.length; i++) {
       final line = lines[i];
       
-      // "대 표 자 : 김광석" 또는 "대표자 : 김광석" 패턴
       if (line.contains('대') && line.contains('표') && line.contains('자')) {
-        // 같은 줄에서 이름 추출
         final regExp = RegExp(r'[:\s]+([가-힣]{2,5})');
         final match = regExp.firstMatch(line);
         if (match != null) {
           return match.group(1)?.trim();
         }
         
-        // 다음 줄에서 이름 추출 ("자 : 김광석" 케이스)
         if (i + 1 < lines.length) {
           final nextLine = lines[i + 1];
           final nextMatch = RegExp(r'[:\s]*([가-힣]{2,5})').firstMatch(nextLine);
@@ -316,7 +489,6 @@ class OcrVerificationHelper {
         }
       }
       
-      // "자 : 김광석" 패턴 (대표가 이전 줄에 있는 경우)
       if (line.trim().startsWith('자') && line.contains(':')) {
         final regExp = RegExp(r'자\s*[:\s]+([가-힣]{2,5})');
         final match = regExp.firstMatch(line);

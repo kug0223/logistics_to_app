@@ -106,7 +106,7 @@ class AuthService {
     }
   }
 
-  // ⭐ 개선된 회원가입 - 주민번호 기반 + 서류 업로드
+  // ⭐ 개선된 회원가입 - 주민번호 기반 + 서류 업로드 + 통장정보
   Future<UserModel?> signUp({
     required String username,
     required String password,
@@ -129,6 +129,9 @@ class AuthService {
     // ✅ 사업자 정보 추가
     String? businessNumber,
     String? businessName,
+    // ✅ 통장 정보 추가
+    String? bankName,
+    String? accountNumber,
   }) async {
     try {
       // ⭐ 시스템 이메일 생성 (Firebase Auth용)
@@ -157,8 +160,8 @@ class AuthService {
           birthDate: birthDate,
           residentNumber: residentNumber,
           // ⭐ 주소 추가!
-          address: address,                    // ⭐ 추가
-          detailAddress: detailAddress,        // ⭐ 추가
+          address: address,
+          detailAddress: detailAddress,
           // ⭐ 서류 이미지
           idCardImageUrl: idCardImageUrl,
           bankbookImageUrl: bankbookImageUrl,
@@ -166,6 +169,10 @@ class AuthService {
           // ✅ 사업자 정보 추가
           businessNumber: businessNumber,
           businessName: businessName,
+          // ✅ 통장 정보 추가
+          bankName: bankName,
+          accountNumber: accountNumber,
+          accountHolder: name,  // 예금주는 본인 이름으로 자동 설정
         );
 
         await _firestore
@@ -181,7 +188,7 @@ class AuthService {
       String message = '회원가입에 실패했습니다.';
       switch (e.code) {
         case 'email-already-in-use':
-          message = '이미 사용 중인 아이디입니다.';  // ⭐ 메시지 변경
+          message = '이미 사용 중인 아이디입니다.';
           break;
         case 'invalid-email':
           message = '유효하지 않은 이메일 형식입니다.';

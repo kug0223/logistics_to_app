@@ -333,9 +333,9 @@ class _DocumentManagementScreenState extends State<DocumentManagementScreen> {
                       ),
                       SizedBox(height: ResponsiveHelper.spacing(context, 4)),
                       Text(
-                        '승인 대기중',
+                        '등록 완료 ✓',
                         style: ResponsiveHelper.smallStyle(context).copyWith(
-                          color: Colors.orange[700],
+                          color: Colors.green[700],
                         ),
                       ),
                     ],

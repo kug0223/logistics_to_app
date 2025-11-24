@@ -85,28 +85,32 @@ class UserProvider with ChangeNotifier {
     }
   }
 
-  // ⭐ 개선된 회원가입 - 주민번호 기반 + 서류 업로드
+  // ⭐ 개선된 회원가입 - 주민번호 기반 + 서류 업로드 + 통장정보
   Future<bool> signUp({
     required String username,
-    required String userEmail,      // ⭐ email → userEmail
+    required String userEmail,
     required String password,
     required String name,
     String? phone,
     required UserRole role,
     String? businessId,
-    // ⭐ 주민번호 기반 필드
+    // 주민번호 기반 필드
     String? gender,
     DateTime? birthDate,
     String? residentNumber,
-    // ⭐ 주소 추가!
-    String? address,           // ⭐ 추가
-    String? detailAddress,     // ⭐ 추가
-    // ⭐ 서류 업로드 필드
-    String? idCardImageUrl,           // 신분증 앞면 (지원자)
-    String? bankbookImageUrl,         // 통장 사본 (지원자)
-    String? businessLicenseImageUrl,  // 사업자등록증 (사업자)
-    String? businessNumber,    // ✅ 추가
-    String? businessName,      // ✅ 추가
+    // 주소 필드
+    String? address,
+    String? detailAddress,
+    // 서류 업로드 필드
+    String? idCardImageUrl,
+    String? bankbookImageUrl,
+    String? businessLicenseImageUrl,
+    // 사업자 정보
+    String? businessNumber,
+    String? businessName,
+    // ✅ 통장 정보 추가
+    String? bankName,
+    String? accountNumber,
   }) async {
     try {
       _isLoading = true;
@@ -115,23 +119,25 @@ class UserProvider with ChangeNotifier {
 
       final user = await _authService.signUp(
         username: username, 
-        userEmail: userEmail,       // ⭐ 변경
+        userEmail: userEmail,
         password: password,
         name: name,
         phone: phone,
         role: role,
         businessId: businessId,
-        // ⭐ 추가 필드 전달
         gender: gender,
         birthDate: birthDate,
         residentNumber: residentNumber,
-        address: address,                    // ⭐ 추가
-        detailAddress: detailAddress,        // ⭐ 추가
+        address: address,
+        detailAddress: detailAddress,
         idCardImageUrl: idCardImageUrl,
         bankbookImageUrl: bankbookImageUrl,
         businessLicenseImageUrl: businessLicenseImageUrl,
-        businessNumber: businessNumber,      // ✅ 추가
-        businessName: businessName,          // ✅ 추가
+        businessNumber: businessNumber,
+        businessName: businessName,
+        // ✅ 통장 정보 전달
+        bankName: bankName,
+        accountNumber: accountNumber,
       );
 
       if (user != null) {
@@ -209,6 +215,7 @@ class UserProvider with ChangeNotifier {
     _error = null;
     notifyListeners();
   }
+  
   Future<void> refreshCurrentUser() async {
     if (_currentUser != null) {
       try {
