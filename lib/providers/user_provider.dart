@@ -105,6 +105,8 @@ class UserProvider with ChangeNotifier {
     String? idCardImageUrl,           // 신분증 앞면 (지원자)
     String? bankbookImageUrl,         // 통장 사본 (지원자)
     String? businessLicenseImageUrl,  // 사업자등록증 (사업자)
+    String? businessNumber,    // ✅ 추가
+    String? businessName,      // ✅ 추가
   }) async {
     try {
       _isLoading = true;
@@ -128,6 +130,8 @@ class UserProvider with ChangeNotifier {
         idCardImageUrl: idCardImageUrl,
         bankbookImageUrl: bankbookImageUrl,
         businessLicenseImageUrl: businessLicenseImageUrl,
+        businessNumber: businessNumber,      // ✅ 추가
+        businessName: businessName,          // ✅ 추가
       );
 
       if (user != null) {

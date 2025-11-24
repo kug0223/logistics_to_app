@@ -192,40 +192,11 @@ class OcrVerificationHelper {
       final rawText = recognizedText.text;
       print('📄 [사업자등록증 OCR] 원본: $rawText');
       
-      // 사업자번호 패턴 찾기
-      final businessNumberPattern = RegExp(r'\d{3}-?\d{2}-?\d{5}');
-      final matches = businessNumberPattern.allMatches(rawText);
+      // ✅ 사업자번호 추출 (법인등록번호 제외)
+      String? extractedNumber = _extractBusinessNumber(rawText);
       
-      String? extractedNumber;
-      if (matches.isNotEmpty) {
-        extractedNumber = matches.first.group(0)?.replaceAll('-', '');
-      }
-      
-      // 대표자명 찾기
-      final List<String> lines = [];
-      for (TextBlock block in recognizedText.blocks) {
-        lines.add(block.text);
-      }
-      
-      String? extractedName;
-      
-      for (int i = 0; i < lines.length; i++) {
-        if (lines[i].contains('대표자') || lines[i].contains('성명')) {
-          final currentLine = _cleanText(lines[i]);
-          final nextLine = i + 1 < lines.length ? _cleanText(lines[i + 1]) : '';
-          
-          extractedName = currentLine
-              .replaceAll('대표자', '')
-              .replaceAll('성명', '')
-              .replaceAll(':', '')
-              .trim();
-          
-          if (extractedName.isEmpty && nextLine.isNotEmpty) {
-            extractedName = nextLine;
-          }
-          break;
-        }
-      }
+      // ✅ 대표자명 추출
+      String? extractedName = _extractCeoName(rawText);
       
       print('📄 [사업자등록증 OCR] 추출된 번호: $extractedNumber');
       print('📄 [사업자등록증 OCR] 추출된 대표자: $extractedName');
@@ -238,6 +209,7 @@ class OcrVerificationHelper {
         final cleanedExtracted = extractedNumber.replaceAll(RegExp(r'\D'), '');
         final cleanedExpected = expectedBusinessNumber.replaceAll(RegExp(r'\D'), '');
         isValidNumber = cleanedExtracted == cleanedExpected;
+        print('📄 [사업자등록증 OCR] 번호 비교: $cleanedExtracted == $cleanedExpected → $isValidNumber');
       }
       
       if (expectedCeoName != null && extractedName != null) {
@@ -245,6 +217,7 @@ class OcrVerificationHelper {
         final cleanedExpected = _cleanText(expectedCeoName);
         isValidName = cleanedExtracted.contains(cleanedExpected) || 
                       cleanedExpected.contains(cleanedExtracted);
+        print('📄 [사업자등록증 OCR] 이름 비교: $cleanedExtracted vs $cleanedExpected → $isValidName');
       }
       
       // 신뢰도 계산
@@ -275,6 +248,85 @@ class OcrVerificationHelper {
     } finally {
       textRecognizer?.close();
     }
+  }
+  /// ✅ 사업자등록번호 추출 (법인등록번호 제외)
+  static String? _extractBusinessNumber(String text) {
+    // 1. "등록번호 : 000-00-00000" 패턴 찾기 (법인등록번호 라인 제외)
+    final lines = text.split('\n');
+    
+    for (final line in lines) {
+      // "법인등록번호" 라인은 건너뛰기
+      if (line.contains('법인') && line.contains('등록')) {
+        continue;
+      }
+      
+      // "등록번호" 키워드가 있는 라인에서 추출
+      if (line.contains('등록번호') || line.contains('등 록 번 호')) {
+        final regExp = RegExp(r'(\d{3})[-\s]?(\d{2})[-\s]?(\d{5})');
+        final match = regExp.firstMatch(line);
+        if (match != null) {
+          final number = '${match.group(1)}${match.group(2)}${match.group(3)}';
+          if (number.length == 10) {
+            return number;
+          }
+        }
+      }
+    }
+    
+    // 2. 전체 텍스트에서 000-00-00000 패턴 찾기 (10자리만)
+    final regExp = RegExp(r'(\d{3})[-\s]?(\d{2})[-\s]?(\d{5})');
+    for (final match in regExp.allMatches(text)) {
+      final number = '${match.group(1)}${match.group(2)}${match.group(3)}';
+      // 13자리(법인등록번호) 아닌 10자리만
+      if (number.length == 10) {
+        // 법인등록번호 패턴(6-7)이 아닌지 확인
+        final fullMatch = match.group(0) ?? '';
+        if (!fullMatch.contains(RegExp(r'\d{6}[-\s]?\d{7}'))) {
+          return number;
+        }
+      }
+    }
+    
+    return null;
+  }
+
+  /// ✅ 대표자명 추출
+  static String? _extractCeoName(String text) {
+    final lines = text.split('\n');
+    
+    for (int i = 0; i < lines.length; i++) {
+      final line = lines[i];
+      
+      // "대 표 자 : 김광석" 또는 "대표자 : 김광석" 패턴
+      if (line.contains('대') && line.contains('표') && line.contains('자')) {
+        // 같은 줄에서 이름 추출
+        final regExp = RegExp(r'[:\s]+([가-힣]{2,5})');
+        final match = regExp.firstMatch(line);
+        if (match != null) {
+          return match.group(1)?.trim();
+        }
+        
+        // 다음 줄에서 이름 추출 ("자 : 김광석" 케이스)
+        if (i + 1 < lines.length) {
+          final nextLine = lines[i + 1];
+          final nextMatch = RegExp(r'[:\s]*([가-힣]{2,5})').firstMatch(nextLine);
+          if (nextMatch != null) {
+            return nextMatch.group(1)?.trim();
+          }
+        }
+      }
+      
+      // "자 : 김광석" 패턴 (대표가 이전 줄에 있는 경우)
+      if (line.trim().startsWith('자') && line.contains(':')) {
+        final regExp = RegExp(r'자\s*[:\s]+([가-힣]{2,5})');
+        final match = regExp.firstMatch(line);
+        if (match != null) {
+          return match.group(1)?.trim();
+        }
+      }
+    }
+    
+    return null;
   }
   
   /// 🧹 텍스트 정제

@@ -79,6 +79,18 @@ class _RegisterScreenState extends State<RegisterScreen> {
   // Step 3: 추가 정보 (선택)
   String? _idCardImagePath;
   String? _bankbookImagePath;
+  // 기존 컨트롤러 선언 아래에 추가
+  final _nameFocus = FocusNode();
+  final _usernameFocus = FocusNode();
+  final _residentNumber1Focus = FocusNode();
+  final _residentNumber2Focus = FocusNode();
+  final _emailFocus = FocusNode();
+  final _emailCodeFocus = FocusNode();
+  final _phoneFocus = FocusNode();
+  final _addressFocus = FocusNode();
+  final _detailAddressFocus = FocusNode();
+  final _passwordFocus = FocusNode();
+  final _confirmPasswordFocus = FocusNode();
 
   @override
   void dispose() {
@@ -95,6 +107,18 @@ class _RegisterScreenState extends State<RegisterScreen> {
     _addressController.dispose();
     _detailAddressController.dispose();
     _accountNumberController.dispose();
+    
+    _nameFocus.dispose();
+    _usernameFocus.dispose();
+    _residentNumber1Focus.dispose();
+    _residentNumber2Focus.dispose();
+    _emailFocus.dispose();
+    _emailCodeFocus.dispose();
+    _phoneFocus.dispose();
+    _addressFocus.dispose();
+    _detailAddressFocus.dispose();
+    _passwordFocus.dispose();
+    _confirmPasswordFocus.dispose();
     super.dispose();
   }
 
@@ -337,6 +361,89 @@ class _RegisterScreenState extends State<RegisterScreen> {
   void _showBusinessRegistrationDialog() {
     final theme = Theme.of(context);
     
+    // 사업자등록증 미등록 시 경고
+    if (_businessLicenseImagePath == null) {
+      showDialog(
+        context: context,
+        barrierDismissible: false,
+        builder: (context) => AlertDialog(
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(20),
+          ),
+          title: Row(
+            children: [
+              Icon(Icons.warning_amber, color: Colors.orange[700]),
+              SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+              Text('사업자등록증 미등록', style: ResponsiveHelper.titleStyle(context)),
+            ],
+          ),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Container(
+                  padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 12)),
+                  decoration: BoxDecoration(
+                    color: Colors.orange[50],
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: Colors.orange[200]!),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        '⚠️ 사업자등록증이 등록되지 않았습니다.',
+                        style: ResponsiveHelper.bodyStyle(context).copyWith(
+                          fontWeight: FontWeight.bold,
+                          color: Colors.orange[900],
+                        ),
+                      ),
+                      SizedBox(height: ResponsiveHelper.spacing(context, 8)),
+                      Text(
+                        '• 사업자등록증 미등록 시 사업장 등록이 불가합니다.\n'
+                        '• 설정 > 내 서류 관리에서 등록할 수 있습니다.',
+                        style: ResponsiveHelper.smallStyle(context).copyWith(
+                          color: Colors.orange[800],
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () {
+                Navigator.pop(context);
+              },
+              child: Text('돌아가기', style: ResponsiveHelper.bodyStyle(context)),
+            ),
+            ElevatedButton(
+              onPressed: () {
+                Navigator.pop(context);
+                _registerUser();
+              },
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.orange[700],
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+              ),
+              child: Text(
+                '나중에 등록',
+                style: ResponsiveHelper.bodyStyle(context).copyWith(
+                  color: Colors.white,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ),
+          ],
+        ),
+      );
+      return;
+    }
+    
+    // 사업자등록증 등록 완료 시 기존 다이얼로그
     showDialog(
       context: context,
       barrierDismissible: false,
@@ -418,6 +525,14 @@ class _RegisterScreenState extends State<RegisterScreen> {
       idCardImageUrl: _idCardImagePath,
       address: _addressController.text.trim(),
       detailAddress: _detailAddressController.text.trim(),
+      // ✅ 사업자 정보 추가 (BUSINESS_ADMIN인 경우)
+      businessNumber: _selectedRole == UserRole.BUSINESS_ADMIN 
+          ? _businessNumberController.text.replaceAll('-', '') 
+          : null,
+      businessName: _selectedRole == UserRole.BUSINESS_ADMIN 
+          ? _businessNameController.text.trim() 
+          : null,
+      
     );
 
     if (success && mounted) {
@@ -487,6 +602,10 @@ class _RegisterScreenState extends State<RegisterScreen> {
       residentNumber: '${_residentNumber1Controller.text}-${_residentNumber2Controller.text}******',
       address: _addressController.text.trim(),
       detailAddress: _detailAddressController.text.trim(),
+      // ✅ 사업자 정보 추가
+      businessNumber: _businessNumberController.text.replaceAll('-', ''),
+      businessName: _businessNameController.text.trim(),
+      // businessLicenseImageUrl은 나중에 Storage 업로드 후 저장
     );
 
     if (success && mounted) {
@@ -816,7 +935,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
     }
   }
 
-  /// Step 1: 기본 정보 (✅ 여백 최적화)
+  /// Step 1: 기본 정보 (✅ 키보드 네비게이션 완성)
   Widget _buildStep1BasicInfo() {
     return Container(
       padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 12)),
@@ -842,6 +961,9 @@ class _RegisterScreenState extends State<RegisterScreen> {
               label: '이름',
               hint: '홍길동',
               icon: Icons.person_outline,
+              focusNode: _nameFocus,
+              textInputAction: TextInputAction.next,
+              onFieldSubmitted: (_) => _usernameFocus.requestFocus(),
               validator: (value) {
                 if (value == null || value.isEmpty) return '이름을 입력해주세요';
                 return null;
@@ -856,6 +978,9 @@ class _RegisterScreenState extends State<RegisterScreen> {
               label: '아이디',
               hint: '영문소문자, 숫자 (4-20자)',
               icon: Icons.account_circle_outlined,
+              focusNode: _usernameFocus,
+              textInputAction: TextInputAction.next,
+              onFieldSubmitted: (_) => _residentNumber1Focus.requestFocus(),
               suffixIcon: _currentUsername.isEmpty
                   ? null
                   : _isCheckingUsername
@@ -919,7 +1044,10 @@ class _RegisterScreenState extends State<RegisterScreen> {
                   flex: 3,
                   child: TextFormField(
                     controller: _residentNumber1Controller,
+                    focusNode: _residentNumber1Focus,
                     keyboardType: TextInputType.number,
+                    textInputAction: TextInputAction.next,
+                    onFieldSubmitted: (_) => _residentNumber2Focus.requestFocus(),
                     inputFormatters: [
                       FilteringTextInputFormatter.digitsOnly,
                       LengthLimitingTextInputFormatter(6),
@@ -958,6 +1086,8 @@ class _RegisterScreenState extends State<RegisterScreen> {
                         });
                       } else {
                         _parseResidentNumber();
+                        // ✅ 6자리 입력 완료 시 자동으로 다음 필드로 이동
+                        _residentNumber2Focus.requestFocus();
                       }
                     },
                   ),
@@ -972,7 +1102,10 @@ class _RegisterScreenState extends State<RegisterScreen> {
                   flex: 2,
                   child: TextFormField(
                     controller: _residentNumber2Controller,
+                    focusNode: _residentNumber2Focus,
                     keyboardType: TextInputType.number,
+                    textInputAction: TextInputAction.next,
+                    onFieldSubmitted: (_) => _emailFocus.requestFocus(),
                     inputFormatters: [
                       FilteringTextInputFormatter.digitsOnly,
                       LengthLimitingTextInputFormatter(1),
@@ -1006,6 +1139,8 @@ class _RegisterScreenState extends State<RegisterScreen> {
                         });
                       } else {
                         _parseResidentNumber();
+                        // ✅ 1자리 입력 완료 시 자동으로 다음 필드로 이동
+                        _emailFocus.requestFocus();
                       }
                     },
                   ),
@@ -1076,6 +1211,9 @@ class _RegisterScreenState extends State<RegisterScreen> {
               hint: 'your@email.com',
               icon: Icons.email_outlined,
               keyboardType: TextInputType.emailAddress,
+              focusNode: _emailFocus,
+              textInputAction: TextInputAction.next,
+              onFieldSubmitted: (_) => _phoneFocus.requestFocus(),
               suffixIcon: _currentEmail.isEmpty
                   ? null
                   : !_isEmailVerified
@@ -1118,6 +1256,9 @@ class _RegisterScreenState extends State<RegisterScreen> {
                 hint: '6자리 숫자',
                 icon: Icons.password,
                 keyboardType: TextInputType.number,
+                focusNode: _emailCodeFocus,
+                textInputAction: TextInputAction.done,
+                onFieldSubmitted: (_) => _verifyEmailCode(),
                 inputFormatters: [
                   FilteringTextInputFormatter.digitsOnly,
                   LengthLimitingTextInputFormatter(6),
@@ -1144,6 +1285,9 @@ class _RegisterScreenState extends State<RegisterScreen> {
               hint: '01012345678',
               icon: Icons.phone_outlined,
               keyboardType: TextInputType.phone,
+              focusNode: _phoneFocus,
+              textInputAction: TextInputAction.next,
+              onFieldSubmitted: (_) => kIsWeb ? _addressFocus.requestFocus() : _detailAddressFocus.requestFocus(),
               inputFormatters: [
                 FilteringTextInputFormatter.digitsOnly,
                 LengthLimitingTextInputFormatter(11),
@@ -1164,6 +1308,9 @@ class _RegisterScreenState extends State<RegisterScreen> {
                 label: '주소',
                 hint: '주소를 직접 입력해주세요 (임시)',
                 icon: Icons.location_on_outlined,
+                focusNode: _addressFocus,
+                textInputAction: TextInputAction.next,
+                onFieldSubmitted: (_) => _detailAddressFocus.requestFocus(),
                 validator: (value) {
                   if (value == null || value.isEmpty) return '주소를 입력해주세요';
                   return null;
@@ -1200,6 +1347,9 @@ class _RegisterScreenState extends State<RegisterScreen> {
               label: '상세 주소',
               hint: '동/호수 등 상세 주소',
               icon: Icons.home_outlined,
+              focusNode: _detailAddressFocus,
+              textInputAction: TextInputAction.next,
+              onFieldSubmitted: (_) => _passwordFocus.requestFocus(),
               validator: (value) => null,
             ),
 
@@ -1212,6 +1362,9 @@ class _RegisterScreenState extends State<RegisterScreen> {
               hint: '영문+숫자+특수문자 8자 이상',
               icon: Icons.lock_outline,
               obscureText: _obscurePassword,
+              focusNode: _passwordFocus,
+              textInputAction: TextInputAction.next,
+              onFieldSubmitted: (_) => _confirmPasswordFocus.requestFocus(),
               suffixIcon: IconButton(
                 icon: Icon(
                   _obscurePassword ? Icons.visibility_off : Icons.visibility,
@@ -1278,6 +1431,9 @@ class _RegisterScreenState extends State<RegisterScreen> {
               hint: '비밀번호를 다시 입력',
               icon: Icons.lock_outline,
               obscureText: _obscureConfirmPassword,
+              focusNode: _confirmPasswordFocus,
+              textInputAction: TextInputAction.done,
+              onFieldSubmitted: (_) => FocusScope.of(context).unfocus(),
               suffixIcon: IconButton(
                 icon: Icon(
                   _obscureConfirmPassword ? Icons.visibility_off : Icons.visibility,
@@ -2122,17 +2278,23 @@ class _RegisterScreenState extends State<RegisterScreen> {
     Widget? suffixIcon,
     String? Function(String?)? validator,
     void Function(String)? onChanged,
+    TextInputAction? textInputAction,           // ✅ 추가
+    void Function(String)? onFieldSubmitted,    // ✅ 추가
+    FocusNode? focusNode,                       // ✅ 추가
   }) {
     final theme = Theme.of(context);
     
     return TextFormField(
       controller: controller,
+      focusNode: focusNode,  
       keyboardType: keyboardType,
       inputFormatters: inputFormatters,
       obscureText: obscureText,
       enabled: enabled,
       readOnly: readOnly,
       onTap: onTap,
+      textInputAction: textInputAction,        // ✅ 추가
+      onFieldSubmitted: onFieldSubmitted,      // ✅ 추가
       style: ResponsiveHelper.bodyStyle(context),
       decoration: InputDecoration(
         labelText: label,

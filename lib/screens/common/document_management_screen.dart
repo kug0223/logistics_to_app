@@ -55,7 +55,10 @@ class _DocumentManagementScreenState extends State<DocumentManagementScreen> {
   Future<void> _loadUserDocuments() async {
     final userProvider = context.read<UserProvider>();
     final user = userProvider.currentUser;
-    
+    // ✅ 디버깅 로그 추가
+    print('📄 [내서류관리] user: $user');
+    print('📄 [내서류관리] businessNumber: ${user?.businessNumber}');
+    print('📄 [내서류관리] businessName: ${user?.businessName}');
     if (user != null) {
       setState(() {
         _selectedBank = user.bankName;
@@ -226,12 +229,16 @@ class _DocumentManagementScreenState extends State<DocumentManagementScreen> {
           
           SizedBox(height: ResponsiveHelper.spacing(context, 16)),
           
-          // 저장 버튼
+          // 저장/수정 버튼
           CommonWidgets.primaryButton(
             context: context,
-            text: '사업자 정보 저장',
-            icon: Icons.save,
-            onPressed: _saveBusinessInfo,
+            text: (user.businessNumber != null && user.businessName != null) 
+                ? '사업자 정보 수정' 
+                : '사업자 정보 저장',
+            icon: (user.businessNumber != null && user.businessName != null) 
+                ? Icons.edit 
+                : Icons.save,
+            onPressed: () => _saveBusinessInfo(),
           ),
         ],
       ),
@@ -286,7 +293,8 @@ class _DocumentManagementScreenState extends State<DocumentManagementScreen> {
   /// 📋 사업자등록증 섹션
   Widget _buildBusinessLicenseSection(UserModel user) {
     final hasLicense = user.businessLicenseImageUrl != null;
-    final hasBusinessInfo = _businessNumberController.text.length == 10 &&
+    final cleanNumber = _businessNumberController.text.replaceAll('-', '');
+    final hasBusinessInfo = cleanNumber.length == 10 &&
         _businessNameController.text.trim().isNotEmpty;
     
     return Container(
@@ -522,6 +530,7 @@ class _DocumentManagementScreenState extends State<DocumentManagementScreen> {
     
     final userProvider = context.read<UserProvider>();
     final user = userProvider.currentUser;
+    
     
     if (user == null) return;
     

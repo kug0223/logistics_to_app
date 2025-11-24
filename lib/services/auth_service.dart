@@ -126,6 +126,9 @@ class AuthService {
     String? idCardImageUrl,           // 신분증 앞면 (지원자)
     String? bankbookImageUrl,         // 통장 사본 (지원자)
     String? businessLicenseImageUrl,  // 사업자등록증 (사업자)
+    // ✅ 사업자 정보 추가
+    String? businessNumber,
+    String? businessName,
   }) async {
     try {
       // ⭐ 시스템 이메일 생성 (Firebase Auth용)
@@ -158,8 +161,11 @@ class AuthService {
           detailAddress: detailAddress,        // ⭐ 추가
           // ⭐ 서류 이미지
           idCardImageUrl: idCardImageUrl,
-          // TODO: bankbookImageUrl, businessLicenseImageUrl는 
-          // UserModel에 필드 추가 후 사용
+          bankbookImageUrl: bankbookImageUrl,
+          businessLicenseImageUrl: businessLicenseImageUrl,
+          // ✅ 사업자 정보 추가
+          businessNumber: businessNumber,
+          businessName: businessName,
         );
 
         await _firestore
