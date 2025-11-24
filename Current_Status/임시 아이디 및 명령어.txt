@@ -17,7 +17,7 @@ subadmin123!@#
 ALfit
 
 git add .
-git commit -m "디자인리팩토링 251120-3"
+git commit -m "설정메뉴 추가 251124-1"
 git push
 
 flutter clean
@@ -42,7 +42,6 @@ lib의 모든 하위 폴더와 파일구조
 디자인 요구사항:
 1. ResponsiveHelper 필수 사용 (하드코딩 금지)
 2. Theme.of(context) 색상 사용 (역할별 테마)
-3. 그라데이션 배경
 4. 둥근 모서리 카드 (24px)
 5. 부드러운 그림자
 6. 큰 아이콘 + 명확한 버튼

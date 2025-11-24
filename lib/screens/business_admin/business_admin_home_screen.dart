@@ -194,24 +194,7 @@ class BusinessAdminHomeScreen extends StatelessWidget {
                           crossAxisSpacing: ResponsiveHelper.spacing(context, 16),
                           mainAxisSpacing: ResponsiveHelper.spacing(context, 16),
                           children: [
-                            // 1. 사업장 관리
-                            _buildMenuCard(
-                              context,
-                              icon: Icons.business_rounded,
-                              title: '사업장 관리',
-                              subtitle: '내 사업장 목록',
-                              color: theme.primaryColor,
-                              onTap: () {
-                                Navigator.push(
-                                  context,
-                                  MaterialPageRoute(
-                                    builder: (context) => BusinessListScreen(),
-                                  ),
-                                );
-                              },
-                            ),
-
-                            // 2. TO 생성
+                            // 1. TO 생성
                             _buildMenuCard(
                               context,
                               icon: Icons.add_circle_outline,
@@ -232,7 +215,7 @@ class BusinessAdminHomeScreen extends StatelessWidget {
                               },
                             ),
 
-                            // 3. 인력 관리 (통합)
+                            // 2. 인력 관리 (통합)
                             _buildMenuCard(
                               context,
                               icon: Icons.groups,
@@ -249,7 +232,7 @@ class BusinessAdminHomeScreen extends StatelessWidget {
                               },
                             ),
 
-                            // 4. 통계
+                            // 3. 통계
                             _buildMenuCard(
                               context,
                               icon: Icons.bar_chart_outlined,
@@ -263,7 +246,7 @@ class BusinessAdminHomeScreen extends StatelessWidget {
                               },
                             ),
 
-                            // 5. 설정
+                            // 4. 설정
                             _buildMenuCard(
                               context,
                               icon: Icons.settings_outlined,

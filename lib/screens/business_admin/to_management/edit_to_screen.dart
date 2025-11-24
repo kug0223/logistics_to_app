@@ -182,6 +182,7 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
         workType: result.workType!,
         workTypeIcon: result.workTypeIcon,
         workTypeColor: result.workTypeColor,
+        workTypeBackgroundColor: result.workTypeBackgroundColor,
         wage: result.wage!,
         requiredCount: result.requiredCount!,
         currentCount: 0,

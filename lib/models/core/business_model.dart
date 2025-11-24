@@ -23,6 +23,40 @@ class BusinessModel {
   // ⭐ 출퇴근 설정 추가
   final String attendanceType;   // "gps" | "beacon" | "manual"
   final int gpsRadius;            // GPS 반경 (미터)
+  
+  // ═══════════════════════════════════════════════════════════
+  // 📸 이미지
+  // ═══════════════════════════════════════════════════════════
+  final String? mainImageUrl;          // 대표 이미지
+  final List<String>? imageUrls;       // 사업장 사진들 (최대 5장)
+  
+  // ═══════════════════════════════════════════════════════════
+  // 💬 소개
+  // ═══════════════════════════════════════════════════════════
+  final String? oneLineIntro;          // 한 줄 소개
+  final String? detailedDescription;   // 상세 소개
+  
+  // ═══════════════════════════════════════════════════════════
+  // 🚗 시설 및 환경
+  // ═══════════════════════════════════════════════════════════
+  final bool parkingAvailable;         // 주차 가능 여부
+  final String? mealProvided;          // 식사 제공 (조식/중식/석식/간식/없음)
+  final String? uniformProvided;       // 복장 (유니폼제공/자유복/정장/없음)
+  final List<String>? facilities;      // 편의시설 [휴게실, 사물함, 탈의실, 샤워실]
+  
+  // ═══════════════════════════════════════════════════════════
+  // 🗺️ 교통편
+  // ═══════════════════════════════════════════════════════════
+  final String? nearestStation;        // 가까운 역 (예: 강남역 3번 출구)
+  final int? walkingMinutes;           // 역에서 도보 시간 (분)
+  final String? busInfo;               // 버스 정보 (예: 146, 740)
+  
+  // ═══════════════════════════════════════════════════════════
+  // 📝 기타
+  // ═══════════════════════════════════════════════════════════
+  final String? precautions;           // 준비사항/주의사항
+  final double? rating;                // 평점
+  final int? reviewCount;              // 리뷰 수
 
   BusinessModel({
     required this.id,
@@ -43,6 +77,25 @@ class BusinessModel {
     this.updatedAt,
     this.attendanceType = 'gps',
     this.gpsRadius = 100,  // ⭐ 기본값 100m
+    // 이미지
+    this.mainImageUrl,
+    this.imageUrls,
+    // 소개
+    this.oneLineIntro,
+    this.detailedDescription,
+    // 시설 및 환경
+    this.parkingAvailable = false,
+    this.mealProvided,
+    this.uniformProvided,
+    this.facilities,
+    // 교통편
+    this.nearestStation,
+    this.walkingMinutes,
+    this.busInfo,
+    // 기타
+    this.precautions,
+    this.rating,
+    this.reviewCount,
   });
 
   // Firestore에서 데이터 가져올 때
@@ -68,6 +121,29 @@ class BusinessModel {
           : null,
       attendanceType: map['attendanceType'] ?? 'gps',
       gpsRadius: map['gpsRadius'] ?? 100,
+      // 이미지
+      mainImageUrl: map['mainImageUrl'],
+      imageUrls: map['imageUrls'] != null 
+          ? List<String>.from(map['imageUrls']) 
+          : null,
+      // 소개
+      oneLineIntro: map['oneLineIntro'],
+      detailedDescription: map['detailedDescription'],
+      // 시설 및 환경
+      parkingAvailable: map['parkingAvailable'] ?? false,
+      mealProvided: map['mealProvided'],
+      uniformProvided: map['uniformProvided'],
+      facilities: map['facilities'] != null 
+          ? List<String>.from(map['facilities']) 
+          : null,
+      // 교통편
+      nearestStation: map['nearestStation'],
+      walkingMinutes: map['walkingMinutes'],
+      busInfo: map['busInfo'],
+      // 기타
+      precautions: map['precautions'],
+      rating: map['rating']?.toDouble(),
+      reviewCount: map['reviewCount'],
     );
   }
   /// ⭐ Firestore DocumentSnapshot에서 변환 (추가!)
@@ -96,6 +172,25 @@ class BusinessModel {
       'updatedAt': updatedAt != null ? Timestamp.fromDate(updatedAt!) : null,
       'attendanceType': attendanceType,
       'gpsRadius': gpsRadius,
+      // 이미지
+      'mainImageUrl': mainImageUrl,
+      'imageUrls': imageUrls,
+      // 소개
+      'oneLineIntro': oneLineIntro,
+      'detailedDescription': detailedDescription,
+      // 시설 및 환경
+      'parkingAvailable': parkingAvailable,
+      'mealProvided': mealProvided,
+      'uniformProvided': uniformProvided,
+      'facilities': facilities,
+      // 교통편
+      'nearestStation': nearestStation,
+      'walkingMinutes': walkingMinutes,
+      'busInfo': busInfo,
+      // 기타
+      'precautions': precautions,
+      'rating': rating,
+      'reviewCount': reviewCount,
     };
   }
 
@@ -139,6 +234,21 @@ class BusinessModel {
     bool? isApproved,
     DateTime? createdAt,
     DateTime? updatedAt,
+    // 새 파라미터 추가
+    String? mainImageUrl,
+    List<String>? imageUrls,
+    String? oneLineIntro,
+    String? detailedDescription,
+    bool? parkingAvailable,
+    String? mealProvided,
+    String? uniformProvided,
+    List<String>? facilities,
+    String? nearestStation,
+    int? walkingMinutes,
+    String? busInfo,
+    String? precautions,
+    double? rating,
+    int? reviewCount,
   }) {
     return BusinessModel(
       id: id ?? this.id,
@@ -157,6 +267,21 @@ class BusinessModel {
       isApproved: isApproved ?? this.isApproved,
       createdAt: createdAt ?? this.createdAt,
       updatedAt: updatedAt ?? this.updatedAt,
+      // 새 필드 추가
+      mainImageUrl: mainImageUrl ?? this.mainImageUrl,
+      imageUrls: imageUrls ?? this.imageUrls,
+      oneLineIntro: oneLineIntro ?? this.oneLineIntro,
+      detailedDescription: detailedDescription ?? this.detailedDescription,
+      parkingAvailable: parkingAvailable ?? this.parkingAvailable,
+      mealProvided: mealProvided ?? this.mealProvided,
+      uniformProvided: uniformProvided ?? this.uniformProvided,
+      facilities: facilities ?? this.facilities,
+      nearestStation: nearestStation ?? this.nearestStation,
+      walkingMinutes: walkingMinutes ?? this.walkingMinutes,
+      busInfo: busInfo ?? this.busInfo,
+      precautions: precautions ?? this.precautions,
+      rating: rating ?? this.rating,
+      reviewCount: reviewCount ?? this.reviewCount,
     );
   }
 

@@ -10,9 +10,14 @@ import '../../providers/user_provider.dart';
 // Utils
 import '../../utils/responsive_helper.dart';
 
+// Widgets
+import '../../widgets/common/common_widgets.dart';
+
 // Screens
 import '../business_admin/work_type_management_screen.dart';
 import 'document_management_screen.dart';
+import 'profile_edit_screen.dart';
+import '../business_admin/business_list_screen.dart';
 
 /// ✨ 통합 설정 화면 (역할별 메뉴 자동 표시)
 class SettingsScreen extends StatelessWidget {
@@ -47,9 +52,11 @@ class SettingsScreen extends StatelessWidget {
             title: '프로필 수정',
             subtitle: '이름, 연락처 등 기본 정보 수정',
             onTap: () {
-              // TODO: 프로필 수정 화면
-              ScaffoldMessenger.of(context).showSnackBar(
-                SnackBar(content: Text('프로필 수정 화면 (구현 예정)')),
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (context) => const ProfileEditScreen(),
+                ),
               );
             },
           ),
@@ -80,6 +87,42 @@ class SettingsScreen extends StatelessWidget {
           if (user?.role == UserRole.BUSINESS_ADMIN) ...[
             _buildSectionHeader(context, '사업장 설정', Icons.business),
             SizedBox(height: ResponsiveHelper.spacing(context, 12)),
+            // ✅ 추가: 내 서류 관리 (사업자등록증)
+            _buildMenuCard(
+              context,
+              icon: Icons.description,
+              iconColor: Colors.teal,
+              title: '내 서류 관리',
+              subtitle: '사업자등록증 관리',
+              onTap: () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (context) => const DocumentManagementScreen(),
+                  ),
+                );
+              },
+            ),
+            SizedBox(height: ResponsiveHelper.spacing(context, 12)),
+            
+            // 메뉴 onTap 수정
+            _buildMenuCard(
+              context,
+              icon: Icons.business,
+              iconColor: Colors.purple,
+              title: '사업장 정보',
+              subtitle: '내 사업장 관리',
+              onTap: () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (context) => const BusinessListScreen(),
+                  ),
+                );
+              },
+            ),
+            
+            SizedBox(height: ResponsiveHelper.spacing(context, 12)),
             
             _buildMenuCard(
               context,
@@ -93,22 +136,6 @@ class SettingsScreen extends StatelessWidget {
                   MaterialPageRoute(
                     builder: (context) => const WorkTypeManagementScreen(),
                   ),
-                );
-              },
-            ),
-            
-            SizedBox(height: ResponsiveHelper.spacing(context, 12)),
-            
-            _buildMenuCard(
-              context,
-              icon: Icons.store,
-              iconColor: Colors.purple,
-              title: '사업장 정보',
-              subtitle: '사업장 정보 확인 및 수정',
-              onTap: () {
-                // TODO: 사업장 정보 화면
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(content: Text('사업장 정보 화면 (구현 예정)')),
                 );
               },
             ),
@@ -204,33 +231,8 @@ class SettingsScreen extends StatelessWidget {
     final theme = Theme.of(context);
     final user = userProvider.currentUser;
     
-    // 역할별 색상
-    Color getRoleColor() {
-      switch (user?.role) {
-        case UserRole.SUPER_ADMIN:
-          return Colors.red;
-        case UserRole.BUSINESS_ADMIN:
-          return Colors.blue;
-        case UserRole.USER:
-        default:
-          return Colors.green;
-      }
-    }
-    
-    // 역할별 이름
-    String getRoleName() {
-      switch (user?.role) {
-        case UserRole.SUPER_ADMIN:
-          return '슈퍼 관리자';
-        case UserRole.BUSINESS_ADMIN:
-          return '사업장 관리자';
-        case UserRole.USER:
-        default:
-          return '지원자';
-      }
-    }
-    
-    final roleColor = getRoleColor();
+    // ⭐ Theme에서 자동으로 역할별 색상 가져옴
+    final roleColor = theme.primaryColor;
     
     return Container(
       padding: ResponsiveHelper.cardPadding(context),
@@ -277,56 +279,30 @@ class SettingsScreen extends StatelessWidget {
               fontWeight: FontWeight.bold,
             ),
           ),
-          SizedBox(height: ResponsiveHelper.spacing(context, 8)),
+          SizedBox(height: ResponsiveHelper.spacing(context, 4)),
           
-          // 이메일/아이디
+          // 아이디
+          Text(
+            '@${user?.username ?? 'username'}',
+            style: ResponsiveHelper.bodyStyle(context).copyWith(
+              color: Colors.white.withOpacity(0.9),
+            ),
+          ),
+          SizedBox(height: ResponsiveHelper.spacing(context, 12)),
+          
+          // 역할 뱃지
           Container(
             padding: EdgeInsets.symmetric(
               horizontal: ResponsiveHelper.spacing(context, 16),
-              vertical: ResponsiveHelper.spacing(context, 8),
+              vertical: ResponsiveHelper.spacing(context, 6),
             ),
             decoration: BoxDecoration(
               color: Colors.white.withOpacity(0.2),
               borderRadius: BorderRadius.circular(20),
-            ),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Icon(
-                  Icons.account_circle,
-                  size: ResponsiveHelper.iconSize(context, 16),
-                  color: Colors.white,
-                ),
-                SizedBox(width: ResponsiveHelper.spacing(context, 8)),
-                Flexible(
-                  child: Text(
-                    user?.username ?? user?.email ?? '',
-                    style: ResponsiveHelper.bodyStyle(context).copyWith(
-                      color: Colors.white,
-                    ),
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                ),
-              ],
-            ),
-          ),
-          SizedBox(height: ResponsiveHelper.spacing(context, 8)),
-          
-          // 권한 배지
-          Container(
-            padding: EdgeInsets.symmetric(
-              horizontal: ResponsiveHelper.spacing(context, 16),
-              vertical: ResponsiveHelper.spacing(context, 8),
-            ),
-            decoration: BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.circular(20),
-              boxShadow: [
-                BoxShadow(
-                  color: Colors.white.withOpacity(0.3),
-                  blurRadius: 8,
-                ),
-              ],
+              border: Border.all(
+                color: Colors.white.withOpacity(0.3),
+                width: 1,
+              ),
             ),
             child: Row(
               mainAxisSize: MainAxisSize.min,
@@ -338,13 +314,14 @@ class SettingsScreen extends StatelessWidget {
                           ? Icons.admin_panel_settings
                           : Icons.person,
                   size: ResponsiveHelper.iconSize(context, 16),
-                  color: roleColor,
+                  color: Colors.white,
                 ),
                 SizedBox(width: ResponsiveHelper.spacing(context, 8)),
                 Text(
-                  getRoleName(),
+                  // ⭐ CommonWidgets.getRoleName() 사용
+                  CommonWidgets.getRoleName(user?.roleString ?? 'USER'),
                   style: ResponsiveHelper.bodyStyle(context).copyWith(
-                    color: roleColor,
+                    color: Colors.white,
                     fontWeight: FontWeight.bold,
                   ),
                 ),

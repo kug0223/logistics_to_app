@@ -60,6 +60,9 @@ class UserModel {
   final DateTime? availableFrom;        // 근무 가능 시작일
   final bool isBlacklisted;             // 블랙리스트 여부
   final String? blacklistReason;        // 블랙리스트 사유
+  final String? businessNumber;         // ✅ 추가: 사업자등록번호 (관리자용)
+  final String? businessName;           // ✅ 추가: 상호명 (관리자용)
+  final String? businessLicenseImageUrl; // ✅ 추가: 사업자등록증 이미지
 
   UserModel({
     required this.uid,
@@ -100,6 +103,9 @@ class UserModel {
     this.availableFrom,
     this.isBlacklisted = false,
     this.blacklistReason,
+    this.businessNumber,              // ✅ 추가
+    this.businessName,     
+    this.businessLicenseImageUrl,     // ✅ 추가
   });
 
   // ━━━ 편의 메서드 ━━━
@@ -210,6 +216,9 @@ class UserModel {
       availableFrom: map['availableFrom']?.toDate(),
       isBlacklisted: map['isBlacklisted'] ?? false,
       blacklistReason: map['blacklistReason'],
+      businessNumber: map['businessNumber'],              // ✅ 추가
+      businessName: map['businessName'],         
+      businessLicenseImageUrl: map['businessLicenseImageUrl'], // ✅ 추가
     );
   }
 
@@ -257,6 +266,9 @@ class UserModel {
           : null,
       'isBlacklisted': isBlacklisted,
       'blacklistReason': blacklistReason,
+      'businessNumber': businessNumber,              // ✅ 추가
+      'businessName': businessName,             
+      'businessLicenseImageUrl': businessLicenseImageUrl, // ✅ 추가
     };
   }
 
@@ -327,6 +339,9 @@ class UserModel {
     DateTime? availableFrom,
     bool? isBlacklisted,
     String? blacklistReason,
+    String? businessNumber,              // ✅ 추가
+    String? businessName,      
+    String? businessLicenseImageUrl,     // ✅ 추가
   }) {
     return UserModel(
       uid: uid ?? this.uid,
@@ -366,6 +381,9 @@ class UserModel {
       availableFrom: availableFrom ?? this.availableFrom,
       isBlacklisted: isBlacklisted ?? this.isBlacklisted,
       blacklistReason: blacklistReason ?? this.blacklistReason,
+      businessNumber: businessNumber ?? this.businessNumber,              // ✅ 추가
+      businessName: businessName ?? this.businessName,      
+      businessLicenseImageUrl: businessLicenseImageUrl ?? this.businessLicenseImageUrl, // ✅ 추가
     );
   }
 }

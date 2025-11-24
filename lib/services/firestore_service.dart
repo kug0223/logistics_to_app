@@ -2218,7 +2218,9 @@ class FirestoreService {
         'workType': workDetail.workType,
         'workTypeIcon': workDetail.workTypeIcon,
         'workTypeColor': workDetail.workTypeColor,
+        'workTypeBackgroundColor': workDetail.workTypeBackgroundColor,
         'wage': workDetail.wage,
+        'wageType': workDetail.wageType,
         'requiredCount': workDetail.requiredCount,
         'currentCount': 0,
         'pendingCount': 0,
@@ -4371,4 +4373,5 @@ class FirestoreService {
       rethrow;
     }
   }
+  
 }
