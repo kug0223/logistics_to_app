@@ -332,11 +332,11 @@ class _BusinessListScreenState extends State<BusinessListScreen> {
         
         // 식사
         Text(
-          business.mealProvided != null && business.mealProvided != '없음' 
+          business.mealsProvided != null && business.mealsProvided!.isNotEmpty
               ? '식사O' 
               : '식사X',
           style: ResponsiveHelper.smallStyle(context).copyWith(
-            color: business.mealProvided != null && business.mealProvided != '없음'
+            color: business.mealsProvided != null && business.mealsProvided!.isNotEmpty
                 ? Colors.green[700] 
                 : Colors.grey[500],
           ),

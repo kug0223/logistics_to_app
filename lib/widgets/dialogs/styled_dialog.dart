@@ -340,6 +340,9 @@ class StyledDialogTextField extends StatelessWidget {
   final TextInputType? keyboardType;
   final void Function(String)? onChanged;
   final int? maxLength;
+  final FocusNode? focusNode;  // ⭐ 추가
+  final void Function(String)? onFieldSubmitted;  // ⭐ 추가
+  final bool enabled;  // ⭐ 추가
 
   const StyledDialogTextField({
     super.key,
@@ -352,6 +355,9 @@ class StyledDialogTextField extends StatelessWidget {
     this.keyboardType,
     this.onChanged,
     this.maxLength,
+    this.focusNode,  // ⭐ 추가
+    this.onFieldSubmitted,  // ⭐ 추가
+    this.enabled = true,  // ⭐ 추가
   });
 
   @override
@@ -370,6 +376,9 @@ class StyledDialogTextField extends StatelessWidget {
         SizedBox(height: ResponsiveHelper.spacing(context, 8)),
         TextField(
           controller: controller,
+          focusNode: focusNode,  // ⭐ 추가
+          enabled: enabled,  // ⭐ 추가
+          onSubmitted: onFieldSubmitted,  // ⭐ 추가
           obscureText: obscureText,
           keyboardType: keyboardType,
           onChanged: onChanged,

@@ -2504,7 +2504,7 @@ class FirestoreService {
       final snapshot = await _firestore
           .collection('businesses')
           .where('ownerId', isEqualTo: ownerId)
-          .where('isApproved', isEqualTo: true)
+          // ⭐ isApproved 필터 제거 (승인 대기 중인 것도 표시)
           .orderBy('createdAt', descending: true)
           .get();
 

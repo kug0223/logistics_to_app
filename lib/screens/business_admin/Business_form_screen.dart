@@ -79,7 +79,7 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
   final _oneLineIntroController = TextEditingController();
   final _detailedDescriptionController = TextEditingController();
   bool _parkingAvailable = false;
-  String? _mealProvided = '없음';
+  List<String> _selectedMeals = [];
   String? _uniformProvided = '없음';
   List<String> _selectedFacilities = [];
 
@@ -96,7 +96,7 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
   final _precautionsController = TextEditingController();
 
   // 선택 옵션
-  final List<String> _mealOptions = ['없음', '조식', '중식', '석식', '간식'];
+  final List<String> _mealOptions = ['조식', '중식', '석식', '야식', '간식'];
   final List<String> _uniformOptions = ['없음', '유니폼 제공', '자유복', '정장'];
   final List<String> _facilityOptions = ['휴게실', '사물함', '탈의실', '샤워실', '흡연실'];
 
@@ -151,7 +151,7 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
     _additionalImageUrls = business.imageUrls ?? [];
 
     _parkingAvailable = business.parkingAvailable;
-    _mealProvided = business.mealProvided ?? '없음';
+    _selectedMeals = business.mealsProvided ?? [];
     _uniformProvided = business.uniformProvided ?? '없음';
     _selectedFacilities = business.facilities ?? [];
   }
@@ -801,13 +801,45 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
           Divider(height: ResponsiveHelper.spacing(context, 16)),
 
           // 식사 제공
-          _buildDropdownRow(
-            context: context,
-            label: '식사 제공',
-            icon: Icons.restaurant,
-            value: _mealProvided,
-            items: _mealOptions,
-            onChanged: (value) => setState(() => _mealProvided = value),
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Icon(Icons.restaurant, color: Theme.of(context).primaryColor),
+                  SizedBox(width: ResponsiveHelper.spacing(context, 12)),
+                  Text(
+                    '식사 제공',
+                    style: ResponsiveHelper.bodyStyle(context).copyWith(
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ],
+              ),
+              SizedBox(height: ResponsiveHelper.spacing(context, 12)),
+              Wrap(
+                spacing: ResponsiveHelper.spacing(context, 8),
+                runSpacing: ResponsiveHelper.spacing(context, 8),
+                children: _mealOptions.map((meal) {
+                  final isSelected = _selectedMeals.contains(meal);
+                  return FilterChip(
+                    label: Text(meal),
+                    selected: isSelected,
+                    onSelected: (selected) {
+                      setState(() {
+                        if (selected) {
+                          _selectedMeals.add(meal);
+                        } else {
+                          _selectedMeals.remove(meal);
+                        }
+                      });
+                    },
+                    selectedColor: Theme.of(context).primaryColor.withOpacity(0.2),
+                    checkmarkColor: Theme.of(context).primaryColor,
+                  );
+                }).toList(),
+              ),
+            ],
           ),
 
           Divider(height: ResponsiveHelper.spacing(context, 16)),
@@ -1256,10 +1288,6 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
     try {
       final ownerId = user.uid;
 
-      if (ownerId == null) {
-        throw Exception('로그인이 필요합니다');
-      }
-
       // 위도/경도 기본값
       _latitude ??= 37.5665;
       _longitude ??= 126.9780;
@@ -1301,7 +1329,7 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
         'oneLineIntro': _oneLineIntroController.text.trim().isEmpty ? null : _oneLineIntroController.text.trim(),
         'detailedDescription': _detailedDescriptionController.text.trim().isEmpty ? null : _detailedDescriptionController.text.trim(),
         'parkingAvailable': _parkingAvailable,
-        'mealProvided': _mealProvided,
+        'mealsProvided': _selectedMeals.isEmpty ? null : _selectedMeals,
         'uniformProvided': _uniformProvided,
         'facilities': _selectedFacilities,
         'nearestStation': _nearestStationController.text.trim().isEmpty ? null : _nearestStationController.text.trim(),

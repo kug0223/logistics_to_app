@@ -362,14 +362,14 @@ class _BusinessDetailScreenState extends State<BusinessDetailScreen> {
               ),
 
               // 식사
-              if (widget.business.mealProvided != null) ...[
+              if (widget.business.mealsProvided != null && widget.business.mealsProvided!.isNotEmpty) ...[
                 SizedBox(height: ResponsiveHelper.spacing(context, 12)),
                 _buildFacilityItem(
                   context,
                   Icons.restaurant,
                   '식사 제공',
-                  widget.business.mealProvided!,
-                  widget.business.mealProvided != '없음',
+                  widget.business.mealsProvided!.join(', '),  // ⭐ List를 문자열로 조합
+                  true,  // ⭐ 항목이 있으면 무조건 true
                 ),
               ],
 

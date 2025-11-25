@@ -379,4 +379,30 @@ class AuthService {
       return true; // 에러 시 중복으로 간주
     }
   }
+  // 🔍 아이디 찾기 (이름 + 전화번호)
+  Future<String?> findUsername({
+    required String name,
+    required String phone,
+  }) async {
+    try {
+      final snapshot = await _firestore
+          .collection('users')
+          .where('name', isEqualTo: name)
+          .where('phone', isEqualTo: phone)
+          .limit(1)
+          .get();
+
+      if (snapshot.docs.isEmpty) {
+        ToastHelper.showError('일치하는 사용자를 찾을 수 없습니다.');
+        return null;
+      }
+
+      final userData = snapshot.docs.first.data();
+      return userData['username'] as String?;
+    } catch (e) {
+      print('❌ 아이디 찾기 실패: $e');
+      ToastHelper.showError('아이디 찾기 중 오류가 발생했습니다.');
+      return null;
+    }
+  }
 }

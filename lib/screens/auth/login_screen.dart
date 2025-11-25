@@ -66,48 +66,46 @@ class _LoginScreenState extends State<LoginScreen> {
   Future<void> _showFindUsernameDialog() async {
     final nameController = TextEditingController();
     final phoneController = TextEditingController();
+    
+    // ⭐ FocusNode 선언
+    final nameFocus = FocusNode();
+    final phoneFocus = FocusNode();
 
-    final result = await showDialog<String?>(
+    await showDialog(
       context: context,
-      builder: (context) => StatefulBuilder(
-        builder: (context, setState) => StyledDialog(
-          title: '아이디 찾기',
-          subtitle: '가입 시 입력한 정보를 입력해주세요',
-          icon: Icons.person_search,
-          headerColor: Theme.of(context).primaryColor,
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              // 이름 입력
-              StyledDialogTextField(
-                controller: nameController,
-                labelText: '이름',
-                hintText: '홍길동',
-                prefixIcon: Icons.person,
-              ),
-
-              SizedBox(height: ResponsiveHelper.spacing(context, 16)),
-
-              // 전화번호 입력
-              StyledDialogTextField(
-                controller: phoneController,
-                labelText: '전화번호',
-                hintText: '01012345678',
-                prefixIcon: Icons.phone,
-                keyboardType: TextInputType.phone,
-                maxLength: 11,
-              ),
-            ],
-          ),
-          actions: [
-            StyledDialogButton.cancel(
-              onPressed: () => Navigator.pop(context),
+      builder: (context) => StyledDialog(
+        title: '아이디 찾기',
+        subtitle: '가입 시 입력한 정보를 입력해주세요',
+        icon: Icons.person_search,
+        headerColor: Theme.of(context).primaryColor,
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            // 이름 입력
+            StyledDialogTextField(
+              controller: nameController,
+              focusNode: nameFocus,  // ⭐ 추가
+              labelText: '이름',
+              hintText: '홍길동',
+              prefixIcon: Icons.person,
+              onFieldSubmitted: (_) => phoneFocus.requestFocus(),  // ⭐ 엔터 시 다음 필드로
             ),
-            StyledDialogButton.primary(
-              text: '찾기',
-              onPressed: () async {
+
+            SizedBox(height: ResponsiveHelper.spacing(context, 16)),
+
+            // 전화번호 입력
+            StyledDialogTextField(
+              controller: phoneController,
+              focusNode: phoneFocus,  // ⭐ 추가
+              labelText: '전화번호',
+              hintText: '01012345678',
+              prefixIcon: Icons.phone,
+              keyboardType: TextInputType.phone,
+              maxLength: 11,
+              onFieldSubmitted: (_) async {  // ⭐ 엔터 시 찾기 버튼 로직 실행
                 if (nameController.text.isEmpty) {
                   ToastHelper.showWarning('이름을 입력해주세요');
+                  nameFocus.requestFocus();
                   return;
                 }
                 if (phoneController.text.isEmpty) {
@@ -121,86 +119,177 @@ class _LoginScreenState extends State<LoginScreen> {
                   phone: phoneController.text,
                 );
 
-                if (username != null) {
+                if (username != null && context.mounted) {
                   final maskedUsername = username.length > 4
                       ? '${username.substring(0, 4)}${'*' * (username.length - 4)}'
                       : username;
-                  Navigator.pop(context, maskedUsername);
+                  
+                  await showDialog(
+                    context: context,
+                    builder: (resultContext) => StyledDialog(
+                      title: '아이디 찾기 완료',
+                      subtitle: null,
+                      icon: Icons.check_circle,
+                      headerColor: Colors.green[600],
+                      content: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Container(
+                            padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 20)),
+                            decoration: BoxDecoration(
+                              color: Colors.grey[100],
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                            child: Column(
+                              children: [
+                                Text(
+                                  '회원님의 아이디는',
+                                  style: ResponsiveHelper.bodyStyle(context),
+                                ),
+                                SizedBox(height: ResponsiveHelper.spacing(context, 8)),
+                                Text(
+                                  maskedUsername,
+                                  style: ResponsiveHelper.titleStyle(context).copyWith(
+                                    fontWeight: FontWeight.bold,
+                                    color: Theme.of(context).primaryColor,
+                                  ),
+                                ),
+                                SizedBox(height: ResponsiveHelper.spacing(context, 4)),
+                                Text(
+                                  '입니다',
+                                  style: ResponsiveHelper.bodyStyle(context),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ),
+                      actions: [
+                        StyledDialogButton.primary(
+                          text: '확인',
+                          onPressed: () {
+                            Navigator.pop(resultContext);
+                            Navigator.pop(context);
+                          },
+                        ),
+                      ],
+                    ),
+                  );
                 }
               },
             ),
           ],
         ),
+        actions: [
+          StyledDialogButton.cancel(
+            onPressed: () => Navigator.pop(context),
+          ),
+          StyledDialogButton.primary(
+            text: '찾기',
+            onPressed: () async {
+              if (nameController.text.isEmpty) {
+                ToastHelper.showWarning('이름을 입력해주세요');
+                nameFocus.requestFocus();
+                return;
+              }
+              if (phoneController.text.isEmpty) {
+                ToastHelper.showWarning('전화번호를 입력해주세요');
+                phoneFocus.requestFocus();
+                return;
+              }
+
+              final authService = AuthService();
+              final username = await authService.findUsername(
+                name: nameController.text,
+                phone: phoneController.text,
+              );
+
+              if (username != null && context.mounted) {
+                final maskedUsername = username.length > 4
+                    ? '${username.substring(0, 4)}${'*' * (username.length - 4)}'
+                    : username;
+                
+                await showDialog(
+                  context: context,
+                  builder: (resultContext) => StyledDialog(
+                    title: '아이디 찾기 완료',
+                    subtitle: null,
+                    icon: Icons.check_circle,
+                    headerColor: Colors.green[600],
+                    content: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Container(
+                          padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 20)),
+                          decoration: BoxDecoration(
+                            color: Colors.grey[100],
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          child: Column(
+                            children: [
+                              Text(
+                                '회원님의 아이디는',
+                                style: ResponsiveHelper.bodyStyle(context),
+                              ),
+                              SizedBox(height: ResponsiveHelper.spacing(context, 8)),
+                              Text(
+                                maskedUsername,
+                                style: ResponsiveHelper.titleStyle(context).copyWith(
+                                  fontWeight: FontWeight.bold,
+                                  color: Theme.of(context).primaryColor,
+                                ),
+                              ),
+                              SizedBox(height: ResponsiveHelper.spacing(context, 4)),
+                              Text(
+                                '입니다',
+                                style: ResponsiveHelper.bodyStyle(context),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                    actions: [
+                      StyledDialogButton.primary(
+                        text: '확인',
+                        onPressed: () {
+                          Navigator.pop(resultContext);
+                          Navigator.pop(context);
+                        },
+                      ),
+                    ],
+                  ),
+                );
+              }
+            },
+          ),
+        ],
       ),
     );
 
+    // ⭐ dispose
     nameController.dispose();
     phoneController.dispose();
-
-    // 결과 표시
-    if (result != null && mounted) {
-      await showDialog(
-        context: context,
-        builder: (context) => StyledDialog(
-          title: '아이디 찾기 완료',
-          subtitle: null,
-          icon: Icons.check_circle,
-          headerColor: Colors.green[600],
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Container(
-                padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 20)),
-                decoration: BoxDecoration(
-                  color: Colors.grey[100],
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: Column(
-                  children: [
-                    Text(
-                      '회원님의 아이디는',
-                      style: ResponsiveHelper.bodyStyle(context),
-                    ),
-                    SizedBox(height: ResponsiveHelper.spacing(context, 8)),
-                    Text(
-                      result,
-                      style: ResponsiveHelper.titleStyle(context).copyWith(
-                        fontWeight: FontWeight.bold,
-                        color: Theme.of(context).primaryColor,
-                      ),
-                    ),
-                    SizedBox(height: ResponsiveHelper.spacing(context, 4)),
-                    Text(
-                      '입니다',
-                      style: ResponsiveHelper.bodyStyle(context),
-                    ),
-                  ],
-                ),
-              ),
-            ],
-          ),
-          actions: [
-            StyledDialogButton.primary(
-              text: '확인',
-              onPressed: () => Navigator.pop(context),
-            ),
-          ],
-        ),
-      );
-    }
+    nameFocus.dispose();
+    phoneFocus.dispose();
   }
 
-  /// 🔒 비밀번호 찾기 다이얼로그
   Future<void> _showFindPasswordDialog() async {
     final usernameController = TextEditingController();
     final emailController = TextEditingController();
     final codeController = TextEditingController();
+    
+    // ⭐ FocusNode 추가
+    final usernameFocus = FocusNode();
+    final emailFocus = FocusNode();
+    final codeFocus = FocusNode();
+    
     bool isEmailSent = false;
     String? verificationCode;
 
-    final result = await showDialog<bool>(
+    await showDialog(
       context: context,
-      builder: (context) => StatefulBuilder(
+      builder: (context) => StatefulBuilder(  // ⭐ 전체를 StatefulBuilder로
         builder: (context, setState) => StyledDialog(
           title: '비밀번호 찾기',
           subtitle: '이메일 인증 후 비밀번호를 재설정할 수 있습니다',
@@ -212,9 +301,14 @@ class _LoginScreenState extends State<LoginScreen> {
               // 아이디 입력
               StyledDialogTextField(
                 controller: usernameController,
+                focusNode: usernameFocus,
                 labelText: '아이디',
                 hintText: 'your_username',
                 prefixIcon: Icons.account_circle,
+                onFieldSubmitted: (_) {
+                  // ⭐ 엔터 시 이메일 필드로 이동
+                  emailFocus.requestFocus();
+                },
               ),
 
               SizedBox(height: ResponsiveHelper.spacing(context, 16)),
@@ -222,21 +316,25 @@ class _LoginScreenState extends State<LoginScreen> {
               // 이메일 입력
               StyledDialogTextField(
                 controller: emailController,
+                focusNode: emailFocus,
                 labelText: '이메일',
                 hintText: 'your@email.com',
                 prefixIcon: Icons.email,
                 keyboardType: TextInputType.emailAddress,
+                enabled: !isEmailSent,  // ⭐ 인증번호 발송 후 비활성화
                 suffixIcon: isEmailSent
-                    ? null
+                    ? Icon(Icons.check_circle, color: Colors.green)
                     : TextButton(
-                        onPressed: () async {
+                        onPressed: () {
                           if (usernameController.text.isEmpty) {
                             ToastHelper.showWarning('아이디를 입력해주세요');
+                            usernameFocus.requestFocus();
                             return;
                           }
                           if (emailController.text.isEmpty ||
                               !emailController.text.contains('@')) {
                             ToastHelper.showWarning('올바른 이메일을 입력해주세요');
+                            emailFocus.requestFocus();
                             return;
                           }
 
@@ -248,6 +346,11 @@ class _LoginScreenState extends State<LoginScreen> {
 
                           ToastHelper.showSuccess(
                               '인증번호가 발송되었습니다\n(개발용: 123456)');
+                          
+                          // ⭐ 인증번호 입력창으로 포커스 이동
+                          Future.delayed(const Duration(milliseconds: 300), () {
+                            codeFocus.requestFocus();
+                          });
                         },
                         child: Text(
                           '인증',
@@ -264,28 +367,139 @@ class _LoginScreenState extends State<LoginScreen> {
                 SizedBox(height: ResponsiveHelper.spacing(context, 16)),
                 StyledDialogTextField(
                   controller: codeController,
+                  focusNode: codeFocus,
                   labelText: '인증번호',
                   hintText: '6자리 숫자',
                   prefixIcon: Icons.password,
                   keyboardType: TextInputType.number,
                   maxLength: 6,
+                  onFieldSubmitted: (_) async {  // ⭐ 엔터 시 확인 버튼 로직 실행
+                    if (codeController.text != verificationCode) {
+                      ToastHelper.showError('인증번호가 일치하지 않습니다');
+                      return;
+                    }
+
+                    // 결과 다이얼로그 표시
+                    await showDialog(
+                      context: context,
+                      builder: (resultContext) => StyledDialog(
+                        title: '이메일 인증 완료',
+                        subtitle: null,
+                        icon: Icons.mark_email_read,
+                        headerColor: Colors.green[600],
+                        content: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Text(
+                              '이메일로 비밀번호 재설정 링크가 발송되었습니다.\n이메일을 확인해주세요.',
+                              style: ResponsiveHelper.bodyStyle(context),
+                              textAlign: TextAlign.center,
+                            ),
+                            SizedBox(height: ResponsiveHelper.spacing(context, 16)),
+                            Container(
+                              padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 16)),
+                              decoration: BoxDecoration(
+                                color: Colors.blue[50],
+                                borderRadius: BorderRadius.circular(12),
+                              ),
+                              child: Row(
+                                children: [
+                                  Icon(Icons.info_outline, color: Colors.blue[700]),
+                                  SizedBox(width: ResponsiveHelper.spacing(context, 12)),
+                                  Expanded(
+                                    child: Text(
+                                      '링크는 24시간 동안 유효합니다.',
+                                      style: ResponsiveHelper.smallStyle(context).copyWith(
+                                        color: Colors.blue[900],
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ],
+                        ),
+                        actions: [
+                          StyledDialogButton.primary(
+                            text: '확인',
+                            onPressed: () {
+                              Navigator.pop(resultContext);
+                              Navigator.pop(context);
+                            },
+                          ),
+                        ],
+                      ),
+                    );
+                  },
                 ),
               ],
             ],
           ),
           actions: [
             StyledDialogButton.cancel(
-              onPressed: () => Navigator.pop(context, false),
+              onPressed: () => Navigator.pop(context),  // ⭐ dispose 제거
             ),
             if (isEmailSent)
               StyledDialogButton.primary(
                 text: '확인',
-                onPressed: () {
+                onPressed: () async {
                   if (codeController.text != verificationCode) {
                     ToastHelper.showError('인증번호가 일치하지 않습니다');
+                    codeFocus.requestFocus();
                     return;
                   }
-                  Navigator.pop(context, true);
+
+                  // ⭐ 다이얼로그 위에 결과 표시
+                  await showDialog(
+                    context: context,
+                    builder: (resultContext) => StyledDialog(
+                      title: '이메일 인증 완료',
+                      subtitle: null,
+                      icon: Icons.mark_email_read,
+                      headerColor: Colors.green[600],
+                      content: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Text(
+                            '이메일로 비밀번호 재설정 링크가 발송되었습니다.\n이메일을 확인해주세요.',
+                            style: ResponsiveHelper.bodyStyle(context),
+                            textAlign: TextAlign.center,
+                          ),
+                          SizedBox(height: ResponsiveHelper.spacing(context, 16)),
+                          Container(
+                            padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 16)),
+                            decoration: BoxDecoration(
+                              color: Colors.blue[50],
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                            child: Row(
+                              children: [
+                                Icon(Icons.info_outline, color: Colors.blue[700]),
+                                SizedBox(width: ResponsiveHelper.spacing(context, 12)),
+                                Expanded(
+                                  child: Text(
+                                    '링크는 24시간 동안 유효합니다.',
+                                    style: ResponsiveHelper.smallStyle(context).copyWith(
+                                      color: Colors.blue[900],
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ),
+                      actions: [
+                        StyledDialogButton.primary(
+                          text: '확인',
+                          onPressed: () {
+                            Navigator.pop(resultContext);
+                            Navigator.pop(context);
+                          },
+                        ),
+                      ],
+                    ),
+                  );
                 },
               ),
           ],
@@ -293,44 +507,13 @@ class _LoginScreenState extends State<LoginScreen> {
       ),
     );
 
+    // ⭐ dispose를 다이얼로그 끝난 후로 이동
     usernameController.dispose();
     emailController.dispose();
     codeController.dispose();
-
-    // 인증 성공 시 비밀번호 재설정 안내
-    if (result == true && mounted) {
-      await showDialog(
-        context: context,
-        builder: (context) => StyledDialog(
-          title: '이메일 인증 완료',
-          subtitle: null,
-          icon: Icons.mark_email_read,
-          headerColor: Colors.green[600],
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Text(
-                '이메일로 비밀번호 재설정 링크가 발송되었습니다.',
-                style: ResponsiveHelper.bodyStyle(context),
-                textAlign: TextAlign.center,
-              ),
-              SizedBox(height: ResponsiveHelper.spacing(context, 12)),
-              Text(
-                '이메일을 확인하여 비밀번호를 재설정해주세요.',
-                style: ResponsiveHelper.smallStyle(context, color: Colors.grey[600]),
-                textAlign: TextAlign.center,
-              ),
-            ],
-          ),
-          actions: [
-            StyledDialogButton.primary(
-              text: '확인',
-              onPressed: () => Navigator.pop(context),
-            ),
-          ],
-        ),
-      );
-    }
+    usernameFocus.dispose();
+    emailFocus.dispose();
+    codeFocus.dispose();
   }
 
   @override

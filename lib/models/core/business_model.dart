@@ -40,7 +40,7 @@ class BusinessModel {
   // 🚗 시설 및 환경
   // ═══════════════════════════════════════════════════════════
   final bool parkingAvailable;         // 주차 가능 여부
-  final String? mealProvided;          // 식사 제공 (조식/중식/석식/간식/없음)
+  final List<String>? mealsProvided;       // 식사 제공 (조식/중식/석식/간식/없음)
   final String? uniformProvided;       // 복장 (유니폼제공/자유복/정장/없음)
   final List<String>? facilities;      // 편의시설 [휴게실, 사물함, 탈의실, 샤워실]
   
@@ -85,7 +85,7 @@ class BusinessModel {
     this.detailedDescription,
     // 시설 및 환경
     this.parkingAvailable = false,
-    this.mealProvided,
+    this.mealsProvided,
     this.uniformProvided,
     this.facilities,
     // 교통편
@@ -131,7 +131,9 @@ class BusinessModel {
       detailedDescription: map['detailedDescription'],
       // 시설 및 환경
       parkingAvailable: map['parkingAvailable'] ?? false,
-      mealProvided: map['mealProvided'],
+      mealsProvided: map['mealsProvided'] != null 
+      ? List<String>.from(map['mealsProvided']) 
+      : null,
       uniformProvided: map['uniformProvided'],
       facilities: map['facilities'] != null 
           ? List<String>.from(map['facilities']) 
@@ -180,7 +182,7 @@ class BusinessModel {
       'detailedDescription': detailedDescription,
       // 시설 및 환경
       'parkingAvailable': parkingAvailable,
-      'mealProvided': mealProvided,
+      'mealsProvided': mealsProvided,
       'uniformProvided': uniformProvided,
       'facilities': facilities,
       // 교통편
@@ -273,7 +275,7 @@ class BusinessModel {
       oneLineIntro: oneLineIntro ?? this.oneLineIntro,
       detailedDescription: detailedDescription ?? this.detailedDescription,
       parkingAvailable: parkingAvailable ?? this.parkingAvailable,
-      mealProvided: mealProvided ?? this.mealProvided,
+      mealsProvided: mealsProvided ?? this.mealsProvided,
       uniformProvided: uniformProvided ?? this.uniformProvided,
       facilities: facilities ?? this.facilities,
       nearestStation: nearestStation ?? this.nearestStation,
