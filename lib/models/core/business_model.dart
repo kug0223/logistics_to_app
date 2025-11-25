@@ -12,6 +12,7 @@ class BusinessModel {
   final String category;         // 업종 카테고리
   final String subCategory;      // 세부 업종
   final String address;          // 주소
+  final String? detailAddress;   // 세부주소
   final double? latitude;
   final double? longitude;
   final String ownerId;          // 사업장 관리자 UID
@@ -67,6 +68,7 @@ class BusinessModel {
     required this.category,
     required this.subCategory,
     required this.address,
+    this.detailAddress,
     this.latitude,
     this.longitude,
     required this.ownerId,
@@ -109,6 +111,7 @@ class BusinessModel {
       category: map['category'] ?? '',
       subCategory: map['subCategory'] ?? '',
       address: map['address'] ?? '',
+      detailAddress: map['detailAddress'],
       latitude: map['latitude'] != null ? (map['latitude'] as num).toDouble() : null,
       longitude: map['longitude'] != null ? (map['longitude'] as num).toDouble() : null,
       ownerId: map['ownerId'] ?? '',
@@ -164,6 +167,7 @@ class BusinessModel {
       'category': category,
       'subCategory': subCategory,
       'address': address,
+      'detailAddress': detailAddress,
       'latitude': latitude,
       'longitude': longitude,
       'ownerId': ownerId,
@@ -228,6 +232,7 @@ class BusinessModel {
     String? category,
     String? subCategory,
     String? address,
+    String? detailAddress,
     double? latitude,
     double? longitude,
     String? ownerId,
@@ -261,6 +266,7 @@ class BusinessModel {
       category: category ?? this.category,
       subCategory: subCategory ?? this.subCategory,
       address: address ?? this.address,
+      detailAddress: detailAddress ?? this.detailAddress,
       latitude: latitude ?? this.latitude,
       longitude: longitude ?? this.longitude,
       ownerId: ownerId ?? this.ownerId,

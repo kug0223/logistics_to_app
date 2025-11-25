@@ -468,9 +468,23 @@ class _BusinessDetailScreenState extends State<BusinessDetailScreen> {
                   ),
                   SizedBox(width: ResponsiveHelper.spacing(context, 8)),
                   Expanded(
-                    child: Text(
-                      widget.business.address,
-                      style: ResponsiveHelper.bodyStyle(context),
+                    child: Column(  // ⭐ Text를 Column으로 변경
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          widget.business.address,
+                          style: ResponsiveHelper.bodyStyle(context),
+                        ),
+                        if (widget.business.detailAddress != null && widget.business.detailAddress!.isNotEmpty) ...[  // ⭐ 상세주소 추가
+                          SizedBox(height: ResponsiveHelper.spacing(context, 4)),
+                          Text(
+                            widget.business.detailAddress!,
+                            style: ResponsiveHelper.bodyStyle(context).copyWith(
+                              color: Colors.grey[600],
+                            ),
+                          ),
+                        ],
+                      ],
                     ),
                   ),
                 ],
@@ -693,13 +707,17 @@ class _BusinessDetailScreenState extends State<BusinessDetailScreen> {
       return;
     }
 
-    final uri = Uri.parse(
-      'https://map.kakao.com/link/map/${widget.business.publicName},${widget.business.latitude},${widget.business.longitude}',
-    );
+    // ⭐ URL 인코딩 적용
+    final encodedName = Uri.encodeComponent(widget.business.publicName);
+    final urlString = 'https://map.kakao.com/link/map/$encodedName,${widget.business.latitude},${widget.business.longitude}';
+    
+    final uri = Uri.parse(urlString);
 
-    if (await canLaunchUrl(uri)) {
-      await launchUrl(uri, mode: LaunchMode.externalApplication);
-    } else {
+    try {
+      // ⭐ platformDefault 모드로 변경 (브라우저 또는 카카오맵 앱으로 자동 열림)
+      await launchUrl(uri, mode: LaunchMode.platformDefault);
+    } catch (e) {
+      print('❌ 지도 열기 실패: $e');
       ToastHelper.showError('지도를 열 수 없습니다');
     }
   }
@@ -711,13 +729,17 @@ class _BusinessDetailScreenState extends State<BusinessDetailScreen> {
       return;
     }
 
-    final uri = Uri.parse(
-      'https://map.kakao.com/link/to/${widget.business.publicName},${widget.business.latitude},${widget.business.longitude}',
-    );
+    // ⭐ URL 인코딩 적용
+    final encodedName = Uri.encodeComponent(widget.business.publicName);
+    final urlString = 'https://map.kakao.com/link/to/$encodedName,${widget.business.latitude},${widget.business.longitude}';
+    
+    final uri = Uri.parse(urlString);
 
-    if (await canLaunchUrl(uri)) {
-      await launchUrl(uri, mode: LaunchMode.externalApplication);
-    } else {
+    try {
+      // ⭐ platformDefault 모드로 변경
+      await launchUrl(uri, mode: LaunchMode.platformDefault);
+    } catch (e) {
+      print('❌ 길찾기 열기 실패: $e');
       ToastHelper.showError('길찾기를 열 수 없습니다');
     }
   }

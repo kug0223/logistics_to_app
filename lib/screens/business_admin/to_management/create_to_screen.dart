@@ -13,7 +13,6 @@ import '../../../models/work_detail_input.dart';
 import '../../../widgets/work_type_icon.dart';
 import '../../../utils/format_helper.dart';
 import '../../../utils/responsive_helper.dart';
-import '../../../widgets/common/styled_container.dart';
 
 /// ✨ TO 생성 화면 - 세련된 디자인
 class AdminCreateTOScreen extends StatefulWidget {
@@ -99,7 +98,7 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
   // 📡 데이터 로딩
   // ============================================================
 
-  /// 내 사업장 목록 로드
+  /// 내 사업장 목록 로드 (승인된 것만)
   Future<void> _loadMyBusinesses() async {
     setState(() => _isLoading = true);
 
@@ -112,10 +111,13 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
         return;
       }
 
-      final businesses = await _firestoreService.getMyBusiness(uid);
+      final allBusinesses = await _firestoreService.getMyBusiness(uid);
+      
+      // ⭐ 승인된 사업장만 필터링
+      final approvedBusinesses = allBusinesses.where((b) => b.isApproved).toList();
 
       setState(() {
-        _myBusinesses = businesses;
+        _myBusinesses = approvedBusinesses;
         if (_myBusinesses.isNotEmpty) {
           _selectedBusiness = _myBusinesses.first;
           _loadWorkTypes();
@@ -123,7 +125,10 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
         _isLoading = false;
       });
 
-      if (businesses.isEmpty) {
+      // ⭐ 사업장은 있지만 승인된 것이 없을 때
+      if (allBusinesses.isNotEmpty && approvedBusinesses.isEmpty) {
+        ToastHelper.showWarning('승인된 사업장이 없습니다\n관리자 승인 후 TO를 생성할 수 있습니다');
+      } else if (approvedBusinesses.isEmpty) {
         ToastHelper.showInfo('등록된 사업장이 없습니다');
       }
     } catch (e) {

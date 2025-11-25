@@ -184,7 +184,31 @@ class _BusinessListScreenState extends State<BusinessListScreen> {
       margin: EdgeInsets.only(
         bottom: ResponsiveHelper.spacing(context, 16),
       ),
-      decoration: CommonWidgets.cardDecoration(),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        // ⭐ 그림자 강화
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.08),
+            blurRadius: 16,
+            offset: const Offset(0, 4),
+            spreadRadius: 1,
+          ),
+          BoxShadow(
+            color: theme.primaryColor.withOpacity(0.05),
+            blurRadius: 8,
+            offset: const Offset(0, 2),
+          ),
+        ],
+        // ⭐ 승인 대기중일 때 테두리 추가
+        border: business.isApproved 
+            ? null 
+            : Border.all(
+                color: theme.colorScheme.error.withOpacity(0.3),
+                width: 1.5,
+              ),
+      ),
       child: InkWell(
         onTap: () {
           Navigator.push(
@@ -211,16 +235,45 @@ class _BusinessListScreenState extends State<BusinessListScreen> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    // 사업장명
-                    Text(
-                      business.publicName,
-                      style: ResponsiveHelper.subtitleStyle(context).copyWith(
-                        fontWeight: FontWeight.bold,
-                      ),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
+                    // 사업장명 + 승인 상태
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            business.publicName,
+                            style: ResponsiveHelper.subtitleStyle(context).copyWith(
+                              fontWeight: FontWeight.bold,
+                            ),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                        SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+                        // ⭐ 승인 상태 배지
+                        Container(
+                          padding: EdgeInsets.symmetric(
+                            horizontal: ResponsiveHelper.spacing(context, 8),
+                            vertical: ResponsiveHelper.spacing(context, 4),
+                          ),
+                          decoration: BoxDecoration(
+                            color: business.isApproved 
+                                ? theme.colorScheme.primaryContainer
+                                : theme.colorScheme.errorContainer,
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          child: Text(
+                            business.isApproved ? '승인됨' : '승인대기',
+                            style: ResponsiveHelper.tinyStyle(context).copyWith(
+                              color: business.isApproved 
+                                  ? theme.colorScheme.onPrimaryContainer
+                                  : theme.colorScheme.onErrorContainer,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                        ),
+                      ],
                     ),
-                    
+
                     SizedBox(height: ResponsiveHelper.spacing(context, 6)),
                     
                     // 주소
@@ -346,66 +399,29 @@ class _BusinessListScreenState extends State<BusinessListScreen> {
   }
 
   /// 더보기 메뉴
-  Widget _buildMoreMenu(
-    BuildContext context,
-    ThemeData theme,
-    BusinessModel business,
-  ) {
+  Widget _buildMoreMenu(BuildContext context, ThemeData theme, BusinessModel business) {
     return PopupMenuButton<String>(
       icon: Icon(
         Icons.more_vert,
         size: ResponsiveHelper.iconSize(context, 24),
         color: theme.primaryColor,
       ),
+      // ⭐ 둥근 모서리
       shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(12),
+        borderRadius: BorderRadius.circular(16),
       ),
-      itemBuilder: (context) => [
-        PopupMenuItem(
-          value: 'detail',
-          child: Row(
-            children: [
-              Icon(
-                Icons.info_outline,
-                size: ResponsiveHelper.iconSize(context, 20),
-                color: Colors.blue[600],
-              ),
-              SizedBox(width: ResponsiveHelper.spacing(context, 12)),
-              const Text('자세히 보기'),
-            ],
-          ),
-        ),
-        PopupMenuItem(
-          value: 'edit',
-          child: Row(
-            children: [
-              Icon(
-                Icons.edit_outlined,
-                size: ResponsiveHelper.iconSize(context, 20),
-                color: Colors.orange[600],
-              ),
-              SizedBox(width: ResponsiveHelper.spacing(context, 12)),
-              const Text('수정하기'),
-            ],
-          ),
-        ),
-        PopupMenuItem(
-          value: 'delete',
-          child: Row(
-            children: [
-              Icon(
-                Icons.delete_outline,
-                size: ResponsiveHelper.iconSize(context, 20),
-                color: Colors.red[600],
-              ),
-              SizedBox(width: ResponsiveHelper.spacing(context, 12)),
-              const Text('삭제하기'),
-            ],
-          ),
-        ),
-      ],
+      // ⭐ 그림자
+      elevation: 8,
       onSelected: (value) {
         switch (value) {
+          case 'create_to':
+            // 승인 체크
+            if (!business.isApproved) {
+              ToastHelper.showWarning('승인된 사업장만 TO를 등록할 수 있습니다');
+              return;
+            }
+            Navigator.pushNamed(context, '/create_to');
+            break;
           case 'detail':
             Navigator.push(
               context,
@@ -433,6 +449,169 @@ class _BusinessListScreenState extends State<BusinessListScreen> {
             break;
         }
       },
+      itemBuilder: (context) => [
+        // TO 등록
+        PopupMenuItem<String>(
+          value: 'create_to',
+          enabled: business.isApproved,
+          child: Row(
+            children: [
+              Container(
+                padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 8)),
+                decoration: BoxDecoration(
+                  color: business.isApproved 
+                      ? theme.primaryColor.withOpacity(0.1)
+                      : theme.disabledColor.withOpacity(0.1),
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: Icon(
+                  Icons.add_circle_outline,
+                  size: ResponsiveHelper.iconSize(context, 20),
+                  color: business.isApproved 
+                      ? theme.primaryColor 
+                      : theme.disabledColor,
+                ),
+              ),
+              SizedBox(width: ResponsiveHelper.spacing(context, 12)),
+              Text(
+                'TO 등록',
+                style: ResponsiveHelper.bodyStyle(context).copyWith(
+                  color: business.isApproved 
+                      ? null 
+                      : theme.disabledColor,
+                ),
+              ),
+              if (!business.isApproved) ...[
+                SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+                Text(
+                  '(승인필요)',
+                  style: ResponsiveHelper.tinyStyle(context).copyWith(
+                    color: theme.colorScheme.error,
+                  ),
+                ),
+              ],
+            ],
+          ),
+        ),
+        // 상세보기
+        PopupMenuItem<String>(
+          value: 'detail',
+          child: Row(
+            children: [
+              Container(
+                padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 8)),
+                decoration: BoxDecoration(
+                  color: Colors.blue.withOpacity(0.1),
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: Icon(
+                  Icons.info_outline,
+                  size: ResponsiveHelper.iconSize(context, 20),
+                  color: Colors.blue,
+                ),
+              ),
+              SizedBox(width: ResponsiveHelper.spacing(context, 12)),
+              Text('상세보기', style: ResponsiveHelper.bodyStyle(context)),
+            ],
+          ),
+        ),
+        // 수정
+        PopupMenuItem<String>(
+          value: 'edit',
+          child: Row(
+            children: [
+              Container(
+                padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 8)),
+                decoration: BoxDecoration(
+                  color: Colors.orange.withOpacity(0.1),
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: Icon(
+                  Icons.edit,
+                  size: ResponsiveHelper.iconSize(context, 20),
+                  color: Colors.orange,
+                ),
+              ),
+              SizedBox(width: ResponsiveHelper.spacing(context, 12)),
+              Text('수정', style: ResponsiveHelper.bodyStyle(context)),
+            ],
+          ),
+        ),
+        // 삭제
+        PopupMenuItem<String>(
+          value: 'delete',
+          child: Row(
+            children: [
+              Container(
+                padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 8)),
+                decoration: BoxDecoration(
+                  color: theme.colorScheme.error.withOpacity(0.1),
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: Icon(
+                  Icons.delete,
+                  size: ResponsiveHelper.iconSize(context, 20),
+                  color: theme.colorScheme.error,
+                ),
+              ),
+              SizedBox(width: ResponsiveHelper.spacing(context, 12)),
+              Text(
+                '삭제',
+                style: ResponsiveHelper.bodyStyle(context).copyWith(
+                  color: theme.colorScheme.error,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  /// BottomSheet 메뉴 아이템
+  Widget _buildBottomSheetItem({
+    required BuildContext context,
+    required IconData icon,
+    required Color iconColor,
+    required String title,
+    String? subtitle,
+    bool enabled = true,
+    required VoidCallback onTap,
+  }) {
+    return ListTile(
+      enabled: enabled,
+      leading: Container(
+        padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 10)),
+        decoration: BoxDecoration(
+          color: enabled ? iconColor.withOpacity(0.1) : Colors.grey[100],
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: Icon(
+          icon,
+          color: enabled ? iconColor : Colors.grey,
+          size: ResponsiveHelper.iconSize(context, 24),
+        ),
+      ),
+      title: Text(
+        title,
+        style: ResponsiveHelper.bodyStyle(context).copyWith(
+          fontWeight: FontWeight.w600,
+          color: enabled ? Colors.black87 : Colors.grey,
+        ),
+      ),
+      subtitle: subtitle != null
+          ? Text(
+              subtitle,
+              style: ResponsiveHelper.smallStyle(context).copyWith(
+                color: Colors.grey[600],
+              ),
+            )
+          : null,
+      onTap: enabled ? onTap : null,
+      contentPadding: EdgeInsets.symmetric(
+        horizontal: ResponsiveHelper.spacing(context, 20),
+        vertical: ResponsiveHelper.spacing(context, 4),
+      ),
     );
   }
 

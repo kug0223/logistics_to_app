@@ -136,6 +136,9 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
       _displayNameController.text = business.displayName!;
     }
     _addressController.text = business.address;
+    if (business.detailAddress != null) {  // ⭐ 추가
+      _detailAddressController.text = business.detailAddress!;
+    }
     _latitude = business.latitude;
     _longitude = business.longitude;
 
@@ -821,23 +824,41 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
                 spacing: ResponsiveHelper.spacing(context, 8),
                 runSpacing: ResponsiveHelper.spacing(context, 8),
                 children: _mealOptions.map((meal) {
-                  final isSelected = _selectedMeals.contains(meal);
-                  return FilterChip(
-                    label: Text(meal),
-                    selected: isSelected,
-                    onSelected: (selected) {
-                      setState(() {
-                        if (selected) {
-                          _selectedMeals.add(meal);
-                        } else {
-                          _selectedMeals.remove(meal);
-                        }
-                      });
-                    },
-                    selectedColor: Theme.of(context).primaryColor.withOpacity(0.2),
-                    checkmarkColor: Theme.of(context).primaryColor,
-                  );
-                }).toList(),
+                final isSelected = _selectedMeals.contains(meal);
+                final theme = Theme.of(context);
+                
+                return FilterChip(
+                  label: Text(meal),
+                  selected: isSelected,
+                  onSelected: (selected) {
+                    setState(() {
+                      if (selected) {
+                        _selectedMeals.add(meal);
+                      } else {
+                        _selectedMeals.remove(meal);
+                      }
+                    });
+                  },
+                  // ⭐ Theme 사용
+                  backgroundColor: theme.colorScheme.surfaceVariant,  // 선택 안 된 것
+                  selectedColor: theme.primaryColor,  // 선택된 것
+                  checkmarkColor: theme.colorScheme.onPrimary,  // 체크마크 (흰색)
+                  labelStyle: ResponsiveHelper.bodyStyle(context).copyWith(
+                    color: isSelected 
+                        ? theme.colorScheme.onPrimary  // 선택 시 흰색
+                        : theme.textTheme.bodyMedium?.color,  // 기본 텍스트 색
+                    fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+                  ),
+                  side: BorderSide(
+                    color: isSelected 
+                        ? theme.primaryColor 
+                        : theme.dividerColor,
+                    width: isSelected ? 2 : 1,
+                  ),
+                  elevation: isSelected ? 2 : 0,
+                  shadowColor: theme.primaryColor.withOpacity(0.3),
+                );
+              }).toList(),
               ),
             ],
           ),
@@ -878,6 +899,8 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
                 runSpacing: ResponsiveHelper.spacing(context, 8),
                 children: _facilityOptions.map((facility) {
                   final isSelected = _selectedFacilities.contains(facility);
+                  final theme = Theme.of(context);
+                  
                   return FilterChip(
                     label: Text(facility),
                     selected: isSelected,
@@ -890,8 +913,24 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
                         }
                       });
                     },
-                    selectedColor: Theme.of(context).primaryColor.withOpacity(0.2),
-                    checkmarkColor: Theme.of(context).primaryColor,
+                    // ⭐ Theme 사용
+                    backgroundColor: theme.colorScheme.surfaceVariant,  // 선택 안 된 것
+                    selectedColor: theme.primaryColor,  // 선택된 것
+                    checkmarkColor: theme.colorScheme.onPrimary,  // 체크마크 (흰색)
+                    labelStyle: ResponsiveHelper.bodyStyle(context).copyWith(
+                      color: isSelected 
+                          ? theme.colorScheme.onPrimary  // 선택 시 흰색
+                          : theme.textTheme.bodyMedium?.color,  // 기본 텍스트 색
+                      fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+                    ),
+                    side: BorderSide(
+                      color: isSelected 
+                          ? theme.primaryColor 
+                          : theme.dividerColor,
+                      width: isSelected ? 2 : 1,
+                    ),
+                    elevation: isSelected ? 2 : 0,
+                    shadowColor: theme.primaryColor.withOpacity(0.3),
                   );
                 }).toList(),
               ),
@@ -1304,13 +1343,6 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
         if (url != null) additionalUrls.add(url);
       }
 
-      // 주소 조합
-      String fullAddress = _addressController.text.trim();
-      if (_detailAddressController.text.trim().isNotEmpty) {
-        fullAddress += ', ${_detailAddressController.text.trim()}';
-      }
-
-      // Firestore 저장
       final businessData = {
         'name': _nameController.text.trim(),
         'businessNumber': _businessNumberController.text.replaceAll('-', ''),
@@ -1318,7 +1350,8 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
         'useDisplayName': _useDisplayName,
         'category': _selectedCategory,
         'subCategory': _selectedSubCategory,
-        'address': fullAddress,
+        'address': _addressController.text.trim(),  // ⭐ 분리 저장
+        'detailAddress': _detailAddressController.text.trim().isEmpty ? null : _detailAddressController.text.trim(),  // ⭐ 추가
         'latitude': _latitude,
         'longitude': _longitude,
         'phone': _phoneController.text.trim().isEmpty ? null : _phoneController.text.trim(),

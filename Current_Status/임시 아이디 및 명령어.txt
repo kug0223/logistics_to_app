@@ -2,9 +2,11 @@
 user_test
 user123!@#
 
-ayoung22
-user123!@#
+userkug
 
+adminkug
+
+김광석
 
 최고관리자
 admin_test
@@ -17,12 +19,19 @@ subadmin123!@#
 ALfit
 
 git add .
-git commit -m "설정메뉴 추가 251124-1"
+git commit -m "Id,Pw찾기 및 사업장 등록 개선중 251125-3"
 git push
 
 flutter clean
 flutter pub get
 flutter run -d web-server
+
+시뮬레이터 사진 넣기
+안드로이드 스튜디오 > View > Tool Windows > Device File Explorer
+- sdcard/Pictures 우클릭 > Upload
+
+시뮬레이터 갤러리 사진 불러오기
+adb shell am broadcast -a android.intent.action.MEDIA_SCANNER_SCAN_FILE -d file:///sdcard/Pictures/
 
 mnt/project 절대 보지 말것!!!!
 project_knowledge_search 도구를 사용해서
@@ -67,3 +76,5 @@ lib의 모든 하위 폴더와 파일구조
 ✅ Theme.of(context) 사용
 ✅ 색상 하드코딩 금지
 ✅ 일관된 둥근 모서리 (8~24px)
+
+

@@ -4,7 +4,6 @@ import 'package:provider/provider.dart';
 import 'package:intl/intl.dart';
 import '../../models/core/application_model.dart';
 import '../../models/core/attendance_model.dart';
-import '../../models/core/business_model.dart';
 import '../../services/firestore_service.dart';
 import '../../providers/user_provider.dart';
 import '../../utils/location_helper.dart';
