@@ -1636,6 +1636,31 @@ class FirestoreService {
     String type = 'short',
   }) async {
     try {
+      // ✅ 서버 레벨 서류 체크
+      final userDoc = await _firestore.collection('users').doc(uid).get();
+      
+      if (!userDoc.exists) {
+        ToastHelper.showError('사용자 정보를 찾을 수 없습니다.');
+        return false;
+      }
+      
+      final userData = userDoc.data()!;
+      
+      // 필수 서류 체크
+      if (userData['idCardImageUrl'] == null) {
+        ToastHelper.showError('신분증 등록이 필요합니다.');
+        return false;
+      }
+      
+      if (userData['bankName'] == null || userData['accountNumber'] == null) {
+        ToastHelper.showError('통장 정보 등록이 필요합니다.');
+        return false;
+      }
+      
+      if (userData['bankbookImageUrl'] == null) {
+        ToastHelper.showError('통장사본 등록이 필요합니다.');
+        return false;
+      }
       // 1. 중복 지원 확인 - ⭐ Phase 2: 취소/거절된 지원은 제외
       final existingApp = await _firestore
           .collection('applications')

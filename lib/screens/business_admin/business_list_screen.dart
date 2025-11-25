@@ -18,6 +18,7 @@ import '../../utils/dialog_helper.dart';
 
 // Widgets
 import '../../widgets/common/common_widgets.dart';
+import '../common/document_management_screen.dart';
 
 // Screen
 import 'business_detail_screen.dart';
@@ -105,15 +106,7 @@ class _BusinessListScreenState extends State<BusinessListScreen> {
               Icons.add_circle_outline,
               size: ResponsiveHelper.iconSize(context, 28),
             ),
-            onPressed: () async {
-              final result = await Navigator.push(
-                context,
-                MaterialPageRoute(
-                  builder: (context) => const BusinessFormScreen(),
-                ),
-              );
-              if (result == true) _loadBusinesses();
-            },
+            onPressed: _navigateToBusinessForm, // ✅ 변경
           ),
         ],
       ),
@@ -157,15 +150,7 @@ class _BusinessListScreenState extends State<BusinessListScreen> {
             context: context,
             text: '사업장 등록하기',
             icon: Icons.add_business,
-            onPressed: () async {
-              final result = await Navigator.push(
-                context,
-                MaterialPageRoute(
-                  builder: (context) => const BusinessFormScreen(),
-                ),
-              );
-              if (result == true) _loadBusinesses();
-            },
+            onPressed: _navigateToBusinessForm, // ✅ 변경
           ),
         ],
       ),
@@ -461,15 +446,7 @@ class _BusinessListScreenState extends State<BusinessListScreen> {
       child: Material(
         color: Colors.transparent,
         child: InkWell(
-          onTap: () async {
-            final result = await Navigator.push(
-              context,
-              MaterialPageRoute(
-                builder: (context) => const BusinessFormScreen(),
-              ),
-            );
-            if (result == true) _loadBusinesses();
-          },
+          onTap: _navigateToBusinessForm,
           borderRadius: BorderRadius.circular(16),
           child: Container(
             padding: EdgeInsets.symmetric(
@@ -505,5 +482,48 @@ class _BusinessListScreenState extends State<BusinessListScreen> {
         ),
       ),
     );
+  }
+  /// 사업자등록증 체크 후 사업장 등록 화면으로 이동
+  Future<void> _navigateToBusinessForm() async {
+    final userProvider = context.read<UserProvider>();
+    
+    // 최신 사용자 정보 가져오기
+    await userProvider.refreshCurrentUser();
+    final user = userProvider.currentUser;
+    
+    if (user == null) {
+      ToastHelper.showError('로그인이 필요합니다.');
+      return;
+    }
+    
+    // 사업자등록증 미등록 시 다이얼로그
+    if (user.businessLicenseImageUrl == null) {
+      final shouldNavigate = await DialogHelper.showDocumentRequired(
+        context,
+        title: '사업자등록증 등록 필요',
+        missingDocuments: ['사업자등록증'],
+      );
+      
+      if (shouldNavigate && mounted) {
+        // 서류 관리 화면으로 이동
+        Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (context) => const DocumentManagementScreen(),
+          ),
+        );
+      }
+      return;
+    }
+    
+    // 사업자등록증 있음 → 사업장 등록 화면으로
+    final result = await Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => const BusinessFormScreen(),
+      ),
+    );
+    
+    if (result == true) _loadBusinesses();
   }
 }

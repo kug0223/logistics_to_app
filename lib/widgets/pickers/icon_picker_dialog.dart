@@ -536,7 +536,7 @@ class _IconPickerWidgetState extends State<_IconPickerWidget> {
   /// ✨ 아이콘 그리드 (반응형 복구)
   Widget _buildIconGrid() {
     if (_filteredIcons.isEmpty) {
-      return Container(
+      return SizedBox(
         height: 200,
         child: Center(
           child: Column(

@@ -1,3 +1,4 @@
+import 'package:ALfit/screens/common/document_management_screen.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
@@ -20,6 +21,7 @@ import '../../services/firestore_service.dart';
 import '../../utils/responsive_helper.dart';
 import '../../utils/toast_helper.dart';
 import '../../utils/constants.dart';
+import '../../utils/dialog_helper.dart';
 
 // Widgets
 import '../../widgets/common/common_widgets.dart';
@@ -82,7 +84,7 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
   List<String> _selectedFacilities = [];
 
   // 추가 사진
-  List<File> _additionalImages = [];
+  final List<File> _additionalImages = [];
   List<String> _additionalImageUrls = [];
 
   // 교통편
@@ -1217,11 +1219,42 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
   }
 
   Future<void> _saveBusiness() async {
+    // ✅ 사업자등록증 체크 (사업장 등록 전) - Firestore에서 최신 데이터 가져오기
+    final userProvider = context.read<UserProvider>();
+    
+    // 최신 사용자 정보 가져오기 (캐시 무시)
+    await userProvider.refreshCurrentUser();
+    final user = userProvider.currentUser;
+    
+    if (user == null) {
+      ToastHelper.showError('로그인이 필요합니다.');
+      return;
+    }
+    
+    // 사업자등록증 미등록 시 다이얼로그
+    if (user.businessLicenseImageUrl == null) {
+      final shouldNavigate = await DialogHelper.showDocumentRequired(
+        context,
+        title: '사업자등록증 등록 필요',
+        missingDocuments: ['사업자등록증'],
+      );
+      
+      if (shouldNavigate && mounted) {
+        // 서류 관리 화면으로 이동
+        Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (context) => const DocumentManagementScreen(),
+          ),
+        );
+      }
+      return;
+    }
+    
     setState(() => _isLoading = true);
 
     try {
-      final userProvider = context.read<UserProvider>();
-      final ownerId = userProvider.currentUser?.uid;
+      final ownerId = user.uid;
 
       if (ownerId == null) {
         throw Exception('로그인이 필요합니다');

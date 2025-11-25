@@ -66,7 +66,7 @@ class _DocumentManagementScreenState extends State<DocumentManagementScreen> {
         // 관리자용 필드
       _businessNumberController.text = user.businessNumber ?? '';
       _businessNameController.text = user.businessName ?? '';
-      _ceoNameController.text = user.name; // 기본값: 본인 이름
+      _ceoNameController.text = user.ceoName ?? user.name; // ✅ 저장된 값 우선, 없으면 본인 이름
       });
     }
   }
@@ -277,6 +277,7 @@ class _DocumentManagementScreenState extends State<DocumentManagementScreen> {
         {
           'businessNumber': cleanNumber,
           'businessName': _businessNameController.text.trim(),
+          'ceoName': _ceoNameController.text.trim(), // ✅ 추가!
         },
       );
       
@@ -537,6 +538,11 @@ class _DocumentManagementScreenState extends State<DocumentManagementScreen> {
     setState(() => _isLoading = true);
     
     try {
+      // ✅ Storage에서 이미지 파일 삭제
+      if (user.businessLicenseImageUrl != null) {
+        await _storageService.deleteImageByUrl(user.businessLicenseImageUrl!);
+      }
+      
       await _firestoreService.updateUserDocument(
         user.uid,
         {
@@ -548,6 +554,7 @@ class _DocumentManagementScreenState extends State<DocumentManagementScreen> {
       
       ToastHelper.showSuccess('사업자등록증이 삭제되었습니다');
     } catch (e) {
+      print('❌ 사업자등록증 삭제 실패: $e');
       ToastHelper.showError('사업자등록증 삭제에 실패했습니다');
     } finally {
       setState(() => _isLoading = false);
@@ -719,6 +726,11 @@ class _DocumentManagementScreenState extends State<DocumentManagementScreen> {
     setState(() => _isLoading = true);
     
     try {
+      // ✅ Storage에서 이미지 파일 삭제
+      if (user.idCardImageUrl != null) {
+        await _storageService.deleteImageByUrl(user.idCardImageUrl!);
+      }
+      
       await _firestoreService.updateUserDocument(
         user.uid,
         {
@@ -732,6 +744,7 @@ class _DocumentManagementScreenState extends State<DocumentManagementScreen> {
       
       ToastHelper.showSuccess('신분증이 삭제되었습니다');
     } catch (e) {
+      print('❌ 신분증 삭제 실패: $e');
       ToastHelper.showError('신분증 삭제에 실패했습니다');
     } finally {
       setState(() => _isLoading = false);
@@ -769,12 +782,18 @@ class _DocumentManagementScreenState extends State<DocumentManagementScreen> {
     setState(() => _isLoading = true);
     
     try {
+      // ✅ Storage에서 통장사본 이미지 파일 삭제
+      if (user.bankbookImageUrl != null) {
+        await _storageService.deleteImageByUrl(user.bankbookImageUrl!);
+      }
+      
       await _firestoreService.updateUserDocument(
         user.uid,
         {
           'bankName': null,
           'accountNumber': null,
           'accountHolder': null,
+          'bankbookImageUrl': null,
         },
       );
       
@@ -787,6 +806,7 @@ class _DocumentManagementScreenState extends State<DocumentManagementScreen> {
       
       ToastHelper.showSuccess('통장 정보가 삭제되었습니다');
     } catch (e) {
+      print('❌ 통장 정보 삭제 실패: $e');
       ToastHelper.showError('통장 정보 삭제에 실패했습니다');
     } finally {
       setState(() => _isLoading = false);
@@ -1160,7 +1180,7 @@ class _DocumentManagementScreenState extends State<DocumentManagementScreen> {
             children: [
               // 은행 선택
               DropdownButtonFormField<String>(
-                value: _selectedBank,
+                initialValue: _selectedBank,
                 decoration: InputDecoration(
                   labelText: '은행',
                   prefixIcon: Icon(Icons.account_balance),

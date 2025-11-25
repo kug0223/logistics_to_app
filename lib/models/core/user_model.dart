@@ -63,6 +63,7 @@ class UserModel {
   final String? businessNumber;         // ✅ 추가: 사업자등록번호 (관리자용)
   final String? businessName;           // ✅ 추가: 상호명 (관리자용)
   final String? businessLicenseImageUrl; // ✅ 추가: 사업자등록증 이미지
+  final String? ceoName;                 // ✅ 추가: 대표자명
 
   UserModel({
     required this.uid,
@@ -106,6 +107,7 @@ class UserModel {
     this.businessNumber,              // ✅ 추가
     this.businessName,     
     this.businessLicenseImageUrl,     // ✅ 추가
+    this.ceoName,  // ✅ 추가
   });
 
   // ━━━ 편의 메서드 ━━━
@@ -219,6 +221,7 @@ class UserModel {
       businessNumber: map['businessNumber'],              // ✅ 추가
       businessName: map['businessName'],         
       businessLicenseImageUrl: map['businessLicenseImageUrl'], // ✅ 추가
+      ceoName: map['ceoName'],  // ✅ 추가
     );
   }
 
@@ -269,6 +272,7 @@ class UserModel {
       'businessNumber': businessNumber,              // ✅ 추가
       'businessName': businessName,             
       'businessLicenseImageUrl': businessLicenseImageUrl, // ✅ 추가
+      'ceoName': ceoName,  // ✅ 추가
     };
   }
 
@@ -342,6 +346,7 @@ class UserModel {
     String? businessNumber,              // ✅ 추가
     String? businessName,      
     String? businessLicenseImageUrl,     // ✅ 추가
+    String? ceoName,  // ✅ 추가
   }) {
     return UserModel(
       uid: uid ?? this.uid,
@@ -384,6 +389,7 @@ class UserModel {
       businessNumber: businessNumber ?? this.businessNumber,              // ✅ 추가
       businessName: businessName ?? this.businessName,      
       businessLicenseImageUrl: businessLicenseImageUrl ?? this.businessLicenseImageUrl, // ✅ 추가
+      ceoName: ceoName ?? this.ceoName,  // ✅ 추가
     );
   }
 }

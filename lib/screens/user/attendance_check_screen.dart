@@ -24,7 +24,7 @@ class _AttendanceCheckScreenState extends State<AttendanceCheckScreen> {
   final FirestoreService _firestoreService = FirestoreService();
   
   List<ApplicationModel> _todayWorks = [];
-  Map<String, AttendanceModel?> _attendanceMap = {}; // applicationId -> AttendanceModel
+  final Map<String, AttendanceModel?> _attendanceMap = {}; // applicationId -> AttendanceModel
   bool _isLoading = true;
   bool _isProcessing = false;
 

@@ -139,7 +139,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
     final rn1 = _residentNumber1Controller.text;
     final rn2 = _residentNumber2Controller.text;
     
-    if (rn1.length == 6 && rn2.length >= 1) {
+    if (rn1.length == 6 && rn2.isNotEmpty) {
       try {
         int year = int.parse(rn1.substring(0, 2));
         int month = int.parse(rn1.substring(2, 4));
@@ -176,7 +176,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
           setState(() {
             _parsedBirthDate = null;
             _parsedGender = null;
-            _residentNumberError = '${year}년생은 뒷자리 1 또는 2를 사용해야 합니다';
+            _residentNumberError = '$year년생은 뒷자리 1 또는 2를 사용해야 합니다';
           });
           return;
         }
@@ -185,7 +185,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
           setState(() {
             _parsedBirthDate = null;
             _parsedGender = null;
-            _residentNumberError = '${year}년생은 뒷자리 3 또는 4를 사용해야 합니다';
+            _residentNumberError = '$year년생은 뒷자리 3 또는 4를 사용해야 합니다';
           });
           return;
         }
@@ -1895,7 +1895,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
           
           // 은행 선택
           DropdownButtonFormField<String>(
-            value: _selectedBank,
+            initialValue: _selectedBank,
             decoration: InputDecoration(
               labelText: '은행',
               prefixIcon: Icon(Icons.account_balance, size: ResponsiveHelper.iconSize(context, 20)),

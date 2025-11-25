@@ -569,7 +569,7 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
-              '${DateFormat('yyyy년 M월 d일 (E)', 'ko_KR').format(selectedDate)}',
+              DateFormat('yyyy년 M월 d일 (E)', 'ko_KR').format(selectedDate),
               style: ResponsiveHelper.subtitleStyle(context).copyWith(
                 fontWeight: FontWeight.bold,
               ),
@@ -819,7 +819,7 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
-              '${DateFormat('yyyy년 M월 d일 (E)', 'ko_KR').format(selectedDate)}',
+              DateFormat('yyyy년 M월 d일 (E)', 'ko_KR').format(selectedDate),
               style: ResponsiveHelper.subtitleStyle(context).copyWith(
                 fontWeight: FontWeight.bold,
               ),

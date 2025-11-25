@@ -403,8 +403,9 @@ class OcrVerificationHelper {
       }
       
       double confidence = 0.0;
-      if (isValidNumber && isValidName) confidence = 1.0;
-      else if (isValidNumber || isValidName) confidence = 0.6;
+      if (isValidNumber && isValidName) {
+        confidence = 1.0;
+      } else if (isValidNumber || isValidName) confidence = 0.6;
       
       return {
         'isValidNumber': isValidNumber,

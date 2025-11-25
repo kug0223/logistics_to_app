@@ -57,7 +57,7 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
   final List<DateTime> _selectedDates = [];
   final List<String> _selectedWeekdays = [];
   DateTime _focusedDay = DateTime.now();
-  CalendarFormat _calendarFormat = CalendarFormat.month;
+  final CalendarFormat _calendarFormat = CalendarFormat.month;
   bool _isCalendarExpanded = false;
   // 🔥 범위 선택용 변수 추가
   DateTime? _rangeStart;

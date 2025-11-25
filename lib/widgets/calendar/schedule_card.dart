@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
 import '../../models/core/application_model.dart';
 import '../../utils/dialog_helper.dart';
 import '../../services/firestore_service.dart';
@@ -8,8 +7,6 @@ import '../../utils/responsive_helper.dart';
 import '../dialogs/schedule_detail_dialog.dart';
 import '../../models/core/schedule_change_request_model.dart';
 import 'package:intl/intl.dart';
-import 'package:provider/provider.dart';
-import '../../providers/user_provider.dart';
 
 /// ✨ 개별 일정 카드 (세련된 디자인)
 class ScheduleCard extends StatelessWidget {

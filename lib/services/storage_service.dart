@@ -48,4 +48,17 @@ class StorageService {
       return false;
     }
   }
+  /// URL로 이미지 삭제 (다운로드 URL → Storage Path 변환)
+  Future<bool> deleteImageByUrl(String downloadUrl) async {
+    try {
+      // URL에서 Storage Reference 생성
+      final ref = _storage.refFromURL(downloadUrl);
+      await ref.delete();
+      print('✅ Storage 삭제 성공 (URL): ${ref.fullPath}');
+      return true;
+    } catch (e) {
+      print('❌ Storage 삭제 실패 (URL): $e');
+      return false;
+    }
+  }
 }

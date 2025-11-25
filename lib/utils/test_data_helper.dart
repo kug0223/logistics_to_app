@@ -222,14 +222,14 @@ class TestDataHelper {
         totalWorkDays, averageRating, noShowCount, lateCount
       );
       
-      print('  ✅ $name ($gender, ${calculatedAge}세)');
+      print('  ✅ $name ($gender, $calculatedAge세)');
       print('     🆔 $residentNumber');
       print('     📞 $phone');
       print('     🏠 $address $detailAddress');
       print('     💳 $bankName $accountNumber ($accountHolder)');
-      print('     ⭐ 평점: ${averageRating.toStringAsFixed(1)} (${reviewCount}개) | 신뢰도: $trustScore점');
+      print('     ⭐ 평점: ${averageRating.toStringAsFixed(1)} ($reviewCount개) | 신뢰도: $trustScore점');
       print('     💼 선호: ${preferredWorkTypes.join(", ")}');
-      print('     📊 근무: ${totalWorkDays}일 (${totalWorkHours}시간)');
+      print('     📊 근무: $totalWorkDays일 ($totalWorkHours시간)');
       print('');
     }
 

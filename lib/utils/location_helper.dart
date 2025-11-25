@@ -1,5 +1,4 @@
 import 'package:geolocator/geolocator.dart';
-import 'package:permission_handler/permission_handler.dart';
 import 'dart:math' show cos, sqrt, asin;
 
 /// GPS 위치 및 권한 관리 헬퍼

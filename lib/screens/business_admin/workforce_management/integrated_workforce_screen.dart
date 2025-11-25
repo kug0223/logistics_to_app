@@ -8,7 +8,6 @@ import '../../../utils/responsive_helper.dart';
 import '../../../services/firestore_service.dart';
 import 'workforce_list_view.dart';
 import 'workforce_calendar_view.dart';
-import '../dialogs/resign_request_management_dialog.dart';
 import '../dialogs/fixed_worker_management_dialog.dart';
 import '../../../utils/test_data_helper.dart';
 import '../../../models/core/to_model.dart';

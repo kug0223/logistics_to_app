@@ -10,7 +10,6 @@ import '../../../services/firestore_service.dart';
 import '../../../providers/user_provider.dart';
 import '../../../utils/toast_helper.dart';
 import '../../../utils/responsive_helper.dart';
-import '../../../widgets/common/loading_widget.dart';
 import '../../../widgets/pickers/work_detail_dialog.dart';
 import '../../../widgets/work_type_icon.dart';
 import '../../../utils/format_helper.dart';

@@ -549,7 +549,7 @@ class _WorkTypeManagementScreenState extends State<WorkTypeManagementScreen> {
                       ),
                       SizedBox(height: ResponsiveHelper.spacing(context, 8)),
                       Text(
-                        '${workType.name}',
+                        workType.name,
                         style: ResponsiveHelper.bodyStyle(context).copyWith(
                           color: Theme.of(context).primaryColor,
                           fontWeight: FontWeight.bold,
@@ -827,7 +827,7 @@ class _WorkTypeManagementScreenState extends State<WorkTypeManagementScreen> {
         ],
       ),
       child: DropdownButtonFormField<BusinessModel>(
-        value: _selectedBusiness,
+        initialValue: _selectedBusiness,
         decoration: InputDecoration(
           labelText: '사업장 선택',
           prefixIcon: Icon(Icons.business, color: theme.primaryColor),

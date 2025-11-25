@@ -262,7 +262,7 @@ class WorkDetailDialog {
           ),
           child: DropdownButtonFormField<BusinessWorkTypeModel>(
             isExpanded: true,
-            value: selectedWorkType,
+            initialValue: selectedWorkType,
             decoration: InputDecoration(
               border: InputBorder.none,
               contentPadding: ResponsiveHelper.cardPadding(context),
@@ -467,7 +467,7 @@ class WorkDetailDialog {
                 ),
               ),
               child: DropdownButtonFormField<String>(
-                value: startTime,
+                initialValue: startTime,
                 isExpanded: true,
                 decoration: InputDecoration(
                   border: InputBorder.none,
@@ -522,7 +522,7 @@ class WorkDetailDialog {
                 ),
               ),
               child: DropdownButtonFormField<String>(
-                value: endTime,
+                initialValue: endTime,
                 isExpanded: true,
                 decoration: InputDecoration(
                   border: InputBorder.none,
@@ -860,7 +860,7 @@ class WorkDetailDialog {
                     Navigator.pop(
                       context,
                       WorkDetailInput(
-                        workType: selectedWorkType!.name,
+                        workType: selectedWorkType.name,
                         workTypeIcon: selectedWorkType.icon,
                         workTypeColor: selectedWorkType.color ?? '#FFFFFF',
                         workTypeBackgroundColor: selectedWorkType.backgroundColor,

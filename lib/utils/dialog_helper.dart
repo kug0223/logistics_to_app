@@ -322,4 +322,138 @@ class DialogHelper {
       confirmColor: Colors.orange,
     );
   }
+  /// 서류 미등록 안내 다이얼로그 (서류 관리로 이동)
+  /// 
+  /// 사용 예:
+  /// ```dart
+  /// final shouldNavigate = await DialogHelper.showDocumentRequired(
+  ///   context,
+  ///   title: '서류 등록 필요',
+  ///   missingDocuments: ['신분증', '통장사본'],
+  /// );
+  /// if (shouldNavigate) {
+  ///   // 서류 관리 화면으로 이동
+  /// }
+  /// ```
+  static Future<bool> showDocumentRequired(
+    BuildContext context, {
+    required String title,
+    required List<String> missingDocuments,
+  }) async {
+    final result = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(16),
+        ),
+        title: Row(
+          children: [
+            Icon(
+              Icons.warning_amber_rounded,
+              color: Colors.orange[700],
+              size: 28,
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Text(
+                title,
+                style: const TextStyle(
+                  fontSize: 18,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+            ),
+          ],
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              '지원하기 전에 서류 등록이 필요합니다.',
+              style: TextStyle(fontSize: 15),
+            ),
+            const SizedBox(height: 16),
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: Colors.orange[50],
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: Colors.orange[200]!),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Icon(
+                        Icons.description_outlined,
+                        size: 20,
+                        color: Colors.orange[900],
+                      ),
+                      const SizedBox(width: 8),
+                      Text(
+                        '미등록 항목:',
+                        style: TextStyle(
+                          fontWeight: FontWeight.bold,
+                          color: Colors.orange[900],
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  ...missingDocuments.map((doc) => Padding(
+                        padding: const EdgeInsets.only(left: 8, top: 4),
+                        child: Row(
+                          children: [
+                            Icon(
+                              Icons.circle,
+                              size: 6,
+                              color: Colors.orange[700],
+                            ),
+                            const SizedBox(width: 8),
+                            Text(
+                              doc,
+                              style: TextStyle(
+                                color: Colors.orange[900],
+                              ),
+                            ),
+                          ],
+                        ),
+                      )),
+                ],
+              ),
+            ),
+            const SizedBox(height: 12),
+            Text(
+              '설정 > 내 서류 관리에서\n서류를 등록해주세요.',
+              style: TextStyle(
+                fontSize: 13,
+                color: Colors.grey[600],
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('취소'),
+          ),
+          ElevatedButton.icon(
+            onPressed: () => Navigator.pop(context, true),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Theme.of(context).primaryColor,
+              foregroundColor: Colors.white,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(8),
+              ),
+            ),
+            icon: const Icon(Icons.arrow_forward, size: 18),
+            label: const Text('서류 등록하기'),
+          ),
+        ],
+      ),
+    );
+    return result ?? false;
+  }
 }

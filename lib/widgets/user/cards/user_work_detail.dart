@@ -1,11 +1,26 @@
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
+import 'package:provider/provider.dart';
+
+// Models
 import '../../../models/core/work_detail_model.dart';
 import '../../../models/core/to_model.dart';
+
+// Providers
+import '../../../providers/user_provider.dart';
+
+// Services & Utils
 import '../../../utils/format_helper.dart';
-import '../../../utils/responsive_helper.dart';  // ⭐ 추가
+import '../../../utils/responsive_helper.dart';
+import '../../../utils/dialog_helper.dart';
+import '../../../utils/toast_helper.dart';
+
+// Screens
 import '../../../screens/user/dialogs/work_detail_dialog.dart';
 import '../../../screens/user/dialogs/apply_dialog.dart';
+import '../../../screens/common/document_management_screen.dart';
+
+// Widgets
 import '../../work_type_icon.dart';
 
 /// 업무 항목 카드 (공통 위젯) - StatefulWidget으로 변경
@@ -247,6 +262,51 @@ class _WorkItemCardState extends State<WorkItemCard> {
                   onPressed: _localHasApplied || widget.work.isClosed || widget.work.isTimeExpired
                       ? null
                       : () async {
+                          // ✅ 서류 체크 - Firestore에서 최신 데이터 가져오기
+                          final userProvider = context.read<UserProvider>();
+                          
+                          // 최신 사용자 정보 가져오기 (캐시 무시)
+                          await userProvider.refreshCurrentUser();
+                          final user = userProvider.currentUser;
+                          
+                          if (user == null) {
+                            ToastHelper.showError('로그인이 필요합니다.');
+                            return;
+                          }
+                          
+                          // 미등록 서류 체크
+                          final List<String> missingDocs = [];
+                          if (user.idCardImageUrl == null) {
+                            missingDocs.add('신분증');
+                          }
+                          if (user.bankName == null || user.accountNumber == null) {
+                            missingDocs.add('통장 정보');
+                          }
+                          if (user.bankbookImageUrl == null) {
+                            missingDocs.add('통장사본');
+                          }
+                          
+                          // 서류 미등록 시 다이얼로그
+                          if (missingDocs.isNotEmpty) {
+                            final shouldNavigate = await DialogHelper.showDocumentRequired(
+                              context,
+                              title: '서류 등록 필요',
+                              missingDocuments: missingDocs,
+                            );
+                            
+                            if (shouldNavigate && mounted) {
+                              // 서류 관리 화면으로 이동
+                              Navigator.push(
+                                context,
+                                MaterialPageRoute(
+                                  builder: (context) => const DocumentManagementScreen(),
+                                ),
+                              );
+                            }
+                            return;
+                          }
+                          
+                          // 서류 완료 → 지원 진행
                           final success = await ApplyDialog.show(
                             context: context,
                             work: widget.work,

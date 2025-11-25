@@ -237,7 +237,7 @@ class _BusinessDetailScreenState extends State<BusinessDetailScreen> {
               ),
               SizedBox(width: ResponsiveHelper.spacing(context, 8)),
               Text(
-                '${widget.business.rating!.toStringAsFixed(1)}',
+                widget.business.rating!.toStringAsFixed(1),
                 style: ResponsiveHelper.bodyStyle(context).copyWith(
                   fontWeight: FontWeight.bold,
                 ),

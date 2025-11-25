@@ -384,7 +384,7 @@ class OcrVerificationDialog {
   ) {
     return Row(
       children: [
-        Container(
+        SizedBox(
           width: ResponsiveHelper.spacing(context, 80),
           child: Text(
             label,

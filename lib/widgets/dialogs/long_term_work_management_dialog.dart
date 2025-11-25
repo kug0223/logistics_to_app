@@ -313,16 +313,16 @@ class _LongTermWorkManagementDialogState
                     color: textColor,
                   ).copyWith(fontWeight: FontWeight.bold),
                 ),
-                if (detailText != null) ...[
-                  SizedBox(height: ResponsiveHelper.spacing(context, 4)),  // ⭐ 변경
-                  Text(
-                    detailText,
-                    style: ResponsiveHelper.tinyStyle(  // ⭐ 변경
-                      context,
-                      color: textColor.withOpacity(0.8),
-                    ),
+                ...[
+                SizedBox(height: ResponsiveHelper.spacing(context, 4)),  // ⭐ 변경
+                Text(
+                  detailText,
+                  style: ResponsiveHelper.tinyStyle(  // ⭐ 변경
+                    context,
+                    color: textColor.withOpacity(0.8),
                   ),
-                ],
+                ),
+              ],
               ],
             ),
           ),
