@@ -63,8 +63,6 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
   // Step 2: 기본 정보
   final _nameController = TextEditingController();
   final _businessNumberController = TextEditingController();
-  final _displayNameController = TextEditingController();
-  bool _useDisplayName = false;
   final _addressController = TextEditingController();
   final _detailAddressController = TextEditingController();
   final _phoneController = TextEditingController();
@@ -131,10 +129,6 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
 
     _nameController.text = business.name;
     _businessNumberController.text = _formatBusinessNumber(business.businessNumber);
-    _useDisplayName = business.useDisplayName;
-    if (business.displayName != null) {
-      _displayNameController.text = business.displayName!;
-    }
     _addressController.text = business.address;
     if (business.detailAddress != null) {  // ⭐ 추가
       _detailAddressController.text = business.detailAddress!;
@@ -175,7 +169,6 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
   void dispose() {
     _nameController.dispose();
     _businessNumberController.dispose();
-    _displayNameController.dispose();
     _addressController.dispose();
     _detailAddressController.dispose();
     _phoneController.dispose();
@@ -509,11 +502,6 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
 
           SizedBox(height: ResponsiveHelper.spacing(context, 16)),
 
-          // 공개 표시명 설정
-          _buildDisplayNameSection(context, theme),
-
-          SizedBox(height: ResponsiveHelper.spacing(context, 16)),
-
           // 주소
           CommonWidgets.textField(
             context: context,
@@ -600,76 +588,6 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
                 ],
               )
             : null,
-      ),
-    );
-  }
-
-  /// 공개 표시명 섹션
-  Widget _buildDisplayNameSection(BuildContext context, ThemeData theme) {
-    return Container(
-      padding: ResponsiveHelper.cardPadding(context),
-      decoration: BoxDecoration(
-        color: theme.primaryColor.withOpacity(0.05),
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: theme.primaryColor.withOpacity(0.2)),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Icon(
-                Icons.info_outline,
-                color: theme.primaryColor,
-                size: ResponsiveHelper.iconSize(context, 20),
-              ),
-              SizedBox(width: ResponsiveHelper.spacing(context, 8)),
-              Text(
-                '공개 표시명 설정',
-                style: ResponsiveHelper.subtitleStyle(context).copyWith(
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
-            ],
-          ),
-          SizedBox(height: ResponsiveHelper.spacing(context, 8)),
-          Text(
-            '공고에 회사명이나 브랜드명을 표시하고 싶다면 설정하세요.',
-            style: ResponsiveHelper.smallStyle(context).copyWith(
-              color: Colors.grey[700],
-            ),
-          ),
-          SizedBox(height: ResponsiveHelper.spacing(context, 12)),
-
-          CheckboxListTile(
-            value: _useDisplayName,
-            onChanged: (value) {
-              setState(() => _useDisplayName = value ?? false);
-            },
-            title: Text(
-              '공개 표시명 사용',
-              style: ResponsiveHelper.bodyStyle(context),
-            ),
-            subtitle: Text(
-              '예: 주식회사 OOO',
-              style: ResponsiveHelper.smallStyle(context),
-            ),
-            contentPadding: EdgeInsets.zero,
-            controlAffinity: ListTileControlAffinity.leading,
-            activeColor: theme.primaryColor,
-          ),
-
-          if (_useDisplayName) ...[
-            SizedBox(height: ResponsiveHelper.spacing(context, 12)),
-            CommonWidgets.textField(
-              context: context,
-              controller: _displayNameController,
-              label: '공개 표시명',
-              hint: '예: 주식회사 OOO',
-              icon: Icons.storefront,
-            ),
-          ],
-        ],
       ),
     );
   }
@@ -1167,10 +1085,6 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
     if (!_formKey.currentState!.validate()) {
       return false;
     }
-    if (_useDisplayName && _displayNameController.text.trim().isEmpty) {
-      ToastHelper.showError('공개 표시명을 입력해주세요');
-      return false;
-    }
     return true;
   }
 
@@ -1346,8 +1260,6 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
       final businessData = {
         'name': _nameController.text.trim(),
         'businessNumber': _businessNumberController.text.replaceAll('-', ''),
-        'displayName': _useDisplayName ? _displayNameController.text.trim() : null,
-        'useDisplayName': _useDisplayName,
         'category': _selectedCategory,
         'subCategory': _selectedSubCategory,
         'address': _addressController.text.trim(),  // ⭐ 분리 저장
@@ -1356,7 +1268,7 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
         'longitude': _longitude,
         'phone': _phoneController.text.trim().isEmpty ? null : _phoneController.text.trim(),
         'ownerId': ownerId,
-        'isApproved': _isEditMode ? widget.business!.isApproved : false,
+        'isApproved': _isEditMode ? widget.business!.isApproved : true,
         'mainImageUrl': mainImageUrl,
         'imageUrls': additionalUrls,
         'oneLineIntro': _oneLineIntroController.text.trim().isEmpty ? null : _oneLineIntroController.text.trim(),
@@ -1383,7 +1295,7 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
         businessData['attendanceType'] = 'gps';
         businessData['gpsRadius'] = 100;
         await FirebaseFirestore.instance.collection('businesses').add(businessData);
-        ToastHelper.showSuccess('사업장이 등록되었습니다\n관리자 승인 후 사용할 수 있습니다');
+        ToastHelper.showSuccess('사업장이 등록되었습니다\n바로 사용하실 수 있습니다');  // ✅ 메시지 변경!
       }
 
       if (mounted) {

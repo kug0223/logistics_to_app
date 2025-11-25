@@ -2387,7 +2387,7 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
       
       final toId = await _firestoreService.createTOWithDetails(
         businessId: _selectedBusiness!.id,
-        businessName: _selectedBusiness!.publicName,
+        businessName: _selectedBusiness!.name,
         title: _titleController.text.trim(),
         date: date,
         workDetailsData: _workDetails.map((w) => {
@@ -2464,7 +2464,7 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
 
         final toId = await _firestoreService.createTOWithDetails(
           businessId: _selectedBusiness!.id,
-          businessName: _selectedBusiness!.publicName,
+          businessName: _selectedBusiness!.name,
           title: _titleController.text.trim(),
           date: date,
           workDetailsData: _workDetails.map((w) => {

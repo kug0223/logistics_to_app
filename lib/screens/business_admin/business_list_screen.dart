@@ -23,6 +23,7 @@ import '../common/document_management_screen.dart';
 // Screen
 import 'business_detail_screen.dart';
 import 'business_form_screen.dart';
+import 'to_management/create_to_screen.dart';
 
 /// 📋 내 사업장 관리 화면 (관리자 전용)
 class BusinessListScreen extends StatefulWidget {
@@ -240,7 +241,7 @@ class _BusinessListScreenState extends State<BusinessListScreen> {
                       children: [
                         Expanded(
                           child: Text(
-                            business.publicName,
+                            business.name,
                             style: ResponsiveHelper.subtitleStyle(context).copyWith(
                               fontWeight: FontWeight.bold,
                             ),
@@ -420,7 +421,13 @@ class _BusinessListScreenState extends State<BusinessListScreen> {
               ToastHelper.showWarning('승인된 사업장만 TO를 등록할 수 있습니다');
               return;
             }
-            Navigator.pushNamed(context, '/create_to');
+            // ✅ 직접 화면 이동으로 변경!
+            Navigator.push(
+              context,
+              MaterialPageRoute(
+                builder: (context) => const AdminCreateTOScreen(),
+              ),
+            );
             break;
           case 'detail':
             Navigator.push(

@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
+import 'package:flutter/services.dart';
 
 // Models
 import '../../models/core/business_model.dart';
@@ -10,6 +11,8 @@ import '../../utils/toast_helper.dart';
 
 // Widgets
 import '../../widgets/common/common_widgets.dart';
+import '../../widgets/maps/kakao_map_widget.dart';
+import '../../widgets/maps/full_map_dialog.dart';
 
 // Screen
 import 'business_form_screen.dart';
@@ -37,7 +40,7 @@ class _BusinessDetailScreenState extends State<BusinessDetailScreen> {
 
     return Scaffold(
       appBar: AppBar(
-        title: Text(widget.business.publicName),
+        title: Text(widget.business.name),
         actions: [
           // 수정 버튼
           IconButton(
@@ -70,42 +73,42 @@ class _BusinessDetailScreenState extends State<BusinessDetailScreen> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  // 사업장명 + 평점
+                  // 1. 사업장명 + 평점
                   _buildHeader(context, theme),
 
-                  SizedBox(height: ResponsiveHelper.spacing(context, 24)),
+                  // 2. 사업장 소개 (상세 안내)
+                  if (widget.business.detailedDescription != null) ...[
+                    SizedBox(height: ResponsiveHelper.spacing(context, 24)),
+                    _buildDescription(context, theme),
+                  ],
 
-                  // 기본 정보
-                  _buildBasicInfo(context, theme),
-
-                  SizedBox(height: ResponsiveHelper.spacing(context, 24)),
-
-                  // 시설 및 환경
-                  _buildFacilities(context, theme),
-
-                  // 사업장 사진들
+                  // 3. 사업장 사진
                   if (widget.business.imageUrls != null &&
                       widget.business.imageUrls!.isNotEmpty) ...[
                     SizedBox(height: ResponsiveHelper.spacing(context, 24)),
                     _buildPhotoGallery(context, theme),
                   ],
 
-                  SizedBox(height: ResponsiveHelper.spacing(context, 24)),
-
-                  // 오시는 길
-                  _buildLocation(context, theme),
-
-                  // 상세 안내
-                  if (widget.business.detailedDescription != null) ...[
-                    SizedBox(height: ResponsiveHelper.spacing(context, 24)),
-                    _buildDescription(context, theme),
-                  ],
-
-                  // 주의사항
+                  // 4. 준비사항
                   if (widget.business.precautions != null) ...[
                     SizedBox(height: ResponsiveHelper.spacing(context, 24)),
                     _buildPrecautions(context, theme),
                   ],
+
+                  SizedBox(height: ResponsiveHelper.spacing(context, 24)),
+
+                  // 5. 시설 및 환경
+                  _buildFacilities(context, theme),
+
+                  SizedBox(height: ResponsiveHelper.spacing(context, 24)),
+
+                  // 6. 오시는 길
+                  _buildLocation(context, theme),
+
+                  SizedBox(height: ResponsiveHelper.spacing(context, 24)),
+
+                  // 7. 기본 정보 (맨 아래)
+                  _buildBasicInfo(context, theme),
 
                   SizedBox(height: ResponsiveHelper.spacing(context, 32)),
                 ],
@@ -212,7 +215,7 @@ class _BusinessDetailScreenState extends State<BusinessDetailScreen> {
       children: [
         // 사업장명
         Text(
-          widget.business.publicName,
+          widget.business.name,
           style: ResponsiveHelper.titleStyle(context).copyWith(
             fontSize: ResponsiveHelper.getFontSize(context, 22),
             fontWeight: FontWeight.bold,
@@ -318,7 +321,7 @@ class _BusinessDetailScreenState extends State<BusinessDetailScreen> {
                 _buildInfoRow(
                   context,
                   '연락처',
-                  widget.business.phone!,
+                  _formatPhoneNumber(widget.business.phone!),  // ✅ 포맷 적용!
                   trailing: IconButton(
                     icon: Icon(
                       Icons.phone,
@@ -458,8 +461,9 @@ class _BusinessDetailScreenState extends State<BusinessDetailScreen> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              // 주소
+              // 주소 + 상세주소 + 복사 버튼
               Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Icon(
                     Icons.location_on,
@@ -468,22 +472,54 @@ class _BusinessDetailScreenState extends State<BusinessDetailScreen> {
                   ),
                   SizedBox(width: ResponsiveHelper.spacing(context, 8)),
                   Expanded(
-                    child: Column(  // ⭐ Text를 Column으로 변경
+                    child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
+                        // 기본 주소
                         Text(
                           widget.business.address,
                           style: ResponsiveHelper.bodyStyle(context),
                         ),
-                        if (widget.business.detailAddress != null && widget.business.detailAddress!.isNotEmpty) ...[  // ⭐ 상세주소 추가
+                        // 상세주소 (있을 경우)
+                        if (widget.business.detailAddress != null && 
+                            widget.business.detailAddress!.isNotEmpty) ...[
                           SizedBox(height: ResponsiveHelper.spacing(context, 4)),
                           Text(
                             widget.business.detailAddress!,
-                            style: ResponsiveHelper.bodyStyle(context).copyWith(
-                              color: Colors.grey[600],
-                            ),
+                            style: ResponsiveHelper.bodyStyle(context),
                           ),
                         ],
+                        // 📋 주소 복사 버튼
+                        SizedBox(height: ResponsiveHelper.spacing(context, 8)),
+                        InkWell(
+                          onTap: () {
+                            // 주소 + 상세주소 함께 복사
+                            String fullAddress = widget.business.address;
+                            if (widget.business.detailAddress != null && 
+                                widget.business.detailAddress!.isNotEmpty) {
+                              fullAddress += ' ${widget.business.detailAddress}';
+                            }
+                            Clipboard.setData(ClipboardData(text: fullAddress));
+                            ToastHelper.showSuccess('주소가 복사되었습니다');
+                          },
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(
+                                Icons.content_copy,
+                                size: ResponsiveHelper.iconSize(context, 14),
+                                color: theme.primaryColor,
+                              ),
+                              SizedBox(width: ResponsiveHelper.spacing(context, 4)),
+                              Text(
+                                '주소 복사',
+                                style: ResponsiveHelper.smallStyle(context).copyWith(
+                                  color: theme.primaryColor,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
                       ],
                     ),
                   ),
@@ -532,34 +568,51 @@ class _BusinessDetailScreenState extends State<BusinessDetailScreen> {
                 ),
               ],
 
-              SizedBox(height: ResponsiveHelper.spacing(context, 16)),
-
-              // 버튼들
-              Row(
-                children: [
-                  Expanded(
-                    child: CommonWidgets.outlineButton(
-                      context: context,
-                      text: '지도 보기',
-                      icon: Icons.map,
-                      onPressed: () => _openMap(),
+              // ✨ 지도 미리보기 (NEW!)
+              if (widget.business.latitude != null && widget.business.longitude != null) ...[
+                SizedBox(height: ResponsiveHelper.spacing(context, 16)),
+                GestureDetector(
+                  onTap: () => _showFullMap(context),
+                  child: KakaoMapWidget(
+                    latitude: widget.business.latitude!,
+                    longitude: widget.business.longitude!,
+                    placeName: widget.business.name,
+                    height: ResponsiveHelper.spacing(context, 250),
+                    showControls: false,
+                  ),
+                ),
+                SizedBox(height: ResponsiveHelper.spacing(context, 8)),
+                Center(
+                  child: TextButton.icon(
+                    onPressed: () => _showFullMap(context),
+                    icon: Icon(
+                      Icons.zoom_out_map,
+                      size: ResponsiveHelper.iconSize(context, 18),
+                    ),
+                    label: Text(
+                      '큰 지도 보기',
+                      style: ResponsiveHelper.bodyStyle(context),
                     ),
                   ),
-                  SizedBox(width: ResponsiveHelper.spacing(context, 12)),
-                  Expanded(
-                    child: CommonWidgets.outlineButton(
-                      context: context,
-                      text: '길찾기',
-                      icon: Icons.directions,
-                      onPressed: () => _openDirections(),
-                    ),
-                  ),
-                ],
-              ),
+                ),
+              ],
             ],
           ),
         ),
       ],
+    );
+  }
+
+  /// 전체 화면 지도 보기 (NEW!)
+  void _showFullMap(BuildContext context) {
+    if (widget.business.latitude == null || widget.business.longitude == null) {
+      ToastHelper.showError('위치 정보가 없습니다');
+      return;
+    }
+
+    showDialog(
+      context: context,
+      builder: (context) => FullMapDialog(business: widget.business),
     );
   }
 
@@ -700,47 +753,23 @@ class _BusinessDetailScreenState extends State<BusinessDetailScreen> {
     }
   }
 
-  /// 지도 열기 (Kakao Map)
-  void _openMap() async {
-    if (widget.business.latitude == null || widget.business.longitude == null) {
-      ToastHelper.showError('위치 정보가 없습니다');
-      return;
-    }
-
-    // ⭐ URL 인코딩 적용
-    final encodedName = Uri.encodeComponent(widget.business.publicName);
-    final urlString = 'https://map.kakao.com/link/map/$encodedName,${widget.business.latitude},${widget.business.longitude}';
+  /// 전화번호 포맷팅 (010-1234-5678)
+  String _formatPhoneNumber(String phone) {
+    // 숫자만 추출
+    final numbers = phone.replaceAll(RegExp(r'[^0-9]'), '');
     
-    final uri = Uri.parse(urlString);
-
-    try {
-      // ⭐ platformDefault 모드로 변경 (브라우저 또는 카카오맵 앱으로 자동 열림)
-      await launchUrl(uri, mode: LaunchMode.platformDefault);
-    } catch (e) {
-      print('❌ 지도 열기 실패: $e');
-      ToastHelper.showError('지도를 열 수 없습니다');
+    if (numbers.length == 10) {
+      // 010-123-4567 (10자리)
+      return '${numbers.substring(0, 3)}-${numbers.substring(3, 6)}-${numbers.substring(6)}';
+    } else if (numbers.length == 11) {
+      // 010-1234-5678 (11자리)
+      return '${numbers.substring(0, 3)}-${numbers.substring(3, 7)}-${numbers.substring(7)}';
+    } else if (numbers.length == 9) {
+      // 02-123-4567 (서울 지역번호)
+      return '${numbers.substring(0, 2)}-${numbers.substring(2, 5)}-${numbers.substring(5)}';
     }
-  }
-
-  /// 길찾기
-  void _openDirections() async {
-    if (widget.business.latitude == null || widget.business.longitude == null) {
-      ToastHelper.showError('위치 정보가 없습니다');
-      return;
-    }
-
-    // ⭐ URL 인코딩 적용
-    final encodedName = Uri.encodeComponent(widget.business.publicName);
-    final urlString = 'https://map.kakao.com/link/to/$encodedName,${widget.business.latitude},${widget.business.longitude}';
     
-    final uri = Uri.parse(urlString);
-
-    try {
-      // ⭐ platformDefault 모드로 변경
-      await launchUrl(uri, mode: LaunchMode.platformDefault);
-    } catch (e) {
-      print('❌ 길찾기 열기 실패: $e');
-      ToastHelper.showError('길찾기를 열 수 없습니다');
-    }
+    // 기타 형식은 그대로 반환
+    return phone;
   }
 }
