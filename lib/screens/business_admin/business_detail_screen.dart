@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:flutter/services.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 
 // Models
 import '../../models/core/business_model.dart';
@@ -33,91 +34,122 @@ class BusinessDetailScreen extends StatefulWidget {
 
 class _BusinessDetailScreenState extends State<BusinessDetailScreen> {
   int _currentImageIndex = 0;
+  late BusinessModel _currentBusiness;
+  
+  @override
+  void initState() {
+    super.initState();
+    _currentBusiness = widget.business;
+  }
+
+  // ✅ Firestore에서 최신 데이터 다시 가져오기
+  Future<void> _reloadBusiness() async {
+    try {
+      print('🔄 사업장 데이터 재조회 시작: ${_currentBusiness.id}');
+      
+      final doc = await FirebaseFirestore.instance
+          .collection('businesses')
+          .doc(_currentBusiness.id)
+          .get(const GetOptions(source: Source.server));
+      
+      if (doc.exists && mounted) {
+        setState(() {
+          _currentBusiness = BusinessModel.fromMap(doc.data()!, doc.id);
+        });
+        print('✅ 사업장 데이터 업데이트 완료!');
+        ToastHelper.showSuccess('사업장 정보가 업데이트되었습니다');
+      }
+    } catch (e) {
+      print('❌ 사업장 재조회 실패: $e');
+      ToastHelper.showError('업데이트된 정보를 불러오는데 실패했습니다');
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
 
     return Scaffold(
-      appBar: AppBar(
-        title: Text(widget.business.name),
-        actions: [
-          // 수정 버튼
-          IconButton(
-            icon: const Icon(Icons.edit_outlined),
-            onPressed: () async {
-              final result = await Navigator.push(
-                context,
-                MaterialPageRoute(
-                  builder: (context) => BusinessFormScreen(
-                    business: widget.business,
+        appBar: AppBar(
+          title: Text(_currentBusiness.name),
+          actions: [
+            // 수정 버튼
+            IconButton(
+              icon: const Icon(Icons.edit_outlined),
+              onPressed: () async {
+                final result = await Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (context) => BusinessFormScreen(
+                      business: _currentBusiness,
+                    ),
                   ),
-                ),
-              );
-              if (result == true && mounted) {
-                Navigator.pop(context, true);  // 리스트 화면으로 돌아가면서 새로고침
-              }
-            },
-          ),
-        ],
-      ),
-      body: SingleChildScrollView(
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            // 이미지 슬라이드
-            _buildImageSlider(context),
-
-            Padding(
-              padding: ResponsiveHelper.cardPadding(context),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  // 1. 사업장명 + 평점
-                  _buildHeader(context, theme),
-
-                  // 2. 사업장 소개 (상세 안내)
-                  if (widget.business.detailedDescription != null) ...[
-                    SizedBox(height: ResponsiveHelper.spacing(context, 24)),
-                    _buildDescription(context, theme),
-                  ],
-
-                  // 3. 사업장 사진
-                  if (widget.business.imageUrls != null &&
-                      widget.business.imageUrls!.isNotEmpty) ...[
-                    SizedBox(height: ResponsiveHelper.spacing(context, 24)),
-                    _buildPhotoGallery(context, theme),
-                  ],
-
-                  // 4. 준비사항
-                  if (widget.business.precautions != null) ...[
-                    SizedBox(height: ResponsiveHelper.spacing(context, 24)),
-                    _buildPrecautions(context, theme),
-                  ],
-
-                  SizedBox(height: ResponsiveHelper.spacing(context, 24)),
-
-                  // 5. 시설 및 환경
-                  _buildFacilities(context, theme),
-
-                  SizedBox(height: ResponsiveHelper.spacing(context, 24)),
-
-                  // 6. 오시는 길
-                  _buildLocation(context, theme),
-
-                  SizedBox(height: ResponsiveHelper.spacing(context, 24)),
-
-                  // 7. 기본 정보 (맨 아래)
-                  _buildBasicInfo(context, theme),
-
-                  SizedBox(height: ResponsiveHelper.spacing(context, 32)),
-                ],
-              ),
+                );
+                if (result == true && mounted) {
+                  // ✅ Firestore에서 최신 데이터 다시 가져오기!
+                  await _reloadBusiness();
+                }
+              },
             ),
           ],
         ),
-      ),
-    );
+        body: SingleChildScrollView(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // 이미지 슬라이드
+              _buildImageSlider(context),
+
+              Padding(
+                padding: ResponsiveHelper.cardPadding(context),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    // 1. 사업장명 + 평점
+                    _buildHeader(context, theme),
+
+                    // 2. 사업장 소개 (상세 안내)
+                    if (_currentBusiness.detailedDescription != null) ...[
+                      SizedBox(height: ResponsiveHelper.spacing(context, 24)),
+                      _buildDescription(context, theme),
+                    ],
+
+                    // 3. 사업장 사진
+                    if (_currentBusiness.imageUrls != null &&
+                        _currentBusiness.imageUrls!.isNotEmpty) ...[
+                      SizedBox(height: ResponsiveHelper.spacing(context, 24)),
+                      _buildPhotoGallery(context, theme),
+                    ],
+
+                    // 4. 준비사항
+                    if (_currentBusiness.precautions != null) ...[
+                      SizedBox(height: ResponsiveHelper.spacing(context, 24)),
+                      _buildPrecautions(context, theme),
+                    ],
+
+                    SizedBox(height: ResponsiveHelper.spacing(context, 24)),
+
+                    // 5. 시설 및 환경
+                    _buildFacilities(context, theme),
+
+                    SizedBox(height: ResponsiveHelper.spacing(context, 24)),
+
+                    // 6. 오시는 길
+                    _buildLocation(context, theme),
+
+                    SizedBox(height: ResponsiveHelper.spacing(context, 24)),
+
+                    // 7. 기본 정보 (맨 아래)
+                    _buildBasicInfo(context, theme),
+
+                    SizedBox(height: ResponsiveHelper.spacing(context, 32)),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
   }
 
   /// 📸 이미지 슬라이더
@@ -125,13 +157,13 @@ class _BusinessDetailScreenState extends State<BusinessDetailScreen> {
     final images = <String>[];
     
     // 대표 이미지 추가
-    if (widget.business.mainImageUrl != null) {
-      images.add(widget.business.mainImageUrl!);
+    if (_currentBusiness.mainImageUrl != null) {
+      images.add(_currentBusiness.mainImageUrl!);
     }
     
     // 추가 이미지들
-    if (widget.business.imageUrls != null) {
-      images.addAll(widget.business.imageUrls!);
+    if (_currentBusiness.imageUrls != null) {
+      images.addAll(_currentBusiness.imageUrls!);
     }
 
     if (images.isEmpty) {
@@ -215,7 +247,7 @@ class _BusinessDetailScreenState extends State<BusinessDetailScreen> {
       children: [
         // 사업장명
         Text(
-          widget.business.name,
+          _currentBusiness.name,
           style: ResponsiveHelper.titleStyle(context).copyWith(
             fontSize: ResponsiveHelper.getFontSize(context, 22),
             fontWeight: FontWeight.bold,
@@ -225,13 +257,13 @@ class _BusinessDetailScreenState extends State<BusinessDetailScreen> {
         SizedBox(height: ResponsiveHelper.spacing(context, 8)),
 
         // 평점
-        if (widget.business.rating != null)
+        if (_currentBusiness.rating != null)
           Row(
             children: [
               ...List.generate(
                 5,
                 (index) => Icon(
-                  index < widget.business.rating!.floor()
+                  index < _currentBusiness.rating!.floor()
                       ? Icons.star
                       : Icons.star_border,
                   size: ResponsiveHelper.iconSize(context, 20),
@@ -240,14 +272,14 @@ class _BusinessDetailScreenState extends State<BusinessDetailScreen> {
               ),
               SizedBox(width: ResponsiveHelper.spacing(context, 8)),
               Text(
-                widget.business.rating!.toStringAsFixed(1),
+                _currentBusiness.rating!.toStringAsFixed(1),
                 style: ResponsiveHelper.bodyStyle(context).copyWith(
                   fontWeight: FontWeight.bold,
                 ),
               ),
-              if (widget.business.reviewCount != null)
+              if (_currentBusiness.reviewCount != null)
                 Text(
-                  ' (${widget.business.reviewCount}명)',
+                  ' (${_currentBusiness.reviewCount}명)',
                   style: ResponsiveHelper.smallStyle(context).copyWith(
                     color: Colors.grey[600],
                   ),
@@ -256,7 +288,7 @@ class _BusinessDetailScreenState extends State<BusinessDetailScreen> {
           ),
 
         // 한 줄 소개
-        if (widget.business.oneLineIntro != null) ...[
+        if (_currentBusiness.oneLineIntro != null) ...[
           SizedBox(height: ResponsiveHelper.spacing(context, 12)),
           Container(
             padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 12)),
@@ -274,7 +306,7 @@ class _BusinessDetailScreenState extends State<BusinessDetailScreen> {
                 SizedBox(width: ResponsiveHelper.spacing(context, 8)),
                 Expanded(
                   child: Text(
-                    widget.business.oneLineIntro!,
+                    _currentBusiness.oneLineIntro!,
                     style: ResponsiveHelper.bodyStyle(context).copyWith(
                       fontStyle: FontStyle.italic,
                       color: theme.primaryColor,
@@ -305,30 +337,30 @@ class _BusinessDetailScreenState extends State<BusinessDetailScreen> {
           padding: ResponsiveHelper.cardPadding(context),
           child: Column(
             children: [
-              _buildInfoRow(context, '업종', widget.business.category),
-              if (widget.business.subCategory.isNotEmpty) ...[
+              _buildInfoRow(context, '업종', _currentBusiness.category),
+              if (_currentBusiness.subCategory.isNotEmpty) ...[
                 Divider(height: ResponsiveHelper.spacing(context, 24)),
-                _buildInfoRow(context, '세부 업종', widget.business.subCategory),
+                _buildInfoRow(context, '세부 업종', _currentBusiness.subCategory),
               ],
               Divider(height: ResponsiveHelper.spacing(context, 24)),
               _buildInfoRow(
                 context,
                 '사업자번호',
-                widget.business.formattedBusinessNumber,
+                _currentBusiness.formattedBusinessNumber,
               ),
-              if (widget.business.phone != null) ...[
+              if (_currentBusiness.phone != null) ...[
                 Divider(height: ResponsiveHelper.spacing(context, 24)),
                 _buildInfoRow(
                   context,
                   '연락처',
-                  _formatPhoneNumber(widget.business.phone!),  // ✅ 포맷 적용!
+                  _formatPhoneNumber(_currentBusiness.phone!),  // ✅ 포맷 적용!
                   trailing: IconButton(
                     icon: Icon(
                       Icons.phone,
                       color: theme.primaryColor,
                       size: ResponsiveHelper.iconSize(context, 20),
                     ),
-                    onPressed: () => _callPhone(widget.business.phone!),
+                    onPressed: () => _callPhone(_currentBusiness.phone!),
                   ),
                 ),
               ],
@@ -360,43 +392,43 @@ class _BusinessDetailScreenState extends State<BusinessDetailScreen> {
                 context,
                 Icons.local_parking,
                 '주차',
-                widget.business.parkingAvailable ? '가능' : '불가',
-                widget.business.parkingAvailable,
+                _currentBusiness.parkingAvailable ? '가능' : '불가',
+                _currentBusiness.parkingAvailable,
               ),
 
               // 식사
-              if (widget.business.mealsProvided != null && widget.business.mealsProvided!.isNotEmpty) ...[
+              if (_currentBusiness.mealsProvided != null && _currentBusiness.mealsProvided!.isNotEmpty) ...[
                 SizedBox(height: ResponsiveHelper.spacing(context, 12)),
                 _buildFacilityItem(
                   context,
                   Icons.restaurant,
                   '식사 제공',
-                  widget.business.mealsProvided!.join(', '),  // ⭐ List를 문자열로 조합
+                  _currentBusiness.mealsProvided!.join(', '),  // ⭐ List를 문자열로 조합
                   true,  // ⭐ 항목이 있으면 무조건 true
                 ),
               ],
 
               // 복장
-              if (widget.business.uniformProvided != null) ...[
+              if (_currentBusiness.uniformProvided != null) ...[
                 SizedBox(height: ResponsiveHelper.spacing(context, 12)),
                 _buildFacilityItem(
                   context,
                   Icons.checkroom,
                   '복장',
-                  widget.business.uniformProvided!,
-                  widget.business.uniformProvided != '없음',
+                  _currentBusiness.uniformProvided!,
+                  _currentBusiness.uniformProvided != '없음',
                 ),
               ],
 
               // 편의시설
-              if (widget.business.facilities != null &&
-                  widget.business.facilities!.isNotEmpty) ...[
+              if (_currentBusiness.facilities != null &&
+                  _currentBusiness.facilities!.isNotEmpty) ...[
                 SizedBox(height: ResponsiveHelper.spacing(context, 12)),
                 _buildFacilityItem(
                   context,
                   Icons.star_outline,
                   '편의시설',
-                  widget.business.facilities!.join(', '),
+                  _currentBusiness.facilities!.join(', '),
                   true,
                 ),
               ],
@@ -422,7 +454,7 @@ class _BusinessDetailScreenState extends State<BusinessDetailScreen> {
           height: 120,
           child: ListView.builder(
             scrollDirection: Axis.horizontal,
-            itemCount: widget.business.imageUrls!.length,
+            itemCount: _currentBusiness.imageUrls!.length,
             itemBuilder: (context, index) {
               return Container(
                 width: 120,
@@ -432,7 +464,7 @@ class _BusinessDetailScreenState extends State<BusinessDetailScreen> {
                 decoration: BoxDecoration(
                   borderRadius: BorderRadius.circular(12),
                   image: DecorationImage(
-                    image: NetworkImage(widget.business.imageUrls![index]),
+                    image: NetworkImage(_currentBusiness.imageUrls![index]),
                     fit: BoxFit.cover,
                   ),
                 ),
@@ -477,15 +509,15 @@ class _BusinessDetailScreenState extends State<BusinessDetailScreen> {
                       children: [
                         // 기본 주소
                         Text(
-                          widget.business.address,
+                          _currentBusiness.address,
                           style: ResponsiveHelper.bodyStyle(context),
                         ),
                         // 상세주소 (있을 경우)
-                        if (widget.business.detailAddress != null && 
-                            widget.business.detailAddress!.isNotEmpty) ...[
+                        if (_currentBusiness.detailAddress != null && 
+                            _currentBusiness.detailAddress!.isNotEmpty) ...[
                           SizedBox(height: ResponsiveHelper.spacing(context, 4)),
                           Text(
-                            widget.business.detailAddress!,
+                            _currentBusiness.detailAddress!,
                             style: ResponsiveHelper.bodyStyle(context),
                           ),
                         ],
@@ -494,10 +526,10 @@ class _BusinessDetailScreenState extends State<BusinessDetailScreen> {
                         InkWell(
                           onTap: () {
                             // 주소 + 상세주소 함께 복사
-                            String fullAddress = widget.business.address;
-                            if (widget.business.detailAddress != null && 
-                                widget.business.detailAddress!.isNotEmpty) {
-                              fullAddress += ' ${widget.business.detailAddress}';
+                            String fullAddress = _currentBusiness.address;
+                            if (_currentBusiness.detailAddress != null && 
+                                _currentBusiness.detailAddress!.isNotEmpty) {
+                              fullAddress += ' ${_currentBusiness.detailAddress}';
                             }
                             Clipboard.setData(ClipboardData(text: fullAddress));
                             ToastHelper.showSuccess('주소가 복사되었습니다');
@@ -527,7 +559,7 @@ class _BusinessDetailScreenState extends State<BusinessDetailScreen> {
               ),
 
               // 지하철
-              if (widget.business.nearestStation != null) ...[
+              if (_currentBusiness.nearestStation != null) ...[
                 SizedBox(height: ResponsiveHelper.spacing(context, 12)),
                 Row(
                   children: [
@@ -539,7 +571,7 @@ class _BusinessDetailScreenState extends State<BusinessDetailScreen> {
                     SizedBox(width: ResponsiveHelper.spacing(context, 8)),
                     Expanded(
                       child: Text(
-                        '${widget.business.nearestStation}${widget.business.walkingMinutes != null ? " 도보 ${widget.business.walkingMinutes}분" : ""}',
+                        '${_currentBusiness.nearestStation}${_currentBusiness.walkingMinutes != null ? " 도보 ${_currentBusiness.walkingMinutes}분" : ""}',
                         style: ResponsiveHelper.bodyStyle(context),
                       ),
                     ),
@@ -548,7 +580,7 @@ class _BusinessDetailScreenState extends State<BusinessDetailScreen> {
               ],
 
               // 버스
-              if (widget.business.busInfo != null) ...[
+              if (_currentBusiness.busInfo != null) ...[
                 SizedBox(height: ResponsiveHelper.spacing(context, 12)),
                 Row(
                   children: [
@@ -560,7 +592,7 @@ class _BusinessDetailScreenState extends State<BusinessDetailScreen> {
                     SizedBox(width: ResponsiveHelper.spacing(context, 8)),
                     Expanded(
                       child: Text(
-                        widget.business.busInfo!,
+                        _currentBusiness.busInfo!,
                         style: ResponsiveHelper.bodyStyle(context),
                       ),
                     ),
@@ -569,14 +601,14 @@ class _BusinessDetailScreenState extends State<BusinessDetailScreen> {
               ],
 
               // ✨ 지도 미리보기 (NEW!)
-              if (widget.business.latitude != null && widget.business.longitude != null) ...[
+              if (_currentBusiness.latitude != null && _currentBusiness.longitude != null) ...[
                 SizedBox(height: ResponsiveHelper.spacing(context, 16)),
                 GestureDetector(
                   onTap: () => _showFullMap(context),
                   child: KakaoMapWidget(
-                    latitude: widget.business.latitude!,
-                    longitude: widget.business.longitude!,
-                    placeName: widget.business.name,
+                    latitude: _currentBusiness.latitude!,
+                    longitude: _currentBusiness.longitude!,
+                    placeName: _currentBusiness.name,
                     height: ResponsiveHelper.spacing(context, 250),
                     showControls: false,
                   ),
@@ -605,14 +637,14 @@ class _BusinessDetailScreenState extends State<BusinessDetailScreen> {
 
   /// 전체 화면 지도 보기 (NEW!)
   void _showFullMap(BuildContext context) {
-    if (widget.business.latitude == null || widget.business.longitude == null) {
+    if (_currentBusiness.latitude == null || _currentBusiness.longitude == null) {
       ToastHelper.showError('위치 정보가 없습니다');
       return;
     }
 
     showDialog(
       context: context,
-      builder: (context) => FullMapDialog(business: widget.business),
+      builder: (context) => FullMapDialog(business: _currentBusiness),
     );
   }
 
@@ -632,7 +664,7 @@ class _BusinessDetailScreenState extends State<BusinessDetailScreen> {
           decoration: CommonWidgets.cardDecoration(),
           padding: ResponsiveHelper.cardPadding(context),
           child: Text(
-            widget.business.detailedDescription!,
+            _currentBusiness.detailedDescription!,
             style: ResponsiveHelper.bodyStyle(context),
           ),
         ),
@@ -653,7 +685,7 @@ class _BusinessDetailScreenState extends State<BusinessDetailScreen> {
         SizedBox(height: ResponsiveHelper.spacing(context, 12)),
         CommonWidgets.infoCard(
           context: context,
-          message: widget.business.precautions!,
+          message: _currentBusiness.precautions!,
           icon: Icons.info_outline,
           color: Colors.orange[700],
         ),

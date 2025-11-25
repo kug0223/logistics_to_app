@@ -3,6 +3,7 @@ import 'package:firebase_core/firebase_core.dart';
 import 'package:provider/provider.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:intl/date_symbol_data_local.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'firebase_options.dart';
 import 'providers/user_provider.dart';
 import 'providers/theme_provider.dart';
@@ -24,6 +25,13 @@ void main() async {
     await Firebase.initializeApp(
       options: DefaultFirebaseOptions.currentPlatform,
     );
+    
+    // ✅ Firestore 캐시 설정 (서버 우선!)
+    FirebaseFirestore.instance.settings = const Settings(
+      persistenceEnabled: true,  // 캐시는 유지
+      cacheSizeBytes: Settings.CACHE_SIZE_UNLIMITED,
+    );
+    
     print('✅ Firebase 초기화 완료');
   } catch (e) {
     print('❌ Firebase 초기화 에러: $e');

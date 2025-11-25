@@ -211,8 +211,8 @@ class _BusinessListScreenState extends State<BusinessListScreen> {
               ),
       ),
       child: InkWell(
-        onTap: () {
-          Navigator.push(
+        onTap: () async {  // ✅ async 추가!
+          await Navigator.push(
             context,
             MaterialPageRoute(
               builder: (context) => BusinessDetailScreen(
@@ -220,6 +220,7 @@ class _BusinessListScreenState extends State<BusinessListScreen> {
               ),
             ),
           );
+          _loadBusinesses();  // ✅ 돌아오면 새로고침!
         },
         borderRadius: BorderRadius.circular(16),
         child: Padding(
@@ -413,7 +414,7 @@ class _BusinessListScreenState extends State<BusinessListScreen> {
       ),
       // ⭐ 그림자
       elevation: 8,
-      onSelected: (value) {
+      onSelected: (value) async {
         switch (value) {
           case 'create_to':
             // 승인 체크
@@ -430,7 +431,7 @@ class _BusinessListScreenState extends State<BusinessListScreen> {
             );
             break;
           case 'detail':
-            Navigator.push(
+            await Navigator.push(
               context,
               MaterialPageRoute(
                 builder: (context) => BusinessDetailScreen(
@@ -438,6 +439,7 @@ class _BusinessListScreenState extends State<BusinessListScreen> {
                 ),
               ),
             );
+            _loadBusinesses();  // ✅ 돌아오면 새로고침!
             break;
           case 'edit':
             Navigator.push(

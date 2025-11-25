@@ -19,7 +19,7 @@ subadmin123!@#
 ALfit
 
 git add .
-git commit -m "Id,Pw찾기 및 사업장 등록 개선중 251125-3"
+git commit -m "사업장 상세보기 개선 251125-7"
 git push
 
 flutter clean

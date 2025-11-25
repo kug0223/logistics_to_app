@@ -2502,11 +2502,10 @@ class FirestoreService {
       print('   ownerId: $ownerId');
 
       final snapshot = await _firestore
-          .collection('businesses')
-          .where('ownerId', isEqualTo: ownerId)
-          // ⭐ isApproved 필터 제거 (승인 대기 중인 것도 표시)
-          .orderBy('createdAt', descending: true)
-          .get();
+      .collection('businesses')
+      .where('ownerId', isEqualTo: ownerId)
+      .orderBy('createdAt', descending: true)
+      .get(const GetOptions(source: Source.server));
 
       final businesses = snapshot.docs
           .map((doc) => BusinessModel.fromMap(doc.data(), doc.id))
