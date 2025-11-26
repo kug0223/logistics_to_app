@@ -10,6 +10,8 @@ import '../../widgets/work_type_icon.dart';
 import '../../utils/toast_helper.dart';
 import '../../utils/format_helper.dart';
 import '../../utils/responsive_helper.dart';
+import '../../utils/navigation_helper.dart';
+import 'work_type_detail_screen.dart';
 
 /// ✨ 세련된 업무 유형 관리 화면
 class WorkTypeManagementScreen extends StatefulWidget {
@@ -963,6 +965,7 @@ class _WorkTypeManagementScreenState extends State<WorkTypeManagementScreen> {
             ],
           ),
           child: ListTile(
+            onTap: () => _openDetailScreen(workType),
             contentPadding: EdgeInsets.symmetric(
               horizontal: ResponsiveHelper.spacing(context, 20),
               vertical: ResponsiveHelper.spacing(context, 12),
@@ -1219,5 +1222,19 @@ class _WorkTypeManagementScreenState extends State<WorkTypeManagementScreen> {
       enabled: onTap != null,
       onTap: onTap,
     );
+  }
+  /// 상세 화면으로 이동
+  Future<void> _openDetailScreen(BusinessWorkTypeModel workType) async {
+    final result = await Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => WorkTypeDetailScreen(workType: workType),
+      ),
+    );
+    
+    // 변경사항이 있으면 목록 새로고침
+    if (result == true) {
+      _loadWorkTypes();
+    }
   }
 }

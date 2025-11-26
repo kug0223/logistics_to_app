@@ -1,11 +1,11 @@
 // lib/utils/document_upload_helper.dart
-
+import 'dart:io';
 import 'package:flutter/material.dart';
-import 'package:image_picker/image_picker.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import '../widgets/dialogs/ocr_verification_dialog.dart';
 import 'ocr_verification_helper.dart';
 import 'responsive_helper.dart';
+import 'image_helper.dart';
 
 /// 📄 서류 업로드 통합 헬퍼
 /// 
@@ -13,85 +13,7 @@ import 'responsive_helper.dart';
 /// - 회원가입 화면
 /// - 설정 > 내 정보 화면
 /// - 프로필 수정 화면
-class DocumentUploadHelper {
-  
-  /// 🎯 이미지 소스 선택 다이얼로그 (모바일만)
-  static Future<ImageSource?> _showImageSourceDialog(BuildContext context) async {
-    return await showDialog<ImageSource>(
-      context: context,
-      builder: (context) => AlertDialog(
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(20),
-        ),
-        title: Row(
-          children: [
-            Icon(
-              Icons.add_photo_alternate,
-              color: Theme.of(context).primaryColor,
-            ),
-            SizedBox(width: ResponsiveHelper.spacing(context, 12)),
-            Text(
-              '이미지 선택',
-              style: ResponsiveHelper.subtitleStyle(context),
-            ),
-          ],
-        ),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            // 📷 카메라
-            ListTile(
-              leading: Container(
-                padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 8)),
-                decoration: BoxDecoration(
-                  color: Colors.blue.withOpacity(0.1),
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: Icon(
-                  Icons.camera_alt,
-                  color: Colors.blue[700],
-                  size: ResponsiveHelper.iconSize(context, 24),
-                ),
-              ),
-              title: Text(
-                '카메라로 촬영',
-                style: ResponsiveHelper.bodyStyle(context),
-              ),
-              onTap: () => Navigator.pop(context, ImageSource.camera),
-            ),
-            SizedBox(height: ResponsiveHelper.spacing(context, 8)),
-            // 🖼️ 갤러리
-            ListTile(
-              leading: Container(
-                padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 8)),
-                decoration: BoxDecoration(
-                  color: Colors.green.withOpacity(0.1),
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: Icon(
-                  Icons.photo_library,
-                  color: Colors.green[700],
-                  size: ResponsiveHelper.iconSize(context, 24),
-                ),
-              ),
-              title: Text(
-                '갤러리에서 선택',
-                style: ResponsiveHelper.bodyStyle(context),
-              ),
-              onTap: () => Navigator.pop(context, ImageSource.gallery),
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: Text('취소'),
-          ),
-        ],
-      ),
-    );
-  }
-  
+class DocumentUploadHelper {  
   /// 🔄 로딩 다이얼로그 표시
   static void _showLoadingDialog(BuildContext context, String message) {
     showDialog(
@@ -133,23 +55,10 @@ class DocumentUploadHelper {
     String? expectedResidentNumber,
   }) async {
     try {
-      final ImagePicker picker = ImagePicker();
-      ImageSource? source;
-      
-      // 웹/모바일 분기
-      if (kIsWeb) {
-        source = ImageSource.gallery;
-      } else {
-        source = await _showImageSourceDialog(context);
-        if (source == null) return null; // 사용자 취소
-      }
-      
-      // 이미지 선택
-      final XFile? image = await picker.pickImage(
-        source: source,
-        maxWidth: 1920,
-        maxHeight: 1920,
-        imageQuality: 85,
+      // ✅ ImageHelper 사용 (선택 + 압축)
+      final File? image = await ImageHelper.pickAndCompressImage(
+        context,
+        type: ImageType.document,  // OCR용 고품질
       );
       
       if (image == null) return null;
@@ -260,21 +169,10 @@ class DocumentUploadHelper {
     String? expectedBankName,
   }) async {
     try {
-      final ImagePicker picker = ImagePicker();
-      ImageSource? source;
-      
-      if (kIsWeb) {
-        source = ImageSource.gallery;
-      } else {
-        source = await _showImageSourceDialog(context);
-        if (source == null) return null;
-      }
-      
-      final XFile? image = await picker.pickImage(
-        source: source,
-        maxWidth: 1920,
-        maxHeight: 1920,
-        imageQuality: 85,
+      // ✅ ImageHelper 사용 (선택 + 압축)
+      final File? image = await ImageHelper.pickAndCompressImage(
+        context,
+        type: ImageType.document,  // OCR용 고품질
       );
       
       if (image == null) return null;
@@ -398,21 +296,10 @@ class DocumentUploadHelper {
     String? ceoName,
   }) async {
     try {
-      final ImagePicker picker = ImagePicker();
-      ImageSource? source;
-      
-      if (kIsWeb) {
-        source = ImageSource.gallery;
-      } else {
-        source = await _showImageSourceDialog(context);
-        if (source == null) return null;
-      }
-      
-      final XFile? image = await picker.pickImage(
-        source: source,
-        maxWidth: 1920,
-        maxHeight: 1920,
-        imageQuality: 85,
+      // ✅ ImageHelper 사용 (선택 + 압축)
+      final File? image = await ImageHelper.pickAndCompressImage(
+        context,
+        type: ImageType.document,  // OCR용 고품질
       );
       
       if (image == null) return null;

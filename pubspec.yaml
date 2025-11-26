@@ -37,6 +37,7 @@ dependencies:
   # 유틸리티
   intl: ^0.20.2
   http: ^1.2.2
+  path_provider: ^2.1.1
   
   # WebView (주소 검색용)
   webview_flutter: ^4.4.2
@@ -49,6 +50,9 @@ dependencies:
   
   # 이미지 선택 (회원가입 서류 업로드용)
   image_picker: ^1.0.7
+  
+  # 이미지 압축
+  flutter_image_compress: ^2.1.0
   
   # OCR (텍스트 인식 - 신분증/서류 검증용)
   google_mlkit_text_recognition: ^0.15.0

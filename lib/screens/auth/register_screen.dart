@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:flutter/services.dart';
-import 'package:image_picker/image_picker.dart';
 import '../../models/core/user_model.dart';
 import '../../providers/user_provider.dart';
 import '../../widgets/common/loading_widget.dart';
@@ -809,80 +808,6 @@ class _RegisterScreenState extends State<RegisterScreen> {
     );
   }
 
-  /// 이미지 소스 선택 다이얼로그
-  Future<ImageSource?> _showImageSourceDialog() async {
-    return await showDialog<ImageSource>(
-      context: context,
-      builder: (context) => AlertDialog(
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(20),
-        ),
-        title: Row(
-          children: [
-            Icon(
-              Icons.add_photo_alternate,
-              color: Theme.of(context).primaryColor,
-            ),
-            SizedBox(width: ResponsiveHelper.spacing(context, 8)),
-            Text(
-              '이미지 선택',
-              style: ResponsiveHelper.subtitleStyle(context),
-            ),
-          ],
-        ),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            ListTile(
-              leading: Container(
-                padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 8)),
-                decoration: BoxDecoration(
-                  color: Colors.blue.withOpacity(0.1),
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: Icon(
-                  Icons.camera_alt,
-                  color: Colors.blue[700],
-                  size: ResponsiveHelper.iconSize(context, 24),
-                ),
-              ),
-              title: Text(
-                '카메라로 촬영',
-                style: ResponsiveHelper.bodyStyle(context),
-              ),
-              onTap: () => Navigator.pop(context, ImageSource.camera),
-            ),
-            SizedBox(height: ResponsiveHelper.spacing(context, 8)),
-            ListTile(
-              leading: Container(
-                padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 8)),
-                decoration: BoxDecoration(
-                  color: Colors.green.withOpacity(0.1),
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: Icon(
-                  Icons.photo_library,
-                  color: Colors.green[700],
-                  size: ResponsiveHelper.iconSize(context, 24),
-                ),
-              ),
-              title: Text(
-                '갤러리에서 선택',
-                style: ResponsiveHelper.bodyStyle(context),
-              ),
-              onTap: () => Navigator.pop(context, ImageSource.gallery),
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: Text('취소'),
-          ),
-        ],
-      ),
-    );
-  }
 
   /// 사업자등록증 이미지 선택
   Future<void> _pickBusinessLicenseImage() async {

@@ -1,7 +1,6 @@
 import 'package:ALfit/screens/common/document_management_screen.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:image_picker/image_picker.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:provider/provider.dart';
@@ -14,6 +13,8 @@ import '../../models/core/user_model.dart';
 // Providers
 import '../../providers/user_provider.dart';
 
+// Helper
+import '../../utils/image_helper.dart';
 // Services
 import '../../services/firestore_service.dart';
 
@@ -1135,16 +1136,13 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
   }
 
   Future<void> _pickMainImage() async {
-    final picker = ImagePicker();
-    final pickedFile = await picker.pickImage(
-      source: ImageSource.gallery,
-      maxWidth: 1920,
-      maxHeight: 1080,
-      imageQuality: 85,
+    final image = await ImageHelper.pickAndCompressImage(
+      context,
+      type: ImageType.general,  // 1920x1080, 80% 압축
     );
 
-    if (pickedFile != null) {
-      setState(() => _mainImage = File(pickedFile.path));
+    if (image != null) {
+      setState(() => _mainImage = image);
     }
   }
 
@@ -1156,16 +1154,13 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
       return;
     }
 
-    final picker = ImagePicker();
-    final pickedFile = await picker.pickImage(
-      source: ImageSource.gallery,
-      maxWidth: 1920,
-      maxHeight: 1080,
-      imageQuality: 85,
+    final image = await ImageHelper.pickAndCompressImage(
+      context,
+      type: ImageType.general,  // 1920x1080, 80% 압축
     );
 
-    if (pickedFile != null) {
-      setState(() => _additionalImages.add(File(pickedFile.path)));
+    if (image != null) {
+      setState(() => _additionalImages.add(image));
     }
   }
 
