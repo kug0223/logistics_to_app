@@ -12,9 +12,11 @@ import '../../utils/toast_helper.dart';
 import '../../utils/dialog_helper.dart';
 import '../../utils/navigation_helper.dart';
 import '../../utils/image_helper.dart';
+import '../../../utils/format_helper.dart';
 
 // Widgets
 import '../../widgets/common/common_widgets.dart';
+import '../../../widgets/work_type_icon.dart';
 
 // Services
 import '../../services/storage_service.dart';
@@ -127,17 +129,25 @@ class _WorkTypeDetailScreenState extends State<WorkTypeDetailScreen> {
                     _buildImageSection(context),
                     SizedBox(height: ResponsiveHelper.spacing(context, 16)),
 
-                    // 기본 정보
-                    _buildBasicInfoSection(context),
+                    // 상세 설명
+                    _buildDescriptionSection(context),
                     SizedBox(height: ResponsiveHelper.spacing(context, 16)),
+
+                    // 근무 환경
+                    if (_currentWorkType.workEnvironment != null || _isEditing) ...[
+                      _buildWorkEnvironmentSection(context),
+                      SizedBox(height: ResponsiveHelper.spacing(context, 16)),
+                    ],
+
+                    // 준비사항
+                    if (_currentWorkType.precautions?.isNotEmpty == true || _isEditing) ...[
+                      _buildPrecautionsSection(context),
+                      SizedBox(height: ResponsiveHelper.spacing(context, 16)),
+                    ],
 
                     // 업무 상세
                     _buildDetailSection(context),
                     SizedBox(height: ResponsiveHelper.spacing(context, 16)),
-
-                    // 주의사항
-                    if (_currentWorkType.precautions?.isNotEmpty == true || _isEditing)
-                      _buildPrecautionsSection(context),
 
                     // 저장 버튼 (수정 모드일 때)
                     if (_isEditing) ...[
@@ -171,15 +181,25 @@ class _WorkTypeDetailScreenState extends State<WorkTypeDetailScreen> {
                 width: ResponsiveHelper.spacing(context, 60),
                 height: ResponsiveHelper.spacing(context, 60),
                 decoration: BoxDecoration(
-                  color: iconColor.withOpacity(0.1),
+                  gradient: LinearGradient(
+                    colors: [
+                      FormatHelper.parseColor(_currentWorkType.backgroundColor ?? '#2196F3'),
+                      FormatHelper.parseColor(_currentWorkType.backgroundColor ?? '#2196F3').withOpacity(0.8),
+                    ],
+                  ),
                   borderRadius: BorderRadius.circular(16),
+                  boxShadow: [
+                    BoxShadow(
+                      color: FormatHelper.parseColor(_currentWorkType.backgroundColor ?? '#2196F3').withOpacity(0.3),
+                      blurRadius: 8,
+                      offset: const Offset(0, 4),
+                    ),
+                  ],
                 ),
                 child: Center(
-                  child: Text(
-                    _currentWorkType.icon,
-                    style: TextStyle(
-                      fontSize: ResponsiveHelper.spacing(context, 32),
-                    ),
+                  child: WorkTypeIcon.build(
+                    _currentWorkType,
+                    size: ResponsiveHelper.spacing(context, 32),
                   ),
                 ),
               ),
@@ -188,29 +208,19 @@ class _WorkTypeDetailScreenState extends State<WorkTypeDetailScreen> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(
+                      Text(
                       _currentWorkType.name,
                       style: ResponsiveHelper.titleStyle(context).copyWith(
                         fontWeight: FontWeight.bold,
                       ),
                     ),
-                    if (_currentWorkType.oneLineIntro?.isNotEmpty == true && !_isEditing)
-                      Padding(
-                        padding: EdgeInsets.only(top: ResponsiveHelper.spacing(context, 4)),
-                        child: Text(
-                          _currentWorkType.oneLineIntro!,
-                          style: ResponsiveHelper.bodyStyle(context).copyWith(
-                            color: Colors.grey[600],
-                          ),
-                        ),
-                      ),
                   ],
                 ),
               ),
             ],
           ),
 
-          // 수정 모드: 한 줄 소개 입력
+          // 한 줄 소개
           if (_isEditing) ...[
             SizedBox(height: ResponsiveHelper.spacing(context, 16)),
             TextField(
@@ -218,11 +228,40 @@ class _WorkTypeDetailScreenState extends State<WorkTypeDetailScreen> {
               decoration: InputDecoration(
                 labelText: '한 줄 소개',
                 hintText: '예: 상품을 찾아 바구니에 담는 업무입니다',
+                prefixIcon: Icon(Icons.format_quote, color: Theme.of(context).primaryColor),
                 border: OutlineInputBorder(
                   borderRadius: BorderRadius.circular(12),
                 ),
               ),
               maxLength: 50,
+            ),
+          ] else if (_currentWorkType.oneLineIntro?.isNotEmpty == true) ...[
+            SizedBox(height: ResponsiveHelper.spacing(context, 16)),
+            Container(
+              padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 12)),
+              decoration: BoxDecoration(
+                color: Theme.of(context).primaryColor.withOpacity(0.1),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Row(
+                children: [
+                  Icon(
+                    Icons.format_quote,
+                    size: ResponsiveHelper.iconSize(context, 18),
+                    color: Theme.of(context).primaryColor,
+                  ),
+                  SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+                  Expanded(
+                    child: Text(
+                      _currentWorkType.oneLineIntro!,
+                      style: ResponsiveHelper.bodyStyle(context).copyWith(
+                        fontStyle: FontStyle.italic,
+                        color: Theme.of(context).primaryColor,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
             ),
           ],
         ],
@@ -241,10 +280,10 @@ class _WorkTypeDetailScreenState extends State<WorkTypeDetailScreen> {
       allImages.add(_currentWorkType.thumbnailUrl);
     }
     
-    // 추가 이미지
+    // 추가 이미지 (대표 이미지와 중복 제외)
     if (_currentWorkType.images != null) {
       for (var url in _currentWorkType.images!) {
-        if (!_imagesToDelete.contains(url)) {
+        if (!_imagesToDelete.contains(url) && url != _currentWorkType.thumbnailUrl) {
           allImages.add(url);
         }
       }
@@ -406,8 +445,8 @@ class _WorkTypeDetailScreenState extends State<WorkTypeDetailScreen> {
     );
   }
 
-  /// 기본 정보 섹션
-  Widget _buildBasicInfoSection(BuildContext context) {
+  /// 상세 설명 섹션
+  Widget _buildDescriptionSection(BuildContext context) {
     return Container(
       padding: ResponsiveHelper.cardPadding(context),
       decoration: CommonWidgets.cardDecoration(),
@@ -416,55 +455,13 @@ class _WorkTypeDetailScreenState extends State<WorkTypeDetailScreen> {
         children: [
           CommonWidgets.sectionHeader(
             context: context,
-            title: '기본 정보',
-            icon: Icons.info_outline,
+            title: '상세 설명',
+            icon: Icons.description_outlined,
           ),
           SizedBox(height: ResponsiveHelper.spacing(context, 16)),
 
-          // 근무 환경
-          if (_isEditing) ...[
-            Text(
-              '근무 환경',
-              style: ResponsiveHelper.bodyStyle(context).copyWith(
-                fontWeight: FontWeight.w600,
-              ),
-            ),
-            SizedBox(height: ResponsiveHelper.spacing(context, 8)),
-            Wrap(
-              spacing: ResponsiveHelper.spacing(context, 8),
-              children: ['실내', '실외', '혼합'].map((env) {
-                final isSelected = _selectedWorkEnvironment == env;
-                return ChoiceChip(
-                  label: Text(env),
-                  selected: isSelected,
-                  onSelected: (selected) {
-                    setState(() {
-                      _selectedWorkEnvironment = selected ? env : null;
-                    });
-                  },
-                );
-              }).toList(),
-            ),
-            SizedBox(height: ResponsiveHelper.spacing(context, 16)),
-          ] else if (_currentWorkType.workEnvironment != null) ...[
-            _buildInfoRow(
-              context,
-              icon: Icons.location_on_outlined,
-              label: '근무 환경',
-              value: _currentWorkType.workEnvironment!,
-            ),
-            SizedBox(height: ResponsiveHelper.spacing(context, 12)),
-          ],
-
           // 상세 설명
           if (_isEditing) ...[
-            Text(
-              '상세 설명',
-              style: ResponsiveHelper.bodyStyle(context).copyWith(
-                fontWeight: FontWeight.w600,
-              ),
-            ),
-            SizedBox(height: ResponsiveHelper.spacing(context, 8)),
             TextField(
               controller: _descriptionController,
               decoration: InputDecoration(
@@ -476,24 +473,170 @@ class _WorkTypeDetailScreenState extends State<WorkTypeDetailScreen> {
               maxLines: 4,
             ),
           ] else if (_currentWorkType.description?.isNotEmpty == true) ...[
-            Text(
-              '상세 설명',
-              style: ResponsiveHelper.bodyStyle(context).copyWith(
-                fontWeight: FontWeight.w600,
+            Container(
+              width: double.infinity,
+              padding: ResponsiveHelper.cardPadding(context),
+              decoration: BoxDecoration(
+                color: Colors.grey[50],
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Text(
+                _currentWorkType.description!,
+                style: ResponsiveHelper.bodyStyle(context).copyWith(
+                  color: Colors.grey[700],
+                  height: 1.5,
+                ),
               ),
             ),
-            SizedBox(height: ResponsiveHelper.spacing(context, 8)),
+          ] else ...[
             Text(
-              _currentWorkType.description!,
+              '등록된 상세 설명이 없습니다',
               style: ResponsiveHelper.bodyStyle(context).copyWith(
-                color: Colors.grey[700],
-                height: 1.5,
+                color: Colors.grey[500],
+                fontStyle: FontStyle.italic,
               ),
             ),
           ],
         ],
       ),
     );
+  }
+  /// 근무 환경 섹션 (사업장 상세 스타일)
+  Widget _buildWorkEnvironmentSection(BuildContext context) {
+    final theme = Theme.of(context);
+    
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        CommonWidgets.sectionHeader(
+          context: context,
+          title: '근무 환경',
+          icon: Icons.location_on_outlined,
+        ),
+        SizedBox(height: ResponsiveHelper.spacing(context, 12)),
+        
+        Container(
+          width: double.infinity,  // ← 너비 맞춤 추가
+          decoration: CommonWidgets.cardDecoration(),
+          padding: ResponsiveHelper.cardPadding(context),
+          child: _isEditing
+              ? Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      '근무 환경을 선택하세요',
+                      style: ResponsiveHelper.bodyStyle(context).copyWith(
+                        color: Colors.grey[600],
+                      ),
+                    ),
+                    SizedBox(height: ResponsiveHelper.spacing(context, 12)),
+                    Wrap(
+                      spacing: ResponsiveHelper.spacing(context, 8),
+                      runSpacing: ResponsiveHelper.spacing(context, 8),  // ← 줄바꿈 간격 추가
+                      children: ['실내(상온)', '실내(냉장)', '실내(냉동)', '실외', '혼합'].map((env) {
+                        final isSelected = _selectedWorkEnvironment == env;
+                        return ChoiceChip(
+                          label: Text(env),
+                          selected: isSelected,
+                          onSelected: (selected) {
+                            setState(() {
+                              _selectedWorkEnvironment = selected ? env : null;
+                            });
+                          },
+                          selectedColor: theme.primaryColor,
+                          checkmarkColor: Colors.white,
+                          labelStyle: ResponsiveHelper.bodyStyle(context).copyWith(
+                            color: isSelected ? Colors.white : Colors.grey[700],
+                            fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+                          ),
+                          side: BorderSide(
+                            color: isSelected ? theme.primaryColor : Colors.grey[300]!,
+                          ),
+                        );
+                      }).toList(),
+                    ),
+                  ],
+                )
+              : _buildEnvironmentItem(
+                  context,
+                  _getWorkEnvironmentIcon(_currentWorkType.workEnvironment!),
+                  '근무 장소',
+                  _currentWorkType.workEnvironment!,
+                ),
+        ),
+      ],
+    );
+  }
+
+  /// 환경 항목 (사업장 상세 _buildFacilityItem 스타일)
+  Widget _buildEnvironmentItem(
+    BuildContext context,
+    IconData icon,
+    String label,
+    String value,
+  ) {
+    final theme = Theme.of(context);
+    
+    return Row(
+      children: [
+        Container(
+          padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 8)),
+          decoration: BoxDecoration(
+            color: theme.primaryColor.withOpacity(0.1),
+            borderRadius: BorderRadius.circular(8),
+          ),
+          child: Icon(
+            icon,
+            size: ResponsiveHelper.iconSize(context, 20),
+            color: theme.primaryColor,
+          ),
+        ),
+        SizedBox(width: ResponsiveHelper.spacing(context, 12)),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                label,
+                style: ResponsiveHelper.smallStyle(context).copyWith(
+                  color: Colors.grey[600],
+                ),
+              ),
+              SizedBox(height: ResponsiveHelper.spacing(context, 2)),
+              Text(
+                value,
+                style: ResponsiveHelper.bodyStyle(context).copyWith(
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ],
+          ),
+        ),
+        Icon(
+          Icons.check_circle,
+          size: ResponsiveHelper.iconSize(context, 20),
+          color: Colors.green,
+        ),
+      ],
+    );
+  }
+
+  /// 근무환경별 아이콘 반환
+  IconData _getWorkEnvironmentIcon(String env) {
+    switch (env) {
+      case '실내(상온)':
+        return Icons.warehouse_outlined;
+      case '실내(냉장)':
+        return Icons.ac_unit_outlined;
+      case '실내(냉동)':
+        return Icons.severe_cold;
+      case '실외':
+        return Icons.wb_sunny_outlined;
+      case '혼합':
+        return Icons.sync_alt;
+      default:
+        return Icons.location_on_outlined;
+    }
   }
 
   /// 업무 상세 섹션
@@ -608,87 +751,38 @@ class _WorkTypeDetailScreenState extends State<WorkTypeDetailScreen> {
 
   /// 주의사항 섹션
   Widget _buildPrecautionsSection(BuildContext context) {
-    return Container(
-      padding: ResponsiveHelper.cardPadding(context),
-      decoration: CommonWidgets.cardDecoration(),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          CommonWidgets.sectionHeader(
-            context: context,
-            title: '주의사항',
-            icon: Icons.warning_amber_outlined,
-          ),
-          SizedBox(height: ResponsiveHelper.spacing(context, 16)),
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        CommonWidgets.sectionHeader(
+          context: context,
+          title: '준비사항',
+          icon: Icons.warning_amber_outlined,
+        ),
+        SizedBox(height: ResponsiveHelper.spacing(context, 12)),
 
-          if (_isEditing)
-            TextField(
+        if (_isEditing)
+          Container(
+            padding: ResponsiveHelper.cardPadding(context),
+            decoration: CommonWidgets.cardDecoration(),
+            child: TextField(
               controller: _precautionsController,
               decoration: InputDecoration(
-                hintText: '근무 시 주의사항을 입력하세요',
+                hintText: '예: 냉장 3~5도(따뜻한 복장 권장)\n냉동 -18도(냉동복 제공)',
                 border: OutlineInputBorder(
                   borderRadius: BorderRadius.circular(12),
                 ),
               ),
               maxLines: 3,
-            )
-          else
-            Container(
-              width: double.infinity,
-              padding: ResponsiveHelper.cardPadding(context),
-              decoration: BoxDecoration(
-                color: Colors.orange[50],
-                borderRadius: BorderRadius.circular(8),
-                border: Border.all(color: Colors.orange[200]!),
-              ),
-              child: Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Icon(
-                    Icons.info_outline,
-                    size: 18,
-                    color: Colors.orange[700],
-                  ),
-                  SizedBox(width: ResponsiveHelper.spacing(context, 8)),
-                  Expanded(
-                    child: Text(
-                      _currentWorkType.precautions!,
-                      style: ResponsiveHelper.bodyStyle(context).copyWith(
-                        color: Colors.orange[800],
-                        height: 1.5,
-                      ),
-                    ),
-                  ),
-                ],
-              ),
             ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildInfoRow(
-    BuildContext context, {
-    required IconData icon,
-    required String label,
-    required String value,
-  }) {
-    return Row(
-      children: [
-        Icon(icon, size: 18, color: Colors.grey[600]),
-        SizedBox(width: ResponsiveHelper.spacing(context, 8)),
-        Text(
-          '$label: ',
-          style: ResponsiveHelper.bodyStyle(context).copyWith(
-            color: Colors.grey[600],
+          )
+        else
+          CommonWidgets.infoCard(
+            context: context,
+            message: _currentWorkType.precautions!,
+            icon: Icons.info_outline,
+            color: Colors.orange[700],
           ),
-        ),
-        Text(
-          value,
-          style: ResponsiveHelper.bodyStyle(context).copyWith(
-            fontWeight: FontWeight.w600,
-          ),
-        ),
       ],
     );
   }
@@ -724,15 +818,20 @@ class _WorkTypeDetailScreenState extends State<WorkTypeDetailScreen> {
     
     setState(() {
       if (image is File) {
-        if (index == 0 && _newThumbnail != null) {
+        if (_newThumbnail == image) {
           _newThumbnail = null;
         } else {
           _newImages.remove(image);
         }
       } else if (image is String) {
         _imagesToDelete.add(image);
+        // 대표 이미지도 삭제 목록에 포함되었는지 체크
+        if (image == _currentWorkType.thumbnailUrl) {
+          // 대표 이미지 삭제 시 처리됨
+        }
       }
       
+      // 현재 인덱스 조정
       if (_currentImageIndex >= allImages.length - 1 && _currentImageIndex > 0) {
         _currentImageIndex--;
       }
@@ -782,9 +881,9 @@ class _WorkTypeDetailScreenState extends State<WorkTypeDetailScreen> {
         if (url != null) imageUrls.add(url);
       }
 
-      // 첫 번째 이미지를 대표이미지로
+      // 첫 번째 이미지를 대표이미지로 (images 배열에서는 제외)
       if (thumbnailUrl == null && imageUrls.isNotEmpty) {
-        thumbnailUrl = imageUrls.first;
+        thumbnailUrl = imageUrls.removeAt(0);  // 첫 번째 이미지를 꺼내서 대표로
       }
 
       // 3. Firestore 업데이트
