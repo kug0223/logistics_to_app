@@ -54,6 +54,7 @@ class BusinessModel {
   final String? precautions;           // 준비사항/주의사항
   final double? rating;                // 평점
   final int? reviewCount;              // 리뷰 수
+  final String? companyName; 
 
   BusinessModel({
     required this.id,
@@ -92,6 +93,7 @@ class BusinessModel {
     this.precautions,
     this.rating,
     this.reviewCount,
+    this.companyName,
   });
 
   // Firestore에서 데이터 가져올 때
@@ -141,6 +143,7 @@ class BusinessModel {
       precautions: map['precautions'],
       rating: map['rating']?.toDouble(),
       reviewCount: map['reviewCount'],
+      companyName: map['companyName'],
     );
   }
   /// ⭐ Firestore DocumentSnapshot에서 변환 (추가!)
@@ -187,6 +190,7 @@ class BusinessModel {
       'precautions': precautions,
       'rating': rating,
       'reviewCount': reviewCount,
+      'companyName': companyName,
     };
   }
   String get formattedBusinessNumber {
@@ -228,6 +232,8 @@ class BusinessModel {
     String? precautions,
     double? rating,
     int? reviewCount,
+    String? companyName,
+    
   }) {
     return BusinessModel(
       id: id ?? this.id,
@@ -260,6 +266,7 @@ class BusinessModel {
       precautions: precautions ?? this.precautions,
       rating: rating ?? this.rating,
       reviewCount: reviewCount ?? this.reviewCount,
+      companyName: companyName ?? this.companyName,
     );
   }
 

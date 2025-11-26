@@ -31,6 +31,7 @@ import '../../widgets/inputs/daum_address_search.dart';
 import '../auth/register_screen.dart';
 import '../auth/login_screen.dart';
 import '../../utils/navigation_helper.dart';
+import '../../utils/format_helper.dart';
 
 /// 🏢 사업장 등록/수정 화면 (Stepper 방식)
 class BusinessFormScreen extends StatefulWidget {
@@ -64,6 +65,7 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
   // Step 2: 기본 정보
   final _nameController = TextEditingController();
   final _businessNumberController = TextEditingController();
+  final _companyNameController = TextEditingController(); 
   final _addressController = TextEditingController();
   final _detailAddressController = TextEditingController();
   final _phoneController = TextEditingController();
@@ -111,13 +113,18 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
     }
   }
 
-  /// 회원가입 시 입력한 사업자번호 자동 완성
+  /// 회원가입 시 입력한 사업자번호/상호명 자동 완성
   void _loadUserBusinessNumber() {
     final userProvider = context.read<UserProvider>();
     final user = userProvider.currentUser;
 
     if (user?.businessNumber != null && user!.businessNumber!.isNotEmpty) {
-      _businessNumberController.text = _formatBusinessNumber(user.businessNumber!);
+      _businessNumberController.text = FormatHelper.formatBusinessNumber(user.businessNumber!);
+    }
+    
+    // ✅ 상호명 자동 완성
+    if (user?.businessName != null && user!.businessName!.isNotEmpty) {
+      _companyNameController.text = user.businessName!;
     }
   }
 
@@ -129,7 +136,8 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
     _selectedSubCategory = business.subCategory;
 
     _nameController.text = business.name;
-    _businessNumberController.text = _formatBusinessNumber(business.businessNumber);
+    _companyNameController.text = business.companyName ?? '';
+    _businessNumberController.text = FormatHelper.formatBusinessNumber(business.businessNumber);
     _addressController.text = business.address;
     if (business.detailAddress != null) {  // ⭐ 추가
       _detailAddressController.text = business.detailAddress!;
@@ -154,22 +162,12 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
     _selectedFacilities = business.facilities ?? [];
   }
 
-  /// 사업자등록번호 포맷팅
-  String _formatBusinessNumber(String value) {
-    final cleaned = value.replaceAll('-', '');
-    if (cleaned.length <= 3) {
-      return cleaned;
-    } else if (cleaned.length <= 5) {
-      return '${cleaned.substring(0, 3)}-${cleaned.substring(3)}';
-    } else {
-      return '${cleaned.substring(0, 3)}-${cleaned.substring(3, 5)}-${cleaned.substring(5, cleaned.length > 10 ? 10 : cleaned.length)}';
-    }
-  }
 
   @override
   void dispose() {
     _nameController.dispose();
     _businessNumberController.dispose();
+    _companyNameController.dispose();
     _addressController.dispose();
     _detailAddressController.dispose();
     _phoneController.dispose();
@@ -485,7 +483,7 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
               ),
             ),
             onChanged: (value) {
-              final formatted = _formatBusinessNumber(value);
+              final formatted = FormatHelper.formatBusinessNumber(value);
               if (formatted != value) {
                 _businessNumberController.value = TextEditingValue(
                   text: formatted,
@@ -500,6 +498,21 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
               return null;
             },
           ),
+          
+          SizedBox(height: ResponsiveHelper.spacing(context, 16)),
+          // ✅ 상호명 추가
+          CommonWidgets.textField(
+            context: context,
+            controller: _companyNameController,
+            label: '상호명 (법적 회사명)',
+            hint: '예: (주)홍길동물류',
+            icon: Icons.store,
+            validator: (value) {
+              if (value == null || value.isEmpty) return '상호명을 입력하세요';
+              return null;
+            },
+          ),
+
 
           SizedBox(height: ResponsiveHelper.spacing(context, 16)),
 
@@ -549,47 +562,79 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
 
   /// 대표 이미지 선택
   Widget _buildMainImagePicker(BuildContext context, ThemeData theme) {
-    return GestureDetector(
-      onTap: () => _pickMainImage(),
-      child: Container(
-        width: double.infinity,
-        height: 180,
-        decoration: BoxDecoration(
-          color: Colors.grey[200],
-          borderRadius: BorderRadius.circular(16),
-          border: Border.all(color: Colors.grey[300]!),
-          image: _mainImage != null
-              ? DecorationImage(
-                  image: FileImage(_mainImage!),
-                  fit: BoxFit.cover,
-                )
-              : _mainImageUrl != null
+    final hasImage = _mainImage != null || _mainImageUrl != null;
+    
+    return Stack(
+      children: [
+        GestureDetector(
+          onTap: () => _pickMainImage(),
+          child: Container(
+            width: double.infinity,
+            height: 180,
+            decoration: BoxDecoration(
+              color: Colors.grey[200],
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(color: Colors.grey[300]!),
+              image: _mainImage != null
                   ? DecorationImage(
-                      image: NetworkImage(_mainImageUrl!),
+                      image: FileImage(_mainImage!),
                       fit: BoxFit.cover,
                     )
-                  : null,
+                  : _mainImageUrl != null
+                      ? DecorationImage(
+                          image: NetworkImage(_mainImageUrl!),
+                          fit: BoxFit.cover,
+                        )
+                      : null,
+            ),
+            child: !hasImage
+                ? Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Icon(
+                        Icons.add_photo_alternate,
+                        size: ResponsiveHelper.iconSize(context, 48),
+                        color: Colors.grey[400],
+                      ),
+                      SizedBox(height: ResponsiveHelper.spacing(context, 8)),
+                      Text(
+                        '대표 이미지 추가 (선택)',
+                        style: ResponsiveHelper.bodyStyle(context).copyWith(
+                          color: Colors.grey[600],
+                        ),
+                      ),
+                    ],
+                  )
+                : null,
+          ),
         ),
-        child: _mainImage == null && _mainImageUrl == null
-            ? Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Icon(
-                    Icons.add_photo_alternate,
-                    size: ResponsiveHelper.iconSize(context, 48),
-                    color: Colors.grey[400],
-                  ),
-                  SizedBox(height: ResponsiveHelper.spacing(context, 8)),
-                  Text(
-                    '대표 이미지 추가 (선택)',
-                    style: ResponsiveHelper.bodyStyle(context).copyWith(
-                      color: Colors.grey[600],
-                    ),
-                  ),
-                ],
-              )
-            : null,
-      ),
+        // ✅ 삭제 버튼 (이미지가 있을 때만 표시)
+        if (hasImage)
+          Positioned(
+            top: ResponsiveHelper.spacing(context, 8),
+            right: ResponsiveHelper.spacing(context, 8),
+            child: GestureDetector(
+              onTap: () {
+                setState(() {
+                  _mainImage = null;
+                  _mainImageUrl = null;
+                });
+              },
+              child: Container(
+                padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 6)),
+                decoration: BoxDecoration(
+                  color: Colors.black.withOpacity(0.6),
+                  shape: BoxShape.circle,
+                ),
+                child: Icon(
+                  Icons.close,
+                  color: Colors.white,
+                  size: ResponsiveHelper.iconSize(context, 20),
+                ),
+              ),
+            ),
+          ),
+      ],
     );
   }
 
@@ -1261,6 +1306,7 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
       final businessData = {
         'name': _nameController.text.trim(),
         'businessNumber': _businessNumberController.text.replaceAll('-', ''),
+        'companyName': _companyNameController.text.trim(),
         'category': _selectedCategory,
         'subCategory': _selectedSubCategory,
         'address': _addressController.text.trim(),  // ⭐ 분리 저장

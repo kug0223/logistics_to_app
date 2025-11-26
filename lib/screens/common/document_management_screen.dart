@@ -8,6 +8,7 @@ import '../../widgets/common/common_widgets.dart';
 import '../../utils/document_upload_helper.dart';
 import '../../services/firestore_service.dart';
 import '../../utils/toast_helper.dart';
+import '../../utils/format_helper.dart';
 import 'package:intl/intl.dart';
 import '../../services/storage_service.dart';
 import '../../utils/navigation_helper.dart';
@@ -66,7 +67,9 @@ class _DocumentManagementScreenState extends State<DocumentManagementScreen> {
         _selectedBank = user.bankName;
         _accountNumberController.text = user.accountNumber ?? '';
         // 관리자용 필드
-      _businessNumberController.text = user.businessNumber ?? '';
+      _businessNumberController.text = user.businessNumber != null 
+          ? FormatHelper.formatBusinessNumber(user.businessNumber!) 
+          : '';
       _businessNameController.text = user.businessName ?? '';
       _ceoNameController.text = user.ceoName ?? user.name; // ✅ 저장된 값 우선, 없으면 본인 이름
       });
@@ -174,7 +177,7 @@ class _DocumentManagementScreenState extends State<DocumentManagementScreen> {
             keyboardType: TextInputType.number,
             maxLength: 12,  // 000-00-00000 형식 (하이픈 포함)
             inputFormatters: [
-              _BusinessNumberFormatter(),  // ✅ 커스텀 포맷터
+              BusinessNumberFormatter(),  
             ],
             style: ResponsiveHelper.bodyStyle(context),
             decoration: InputDecoration(
@@ -454,15 +457,6 @@ class _DocumentManagementScreenState extends State<DocumentManagementScreen> {
         ],
       ),
     );
-  }
-
-  /// 사업자번호 포맷팅
-  String _formatBusinessNumber(String number) {
-    final cleaned = number.replaceAll('-', '');
-    if (cleaned.length == 10) {
-      return '${cleaned.substring(0, 3)}-${cleaned.substring(3, 5)}-${cleaned.substring(5)}';
-    }
-    return number;
   }
 
   /// 사업자등록증 업로드
@@ -1287,40 +1281,5 @@ class _DocumentManagementScreenState extends State<DocumentManagementScreen> {
         setState(() => _isLoading = false);
       }
     }
-  }
-}
-
-/// 사업자등록번호 자동 포맷터 (000-00-00000)
-class _BusinessNumberFormatter extends TextInputFormatter {
-  @override
-  TextEditingValue formatEditUpdate(
-    TextEditingValue oldValue,
-    TextEditingValue newValue,
-  ) {
-    final text = newValue.text.replaceAll('-', '');
-    
-    // 숫자만 허용
-    if (text.isNotEmpty && !RegExp(r'^[0-9]+$').hasMatch(text)) {
-      return oldValue;
-    }
-    
-    // 최대 10자리
-    if (text.length > 10) {
-      return oldValue;
-    }
-    
-    // 포맷팅: 000-00-00000
-    String formatted = '';
-    for (int i = 0; i < text.length; i++) {
-      if (i == 3 || i == 5) {
-        formatted += '-';
-      }
-      formatted += text[i];
-    }
-    
-    return TextEditingValue(
-      text: formatted,
-      selection: TextSelection.collapsed(offset: formatted.length),
-    );
   }
 }

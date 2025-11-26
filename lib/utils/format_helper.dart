@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 /// 포맷팅 및 파싱 유틸리티 클래스
 class FormatHelper {
@@ -154,5 +155,103 @@ class FormatHelper {
            (firstChar >= 0x1F600 && firstChar <= 0x1F64F) || // 이모티콘
            (firstChar >= 0x1F680 && firstChar <= 0x1F6FF) || // 교통/지도 심볼
            (firstChar >= 0x1F900 && firstChar <= 0x1F9FF);   // 보조 심볼
+  }
+  // ============================================================
+  // 전화번호 포맷팅
+  // ============================================================
+  
+  /// 전화번호 포맷팅 (010-1234-5678)
+  /// 
+  /// 예시:
+  /// - formatPhone('01012345678') → '010-1234-5678'
+  /// - formatPhone('0212345678') → '02-1234-5678'
+  static String formatPhone(String phone) {
+    final numbers = phone.replaceAll(RegExp(r'[^0-9]'), '');
+    
+    if (numbers.length == 11) {
+      // 010-1234-5678 (11자리)
+      return '${numbers.substring(0, 3)}-${numbers.substring(3, 7)}-${numbers.substring(7)}';
+    } else if (numbers.length == 10) {
+      // 010-123-4567 또는 02-1234-5678
+      if (numbers.startsWith('02')) {
+        return '${numbers.substring(0, 2)}-${numbers.substring(2, 6)}-${numbers.substring(6)}';
+      }
+      return '${numbers.substring(0, 3)}-${numbers.substring(3, 6)}-${numbers.substring(6)}';
+    } else if (numbers.length == 9) {
+      // 02-123-4567 (서울 지역번호)
+      return '${numbers.substring(0, 2)}-${numbers.substring(2, 5)}-${numbers.substring(5)}';
+    }
+    
+    return phone;
+  }
+  // ============================================================
+  // 사업자번호 포맷팅
+  // ============================================================
+  
+  /// 사업자등록번호 포맷팅 (000-00-00000)
+  /// 
+  /// 예시:
+  /// - formatBusinessNumber('1234567890') → '123-45-67890'
+  static String formatBusinessNumber(String number) {
+    final cleaned = number.replaceAll('-', '');
+    
+    if (cleaned.length >= 10) {
+      return '${cleaned.substring(0, 3)}-${cleaned.substring(3, 5)}-${cleaned.substring(5, 10)}';
+    } else if (cleaned.length >= 5) {
+      return '${cleaned.substring(0, 3)}-${cleaned.substring(3, 5)}-${cleaned.substring(5)}';
+    } else if (cleaned.length >= 3) {
+      return '${cleaned.substring(0, 3)}-${cleaned.substring(3)}';
+    }
+    
+    return cleaned;
+  }
+  
+}
+  
+// ============================================================
+// TextInputFormatter 클래스들
+// ============================================================
+
+/// 사업자등록번호 입력 포맷터 (자동 하이픈)
+class BusinessNumberFormatter extends TextInputFormatter {
+  @override
+  TextEditingValue formatEditUpdate(
+    TextEditingValue oldValue,
+    TextEditingValue newValue,
+  ) {
+    final text = newValue.text.replaceAll('-', '');
+    
+    if (text.length > 10) {
+      return oldValue;
+    }
+    
+    final formatted = FormatHelper.formatBusinessNumber(text);
+    
+    return TextEditingValue(
+      text: formatted,
+      selection: TextSelection.collapsed(offset: formatted.length),
+    );
+  }
+}
+
+/// 전화번호 입력 포맷터 (자동 하이픈)
+class PhoneNumberFormatter extends TextInputFormatter {
+  @override
+  TextEditingValue formatEditUpdate(
+    TextEditingValue oldValue,
+    TextEditingValue newValue,
+  ) {
+    final text = newValue.text.replaceAll(RegExp(r'[^0-9]'), '');
+    
+    if (text.length > 11) {
+      return oldValue;
+    }
+    
+    final formatted = FormatHelper.formatPhone(text);
+    
+    return TextEditingValue(
+      text: formatted,
+      selection: TextSelection.collapsed(offset: formatted.length),
+    );
   }
 }

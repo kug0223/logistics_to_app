@@ -11,6 +11,15 @@ class BusinessWorkTypeModel {
   final int displayOrder;        // 정렬 순서 (낮을수록 위)
   final bool isActive;           // 활성화 여부
   final DateTime createdAt;      // 생성 일시
+  // ✅ 확장 필드
+  final String? oneLineIntro;    // 한 줄 소개
+  final String? description;     // 상세 설명
+  final String? workEnvironment; // 근무 환경 (실내/실외/혼합)
+  final String? requirements;    // 자격 요건 (자유 작성)
+  final String? duties;          // 주요 업무 (자유 작성)
+  final String? precautions;     // 주의사항
+  final String? thumbnailUrl;    // 대표 이미지 URL
+  final List<String>? images;    // 업무 사진 URL 목록
 
   BusinessWorkTypeModel({
     required this.id,
@@ -22,6 +31,15 @@ class BusinessWorkTypeModel {
     required this.displayOrder,
     this.isActive = true,
     required this.createdAt,
+    // ✅ 확장 필드
+    this.oneLineIntro,
+    this.description,
+    this.workEnvironment,
+    this.requirements,
+    this.duties,
+    this.precautions,
+    this.thumbnailUrl,
+    this.images,
   });
 
   /// Firestore 문서 → 모델
@@ -36,6 +54,17 @@ class BusinessWorkTypeModel {
       displayOrder: map['displayOrder'] ?? 0,
       isActive: map['isActive'] ?? true,
       createdAt: (map['createdAt'] as Timestamp).toDate(),
+      // ✅ 확장 필드
+      oneLineIntro: map['oneLineIntro'],
+      description: map['description'],
+      workEnvironment: map['workEnvironment'],
+      requirements: map['requirements'],
+      duties: map['duties'],
+      precautions: map['precautions'],
+      thumbnailUrl: map['thumbnailUrl'],
+      images: map['images'] != null 
+          ? List<String>.from(map['images']) 
+          : null,
     );
   }
 
@@ -56,6 +85,15 @@ class BusinessWorkTypeModel {
       'displayOrder': displayOrder,
       'isActive': isActive,
       'createdAt': Timestamp.fromDate(createdAt),
+      // ✅ 확장 필드
+      'oneLineIntro': oneLineIntro,
+      'description': description,
+      'workEnvironment': workEnvironment,
+      'requirements': requirements,
+      'duties': duties,
+      'precautions': precautions,
+      'thumbnailUrl': thumbnailUrl,
+      'images': images,
     };
   }
 
@@ -70,6 +108,15 @@ class BusinessWorkTypeModel {
     int? displayOrder,
     bool? isActive,
     DateTime? createdAt,
+    // ✅ 확장 필드
+    String? oneLineIntro,
+    String? description,
+    String? workEnvironment,
+    String? requirements,
+    String? duties,
+    String? precautions,
+    String? thumbnailUrl,
+    List<String>? images,
   }) {
     return BusinessWorkTypeModel(
       id: id ?? this.id,
@@ -81,6 +128,15 @@ class BusinessWorkTypeModel {
       displayOrder: displayOrder ?? this.displayOrder,
       isActive: isActive ?? this.isActive,
       createdAt: createdAt ?? this.createdAt,
+      // ✅ 확장 필드
+      oneLineIntro: oneLineIntro ?? this.oneLineIntro,
+      description: description ?? this.description,
+      workEnvironment: workEnvironment ?? this.workEnvironment,
+      requirements: requirements ?? this.requirements,
+      duties: duties ?? this.duties,
+      precautions: precautions ?? this.precautions,
+      thumbnailUrl: thumbnailUrl ?? this.thumbnailUrl,
+      images: images ?? this.images,
     );
   }
   @override

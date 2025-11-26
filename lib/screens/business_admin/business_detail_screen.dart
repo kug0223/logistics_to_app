@@ -9,6 +9,7 @@ import '../../models/core/business_model.dart';
 // Utils
 import '../../utils/responsive_helper.dart';
 import '../../utils/toast_helper.dart';
+import '../../utils/format_helper.dart';
 
 // Widgets
 import '../../widgets/common/common_widgets.dart';
@@ -364,12 +365,17 @@ class _BusinessDetailScreenState extends State<BusinessDetailScreen> {
                 '사업자번호',
                 _currentBusiness.formattedBusinessNumber,
               ),
+              // ✅ 상호명 추가 (사업자번호 바로 밑)
+              if (_currentBusiness.companyName != null && _currentBusiness.companyName!.isNotEmpty) ...[
+                Divider(height: ResponsiveHelper.spacing(context, 24)),
+                _buildInfoRow(context, '상호명', _currentBusiness.companyName!),
+              ],
               if (_currentBusiness.phone != null) ...[
                 Divider(height: ResponsiveHelper.spacing(context, 24)),
                 _buildInfoRow(
                   context,
                   '연락처',
-                  _formatPhoneNumber(_currentBusiness.phone!),  // ✅ 포맷 적용!
+                  FormatHelper.formatPhone(_currentBusiness.phone!),
                   trailing: IconButton(
                     icon: Icon(
                       Icons.phone,
@@ -799,25 +805,5 @@ class _BusinessDetailScreenState extends State<BusinessDetailScreen> {
     } else {
       ToastHelper.showError('전화를 걸 수 없습니다');
     }
-  }
-
-  /// 전화번호 포맷팅 (010-1234-5678)
-  String _formatPhoneNumber(String phone) {
-    // 숫자만 추출
-    final numbers = phone.replaceAll(RegExp(r'[^0-9]'), '');
-    
-    if (numbers.length == 10) {
-      // 010-123-4567 (10자리)
-      return '${numbers.substring(0, 3)}-${numbers.substring(3, 6)}-${numbers.substring(6)}';
-    } else if (numbers.length == 11) {
-      // 010-1234-5678 (11자리)
-      return '${numbers.substring(0, 3)}-${numbers.substring(3, 7)}-${numbers.substring(7)}';
-    } else if (numbers.length == 9) {
-      // 02-123-4567 (서울 지역번호)
-      return '${numbers.substring(0, 2)}-${numbers.substring(2, 5)}-${numbers.substring(5)}';
-    }
-    
-    // 기타 형식은 그대로 반환
-    return phone;
   }
 }
