@@ -1,13 +1,22 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+
+// Providers
 import '../../providers/user_provider.dart';
 import '../../providers/theme_provider.dart';
+
+// Services
 import '../../services/auth_service.dart';
+
+// Utils
 import '../../utils/dialog_helper.dart';
+import '../../utils/navigation_helper.dart';
 import '../../utils/responsive_helper.dart';
 import '../../utils/toast_helper.dart';
-import 'to_management/create_to_screen.dart';
+
+// Screens
 import '../common/settings_screen.dart';
+import 'to_management/create_to_screen.dart';
 import 'workforce_management/integrated_workforce_screen.dart';
 
 /// 사업장 관리자 홈 화면 - 세련된 디자인
@@ -201,16 +210,15 @@ class BusinessAdminHomeScreen extends StatelessWidget {
                               subtitle: '새 근무 등록',
                               color: theme.primaryColor.withOpacity(0.8),
                               onTap: () async {
-                                final result = await Navigator.push(
+                                await NavigationHelper.push<bool>(
                                   context,
-                                  MaterialPageRoute(
-                                    builder: (context) => const AdminCreateTOScreen(),
-                                  ),
+                                  destination: const AdminCreateTOScreen(),
+                                  onReturn: (result) {
+                                    if (result == true) {
+                                      ToastHelper.showSuccess('TO가 생성되었습니다');
+                                    }
+                                  },
                                 );
-                                
-                                if (result == true) {
-                                  ToastHelper.showSuccess('TO가 생성되었습니다');
-                                }
                               },
                             ),
 

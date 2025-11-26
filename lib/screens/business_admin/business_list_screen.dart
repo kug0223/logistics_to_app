@@ -436,12 +436,12 @@ class _BusinessListScreenState extends State<BusinessListScreen> {
               ToastHelper.showWarning('승인된 사업장만 TO를 등록할 수 있습니다');
               return;
             }
-            // ✅ 직접 화면 이동으로 변경!
-            Navigator.push(
+            await NavigationHelper.push<bool>(
               context,
-              MaterialPageRoute(
-                builder: (context) => const AdminCreateTOScreen(),
-              ),
+              destination: const AdminCreateTOScreen(),
+              onReturn: (result) {
+                if (result == true) _loadBusinesses(forceServer: true);
+              },
             );
             break;
           case 'detail':
@@ -653,11 +653,9 @@ class _BusinessListScreenState extends State<BusinessListScreen> {
       
       if (shouldNavigate && mounted) {
         // 서류 관리 화면으로 이동
-        Navigator.push(
+        NavigationHelper.push<bool>(
           context,
-          MaterialPageRoute(
-            builder: (context) => const DocumentManagementScreen(),
-          ),
+          destination: const DocumentManagementScreen(),
         );
       }
       return;

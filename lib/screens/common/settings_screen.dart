@@ -9,6 +9,7 @@ import '../../providers/user_provider.dart';
 
 // Utils
 import '../../utils/responsive_helper.dart';
+import '../../utils/navigation_helper.dart';
 
 // Widgets
 import '../../widgets/common/common_widgets.dart';
@@ -71,11 +72,9 @@ class SettingsScreen extends StatelessWidget {
               title: '내 서류 관리',
               subtitle: '신분증, 통장사본 등록 및 수정',
               onTap: () {
-                Navigator.push(
+                NavigationHelper.push<bool>(
                   context,
-                  MaterialPageRoute(
-                    builder: (context) => const DocumentManagementScreen(),
-                  ),
+                  destination: const DocumentManagementScreen(),
                 );
               },
             ),
@@ -95,11 +94,9 @@ class SettingsScreen extends StatelessWidget {
               title: '내 서류 관리',
               subtitle: '사업자등록증 관리',
               onTap: () {
-                Navigator.push(
+                NavigationHelper.push<bool>(
                   context,
-                  MaterialPageRoute(
-                    builder: (context) => const DocumentManagementScreen(),
-                  ),
+                  destination: const DocumentManagementScreen(),
                 );
               },
             ),

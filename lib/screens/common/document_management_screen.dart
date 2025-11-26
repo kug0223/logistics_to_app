@@ -10,6 +10,7 @@ import '../../services/firestore_service.dart';
 import '../../utils/toast_helper.dart';
 import 'package:intl/intl.dart';
 import '../../services/storage_service.dart';
+import '../../utils/navigation_helper.dart';
 
 /// 📄 내 서류 관리 화면 (역할별 분기)
 /// - 지원자(USER): 신분증 + 통장 정보
@@ -35,6 +36,7 @@ class _DocumentManagementScreenState extends State<DocumentManagementScreen> {
   String? _selectedBank;
   
   bool _isLoading = false;
+  bool _hasChanges = false;
 
   @override
   void initState() {
@@ -86,6 +88,10 @@ class _DocumentManagementScreenState extends State<DocumentManagementScreen> {
     
     return Scaffold(
       appBar: AppBar(
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back),
+          onPressed: () => NavigationHelper.pop(context, changed: _hasChanges),
+        ),
         title: Text('내 서류 관리'),
       ),
       body: _isLoading
@@ -498,6 +504,7 @@ class _DocumentManagementScreenState extends State<DocumentManagementScreen> {
         await userProvider.refreshCurrentUser();
         
         ToastHelper.showSuccess('사업자등록증이 등록되었습니다');
+        _hasChanges = true;  // ✅ 추가
       } catch (e) {
         ToastHelper.showError('사업자등록증 등록에 실패했습니다');
       } finally {
@@ -553,6 +560,7 @@ class _DocumentManagementScreenState extends State<DocumentManagementScreen> {
       await userProvider.refreshCurrentUser();
       
       ToastHelper.showSuccess('사업자등록증이 삭제되었습니다');
+      _hasChanges = true;  // ✅ 추가
     } catch (e) {
       print('❌ 사업자등록증 삭제 실패: $e');
       ToastHelper.showError('사업자등록증 삭제에 실패했습니다');
@@ -653,6 +661,7 @@ class _DocumentManagementScreenState extends State<DocumentManagementScreen> {
         await userProvider.refreshCurrentUser();
         
         ToastHelper.showSuccess('신분증이 등록되었습니다');
+        _hasChanges = true;  // ✅ 추가
       } catch (e) {
         ToastHelper.showError('신분증 등록에 실패했습니다');
       } finally {
@@ -688,6 +697,7 @@ class _DocumentManagementScreenState extends State<DocumentManagementScreen> {
       await userProvider.refreshCurrentUser();
       
       ToastHelper.showSuccess('통장 정보가 저장되었습니다');
+      _hasChanges = true;  // ✅ 추가
     } catch (e) {
       ToastHelper.showError('통장 정보 저장에 실패했습니다');
     } finally {
@@ -743,9 +753,9 @@ class _DocumentManagementScreenState extends State<DocumentManagementScreen> {
       await userProvider.refreshCurrentUser();
       
       ToastHelper.showSuccess('신분증이 삭제되었습니다');
+      _hasChanges = true;  // ✅ 추가
     } catch (e) {
       print('❌ 신분증 삭제 실패: $e');
-      ToastHelper.showError('신분증 삭제에 실패했습니다');
     } finally {
       setState(() => _isLoading = false);
     }
@@ -805,6 +815,7 @@ class _DocumentManagementScreenState extends State<DocumentManagementScreen> {
       });
       
       ToastHelper.showSuccess('통장 정보가 삭제되었습니다');
+      _hasChanges = true;  // ✅ 추가
     } catch (e) {
       print('❌ 통장 정보 삭제 실패: $e');
       ToastHelper.showError('통장 정보 삭제에 실패했습니다');
