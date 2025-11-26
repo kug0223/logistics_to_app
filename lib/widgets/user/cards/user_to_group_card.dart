@@ -9,6 +9,7 @@ import '../../../services/firestore_service.dart';
 
 // Utils
 import '../../../utils/responsive_helper.dart';
+import '../../../utils/navigation_helper.dart';
 
 // Widgets
 import '../../common/styled_container.dart';
@@ -628,16 +629,16 @@ class _TOGroupCardState extends State<TOGroupCard> {
     
     switch (value) {
       case 'edit':
-        final result = await Navigator.push(
+        await NavigationHelper.push<bool>(
           context,
-          MaterialPageRoute(
-            builder: (context) => AdminEditTOScreen(to: masterTO),
-          ),
+          destination: AdminEditTOScreen(to: masterTO),
+          onReturn: (result) {
+            if (result == true) {
+              widget.firestoreService.clearCache();
+              widget.onChanged();
+            }
+          },
         );
-        if (result == true) {
-          widget.firestoreService.clearCache();
-          widget.onChanged();
-        }
         break;
         
       case 'delete':

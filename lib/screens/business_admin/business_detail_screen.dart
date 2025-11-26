@@ -17,6 +17,7 @@ import '../../widgets/maps/full_map_dialog.dart';
 
 // Screen
 import 'business_form_screen.dart';
+import '../../utils/navigation_helper.dart';
 
 
 /// 🏢 사업장 상세 화면
@@ -35,6 +36,7 @@ class BusinessDetailScreen extends StatefulWidget {
 class _BusinessDetailScreenState extends State<BusinessDetailScreen> {
   int _currentImageIndex = 0;
   late BusinessModel _currentBusiness;
+  bool _hasChanges = false;
   
   @override
   void initState() {
@@ -55,6 +57,7 @@ class _BusinessDetailScreenState extends State<BusinessDetailScreen> {
       if (doc.exists && mounted) {
         setState(() {
           _currentBusiness = BusinessModel.fromMap(doc.data()!, doc.id);
+          _hasChanges = true;  // 변경 발생 표시
         });
         print('✅ 사업장 데이터 업데이트 완료!');
         ToastHelper.showSuccess('사업장 정보가 업데이트되었습니다');
@@ -69,84 +72,97 @@ class _BusinessDetailScreenState extends State<BusinessDetailScreen> {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
 
-    return Scaffold(
+    return PopScope(
+      canPop: true,
+      onPopInvokedWithResult: (didPop, result) {
+        if (didPop && _hasChanges) {
+          // 이미 pop 되었고, 변경사항이 있으면 이전 화면에서 처리하도록
+          // Navigator.pop의 result로는 전달 안되므로 별도 처리 필요 없음
+          // business_list_screen에서 무조건 _loadBusinesses() 호출하는 방식 유지
+        }
+      },
+      child: Scaffold(
         appBar: AppBar(
+          leading: IconButton(
+            icon: const Icon(Icons.arrow_back),
+            onPressed: () => NavigationHelper.pop(context, changed: _hasChanges),
+          ),
           title: Text(_currentBusiness.name),
           actions: [
             // 수정 버튼
             IconButton(
               icon: const Icon(Icons.edit_outlined),
               onPressed: () async {
-                final result = await Navigator.push(
+                await NavigationHelper.push<bool>(
                   context,
-                  MaterialPageRoute(
-                    builder: (context) => BusinessFormScreen(
-                      business: _currentBusiness,
-                    ),
+                  destination: BusinessFormScreen(
+                    business: _currentBusiness,
                   ),
+                  onReturn: (result) async {
+                    if (result == true && mounted) {
+                      await _reloadBusiness();
+                    }
+                  },
                 );
-                if (result == true && mounted) {
-                  // ✅ Firestore에서 최신 데이터 다시 가져오기!
-                  await _reloadBusiness();
-                }
               },
             ),
           ],
         ),
-        body: SingleChildScrollView(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              // 이미지 슬라이드
-              _buildImageSlider(context),
+          body: SingleChildScrollView(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // 이미지 슬라이드
+                _buildImageSlider(context),
 
-              Padding(
-                padding: ResponsiveHelper.cardPadding(context),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    // 1. 사업장명 + 평점
-                    _buildHeader(context, theme),
+                Padding(
+                  padding: ResponsiveHelper.cardPadding(context),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      // 1. 사업장명 + 평점
+                      _buildHeader(context, theme),
 
-                    // 2. 사업장 소개 (상세 안내)
-                    if (_currentBusiness.detailedDescription != null) ...[
+                      // 2. 사업장 소개 (상세 안내)
+                      if (_currentBusiness.detailedDescription != null) ...[
+                        SizedBox(height: ResponsiveHelper.spacing(context, 24)),
+                        _buildDescription(context, theme),
+                      ],
+
+                      // 3. 사업장 사진
+                      if (_currentBusiness.imageUrls != null &&
+                          _currentBusiness.imageUrls!.isNotEmpty) ...[
+                        SizedBox(height: ResponsiveHelper.spacing(context, 24)),
+                        _buildPhotoGallery(context, theme),
+                      ],
+
+                      // 4. 준비사항
+                      if (_currentBusiness.precautions != null) ...[
+                        SizedBox(height: ResponsiveHelper.spacing(context, 24)),
+                        _buildPrecautions(context, theme),
+                      ],
+
                       SizedBox(height: ResponsiveHelper.spacing(context, 24)),
-                      _buildDescription(context, theme),
-                    ],
 
-                    // 3. 사업장 사진
-                    if (_currentBusiness.imageUrls != null &&
-                        _currentBusiness.imageUrls!.isNotEmpty) ...[
+                      // 5. 시설 및 환경
+                      _buildFacilities(context, theme),
+
                       SizedBox(height: ResponsiveHelper.spacing(context, 24)),
-                      _buildPhotoGallery(context, theme),
-                    ],
 
-                    // 4. 준비사항
-                    if (_currentBusiness.precautions != null) ...[
+                      // 6. 오시는 길
+                      _buildLocation(context, theme),
+
                       SizedBox(height: ResponsiveHelper.spacing(context, 24)),
-                      _buildPrecautions(context, theme),
+
+                      // 7. 기본 정보 (맨 아래)
+                      _buildBasicInfo(context, theme),
+
+                      SizedBox(height: ResponsiveHelper.spacing(context, 32)),
                     ],
-
-                    SizedBox(height: ResponsiveHelper.spacing(context, 24)),
-
-                    // 5. 시설 및 환경
-                    _buildFacilities(context, theme),
-
-                    SizedBox(height: ResponsiveHelper.spacing(context, 24)),
-
-                    // 6. 오시는 길
-                    _buildLocation(context, theme),
-
-                    SizedBox(height: ResponsiveHelper.spacing(context, 24)),
-
-                    // 7. 기본 정보 (맨 아래)
-                    _buildBasicInfo(context, theme),
-
-                    SizedBox(height: ResponsiveHelper.spacing(context, 32)),
-                  ],
+                  ),
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
         ),
       );

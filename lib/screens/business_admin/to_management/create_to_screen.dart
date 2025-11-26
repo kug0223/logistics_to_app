@@ -2,17 +2,26 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:table_calendar/table_calendar.dart';
 import 'package:intl/intl.dart';
+
+// Models
 import '../../../models/core/business_model.dart';
 import '../../../models/core/to_model.dart';
+import '../../../models/core/business_work_type_model.dart';
+import '../../../models/work_detail_input.dart';
+
+// Services & Providers
 import '../../../services/firestore_service.dart';
 import '../../../providers/user_provider.dart';
+
+// Utils
 import '../../../utils/toast_helper.dart';
-import '../../../models/core/business_work_type_model.dart';
-import '../../../widgets/pickers/work_detail_dialog.dart';
-import '../../../models/work_detail_input.dart';
-import '../../../widgets/work_type_icon.dart';
 import '../../../utils/format_helper.dart';
 import '../../../utils/responsive_helper.dart';
+import '../../../utils/navigation_helper.dart';
+
+// Widgets
+import '../../../widgets/pickers/work_detail_dialog.dart';
+import '../../../widgets/work_type_icon.dart';
 
 /// ✨ TO 생성 화면 - 세련된 디자인
 class AdminCreateTOScreen extends StatefulWidget {
@@ -2349,7 +2358,7 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
         } else {
           ToastHelper.showSuccess('TO가 생성되었습니다');
         }
-        Navigator.pop(context, true);
+        NavigationHelper.popWithChange(context);
       }
     } catch (e) {
       print('❌ TO 생성 실패: $e');

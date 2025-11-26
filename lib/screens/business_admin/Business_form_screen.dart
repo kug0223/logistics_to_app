@@ -30,6 +30,7 @@ import '../../widgets/inputs/daum_address_search.dart';
 // Screen
 import '../auth/register_screen.dart';
 import '../auth/login_screen.dart';
+import '../../utils/navigation_helper.dart';
 
 /// 🏢 사업장 등록/수정 화면 (Stepper 방식)
 class BusinessFormScreen extends StatefulWidget {
@@ -1301,14 +1302,13 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
       if (mounted) {
         if (widget.isFromSignUp) {
           // 회원가입 후 → 로그인 화면으로
-          Navigator.pushAndRemoveUntil(
+          NavigationHelper.pushAndRemoveAll(
             context,
-            MaterialPageRoute(builder: (context) => const LoginScreen()),
-            (route) => false,
+            destination: const LoginScreen(),
           );
         } else {
-          // 일반 등록/수정 → 뒤로가기
-          Navigator.pop(context, true);
+          // 일반 등록/수정 → 뒤로가기 (변경됨 표시)
+          NavigationHelper.popWithChange(context);
         }
       }
     } catch (e) {

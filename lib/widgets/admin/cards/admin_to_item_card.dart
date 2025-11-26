@@ -9,6 +9,7 @@ import '../../../services/firestore_service.dart';
 
 // Utils
 import '../../../utils/responsive_helper.dart';
+import '../../../utils/navigation_helper.dart';
 
 // Widgets
 
@@ -622,16 +623,16 @@ class _TOItemCardState extends State<TOItemCard> {
   Future<void> _handleMenuAction(BuildContext context, String value) async {
     switch (value) {
       case 'edit':
-        final result = await Navigator.push(
+        await NavigationHelper.push<bool>(
           context,
-          MaterialPageRoute(
-            builder: (context) => AdminEditTOScreen(to: widget.toItem.to),
-          ),
+          destination: AdminEditTOScreen(to: widget.toItem.to),
+          onReturn: (result) {
+            if (result == true) {
+              widget.firestoreService.clearCache();
+              widget.onChanged();
+            }
+          },
         );
-        if (result == true) {
-          widget.firestoreService.clearCache();
-          widget.onChanged();
-        }
         break;
         
       case 'delete':

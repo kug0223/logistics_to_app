@@ -19,6 +19,8 @@ import '../../utils/dialog_helper.dart';
 // Widgets
 import '../../widgets/common/common_widgets.dart';
 import '../common/document_management_screen.dart';
+import '../../utils/navigation_helper.dart';
+import '../../utils/cache_manager.dart';
 
 // Screen
 import 'business_detail_screen.dart';
@@ -45,7 +47,7 @@ class _BusinessListScreenState extends State<BusinessListScreen> {
   }
 
   /// 사업장 목록 로드
-  Future<void> _loadBusinesses() async {
+  Future<void> _loadBusinesses({bool forceServer = false}) async {
     setState(() => _isLoading = true);
 
     try {
@@ -54,7 +56,21 @@ class _BusinessListScreenState extends State<BusinessListScreen> {
 
       if (ownerId == null) return;
 
-      final businesses = await _firestoreService.getMyBusiness(ownerId);
+      List<BusinessModel> businesses;
+      
+      if (forceServer) {
+        // 서버에서 직접 조회 (캐시 무시)
+        final snapshot = await CacheManager.getCollectionWhere(
+          'businesses',
+          field: 'ownerId',
+          isEqualTo: ownerId,
+        );
+        businesses = snapshot.docs
+            .map((doc) => BusinessModel.fromMap(doc.data(), doc.id))
+            .toList();
+      } else {
+        businesses = await _firestoreService.getMyBusiness(ownerId);
+      }
 
       setState(() {
         _businesses = businesses;
@@ -211,16 +227,14 @@ class _BusinessListScreenState extends State<BusinessListScreen> {
               ),
       ),
       child: InkWell(
-        onTap: () async {  // ✅ async 추가!
-          await Navigator.push(
+        onTap: () {
+          NavigationHelper.push<bool>(
             context,
-            MaterialPageRoute(
-              builder: (context) => BusinessDetailScreen(
-                business: business,
-              ),
-            ),
+            destination: BusinessDetailScreen(business: business),
+            onReturn: (result) {
+              if (result == true) _loadBusinesses(forceServer: true);
+            },
           );
-          _loadBusinesses();  // ✅ 돌아오면 새로고침!
         },
         borderRadius: BorderRadius.circular(16),
         child: Padding(
@@ -431,30 +445,22 @@ class _BusinessListScreenState extends State<BusinessListScreen> {
             );
             break;
           case 'detail':
-            await Navigator.push(
+            await NavigationHelper.push<bool>(
               context,
-              MaterialPageRoute(
-                builder: (context) => BusinessDetailScreen(
-                  business: business,
-                ),
-              ),
+              destination: BusinessDetailScreen(business: business),
+              onReturn: (result) {
+                if (result == true) _loadBusinesses(forceServer: true);
+              },
             );
-            _loadBusinesses();  // ✅ 돌아오면 새로고침!
             break;
           case 'edit':
-            Navigator.push(
+            NavigationHelper.push<bool>(
               context,
-              MaterialPageRoute(
-                builder: (context) => BusinessFormScreen(
-                  business: business,
-                ),
-              ),
-            ).then((result) {
-              if (result == true) _loadBusinesses();
-            });
-            break;
-          case 'delete':
-            _deleteBusiness(business);
+              destination: BusinessFormScreen(business: business),
+              onReturn: (result) {
+                if (result == true) _loadBusinesses(forceServer: true);
+              },
+            );
             break;
         }
       },
@@ -577,53 +583,6 @@ class _BusinessListScreenState extends State<BusinessListScreen> {
     );
   }
 
-  /// BottomSheet 메뉴 아이템
-  Widget _buildBottomSheetItem({
-    required BuildContext context,
-    required IconData icon,
-    required Color iconColor,
-    required String title,
-    String? subtitle,
-    bool enabled = true,
-    required VoidCallback onTap,
-  }) {
-    return ListTile(
-      enabled: enabled,
-      leading: Container(
-        padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 10)),
-        decoration: BoxDecoration(
-          color: enabled ? iconColor.withOpacity(0.1) : Colors.grey[100],
-          borderRadius: BorderRadius.circular(12),
-        ),
-        child: Icon(
-          icon,
-          color: enabled ? iconColor : Colors.grey,
-          size: ResponsiveHelper.iconSize(context, 24),
-        ),
-      ),
-      title: Text(
-        title,
-        style: ResponsiveHelper.bodyStyle(context).copyWith(
-          fontWeight: FontWeight.w600,
-          color: enabled ? Colors.black87 : Colors.grey,
-        ),
-      ),
-      subtitle: subtitle != null
-          ? Text(
-              subtitle,
-              style: ResponsiveHelper.smallStyle(context).copyWith(
-                color: Colors.grey[600],
-              ),
-            )
-          : null,
-      onTap: enabled ? onTap : null,
-      contentPadding: EdgeInsets.symmetric(
-        horizontal: ResponsiveHelper.spacing(context, 20),
-        vertical: ResponsiveHelper.spacing(context, 4),
-      ),
-    );
-  }
-
   /// 새 사업장 추가 버튼
   Widget _buildAddButton(BuildContext context, ThemeData theme) {
     return Container(
@@ -705,13 +664,12 @@ class _BusinessListScreenState extends State<BusinessListScreen> {
     }
     
     // 사업자등록증 있음 → 사업장 등록 화면으로
-    final result = await Navigator.push(
+    await NavigationHelper.push<bool>(
       context,
-      MaterialPageRoute(
-        builder: (context) => const BusinessFormScreen(),
-      ),
+      destination: const BusinessFormScreen(),
+      onReturn: (result) {
+        if (result == true) _loadBusinesses(forceServer: true);
+      },
     );
-    
-    if (result == true) _loadBusinesses();
   }
 }

@@ -3,16 +3,25 @@ import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import 'package:intl/intl.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+
+// Models
 import '../../../models/core/to_model.dart';
 import '../../../models/core/work_detail_model.dart';
 import '../../../models/core/business_work_type_model.dart';
+
+// Services & Providers
 import '../../../services/firestore_service.dart';
 import '../../../providers/user_provider.dart';
+
+// Utils
 import '../../../utils/toast_helper.dart';
+import '../../../utils/navigation_helper.dart';
 import '../../../utils/responsive_helper.dart';
+import '../../../utils/format_helper.dart';
+
+// Widgets
 import '../../../widgets/pickers/work_detail_dialog.dart';
 import '../../../widgets/work_type_icon.dart';
-import '../../../utils/format_helper.dart';
 
 /// ✨ TO 수정 화면 - 세련된 디자인
 class AdminEditTOScreen extends StatefulWidget {
@@ -156,7 +165,7 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
       
       if (mounted) {
         print('🔵🔵🔵 [9단계] true 반환하며 화면 닫기');
-        Navigator.pop(context, true);
+        NavigationHelper.popWithChange(context);
       }
     } catch (e) {
       print('❌ TO 수정 실패: $e');
