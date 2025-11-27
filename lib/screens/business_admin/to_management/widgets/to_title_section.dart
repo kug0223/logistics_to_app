@@ -75,31 +75,40 @@ class TOTitleSection extends StatelessWidget {
             },
           ),
           
-          // 그룹 TO일 때 그룹명 입력 (create에서만 사용)
-          if (isGroupTO && showGroupNameInput && groupNameController != null) ...[
+          // 그룹명 입력 (create에서만 사용) - 항상 표시, 비활성화 상태 지원
+          if (showGroupNameInput && groupNameController != null) ...[
             SizedBox(height: ResponsiveHelper.spacing(context, 20)),
-            _buildGroupNameInput(context, theme),
+            _buildGroupNameInput(context, theme, enabled: isGroupTO),
           ],
         ],
       ),
     );
   }
 
-  Widget _buildGroupNameInput(BuildContext context, ThemeData theme) {
-    return Container(
-      padding: ResponsiveHelper.cardPadding(context),
-      decoration: BoxDecoration(
-        gradient: LinearGradient(
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-          colors: [
-            theme.primaryColor.withOpacity(0.1),
-            theme.primaryColor.withOpacity(0.05),
-          ],
-        ),
+  Widget _buildGroupNameInput(BuildContext context, ThemeData theme, {required bool enabled}) {
+    return Opacity(
+      opacity: enabled ? 1.0 : 0.5,
+      child: Container(
+        padding: ResponsiveHelper.cardPadding(context),
+        decoration: BoxDecoration(
+          gradient: LinearGradient(
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+            colors: enabled
+                ? [
+                    theme.primaryColor.withOpacity(0.1),
+                    theme.primaryColor.withOpacity(0.05),
+                  ]
+                : [
+                    Colors.grey.withOpacity(0.1),
+                    Colors.grey.withOpacity(0.05),
+                  ],
+          ),
         borderRadius: BorderRadius.circular(12),
         border: Border.all(
-          color: theme.primaryColor.withOpacity(0.3),
+          color: enabled 
+              ? theme.primaryColor.withOpacity(0.3)
+              : Colors.grey.withOpacity(0.3),
           width: 1.5,
         ),
       ),
@@ -117,44 +126,46 @@ class TOTitleSection extends StatelessWidget {
                 child: Icon(
                   Icons.link,
                   size: ResponsiveHelper.iconSize(context, 18),
-                  color: theme.primaryColor,
+                  color: enabled ? theme.primaryColor : Colors.grey,
                 ),
               ),
               SizedBox(width: ResponsiveHelper.spacing(context, 12)),
               Text(
-                '그룹 TO',
+                enabled ? '그룹 TO' : '그룹 TO (2일 이상 선택 시 활성화)',
                 style: ResponsiveHelper.subtitleStyle(context).copyWith(
                   fontWeight: FontWeight.bold,
-                  color: theme.primaryColor,
+                  color: enabled ? theme.primaryColor : Colors.grey,
                 ),
               ),
             ],
           ),
           SizedBox(height: ResponsiveHelper.spacing(context, 12)),
-          TextFormField(
-            controller: groupNameController,
-            style: ResponsiveHelper.bodyStyle(context),
-            decoration: InputDecoration(
-              labelText: '그룹명 (선택)',
-              labelStyle: ResponsiveHelper.bodyStyle(context),
-              hintText: '비워두면 자동으로 생성됩니다',
-              hintStyle: ResponsiveHelper.smallStyle(
-                context,
-                color: Colors.grey[400],
-              ),
-              border: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(12),
-              ),
-              filled: true,
-              fillColor: Colors.white,
-              helperText: '비워두면 자동으로 생성됩니다',
-              helperStyle: ResponsiveHelper.smallStyle(
-                context,
-                color: Colors.grey[600],
+            TextFormField(
+              controller: groupNameController,
+              enabled: enabled,
+              style: ResponsiveHelper.bodyStyle(context),
+              decoration: InputDecoration(
+                labelText: '그룹명 (선택)',
+                labelStyle: ResponsiveHelper.bodyStyle(context),
+                hintText: '비워두면 자동으로 생성됩니다',
+                hintStyle: ResponsiveHelper.smallStyle(
+                  context,
+                  color: Colors.grey[400],
+                ),
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                filled: true,
+                fillColor: Colors.white,
+                helperText: '비워두면 자동으로 생성됩니다',
+                helperStyle: ResponsiveHelper.smallStyle(
+                  context,
+                  color: Colors.grey[600],
+                ),
               ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }

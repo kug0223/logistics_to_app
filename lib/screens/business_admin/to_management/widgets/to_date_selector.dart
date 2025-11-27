@@ -1,31 +1,26 @@
 import 'package:flutter/material.dart';
-import 'package:table_calendar/table_calendar.dart';
 import 'package:intl/intl.dart';
 import '../../../../utils/responsive_helper.dart';
 import 'to_section_container.dart';
 
 // 위젯 파일 위치: lib/screens/business_admin/to_management/widgets/
 
-/// TO 날짜 선택 공통 위젯
-/// - 단기 알바: 다중 날짜 선택 (캘린더)
-/// - 장기 근무: 기간 + 요일 선택
+/// TO 날짜 선택 공통 위젯 (당근 스타일)
+/// - 연속 날짜: 연결된 배경으로 표현
+/// - 자동 범위 선택: 시작점 → 끝점 탭으로 범위 자동 선택
+/// - 빠른 선택: 토글 방식 (재클릭 해제, 다른 버튼 클릭 시 교체)
 class TODateSelector extends StatefulWidget {
-  // ============================================================
-  // 공통 파라미터
-  // ============================================================
   final bool isLongTerm;
-  final bool isReadOnly; // edit 화면에서 수정 불가 표시용
+  final bool isReadOnly;
   
-  // ============================================================
-  // 단기 알바용 파라미터
-  // ============================================================
+  // 단기 알바용
   final List<DateTime> selectedDates;
   final Function(DateTime)? onDateToggle;
+  final Function(List<DateTime>)? onDatesChanged;
   final Function()? onClearAll;
+  final int maxSelectableDays;
   
-  // ============================================================
-  // 장기 근무용 파라미터
-  // ============================================================
+  // 장기 근무용
   final DateTime? rangeStart;
   final DateTime? rangeEnd;
   final List<String> selectedWeekdays;
@@ -33,28 +28,25 @@ class TODateSelector extends StatefulWidget {
   final Function(DateTime)? onRangeEndChanged;
   final Function(String)? onWeekdayToggle;
   
-  // ============================================================
-  // 읽기 전용 모드 (edit 화면)
-  // ============================================================
-  final DateTime? displayDate; // 단일 날짜 표시용
-  final List<String>? displayWorkDays; // 근무 요일 표시용
+  // 읽기 전용
+  final DateTime? displayDate;
+  final List<String>? displayWorkDays;
 
   const TODateSelector({
     super.key,
     required this.isLongTerm,
     this.isReadOnly = false,
-    // 단기
     this.selectedDates = const [],
     this.onDateToggle,
+    this.onDatesChanged,
     this.onClearAll,
-    // 장기
+    this.maxSelectableDays = 30,
     this.rangeStart,
     this.rangeEnd,
     this.selectedWeekdays = const [],
     this.onRangeStartChanged,
     this.onRangeEndChanged,
     this.onWeekdayToggle,
-    // 읽기 전용
     this.displayDate,
     this.displayWorkDays,
   });
@@ -66,6 +58,12 @@ class TODateSelector extends StatefulWidget {
 class _TODateSelectorState extends State<TODateSelector> {
   DateTime _focusedDay = DateTime.now();
   bool _isCalendarExpanded = true;
+  
+  // 범위 선택 모드
+  DateTime? _rangeStart; // 범위 시작점 (첫 번째 탭)
+  
+  // 빠른 선택 활성 상태
+  String? _activeQuickSelect; // 'today', 'thisWeek', 'nextWeek', 'weekend'
 
   @override
   Widget build(BuildContext context) {
@@ -81,7 +79,7 @@ class _TODateSelectorState extends State<TODateSelector> {
   }
 
   // ============================================================
-  // 📅 읽기 전용 섹션 (edit 화면용)
+  // 📅 읽기 전용 섹션
   // ============================================================
   Widget _buildReadOnlySection(BuildContext context) {
     final theme = Theme.of(context);
@@ -110,12 +108,7 @@ class _TODateSelectorState extends State<TODateSelector> {
                 padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 12)),
                 decoration: BoxDecoration(
                   gradient: LinearGradient(
-                    begin: Alignment.topLeft,
-                    end: Alignment.bottomRight,
-                    colors: [
-                      theme.primaryColor,
-                      theme.primaryColor.withOpacity(0.8),
-                    ],
+                    colors: [theme.primaryColor, theme.primaryColor.withOpacity(0.8)],
                   ),
                   borderRadius: BorderRadius.circular(12),
                   boxShadow: [
@@ -139,17 +132,12 @@ class _TODateSelectorState extends State<TODateSelector> {
                   children: [
                     Text(
                       widget.isLongTerm ? '계약 기간' : '근무 날짜',
-                      style: ResponsiveHelper.smallStyle(
-                        context,
-                        color: Colors.grey[600],
-                      ),
+                      style: ResponsiveHelper.smallStyle(context, color: Colors.grey[600]),
                     ),
                     SizedBox(height: ResponsiveHelper.spacing(context, 4)),
                     Text(
                       dateText,
-                      style: ResponsiveHelper.subtitleStyle(context).copyWith(
-                        fontWeight: FontWeight.bold,
-                      ),
+                      style: ResponsiveHelper.subtitleStyle(context).copyWith(fontWeight: FontWeight.bold),
                     ),
                   ],
                 ),
@@ -157,29 +145,20 @@ class _TODateSelectorState extends State<TODateSelector> {
             ],
           ),
           
-          // 장기 근무 요일 표시
           if (widget.isLongTerm && widget.displayWorkDays != null && widget.displayWorkDays!.isNotEmpty) ...[
             SizedBox(height: ResponsiveHelper.spacing(context, 16)),
             Row(
               children: [
-                Icon(
-                  Icons.event_repeat,
-                  size: ResponsiveHelper.iconSize(context, 18),
-                  color: Colors.grey[600],
-                ),
+                Icon(Icons.event_repeat, size: ResponsiveHelper.iconSize(context, 18), color: Colors.grey[600]),
                 SizedBox(width: ResponsiveHelper.spacing(context, 8)),
                 Text(
                   '근무 요일: ${widget.displayWorkDays!.join(', ')}',
-                  style: ResponsiveHelper.bodyStyle(
-                    context,
-                    color: Colors.grey[700],
-                  ),
+                  style: ResponsiveHelper.bodyStyle(context, color: Colors.grey[700]),
                 ),
               ],
             ),
           ],
           
-          // 수정 불가 안내
           SizedBox(height: ResponsiveHelper.spacing(context, 16)),
           Container(
             padding: EdgeInsets.symmetric(
@@ -193,19 +172,12 @@ class _TODateSelectorState extends State<TODateSelector> {
             ),
             child: Row(
               children: [
-                Icon(
-                  Icons.warning_amber,
-                  color: Colors.orange[700],
-                  size: ResponsiveHelper.iconSize(context, 18),
-                ),
+                Icon(Icons.warning_amber, color: Colors.orange[700], size: ResponsiveHelper.iconSize(context, 18)),
                 SizedBox(width: ResponsiveHelper.spacing(context, 12)),
                 Expanded(
                   child: Text(
                     '${widget.isLongTerm ? "계약 기간과 근무 요일" : "날짜"}은(는) 수정할 수 없습니다',
-                    style: ResponsiveHelper.smallStyle(
-                      context,
-                      color: Colors.orange[900],
-                    ),
+                    style: ResponsiveHelper.smallStyle(context, color: Colors.orange[900]),
                   ),
                 ),
               ],
@@ -217,7 +189,7 @@ class _TODateSelectorState extends State<TODateSelector> {
   }
 
   // ============================================================
-  // 📅 단기 알바 - 다중 날짜 선택
+  // 📅 단기 알바 - 당근 스타일 캘린더
   // ============================================================
   Widget _buildShortTermSelector(BuildContext context) {
     final theme = Theme.of(context);
@@ -227,181 +199,101 @@ class _TODateSelectorState extends State<TODateSelector> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           // 헤더
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Text(
-                '근무 날짜 선택',
-                style: ResponsiveHelper.subtitleStyle(context).copyWith(
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
-              if (widget.selectedDates.isNotEmpty)
-                _buildClearAllButton(context),
-            ],
-          ),
+          _buildHeader(context, theme),
           
-          // 선택된 날짜 요약
-          if (widget.selectedDates.isNotEmpty) ...[
-            SizedBox(height: ResponsiveHelper.spacing(context, 16)),
-            _buildDateSummary(context, theme),
-          ],
-
+          SizedBox(height: ResponsiveHelper.spacing(context, 16)),
+          
+          // 빠른 선택 버튼
+          _buildQuickSelectButtons(context, theme),
+          
           SizedBox(height: ResponsiveHelper.spacing(context, 16)),
 
-          // 캘린더 토글 버튼
+          // 캘린더 토글
           _buildCalendarToggle(context, theme),
 
           // 캘린더
           if (_isCalendarExpanded) ...[
-            SizedBox(height: ResponsiveHelper.spacing(context, 16)),
-            _buildCalendar(context, theme),
+            SizedBox(height: ResponsiveHelper.spacing(context, 12)),
+            _buildCarrotStyleCalendar(context, theme),
           ],
         ],
       ),
     );
   }
 
-  /// 전체 해제 버튼
-  Widget _buildClearAllButton(BuildContext context) {
-    return Material(
-      color: Colors.red[50],
-      borderRadius: BorderRadius.circular(8),
-      child: InkWell(
-        onTap: widget.onClearAll,
-        borderRadius: BorderRadius.circular(8),
-        child: Padding(
-          padding: EdgeInsets.symmetric(
-            horizontal: ResponsiveHelper.spacing(context, 12),
-            vertical: ResponsiveHelper.spacing(context, 8),
-          ),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(
-                Icons.clear_all,
-                size: ResponsiveHelper.iconSize(context, 18),
-                color: Colors.red[700],
-              ),
-              SizedBox(width: ResponsiveHelper.spacing(context, 6)),
-              Text(
-                '전체 해제',
-                style: ResponsiveHelper.smallStyle(context).copyWith(
-                  color: Colors.red[700],
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  /// 날짜 요약 표시
-  Widget _buildDateSummary(BuildContext context, ThemeData theme) {
-    final groups = _groupConsecutiveDates(widget.selectedDates);
-
-    return Container(
-      padding: ResponsiveHelper.cardPadding(context),
-      decoration: BoxDecoration(
-        gradient: LinearGradient(
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-          colors: [
-            theme.primaryColor.withOpacity(0.1),
-            theme.primaryColor.withOpacity(0.05),
-          ],
-        ),
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(
-          color: theme.primaryColor.withOpacity(0.3),
-          width: 1.5,
-        ),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+  /// 헤더
+  Widget _buildHeader(BuildContext context, ThemeData theme) {
+    return SizedBox(
+      height: ResponsiveHelper.spacing(context, 40), // 높이 고정
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
           Row(
             children: [
-              Icon(
-                Icons.calendar_today,
-                size: ResponsiveHelper.iconSize(context, 16),
-                color: theme.primaryColor,
-              ),
-              SizedBox(width: ResponsiveHelper.spacing(context, 8)),
               Text(
-                '선택된 날짜: ${widget.selectedDates.length}일',
-                style: ResponsiveHelper.bodyStyle(context).copyWith(
-                  color: theme.primaryColor,
-                  fontWeight: FontWeight.bold,
-                ),
+                '근무 날짜 선택',
+                style: ResponsiveHelper.subtitleStyle(context).copyWith(fontWeight: FontWeight.bold),
               ),
+              if (widget.selectedDates.isNotEmpty) ...[
+                SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+                Container(
+                  padding: EdgeInsets.symmetric(
+                    horizontal: ResponsiveHelper.spacing(context, 10),
+                    vertical: ResponsiveHelper.spacing(context, 4),
+                  ),
+                  decoration: BoxDecoration(
+                    color: theme.primaryColor,
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Text(
+                    '${widget.selectedDates.length}일',
+                    style: ResponsiveHelper.smallStyle(context).copyWith(
+                      color: Colors.white,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ),
+              ],
             ],
           ),
-          SizedBox(height: ResponsiveHelper.spacing(context, 12)),
-          Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            children: groups.map((group) {
-              if (group.length == 1) {
-                return _buildSingleDateChip(context, theme, group[0]);
-              } else {
-                return _buildDateRangeChip(context, theme, group.first, group.last, group.length);
-              }
-            }).toList(),
-          ),
-        ],
-      ),
-    );
-  }
-
-  /// 단일 날짜 칩
-  Widget _buildSingleDateChip(BuildContext context, ThemeData theme, DateTime date) {
-    return Container(
-      padding: EdgeInsets.symmetric(
-        horizontal: ResponsiveHelper.spacing(context, 12),
-        vertical: ResponsiveHelper.spacing(context, 8),
-      ),
-      decoration: BoxDecoration(
-        gradient: LinearGradient(
-          colors: [
-            theme.primaryColor,
-            theme.primaryColor.withOpacity(0.8),
-          ],
-        ),
-        borderRadius: BorderRadius.circular(20),
-        boxShadow: [
-          BoxShadow(
-            color: theme.primaryColor.withOpacity(0.3),
-            blurRadius: 4,
-            offset: const Offset(0, 2),
-          ),
-        ],
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Text(
-            '${date.month}/${date.day}',
-            style: ResponsiveHelper.bodyStyle(context).copyWith(
-              color: Colors.white,
-              fontWeight: FontWeight.w600,
-            ),
-          ),
-          SizedBox(width: ResponsiveHelper.spacing(context, 8)),
-          GestureDetector(
-            onTap: () => widget.onDateToggle?.call(date),
-            child: Container(
-              padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 2)),
-              decoration: BoxDecoration(
-                color: Colors.white.withOpacity(0.3),
-                shape: BoxShape.circle,
-              ),
-              child: Icon(
-                Icons.close,
-                size: ResponsiveHelper.iconSize(context, 16),
-                color: Colors.white,
+          // 전체 해제 버튼 (항상 공간 차지, 투명하게 숨김)
+          Opacity(
+            opacity: widget.selectedDates.isNotEmpty ? 1.0 : 0.0,
+            child: IgnorePointer(
+              ignoring: widget.selectedDates.isEmpty,
+              child: Material(
+                color: Colors.red[50],
+                borderRadius: BorderRadius.circular(8),
+                child: InkWell(
+                  onTap: () {
+                    setState(() {
+                      _activeQuickSelect = null;
+                      _rangeStart = null;
+                    });
+                    widget.onClearAll?.call();
+                  },
+                  borderRadius: BorderRadius.circular(8),
+                  child: Padding(
+                    padding: EdgeInsets.symmetric(
+                      horizontal: ResponsiveHelper.spacing(context, 12),
+                      vertical: ResponsiveHelper.spacing(context, 8),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(Icons.clear_all, size: ResponsiveHelper.iconSize(context, 18), color: Colors.red[700]),
+                        SizedBox(width: ResponsiveHelper.spacing(context, 6)),
+                        Text(
+                          '전체 해제',
+                          style: ResponsiveHelper.smallStyle(context).copyWith(
+                            color: Colors.red[700],
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
               ),
             ),
           ),
@@ -410,94 +302,70 @@ class _TODateSelectorState extends State<TODateSelector> {
     );
   }
 
-  /// 연속 날짜 범위 칩
-  Widget _buildDateRangeChip(BuildContext context, ThemeData theme, DateTime start, DateTime end, int count) {
-    return Container(
-      padding: EdgeInsets.symmetric(
-        horizontal: ResponsiveHelper.spacing(context, 12),
-        vertical: ResponsiveHelper.spacing(context, 8),
-      ),
-      decoration: BoxDecoration(
-        gradient: LinearGradient(
-          colors: [
-            Colors.green[600]!,
-            Colors.green[400]!,
-          ],
-        ),
-        borderRadius: BorderRadius.circular(20),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.green.withOpacity(0.3),
-            blurRadius: 4,
-            offset: const Offset(0, 2),
-          ),
-        ],
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Text(
-            '${start.month}/${start.day} ~ ${end.month}/${end.day}',
-            style: ResponsiveHelper.bodyStyle(context).copyWith(
-              color: Colors.white,
-              fontWeight: FontWeight.w600,
-            ),
-          ),
-          SizedBox(width: ResponsiveHelper.spacing(context, 8)),
-          Container(
+  /// 빠른 선택 버튼 (토글 방식)
+  Widget _buildQuickSelectButtons(BuildContext context, ThemeData theme) {
+    return Row(
+      children: [
+        _buildQuickButton(context, theme, id: 'today', icon: Icons.today, label: '오늘'),
+        SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+        _buildQuickButton(context, theme, id: 'thisWeek', icon: Icons.view_week, label: '이번 주'),
+        SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+        _buildQuickButton(context, theme, id: 'nextWeek', icon: Icons.next_week, label: '다음 주'),
+      ],
+    );
+  }
+
+  Widget _buildQuickButton(
+    BuildContext context,
+    ThemeData theme, {
+    required String id,
+    required IconData icon,
+    required String label,
+  }) {
+    final isActive = _activeQuickSelect == id;
+    
+    return Expanded(
+      child: Material(
+        color: isActive ? theme.primaryColor : theme.primaryColor.withOpacity(0.1),
+        borderRadius: BorderRadius.circular(12),
+        child: InkWell(
+          onTap: () => _handleQuickSelect(id),
+          borderRadius: BorderRadius.circular(12),
+          child: Padding(
             padding: EdgeInsets.symmetric(
-              horizontal: ResponsiveHelper.spacing(context, 8),
-              vertical: ResponsiveHelper.spacing(context, 2),
+              vertical: ResponsiveHelper.spacing(context, 10),
             ),
-            decoration: BoxDecoration(
-              color: Colors.white.withOpacity(0.3),
-              borderRadius: BorderRadius.circular(12),
-            ),
-            child: Text(
-              '$count일',
-              style: ResponsiveHelper.smallStyle(context).copyWith(
-                color: Colors.white,
-                fontWeight: FontWeight.bold,
-              ),
-            ),
-          ),
-          SizedBox(width: ResponsiveHelper.spacing(context, 8)),
-          GestureDetector(
-            onTap: () {
-              // 범위 내 모든 날짜 삭제
-              for (var date = start; !date.isAfter(end); date = date.add(const Duration(days: 1))) {
-                widget.onDateToggle?.call(date);
-              }
-            },
-            child: Container(
-              padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 2)),
-              decoration: BoxDecoration(
-                color: Colors.white.withOpacity(0.3),
-                shape: BoxShape.circle,
-              ),
-              child: Icon(
-                Icons.close,
-                size: ResponsiveHelper.iconSize(context, 16),
-                color: Colors.white,
-              ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(
+                  icon,
+                  size: ResponsiveHelper.iconSize(context, 18),
+                  color: isActive ? Colors.white : theme.primaryColor,
+                ),
+                SizedBox(height: ResponsiveHelper.spacing(context, 4)),
+                Text(
+                  label,
+                  style: ResponsiveHelper.tinyStyle(context).copyWith(
+                    color: isActive ? Colors.white : theme.primaryColor,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ],
             ),
           ),
-        ],
+        ),
       ),
     );
   }
 
-  /// 캘린더 토글 버튼
+  /// 캘린더 토글
   Widget _buildCalendarToggle(BuildContext context, ThemeData theme) {
     return Material(
-      color: theme.primaryColor.withOpacity(0.1),
+      color: Colors.grey[100],
       borderRadius: BorderRadius.circular(12),
       child: InkWell(
-        onTap: () {
-          setState(() {
-            _isCalendarExpanded = !_isCalendarExpanded;
-          });
-        },
+        onTap: () => setState(() => _isCalendarExpanded = !_isCalendarExpanded),
         borderRadius: BorderRadius.circular(12),
         child: Padding(
           padding: EdgeInsets.symmetric(
@@ -509,14 +377,15 @@ class _TODateSelectorState extends State<TODateSelector> {
             children: [
               Icon(
                 _isCalendarExpanded ? Icons.expand_less : Icons.expand_more,
-                color: theme.primaryColor,
+                color: Colors.grey[700],
+                size: ResponsiveHelper.iconSize(context, 20),
               ),
               SizedBox(width: ResponsiveHelper.spacing(context, 8)),
               Text(
                 _isCalendarExpanded ? '캘린더 접기' : '캘린더 펼치기',
                 style: ResponsiveHelper.bodyStyle(context).copyWith(
-                  color: theme.primaryColor,
-                  fontWeight: FontWeight.bold,
+                  color: Colors.grey[700],
+                  fontWeight: FontWeight.w600,
                 ),
               ),
             ],
@@ -526,72 +395,245 @@ class _TODateSelectorState extends State<TODateSelector> {
     );
   }
 
-  /// 캘린더 위젯
-  Widget _buildCalendar(BuildContext context, ThemeData theme) {
+  /// 당근 스타일 캘린더 (커스텀 구현)
+  Widget _buildCarrotStyleCalendar(BuildContext context, ThemeData theme) {
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    
     return Container(
       decoration: BoxDecoration(
-        color: Colors.grey[50],
-        borderRadius: BorderRadius.circular(12),
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: Colors.grey[200]!),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.05),
+            blurRadius: 10,
+            offset: const Offset(0, 2),
+          ),
+        ],
       ),
-      padding: ResponsiveHelper.cardPadding(context),
-      child: TableCalendar(
-        locale: 'ko_KR',
-        firstDay: DateTime.now(),
-        lastDay: DateTime.now().add(const Duration(days: 90)),
-        focusedDay: _focusedDay,
-        calendarFormat: CalendarFormat.month,
-        selectedDayPredicate: (day) {
-          return widget.selectedDates.any((date) =>
-              date.year == day.year &&
-              date.month == day.month &&
-              date.day == day.day);
-        },
-        onDaySelected: (selectedDay, focusedDay) {
-          setState(() {
-            _focusedDay = focusedDay;
-          });
-          widget.onDateToggle?.call(DateTime(
-            selectedDay.year,
-            selectedDay.month,
-            selectedDay.day,
-          ));
-        },
-        onPageChanged: (focusedDay) {
-          setState(() {
-            _focusedDay = focusedDay;
-          });
-        },
-        calendarStyle: CalendarStyle(
-          selectedDecoration: BoxDecoration(
-            gradient: LinearGradient(
-              colors: [
-                theme.primaryColor,
-                theme.primaryColor.withOpacity(0.8),
-              ],
+      child: Column(
+        children: [
+          // 헤더 (월 네비게이션)
+          _buildCalendarHeader(context, theme),
+          
+          // 요일 헤더
+          _buildWeekdayHeader(context),
+          
+          // 날짜 그리드
+          _buildDateGrid(context, theme, today),
+          
+          SizedBox(height: ResponsiveHelper.spacing(context, 8)),
+        ],
+      ),
+    );
+  }
+
+  /// 캘린더 헤더
+  Widget _buildCalendarHeader(BuildContext context, ThemeData theme) {
+    return Padding(
+      padding: EdgeInsets.symmetric(
+        horizontal: ResponsiveHelper.spacing(context, 8),
+        vertical: ResponsiveHelper.spacing(context, 12),
+      ),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          IconButton(
+            onPressed: () {
+              setState(() {
+                _focusedDay = DateTime(_focusedDay.year, _focusedDay.month - 1, 1);
+              });
+            },
+            icon: Container(
+              padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 8)),
+              decoration: BoxDecoration(
+                color: theme.primaryColor.withOpacity(0.1),
+                shape: BoxShape.circle,
+              ),
+              child: Icon(Icons.chevron_left, color: theme.primaryColor),
             ),
-            shape: BoxShape.circle,
           ),
-          todayDecoration: BoxDecoration(
-            color: theme.primaryColor.withOpacity(0.3),
-            shape: BoxShape.circle,
+          Text(
+            DateFormat('yyyy년 M월', 'ko_KR').format(_focusedDay),
+            style: ResponsiveHelper.subtitleStyle(context).copyWith(
+              fontWeight: FontWeight.bold,
+              color: theme.primaryColor,
+            ),
           ),
-          outsideDaysVisible: false,
+          IconButton(
+            onPressed: () {
+              setState(() {
+                _focusedDay = DateTime(_focusedDay.year, _focusedDay.month + 1, 1);
+              });
+            },
+            icon: Container(
+              padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 8)),
+              decoration: BoxDecoration(
+                color: theme.primaryColor.withOpacity(0.1),
+                shape: BoxShape.circle,
+              ),
+              child: Icon(Icons.chevron_right, color: theme.primaryColor),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// 요일 헤더
+  Widget _buildWeekdayHeader(BuildContext context) {
+    const weekdays = ['일', '월', '화', '수', '목', '금', '토'];
+    
+    return Padding(
+      padding: EdgeInsets.symmetric(horizontal: ResponsiveHelper.spacing(context, 8)),
+      child: Row(
+        children: weekdays.asMap().entries.map((entry) {
+          final index = entry.key;
+          final day = entry.value;
+          final isWeekend = index == 0 || index == 6; // 일, 토
+          
+          return Expanded(
+            child: Center(
+              child: Padding(
+                padding: EdgeInsets.symmetric(vertical: ResponsiveHelper.spacing(context, 8)),
+                child: Text(
+                  day,
+                  style: ResponsiveHelper.smallStyle(context).copyWith(
+                    fontWeight: FontWeight.bold,
+                    color: isWeekend ? Colors.red[400] : Colors.grey[600],
+                  ),
+                ),
+              ),
+            ),
+          );
+        }).toList(),
+      ),
+    );
+  }
+
+  /// 날짜 그리드 (당근 스타일 - 연속 날짜 연결)
+  Widget _buildDateGrid(BuildContext context, ThemeData theme, DateTime today) {
+    final firstDayOfMonth = DateTime(_focusedDay.year, _focusedDay.month, 1);
+    final lastDayOfMonth = DateTime(_focusedDay.year, _focusedDay.month + 1, 0);
+    // 일요일 = 0 시작 (일~토 순서)
+    final firstWeekday = firstDayOfMonth.weekday % 7;
+    
+    final daysInMonth = lastDayOfMonth.day;
+    final totalCells = ((firstWeekday + daysInMonth) / 7).ceil() * 7;
+    
+    List<Widget> rows = [];
+    List<Widget> currentRow = [];
+    
+    for (int i = 0; i < totalCells; i++) {
+      final dayOffset = i - firstWeekday;
+      
+      if (dayOffset < 0 || dayOffset >= daysInMonth) {
+        // 빈 셀
+        currentRow.add(Expanded(child: SizedBox(height: ResponsiveHelper.spacing(context, 44))));
+      } else {
+        final date = DateTime(_focusedDay.year, _focusedDay.month, dayOffset + 1);
+        currentRow.add(Expanded(child: _buildDateCell(context, theme, date, today)));
+      }
+      
+      if (currentRow.length == 7) {
+        rows.add(
+          Padding(
+            padding: EdgeInsets.symmetric(horizontal: ResponsiveHelper.spacing(context, 4)),
+            child: Row(children: currentRow),
+          ),
+        );
+        currentRow = [];
+      }
+    }
+    
+    return Column(children: rows);
+  }
+
+  /// 날짜 셀 (당근 스타일 - 연속 날짜 연결 배경)
+  Widget _buildDateCell(BuildContext context, ThemeData theme, DateTime date, DateTime today) {
+    final isPast = date.isBefore(today);
+    final isToday = _isSameDay(date, today);
+    final isSelected = widget.selectedDates.any((d) => _isSameDay(d, date));
+    
+    // 연속 날짜 체크
+    final prevDay = date.subtract(const Duration(days: 1));
+    final nextDay = date.add(const Duration(days: 1));
+    final hasPrev = widget.selectedDates.any((d) => _isSameDay(d, prevDay));
+    final hasNext = widget.selectedDates.any((d) => _isSameDay(d, nextDay));
+    
+    // 연결 배경 타입 결정
+    BorderRadius borderRadius;
+    if (isSelected) {
+      if (hasPrev && hasNext) {
+        // 중간: 둥근 모서리 없음
+        borderRadius = BorderRadius.zero;
+      } else if (hasPrev && !hasNext) {
+        // 끝점: 오른쪽만 둥근 모서리
+        borderRadius = BorderRadius.horizontal(right: Radius.circular(ResponsiveHelper.spacing(context, 22)));
+      } else if (!hasPrev && hasNext) {
+        // 시작점: 왼쪽만 둥근 모서리
+        borderRadius = BorderRadius.horizontal(left: Radius.circular(ResponsiveHelper.spacing(context, 22)));
+      } else {
+        // 단독: 모든 모서리 둥근
+        borderRadius = BorderRadius.circular(ResponsiveHelper.spacing(context, 22));
+      }
+    } else {
+      borderRadius = BorderRadius.circular(ResponsiveHelper.spacing(context, 22));
+    }
+    
+    // 색상 결정
+    Color backgroundColor;
+    Color textColor;
+    
+    if (isPast) {
+      backgroundColor = Colors.transparent;
+      textColor = Colors.grey[300]!;
+    } else if (isSelected) {
+      backgroundColor = theme.primaryColor;
+      textColor = Colors.white;
+    } else {
+      backgroundColor = Colors.transparent;
+      textColor = (date.weekday == DateTime.sunday || date.weekday == DateTime.saturday)
+          ? Colors.red[400]!
+          : Colors.black87;
+    }
+    
+    return GestureDetector(
+      onTap: isPast ? null : () => _handleDateTap(date, today),
+      child: Container(
+        height: ResponsiveHelper.spacing(context, 44),
+        margin: EdgeInsets.symmetric(vertical: ResponsiveHelper.spacing(context, 2)),
+        decoration: BoxDecoration(
+          color: isSelected ? backgroundColor : Colors.transparent,
+          borderRadius: borderRadius,
         ),
-        headerStyle: HeaderStyle(
-          formatButtonVisible: false,
-          titleCentered: true,
-          titleTextStyle: ResponsiveHelper.subtitleStyle(context).copyWith(
-            fontWeight: FontWeight.bold,
-          ),
-        ),
-        daysOfWeekStyle: DaysOfWeekStyle(
-          weekdayStyle: ResponsiveHelper.smallStyle(context).copyWith(
-            fontWeight: FontWeight.bold,
-          ),
-          weekendStyle: ResponsiveHelper.smallStyle(context).copyWith(
-            fontWeight: FontWeight.bold,
-            color: Colors.red[400],
-          ),
+        child: Stack(
+          alignment: Alignment.center,
+          children: [
+            // 오늘 표시 (테두리)
+            if (isToday && !isSelected)
+              Container(
+                width: ResponsiveHelper.spacing(context, 36),
+                height: ResponsiveHelper.spacing(context, 36),
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  border: Border.all(color: theme.primaryColor, width: 2),
+                ),
+              ),
+            
+            // 날짜 텍스트
+            Text(
+              '${date.day}',
+              style: ResponsiveHelper.bodyStyle(context).copyWith(
+                color: textColor,
+                fontWeight: (isSelected || isToday) ? FontWeight.bold : FontWeight.normal,
+                decoration: isPast ? TextDecoration.lineThrough : null,
+                decorationColor: Colors.grey[300],
+              ),
+            ),
+          ],
         ),
       ),
     );
@@ -609,13 +651,10 @@ class _TODateSelectorState extends State<TODateSelector> {
         children: [
           Text(
             '계약 기간',
-            style: ResponsiveHelper.subtitleStyle(context).copyWith(
-              fontWeight: FontWeight.bold,
-            ),
+            style: ResponsiveHelper.subtitleStyle(context).copyWith(fontWeight: FontWeight.bold),
           ),
           SizedBox(height: ResponsiveHelper.spacing(context, 16)),
           
-          // 시작일/종료일
           Row(
             children: [
               Expanded(
@@ -624,17 +663,12 @@ class _TODateSelectorState extends State<TODateSelector> {
                   theme: theme,
                   label: '시작일',
                   date: widget.rangeStart,
-                  onTap: () => _selectDate(context, isStart: true),
+                  onTap: () => _selectLongTermDate(context, isStart: true),
                 ),
               ),
               Padding(
-                padding: EdgeInsets.symmetric(
-                  horizontal: ResponsiveHelper.spacing(context, 12),
-                ),
-                child: Icon(
-                  Icons.arrow_forward,
-                  color: theme.primaryColor,
-                ),
+                padding: EdgeInsets.symmetric(horizontal: ResponsiveHelper.spacing(context, 12)),
+                child: Icon(Icons.arrow_forward, color: theme.primaryColor),
               ),
               Expanded(
                 child: _buildDateField(
@@ -642,7 +676,7 @@ class _TODateSelectorState extends State<TODateSelector> {
                   theme: theme,
                   label: '종료일',
                   date: widget.rangeEnd,
-                  onTap: () => _selectDate(context, isStart: false),
+                  onTap: () => _selectLongTermDate(context, isStart: false),
                 ),
               ),
             ],
@@ -654,24 +688,17 @@ class _TODateSelectorState extends State<TODateSelector> {
           
           Text(
             '근무 요일 선택',
-            style: ResponsiveHelper.subtitleStyle(context).copyWith(
-              fontWeight: FontWeight.bold,
-            ),
+            style: ResponsiveHelper.subtitleStyle(context).copyWith(fontWeight: FontWeight.bold),
           ),
           SizedBox(height: ResponsiveHelper.spacing(context, 8)),
           Text(
             '※ 매주 반복되는 근무 요일을 선택하세요',
-            style: ResponsiveHelper.smallStyle(
-              context,
-              color: Colors.grey[600],
-            ),
+            style: ResponsiveHelper.smallStyle(context, color: Colors.grey[600]),
           ),
           SizedBox(height: ResponsiveHelper.spacing(context, 16)),
           
-          // 요일 버튼들
           _buildWeekdayButtons(context, theme),
           
-          // 선택 요약
           if (widget.selectedWeekdays.isNotEmpty) ...[
             SizedBox(height: ResponsiveHelper.spacing(context, 16)),
             _buildWeekdaySummary(context),
@@ -681,7 +708,6 @@ class _TODateSelectorState extends State<TODateSelector> {
     );
   }
 
-  /// 날짜 필드
   Widget _buildDateField({
     required BuildContext context,
     required ThemeData theme,
@@ -703,18 +729,10 @@ class _TODateSelectorState extends State<TODateSelector> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text(
-                label,
-                style: ResponsiveHelper.smallStyle(
-                  context,
-                  color: Colors.grey[600],
-                ),
-              ),
+              Text(label, style: ResponsiveHelper.smallStyle(context, color: Colors.grey[600])),
               SizedBox(height: ResponsiveHelper.spacing(context, 4)),
               Text(
-                date != null
-                    ? DateFormat('yyyy-MM-dd').format(date)
-                    : '선택하세요',
+                date != null ? DateFormat('yyyy-MM-dd').format(date) : '선택하세요',
                 style: ResponsiveHelper.subtitleStyle(context).copyWith(
                   color: date != null ? Colors.black : Colors.grey[400],
                   fontWeight: date != null ? FontWeight.bold : FontWeight.normal,
@@ -727,8 +745,7 @@ class _TODateSelectorState extends State<TODateSelector> {
     );
   }
 
-  /// 날짜 선택 다이얼로그
-  Future<void> _selectDate(BuildContext context, {required bool isStart}) async {
+  Future<void> _selectLongTermDate(BuildContext context, {required bool isStart}) async {
     final picked = await showDatePicker(
       context: context,
       initialDate: isStart
@@ -747,7 +764,6 @@ class _TODateSelectorState extends State<TODateSelector> {
     }
   }
 
-  /// 요일 버튼들
   Widget _buildWeekdayButtons(BuildContext context, ThemeData theme) {
     const weekdays = ['월', '화', '수', '목', '금', '토', '일'];
     
@@ -759,39 +775,29 @@ class _TODateSelectorState extends State<TODateSelector> {
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: weekdays.map((day) {
             final isSelected = widget.selectedWeekdays.contains(day);
+            final isWeekend = day == '토' || day == '일';
+            
             return GestureDetector(
               onTap: () => widget.onWeekdayToggle?.call(day),
-              child: Container(
+              child: AnimatedContainer(
+                duration: const Duration(milliseconds: 200),
                 width: buttonWidth,
                 height: buttonWidth,
                 decoration: BoxDecoration(
                   gradient: isSelected
-                      ? LinearGradient(
-                          begin: Alignment.topLeft,
-                          end: Alignment.bottomRight,
-                          colors: [
-                            theme.primaryColor,
-                            theme.primaryColor.withOpacity(0.8),
-                          ],
-                        )
+                      ? LinearGradient(colors: [theme.primaryColor, theme.primaryColor.withOpacity(0.8)])
                       : null,
-                  color: isSelected ? null : Colors.grey[100],
+                  color: isSelected ? null : (isWeekend ? Colors.red[50] : Colors.grey[100]),
                   borderRadius: BorderRadius.circular(12),
                   boxShadow: isSelected
-                      ? [
-                          BoxShadow(
-                            color: theme.primaryColor.withOpacity(0.3),
-                            blurRadius: 8,
-                            offset: const Offset(0, 4),
-                          ),
-                        ]
+                      ? [BoxShadow(color: theme.primaryColor.withOpacity(0.3), blurRadius: 8, offset: const Offset(0, 4))]
                       : null,
                 ),
                 child: Center(
                   child: Text(
                     day,
                     style: ResponsiveHelper.subtitleStyle(context).copyWith(
-                      color: isSelected ? Colors.white : Colors.grey[700],
+                      color: isSelected ? Colors.white : (isWeekend ? Colors.red[400] : Colors.grey[700]),
                       fontWeight: FontWeight.bold,
                     ),
                   ),
@@ -804,19 +810,11 @@ class _TODateSelectorState extends State<TODateSelector> {
     );
   }
 
-  /// 요일 선택 요약
   Widget _buildWeekdaySummary(BuildContext context) {
     return Container(
       padding: ResponsiveHelper.cardPadding(context),
       decoration: BoxDecoration(
-        gradient: LinearGradient(
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-          colors: [
-            Colors.green[50]!,
-            Colors.green[100]!,
-          ],
-        ),
+        gradient: LinearGradient(colors: [Colors.green[50]!, Colors.green[100]!]),
         borderRadius: BorderRadius.circular(12),
         border: Border.all(color: Colors.green[300]!),
       ),
@@ -825,11 +823,7 @@ class _TODateSelectorState extends State<TODateSelector> {
         children: [
           Row(
             children: [
-              Icon(
-                Icons.check_circle,
-                color: Colors.green[700],
-                size: ResponsiveHelper.iconSize(context, 18),
-              ),
+              Icon(Icons.check_circle, color: Colors.green[700], size: ResponsiveHelper.iconSize(context, 18)),
               SizedBox(width: ResponsiveHelper.spacing(context, 8)),
               Text(
                 '주 ${widget.selectedWeekdays.length}일 근무',
@@ -843,10 +837,7 @@ class _TODateSelectorState extends State<TODateSelector> {
           SizedBox(height: ResponsiveHelper.spacing(context, 8)),
           Text(
             '선택된 요일: ${widget.selectedWeekdays.join(', ')}',
-            style: ResponsiveHelper.smallStyle(
-              context,
-              color: Colors.green[800],
-            ),
+            style: ResponsiveHelper.smallStyle(context, color: Colors.green[800]),
           ),
         ],
       ),
@@ -854,29 +845,121 @@ class _TODateSelectorState extends State<TODateSelector> {
   }
 
   // ============================================================
-  // 🛠️ 유틸리티 함수
+  // 🛠️ 이벤트 핸들러
   // ============================================================
   
-  /// 연속 날짜 그룹화
-  List<List<DateTime>> _groupConsecutiveDates(List<DateTime> dates) {
-    if (dates.isEmpty) return [];
+  /// 날짜 탭 처리 (자동 범위 선택)
+  void _handleDateTap(DateTime date, DateTime today) {
+    setState(() => _activeQuickSelect = null); // 빠른 선택 해제
     
-    final sorted = List<DateTime>.from(dates)..sort();
-    List<List<DateTime>> groups = [];
-    List<DateTime> currentGroup = [sorted[0]];
+    final isAlreadySelected = widget.selectedDates.any((d) => _isSameDay(d, date));
+    
+    // 이미 선택된 날짜 → 바로 해제
+    if (isAlreadySelected) {
+      setState(() => _rangeStart = null); // 범위 모드 초기화
+      widget.onDateToggle?.call(date);
+      return;
+    }
+    
+    // 새 날짜 선택
+    if (_rangeStart == null) {
+      // 범위 시작점 설정
+      setState(() => _rangeStart = date);
+      widget.onDateToggle?.call(date);
+    } else {
+      // 범위 선택 완료
+      _selectRange(_rangeStart!, date, today);
+      setState(() => _rangeStart = null);
+    }
+  }
 
-    for (int i = 1; i < sorted.length; i++) {
-      final diff = sorted[i].difference(sorted[i - 1]).inDays;
-
-      if (diff == 1) {
-        currentGroup.add(sorted[i]);
-      } else {
-        groups.add(currentGroup);
-        currentGroup = [sorted[i]];
+  /// 범위 선택
+  void _selectRange(DateTime start, DateTime end, DateTime today) {
+    DateTime rangeStart = start.isBefore(end) ? start : end;
+    DateTime rangeEnd = start.isBefore(end) ? end : start;
+    
+    List<DateTime> newDates = List<DateTime>.from(widget.selectedDates);
+    
+    for (var d = rangeStart; !d.isAfter(rangeEnd); d = d.add(const Duration(days: 1))) {
+      if (!d.isBefore(today) && !newDates.any((existing) => _isSameDay(existing, d))) {
+        if (newDates.length < widget.maxSelectableDays) {
+          newDates.add(d);
+        }
       }
     }
+    
+    newDates.sort();
+    
+    if (widget.onDatesChanged != null) {
+      widget.onDatesChanged!(newDates);
+    } else {
+      // onDatesChanged 없으면 개별 토글
+      for (var d = rangeStart; !d.isAfter(rangeEnd); d = d.add(const Duration(days: 1))) {
+        if (!d.isBefore(today) && !widget.selectedDates.any((existing) => _isSameDay(existing, d))) {
+          widget.onDateToggle?.call(d);
+        }
+      }
+    }
+  }
 
-    groups.add(currentGroup);
-    return groups;
+  /// 빠른 선택 처리 (토글 방식)
+  void _handleQuickSelect(String id) {
+    final today = DateTime.now();
+    final todayNormalized = DateTime(today.year, today.month, today.day);
+    
+    setState(() => _rangeStart = null); // 범위 선택 초기화
+    
+    // 같은 버튼 다시 클릭 → 해제
+    if (_activeQuickSelect == id) {
+      setState(() => _activeQuickSelect = null);
+      widget.onClearAll?.call();
+      return;
+    }
+    
+    // 다른 버튼 클릭 → 기존 해제 후 새로 선택
+    List<DateTime> dates = [];
+    
+    switch (id) {
+      case 'today':
+        dates = [todayNormalized];
+        break;
+      case 'thisWeek':
+        dates = _getWeekDates(todayNormalized, isNextWeek: false);
+        break;
+      case 'nextWeek':
+        dates = _getWeekDates(todayNormalized, isNextWeek: true);
+        break;
+    }
+    
+    // 과거 날짜 필터링
+    dates = dates.where((d) => !d.isBefore(todayNormalized)).toList();
+    
+    setState(() => _activeQuickSelect = id);
+    
+    if (widget.onDatesChanged != null) {
+      widget.onDatesChanged!(dates);
+    } else {
+      widget.onClearAll?.call();
+      for (var date in dates) {
+        widget.onDateToggle?.call(date);
+      }
+    }
+  }
+
+  /// 주간 날짜 가져오기 (월~일)
+  List<DateTime> _getWeekDates(DateTime today, {required bool isNextWeek}) {
+    // 이번 주 월요일 찾기 (weekday: 월=1, 일=7)
+    final monday = today.subtract(Duration(days: today.weekday - 1));
+    final targetMonday = isNextWeek ? monday.add(const Duration(days: 7)) : monday;
+    
+    return List.generate(7, (i) => targetMonday.add(Duration(days: i)));
+  }
+
+  // ============================================================
+  // 🛠️ 유틸리티
+  // ============================================================
+  
+  bool _isSameDay(DateTime a, DateTime b) {
+    return a.year == b.year && a.month == b.month && a.day == b.day;
   }
 }
