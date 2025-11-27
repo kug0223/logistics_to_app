@@ -73,6 +73,7 @@ class WorkDetailModel {
       workTypeColor: map['workTypeColor'] ?? '#2196F3',
       workTypeBackgroundColor: map['workTypeBackgroundColor'],
       wage: map['wage'] ?? 0,
+      wageType: map['wageType'] ?? 'hourly',
       requiredCount: map['requiredCount'] ?? 0,
       currentCount: map['currentCount'] ?? 0,
       startTime: map['startTime'] ?? '09:00',

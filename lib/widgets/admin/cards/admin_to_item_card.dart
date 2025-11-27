@@ -15,6 +15,7 @@ import '../../../utils/navigation_helper.dart';
 
 // Screens
 import '../../../screens/business_admin/to_management/edit_to_screen.dart';
+import '../../../screens/common/job_posting_screen.dart';
 
 // Dialogs
 import '../../../screens/business_admin/dialogs/confirmed_list_dialog.dart';
@@ -546,6 +547,20 @@ class _TOItemCardState extends State<TOItemCard> {
       onSelected: (value) => _handleMenuAction(context, value),
       itemBuilder: (context) => [
         PopupMenuItem(
+          value: 'preview',
+          child: Row(
+            children: [
+              Icon(
+                Icons.visibility,
+                size: ResponsiveHelper.iconSize(context, 18),
+                color: Colors.teal[600],
+              ),
+              SizedBox(width: ResponsiveHelper.spacing(context, 12)),
+              const Text('공고 상세보기'),
+            ],
+          ),
+        ),
+        PopupMenuItem(
           value: 'edit',
           child: Row(
             children: [
@@ -622,6 +637,18 @@ class _TOItemCardState extends State<TOItemCard> {
   /// 메뉴 액션 처리
   Future<void> _handleMenuAction(BuildContext context, String value) async {
     switch (value) {
+      case 'preview':
+        Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (_) => JobPostingScreen(
+              to: widget.toItem.to,
+              workDetails: widget.toItem.workDetails,
+              mode: TODetailMode.adminPreview,
+            ),
+          ),
+        );
+    break;
       case 'edit':
         await NavigationHelper.push<bool>(
           context,

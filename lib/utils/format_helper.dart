@@ -67,6 +67,50 @@ class FormatHelper {
       return 0;
     }
   }
+  /// DateTime을 날짜+시간 형식으로 포맷팅
+  /// 
+  /// 예시:
+  /// - formatDateTime(DateTime(2024, 11, 27, 18, 30)) → '11/27 18:30'
+  static String formatDateTime(DateTime dateTime) {
+    return '${dateTime.month}/${dateTime.day} '
+           '${dateTime.hour.toString().padLeft(2, '0')}:'
+           '${dateTime.minute.toString().padLeft(2, '0')}';
+  }
+
+  /// DateTime을 날짜만 포맷팅 (요일 포함)
+  /// 
+  /// 예시:
+  /// - formatDate(DateTime(2024, 11, 27)) → '11/27 (수)'
+  static String formatDate(DateTime date) {
+    final weekdays = ['월', '화', '수', '목', '금', '토', '일'];
+    final weekday = weekdays[date.weekday - 1];
+    return '${date.month}/${date.day} ($weekday)';
+  }
+
+  /// DateTime을 날짜만 포맷팅 (요일 없이)
+  /// 
+  /// 예시:
+  /// - formatDateShort(DateTime(2024, 11, 27)) → '11/27'
+  static String formatDateShort(DateTime date) {
+    return '${date.month}/${date.day}';
+  }
+
+  /// DateTime을 시간만 포맷팅
+  /// 
+  /// 예시:
+  /// - formatTime(DateTime(2024, 11, 27, 18, 30)) → '18:30'
+  static String formatTime(DateTime dateTime) {
+    return '${dateTime.hour.toString().padLeft(2, '0')}:'
+           '${dateTime.minute.toString().padLeft(2, '0')}';
+  }
+
+  /// 날짜 범위 포맷팅
+  /// 
+  /// 예시:
+  /// - formatDateRange(start, end) → '11/1 ~ 11/30'
+  static String formatDateRange(DateTime start, DateTime end) {
+    return '${start.month}/${start.day} ~ ${end.month}/${end.day}';
+  }
 
   // ============================================================
   // 금액 관련
