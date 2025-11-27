@@ -1,0 +1,30 @@
+<svg width="1024" height="1024" viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="bgGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#1976D2"/>
+      <stop offset="100%" style="stop-color:#1565C0"/>
+    </linearGradient>
+    <filter id="textShadow">
+      <feDropShadow dx="0" dy="4" stdDeviation="6" flood-opacity="0.25"/>
+    </filter>
+  </defs>
+  
+  <!-- 배경 (그라데이션) -->
+  <rect width="1024" height="1024" fill="url(#bgGradient)" rx="180"/>
+  
+  <!-- ALfit 로고 텍스트 -->
+  <text 
+    x="480" 
+    y="580" 
+    font-family="Arial, Helvetica, sans-serif" 
+    font-size="260" 
+    font-weight="800" 
+    fill="white" 
+    text-anchor="middle"
+    letter-spacing="6"
+    filter="url(#textShadow)"
+  >ALfit</text>
+  
+  <!-- 파란 점 (t 오른쪽 위) -->
+  <circle cx="780" cy="420" r="22" fill="#64B5F6" opacity="0.95"/>
+</svg>

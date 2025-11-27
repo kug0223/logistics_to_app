@@ -13,7 +13,6 @@ class StorageService {
   Future<String?> uploadImage(String filePath, String storagePath) async {
     try {
       if (kIsWeb) {
-        // 웹은 별도 처리 필요 (일단 패스)
         print('⚠️ 웹 환경에서는 Storage 업로드 미지원');
         return null;
       }
@@ -36,10 +35,28 @@ class StorageService {
     }
   }
 
-  /// 이미지 삭제
+  /// 이미지 삭제 (경로 기반)
   Future<bool> deleteImage(String storagePath) async {
     try {
+      // 빈 경로 체크
+      if (storagePath.isEmpty) {
+        print('⚠️ 빈 경로 (무시)');
+        return true;
+      }
+
       final ref = _storage.ref().child(storagePath);
+
+      // 파일 존재 여부 확인
+      try {
+        await ref.getMetadata();
+      } on FirebaseException catch (e) {
+        if (e.code == 'object-not-found') {
+          print('⚠️ 파일이 이미 없음 (무시): $storagePath');
+          return true;
+        }
+        rethrow;
+      }
+
       await ref.delete();
       print('✅ Storage 삭제 성공: $storagePath');
       return true;
@@ -48,11 +65,31 @@ class StorageService {
       return false;
     }
   }
+
   /// URL로 이미지 삭제 (다운로드 URL → Storage Path 변환)
   Future<bool> deleteImageByUrl(String downloadUrl) async {
     try {
-      // URL에서 Storage Reference 생성
+      // 1. Firebase Storage URL인지 확인
+      if (!_isFirebaseStorageUrl(downloadUrl)) {
+        print('⚠️ Firebase Storage URL이 아님 (무시): $downloadUrl');
+        return true;
+      }
+
+      // 2. URL에서 Storage Reference 생성
       final ref = _storage.refFromURL(downloadUrl);
+
+      // 3. 파일 존재 여부 확인
+      try {
+        await ref.getMetadata();
+      } on FirebaseException catch (e) {
+        if (e.code == 'object-not-found') {
+          print('⚠️ 파일이 이미 없음 (무시): ${ref.fullPath}');
+          return true;
+        }
+        rethrow;
+      }
+
+      // 4. 파일 삭제
       await ref.delete();
       print('✅ Storage 삭제 성공 (URL): ${ref.fullPath}');
       return true;
@@ -60,5 +97,32 @@ class StorageService {
       print('❌ Storage 삭제 실패 (URL): $e');
       return false;
     }
+  }
+
+  /// 파일 존재 여부 확인
+  Future<bool> exists(String storagePath) async {
+    try {
+      final ref = _storage.ref().child(storagePath);
+      await ref.getMetadata();
+      return true;
+    } on FirebaseException catch (e) {
+      if (e.code == 'object-not-found') {
+        return false;
+      }
+      rethrow;
+    }
+  }
+
+  /// 여러 이미지 일괄 삭제
+  Future<void> deleteMultipleByUrls(List<String> urls) async {
+    for (final url in urls) {
+      await deleteImageByUrl(url);
+    }
+  }
+
+  /// Firebase Storage URL인지 확인
+  bool _isFirebaseStorageUrl(String url) {
+    return url.contains('firebasestorage.googleapis.com') ||
+           url.contains('storage.googleapis.com');
   }
 }

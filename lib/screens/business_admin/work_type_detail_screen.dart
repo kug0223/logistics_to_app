@@ -24,10 +24,12 @@ import '../../services/storage_service.dart';
 /// 📦 업무유형 상세 화면
 class WorkTypeDetailScreen extends StatefulWidget {
   final BusinessWorkTypeModel workType;
+  final bool initialEditMode;  // ⭐ 추가
 
   const WorkTypeDetailScreen({
     super.key,
     required this.workType,
+    this.initialEditMode = false,  // ⭐ 기본값 false
   });
 
   @override
@@ -60,6 +62,7 @@ class _WorkTypeDetailScreenState extends State<WorkTypeDetailScreen> {
   void initState() {
     super.initState();
     _currentWorkType = widget.workType;
+    _isEditing = widget.initialEditMode;  // ⭐ 추가
     _initControllers();
   }
 

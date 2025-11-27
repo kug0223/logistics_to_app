@@ -23,28 +23,31 @@ class ALfitSplashLogo extends StatelessWidget {
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          // ALfit 로고
-          Row(
-            mainAxisAlignment: MainAxisAlignment.center,
+          // ALfit 로고 + 점 (A-2 기준: 우측 상단)
+          Stack(
+            clipBehavior: Clip.none,
             children: [
               Text(
                 'ALfit',
                 style: TextStyle(
-                  fontSize: width * 0.22, // 반응형 크기
+                  fontSize: width * 0.22,
                   fontWeight: FontWeight.w800,
                   color: primaryColor,
                   letterSpacing: 2,
                   height: 1.2,
                 ),
               ),
-              SizedBox(width: width * 0.02),
-              // 작은 연결점
-              Container(
-                width: width * 0.02,
-                height: width * 0.02,
-                decoration: BoxDecoration(
-                  color: secondaryColor,
-                  shape: BoxShape.circle,
+              // 파란 점 (A-2 비율: cx=820, cy=420 → 텍스트 우측 상단)
+              Positioned(
+                right: -(width * 0.02),
+                top: width * 0.06,
+                child: Container(
+                  width: width * 0.025,
+                  height: width * 0.025,
+                  decoration: BoxDecoration(
+                    color: secondaryColor.withOpacity(0.9),
+                    shape: BoxShape.circle,
+                  ),
                 ),
               ),
             ],

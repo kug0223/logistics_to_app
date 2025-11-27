@@ -1,4 +1,5 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_storage/firebase_storage.dart';
 import 'package:intl/intl.dart';
 import '../models/core/user_model.dart';
 import '../models/core/to_model.dart';
@@ -2748,7 +2749,7 @@ class FirestoreService {
     }
   }
 
-  /// 업무 유형 삭제 (소프트 삭제)
+  /// 업무 유형 삭제 (소프트 삭제 + Storage 이미지 삭제)
   Future<bool> deleteBusinessWorkType({
     required String businessId,
     required String workTypeId,
@@ -2756,6 +2757,42 @@ class FirestoreService {
     try {
       print('🔍 [FirestoreService] 업무 유형 삭제...');
 
+      // ✅ 1. 업무유형 문서 조회 (이미지 URL 확인)
+      final doc = await _firestore
+          .collection('businesses')
+          .doc(businessId)
+          .collection('workTypes')
+          .doc(workTypeId)
+          .get();
+      
+      if (doc.exists) {
+        final data = doc.data()!;
+        final storage = FirebaseStorage.instance;
+        
+        // ✅ 2. 썸네일 이미지 삭제
+        if (data['thumbnailUrl'] != null) {
+          try {
+            await storage.refFromURL(data['thumbnailUrl']).delete();
+            print('✅ 썸네일 삭제: ${data['thumbnailUrl']}');
+          } catch (e) {
+            print('⚠️ 썸네일 삭제 실패: $e');
+          }
+        }
+        
+        // ✅ 3. 추가 이미지들 삭제
+        if (data['images'] != null) {
+          for (var url in List<String>.from(data['images'])) {
+            try {
+              await storage.refFromURL(url).delete();
+              print('✅ 이미지 삭제: $url');
+            } catch (e) {
+              print('⚠️ 이미지 삭제 실패: $e');
+            }
+          }
+        }
+      }
+
+      // ✅ 4. Firestore 소프트 삭제
       await _firestore
           .collection('businesses')
           .doc(businessId)

@@ -50,24 +50,32 @@ class AdminHomeScreen extends StatelessWidget {
                             // ALfit 로고 + 역할
                             Row(
                               children: [
-                                // ALfit 로고
-                                Text(
-                                  'ALfit',
-                                  style: TextStyle(
-                                    color: Colors.white,
-                                    fontSize: ResponsiveHelper.titleStyle(context).fontSize! * 1.3,
-                                    fontWeight: FontWeight.w800,
-                                    letterSpacing: 1.5,
-                                  ),
-                                ),
-                                SizedBox(width: ResponsiveHelper.spacing(context, 6)),
-                                Container(
-                                  width: ResponsiveHelper.spacing(context, 8),
-                                  height: ResponsiveHelper.spacing(context, 8),
-                                  decoration: BoxDecoration(
-                                    color: Colors.white.withOpacity(0.8),
-                                    shape: BoxShape.circle,
-                                  ),
+                                // ALfit 로고 + 점 (오른쪽 위)
+                                Stack(
+                                  clipBehavior: Clip.none,
+                                  children: [
+                                    Text(
+                                      'ALfit',
+                                      style: TextStyle(
+                                        color: Colors.white,
+                                        fontSize: ResponsiveHelper.titleStyle(context).fontSize! * 1.3,
+                                        fontWeight: FontWeight.w800,
+                                        letterSpacing: 1.5,
+                                      ),
+                                    ),
+                                    Positioned(
+                                      right: -ResponsiveHelper.spacing(context, 3),
+                                      top: ResponsiveHelper.spacing(context, 5),
+                                      child: Container(
+                                        width: ResponsiveHelper.spacing(context, 4),
+                                        height: ResponsiveHelper.spacing(context, 4),
+                                        decoration: BoxDecoration(
+                                          color: Colors.white.withOpacity(0.8),
+                                          shape: BoxShape.circle,
+                                        ),
+                                      ),
+                                    ),
+                                  ],
                                 ),
                                 SizedBox(width: ResponsiveHelper.spacing(context, 12)),
                                 // 역할 뱃지

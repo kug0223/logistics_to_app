@@ -17,6 +17,7 @@ import '../../providers/user_provider.dart';
 import '../../utils/image_helper.dart';
 // Services
 import '../../services/firestore_service.dart';
+import '../../services/storage_service.dart';
 
 // Utils
 import '../../utils/responsive_helper.dart';
@@ -76,6 +77,10 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
   // 이미지
   File? _mainImage;
   String? _mainImageUrl;
+
+   // ✅ 삭제할 이미지 URL 추적
+  final List<String> _imagesToDelete = [];
+  final StorageService _storageService = StorageService();
 
   // Step 3: 시설 및 환경
   final _oneLineIntroController = TextEditingController();
@@ -618,6 +623,10 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
               onTap: () {
                 setState(() {
                   _mainImage = null;
+                  // ✅ 기존 URL이 있으면 삭제 목록에 추가
+                  if (_mainImageUrl != null) {
+                    _imagesToDelete.add(_mainImageUrl!);
+                  }
                   _mainImageUrl = null;
                 });
               },
@@ -953,7 +962,10 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
               context,
               networkUrl: _additionalImageUrls[index],
               onRemove: () {
-                setState(() => _additionalImageUrls.removeAt(index));
+                setState(() {
+                  _imagesToDelete.add(_additionalImageUrls[index]);
+                  _additionalImageUrls.removeAt(index);
+                });
               },
             );
           }
@@ -1286,9 +1298,18 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
       _latitude ??= 37.5665;
       _longitude ??= 126.9780;
 
+      // ✅ 삭제할 이미지 처리 (Storage에서 실제 삭제)
+      for (var url in _imagesToDelete) {
+        await _storageService.deleteImageByUrl(url);
+      }
+
       // 이미지 업로드
       String? mainImageUrl = _mainImageUrl;
       if (_mainImage != null) {
+        // ✅ 수정 모드에서 새 이미지 업로드 시 기존 이미지 삭제
+        if (_isEditMode && widget.business?.mainImageUrl != null && !_imagesToDelete.contains(widget.business!.mainImageUrl)) {
+          await _storageService.deleteImageByUrl(widget.business!.mainImageUrl!);
+        }
         mainImageUrl = await _uploadImage(_mainImage!, 'main');
       }
 

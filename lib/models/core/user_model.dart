@@ -195,7 +195,7 @@ class UserModel {
       address: map['address'],
       detailAddress: map['detailAddress'],
       idCardImageUrl: map['idCardImageUrl'],
-      idCardVerifiedAt: map['idCardVerifiedAt']?.toDate(),
+      idCardVerifiedAt: _parseDateTime(map['idCardVerifiedAt']),
       isIdVerified: map['isIdVerified'] ?? false,
       bankName: map['bankName'],
       accountNumber: map['accountNumber'],
@@ -391,5 +391,13 @@ class UserModel {
       businessLicenseImageUrl: businessLicenseImageUrl ?? this.businessLicenseImageUrl, // ✅ 추가
       ceoName: ceoName ?? this.ceoName,  // ✅ 추가
     );
+  }
+  /// 안전한 DateTime 파싱
+  static DateTime? _parseDateTime(dynamic value) {
+    if (value == null) return null;
+    if (value is Timestamp) return value.toDate();
+    if (value is DateTime) return value;
+    if (value is String) return DateTime.tryParse(value);
+    return null;
   }
 }

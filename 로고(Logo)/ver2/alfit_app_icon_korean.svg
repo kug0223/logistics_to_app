@@ -1,0 +1,29 @@
+<svg width="1024" height="1024" viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#1976D2"/>
+      <stop offset="100%" style="stop-color:#1565C0"/>
+    </linearGradient>
+    <filter id="shadow">
+      <feDropShadow dx="0" dy="4" stdDeviation="6" flood-opacity="0.2"/>
+    </filter>
+  </defs>
+  
+  <!-- 배경 -->
+  <rect width="1024" height="1024" fill="url(#bgGrad)" rx="180"/>
+  
+  <!-- 한글 "알핏" -->
+  <text 
+    x="480" 
+    y="620" 
+    font-family="'Noto Sans KR', 'Malgun Gothic', 'Apple SD Gothic Neo', sans-serif" 
+    font-size="340" 
+    font-weight="800" 
+    fill="white" 
+    text-anchor="middle"
+    filter="url(#shadow)"
+  >알핏</text>
+  
+  <!-- 포인트 점 -->
+  <circle cx="780" cy="340" r="28" fill="#64B5F6" opacity="0.9"/>
+</svg>

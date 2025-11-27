@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_storage/firebase_storage.dart';
 
 // Models
 import '../../models/core/business_model.dart';
@@ -95,7 +96,58 @@ class _BusinessListScreenState extends State<BusinessListScreen> {
     if (confirmed != true) return;
 
     try {
-      // Firestore에서 직접 삭제
+      final storage = FirebaseStorage.instance;
+      
+      // ✅ 1. 대표 이미지 삭제
+      if (business.mainImageUrl != null) {
+        try {
+          await storage.refFromURL(business.mainImageUrl!).delete();
+          print('✅ 대표 이미지 삭제');
+        } catch (e) {
+          print('⚠️ 대표 이미지 삭제 실패: $e');
+        }
+      }
+      
+      // ✅ 2. 추가 이미지들 삭제
+      if (business.imageUrls != null) {
+        for (var url in business.imageUrls!) {
+          try {
+            await storage.refFromURL(url).delete();
+            print('✅ 추가 이미지 삭제');
+          } catch (e) {
+            print('⚠️ 추가 이미지 삭제 실패: $e');
+          }
+        }
+      }
+      
+      // ✅ 3. 업무유형들의 이미지도 삭제
+      final workTypesSnapshot = await FirebaseFirestore.instance
+          .collection('businesses')
+          .doc(business.id)
+          .collection('workTypes')
+          .get();
+      
+      for (var doc in workTypesSnapshot.docs) {
+        final data = doc.data();
+        if (data['thumbnailUrl'] != null) {
+          try {
+            await storage.refFromURL(data['thumbnailUrl']).delete();
+          } catch (e) {
+            print('⚠️ 업무유형 썸네일 삭제 실패: $e');
+          }
+        }
+        if (data['images'] != null) {
+          for (var url in List<String>.from(data['images'])) {
+            try {
+              await storage.refFromURL(url).delete();
+            } catch (e) {
+              print('⚠️ 업무유형 이미지 삭제 실패: $e');
+            }
+          }
+        }
+      }
+
+      // ✅ 4. Firestore에서 삭제
       await FirebaseFirestore.instance
           .collection('businesses')
           .doc(business.id)

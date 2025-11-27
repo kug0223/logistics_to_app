@@ -48,8 +48,9 @@ class UserHomeScreen extends StatelessWidget {
                     Row(
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
-                        // ALfit 로고
-                        Row(
+                        // ALfit 로고 + 점 (오른쪽 위)
+                        Stack(
+                          clipBehavior: Clip.none,
                           children: [
                             Text(
                               'ALfit',
@@ -60,13 +61,16 @@ class UserHomeScreen extends StatelessWidget {
                                 letterSpacing: 1.5,
                               ),
                             ),
-                            SizedBox(width: ResponsiveHelper.spacing(context, 6)),
-                            Container(
-                              width: ResponsiveHelper.spacing(context, 8),
-                              height: ResponsiveHelper.spacing(context, 8),
-                              decoration: BoxDecoration(
-                                color: Colors.white.withOpacity(0.8),
-                                shape: BoxShape.circle,
+                            Positioned(
+                              right: -ResponsiveHelper.spacing(context, 3),
+                              top: ResponsiveHelper.spacing(context, 5),
+                              child: Container(
+                                width: ResponsiveHelper.spacing(context, 4),
+                                height: ResponsiveHelper.spacing(context, 4),
+                                decoration: BoxDecoration(
+                                  color: Colors.white.withOpacity(0.8),
+                                  shape: BoxShape.circle,
+                                ),
                               ),
                             ),
                           ],

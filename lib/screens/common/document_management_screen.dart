@@ -477,8 +477,13 @@ class _DocumentManagementScreenState extends State<DocumentManagementScreen> {
       setState(() => _isLoading = true);
       
       try {
+        // ✅ 기존 이미지가 있으면 먼저 삭제
+        if (user.idCardImageUrl != null) {
+          await _storageService.deleteImageByUrl(user.idCardImageUrl!);
+        }
+        
         // Firebase Storage에 업로드
-        final storagePath = 'users/${user.uid}/businessLicense_${DateTime.now().millisecondsSinceEpoch}.jpg';
+        final storagePath = 'users/${user.uid}/idCard_${DateTime.now().millisecondsSinceEpoch}.jpg';
         final downloadUrl = await _storageService.uploadImage(imagePath, storagePath);
         
         if (downloadUrl == null) {
@@ -1255,7 +1260,11 @@ class _DocumentManagementScreenState extends State<DocumentManagementScreen> {
       setState(() => _isLoading = true);
       
       try {
-        // Firebase Storage에 업로드
+        // ✅ 기존 이미지가 있으면 먼저 삭제
+        if (user.bankbookImageUrl != null) {
+          await _storageService.deleteImageByUrl(user.bankbookImageUrl!);
+        }
+        
         final storagePath = 'users/${user.uid}/bankbook_${DateTime.now().millisecondsSinceEpoch}.jpg';
         final downloadUrl = await _storageService.uploadImage(imagePath, storagePath);
         

@@ -208,7 +208,7 @@ class _WorkTypeManagementScreenState extends State<WorkTypeManagementScreen> {
           );
           
           if (goToDetail == true) {
-            _openDetailScreen(newWorkType);
+            _openDetailScreen(newWorkType, initialEditMode: true);  // ⭐ 수정
           }
         }
       }
@@ -955,7 +955,7 @@ class _WorkTypeManagementScreenState extends State<WorkTypeManagementScreen> {
                         color: Colors.orange,
                       ),
                       SizedBox(width: ResponsiveHelper.spacing(context, 12)),
-                      Text('수정', style: ResponsiveHelper.bodyStyle(context)),
+                      Text('아이콘수정', style: ResponsiveHelper.bodyStyle(context)),
                     ],
                   ),
                 ),
@@ -1014,11 +1014,14 @@ class _WorkTypeManagementScreenState extends State<WorkTypeManagementScreen> {
     }
 
   /// 상세 화면으로 이동
-  Future<void> _openDetailScreen(BusinessWorkTypeModel workType) async {
+  Future<void> _openDetailScreen(BusinessWorkTypeModel workType, {bool initialEditMode = false}) async {  // ⭐ 파라미터 추가
     final result = await Navigator.push(
       context,
       MaterialPageRoute(
-        builder: (_) => WorkTypeDetailScreen(workType: workType),
+        builder: (_) => WorkTypeDetailScreen(
+          workType: workType,
+          initialEditMode: initialEditMode,  // ⭐ 전달
+        ),
       ),
     );
     

@@ -1,0 +1,11 @@
+<svg width="1024" height="1024" viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="gradA" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#1976D2"/>
+      <stop offset="100%" style="stop-color:#0D47A1"/>
+    </linearGradient>
+  </defs>
+  <rect width="1024" height="1024" fill="url(#gradA)" rx="180"/>
+  <text x="512" y="580" font-family="Arial, sans-serif" font-size="260" font-weight="800" fill="white" text-anchor="middle" letter-spacing="6">ALfit</text>
+  <circle cx="820" cy="420" r="20" fill="#64B5F6" opacity="0.9"/>
+</svg>

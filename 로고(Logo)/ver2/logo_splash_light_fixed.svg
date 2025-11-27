@@ -1,0 +1,28 @@
+<svg width="1200" height="480" viewBox="0 0 1200 480" xmlns="http://www.w3.org/2000/svg">
+  <!-- ALfit 로고 텍스트 -->
+  <text 
+    x="560" 
+    y="280" 
+    font-family="Arial, Helvetica, sans-serif" 
+    font-size="180" 
+    font-weight="800" 
+    fill="#1976D2" 
+    text-anchor="middle"
+    letter-spacing="6"
+  >ALfit</text>
+  
+  <!-- 파란 점 (t 오른쪽 위) - Flutter 위젯과 동일 위치 -->
+  <circle cx="755" cy="200" r="14" fill="#2196F3"/>
+  
+  <!-- 태그라인 -->
+  <text 
+    x="600" 
+    y="380" 
+    font-family="'Noto Sans KR', 'Malgun Gothic', Arial, sans-serif" 
+    font-size="42" 
+    font-weight="400" 
+    fill="#0D47A1" 
+    text-anchor="middle"
+    letter-spacing="6"
+  >나에게 딱 맞는 알바, 알핏!</text>
+</svg>
