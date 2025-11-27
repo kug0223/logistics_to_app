@@ -26,11 +26,17 @@ class WorkTypeIcon {
   /// 아이콘 또는 이모지를 렌더링 (작은 사이즈 - 드롭다운용)
   static Widget buildSmall(
     BusinessWorkTypeModel workType, {
+    Color? color,
     double size = 16,
   }) {
+    final iconColor = color ?? 
+        (workType.color != null 
+            ? FormatHelper.parseColor(workType.color!) 
+            : Colors.white);
+    
     return buildFromString(
       workType.icon,
-      color: Colors.white,
+      color: iconColor,
       size: size,
     );
   }

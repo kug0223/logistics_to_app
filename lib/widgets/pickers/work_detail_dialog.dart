@@ -296,7 +296,13 @@ class WorkDetailDialog {
                         ],
                       ),
                       child: Center(
-                        child: WorkTypeIcon.buildSmall(workType),
+                        child: WorkTypeIcon.buildFromString(
+                          workType.icon,
+                          color: workType.color != null 
+                              ? FormatHelper.parseColor(workType.color!)
+                              : Colors.white,
+                          size: ResponsiveHelper.iconSize(context, 16),
+                        ),
                       ),
                     ),
                     SizedBox(width: ResponsiveHelper.spacing(context, 12)),
