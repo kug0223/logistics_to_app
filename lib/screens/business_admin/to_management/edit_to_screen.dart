@@ -385,6 +385,7 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
     final countController = TextEditingController(text: work.requiredCount.toString());
     String startTime = work.startTime;
     String endTime = work.endTime;
+    String selectedWageType = work.wageType;
     final theme = Theme.of(context);
 
     return showDialog<Map<String, dynamic>>(
@@ -405,12 +406,33 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
+                  // 급여 타입 선택
+                  Row(
+                    children: [
+                      _buildWageTypeChip(
+                        context, theme, '시급', 'hourly', selectedWageType,
+                        () => setDialogState(() => selectedWageType = 'hourly'),
+                      ),
+                      SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+                      _buildWageTypeChip(
+                        context, theme, '일급', 'daily', selectedWageType,
+                        () => setDialogState(() => selectedWageType = 'daily'),
+                      ),
+                      SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+                      _buildWageTypeChip(
+                        context, theme, '월급', 'monthly', selectedWageType,
+                        () => setDialogState(() => selectedWageType = 'monthly'),
+                      ),
+                    ],
+                  ),
+                  SizedBox(height: ResponsiveHelper.spacing(context, 16)),
+
                   // 급여
                   TextFormField(
                     controller: wageController,
                     keyboardType: TextInputType.number,
                     decoration: InputDecoration(
-                      labelText: '급여 (원)',
+                      labelText: _getWageLabel(selectedWageType),  // ✅ 동적 라벨
                       prefixIcon: const Icon(Icons.payments),
                       border: OutlineInputBorder(
                         borderRadius: BorderRadius.circular(12),
@@ -527,6 +549,7 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
 
                   Navigator.pop(context, {
                     'wage': wage,
+                    'wageType': selectedWageType,
                     'requiredCount': count,
                     'startTime': startTime,
                     'endTime': endTime,
@@ -585,5 +608,49 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
         ],
       ),
     );
+  }
+  /// 급여 타입 칩 위젯
+  Widget _buildWageTypeChip(
+    BuildContext context,
+    ThemeData theme,
+    String label,
+    String value,
+    String selectedValue,
+    VoidCallback onTap,
+  ) {
+    final isSelected = value == selectedValue;
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        padding: EdgeInsets.symmetric(
+          horizontal: ResponsiveHelper.spacing(context, 12),
+          vertical: ResponsiveHelper.spacing(context, 8),
+        ),
+        decoration: BoxDecoration(
+          color: isSelected ? theme.primaryColor : Colors.grey[100],
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(
+            color: isSelected ? theme.primaryColor : Colors.grey[300]!,
+          ),
+        ),
+        child: Text(
+          label,
+          style: ResponsiveHelper.smallStyle(context).copyWith(
+            color: isSelected ? Colors.white : Colors.grey[700],
+            fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// 급여 라벨 반환
+  String _getWageLabel(String wageType) {
+    switch (wageType) {
+      case 'hourly': return '시급 (원)';
+      case 'daily': return '일급 (원)';
+      case 'monthly': return '월급 (원)';
+      default: return '급여 (원)';
+    }
   }
 }
