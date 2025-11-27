@@ -321,7 +321,15 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
           child: ListView(
             padding: ResponsiveHelper.cardPadding(context),
             children: [
-              _buildDateSection(theme),
+              // ✅ 공통 위젯 사용 - 날짜 섹션 (수정 불가)
+              TODateSelector(
+                isLongTerm: widget.to.isLongTerm,
+                isReadOnly: true,
+                displayDate: widget.to.date,
+                rangeStart: widget.to.startDate,
+                rangeEnd: widget.to.endDate,
+                displayWorkDays: widget.to.workDays,
+              ),
               SizedBox(height: ResponsiveHelper.spacing(context, 16)),
               
               // ✅ 공통 위젯 사용 - 제목 섹션
@@ -364,138 +372,6 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
             ],
           ),
         ),
-      ),
-    );
-  }
-
-  /// ✨ 날짜 섹션 (수정 불가)
-  Widget _buildDateSection(ThemeData theme) {
-    final now = DateTime.now();
-    final isSameYear = widget.to.date.year == now.year;
-    final dateFormat = DateFormat(isSameYear ? 'M월 d일 (E)' : 'yyyy년 M월 d일 (E)', 'ko_KR');
-
-    return TOSectionContainer(
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Container(
-                padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 12)),
-                decoration: BoxDecoration(
-                  gradient: LinearGradient(
-                    begin: Alignment.topLeft,
-                    end: Alignment.bottomRight,
-                    colors: [
-                      theme.primaryColor,
-                      theme.primaryColor.withOpacity(0.8),
-                    ],
-                  ),
-                  borderRadius: BorderRadius.circular(12),
-                  boxShadow: [
-                    BoxShadow(
-                      color: theme.primaryColor.withOpacity(0.3),
-                      blurRadius: 8,
-                      offset: const Offset(0, 4),
-                    ),
-                  ],
-                ),
-                child: Icon(
-                  Icons.calendar_today,
-                  color: Colors.white,
-                  size: ResponsiveHelper.iconSize(context, 24),
-                ),
-              ),
-              SizedBox(width: ResponsiveHelper.spacing(context, 16)),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      widget.to.isLongTerm ? '계약 기간' : '근무 날짜',
-                      style: ResponsiveHelper.smallStyle(
-                        context,
-                        color: Colors.grey[600],
-                      ),
-                    ),
-                    SizedBox(height: ResponsiveHelper.spacing(context, 4)),
-                    if (widget.to.isLongTerm && widget.to.startDate != null && widget.to.endDate != null)
-                      Text(
-                        '${dateFormat.format(widget.to.startDate!)} ~ ${dateFormat.format(widget.to.endDate!)}',
-                        style: ResponsiveHelper.subtitleStyle(context).copyWith(
-                          fontWeight: FontWeight.bold,
-                        ),
-                      )
-                    else
-                      Text(
-                        dateFormat.format(widget.to.date),
-                        style: ResponsiveHelper.subtitleStyle(context).copyWith(
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                  ],
-                ),
-              ),
-            ],
-          ),
-          
-          // 장기 근무일 경우 근무 요일 표시
-          if (widget.to.isLongTerm && widget.to.workDays != null && widget.to.workDays!.isNotEmpty) ...[
-            SizedBox(height: ResponsiveHelper.spacing(context, 16)),
-            Row(
-              children: [
-                Icon(
-                  Icons.event_repeat,
-                  size: ResponsiveHelper.iconSize(context, 18),
-                  color: Colors.grey[600],
-                ),
-                SizedBox(width: ResponsiveHelper.spacing(context, 8)),
-                Text(
-                  '근무 요일: ${widget.to.workDays!.join(', ')}',
-                  style: ResponsiveHelper.bodyStyle(
-                    context,
-                    color: Colors.grey[700],
-                  ),
-                ),
-              ],
-            ),
-          ],
-          
-          SizedBox(height: ResponsiveHelper.spacing(context, 16)),
-          Container(
-            padding: EdgeInsets.symmetric(
-              horizontal: ResponsiveHelper.spacing(context, 12),
-              vertical: ResponsiveHelper.spacing(context, 8),
-            ),
-            decoration: BoxDecoration(
-              color: Colors.orange[50],
-              borderRadius: BorderRadius.circular(8),
-              border: Border.all(
-                color: Colors.orange[200]!,
-                width: 1,
-              ),
-            ),
-            child: Row(
-              children: [
-                Icon(
-                  Icons.warning_amber,
-                  color: Colors.orange[700],
-                  size: ResponsiveHelper.iconSize(context, 18),
-                ),
-                SizedBox(width: ResponsiveHelper.spacing(context, 12)),
-                Expanded(
-                  child: Text(
-                    '${widget.to.isLongTerm ? "계약 기간과 근무 요일" : "날짜"}은(는) 수정할 수 없습니다',
-                    style: ResponsiveHelper.smallStyle(
-                      context,
-                      color: Colors.orange[900],
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ],
       ),
     );
   }
