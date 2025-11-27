@@ -145,6 +145,7 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
           workDetailId: work.id,
           updates: {
             'wage': work.wage,
+            'wageType': work.wageType,
             'requiredCount': work.requiredCount,
             'startTime': work.startTime,
             'endTime': work.endTime,
@@ -238,6 +239,7 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
         if (index != -1) {
           _workDetails[index] = _workDetails[index].copyWith(
             wage: result['wage'],
+            wageType: result['wageType'],
             requiredCount: result['requiredCount'],
             startTime: result['startTime'],
             endTime: result['endTime'],
