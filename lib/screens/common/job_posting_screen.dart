@@ -431,11 +431,12 @@ class _JobPostingScreenState extends State<JobPostingScreen> {
                     Icons.calendar_today,
                     _to!.isLongTerm ? '근무기간' : '근무일',
                     _to!.isLongTerm 
-                        ? (_to!.groupDateRangeDisplay ?? _to!.formattedDate)  // 장기: "11/1 ~ 11/30" (없으면 단일 날짜)
-                        : _to!.formattedDate,                                  // 단기: "11/27 (목)"
+                        ? (_to!.startDate != null && _to!.endDate != null
+                            ? '${FormatHelper.formatDate(_to!.startDate!)} ~ ${FormatHelper.formatDate(_to!.endDate!)}'
+                            : _to!.groupDateRangeDisplay ?? _to!.formattedDate)
+                        : _to!.formattedDate,
                     theme.primaryColor,
                   ),
-
                   SizedBox(height: ResponsiveHelper.spacing(context, 8)),
 
                   // 근무 유형

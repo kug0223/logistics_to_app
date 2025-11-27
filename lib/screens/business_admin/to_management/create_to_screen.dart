@@ -747,7 +747,7 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
               Expanded(
                 child: _buildJobTypeChip(
                   theme: theme,
-                  label: '단기 알바',
+                  label: '단기 근무',
                   value: 'short',
                   icon: Icons.today,
                 ),
@@ -756,7 +756,7 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
               Expanded(
                 child: _buildJobTypeChip(
                   theme: theme,
-                  label: '1개월 이상',
+                  label: '고정 근무',
                   value: 'long_term',
                   icon: Icons.event_note,
                 ),

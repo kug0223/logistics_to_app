@@ -415,7 +415,7 @@ class TOModel {
 
   /// 채용 유형 표시명
   String get jobTypeLabel {
-    return isShortTerm ? '단기 알바' : '1개월 이상';
+    return isShortTerm ? '단기 근무' : '고정 근무';
   }
   // ✅ NEW: 실제 지원 마감 시간 계산 (getter)
   DateTime get effectiveDeadline {
