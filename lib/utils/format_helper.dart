@@ -298,4 +298,33 @@ class PhoneNumberFormatter extends TextInputFormatter {
       selection: TextSelection.collapsed(offset: formatted.length),
     );
   }
+  
+}
+/// 천단위 콤마 입력 포맷터
+class NumberInputFormatter extends TextInputFormatter {
+  @override
+  TextEditingValue formatEditUpdate(
+    TextEditingValue oldValue,
+    TextEditingValue newValue,
+  ) {
+    // 빈 값 허용
+    if (newValue.text.isEmpty) {
+      return newValue;
+    }
+    
+    // 콤마 제거 후 숫자만 추출
+    final cleanText = newValue.text.replaceAll(',', '');
+    final number = int.tryParse(cleanText);
+    
+    if (number == null) {
+      return oldValue;
+    }
+    
+    final formatted = FormatHelper.formatNumber(number);
+    
+    return TextEditingValue(
+      text: formatted,
+      selection: TextSelection.collapsed(offset: formatted.length),
+    );
+  }
 }

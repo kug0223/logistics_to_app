@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
-import 'package:intl/intl.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 
 // Models
@@ -17,11 +16,9 @@ import '../../../providers/user_provider.dart';
 import '../../../utils/toast_helper.dart';
 import '../../../utils/navigation_helper.dart';
 import '../../../utils/responsive_helper.dart';
-import '../../../utils/format_helper.dart';
 
 // Widgets
 import '../../../widgets/pickers/work_detail_dialog.dart';
-import '../../../widgets/work_type_icon.dart';
 
 // 공통 위젯
 import 'widgets/to_widgets.dart';
@@ -230,7 +227,10 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
 
   /// 업무 수정 다이얼로그
   Future<void> _showEditWorkDialog(WorkDetailModel work) async {
-    final result = await _showWorkEditDialog(work);
+    final result = await WorkDetailDialog.showEditDialog(
+      context: context,
+      work: work,
+    );
 
     if (result != null) {
       setState(() {
@@ -376,194 +376,6 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
     );
   }
 
-  // ============================================================
-  // 🛠️ 다이얼로그 헬퍼 함수들
-  // ============================================================
-
-  Future<Map<String, dynamic>?> _showWorkEditDialog(WorkDetailModel work) async {
-    final wageController = TextEditingController(text: work.wage.toString());
-    final countController = TextEditingController(text: work.requiredCount.toString());
-    String startTime = work.startTime;
-    String endTime = work.endTime;
-    String selectedWageType = work.wageType;
-    final theme = Theme.of(context);
-
-    return showDialog<Map<String, dynamic>>(
-      context: context,
-      builder: (context) => StatefulBuilder(
-        builder: (context, setDialogState) {
-          return AlertDialog(
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(16),
-            ),
-            title: Text(
-              '${work.workType} 수정',
-              style: ResponsiveHelper.titleStyle(context).copyWith(
-                fontWeight: FontWeight.bold,
-              ),
-            ),
-            content: SingleChildScrollView(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  // 급여 타입 선택
-                  Row(
-                    children: [
-                      _buildWageTypeChip(
-                        context, theme, '시급', 'hourly', selectedWageType,
-                        () => setDialogState(() => selectedWageType = 'hourly'),
-                      ),
-                      SizedBox(width: ResponsiveHelper.spacing(context, 8)),
-                      _buildWageTypeChip(
-                        context, theme, '일급', 'daily', selectedWageType,
-                        () => setDialogState(() => selectedWageType = 'daily'),
-                      ),
-                      SizedBox(width: ResponsiveHelper.spacing(context, 8)),
-                      _buildWageTypeChip(
-                        context, theme, '월급', 'monthly', selectedWageType,
-                        () => setDialogState(() => selectedWageType = 'monthly'),
-                      ),
-                    ],
-                  ),
-                  SizedBox(height: ResponsiveHelper.spacing(context, 16)),
-
-                  // 급여
-                  TextFormField(
-                    controller: wageController,
-                    keyboardType: TextInputType.number,
-                    decoration: InputDecoration(
-                      labelText: _getWageLabel(selectedWageType),  // ✅ 동적 라벨
-                      prefixIcon: const Icon(Icons.payments),
-                      border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                    ),
-                    inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-                  ),
-                  SizedBox(height: ResponsiveHelper.spacing(context, 16)),
-                  
-                  // 인원
-                  TextFormField(
-                    controller: countController,
-                    keyboardType: TextInputType.number,
-                    decoration: InputDecoration(
-                      labelText: '필요 인원',
-                      prefixIcon: const Icon(Icons.people),
-                      border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                      helperText: work.currentCount > 0
-                          ? '⚠️ 현재 확정 인원: ${work.currentCount}명'
-                          : null,
-                      helperStyle: const TextStyle(color: Colors.orange),
-                    ),
-                    inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-                  ),
-                  SizedBox(height: ResponsiveHelper.spacing(context, 16)),
-                  
-                  // 시작 시간
-                  ListTile(
-                    contentPadding: EdgeInsets.zero,
-                    leading: const Icon(Icons.access_time),
-                    title: const Text('시작 시간'),
-                    trailing: TextButton(
-                      onPressed: () async {
-                        final timeParts = startTime.split(':');
-                        final picked = await showTimePicker(
-                          context: context,
-                          initialTime: TimeOfDay(
-                            hour: int.parse(timeParts[0]),
-                            minute: int.parse(timeParts[1]),
-                          ),
-                        );
-                        if (picked != null) {
-                          setDialogState(() {
-                            startTime = '${picked.hour.toString().padLeft(2, '0')}:${picked.minute.toString().padLeft(2, '0')}';
-                          });
-                        }
-                      },
-                      child: Text(
-                        startTime,
-                        style: ResponsiveHelper.subtitleStyle(context).copyWith(
-                          color: theme.primaryColor,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                    ),
-                  ),
-                  
-                  // 종료 시간
-                  ListTile(
-                    contentPadding: EdgeInsets.zero,
-                    leading: const Icon(Icons.access_time_filled),
-                    title: const Text('종료 시간'),
-                    trailing: TextButton(
-                      onPressed: () async {
-                        final timeParts = endTime.split(':');
-                        final picked = await showTimePicker(
-                          context: context,
-                          initialTime: TimeOfDay(
-                            hour: int.parse(timeParts[0]),
-                            minute: int.parse(timeParts[1]),
-                          ),
-                        );
-                        if (picked != null) {
-                          setDialogState(() {
-                            endTime = '${picked.hour.toString().padLeft(2, '0')}:${picked.minute.toString().padLeft(2, '0')}';
-                          });
-                        }
-                      },
-                      child: Text(
-                        endTime,
-                        style: ResponsiveHelper.subtitleStyle(context).copyWith(
-                          color: theme.primaryColor,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.pop(context),
-                child: const Text('취소'),
-              ),
-              ElevatedButton(
-                onPressed: () {
-                  final wage = int.tryParse(wageController.text);
-                  final count = int.tryParse(countController.text);
-
-                  if (wage == null || count == null) {
-                    ToastHelper.showError('금액과 인원을 입력하세요');
-                    return;
-                  }
-
-                  if (count < work.currentCount) {
-                    ToastHelper.showError(
-                      '필요 인원은 확정 인원(${work.currentCount}명)보다 작을 수 없습니다'
-                    );
-                    return;
-                  }
-
-                  Navigator.pop(context, {
-                    'wage': wage,
-                    'wageType': selectedWageType,
-                    'requiredCount': count,
-                    'startTime': startTime,
-                    'endTime': endTime,
-                  });
-                },
-                child: const Text('저장'),
-              ),
-            ],
-          );
-        },
-      ),
-    );
-  }
-
   void _showCannotDeleteDialog(WorkDetailModel work) {
     showDialog(
       context: context,
@@ -608,49 +420,5 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
         ],
       ),
     );
-  }
-  /// 급여 타입 칩 위젯
-  Widget _buildWageTypeChip(
-    BuildContext context,
-    ThemeData theme,
-    String label,
-    String value,
-    String selectedValue,
-    VoidCallback onTap,
-  ) {
-    final isSelected = value == selectedValue;
-    return GestureDetector(
-      onTap: onTap,
-      child: Container(
-        padding: EdgeInsets.symmetric(
-          horizontal: ResponsiveHelper.spacing(context, 12),
-          vertical: ResponsiveHelper.spacing(context, 8),
-        ),
-        decoration: BoxDecoration(
-          color: isSelected ? theme.primaryColor : Colors.grey[100],
-          borderRadius: BorderRadius.circular(20),
-          border: Border.all(
-            color: isSelected ? theme.primaryColor : Colors.grey[300]!,
-          ),
-        ),
-        child: Text(
-          label,
-          style: ResponsiveHelper.smallStyle(context).copyWith(
-            color: isSelected ? Colors.white : Colors.grey[700],
-            fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
-          ),
-        ),
-      ),
-    );
-  }
-
-  /// 급여 라벨 반환
-  String _getWageLabel(String wageType) {
-    switch (wageType) {
-      case 'hourly': return '시급 (원)';
-      case 'daily': return '일급 (원)';
-      case 'monthly': return '월급 (원)';
-      default: return '급여 (원)';
-    }
   }
 }
