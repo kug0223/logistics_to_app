@@ -2,6 +2,7 @@
 
 import 'package:flutter/material.dart';
 import '../../utils/responsive_helper.dart';
+import '../../theme/app_colors.dart';
 
 /// 🎨 앱 전체에서 사용하는 공통 위젯 모음
 /// 디자인 일관성을 위해 이 위젯들을 사용하세요!
@@ -10,11 +11,11 @@ class CommonWidgets {
   /// 📦 기본 카드 스타일
   static BoxDecoration cardDecoration({Color? color}) {
     return BoxDecoration(
-      color: color ?? Colors.white,
+      color: color ?? AppColors.surface,
       borderRadius: BorderRadius.circular(20),
       boxShadow: [
         BoxShadow(
-          color: Colors.grey.withOpacity(0.1),
+          color: AppColors.grey500.withOpacity(0.1),
           blurRadius: 10,
           offset: const Offset(0, 4),
         ),
@@ -213,18 +214,18 @@ class CommonWidgets {
         suffixIcon: suffixIcon,
         border: OutlineInputBorder(
           borderRadius: BorderRadius.circular(12),
-          borderSide: BorderSide(color: Colors.grey[300]!),
+          borderSide: BorderSide(color: AppColors.border),
         ),
         enabledBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(12),
-          borderSide: BorderSide(color: Colors.grey[300]!),
+          borderSide: BorderSide(color: AppColors.border),
         ),
         focusedBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(12),
           borderSide: BorderSide(color: theme.primaryColor, width: 2),
         ),
         filled: true,
-        fillColor: readOnly ? Colors.grey[100] : Colors.grey[50],
+        fillColor: readOnly ? AppColors.disabledBackground : AppColors.inputBackground,
         contentPadding: EdgeInsets.symmetric(
           horizontal: ResponsiveHelper.spacing(context, 16),
           vertical: ResponsiveHelper.spacing(context, 18),
@@ -306,16 +307,15 @@ class CommonWidgets {
     );
   }
   
-  /// 🎨 역할별 색상 반환
   static Color getRoleColor(String? role) {
     switch (role) {
       case 'SUPER_ADMIN':
-        return Colors.red;
+        return AppColors.purple;  // 슈퍼 관리자는 보라색
       case 'BUSINESS_ADMIN':
-        return Colors.blue;
+        return AppColors.info;    // 사업장 관리자는 파란색
       case 'USER':
       default:
-        return Colors.green;
+        return AppColors.success; // 지원자는 초록색
     }
   }
   

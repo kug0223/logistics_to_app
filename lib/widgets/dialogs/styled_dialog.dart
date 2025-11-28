@@ -2,6 +2,7 @@
 
 import 'package:flutter/material.dart';
 import '../../utils/responsive_helper.dart';
+import '../../theme/app_colors.dart';
 
 /// ✨ 세련된 다이얼로그 위젯
 /// 
@@ -128,12 +129,12 @@ class StyledDialog extends StatelessWidget {
           Container(
             padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 10)),
             decoration: BoxDecoration(
-              color: Colors.white.withOpacity(0.2),
+              color: AppColors.surface.withOpacity(0.2),
               borderRadius: BorderRadius.circular(12),
             ),
             child: Icon(
               icon,
-              color: Colors.white,
+              color: AppColors.surface,
               size: ResponsiveHelper.iconSize(context, 28),
             ),
           ),
@@ -148,7 +149,7 @@ class StyledDialog extends StatelessWidget {
                 Text(
                   title,
                   style: ResponsiveHelper.subtitleStyle(context).copyWith(
-                    color: Colors.white,
+                    color: AppColors.surface,
                     fontWeight: FontWeight.bold,
                   ),
                 ),
@@ -157,7 +158,7 @@ class StyledDialog extends StatelessWidget {
                   Text(
                     subtitle!,
                     style: ResponsiveHelper.smallStyle(context).copyWith(
-                      color: Colors.white.withOpacity(0.9),
+                      color: AppColors.surface.withOpacity(0.9),
                     ),
                   ),
                 ],
@@ -169,7 +170,7 @@ class StyledDialog extends StatelessWidget {
           if (showCloseButton)
             IconButton(
               onPressed: () => Navigator.pop(context),
-              icon: const Icon(Icons.close, color: Colors.white),
+              icon: Icon(Icons.close, color: AppColors.surface),
               padding: EdgeInsets.zero,
               constraints: const BoxConstraints(),
             ),
@@ -183,7 +184,7 @@ class StyledDialog extends StatelessWidget {
     return Container(
       padding: ResponsiveHelper.cardPadding(context),
       decoration: BoxDecoration(
-        color: Colors.grey[50],
+        color: AppColors.grey50,
         borderRadius: const BorderRadius.only(
           bottomLeft: Radius.circular(24),
           bottomRight: Radius.circular(24),
@@ -238,7 +239,7 @@ class StyledDialogButton extends StatelessWidget {
       text: text,
       onPressed: onPressed,
       backgroundColor: backgroundColor,
-      foregroundColor: Colors.white,
+      foregroundColor: AppColors.surface,
       isLoading: isLoading,
     );
   }
@@ -264,8 +265,8 @@ class StyledDialogButton extends StatelessWidget {
     return StyledDialogButton(
       text: text,
       onPressed: onPressed,
-      backgroundColor: Colors.red,
-      foregroundColor: Colors.white,
+      backgroundColor: AppColors.error,
+      foregroundColor: AppColors.surface,
       isLoading: isLoading,
     );
   }
@@ -281,7 +282,7 @@ class StyledDialogButton extends StatelessWidget {
           padding: EdgeInsets.symmetric(
             vertical: ResponsiveHelper.spacing(context, 16),
           ),
-          side: BorderSide(color: Colors.grey[400]!),
+          side: BorderSide(color: AppColors.grey400),
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(12),
           ),
@@ -289,7 +290,7 @@ class StyledDialogButton extends StatelessWidget {
         child: Text(
           text,
           style: ResponsiveHelper.bodyStyle(context).copyWith(
-            color: Colors.grey[700],
+            color: AppColors.grey700,
             fontWeight: FontWeight.w600,
           ),
         ),
@@ -300,7 +301,7 @@ class StyledDialogButton extends StatelessWidget {
       onPressed: isLoading ? null : onPressed,
       style: ElevatedButton.styleFrom(
         backgroundColor: backgroundColor ?? theme.primaryColor,
-        foregroundColor: foregroundColor ?? Colors.white,
+        foregroundColor: foregroundColor ?? AppColors.surface,
         padding: EdgeInsets.symmetric(
           vertical: ResponsiveHelper.spacing(context, 16),
         ),
@@ -313,15 +314,15 @@ class StyledDialogButton extends StatelessWidget {
           ? SizedBox(
               height: ResponsiveHelper.iconSize(context, 20),
               width: ResponsiveHelper.iconSize(context, 20),
-              child: const CircularProgressIndicator(
+              child: CircularProgressIndicator(
                 strokeWidth: 2,
-                color: Colors.white,
+                color: AppColors.surface,
               ),
             )
           : Text(
               text,
               style: ResponsiveHelper.bodyStyle(context).copyWith(
-                color: foregroundColor ?? Colors.white,
+                color: foregroundColor ?? AppColors.surface,
                 fontWeight: FontWeight.bold,
               ),
             ),
@@ -340,9 +341,9 @@ class StyledDialogTextField extends StatelessWidget {
   final TextInputType? keyboardType;
   final void Function(String)? onChanged;
   final int? maxLength;
-  final FocusNode? focusNode;  // ⭐ 추가
-  final void Function(String)? onFieldSubmitted;  // ⭐ 추가
-  final bool enabled;  // ⭐ 추가
+  final FocusNode? focusNode;
+  final void Function(String)? onFieldSubmitted;
+  final bool enabled;
 
   const StyledDialogTextField({
     super.key,
@@ -355,9 +356,9 @@ class StyledDialogTextField extends StatelessWidget {
     this.keyboardType,
     this.onChanged,
     this.maxLength,
-    this.focusNode,  // ⭐ 추가
-    this.onFieldSubmitted,  // ⭐ 추가
-    this.enabled = true,  // ⭐ 추가
+    this.focusNode,
+    this.onFieldSubmitted,
+    this.enabled = true,
   });
 
   @override
@@ -376,9 +377,9 @@ class StyledDialogTextField extends StatelessWidget {
         SizedBox(height: ResponsiveHelper.spacing(context, 8)),
         TextField(
           controller: controller,
-          focusNode: focusNode,  // ⭐ 추가
-          enabled: enabled,  // ⭐ 추가
-          onSubmitted: onFieldSubmitted,  // ⭐ 추가
+          focusNode: focusNode,
+          enabled: enabled,
+          onSubmitted: onFieldSubmitted,
           obscureText: obscureText,
           keyboardType: keyboardType,
           onChanged: onChanged,
@@ -388,7 +389,7 @@ class StyledDialogTextField extends StatelessWidget {
             hintText: hintText,
             hintStyle: ResponsiveHelper.smallStyle(
               context,
-              color: Colors.grey[400],
+              color: AppColors.grey400,
             ),
             prefixIcon: Icon(
               prefixIcon,
@@ -398,18 +399,22 @@ class StyledDialogTextField extends StatelessWidget {
             suffixIcon: suffixIcon,
             border: OutlineInputBorder(
               borderRadius: BorderRadius.circular(12),
-              borderSide: BorderSide(color: Colors.grey[300]!),
+              borderSide: BorderSide(color: AppColors.border),
             ),
             enabledBorder: OutlineInputBorder(
               borderRadius: BorderRadius.circular(12),
-              borderSide: BorderSide(color: Colors.grey[300]!),
+              borderSide: BorderSide(color: AppColors.border),
             ),
             focusedBorder: OutlineInputBorder(
               borderRadius: BorderRadius.circular(12),
               borderSide: BorderSide(color: theme.primaryColor, width: 2),
             ),
+            disabledBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(12),
+              borderSide: BorderSide(color: AppColors.grey200),
+            ),
             filled: true,
-            fillColor: Colors.grey[50],
+            fillColor: enabled ? AppColors.grey50 : AppColors.grey100,
             contentPadding: EdgeInsets.symmetric(
               horizontal: ResponsiveHelper.spacing(context, 16),
               vertical: ResponsiveHelper.spacing(context, 16),
@@ -440,7 +445,7 @@ class StyledDialogInfoCard extends StatelessWidget {
     return StyledDialogInfoCard(
       message: message,
       icon: Icons.info_outline,
-      color: Colors.blue,
+      color: AppColors.info,
     );
   }
 
@@ -449,7 +454,7 @@ class StyledDialogInfoCard extends StatelessWidget {
     return StyledDialogInfoCard(
       message: message,
       icon: Icons.warning_amber,
-      color: Colors.orange,
+      color: AppColors.warning,
     );
   }
 
@@ -458,7 +463,16 @@ class StyledDialogInfoCard extends StatelessWidget {
     return StyledDialogInfoCard(
       message: message,
       icon: Icons.check_circle_outline,
-      color: Colors.green,
+      color: AppColors.success,
+    );
+  }
+
+  /// Error 카드 (빨간색)
+  factory StyledDialogInfoCard.error(String message) {
+    return StyledDialogInfoCard(
+      message: message,
+      icon: Icons.error_outline,
+      color: AppColors.error,
     );
   }
 
@@ -494,6 +508,7 @@ class StyledDialogInfoCard extends StatelessWidget {
       ),
     );
   }
+
   /// 색상 shade 가져오기 (MaterialColor가 아닌 경우 대체)
   Color _getShade(Color color, int shade) {
     if (color is MaterialColor) {
@@ -525,10 +540,10 @@ class PasswordStrengthIndicator extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     Color getColor(int index) {
-      if (strength == 0) return Colors.grey[300]!;
-      if (index >= strength) return Colors.grey[300]!;
-      if (strength <= 2) return Colors.orange;
-      return Colors.green;
+      if (strength == 0) return AppColors.grey300;
+      if (index >= strength) return AppColors.grey300;
+      if (strength <= 2) return AppColors.warning;
+      return AppColors.success;
     }
 
     String getLabel() {
@@ -538,9 +553,9 @@ class PasswordStrengthIndicator extends StatelessWidget {
     }
 
     Color getLabelColor() {
-      if (strength == 0) return Colors.red.shade700;
-      if (strength <= 2) return Colors.orange.shade700;
-      return Colors.green.shade700;
+      if (strength == 0) return AppColors.errorDark;
+      if (strength <= 2) return AppColors.warningDark;
+      return AppColors.successDark;
     }
 
     return Row(
@@ -585,5 +600,4 @@ class PasswordStrengthIndicator extends StatelessWidget {
       ],
     );
   }
-
 }

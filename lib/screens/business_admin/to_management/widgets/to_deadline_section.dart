@@ -2,6 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import '../../../../utils/responsive_helper.dart';
 import '../../../../utils/toast_helper.dart';
+import '../../../../theme/app_colors.dart';
+import '../../../../widgets/pickers/date_picker_bottom_sheet.dart';
+import '../../../../widgets/pickers/time_picker_bottom_sheet.dart';
 import 'to_section_container.dart';
 
 /// ✨ TO 마감 설정 섹션
@@ -37,12 +40,9 @@ class TODeadlineSection extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(
-            '지원 마감 설정',
-            style: ResponsiveHelper.subtitleStyle(context).copyWith(
-              fontWeight: FontWeight.bold,
-            ),
-          ),
+          // 섹션 헤더
+          _buildSectionHeader(context),
+          
           SizedBox(height: ResponsiveHelper.spacing(context, 16)),
           
           if (isLongTerm)
@@ -51,6 +51,50 @@ class TODeadlineSection extends StatelessWidget {
             _buildHoursBeforeDeadline(context),
         ],
       ),
+    );
+  }
+
+  /// 섹션 헤더
+  Widget _buildSectionHeader(BuildContext context) {
+    final theme = Theme.of(context);
+    
+    return Row(
+      children: [
+        Container(
+          padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 8)),
+          decoration: BoxDecoration(
+            color: theme.primaryColor.withOpacity(0.1),
+            borderRadius: BorderRadius.circular(8),
+          ),
+          child: Icon(
+            Icons.timer_outlined,
+            color: theme.primaryColor,
+            size: ResponsiveHelper.iconSize(context, 20),
+          ),
+        ),
+        SizedBox(width: ResponsiveHelper.spacing(context, 12)),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                '지원 마감 설정',
+                style: ResponsiveHelper.subtitleStyle(context).copyWith(
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+              SizedBox(height: ResponsiveHelper.spacing(context, 2)),
+              Text(
+                isLongTerm ? '고정 마감 시간' : '업무 시작 기준 자동 마감',
+                style: ResponsiveHelper.smallStyle(
+                  context,
+                  color: AppColors.textSecondary,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
     );
   }
 
@@ -67,25 +111,37 @@ class TODeadlineSection extends StatelessWidget {
           decoration: BoxDecoration(
             gradient: LinearGradient(
               colors: [
-                theme.primaryColor.withOpacity(0.1),
-                theme.primaryColor.withOpacity(0.05),
+                AppColors.infoBg,
+                AppColors.infoBg.withOpacity(0.5),
               ],
             ),
             borderRadius: BorderRadius.circular(12),
+            border: Border.all(
+              color: AppColors.infoLight,
+              width: 1,
+            ),
           ),
           child: Row(
             children: [
-              Icon(
-                Icons.info_outline,
-                color: theme.primaryColor,
-                size: ResponsiveHelper.iconSize(context, 20),
+              Container(
+                padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 6)),
+                decoration: BoxDecoration(
+                  color: AppColors.info.withOpacity(0.2),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Icon(
+                  Icons.info_outline,
+                  color: AppColors.infoDark,
+                  size: ResponsiveHelper.iconSize(context, 18),
+                ),
               ),
               SizedBox(width: ResponsiveHelper.spacing(context, 12)),
               Expanded(
                 child: Text(
                   '각 업무별로 시작 시간 기준으로 자동 마감됩니다',
                   style: ResponsiveHelper.smallStyle(context).copyWith(
-                    color: theme.primaryColor,
+                    color: AppColors.infoDark,
+                    fontWeight: FontWeight.w500,
                   ),
                 ),
               ),
@@ -93,51 +149,129 @@ class TODeadlineSection extends StatelessWidget {
           ),
         ),
         
-        SizedBox(height: ResponsiveHelper.spacing(context, 16)),
+        SizedBox(height: ResponsiveHelper.spacing(context, 20)),
         
-        // 시간 선택
-        Row(
-          children: [
-            Text(
-              '업무 시작',
-              style: ResponsiveHelper.bodyStyle(context).copyWith(
-                fontWeight: FontWeight.bold,
+        // 시간 선택 카드
+        Container(
+          padding: ResponsiveHelper.cardPadding(context),
+          decoration: BoxDecoration(
+            color: AppColors.grey50,
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: AppColors.border),
+          ),
+          child: Row(
+            children: [
+              // 아이콘
+              Container(
+                padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 10)),
+                decoration: BoxDecoration(
+                  color: theme.primaryColor.withOpacity(0.1),
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: Icon(
+                  Icons.schedule,
+                  color: theme.primaryColor,
+                  size: ResponsiveHelper.iconSize(context, 22),
+                ),
               ),
-            ),
-            SizedBox(width: ResponsiveHelper.spacing(context, 16)),
-            Container(
-              padding: EdgeInsets.symmetric(
-                horizontal: ResponsiveHelper.spacing(context, 16),
-                vertical: ResponsiveHelper.spacing(context, 8),
+              
+              SizedBox(width: ResponsiveHelper.spacing(context, 16)),
+              
+              // 텍스트
+              Text(
+                '업무 시작',
+                style: ResponsiveHelper.bodyStyle(context).copyWith(
+                  fontWeight: FontWeight.w600,
+                ),
               ),
-              decoration: BoxDecoration(
-                color: theme.primaryColor.withOpacity(0.1),
-                borderRadius: BorderRadius.circular(12),
-                border: Border.all(color: theme.primaryColor),
+              
+              SizedBox(width: ResponsiveHelper.spacing(context, 12)),
+              
+              // 드롭다운
+              Expanded(
+                child: Container(
+                  padding: EdgeInsets.symmetric(
+                    horizontal: ResponsiveHelper.spacing(context, 12),
+                    vertical: ResponsiveHelper.spacing(context, 4),
+                  ),
+                  decoration: BoxDecoration(
+                    color: AppColors.surface,
+                    borderRadius: BorderRadius.circular(10),
+                    border: Border.all(color: theme.primaryColor),
+                  ),
+                  child: DropdownButton<int>(
+                    value: hoursBeforeStart,
+                    underline: const SizedBox(),
+                    isExpanded: true,
+                    icon: Icon(
+                      Icons.keyboard_arrow_down,
+                      color: theme.primaryColor,
+                    ),
+                    style: ResponsiveHelper.bodyStyle(context).copyWith(
+                      color: theme.primaryColor,
+                      fontWeight: FontWeight.bold,
+                    ),
+                    items: List.generate(24, (index) => index + 1)
+                        .map((hour) => DropdownMenuItem(
+                              value: hour,
+                              child: Text(
+                                '$hour시간 전',
+                                style: ResponsiveHelper.bodyStyle(context).copyWith(
+                                  color: AppColors.textPrimary,
+                                ),
+                              ),
+                            ))
+                        .toList(),
+                    onChanged: onHoursChanged != null 
+                        ? (value) => onHoursChanged!(value!)
+                        : null,
+                  ),
+                ),
               ),
-              child: DropdownButton<int>(
-                value: hoursBeforeStart,
-                underline: const SizedBox(),
-                items: List.generate(24, (index) => index + 1)
-                    .map((hour) => DropdownMenuItem(
-                          value: hour,
-                          child: Text(
-                            '$hour시간 전',
-                            style: ResponsiveHelper.bodyStyle(context),
-                          ),
-                        ))
-                    .toList(),
-                onChanged: onHoursChanged != null 
-                    ? (value) => onHoursChanged!(value!)
-                    : null,
+              
+              SizedBox(width: ResponsiveHelper.spacing(context, 12)),
+              
+              Text(
+                '마감',
+                style: ResponsiveHelper.bodyStyle(context).copyWith(
+                  fontWeight: FontWeight.w600,
+                ),
               ),
-            ),
-            SizedBox(width: ResponsiveHelper.spacing(context, 8)),
-            Text(
-              '마감',
-              style: ResponsiveHelper.bodyStyle(context),
-            ),
-          ],
+            ],
+          ),
+        ),
+        
+        SizedBox(height: ResponsiveHelper.spacing(context, 12)),
+        
+        // 예시 안내
+        Container(
+          padding: EdgeInsets.symmetric(
+            horizontal: ResponsiveHelper.spacing(context, 12),
+            vertical: ResponsiveHelper.spacing(context, 8),
+          ),
+          decoration: BoxDecoration(
+            color: AppColors.grey100,
+            borderRadius: BorderRadius.circular(8),
+          ),
+          child: Row(
+            children: [
+              Icon(
+                Icons.lightbulb_outline,
+                color: AppColors.textSecondary,
+                size: ResponsiveHelper.iconSize(context, 16),
+              ),
+              SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+              Expanded(
+                child: Text(
+                  '예: 09:00 시작 업무 → ${hoursBeforeStart}시간 전인 ${_getExampleTime(hoursBeforeStart)}에 마감',
+                  style: ResponsiveHelper.smallStyle(
+                    context,
+                    color: AppColors.textSecondary,
+                  ),
+                ),
+              ),
+            ],
+          ),
         ),
       ],
     );
@@ -154,22 +288,39 @@ class TODeadlineSection extends StatelessWidget {
         Container(
           padding: ResponsiveHelper.cardPadding(context),
           decoration: BoxDecoration(
-            color: Colors.orange[50],
+            gradient: LinearGradient(
+              colors: [
+                AppColors.warningBg,
+                AppColors.warningBg.withOpacity(0.5),
+              ],
+            ),
             borderRadius: BorderRadius.circular(12),
+            border: Border.all(
+              color: AppColors.warningLight,
+              width: 1,
+            ),
           ),
           child: Row(
             children: [
-              Icon(
-                Icons.info_outline,
-                color: Colors.orange[700],
-                size: ResponsiveHelper.iconSize(context, 20),
+              Container(
+                padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 6)),
+                decoration: BoxDecoration(
+                  color: AppColors.warning.withOpacity(0.2),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Icon(
+                  Icons.event_available,
+                  color: AppColors.warningDark,
+                  size: ResponsiveHelper.iconSize(context, 18),
+                ),
               ),
               SizedBox(width: ResponsiveHelper.spacing(context, 12)),
               Expanded(
                 child: Text(
                   '지원 마감 날짜와 시간을 직접 설정하세요',
                   style: ResponsiveHelper.smallStyle(context).copyWith(
-                    color: Colors.orange[900],
+                    color: AppColors.warningDark,
+                    fontWeight: FontWeight.w500,
                   ),
                 ),
               ),
@@ -177,7 +328,7 @@ class TODeadlineSection extends StatelessWidget {
           ),
         ),
         
-        SizedBox(height: ResponsiveHelper.spacing(context, 16)),
+        SizedBox(height: ResponsiveHelper.spacing(context, 20)),
         
         // 날짜/시간 선택 버튼
         Material(
@@ -188,67 +339,188 @@ class TODeadlineSection extends StatelessWidget {
             child: Container(
               padding: ResponsiveHelper.cardPadding(context),
               decoration: BoxDecoration(
-                border: Border.all(color: Colors.grey[300]!),
+                color: fixedDeadline != null 
+                    ? theme.primaryColor.withOpacity(0.05)
+                    : AppColors.grey50,
+                border: Border.all(
+                  color: fixedDeadline != null 
+                      ? theme.primaryColor
+                      : AppColors.border,
+                  width: fixedDeadline != null ? 2 : 1,
+                ),
                 borderRadius: BorderRadius.circular(12),
               ),
               child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
-                  Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        '지원 마감',
-                        style: ResponsiveHelper.smallStyle(
-                          context,
-                          color: Colors.grey[600],
-                        ),
-                      ),
-                      SizedBox(height: ResponsiveHelper.spacing(context, 4)),
-                      Text(
-                        fixedDeadline != null
-                            ? DateFormat('yyyy-MM-dd HH:mm').format(fixedDeadline!)
-                            : '날짜와 시간을 선택하세요',
-                        style: ResponsiveHelper.subtitleStyle(context).copyWith(
-                          color: fixedDeadline != null ? Colors.black : Colors.grey[400],
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                    ],
+                  // 아이콘
+                  Container(
+                    padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 10)),
+                    decoration: BoxDecoration(
+                      color: fixedDeadline != null
+                          ? theme.primaryColor.withOpacity(0.15)
+                          : AppColors.grey200,
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: Icon(
+                      Icons.calendar_today,
+                      color: fixedDeadline != null 
+                          ? theme.primaryColor
+                          : AppColors.textSecondary,
+                      size: ResponsiveHelper.iconSize(context, 22),
+                    ),
                   ),
-                  Icon(
-                    Icons.calendar_today,
-                    color: theme.primaryColor,
+                  
+                  SizedBox(width: ResponsiveHelper.spacing(context, 16)),
+                  
+                  // 텍스트
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          '지원 마감',
+                          style: ResponsiveHelper.smallStyle(
+                            context,
+                            color: AppColors.textSecondary,
+                          ),
+                        ),
+                        SizedBox(height: ResponsiveHelper.spacing(context, 4)),
+                        Text(
+                          fixedDeadline != null
+                              ? DateFormat('yyyy년 MM월 dd일 HH:mm', 'ko_KR').format(fixedDeadline!)
+                              : '날짜와 시간을 선택하세요',
+                          style: ResponsiveHelper.subtitleStyle(context).copyWith(
+                            color: fixedDeadline != null 
+                                ? AppColors.textPrimary
+                                : AppColors.textHint,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  
+                  // 화살표
+                  Container(
+                    padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 8)),
+                    decoration: BoxDecoration(
+                      color: theme.primaryColor.withOpacity(0.1),
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: Icon(
+                      Icons.edit_calendar,
+                      color: theme.primaryColor,
+                      size: ResponsiveHelper.iconSize(context, 20),
+                    ),
                   ),
                 ],
               ),
             ),
           ),
         ),
+        
+        // 선택된 마감일이 있으면 남은 시간 표시
+        if (fixedDeadline != null) ...[
+          SizedBox(height: ResponsiveHelper.spacing(context, 12)),
+          _buildRemainingTime(context),
+        ],
       ],
     );
   }
 
+  /// 남은 시간 표시
+  Widget _buildRemainingTime(BuildContext context) {
+    final now = DateTime.now();
+    final difference = fixedDeadline!.difference(now);
+    
+    String remainingText;
+    Color statusColor;
+    IconData statusIcon;
+    
+    if (difference.isNegative) {
+      remainingText = '마감됨';
+      statusColor = AppColors.error;
+      statusIcon = Icons.timer_off;
+    } else if (difference.inDays > 0) {
+      remainingText = '${difference.inDays}일 ${difference.inHours % 24}시간 남음';
+      statusColor = AppColors.success;
+      statusIcon = Icons.timer;
+    } else if (difference.inHours > 0) {
+      remainingText = '${difference.inHours}시간 ${difference.inMinutes % 60}분 남음';
+      statusColor = AppColors.warning;
+      statusIcon = Icons.timer;
+    } else {
+      remainingText = '${difference.inMinutes}분 남음';
+      statusColor = AppColors.error;
+      statusIcon = Icons.timer;
+    }
+    
+    return Container(
+      padding: EdgeInsets.symmetric(
+        horizontal: ResponsiveHelper.spacing(context, 12),
+        vertical: ResponsiveHelper.spacing(context, 10),
+      ),
+      decoration: BoxDecoration(
+        color: statusColor.withOpacity(0.1),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(
+          color: statusColor.withOpacity(0.3),
+        ),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(
+            statusIcon,
+            color: statusColor,
+            size: ResponsiveHelper.iconSize(context, 16),
+          ),
+          SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+          Text(
+            remainingText,
+            style: ResponsiveHelper.smallStyle(context).copyWith(
+              color: statusColor,
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// 예시 시간 계산
+  String _getExampleTime(int hoursBefore) {
+    final example = DateTime(2024, 1, 1, 9, 0).subtract(Duration(hours: hoursBefore));
+    return DateFormat('HH:mm').format(example);
+  }
+
+  /// 날짜/시간 선택 (새 피커 사용)
   Future<void> _selectDateTime(BuildContext context) async {
     if (rangeEndDate == null && onFixedDeadlineChanged != null) {
       ToastHelper.showError('먼저 근무 종료일을 선택해주세요');
       return;
     }
 
-    final pickedDate = await showDatePicker(
+    // 1단계: 날짜 선택 (커스텀 바텀시트)
+    final pickedDate = await DatePickerBottomSheet.show(
       context: context,
       initialDate: fixedDeadline ?? DateTime.now(),
-      firstDate: DateTime.now(),
-      lastDate: rangeEndDate ?? DateTime.now().add(const Duration(days: 365)),
-      locale: const Locale('ko', 'KR'),
+      title: '마감 날짜 선택',
+      subtitle: '지원 마감일을 선택하세요',
+      minDate: DateTime.now(),
+      maxDate: rangeEndDate ?? DateTime.now().add(const Duration(days: 365)),
     );
 
     if (pickedDate != null && context.mounted) {
-      final pickedTime = await showTimePicker(
+      // 2단계: 시간 선택 (커스텀 휠 피커)
+      final pickedTime = await TimePickerBottomSheet.show(
         context: context,
         initialTime: fixedDeadline != null 
             ? TimeOfDay.fromDateTime(fixedDeadline!)
             : const TimeOfDay(hour: 18, minute: 0),
+        title: '마감 시간 선택',
+        subtitle: '지원 마감 시간을 선택하세요',
+        minuteInterval: 5,
       );
 
       if (pickedTime != null && onFixedDeadlineChanged != null) {

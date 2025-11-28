@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:fluttertoast/fluttertoast.dart';
+import '../theme/app_colors.dart';
 
 class ToastHelper {
   static void showSuccess(String message) {
@@ -7,8 +8,8 @@ class ToastHelper {
       msg: message,
       toastLength: Toast.LENGTH_SHORT,
       gravity: ToastGravity.BOTTOM,
-      backgroundColor: Colors.green,
-      textColor: Colors.white,
+      backgroundColor: AppColors.success,
+      textColor: AppColors.textOnDark,
       fontSize: 16.0,
     );
   }
@@ -18,8 +19,8 @@ class ToastHelper {
       msg: message,
       toastLength: Toast.LENGTH_LONG,
       gravity: ToastGravity.BOTTOM,
-      backgroundColor: Colors.red,
-      textColor: Colors.white,
+      backgroundColor: AppColors.error,
+      textColor: AppColors.textOnDark,
       fontSize: 16.0,
     );
   }
@@ -29,8 +30,8 @@ class ToastHelper {
       msg: message,
       toastLength: Toast.LENGTH_SHORT,
       gravity: ToastGravity.BOTTOM,
-      backgroundColor: Colors.blue,
-      textColor: Colors.white,
+      backgroundColor: AppColors.info,
+      textColor: AppColors.textOnDark,
       fontSize: 16.0,
     );
   }
@@ -41,8 +42,8 @@ class ToastHelper {
       msg: message,
       toastLength: Toast.LENGTH_SHORT,
       gravity: ToastGravity.BOTTOM,
-      backgroundColor: Colors.orange,
-      textColor: Colors.white,
+      backgroundColor: AppColors.warning,
+      textColor: AppColors.textOnDark,
       fontSize: 16.0,
     );
   }

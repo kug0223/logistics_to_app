@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import '../../utils/responsive_helper.dart';  // ⭐ 추가
-
+import '../../theme/app_colors.dart';
 /// 공통 스타일 컨테이너 위젯 모음
 /// 
 /// 반복되는 Container + BoxDecoration 패턴을 공통화합니다.
@@ -358,8 +358,8 @@ class StatusBadge extends StatelessWidget {
   }) {
     return StatusBadge(
       label: label,
-      backgroundColor: Colors.green[50]!,
-      textColor: Colors.green[700]!,
+      backgroundColor: AppColors.successBg,
+      textColor: AppColors.successDark,
       icon: icon ?? Icons.check_circle,
     );
   }
@@ -371,8 +371,8 @@ class StatusBadge extends StatelessWidget {
   }) {
     return StatusBadge(
       label: label,
-      backgroundColor: Colors.red[50]!,
-      textColor: Colors.red[700]!,
+      backgroundColor: AppColors.errorBg,
+      textColor: AppColors.errorDark,
       icon: icon ?? Icons.error,
     );
   }
@@ -384,12 +384,11 @@ class StatusBadge extends StatelessWidget {
   }) {
     return StatusBadge(
       label: label,
-      backgroundColor: Colors.orange[50]!,
-      textColor: Colors.orange[700]!,
+      backgroundColor: AppColors.warningBg,
+      textColor: AppColors.warningDark,
       icon: icon ?? Icons.warning,
     );
   }
-
   /// 정보 (파란색)
   factory StatusBadge.info({
     required String label,
@@ -397,8 +396,8 @@ class StatusBadge extends StatelessWidget {
   }) {
     return StatusBadge(
       label: label,
-      backgroundColor: Colors.blue[50]!,
-      textColor: Colors.blue[700]!,
+      backgroundColor: AppColors.infoBg,
+      textColor: AppColors.infoDark,
       icon: icon ?? Icons.info,
     );
   }
@@ -410,8 +409,8 @@ class StatusBadge extends StatelessWidget {
   }) {
     return StatusBadge(
       label: label,
-      backgroundColor: Colors.grey[200]!,
-      textColor: Colors.grey[700]!,
+      backgroundColor: AppColors.grey200,
+      textColor: AppColors.grey700,
       icon: icon,
     );
   }

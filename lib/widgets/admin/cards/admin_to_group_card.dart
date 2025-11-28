@@ -12,6 +12,7 @@ import '../../../utils/responsive_helper.dart';
 import '../../../utils/navigation_helper.dart';
 
 // Widgets
+import '../../../theme/app_colors.dart';
 
 // Screens
 import '../../../screens/business_admin/to_management/edit_to_screen.dart';
@@ -101,9 +102,9 @@ class _TOGroupCardState extends State<TOGroupCard> {
         border: widget.isExpanded
             ? Border.all(color: theme.primaryColor, width: 2)
             : isFull
-                ? Border.all(color: Colors.green[300]!, width: 2)
+                ? Border.all(color: AppColors.successLight, width: 2)
                 : Border.all(
-                  color: Colors.grey[200]!,  // ⭐ 추가
+                  color: AppColors.grey200,
                   width: 1,
                 ),
       ),
@@ -190,16 +191,14 @@ class _TOGroupCardState extends State<TOGroupCard> {
                               vertical: ResponsiveHelper.spacing(context, 6),
                             ),
                             decoration: BoxDecoration(
-                              gradient: LinearGradient(
-                                colors: masterTO.isLongTerm
-                                    ? [Colors.purple[100]!, Colors.purple[50]!]
-                                    : [Colors.blue[100]!, Colors.blue[50]!],
-                              ),
+                              gradient: masterTO.isLongTerm
+                                  ? AppColors.purpleGradient
+                                  : AppColors.infoGradient,
                               borderRadius: BorderRadius.circular(10),
                               border: Border.all(
                                 color: masterTO.isLongTerm
-                                    ? Colors.purple[300]!
-                                    : Colors.blue[300]!,
+                                    ? AppColors.purpleLight
+                                    : AppColors.infoLight,
                                 width: 1.5,
                               ),
                             ),
@@ -210,8 +209,8 @@ class _TOGroupCardState extends State<TOGroupCard> {
                                   masterTO.isLongTerm ? Icons.calendar_month : Icons.today,
                                   size: ResponsiveHelper.iconSize(context, 14),
                                   color: masterTO.isLongTerm
-                                      ? Colors.purple[700]
-                                      : Colors.blue[700],
+                                      ? AppColors.purpleDark
+                                      : AppColors.infoDark,
                                 ),
                                 SizedBox(width: ResponsiveHelper.spacing(context, 4)),
                                 Text(
@@ -220,8 +219,8 @@ class _TOGroupCardState extends State<TOGroupCard> {
                                     context,
                                     fontWeight: FontWeight.bold,
                                     color: masterTO.isLongTerm
-                                        ? Colors.purple[700]
-                                        : Colors.blue[700],
+                                        ? AppColors.purpleDark
+                                        : AppColors.infoDark,
                                   ),
                                 ),
                               ],
@@ -264,7 +263,7 @@ class _TOGroupCardState extends State<TOGroupCard> {
                           masterTO.title,
                           style: ResponsiveHelper.subtitleStyle(context).copyWith(
                             fontWeight: FontWeight.bold,
-                            color: Colors.grey[900],
+                            color: AppColors.textPrimary,
                           ),
                           maxLines: 2,
                           overflow: TextOverflow.ellipsis,
@@ -277,7 +276,7 @@ class _TOGroupCardState extends State<TOGroupCard> {
                       Container(
                         padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 12)),
                         decoration: BoxDecoration(
-                          color: Colors.grey[50],
+                          color: AppColors.grey50,
                           borderRadius: BorderRadius.circular(12),
                         ),
                         child: Column(
@@ -288,13 +287,13 @@ class _TOGroupCardState extends State<TOGroupCard> {
                                 Container(
                                   padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 6)),
                                   decoration: BoxDecoration(
-                                    color: Colors.blue[100],
+                                    color: AppColors.infoLight,
                                     borderRadius: BorderRadius.circular(8),
                                   ),
                                   child: Icon(
                                     Icons.calendar_today,
                                     size: ResponsiveHelper.iconSize(context, 16),
-                                    color: Colors.blue[700],
+                                    color: AppColors.infoDark,
                                   ),
                                 ),
                                 SizedBox(width: ResponsiveHelper.spacing(context, 12)),
@@ -315,9 +314,9 @@ class _TOGroupCardState extends State<TOGroupCard> {
                                               Text(
                                                 masterTO.workDaysLabel,
                                                 style: ResponsiveHelper.smallStyle(
-                                                  context,
-                                                  color: Colors.grey[600],
-                                                ),
+                                                context,
+                                                  color: AppColors.textSecondary,
+                                              ),
                                               ),
                                             ],
                                           ],
@@ -344,14 +343,14 @@ class _TOGroupCardState extends State<TOGroupCard> {
                                   Icon(
                                     Icons.visibility_off,
                                     size: ResponsiveHelper.iconSize(context, 14),
-                                    color: Colors.orange[600],
+                                    color: AppColors.warningDark,
                                   ),
                                   SizedBox(width: ResponsiveHelper.spacing(context, 6)),
                                   Text(
                                     '공개: ${masterTO.publishAtDisplay ?? ''}',
                                     style: ResponsiveHelper.smallStyle(
                                       context,
-                                      color: Colors.orange[700],
+                                      color: AppColors.warningDark,
                                     ).copyWith(fontWeight: FontWeight.w500),
                                   ),
                                 ],
@@ -377,7 +376,7 @@ class _TOGroupCardState extends State<TOGroupCard> {
                                 decoration: BoxDecoration(
                                   gradient: LinearGradient(
                                     colors: isFull
-                                        ? [Colors.green[50]!, Colors.green[50]!.withOpacity(0.3)]
+                                        ? [AppColors.successBg, AppColors.successBg.withOpacity(0.3)]
                                         : [
                                             theme.primaryColor.withOpacity(0.1),
                                             theme.primaryColor.withOpacity(0.05)
@@ -386,7 +385,7 @@ class _TOGroupCardState extends State<TOGroupCard> {
                                   borderRadius: BorderRadius.circular(12),
                                   border: Border.all(
                                     color: isFull
-                                        ? Colors.green[300]!
+                                        ? AppColors.successLight
                                         : theme.primaryColor.withOpacity(0.3),
                                     width: 1.5,
                                   ),
@@ -397,21 +396,21 @@ class _TOGroupCardState extends State<TOGroupCard> {
                                     Icon(
                                       Icons.people,
                                       size: ResponsiveHelper.iconSize(context, 16),
-                                      color: isFull ? Colors.green[700] : theme.primaryColor,
+                                      color: isFull ? AppColors.successDark : theme.primaryColor,
                                     ),
                                     SizedBox(width: ResponsiveHelper.spacing(context, 6)),
                                     Text(
                                       '확정 ',
                                       style: ResponsiveHelper.smallStyle(
                                         context,
-                                        color: isFull ? Colors.green[700] : theme.primaryColor,
+                                        color: isFull ? AppColors.successDark : theme.primaryColor,
                                       ),
                                     ),
                                     Text(
                                       '$totalConfirmed/$totalRequired',
                                       style: ResponsiveHelper.bodyStyle(
                                         context,
-                                        color: isFull ? Colors.green[700] : theme.primaryColor,
+                                        color: isFull ? AppColors.successDark : theme.primaryColor,
                                       ).copyWith(fontWeight: FontWeight.bold),
                                     ),
                                   ],
@@ -426,13 +425,13 @@ class _TOGroupCardState extends State<TOGroupCard> {
                                   decoration: BoxDecoration(
                                     gradient: LinearGradient(
                                       colors: [
-                                        Colors.orange[50]!,
-                                        Colors.orange[50]!.withOpacity(0.3)
+                                        AppColors.warningBg,
+                                        AppColors.warningBg.withOpacity(0.3)
                                       ],
                                     ),
                                     borderRadius: BorderRadius.circular(12),
                                     border: Border.all(
-                                      color: Colors.orange[300]!,
+                                      color: AppColors.warningLight,
                                       width: 1.5,
                                     ),
                                   ),
@@ -442,21 +441,21 @@ class _TOGroupCardState extends State<TOGroupCard> {
                                       Icon(
                                         Icons.schedule,
                                         size: ResponsiveHelper.iconSize(context, 16),
-                                        color: Colors.orange[700],
+                                        color: AppColors.warningDark,
                                       ),
                                       SizedBox(width: ResponsiveHelper.spacing(context, 6)),
                                       Text(
                                         '대기 ',
                                         style: ResponsiveHelper.smallStyle(
                                           context,
-                                          color: Colors.orange[700],
+                                          color: AppColors.warningDark,
                                         ),
                                       ),
                                       Text(
                                         '$totalPending',
                                         style: ResponsiveHelper.bodyStyle(
                                           context,
-                                          color: Colors.orange[700],
+                                          color: AppColors.warningDark,
                                         ).copyWith(fontWeight: FontWeight.bold),
                                       ),
                                     ],
@@ -486,7 +485,7 @@ class _TOGroupCardState extends State<TOGroupCard> {
             
             // 펼쳐진 경우: 그룹 TO 목록
             if (widget.isExpanded && widget.groupItem.isGrouped) ...[
-              Divider(height: 1, color: Colors.grey[200]),
+              Divider(height: 1, color: AppColors.grey200),
               Padding(
                 padding: ResponsiveHelper.cardPadding(context),
                 child: Column(
@@ -507,11 +506,11 @@ class _TOGroupCardState extends State<TOGroupCard> {
             
             // 펼쳐진 경우: 단일 TO 업무 상세
             if (widget.isExpanded && !widget.groupItem.isGrouped) ...[
-              Divider(height: 1, color: Colors.grey[200]),
+              Divider(height: 1, color: AppColors.grey200),
               Container(
                 padding: ResponsiveHelper.cardPadding(context),
                 decoration: BoxDecoration(
-                  color: Colors.grey[50],
+                  color: AppColors.grey50,
                   borderRadius: const BorderRadius.only(
                     bottomLeft: Radius.circular(20),
                     bottomRight: Radius.circular(20),
@@ -577,11 +576,9 @@ class _TOGroupCardState extends State<TOGroupCard> {
         vertical: ResponsiveHelper.spacing(context, 8),
       ),
       decoration: BoxDecoration(
-        gradient: LinearGradient(
-          colors: [Colors.green[100]!, Colors.green[50]!],
-        ),
+        gradient: AppColors.successGradient,
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: Colors.green[300]!, width: 1.5),
+        border: Border.all(color: AppColors.successLight, width: 1.5),
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
@@ -589,7 +586,7 @@ class _TOGroupCardState extends State<TOGroupCard> {
           Icon(
             Icons.folder_open,
             size: ResponsiveHelper.iconSize(context, 18),
-            color: Colors.green[700],
+            color: AppColors.successDark,
           ),
           SizedBox(width: ResponsiveHelper.spacing(context, 8)),
           Flexible(
@@ -597,7 +594,7 @@ class _TOGroupCardState extends State<TOGroupCard> {
               groupName,
               style: ResponsiveHelper.bodyStyle(
                 context,
-                color: Colors.green[800],
+                color: AppColors.successDark,
               ).copyWith(fontWeight: FontWeight.bold),
               overflow: TextOverflow.ellipsis,
             ),
@@ -615,11 +612,9 @@ class _TOGroupCardState extends State<TOGroupCard> {
         vertical: ResponsiveHelper.spacing(context, 8),
       ),
       decoration: BoxDecoration(
-        gradient: LinearGradient(
-          colors: [Colors.blue[100]!, Colors.blue[50]!],
-        ),
+        gradient: AppColors.infoGradient,
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: Colors.blue[300]!, width: 1.5),
+        border: Border.all(color: AppColors.infoLight, width: 1.5),
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
@@ -627,14 +622,14 @@ class _TOGroupCardState extends State<TOGroupCard> {
           Icon(
             Icons.work_outline,
             size: ResponsiveHelper.iconSize(context, 18),
-            color: Colors.blue[700],
+            color: AppColors.infoDark,
           ),
           SizedBox(width: ResponsiveHelper.spacing(context, 8)),
           Text(
             '단일 공고',
             style: ResponsiveHelper.bodyStyle(
               context,
-              color: Colors.blue[800],
+              color: AppColors.infoDark,
             ).copyWith(fontWeight: FontWeight.bold),
           ),
         ],
@@ -656,11 +651,9 @@ class _TOGroupCardState extends State<TOGroupCard> {
         vertical: ResponsiveHelper.spacing(context, 6),
       ),
       decoration: BoxDecoration(
-        gradient: LinearGradient(
-          colors: [Colors.orange[100]!, Colors.orange[50]!],
-        ),
+        gradient: AppColors.warningGradient,
         borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: Colors.orange[300]!, width: 1.5),
+        border: Border.all(color: AppColors.warningLight, width: 1.5),
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
@@ -668,14 +661,14 @@ class _TOGroupCardState extends State<TOGroupCard> {
           Icon(
             Icons.schedule,
             size: ResponsiveHelper.iconSize(context, 14),
-            color: Colors.orange[700],
+            color: AppColors.warningDark,
           ),
           SizedBox(width: ResponsiveHelper.spacing(context, 4)),
           Text(
             '예약',
             style: ResponsiveHelper.smallStyle(
               context,
-              color: Colors.orange[700],
+              color: AppColors.warningDark,
             ).copyWith(fontWeight: FontWeight.bold),
           ),
         ],
@@ -697,11 +690,11 @@ class _TOGroupCardState extends State<TOGroupCard> {
     if (allClosed) {
       icon = Icons.lock;
       label = '마감됨';
-      color = Colors.grey[600]!;
-    } else if (isFull) {
+      color = AppColors.grey600;
+     } else if (isFull) {
       icon = Icons.check_circle;
       label = '인원충족';
-      color = Colors.green[600]!;
+      color = AppColors.successDark;
     } else {
       icon = Icons.circle;
       label = '진행중';
@@ -762,9 +755,9 @@ class _TOGroupCardState extends State<TOGroupCard> {
         vertical: ResponsiveHelper.spacing(context, 4),
       ),
       decoration: BoxDecoration(
-        color: Colors.orange[100],
+        color: AppColors.warningBg,
         borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: Colors.orange[300]!),
+        border: Border.all(color: AppColors.warningLight),
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
@@ -772,14 +765,14 @@ class _TOGroupCardState extends State<TOGroupCard> {
           Icon(
             Icons.access_time,
             size: ResponsiveHelper.iconSize(context, 12),
-            color: Colors.orange[700],
+            color: AppColors.warningDark,
           ),
           SizedBox(width: ResponsiveHelper.spacing(context, 4)),
           Text(
             label,
             style: ResponsiveHelper.tinyStyle(
               context,
-              color: Colors.orange[700],
+              color: AppColors.warningDark,
             ).copyWith(fontWeight: FontWeight.bold),
           ),
         ],
@@ -811,7 +804,7 @@ class _TOGroupCardState extends State<TOGroupCard> {
               Icon(
                 Icons.visibility,
                 size: ResponsiveHelper.iconSize(context, 18),
-                color: Colors.teal[600],
+                color: AppColors.info,  
               ),
               SizedBox(width: ResponsiveHelper.spacing(context, 12)),
               const Text('공고 미리보기'),
@@ -825,7 +818,7 @@ class _TOGroupCardState extends State<TOGroupCard> {
               Icon(
                 Icons.edit,
                 size: ResponsiveHelper.iconSize(context, 18),
-                color: Colors.orange[600],
+                color: AppColors.warning,
               ),
               SizedBox(width: ResponsiveHelper.spacing(context, 12)),
               const Text('수정'),
@@ -839,7 +832,7 @@ class _TOGroupCardState extends State<TOGroupCard> {
               Icon(
                 Icons.delete,
                 size: ResponsiveHelper.iconSize(context, 18),
-                color: Colors.red[600],
+                color: AppColors.error,
               ),
               SizedBox(width: ResponsiveHelper.spacing(context, 12)),
               const Text('삭제'),
@@ -854,7 +847,7 @@ class _TOGroupCardState extends State<TOGroupCard> {
                 Icon(
                   Icons.link,
                   size: ResponsiveHelper.iconSize(context, 18),
-                  color: Colors.blue[600],
+                  color: AppColors.info,  
                 ),
                 SizedBox(width: ResponsiveHelper.spacing(context, 12)),
                 const Text('그룹 연결'),
@@ -868,7 +861,7 @@ class _TOGroupCardState extends State<TOGroupCard> {
               Icon(
                 Icons.check_circle_outline,
                 size: ResponsiveHelper.iconSize(context, 18),
-                color: Colors.green[600],
+                color: AppColors.success,
               ),
               SizedBox(width: ResponsiveHelper.spacing(context, 12)),
               const Text('확정명단'),
@@ -882,7 +875,7 @@ class _TOGroupCardState extends State<TOGroupCard> {
               Icon(
                 Icons.assignment_turned_in,
                 size: ResponsiveHelper.iconSize(context, 18),
-                color: Colors.purple[600],
+                color: AppColors.purple,
               ),
               SizedBox(width: ResponsiveHelper.spacing(context, 12)),
               const Text('업무별 마감'),
@@ -917,7 +910,7 @@ class _TOGroupCardState extends State<TOGroupCard> {
               Icon(
                 Icons.edit,
                 size: ResponsiveHelper.iconSize(context, 18),
-                color: Colors.blue[600],
+                color: AppColors.info,
               ),
               SizedBox(width: ResponsiveHelper.spacing(context, 12)),
               const Text('그룹명 수정'),
@@ -931,7 +924,7 @@ class _TOGroupCardState extends State<TOGroupCard> {
               Icon(
                 masterTO.isClosed ? Icons.lock_open : Icons.lock,
                 size: ResponsiveHelper.iconSize(context, 18),
-                color: masterTO.isClosed ? Colors.green[600] : Colors.orange[600],
+                color: masterTO.isClosed ? AppColors.success : AppColors.warning, 
               ),
               SizedBox(width: ResponsiveHelper.spacing(context, 12)),
               Text(masterTO.isClosed ? '그룹 재오픈' : '그룹 마감'),
@@ -945,7 +938,7 @@ class _TOGroupCardState extends State<TOGroupCard> {
               Icon(
                 Icons.delete_forever,
                 size: ResponsiveHelper.iconSize(context, 18),
-                color: Colors.red[600],
+                color: AppColors.error,
               ),
               SizedBox(width: ResponsiveHelper.spacing(context, 12)),
               const Text('그룹 전체 삭제'),

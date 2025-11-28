@@ -1,7 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import '../../../../utils/responsive_helper.dart';
+import '../../../../utils/format_helper.dart';
+import '../../../../theme/app_colors.dart';
+import '../../../../widgets/pickers/date_picker_bottom_sheet.dart';
 import 'to_section_container.dart';
+import '../../../../utils/toast_helper.dart';
 
 // 위젯 파일 위치: lib/screens/business_admin/to_management/widgets/
 
@@ -40,7 +44,7 @@ class TODateSelector extends StatefulWidget {
     this.onDateToggle,
     this.onDatesChanged,
     this.onClearAll,
-    this.maxSelectableDays = 30,
+    this.maxSelectableDays = 14,
     this.rangeStart,
     this.rangeEnd,
     this.selectedWeekdays = const [],
@@ -56,6 +60,9 @@ class TODateSelector extends StatefulWidget {
 }
 
 class _TODateSelectorState extends State<TODateSelector> {
+  // ⭐ 선택 가능 최대 기간 (오늘부터 N일 후까지)
+  static const int _maxFutureDays = 60;
+  
   DateTime _focusedDay = DateTime.now();
   bool _isCalendarExpanded = true;
   
@@ -121,7 +128,7 @@ class _TODateSelectorState extends State<TODateSelector> {
                 ),
                 child: Icon(
                   Icons.calendar_today,
-                  color: Colors.white,
+                  color: AppColors.surface,
                   size: ResponsiveHelper.iconSize(context, 24),
                 ),
               ),
@@ -132,7 +139,7 @@ class _TODateSelectorState extends State<TODateSelector> {
                   children: [
                     Text(
                       widget.isLongTerm ? '계약 기간' : '근무 날짜',
-                      style: ResponsiveHelper.smallStyle(context, color: Colors.grey[600]),
+                      style: ResponsiveHelper.smallStyle(context, color: AppColors.textSecondary),
                     ),
                     SizedBox(height: ResponsiveHelper.spacing(context, 4)),
                     Text(
@@ -153,7 +160,7 @@ class _TODateSelectorState extends State<TODateSelector> {
                 SizedBox(width: ResponsiveHelper.spacing(context, 8)),
                 Text(
                   '근무 요일: ${widget.displayWorkDays!.join(', ')}',
-                  style: ResponsiveHelper.bodyStyle(context, color: Colors.grey[700]),
+                  style: ResponsiveHelper.bodyStyle(context, color: AppColors.textPrimary),
                 ),
               ],
             ),
@@ -166,18 +173,18 @@ class _TODateSelectorState extends State<TODateSelector> {
               vertical: ResponsiveHelper.spacing(context, 8),
             ),
             decoration: BoxDecoration(
-              color: Colors.orange[50],
+              color: AppColors.warningBg,
               borderRadius: BorderRadius.circular(8),
-              border: Border.all(color: Colors.orange[200]!, width: 1),
+              border: Border.all(color: AppColors.warningLight, width: 1),
             ),
             child: Row(
               children: [
-                Icon(Icons.warning_amber, color: Colors.orange[700], size: ResponsiveHelper.iconSize(context, 18)),
+                Icon(Icons.warning_amber, color: AppColors.warningDark, size: ResponsiveHelper.iconSize(context, 18)),
                 SizedBox(width: ResponsiveHelper.spacing(context, 12)),
                 Expanded(
                   child: Text(
                     '${widget.isLongTerm ? "계약 기간과 근무 요일" : "날짜"}은(는) 수정할 수 없습니다',
-                    style: ResponsiveHelper.smallStyle(context, color: Colors.orange[900]),
+                    style: ResponsiveHelper.smallStyle(context, color: AppColors.warningDark),
                   ),
                 ),
               ],
@@ -248,7 +255,7 @@ class _TODateSelectorState extends State<TODateSelector> {
                   child: Text(
                     '${widget.selectedDates.length}일',
                     style: ResponsiveHelper.smallStyle(context).copyWith(
-                      color: Colors.white,
+                      color: AppColors.surface,
                       fontWeight: FontWeight.bold,
                     ),
                   ),
@@ -262,7 +269,7 @@ class _TODateSelectorState extends State<TODateSelector> {
             child: IgnorePointer(
               ignoring: widget.selectedDates.isEmpty,
               child: Material(
-                color: Colors.red[50],
+                color: AppColors.errorBg,
                 borderRadius: BorderRadius.circular(8),
                 child: InkWell(
                   onTap: () {
@@ -281,12 +288,12 @@ class _TODateSelectorState extends State<TODateSelector> {
                     child: Row(
                       mainAxisSize: MainAxisSize.min,
                       children: [
-                        Icon(Icons.clear_all, size: ResponsiveHelper.iconSize(context, 18), color: Colors.red[700]),
+                        Icon(Icons.clear_all, size: ResponsiveHelper.iconSize(context, 18), color: AppColors.errorDark),
                         SizedBox(width: ResponsiveHelper.spacing(context, 6)),
                         Text(
                           '전체 해제',
                           style: ResponsiveHelper.smallStyle(context).copyWith(
-                            color: Colors.red[700],
+                            color: AppColors.errorDark,
                             fontWeight: FontWeight.bold,
                           ),
                         ),
@@ -341,13 +348,13 @@ class _TODateSelectorState extends State<TODateSelector> {
                 Icon(
                   icon,
                   size: ResponsiveHelper.iconSize(context, 18),
-                  color: isActive ? Colors.white : theme.primaryColor,
+                  color: isActive ? AppColors.surface : theme.primaryColor,
                 ),
                 SizedBox(height: ResponsiveHelper.spacing(context, 4)),
                 Text(
                   label,
                   style: ResponsiveHelper.tinyStyle(context).copyWith(
-                    color: isActive ? Colors.white : theme.primaryColor,
+                    color: isActive ? AppColors.surface : theme.primaryColor,
                     fontWeight: FontWeight.w600,
                   ),
                 ),
@@ -362,7 +369,7 @@ class _TODateSelectorState extends State<TODateSelector> {
   /// 캘린더 토글
   Widget _buildCalendarToggle(BuildContext context, ThemeData theme) {
     return Material(
-      color: Colors.grey[100],
+      color: AppColors.grey100,
       borderRadius: BorderRadius.circular(12),
       child: InkWell(
         onTap: () => setState(() => _isCalendarExpanded = !_isCalendarExpanded),
@@ -377,14 +384,14 @@ class _TODateSelectorState extends State<TODateSelector> {
             children: [
               Icon(
                 _isCalendarExpanded ? Icons.expand_less : Icons.expand_more,
-                color: Colors.grey[700],
+                color: AppColors.grey700,
                 size: ResponsiveHelper.iconSize(context, 20),
               ),
               SizedBox(width: ResponsiveHelper.spacing(context, 8)),
               Text(
                 _isCalendarExpanded ? '캘린더 접기' : '캘린더 펼치기',
                 style: ResponsiveHelper.bodyStyle(context).copyWith(
-                  color: Colors.grey[700],
+                  color: AppColors.grey700,
                   fontWeight: FontWeight.w600,
                 ),
               ),
@@ -400,11 +407,11 @@ class _TODateSelectorState extends State<TODateSelector> {
     final now = DateTime.now();
     final today = DateTime(now.year, now.month, now.day);
     
-    return Container(
+   return Container(
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: AppColors.surface,
         borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: Colors.grey[200]!),
+        border: Border.all(color: AppColors.grey200),
         boxShadow: [
           BoxShadow(
             color: Colors.black.withOpacity(0.05),
@@ -502,7 +509,7 @@ class _TODateSelectorState extends State<TODateSelector> {
                   day,
                   style: ResponsiveHelper.smallStyle(context).copyWith(
                     fontWeight: FontWeight.bold,
-                    color: isWeekend ? Colors.red[400] : Colors.grey[600],
+                    color: isWeekend ? AppColors.error : AppColors.textSecondary,
                   ),
                 ),
               ),
@@ -554,6 +561,7 @@ class _TODateSelectorState extends State<TODateSelector> {
   /// 날짜 셀 (당근 스타일 - 연속 날짜 연결 배경)
   Widget _buildDateCell(BuildContext context, ThemeData theme, DateTime date, DateTime today) {
     final isPast = date.isBefore(today);
+    final isTooFar = date.isAfter(today.add(const Duration(days: _maxFutureDays)));
     final isToday = _isSameDay(date, today);
     final isSelected = widget.selectedDates.any((d) => _isSameDay(d, date));
     
@@ -587,21 +595,21 @@ class _TODateSelectorState extends State<TODateSelector> {
     Color backgroundColor;
     Color textColor;
     
-    if (isPast) {
+    if (isPast || isTooFar) {
       backgroundColor = Colors.transparent;
-      textColor = Colors.grey[300]!;
+      textColor = AppColors.grey300;
     } else if (isSelected) {
       backgroundColor = theme.primaryColor;
-      textColor = Colors.white;
+      textColor = AppColors.surface;
     } else {
       backgroundColor = Colors.transparent;
       textColor = (date.weekday == DateTime.sunday || date.weekday == DateTime.saturday)
-          ? Colors.red[400]!
-          : Colors.black87;
+          ? AppColors.error
+          : AppColors.textPrimary;
     }
     
     return GestureDetector(
-      onTap: isPast ? null : () => _handleDateTap(date, today),
+      onTap: (isPast || isTooFar) ? null : () => _handleDateTap(date, today),
       child: Container(
         height: ResponsiveHelper.spacing(context, 44),
         margin: EdgeInsets.symmetric(vertical: ResponsiveHelper.spacing(context, 2)),
@@ -630,7 +638,7 @@ class _TODateSelectorState extends State<TODateSelector> {
                 color: textColor,
                 fontWeight: (isSelected || isToday) ? FontWeight.bold : FontWeight.normal,
                 decoration: isPast ? TextDecoration.lineThrough : null,
-                decorationColor: Colors.grey[300],
+                decorationColor: AppColors.grey300,
               ),
             ),
           ],
@@ -683,7 +691,7 @@ class _TODateSelectorState extends State<TODateSelector> {
           ),
           
           SizedBox(height: ResponsiveHelper.spacing(context, 24)),
-          Divider(color: Colors.grey[300]),
+          Divider(color: AppColors.grey300),
           SizedBox(height: ResponsiveHelper.spacing(context, 16)),
           
           Text(
@@ -693,7 +701,7 @@ class _TODateSelectorState extends State<TODateSelector> {
           SizedBox(height: ResponsiveHelper.spacing(context, 8)),
           Text(
             '※ 매주 반복되는 근무 요일을 선택하세요',
-            style: ResponsiveHelper.smallStyle(context, color: Colors.grey[600]),
+            style: ResponsiveHelper.smallStyle(context, color: AppColors.textSecondary),
           ),
           SizedBox(height: ResponsiveHelper.spacing(context, 16)),
           
@@ -708,7 +716,7 @@ class _TODateSelectorState extends State<TODateSelector> {
     );
   }
 
-  Widget _buildDateField({
+   Widget _buildDateField({
     required BuildContext context,
     required ThemeData theme,
     required String label,
@@ -721,20 +729,27 @@ class _TODateSelectorState extends State<TODateSelector> {
         onTap: onTap,
         borderRadius: BorderRadius.circular(12),
         child: Container(
-          padding: ResponsiveHelper.cardPadding(context),
+          padding: EdgeInsets.symmetric(
+            horizontal: ResponsiveHelper.spacing(context, 12),
+            vertical: ResponsiveHelper.spacing(context, 10),
+          ),
           decoration: BoxDecoration(
-            border: Border.all(color: Colors.grey[300]!),
+            color: date != null ? theme.primaryColor.withOpacity(0.05) : AppColors.grey50,
+            border: Border.all(
+              color: date != null ? theme.primaryColor : AppColors.border,
+              width: date != null ? 2 : 1,
+            ),
             borderRadius: BorderRadius.circular(12),
           ),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text(label, style: ResponsiveHelper.smallStyle(context, color: Colors.grey[600])),
+              Text(label, style: ResponsiveHelper.smallStyle(context, color: AppColors.textSecondary)),
               SizedBox(height: ResponsiveHelper.spacing(context, 4)),
               Text(
-                date != null ? DateFormat('yyyy-MM-dd').format(date) : '선택하세요',
-                style: ResponsiveHelper.subtitleStyle(context).copyWith(
-                  color: date != null ? Colors.black : Colors.grey[400],
+                date != null ? FormatHelper.formatDate(date) : '선택하세요',
+                style: ResponsiveHelper.bodyStyle(context).copyWith(
+                  color: date != null ? AppColors.textPrimary : AppColors.textHint,
                   fontWeight: date != null ? FontWeight.bold : FontWeight.normal,
                 ),
               ),
@@ -746,13 +761,15 @@ class _TODateSelectorState extends State<TODateSelector> {
   }
 
   Future<void> _selectLongTermDate(BuildContext context, {required bool isStart}) async {
-    final picked = await showDatePicker(
+    final picked = await DatePickerBottomSheet.show(
       context: context,
       initialDate: isStart
           ? (widget.rangeStart ?? DateTime.now())
           : (widget.rangeEnd ?? widget.rangeStart ?? DateTime.now()),
-      firstDate: isStart ? DateTime.now() : (widget.rangeStart ?? DateTime.now()),
-      lastDate: DateTime.now().add(const Duration(days: 365)),
+      title: isStart ? '계약 시작일' : '계약 종료일',
+      subtitle: isStart ? '근무 시작 날짜를 선택하세요' : '근무 종료 날짜를 선택하세요',
+      minDate: isStart ? DateTime.now() : (widget.rangeStart ?? DateTime.now()),
+      maxDate: DateTime.now().add(const Duration(days: 365)),
     );
     
     if (picked != null) {
@@ -787,7 +804,7 @@ class _TODateSelectorState extends State<TODateSelector> {
                   gradient: isSelected
                       ? LinearGradient(colors: [theme.primaryColor, theme.primaryColor.withOpacity(0.8)])
                       : null,
-                  color: isSelected ? null : (isWeekend ? Colors.red[50] : Colors.grey[100]),
+                  color: isSelected ? null : (isWeekend ? AppColors.errorBg : AppColors.grey100),
                   borderRadius: BorderRadius.circular(12),
                   boxShadow: isSelected
                       ? [BoxShadow(color: theme.primaryColor.withOpacity(0.3), blurRadius: 8, offset: const Offset(0, 4))]
@@ -797,7 +814,7 @@ class _TODateSelectorState extends State<TODateSelector> {
                   child: Text(
                     day,
                     style: ResponsiveHelper.subtitleStyle(context).copyWith(
-                      color: isSelected ? Colors.white : (isWeekend ? Colors.red[400] : Colors.grey[700]),
+                      color: isSelected ? AppColors.surface : (isWeekend ? AppColors.error : AppColors.grey700),
                       fontWeight: FontWeight.bold,
                     ),
                   ),
@@ -814,21 +831,21 @@ class _TODateSelectorState extends State<TODateSelector> {
     return Container(
       padding: ResponsiveHelper.cardPadding(context),
       decoration: BoxDecoration(
-        gradient: LinearGradient(colors: [Colors.green[50]!, Colors.green[100]!]),
+        gradient: LinearGradient(colors: [AppColors.successBg, AppColors.successLight.withOpacity(0.3)]),
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: Colors.green[300]!),
+        border: Border.all(color: AppColors.successLight),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
             children: [
-              Icon(Icons.check_circle, color: Colors.green[700], size: ResponsiveHelper.iconSize(context, 18)),
+              Icon(Icons.check_circle, color: AppColors.successDark, size: ResponsiveHelper.iconSize(context, 18)),
               SizedBox(width: ResponsiveHelper.spacing(context, 8)),
               Text(
                 '주 ${widget.selectedWeekdays.length}일 근무',
                 style: ResponsiveHelper.bodyStyle(context).copyWith(
-                  color: Colors.green[900],
+                  color: AppColors.successDark,
                   fontWeight: FontWeight.bold,
                 ),
               ),
@@ -837,7 +854,7 @@ class _TODateSelectorState extends State<TODateSelector> {
           SizedBox(height: ResponsiveHelper.spacing(context, 8)),
           Text(
             '선택된 요일: ${widget.selectedWeekdays.join(', ')}',
-            style: ResponsiveHelper.smallStyle(context, color: Colors.green[800]),
+            style: ResponsiveHelper.smallStyle(context, color: AppColors.successDark),
           ),
         ],
       ),
@@ -861,6 +878,12 @@ class _TODateSelectorState extends State<TODateSelector> {
       return;
     }
     
+    // ⭐ 최대 선택 개수 체크
+    if (widget.selectedDates.length >= widget.maxSelectableDays && _rangeStart == null) {
+      ToastHelper.showWarning('최대 ${widget.maxSelectableDays}일까지 선택 가능합니다');
+      return;
+    }
+    
     // 새 날짜 선택
     if (_rangeStart == null) {
       // 범위 시작점 설정
@@ -872,20 +895,27 @@ class _TODateSelectorState extends State<TODateSelector> {
       setState(() => _rangeStart = null);
     }
   }
-
   /// 범위 선택
   void _selectRange(DateTime start, DateTime end, DateTime today) {
     DateTime rangeStart = start.isBefore(end) ? start : end;
     DateTime rangeEnd = start.isBefore(end) ? end : start;
     
     List<DateTime> newDates = List<DateTime>.from(widget.selectedDates);
+    bool reachedLimit = false;
     
     for (var d = rangeStart; !d.isAfter(rangeEnd); d = d.add(const Duration(days: 1))) {
       if (!d.isBefore(today) && !newDates.any((existing) => _isSameDay(existing, d))) {
         if (newDates.length < widget.maxSelectableDays) {
           newDates.add(d);
+        } else {
+          reachedLimit = true;
         }
       }
+    }
+    
+    // ⭐ 최대 개수 초과 시 안내
+    if (reachedLimit) {
+      ToastHelper.showWarning('최대 ${widget.maxSelectableDays}일까지 선택 가능합니다');
     }
     
     newDates.sort();
