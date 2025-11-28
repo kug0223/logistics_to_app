@@ -18,11 +18,12 @@ ALfit
 
 냉동분류
 
-git add . ; if ($?) { git commit -m "TO등록 개선 251127-10" } ; if ($?) { git push }
+git add . ; if ($?) { git commit -m "TO등록 개선 251128-1" } ; if ($?) { git push }
 
 flutter clean
 flutter pub get
 flutter run -d web-server
+
 
 
 # 릴리즈 APK (배포용)

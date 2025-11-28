@@ -280,57 +280,83 @@ class _TOGroupCardState extends State<TOGroupCard> {
                           color: Colors.grey[50],
                           borderRadius: BorderRadius.circular(12),
                         ),
-                        child: Row(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            Container(
-                              padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 6)),
-                              decoration: BoxDecoration(
-                                color: Colors.blue[100],
-                                borderRadius: BorderRadius.circular(8),
-                              ),
-                              child: Icon(
-                                Icons.calendar_today,
-                                size: ResponsiveHelper.iconSize(context, 16),
-                                color: Colors.blue[700],
-                              ),
-                            ),
-                            SizedBox(width: ResponsiveHelper.spacing(context, 12)),
-                            Expanded(
-                              child: masterTO.isLongTerm
-                                  ? Column(
-                                      crossAxisAlignment: CrossAxisAlignment.start,
-                                      children: [
-                                        Text(
-                                          masterTO.longTermPeriodWithDays,
+                            Row(
+                              children: [
+                                Container(
+                                  padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 6)),
+                                  decoration: BoxDecoration(
+                                    color: Colors.blue[100],
+                                    borderRadius: BorderRadius.circular(8),
+                                  ),
+                                  child: Icon(
+                                    Icons.calendar_today,
+                                    size: ResponsiveHelper.iconSize(context, 16),
+                                    color: Colors.blue[700],
+                                  ),
+                                ),
+                                SizedBox(width: ResponsiveHelper.spacing(context, 12)),
+                                Expanded(
+                                  child: masterTO.isLongTerm
+                                      ? Column(
+                                          crossAxisAlignment: CrossAxisAlignment.start,
+                                          children: [
+                                            Text(
+                                              masterTO.longTermPeriodWithDays,
+                                              style: ResponsiveHelper.bodyStyle(context).copyWith(
+                                                fontWeight: FontWeight.w600,
+                                              ),
+                                            ),
+                                            if (masterTO.workDays != null &&
+                                                masterTO.workDays!.isNotEmpty) ...[
+                                              SizedBox(height: ResponsiveHelper.spacing(context, 4)),
+                                              Text(
+                                                masterTO.workDaysLabel,
+                                                style: ResponsiveHelper.smallStyle(
+                                                  context,
+                                                  color: Colors.grey[600],
+                                                ),
+                                              ),
+                                            ],
+                                          ],
+                                        )
+                                      : Text(
+                                          widget.groupItem.isGrouped
+                                              ? '${dateFormat.format(masterTO.date)} 외 ${widget.groupItem.groupTOs.length - 1}일'
+                                              : dateFormat.format(masterTO.date),
                                           style: ResponsiveHelper.bodyStyle(context).copyWith(
                                             fontWeight: FontWeight.w600,
                                           ),
                                         ),
-                                        if (masterTO.workDays != null &&
-                                            masterTO.workDays!.isNotEmpty) ...[
-                                          SizedBox(height: ResponsiveHelper.spacing(context, 4)),
-                                          Text(
-                                            masterTO.workDaysLabel,
-                                            style: ResponsiveHelper.smallStyle(
-                                              context,
-                                              color: Colors.grey[600],
-                                            ),
-                                          ),
-                                        ],
-                                      ],
-                                    )
-                                  : Text(
-                                      widget.groupItem.isGrouped
-                                          ? '${dateFormat.format(masterTO.date)} 외 ${widget.groupItem.groupTOs.length - 1}일'
-                                          : dateFormat.format(masterTO.date),
-                                      style: ResponsiveHelper.bodyStyle(context).copyWith(
-                                        fontWeight: FontWeight.w600,
-                                      ),
-                                    ),
+                                ),
+                                // 단일 TO인 경우 마감시간
+                                if (!widget.groupItem.isGrouped)
+                                  _buildDeadlineBadge(context, masterTO),
+                              ],
                             ),
-                            // 단일 TO인 경우 마감시간
-                            if (!widget.groupItem.isGrouped)
-                              _buildDeadlineBadge(context, masterTO),
+                            // ✅ 예약 공개 시간 표시 (단일 TO + 예약 대기 상태)
+                            if (!widget.groupItem.isGrouped && masterTO.isPendingPublish) ...[
+                              SizedBox(height: ResponsiveHelper.spacing(context, 8)),
+                              Row(
+                                children: [
+                                  Icon(
+                                    Icons.visibility_off,
+                                    size: ResponsiveHelper.iconSize(context, 14),
+                                    color: Colors.orange[600],
+                                  ),
+                                  SizedBox(width: ResponsiveHelper.spacing(context, 6)),
+                                  Text(
+                                    '공개: ${masterTO.publishAtDisplay ?? ''}',
+                                    style: ResponsiveHelper.smallStyle(
+                                      context,
+                                      color: Colors.orange[700],
+                                    ).copyWith(fontWeight: FontWeight.w500),
+                                  ),
+                                ],
+                              ),
+                            ],
                           ],
                         ),
                       ),
@@ -440,8 +466,16 @@ class _TOGroupCardState extends State<TOGroupCard> {
                             ],
                           ),
                           
-                          // 오른쪽: 상태 배지
-                          _buildStatusBadge(context, isFull),
+                          // 오른쪽: 예약 배지 + 상태 배지
+                          Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              _buildScheduledBadge(context),
+                              if (widget.groupItem.masterTO.isPendingPublish)
+                                SizedBox(width: ResponsiveHelper.spacing(context, 6)),
+                              _buildStatusBadge(context, isFull),
+                            ],
+                          ),
                         ],
                       ),
                     ],
@@ -601,6 +635,47 @@ class _TOGroupCardState extends State<TOGroupCard> {
             style: ResponsiveHelper.bodyStyle(
               context,
               color: Colors.blue[800],
+            ).copyWith(fontWeight: FontWeight.bold),
+          ),
+        ],
+      ),
+    );
+  }
+  /// ✨ 예약 공개 배지 (단일 TO 전용)
+  Widget _buildScheduledBadge(BuildContext context) {
+    final masterTO = widget.groupItem.masterTO;
+    
+    // 그룹 TO이거나 예약 대기 상태가 아니면 빈 위젯
+    if (widget.groupItem.isGrouped || !masterTO.isPendingPublish) {
+      return const SizedBox.shrink();
+    }
+    
+    return Container(
+      padding: EdgeInsets.symmetric(
+        horizontal: ResponsiveHelper.spacing(context, 10),
+        vertical: ResponsiveHelper.spacing(context, 6),
+      ),
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          colors: [Colors.orange[100]!, Colors.orange[50]!],
+        ),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: Colors.orange[300]!, width: 1.5),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(
+            Icons.schedule,
+            size: ResponsiveHelper.iconSize(context, 14),
+            color: Colors.orange[700],
+          ),
+          SizedBox(width: ResponsiveHelper.spacing(context, 4)),
+          Text(
+            '예약',
+            style: ResponsiveHelper.smallStyle(
+              context,
+              color: Colors.orange[700],
             ).copyWith(fontWeight: FontWeight.bold),
           ),
         ],

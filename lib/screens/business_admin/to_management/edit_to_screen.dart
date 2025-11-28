@@ -22,6 +22,7 @@ import '../../../widgets/pickers/work_detail_dialog.dart';
 
 // 공통 위젯
 import 'widgets/to_widgets.dart';
+import 'widgets/to_publish_section.dart';
 
 /// ✨ TO 수정 화면 - 공통 위젯 적용
 class AdminEditTOScreen extends StatefulWidget {
@@ -50,9 +51,14 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
   List<WorkDetailModel> _workDetails = [];
   List<BusinessWorkTypeModel> _businessWorkTypes = [];
   
-  // 지원 마감 설정
+   // 지원 마감 설정
   int _hoursBeforeStart = 2;
   DateTime? _fixedDeadline;
+  
+  // 예약 공개 설정
+  String _publishMode = 'immediate';
+  int _publishDaysBefore = 1;
+  String _publishTime = '14:00';
   
   @override
   void initState() {
@@ -63,6 +69,11 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
     
     _hoursBeforeStart = widget.to.hoursBeforeStart ?? 2;
     _fixedDeadline = widget.to.isLongTerm ? widget.to.applicationDeadline : null;
+    
+    // 예약 공개 설정 로드
+    _publishMode = widget.to.publishMode;
+    _publishDaysBefore = widget.to.publishDaysBefore ?? 1;
+    _publishTime = widget.to.publishTime ?? '14:00';
     
     _loadData();
   }
@@ -118,10 +129,38 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
     setState(() => _isSaving = true);
     
     try {
+      // ✅ publishAt 계산 (예약 공개인 경우)
+      DateTime? publishAt;
+      bool shouldPublishImmediately = _publishMode == 'immediate';
+      
+      if (_publishMode == 'scheduled') {
+        final targetDate = widget.to.date.subtract(Duration(days: _publishDaysBefore));
+        final timeParts = _publishTime.split(':');
+        publishAt = DateTime(
+          targetDate.year,
+          targetDate.month,
+          targetDate.day,
+          int.parse(timeParts[0]),
+          int.parse(timeParts[1]),
+        );
+        
+        // ✅ 과거 날짜면 즉시 공개로 전환
+        if (publishAt.isBefore(DateTime.now())) {
+          shouldPublishImmediately = true;
+          ToastHelper.showInfo('공개 예정 시간이 지나 즉시 공개로 전환됩니다');
+        }
+      }
+      
       final updates = <String, dynamic>{
         'title': _titleController.text.trim(),
         'description': _descriptionController.text.trim(),
         'hoursBeforeStart': _hoursBeforeStart,
+        // ✅ 예약 공개 설정
+        'publishMode': _publishMode,
+        'publishAt': publishAt != null ? Timestamp.fromDate(publishAt) : null,
+        'isPublished': shouldPublishImmediately,
+        'publishDaysBefore': _publishMode == 'scheduled' ? _publishDaysBefore : null,
+        'publishTime': _publishMode == 'scheduled' ? _publishTime : null,
       };
       
       // 재오픈 처리
@@ -358,6 +397,19 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
                 fixedDeadline: _fixedDeadline,
                 onFixedDeadlineChanged: (dt) => setState(() => _fixedDeadline = dt),
                 rangeEndDate: widget.to.endDate,
+              ),
+              SizedBox(height: ResponsiveHelper.spacing(context, 16)),
+              
+              // ✅ 예약 공개 설정 섹션
+              TOPublishSection(
+                publishMode: _publishMode,
+                onPublishModeChanged: (mode) => setState(() => _publishMode = mode),
+                publishDaysBefore: _publishDaysBefore,
+                onDaysBeforeChanged: (days) => setState(() => _publishDaysBefore = days),
+                publishTime: _publishTime,
+                onTimeChanged: (time) => setState(() => _publishTime = time),
+                previewDates: [widget.to.date],
+                isLongTerm: widget.to.isLongTerm,
               ),
               SizedBox(height: ResponsiveHelper.spacing(context, 16)),
               

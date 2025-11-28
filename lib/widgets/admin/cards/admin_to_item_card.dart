@@ -157,10 +157,13 @@ class _TOItemCardState extends State<TOItemCard> {
                             ),
                           ),
                           
-                          // 오른쪽: 진행중 배지 + 메뉴
+                          // 오른쪽: 예약 배지 + 진행중 배지 + 메뉴
                           Row(
                             mainAxisSize: MainAxisSize.min,
                             children: [
+                              _buildScheduledBadge(context),
+                              if (widget.toItem.to.isPendingPublish)
+                                SizedBox(width: ResponsiveHelper.spacing(context, 4)),
                               _buildStatusBadge(context, isFull),
                               SizedBox(width: ResponsiveHelper.spacing(context, 4)),
                               _buildPopupMenu(context),
@@ -250,8 +253,29 @@ class _TOItemCardState extends State<TOItemCard> {
                       ],
                       
                       SizedBox(height: ResponsiveHelper.spacing(context, 12)),
-                                                // 마감시간 배지
-                     _buildDeadlineBadge(context, to),
+                      // 마감시간 배지
+                      _buildDeadlineBadge(context, to),
+                      // ✅ 예약 공개 시간 표시
+                      if (to.isPendingPublish) ...[
+                        SizedBox(height: ResponsiveHelper.spacing(context, 8)),
+                        Row(
+                          children: [
+                            Icon(
+                              Icons.visibility_off,
+                              size: ResponsiveHelper.iconSize(context, 14),
+                              color: Colors.orange[600],
+                            ),
+                            SizedBox(width: ResponsiveHelper.spacing(context, 6)),
+                            Text(
+                              '공개: ${to.publishAtDisplay ?? ''}',
+                              style: ResponsiveHelper.smallStyle(
+                                context,
+                                color: Colors.orange[700],
+                              ).copyWith(fontWeight: FontWeight.w500),
+                            ),
+                          ],
+                        ),
+                      ],
                       SizedBox(height: ResponsiveHelper.spacing(context, 12)),
                       
                       // ✅ 3줄: 확정 + 대기 + 화살표
@@ -425,6 +449,47 @@ class _TOItemCardState extends State<TOItemCard> {
             ],
           ],
         ),
+      ),
+    );
+  }
+  /// ✨ 예약 공개 배지
+  Widget _buildScheduledBadge(BuildContext context) {
+    final to = widget.toItem.to;
+    
+    // 예약 대기 상태가 아니면 빈 위젯
+    if (!to.isPendingPublish) {
+      return const SizedBox.shrink();
+    }
+    
+    return Container(
+      padding: EdgeInsets.symmetric(
+        horizontal: ResponsiveHelper.spacing(context, 8),
+        vertical: ResponsiveHelper.spacing(context, 5),
+      ),
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          colors: [Colors.orange[100]!, Colors.orange[50]!],
+        ),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: Colors.orange[300]!, width: 1.5),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(
+            Icons.schedule,
+            size: ResponsiveHelper.iconSize(context, 12),
+            color: Colors.orange[700],
+          ),
+          SizedBox(width: ResponsiveHelper.spacing(context, 4)),
+          Text(
+            '예약',
+            style: ResponsiveHelper.tinyStyle(
+              context,
+              color: Colors.orange[700],
+            ).copyWith(fontWeight: FontWeight.bold),
+          ),
+        ],
       ),
     );
   }

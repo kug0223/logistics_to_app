@@ -73,6 +73,10 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
   // 지원 마감
   int _hoursBeforeStart = 2;
   DateTime? _fixedDeadline; 
+  // 예약 공개
+  String _publishMode = 'immediate';  // 'immediate' | 'scheduled'
+  int _publishDaysBefore = 1;         // D-1, D-2, D-3
+  String _publishTime = '14:00';      // 공개 시간
 
   // 업무 상세
   final List<WorkDetailInput> _workDetails = [];
@@ -319,6 +323,10 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
       _fixedDeadline = null;
       _linkToExisting = false;
       _selectedGroupId = null;
+      // 예약 공개 초기화
+      _publishMode = 'immediate';
+      _publishDaysBefore = 1;
+      _publishTime = '14:00';
     });
   }
 
@@ -467,6 +475,10 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
         groupName: _linkToExisting && _selectedGroupId != null
             ? _myRecentTOs.firstWhere((to) => to.groupId == _selectedGroupId).groupName
             : null,
+        // ✅ 예약 공개 설정
+        publishMode: _publishMode,
+        publishDaysBefore: _publishMode == 'scheduled' ? _publishDaysBefore : null,
+        publishTime: _publishMode == 'scheduled' ? _publishTime : null,
       );
 
       return toId != null;
@@ -540,6 +552,10 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
           startDate: startDate,
           endDate: endDate,
           isGroupMaster: i == 0,
+          // ✅ 예약 공개 설정
+          publishMode: _publishMode,
+          publishDaysBefore: _publishMode == 'scheduled' ? _publishDaysBefore : null,
+          publishTime: _publishMode == 'scheduled' ? _publishTime : null,
         );
 
         if (toId == null) {
@@ -617,6 +633,21 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
                 fixedDeadline: _fixedDeadline,
                 onFixedDeadlineChanged: (dt) => setState(() => _fixedDeadline = dt),
                 rangeEndDate: _rangeEnd,
+              ),
+              SizedBox(height: ResponsiveHelper.spacing(context, 16)),
+              
+              // ✅ 예약 공개 설정
+              TOPublishSection(
+                publishMode: _publishMode,
+                onPublishModeChanged: (mode) => setState(() => _publishMode = mode),
+                publishDaysBefore: _publishDaysBefore,
+                onDaysBeforeChanged: (days) => setState(() => _publishDaysBefore = days),
+                publishTime: _publishTime,
+                onTimeChanged: (time) => setState(() => _publishTime = time),
+                previewDates: _selectedJobType == 'long_term' 
+                    ? (_rangeStart != null ? [_rangeStart!] : [])
+                    : _selectedDates,
+                isLongTerm: _selectedJobType == 'long_term',
               ),
               SizedBox(height: ResponsiveHelper.spacing(context, 16)),
               

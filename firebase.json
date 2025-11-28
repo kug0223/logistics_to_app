@@ -1,1 +1,39 @@
-{"flutter":{"platforms":{"android":{"default":{"projectId":"logistics-to-system","appId":"1:635507076709:android:bc2dafc49476cf11a2e08c","fileOutput":"android/app/google-services.json"}},"dart":{"lib/firebase_options.dart":{"projectId":"logistics-to-system","configurations":{"android":"1:635507076709:android:bc2dafc49476cf11a2e08c","ios":"1:635507076709:ios:7e9c4d71ef689c49a2e08c"}}}}}}
+{
+  "flutter": {
+    "platforms": {
+      "android": {
+        "default": {
+          "projectId": "logistics-to-system",
+          "appId": "1:635507076709:android:bc2dafc49476cf11a2e08c",
+          "fileOutput": "android/app/google-services.json"
+        }
+      },
+      "dart": {
+        "lib/firebase_options.dart": {
+          "projectId": "logistics-to-system",
+          "configurations": {
+            "android": "1:635507076709:android:bc2dafc49476cf11a2e08c",
+            "ios": "1:635507076709:ios:7e9c4d71ef689c49a2e08c"
+          }
+        }
+      }
+    }
+  },
+  "functions": [
+    {
+      "source": "functions",
+      "codebase": "default",
+      "ignore": [
+        "node_modules",
+        ".git",
+        "firebase-debug.log",
+        "firebase-debug.*.log",
+        "*.local"
+      ],
+      "predeploy": [
+        "npm --prefix \"$RESOURCE_DIR\" run lint",
+        "npm --prefix \"$RESOURCE_DIR\" run build"
+      ]
+    }
+  ]
+}

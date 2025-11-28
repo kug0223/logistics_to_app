@@ -350,6 +350,10 @@ class FirestoreService {
     // ⭐ 추가: 장기 근무용
     String? jobType = 'short',
     List<String>? workDays,
+    // ✅ 예약 공개 설정
+    String publishMode = 'immediate',
+    int? publishDaysBefore,
+    String? publishTime,
   }) async {
     try {
       print('🔧 [FirestoreService] TO 생성 시작...');
@@ -361,6 +365,27 @@ class FirestoreService {
       }
 
       // 2. TO 기본 정보 생성
+      // ✅ publishAt 계산 (예약 공개인 경우)
+      DateTime? publishAt;
+      bool shouldPublishImmediately = publishMode == 'immediate';
+      
+      if (publishMode == 'scheduled' && publishDaysBefore != null && publishTime != null) {
+        final targetDate = date.subtract(Duration(days: publishDaysBefore));
+        final timeParts = publishTime.split(':');
+        publishAt = DateTime(
+          targetDate.year,
+          targetDate.month,
+          targetDate.day,
+          int.parse(timeParts[0]),
+          int.parse(timeParts[1]),
+        );
+        
+        // ✅ 과거 날짜면 즉시 공개로 전환
+        if (publishAt.isBefore(DateTime.now())) {
+          shouldPublishImmediately = true;
+          print('⚠️ 공개 예정 시간이 과거입니다. 즉시 공개로 전환합니다.');
+        }
+      }
       final toData = {
         'businessId': businessId,
         'businessName': businessName,
@@ -383,6 +408,12 @@ class FirestoreService {
         'description': description ?? '',
         'creatorUID': creatorUID,
         'createdAt': FieldValue.serverTimestamp(),
+        // ✅ 예약 공개 설정
+        'publishMode': publishMode,
+        'publishAt': publishAt != null ? Timestamp.fromDate(publishAt) : null,
+        'isPublished': shouldPublishImmediately,  // 즉시 공개 또는 과거 날짜면 true
+        'publishDaysBefore': publishDaysBefore,
+        'publishTime': publishTime,
       };
 
       // 3. TO 문서 생성
@@ -2850,7 +2881,8 @@ class FirestoreService {
   // ═══════════════════════════════════════════════════════════
 
   /// 진행중인 TO 목록 조회 (대표 TO + 단일 TO)
-  Future<List<TOModel>> getActiveTOs() async {
+  /// [publishedOnly] true면 공개된 TO만 (사용자용), false면 전체 (관리자용)
+  Future<List<TOModel>> getActiveTOs({bool publishedOnly = false}) async {
     try {
       final snapshot = await _firestore
           .collection('tos')
@@ -2920,6 +2952,13 @@ class FirestoreService {
         }
       }
 
+      // ✅ 공개 필터링 (사용자용)
+      if (publishedOnly) {
+        final publishedTOs = activeTOs.where((to) => to.isPublished).toList();
+        print('✅ 공개된 진행중 TO: ${publishedTOs.length}개 (전체 ${activeTOs.length}개 중)');
+        return publishedTOs;
+      }
+      
       print('✅ 진행중 TO 조회: ${activeTOs.length}개 (그룹 대표 + 단일 TO)');
       return activeTOs;
     } catch (e) {

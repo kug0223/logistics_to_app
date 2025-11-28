@@ -46,6 +46,13 @@ class TOModel {
   final DateTime? reopenedAt;       // 재오픈 시각
   final String? reopenedBy;         // 재오픈 처리자 UID
 
+  // ✅ 예약 공개 관리
+  final String publishMode;         // 'immediate' (즉시) | 'scheduled' (예약)
+  final DateTime? publishAt;        // 예약 공개 시간
+  final bool isPublished;           // 실제 공개 여부
+  final int? publishDaysBefore;     // D-N (1, 2, 3 등)
+  final String? publishTime;        // 공개 시간 ('14:00' 등)
+
   TOModel({
     required this.id,
     required this.businessId,
@@ -77,6 +84,12 @@ class TOModel {
     this.closedBy,
     this.reopenedAt,
     this.reopenedBy,
+    // ✅ 예약 공개 관리
+    this.publishMode = 'immediate',   // 기본값: 즉시 공개
+    this.publishAt,
+    this.isPublished = true,          // 기본값: 공개됨 (하위 호환성)
+    this.publishDaysBefore,
+    this.publishTime,
   });
 
   /// Firestore 문서를 TOModel로 변환
@@ -135,6 +148,14 @@ class TOModel {
           ? (data['reopenedAt'] as Timestamp).toDate()
           : null,
       reopenedBy: data['reopenedBy'],
+      // ✅ 예약 공개 관리
+      publishMode: data['publishMode'] ?? 'immediate',
+      publishAt: data['publishAt'] != null
+          ? (data['publishAt'] as Timestamp).toDate()
+          : null,
+      isPublished: data['isPublished'] ?? true,  // 기존 데이터는 공개 상태
+      publishDaysBefore: data['publishDaysBefore'],
+      publishTime: data['publishTime'],
     );
   }
 
@@ -169,6 +190,12 @@ class TOModel {
       'closedBy': closedBy,
       'reopenedAt': reopenedAt != null ? Timestamp.fromDate(reopenedAt!) : null,
       'reopenedBy': reopenedBy,
+      // ✅ 예약 공개 관리
+      'publishMode': publishMode,
+      'publishAt': publishAt != null ? Timestamp.fromDate(publishAt!) : null,
+      'isPublished': isPublished,
+      'publishDaysBefore': publishDaysBefore,
+      'publishTime': publishTime,
     };
   }
 
@@ -203,6 +230,12 @@ class TOModel {
     String? closedBy,
     DateTime? reopenedAt,
     String? reopenedBy,
+    // ✅ 예약 공개 관리
+    String? publishMode,
+    DateTime? publishAt,
+    bool? isPublished,
+    int? publishDaysBefore,
+    String? publishTime,
   }) {
     return TOModel(
       id: id ?? this.id,
@@ -234,6 +267,12 @@ class TOModel {
       closedBy: closedBy ?? this.closedBy,
       reopenedAt: reopenedAt ?? this.reopenedAt,
       reopenedBy: reopenedBy ?? this.reopenedBy,
+      // ✅ 예약 공개 관리
+      publishMode: publishMode ?? this.publishMode,
+      publishAt: publishAt ?? this.publishAt,
+      isPublished: isPublished ?? this.isPublished,
+      publishDaysBefore: publishDaysBefore ?? this.publishDaysBefore,
+      publishTime: publishTime ?? this.publishTime,
       
     );
   }
@@ -517,5 +556,22 @@ class TOModel {
     final days = endDate!.difference(startDate!).inDays + 1;
     
     return '$start ~ $end ($days일)';
+  }
+  // ============================================
+  // ✅ 예약 공개 관련 헬퍼
+  // ============================================
+
+  /// 예약 공개 모드인지 확인
+  bool get isScheduledPublish => publishMode == 'scheduled';
+
+  /// 공개 대기 중인지 확인 (예약 모드 + 미공개)
+  bool get isPendingPublish => isScheduledPublish && !isPublished;
+
+  /// 공개 예정 시간 표시 (예: "11/27 14:00")
+  String? get publishAtDisplay {
+    if (publishAt == null) return null;
+    return '${publishAt!.month}/${publishAt!.day} '
+           '${publishAt!.hour.toString().padLeft(2, '0')}:'
+           '${publishAt!.minute.toString().padLeft(2, '0')}';
   }
 }
