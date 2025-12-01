@@ -2993,6 +2993,15 @@ class FirestoreService {
         } 
         // 단일 TO인 경우
         else {
+          // 🔥 장기공고: TO 레벨의 applicationDeadline 기준
+          if (masterTO.isLongTerm) {
+            if (!masterTO.isDeadlinePassed) {
+              activeTOs.add(masterTO);
+            }
+            continue;
+          }
+          
+          // 단기공고: WorkDetails 기준
           final workDetails = await getWorkDetails(masterTO.id);
           
           // 🔥 모든 WorkDetail이 마감됐는지 확인
@@ -3127,6 +3136,15 @@ class FirestoreService {
         } 
         // 단일 TO인 경우
         else {
+          // 🔥 장기공고: TO 레벨의 applicationDeadline 기준
+          if (masterTO.isLongTerm) {
+            if (masterTO.isDeadlinePassed) {
+              closedTOs.add(masterTO);
+            }
+            continue;
+          }
+          
+          // 단기공고: WorkDetails 기준
           final workDetails = await getWorkDetails(masterTO.id);
           
           // 🔥 모든 WorkDetail이 마감됐는지 확인
@@ -3615,6 +3633,43 @@ class FirestoreService {
       return true;
     } catch (e) {
       print('❌ WorkDetail 마감시간 재계산 실패: $e');
+      return false;
+    }
+  }
+  /// 🔥 장기공고용: WorkDetails 마감 상태만 초기화 (마감시간 변경 없음)
+  Future<bool> resetWorkDetailsClosedStatus(String toId) async {
+    try {
+      print('🔄 WorkDetails 마감 상태 초기화 시작: $toId');
+      
+      final workDetailsSnapshot = await _firestore
+          .collection('tos')
+          .doc(toId)
+          .collection('workDetails')
+          .get();
+      
+      if (workDetailsSnapshot.docs.isEmpty) {
+        print('⚠️ WorkDetails가 없습니다');
+        return true;
+      }
+      
+      final batch = _firestore.batch();
+      
+      for (var workDoc in workDetailsSnapshot.docs) {
+        batch.update(workDoc.reference, {
+          'isManualClosed': false,
+          'isEmergencyOpen': false,
+          'closedAt': FieldValue.delete(),
+          'closedBy': FieldValue.delete(),
+        });
+      }
+      
+      await batch.commit();
+      
+      clearCache(toId: toId);
+      print('✅ WorkDetails 마감 상태 초기화 완료: ${workDetailsSnapshot.docs.length}개');
+      return true;
+    } catch (e) {
+      print('❌ WorkDetails 마감 상태 초기화 실패: $e');
       return false;
     }
   }

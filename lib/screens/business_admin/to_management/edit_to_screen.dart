@@ -163,6 +163,10 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
         'publishTime': _publishMode == 'scheduled' ? _publishTime : null,
       };
       
+      // ✅ 장기공고: applicationDeadline 업데이트
+      if (widget.to.isLongTerm && _fixedDeadline != null) {
+        updates['applicationDeadline'] = Timestamp.fromDate(_fixedDeadline!);
+      }
       // 재오픈 처리
       updates['closedAt'] = FieldValue.delete();
       updates['closedBy'] = FieldValue.delete();
@@ -193,14 +197,22 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
         print('   ✅ ${work.workType} 업데이트 완료');
       }
       
-      print('🔥 [6단계] 업무별 마감시간 재계산 시작');
-      await _firestoreService.recalculateWorkDetailDeadlines(
-        toId: widget.to.id,
-        workDate: widget.to.date,
-        hoursBeforeStart: _hoursBeforeStart,
-        resetClosedStatus: true,
-      );
-      print('✅ [7단계] 업무별 마감시간 재계산 완료');
+      // 🔥 [6단계] 업무별 마감시간 재계산 또는 상태 초기화
+      if (widget.to.isLongTerm) {
+        // 장기공고: WorkDetails 마감 상태만 초기화 (마감시간은 TO 레벨)
+        print('🔥 [6단계] 장기공고 WorkDetails 마감 상태 초기화');
+        await _firestoreService.resetWorkDetailsClosedStatus(widget.to.id);
+      } else {
+        // 단기공고: 업무별 마감시간 재계산
+        print('🔥 [6단계] 단기공고 업무별 마감시간 재계산');
+        await _firestoreService.recalculateWorkDetailDeadlines(
+          toId: widget.to.id,
+          workDate: widget.to.date,
+          hoursBeforeStart: _hoursBeforeStart,
+          resetClosedStatus: true,
+        );
+      }
+      print('✅ [7단계] 완료');
       
       _firestoreService.clearCache(toId: widget.to.id);
       _firestoreService.clearCache();

@@ -3,6 +3,10 @@ import 'package:intl/intl.dart';
 
 // Models
 import '../../../models/ui/admin_to_list_ui_models.dart';
+import '../../../models/core/work_detail_model.dart';
+
+// Helper
+import '../../../utils/toast_helper.dart';
 
 // Services
 import '../../../services/firestore_service.dart';
@@ -107,9 +111,22 @@ class _TOGroupCardState extends State<TOGroupCard> {
     final allClosed = widget.groupItem.groupTOs.isEmpty
         ? false
         : widget.groupItem.groupTOs.every((toItem) {
-            // 장기공고: applicationDeadline 기준으로 판단 (WorkDetails 로드 여부 상관없이)
+            // 장기공고: endDate 또는 applicationDeadline 기준
             if (toItem.to.isLongTerm) {
-              return toItem.to.isManualClosed || toItem.to.isDeadlinePassed;
+              if (toItem.to.isManualClosed) return true;
+              
+              // endDate가 있으면 endDate 기준, 없으면 applicationDeadline 기준
+              final now = DateTime.now();
+              if (toItem.to.endDate != null) {
+                final endDate = DateTime(
+                  toItem.to.endDate!.year,
+                  toItem.to.endDate!.month,
+                  toItem.to.endDate!.day,
+                  23, 59, 59,
+                );
+                return now.isAfter(endDate);
+              }
+              return toItem.to.isDeadlinePassed;
             }
             
             // 단기공고: workDetails 로드 안됐으면 TO 문서의 마감 상태 사용
@@ -879,17 +896,68 @@ class _TOGroupCardState extends State<TOGroupCard> {
         break;
 
       case 'confirmedList':
+        // ✅ WorkDetails 로드 확인 후 다이얼로그 열기
+        final toItemForConfirmed = widget.groupItem.groupTOs.first;
+        
+        if (!toItemForConfirmed.isWorkDetailLoaded || toItemForConfirmed.workDetails.isEmpty) {
+          showDialog(
+            context: context,
+            barrierDismissible: false,
+            builder: (_) => const Center(child: CircularProgressIndicator()),
+          );
+          
+          try {
+            final result = await widget.firestoreService.loadTOWorkDetails(toItemForConfirmed.to);
+            toItemForConfirmed.setWorkDetails(
+              result['workDetails'] as List<WorkDetailModel>,
+              result['workStats'] as Map<String, Map<String, int>>,
+            );
+          } catch (e) {
+            Navigator.pop(context);
+            ToastHelper.showError('데이터를 불러오는데 실패했습니다.');
+            return;
+          }
+          
+          Navigator.pop(context);
+        }
+        
         ConfirmedListDialog(
           context: context,
-          toItem: widget.groupItem.groupTOs.first,
+          toItem: toItemForConfirmed,
           firestoreService: widget.firestoreService,
         ).show();
         break;
 
       case 'manageWorkDetails':
+        // ✅ WorkDetails 로드 확인 후 다이얼로그 열기
+        final toItem = widget.groupItem.groupTOs.first;
+        
+        if (!toItem.isWorkDetailLoaded || toItem.workDetails.isEmpty) {
+          // 로딩 표시
+          showDialog(
+            context: context,
+            barrierDismissible: false,
+            builder: (_) => const Center(child: CircularProgressIndicator()),
+          );
+          
+          try {
+            final result = await widget.firestoreService.loadTOWorkDetails(toItem.to);
+            toItem.setWorkDetails(
+              result['workDetails'] as List<WorkDetailModel>,
+              result['workStats'] as Map<String, Map<String, int>>,
+            );
+          } catch (e) {
+            Navigator.pop(context); // 로딩 닫기
+            ToastHelper.showError('데이터를 불러오는데 실패했습니다.');
+            return;
+          }
+          
+          Navigator.pop(context); // 로딩 닫기
+        }
+        
         WorkDetailManagementDialog(
           context: context,
-          toItem: widget.groupItem.groupTOs.first,
+          toItem: toItem,
           firestoreService: widget.firestoreService,
           onComplete: widget.onChanged,
         ).show();

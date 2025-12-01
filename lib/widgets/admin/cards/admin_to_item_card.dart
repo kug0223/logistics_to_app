@@ -3,6 +3,10 @@ import 'package:intl/intl.dart';
 
 // Models
 import '../../../models/ui/admin_to_list_ui_models.dart';
+import '../../../models/core/work_detail_model.dart';
+
+// Helper
+import '../../../utils/toast_helper.dart';
 
 // Services
 import '../../../services/firestore_service.dart';
@@ -90,8 +94,23 @@ class _TOItemCardState extends State<TOItemCard> {
     // 전체 마감 여부
     bool allClosed;
     if (widget.toItem.to.isLongTerm) {
-      // 장기공고: applicationDeadline 기준
-      allClosed = widget.toItem.to.isManualClosed || widget.toItem.to.isDeadlinePassed;
+      // 장기공고: endDate 또는 applicationDeadline 기준
+      if (widget.toItem.to.isManualClosed) {
+        allClosed = true;
+      } else {
+        final now = DateTime.now();
+        if (widget.toItem.to.endDate != null) {
+          final endDate = DateTime(
+            widget.toItem.to.endDate!.year,
+            widget.toItem.to.endDate!.month,
+            widget.toItem.to.endDate!.day,
+            23, 59, 59,
+          );
+          allClosed = now.isAfter(endDate);
+        } else {
+          allClosed = widget.toItem.to.isDeadlinePassed;
+        }
+      }
     } else if (!widget.toItem.isWorkDetailLoaded || widget.toItem.workDetails.isEmpty) {
       // 단기공고 (로드 안됨): TO 문서 기준
       allClosed = widget.toItem.to.isClosed;
@@ -565,6 +584,29 @@ class _TOItemCardState extends State<TOItemCard> {
         break;
         
       case 'confirmedList':
+        // ✅ WorkDetails 로드 확인 후 다이얼로그 열기
+        if (!widget.toItem.isWorkDetailLoaded || widget.toItem.workDetails.isEmpty) {
+          showDialog(
+            context: context,
+            barrierDismissible: false,
+            builder: (_) => const Center(child: CircularProgressIndicator()),
+          );
+          
+          try {
+            final result = await widget.firestoreService.loadTOWorkDetails(widget.toItem.to);
+            widget.toItem.setWorkDetails(
+              result['workDetails'] as List<WorkDetailModel>,
+              result['workStats'] as Map<String, Map<String, int>>,
+            );
+          } catch (e) {
+            Navigator.pop(context);
+            ToastHelper.showError('데이터를 불러오는데 실패했습니다.');
+            return;
+          }
+          
+          Navigator.pop(context);
+        }
+        
         ConfirmedListDialog(
           context: context,
           toItem: widget.toItem,
@@ -573,6 +615,30 @@ class _TOItemCardState extends State<TOItemCard> {
         break;
         
       case 'manageWorkDetails':
+        // ✅ WorkDetails 로드 확인 후 다이얼로그 열기
+        if (!widget.toItem.isWorkDetailLoaded || widget.toItem.workDetails.isEmpty) {
+          // 로딩 표시
+          showDialog(
+            context: context,
+            barrierDismissible: false,
+            builder: (_) => const Center(child: CircularProgressIndicator()),
+          );
+          
+          try {
+            final result = await widget.firestoreService.loadTOWorkDetails(widget.toItem.to);
+            widget.toItem.setWorkDetails(
+              result['workDetails'] as List<WorkDetailModel>,
+              result['workStats'] as Map<String, Map<String, int>>,
+            );
+          } catch (e) {
+            Navigator.pop(context); // 로딩 닫기
+            ToastHelper.showError('데이터를 불러오는데 실패했습니다.');
+            return;
+          }
+          
+          Navigator.pop(context); // 로딩 닫기
+        }
+        
         WorkDetailManagementDialog(
           context: context,
           toItem: widget.toItem,

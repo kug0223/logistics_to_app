@@ -70,7 +70,12 @@ class _WorkforceListViewState extends State<WorkforceListView> {
 
   /// ✨ TO 목록 로드 (Lazy Loading - 겉 카드만)
   Future<void> _loadTOsWithStats() async {
-    setState(() => _isLoading = true);
+    setState(() {
+      _isLoading = true;
+      // ✅ 새로고침 시 펼침 상태 초기화
+      _expandedGroups.clear();
+      _expandedTOs.clear();
+    });
 
     try {
       // ✨ 겉 카드만 로드 (상세 정보 없이)
