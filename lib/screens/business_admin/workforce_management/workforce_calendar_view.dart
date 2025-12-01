@@ -662,6 +662,7 @@ class _WorkforceCalendarViewState extends State<WorkforceCalendarView> {
                 expandedTOs: _expandedTOs,
                 onToggleExpand: () => _handleGroupToggle(groupItem),
                 onToggleTOExpand: _handleTOToggle,
+                selectedDate: _selectedDay,  // ✨ 추가
               ),
             );
           },

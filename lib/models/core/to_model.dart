@@ -1,4 +1,5 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
+import '../../../utils/format_helper.dart';
 
 /// TO(근무 오더) 모델 - 하위 컬렉션 방식 + 그룹 기능
 /// workDetails 하위 컬렉션에 업무 상세 정보 저장
@@ -291,14 +292,11 @@ class TOModel {
     _cachedMinStartTime = minStart;
     _cachedMaxEndTime = maxEnd;
   }
-  /// 장기 근무 기간 표시 (예: "3/1 ~ 3/31 (월,수,금)")
+  /// 장기 근무 기간 표시 (예: "11/28 (목) ~ 12/7 (토)")
   String get longTermPeriodWithDays {
     if (!isLongTerm || startDate == null || endDate == null) return '';
     
-    final start = '${startDate!.month}/${startDate!.day}';
-    final end = '${endDate!.month}/${endDate!.day}';
-    
-    return '$start ~ $end';  // ⭐ 요일 제거
+    return '${FormatHelper.formatDate(startDate!)} ~ ${FormatHelper.formatDate(endDate!)}';
   }
   /// 근무 요일 레이블 (새로 추가)
   String get workDaysLabel {
