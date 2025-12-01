@@ -90,134 +90,141 @@ class WorkDetailRow extends StatelessWidget {
             ),
             SizedBox(width: ResponsiveHelper.spacing(context, 8)),
             
-            // ✨ 메인 컨텐츠
+            // ✨ 메인 컨텐츠 (카드 전체 클릭 가능)
             Expanded(
-              child: Container(
-                padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 12)),
-                decoration: BoxDecoration(
-                  color: Colors.white,
+              child: Material(
+                color: Colors.transparent,
+                child: InkWell(
+                  onTap: () => _showApplicantsDialog(context),
                   borderRadius: BorderRadius.circular(10),
-                  border: Border.all(color: AppColors.grey200),
-                ),
-                child: Row(
-                  children: [
-                    // 업무 아이콘
-                    _buildWorkIcon(context),
-                    
-                    SizedBox(width: ResponsiveHelper.spacing(context, 12)),
-                    
-                    // 업무 정보
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          // 1줄: 업무명
-                          Text(
-                            work.workType,
-                            style: ResponsiveHelper.bodyStyle(context).copyWith(
-                              fontWeight: FontWeight.w600,
-                              color: AppColors.textPrimary,
-                            ),
-                          ),
-                          SizedBox(height: ResponsiveHelper.spacing(context, 4)),
-                          // 2줄: 근무시간
-                          Row(
+                  child: Container(
+                    padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 12)),
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(10),
+                      border: Border.all(color: AppColors.grey200),
+                    ),
+                    child: Row(
+                      children: [
+                        // 업무 아이콘
+                        _buildWorkIcon(context),
+                        
+                        SizedBox(width: ResponsiveHelper.spacing(context, 12)),
+                        
+                        // 업무 정보
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            mainAxisSize: MainAxisSize.min,
                             children: [
-                              Icon(
-                                Icons.access_time,
-                                size: ResponsiveHelper.iconSize(context, 12),
-                                color: AppColors.grey500,
-                              ),
-                              SizedBox(width: ResponsiveHelper.spacing(context, 4)),
+                              // 1줄: 업무명
                               Text(
-                                '${work.startTime} ~ ${work.endTime}',
-                                style: ResponsiveHelper.smallStyle(
-                                  context,
-                                  color: AppColors.grey600,
+                                work.workType,
+                                style: ResponsiveHelper.bodyStyle(context).copyWith(
+                                  fontWeight: FontWeight.w600,
+                                  color: AppColors.textPrimary,
                                 ),
                               ),
-                            ],
-                          ),
-                          // 3줄: 마감시간 (단기공고만 - 장기공고는 카드 레벨에서 표시)
-                          if (!toItem.to.isLongTerm) ...[
-                            SizedBox(height: ResponsiveHelper.spacing(context, 2)),
-                            Row(
-                              children: [
-                                Icon(
-                                  Icons.timer_off_outlined,
-                                  size: ResponsiveHelper.iconSize(context, 12),
-                                  color: isClosed ? AppColors.grey500 : AppColors.warningDark,
-                                ),
-                                SizedBox(width: ResponsiveHelper.spacing(context, 4)),
-                                Text(
-                                  '마감 ${work.applicationDeadline != null ? FormatHelper.formatTime(work.applicationDeadline!) : work.startTime}',
-                                  style: ResponsiveHelper.smallStyle(
-                                    context,
-                                    color: isClosed ? AppColors.grey500 : AppColors.warningDark,
+                              SizedBox(height: ResponsiveHelper.spacing(context, 4)),
+                              // 2줄: 근무시간
+                              Row(
+                                children: [
+                                  Icon(
+                                    Icons.access_time,
+                                    size: ResponsiveHelper.iconSize(context, 12),
+                                    color: AppColors.grey500,
                                   ),
-                                ),
-                                if (isClosed) ...[
-                                  SizedBox(width: ResponsiveHelper.spacing(context, 6)),
-                                  Container(
-                                    padding: EdgeInsets.symmetric(
-                                      horizontal: ResponsiveHelper.spacing(context, 6),
-                                      vertical: ResponsiveHelper.spacing(context, 2),
-                                    ),
-                                    decoration: BoxDecoration(
-                                      color: AppColors.grey200,
-                                      borderRadius: BorderRadius.circular(4),
-                                    ),
-                                    child: Text(
-                                      '마감됨',
-                                      style: ResponsiveHelper.tinyStyle(
-                                        context,
-                                        color: AppColors.grey600,
-                                      ),
+                                  SizedBox(width: ResponsiveHelper.spacing(context, 4)),
+                                  Text(
+                                    '${work.startTime} ~ ${work.endTime}',
+                                    style: ResponsiveHelper.smallStyle(
+                                      context,
+                                      color: AppColors.grey600,
                                     ),
                                   ),
                                 ],
-                              ],
-                            ),
-                          ],
-                          SizedBox(height: ResponsiveHelper.spacing(context, 2)),
-                          // 4줄: 급여
-                          Row(
-                            children: [
-                              Icon(
-                                Icons.paid,
-                                size: ResponsiveHelper.iconSize(context, 12),
-                                color: AppColors.successDark,
                               ),
-                              SizedBox(width: ResponsiveHelper.spacing(context, 4)),
-                              Text(
-                                FormatHelper.formatWage(work.wage),
-                                style: ResponsiveHelper.smallStyle(
-                                  context,
-                                  color: AppColors.successDark,
-                                ).copyWith(fontWeight: FontWeight.w600),
+                              // 3줄: 마감시간 (단기공고만 - 장기공고는 카드 레벨에서 표시)
+                              if (!toItem.to.isLongTerm) ...[
+                                SizedBox(height: ResponsiveHelper.spacing(context, 2)),
+                                Row(
+                                  children: [
+                                    Icon(
+                                      Icons.timer_off_outlined,
+                                      size: ResponsiveHelper.iconSize(context, 12),
+                                      color: isClosed ? AppColors.grey500 : AppColors.warningDark,
+                                    ),
+                                    SizedBox(width: ResponsiveHelper.spacing(context, 4)),
+                                    Text(
+                                      '마감 ${work.applicationDeadline != null ? FormatHelper.formatTime(work.applicationDeadline!) : work.startTime}',
+                                      style: ResponsiveHelper.smallStyle(
+                                        context,
+                                        color: isClosed ? AppColors.grey500 : AppColors.warningDark,
+                                      ),
+                                    ),
+                                    if (isClosed) ...[
+                                      SizedBox(width: ResponsiveHelper.spacing(context, 6)),
+                                      Container(
+                                        padding: EdgeInsets.symmetric(
+                                          horizontal: ResponsiveHelper.spacing(context, 6),
+                                          vertical: ResponsiveHelper.spacing(context, 2),
+                                        ),
+                                        decoration: BoxDecoration(
+                                          color: AppColors.grey200,
+                                          borderRadius: BorderRadius.circular(4),
+                                        ),
+                                        child: Text(
+                                          '마감됨',
+                                          style: ResponsiveHelper.tinyStyle(
+                                            context,
+                                            color: AppColors.grey600,
+                                          ),
+                                        ),
+                                      ),
+                                    ],
+                                  ],
+                                ),
+                              ],
+                              SizedBox(height: ResponsiveHelper.spacing(context, 2)),
+                              // 4줄: 급여
+                              Row(
+                                children: [
+                                  Icon(
+                                    Icons.paid,
+                                    size: ResponsiveHelper.iconSize(context, 12),
+                                    color: AppColors.successDark,
+                                  ),
+                                  SizedBox(width: ResponsiveHelper.spacing(context, 4)),
+                                  Text(
+                                    FormatHelper.formatWage(work.wage),
+                                    style: ResponsiveHelper.smallStyle(
+                                      context,
+                                      color: AppColors.successDark,
+                                    ).copyWith(fontWeight: FontWeight.w600),
+                                  ),
+                                ],
                               ),
                             ],
                           ),
-                        ],
-                      ),
-                    ),
-                    
-                    // 오른쪽: 인원 + 버튼 (세로 배치)
-                    Column(
-                      crossAxisAlignment: CrossAxisAlignment.end,
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        // 인원 현황
-                        _buildPersonnelStatus(context, isFull, isClosed, statusColor),
+                        ),
                         
-                        SizedBox(height: ResponsiveHelper.spacing(context, 8)),
-                        
-                        // 지원자 보기 버튼
-                        _buildApplicantButton(context, theme),
+                        // 오른쪽: 인원 + 버튼 (세로 배치)
+                        Column(
+                          crossAxisAlignment: CrossAxisAlignment.end,
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            // 인원 현황
+                            _buildPersonnelStatus(context, isFull, isClosed, statusColor),
+                            
+                            SizedBox(height: ResponsiveHelper.spacing(context, 8)),
+                            
+                            // 지원자 보기 버튼
+                            _buildApplicantButton(context, theme),
+                          ],
+                        ),
                       ],
                     ),
-                  ],
+                  ),
                 ),
               ),
             ),

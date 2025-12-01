@@ -12,6 +12,9 @@ import '../utils/toast_helper.dart';
 import '../models/core/business_work_type_model.dart';
 import '../models/core/attendance_model.dart';
 import '../models/core/schedule_change_request_model.dart';
+import '../models/core/review_model.dart';
+import '../models/core/id_card_access_request_model.dart';
+import '../models/core/notification_model.dart';
 
 class FirestoreService {
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
@@ -4826,6 +4829,639 @@ class FirestoreService {
     } catch (e) {
       print('❌ totalRequired 업데이트 실패: $e');
     }
+  }
+  // ═══════════════════════════════════════════════════════════════════════════
+  // 📝 FirestoreService 추가 메서드 (리뷰, 신분증 열람, 알림)
+  // 이 내용을 lib/services/firestore_service.dart에 추가하세요
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  // ═══════════════════════════════════════════════════════════
+  // 리뷰 관리 (Review Management)
+  // ═══════════════════════════════════════════════════════════
+
+  /// 리뷰 작성
+  Future<String?> createReview({
+    required String applicationId,
+    required String reviewerId,
+    required String reviewerName,
+    required String targetUserId,
+    required String businessId,
+    required String businessName,
+    required String workType,
+    required DateTime workDate,
+    required int rating,
+    String? comment,
+    bool wouldRehire = true,
+  }) async {
+    try {
+      print('📝 [createReview] 리뷰 작성 시작');
+      
+      // 1. 리뷰 생성
+      final docRef = await _firestore.collection('reviews').add({
+        'applicationId': applicationId,
+        'reviewerId': reviewerId,
+        'reviewerName': reviewerName,
+        'targetUserId': targetUserId,
+        'businessId': businessId,
+        'businessName': businessName,
+        'workType': workType,
+        'workDate': Timestamp.fromDate(workDate),
+        'rating': rating,
+        'comment': comment,
+        'wouldRehire': wouldRehire,
+        'createdAt': FieldValue.serverTimestamp(),
+      });
+      
+      // 2. 사용자 통계 업데이트 (평균 평점, 리뷰 수)
+      await _updateUserReviewStats(targetUserId);
+      
+      // 3. 지원서에 리뷰 작성 표시
+      await _firestore.collection('applications').doc(applicationId).update({
+        'hasReview': true,
+        'reviewId': docRef.id,
+      });
+      
+      // 4. 알림 생성
+      await createNotification(
+        NotificationModel.createReviewReceived(
+          userId: targetUserId,
+          businessName: businessName,
+          rating: rating,
+          reviewId: docRef.id,
+        ),
+      );
+      
+      print('✅ [createReview] 리뷰 작성 완료: ${docRef.id}');
+      return docRef.id;
+    } catch (e) {
+      print('❌ [createReview] 실패: $e');
+      return null;
+    }
+  }
+
+  /// 사용자 리뷰 통계 업데이트
+  Future<void> _updateUserReviewStats(String userId) async {
+    try {
+      final reviews = await _firestore
+          .collection('reviews')
+          .where('targetUserId', isEqualTo: userId)
+          .get();
+      
+      if (reviews.docs.isEmpty) return;
+      
+      double totalRating = 0;
+      for (var doc in reviews.docs) {
+        totalRating += (doc.data()['rating'] ?? 0) as int;
+      }
+      
+      final avgRating = totalRating / reviews.docs.length;
+      
+      await _firestore.collection('users').doc(userId).update({
+        'averageRating': avgRating,
+        'reviewCount': reviews.docs.length,
+      });
+      
+      print('✅ 사용자 리뷰 통계 업데이트: avg=$avgRating, count=${reviews.docs.length}');
+    } catch (e) {
+      print('⚠️ 사용자 리뷰 통계 업데이트 실패: $e');
+    }
+  }
+
+  /// 사용자가 받은 리뷰 목록 조회
+  Future<List<ReviewModel>> getUserReviews(String userId, {int limit = 10}) async {
+    try {
+      final snapshot = await _firestore
+          .collection('reviews')
+          .where('targetUserId', isEqualTo: userId)
+          .orderBy('createdAt', descending: true)
+          .limit(limit)
+          .get();
+      
+      return snapshot.docs
+          .map((doc) => ReviewModel.fromFirestore(doc))
+          .toList();
+    } catch (e) {
+      print('❌ 사용자 리뷰 조회 실패: $e');
+      return [];
+    }
+  }
+
+  /// 특정 지원서의 리뷰 조회
+  Future<ReviewModel?> getReviewByApplicationId(String applicationId) async {
+    try {
+      final snapshot = await _firestore
+          .collection('reviews')
+          .where('applicationId', isEqualTo: applicationId)
+          .limit(1)
+          .get();
+      
+      if (snapshot.docs.isEmpty) return null;
+      return ReviewModel.fromFirestore(snapshot.docs.first);
+    } catch (e) {
+      print('❌ 리뷰 조회 실패: $e');
+      return null;
+    }
+  }
+
+  // ═══════════════════════════════════════════════════════════
+  // 우리 사업장 근무 이력 (Business Work History)
+  // ═══════════════════════════════════════════════════════════
+
+  /// 특정 사용자의 우리 사업장 근무 이력 조회
+  Future<Map<String, dynamic>> getBusinessWorkHistory({
+    required String userId,
+    required String businessId,
+  }) async {
+    try {
+      print('🔍 [getBusinessWorkHistory] 조회: userId=$userId, businessId=$businessId');
+      
+      // 1. 확정된 지원서 조회
+      final snapshot = await _firestore
+          .collection('applications')
+          .where('uid', isEqualTo: userId)
+          .where('businessId', isEqualTo: businessId)
+          .where('status', isEqualTo: 'CONFIRMED')
+          .orderBy('workDate', descending: true)
+          .get();
+      
+      if (snapshot.docs.isEmpty) {
+        return {
+          'workCount': 0,
+          'lastWorkDate': null,
+          'lastWorkType': null,
+          'averageRating': null,
+          'reviews': <ReviewModel>[],
+        };
+      }
+      
+      final applications = snapshot.docs
+          .map((doc) => ApplicationModel.fromFirestore(doc))
+          .toList();
+      
+      // 2. 이 사업장에서 받은 리뷰 조회
+      final reviewSnapshot = await _firestore
+          .collection('reviews')
+          .where('targetUserId', isEqualTo: userId)
+          .where('businessId', isEqualTo: businessId)
+          .orderBy('createdAt', descending: true)
+          .limit(5)
+          .get();
+      
+      final reviews = reviewSnapshot.docs
+          .map((doc) => ReviewModel.fromFirestore(doc))
+          .toList();
+      
+      // 3. 이 사업장에서의 평균 평점 계산
+      double? avgRating;
+      if (reviews.isNotEmpty) {
+        double total = 0;
+        for (var review in reviews) {
+          total += review.rating;
+        }
+        avgRating = total / reviews.length;
+      }
+      
+      // 4. 가장 최근 근무 정보
+      final lastApp = applications.first;
+      
+      print('✅ [getBusinessWorkHistory] 조회 완료: ${applications.length}회 근무');
+      
+      return {
+        'workCount': applications.length,
+        'lastWorkDate': lastApp.workDate,
+        'lastWorkType': lastApp.selectedWorkType,
+        'averageRating': avgRating,
+        'reviews': reviews,
+        'applications': applications,
+      };
+    } catch (e) {
+      print('❌ [getBusinessWorkHistory] 실패: $e');
+      return {
+        'workCount': 0,
+        'lastWorkDate': null,
+        'lastWorkType': null,
+        'averageRating': null,
+        'reviews': <ReviewModel>[],
+      };
+    }
+  }
+
+  // ═══════════════════════════════════════════════════════════
+  // 신분증 열람 요청 (ID Card Access Request)
+  // ═══════════════════════════════════════════════════════════
+
+  /// 신분증 열람 요청 생성
+  Future<String?> createIdCardAccessRequest({
+    required String requesterId,
+    required String requesterName,
+    required String requesterBusinessId,
+    required String requesterBusinessName,
+    required String targetUserId,
+    required String targetUserName,
+    required IdCardAccessReason reason,
+    String? customReason,
+    String? applicationId,
+  }) async {
+    try {
+      print('📄 [createIdCardAccessRequest] 요청 생성');
+      
+      // 1. 이미 대기 중인 요청이 있는지 확인
+      final existingPending = await _firestore
+          .collection('idCardAccessRequests')
+          .where('requesterId', isEqualTo: requesterId)
+          .where('targetUserId', isEqualTo: targetUserId)
+          .where('status', isEqualTo: 'pending')
+          .limit(1)
+          .get();
+      
+      if (existingPending.docs.isNotEmpty) {
+        print('⚠️ 이미 대기 중인 요청이 있습니다');
+        ToastHelper.showWarning('이미 요청 중입니다. 응답을 기다려주세요.');
+        return null;
+      }
+      
+      // 2. 유효한 승인이 있는지 확인
+      final existingApproved = await _firestore
+          .collection('idCardAccessRequests')
+          .where('requesterId', isEqualTo: requesterId)
+          .where('targetUserId', isEqualTo: targetUserId)
+          .where('status', isEqualTo: 'approved')
+          .get();
+      
+      for (var doc in existingApproved.docs) {
+        final expiresAt = (doc.data()['expiresAt'] as Timestamp?)?.toDate();
+        if (expiresAt != null && DateTime.now().isBefore(expiresAt)) {
+          print('⚠️ 이미 유효한 열람 권한이 있습니다');
+          ToastHelper.showInfo('이미 열람 권한이 있습니다.');
+          return doc.id;
+        }
+      }
+      
+      // 3. 요청 생성
+      final docRef = await _firestore.collection('idCardAccessRequests').add({
+        'requesterId': requesterId,
+        'requesterName': requesterName,
+        'requesterBusinessId': requesterBusinessId,
+        'requesterBusinessName': requesterBusinessName,
+        'targetUserId': targetUserId,
+        'targetUserName': targetUserName,
+        'reason': _reasonToString(reason),
+        'customReason': customReason,
+        'status': 'pending',
+        'requestedAt': FieldValue.serverTimestamp(),
+        'applicationId': applicationId,
+      });
+      
+      // 4. 알림 생성 (지원자에게)
+      final reasonText = reason == IdCardAccessReason.other 
+          ? (customReason ?? '기타') 
+          : _getReasonText(reason);
+      
+      await createNotification(
+        NotificationModel.createIdCardAccessRequest(
+          userId: targetUserId,
+          businessName: requesterBusinessName,
+          reason: reasonText,
+          requestId: docRef.id,
+        ),
+      );
+      
+      print('✅ [createIdCardAccessRequest] 요청 생성 완료: ${docRef.id}');
+      ToastHelper.showSuccess('신분증 열람 요청을 보냈습니다');
+      return docRef.id;
+    } catch (e) {
+      print('❌ [createIdCardAccessRequest] 실패: $e');
+      ToastHelper.showError('요청 실패');
+      return null;
+    }
+  }
+
+  /// 신분증 열람 요청 승인
+  Future<bool> approveIdCardAccessRequest(String requestId) async {
+    try {
+      print('✅ [approveIdCardAccessRequest] 승인: $requestId');
+      
+      final docRef = _firestore.collection('idCardAccessRequests').doc(requestId);
+      final doc = await docRef.get();
+      
+      if (!doc.exists) {
+        print('❌ 요청을 찾을 수 없습니다');
+        return false;
+      }
+      
+      final data = doc.data()!;
+      final expiresAt = DateTime.now().add(const Duration(days: 7));
+      
+      // 1. 요청 상태 업데이트
+      await docRef.update({
+        'status': 'approved',
+        'respondedAt': FieldValue.serverTimestamp(),
+        'expiresAt': Timestamp.fromDate(expiresAt),
+      });
+      
+      // 2. 알림 생성 (관리자에게)
+      await createNotification(
+        NotificationModel.createIdCardAccessApproved(
+          userId: data['requesterId'],
+          targetUserName: data['targetUserName'],
+          requestId: requestId,
+        ),
+      );
+      
+      print('✅ [approveIdCardAccessRequest] 승인 완료');
+      return true;
+    } catch (e) {
+      print('❌ [approveIdCardAccessRequest] 실패: $e');
+      return false;
+    }
+  }
+
+  /// 신분증 열람 요청 거절
+  Future<bool> rejectIdCardAccessRequest(String requestId, {String? reason}) async {
+    try {
+      print('❌ [rejectIdCardAccessRequest] 거절: $requestId');
+      
+      final docRef = _firestore.collection('idCardAccessRequests').doc(requestId);
+      final doc = await docRef.get();
+      
+      if (!doc.exists) {
+        print('❌ 요청을 찾을 수 없습니다');
+        return false;
+      }
+      
+      final data = doc.data()!;
+      
+      // 1. 요청 상태 업데이트
+      await docRef.update({
+        'status': 'rejected',
+        'respondedAt': FieldValue.serverTimestamp(),
+        'rejectionReason': reason,
+      });
+      
+      // 2. 알림 생성 (관리자에게)
+      await createNotification(
+        NotificationModel.createIdCardAccessRejected(
+          userId: data['requesterId'],
+          targetUserName: data['targetUserName'],
+          requestId: requestId,
+          rejectionReason: reason,
+        ),
+      );
+      
+      print('✅ [rejectIdCardAccessRequest] 거절 완료');
+      return true;
+    } catch (e) {
+      print('❌ [rejectIdCardAccessRequest] 실패: $e');
+      return false;
+    }
+  }
+
+  /// 신분증 열람 권한 확인 (pending, approved 모두 조회)
+  Future<IdCardAccessRequestModel?> checkIdCardAccess({
+    required String requesterId,
+    required String targetUserId,
+  }) async {
+    try {
+      // ✅ pending 또는 approved 상태 조회 (최신순)
+      final snapshot = await _firestore
+          .collection('idCardAccessRequests')
+          .where('requesterId', isEqualTo: requesterId)
+          .where('targetUserId', isEqualTo: targetUserId)
+          .where('status', whereIn: ['pending', 'approved'])
+          .orderBy('requestedAt', descending: true)
+          .limit(1)
+          .get(const GetOptions(source: Source.server));
+      
+      if (snapshot.docs.isEmpty) return null;
+      
+      final request = IdCardAccessRequestModel.fromFirestore(snapshot.docs.first);
+      
+      // 승인된 경우 만료 확인
+      if (request.status == IdCardAccessStatus.approved && request.isExpired) {
+        // 만료 상태로 업데이트
+        await _firestore
+            .collection('idCardAccessRequests')
+            .doc(request.id)
+            .update({'status': 'expired'});
+        return null;
+      }
+      
+      return request;
+    } catch (e) {
+      print('❌ 열람 권한 확인 실패: $e');
+      return null;
+    }
+  }
+
+  /// 대기 중인 신분증 열람 요청 조회 (지원자용)
+  Future<List<IdCardAccessRequestModel>> getPendingIdCardRequests(String userId) async {
+    try {
+      final snapshot = await _firestore
+          .collection('idCardAccessRequests')
+          .where('targetUserId', isEqualTo: userId)
+          .where('status', isEqualTo: 'pending')
+          .orderBy('requestedAt', descending: true)
+          .get();
+      
+      return snapshot.docs
+          .map((doc) => IdCardAccessRequestModel.fromFirestore(doc))
+          .toList();
+    } catch (e) {
+      print('❌ 대기 요청 조회 실패: $e');
+      return [];
+    }
+  }
+
+  /// 내가 보낸 신분증 열람 요청 조회 (관리자용)
+  Future<List<IdCardAccessRequestModel>> getMyIdCardRequests(String requesterId) async {
+    try {
+      final snapshot = await _firestore
+          .collection('idCardAccessRequests')
+          .where('requesterId', isEqualTo: requesterId)
+          .orderBy('requestedAt', descending: true)
+          .limit(50)
+          .get();
+      
+      return snapshot.docs
+          .map((doc) => IdCardAccessRequestModel.fromFirestore(doc))
+          .toList();
+    } catch (e) {
+      print('❌ 내 요청 조회 실패: $e');
+      return [];
+    }
+  }
+
+  // Helper methods for IdCardAccessReason
+  String _reasonToString(IdCardAccessReason reason) {
+    switch (reason) {
+      case IdCardAccessReason.incomeTax: return 'incomeTax';
+      case IdCardAccessReason.laborContract: return 'laborContract';
+      case IdCardAccessReason.insurance: return 'insurance';
+      case IdCardAccessReason.identityVerify: return 'identityVerify';
+      case IdCardAccessReason.other: return 'other';
+    }
+  }
+
+  String _getReasonText(IdCardAccessReason reason) {
+    switch (reason) {
+      case IdCardAccessReason.incomeTax: return '소득세 신고';
+      case IdCardAccessReason.laborContract: return '근로계약서 작성';
+      case IdCardAccessReason.insurance: return '4대보험 신고';
+      case IdCardAccessReason.identityVerify: return '본인 확인';
+      case IdCardAccessReason.other: return '기타';
+    }
+  }
+
+  // ═══════════════════════════════════════════════════════════
+  // 알림 관리 (Notification Management)
+  // ═══════════════════════════════════════════════════════════
+
+  /// 알림 생성
+  Future<String?> createNotification(NotificationModel notification) async {
+    try {
+      final docRef = await _firestore.collection('notifications').add(
+        notification.toMap(),
+      );
+      print('✅ 알림 생성: ${docRef.id}');
+      return docRef.id;
+    } catch (e) {
+      print('❌ 알림 생성 실패: $e');
+      return null;
+    }
+  }
+
+  /// 사용자 알림 목록 조회
+  Future<List<NotificationModel>> getUserNotifications(
+    String userId, {
+    int limit = 50,
+    bool unreadOnly = false,
+  }) async {
+    try {
+      Query query = _firestore
+          .collection('notifications')
+          .where('userId', isEqualTo: userId)
+          .orderBy('createdAt', descending: true)
+          .limit(limit);
+      
+      if (unreadOnly) {
+        query = query.where('isRead', isEqualTo: false);
+      }
+      
+      final snapshot = await query.get();
+      
+      return snapshot.docs
+          .map((doc) => NotificationModel.fromFirestore(doc))
+          .toList();
+    } catch (e) {
+      print('❌ 알림 조회 실패: $e');
+      return [];
+    }
+  }
+
+  /// 읽지 않은 알림 개수
+  Future<int> getUnreadNotificationCount(String userId) async {
+    try {
+      final snapshot = await _firestore
+          .collection('notifications')
+          .where('userId', isEqualTo: userId)
+          .where('isRead', isEqualTo: false)
+          .count()
+          .get();
+      
+      return snapshot.count ?? 0;
+    } catch (e) {
+      print('❌ 읽지 않은 알림 개수 조회 실패: $e');
+      return 0;
+    }
+  }
+
+  /// 알림 읽음 처리
+  Future<bool> markNotificationAsRead(String notificationId) async {
+    try {
+      await _firestore.collection('notifications').doc(notificationId).update({
+        'isRead': true,
+        'readAt': FieldValue.serverTimestamp(),
+      });
+      return true;
+    } catch (e) {
+      print('❌ 알림 읽음 처리 실패: $e');
+      return false;
+    }
+  }
+
+  /// 모든 알림 읽음 처리
+  Future<bool> markAllNotificationsAsRead(String userId) async {
+    try {
+      final batch = _firestore.batch();
+      
+      final snapshot = await _firestore
+          .collection('notifications')
+          .where('userId', isEqualTo: userId)
+          .where('isRead', isEqualTo: false)
+          .get();
+      
+      for (var doc in snapshot.docs) {
+        batch.update(doc.reference, {
+          'isRead': true,
+          'readAt': FieldValue.serverTimestamp(),
+        });
+      }
+      
+      await batch.commit();
+      print('✅ ${snapshot.docs.length}개 알림 읽음 처리');
+      return true;
+    } catch (e) {
+      print('❌ 전체 읽음 처리 실패: $e');
+      return false;
+    }
+  }
+
+  /// 오래된 알림 삭제 (30일 이상)
+  Future<int> deleteOldNotifications(String userId) async {
+    try {
+      final cutoffDate = DateTime.now().subtract(const Duration(days: 30));
+      
+      final snapshot = await _firestore
+          .collection('notifications')
+          .where('userId', isEqualTo: userId)
+          .where('createdAt', isLessThan: Timestamp.fromDate(cutoffDate))
+          .get();
+      
+      final batch = _firestore.batch();
+      for (var doc in snapshot.docs) {
+        batch.delete(doc.reference);
+      }
+      
+      await batch.commit();
+      print('✅ ${snapshot.docs.length}개 오래된 알림 삭제');
+      return snapshot.docs.length;
+    } catch (e) {
+      print('❌ 오래된 알림 삭제 실패: $e');
+      return 0;
+    }
+  }
+
+  /// 알림 스트림 (실시간)
+  Stream<List<NotificationModel>> watchUserNotifications(String userId) {
+    return _firestore
+        .collection('notifications')
+        .where('userId', isEqualTo: userId)
+        .orderBy('createdAt', descending: true)
+        .limit(50)
+        .snapshots()
+        .map((snapshot) => snapshot.docs
+            .map((doc) => NotificationModel.fromFirestore(doc))
+            .toList());
+  }
+
+  /// 읽지 않은 알림 개수 스트림 (실시간)
+  Stream<int> watchUnreadNotificationCount(String userId) {
+    return _firestore
+        .collection('notifications')
+        .where('userId', isEqualTo: userId)
+        .where('isRead', isEqualTo: false)
+        .snapshots()
+        .map((snapshot) => snapshot.docs.length);
   }
   
 }
