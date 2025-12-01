@@ -1,4 +1,7 @@
 import 'package:flutter/material.dart';
+import 'responsive_helper.dart';
+import 'toast_helper.dart';
+import '../theme/app_colors.dart';
 
 /// 공통 다이얼로그 헬퍼
 class DialogHelper {
@@ -25,33 +28,72 @@ class DialogHelper {
     IconData? icon,
     Color? iconColor,
   }) async {
+    final theme = Theme.of(context);
+    
     final result = await showDialog<bool>(
       context: context,
-      builder: (context) => AlertDialog(
+      builder: (dialogContext) => AlertDialog(
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(ResponsiveHelper.spacing(context, 24)),
+        ),
         title: icon != null
             ? Row(
                 children: [
-                  Icon(icon, color: iconColor ?? confirmColor),
-                  const SizedBox(width: 12),
-                  Text(title),
+                  Icon(
+                    icon, 
+                    color: iconColor ?? confirmColor ?? theme.primaryColor,
+                    size: ResponsiveHelper.iconSize(context, 24),
+                  ),
+                  SizedBox(width: ResponsiveHelper.spacing(context, 12)),
+                  Expanded(
+                    child: Text(
+                      title,
+                      style: ResponsiveHelper.subtitleStyle(context).copyWith(
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ),
                 ],
               )
-            : Text(title),
-        content: Text(message),
+            : Text(
+                title,
+                style: ResponsiveHelper.subtitleStyle(context).copyWith(
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+        content: Text(
+          message,
+          style: ResponsiveHelper.bodyStyle(
+            context,
+            color: theme.textTheme.bodyMedium?.color,
+          ),
+        ),
+        actionsPadding: EdgeInsets.all(ResponsiveHelper.spacing(context, 16)),
         actions: [
           TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: Text(cancelText),
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: Text(
+              cancelText,
+              style: ResponsiveHelper.bodyStyle(context),
+            ),
           ),
           ElevatedButton(
-            onPressed: () => Navigator.pop(context, true),
-            style: confirmColor != null
-                ? ElevatedButton.styleFrom(
-                    backgroundColor: confirmColor,
-                    foregroundColor: Colors.white,
-                  )
-                : null,
-            child: Text(confirmText),
+            onPressed: () => Navigator.pop(dialogContext, true),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: confirmColor ?? theme.primaryColor,
+              foregroundColor: Colors.white,
+              padding: EdgeInsets.symmetric(
+                horizontal: ResponsiveHelper.spacing(context, 20),
+                vertical: ResponsiveHelper.spacing(context, 12),
+              ),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(ResponsiveHelper.spacing(context, 8)),
+              ),
+            ),
+            child: Text(
+              confirmText,
+              style: ResponsiveHelper.bodyStyle(context, color: Colors.white),
+            ),
           ),
         ],
       ),
@@ -82,9 +124,9 @@ class DialogHelper {
       message: message,
       confirmText: confirmText,
       cancelText: cancelText,
-      confirmColor: Colors.red,
+      confirmColor: AppColors.error,
       icon: Icons.warning,
-      iconColor: Colors.red[700],
+      iconColor: AppColors.error,
     );
   }
 
@@ -106,23 +148,54 @@ class DialogHelper {
     IconData? icon,
     Color? iconColor,
   }) {
+    final theme = Theme.of(context);
+    
     return showDialog(
       context: context,
-      builder: (context) => AlertDialog(
+      builder: (dialogContext) => AlertDialog(
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(ResponsiveHelper.spacing(context, 24)),
+        ),
         title: icon != null
             ? Row(
                 children: [
-                  Icon(icon, color: iconColor),
-                  const SizedBox(width: 12),
-                  Text(title),
+                  Icon(
+                    icon, 
+                    color: iconColor ?? theme.primaryColor,
+                    size: ResponsiveHelper.iconSize(context, 24),
+                  ),
+                  SizedBox(width: ResponsiveHelper.spacing(context, 12)),
+                  Expanded(
+                    child: Text(
+                      title,
+                      style: ResponsiveHelper.subtitleStyle(context).copyWith(
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ),
                 ],
               )
-            : Text(title),
-        content: Text(message),
+            : Text(
+                title,
+                style: ResponsiveHelper.subtitleStyle(context).copyWith(
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+        content: Text(
+          message,
+          style: ResponsiveHelper.bodyStyle(
+            context,
+            color: theme.textTheme.bodyMedium?.color,
+          ),
+        ),
+        actionsPadding: EdgeInsets.all(ResponsiveHelper.spacing(context, 16)),
         actions: [
           TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: Text(buttonText),
+            onPressed: () => Navigator.pop(dialogContext),
+            child: Text(
+              buttonText,
+              style: ResponsiveHelper.bodyStyle(context),
+            ),
           ),
         ],
       ),
@@ -140,7 +213,7 @@ class DialogHelper {
       title: title,
       message: message,
       icon: Icons.error_outline,
-      iconColor: Colors.red[700],
+      iconColor: AppColors.error,
     );
   }
 
@@ -155,7 +228,7 @@ class DialogHelper {
       title: title,
       message: message,
       icon: Icons.check_circle_outline,
-      iconColor: Colors.green[700],
+      iconColor: AppColors.success,
     );
   }
 
@@ -170,7 +243,7 @@ class DialogHelper {
       title: title,
       message: message,
       icon: Icons.info_outline,
-      iconColor: Colors.blue[700],
+      iconColor: AppColors.info,
     );
   }
 
@@ -186,21 +259,31 @@ class DialogHelper {
     BuildContext context, {
     String message = '처리 중...',
   }) {
+    final theme = Theme.of(context);
+    
     showDialog(
       context: context,
       barrierDismissible: false,
-      builder: (context) => PopScope(
+      builder: (dialogContext) => PopScope(
         canPop: false,
         child: Center(
           child: Card(
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(ResponsiveHelper.spacing(context, 16)),
+            ),
             child: Padding(
-              padding: const EdgeInsets.all(20),
+              padding: ResponsiveHelper.cardPadding(context),
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  const CircularProgressIndicator(),
-                  const SizedBox(height: 16),
-                  Text(message),
+                  CircularProgressIndicator(
+                    color: theme.primaryColor,
+                  ),
+                  SizedBox(height: ResponsiveHelper.spacing(context, 16)),
+                  Text(
+                    message,
+                    style: ResponsiveHelper.bodyStyle(context),
+                  ),
                 ],
               ),
             ),
@@ -229,22 +312,40 @@ class DialogHelper {
   }) {
     return showDialog<T>(
       context: context,
-      builder: (context) => AlertDialog(
-        title: Text(title),
+      builder: (dialogContext) => AlertDialog(
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(ResponsiveHelper.spacing(context, 24)),
+        ),
+        title: Text(
+          title,
+          style: ResponsiveHelper.subtitleStyle(context).copyWith(
+            fontWeight: FontWeight.bold,
+          ),
+        ),
         content: Column(
           mainAxisSize: MainAxisSize.min,
           children: options.map((option) {
             final label = optionLabel?.call(option) ?? option.toString();
             return ListTile(
-              title: Text(label),
-              onTap: () => Navigator.pop(context, option),
+              title: Text(
+                label,
+                style: ResponsiveHelper.bodyStyle(context),
+              ),
+              onTap: () => Navigator.pop(dialogContext, option),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(ResponsiveHelper.spacing(context, 8)),
+              ),
             );
           }).toList(),
         ),
+        actionsPadding: EdgeInsets.all(ResponsiveHelper.spacing(context, 16)),
         actions: [
           TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('취소'),
+            onPressed: () => Navigator.pop(dialogContext),
+            child: Text(
+              '취소',
+              style: ResponsiveHelper.bodyStyle(context),
+            ),
           ),
         ],
       ),
@@ -267,13 +368,47 @@ class DialogHelper {
     required Widget content,
     List<Widget>? actions,
     bool barrierDismissible = true,
+    IconData? icon,
+    Color? iconColor,
   }) {
+    final theme = Theme.of(context);
+    
     return showDialog<T>(
       context: context,
       barrierDismissible: barrierDismissible,
-      builder: (context) => AlertDialog(
-        title: title != null ? Text(title) : null,
+      builder: (dialogContext) => AlertDialog(
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(ResponsiveHelper.spacing(context, 24)),
+        ),
+        title: title != null
+            ? (icon != null
+                ? Row(
+                    children: [
+                      Icon(
+                        icon,
+                        color: iconColor ?? theme.primaryColor,
+                        size: ResponsiveHelper.iconSize(context, 24),
+                      ),
+                      SizedBox(width: ResponsiveHelper.spacing(context, 12)),
+                      Expanded(
+                        child: Text(
+                          title,
+                          style: ResponsiveHelper.subtitleStyle(context).copyWith(
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ),
+                    ],
+                  )
+                : Text(
+                    title,
+                    style: ResponsiveHelper.subtitleStyle(context).copyWith(
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ))
+            : null,
         content: content,
+        actionsPadding: EdgeInsets.all(ResponsiveHelper.spacing(context, 16)),
         actions: actions,
       ),
     );
@@ -286,7 +421,9 @@ class DialogHelper {
       title: '로그아웃',
       message: '로그아웃 하시겠습니까?',
       confirmText: '로그아웃',
-      confirmColor: Colors.red,
+      confirmColor: AppColors.error,
+      icon: Icons.logout,
+      iconColor: AppColors.error,
     );
   }
 
@@ -319,9 +456,348 @@ class DialogHelper {
       title: title,
       message: message,
       confirmText: '취소하기',
-      confirmColor: Colors.orange,
+      confirmColor: AppColors.warning,
+      icon: Icons.cancel_outlined,
+      iconColor: AppColors.warning,
     );
   }
+
+  /// 텍스트 입력 다이얼로그
+  /// 
+  /// 사용 예:
+  /// ```dart
+  /// final reason = await DialogHelper.showTextInput(
+  ///   context,
+  ///   title: '거절 사유',
+  ///   message: '거절 사유를 입력해주세요.',
+  ///   hintText: '사유 입력',
+  ///   confirmText: '거절',
+  ///   confirmColor: Colors.red,
+  /// );
+  /// if (reason != null) { ... }
+  /// ```
+  static Future<String?> showTextInput(
+    BuildContext context, {
+    required String title,
+    String? message,
+    String? hintText,
+    String? initialValue,
+    int maxLines = 3,
+    int? maxLength,
+    String confirmText = '확인',
+    String cancelText = '취소',
+    Color? confirmColor,
+    IconData? icon,
+    Color? iconColor,
+    bool Function(String?)? validator,
+  }) async {
+    final controller = TextEditingController(text: initialValue);
+    final theme = Theme.of(context);
+    
+    final result = await showDialog<String>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (builderContext, setDialogState) => AlertDialog(
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(ResponsiveHelper.spacing(context, 24)),
+          ),
+          title: icon != null
+              ? Row(
+                  children: [
+                    Icon(
+                      icon, 
+                      color: iconColor ?? confirmColor ?? theme.primaryColor,
+                      size: ResponsiveHelper.iconSize(context, 24),
+                    ),
+                    SizedBox(width: ResponsiveHelper.spacing(context, 12)),
+                    Expanded(
+                      child: Text(
+                        title,
+                        style: ResponsiveHelper.subtitleStyle(context).copyWith(
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ),
+                  ],
+                )
+              : Text(
+                  title,
+                  style: ResponsiveHelper.subtitleStyle(context).copyWith(
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              if (message != null) ...[
+                Text(
+                  message,
+                  style: ResponsiveHelper.bodyStyle(
+                    context,
+                    color: theme.textTheme.bodyMedium?.color,
+                  ),
+                ),
+                SizedBox(height: ResponsiveHelper.spacing(context, 16)),
+              ],
+              TextField(
+                controller: controller,
+                maxLines: maxLines,
+                maxLength: maxLength,
+                style: ResponsiveHelper.bodyStyle(context),
+                decoration: InputDecoration(
+                  hintText: hintText,
+                  hintStyle: ResponsiveHelper.bodyStyle(
+                    context,
+                    color: theme.hintColor,
+                  ),
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(ResponsiveHelper.spacing(context, 8)),
+                  ),
+                  contentPadding: EdgeInsets.symmetric(
+                    horizontal: ResponsiveHelper.spacing(context, 12),
+                    vertical: ResponsiveHelper.spacing(context, 12),
+                  ),
+                ),
+                autofocus: true,
+              ),
+            ],
+          ),
+          actionsPadding: EdgeInsets.all(ResponsiveHelper.spacing(context, 16)),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext),
+              child: Text(
+                cancelText,
+                style: ResponsiveHelper.bodyStyle(context),
+              ),
+            ),
+            ElevatedButton(
+              onPressed: () {
+                final value = controller.text.trim();
+                if (validator != null && !validator(value)) {
+                  return;
+                }
+                Navigator.pop(dialogContext, value);
+              },
+              style: ElevatedButton.styleFrom(
+                backgroundColor: confirmColor ?? theme.primaryColor,
+                foregroundColor: Colors.white,
+                padding: EdgeInsets.symmetric(
+                  horizontal: ResponsiveHelper.spacing(context, 20),
+                  vertical: ResponsiveHelper.spacing(context, 12),
+                ),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(ResponsiveHelper.spacing(context, 8)),
+                ),
+              ),
+              child: Text(
+                confirmText,
+                style: ResponsiveHelper.bodyStyle(context, color: Colors.white),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+    
+    controller.dispose();
+    return result;
+  }
+  /// 거절 사유 선택 다이얼로그
+  /// 
+  /// 미리 정의된 사유 중 선택하거나 기타(직접 입력) 가능
+  /// 
+  /// 사용 예:
+  /// ```dart
+  /// final reason = await DialogHelper.showRejectReasonPicker(
+  ///   context,
+  ///   title: '거절 사유',
+  ///   targetName: '홍길동',
+  /// );
+  /// if (reason != null) { ... }
+  /// ```
+  static Future<String?> showRejectReasonPicker(
+    BuildContext context, {
+    required String title,
+    String? targetName,
+    String? message,
+  }) async {
+    final theme = Theme.of(context);
+    
+    // 거절 사유 옵션
+    final reasons = [
+      '경력/경험 부족',
+      '일정 불가',
+      '다른 지원자 확정',
+      '인원 충원 완료',
+      '서류 미비',
+      '기타',
+    ];
+    
+    String? selectedReason;
+    final customController = TextEditingController();
+    bool isCustom = false;
+    
+    final result = await showDialog<String>(
+      context: context,
+      builder: (dialogContext) {
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            return AlertDialog(
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(ResponsiveHelper.spacing(context, 24)),
+              ),
+              title: Row(
+                children: [
+                  Icon(
+                    Icons.cancel,
+                    color: AppColors.error,
+                    size: ResponsiveHelper.iconSize(context, 24),
+                  ),
+                  SizedBox(width: ResponsiveHelper.spacing(context, 12)),
+                  Expanded(
+                    child: Text(
+                      title,
+                      style: ResponsiveHelper.subtitleStyle(context).copyWith(
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+              content: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    if (targetName != null || message != null) ...[
+                      Text(
+                        message ?? '$targetName님의 지원을 거절합니다.',
+                        style: ResponsiveHelper.bodyStyle(
+                          context,
+                          color: theme.textTheme.bodyMedium?.color,
+                        ),
+                      ),
+                      SizedBox(height: ResponsiveHelper.spacing(context, 16)),
+                    ],
+                    
+                    Text(
+                      '거절 사유 선택',
+                      style: ResponsiveHelper.bodyStyle(context).copyWith(
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                    SizedBox(height: ResponsiveHelper.spacing(context, 12)),
+                    
+                    // 사유 선택 칩
+                    Wrap(
+                      spacing: ResponsiveHelper.spacing(context, 8),
+                      runSpacing: ResponsiveHelper.spacing(context, 8),
+                      children: reasons.map((reason) {
+                        final isSelected = selectedReason == reason;
+                        return ChoiceChip(
+                          label: Text(
+                            reason,
+                            style: ResponsiveHelper.smallStyle(
+                              context,
+                              color: isSelected ? Colors.white : theme.textTheme.bodyMedium?.color,
+                            ),
+                          ),
+                          selected: isSelected,
+                          selectedColor: AppColors.error,
+                          backgroundColor: AppColors.grey100,
+                          onSelected: (selected) {
+                            setDialogState(() {
+                              selectedReason = selected ? reason : null;
+                              isCustom = reason == '기타' && selected;
+                            });
+                          },
+                        );
+                      }).toList(),
+                    ),
+                    
+                    // 기타 선택 시 입력 필드
+                    if (isCustom) ...[
+                      SizedBox(height: ResponsiveHelper.spacing(context, 16)),
+                      TextField(
+                        controller: customController,
+                        maxLines: 2,
+                        maxLength: 100,
+                        style: ResponsiveHelper.bodyStyle(context),
+                        decoration: InputDecoration(
+                          hintText: '거절 사유를 입력하세요',
+                          hintStyle: ResponsiveHelper.bodyStyle(
+                            context,
+                            color: theme.hintColor,
+                          ),
+                          border: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(ResponsiveHelper.spacing(context, 8)),
+                          ),
+                          contentPadding: EdgeInsets.symmetric(
+                            horizontal: ResponsiveHelper.spacing(context, 12),
+                            vertical: ResponsiveHelper.spacing(context, 12),
+                          ),
+                        ),
+                        autofocus: true,
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+              actionsPadding: EdgeInsets.all(ResponsiveHelper.spacing(context, 16)),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(dialogContext),
+                  child: Text(
+                    '취소',
+                    style: ResponsiveHelper.bodyStyle(context),
+                  ),
+                ),
+                ElevatedButton(
+                  onPressed: selectedReason == null
+                      ? null
+                      : () {
+                          String finalReason;
+                          if (isCustom) {
+                            final customText = customController.text.trim();
+                            if (customText.isEmpty) {
+                              ToastHelper.showWarning('거절 사유를 입력해주세요.');
+                              return;
+                            }
+                            finalReason = customText;
+                          } else {
+                            finalReason = selectedReason!;
+                          }
+                          Navigator.pop(dialogContext, finalReason);
+                        },
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: AppColors.error,
+                    foregroundColor: Colors.white,
+                    disabledBackgroundColor: AppColors.grey300,
+                    padding: EdgeInsets.symmetric(
+                      horizontal: ResponsiveHelper.spacing(context, 20),
+                      vertical: ResponsiveHelper.spacing(context, 12),
+                    ),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(ResponsiveHelper.spacing(context, 8)),
+                    ),
+                  ),
+                  child: Text(
+                    '거절',
+                    style: ResponsiveHelper.bodyStyle(context, color: Colors.white),
+                  ),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+
+    return result;
+  }
+
   /// 서류 미등록 안내 다이얼로그 (서류 관리로 이동)
   /// 
   /// 사용 예:
@@ -340,25 +816,26 @@ class DialogHelper {
     required String title,
     required List<String> missingDocuments,
   }) async {
+    final theme = Theme.of(context);
+    
     final result = await showDialog<bool>(
       context: context,
-      builder: (context) => AlertDialog(
+      builder: (dialogContext) => AlertDialog(
         shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(16),
+          borderRadius: BorderRadius.circular(ResponsiveHelper.spacing(context, 24)),
         ),
         title: Row(
           children: [
             Icon(
               Icons.warning_amber_rounded,
-              color: Colors.orange[700],
-              size: 28,
+              color: AppColors.warning,
+              size: ResponsiveHelper.iconSize(context, 28),
             ),
-            const SizedBox(width: 12),
+            SizedBox(width: ResponsiveHelper.spacing(context, 12)),
             Expanded(
               child: Text(
                 title,
-                style: const TextStyle(
-                  fontSize: 18,
+                style: ResponsiveHelper.subtitleStyle(context).copyWith(
                   fontWeight: FontWeight.bold,
                 ),
               ),
@@ -369,17 +846,17 @@ class DialogHelper {
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text(
+            Text(
               '지원하기 전에 서류 등록이 필요합니다.',
-              style: TextStyle(fontSize: 15),
+              style: ResponsiveHelper.bodyStyle(context),
             ),
-            const SizedBox(height: 16),
+            SizedBox(height: ResponsiveHelper.spacing(context, 16)),
             Container(
-              padding: const EdgeInsets.all(12),
+              padding: ResponsiveHelper.cardPadding(context),
               decoration: BoxDecoration(
-                color: Colors.orange[50],
-                borderRadius: BorderRadius.circular(8),
-                border: Border.all(color: Colors.orange[200]!),
+                color: AppColors.warning.withOpacity(0.1),
+                borderRadius: BorderRadius.circular(ResponsiveHelper.spacing(context, 8)),
+                border: Border.all(color: AppColors.warning.withOpacity(0.3)),
               ),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -388,34 +865,38 @@ class DialogHelper {
                     children: [
                       Icon(
                         Icons.description_outlined,
-                        size: 20,
-                        color: Colors.orange[900],
+                        size: ResponsiveHelper.iconSize(context, 20),
+                        color: AppColors.warning,
                       ),
-                      const SizedBox(width: 8),
+                      SizedBox(width: ResponsiveHelper.spacing(context, 8)),
                       Text(
                         '미등록 항목:',
-                        style: TextStyle(
+                        style: ResponsiveHelper.bodyStyle(context).copyWith(
                           fontWeight: FontWeight.bold,
-                          color: Colors.orange[900],
+                          color: AppColors.warning,
                         ),
                       ),
                     ],
                   ),
-                  const SizedBox(height: 8),
+                  SizedBox(height: ResponsiveHelper.spacing(context, 8)),
                   ...missingDocuments.map((doc) => Padding(
-                        padding: const EdgeInsets.only(left: 8, top: 4),
+                        padding: EdgeInsets.only(
+                          left: ResponsiveHelper.spacing(context, 8),
+                          top: ResponsiveHelper.spacing(context, 4),
+                        ),
                         child: Row(
                           children: [
                             Icon(
                               Icons.circle,
-                              size: 6,
-                              color: Colors.orange[700],
+                              size: ResponsiveHelper.iconSize(context, 6),
+                              color: AppColors.warning,
                             ),
-                            const SizedBox(width: 8),
+                            SizedBox(width: ResponsiveHelper.spacing(context, 8)),
                             Text(
                               doc,
-                              style: TextStyle(
-                                color: Colors.orange[900],
+                              style: ResponsiveHelper.bodyStyle(
+                                context,
+                                color: AppColors.warning,
                               ),
                             ),
                           ],
@@ -424,32 +905,46 @@ class DialogHelper {
                 ],
               ),
             ),
-            const SizedBox(height: 12),
+            SizedBox(height: ResponsiveHelper.spacing(context, 12)),
             Text(
               '설정 > 내 서류 관리에서\n서류를 등록해주세요.',
-              style: TextStyle(
-                fontSize: 13,
-                color: Colors.grey[600],
+              style: ResponsiveHelper.smallStyle(
+                context,
+                color: theme.textTheme.bodySmall?.color,
               ),
             ),
           ],
         ),
+        actionsPadding: EdgeInsets.all(ResponsiveHelper.spacing(context, 16)),
         actions: [
           TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('취소'),
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: Text(
+              '취소',
+              style: ResponsiveHelper.bodyStyle(context),
+            ),
           ),
           ElevatedButton.icon(
-            onPressed: () => Navigator.pop(context, true),
+            onPressed: () => Navigator.pop(dialogContext, true),
             style: ElevatedButton.styleFrom(
-              backgroundColor: Theme.of(context).primaryColor,
+              backgroundColor: theme.primaryColor,
               foregroundColor: Colors.white,
+              padding: EdgeInsets.symmetric(
+                horizontal: ResponsiveHelper.spacing(context, 16),
+                vertical: ResponsiveHelper.spacing(context, 12),
+              ),
               shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(8),
+                borderRadius: BorderRadius.circular(ResponsiveHelper.spacing(context, 8)),
               ),
             ),
-            icon: const Icon(Icons.arrow_forward, size: 18),
-            label: const Text('서류 등록하기'),
+            icon: Icon(
+              Icons.arrow_forward,
+              size: ResponsiveHelper.iconSize(context, 18),
+            ),
+            label: Text(
+              '서류 등록하기',
+              style: ResponsiveHelper.bodyStyle(context, color: Colors.white),
+            ),
           ),
         ],
       ),

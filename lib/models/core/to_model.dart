@@ -36,6 +36,11 @@ class TOModel {
   final int totalConfirmed; // 전체 확정 인원
   final int totalPending;        // ✅ 추가
   final int totalApplications;   // ✅ 추가
+
+  // ✅ 그룹 마스터 전용 통계 (마스터 TO에만 저장)
+  final int? groupTotalRequired;   // 그룹 전체 필요 인원
+  final int? groupTotalConfirmed;  // 그룹 전체 확정 인원
+  final int? groupTotalPending;    // 그룹 전체 대기 인원
   
   final String? description; // 전체 설명
   final String creatorUID; // 생성한 관리자 UID
@@ -76,6 +81,11 @@ class TOModel {
     this.totalConfirmed = 0,
     this.totalPending = 0,        // ✅ 추가
     this.totalApplications = 0,   // ✅ 추가
+    // ✅ 그룹 마스터 통계
+    this.groupTotalRequired,
+    this.groupTotalConfirmed,
+    this.groupTotalPending,
+
     this.description,
     required this.creatorUID,
     required this.createdAt,
@@ -134,6 +144,11 @@ class TOModel {
       totalConfirmed: data['totalConfirmed'] ?? 0,
       totalPending: data['totalPending'] ?? 0,           // ✅ 추가
       totalApplications: data['totalApplications'] ?? 0, // ✅ 추가
+      // ✅ 그룹 마스터 통계
+      groupTotalRequired: data['groupTotalRequired'],
+      groupTotalConfirmed: data['groupTotalConfirmed'],
+      groupTotalPending: data['groupTotalPending'],
+
       description: data['description'],
       creatorUID: data['creatorUID'] ?? '',
       createdAt: data['createdAt'] != null 
@@ -181,7 +196,10 @@ class TOModel {
       'deadlineType': deadlineType,
       'hoursBeforeStart': hoursBeforeStart,
       'totalRequired': totalRequired,
-      'totalConfirmed': totalConfirmed,
+      // ✅ 그룹 마스터 통계 (null이면 저장 안함)
+      if (groupTotalRequired != null) 'groupTotalRequired': groupTotalRequired,
+      if (groupTotalConfirmed != null) 'groupTotalConfirmed': groupTotalConfirmed,
+      if (groupTotalPending != null) 'groupTotalPending': groupTotalPending,
       'description': description,
       'creatorUID': creatorUID,
       'createdAt': Timestamp.fromDate(createdAt),
@@ -222,6 +240,10 @@ class TOModel {
     int? hoursBeforeStart,
     int? totalRequired,
     int? totalConfirmed,
+    // ✅ 그룹 마스터 통계
+    int? groupTotalRequired,
+    int? groupTotalConfirmed,
+    int? groupTotalPending,
     String? description,
     String? creatorUID,
     DateTime? createdAt,
@@ -259,6 +281,10 @@ class TOModel {
       hoursBeforeStart: hoursBeforeStart ?? this.hoursBeforeStart,
       totalRequired: totalRequired ?? this.totalRequired,
       totalConfirmed: totalConfirmed ?? this.totalConfirmed,
+      // ✅ 그룹 마스터 통계
+      groupTotalRequired: groupTotalRequired ?? this.groupTotalRequired,
+      groupTotalConfirmed: groupTotalConfirmed ?? this.groupTotalConfirmed,
+      groupTotalPending: groupTotalPending ?? this.groupTotalPending,
       description: description ?? this.description,
       creatorUID: creatorUID ?? this.creatorUID,
       createdAt: createdAt ?? this.createdAt,

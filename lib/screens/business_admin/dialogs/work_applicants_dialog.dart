@@ -941,14 +941,13 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog> {
   Future<void> _batchReject() async {
     if (_selectedIds.isEmpty) return;
 
-    final confirm = await DialogHelper.showDangerConfirm(
+    final reason = await DialogHelper.showRejectReasonPicker(
       context,
       title: '일괄 거절',
-      message: '선택한 ${_selectedIds.length}명을 거절하시겠습니까?',
-      confirmText: '거절',
+      message: '선택한 ${_selectedIds.length}명을 거절합니다.\n거절 사유를 선택해주세요.',
     );
 
-    if (confirm != true) return;
+    if (reason == null) return;
 
     try {
       final userProvider = context.read<UserProvider>();
@@ -959,6 +958,7 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog> {
           applicationId: appId,
           status: 'REJECTED',
           rejectedBy: adminUID,
+          message: reason,
         );
       }
 

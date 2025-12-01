@@ -640,6 +640,9 @@ class FirestoreService {
       // 대상 그룹의 날짜 범위 재계산
       await _updateGroupDateRange(targetGroupId);
       
+      // ✅ 대상 그룹 마스터 통계 동기화
+      await _updateGroupMasterStats(targetGroupId);
+      
       print('✅ TO 그룹 재연결 완료: $toId → $targetGroupId');
       ToastHelper.showSuccess('그룹에 연결되었습니다.');
       return true;
@@ -672,6 +675,9 @@ class FirestoreService {
         'startDate': Timestamp.fromDate(to.date),
         'endDate': Timestamp.fromDate(to.date),
       });
+      
+      // ✅ 그룹 마스터 통계 초기화
+      await _updateGroupMasterStats(groupId);
       
       print('✅ 새 그룹 생성 완료');
       print('   그룹 ID: $groupId');
@@ -806,6 +812,9 @@ class FirestoreService {
       print('✅ [FirestoreService] 기존 그룹에 TO 추가 완료!');
       print('   추가된 TO: ${dates.length}개');
       print('   그룹 ID: $groupId');
+      
+      // ✅ 그룹 마스터 통계 동기화
+      await _updateGroupMasterStats(groupId);
       
       ToastHelper.showSuccess('${dates.length}개 TO가 그룹에 추가되었습니다!');
       return true;
@@ -957,6 +966,14 @@ class FirestoreService {
         }
       }
       
+      // ✅ 그룹 마스터 통계 동기화 (그룹이 남아있는 경우만)
+      if (groupId != null) {
+        final remainingTOs = await getTOsByGroup(groupId);
+        if (remainingTOs.isNotEmpty) {
+          await _updateGroupMasterStats(groupId);
+        }
+      }
+      
       print('✅ [FirestoreService] TO 삭제 완료');
       ToastHelper.showSuccess('TO가 삭제되었습니다.');
       return true;
@@ -1032,7 +1049,12 @@ class FirestoreService {
         await _updateGroupDateRange(groupId);
       }
       
-      clearCache(toId: toId);  // 🔥 변경!
+      clearCache(toId: toId);
+      
+      // ✅ 그룹 마스터 통계 동기화 (그룹이 남아있는 경우만)
+      if (remainingTOs.length > 1) {
+        await _updateGroupMasterStats(groupId);
+      }
       
       print('✅ TO 그룹 해제 완료: $toId');
       ToastHelper.showSuccess('그룹에서 해제되었습니다.');
@@ -1577,7 +1599,10 @@ class FirestoreService {
         final toId = toSnapshot.docs.first.id;
         await recalculateTOStats(toId);
         clearCache(toId: toId);
-        print('📊 TO 통계 재계산 완료: $toId');
+        
+        // ✅ 그룹 마스터 통계 동기화
+        await syncGroupMasterStats(toId);
+        print('📊 TO 통계 재계산 + 그룹 동기화 완료: $toId');
       }
       
       // 4. 알림 발송 (나중에 구현)
@@ -1862,13 +1887,14 @@ class FirestoreService {
       await batch.commit();
       print('✅ Batch commit 완료');
 
-      // ✅ 통계 재계산 (통합 로직 사용)
+      /// ✅ 통계 재계산 (통합 로직 사용)
       print('📊 지원 생성 후 통계 재계산...');
       await recalculateTOStats(toId);
-
-      // ✅ 캐시 클리어 추가!
       clearCache(toId: toId);
-      print('🗑️ 지원 후 캐시 클리어 완료');
+      
+      // ✅ 그룹 마스터 통계 동기화
+      await syncGroupMasterStats(toId);
+      print('🗑️ 지원 후 캐시 클리어 + 그룹 동기화 완료');
 
       print('✅ 지원 완료: businessId=$businessId, toTitle=$toTitle, WorkType=$selectedWorkType');
       return true;
@@ -2034,6 +2060,9 @@ class FirestoreService {
       print('📊 지원자 확정 후 통계 재계산...');
       await recalculateTOStats(toId);
       clearCache(toId: toId);
+      
+      // ✅ 그룹 마스터 통계 동기화
+      await syncGroupMasterStats(toId);
 
       print('✅ 지원자 확정 완료');
       ToastHelper.showSuccess('지원자가 확정되었습니다.');
@@ -2046,7 +2075,11 @@ class FirestoreService {
   }
 
   /// 지원자 거절 (관리자용)
-  Future<bool> rejectApplicant(String applicationId, String adminUID) async {
+  Future<bool> rejectApplicant(
+    String applicationId, 
+    String adminUID, {
+    String? rejectMessage,
+  }) async {
     try {
       DocumentSnapshot appDoc = await _firestore
           .collection('applications')
@@ -2071,9 +2104,17 @@ class FirestoreService {
       final workDate = appData['workDate'] as Timestamp;
 
       // 지원서 거절 처리
-      await _firestore.collection('applications').doc(applicationId).update({
+      final updateData = <String, dynamic>{
         'status': 'REJECTED',
-      });
+        'rejectedAt': FieldValue.serverTimestamp(),
+        'rejectedBy': adminUID,
+      };
+      
+      if (rejectMessage != null && rejectMessage.isNotEmpty) {
+        updateData['rejectMessage'] = rejectMessage;
+      }
+      
+      await _firestore.collection('applications').doc(applicationId).update(updateData);
 
       // ✅ 통계 재계산
       print('📊 지원자 거절 후 통계 재계산...');
@@ -2086,8 +2127,12 @@ class FirestoreService {
           .get();
 
       if (toSnapshot.docs.isNotEmpty) {
-        await recalculateTOStats(toSnapshot.docs.first.id);
-        clearCache(toId: toSnapshot.docs.first.id);
+        final toId = toSnapshot.docs.first.id;
+        await recalculateTOStats(toId);
+        clearCache(toId: toId);
+        
+        // ✅ 그룹 마스터 통계 동기화
+        await syncGroupMasterStats(toId);
       }
 
       print('✅ 지원자 거절 완료');
@@ -2148,7 +2193,12 @@ class FirestoreService {
           .get();
 
       if (toSnapshot.docs.isNotEmpty) {
-        await recalculateTOStats(toSnapshot.docs.first.id);
+        final toId = toSnapshot.docs.first.id;
+        await recalculateTOStats(toId);
+        clearCache(toId: toId);
+        
+        // ✅ 그룹 마스터 통계 동기화
+        await syncGroupMasterStats(toId);
       }
 
       ToastHelper.showSuccess('지원이 취소되었습니다.');
@@ -4624,58 +4674,96 @@ class FirestoreService {
         if (to.isGrouped && to.groupId != null) {
           // 그룹 마스터만 처리 (중복 방지)
           if (to.isGroupMaster) {
-            groupMap[to.groupId!] = [];
+            groupMap[to.groupId!] = [to];  // ✨ 마스터 TO 임시 저장
           }
         } else {
           singleTOs.add(to);
         }
       }
       
-      // 그룹 TO들의 통계 합산을 위해 그룹 멤버 조회
-      for (var groupId in groupMap.keys) {
-        final groupTOs = await getTOsByGroup(groupId);
-        groupMap[groupId] = groupTOs;
-      }
+      // ✨ 그룹 TO 처리 (마스터 통계 우선 사용, 없으면 Fallback)
+      List<String> groupIdsNeedingFetch = [];  // 통계 없는 그룹만 조회
       
-      // 그룹 TO 처리
       for (var entry in groupMap.entries) {
         final groupId = entry.key;
-        final groupTOs = entry.value;
+        final masterTO = entry.value.first;  // 임시 저장된 마스터 TO
         
-        if (groupTOs.isEmpty) continue;
+        // ✨ 마스터에 그룹 통계가 있으면 바로 사용 (추가 쿼리 없음!)
+        if (masterTO.groupTotalRequired != null) {
+          groupItems.add(TOGroupItem(
+            masterTO: masterTO,
+            groupTOs: [
+              TOItem(
+                to: masterTO,
+                workDetails: null,
+                confirmedCount: masterTO.groupTotalConfirmed ?? 0,
+                pendingCount: masterTO.groupTotalPending ?? 0,
+                totalRequired: masterTO.groupTotalRequired ?? 0,
+                isWorkDetailLoaded: false,
+              ),
+            ],
+            isGrouped: true,
+            isGroupDetailLoaded: false,
+          ));
+          print('   ✅ [Lazy] 그룹 $groupId: 마스터 통계 사용');
+        } else {
+          // 통계 없으면 Fallback 목록에 추가
+          groupIdsNeedingFetch.add(groupId);
+        }
+      }
+      
+      // ✨ Fallback: 통계 없는 그룹만 병렬 조회
+      if (groupIdsNeedingFetch.isNotEmpty) {
+        print('   ⚠️ [Lazy] ${groupIdsNeedingFetch.length}개 그룹 Fallback 조회...');
         
-        // 마스터 TO 찾기
-        final masterTO = groupTOs.firstWhere(
-          (to) => to.isGroupMaster,
-          orElse: () => groupTOs.first,
+        final groupResults = await Future.wait(
+          groupIdsNeedingFetch.map((groupId) => getTOsByGroup(groupId))
         );
         
-        // 그룹 전체 통계 합산 (TO 문서의 값 사용)
-        int groupTotalRequired = 0;
-        int groupTotalConfirmed = 0;
-        int groupTotalPending = 0;
-        
-        for (var to in groupTOs) {
-          groupTotalRequired += to.totalRequired;
-          groupTotalConfirmed += to.totalConfirmed;
-          groupTotalPending += to.totalPending;
+        for (int i = 0; i < groupIdsNeedingFetch.length; i++) {
+          final groupId = groupIdsNeedingFetch[i];
+          final groupTOs = groupResults[i];
+          
+          if (groupTOs.isEmpty) continue;
+          
+          // 마스터 TO 찾기
+          final masterTO = groupTOs.firstWhere(
+            (to) => to.isGroupMaster,
+            orElse: () => groupTOs.first,
+          );
+          
+          // 그룹 전체 통계 합산
+          int totalRequired = 0;
+          int totalConfirmed = 0;
+          int totalPending = 0;
+          
+          for (var to in groupTOs) {
+            totalRequired += to.totalRequired;
+            totalConfirmed += to.totalConfirmed;
+            totalPending += to.totalPending;
+          }
+          
+          groupItems.add(TOGroupItem(
+            masterTO: masterTO,
+            groupTOs: [
+              TOItem(
+                to: masterTO,
+                workDetails: null,
+                confirmedCount: totalConfirmed,
+                pendingCount: totalPending,
+                totalRequired: totalRequired,
+                isWorkDetailLoaded: false,
+              ),
+            ],
+            isGrouped: true,
+            isGroupDetailLoaded: false,
+          ));
+          
+          // ⚠️ Fallback 발생 시 마스터 통계 자동 업데이트 (백그라운드)
+          _updateGroupMasterStats(groupId).catchError((e) {
+            print('   ⚠️ 마스터 통계 자동 업데이트 실패: $e');
+          });
         }
-        
-        groupItems.add(TOGroupItem(
-          masterTO: masterTO,
-          groupTOs: [
-            TOItem(
-              to: masterTO,
-              workDetails: null,
-              confirmedCount: groupTotalConfirmed,
-              pendingCount: groupTotalPending,
-              totalRequired: groupTotalRequired,
-              isWorkDetailLoaded: false,
-            ),
-          ],
-          isGrouped: true,
-          isGroupDetailLoaded: false,
-        ));
       }
       
       // 단일 TO 처리 (TO 문서의 값 직접 사용)
@@ -4828,6 +4916,107 @@ class FirestoreService {
       print('📊 totalRequired 업데이트: $totalRequired');
     } catch (e) {
       print('❌ totalRequired 업데이트 실패: $e');
+    }
+  }
+  // ═══════════════════════════════════════════════════════════
+  // ✨ 그룹 마스터 통계 동기화 (Group Master Stats Sync)
+  // ═══════════════════════════════════════════════════════════
+
+  /// 그룹 마스터 TO의 통계 업데이트
+  /// - 그룹 내 모든 TO의 통계를 합산하여 마스터에 저장
+  /// - 지원 확정/거절/취소, TO 생성/삭제 시 호출
+  Future<bool> _updateGroupMasterStats(String groupId) async {
+    try {
+      print('📊 [Sync] 그룹 마스터 통계 업데이트: $groupId');
+      
+      // 1. 그룹의 모든 TO 조회
+      final groupTOs = await getTOsByGroup(groupId);
+      if (groupTOs.isEmpty) {
+        print('   ⚠️ 그룹 TO가 없습니다');
+        return false;
+      }
+      
+      // 2. 마스터 TO 찾기
+      final masterTO = groupTOs.firstWhere(
+        (to) => to.isGroupMaster,
+        orElse: () => groupTOs.first,
+      );
+      
+      // 3. 그룹 전체 통계 합산
+      int groupTotalRequired = 0;
+      int groupTotalConfirmed = 0;
+      int groupTotalPending = 0;
+      
+      for (var to in groupTOs) {
+        groupTotalRequired += to.totalRequired;
+        groupTotalConfirmed += to.totalConfirmed;
+        groupTotalPending += to.totalPending;
+      }
+      
+      // 4. 마스터 TO 업데이트
+      await _firestore.collection('tos').doc(masterTO.id).update({
+        'groupTotalRequired': groupTotalRequired,
+        'groupTotalConfirmed': groupTotalConfirmed,
+        'groupTotalPending': groupTotalPending,
+        'groupStatsUpdatedAt': FieldValue.serverTimestamp(),
+      });
+      
+      print('   ✅ 마스터 통계 업데이트 완료: 필요 $groupTotalRequired, 확정 $groupTotalConfirmed, 대기 $groupTotalPending');
+      return true;
+    } catch (e) {
+      print('❌ [Sync] 그룹 마스터 통계 업데이트 실패: $e');
+      return false;
+    }
+  }
+
+  /// 공개 메서드: TO의 그룹 마스터 통계 동기화
+  /// - toId로 해당 TO의 groupId를 찾아서 마스터 통계 업데이트
+  Future<bool> syncGroupMasterStats(String toId) async {
+    try {
+      final to = await getTO(toId);
+      if (to == null) return false;
+      
+      // 그룹 TO가 아니면 스킵
+      if (to.groupId == null) {
+        print('   ℹ️ 단일 TO - 그룹 동기화 스킵');
+        return true;
+      }
+      
+      return await _updateGroupMasterStats(to.groupId!);
+    } catch (e) {
+      print('❌ syncGroupMasterStats 실패: $e');
+      return false;
+    }
+  }
+
+  /// 그룹 마스터 통계 전체 재계산 (마이그레이션/수동 보정용)
+  Future<int> migrateAllGroupMasterStats() async {
+    try {
+      print('🔄 [Migration] 전체 그룹 마스터 통계 마이그레이션 시작...');
+      
+      // 모든 그룹 마스터 TO 조회
+      final snapshot = await _firestore
+          .collection('tos')
+          .where('isGroupMaster', isEqualTo: true)
+          .get();
+      
+      int successCount = 0;
+      final groupIds = <String>{};
+      
+      for (var doc in snapshot.docs) {
+        final groupId = doc.data()['groupId'] as String?;
+        if (groupId != null && !groupIds.contains(groupId)) {
+          groupIds.add(groupId);
+          final success = await _updateGroupMasterStats(groupId);
+          if (success) successCount++;
+        }
+      }
+      
+      print('✅ [Migration] 완료: $successCount/${groupIds.length}개 그룹');
+      return successCount;
+    } catch (e) {
+      print('❌ [Migration] 실패: $e');
+      return 0;
     }
   }
   // ═══════════════════════════════════════════════════════════════════════════

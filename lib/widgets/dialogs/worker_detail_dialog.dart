@@ -923,15 +923,31 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
     if (widget.application == null) return;
     
     final actionText = newStatus == 'CONFIRMED' ? '승인' : '거절';
+    String? rejectReason;
     
-    final confirm = await DialogHelper.showConfirm(
-      context,
-      title: '지원자 $actionText',
-      message: '${widget.user.name}님을 ${actionText}하시겠습니까?',
-      confirmText: actionText,
-    );
-    
-    if (confirm != true) return;
+    if (newStatus == 'CONFIRMED') {
+      // 승인
+      final confirm = await DialogHelper.showConfirm(
+        context,
+        title: '지원자 승인',
+        message: '${widget.user.name}님을 승인하시겠습니까?',
+        confirmText: '승인',
+        confirmColor: AppColors.success,
+        icon: Icons.check_circle,
+        iconColor: AppColors.success,
+      );
+      
+      if (confirm != true) return;
+    } else {
+      // 거절 - 사유 선택
+      rejectReason = await DialogHelper.showRejectReasonPicker(
+        context,
+        title: '지원자 거절',
+        targetName: widget.user.name,
+      );
+      
+      if (rejectReason == null) return;
+    }
 
     try {
       final userProvider = context.read<UserProvider>();
@@ -942,14 +958,19 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
         status: newStatus,
         confirmedBy: newStatus == 'CONFIRMED' ? adminUID : null,
         rejectedBy: newStatus == 'REJECTED' ? adminUID : null,
+        message: rejectReason,
       );
-      
-      ToastHelper.showSuccess('$actionText되었습니다');
-      widget.onStatusChanged?.call();
-      Navigator.pop(context);
+
+      if (mounted) {
+        Navigator.pop(context);
+        ToastHelper.showSuccess('$actionText 처리되었습니다');
+        widget.onStatusChanged?.call();
+      }
     } catch (e) {
       print('❌ 상태 업데이트 실패: $e');
-      ToastHelper.showError('처리 중 오류가 발생했습니다');
+      if (mounted) {
+        ToastHelper.showError('$actionText 처리 중 오류가 발생했습니다');
+      }
     }
   }
 

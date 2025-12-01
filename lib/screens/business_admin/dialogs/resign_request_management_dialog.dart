@@ -446,55 +446,24 @@ class _ResignRequestManagementDialogState
 
   /// 거절 처리
   Future<void> _handleReject(_ResignRequestWithUser item) async {
-    // 거절 사유 입력
-    final reasonController = TextEditingController();
-    final reason = await showDialog<String>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('퇴사 거절 사유'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Text(
-              '${item.userName}님의 퇴사 요청을 거절하는 이유를 입력해주세요.',
-              style: ResponsiveHelper.bodyStyle(  // ⭐ 변경
-                context,
-                color: Theme.of(context).textTheme.bodyMedium?.color,
-              ),
-            ),
-            SizedBox(height: ResponsiveHelper.spacing(context, 16)),  // ⭐ 변경
-            TextField(
-              controller: reasonController,
-              maxLines: 3,
-              maxLength: 200,
-              decoration: const InputDecoration(
-                hintText: '거절 사유를 입력하세요',
-                border: OutlineInputBorder(),
-              ),
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('취소'),
-          ),
-          ElevatedButton(
-            onPressed: () {
-              if (reasonController.text.trim().isEmpty) {
-                ToastHelper.showWarning('거절 사유를 입력해주세요.');
-                return;
-              }
-              Navigator.pop(context, reasonController.text.trim());
-            },
-            style: ElevatedButton.styleFrom(
-              backgroundColor: Colors.red,
-              foregroundColor: Colors.white,
-            ),
-            child: const Text('거절'),
-          ),
-        ],
-      ),
+    final reason = await DialogHelper.showTextInput(
+      context,
+      title: '퇴사 거절 사유',
+      message: '${item.userName}님의 퇴사 요청을 거절하는 이유를 입력해주세요.',
+      hintText: '거절 사유를 입력하세요',
+      maxLines: 3,
+      maxLength: 200,
+      confirmText: '거절',
+      confirmColor: Colors.red,
+      icon: Icons.cancel,
+      iconColor: Colors.red,
+      validator: (value) {
+        if (value == null || value.isEmpty) {
+          ToastHelper.showWarning('거절 사유를 입력해주세요.');
+          return false;
+        }
+        return true;
+      },
     );
 
     if (reason == null || reason.isEmpty || !mounted) return;
