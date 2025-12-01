@@ -9,7 +9,6 @@ import 'package:url_launcher/url_launcher.dart';
 import '../../../models/core/work_detail_model.dart';
 import '../../../models/core/application_model.dart';
 import '../../../models/core/user_model.dart';
-import '../../../models/core/id_card_access_request_model.dart';
 import '../../../providers/user_provider.dart';
 import '../../../services/firestore_service.dart';
 import '../../../utils/format_helper.dart';
@@ -20,6 +19,7 @@ import '../../../widgets/dialogs/styled_dialog.dart';
 import '../../../widgets/dialogs/worker_detail_dialog.dart';
 import '../../../models/ui/admin_to_list_ui_models.dart';
 import '../../../theme/app_colors.dart';
+import '../../../utils/id_card_helper.dart';
 
 class ConfirmedListDialog {
   final BuildContext context;
@@ -61,6 +61,7 @@ class _ConfirmedListDialogWidgetState
     extends State<_ConfirmedListDialogWidget> {
   bool _isLoading = true;
   Map<String, List<Map<String, dynamic>>> _confirmedByWork = {};
+  Map<String, String> _idCardStatusMap = {};
   String? _error;
   int _totalConfirmed = 0;
 
@@ -97,7 +98,7 @@ class _ConfirmedListDialogWidgetState
 
       final results = await Future.wait(futures);
 
-      final Map<String, List<Map<String, dynamic>>> groupedByWork = {};
+     final Map<String, List<Map<String, dynamic>>> groupedByWork = {};
 
       for (var result in results) {
         if (result['user'] != null) {
@@ -107,8 +108,46 @@ class _ConfirmedListDialogWidgetState
         }
       }
 
+      // 각 업무별로 성별→나이순 정렬
+      for (var workers in groupedByWork.values) {
+        workers.sort((a, b) {
+          final userA = a['user'] as UserModel;
+          final userB = b['user'] as UserModel;
+          
+          // 1. 성별 정렬 (남성 먼저)
+          final genderOrder = {'남성': 0, '여성': 1};
+          final genderA = genderOrder[userA.gender] ?? 2;
+          final genderB = genderOrder[userB.gender] ?? 2;
+          
+          if (genderA != genderB) {
+            return genderA.compareTo(genderB);
+          }
+          
+          // 2. 나이순 정렬 (어린순)
+          final ageA = userA.age ?? 999;
+          final ageB = userB.age ?? 999;
+          return ageA.compareTo(ageB);
+        });
+      }
+
+      // 신분증 상태 일괄 조회
+      final userProvider = context.read<UserProvider>();
+      final currentUserId = userProvider.currentUser?.uid ?? '';
+      
+      final confirmedUserIds = results
+          .where((item) => item['user'] != null)
+          .map((item) => (item['user'] as UserModel).uid)
+          .toList();
+      
+      final idCardStatusMap = await IdCardHelper.loadStatusBatch(
+        firestoreService: widget.firestoreService,
+        requesterId: currentUserId,
+        targetUserIds: confirmedUserIds,
+      );
+
       setState(() {
         _confirmedByWork = groupedByWork;
+        _idCardStatusMap = idCardStatusMap;
         _totalConfirmed = confirmed.length;
         _isLoading = false;
       });
@@ -309,27 +348,43 @@ class _ConfirmedListDialogWidgetState
                   decoration: BoxDecoration(border: isLast ? null : Border(bottom: BorderSide(color: AppColors.border))),
                   child: Row(
                     children: [
+                      // 순번
                       CircleAvatar(
-                        radius: ResponsiveHelper.spacing(context, 20),
-                        backgroundColor: AppColors.grey100,
-                        child: Text(user.name.isNotEmpty ? user.name[0] : '?', style: ResponsiveHelper.subtitleStyle(context).copyWith(fontWeight: FontWeight.bold, color: AppColors.grey600)),
+                        radius: ResponsiveHelper.spacing(context, 16),
+                        backgroundColor: AppColors.success.withOpacity(0.15),
+                        child: Text(
+                          '${index + 1}',
+                          style: ResponsiveHelper.bodyStyle(context).copyWith(
+                            fontWeight: FontWeight.bold,
+                            color: AppColors.successDark,
+                          ),
+                        ),
                       ),
                       SizedBox(width: ResponsiveHelper.spacing(context, 12)),
                       Expanded(
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
+                            // 1줄: 이름 + 성별·나이 + 화살표
                             Row(
                               children: [
                                 Text(user.name, style: ResponsiveHelper.bodyStyle(context).copyWith(fontWeight: FontWeight.w600)),
+                                SizedBox(width: ResponsiveHelper.spacing(context, 6)),
+                                Text(
+                                  '${user.gender ?? ''}${user.age != null ? ' · ${user.age}세' : ''}',
+                                  style: ResponsiveHelper.smallStyle(context, color: AppColors.grey600),
+                                ),
                                 SizedBox(width: ResponsiveHelper.spacing(context, 4)),
                                 Icon(Icons.chevron_right, size: ResponsiveHelper.iconSize(context, 16), color: AppColors.grey400),
                               ],
                             ),
-                            SizedBox(height: ResponsiveHelper.spacing(context, 2)),
+                            SizedBox(height: ResponsiveHelper.spacing(context, 4)),
+                            // 2줄: 신뢰도 + 신분증 + 평점
                             Row(
                               children: [
                                 _buildTrustBadge(user),
+                                SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+                                IdCardHelper.buildStatusBadge(context, _idCardStatusMap[user.uid] ?? 'none'),
                                 SizedBox(width: ResponsiveHelper.spacing(context, 8)),
                                 if (user.averageRating > 0) ...[
                                   Icon(Icons.star, size: ResponsiveHelper.iconSize(context, 12), color: Colors.amber),
@@ -340,13 +395,7 @@ class _ConfirmedListDialogWidgetState
                             ),
                           ],
                         ),
-                      ),
-                      if (user.phone != null)
-                        IconButton(
-                          onPressed: () => _makePhoneCall(user.phone!),
-                          icon: Icon(Icons.phone, color: AppColors.info, size: ResponsiveHelper.iconSize(context, 20)),
-                          tooltip: '전화 걸기',
-                        ),
+                      ),  
                     ],
                   ),
                 ),

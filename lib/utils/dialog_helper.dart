@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'responsive_helper.dart';
 import 'toast_helper.dart';
 import '../theme/app_colors.dart';
+import '../widgets/dialogs/styled_dialog.dart';
 
 /// 공통 다이얼로그 헬퍼
 class DialogHelper {
@@ -607,24 +608,12 @@ class DialogHelper {
   /// 거절 사유 선택 다이얼로그
   /// 
   /// 미리 정의된 사유 중 선택하거나 기타(직접 입력) 가능
-  /// 
-  /// 사용 예:
-  /// ```dart
-  /// final reason = await DialogHelper.showRejectReasonPicker(
-  ///   context,
-  ///   title: '거절 사유',
-  ///   targetName: '홍길동',
-  /// );
-  /// if (reason != null) { ... }
-  /// ```
   static Future<String?> showRejectReasonPicker(
     BuildContext context, {
     required String title,
     String? targetName,
     String? message,
   }) async {
-    final theme = Theme.of(context);
-    
     // 거절 사유 옵션
     final reasons = [
       '경력/경험 부족',
@@ -637,132 +626,86 @@ class DialogHelper {
     
     String? selectedReason;
     final customController = TextEditingController();
-    bool isCustom = false;
     
     final result = await showDialog<String>(
       context: context,
       builder: (dialogContext) {
         return StatefulBuilder(
           builder: (context, setDialogState) {
-            return AlertDialog(
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(ResponsiveHelper.spacing(context, 24)),
-              ),
-              title: Row(
+            final isCustom = selectedReason == '기타';
+            
+            return StyledDialog(
+              title: title,
+              subtitle: message ?? (targetName != null ? '$targetName님의 지원을 거절합니다' : '거절 사유를 선택해주세요'),
+              icon: Icons.cancel,
+              headerColor: AppColors.error,
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
                 children: [
-                  Icon(
-                    Icons.cancel,
-                    color: AppColors.error,
-                    size: ResponsiveHelper.iconSize(context, 24),
-                  ),
-                  SizedBox(width: ResponsiveHelper.spacing(context, 12)),
-                  Expanded(
-                    child: Text(
-                      title,
-                      style: ResponsiveHelper.subtitleStyle(context).copyWith(
-                        fontWeight: FontWeight.bold,
+                  // 라디오 리스트
+                  ...reasons.map((reason) {
+                    return RadioListTile<String>(
+                      title: Text(
+                        reason,
+                        style: ResponsiveHelper.bodyStyle(context),
                       ),
+                      value: reason,
+                      groupValue: selectedReason,
+                      activeColor: AppColors.error,
+                      contentPadding: EdgeInsets.zero,
+                      dense: true,
+                      onChanged: (value) {
+                        setDialogState(() {
+                          selectedReason = value;
+                        });
+                      },
+                    );
+                  }),
+                  
+                  // 기타 선택 시 입력 필드
+                  if (isCustom) ...[
+                    SizedBox(height: ResponsiveHelper.spacing(context, 12)),
+                    TextField(
+                      controller: customController,
+                      maxLines: 2,
+                      maxLength: 100,
+                      style: ResponsiveHelper.bodyStyle(context),
+                      decoration: InputDecoration(
+                        hintText: '거절 사유를 입력하세요',
+                        hintStyle: ResponsiveHelper.bodyStyle(
+                          context,
+                          color: AppColors.grey400,
+                        ),
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        contentPadding: EdgeInsets.symmetric(
+                          horizontal: ResponsiveHelper.spacing(context, 12),
+                          vertical: ResponsiveHelper.spacing(context, 12),
+                        ),
+                        counterText: '',
+                      ),
+                      autofocus: true,
                     ),
-                  ),
+                  ],
                 ],
               ),
-              content: SingleChildScrollView(
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    if (targetName != null || message != null) ...[
-                      Text(
-                        message ?? '$targetName님의 지원을 거절합니다.',
-                        style: ResponsiveHelper.bodyStyle(
-                          context,
-                          color: theme.textTheme.bodyMedium?.color,
-                        ),
-                      ),
-                      SizedBox(height: ResponsiveHelper.spacing(context, 16)),
-                    ],
-                    
-                    Text(
-                      '거절 사유 선택',
-                      style: ResponsiveHelper.bodyStyle(context).copyWith(
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                    SizedBox(height: ResponsiveHelper.spacing(context, 12)),
-                    
-                    // 사유 선택 칩
-                    Wrap(
-                      spacing: ResponsiveHelper.spacing(context, 8),
-                      runSpacing: ResponsiveHelper.spacing(context, 8),
-                      children: reasons.map((reason) {
-                        final isSelected = selectedReason == reason;
-                        return ChoiceChip(
-                          label: Text(
-                            reason,
-                            style: ResponsiveHelper.smallStyle(
-                              context,
-                              color: isSelected ? Colors.white : theme.textTheme.bodyMedium?.color,
-                            ),
-                          ),
-                          selected: isSelected,
-                          selectedColor: AppColors.error,
-                          backgroundColor: AppColors.grey100,
-                          onSelected: (selected) {
-                            setDialogState(() {
-                              selectedReason = selected ? reason : null;
-                              isCustom = reason == '기타' && selected;
-                            });
-                          },
-                        );
-                      }).toList(),
-                    ),
-                    
-                    // 기타 선택 시 입력 필드
-                    if (isCustom) ...[
-                      SizedBox(height: ResponsiveHelper.spacing(context, 16)),
-                      TextField(
-                        controller: customController,
-                        maxLines: 2,
-                        maxLength: 100,
-                        style: ResponsiveHelper.bodyStyle(context),
-                        decoration: InputDecoration(
-                          hintText: '거절 사유를 입력하세요',
-                          hintStyle: ResponsiveHelper.bodyStyle(
-                            context,
-                            color: theme.hintColor,
-                          ),
-                          border: OutlineInputBorder(
-                            borderRadius: BorderRadius.circular(ResponsiveHelper.spacing(context, 8)),
-                          ),
-                          contentPadding: EdgeInsets.symmetric(
-                            horizontal: ResponsiveHelper.spacing(context, 12),
-                            vertical: ResponsiveHelper.spacing(context, 12),
-                          ),
-                        ),
-                        autofocus: true,
-                      ),
-                    ],
-                  ],
-                ),
-              ),
-              actionsPadding: EdgeInsets.all(ResponsiveHelper.spacing(context, 16)),
               actions: [
-                TextButton(
+                StyledDialogButton.cancel(
                   onPressed: () => Navigator.pop(dialogContext),
-                  child: Text(
-                    '취소',
-                    style: ResponsiveHelper.bodyStyle(context),
-                  ),
                 ),
-                ElevatedButton(
+                StyledDialogButton.danger(
+                  text: '거절',
                   onPressed: selectedReason == null
-                      ? null
+                      ? () {
+                          ToastHelper.showWarning('거절 사유를 선택해주세요');
+                        }
                       : () {
                           String finalReason;
                           if (isCustom) {
                             final customText = customController.text.trim();
                             if (customText.isEmpty) {
-                              ToastHelper.showWarning('거절 사유를 입력해주세요.');
+                              ToastHelper.showWarning('거절 사유를 입력해주세요');
                               return;
                             }
                             finalReason = customText;
@@ -771,22 +714,6 @@ class DialogHelper {
                           }
                           Navigator.pop(dialogContext, finalReason);
                         },
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: AppColors.error,
-                    foregroundColor: Colors.white,
-                    disabledBackgroundColor: AppColors.grey300,
-                    padding: EdgeInsets.symmetric(
-                      horizontal: ResponsiveHelper.spacing(context, 20),
-                      vertical: ResponsiveHelper.spacing(context, 12),
-                    ),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(ResponsiveHelper.spacing(context, 8)),
-                    ),
-                  ),
-                  child: Text(
-                    '거절',
-                    style: ResponsiveHelper.bodyStyle(context, color: Colors.white),
-                  ),
                 ),
               ],
             );
@@ -794,7 +721,6 @@ class DialogHelper {
         );
       },
     );
-
     return result;
   }
 

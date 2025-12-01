@@ -415,6 +415,30 @@ class _IntegratedWorkforceScreenState extends State<IntegratedWorkforceScreen> {
             ),
             
             const Divider(),
+            // ⭐ 리뷰 생성
+            ListTile(
+              leading: Icon(
+                Icons.star, 
+                color: Colors.amber,
+                size: ResponsiveHelper.iconSize(context, 24),
+              ),
+              title: Text(
+                '더미 리뷰 생성',
+                style: ResponsiveHelper.bodyStyle(context).copyWith(
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+              subtitle: Text(
+                '확정 지원서에 랜덤 리뷰 추가',
+                style: ResponsiveHelper.smallStyle(context),
+              ),
+              onTap: () async {
+                Navigator.pop(context);
+                await _createDummyReviews();
+              },
+            ),
+            
+            const Divider(),
             
             // ⭐ 출근 데이터 생성
             ListTile(
@@ -810,6 +834,57 @@ class _IntegratedWorkforceScreenState extends State<IntegratedWorkforceScreen> {
       ToastHelper.showError('출근 데이터 삭제 실패: $e');
     }
   }
+  /// 더미 리뷰 생성
+  Future<void> _createDummyReviews() async {
+    if (_selectedBusinessId == null) {
+      ToastHelper.showWarning('사업장을 선택해주세요');
+      return;
+    }
+
+    try {
+      final userProvider = context.read<UserProvider>();
+      final currentUser = userProvider.currentUser;
+      
+      if (currentUser == null) {
+        ToastHelper.showError('로그인 정보를 확인할 수 없습니다');
+        return;
+      }
+
+      // 사업장 이름 가져오기
+      String businessName = '사업장';
+      try {
+        final businessDoc = await FirebaseFirestore.instance
+            .collection('businesses')
+            .doc(_selectedBusinessId)
+            .get();
+        if (businessDoc.exists) {
+          businessName = businessDoc.data()?['name'] ?? '사업장';
+        }
+      } catch (e) {
+        print('⚠️ 사업장명 조회 실패: $e');
+      }
+
+      ToastHelper.showInfo('리뷰 생성 중...');
+      
+      await TestDataHelper.createDummyReviews(
+        businessId: _selectedBusinessId!,
+        businessName: businessName,
+        reviewerId: currentUser.uid,
+        reviewerName: currentUser.name,
+        count: 10,
+      );
+      
+      ToastHelper.showSuccess('더미 리뷰 생성 완료!');
+      
+      if (mounted) {
+        setState(() {});
+      }
+    } catch (e) {
+      print('❌ 리뷰 생성 실패: $e');
+      ToastHelper.showError('리뷰 생성 실패: $e');
+    }
+  }
+  
 
   /// 모든 더미 데이터 삭제
   Future<void> _clearAllDummyData() async {
@@ -909,4 +984,5 @@ class _IntegratedWorkforceScreenState extends State<IntegratedWorkforceScreen> {
       ),
     );
   }
+  
 }

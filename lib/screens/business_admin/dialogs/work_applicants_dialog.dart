@@ -7,7 +7,6 @@ import 'package:provider/provider.dart';
 import '../../../models/core/application_model.dart';
 import '../../../models/core/work_detail_model.dart';
 import '../../../models/core/user_model.dart';
-import '../../../models/core/id_card_access_request_model.dart';
 import '../../../services/firestore_service.dart';
 import '../../../providers/user_provider.dart';
 import '../../../utils/toast_helper.dart';
@@ -17,6 +16,7 @@ import '../../../widgets/work_type_icon.dart';
 import '../../../widgets/dialogs/worker_detail_dialog.dart';
 import '../../../models/ui/admin_to_list_ui_models.dart';
 import '../../../theme/app_colors.dart';
+import '../../../utils/id_card_helper.dart';
 
 /// 업무별 지원자 관리 다이얼로그 - 개선된 버전
 class WorkApplicantsDialog extends StatefulWidget {
@@ -113,7 +113,11 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog> {
           .map((item) => (item['user'] as UserModel).uid)
           .toList();
       
-      final idCardStatusMap = await _loadIdCardStatusBatch(currentUserId, confirmedUserIds);
+      final idCardStatusMap = await IdCardHelper.loadStatusBatch(
+        firestoreService: _firestoreService,
+        requesterId: currentUserId,
+        targetUserIds: confirmedUserIds,
+      );
 
       setState(() {
         _applicants = applicantsWithUserInfo;
@@ -126,33 +130,6 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog> {
     }
   }
 
-  /// 신분증 요청 상태 일괄 조회
-  Future<Map<String, String>> _loadIdCardStatusBatch(String requesterId, List<String> targetUserIds) async {
-    final Map<String, String> statusMap = {};
-    
-    try {
-      for (final userId in targetUserIds) {
-        final access = await _firestoreService.checkIdCardAccess(
-          requesterId: requesterId,
-          targetUserId: userId,
-        );
-        
-        if (access == null) {
-          statusMap[userId] = 'none';
-        } else if (access.status == IdCardAccessStatus.pending) {
-          statusMap[userId] = 'pending';
-        } else if (access.isValidAccess) {
-          statusMap[userId] = 'approved';
-        } else {
-          statusMap[userId] = 'none';
-        }
-      }
-    } catch (e) {
-      print('⚠️ 신분증 상태 조회 실패: $e');
-    }
-    
-    return statusMap;
-  }
 
   /// 전체 선택/해제
   void _toggleSelectAll(bool? value) {
@@ -618,7 +595,7 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog> {
                           ],
                           // 신분증 상태 (확정자만)
                           if (!isPending)
-                            _buildIdCardStatusBadge(context, idCardStatus),
+                            IdCardHelper.buildStatusBadge(context, idCardStatus)
                         ],
                       ),
                       
@@ -731,56 +708,6 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog> {
           SizedBox(width: ResponsiveHelper.spacing(context, 3)),
           Text(
             '신뢰 $score',
-            style: ResponsiveHelper.tinyStyle(context, color: color).copyWith(
-              fontWeight: FontWeight.bold,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  /// 신분증 상태 배지
-  Widget _buildIdCardStatusBadge(BuildContext context, String status) {
-    IconData icon;
-    String label;
-    Color color;
-    
-    switch (status) {
-      case 'approved':
-        icon = Icons.verified;
-        label = '신분증';
-        color = AppColors.success;
-        break;
-      case 'pending':
-        icon = Icons.hourglass_top;
-        label = '요청중';
-        color = AppColors.warning;
-        break;
-      case 'none':
-      default:
-        icon = Icons.lock_outline;
-        label = '미요청';
-        color = AppColors.grey400;
-        break;
-    }
-    
-    return Container(
-      padding: EdgeInsets.symmetric(
-        horizontal: ResponsiveHelper.spacing(context, 6),
-        vertical: ResponsiveHelper.spacing(context, 2),
-      ),
-      decoration: BoxDecoration(
-        color: color.withOpacity(0.15),
-        borderRadius: BorderRadius.circular(8),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(icon, size: ResponsiveHelper.iconSize(context, 10), color: color),
-          SizedBox(width: ResponsiveHelper.spacing(context, 3)),
-          Text(
-            label,
             style: ResponsiveHelper.tinyStyle(context, color: color).copyWith(
               fontWeight: FontWeight.bold,
             ),

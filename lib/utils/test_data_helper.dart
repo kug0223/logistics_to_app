@@ -685,4 +685,128 @@ class TestDataHelper {
       rethrow;
     }
   }
+  // ━━━ 리뷰 코멘트 템플릿 ━━━
+  static final List<String> _reviewComments = [
+    '성실하게 일해주셨습니다.',
+    '시간 약속을 잘 지켜요.',
+    '업무 이해도가 높아요.',
+    '다음에도 같이 일하고 싶어요.',
+    '꼼꼼하게 작업해주셨습니다.',
+    '적극적으로 일해주셨어요.',
+    '다른 분들과 협력을 잘 해요.',
+    '빠르고 정확하게 처리해요.',
+    '친절하고 예의 바릅니다.',
+    '책임감이 강해요.',
+    '조금 늦게 오셨지만 열심히 일해주셨어요.',
+    '업무 속도가 조금 느린 편이에요.',
+    '기본적인 업무는 잘 수행해요.',
+  ];
+
+  /// ⭐ 더미 리뷰 생성
+  static Future<void> createDummyReviews({
+    required String businessId,
+    required String businessName,
+    required String reviewerId,
+    required String reviewerName,
+    int count = 10,
+  }) async {
+    print('');
+    print('⭐ ═══════════════════════════════════════');
+    print('⭐ 더미 리뷰 $count개 생성 시작...');
+    print('⭐ ═══════════════════════════════════════');
+    print('');
+
+    try {
+      // 해당 사업장의 확정 지원서 조회
+      final confirmedSnapshot = await _firestore
+          .collection('applications')
+          .where('businessId', isEqualTo: businessId)
+          .where('status', isEqualTo: 'CONFIRMED')
+          .where('hasReview', isNotEqualTo: true)  // 리뷰 없는 것만
+          .limit(count)
+          .get();
+
+      if (confirmedSnapshot.docs.isEmpty) {
+        print('⚠️ 리뷰 작성 가능한 확정 지원서가 없습니다.');
+        return;
+      }
+
+      int createdCount = 0;
+
+      for (var appDoc in confirmedSnapshot.docs) {
+        final appData = appDoc.data();
+        final uid = appData['uid'] as String;
+        final workType = appData['selectedWorkType'] ?? '일반';
+        final workDate = (appData['workDate'] as Timestamp).toDate();
+
+        // 랜덤 평점 (3~5점, 가끔 1~2점)
+        int rating;
+        if (_random.nextDouble() < 0.1) {
+          rating = _random.nextInt(2) + 1;  // 1~2점 (10%)
+        } else if (_random.nextDouble() < 0.3) {
+          rating = 3;  // 3점 (20%)
+        } else {
+          rating = _random.nextInt(2) + 4;  // 4~5점 (70%)
+        }
+
+        // 랜덤 코멘트 (80% 확률로 작성)
+        String? comment;
+        if (_random.nextDouble() < 0.8) {
+          comment = _reviewComments[_random.nextInt(_reviewComments.length)];
+        }
+
+        // 재고용 의사 (평점에 따라)
+        final wouldRehire = rating >= 3;
+
+        // 리뷰 생성
+        await _firestoreService.createReview(
+          applicationId: appDoc.id,
+          reviewerId: reviewerId,
+          reviewerName: reviewerName,
+          targetUserId: uid,
+          businessId: businessId,
+          businessName: businessName,
+          workType: workType,
+          workDate: workDate,
+          rating: rating,
+          comment: comment,
+          wouldRehire: wouldRehire,
+        );
+
+        createdCount++;
+        print('  ⭐ $uid → $rating점 ${comment != null ? '(코멘트 있음)' : ''}');
+      }
+
+      print('');
+      print('🎉 ═══════════════════════════════════════');
+      print('🎉 더미 리뷰 $createdCount개 생성 완료!');
+      print('🎉 ═══════════════════════════════════════');
+      print('');
+    } catch (e) {
+      print('❌ 더미 리뷰 생성 실패: $e');
+    }
+  }
+
+  /// 더미 리뷰 삭제
+  static Future<void> clearDummyReviews() async {
+    print('📋 더미 리뷰(reviews) 삭제 중...');
+    
+    try {
+      // 더미 사용자의 리뷰 삭제
+      final reviewsSnapshot = await _firestore.collection('reviews').get();
+      
+      int deletedCount = 0;
+      for (var doc in reviewsSnapshot.docs) {
+        final targetUserId = doc.data()['targetUserId'] as String?;
+        if (targetUserId != null && targetUserId.startsWith('dummy_user_')) {
+          await doc.reference.delete();
+          deletedCount++;
+        }
+      }
+      
+      print('✅ 더미 리뷰 $deletedCount개 삭제 완료');
+    } catch (e) {
+      print('⚠️ 더미 리뷰 삭제 실패: $e');
+    }
+  }
 }
