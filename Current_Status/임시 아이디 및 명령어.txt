@@ -18,7 +18,7 @@ ALfit
 
 냉동분류
 
-git add . ; if ($?) { git commit -m "admin to card 재구성 251128-1" } ; if ($?) { git push }
+git add . ; if ($?) { git commit -m "공고로드속도 개선 251201-2" } ; if ($?) { git push }
 
 flutter clean
 flutter pub get

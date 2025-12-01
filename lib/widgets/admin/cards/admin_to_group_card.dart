@@ -46,6 +46,10 @@ class TOGroupCard extends StatefulWidget {
   final VoidCallback onToggleExpand;
   final Function(String toId) onToggleTOExpand;
   final DateTime? selectedDate;
+  
+  // ✨ Lazy Loading 상태
+  final bool isGroupLoading;      // 그룹 로딩 중
+  final Set<String> loadingTOs;   // 로딩 중인 TO 목록
 
   const TOGroupCard({
     super.key,
@@ -59,6 +63,8 @@ class TOGroupCard extends StatefulWidget {
     required this.onToggleExpand,
     required this.onToggleTOExpand,
     this.selectedDate,
+    this.isGroupLoading = false,
+    this.loadingTOs = const {},
   });
 
   @override
@@ -82,20 +88,32 @@ class _TOGroupCardState extends State<TOGroupCard> {
       totalRequired += toItem.totalRequired;
     }
     
-    // 인원 충족 여부
-    final isFull = widget.groupItem.groupTOs.every((toItem) {
-      return toItem.workDetails.every((work) {
-        final stats = toItem.workDetailStats?[work.workType];
-        final confirmed = stats?['confirmed'] ?? 0;
-        return confirmed >= work.requiredCount;
-      });
-    });
+    // 인원 충족 여부 (workDetails 로드 안됐으면 TO 문서 기준)
+    final isFull = widget.groupItem.groupTOs.isEmpty 
+        ? false 
+        : widget.groupItem.groupTOs.every((toItem) {
+            // workDetails 로드 안됐으면 TO 문서의 통계 사용
+            if (!toItem.isWorkDetailLoaded || toItem.workDetails.isEmpty) {
+              return toItem.confirmedCount >= toItem.totalRequired && toItem.totalRequired > 0;
+            }
+            return toItem.workDetails.every((work) {
+              final stats = toItem.workDetailStats?[work.workType];
+              final confirmed = stats?['confirmed'] ?? 0;
+              return confirmed >= work.requiredCount;
+            });
+          });
 
-    // 전체 마감 여부
-    final allClosed = widget.groupItem.groupTOs.every((toItem) {
-      return toItem.workDetails.every((work) =>
-          work.isClosed || work.isTimeExpired || work.isFull);
-    });
+    // 전체 마감 여부 (workDetails 로드 안됐으면 TO 문서 기준)
+    final allClosed = widget.groupItem.groupTOs.isEmpty
+        ? false
+        : widget.groupItem.groupTOs.every((toItem) {
+            // workDetails 로드 안됐으면 TO 문서의 마감 상태 사용
+            if (!toItem.isWorkDetailLoaded || toItem.workDetails.isEmpty) {
+              return toItem.to.isClosed;
+            }
+            return toItem.workDetails.every((work) =>
+                work.isClosed || work.isTimeExpired || work.isFull);
+          });
 
     // ✨ 상태별 컬러바 색상 결정
     Color statusBarColor;
@@ -313,19 +331,49 @@ class _TOGroupCardState extends State<TOGroupCard> {
                           ),
                           child: Padding(
                             padding: ResponsiveHelper.cardPadding(context),
-                            child: Column(
-                              children: _getFilteredGroupTOs().map((toItem) {
-                                return TOItemCard(
-                                  toItem: toItem,
-                                  groupItem: widget.groupItem,
-                                  firestoreService: widget.firestoreService,
-                                  dialogs: widget.dialogs,
-                                  onChanged: widget.onChanged,
-                                  isExpanded: widget.expandedTOs.contains(toItem.to.id),
-                                  onToggleExpand: () => widget.onToggleTOExpand(toItem.to.id),
-                                );
-                              }).toList(),
-                            ),
+                            child: widget.isGroupLoading
+                                // ✨ 로딩 중 스피너
+                                ? Center(
+                                    child: Padding(
+                                      padding: EdgeInsets.all(
+                                        ResponsiveHelper.spacing(context, 24),
+                                      ),
+                                      child: Column(
+                                        children: [
+                                          SizedBox(
+                                            width: 24,
+                                            height: 24,
+                                            child: CircularProgressIndicator(
+                                              strokeWidth: 2,
+                                              color: theme.primaryColor,
+                                            ),
+                                          ),
+                                          SizedBox(height: ResponsiveHelper.spacing(context, 8)),
+                                          Text(
+                                            '불러오는 중...',
+                                            style: ResponsiveHelper.smallStyle(context).copyWith(
+                                              color: AppColors.grey500,
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+                                  )
+                                // ✨ 로드 완료 - TO 목록 표시
+                                : Column(
+                                    children: _getFilteredGroupTOs().map((toItem) {
+                                      return TOItemCard(
+                                        toItem: toItem,
+                                        groupItem: widget.groupItem,
+                                        firestoreService: widget.firestoreService,
+                                        dialogs: widget.dialogs,
+                                        onChanged: widget.onChanged,
+                                        isExpanded: widget.expandedTOs.contains(toItem.to.id),
+                                        onToggleExpand: () => widget.onToggleTOExpand(toItem.to.id),
+                                        isLoading: widget.loadingTOs.contains(toItem.to.id),  // ✨ 추가
+                                      );
+                                    }).toList(),
+                                  ),
                           ),
                         ),
                       ],
@@ -342,7 +390,36 @@ class _TOGroupCardState extends State<TOGroupCard> {
                               bottomRight: Radius.circular(16),
                             ),
                           ),
-                          child: Column(
+                          child: widget.loadingTOs.contains(widget.groupItem.groupTOs.first.to.id)
+                              // ✨ 로딩 중 스피너
+                              ? Center(
+                                  child: Padding(
+                                    padding: EdgeInsets.all(
+                                      ResponsiveHelper.spacing(context, 24),
+                                    ),
+                                    child: Column(
+                                      children: [
+                                        SizedBox(
+                                          width: 24,
+                                          height: 24,
+                                          child: CircularProgressIndicator(
+                                            strokeWidth: 2,
+                                            color: theme.primaryColor,
+                                          ),
+                                        ),
+                                        SizedBox(height: ResponsiveHelper.spacing(context, 8)),
+                                        Text(
+                                          '업무 정보 불러오는 중...',
+                                          style: ResponsiveHelper.smallStyle(context).copyWith(
+                                            color: AppColors.grey500,
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                )
+                              // ✨ 로드 완료 - 업무 상세 표시
+                              : Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
                               // 업무 상세 헤더

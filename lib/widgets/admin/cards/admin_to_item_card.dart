@@ -41,6 +41,7 @@ class TOItemCard extends StatefulWidget {
   final VoidCallback onChanged;
   final bool isExpanded;
   final VoidCallback onToggleExpand;
+  final bool isLoading;  // ✨ 추가: WorkDetails 로딩 중
 
   const TOItemCard({
     super.key,
@@ -51,6 +52,7 @@ class TOItemCard extends StatefulWidget {
     required this.onChanged,
     required this.isExpanded,
     required this.onToggleExpand,
+    this.isLoading = false,  // ✨ 추가
   });
 
   @override
@@ -63,23 +65,33 @@ class _TOItemCardState extends State<TOItemCard> {
     final to = widget.toItem.to;
     final theme = Theme.of(context);
     
-    // 인원 계산
+    // 인원 계산 (workDetails 로드 안됐으면 TOItem 통계 사용)
     int confirmed = 0;
     int pending = 0;
     int required = 0;
     
-    for (var work in widget.toItem.workDetails) {
-      final stats = widget.toItem.workDetailStats?[work.workType];
-      confirmed += (stats?['confirmed'] ?? 0) as int;
-      pending += (stats?['pending'] ?? 0) as int;
-      required += work.requiredCount;
+    if (!widget.toItem.isWorkDetailLoaded || widget.toItem.workDetails.isEmpty) {
+      // ✨ 아직 상세 로드 안됨 - TOItem의 통계 사용
+      confirmed = widget.toItem.confirmedCount;
+      pending = widget.toItem.pendingCount;
+      required = widget.toItem.totalRequired;
+    } else {
+      // 상세 로드됨 - workDetails에서 계산
+      for (var work in widget.toItem.workDetails) {
+        final stats = widget.toItem.workDetailStats?[work.workType];
+        confirmed += (stats?['confirmed'] ?? 0) as int;
+        pending += (stats?['pending'] ?? 0) as int;
+        required += work.requiredCount;
+      }
     }
     
     final isFull = confirmed >= required && required > 0;
     
-    // 전체 마감 여부
-    final allClosed = widget.toItem.workDetails.every((work) =>
-        work.isClosed || work.isTimeExpired || work.isFull);
+    // 전체 마감 여부 (workDetails 로드 안됐으면 TO 문서 기준)
+    final allClosed = !widget.toItem.isWorkDetailLoaded || widget.toItem.workDetails.isEmpty
+        ? widget.toItem.to.isClosed
+        : widget.toItem.workDetails.every((work) =>
+            work.isClosed || work.isTimeExpired || work.isFull);
 
     // 상태별 컬러
     Color statusColor;
@@ -246,27 +258,57 @@ class _TOItemCardState extends State<TOItemCard> {
                               bottomRight: Radius.circular(12),
                             ),
                           ),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              // 업무 상세 헤더
-                              Row(
-                                children: [
-                                  Icon(
-                                    Icons.assignment,
-                                    size: ResponsiveHelper.iconSize(context, 14),
-                                    color: theme.primaryColor,
-                                  ),
-                                  SizedBox(width: ResponsiveHelper.spacing(context, 6)),
-                                  Text(
-                                    '업무 상세',
-                                    style: ResponsiveHelper.bodyStyle(context).copyWith(
-                                      fontWeight: FontWeight.bold,
+                          child: widget.isLoading
+                              // ✨ 로딩 중 스피너
+                              ? Center(
+                                  child: Padding(
+                                    padding: EdgeInsets.all(
+                                      ResponsiveHelper.spacing(context, 16),
+                                    ),
+                                    child: Row(
+                                      mainAxisAlignment: MainAxisAlignment.center,
+                                      children: [
+                                        SizedBox(
+                                          width: 20,
+                                          height: 20,
+                                          child: CircularProgressIndicator(
+                                            strokeWidth: 2,
+                                            color: theme.primaryColor,
+                                          ),
+                                        ),
+                                        SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+                                        Text(
+                                          '업무 정보 불러오는 중...',
+                                          style: ResponsiveHelper.smallStyle(context).copyWith(
+                                            color: AppColors.grey500,
+                                          ),
+                                        ),
+                                      ],
                                     ),
                                   ),
-                                ],
-                              ),
-                              SizedBox(height: ResponsiveHelper.spacing(context, 10)),
+                                )
+                              // ✨ 로드 완료 - 업무 상세 표시
+                              : Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    // 업무 상세 헤더
+                                    Row(
+                                      children: [
+                                        Icon(
+                                          Icons.assignment,
+                                          size: ResponsiveHelper.iconSize(context, 14),
+                                          color: theme.primaryColor,
+                                        ),
+                                        SizedBox(width: ResponsiveHelper.spacing(context, 6)),
+                                        Text(
+                                          '업무 상세',
+                                          style: ResponsiveHelper.bodyStyle(context).copyWith(
+                                            fontWeight: FontWeight.bold,
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                    SizedBox(height: ResponsiveHelper.spacing(context, 10)),
                               
                               // 업무 목록
                               ...widget.toItem.workDetails.map((work) {

@@ -63,144 +63,27 @@ class _WorkforceListViewState extends State<WorkforceListView> {
   // 이중 토글 상태 관리
   final Set<String> _expandedGroups = {};
   final Set<String> _expandedTOs = {};
+  
+  // ✨ Lazy Loading 상태
+  final Set<String> _loadingGroups = {};  // 로딩 중인 그룹
+  final Set<String> _loadingTOs = {};     // 로딩 중인 TO
 
-  /// TO 목록 + 지원자 통계 로드
+  /// ✨ TO 목록 로드 (Lazy Loading - 겉 카드만)
   Future<void> _loadTOsWithStats() async {
     setState(() => _isLoading = true);
 
     try {
-      List<TOModel> masterTOs;
-      if (_selectedTab == 'ACTIVE') {
-        masterTOs = await _firestoreService.getActiveTOs();
-      } else {
-        masterTOs = await _firestoreService.getClosedTOs();
-      }
+      // ✨ 겉 카드만 로드 (상세 정보 없이)
+      final List<TOGroupItem> groupItems = await _firestoreService.getTOGroupItemsLight(
+        activeOnly: _selectedTab == 'ACTIVE',
+        closedOnly: _selectedTab == 'CLOSED',
+      );
 
-      List<TOGroupItem> groupItems = [];
-      
-      for (var masterTO in masterTOs) {
-        if (masterTO.isGrouped && masterTO.groupId != null) {
-          final groupTOs = await _firestoreService.getTOsByGroup(masterTO.groupId!);
-          final toIds = groupTOs.map((to) => to.id).toList();
-          
-          final batchResults = await Future.wait([
-            _firestoreService.getWorkDetailsBatch(toIds, forceRefresh: true),
-            _firestoreService.calculateGroupTimeRange(masterTO.groupId!, forceRefresh: true),
-          ]);
-          
-          final workDetailsMap = batchResults[0] as Map<String, List<WorkDetailModel>>;
-          final timeRange = batchResults[1] as Map<String, String>;
-          final applicationsMap = await _firestoreService.getApplicationsByTOIds(toIds);
-
-          List<TOItem> toItems = [];
-          for (var to in groupTOs) {
-            final toWorkDetails = workDetailsMap[to.id] ?? [];
-            final apps = applicationsMap[to.id] ?? [];
-
-            int confirmed = apps.where((a) => a.status == 'CONFIRMED').length;
-            int pending = apps.where((a) => a.status == 'PENDING').length;
-            
-            int totalRequired = 0;
-            for (var work in toWorkDetails) {
-              totalRequired += work.requiredCount;
-            }
-            
-            Map<String, Map<String, int>> workStats = {};
-            for (var work in toWorkDetails) {
-              final workApps = apps.where((a) => a.selectedWorkType == work.workType);
-              workStats[work.workType] = {
-                'confirmed': workApps.where((a) => a.status == 'CONFIRMED').length,
-                'pending': workApps.where((a) => a.status == 'PENDING').length,
-              };
-            }
-
-            toItems.add(TOItem(
-              to: to,
-              workDetails: toWorkDetails,
-              confirmedCount: confirmed,
-              pendingCount: pending,
-              totalRequired: totalRequired,
-              workDetailStats: workStats,
-            ));
-          }
-          
-          masterTO.setTimeRange(timeRange['minStart']!, timeRange['maxEnd']!);
-          
-          groupItems.add(TOGroupItem(
-            masterTO: masterTO,
-            groupTOs: toItems,
-            isGrouped: true,
-          ));
-          
-        } else {
-          final workDetails = await _firestoreService.getWorkDetails(
-            masterTO.id,
-            forceRefresh: true
-          );
-          
-          if (workDetails.isNotEmpty) {
-            String? minStart;
-            String? maxEnd;
-            
-            for (var work in workDetails) {
-              if (minStart == null || work.startTime.compareTo(minStart) < 0) {
-                minStart = work.startTime;
-              }
-              if (maxEnd == null || work.endTime.compareTo(maxEnd) > 0) {
-                maxEnd = work.endTime;
-              }
-            }
-            
-            if (minStart != null && maxEnd != null) {
-              masterTO.setTimeRange(minStart, maxEnd);
-            }
-          }
-          
-          final apps = await _firestoreService.getApplicationsByTO(
-            masterTO.businessId,
-            masterTO.title,
-            masterTO.date,
-          );
-          
-          Map<String, Map<String, int>> workStats = {};
-          for (var work in workDetails) {
-            final workApps = apps.where((a) => a.selectedWorkType == work.workType);            
-            workStats[work.workType] = {
-              'confirmed': workApps.where((a) => a.status == 'CONFIRMED').length,
-              'pending': workApps.where((a) => a.status == 'PENDING').length,
-            };
-          }
-          
-          int totalConfirmed = 0;
-          int totalPending = 0;
-          for (var stats in workStats.values) {
-            totalConfirmed += stats['confirmed'] as int;
-            totalPending += stats['pending'] as int;
-          }
-          
-          int totalRequired = 0;
-          for (var work in workDetails) {
-            totalRequired += work.requiredCount;
-          }
-          
-          groupItems.add(TOGroupItem(
-            masterTO: masterTO.copyWith(totalRequired: totalRequired),
-            groupTOs: [
-              TOItem(
-                to: masterTO.copyWith(totalRequired: totalRequired),
-                workDetails: workDetails,
-                confirmedCount: totalConfirmed,
-                pendingCount: totalPending,
-                totalRequired: totalRequired,
-                workDetailStats: workStats,
-              ),
-            ],
-            isGrouped: false,
-          ));
-        }
-      }
-
-      final businessSet = masterTOs.map((to) => to.businessName).toSet();
+      // 사업장 목록 추출
+      final businessSet = groupItems
+          .map((TOGroupItem g) => g.masterTO.businessName)
+          .where((String name) => name.isNotEmpty)
+          .toSet();
       final businessList = businessSet.toList()..sort();
 
       setState(() {
@@ -210,6 +93,8 @@ class _WorkforceListViewState extends State<WorkforceListView> {
       });
       
       _applyFilters();
+      
+      print('✅ [Lazy] 초기 로드 완료: ${groupItems.length}개 카드');
     } catch (e) {
       print('❌ TO 목록 로드 실패: $e');
       setState(() => _isLoading = false);
@@ -614,8 +499,21 @@ class _WorkforceListViewState extends State<WorkforceListView> {
                 groupItem.masterTO.groupId ?? groupItem.masterTO.id
               ),
               expandedTOs: _expandedTOs,
-              onToggleExpand: () => _handleGroupToggle(groupItem),
-              onToggleTOExpand: _handleTOToggle,
+              onToggleExpand: () => _handleGroupExpand(groupItem),  // ✨ 변경
+              onToggleTOExpand: (toId) async {
+                // toId로 해당 TOItem 찾기
+                if (groupItem.groupTOs.isEmpty) return;
+                final toItem = groupItem.groupTOs.firstWhere(
+                  (item) => item.to.id == toId,
+                  orElse: () => groupItem.groupTOs.first,
+                );
+                await _handleTOExpand(toItem);
+              },
+              // ✨ 로딩 상태 전달 (카드에서 스피너 표시용)
+              isGroupLoading: _loadingGroups.contains(
+                groupItem.masterTO.groupId ?? groupItem.masterTO.id
+              ),
+              loadingTOs: _loadingTOs,
             ),
           );
         },
@@ -684,30 +582,87 @@ class _WorkforceListViewState extends State<WorkforceListView> {
     );
   }
 
-  /// 그룹 토글 핸들러
-  void _handleGroupToggle(TOGroupItem groupItem) {
-    setState(() {
-      final key = groupItem.masterTO.groupId ?? groupItem.masterTO.id;
-      if (_expandedGroups.contains(key)) {
-        _expandedGroups.remove(key);
-        _expandedTOs.clear();
-      } else {
-        _expandedGroups.clear();
-        _expandedTOs.clear();
-        _expandedGroups.add(key);
+  /// ✨ 그룹 카드 펼침 핸들러 (Lazy Loading)
+  Future<void> _handleGroupExpand(TOGroupItem groupItem) async {
+    final key = groupItem.masterTO.groupId ?? groupItem.masterTO.id;
+    
+    // 이미 펼쳐져 있으면 접기만
+    if (_expandedGroups.contains(key)) {
+      setState(() => _expandedGroups.remove(key));
+      return;
+    }
+    
+    // 그룹 TO이고 아직 상세 로드 안됐으면 로드
+    if (groupItem.needsGroupDetailLoad) {
+      setState(() => _loadingGroups.add(key));
+      
+      try {
+        final toItems = await _firestoreService.loadGroupTOsLight(
+          groupItem.masterTO.groupId!
+        );
+        groupItem.setGroupTOs(toItems);
+      } catch (e) {
+        print('❌ 그룹 상세 로드 실패: $e');
+        ToastHelper.showError('데이터를 불러오는데 실패했습니다.');
       }
-    });
+      
+      setState(() => _loadingGroups.remove(key));
+    }
+    
+    // ✨ 단일 TO인 경우: WorkDetails 로드 필요
+    if (!groupItem.isGrouped && groupItem.groupTOs.isNotEmpty) {
+      final toItem = groupItem.groupTOs.first;
+      if (toItem.needsWorkDetailLoad) {
+        setState(() => _loadingTOs.add(toItem.to.id));
+        
+        try {
+          final result = await _firestoreService.loadTOWorkDetails(toItem.to);
+          toItem.setWorkDetails(
+            result['workDetails'] as List<WorkDetailModel>,
+            result['workStats'] as Map<String, Map<String, int>>,
+          );
+        } catch (e) {
+          print('❌ TO 상세 로드 실패: $e');
+          ToastHelper.showError('데이터를 불러오는데 실패했습니다.');
+        }
+        
+        setState(() => _loadingTOs.remove(toItem.to.id));
+      }
+    }
+    
+    // 펼치기
+    setState(() => _expandedGroups.add(key));
   }
 
-  /// TO 토글 핸들러
-  void _handleTOToggle(String toId) {
-    setState(() {
-      if (_expandedTOs.contains(toId)) {
-        _expandedTOs.remove(toId);
-      } else {
-        _expandedTOs.clear();
-        _expandedTOs.add(toId);
+  /// ✨ TO 카드 펼침 핸들러 (Lazy Loading)
+  Future<void> _handleTOExpand(TOItem toItem) async {
+    final key = toItem.to.id;
+    
+    // 이미 펼쳐져 있으면 접기만
+    if (_expandedTOs.contains(key)) {
+      setState(() => _expandedTOs.remove(key));
+      return;
+    }
+    
+    // 아직 WorkDetails 로드 안됐으면 로드
+    if (toItem.needsWorkDetailLoad) {
+      setState(() => _loadingTOs.add(key));
+      
+      try {
+        final result = await _firestoreService.loadTOWorkDetails(toItem.to);
+        toItem.setWorkDetails(
+          result['workDetails'] as List<WorkDetailModel>,
+          result['workStats'] as Map<String, Map<String, int>>,
+        );
+      } catch (e) {
+        print('❌ TO 상세 로드 실패: $e');
+        ToastHelper.showError('데이터를 불러오는데 실패했습니다.');
       }
-    });
+      
+      setState(() => _loadingTOs.remove(key));
+    }
+    
+    // 펼치기
+    setState(() => _expandedTOs.add(key));
   }
 }

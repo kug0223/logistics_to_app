@@ -4,6 +4,7 @@ import 'package:intl/intl.dart';
 import '../models/core/user_model.dart';
 import '../models/core/to_model.dart';
 import '../models/core/application_model.dart';
+import '../models/ui/admin_to_list_ui_models.dart'; 
 import '../models/core/business_model.dart';
 import '../models/core/work_type_model.dart';
 import '../models/core/work_detail_model.dart';
@@ -1458,6 +1459,32 @@ class FirestoreService {
           .update(updates);
 
       print('✅ 지원서 상태 업데이트: $status');
+      
+      // ✅ TO 통계 재계산 (REJECTED 시)
+      if (status == 'REJECTED') {
+        final appDoc = await _firestore
+            .collection('applications')
+            .doc(applicationId)
+            .get();
+        
+        if (appDoc.exists) {
+          final appData = appDoc.data()!;
+          final toSnapshot = await _firestore
+              .collection('tos')
+              .where('businessId', isEqualTo: appData['businessId'])
+              .where('title', isEqualTo: appData['toTitle'])
+              .where('date', isEqualTo: appData['workDate'])
+              .limit(1)
+              .get();
+          
+          if (toSnapshot.docs.isNotEmpty) {
+            final toId = toSnapshot.docs.first.id;
+            await recalculateTOStats(toId);
+            clearCache(toId: toId);
+            print('📊 TO 통계 재계산 완료: $toId');
+          }
+        }
+      }
     } catch (e) {
       print('❌ 지원서 상태 업데이트 실패: $e');
       rethrow;
@@ -1532,6 +1559,23 @@ class FirestoreService {
       await batch.commit();
       
       print('✅ 확정 완료 + ${conflictingApps.length}개 자동 취소');
+      
+      // 4. ✅ TO 통계 재계산
+      // TO 찾기
+      final toSnapshot = await _firestore
+          .collection('tos')
+          .where('businessId', isEqualTo: app.businessId)
+          .where('title', isEqualTo: app.toTitle)
+          .where('date', isEqualTo: Timestamp.fromDate(app.workDate))
+          .limit(1)
+          .get();
+      
+      if (toSnapshot.docs.isNotEmpty) {
+        final toId = toSnapshot.docs.first.id;
+        await recalculateTOStats(toId);
+        clearCache(toId: toId);
+        print('📊 TO 통계 재계산 완료: $toId');
+      }
       
       // 4. 알림 발송 (나중에 구현)
       // TODO: Phase 2-D에서 구현
@@ -2292,7 +2336,11 @@ class FirestoreService {
       });
 
       print('✅ [FirestoreService] WorkDetail 추가 완료: ${docRef.id}');
-      return docRef.id;  // ✅ ID 반환
+      
+      // ✅ TO의 totalRequired 업데이트
+      await _recalculateTotalRequired(toId);
+      
+      return docRef.id;
     } catch (e) {
       print('❌ [FirestoreService] WorkDetail 추가 실패: $e');
       rethrow;
@@ -2314,6 +2362,11 @@ class FirestoreService {
           .update(updates);
 
       print('✅ [FirestoreService] WorkDetail 수정 완료');
+      
+      // ✅ requiredCount 변경 시 TO의 totalRequired 업데이트
+      if (updates.containsKey('requiredCount')) {
+        await _recalculateTotalRequired(toId);
+      }
     } catch (e) {
       print('❌ [FirestoreService] WorkDetail 수정 실패: $e');
       rethrow;
@@ -2332,7 +2385,10 @@ class FirestoreService {
           .collection('workDetails')
           .doc(workDetailId)
           .delete();
-
+      
+      // ✅ TO의 totalRequired 업데이트
+      await _recalculateTotalRequired(toId);
+      
       print('✅ [FirestoreService] WorkDetail 삭제 완료');
     } catch (e) {
       print('❌ [FirestoreService] WorkDetail 삭제 실패: $e');
@@ -4475,6 +4531,245 @@ class FirestoreService {
     } catch (e) {
       print('❌ 사용자 정보 업데이트 실패: $e');
       rethrow;
+    }
+  }
+  // ═══════════════════════════════════════════════════════════
+  // ✨ Lazy Loading 메서드 (성능 최적화)
+  // ═══════════════════════════════════════════════════════════
+
+  /// 1단계: 겉 카드용 TO 목록 로드 (최적화 - 추가 쿼리 없음!)
+  Future<List<TOGroupItem>> getTOGroupItemsLight({
+    bool activeOnly = true,
+    bool closedOnly = false,
+  }) async {
+    try {
+      print('🔍 [Lazy] 겉 카드용 TO 목록 로드 시작...');
+      
+      List<TOModel> masterTOs;
+      if (closedOnly) {
+        masterTOs = await getClosedTOs();
+      } else if (activeOnly) {
+        masterTOs = await getActiveTOs();
+      } else {
+        final active = await getActiveTOs();
+        final closed = await getClosedTOs();
+        masterTOs = [...active, ...closed];
+      }
+      
+      List<TOGroupItem> groupItems = [];
+      
+      // ✨ 그룹 TO의 경우 전체 통계 계산을 위해 그룹별로 묶기
+      Map<String, List<TOModel>> groupMap = {};
+      List<TOModel> singleTOs = [];
+      
+      for (var to in masterTOs) {
+        if (to.isGrouped && to.groupId != null) {
+          // 그룹 마스터만 처리 (중복 방지)
+          if (to.isGroupMaster) {
+            groupMap[to.groupId!] = [];
+          }
+        } else {
+          singleTOs.add(to);
+        }
+      }
+      
+      // 그룹 TO들의 통계 합산을 위해 그룹 멤버 조회
+      for (var groupId in groupMap.keys) {
+        final groupTOs = await getTOsByGroup(groupId);
+        groupMap[groupId] = groupTOs;
+      }
+      
+      // 그룹 TO 처리
+      for (var entry in groupMap.entries) {
+        final groupId = entry.key;
+        final groupTOs = entry.value;
+        
+        if (groupTOs.isEmpty) continue;
+        
+        // 마스터 TO 찾기
+        final masterTO = groupTOs.firstWhere(
+          (to) => to.isGroupMaster,
+          orElse: () => groupTOs.first,
+        );
+        
+        // 그룹 전체 통계 합산 (TO 문서의 값 사용)
+        int groupTotalRequired = 0;
+        int groupTotalConfirmed = 0;
+        int groupTotalPending = 0;
+        
+        for (var to in groupTOs) {
+          groupTotalRequired += to.totalRequired;
+          groupTotalConfirmed += to.totalConfirmed;
+          groupTotalPending += to.totalPending;
+        }
+        
+        groupItems.add(TOGroupItem(
+          masterTO: masterTO,
+          groupTOs: [
+            TOItem(
+              to: masterTO,
+              workDetails: null,
+              confirmedCount: groupTotalConfirmed,
+              pendingCount: groupTotalPending,
+              totalRequired: groupTotalRequired,
+              isWorkDetailLoaded: false,
+            ),
+          ],
+          isGrouped: true,
+          isGroupDetailLoaded: false,
+        ));
+      }
+      
+      // 단일 TO 처리 (TO 문서의 값 직접 사용)
+      for (var to in singleTOs) {
+        groupItems.add(TOGroupItem(
+          masterTO: to,
+          groupTOs: [
+            TOItem(
+              to: to,
+              workDetails: null,
+              confirmedCount: to.totalConfirmed,
+              pendingCount: to.totalPending,
+              totalRequired: to.totalRequired,
+              isWorkDetailLoaded: false,
+            ),
+          ],
+          isGrouped: false,
+          isGroupDetailLoaded: true,
+        ));
+      }
+      
+      print('✅ [Lazy] 겉 카드 로드 완료: ${groupItems.length}개');
+      return groupItems;
+    } catch (e) {
+      print('❌ [Lazy] 겉 카드 로드 실패: $e');
+      return [];
+    }
+  }
+
+  /// 2단계: 그룹 펼칠 때 - 그룹 내 TO 목록 + 기본 통계 로드
+  Future<List<TOItem>> loadGroupTOsLight(String groupId) async {
+    try {
+      print('🔍 [Lazy] 그룹 내 TO 목록 로드: $groupId');
+      
+      final groupTOs = await getTOsByGroup(groupId);
+      final toIds = groupTOs.map((to) => to.id).toList();
+      
+      // ✨ 병렬로 WorkDetails 개수 + 지원자 통계 로드
+      final results = await Future.wait([
+        getWorkDetailsBatch(toIds),
+        getApplicationsByTOIds(toIds),
+      ]);
+      
+      final workDetailsMap = results[0] as Map<String, List<WorkDetailModel>>;
+      final applicationsMap = results[1] as Map<String, List<ApplicationModel>>;
+      
+      List<TOItem> toItems = [];
+      for (var to in groupTOs) {
+        final workDetails = workDetailsMap[to.id] ?? [];
+        final apps = applicationsMap[to.id] ?? [];
+        
+        // 통계 계산
+        int totalRequired = 0;
+        for (var work in workDetails) {
+          totalRequired += work.requiredCount;
+        }
+        
+        int confirmed = apps.where((a) => a.status == 'CONFIRMED').length;
+        int pending = apps.where((a) => a.status == 'PENDING').length;
+        
+        toItems.add(TOItem(
+          to: to,
+          workDetails: null,  // 업무별 상세는 펼칠 때 로드
+          confirmedCount: confirmed,
+          pendingCount: pending,
+          totalRequired: totalRequired,
+          isWorkDetailLoaded: false,
+        ));
+      }
+      
+      print('✅ [Lazy] 그룹 TO 로드 완료: ${toItems.length}개 (통계 포함)');
+      return toItems;
+    } catch (e) {
+      print('❌ [Lazy] 그룹 TO 로드 실패: $e');
+      return [];
+    }
+  }
+
+  /// 3단계: TO 펼칠 때 - WorkDetails + 지원자 통계 로드
+  Future<Map<String, dynamic>> loadTOWorkDetails(TOModel to) async {
+    try {
+      print('🔍 [Lazy] TO 상세 로드: ${to.id}');
+      
+      // 병렬로 WorkDetails와 지원자 조회
+      final results = await Future.wait([
+        getWorkDetails(to.id, forceRefresh: true),
+        getApplicationsByTO(to.businessId, to.title, to.date),
+      ]);
+      
+      final workDetails = results[0] as List<WorkDetailModel>;
+      final apps = results[1] as List<ApplicationModel>;
+      
+      // 업무별 통계 계산
+      Map<String, Map<String, int>> workStats = {};
+      for (var work in workDetails) {
+        final workApps = apps.where((a) => a.selectedWorkType == work.workType);
+        workStats[work.workType] = {
+          'confirmed': workApps.where((a) => a.status == 'CONFIRMED').length,
+          'pending': workApps.where((a) => a.status == 'PENDING').length,
+        };
+      }
+      
+      // 시간 범위 설정
+      if (workDetails.isNotEmpty) {
+        String? minStart;
+        String? maxEnd;
+        
+        for (var work in workDetails) {
+          if (minStart == null || work.startTime.compareTo(minStart) < 0) {
+            minStart = work.startTime;
+          }
+          if (maxEnd == null || work.endTime.compareTo(maxEnd) > 0) {
+            maxEnd = work.endTime;
+          }
+        }
+        
+        if (minStart != null && maxEnd != null) {
+          to.setTimeRange(minStart, maxEnd);
+        }
+      }
+      
+      print('✅ [Lazy] TO 상세 로드 완료: WorkDetails ${workDetails.length}개');
+      
+      return {
+        'workDetails': workDetails,
+        'workStats': workStats,
+      };
+    } catch (e) {
+      print('❌ [Lazy] TO 상세 로드 실패: $e');
+      return {
+        'workDetails': <WorkDetailModel>[],
+        'workStats': <String, Map<String, int>>{},
+      };
+    }
+  }
+  /// ✅ TO의 totalRequired 재계산
+  Future<void> _recalculateTotalRequired(String toId) async {
+    try {
+      final workDetails = await getWorkDetails(toId, forceRefresh: true);
+      
+      int totalRequired = 0;
+      for (var work in workDetails) {
+        totalRequired += work.requiredCount;
+      }
+      
+      await _firestore.collection('tos').doc(toId).update({
+        'totalRequired': totalRequired,
+      });
+      
+      print('📊 totalRequired 업데이트: $totalRequired');
+    } catch (e) {
+      print('❌ totalRequired 업데이트 실패: $e');
     }
   }
   
