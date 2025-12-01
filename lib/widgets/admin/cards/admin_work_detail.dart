@@ -139,45 +139,47 @@ class WorkDetailRow extends StatelessWidget {
                               ),
                             ],
                           ),
-                          SizedBox(height: ResponsiveHelper.spacing(context, 2)),
-                          // 3줄: 마감시간
-                          Row(
-                            children: [
-                              Icon(
-                                Icons.timer_off_outlined,
-                                size: ResponsiveHelper.iconSize(context, 12),
-                                color: isClosed ? AppColors.grey500 : AppColors.warningDark,
-                              ),
-                              SizedBox(width: ResponsiveHelper.spacing(context, 4)),
-                              Text(
-                                '마감 ${work.applicationDeadline != null ? FormatHelper.formatTime(work.applicationDeadline!) : work.startTime}',
-                                style: ResponsiveHelper.smallStyle(
-                                  context,
+                          // 3줄: 마감시간 (단기공고만 - 장기공고는 카드 레벨에서 표시)
+                          if (!toItem.to.isLongTerm) ...[
+                            SizedBox(height: ResponsiveHelper.spacing(context, 2)),
+                            Row(
+                              children: [
+                                Icon(
+                                  Icons.timer_off_outlined,
+                                  size: ResponsiveHelper.iconSize(context, 12),
                                   color: isClosed ? AppColors.grey500 : AppColors.warningDark,
                                 ),
-                              ),
-                              if (isClosed) ...[
-                                SizedBox(width: ResponsiveHelper.spacing(context, 6)),
-                                Container(
-                                  padding: EdgeInsets.symmetric(
-                                    horizontal: ResponsiveHelper.spacing(context, 6),
-                                    vertical: ResponsiveHelper.spacing(context, 2),
-                                  ),
-                                  decoration: BoxDecoration(
-                                    color: AppColors.grey200,
-                                    borderRadius: BorderRadius.circular(4),
-                                  ),
-                                  child: Text(
-                                    '마감됨',
-                                    style: ResponsiveHelper.tinyStyle(
-                                      context,
-                                      color: AppColors.grey600,
-                                    ),
+                                SizedBox(width: ResponsiveHelper.spacing(context, 4)),
+                                Text(
+                                  '마감 ${work.applicationDeadline != null ? FormatHelper.formatTime(work.applicationDeadline!) : work.startTime}',
+                                  style: ResponsiveHelper.smallStyle(
+                                    context,
+                                    color: isClosed ? AppColors.grey500 : AppColors.warningDark,
                                   ),
                                 ),
+                                if (isClosed) ...[
+                                  SizedBox(width: ResponsiveHelper.spacing(context, 6)),
+                                  Container(
+                                    padding: EdgeInsets.symmetric(
+                                      horizontal: ResponsiveHelper.spacing(context, 6),
+                                      vertical: ResponsiveHelper.spacing(context, 2),
+                                    ),
+                                    decoration: BoxDecoration(
+                                      color: AppColors.grey200,
+                                      borderRadius: BorderRadius.circular(4),
+                                    ),
+                                    child: Text(
+                                      '마감됨',
+                                      style: ResponsiveHelper.tinyStyle(
+                                        context,
+                                        color: AppColors.grey600,
+                                      ),
+                                    ),
+                                  ),
+                                ],
                               ],
-                            ],
-                          ),
+                            ),
+                          ],
                           SizedBox(height: ResponsiveHelper.spacing(context, 2)),
                           // 4줄: 급여
                           Row(

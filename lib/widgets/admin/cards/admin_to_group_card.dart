@@ -109,12 +109,15 @@ class _TOGroupCardState extends State<TOGroupCard> {
         : widget.groupItem.groupTOs.every((toItem) {
             // workDetails 로드 안됐으면 TO 문서의 마감 상태 사용
             if (!toItem.isWorkDetailLoaded || toItem.workDetails.isEmpty) {
+              // 장기공고: applicationDeadline 기준으로 판단
+              if (toItem.to.isLongTerm) {
+                return toItem.to.isManualClosed || toItem.to.isDeadlinePassed;
+              }
               return toItem.to.isClosed;
             }
             return toItem.workDetails.every((work) =>
                 work.isClosed || work.isTimeExpired || work.isFull);
           });
-
     // ✨ 상태별 컬러바 색상 결정
     Color statusBarColor;
     if (allClosed) {
@@ -294,6 +297,52 @@ class _TOGroupCardState extends State<TOGroupCard> {
                               if (!widget.groupItem.isGrouped && masterTO.isPendingPublish) ...[
                                 SizedBox(height: ResponsiveHelper.spacing(context, 8)),
                                 _buildScheduledInfo(context, masterTO),
+                              ],
+                              
+                              // ✨ 장기공고 마감일시 표시 (단일 TO이고 장기공고인 경우)
+                              if (!widget.groupItem.isGrouped && masterTO.isLongTerm && !allClosed) ...[
+                                SizedBox(height: ResponsiveHelper.spacing(context, 8)),
+                                Row(
+                                  children: [
+                                    Icon(
+                                      Icons.timer_outlined,
+                                      size: ResponsiveHelper.iconSize(context, 14),
+                                      color: masterTO.isDeadlinePassed 
+                                          ? AppColors.grey500 
+                                          : AppColors.warningDark,
+                                    ),
+                                    SizedBox(width: ResponsiveHelper.spacing(context, 6)),
+                                    Text(
+                                      '지원마감 ${masterTO.formattedDeadline}',
+                                      style: ResponsiveHelper.smallStyle(
+                                        context,
+                                        color: masterTO.isDeadlinePassed 
+                                            ? AppColors.grey500 
+                                            : AppColors.warningDark,
+                                      ),
+                                    ),
+                                    if (masterTO.isDeadlineSoon && !masterTO.isDeadlinePassed) ...[
+                                      SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+                                      Container(
+                                        padding: EdgeInsets.symmetric(
+                                          horizontal: ResponsiveHelper.spacing(context, 6),
+                                          vertical: ResponsiveHelper.spacing(context, 2),
+                                        ),
+                                        decoration: BoxDecoration(
+                                          color: AppColors.warningBg,
+                                          borderRadius: BorderRadius.circular(4),
+                                        ),
+                                        child: Text(
+                                          '마감임박',
+                                          style: ResponsiveHelper.tinyStyle(
+                                            context,
+                                            color: AppColors.warningDark,
+                                          ).copyWith(fontWeight: FontWeight.bold),
+                                        ),
+                                      ),
+                                    ],
+                                  ],
+                                ),
                               ],
                               
                               // ✨ 상태 표시 (마감된 경우만)
