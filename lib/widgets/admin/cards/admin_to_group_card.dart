@@ -103,16 +103,17 @@ class _TOGroupCardState extends State<TOGroupCard> {
             });
           });
 
-    // 전체 마감 여부 (workDetails 로드 안됐으면 TO 문서 기준)
+    // 전체 마감 여부
     final allClosed = widget.groupItem.groupTOs.isEmpty
         ? false
         : widget.groupItem.groupTOs.every((toItem) {
-            // workDetails 로드 안됐으면 TO 문서의 마감 상태 사용
+            // 장기공고: applicationDeadline 기준으로 판단 (WorkDetails 로드 여부 상관없이)
+            if (toItem.to.isLongTerm) {
+              return toItem.to.isManualClosed || toItem.to.isDeadlinePassed;
+            }
+            
+            // 단기공고: workDetails 로드 안됐으면 TO 문서의 마감 상태 사용
             if (!toItem.isWorkDetailLoaded || toItem.workDetails.isEmpty) {
-              // 장기공고: applicationDeadline 기준으로 판단
-              if (toItem.to.isLongTerm) {
-                return toItem.to.isManualClosed || toItem.to.isDeadlinePassed;
-              }
               return toItem.to.isClosed;
             }
             return toItem.workDetails.every((work) =>
@@ -299,8 +300,8 @@ class _TOGroupCardState extends State<TOGroupCard> {
                                 _buildScheduledInfo(context, masterTO),
                               ],
                               
-                              // ✨ 장기공고 마감일시 표시 (단일 TO이고 장기공고인 경우)
-                              if (!widget.groupItem.isGrouped && masterTO.isLongTerm && !allClosed) ...[
+                              // ✨ 장기공고 마감일시 표시 (장기공고인 경우)
+                              if (masterTO.isLongTerm && !allClosed) ...[
                                 SizedBox(height: ResponsiveHelper.spacing(context, 8)),
                                 Row(
                                   children: [

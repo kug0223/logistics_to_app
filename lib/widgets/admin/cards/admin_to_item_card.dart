@@ -87,11 +87,19 @@ class _TOItemCardState extends State<TOItemCard> {
     
     final isFull = confirmed >= required && required > 0;
     
-    // 전체 마감 여부 (workDetails 로드 안됐으면 TO 문서 기준)
-    final allClosed = !widget.toItem.isWorkDetailLoaded || widget.toItem.workDetails.isEmpty
-        ? widget.toItem.to.isClosed
-        : widget.toItem.workDetails.every((work) =>
-            work.isClosed || work.isTimeExpired || work.isFull);
+    // 전체 마감 여부
+    bool allClosed;
+    if (widget.toItem.to.isLongTerm) {
+      // 장기공고: applicationDeadline 기준
+      allClosed = widget.toItem.to.isManualClosed || widget.toItem.to.isDeadlinePassed;
+    } else if (!widget.toItem.isWorkDetailLoaded || widget.toItem.workDetails.isEmpty) {
+      // 단기공고 (로드 안됨): TO 문서 기준
+      allClosed = widget.toItem.to.isClosed;
+    } else {
+      // 단기공고 (로드됨): WorkDetails 기준
+      allClosed = widget.toItem.workDetails.every((work) =>
+          work.isClosed || work.isTimeExpired || work.isFull);
+    }
 
     // 상태별 컬러
     Color statusColor;
