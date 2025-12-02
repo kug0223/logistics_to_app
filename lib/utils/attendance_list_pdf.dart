@@ -256,7 +256,7 @@ class AttendanceListPdf {
             columnWidths: {
               0: const pw.FixedColumnWidth(25),   // 체크박스
               1: const pw.FixedColumnWidth(55),   // 이름
-              2: const pw.FixedColumnWidth(28),   // 성별
+              2: const pw.FixedColumnWidth(35),   // 성별
               3: const pw.FixedColumnWidth(95),   // 연락처
               4: const pw.FixedColumnWidth(80),   // 시간 (18:00~22:00)
               5: const pw.FlexColumnWidth(1),     // 비고

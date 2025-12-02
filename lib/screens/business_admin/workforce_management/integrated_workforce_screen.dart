@@ -159,51 +159,6 @@ class _IntegratedWorkforceScreenState extends State<IntegratedWorkforceScreen> {
                 },
               ),
               
-              // 고정근무자 관리 아이콘
-              FutureBuilder<Map<String, int>>(
-                future: _getFixedWorkerManagementCounts(),
-                builder: (context, snapshot) {
-                  final counts = snapshot.data ?? {'resign': 0, 'schedule': 0};
-                  final totalCount = counts['resign']! + counts['schedule']!;
-                  
-                  return Stack(
-                    children: [
-                      IconButton(
-                        icon: Icon(
-                          Icons.manage_accounts,
-                          size: ResponsiveHelper.iconSize(context, 24),
-                        ),
-                        onPressed: _showFixedWorkerManagement,
-                        tooltip: '고정근무자 관리',
-                      ),
-                      if (totalCount > 0)
-                        Positioned(
-                          right: 8,
-                          top: 8,
-                          child: Container(
-                            padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 4)),
-                            decoration: BoxDecoration(
-                              color: Colors.red,
-                              shape: BoxShape.circle,
-                            ),
-                            constraints: BoxConstraints(
-                              minWidth: ResponsiveHelper.iconSize(context, 18),
-                              minHeight: ResponsiveHelper.iconSize(context, 18),
-                            ),
-                            child: Text(
-                              '$totalCount',
-                              style: ResponsiveHelper.tinyStyle(context).copyWith(
-                                color: Colors.white,
-                                fontWeight: FontWeight.bold,
-                              ),
-                              textAlign: TextAlign.center,
-                            ),
-                          ),
-                        ),
-                    ],
-                  );
-                },
-              ),
               
               // 리스트/캘린더 토글 (탭바 스타일)
               Container(

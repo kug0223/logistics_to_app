@@ -17,6 +17,7 @@ import '../../../widgets/dialogs/worker_detail_dialog.dart';
 import '../../../models/ui/admin_to_list_ui_models.dart';
 import '../../../theme/app_colors.dart';
 import '../../../utils/id_card_helper.dart';
+import 'fixed_worker_management_dialog.dart';
 
 /// 업무별 지원자 관리 다이얼로그 - 개선된 버전
 class WorkApplicantsDialog extends StatefulWidget {
@@ -482,11 +483,12 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog> {
       child: Material(
         color: Colors.transparent,
         child: InkWell(
-          onTap: () => _showApplicantDetail(item),
+          onTap: isPending ? () => _toggleSelection(app.id) : null,
           borderRadius: BorderRadius.circular(12),
           child: Padding(
             padding: ResponsiveHelper.cardPadding(context),
             child: Row(
+              crossAxisAlignment: CrossAxisAlignment.center,
               children: [
                 // 체크박스 (대기 중만)
                 if (isPending) ...[
@@ -523,7 +525,7 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      // 1줄: 이름 + 성별·나이 + 화살표
+                      // 1줄: 이름 + 성별·나이
                       Row(
                         children: [
                           Text(
@@ -533,21 +535,17 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog> {
                             ),
                           ),
                           SizedBox(width: ResponsiveHelper.spacing(context, 6)),
-                          Text(
-                            '${user?.gender ?? ''}${user?.age != null ? ' · ${user!.age}세' : ''}',
-                            style: ResponsiveHelper.smallStyle(context, color: AppColors.grey500),
-                          ),
-                          const Spacer(),
-                          Icon(
-                            Icons.chevron_right,
-                            size: ResponsiveHelper.iconSize(context, 18),
-                            color: AppColors.grey400,
+                          Expanded(
+                            child: Text(
+                              '${user?.gender ?? ''}${user?.age != null ? ' · ${user!.age}세' : ''}',
+                              style: ResponsiveHelper.smallStyle(context, color: AppColors.grey500),
+                            ),
                           ),
                         ],
                       ),
                       SizedBox(height: ResponsiveHelper.spacing(context, 4)),
                       
-                      // 2줄: 연락처 + 지원시간
+                      // 2줄: 연락처
                       Row(
                         children: [
                           Icon(
@@ -560,7 +558,13 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog> {
                             user?.phone ?? '-',
                             style: ResponsiveHelper.smallStyle(context, color: AppColors.grey600),
                           ),
-                          SizedBox(width: ResponsiveHelper.spacing(context, 12)),
+                        ],
+                      ),
+                      SizedBox(height: ResponsiveHelper.spacing(context, 4)),
+                      
+                      // 3줄: 지원시간
+                      Row(
+                        children: [
                           Icon(
                             Icons.access_time,
                             size: ResponsiveHelper.iconSize(context, 12),
@@ -654,6 +658,7 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog> {
                     ],
                   ),
                 ),
+                _buildMoreMenuButton(context, item, isPending),
               ],
             ),
           ),
@@ -732,9 +737,387 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog> {
       return DateFormat('MM/dd HH:mm').format(appliedAt);
     }
   }
+  /// 더보기 메뉴 버튼
+  Widget _buildMoreMenuButton(BuildContext context, Map<String, dynamic> item, bool isPending) {
+    final app = item['application'] as ApplicationModel;
+    final user = item['user'] as UserModel?;
+    final isConfirmed = app.status == 'CONFIRMED';
+    final isLongTerm = app.isLongTermApplication;
+
+    return SizedBox(
+      width: ResponsiveHelper.spacing(context, 32),
+      height: ResponsiveHelper.spacing(context, 32),
+      child: PopupMenuButton<String>(
+        icon: Icon(
+          Icons.more_vert,
+          size: ResponsiveHelper.iconSize(context, 20),
+          color: AppColors.grey600,
+        ),
+        padding: EdgeInsets.zero,
+        constraints: const BoxConstraints(),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      onSelected: (value) => _handleMenuAction(value, item),
+      itemBuilder: (context) => [
+        // 상세보기 (공통)
+        PopupMenuItem<String>(
+          value: 'detail',
+          child: Row(
+            children: [
+              Icon(Icons.person_outline, size: ResponsiveHelper.iconSize(context, 18), color: AppColors.grey700),
+              SizedBox(width: ResponsiveHelper.spacing(context, 12)),
+              Text('상세보기', style: ResponsiveHelper.bodyStyle(context)),
+            ],
+          ),
+        ),
+        
+        // 파트변경 (공통)
+        PopupMenuItem<String>(
+          value: 'change_part',
+          child: Row(
+            children: [
+              Icon(Icons.swap_horiz, size: ResponsiveHelper.iconSize(context, 18), color: AppColors.info),
+              SizedBox(width: ResponsiveHelper.spacing(context, 12)),
+              Text('파트변경', style: ResponsiveHelper.bodyStyle(context)),
+            ],
+          ),
+        ),
+        
+        // 대기중일 때: 승인/거절
+        if (isPending) ...[
+          const PopupMenuDivider(),
+          PopupMenuItem<String>(
+            value: 'approve',
+            child: Row(
+              children: [
+                Icon(Icons.check_circle_outline, size: ResponsiveHelper.iconSize(context, 18), color: AppColors.success),
+                SizedBox(width: ResponsiveHelper.spacing(context, 12)),
+                Text('승인', style: ResponsiveHelper.bodyStyle(context, color: AppColors.success)),
+              ],
+            ),
+          ),
+          PopupMenuItem<String>(
+            value: 'reject',
+            child: Row(
+              children: [
+                Icon(Icons.cancel_outlined, size: ResponsiveHelper.iconSize(context, 18), color: AppColors.error),
+                SizedBox(width: ResponsiveHelper.spacing(context, 12)),
+                Text('거절', style: ResponsiveHelper.bodyStyle(context, color: AppColors.error)),
+              ],
+            ),
+          ),
+        ],
+        
+        // 확정자일 때
+        if (isConfirmed) ...[
+          const PopupMenuDivider(),
+          if (isLongTerm) ...[
+            // 장기: 고정근무 관리
+            PopupMenuItem<String>(
+              value: 'fixed_worker_management',
+              child: Row(
+                children: [
+                  Icon(Icons.settings, size: ResponsiveHelper.iconSize(context, 18), color: AppColors.longTermDark),
+                  SizedBox(width: ResponsiveHelper.spacing(context, 12)),
+                  Text('고정근무 관리', style: ResponsiveHelper.bodyStyle(context, color: AppColors.longTermDark)),
+                ],
+              ),
+            ),
+          ] else ...[
+            // 단기: 확정취소
+            PopupMenuItem<String>(
+              value: 'cancel_confirmation',
+              child: Row(
+                children: [
+                  Icon(Icons.cancel_outlined, size: ResponsiveHelper.iconSize(context, 18), color: AppColors.error),
+                  SizedBox(width: ResponsiveHelper.spacing(context, 12)),
+                  Text('확정취소', style: ResponsiveHelper.bodyStyle(context, color: AppColors.error)),
+                ],
+              ),
+            ),
+          ],
+        ],
+      ],
+      ),
+    );
+  }
+
+  /// 메뉴 액션 처리
+  Future<void> _handleMenuAction(String action, Map<String, dynamic> item) async {
+    switch (action) {
+      case 'detail':
+        _showApplicantDetail(item);
+        break;
+      case 'change_part':
+        _showChangeWorkPartDialog(item);
+        break;
+      case 'approve':
+        _approveApplication(item);
+        break;
+      case 'reject':
+        _rejectApplication(item);
+        break;
+      case 'cancel_confirmation':
+        _cancelConfirmation(item);
+        break;
+      case 'fixed_worker_management':
+        _openFixedWorkerManagement();
+        break;
+    }
+  }
+
+  /// 파트변경 다이얼로그
+  Future<void> _showChangeWorkPartDialog(Map<String, dynamic> item) async {
+    final app = item['application'] as ApplicationModel;
+    final user = item['user'] as UserModel?;
+    final workDetails = widget.toItem.workDetails;
+    
+    // 현재 파트 제외한 다른 파트 목록
+    final otherWorkDetails = workDetails.where((w) => w.workType != widget.work.workType).toList();
+    
+    if (otherWorkDetails.isEmpty) {
+      ToastHelper.showWarning('변경 가능한 다른 파트가 없습니다');
+      return;
+    }
+
+    final selectedWorkType = await showDialog<String>(
+      context: context,
+      builder: (context) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: Row(
+          children: [
+            Icon(Icons.swap_horiz, color: Theme.of(context).primaryColor),
+            SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+            Text('파트변경', style: ResponsiveHelper.titleStyle(context)),
+          ],
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              '${user?.name ?? '지원자'}님의 파트를 변경합니다.',
+              style: ResponsiveHelper.bodyStyle(context, color: AppColors.grey600),
+            ),
+            SizedBox(height: ResponsiveHelper.spacing(context, 8)),
+            Container(
+              padding: EdgeInsets.symmetric(
+                horizontal: ResponsiveHelper.spacing(context, 12),
+                vertical: ResponsiveHelper.spacing(context, 8),
+              ),
+              decoration: BoxDecoration(
+                color: AppColors.grey100,
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Row(
+                children: [
+                  Text('현재: ', style: ResponsiveHelper.bodyStyle(context, color: AppColors.grey600)),
+                  Text(
+                    widget.work.workType,
+                    style: ResponsiveHelper.bodyStyle(context).copyWith(fontWeight: FontWeight.bold),
+                  ),
+                ],
+              ),
+            ),
+            SizedBox(height: ResponsiveHelper.spacing(context, 16)),
+            Text(
+              '변경할 파트 선택',
+              style: ResponsiveHelper.subtitleStyle(context).copyWith(fontWeight: FontWeight.bold),
+            ),
+            SizedBox(height: ResponsiveHelper.spacing(context, 8)),
+            ...otherWorkDetails.map((work) => Padding(
+              padding: EdgeInsets.only(bottom: ResponsiveHelper.spacing(context, 8)),
+              child: Material(
+                color: Colors.transparent,
+                child: InkWell(
+                  onTap: () => Navigator.pop(context, work.workType),
+                  borderRadius: BorderRadius.circular(12),
+                  child: Container(
+                    padding: ResponsiveHelper.cardPadding(context),
+                    decoration: BoxDecoration(
+                      border: Border.all(color: AppColors.border),
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: Row(
+                      children: [
+                        WorkTypeIcon.buildWithBackground(
+                          iconString: work.workTypeIcon,
+                          backgroundColor: work.workTypeBackgroundColor,
+                          size: ResponsiveHelper.iconSize(context, 20),
+                          containerSize: ResponsiveHelper.spacing(context, 36),
+                        ),
+                        SizedBox(width: ResponsiveHelper.spacing(context, 12)),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                work.workType,
+                                style: ResponsiveHelper.bodyStyle(context).copyWith(fontWeight: FontWeight.w600),
+                              ),
+                              Text(
+                                '${work.startTime}~${work.endTime} | ${work.formattedWage}',
+                                style: ResponsiveHelper.smallStyle(context, color: AppColors.grey600),
+                              ),
+                            ],
+                          ),
+                        ),
+                        Icon(Icons.arrow_forward_ios, size: ResponsiveHelper.iconSize(context, 14), color: AppColors.grey400),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            )),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: Text('취소', style: TextStyle(color: AppColors.grey600)),
+          ),
+        ],
+      ),
+    );
+
+    if (selectedWorkType == null) return;
+
+    // 파트 변경 처리
+    try {
+      final userProvider = context.read<UserProvider>();
+      final adminUID = userProvider.currentUser?.uid ?? '';
+      final selectedWork = otherWorkDetails.firstWhere((w) => w.workType == selectedWorkType);
+
+      await _firestoreService.changeApplicationWorkType(
+        applicationId: app.id,
+        newWorkType: selectedWorkType,
+        newWage: selectedWork.wage,
+        adminUID: adminUID,
+      );
+      ToastHelper.showSuccess('${user?.name ?? '지원자'}님의 파트가 $selectedWorkType(으)로 변경되었습니다');
+      widget.onChanged();
+      await _loadApplicants();
+    } catch (e) {
+      print('❌ 파트 변경 실패: $e');
+      ToastHelper.showError('파트 변경에 실패했습니다');
+    }
+  }
+
+  /// 개별 승인
+  Future<void> _approveApplication(Map<String, dynamic> item) async {
+    final app = item['application'] as ApplicationModel;
+    final user = item['user'] as UserModel?;
+
+    final confirm = await DialogHelper.showConfirm(
+      context,
+      title: '지원 승인',
+      message: '${user?.name ?? '지원자'}님을 승인하시겠습니까?',
+      confirmText: '승인',
+    );
+
+    if (confirm != true) return;
+
+    try {
+      final userProvider = context.read<UserProvider>();
+      final adminUID = userProvider.currentUser?.uid;
+
+      await _firestoreService.updateApplicationStatus(
+        applicationId: app.id,
+        status: 'CONFIRMED',
+        confirmedBy: adminUID,
+      );
+
+      ToastHelper.showSuccess('${user?.name ?? '지원자'}님이 승인되었습니다');
+      widget.onChanged();
+      await _loadApplicants();
+    } catch (e) {
+      print('❌ 승인 실패: $e');
+      ToastHelper.showError('승인 처리 중 오류가 발생했습니다');
+    }
+  }
+
+  /// 개별 거절
+  Future<void> _rejectApplication(Map<String, dynamic> item) async {
+    final app = item['application'] as ApplicationModel;
+    final user = item['user'] as UserModel?;
+
+    final reason = await DialogHelper.showRejectReasonPicker(
+      context,
+      title: '지원 거절',
+      message: '${user?.name ?? '지원자'}님을 거절합니다.\n거절 사유를 선택해주세요.',
+    );
+
+    if (reason == null) return;
+
+    try {
+      final userProvider = context.read<UserProvider>();
+      final adminUID = userProvider.currentUser?.uid;
+
+      await _firestoreService.updateApplicationStatus(
+        applicationId: app.id,
+        status: 'REJECTED',
+        rejectedBy: adminUID,
+        message: reason,
+      );
+
+      ToastHelper.showSuccess('${user?.name ?? '지원자'}님이 거절되었습니다');
+      widget.onChanged();
+      await _loadApplicants();
+    } catch (e) {
+      print('❌ 거절 실패: $e');
+      ToastHelper.showError('거절 처리 중 오류가 발생했습니다');
+    }
+  }
+
+  /// 확정취소 (단기)
+  Future<void> _cancelConfirmation(Map<String, dynamic> item) async {
+    final app = item['application'] as ApplicationModel;
+    final user = item['user'] as UserModel?;
+
+    final reason = await DialogHelper.showRejectReasonPicker(
+      context,
+      title: '확정 취소',
+      message: '${user?.name ?? '근무자'}님의 확정을 취소합니다.\n취소 사유를 선택해주세요.',
+    );
+
+    if (reason == null) return;
+
+    try {
+      final userProvider = context.read<UserProvider>();
+      final adminUID = userProvider.currentUser?.uid;
+
+      await _firestoreService.updateApplicationStatus(
+        applicationId: app.id,
+        status: 'REJECTED',
+        rejectedBy: adminUID,
+        message: reason,
+      );
+
+      ToastHelper.showSuccess('${user?.name ?? '근무자'}님의 확정이 취소되었습니다');
+      widget.onChanged();
+      await _loadApplicants();
+    } catch (e) {
+      print('❌ 확정취소 실패: $e');
+      ToastHelper.showError('확정 취소 중 오류가 발생했습니다');
+    }
+  }
+
+  /// 고정근무 관리 다이얼로그 열기 (장기)
+  void _openFixedWorkerManagement() {
+    Navigator.pop(context); // 현재 다이얼로그 닫기
+    
+    showDialog(
+      context: context,
+      builder: (context) => FixedWorkerManagementDialog(
+        businessId: widget.toItem.to.businessId,
+        onChanged: () {
+          widget.onChanged();
+        },
+      ),
+    );
+  }
 
   /// 지원자 상세 보기 - 공통 위젯 사용
-  void _showApplicantDetail(Map<String, dynamic> item) {
+  void _showApplicantDetail(Map<String, dynamic> item) async{
     final app = item['application'] as ApplicationModel;
     final user = item['user'] as UserModel?;
     
@@ -746,7 +1129,7 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog> {
     final isPending = app.status == 'PENDING';
     final isConfirmed = app.status == 'CONFIRMED';
 
-    WorkerDetailDialog.show(
+    final changed = await WorkerDetailDialog.show(
       context: context,
       user: user,
       application: app,
@@ -759,6 +1142,14 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog> {
         _loadApplicants();
       },
     );
+    
+
+    
+    // 신분증 상태 등 변경되었으면 리스트 새로고침
+    // changed: true(변경됨), false(변경없음), null(외부탭으로 닫음)
+    if (changed != false) {
+      _loadApplicants();
+    }
   }
 
   /// 하단 액션 바

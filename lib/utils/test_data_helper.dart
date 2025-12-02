@@ -340,14 +340,14 @@ class TestDataHelper {
       final workDetail = workDetails[_random.nextInt(workDetails.length)];
       final workData = workDetail.data();
       
-      // 지원서 데이터 생성
+      // 지원서 데이터 생성 (WorkDetails에서 시간 가져옴)
       final applicationData = <String, dynamic>{
         'businessId': businessId,
         'businessName': businessName,
         'toTitle': toTitle,
         'workDate': Timestamp.fromDate(date),
-        'startTime': startTime,
-        'endTime': endTime,
+        'startTime': workData['startTime'] ?? startTime ?? '',
+        'endTime': workData['endTime'] ?? endTime ?? '',
         'uid': uid,
         'selectedWorkType': workData['workType'],
         'wage': workData['wage'],
@@ -529,6 +529,9 @@ class TestDataHelper {
       print('   퇴근 완료: $checkedOutCount명');
       print('   미출근: ${todayWorkers.length - checkedInCount}명');
       print('');
+      // ✅ 캐시 클리어
+      _firestoreService.clearCache();
+      print('🗑️ 캐시 클리어 완료');
     } catch (e, stackTrace) {
       print('');
       print('❌ ═══════════════════════════════════════');
@@ -640,6 +643,9 @@ class TestDataHelper {
       print('   📊 총 $totalDeleted개 항목 삭제됨');
       print('   🎯 영향받은 TO: ${affectedTOIds.length}개');
       print('');
+      // ✅ 캐시 클리어
+      _firestoreService.clearCache();
+      print('🗑️ 캐시 클리어 완료');
       
     } catch (e, stackTrace) {
       print('');
@@ -683,6 +689,8 @@ class TestDataHelper {
       } else {
         print('   ℹ️  삭제할 더미 attendance 없음');
       }
+      // ✅ 캐시 클리어
+      _firestoreService.clearCache();
     } catch (e) {
       print('❌ 더미 출근 데이터 삭제 실패: $e');
       rethrow;
@@ -814,6 +822,9 @@ class TestDataHelper {
       print('🎉 더미 리뷰 $createdCount개 생성 완료!');
       print('🎉 ═══════════════════════════════════════');
       print('');
+      // ✅ 캐시 클리어
+      _firestoreService.clearCache();
+      print('🗑️ 캐시 클리어 완료');
     } catch (e) {
       print('❌ 더미 리뷰 생성 실패: $e');
     }

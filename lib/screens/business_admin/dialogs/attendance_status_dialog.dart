@@ -35,6 +35,8 @@ import '../../../widgets/pickers/time_picker_bottom_sheet.dart';
 
 // PDF
 import '../../../utils/attendance_list_pdf.dart';
+// Dialogs
+import 'fixed_worker_management_dialog.dart';
 
 /// 인원현황 다이얼로그 - 출퇴근 관리 기능 포함
 class AttendanceStatusDialog extends StatefulWidget {
@@ -329,7 +331,9 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
     // 출근 완료
     if (attendance?.checkIn != null) {
       // 지각 체크
-      final isLate = _isLate(attendance!.checkIn!, expectedStartTime);
+      debugPrint('🔍 지각 체크: checkIn=${attendance!.checkIn}, expected=$expectedStartTime');
+      final isLate = _isLate(attendance.checkIn!, expectedStartTime);
+      debugPrint('🔍 결과: isLate=$isLate');
       if (isLate) {
         return {
           'status': 'late',
@@ -358,13 +362,15 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
     };
   }
 
-  /// 지각 여부 판단
+  /// 지각 여부 판단 (1분 이상 늦으면 지각)
   bool _isLate(String checkInTime, String expectedTime) {
     try {
       final checkIn = _parseTime(checkInTime);
       final expected = _parseTime(expectedTime);
-      return checkIn.isAfter(expected);
+      // 1분 이상 늦으면 지각 (동일 시간은 지각 아님)
+      return checkIn.difference(expected).inMinutes > 0;
     } catch (e) {
+      debugPrint('⚠️ 지각 판단 오류: checkIn=$checkInTime, expected=$expectedTime, error=$e');
       return false;
     }
   }
@@ -1384,49 +1390,64 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
         ),
       ),
       child: Row(
+        mainAxisAlignment: MainAxisAlignment.center,
         children: [
           // 명단 출력 버튼
-          OutlinedButton.icon(
-            onPressed: _confirmedWorkers.isNotEmpty ? _showPrintPreview : null,
-            icon: Icon(Icons.print_outlined, size: ResponsiveHelper.iconSize(context, 18)),
-            label: const Text('명단 출력'),
-            style: OutlinedButton.styleFrom(
-              foregroundColor: _confirmedWorkers.isNotEmpty ? theme.primaryColor : AppColors.grey500,
-              side: BorderSide(
-                color: _confirmedWorkers.isNotEmpty ? theme.primaryColor : AppColors.grey300,
-              ),
-              padding: EdgeInsets.symmetric(
-                horizontal: ResponsiveHelper.spacing(context, 16),
-                vertical: ResponsiveHelper.spacing(context, 12),
+          Expanded(
+            child: OutlinedButton.icon(
+              onPressed: _confirmedWorkers.isNotEmpty ? _showPrintPreview : null,
+              icon: Icon(Icons.print_outlined, size: ResponsiveHelper.iconSize(context, 18)),
+              label: const Text('명단 출력'),
+              style: OutlinedButton.styleFrom(
+                foregroundColor: _confirmedWorkers.isNotEmpty ? theme.primaryColor : AppColors.grey500,
+                side: BorderSide(
+                  color: _confirmedWorkers.isNotEmpty ? theme.primaryColor : AppColors.grey300,
+                ),
+                padding: EdgeInsets.symmetric(
+                  vertical: ResponsiveHelper.spacing(context, 12),
+                ),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
               ),
             ),
           ),
 
-          const Spacer(),
+          SizedBox(width: ResponsiveHelper.spacing(context, 12)),
 
-          // 닫기 버튼
-          ElevatedButton(
-            onPressed: () => Navigator.pop(context),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: theme.primaryColor,
-              foregroundColor: Colors.white,
-              padding: EdgeInsets.symmetric(
-                horizontal: ResponsiveHelper.spacing(context, 32),
-                vertical: ResponsiveHelper.spacing(context, 12),
-              ),
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(12),
-              ),
-            ),
-            child: Text(
-              '닫기',
-              style: ResponsiveHelper.bodyStyle(context).copyWith(
-                color: Colors.white,
-                fontWeight: FontWeight.bold,
+          // 고정근무 관리 버튼 (WorkerDetailDialog와 동일)
+          Expanded(
+            child: ElevatedButton.icon(
+              onPressed: _selectedBusinessId != null ? _openFixedWorkerManagement : null,
+              icon: Icon(Icons.settings, size: ResponsiveHelper.iconSize(context, 18)),
+              label: const Text('고정근무 관리'),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: AppColors.longTermDark,
+                foregroundColor: Colors.white,
+                padding: EdgeInsets.symmetric(
+                  vertical: ResponsiveHelper.spacing(context, 12),
+                ),
               ),
             ),
           ),
         ],
+      ),
+    );
+  }
+  /// 고정근무 관리 다이얼로그 열기
+  void _openFixedWorkerManagement() {
+    if (_selectedBusinessId == null) {
+      ToastHelper.showWarning('사업장을 선택해주세요');
+      return;
+    }
+
+    showDialog(
+      context: context,
+      builder: (context) => FixedWorkerManagementDialog(
+        businessId: _selectedBusinessId!,
+        onChanged: () {
+          _loadData(); // 데이터 새로고침
+        },
       ),
     );
   }

@@ -46,7 +46,7 @@ class WorkerDetailDialog extends StatefulWidget {
   });
 
   /// 다이얼로그 표시 헬퍼
-  static Future<void> show({
+  static Future<bool?> show({
     required BuildContext context,
     required UserModel user,
     ApplicationModel? application,
@@ -56,7 +56,7 @@ class WorkerDetailDialog extends StatefulWidget {
     bool showApprovalButtons = false,
     VoidCallback? onStatusChanged,
   }) {
-    return showDialog(
+    return showDialog<bool>(
       context: context,
       builder: (context) => WorkerDetailDialog(
         user: user,
@@ -915,7 +915,7 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
           // 닫기 버튼 (항상)
           Expanded(
             child: OutlinedButton(
-              onPressed: () => Navigator.pop(context),
+              onPressed: () => Navigator.pop(context, _hasChanges),
               child: const Text('닫기'),
               style: OutlinedButton.styleFrom(
                 foregroundColor: AppColors.grey600,
