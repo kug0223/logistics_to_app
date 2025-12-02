@@ -47,6 +47,8 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog> {
   
   // 신분증 상태 맵
   Map<String, String> _idCardStatusMap = {};
+  // ⭐ 변경 여부 추적
+  bool _hasChanges = false;
 
   @override
   void initState() {
@@ -175,8 +177,8 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog> {
     final confirmed = _applicants.where((item) => 
       (item['application'] as ApplicationModel).status == 'CONFIRMED').toList();
 
-    return Dialog(
-      backgroundColor: Colors.transparent,
+      return Dialog(
+        backgroundColor: const Color.fromARGB(0, 112, 106, 106),
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(24),
       ),
@@ -995,6 +997,7 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog> {
       );
       ToastHelper.showSuccess('${user?.name ?? '지원자'}님의 파트가 $selectedWorkType(으)로 변경되었습니다');
       await _loadApplicants();
+      _updateLocalStats();
     } catch (e) {
       print('❌ 파트 변경 실패: $e');
       ToastHelper.showError('파트 변경에 실패했습니다');
@@ -1027,6 +1030,7 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog> {
 
       ToastHelper.showSuccess('${user?.name ?? '지원자'}님이 승인되었습니다');
       await _loadApplicants();
+      _updateLocalStats();
     } catch (e) {
       print('❌ 승인 실패: $e');
       ToastHelper.showError('승인 처리 중 오류가 발생했습니다');
@@ -1059,6 +1063,7 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog> {
 
       ToastHelper.showSuccess('${user?.name ?? '지원자'}님이 거절되었습니다');
       await _loadApplicants();
+      _updateLocalStats();
     } catch (e) {
       print('❌ 거절 실패: $e');
       ToastHelper.showError('거절 처리 중 오류가 발생했습니다');
@@ -1091,6 +1096,7 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog> {
 
       ToastHelper.showSuccess('${user?.name ?? '근무자'}님의 확정이 취소되었습니다');
       await _loadApplicants();
+      _updateLocalStats();
     } catch (e) {
       print('❌ 확정취소 실패: $e');
       ToastHelper.showError('확정 취소 중 오류가 발생했습니다');
@@ -1133,9 +1139,9 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog> {
       businessId: widget.toItem.to.businessId,
       isConfirmed: isConfirmed,
       showApprovalButtons: isPending,
-      onStatusChanged: () {
-        widget.onChanged();
-        _loadApplicants();
+      onStatusChanged: () async {
+        await _loadApplicants();
+        _updateLocalStats();
       },
     );
     
@@ -1299,6 +1305,7 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog> {
   }
   /// 로컬 통계 갱신 (부모 toItem의 workDetailStats 업데이트)
   Future<void> _updateLocalStats() async {
+    _hasChanges = true;  // ⭐ 변경 표시
     // 현재 지원자 목록에서 통계 계산
     int pending = 0;
     int confirmed = 0;

@@ -35,7 +35,7 @@ import '../../../screens/business_admin/dialogs/work_applicants_dialog.dart';
 /// - 좌측 컬러 인디케이터
 /// - 정보 간소화 (업무명 + 시간 + 인원)
 /// - 상태별 색상 적용
-class WorkDetailRow extends StatelessWidget {
+class WorkDetailRow extends StatefulWidget {
   final WorkDetailModel work;
   final int confirmedCount;
   final int pendingCount;
@@ -54,11 +54,28 @@ class WorkDetailRow extends StatelessWidget {
   });
 
   @override
+  State<WorkDetailRow> createState() => _WorkDetailRowState();
+}
+
+class _WorkDetailRowState extends State<WorkDetailRow> {
+  
+  // ⭐ 로컬 통계 (toItem.workDetailStats에서 가져오거나 초기값 사용)
+  int get _confirmedCount {
+    final stats = widget.toItem.workDetailStats?[widget.work.workType];
+    return stats?['confirmed'] ?? widget.confirmedCount;
+  }
+  
+  int get _pendingCount {
+    final stats = widget.toItem.workDetailStats?[widget.work.workType];
+    return stats?['pending'] ?? widget.pendingCount;
+  }
+  
+  @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final isFull = confirmedCount >= work.requiredCount;
-    final isClosed = work.isClosed || work.isTimeExpired || work.isFull;
-    final isEmergency = work.isEmergencyOpen;
+    final isFull = _confirmedCount >= widget.work.requiredCount;
+    final isClosed = widget.work.isClosed || widget.work.isTimeExpired || widget.work.isFull;
+    final isEmergency = widget.work.isEmergencyOpen;
     
     // 상태별 색상
     Color statusColor;
@@ -119,7 +136,7 @@ class WorkDetailRow extends StatelessWidget {
                             children: [
                               // 1줄: 업무명
                               Text(
-                                work.workType,
+                                widget.work.workType,
                                 style: ResponsiveHelper.bodyStyle(context).copyWith(
                                   fontWeight: FontWeight.w600,
                                   color: AppColors.textPrimary,
@@ -136,7 +153,7 @@ class WorkDetailRow extends StatelessWidget {
                                   ),
                                   SizedBox(width: ResponsiveHelper.spacing(context, 4)),
                                   Text(
-                                    '${work.startTime} ~ ${work.endTime}',
+                                    '${widget.work.startTime} ~ ${widget.work.endTime}',
                                     style: ResponsiveHelper.smallStyle(
                                       context,
                                       color: AppColors.grey600,
@@ -145,7 +162,7 @@ class WorkDetailRow extends StatelessWidget {
                                 ],
                               ),
                               // 3줄: 마감시간 (단기공고만 - 장기공고는 카드 레벨에서 표시)
-                              if (!toItem.to.isLongTerm) ...[
+                              if (!widget.toItem.to.isLongTerm) ...[
                                 SizedBox(height: ResponsiveHelper.spacing(context, 2)),
                                 Row(
                                   children: [
@@ -156,7 +173,7 @@ class WorkDetailRow extends StatelessWidget {
                                     ),
                                     SizedBox(width: ResponsiveHelper.spacing(context, 4)),
                                     Text(
-                                      '마감 ${work.applicationDeadline != null ? FormatHelper.formatTime(work.applicationDeadline!) : work.startTime}',
+                                      '마감 ${widget.work.applicationDeadline != null ? FormatHelper.formatTime(widget.work.applicationDeadline!) : widget.work.startTime}',
                                       style: ResponsiveHelper.smallStyle(
                                         context,
                                         color: isClosed ? AppColors.grey500 : AppColors.warningDark,
@@ -196,7 +213,7 @@ class WorkDetailRow extends StatelessWidget {
                                   ),
                                   SizedBox(width: ResponsiveHelper.spacing(context, 4)),
                                   Text(
-                                    FormatHelper.formatWage(work.wage),
+                                    FormatHelper.formatWage(widget.work.wage),
                                     style: ResponsiveHelper.smallStyle(
                                       context,
                                       color: AppColors.successDark,
@@ -240,13 +257,13 @@ class WorkDetailRow extends StatelessWidget {
       width: ResponsiveHelper.iconSize(context, 36),
       height: ResponsiveHelper.iconSize(context, 36),
       decoration: BoxDecoration(
-        color: FormatHelper.parseColor(work.workTypeBackgroundColor ?? '#E3F2FD'),
+        color: FormatHelper.parseColor(widget.work.workTypeBackgroundColor ?? '#E3F2FD'),
         borderRadius: BorderRadius.circular(8),
       ),
       child: Center(
         child: WorkTypeIcon.buildFromString(
-          work.workTypeIcon,
-          color: FormatHelper.parseColor(work.workTypeColor ?? '#2196F3'),
+          widget.work.workTypeIcon,
+          color: FormatHelper.parseColor(widget.work.workTypeColor ?? '#2196F3'),
           size: ResponsiveHelper.iconSize(context, 18),
         ),
       ),
@@ -280,15 +297,15 @@ class WorkDetailRow extends StatelessWidget {
         ),
         SizedBox(width: ResponsiveHelper.spacing(context, 4)),
         Text(
-          '$confirmedCount/${work.requiredCount}',
+          '$_confirmedCount/${widget.work.requiredCount}',
           style: ResponsiveHelper.bodyStyle(
             context,
             color: displayColor,
           ).copyWith(fontWeight: FontWeight.bold),
         ),
-        if (pendingCount > 0) ...[
+        if (_pendingCount > 0) ...[
           Text(
-            ' +$pendingCount',
+            ' +$_pendingCount',
             style: ResponsiveHelper.smallStyle(
               context,
               color: AppColors.warningDark,
@@ -327,12 +344,12 @@ class WorkDetailRow extends StatelessWidget {
     await showDialog(
       context: context,
       builder: (context) => WorkApplicantsDialog(
-        toItem: toItem,
-        work: work,
-        onChanged: onChanged,
+        toItem: widget.toItem,
+        work: widget.work,
+        onChanged: widget.onChanged,
       ),
     );
-    // 다이얼로그 닫힌 후 항상 부모에 갱신 요청
-    onChanged();
+    // ⭐ 다이얼로그 닫힌 후 이 위젯만 rebuild (toItem.workDetailStats 이미 업데이트됨)
+    if (mounted) setState(() {});
   }
 }
