@@ -12,9 +12,12 @@ import '../../../services/firestore_service.dart';
 // Utils
 import '../../../utils/toast_helper.dart';
 import '../../../utils/responsive_helper.dart';
+import '../../../theme/app_colors.dart';
 
 // Widgets
 import '../../../widgets/common/loading_widget.dart';
+// Dialogs
+import 'fixed_worker_management_dialog.dart';
 
 /// 인원현황 다이얼로그 - 세련된 디자인 (로그인 스타일)
 class AttendanceStatusDialog extends StatefulWidget {
@@ -543,30 +546,65 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
                   ),
                 ),
               ),
-              child: SizedBox(
-                width: double.infinity,
-                child: ElevatedButton(
-                  onPressed: () => Navigator.pop(context),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: theme.primaryColor,
-                    foregroundColor: Colors.white,
-                    padding: EdgeInsets.symmetric(
-                      vertical: ResponsiveHelper.spacing(context, 16),
+              child: Row(
+                children: [
+                  // 고정근무자 관리 버튼
+                  Expanded(
+                    child: ElevatedButton.icon(
+                      onPressed: () {
+                        Navigator.pop(context);
+                        showDialog(
+                          context: context,
+                          builder: (context) => FixedWorkerManagementDialog(
+                            businessId: _selectedBusinessId!,
+                            onChanged: () {},
+                          ),
+                        );
+                      },
+                      icon: Icon(
+                        Icons.settings,
+                        size: ResponsiveHelper.iconSize(context, 18),
+                      ),
+                      label: const Text('고정근무 관리'),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: AppColors.longTermDark,
+                        foregroundColor: Colors.white,
+                        padding: EdgeInsets.symmetric(
+                          vertical: ResponsiveHelper.spacing(context, 14),
+                        ),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        elevation: 0,
+                      ),
                     ),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                    elevation: 0,
                   ),
-                  child: Text(
-                    '닫기',
-                    style: ResponsiveHelper.bodyStyle(context).copyWith(
-                      color: Colors.white,
-                      fontWeight: FontWeight.bold,
-                      fontSize: ResponsiveHelper.bodyStyle(context).fontSize! * 1.1,
+                  SizedBox(width: ResponsiveHelper.spacing(context, 12)),
+                  // 닫기 버튼
+                  Expanded(
+                    child: ElevatedButton(
+                      onPressed: () => Navigator.pop(context),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: theme.primaryColor,
+                        foregroundColor: Colors.white,
+                        padding: EdgeInsets.symmetric(
+                          vertical: ResponsiveHelper.spacing(context, 14),
+                        ),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        elevation: 0,
+                      ),
+                      child: Text(
+                        '닫기',
+                        style: ResponsiveHelper.bodyStyle(context).copyWith(
+                          color: Colors.white,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
                     ),
                   ),
-                ),
+                ],
               ),
             ),
           ],

@@ -127,31 +127,37 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
       
       final results = await Future.wait(futures);
       
-      setState(() {
-        _businessHistory = results[0] as Map<String, dynamic>?;
-        _recentReviews = results[1] as List<ReviewModel>;
-        _idCardAccess = results[2] as IdCardAccessRequestModel?;
-        _isLoading = false;
-      });
-    } catch (e) {
-      print('❌ 추가 데이터 로드 실패: $e');
-      setState(() => _isLoading = false);
-    }
-    // 🔥 근무 시간 조회 (장기 지원자용)
-    final app = widget.application;
-    if (app != null && widget.toItem == null) {
-      if (app.startTime.isNotEmpty && app.endTime.isNotEmpty) {
-        _workTime = '${app.startTime} ~ ${app.endTime}';
-      } else {
-        // TO 조회 후 workDetails에서 시간 가져오기
-        final to = await _firestoreService.getTOByApplication(app);
-        if (to != null) {
-          final workDetails = await _firestoreService.getWorkDetails(to.id);
-          final matched = workDetails.where((w) => w.workType == app.selectedWorkType).firstOrNull;
-          if (matched != null) {
-            _workTime = '${matched.startTime} ~ ${matched.endTime}';
+      // 결과 할당 (setState 밖에서)
+      _businessHistory = results[0] as Map<String, dynamic>?;
+      _recentReviews = results[1] as List<ReviewModel>;
+      _idCardAccess = results[2] as IdCardAccessRequestModel?;
+      
+      // 🔥 근무 시간 조회 (장기 지원자용 - toItem 없을 때)
+      final app = widget.application;
+      if (app != null && widget.toItem == null) {
+        if (app.startTime.isNotEmpty && app.endTime.isNotEmpty) {
+          _workTime = '${app.startTime} ~ ${app.endTime}';
+        } else {
+          // TO 조회 후 workDetails에서 시간 가져오기
+          final to = await _firestoreService.getTOByApplication(app);
+          if (to != null) {
+            final workDetails = await _firestoreService.getWorkDetails(to.id);
+            final matched = workDetails.where((w) => w.workType == app.selectedWorkType).firstOrNull;
+            if (matched != null) {
+              _workTime = '${matched.startTime} ~ ${matched.endTime}';
+            }
           }
         }
+      }
+      
+      // 모든 작업 완료 후 UI 업데이트
+      if (mounted) {
+        setState(() => _isLoading = false);
+      }
+    } catch (e) {
+      print('❌ 추가 데이터 로드 실패: $e');
+      if (mounted) {
+        setState(() => _isLoading = false);
       }
     }
   }

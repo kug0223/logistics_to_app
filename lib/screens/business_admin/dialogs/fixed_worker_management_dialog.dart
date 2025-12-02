@@ -24,6 +24,7 @@ import '../../../widgets/common/loading_widget.dart';
 import '../../../widgets/dialogs/styled_dialog.dart';
 import '../../../widgets/dialogs/worker_detail_dialog.dart';
 import '../../../theme/app_colors.dart';
+import '../../../widgets/work_type_icon.dart';
 
 /// 고정근무자 관리 다이얼로그
 class FixedWorkerManagementDialog extends StatefulWidget {
@@ -68,10 +69,30 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
             app.resignStatus != 'AUTO_APPROVED';
       }).toList();
 
-      // 사용자 정보 병렬 조회
+      // 사용자 정보 + 업무 아이콘 병렬 조회
       final futures = filtered.map((app) async {
         final user = await _firestoreService.getUserByUID(app.uid);
-        return _FixedWorkerItem(application: app, user: user);
+        
+        // 업무 아이콘 조회 (BusinessWorkType에서 가져오기)
+        String? workTypeIcon;
+        String? workTypeColor;
+        final businessWorkTypes = await _firestoreService.getBusinessWorkTypes(app.businessId);        
+        final matched = businessWorkTypes.where((w) => w.name == app.selectedWorkType).firstOrNull;
+        
+        String? workTypeBackgroundColor;  // 🔥 추가
+        if (matched != null) {
+          workTypeIcon = matched.icon;
+          workTypeColor = matched.color;
+          workTypeBackgroundColor = matched.backgroundColor;
+        }
+        
+        return _FixedWorkerItem(
+          application: app, 
+          user: user,
+          workTypeIcon: workTypeIcon,
+          workTypeColor: workTypeColor,
+          workTypeBackgroundColor: workTypeBackgroundColor,  // 🔥 추가
+        );
       }).toList();
 
       final results = await Future.wait(futures);
@@ -361,28 +382,47 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
                           ],
                         ),
                         SizedBox(height: ResponsiveHelper.spacing(context, 4)),
+                        // 업무 정보
                         Row(
                           children: [
-                            Icon(
-                              Icons.work_outline,
-                              size: ResponsiveHelper.iconSize(context, 14),
-                              color: AppColors.grey500,
-                            ),
+                            // 업무 아이콘
+                            if (item.workTypeIcon != null)
+                              WorkTypeIcon.buildWithBackground(
+                                iconString: item.workTypeIcon!,
+                                iconColor: item.workTypeColor,
+                                backgroundColor: item.workTypeBackgroundColor,
+                                size: 12,
+                                containerSize: 20,
+                              )
+                            else
+                              Icon(
+                                Icons.work_outline,
+                                size: ResponsiveHelper.iconSize(context, 14),
+                                color: AppColors.grey500,
+                              ),
                             SizedBox(width: ResponsiveHelper.spacing(context, 4)),
                             Text(
                               app.selectedWorkType,
                               style: ResponsiveHelper.smallStyle(context, color: AppColors.grey600),
                             ),
-                            SizedBox(width: ResponsiveHelper.spacing(context, 12)),
+                          ],
+                        ),
+                        SizedBox(height: ResponsiveHelper.spacing(context, 4)),
+                        // 요일 (별도 Row)
+                        Row(
+                          children: [
                             Icon(
-                              Icons.calendar_today,
-                              size: ResponsiveHelper.iconSize(context, 14),
-                              color: AppColors.grey500,
+                              Icons.calendar_today_outlined,
+                              size: ResponsiveHelper.iconSize(context, 12),
+                              color: AppColors.grey400,
                             ),
                             SizedBox(width: ResponsiveHelper.spacing(context, 4)),
-                            Text(
-                              _formatWorkDays(app.workDays),
-                              style: ResponsiveHelper.smallStyle(context, color: AppColors.grey600),
+                            Flexible(
+                              child: Text(
+                                '${_formatWorkDays(app.workDays)}',
+                                style: ResponsiveHelper.smallStyle(context, color: AppColors.grey500),
+                                overflow: TextOverflow.ellipsis,
+                              ),
                             ),
                           ],
                         ),
@@ -873,45 +913,6 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
     reasonController.dispose();
   }
 
-  /// 추가 근무 요청 제출
-  Future<void> _submitExtraWorkRequest(ApplicationModel app, DateTime date, String reason) async {
-    final userProvider = context.read<UserProvider>();
-    final adminUid = userProvider.currentUser?.uid;
-    final adminName = userProvider.currentUser?.name;
-
-    if (adminUid == null) {
-      ToastHelper.showError('관리자 정보를 찾을 수 없습니다');
-      return;
-    }
-
-    final worker = await _firestoreService.getUserByUID(app.uid);
-    final workerName = worker?.name ?? '이름 없음';
-
-    final request = ScheduleChangeRequestModel(
-      id: '',
-      businessId: widget.businessId,
-      applicationId: app.id,
-      applicantUid: app.uid,
-      applicantName: workerName,
-      targetDate: DateTime(date.year, date.month, date.day),
-      requestType: RequestType.EXTRA_WORK,
-      requestedBy: RequesterType.ADMIN,
-      requestedByUid: adminUid,
-      requestedAt: DateTime.now(),
-      reason: reason.isEmpty ? null : reason,
-      wageAmount: app.wage,
-    );
-
-    final requestId = await _firestoreService.createScheduleChangeRequest(request);
-
-    if (requestId != null) {
-      ToastHelper.showSuccess('추가 근무 요청이 전송되었습니다');
-      widget.onChanged();
-    } else {
-      ToastHelper.showError('추가 근무 요청 실패');
-    }
-  }
-
   /// 미출근 요청 다이얼로그
   Future<void> _showNoWorkRequestDialog(ApplicationModel app) async {
     // 선택 가능한 첫 날짜 찾기
@@ -1400,13 +1401,18 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
   }
 }
 
-/// 고정근무자 아이템 (Application + User)
 class _FixedWorkerItem {
   final ApplicationModel application;
   final UserModel? user;
+  final String? workTypeIcon;
+  final String? workTypeColor;
+  final String? workTypeBackgroundColor;  // 🔥 추가
 
   _FixedWorkerItem({
     required this.application,
     this.user,
+    this.workTypeIcon,
+    this.workTypeColor,
+    this.workTypeBackgroundColor,  // 🔥 추가
   });
 }
