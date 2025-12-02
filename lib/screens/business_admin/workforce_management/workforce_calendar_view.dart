@@ -118,11 +118,21 @@ class _WorkforceCalendarViewState extends State<WorkforceCalendarView> {
         }
         return true;
       } else if (groupItem.isGrouped) {
-        // 그룹 TO: 그룹 내 TO 중 하나라도 해당 날짜면 표시
-        return groupItem.groupTOs.any((toItem) => 
-          DateUtils.isSameDay(toItem.to.date, day)
-        );
-      } else {
+      // ⭐ 그룹 상세 로드 전: masterTO의 그룹 기간으로 범위 확인
+      if (!groupItem.isGroupDetailLoaded) {
+        final masterTO = groupItem.masterTO;
+        if (masterTO.startDate != null && masterTO.endDate != null) {
+          return !day.isBefore(masterTO.startDate!) && !day.isAfter(masterTO.endDate!);
+        }
+        // startDate/endDate 없으면 masterTO.date만 확인 (fallback)
+        return DateUtils.isSameDay(masterTO.date, day);
+      }
+      
+      // 그룹 상세 로드 후: 그룹 내 TO 중 하나라도 해당 날짜면 표시
+      return groupItem.groupTOs.any((toItem) => 
+        DateUtils.isSameDay(toItem.to.date, day)
+      );
+    } else {
         // 단일 TO: 날짜 일치
         return DateUtils.isSameDay(masterTO.date, day);
       }
@@ -705,15 +715,15 @@ class _WorkforceCalendarViewState extends State<WorkforceCalendarView> {
     );
   }
 
-  /// ⭐ 확정 인원 체크
+  /// ⭐ 확정 인원 체크 (모든 관리 사업장)
   Future<void> _checkConfirmedWorkers(DateTime date) async {
     setState(() => _isCheckingWorkers = true);
 
     try {
       final userProvider = Provider.of<UserProvider>(context, listen: false);
-      final businessId = userProvider.currentUser?.businessId;
+      final uid = userProvider.currentUser?.uid;
 
-      if (businessId == null) {
+      if (uid == null) {
         setState(() {
           _hasConfirmedWorkers = false;
           _isCheckingWorkers = false;
@@ -721,10 +731,29 @@ class _WorkforceCalendarViewState extends State<WorkforceCalendarView> {
         return;
       }
 
-      final confirmedWorkers = await _getConfirmedWorkersForDate(date, businessId);
+      // ⭐ 관리자의 모든 사업장 조회
+      final businesses = await _firestoreService.getMyBusiness(uid);
+      
+      if (businesses.isEmpty) {
+        setState(() {
+          _hasConfirmedWorkers = false;
+          _isCheckingWorkers = false;
+        });
+        return;
+      }
+
+      // ⭐ 모든 사업장에서 확정자 체크
+      bool hasConfirmed = false;
+      for (final business in businesses) {
+        final confirmedWorkers = await _getConfirmedWorkersForDate(date, business.id);
+        if (confirmedWorkers.isNotEmpty) {
+          hasConfirmed = true;
+          break;
+        }
+      }
 
       setState(() {
-        _hasConfirmedWorkers = confirmedWorkers.isNotEmpty;
+        _hasConfirmedWorkers = hasConfirmed;
         _isCheckingWorkers = false;
       });
     } catch (e) {

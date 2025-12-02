@@ -629,6 +629,9 @@ class TestDataHelper {
 
       // 3. 더미 출근 데이터 삭제
       await clearDummyAttendance();
+      
+      // 4. 더미 리뷰 삭제
+      await clearDummyReviews();
 
       print('');
       print('🎉 ═══════════════════════════════════════');
@@ -702,7 +705,7 @@ class TestDataHelper {
     '기본적인 업무는 잘 수행해요.',
   ];
 
-  /// ⭐ 더미 리뷰 생성
+  /// ⭐ 더미 리뷰 생성 (더미 사용자 대상)
   static Future<void> createDummyReviews({
     required String businessId,
     required String businessName,
@@ -717,39 +720,62 @@ class TestDataHelper {
     print('');
 
     try {
-      // 해당 사업장의 확정 지원서 조회
-      final confirmedSnapshot = await _firestore
-          .collection('applications')
-          .where('businessId', isEqualTo: businessId)
-          .where('status', isEqualTo: 'CONFIRMED')
-          .where('hasReview', isNotEqualTo: true)  // 리뷰 없는 것만
-          .limit(count)
+      // 1. 더미 사용자 조회 (dummy_user_로 시작하는 모든 사용자)
+      final usersSnapshot = await _firestore
+          .collection('users')
+          .orderBy(FieldPath.documentId)
           .get();
+      
+      final dummyUsers = usersSnapshot.docs.where((doc) {
+        return doc.id.startsWith('dummy_user_');
+      }).take(count).toList();
 
-      if (confirmedSnapshot.docs.isEmpty) {
-        print('⚠️ 리뷰 작성 가능한 확정 지원서가 없습니다.');
+      if (dummyUsers.isEmpty) {
+        print('⚠️ 더미 사용자가 없습니다. 먼저 더미 지원자를 생성해주세요.');
         return;
       }
 
+      print('📋 더미 사용자 ${dummyUsers.length}명 발견');
+
       int createdCount = 0;
+      final now = DateTime.now();
 
-      for (var appDoc in confirmedSnapshot.docs) {
-        final appData = appDoc.data();
-        final uid = appData['uid'] as String;
-        final workType = appData['selectedWorkType'] ?? '일반';
-        final workDate = (appData['workDate'] as Timestamp).toDate();
+      for (var userDoc in dummyUsers) {
+        final uid = userDoc.id;
+        final userData = userDoc.data();
+        
+        // 이미 해당 사업장에서 리뷰가 있는지 확인
+        final existingReview = await _firestore
+            .collection('reviews')
+            .where('targetUserId', isEqualTo: uid)
+            .where('businessId', isEqualTo: businessId)
+            .limit(1)
+            .get();
+        
+        if (existingReview.docs.isNotEmpty) {
+          print('  ⏭️ $uid - 이미 리뷰 존재, 스킵');
+          continue;
+        }
 
-        // 랜덤 평점 (3~5점, 가끔 1~2점)
+        // 랜덤 업무 유형
+        final workType = _allWorkTypes[_random.nextInt(_allWorkTypes.length)];
+        
+        // 랜덤 근무일 (최근 30일 내)
+        final daysAgo = _random.nextInt(30);
+        final workDate = now.subtract(Duration(days: daysAgo));
+
+        // 랜덤 평점 (3~5점 70%, 3점 20%, 1~2점 10%)
         int rating;
-        if (_random.nextDouble() < 0.1) {
+        final ratingRandom = _random.nextDouble();
+        if (ratingRandom < 0.1) {
           rating = _random.nextInt(2) + 1;  // 1~2점 (10%)
-        } else if (_random.nextDouble() < 0.3) {
+        } else if (ratingRandom < 0.3) {
           rating = 3;  // 3점 (20%)
         } else {
           rating = _random.nextInt(2) + 4;  // 4~5점 (70%)
         }
 
-        // 랜덤 코멘트 (80% 확률로 작성)
+        // 랜덤 코멘트 (80% 확률)
         String? comment;
         if (_random.nextDouble() < 0.8) {
           comment = _reviewComments[_random.nextInt(_reviewComments.length)];
@@ -758,23 +784,29 @@ class TestDataHelper {
         // 재고용 의사 (평점에 따라)
         final wouldRehire = rating >= 3;
 
-        // 리뷰 생성
-        await _firestoreService.createReview(
-          applicationId: appDoc.id,
-          reviewerId: reviewerId,
-          reviewerName: reviewerName,
-          targetUserId: uid,
-          businessId: businessId,
-          businessName: businessName,
-          workType: workType,
-          workDate: workDate,
-          rating: rating,
-          comment: comment,
-          wouldRehire: wouldRehire,
-        );
+        // 리뷰 직접 생성 (Firestore에 직접 추가)
+        await _firestore.collection('reviews').add({
+          'applicationId': 'dummy_app_${uid}_${now.millisecondsSinceEpoch}',
+          'reviewerId': reviewerId,
+          'reviewerName': reviewerName,
+          'targetUserId': uid,
+          'businessId': businessId,
+          'businessName': businessName,
+          'workType': workType,
+          'workDate': Timestamp.fromDate(workDate),
+          'rating': rating,
+          'comment': comment,
+          'wouldRehire': wouldRehire,
+          'createdAt': FieldValue.serverTimestamp(),
+          'isDummy': true,  // ⭐ 더미 표시 추가
+        });
+
+        // 사용자 평점 통계 업데이트
+        await _updateUserReviewStats(uid);
 
         createdCount++;
-        print('  ⭐ $uid → $rating점 ${comment != null ? '(코멘트 있음)' : ''}');
+        final userName = userData['name'] ?? uid;
+        print('  ⭐ $userName → $rating점 ${comment != null ? '(코멘트 있음)' : ''}');
       }
 
       print('');
@@ -787,18 +819,46 @@ class TestDataHelper {
     }
   }
 
+  /// 사용자 리뷰 통계 업데이트 (내부용)
+  static Future<void> _updateUserReviewStats(String userId) async {
+    try {
+      final reviews = await _firestore
+          .collection('reviews')
+          .where('targetUserId', isEqualTo: userId)
+          .get();
+      
+      if (reviews.docs.isEmpty) return;
+      
+      double totalRating = 0;
+      for (var doc in reviews.docs) {
+        totalRating += (doc.data()['rating'] ?? 0) as int;
+      }
+      
+      final avgRating = totalRating / reviews.docs.length;
+      
+      await _firestore.collection('users').doc(userId).update({
+        'averageRating': avgRating,
+        'reviewCount': reviews.docs.length,
+      });
+    } catch (e) {
+      print('⚠️ 사용자 리뷰 통계 업데이트 실패: $e');
+    }
+  }
   /// 더미 리뷰 삭제
   static Future<void> clearDummyReviews() async {
     print('📋 더미 리뷰(reviews) 삭제 중...');
     
     try {
-      // 더미 사용자의 리뷰 삭제
       final reviewsSnapshot = await _firestore.collection('reviews').get();
       
       int deletedCount = 0;
       for (var doc in reviewsSnapshot.docs) {
-        final targetUserId = doc.data()['targetUserId'] as String?;
-        if (targetUserId != null && targetUserId.startsWith('dummy_user_')) {
+        final data = doc.data();
+        final targetUserId = data['targetUserId'] as String?;
+        final isDummy = data['isDummy'] == true;
+        
+        // isDummy 플래그 또는 dummy_user_ 대상인 리뷰 삭제
+        if (isDummy || (targetUserId != null && targetUserId.startsWith('dummy_user_'))) {
           await doc.reference.delete();
           deletedCount++;
         }

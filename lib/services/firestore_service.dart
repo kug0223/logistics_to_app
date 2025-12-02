@@ -3894,6 +3894,128 @@ class FirestoreService {
       return false;
     }
   }
+  // ============================================================
+  // 🔥 계약해지 관리 (관리자 → 근무자)
+  // ============================================================
+
+  /// 계약해지 요청 (관리자용)
+  Future<bool> requestTermination({
+    required String applicationId,
+    required String reason,
+    required String requestedByUid,
+  }) async {
+    try {
+      await _firestore.collection('applications').doc(applicationId).update({
+        'terminationRequestedAt': Timestamp.fromDate(DateTime.now()),
+        'terminationReason': reason,
+        'terminationRequestedByUid': requestedByUid,
+        'terminationStatus': 'PENDING',
+      });
+
+      print('✅ 계약해지 요청 완료: $applicationId');
+      
+      // TODO: 근무자에게 알림 발송
+      // await _sendTerminationNotification(applicationId);
+      
+      return true;
+    } catch (e) {
+      print('❌ 계약해지 요청 실패: $e');
+      return false;
+    }
+  }
+
+  /// 계약해지 요청 취소 (관리자용)
+  Future<bool> cancelTerminationRequest(String applicationId) async {
+    try {
+      await _firestore.collection('applications').doc(applicationId).update({
+        'terminationRequestedAt': FieldValue.delete(),
+        'terminationReason': FieldValue.delete(),
+        'terminationRequestedByUid': FieldValue.delete(),
+        'terminationStatus': FieldValue.delete(),
+        'terminationRespondedAt': FieldValue.delete(),
+        'terminationRejectReason': FieldValue.delete(),
+      });
+
+      print('✅ 계약해지 요청 취소 완료: $applicationId');
+      return true;
+    } catch (e) {
+      print('❌ 계약해지 요청 취소 실패: $e');
+      return false;
+    }
+  }
+
+  /// 계약해지 승인 (근무자용)
+  Future<bool> approveTermination(String applicationId) async {
+    try {
+      await _firestore.collection('applications').doc(applicationId).update({
+        'terminationStatus': 'APPROVED',
+        'terminationRespondedAt': Timestamp.fromDate(DateTime.now()),
+        'resignStatus': 'APPROVED',  // 퇴사 상태도 함께 업데이트
+        'actualResignDate': Timestamp.fromDate(DateTime.now()),
+      });
+
+      print('✅ 계약해지 승인 완료: $applicationId');
+      return true;
+    } catch (e) {
+      print('❌ 계약해지 승인 실패: $e');
+      return false;
+    }
+  }
+
+  /// 계약해지 거절 (근무자용)
+  Future<bool> rejectTermination({
+    required String applicationId,
+    String? rejectReason,
+  }) async {
+    try {
+      await _firestore.collection('applications').doc(applicationId).update({
+        'terminationStatus': 'REJECTED',
+        'terminationRespondedAt': Timestamp.fromDate(DateTime.now()),
+        'terminationRejectReason': rejectReason,
+      });
+
+      print('✅ 계약해지 거절 완료: $applicationId');
+      return true;
+    } catch (e) {
+      print('❌ 계약해지 거절 실패: $e');
+      return false;
+    }
+  }
+
+  /// 계약해지 자동 승인 처리 (3일 경과 시)
+  Future<bool> autoApproveTermination(String applicationId) async {
+    try {
+      await _firestore.collection('applications').doc(applicationId).update({
+        'terminationStatus': 'AUTO_APPROVED',
+        'terminationRespondedAt': Timestamp.fromDate(DateTime.now()),
+        'resignStatus': 'AUTO_APPROVED',
+        'actualResignDate': Timestamp.fromDate(DateTime.now()),
+      });
+
+      print('✅ 계약해지 자동 승인 완료: $applicationId');
+      return true;
+    } catch (e) {
+      print('❌ 계약해지 자동 승인 실패: $e');
+      return false;
+    }
+  }
+
+  /// 계약해지 대기 중인 지원서 조회 (3일 경과 체크용)
+  Future<List<ApplicationModel>> getPendingTerminations() async {
+    try {
+      final snapshot = await _firestore
+          .collection('applications')
+          .where('terminationStatus', isEqualTo: 'PENDING')
+          .get();
+
+      return snapshot.docs
+          .map((doc) => ApplicationModel.fromMap(doc.data(), doc.id))
+          .toList();
+    } catch (e) {
+      print('❌ 계약해지 대기 목록 조회 실패: $e');
+      return [];
+    }
+  }
 
   /// 퇴사 자동 승인 처리 (Cloud Function에서 호출)
   Future<bool> autoApproveResignation(String applicationId) async {

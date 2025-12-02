@@ -25,11 +25,13 @@ class ConfirmedListDialog {
   final BuildContext context;
   final TOItem toItem;
   final FirestoreService firestoreService;
+  final VoidCallback? onChanged;  // ⭐ 추가
 
   ConfirmedListDialog({
     required this.context,
     required this.toItem,
     required this.firestoreService,
+    this.onChanged,  // ⭐ 추가
   });
 
   void show() {
@@ -38,6 +40,7 @@ class ConfirmedListDialog {
       builder: (context) => _ConfirmedListDialogWidget(
         toItem: toItem,
         firestoreService: firestoreService,
+        onChanged: onChanged,  // ⭐ 추가
       ),
     );
   }
@@ -46,10 +49,12 @@ class ConfirmedListDialog {
 class _ConfirmedListDialogWidget extends StatefulWidget {
   final TOItem toItem;
   final FirestoreService firestoreService;
+  final VoidCallback? onChanged;  // ⭐ 추가
 
   const _ConfirmedListDialogWidget({
     required this.toItem,
     required this.firestoreService,
+    this.onChanged,  // ⭐ 추가
   });
 
   @override
@@ -60,6 +65,7 @@ class _ConfirmedListDialogWidget extends StatefulWidget {
 class _ConfirmedListDialogWidgetState
     extends State<_ConfirmedListDialogWidget> {
   bool _isLoading = true;
+  bool _hasChanges = false;  // ⭐ 추가
   Map<String, List<Map<String, dynamic>>> _confirmedByWork = {};
   Map<String, String> _idCardStatusMap = {};
   String? _error;
@@ -175,7 +181,12 @@ class _ConfirmedListDialogWidgetState
       actions: [
         StyledDialogButton.cancel(
           text: '닫기',
-          onPressed: () => Navigator.pop(context),
+          onPressed: () {
+            if (_hasChanges) {
+              widget.onChanged?.call();  // ⭐ 변경사항 전달
+            }
+            Navigator.pop(context);
+          },
         ),
       ],
     );
@@ -393,6 +404,37 @@ class _ConfirmedListDialogWidgetState
                                 ],
                               ],
                             ),
+                            // 3줄: 장기 근무 정보 (있는 경우)
+                            if (application.isLongTermApplication && application.workPeriodDisplay.isNotEmpty) ...[
+                              SizedBox(height: ResponsiveHelper.spacing(context, 6)),
+                              Container(
+                                padding: EdgeInsets.symmetric(
+                                  horizontal: ResponsiveHelper.spacing(context, 8),
+                                  vertical: ResponsiveHelper.spacing(context, 4),
+                                ),
+                                decoration: BoxDecoration(
+                                  color: Colors.purple.withOpacity(0.1),
+                                  borderRadius: BorderRadius.circular(6),
+                                ),
+                                child: Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    Icon(
+                                      Icons.event_note,
+                                      size: ResponsiveHelper.iconSize(context, 12),
+                                      color: Colors.purple,
+                                    ),
+                                    SizedBox(width: ResponsiveHelper.spacing(context, 4)),
+                                    Text(
+                                      '장기: ${application.workPeriodDisplay}',
+                                      style: ResponsiveHelper.tinyStyle(context, color: Colors.purple).copyWith(
+                                        fontWeight: FontWeight.w600,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ],
                           ],
                         ),
                       ),  
@@ -453,7 +495,10 @@ class _ConfirmedListDialogWidgetState
       businessId: widget.toItem.to.businessId,
       isConfirmed: true,
       showApprovalButtons: false,
-      onStatusChanged: _loadConfirmedApplicants,
+      onStatusChanged: () {
+        _hasChanges = true;  // ⭐ 변경 추적
+        _loadConfirmedApplicants();
+      },
     );
   }
 }

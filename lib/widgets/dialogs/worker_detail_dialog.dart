@@ -18,6 +18,7 @@ import '../../utils/responsive_helper.dart';
 import '../../utils/dialog_helper.dart';
 import '../../theme/app_colors.dart';
 import 'styled_dialog.dart';
+import '../../screens/business_admin/dialogs/fixed_worker_management_dialog.dart';
 
 /// 공통 근무자/지원자 상세 다이얼로그
 /// 
@@ -76,9 +77,11 @@ class WorkerDetailDialog extends StatefulWidget {
 class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
   final FirestoreService _firestoreService = FirestoreService();
   bool _isLoading = false;
+  bool _hasChanges = false;  // ⭐ 변경사항 추적 플래그 추가
   
   // 추가 데이터
   Map<String, dynamic>? _businessHistory;
+  String? _workTime;  // 🔥 근무 시간 (장기용)
   List<ReviewModel> _recentReviews = [];
   IdCardAccessRequestModel? _idCardAccess;
 
@@ -109,12 +112,8 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
         futures.add(Future.value(null));
       }
       
-      // 최근 리뷰 (확정자일 때만)
-      if (widget.isConfirmed) {
-        futures.add(_firestoreService.getUserReviews(widget.user.uid, limit: 3));
-      } else {
-        futures.add(Future.value(<ReviewModel>[]));
-      }
+      // 최근 리뷰 (항상 로드)
+      futures.add(_firestoreService.getUserReviews(widget.user.uid, limit: 5));
       
       // 신분증 열람 권한 (확정자일 때만)
       if (widget.isConfirmed) {
@@ -137,6 +136,23 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
     } catch (e) {
       print('❌ 추가 데이터 로드 실패: $e');
       setState(() => _isLoading = false);
+    }
+    // 🔥 근무 시간 조회 (장기 지원자용)
+    final app = widget.application;
+    if (app != null && widget.toItem == null) {
+      if (app.startTime.isNotEmpty && app.endTime.isNotEmpty) {
+        _workTime = '${app.startTime} ~ ${app.endTime}';
+      } else {
+        // TO 조회 후 workDetails에서 시간 가져오기
+        final to = await _firestoreService.getTOByApplication(app);
+        if (to != null) {
+          final workDetails = await _firestoreService.getWorkDetails(to.id);
+          final matched = workDetails.where((w) => w.workType == app.selectedWorkType).firstOrNull;
+          if (matched != null) {
+            _workTime = '${matched.startTime} ~ ${matched.endTime}';
+          }
+        }
+      }
     }
   }
 
@@ -212,11 +228,9 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
                           // 자기소개
                           _buildSelfIntro(context),
                           
-                          // 최근 리뷰 (확정자만)
-                          if (widget.isConfirmed && _recentReviews.isNotEmpty) ...[
-                            SizedBox(height: ResponsiveHelper.spacing(context, 20)),
-                            _buildRecentReviews(context),
-                          ],
+                          // 최근 리뷰 (항상 표시)
+                          SizedBox(height: ResponsiveHelper.spacing(context, 20)),
+                          _buildRecentReviews(context),
                           
                           // 급여 정보 (확정자만)
                           if (widget.isConfirmed) ...[
@@ -454,6 +468,23 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
             _buildInfoRow(context, '지원일', DateFormat('yyyy.MM.dd HH:mm').format(app.appliedAt)),
           if (app != null)
             _buildInfoRow(context, '지원 업무', app.selectedWorkType),
+          // 근무 시간 표시
+          if (app != null) ...[
+            Builder(builder: (context) {
+              if (widget.toItem != null) {
+                final workDetail = widget.toItem!.workDetails.where(
+                  (w) => w.workType == app.selectedWorkType,
+                ).firstOrNull;
+                if (workDetail != null) {
+                  return _buildInfoRow(context, '근무 시간', '${workDetail.startTime} ~ ${workDetail.endTime}');
+                }
+              }
+              if (_workTime != null) {
+                return _buildInfoRow(context, '근무 시간', _workTime!);
+              }
+              return const SizedBox.shrink();
+            }),
+          ],
           if (app != null && app.isLongTermApplication) ...[
             _buildInfoRow(context, '근무 기간', app.workPeriodDisplay),
             if (app.workDaysDisplay != null)
@@ -584,9 +615,27 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
       context,
       title: '최근 리뷰',
       icon: Icons.rate_review,
-      child: Column(
-        children: _recentReviews.map((review) => _buildReviewItem(context, review)).toList(),
-      ),
+      child: _recentReviews.isEmpty
+          ? Container(
+              padding: ResponsiveHelper.cardPadding(context),
+              decoration: BoxDecoration(
+                color: AppColors.grey50,
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Row(
+                children: [
+                  Icon(Icons.info_outline, color: AppColors.grey400, size: ResponsiveHelper.iconSize(context, 16)),
+                  SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+                  Text(
+                    '아직 등록된 리뷰가 없습니다',
+                    style: ResponsiveHelper.smallStyle(context, color: AppColors.grey500),
+                  ),
+                ],
+              ),
+            )
+          : Column(
+              children: _recentReviews.map((review) => _buildReviewItem(context, review)).toList(),
+            ),
     );
   }
 
@@ -847,6 +896,9 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
 
   /// 하단 버튼
   Widget _buildBottomButtons(BuildContext context, bool isPending) {
+    final isConfirmed = widget.application?.status == 'CONFIRMED';
+    final isLongTerm = widget.application?.workEndDate != null;
+
     return Container(
       padding: ResponsiveHelper.cardPadding(context),
       decoration: BoxDecoration(
@@ -897,6 +949,47 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
                 ),
               ),
             ),
+          ],
+
+          // 확정자 액션 버튼
+          if (isConfirmed && widget.application != null) ...[
+            SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+            
+            if (isLongTerm) ...[
+              // 장기 확정자: 고정근무 관리 버튼
+              Expanded(
+                child: ElevatedButton.icon(
+                  onPressed: _openFixedWorkerManagement,
+                  icon: Icon(
+                    Icons.settings,
+                    size: ResponsiveHelper.iconSize(context, 18),
+                  ),
+                  label: const Text('고정근무 관리'),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: AppColors.longTermDark,
+                    foregroundColor: Colors.white,
+                    padding: EdgeInsets.symmetric(vertical: ResponsiveHelper.spacing(context, 12)),
+                  ),
+                ),
+              ),
+            ] else ...[
+              // 단기 확정자: 확정취소 버튼
+              Expanded(
+                child: OutlinedButton.icon(
+                  onPressed: _cancelConfirmation,
+                  icon: Icon(
+                    Icons.cancel_outlined,
+                    size: ResponsiveHelper.iconSize(context, 18),
+                  ),
+                  label: const Text('확정취소'),
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: AppColors.error,
+                    side: BorderSide(color: AppColors.error),
+                    padding: EdgeInsets.symmetric(vertical: ResponsiveHelper.spacing(context, 12)),
+                  ),
+                ),
+              ),
+            ],
           ],
         ],
       ),
@@ -1127,6 +1220,7 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
       ),
     );
   }
+  
 
   /// 신분증 열람 요청 전송
   Future<void> _sendIdCardAccessRequest(BuildContext dialogContext, IdCardAccessReason reason, String customReason) async {
@@ -1160,6 +1254,7 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
       ToastHelper.showSuccess('열람 요청을 보냈습니다');
       
       setState(() {
+        _hasChanges = true;  // ⭐ 변경사항 표시
         _idCardAccess = IdCardAccessRequestModel(
           id: '',
           requesterId: currentUser.uid,
@@ -1179,5 +1274,271 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
       print('❌ 신분증 열람 요청 실패: $e');
       ToastHelper.showError('요청 실패');
     }
+  }
+  /// 단기 확정 취소
+  Future<void> _cancelConfirmation() async {
+    if (widget.application == null) return;
+
+    // 취소 사유 선택
+    final cancelReason = await _showCancelReasonPicker();
+    if (cancelReason == null) return;
+
+    try {
+      final userProvider = context.read<UserProvider>();
+      final adminUID = userProvider.currentUser?.uid;
+
+      await _firestoreService.updateApplicationStatus(
+        applicationId: widget.application!.id,
+        status: 'CANCELED',
+        rejectedBy: adminUID,
+        message: cancelReason,
+      );
+
+      if (mounted) {
+        Navigator.pop(context);
+        ToastHelper.showSuccess('확정이 취소되었습니다');
+        widget.onStatusChanged?.call();
+      }
+    } catch (e) {
+      print('❌ 확정 취소 실패: $e');
+      if (mounted) {
+        ToastHelper.showError('확정 취소 중 오류가 발생했습니다');
+      }
+    }
+  }
+
+  /// 확정취소 사유 선택 다이얼로그
+  Future<String?> _showCancelReasonPicker() async {
+    final theme = Theme.of(context);
+    String? selectedReason;
+    final customReasonController = TextEditingController();
+
+    final reasons = [
+      '일정 변경',
+      '인원 조정',
+      '업무 취소',
+      '근무자 요청',
+      '기타',
+    ];
+
+    final result = await showDialog<String>(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setDialogState) {
+          return Dialog(
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+            child: Container(
+              width: double.maxFinite,
+              constraints: const BoxConstraints(maxWidth: 400),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  // 헤더
+                  Container(
+                    padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 16)),
+                    decoration: BoxDecoration(
+                      color: AppColors.error,
+                      borderRadius: const BorderRadius.only(
+                        topLeft: Radius.circular(16),
+                        topRight: Radius.circular(16),
+                      ),
+                    ),
+                    child: Row(
+                      children: [
+                        Icon(
+                          Icons.cancel_outlined,
+                          color: Colors.white,
+                          size: ResponsiveHelper.iconSize(context, 24),
+                        ),
+                        SizedBox(width: ResponsiveHelper.spacing(context, 12)),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                '확정 취소',
+                                style: ResponsiveHelper.subtitleStyle(context).copyWith(
+                                  color: Colors.white,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                              Text(
+                                '${widget.user.name}님',
+                                style: ResponsiveHelper.smallStyle(context, color: Colors.white70),
+                              ),
+                            ],
+                          ),
+                        ),
+                        IconButton(
+                          icon: Icon(
+                            Icons.close,
+                            color: Colors.white,
+                            size: ResponsiveHelper.iconSize(context, 24),
+                          ),
+                          onPressed: () => Navigator.pop(context),
+                        ),
+                      ],
+                    ),
+                  ),
+
+                  // 사유 선택
+                  Padding(
+                    padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 16)),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          '취소 사유를 선택해주세요',
+                          style: ResponsiveHelper.bodyStyle(context).copyWith(
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                        SizedBox(height: ResponsiveHelper.spacing(context, 12)),
+
+                        // 사유 목록
+                        ...reasons.map((reason) => Padding(
+                          padding: EdgeInsets.only(bottom: ResponsiveHelper.spacing(context, 8)),
+                          child: InkWell(
+                            onTap: () => setDialogState(() => selectedReason = reason),
+                            borderRadius: BorderRadius.circular(8),
+                            child: Container(
+                              padding: EdgeInsets.symmetric(
+                                horizontal: ResponsiveHelper.spacing(context, 12),
+                                vertical: ResponsiveHelper.spacing(context, 12),
+                              ),
+                              decoration: BoxDecoration(
+                                color: selectedReason == reason
+                                    ? AppColors.errorBg
+                                    : AppColors.grey100,
+                                borderRadius: BorderRadius.circular(8),
+                                border: Border.all(
+                                  color: selectedReason == reason
+                                      ? AppColors.error
+                                      : AppColors.grey300,
+                                ),
+                              ),
+                              child: Row(
+                                children: [
+                                  Icon(
+                                    selectedReason == reason
+                                        ? Icons.radio_button_checked
+                                        : Icons.radio_button_off,
+                                    color: selectedReason == reason
+                                        ? AppColors.error
+                                        : AppColors.grey400,
+                                    size: ResponsiveHelper.iconSize(context, 20),
+                                  ),
+                                  SizedBox(width: ResponsiveHelper.spacing(context, 12)),
+                                  Text(
+                                    reason,
+                                    style: ResponsiveHelper.bodyStyle(context),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+                        )),
+
+                        // 기타 사유 입력
+                        if (selectedReason == '기타') ...[
+                          SizedBox(height: ResponsiveHelper.spacing(context, 8)),
+                          TextField(
+                            controller: customReasonController,
+                            decoration: InputDecoration(
+                              hintText: '취소 사유를 입력하세요',
+                              border: OutlineInputBorder(
+                                borderRadius: BorderRadius.circular(8),
+                              ),
+                              contentPadding: EdgeInsets.symmetric(
+                                horizontal: ResponsiveHelper.spacing(context, 12),
+                                vertical: ResponsiveHelper.spacing(context, 12),
+                              ),
+                            ),
+                            style: ResponsiveHelper.bodyStyle(context),
+                            maxLines: 2,
+                          ),
+                        ],
+                      ],
+                    ),
+                  ),
+
+                  // 하단 버튼
+                  Container(
+                    padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 16)),
+                    decoration: BoxDecoration(
+                      border: Border(top: BorderSide(color: AppColors.border)),
+                    ),
+                    child: Row(
+                      children: [
+                        Expanded(
+                          child: OutlinedButton(
+                            onPressed: () => Navigator.pop(context),
+                            child: const Text('취소'),
+                            style: OutlinedButton.styleFrom(
+                              foregroundColor: AppColors.grey600,
+                              side: BorderSide(color: AppColors.grey300),
+                              padding: EdgeInsets.symmetric(
+                                vertical: ResponsiveHelper.spacing(context, 12),
+                              ),
+                            ),
+                          ),
+                        ),
+                        SizedBox(width: ResponsiveHelper.spacing(context, 12)),
+                        Expanded(
+                          child: ElevatedButton(
+                            onPressed: selectedReason != null
+                                ? () {
+                                    final reason = selectedReason == '기타' &&
+                                            customReasonController.text.trim().isNotEmpty
+                                        ? customReasonController.text.trim()
+                                        : selectedReason;
+                                    Navigator.pop(context, reason);
+                                  }
+                                : null,
+                            child: const Text('확정 취소'),
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: AppColors.error,
+                              foregroundColor: Colors.white,
+                              padding: EdgeInsets.symmetric(
+                                vertical: ResponsiveHelper.spacing(context, 12),
+                              ),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          );
+        },
+      ),
+    );
+    return result;
+  }
+
+  /// 고정근무 관리 다이얼로그 열기
+  void _openFixedWorkerManagement() {
+    final businessId = widget.businessId ?? widget.application?.businessId;
+    
+    if (businessId == null) {
+      ToastHelper.showError('사업장 정보를 찾을 수 없습니다');
+      return;
+    }
+
+    // 현재 다이얼로그 닫기
+    Navigator.pop(context);
+
+    // 고정근무 관리 다이얼로그 열기
+    showDialog(
+      context: context,
+      builder: (context) => FixedWorkerManagementDialog(
+        businessId: businessId,
+        onChanged: () {
+          widget.onStatusChanged?.call();
+        },
+      ),
+    );
   }
 }

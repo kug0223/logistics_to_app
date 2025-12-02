@@ -81,12 +81,17 @@ class _TOGroupCardState extends State<TOGroupCard> {
     final masterTO = widget.groupItem.masterTO;
     final theme = Theme.of(context);
     
-    // 전체 통계 계산
+    // 전체 통계 계산 (캘린더 뷰 + 그룹 카드일 때만 선택된 날짜 필터링)
     int totalConfirmed = 0;
     int totalPending = 0;
     int totalRequired = 0;
     
-    for (var toItem in widget.groupItem.groupTOs) {
+    final targetTOs = (widget.selectedDate != null && widget.groupItem.isGrouped)
+        ? widget.groupItem.groupTOs.where((toItem) => 
+            DateUtils.isSameDay(toItem.to.date, widget.selectedDate!)).toList()
+        : widget.groupItem.groupTOs;
+    
+    for (var toItem in targetTOs) {
       totalConfirmed += toItem.confirmedCount;
       totalPending += toItem.pendingCount;
       totalRequired += toItem.totalRequired;
@@ -925,6 +930,7 @@ class _TOGroupCardState extends State<TOGroupCard> {
           context: context,
           toItem: toItemForConfirmed,
           firestoreService: widget.firestoreService,
+          onChanged: widget.onChanged,  // ⭐ 추가
         ).show();
         break;
 

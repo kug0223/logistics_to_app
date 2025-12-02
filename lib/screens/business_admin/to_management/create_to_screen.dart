@@ -18,9 +18,13 @@ import '../../../utils/toast_helper.dart';
 import '../../../utils/format_helper.dart';
 import '../../../utils/responsive_helper.dart';
 import '../../../utils/navigation_helper.dart';
+import '../../../utils/dialog_helper.dart';
+
+// Theme
+import '../../../theme/app_colors.dart';
 
 // Widgets
-import '../../../widgets/pickers/work_detail_dialog.dart';
+import '../../../widgets/pickers/create&edit_work_detail_dialog.dart';
 import '../../../widgets/work_type_icon.dart';
 
 // 공통 위젯
@@ -85,6 +89,9 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
   bool _linkToExisting = false;
   String? _selectedGroupId;
   List<TOModel> _myRecentTOs = [];
+  // 기존 공고 불러오기
+  List<TOModel> _recentTOsForLoad = [];
+
 
   // ============================================================
   // 🚀 라이프사이클
@@ -158,6 +165,310 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
       print('❌ 업무 유형 로드 실패: $e');
       ToastHelper.showError('업무 유형을 불러올 수 없습니다');
     }
+  }
+  // ============================================================
+  // 📋 기존 공고 불러오기
+  // ============================================================
+
+  /// 기존 공고 불러오기 다이얼로그
+  Future<void> _showLoadFromExistingDialog() async {
+    if (_selectedBusiness == null) {
+      ToastHelper.showWarning('먼저 사업장을 선택해주세요');
+      return;
+    }
+
+    DialogHelper.showLoading(context, message: '공고 목록 불러오는 중...');
+
+    try {
+      final allTOs = await _firestoreService.getTOsByBusiness(_selectedBusiness!.id);
+      allTOs.sort((a, b) => b.createdAt.compareTo(a.createdAt));
+      _recentTOsForLoad = allTOs.take(30).toList();
+    } catch (e) {
+      print('❌ TO 목록 로드 실패: $e');
+      if (mounted) Navigator.pop(context);
+      ToastHelper.showError('공고 목록을 불러올 수 없습니다');
+      return;
+    }
+
+    if (!mounted) return;
+    Navigator.pop(context);
+
+    final selectedTO = await showDialog<TOModel>(
+      context: context,
+      builder: (context) => _buildLoadFromExistingDialog(),
+    );
+
+    if (selectedTO != null) {
+      await _loadDataFromTO(selectedTO);
+    }
+  }
+
+  /// 선택한 TO에서 데이터 불러오기
+  Future<void> _loadDataFromTO(TOModel to) async {
+    DialogHelper.showLoading(context, message: '데이터 불러오는 중...');
+
+    try {
+      final workDetails = await _firestoreService.getWorkDetails(to.id);
+
+      if (!mounted) return;
+      Navigator.pop(context);
+
+      setState(() {
+        _titleController.text = to.title;
+        _descriptionController.text = to.description ?? '';
+        _workDetails.clear();
+        for (var work in workDetails) {
+          _workDetails.add(WorkDetailInput(
+            workType: work.workType,
+            workTypeIcon: work.workTypeIcon,
+            workTypeColor: work.workTypeColor,
+            workTypeBackgroundColor: work.workTypeBackgroundColor,
+            wage: work.wage,
+            wageType: work.wageType,
+            requiredCount: work.requiredCount,
+            startTime: work.startTime,
+            endTime: work.endTime,
+          ));
+        }
+      });
+
+      ToastHelper.showSuccess('공고 정보를 불러왔습니다');
+    } catch (e) {
+      print('❌ 데이터 불러오기 실패: $e');
+      if (mounted && Navigator.canPop(context)) Navigator.pop(context);
+      ToastHelper.showError('데이터를 불러오는데 실패했습니다');
+    }
+  }
+
+  /// 기존 공고 불러오기 다이얼로그 UI
+  Widget _buildLoadFromExistingDialog() {
+    final theme = Theme.of(context);
+    String searchQuery = '';
+
+    return StatefulBuilder(
+      builder: (context, setDialogState) {
+        final filteredTOs = searchQuery.isEmpty
+            ? _recentTOsForLoad
+            : _recentTOsForLoad.where((to) =>
+                to.title.toLowerCase().contains(searchQuery.toLowerCase())).toList();
+
+        return Dialog(
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          child: Container(
+            width: double.maxFinite,
+            constraints: BoxConstraints(
+              maxHeight: MediaQuery.of(context).size.height * 0.7,
+              maxWidth: 500,
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                // 헤더
+                Container(
+                  padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 16)),
+                  decoration: BoxDecoration(
+                    color: theme.primaryColor,
+                    borderRadius: const BorderRadius.only(
+                      topLeft: Radius.circular(16),
+                      topRight: Radius.circular(16),
+                    ),
+                  ),
+                  child: Row(
+                    children: [
+                      Icon(
+                        Icons.file_copy_outlined,
+                        color: Colors.white,
+                        size: ResponsiveHelper.iconSize(context, 24),
+                      ),
+                      SizedBox(width: ResponsiveHelper.spacing(context, 12)),
+                      Expanded(
+                        child: Text(
+                          '기존 공고 불러오기',
+                          style: ResponsiveHelper.subtitleStyle(context).copyWith(
+                            color: Colors.white,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ),
+                      IconButton(
+                        icon: Icon(
+                          Icons.close,
+                          color: Colors.white,
+                          size: ResponsiveHelper.iconSize(context, 24),
+                        ),
+                        onPressed: () => Navigator.pop(context),
+                      ),
+                    ],
+                  ),
+                ),
+
+                // 검색
+                Padding(
+                  padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 12)),
+                  child: TextField(
+                    decoration: InputDecoration(
+                      hintText: '공고 제목 검색...',
+                      prefixIcon: Icon(Icons.search, size: ResponsiveHelper.iconSize(context, 20)),
+                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                      contentPadding: EdgeInsets.symmetric(
+                        horizontal: ResponsiveHelper.spacing(context, 16),
+                        vertical: ResponsiveHelper.spacing(context, 12),
+                      ),
+                    ),
+                    style: ResponsiveHelper.bodyStyle(context),
+                    onChanged: (value) => setDialogState(() => searchQuery = value),
+                  ),
+                ),
+
+                // 목록
+                Expanded(
+                  child: filteredTOs.isEmpty
+                      ? Center(
+                          child: Column(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              Icon(
+                                Icons.inbox_outlined,
+                                size: ResponsiveHelper.iconSize(context, 48),
+                                color: AppColors.grey400,
+                              ),
+                              SizedBox(height: ResponsiveHelper.spacing(context, 12)),
+                              Text(
+                                searchQuery.isEmpty ? '등록된 공고가 없습니다' : '검색 결과가 없습니다',
+                                style: ResponsiveHelper.bodyStyle(context, color: AppColors.grey600),
+                              ),
+                            ],
+                          ),
+                        )
+                      : ListView.separated(
+                          padding: EdgeInsets.symmetric(horizontal: ResponsiveHelper.spacing(context, 12)),
+                          itemCount: filteredTOs.length,
+                          separatorBuilder: (_, __) => Divider(height: 1, color: AppColors.divider),
+                          itemBuilder: (context, index) {
+                            final to = filteredTOs[index];
+                            return _buildTOListTile(to);
+                          },
+                        ),
+                ),
+
+                // 안내
+                Container(
+                  padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 12)),
+                  color: AppColors.grey100,
+                  child: Row(
+                    children: [
+                      Icon(
+                        Icons.info_outline,
+                        size: ResponsiveHelper.iconSize(context, 16),
+                        color: AppColors.grey600,
+                      ),
+                      SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+                      Text(
+                        '제목, 업무상세, 설명만 불러옵니다',
+                        style: ResponsiveHelper.smallStyle(context, color: AppColors.grey600),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  /// TO 목록 아이템
+  Widget _buildTOListTile(TOModel to) {
+    final theme = Theme.of(context);
+
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: () => Navigator.pop(context, to),
+        child: Padding(
+          padding: EdgeInsets.symmetric(
+            horizontal: ResponsiveHelper.spacing(context, 4),
+            vertical: ResponsiveHelper.spacing(context, 12),
+          ),
+          child: Row(
+            children: [
+              // 날짜 배지
+              Container(
+                padding: EdgeInsets.symmetric(
+                  horizontal: ResponsiveHelper.spacing(context, 10),
+                  vertical: ResponsiveHelper.spacing(context, 6),
+                ),
+                decoration: BoxDecoration(
+                  color: to.isLongTerm ? AppColors.longTermBg : theme.primaryColor.withOpacity(0.1),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Text(
+                  DateFormat('MM/dd').format(to.date),
+                  style: ResponsiveHelper.smallStyle(
+                    context,
+                    color: to.isLongTerm ? AppColors.longTermDark : theme.primaryColor,
+                  ).copyWith(fontWeight: FontWeight.w600),
+                ),
+              ),
+              SizedBox(width: ResponsiveHelper.spacing(context, 12)),
+
+              // 제목 및 정보
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      to.title,
+                      style: ResponsiveHelper.bodyStyle(context).copyWith(
+                        fontWeight: FontWeight.w600,
+                      ),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    SizedBox(height: ResponsiveHelper.spacing(context, 2)),
+                    Row(
+                      children: [
+                        if (to.isLongTerm) ...[
+                          Icon(
+                            Icons.repeat,
+                            size: ResponsiveHelper.iconSize(context, 12),
+                            color: AppColors.longTermDark,
+                          ),
+                          SizedBox(width: ResponsiveHelper.spacing(context, 4)),
+                          Text(
+                            '장기',
+                            style: ResponsiveHelper.tinyStyle(context, color: AppColors.longTermDark),
+                          ),
+                          SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+                        ],
+                        Icon(
+                          Icons.people_outline,
+                          size: ResponsiveHelper.iconSize(context, 12),
+                          color: AppColors.grey500,
+                        ),
+                        SizedBox(width: ResponsiveHelper.spacing(context, 4)),
+                        Text(
+                          '${to.totalRequired}명',
+                          style: ResponsiveHelper.tinyStyle(context, color: AppColors.grey600),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+
+              // 화살표
+              Icon(
+                Icons.chevron_right,
+                color: AppColors.grey400,
+                size: ResponsiveHelper.iconSize(context, 20),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
   }
 
   /// 최근 TO 목록 로드 (그룹 연결용)
@@ -591,7 +902,19 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
     }
 
     return Scaffold(
-      appBar: AppBar(title: const Text('TO 생성')),
+      appBar: AppBar(
+        title: const Text('TO 생성'),
+        actions: [
+          IconButton(
+            icon: Icon(
+              Icons.file_copy_outlined,
+              size: ResponsiveHelper.iconSize(context, 24),
+            ),
+            onPressed: _selectedBusiness != null ? _showLoadFromExistingDialog : null,
+            tooltip: '기존 공고 불러오기',
+          ),
+        ],
+      ),
       body: Container(
         color: Colors.grey[50],
         child: Form(

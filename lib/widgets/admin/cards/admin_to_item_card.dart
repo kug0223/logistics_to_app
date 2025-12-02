@@ -611,6 +611,7 @@ class _TOItemCardState extends State<TOItemCard> {
           context: context,
           toItem: widget.toItem,
           firestoreService: widget.firestoreService,
+          onChanged: widget.onChanged,  // ⭐ 추가
         ).show();
         break;
         

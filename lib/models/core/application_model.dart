@@ -57,6 +57,13 @@ class ApplicationModel {
   final String? resignApprovedBy;       // 승인/거절자 UID
   final String? resignRejectReason;     // 거절 사유
   final DateTime? actualResignDate;     // 실제 퇴사일 (승인된 날짜)
+  // 🔥 Phase C: 계약해지 관리 (관리자 → 근무자)
+  final String? terminationStatus;          // 'PENDING', 'APPROVED', 'REJECTED', 'AUTO_APPROVED'
+  final DateTime? terminationRequestedAt;   // 해지 요청 시각
+  final String? terminationReason;          // 해지 사유
+  final String? terminationRequestedByUid;  // 요청한 관리자 UID
+  final DateTime? terminationRespondedAt;   // 근무자 응답 시각
+  final String? terminationRejectReason;    // 근무자 거절 사유
 
   ApplicationModel({
     required this.id,
@@ -97,6 +104,13 @@ class ApplicationModel {
     this.resignApprovedBy,
     this.resignRejectReason,
     this.actualResignDate,
+    // 🔥 Phase C: 계약해지 관리
+    this.terminationStatus,
+    this.terminationRequestedAt,
+    this.terminationReason,
+    this.terminationRequestedByUid,
+    this.terminationRespondedAt,
+    this.terminationRejectReason,
     // ⭐ 여기에 추가
     this.leaveDates,
     this.extraWorkDates,
@@ -166,6 +180,17 @@ class ApplicationModel {
       actualResignDate: data['actualResignDate'] != null
           ? (data['actualResignDate'] as Timestamp).toDate()
           : null,
+      // 🔥 Phase C: 계약해지 관리
+      terminationStatus: data['terminationStatus'],
+      terminationRequestedAt: data['terminationRequestedAt'] != null
+          ? (data['terminationRequestedAt'] as Timestamp).toDate()
+          : null,
+      terminationReason: data['terminationReason'],
+      terminationRequestedByUid: data['terminationRequestedByUid'],
+      terminationRespondedAt: data['terminationRespondedAt'] != null
+          ? (data['terminationRespondedAt'] as Timestamp).toDate()
+          : null,
+      terminationRejectReason: data['terminationRejectReason'],
       // ⭐ 여기에 추가
       leaveDates: data['leaveDates'] != null
           ? (data['leaveDates'] as List)
@@ -226,6 +251,13 @@ class ApplicationModel {
       'resignApprovedBy': resignApprovedBy,
       'resignRejectReason': resignRejectReason,
       'actualResignDate': actualResignDate != null ? Timestamp.fromDate(actualResignDate!) : null,
+      // 🔥 Phase C: 계약해지 관리
+      'terminationStatus': terminationStatus,
+      'terminationRequestedAt': terminationRequestedAt != null ? Timestamp.fromDate(terminationRequestedAt!) : null,
+      'terminationReason': terminationReason,
+      'terminationRequestedByUid': terminationRequestedByUid,
+      'terminationRespondedAt': terminationRespondedAt != null ? Timestamp.fromDate(terminationRespondedAt!) : null,
+      'terminationRejectReason': terminationRejectReason,
       // ⭐ 여기에 추가
       'leaveDates': leaveDates?.map((e) => Timestamp.fromDate(e)).toList(),
       'extraWorkDates': extraWorkDates?.map((e) => Timestamp.fromDate(e)).toList(),
@@ -316,6 +348,13 @@ class ApplicationModel {
     String? resignApprovedBy,
     String? resignRejectReason,
     DateTime? actualResignDate,
+    // 🔥 Phase C: 계약해지 관리
+    String? terminationStatus,
+    DateTime? terminationRequestedAt,
+    String? terminationReason,
+    String? terminationRequestedByUid,
+    DateTime? terminationRespondedAt,
+    String? terminationRejectReason,
     List<DateTime>? leaveDates,
     List<DateTime>? extraWorkDates,
     
@@ -359,6 +398,13 @@ class ApplicationModel {
       resignApprovedBy: resignApprovedBy ?? this.resignApprovedBy,
       resignRejectReason: resignRejectReason ?? this.resignRejectReason,
       actualResignDate: actualResignDate ?? this.actualResignDate,
+      // 🔥 Phase C: 계약해지 관리
+      terminationStatus: terminationStatus ?? this.terminationStatus,
+      terminationRequestedAt: terminationRequestedAt ?? this.terminationRequestedAt,
+      terminationReason: terminationReason ?? this.terminationReason,
+      terminationRequestedByUid: terminationRequestedByUid ?? this.terminationRequestedByUid,
+      terminationRespondedAt: terminationRespondedAt ?? this.terminationRespondedAt,
+      terminationRejectReason: terminationRejectReason ?? this.terminationRejectReason,
       leaveDates: leaveDates ?? this.leaveDates,
       extraWorkDates: extraWorkDates ?? this.extraWorkDates,
     );

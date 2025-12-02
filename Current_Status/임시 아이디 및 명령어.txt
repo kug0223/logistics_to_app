@@ -18,7 +18,7 @@ ALfit
 
 냉동분류
 
-git add . ; if ($?) { git commit -m "지원자 상세화면 개선 진행 251201-11" } ; if ($?) { git push }
+git add . ; if ($?) { git commit -m "지원자 상세화면 개선 진행 251202-1" } ; if ($?) { git push }
 
 flutter clean
 flutter pub get

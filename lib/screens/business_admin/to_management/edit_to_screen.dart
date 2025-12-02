@@ -18,7 +18,7 @@ import '../../../utils/navigation_helper.dart';
 import '../../../utils/responsive_helper.dart';
 
 // Widgets
-import '../../../widgets/pickers/work_detail_dialog.dart';
+import '../../../widgets/pickers/create&edit_work_detail_dialog.dart';
 
 // 공통 위젯
 import 'widgets/to_widgets.dart';
