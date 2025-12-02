@@ -323,8 +323,8 @@ class WorkDetailRow extends StatelessWidget {
   }
 
   /// 지원자 다이얼로그 표시
-  void _showApplicantsDialog(BuildContext context) {
-    showDialog(
+  Future<void> _showApplicantsDialog(BuildContext context) async {
+    await showDialog(
       context: context,
       builder: (context) => WorkApplicantsDialog(
         toItem: toItem,
@@ -332,5 +332,7 @@ class WorkDetailRow extends StatelessWidget {
         onChanged: onChanged,
       ),
     );
+    // 다이얼로그 닫힌 후 항상 부모에 갱신 요청
+    onChanged();
   }
 }

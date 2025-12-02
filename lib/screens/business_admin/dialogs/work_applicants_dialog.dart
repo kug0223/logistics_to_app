@@ -994,7 +994,6 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog> {
         adminUID: adminUID,
       );
       ToastHelper.showSuccess('${user?.name ?? '지원자'}님의 파트가 $selectedWorkType(으)로 변경되었습니다');
-      widget.onChanged();
       await _loadApplicants();
     } catch (e) {
       print('❌ 파트 변경 실패: $e');
@@ -1027,7 +1026,6 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog> {
       );
 
       ToastHelper.showSuccess('${user?.name ?? '지원자'}님이 승인되었습니다');
-      widget.onChanged();
       await _loadApplicants();
     } catch (e) {
       print('❌ 승인 실패: $e');
@@ -1060,7 +1058,6 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog> {
       );
 
       ToastHelper.showSuccess('${user?.name ?? '지원자'}님이 거절되었습니다');
-      widget.onChanged();
       await _loadApplicants();
     } catch (e) {
       print('❌ 거절 실패: $e');
@@ -1093,7 +1090,6 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog> {
       );
 
       ToastHelper.showSuccess('${user?.name ?? '근무자'}님의 확정이 취소되었습니다');
-      widget.onChanged();
       await _loadApplicants();
     } catch (e) {
       print('❌ 확정취소 실패: $e');
@@ -1145,10 +1141,22 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog> {
     
 
     
-    // 신분증 상태 등 변경되었으면 리스트 새로고침
-    // changed: true(변경됨), false(변경없음), null(외부탭으로 닫음)
-    if (changed != false) {
-      _loadApplicants();
+    // 신분증 상태만 업데이트 (전체 새로고침 X)
+    if (changed != false && user != null) {
+      final userProvider = context.read<UserProvider>();
+      final currentUserId = userProvider.currentUser?.uid ?? '';
+      
+      final newStatus = await IdCardHelper.loadStatusBatch(
+        firestoreService: _firestoreService,
+        requesterId: currentUserId,
+        targetUserIds: [user.uid],
+      );
+      
+      if (mounted) {
+        setState(() {
+          _idCardStatusMap.addAll(newStatus);
+        });
+      }
     }
   }
 
@@ -1246,9 +1254,9 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog> {
       }
 
       ToastHelper.showSuccess('${_selectedIds.length}명이 승인되었습니다');
-      widget.onChanged();
       _selectedIds.clear();
       await _loadApplicants();
+      await _updateLocalStats();  // ⭐ 로컬 통계 갱신
     } catch (e) {
       print('❌ 일괄 승인 실패: $e');
       ToastHelper.showError('승인 처리 중 오류가 발생했습니다');
@@ -1281,12 +1289,31 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog> {
       }
 
       ToastHelper.showSuccess('${_selectedIds.length}명이 거절되었습니다');
-      widget.onChanged();
       _selectedIds.clear();
       await _loadApplicants();
+      await _updateLocalStats();
     } catch (e) {
       print('❌ 일괄 거절 실패: $e');
       ToastHelper.showError('거절 처리 중 오류가 발생했습니다');
     }
+  }
+  /// 로컬 통계 갱신 (부모 toItem의 workDetailStats 업데이트)
+  Future<void> _updateLocalStats() async {
+    // 현재 지원자 목록에서 통계 계산
+    int pending = 0;
+    int confirmed = 0;
+    
+    for (var item in _applicants) {
+      final app = item['application'] as ApplicationModel;
+      if (app.status == 'PENDING') pending++;
+      if (app.status == 'CONFIRMED') confirmed++;
+    }
+    
+    // workDetailStats 갱신
+    widget.toItem.workDetailStats ??= {};
+    widget.toItem.workDetailStats![widget.work.workType] = {
+      'pending': pending,
+      'confirmed': confirmed,
+    };
   }
 }

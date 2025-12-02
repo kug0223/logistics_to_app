@@ -69,10 +69,6 @@ class _WorkforceCalendarViewState extends State<WorkforceCalendarView> {
       onChanged: _loadData,
     );
     _loadData();
-    // ⭐ 초기 날짜의 확정 인원 체크
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      _checkConfirmedWorkers(_selectedDay!);
-    });
   }
 
   /// ✨ 데이터 로드 (Lazy Loading - 겉 카드만)
@@ -88,10 +84,21 @@ class _WorkforceCalendarViewState extends State<WorkforceCalendarView> {
 
       setState(() {
         _allGroupItems = groupItems;
-        _isLoading = false;
+        // ⭐ 아직 로딩 끝내지 않음
       });
 
       print('✅ [Lazy] 캘린더 초기 로드 완료: ${groupItems.length}개 카드');
+      
+      // ⭐ 선택된 날짜의 그룹 상세 로드 (로딩 상태 유지)
+      if (_selectedDay != null) {
+        await _loadGroupDetailsForDay(_selectedDay!);
+        _checkConfirmedWorkers(_selectedDay!);
+      }
+      
+      // ⭐ 모든 로드 완료 후 로딩 종료
+      setState(() {
+        _isLoading = false;
+      });
     } catch (e) {
       print('❌ 데이터 로드 실패: $e');
       setState(() => _isLoading = false);
@@ -248,6 +255,8 @@ class _WorkforceCalendarViewState extends State<WorkforceCalendarView> {
           _expandedGroups.clear();
           _expandedTOs.clear();
         });
+        // ⭐ 해당 날짜의 그룹 TO 상세 로드
+        _loadGroupDetailsForDay(selectedDay);
         // ⭐ 확정 인원 체크
         _checkConfirmedWorkers(selectedDay);
       },
@@ -713,6 +722,32 @@ class _WorkforceCalendarViewState extends State<WorkforceCalendarView> {
         ],
       ),
     );
+  }
+  /// ⭐ 선택된 날짜의 그룹 TO 상세 자동 로드
+  Future<void> _loadGroupDetailsForDay(DateTime day) async {
+    final dayGroupItems = _getGroupItemsForDay(day);
+    
+    for (var groupItem in dayGroupItems) {
+      // 그룹 TO이고 상세 로드 안 됐으면 로드
+      if (groupItem.isGrouped && !groupItem.isGroupDetailLoaded) {
+        final key = groupItem.masterTO.groupId ?? groupItem.masterTO.id;
+        
+        setState(() => _loadingGroups.add(key));
+        
+        try {
+          final toItems = await _firestoreService.loadGroupTOsLight(
+            groupItem.masterTO.groupId!
+          );
+          groupItem.setGroupTOs(toItems);
+        } catch (e) {
+          print('❌ 그룹 상세 로드 실패: $e');
+        }
+        
+        if (mounted) {
+          setState(() => _loadingGroups.remove(key));
+        }
+      }
+    }
   }
 
   /// ⭐ 확정 인원 체크 (모든 관리 사업장)
