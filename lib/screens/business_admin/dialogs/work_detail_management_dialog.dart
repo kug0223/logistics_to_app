@@ -17,12 +17,14 @@ class WorkDetailManagementDialog {
   final TOItem toItem;
   final FirestoreService firestoreService;
   final VoidCallback onComplete;
+  final VoidCallback? onLocalStatsChanged;
 
   WorkDetailManagementDialog({
     required this.context,
     required this.toItem,
     required this.firestoreService,
     required this.onComplete,
+    this.onLocalStatsChanged,
   });
 
   void show() {
@@ -306,6 +308,7 @@ class WorkDetailManagementDialog {
                         ],
                       ),
                       SizedBox(height: ResponsiveHelper.spacing(context, 4)),
+                      // 시간
                       Row(
                         children: [
                           Icon(
@@ -321,7 +324,12 @@ class WorkDetailManagementDialog {
                               color: AppColors.grey600,
                             ),
                           ),
-                          SizedBox(width: ResponsiveHelper.spacing(context, 16)),
+                        ],
+                      ),
+                      SizedBox(height: ResponsiveHelper.spacing(context, 4)),
+                      // 인원
+                      Row(
+                        children: [
                           Icon(
                             Icons.people,
                             size: ResponsiveHelper.iconSize(context, 14),
@@ -455,16 +463,29 @@ class WorkDetailManagementDialog {
     );
 
     if (confirm) {
+      final adminUID = FirebaseAuth.instance.currentUser!.uid;
+      final now = DateTime.now();
+      
       for (var work in works) {
         await firestoreService.closeWorkDetail(
           toId: toItem.to.id,
           workDetailId: work.id,
-          adminUID: FirebaseAuth.instance.currentUser!.uid,
+          adminUID: adminUID,
         );
+        
+        // ⭐ 로컬 데이터 업데이트
+        final index = toItem.workDetails.indexWhere((w) => w.id == work.id);
+        if (index != -1) {
+          toItem.workDetails[index] = work.copyWith(
+            closedAt: now,
+            closedBy: adminUID,
+            isManualClosed: true,
+          );
+        }
       }
 
       Navigator.pop(context);
-      onComplete();
+      onLocalStatsChanged?.call();
       ToastHelper.showSuccess('${works.length}개 업무가 마감되었습니다');
     }
   }
@@ -480,16 +501,24 @@ class WorkDetailManagementDialog {
     );
 
     if (confirm) {
+      final adminUID = FirebaseAuth.instance.currentUser!.uid;
+      
       for (var work in works) {
         await firestoreService.reopenWorkDetail(
           toId: toItem.to.id,
           workDetailId: work.id,
-          adminUID: FirebaseAuth.instance.currentUser!.uid,
+          adminUID: adminUID,
         );
+        
+        // ⭐ 로컬 데이터 업데이트 (clearClosedAt 사용)
+        final index = toItem.workDetails.indexWhere((w) => w.id == work.id);
+        if (index != -1) {
+          toItem.workDetails[index] = work.copyWith(clearClosedAt: true);
+        }
       }
 
       Navigator.pop(context);
-      onComplete();
+      onLocalStatsChanged?.call();
       ToastHelper.showSuccess('${works.length}개 업무가 재오픈되었습니다');
     }
   }
@@ -505,16 +534,24 @@ class WorkDetailManagementDialog {
     );
 
     if (confirm) {
+      final adminUID = FirebaseAuth.instance.currentUser!.uid;
+      
       for (var work in works) {
         await firestoreService.stopEmergencyRecruitment(
           toId: toItem.to.id,
           workDetailId: work.id,
-          adminUID: FirebaseAuth.instance.currentUser!.uid,
+          adminUID: adminUID,
         );
+        
+        // ⭐ 로컬 데이터 업데이트 (clearEmergency 사용)
+        final index = toItem.workDetails.indexWhere((w) => w.id == work.id);
+        if (index != -1) {
+          toItem.workDetails[index] = work.copyWith(clearEmergency: true);
+        }
       }
 
       Navigator.pop(context);
-      onComplete();
+      onLocalStatsChanged?.call();
       ToastHelper.showSuccess('${works.length}개 업무 긴급모집이 종료되었습니다');
     }
   }

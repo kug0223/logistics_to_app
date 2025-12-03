@@ -1147,7 +1147,7 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
       );
 
       if (mounted) {
-        Navigator.pop(context);
+        Navigator.pop(context, true);
         ToastHelper.showSuccess('확정이 취소되었습니다');
         widget.onStatusChanged?.call();
       }

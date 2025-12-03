@@ -145,6 +145,8 @@ class WorkDetailModel {
     bool? isEmergencyOpen,
     DateTime? emergencyOpenedAt,
     String? emergencyOpenedBy,
+    bool clearClosedAt = false,
+    bool clearEmergency = false,
   }) {
     return WorkDetailModel(
       id: id ?? this.id,
@@ -162,12 +164,12 @@ class WorkDetailModel {
       createdAt: createdAt ?? this.createdAt,
       pendingCount: pendingCount ?? this.pendingCount,
       applicationDeadline: applicationDeadline ?? this.applicationDeadline,
-      closedAt: closedAt ?? this.closedAt,
-      closedBy: closedBy ?? this.closedBy,
-      isManualClosed: isManualClosed ?? this.isManualClosed,
-      isEmergencyOpen: isEmergencyOpen ?? this.isEmergencyOpen,
-      emergencyOpenedAt: emergencyOpenedAt ?? this.emergencyOpenedAt,
-      emergencyOpenedBy: emergencyOpenedBy ?? this.emergencyOpenedBy,
+      closedAt: clearClosedAt ? null : (closedAt ?? this.closedAt),
+      closedBy: clearClosedAt ? null : (closedBy ?? this.closedBy),
+      isManualClosed: clearClosedAt ? false : (isManualClosed ?? this.isManualClosed),
+      isEmergencyOpen: clearEmergency ? false : (isEmergencyOpen ?? this.isEmergencyOpen),
+      emergencyOpenedAt: clearEmergency ? null : (emergencyOpenedAt ?? this.emergencyOpenedAt),
+      emergencyOpenedBy: clearEmergency ? null : (emergencyOpenedBy ?? this.emergencyOpenedBy),
     );
   }
 

@@ -676,6 +676,9 @@ class _TOItemCardState extends State<TOItemCard> {
           toItem: widget.toItem,
           firestoreService: widget.firestoreService,
           onComplete: widget.onChanged,
+          onLocalStatsChanged: () {
+            if (mounted) setState(() {});
+          },
         ).show();
         break;
     }
