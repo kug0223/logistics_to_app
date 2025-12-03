@@ -42,6 +42,7 @@ class WorkDetailRow extends StatefulWidget {
   final TOItem toItem;
   final FirestoreService firestoreService;
   final VoidCallback onChanged;
+  final VoidCallback? onLocalStatsChanged;  // ✅ 추가: 로컬 통계 변경 콜백
 
   const WorkDetailRow({
     super.key,
@@ -51,6 +52,7 @@ class WorkDetailRow extends StatefulWidget {
     required this.toItem,
     required this.firestoreService,
     required this.onChanged,
+    this.onLocalStatsChanged,  // ✅ 추가
   });
 
   @override
@@ -341,7 +343,7 @@ class _WorkDetailRowState extends State<WorkDetailRow> {
 
   /// 지원자 다이얼로그 표시
   Future<void> _showApplicantsDialog(BuildContext context) async {
-    await showDialog(
+    final hasChanges = await showDialog<bool>(
       context: context,
       builder: (context) => WorkApplicantsDialog(
         toItem: widget.toItem,
@@ -349,7 +351,11 @@ class _WorkDetailRowState extends State<WorkDetailRow> {
         onChanged: widget.onChanged,
       ),
     );
-    // ⭐ 다이얼로그 닫힌 후 이 위젯만 rebuild (toItem.workDetailStats 이미 업데이트됨)
-    if (mounted) setState(() {});
+    
+    // ⭐ 다이얼로그 닫힌 후 로컬 업데이트 반영
+    if (hasChanges == true && mounted) {
+      setState(() {});  // 자기 자신 rebuild
+      widget.onLocalStatsChanged?.call();  // 부모 TOGroupCard rebuild
+    }
   }
 }

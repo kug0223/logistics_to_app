@@ -634,14 +634,37 @@ class TestDataHelper {
       await clearDummyAttendance();
       
       // 4. 더미 리뷰 삭제
+      // 4. 더미 리뷰 삭제
       await clearDummyReviews();
+
+      // 5. ✅ 모든 TO 통계 재계산
+      print('');
+      print('📊 5단계: TO 통계 재계산 중...');
+      
+      final allTOsSnapshot = await _firestore.collection('tos').get();
+      int recalculatedCount = 0;
+      
+      for (var toDoc in allTOsSnapshot.docs) {
+        final toId = toDoc.id;
+        await _firestoreService.recalculateTOStats(toId);
+        
+        // 그룹 마스터 통계 동기화
+        final toData = toDoc.data();
+        if (toData['groupId'] != null) {
+          await _firestoreService.syncGroupMasterStats(toId);
+        }
+        
+        recalculatedCount++;
+      }
+      
+      print('✅ $recalculatedCount개 TO 통계 재계산 완료');
 
       print('');
       print('🎉 ═══════════════════════════════════════');
       print('🎉 모든 더미 데이터 삭제 완료!');
       print('🎉 ═══════════════════════════════════════');
       print('   📊 총 $totalDeleted개 항목 삭제됨');
-      print('   🎯 영향받은 TO: ${affectedTOIds.length}개');
+      print('   📊 $recalculatedCount개 TO 통계 재계산됨');
       print('');
       // ✅ 캐시 클리어
       _firestoreService.clearCache();

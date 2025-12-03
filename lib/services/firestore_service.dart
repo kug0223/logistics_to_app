@@ -1620,18 +1620,38 @@ class FirestoreService {
     DateTime date,
   ) async {
     try {
+      // 🔍 디버깅: businessId만으로 모든 지원서 확인
+      final debugAll = await _firestore
+          .collection('applications')
+          .where('businessId', isEqualTo: businessId)
+          .get();
+      
+      print('🔍 [DEBUG] businessId만 조회: ${debugAll.docs.length}개');
+      for (var doc in debugAll.docs) {
+        final data = doc.data();
+        final toTitle = data['toTitle'];
+        final workDate = (data['workDate'] as Timestamp?)?.toDate();
+        print('   - toTitle: "$toTitle", workDate: $workDate, status: ${data['status']}');
+      }
+      print('🔍 [DEBUG] 찾는 title: "$title"');
+      
+      // ✅ 날짜 범위로 조회 (시간 무관하게 해당 날짜 전체)
+      final dateStart = DateTime(date.year, date.month, date.day);
+      final dateEnd = dateStart.add(const Duration(days: 1));
+      
       final snapshot = await _firestore
           .collection('applications')
           .where('businessId', isEqualTo: businessId)
           .where('toTitle', isEqualTo: title)
-          .where('workDate', isEqualTo: Timestamp.fromDate(date))
+          .where('workDate', isGreaterThanOrEqualTo: Timestamp.fromDate(dateStart))
+          .where('workDate', isLessThan: Timestamp.fromDate(dateEnd))
           .get();
 
       final apps = snapshot.docs
           .map((doc) => ApplicationModel.fromFirestore(doc))
           .toList();
 
-      print('✅ TO 지원서 조회: ${apps.length}개');
+      print('✅ TO 지원서 조회: ${apps.length}개 (businessId=$businessId, title=$title, date=$dateStart~$dateEnd)');
       return apps;
     } catch (e) {
       print('❌ TO 지원서 조회 실패: $e');
@@ -4968,6 +4988,8 @@ class FirestoreService {
   Future<Map<String, dynamic>> loadTOWorkDetails(TOModel to) async {
     try {
       print('🔍 [Lazy] TO 상세 로드: ${to.id}');
+      print('   📋 TO 정보: businessId=${to.businessId}, title=${to.title}, date=${to.date}');
+      print('   📋 장기여부: ${to.isLongTerm}');
       
       // 병렬로 WorkDetails와 지원자 조회
       final results = await Future.wait([
@@ -4978,6 +5000,12 @@ class FirestoreService {
       final workDetails = results[0] as List<WorkDetailModel>;
       final apps = results[1] as List<ApplicationModel>;
       
+      print('   📋 WorkDetails: ${workDetails.length}개');
+      print('   📋 Applications: ${apps.length}개');
+      for (var app in apps) {
+        print('      - ${app.selectedWorkType}: ${app.status} (workDate: ${app.workDate})');
+      }
+      
       // 업무별 통계 계산
       Map<String, Map<String, int>> workStats = {};
       for (var work in workDetails) {
@@ -4986,6 +5014,7 @@ class FirestoreService {
           'confirmed': workApps.where((a) => a.status == 'CONFIRMED').length,
           'pending': workApps.where((a) => a.status == 'PENDING').length,
         };
+        print('   📊 ${work.workType}: 확정=${workStats[work.workType]!['confirmed']}, 대기=${workStats[work.workType]!['pending']}');
       }
       
       // 시간 범위 설정

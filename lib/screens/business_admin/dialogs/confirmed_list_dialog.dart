@@ -486,8 +486,8 @@ class _ConfirmedListDialogWidgetState
     }
   }
 
-  void _showWorkerDetailDialog(BuildContext context, UserModel user, ApplicationModel application, WorkDetailModel workDetail) {
-    WorkerDetailDialog.show(
+  Future<void> _showWorkerDetailDialog(BuildContext context, UserModel user, ApplicationModel application, WorkDetailModel workDetail) async {
+    final changed = await WorkerDetailDialog.show(
       context: context,
       user: user,
       application: application,
@@ -496,9 +496,28 @@ class _ConfirmedListDialogWidgetState
       isConfirmed: true,
       showApprovalButtons: false,
       onStatusChanged: () {
-        _hasChanges = true;  // ⭐ 변경 추적
-        _loadConfirmedApplicants();
+        _hasChanges = true;
       },
     );
+    
+    // ⭐ 신분증 상태만 로컬 업데이트 (전체 새로고침 X)
+    if (changed != false) {
+      _hasChanges = true;
+      
+      final userProvider = context.read<UserProvider>();
+      final currentUserId = userProvider.currentUser?.uid ?? '';
+      
+      final newStatus = await IdCardHelper.loadStatusBatch(
+        firestoreService: widget.firestoreService,
+        requesterId: currentUserId,
+        targetUserIds: [user.uid],
+      );
+      
+      if (mounted) {
+        setState(() {
+          _idCardStatusMap.addAll(newStatus);
+        });
+      }
+    }
   }
 }

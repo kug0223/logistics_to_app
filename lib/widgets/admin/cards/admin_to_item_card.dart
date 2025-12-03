@@ -350,6 +350,7 @@ class _TOItemCardState extends State<TOItemCard> {
                                   toItem: widget.toItem,
                                   firestoreService: widget.firestoreService,
                                   onChanged: widget.onChanged,
+                                  onLocalStatsChanged: () => setState(() {}),  // ✅ 추가
                                 );
                               }),
                             ],
@@ -550,6 +551,29 @@ class _TOItemCardState extends State<TOItemCard> {
   Future<void> _handleMenuAction(BuildContext context, String value) async {
     switch (value) {
       case 'preview':
+        // ✅ WorkDetails 로드 확인 후 미리보기 열기
+        if (!widget.toItem.isWorkDetailLoaded || widget.toItem.workDetails.isEmpty) {
+          showDialog(
+            context: context,
+            barrierDismissible: false,
+            builder: (_) => const Center(child: CircularProgressIndicator()),
+          );
+          
+          try {
+            final result = await widget.firestoreService.loadTOWorkDetails(widget.toItem.to);
+            widget.toItem.setWorkDetails(
+              result['workDetails'] as List<WorkDetailModel>,
+              result['workStats'] as Map<String, Map<String, int>>,
+            );
+          } catch (e) {
+            Navigator.pop(context);
+            ToastHelper.showError('데이터를 불러오는데 실패했습니다.');
+            return;
+          }
+          
+          Navigator.pop(context);
+        }
+        
         Navigator.push(
           context,
           MaterialPageRoute(

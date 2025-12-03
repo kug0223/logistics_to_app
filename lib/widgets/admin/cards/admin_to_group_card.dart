@@ -92,10 +92,24 @@ class _TOGroupCardState extends State<TOGroupCard> {
         : widget.groupItem.groupTOs;
     
     for (var toItem in targetTOs) {
-      totalConfirmed += toItem.confirmedCount;
-      totalPending += toItem.pendingCount;
-      totalRequired += toItem.totalRequired;
+      // ✅ workDetailStats가 있으면 그것에서 합산 (로컬 업데이트 반영)
+      if (toItem.workDetailStats != null && toItem.workDetailStats!.isNotEmpty) {
+        for (var stats in toItem.workDetailStats!.values) {
+          totalConfirmed += (stats['confirmed'] ?? 0) as int;
+          totalPending += (stats['pending'] ?? 0) as int;
+        }
+        totalRequired += toItem.totalRequired;
+        print('🔍 [TOGroupCard] workDetailStats 사용: confirmed=$totalConfirmed, pending=$totalPending');
+      } else {
+        // 아직 로드 안 됐으면 초기값 사용
+        totalConfirmed += toItem.confirmedCount;
+        totalPending += toItem.pendingCount;
+        totalRequired += toItem.totalRequired;
+        print('🔍 [TOGroupCard] 초기값 사용: confirmed=${toItem.confirmedCount}, pending=${toItem.pendingCount}');
+      }
     }
+    
+    print('🔍 [TOGroupCard] 최종 통계: $totalConfirmed/$totalRequired (+$totalPending)');
     
     // 인원 충족 여부 (workDetails 로드 안됐으면 TO 문서 기준)
     final isFull = widget.groupItem.groupTOs.isEmpty 
@@ -553,13 +567,19 @@ class _TOGroupCardState extends State<TOGroupCard> {
     if (masterTO.isLongTerm) {
       return masterTO.longTermPeriodWithDays;
     } else if (widget.groupItem.isGrouped) {
-      final count = widget.groupItem.groupTOs.length;
+      // ✅ 그룹 상세 로드됐으면 실제 개수, 아니면 마스터의 groupDaysCount 사용
+      final int count;
+      if (widget.groupItem.isGroupDetailLoaded && widget.groupItem.groupTOs.isNotEmpty) {
+        count = widget.groupItem.groupTOs.length;
+      } else {
+        // masterTO의 startDate ~ endDate에서 일수 계산
+        count = masterTO.groupDaysCount ?? 1;
+      }
       return '${FormatHelper.formatDate(masterTO.date)} 외 ${count - 1}일';
     } else {
       return FormatHelper.formatDate(masterTO.date);
     }
   }
-
   /// ✨ 미니 아이콘 배지 (타입, 그룹 표시용)
   Widget _buildMiniIconBadge(
     BuildContext context, {
@@ -865,12 +885,44 @@ class _TOGroupCardState extends State<TOGroupCard> {
 
     switch (value) {
       case 'preview':
+        // ✅ WorkDetails 로드 확인 후 미리보기 열기
+        final toItemForPreview = widget.groupItem.groupTOs.isNotEmpty 
+            ? widget.groupItem.groupTOs.first 
+            : null;
+        
+        if (toItemForPreview == null) {
+          ToastHelper.showError('TO 정보를 불러올 수 없습니다.');
+          return;
+        }
+        
+        if (!toItemForPreview.isWorkDetailLoaded || toItemForPreview.workDetails.isEmpty) {
+          showDialog(
+            context: context,
+            barrierDismissible: false,
+            builder: (_) => const Center(child: CircularProgressIndicator()),
+          );
+          
+          try {
+            final result = await widget.firestoreService.loadTOWorkDetails(toItemForPreview.to);
+            toItemForPreview.setWorkDetails(
+              result['workDetails'] as List<WorkDetailModel>,
+              result['workStats'] as Map<String, Map<String, int>>,
+            );
+          } catch (e) {
+            Navigator.pop(context);
+            ToastHelper.showError('데이터를 불러오는데 실패했습니다.');
+            return;
+          }
+          
+          Navigator.pop(context);
+        }
+        
         Navigator.push(
           context,
           MaterialPageRoute(
             builder: (_) => JobPostingScreen(
               to: widget.groupItem.masterTO,
-              workDetails: widget.groupItem.groupTOs.first.workDetails,
+              workDetails: toItemForPreview.workDetails,
               mode: TODetailMode.adminPreview,
             ),
           ),

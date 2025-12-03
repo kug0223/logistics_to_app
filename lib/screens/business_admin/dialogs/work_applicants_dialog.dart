@@ -181,6 +181,8 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog> {
         backgroundColor: const Color.fromARGB(0, 112, 106, 106),
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(24),
+
+
       ),
       child: Container(
         constraints: BoxConstraints(
@@ -277,7 +279,7 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog> {
           
           // 닫기 버튼
           IconButton(
-            onPressed: () => Navigator.pop(context),
+            onPressed: () => Navigator.pop(context, _hasChanges),  // ✅ 변경 여부 반환
             icon: Icon(Icons.close, color: Colors.white),
             padding: EdgeInsets.zero,
             constraints: BoxConstraints(),
