@@ -541,6 +541,7 @@ class _TOGroupCardState extends State<TOGroupCard> {
                                   toItem: widget.groupItem.groupTOs.first,
                                   firestoreService: widget.firestoreService,
                                   onChanged: widget.onChanged,
+                                  onLocalStatsChanged: () => setState(() {}),
                                 );
                               }),
                             ],
