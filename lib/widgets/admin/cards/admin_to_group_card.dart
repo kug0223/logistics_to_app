@@ -92,20 +92,19 @@ class _TOGroupCardState extends State<TOGroupCard> {
         : widget.groupItem.groupTOs;
     
     for (var toItem in targetTOs) {
-      // ✅ workDetailStats가 있으면 그것에서 합산 (로컬 업데이트 반영)
-      if (toItem.workDetailStats != null && toItem.workDetailStats!.isNotEmpty) {
-        for (var stats in toItem.workDetailStats!.values) {
-          totalConfirmed += (stats['confirmed'] ?? 0) as int;
-          totalPending += (stats['pending'] ?? 0) as int;
+      // ✅ workDetails 로드됐으면 각 업무별로 workDetailStats에서 합산
+      if (toItem.isWorkDetailLoaded && toItem.workDetails.isNotEmpty) {
+        for (var work in toItem.workDetails) {
+          final stats = toItem.workDetailStats?[work.workType];
+          totalConfirmed += (stats?['confirmed'] ?? 0) as int;
+          totalPending += (stats?['pending'] ?? 0) as int;
         }
         totalRequired += toItem.totalRequired;
-        print('🔍 [TOGroupCard] workDetailStats 사용: confirmed=$totalConfirmed, pending=$totalPending');
       } else {
         // 아직 로드 안 됐으면 초기값 사용
         totalConfirmed += toItem.confirmedCount;
         totalPending += toItem.pendingCount;
         totalRequired += toItem.totalRequired;
-        print('🔍 [TOGroupCard] 초기값 사용: confirmed=${toItem.confirmedCount}, pending=${toItem.pendingCount}');
       }
     }
     
@@ -456,7 +455,8 @@ class _TOGroupCardState extends State<TOGroupCard> {
                                         onChanged: widget.onChanged,
                                         isExpanded: widget.expandedTOs.contains(toItem.to.id),
                                         onToggleExpand: () => widget.onToggleTOExpand(toItem.to.id),
-                                        isLoading: widget.loadingTOs.contains(toItem.to.id),  // ✨ 추가
+                                        isLoading: widget.loadingTOs.contains(toItem.to.id),
+                                        onLocalStatsChanged: () => setState(() {}),  // ✅ 추가: 그룹카드 rebuild
                                       );
                                     }).toList(),
                                   ),
@@ -983,9 +983,10 @@ class _TOGroupCardState extends State<TOGroupCard> {
           context: context,
           toItem: toItemForConfirmed,
           firestoreService: widget.firestoreService,
-          onChanged: widget.onChanged,  // ⭐ 추가
+          onLocalStatsChanged: () {
+            if (mounted) setState(() {});
+          },
         ).show();
-        break;
 
       case 'manageWorkDetails':
         // ✅ WorkDetails 로드 확인 후 다이얼로그 열기

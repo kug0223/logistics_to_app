@@ -80,10 +80,6 @@ class FirestoreService {
       return null;
     }
   }
-  /// UID로 사용자 조회 (별칭 메서드)
-  Future<UserModel?> getUserByUID(String uid) async {
-    return getUser(uid);
-  }
 
   /// 마지막 로그인 시간 업데이트
   Future<void> updateLastLogin(String uid) async {
@@ -210,10 +206,13 @@ class FirestoreService {
   /// 모든 TO 조회 (지원자용, 최고관리자용)
   Future<List<TOModel>> getAllTOs() async {
     try {
-      print('🔍 [FirestoreService] 전체 TO 조회 시작...');
+      // ✅ 서버에서 바로 필터링 (오늘 이후만)
+      final today = DateTime.now();
+      final startOfToday = DateTime(today.year, today.month, today.day);
 
       final snapshot = await _firestore
           .collection('tos')
+          .where('date', isGreaterThanOrEqualTo: Timestamp.fromDate(startOfToday))
           .orderBy('date', descending: false)
           .get();
 
@@ -221,14 +220,8 @@ class FirestoreService {
           .map((doc) => TOModel.fromMap(doc.data(), doc.id))
           .toList();
 
-      // 오늘 날짜 이전 TO 제외
-      final today = DateTime.now();
-      final filteredList = toList.where((to) {
-        return to.date.isAfter(today.subtract(const Duration(days: 1)));
-      }).toList();
-
-      print('✅ [FirestoreService] 전체 TO 조회 완료: ${filteredList.length}개 (오늘 이후)');
-      return filteredList;
+      print('✅ [FirestoreService] 전체 TO 조회 완료: ${toList.length}개');
+      return toList;
     } catch (e) {
       print('❌ [FirestoreService] 전체 TO 조회 실패: $e');
       return [];
@@ -262,10 +255,13 @@ class FirestoreService {
   /// 대표 TO만 조회 (그룹 TO는 대표만, 일반 TO는 전체)
   Future<List<TOModel>> getMasterTOsOnly() async {
     try {
-      print('🔍 [FirestoreService] 대표 TO 조회 시작...');
+      // ✅ 서버에서 날짜 필터링
+      final today = DateTime.now();
+      final startOfToday = DateTime(today.year, today.month, today.day);
 
       final snapshot = await _firestore
           .collection('tos')
+          .where('date', isGreaterThanOrEqualTo: Timestamp.fromDate(startOfToday))
           .orderBy('date', descending: false)
           .get();
 
@@ -273,15 +269,9 @@ class FirestoreService {
           .map((doc) => TOModel.fromMap(doc.data(), doc.id))
           .toList();
 
-      // 필터링: isGroupMaster == true OR groupId == null
-      final filteredTOs = allTOs.where((to) {
+      // 필터링: isGroupMaster == true OR groupId == null (클라이언트 - 복합조건이라 필요)
+      final result = allTOs.where((to) {
         return to.isGroupMaster || to.groupId == null;
-      }).toList();
-
-      // 오늘 이전 TO 제외
-      final today = DateTime.now();
-      final result = filteredTOs.where((to) {
-        return to.date.isAfter(today.subtract(const Duration(days: 1)));
       }).toList();
 
       print('✅ [FirestoreService] 대표 TO 조회 완료: ${result.length}개');
@@ -290,11 +280,6 @@ class FirestoreService {
       print('❌ [FirestoreService] 대표 TO 조회 실패: $e');
       return [];
     }
-  }
-
-  /// 대표 TO만 조회 (별칭)
-  Future<List<TOModel>> getGroupMasterTOs() async {
-    return getMasterTOsOnly();
   }
 
   /// 사용자의 최근 TO 목록 조회 (그룹 연결용)
@@ -1620,21 +1605,6 @@ class FirestoreService {
     DateTime date,
   ) async {
     try {
-      // 🔍 디버깅: businessId만으로 모든 지원서 확인
-      final debugAll = await _firestore
-          .collection('applications')
-          .where('businessId', isEqualTo: businessId)
-          .get();
-      
-      print('🔍 [DEBUG] businessId만 조회: ${debugAll.docs.length}개');
-      for (var doc in debugAll.docs) {
-        final data = doc.data();
-        final toTitle = data['toTitle'];
-        final workDate = (data['workDate'] as Timestamp?)?.toDate();
-        print('   - toTitle: "$toTitle", workDate: $workDate, status: ${data['status']}');
-      }
-      print('🔍 [DEBUG] 찾는 title: "$title"');
-      
       // ✅ 날짜 범위로 조회 (시간 무관하게 해당 날짜 전체)
       final dateStart = DateTime(date.year, date.month, date.day);
       final dateEnd = dateStart.add(const Duration(days: 1));
@@ -3595,12 +3565,11 @@ class FirestoreService {
       
       print('   그룹 TO: ${groupTOs.length}개');
       
-      // 2. 각 TO의 통계 재계산
-      int successCount = 0;
-      for (var to in groupTOs) {
-        final success = await recalculateTOStats(to.id);
-        if (success) successCount++;
-      }
+      // 2. 각 TO의 통계 재계산 (병렬 처리)
+      final results = await Future.wait(
+        groupTOs.map((to) => recalculateTOStats(to.id))
+      );
+      final successCount = results.where((r) => r).length;
       
       print('✅ 그룹 통계 재계산 완료: $successCount/${groupTOs.length}개 성공');
       return successCount == groupTOs.length;

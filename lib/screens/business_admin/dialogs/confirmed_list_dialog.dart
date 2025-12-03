@@ -1,5 +1,4 @@
 // lib/screens/business_admin/dialogs/confirmed_list_dialog.dart
-// PART 1: 메인 클래스, import, 목록 UI
 
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
@@ -25,13 +24,15 @@ class ConfirmedListDialog {
   final BuildContext context;
   final TOItem toItem;
   final FirestoreService firestoreService;
-  final VoidCallback? onChanged;  // ⭐ 추가
+  final VoidCallback? onChanged;
+  final VoidCallback? onLocalStatsChanged;  // ⭐ 추가
 
   ConfirmedListDialog({
     required this.context,
     required this.toItem,
     required this.firestoreService,
-    this.onChanged,  // ⭐ 추가
+    this.onChanged,
+    this.onLocalStatsChanged,  // ⭐ 추가
   });
 
   void show() {
@@ -40,7 +41,8 @@ class ConfirmedListDialog {
       builder: (context) => _ConfirmedListDialogWidget(
         toItem: toItem,
         firestoreService: firestoreService,
-        onChanged: onChanged,  // ⭐ 추가
+        onChanged: onChanged,
+        onLocalStatsChanged: onLocalStatsChanged,  // ⭐ 추가
       ),
     );
   }
@@ -49,12 +51,14 @@ class ConfirmedListDialog {
 class _ConfirmedListDialogWidget extends StatefulWidget {
   final TOItem toItem;
   final FirestoreService firestoreService;
-  final VoidCallback? onChanged;  // ⭐ 추가
+  final VoidCallback? onChanged;
+  final VoidCallback? onLocalStatsChanged;  // ⭐ 추가
 
   const _ConfirmedListDialogWidget({
     required this.toItem,
     required this.firestoreService,
-    this.onChanged,  // ⭐ 추가
+    this.onChanged,
+    this.onLocalStatsChanged,  // ⭐ 추가
   });
 
   @override
@@ -65,11 +69,15 @@ class _ConfirmedListDialogWidget extends StatefulWidget {
 class _ConfirmedListDialogWidgetState
     extends State<_ConfirmedListDialogWidget> {
   bool _isLoading = true;
-  bool _hasChanges = false;  // ⭐ 추가
+  bool _hasChanges = false;
   Map<String, List<Map<String, dynamic>>> _confirmedByWork = {};
   Map<String, String> _idCardStatusMap = {};
   String? _error;
   int _totalConfirmed = 0;
+
+  // 신분증 일괄 요청 모드
+  bool _isIdCardSelectMode = false;
+  final Set<String> _selectedIdCardUserIds = {};
 
   @override
   void initState() {
@@ -104,7 +112,7 @@ class _ConfirmedListDialogWidgetState
 
       final results = await Future.wait(futures);
 
-     final Map<String, List<Map<String, dynamic>>> groupedByWork = {};
+      final Map<String, List<Map<String, dynamic>>> groupedByWork = {};
 
       for (var result in results) {
         if (result['user'] != null) {
@@ -120,7 +128,6 @@ class _ConfirmedListDialogWidgetState
           final userA = a['user'] as UserModel;
           final userB = b['user'] as UserModel;
           
-          // 1. 성별 정렬 (남성 먼저)
           final genderOrder = {'남성': 0, '여성': 1};
           final genderA = genderOrder[userA.gender] ?? 2;
           final genderB = genderOrder[userB.gender] ?? 2;
@@ -129,7 +136,6 @@ class _ConfirmedListDialogWidgetState
             return genderA.compareTo(genderB);
           }
           
-          // 2. 나이순 정렬 (어린순)
           final ageA = userA.age ?? 999;
           final ageB = userB.age ?? 999;
           return ageA.compareTo(ageB);
@@ -158,7 +164,7 @@ class _ConfirmedListDialogWidgetState
         _isLoading = false;
       });
     } catch (e) {
-      print('❌ 확정 명단 로드 실패: $e');
+      debugPrint('❌ 확정 명단 로드 실패: $e');
       setState(() {
         _error = e.toString();
         _isLoading = false;
@@ -170,25 +176,39 @@ class _ConfirmedListDialogWidgetState
   Widget build(BuildContext context) {
     final dateFormat = DateFormat('MM/dd (E)', 'ko_KR');
 
-    return StyledDialog(
-      title: '확정 명단',
-      subtitle:
-          '${dateFormat.format(widget.toItem.to.date)} · ${widget.toItem.to.title}',
-      icon: Icons.check_circle,
-      headerColor: AppColors.success,
-      maxHeightRatio: 0.85,
-      content: _buildContent(),
-      actions: [
-        StyledDialogButton.cancel(
-          text: '닫기',
-          onPressed: () {
-            if (_hasChanges) {
-              widget.onChanged?.call();  // ⭐ 변경사항 전달
-            }
-            Navigator.pop(context);
-          },
-        ),
-      ],
+    // ⭐ PopScope 추가: 외부 탭으로 닫아도 변경 여부 반환
+    return PopScope(
+      canPop: false,
+      onPopInvokedWithResult: (didPop, result) {
+        if (!didPop) {
+          // ⭐ 변경사항 있으면 로컬 콜백 호출
+          if (_hasChanges) {
+            widget.onLocalStatsChanged?.call();
+          }
+          Navigator.pop(context, _hasChanges);
+        }
+      },
+      child: StyledDialog(
+        title: '확정 명단',
+        subtitle:
+            '${dateFormat.format(widget.toItem.to.date)} · ${widget.toItem.to.title}',
+        icon: Icons.check_circle,
+        headerColor: AppColors.success,
+        maxHeightRatio: 0.85,
+        content: _buildContent(),
+        actions: [
+          StyledDialogButton.cancel(
+            text: '닫기',
+            onPressed: () {
+              // ⭐ 변경사항 있으면 로컬 콜백 호출
+              if (_hasChanges) {
+                widget.onLocalStatsChanged?.call();
+              }
+              Navigator.pop(context, _hasChanges);
+            },
+          ),
+        ],
+      ),
     );
   }
 
@@ -247,10 +267,18 @@ class _ConfirmedListDialogWidgetState
       );
     }
 
+    // 전체 미요청자 수 계산
+    final totalRequestableCount = _idCardStatusMap.entries
+        .where((e) => e.value == 'none')
+        .length;
+
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
         _buildTotalStats(),
+        // 신분증 일괄 요청 영역
+        if (totalRequestableCount > 0)
+          _buildIdCardRequestSection(totalRequestableCount),
         SizedBox(height: ResponsiveHelper.spacing(context, 16)),
         ..._confirmedByWork.entries.map((entry) {
           final workType = entry.key;
@@ -304,6 +332,101 @@ class _ConfirmedListDialogWidgetState
     );
   }
 
+  /// 신분증 일괄 요청 섹션
+  Widget _buildIdCardRequestSection(int requestableCount) {
+    return Container(
+      margin: EdgeInsets.only(top: ResponsiveHelper.spacing(context, 12)),
+      padding: EdgeInsets.symmetric(
+        horizontal: ResponsiveHelper.spacing(context, 16),
+        vertical: ResponsiveHelper.spacing(context, 10),
+      ),
+      decoration: BoxDecoration(
+        color: _isIdCardSelectMode ? AppColors.infoBg : Colors.white,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: _isIdCardSelectMode ? AppColors.info : AppColors.border),
+      ),
+      child: Row(
+        children: [
+          Icon(
+            Icons.badge,
+            size: ResponsiveHelper.iconSize(context, 18),
+            color: AppColors.info,
+          ),
+          SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+          Expanded(
+            child: Text(
+              _isIdCardSelectMode 
+                  ? '${_selectedIdCardUserIds.length}명 선택됨'
+                  : '미요청 $requestableCount명',
+              style: ResponsiveHelper.bodyStyle(context, color: AppColors.infoDark),
+            ),
+          ),
+          // 요청하기 버튼 (선택 모드 + 선택된 항목 있을 때)
+          if (_isIdCardSelectMode && _selectedIdCardUserIds.isNotEmpty) ...[
+            Material(
+              color: Colors.transparent,
+              child: InkWell(
+                onTap: () => _batchRequestIdCard(),
+                borderRadius: BorderRadius.circular(8),
+                child: Container(
+                  padding: EdgeInsets.symmetric(
+                    horizontal: ResponsiveHelper.spacing(context, 12),
+                    vertical: ResponsiveHelper.spacing(context, 6),
+                  ),
+                  decoration: BoxDecoration(
+                    color: AppColors.success,
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Text(
+                    '요청하기',
+                    style: ResponsiveHelper.smallStyle(context, color: Colors.white).copyWith(
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
+              ),
+            ),
+            SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+          ],
+          // 신분증 요청 / 취소 버튼
+          Material(
+            color: Colors.transparent,
+            child: InkWell(
+              onTap: () {
+                setState(() {
+                  _isIdCardSelectMode = !_isIdCardSelectMode;
+                  if (!_isIdCardSelectMode) {
+                    _selectedIdCardUserIds.clear();
+                  } else {
+                    _selectAllRequestableUsers();
+                  }
+                });
+              },
+              borderRadius: BorderRadius.circular(8),
+              child: Container(
+                padding: EdgeInsets.symmetric(
+                  horizontal: ResponsiveHelper.spacing(context, 12),
+                  vertical: ResponsiveHelper.spacing(context, 6),
+                ),
+                decoration: BoxDecoration(
+                  color: _isIdCardSelectMode ? AppColors.grey100 : AppColors.info,
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Text(
+                  _isIdCardSelectMode ? '취소' : '신분증 요청',
+                  style: ResponsiveHelper.smallStyle(
+                    context, 
+                    color: _isIdCardSelectMode ? AppColors.grey700 : Colors.white,
+                  ).copyWith(fontWeight: FontWeight.w600),
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildWorkSection(String workType, List<Map<String, dynamic>> workers, WorkDetailModel workDetail) {
     return Container(
       margin: EdgeInsets.only(bottom: ResponsiveHelper.spacing(context, 16)),
@@ -315,6 +438,7 @@ class _ConfirmedListDialogWidgetState
       ),
       child: Column(
         children: [
+          // 헤더
           Container(
             padding: ResponsiveHelper.cardPadding(context),
             decoration: BoxDecoration(
@@ -342,23 +466,44 @@ class _ConfirmedListDialogWidgetState
               ],
             ),
           ),
+          // 워커 목록
           ...workers.asMap().entries.map((entry) {
             final index = entry.key;
             final worker = entry.value;
             final user = worker['user'] as UserModel;
             final application = worker['application'] as ApplicationModel;
             final isLast = index == workers.length - 1;
+            final idCardStatus = _idCardStatusMap[user.uid] ?? 'none';
+            final isIdCardSelected = _selectedIdCardUserIds.contains(user.uid);
 
             return Material(
               color: Colors.transparent,
               child: InkWell(
-                onTap: () => _showWorkerDetailDialog(context, user, application, workDetail),
+                onTap: _isIdCardSelectMode && idCardStatus == 'none'
+                    ? () => _toggleIdCardSelection(user.uid)
+                    : () => _showWorkerDetailDialog(context, user, application, workDetail),
                 borderRadius: isLast ? const BorderRadius.only(bottomLeft: Radius.circular(16), bottomRight: Radius.circular(16)) : null,
                 child: Container(
                   padding: ResponsiveHelper.cardPadding(context),
-                  decoration: BoxDecoration(border: isLast ? null : Border(bottom: BorderSide(color: AppColors.border))),
+                  decoration: BoxDecoration(
+                    color: isIdCardSelected ? AppColors.infoBg : Colors.transparent,
+                    border: isLast ? null : Border(bottom: BorderSide(color: AppColors.border)),
+                  ),
                   child: Row(
                     children: [
+                      // 체크박스 (선택 모드 + 미요청자만)
+                      if (_isIdCardSelectMode && idCardStatus == 'none') ...[
+                        SizedBox(
+                          width: 24,
+                          height: 24,
+                          child: Checkbox(
+                            value: isIdCardSelected,
+                            onChanged: (_) => _toggleIdCardSelection(user.uid),
+                            activeColor: AppColors.info,
+                          ),
+                        ),
+                        SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+                      ],
                       // 순번
                       CircleAvatar(
                         radius: ResponsiveHelper.spacing(context, 16),
@@ -395,7 +540,7 @@ class _ConfirmedListDialogWidgetState
                               children: [
                                 _buildTrustBadge(user),
                                 SizedBox(width: ResponsiveHelper.spacing(context, 8)),
-                                IdCardHelper.buildStatusBadge(context, _idCardStatusMap[user.uid] ?? 'none'),
+                                IdCardHelper.buildStatusBadge(context, idCardStatus),
                                 SizedBox(width: ResponsiveHelper.spacing(context, 8)),
                                 if (user.averageRating > 0) ...[
                                   Icon(Icons.star, size: ResponsiveHelper.iconSize(context, 12), color: Colors.amber),
@@ -413,7 +558,7 @@ class _ConfirmedListDialogWidgetState
                                   vertical: ResponsiveHelper.spacing(context, 4),
                                 ),
                                 decoration: BoxDecoration(
-                                  color: Colors.purple.withOpacity(0.1),
+                                  color: AppColors.longTermBg,
                                   borderRadius: BorderRadius.circular(6),
                                 ),
                                 child: Row(
@@ -422,12 +567,12 @@ class _ConfirmedListDialogWidgetState
                                     Icon(
                                       Icons.event_note,
                                       size: ResponsiveHelper.iconSize(context, 12),
-                                      color: Colors.purple,
+                                      color: AppColors.longTermDark,
                                     ),
                                     SizedBox(width: ResponsiveHelper.spacing(context, 4)),
                                     Text(
                                       '장기: ${application.workPeriodDisplay}',
-                                      style: ResponsiveHelper.tinyStyle(context, color: Colors.purple).copyWith(
+                                      style: ResponsiveHelper.tinyStyle(context, color: AppColors.longTermDark).copyWith(
                                         fontWeight: FontWeight.w600,
                                       ),
                                     ),
@@ -437,7 +582,7 @@ class _ConfirmedListDialogWidgetState
                             ],
                           ],
                         ),
-                      ),  
+                      ),
                     ],
                   ),
                 ),
@@ -486,6 +631,7 @@ class _ConfirmedListDialogWidgetState
     }
   }
 
+  /// ⭐ 수정: 로컬 통계 업데이트 패턴 적용
   Future<void> _showWorkerDetailDialog(BuildContext context, UserModel user, ApplicationModel application, WorkDetailModel workDetail) async {
     final changed = await WorkerDetailDialog.show(
       context: context,
@@ -500,10 +646,38 @@ class _ConfirmedListDialogWidgetState
       },
     );
     
-    // ⭐ 신분증 상태만 로컬 업데이트 (전체 새로고침 X)
-    if (changed != false) {
+    if (changed == true && mounted) {
       _hasChanges = true;
       
+      final workType = application.selectedWorkType;
+      
+      setState(() {
+        // 1. 목록에서 해당 워커 제거
+        _confirmedByWork[workType]?.removeWhere(
+          (item) => (item['user'] as UserModel).uid == user.uid
+        );
+        
+        // 2. 해당 업무에 워커가 없으면 업무 자체 제거
+        if (_confirmedByWork[workType]?.isEmpty ?? false) {
+          _confirmedByWork.remove(workType);
+        }
+        
+        // 3. 총 인원 감소
+        _totalConfirmed--;
+        
+        // 4. 신분증 맵에서 제거
+        _idCardStatusMap.remove(user.uid);
+        _selectedIdCardUserIds.remove(user.uid);
+        
+        // 5. 부모 toItem.workDetailStats 업데이트
+        widget.toItem.workDetailStats ??= {};
+        final stats = widget.toItem.workDetailStats![workType];
+        if (stats != null) {
+          stats['confirmed'] = ((stats['confirmed'] ?? 1) as int) - 1;
+        }
+      });
+    } else {
+      // 신분증 상태만 변경된 경우 (확정 취소 아님)
       final userProvider = context.read<UserProvider>();
       final currentUserId = userProvider.currentUser?.uid ?? '';
       
@@ -518,6 +692,87 @@ class _ConfirmedListDialogWidgetState
           _idCardStatusMap.addAll(newStatus);
         });
       }
+    }
+  }
+
+  /// 미요청자 전체 선택
+  void _selectAllRequestableUsers() {
+    _selectedIdCardUserIds.clear();
+    for (var entry in _confirmedByWork.entries) {
+      for (var worker in entry.value) {
+        final user = worker['user'] as UserModel?;
+        if (user == null) continue;
+        final status = _idCardStatusMap[user.uid] ?? 'none';
+        if (status == 'none') {
+          _selectedIdCardUserIds.add(user.uid);
+        }
+      }
+    }
+  }
+
+  /// 신분증 선택 토글
+  void _toggleIdCardSelection(String uid) {
+    setState(() {
+      if (_selectedIdCardUserIds.contains(uid)) {
+        _selectedIdCardUserIds.remove(uid);
+      } else {
+        _selectedIdCardUserIds.add(uid);
+      }
+    });
+  }
+
+  /// 일괄 신분증 요청
+  Future<void> _batchRequestIdCard() async {
+    if (_selectedIdCardUserIds.isEmpty) return;
+
+    final userProvider = context.read<UserProvider>();
+    final currentUser = userProvider.currentUser;
+    if (currentUser == null) {
+      ToastHelper.showError('로그인이 필요합니다');
+      return;
+    }
+
+    // 선택된 사용자 정보 수집
+    final targets = <Map<String, String>>[];
+    for (var entry in _confirmedByWork.entries) {
+      for (var worker in entry.value) {
+        final user = worker['user'] as UserModel?;
+        final app = worker['application'] as ApplicationModel?;
+        if (user == null || !_selectedIdCardUserIds.contains(user.uid)) continue;
+        
+        targets.add({
+          'uid': user.uid,
+          'name': user.name,
+          'applicationId': app?.id ?? '',
+        });
+      }
+    }
+
+    final businessId = widget.toItem.to.businessId;
+    final business = await widget.firestoreService.getBusinessById(businessId);
+
+    final successCount = await IdCardHelper.showBatchRequestDialog(
+      context: context,
+      firestoreService: widget.firestoreService,
+      requester: {
+        'uid': currentUser.uid,
+        'name': currentUser.name,
+      },
+      business: {
+        'id': businessId,
+        'name': business?.name ?? '',
+      },
+      targets: targets,
+    );
+
+    if (successCount > 0) {
+      setState(() {
+        for (final uid in _selectedIdCardUserIds) {
+          _idCardStatusMap[uid] = 'pending';
+        }
+        _isIdCardSelectMode = false;
+        _selectedIdCardUserIds.clear();
+      });
     }
   }
 }

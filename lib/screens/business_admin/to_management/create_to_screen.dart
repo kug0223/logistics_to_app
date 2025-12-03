@@ -478,7 +478,7 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
     setState(() => _isLoadingRecentTOs = true);
 
     try {
-      final allTOs = await _firestoreService.getGroupMasterTOs();
+      final allTOs = await _firestoreService.getMasterTOsOnly();
       
       final myBusinessTOs = allTOs.where((to) => 
         to.businessId == _selectedBusiness!.id

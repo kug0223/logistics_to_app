@@ -46,6 +46,7 @@ class TOItemCard extends StatefulWidget {
   final bool isExpanded;
   final VoidCallback onToggleExpand;
   final bool isLoading;  // ✨ 추가: WorkDetails 로딩 중
+  final VoidCallback? onLocalStatsChanged;  // ✅ 추가: 로컬 통계 변경 콜백
 
   const TOItemCard({
     super.key,
@@ -57,6 +58,7 @@ class TOItemCard extends StatefulWidget {
     required this.isExpanded,
     required this.onToggleExpand,
     this.isLoading = false,  // ✨ 추가
+    this.onLocalStatsChanged,  // ✅ 추가
   });
 
   @override
@@ -350,7 +352,10 @@ class _TOItemCardState extends State<TOItemCard> {
                                   toItem: widget.toItem,
                                   firestoreService: widget.firestoreService,
                                   onChanged: widget.onChanged,
-                                  onLocalStatsChanged: () => setState(() {}),  // ✅ 추가
+                                  onLocalStatsChanged: () {
+                                    setState(() {});  // 자기 자신 rebuild
+                                    widget.onLocalStatsChanged?.call();  // 부모 TOGroupCard rebuild
+                                  },
                                 );
                               }),
                             ],
@@ -635,7 +640,9 @@ class _TOItemCardState extends State<TOItemCard> {
           context: context,
           toItem: widget.toItem,
           firestoreService: widget.firestoreService,
-          onChanged: widget.onChanged,  // ⭐ 추가
+          onLocalStatsChanged: () {
+            if (mounted) setState(() {});
+          },
         ).show();
         break;
         

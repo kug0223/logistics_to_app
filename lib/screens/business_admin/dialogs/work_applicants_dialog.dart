@@ -49,6 +49,9 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog> {
   Map<String, String> _idCardStatusMap = {};
   // ⭐ 변경 여부 추적
   bool _hasChanges = false;
+  // 신분증 일괄 요청 모드
+  bool _isIdCardSelectMode = false;
+  final Set<String> _selectedIdCardUserIds = {};
 
   @override
   void initState() {
@@ -128,7 +131,6 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog> {
         _isLoading = false;
       });
     } catch (e) {
-      print('❌ 지원자 로드 실패: $e');
       setState(() => _isLoading = false);
     }
   }
@@ -177,14 +179,19 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog> {
     final confirmed = _applicants.where((item) => 
       (item['application'] as ApplicationModel).status == 'CONFIRMED').toList();
 
-      return Dialog(
-        backgroundColor: const Color.fromARGB(0, 112, 106, 106),
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(24),
-
-
-      ),
-      child: Container(
+      return PopScope(
+        canPop: false,
+        onPopInvokedWithResult: (didPop, result) {
+          if (!didPop) {
+            Navigator.pop(context, _hasChanges);
+          }
+        },
+        child: Dialog(
+          backgroundColor: Colors.transparent,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(24),
+          ),
+          child: Container(
         constraints: BoxConstraints(
           maxWidth: 500,
           maxHeight: MediaQuery.of(context).size.height * 0.85,
@@ -227,6 +234,7 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog> {
           ],
         ),
       ),
+        ),
     );
   }
 
@@ -427,7 +435,7 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog> {
           
           // 확정 섹션
           if (confirmed.isNotEmpty) ...[
-            _buildSectionHeader(context, '확정', confirmed.length, AppColors.success),
+            _buildConfirmedSectionHeader(context, confirmed.length),
             SizedBox(height: ResponsiveHelper.spacing(context, 8)),
             ...confirmed.asMap().entries.map((entry) {
               final index = entry.key;
@@ -438,6 +446,223 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog> {
         ],
       ),
     );
+  }
+  /// 확정 섹션 헤더 (신분증 요청 버튼 포함)
+  Widget _buildConfirmedSectionHeader(BuildContext context, int confirmedCount) {
+    // 미요청자 수 계산
+    final requestableCount = _applicants.where((item) {
+      final app = item['application'] as ApplicationModel;
+      final user = item['user'] as UserModel?;
+      if (app.status != 'CONFIRMED' || user == null) return false;
+      final status = _idCardStatusMap[user.uid] ?? 'none';
+      return status == 'none';
+    }).length;
+
+    return Row(
+      children: [
+        // 좌측: 섹션 타이틀
+        Container(
+          width: 4,
+          height: 20,
+          decoration: BoxDecoration(
+            color: AppColors.success,
+            borderRadius: BorderRadius.circular(2),
+          ),
+        ),
+        SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+        Text(
+          '확정 ($confirmedCount명)',
+          style: ResponsiveHelper.subtitleStyle(context).copyWith(
+            fontWeight: FontWeight.bold,
+            color: AppColors.success,
+          ),
+        ),
+        
+        const Spacer(),
+        
+        // 우측: 신분증 요청 버튼들
+        if (requestableCount > 0) ...[
+          // 선택 모드일 때: 요청하기 버튼
+          if (_isIdCardSelectMode && _selectedIdCardUserIds.isNotEmpty) ...[
+            _buildIdCardRequestButton(context),
+            SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+          ],
+          
+          // 신분증 요청 토글 버튼
+          _buildIdCardSelectModeButton(context, requestableCount),
+        ],
+      ],
+    );
+  }
+
+  /// 신분증 선택 모드 토글 버튼
+  Widget _buildIdCardSelectModeButton(BuildContext context, int requestableCount) {
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: () {
+          setState(() {
+            _isIdCardSelectMode = !_isIdCardSelectMode;
+            if (!_isIdCardSelectMode) {
+              _selectedIdCardUserIds.clear();
+            } else {
+              // 선택 모드 진입 시 미요청자 전체 선택
+              _selectAllRequestableUsers();
+            }
+          });
+        },
+        borderRadius: BorderRadius.circular(8),
+        child: Container(
+          padding: EdgeInsets.symmetric(
+            horizontal: ResponsiveHelper.spacing(context, 10),
+            vertical: ResponsiveHelper.spacing(context, 6),
+          ),
+          decoration: BoxDecoration(
+            color: _isIdCardSelectMode ? AppColors.info : AppColors.infoBg,
+            borderRadius: BorderRadius.circular(8),
+            border: Border.all(color: AppColors.info),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(
+                _isIdCardSelectMode ? Icons.close : Icons.badge,
+                size: ResponsiveHelper.iconSize(context, 14),
+                color: _isIdCardSelectMode ? Colors.white : AppColors.info,
+              ),
+              SizedBox(width: ResponsiveHelper.spacing(context, 4)),
+              Text(
+                _isIdCardSelectMode ? '취소' : '신분증 요청',
+                style: ResponsiveHelper.smallStyle(
+                  context,
+                  color: _isIdCardSelectMode ? Colors.white : AppColors.info,
+                ).copyWith(fontWeight: FontWeight.w600),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// 요청하기 버튼
+  Widget _buildIdCardRequestButton(BuildContext context) {
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: () => _batchRequestIdCard(),
+        borderRadius: BorderRadius.circular(8),
+        child: Container(
+          padding: EdgeInsets.symmetric(
+            horizontal: ResponsiveHelper.spacing(context, 10),
+            vertical: ResponsiveHelper.spacing(context, 6),
+          ),
+          decoration: BoxDecoration(
+            color: AppColors.success,
+            borderRadius: BorderRadius.circular(8),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(
+                Icons.send,
+                size: ResponsiveHelper.iconSize(context, 14),
+                color: Colors.white,
+              ),
+              SizedBox(width: ResponsiveHelper.spacing(context, 4)),
+              Text(
+                '요청하기 (${_selectedIdCardUserIds.length})',
+                style: ResponsiveHelper.smallStyle(context, color: Colors.white).copyWith(
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// 미요청자 전체 선택
+  void _selectAllRequestableUsers() {
+    _selectedIdCardUserIds.clear();
+    for (final item in _applicants) {
+      final app = item['application'] as ApplicationModel;
+      final user = item['user'] as UserModel?;
+      if (app.status != 'CONFIRMED' || user == null) continue;
+      
+      final status = _idCardStatusMap[user.uid] ?? 'none';
+      if (status == 'none') {
+        _selectedIdCardUserIds.add(user.uid);
+      }
+    }
+  }
+
+  /// 신분증 선택 토글
+  void _toggleIdCardSelection(String uid) {
+    setState(() {
+      if (_selectedIdCardUserIds.contains(uid)) {
+        _selectedIdCardUserIds.remove(uid);
+      } else {
+        _selectedIdCardUserIds.add(uid);
+      }
+    });
+  }
+
+  /// 일괄 신분증 요청
+  Future<void> _batchRequestIdCard() async {
+    if (_selectedIdCardUserIds.isEmpty) return;
+
+    final userProvider = context.read<UserProvider>();
+    final currentUser = userProvider.currentUser;
+    if (currentUser == null) {
+      ToastHelper.showError('로그인이 필요합니다');
+      return;
+    }
+
+    // 선택된 사용자 정보 수집
+    final targets = <Map<String, String>>[];
+    for (final item in _applicants) {
+      final app = item['application'] as ApplicationModel;
+      final user = item['user'] as UserModel?;
+      if (user == null || !_selectedIdCardUserIds.contains(user.uid)) continue;
+      
+      targets.add({
+        'uid': user.uid,
+        'name': user.name,
+        'applicationId': app.id,
+      });
+    }
+
+    final businessId = widget.toItem.to.businessId;
+    final business = await _firestoreService.getBusinessById(businessId);
+
+    final successCount = await IdCardHelper.showBatchRequestDialog(
+      context: context,
+      firestoreService: _firestoreService,
+      requester: {
+        'uid': currentUser.uid,
+        'name': currentUser.name,
+      },
+      business: {
+        'id': businessId,
+        'name': business?.name ?? '',
+      },
+      targets: targets,
+    );
+
+    if (successCount > 0) {
+      _hasChanges = true;
+      
+      // 상태 맵 업데이트 (요청 성공한 사용자들)
+      setState(() {
+        for (final uid in _selectedIdCardUserIds) {
+          _idCardStatusMap[uid] = 'pending';
+        }
+        _isIdCardSelectMode = false;
+        _selectedIdCardUserIds.clear();
+      });
+    }
   }
 
   /// 섹션 헤더
@@ -494,7 +719,7 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog> {
             child: Row(
               crossAxisAlignment: CrossAxisAlignment.center,
               children: [
-                // 체크박스 (대기 중만)
+                // 체크박스 (대기 중)
                 if (isPending) ...[
                   SizedBox(
                     width: 24,
@@ -503,6 +728,20 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog> {
                       value: isSelected,
                       onChanged: (_) => _toggleSelection(app.id),
                       activeColor: Theme.of(context).primaryColor,
+                    ),
+                  ),
+                  SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+                ],
+                
+                // 체크박스 (확정 + 신분증 선택 모드 + 미요청자만)
+                if (!isPending && _isIdCardSelectMode && idCardStatus == 'none') ...[
+                  SizedBox(
+                    width: 24,
+                    height: 24,
+                    child: Checkbox(
+                      value: _selectedIdCardUserIds.contains(user?.uid ?? ''),
+                      onChanged: (_) => _toggleIdCardSelection(user?.uid ?? ''),
+                      activeColor: AppColors.info,
                     ),
                   ),
                   SizedBox(width: ResponsiveHelper.spacing(context, 8)),
@@ -1001,7 +1240,6 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog> {
       await _loadApplicants();
       _updateLocalStats();
     } catch (e) {
-      print('❌ 파트 변경 실패: $e');
       ToastHelper.showError('파트 변경에 실패했습니다');
     }
   }
@@ -1034,7 +1272,6 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog> {
       await _loadApplicants();
       _updateLocalStats();
     } catch (e) {
-      print('❌ 승인 실패: $e');
       ToastHelper.showError('승인 처리 중 오류가 발생했습니다');
     }
   }
@@ -1067,7 +1304,6 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog> {
       await _loadApplicants();
       _updateLocalStats();
     } catch (e) {
-      print('❌ 거절 실패: $e');
       ToastHelper.showError('거절 처리 중 오류가 발생했습니다');
     }
   }
@@ -1100,7 +1336,6 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog> {
       await _loadApplicants();
       _updateLocalStats();
     } catch (e) {
-      print('❌ 확정취소 실패: $e');
       ToastHelper.showError('확정 취소 중 오류가 발생했습니다');
     }
   }
@@ -1266,7 +1501,6 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog> {
       await _loadApplicants();
       await _updateLocalStats();  // ⭐ 로컬 통계 갱신
     } catch (e) {
-      print('❌ 일괄 승인 실패: $e');
       ToastHelper.showError('승인 처리 중 오류가 발생했습니다');
     }
   }
@@ -1301,7 +1535,6 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog> {
       await _loadApplicants();
       await _updateLocalStats();
     } catch (e) {
-      print('❌ 일괄 거절 실패: $e');
       ToastHelper.showError('거절 처리 중 오류가 발생했습니다');
     }
   }

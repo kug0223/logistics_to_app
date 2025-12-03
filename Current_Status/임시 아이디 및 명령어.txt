@@ -18,7 +18,7 @@ ALfit
 
 냉동분류
 
-git add . ; if ($?) { git commit -m "다이어로그종료 시 통계개선 진행 251203-2" } ; if ($?) { git push }
+git add . ; if ($?) { git commit -m "다이어로그종료 시 통계개선 진행 251203-3" } ; if ($?) { git push }
 
 flutter clean
 flutter pub get
@@ -55,6 +55,8 @@ lib의 모든 하위 폴더와 파일구조
 "역할별 테마 시스템 사용해서 코딩해줘.
 색상 하드코딩 금지!"
 코드 생성할때 반응형으로 작성할것!(프로젝트파일 확인)
+
+내 지침 무시하지말고 꼼꼼히 확인할것
 
 
 

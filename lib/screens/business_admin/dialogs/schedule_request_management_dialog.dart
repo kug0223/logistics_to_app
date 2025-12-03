@@ -58,7 +58,7 @@ class _ScheduleRequestManagementDialogState
 
       // 사용자 정보와 함께 조회
       final futures = workerRequests.map((request) async {  // ⭐ 변경!
-        final user = await _firestoreService.getUserByUID(request.applicantUid);
+        final user = await _firestoreService.getUser(request.applicantUid);
         return _RequestWithUser(
           request: request,
           userName: user?.name ?? '이름 없음',

@@ -17,6 +17,7 @@ import '../../utils/format_helper.dart';
 import '../../utils/responsive_helper.dart';
 import '../../utils/dialog_helper.dart';
 import '../../theme/app_colors.dart';
+import '../../utils/id_card_helper.dart';
 import 'styled_dialog.dart';
 import '../../screens/business_admin/dialogs/fixed_worker_management_dialog.dart';
 
@@ -1074,193 +1075,42 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
   }
 
   /// 신분증 열람 요청 다이얼로그
-  void _showIdCardAccessRequestDialog() {
-    IdCardAccessReason? selectedReason;
-    final customReasonController = TextEditingController();
+  Future<void> _showIdCardAccessRequestDialog() async {
+    final userProvider = context.read<UserProvider>();
+    final currentUser = userProvider.currentUser;
+    if (currentUser == null) {
+      ToastHelper.showError('로그인이 필요합니다');
+      return;
+    }
 
-    showDialog(
+    final businessId = widget.businessId ?? widget.toItem?.to.businessId;
+    final business = businessId != null 
+        ? await _firestoreService.getBusinessById(businessId)
+        : null;
+
+    final successCount = await IdCardHelper.showBatchRequestDialog(
       context: context,
-      builder: (dialogContext) => StatefulBuilder(
-        builder: (context, setDialogState) {
-          return StyledDialog(
-            title: '신분증 열람 요청',
-            subtitle: '${widget.user.name}님에게 요청',
-            icon: Icons.badge,
-            headerColor: AppColors.info,
-            content: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  '신분증 열람 사유를 선택해주세요.',
-                  style: ResponsiveHelper.bodyStyle(context, color: AppColors.grey600),
-                ),
-                SizedBox(height: ResponsiveHelper.spacing(context, 16)),
-                
-                // 사유 선택 카드들
-                ...IdCardAccessRequestModel.reasonOptions.map((option) {
-                  final reason = option['value'] as IdCardAccessReason;
-                  final label = option['label'] as String;
-                  final isSelected = selectedReason == reason;
-                  
-                  return Padding(
-                    padding: EdgeInsets.only(bottom: ResponsiveHelper.spacing(context, 8)),
-                    child: Material(
-                      color: Colors.transparent,
-                      child: InkWell(
-                        onTap: () => setDialogState(() => selectedReason = reason),
-                        borderRadius: BorderRadius.circular(12),
-                        child: Container(
-                          padding: EdgeInsets.symmetric(
-                            horizontal: ResponsiveHelper.spacing(context, 16),
-                            vertical: ResponsiveHelper.spacing(context, 12),
-                          ),
-                          decoration: BoxDecoration(
-                            color: isSelected ? AppColors.info.withOpacity(0.1) : Colors.white,
-                            borderRadius: BorderRadius.circular(12),
-                            border: Border.all(
-                              color: isSelected ? AppColors.info : AppColors.border,
-                              width: isSelected ? 2 : 1,
-                            ),
-                          ),
-                          child: Row(
-                            children: [
-                              Container(
-                                width: ResponsiveHelper.spacing(context, 24),
-                                height: ResponsiveHelper.spacing(context, 24),
-                                decoration: BoxDecoration(
-                                  shape: BoxShape.circle,
-                                  color: isSelected ? AppColors.info : Colors.white,
-                                  border: Border.all(
-                                    color: isSelected ? AppColors.info : AppColors.grey400,
-                                    width: 2,
-                                  ),
-                                ),
-                                child: isSelected
-                                    ? Icon(Icons.check, size: ResponsiveHelper.iconSize(context, 16), color: Colors.white)
-                                    : null,
-                              ),
-                              SizedBox(width: ResponsiveHelper.spacing(context, 12)),
-                              Expanded(
-                                child: Text(
-                                  label,
-                                  style: ResponsiveHelper.bodyStyle(context).copyWith(
-                                    fontWeight: isSelected ? FontWeight.w600 : FontWeight.normal,
-                                    color: isSelected ? AppColors.info : AppColors.grey700,
-                                  ),
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ),
-                    ),
-                  );
-                }),
-                
-                // 기타 사유 입력
-                if (selectedReason == IdCardAccessReason.other) ...[
-                  SizedBox(height: ResponsiveHelper.spacing(context, 8)),
-                  TextField(
-                    controller: customReasonController,
-                    decoration: InputDecoration(
-                      hintText: '사유를 입력해주세요',
-                      hintStyle: ResponsiveHelper.bodyStyle(context, color: AppColors.grey400),
-                      filled: true,
-                      fillColor: AppColors.grey50,
-                      border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(12),
-                        borderSide: BorderSide(color: AppColors.border),
-                      ),
-                      enabledBorder: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(12),
-                        borderSide: BorderSide(color: AppColors.border),
-                      ),
-                      focusedBorder: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(12),
-                        borderSide: BorderSide(color: AppColors.info, width: 2),
-                      ),
-                      contentPadding: EdgeInsets.all(ResponsiveHelper.spacing(context, 16)),
-                    ),
-                    maxLines: 2,
-                  ),
-                ],
-                
-                SizedBox(height: ResponsiveHelper.spacing(context, 16)),
-                
-                // 안내 카드
-                Container(
-                  padding: ResponsiveHelper.cardPadding(context),
-                  decoration: BoxDecoration(
-                    color: AppColors.infoBg,
-                    borderRadius: BorderRadius.circular(12),
-                    border: Border.all(color: AppColors.info.withOpacity(0.3)),
-                  ),
-                  child: Row(
-                    children: [
-                      Icon(Icons.info_outline, size: ResponsiveHelper.iconSize(context, 20), color: AppColors.info),
-                      SizedBox(width: ResponsiveHelper.spacing(context, 12)),
-                      Expanded(
-                        child: Text(
-                          '승인 시 7일간 신분증을 열람할 수 있습니다.',
-                          style: ResponsiveHelper.smallStyle(context, color: AppColors.infoDark),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ],
-            ),
-            actions: [
-              StyledDialogButton.cancel(onPressed: () => Navigator.pop(dialogContext)),
-              StyledDialogButton.primary(
-                text: '요청 보내기',
-                backgroundColor: AppColors.info,
-                onPressed: selectedReason != null
-                    ? () => _sendIdCardAccessRequest(dialogContext, selectedReason!, customReasonController.text)
-                    : () {},
-              ),
-            ],
-          );
+      firestoreService: _firestoreService,
+      requester: {
+        'uid': currentUser.uid,
+        'name': currentUser.name,
+      },
+      business: {
+        'id': businessId ?? '',
+        'name': business?.name ?? '',
+      },
+      targets: [
+        {
+          'uid': widget.user.uid,
+          'name': widget.user.name,
+          'applicationId': widget.application?.id ?? '',
         },
-      ),
+      ],
     );
-  }
-  
 
-  /// 신분증 열람 요청 전송
-  Future<void> _sendIdCardAccessRequest(BuildContext dialogContext, IdCardAccessReason reason, String customReason) async {
-    Navigator.pop(dialogContext);
-    
-    try {
-      final userProvider = context.read<UserProvider>();
-      final currentUser = userProvider.currentUser;
-      if (currentUser == null) {
-        ToastHelper.showError('로그인이 필요합니다');
-        return;
-      }
-      
-      final businessId = widget.businessId ?? widget.toItem?.to.businessId;
-      final business = businessId != null 
-          ? await _firestoreService.getBusinessById(businessId)
-          : null;
-      
-      await _firestoreService.createIdCardAccessRequest(
-        requesterId: currentUser.uid,
-        requesterName: currentUser.name,
-        requesterBusinessId: businessId ?? '',
-        requesterBusinessName: business?.name ?? '',
-        targetUserId: widget.user.uid,
-        targetUserName: widget.user.name,
-        reason: reason,
-        customReason: reason == IdCardAccessReason.other ? customReason : null,
-        applicationId: widget.application?.id,
-      );
-      
-      ToastHelper.showSuccess('열람 요청을 보냈습니다');
-      
+    if (successCount > 0 && mounted) {
       setState(() {
-        _hasChanges = true;  // ⭐ 변경사항 표시
+        _hasChanges = true;
         _idCardAccess = IdCardAccessRequestModel(
           id: '',
           requesterId: currentUser.uid,
@@ -1269,18 +1119,14 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
           requesterBusinessName: business?.name ?? '',
           targetUserId: widget.user.uid,
           targetUserName: widget.user.name,
-          reason: reason,
-          customReason: reason == IdCardAccessReason.other ? customReason : null,
+          reason: IdCardAccessReason.other,  // 실제 선택값은 Helper에서 처리
           status: IdCardAccessStatus.pending,
           requestedAt: DateTime.now(),
-          applicationId: widget.application?.id,
         );
       });
-    } catch (e) {
-      print('❌ 신분증 열람 요청 실패: $e');
-      ToastHelper.showError('요청 실패');
     }
   }
+  
   /// 단기 확정 취소
   Future<void> _cancelConfirmation() async {
     if (widget.application == null) return;

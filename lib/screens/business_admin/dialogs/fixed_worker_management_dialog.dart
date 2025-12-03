@@ -71,7 +71,7 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
 
       // 사용자 정보 + 업무 아이콘 병렬 조회
       final futures = filtered.map((app) async {
-        final user = await _firestoreService.getUserByUID(app.uid);
+        final user = await _firestoreService.getUser(app.uid);
         
         // 업무 아이콘 조회 (BusinessWorkType에서 가져오기)
         String? workTypeIcon;
@@ -1081,7 +1081,7 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
       return;
     }
 
-    final worker = await _firestoreService.getUserByUID(app.uid);
+    final worker = await _firestoreService.getUser(app.uid);
     final workerName = worker?.name ?? '이름 없음';
 
     final request = ScheduleChangeRequestModel(
