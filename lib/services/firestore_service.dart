@@ -398,6 +398,9 @@ class FirestoreService {
       final toData = {
         'businessId': businessId,
         'businessName': businessName,
+        'businessAddress': businessAddress,
+        'businessCity': businessCity,
+        'businessDistrict': businessDistrict,
         'jobType': jobType ?? 'short',
         'workDays': workDays,
         'groupId': groupId,

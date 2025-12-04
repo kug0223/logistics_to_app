@@ -133,11 +133,11 @@ class _UserTOCardState extends State<UserTOCard> {
   /// 급여 금액만 (타입 제외)
   String _getWageAmount() {
     // TOModel에서 직접 가져오기
-    if (widget.to.minWage != null) {
+    if (widget.to.maxWage != null) {
       if (widget.to.minWage == widget.to.maxWage) {
-        return FormatHelper.formatWage(widget.to.minWage!);
+        return FormatHelper.formatWage(widget.to.maxWage!);
       }
-      return '${FormatHelper.formatNumber(widget.to.minWage!)}원~';
+      return '~${FormatHelper.formatNumber(widget.to.maxWage!)}원';
     }
     
     // fallback: workDetails에서
@@ -147,9 +147,9 @@ class _UserTOCardState extends State<UserTOCard> {
       final maxWage = wages.reduce((a, b) => a > b ? a : b);
       
       if (minWage == maxWage) {
-        return FormatHelper.formatWage(minWage);
+        return FormatHelper.formatWage(maxWage);
       }
-      return '${FormatHelper.formatNumber(minWage)}원~';
+      return '~${FormatHelper.formatNumber(maxWage)}원';
     }
     
     return '-';
@@ -214,6 +214,22 @@ class _UserTOCardState extends State<UserTOCard> {
       city: widget.to.businessCity,
       district: widget.to.businessDistrict,
     );
+  }
+  /// 등록일 텍스트
+  String _getCreatedAtText() {
+    final now = DateTime.now();
+    final created = widget.to.createdAt;
+    final diff = now.difference(created);
+    
+    if (diff.inMinutes < 60) {
+      return '${diff.inMinutes}분 전';
+    } else if (diff.inHours < 24) {
+      return '${diff.inHours}시간 전';
+    } else if (diff.inDays < 7) {
+      return '${diff.inDays}일 전';
+    } else {
+      return '${created.month}/${created.day}';
+    }
   }
 
   @override
@@ -409,7 +425,7 @@ class _UserTOCardState extends State<UserTOCard> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        // 지역
+        // 지역 + 등록일
         Row(
           children: [
             Icon(
@@ -424,6 +440,11 @@ class _UserTOCardState extends State<UserTOCard> {
                 style: ResponsiveHelper.bodyStyle(context, color: AppColors.grey700),
                 overflow: TextOverflow.ellipsis,
               ),
+            ),
+            // 등록일
+            Text(
+              _getCreatedAtText(),
+              style: ResponsiveHelper.smallStyle(context, color: AppColors.grey500),
             ),
           ],
         ),
