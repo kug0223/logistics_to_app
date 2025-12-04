@@ -419,7 +419,7 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
                             SizedBox(width: ResponsiveHelper.spacing(context, 4)),
                             Flexible(
                               child: Text(
-                                '${_formatWorkDays(app.workDays)}',
+                                _formatWorkDays(app.workDays),
                                 style: ResponsiveHelper.smallStyle(context, color: AppColors.grey500),
                                 overflow: TextOverflow.ellipsis,
                               ),

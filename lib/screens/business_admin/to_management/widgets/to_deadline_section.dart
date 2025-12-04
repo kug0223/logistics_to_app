@@ -263,7 +263,7 @@ class TODeadlineSection extends StatelessWidget {
               SizedBox(width: ResponsiveHelper.spacing(context, 8)),
               Expanded(
                 child: Text(
-                  '예: 09:00 시작 업무 → ${hoursBeforeStart}시간 전인 ${_getExampleTime(hoursBeforeStart)}에 마감',
+                  '예: 09:00 시작 업무 → $hoursBeforeStart시간 전인 ${_getExampleTime(hoursBeforeStart)}에 마감',
                   style: ResponsiveHelper.smallStyle(
                     context,
                     color: AppColors.textSecondary,

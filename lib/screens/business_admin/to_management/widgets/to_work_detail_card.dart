@@ -290,7 +290,7 @@ class TOWorkDetailCard extends StatelessWidget {
                     Row(
                       children: [
                         Text(
-                          '${requiredCount}명',
+                          '$requiredCount명',
                           style: ResponsiveHelper.subtitleStyle(context).copyWith(
                             fontWeight: FontWeight.bold,
                             color: theme.primaryColor,

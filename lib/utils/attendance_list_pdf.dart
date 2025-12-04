@@ -157,7 +157,7 @@ class AttendanceListPdf {
               headerStyle: headerStyle,
               bodyStyle: bodyStyle,
             );
-          }).toList(),
+          }),
 
           pw.SizedBox(height: 30),
 
@@ -284,7 +284,7 @@ class AttendanceListPdf {
                   _buildTableCell(worker.workTime, bodyStyle),
                   _buildTableCell('', bodyStyle), // 비고 빈칸
                 ],
-              )).toList(),
+              )),
             ],
           ),
         ],

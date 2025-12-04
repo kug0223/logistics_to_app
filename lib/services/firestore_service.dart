@@ -353,6 +353,12 @@ class FirestoreService {
         totalRequired += (detail['requiredCount'] as int);
       }
 
+      // ✅ 급여 정보 계산
+      final wages = workDetailsData.map((d) => d['wage'] as int).toList();
+      final minWage = wages.isNotEmpty ? wages.reduce((a, b) => a < b ? a : b) : 0;
+      final maxWage = wages.isNotEmpty ? wages.reduce((a, b) => a > b ? a : b) : 0;
+      final wageType = workDetailsData.isNotEmpty ? (workDetailsData.first['wageType'] ?? 'hourly') : 'hourly';
+      final workDetailCount = workDetailsData.length;
       // 2. TO 기본 정보 생성
       // ✅ publishAt 계산 (예약 공개인 경우)
       DateTime? publishAt;
@@ -394,6 +400,11 @@ class FirestoreService {
         'totalConfirmed': 0,
         'totalPending': 0,        // ✅ 추가
         'totalApplications': 0,   // ✅ 추가
+        // ✅ 급여 정보
+        'minWage': minWage,
+        'maxWage': maxWage,
+        'wageType': wageType,
+        'workDetailCount': workDetailCount,
         'description': description ?? '',
         'creatorUID': creatorUID,
         'createdAt': FieldValue.serverTimestamp(),
@@ -411,31 +422,32 @@ class FirestoreService {
 
       // 4. WorkDetails 하위 컬렉션에 업무 추가
       final batch = _firestore.batch();
-
-      for (int i = 0; i < workDetailsData.length; i++) {
+      
+        for (int i = 0; i < workDetailsData.length; i++) {
         final data = workDetailsData[i];
         final docRef = toDoc.collection('workDetails').doc();
         
-        // 🔥 각 WorkDetail별 마감시간 계산
-        DateTime workDeadline;
+        // 🔥 장기 공고는 WorkDetail에 마감시간 설정 안 함
+        DateTime? workDeadline;
         
-        if (deadlineType == 'HOURS_BEFORE') {
-          // 각 업무 시작 N시간 전
-          final startTime = data['startTime'] as String;
-          final timeParts = startTime.split(':');
-          final workStartDateTime = DateTime(
-            date.year,
-            date.month,
-            date.day,
-            int.parse(timeParts[0]),
-            int.parse(timeParts[1]),
-          );
-          workDeadline = workStartDateTime.subtract(
-            Duration(hours: hoursBeforeStart ?? 2)
-          );
-        } else {
-          // FIXED_TIME은 TO 마감시간 사용
-          workDeadline = applicationDeadline;
+        if (jobType != 'long_term') {
+          // 단기 공고만 WorkDetail별 마감시간 계산
+          if (deadlineType == 'HOURS_BEFORE') {
+            final startTime = data['startTime'] as String;
+            final timeParts = startTime.split(':');
+            final workStartDateTime = DateTime(
+              date.year,
+              date.month,
+              date.day,
+              int.parse(timeParts[0]),
+              int.parse(timeParts[1]),
+            );
+            workDeadline = workStartDateTime.subtract(
+              Duration(hours: hoursBeforeStart ?? 2)
+            );
+          } else {
+            workDeadline = applicationDeadline;
+          }
         }
         
         batch.set(docRef, {
@@ -452,7 +464,8 @@ class FirestoreService {
           'endTime': data['endTime'],
           'order': i,
           'createdAt': FieldValue.serverTimestamp(),
-          'applicationDeadline': Timestamp.fromDate(workDeadline),  // 🔥 추가!
+          // 🔥 장기 공고는 WorkDetail 마감시간 없음
+          if (workDeadline != null) 'applicationDeadline': Timestamp.fromDate(workDeadline),
         });
         
         print('  - 업무 추가: ${data['workType']} (${data['startTime']} ~ ${data['endTime']})');
@@ -539,7 +552,13 @@ class FirestoreService {
       for (var work in workDetails) {
         totalRequired += (work['requiredCount'] as int?) ?? 0;
       }
-      
+      // ✅ 급여 정보 계산
+      final wages = workDetails.map((d) => d['wage'] as int).toList();
+      final minWage = wages.isNotEmpty ? wages.reduce((a, b) => a < b ? a : b) : 0;
+      final maxWage = wages.isNotEmpty ? wages.reduce((a, b) => a > b ? a : b) : 0;
+      final wageType = workDetails.isNotEmpty ? (workDetails.first['wageType'] ?? 'hourly') : 'hourly';
+      final workDetailCount = workDetails.length;
+
       // 각 날짜별 TO 생성
       for (int i = 0; i < dates.length; i++) {
         final toData = {
@@ -557,6 +576,11 @@ class FirestoreService {
           'applicationDeadline': Timestamp.fromDate(applicationDeadline),
           'totalRequired': totalRequired,
           'totalConfirmed': 0,
+          // ✅ 급여 정보
+          'minWage': minWage,
+          'maxWage': maxWage,
+          'wageType': wageType,
+          'workDetailCount': workDetailCount,
           'description': description,
           'creatorUID': creatorUID,
           'createdAt': FieldValue.serverTimestamp(),
@@ -716,6 +740,12 @@ class FirestoreService {
       for (var detail in workDetails) {
         totalRequired += (detail['requiredCount'] as int);
       }
+      // ✅ 급여 정보 계산
+      final wages = workDetails.map((d) => d['wage'] as int).toList();
+      final minWage = wages.isNotEmpty ? wages.reduce((a, b) => a < b ? a : b) : 0;
+      final maxWage = wages.isNotEmpty ? wages.reduce((a, b) => a > b ? a : b) : 0;
+      final wageType = workDetails.isNotEmpty ? (workDetails.first['wageType'] ?? 'hourly') : 'hourly';
+      final workDetailCount = workDetails.length;
 
       // 각 날짜별 TO 생성
       for (int i = 0; i < dates.length; i++) {
@@ -735,6 +765,11 @@ class FirestoreService {
           'applicationDeadline': Timestamp.fromDate(applicationDeadline),
           'totalRequired': totalRequired,
           'totalConfirmed': 0,
+          // ✅ 급여 정보
+          'minWage': minWage,
+          'maxWage': maxWage,
+          'wageType': wageType,
+          'workDetailCount': workDetailCount,
           'description': description ?? '',
           'creatorUID': creatorUID,
           'createdAt': FieldValue.serverTimestamp(),
@@ -2406,9 +2441,11 @@ class FirestoreService {
 
       print('✅ [FirestoreService] WorkDetail 수정 완료');
       
-      // ✅ requiredCount 변경 시 TO의 totalRequired 업데이트
-      if (updates.containsKey('requiredCount')) {
-        await _recalculateTotalRequired(toId);
+      // ✅ 인원 또는 급여 변경 시 TO 정보 업데이트
+      if (updates.containsKey('requiredCount') || 
+          updates.containsKey('wage') || 
+          updates.containsKey('wageType')) {
+        await _recalculateTOWorkInfo(toId);
       }
     } catch (e) {
       print('❌ [FirestoreService] WorkDetail 수정 실패: $e');
@@ -5019,24 +5056,53 @@ class FirestoreService {
       };
     }
   }
-  /// ✅ TO의 totalRequired 재계산
-  Future<void> _recalculateTotalRequired(String toId) async {
+  /// ✅ TO의 totalRequired + 급여 정보 재계산
+  Future<void> _recalculateTOWorkInfo(String toId) async {
     try {
       final workDetails = await getWorkDetails(toId, forceRefresh: true);
       
+      if (workDetails.isEmpty) {
+        await _firestore.collection('tos').doc(toId).update({
+          'totalRequired': 0,
+          'minWage': null,
+          'maxWage': null,
+          'wageType': null,
+          'workDetailCount': 0,
+        });
+        print('📊 TO 정보 초기화 (업무 없음)');
+        return;
+      }
+      
+      // 인원 계산
       int totalRequired = 0;
       for (var work in workDetails) {
         totalRequired += work.requiredCount;
       }
       
+      // 급여 계산
+      final wages = workDetails.map((w) => w.wage).toList();
+      final minWage = wages.reduce((a, b) => a < b ? a : b);
+      final maxWage = wages.reduce((a, b) => a > b ? a : b);
+      final wageType = workDetails.first.wageType;
+      final workDetailCount = workDetails.length;
+      
       await _firestore.collection('tos').doc(toId).update({
         'totalRequired': totalRequired,
+        'minWage': minWage,
+        'maxWage': maxWage,
+        'wageType': wageType,
+        'workDetailCount': workDetailCount,
       });
       
-      print('📊 totalRequired 업데이트: $totalRequired');
+      print('📊 TO 정보 업데이트: 인원=$totalRequired, 급여=$minWage~$maxWage ($wageType), 업무=$workDetailCount개');
     } catch (e) {
-      print('❌ totalRequired 업데이트 실패: $e');
+      print('❌ TO 정보 업데이트 실패: $e');
     }
+  }
+  
+  /// 기존 함수명 호환용 (deprecated)
+  Future<void> _recalculateTotalRequired(String toId) async {
+    await _recalculateTOWorkInfo(toId);
   }
   // ═══════════════════════════════════════════════════════════
   // ✨ 그룹 마스터 통계 동기화 (Group Master Stats Sync)

@@ -1,7 +1,7 @@
 /// TO 관리 공통 위젯 모음
 /// create_to_screen, edit_to_screen에서 공통으로 사용하는 위젯들
 
-library to_widgets;
+library;
 
 export 'to_section_container.dart';
 export 'to_title_section.dart';

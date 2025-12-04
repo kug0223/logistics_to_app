@@ -917,12 +917,12 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
           Expanded(
             child: OutlinedButton(
               onPressed: () => Navigator.pop(context, _hasChanges),
-              child: const Text('닫기'),
               style: OutlinedButton.styleFrom(
                 foregroundColor: AppColors.grey600,
                 side: BorderSide(color: AppColors.grey300),
                 padding: EdgeInsets.symmetric(vertical: ResponsiveHelper.spacing(context, 12)),
               ),
+              child: const Text('닫기'),
             ),
           ),
           
@@ -934,12 +934,12 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
             Expanded(
               child: OutlinedButton(
                 onPressed: () => _updateStatus('REJECTED'),
-                child: const Text('거절'),
                 style: OutlinedButton.styleFrom(
                   foregroundColor: AppColors.error,
                   side: BorderSide(color: AppColors.error),
                   padding: EdgeInsets.symmetric(vertical: ResponsiveHelper.spacing(context, 12)),
                 ),
+                child: const Text('거절'),
               ),
             ),
             SizedBox(width: ResponsiveHelper.spacing(context, 8)),
@@ -948,12 +948,12 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
             Expanded(
               child: ElevatedButton(
                 onPressed: () => _updateStatus('CONFIRMED'),
-                child: const Text('승인'),
                 style: ElevatedButton.styleFrom(
                   backgroundColor: AppColors.success,
                   foregroundColor: Colors.white,
                   padding: EdgeInsets.symmetric(vertical: ResponsiveHelper.spacing(context, 12)),
                 ),
+                child: const Text('승인'),
               ),
             ),
           ],
@@ -1325,7 +1325,6 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
                         Expanded(
                           child: OutlinedButton(
                             onPressed: () => Navigator.pop(context),
-                            child: const Text('취소'),
                             style: OutlinedButton.styleFrom(
                               foregroundColor: AppColors.grey600,
                               side: BorderSide(color: AppColors.grey300),
@@ -1333,6 +1332,7 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
                                 vertical: ResponsiveHelper.spacing(context, 12),
                               ),
                             ),
+                            child: const Text('취소'),
                           ),
                         ),
                         SizedBox(width: ResponsiveHelper.spacing(context, 12)),
@@ -1347,7 +1347,6 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
                                     Navigator.pop(context, reason);
                                   }
                                 : null,
-                            child: const Text('확정 취소'),
                             style: ElevatedButton.styleFrom(
                               backgroundColor: AppColors.error,
                               foregroundColor: Colors.white,
@@ -1355,6 +1354,7 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
                                 vertical: ResponsiveHelper.spacing(context, 12),
                               ),
                             ),
+                            child: const Text('확정 취소'),
                           ),
                         ),
                       ],

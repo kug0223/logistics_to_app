@@ -249,6 +249,244 @@ class FormatHelper {
     
     return cleaned;
   }
+  // ============================================================
+  // 공고 카드용 포맷팅 (2024.12.04 추가)
+  // ============================================================
+
+  /// 날짜를 간결하게 포맷팅 (요일 포함)
+  /// 
+  /// 예시:
+  /// - formatDateCompact(DateTime(2024, 11, 28)) → '11/28(목)'
+  static String formatDateCompact(DateTime date) {
+    final weekdays = ['월', '화', '수', '목', '금', '토', '일'];
+    final weekday = weekdays[date.weekday - 1];
+    return '${date.month}/${date.day}($weekday)';
+  }
+
+  /// 근무 기간 포맷팅 (단기/장기 구분)
+  /// 
+  /// 예시:
+  /// - 단기 1일: '11/28(목)'
+  /// - 단기 여러일: '11/28(목)~12/7(토) · 5일'
+  /// - 장기: '11/28(목)~ · 월,수,금'
+  /// - 장기 (요일 없음): '11/28(목)~ 장기'
+  static String formatWorkPeriod({
+    required DateTime startDate,
+    DateTime? endDate,
+    bool isLongTerm = false,
+    List<String>? workDays,
+    int? dayCount,
+  }) {
+    final startStr = formatDateCompact(startDate);
+    
+    // 장기 공고
+    if (isLongTerm) {
+      if (workDays != null && workDays.isNotEmpty) {
+        return '$startStr~ · ${workDays.join(",")}';
+      }
+      return '$startStr~ 장기';
+    }
+    
+    // 단기 1일
+    if (endDate == null || _isSameDay(startDate, endDate)) {
+      return startStr;
+    }
+    
+    // 단기 여러일
+    final endStr = formatDateCompact(endDate);
+    final days = dayCount ?? endDate.difference(startDate).inDays + 1;
+    return '$startStr~$endStr · ${days}일';
+  }
+
+  /// 두 날짜가 같은 날인지 비교
+  static bool _isSameDay(DateTime a, DateTime b) {
+    return a.year == b.year && a.month == b.month && a.day == b.day;
+  }
+
+  /// 급여 + 타입 포맷팅
+  /// 
+  /// 예시:
+  /// - formatWageWithType(11000, 'hourly') → '시급 11,000원'
+  /// - formatWageWithType(110000, 'daily') → '일급 110,000원'
+  /// - formatWageWithType(2500000, 'monthly') → '월급 2,500,000원'
+  static String formatWageWithType(int wage, String wageType) {
+    final typeLabel = _getWageTypeLabel(wageType);
+    return '$typeLabel ${FormatHelper.formatNumber(wage)}원';
+  }
+
+  /// 급여 범위 포맷팅
+  /// 
+  /// 예시:
+  /// - formatWageRange(11000, 12000, 'hourly') → '시급 11,000~12,000원'
+  /// - formatWageRange(11000, 11000, 'hourly') → '시급 11,000원' (같으면 단일)
+  static String formatWageRange(int minWage, int maxWage, String wageType) {
+    final typeLabel = _getWageTypeLabel(wageType);
+    
+    if (minWage == maxWage) {
+      return '$typeLabel ${FormatHelper.formatNumber(minWage)}원';
+    }
+    
+    return '$typeLabel ${FormatHelper.formatNumber(minWage)}~${FormatHelper.formatNumber(maxWage)}원';
+  }
+  /// 급여 타입 라벨 반환 (public)
+  static String getWageTypeLabel(String wageType) {
+    switch (wageType.toLowerCase()) {
+      case 'hourly':
+        return '시급';
+      case 'daily':
+        return '일급';
+      case 'monthly':
+        return '월급';
+      case 'per_case':
+        return '건당';
+      default:
+        return '시급';
+    }
+  }
+  
+
+  /// 급여 타입 라벨 변환
+  static String _getWageTypeLabel(String wageType) {
+    switch (wageType.toLowerCase()) {
+      case 'hourly':
+        return '시급';
+      case 'daily':
+        return '일급';
+      case 'monthly':
+        return '월급';
+      case 'per_case':
+        return '건당';
+      default:
+        return '시급';
+    }
+  }
+
+  /// 주소에서 시/구 추출
+  /// 
+  /// 예시:
+  /// - parseAddressCity('경기도 오산시 세교동 123-45') → '오산시'
+  /// - parseAddressCity('서울특별시 강남구 역삼동 123') → '강남구'
+  /// - parseAddressCity('부산광역시 해운대구 우동 456') → '해운대구'
+  static String? parseAddressCity(String? address) {
+    if (address == null || address.isEmpty) return null;
+    
+    final parts = address.split(' ');
+    if (parts.length < 2) return null;
+    
+    // 시/도 다음에 오는 시/구/군 찾기
+    for (int i = 0; i < parts.length; i++) {
+      final part = parts[i];
+      if (part.endsWith('시') || part.endsWith('구') || part.endsWith('군')) {
+        // 첫 번째(시/도)가 아닌 경우만 반환
+        if (i > 0 || !part.contains('특별') && !part.contains('광역') && !part.endsWith('도')) {
+          return part;
+        }
+      }
+    }
+    
+    // 못 찾으면 두 번째 요소 반환 시도
+    return parts.length > 1 ? parts[1] : null;
+  }
+
+  /// 주소에서 동/읍/면 추출
+  /// 
+  /// 예시:
+  /// - parseAddressDistrict('경기도 오산시 세교동 123-45') → '세교동'
+  /// - parseAddressDistrict('서울특별시 강남구 역삼동 123') → '역삼동'
+  static String? parseAddressDistrict(String? address) {
+    if (address == null || address.isEmpty) return null;
+    
+    final parts = address.split(' ');
+    
+    // 동/읍/면/리 찾기
+    for (final part in parts) {
+      if (part.endsWith('동') || part.endsWith('읍') || 
+          part.endsWith('면') || part.endsWith('리')) {
+        // 숫자가 포함되어 있으면 건너뜀 (번지)
+        if (!RegExp(r'\d').hasMatch(part)) {
+          return part;
+        }
+      }
+    }
+    
+    return null;
+  }
+
+  /// 지역 전체 포맷팅 (시/구 + 동)
+  /// 
+  /// 예시:
+  /// - formatLocation('경기도 오산시 세교동 123') → '오산시 세교동'
+  /// - formatLocation(null, city: '강남구', district: '역삼동') → '강남구 역삼동'
+  static String formatLocation({
+    String? address,
+    String? city,
+    String? district,
+  }) {
+    // 직접 전달된 값 우선
+    final finalCity = city ?? parseAddressCity(address);
+    final finalDistrict = district ?? parseAddressDistrict(address);
+    
+    if (finalCity != null && finalDistrict != null) {
+      return '$finalCity $finalDistrict';
+    } else if (finalCity != null) {
+      return finalCity;
+    } else if (finalDistrict != null) {
+      return finalDistrict;
+    }
+    
+    return '';
+  }
+  /// 근무 요일 포맷팅
+  /// 
+  /// 예시:
+  /// - ['월','화','수','목','금'] → '평일(월~금)'
+  /// - ['월','화','수','목','금','토','일'] → '매일'
+  /// - ['토','일'] → '주말(토,일)'
+  /// - ['월','화','수','목','금','토'] → '주6일(일 휴무)'
+  /// - ['월','수','금'] → '주3일(월,수,금)'
+  static String formatWorkDays(List<String>? workDays) {
+    if (workDays == null || workDays.isEmpty) return '';
+    
+    const allDays = ['월', '화', '수', '목', '금', '토', '일'];
+    const weekdays = ['월', '화', '수', '목', '금'];
+    const weekend = ['토', '일'];
+    
+    // 정렬 (월~일 순서로)
+    final sorted = List<String>.from(workDays);
+    sorted.sort((a, b) => allDays.indexOf(a).compareTo(allDays.indexOf(b)));
+    
+    final count = sorted.length;
+    
+    // 매일 (7일)
+    if (count == 7) {
+      return '매일';
+    }
+    
+    // 평일 (월~금)
+    if (count == 5 && weekdays.every((d) => sorted.contains(d))) {
+      return '평일(월~금)';
+    }
+    
+    // 주말 (토,일)
+    if (count == 2 && weekend.every((d) => sorted.contains(d))) {
+      return '주말(토,일)';
+    }
+    
+    // 주6일 (휴무일 표시)
+    if (count == 6) {
+      final offDay = allDays.firstWhere((d) => !sorted.contains(d));
+      return '주6일($offDay 휴무)';
+    }
+    
+    // 주5일인데 평일이 아닌 경우 (휴무일 2개 표시)
+    if (count == 5) {
+      final offDays = allDays.where((d) => !sorted.contains(d)).toList();
+      return '주5일(${offDays.join(",")} 휴무)';
+    }
+    
+    // 그 외: 주N일(요일나열)
+    return '주${count}일(${sorted.join(",")})';
+  }
   
 }
   
@@ -327,4 +565,5 @@ class NumberInputFormatter extends TextInputFormatter {
       selection: TextSelection.collapsed(offset: formatted.length),
     );
   }
+  
 }

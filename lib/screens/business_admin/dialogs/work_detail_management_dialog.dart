@@ -63,7 +63,7 @@ class WorkDetailManagementDialog {
 
           return StyledDialog(
             title: '업무별 마감 관리',
-            subtitle: '${toItem.to.title}',
+            subtitle: toItem.to.title,
             icon: Icons.task_alt,
             headerColor: AppColors.purple,
             maxHeightRatio: 0.85,

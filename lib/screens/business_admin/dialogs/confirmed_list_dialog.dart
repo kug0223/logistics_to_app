@@ -673,7 +673,7 @@ class _ConfirmedListDialogWidgetState
         widget.toItem.workDetailStats ??= {};
         final stats = widget.toItem.workDetailStats![workType];
         if (stats != null) {
-          stats['confirmed'] = ((stats['confirmed'] ?? 1) as int) - 1;
+          stats['confirmed'] = ((stats['confirmed'] ?? 1)) - 1;
         }
       });
     } else {

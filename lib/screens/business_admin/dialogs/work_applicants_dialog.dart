@@ -1385,7 +1385,7 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog> {
 
     
     // 신분증 상태만 업데이트 (전체 새로고침 X)
-    if (changed != false && user != null) {
+    if (changed != false) {
       final userProvider = context.read<UserProvider>();
       final currentUserId = userProvider.currentUser?.uid ?? '';
       
@@ -1471,7 +1471,7 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog> {
     final remaining = widget.work.requiredCount - confirmed;
 
     if (_selectedIds.length > remaining) {
-      ToastHelper.showWarning('필요 인원(${widget.work.requiredCount}명)을 초과합니다. 현재 ${confirmed}명 확정, ${remaining}명 추가 가능');
+      ToastHelper.showWarning('필요 인원(${widget.work.requiredCount}명)을 초과합니다. 현재 $confirmed명 확정, $remaining명 추가 가능');
       return;
     }
 

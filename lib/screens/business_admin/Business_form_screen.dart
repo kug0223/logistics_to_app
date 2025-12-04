@@ -814,7 +814,7 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
                     });
                   },
                   // ⭐ Theme 사용
-                  backgroundColor: theme.colorScheme.surfaceVariant,  // 선택 안 된 것
+                  backgroundColor: theme.colorScheme.surfaceContainerHighest,  // 선택 안 된 것
                   selectedColor: theme.primaryColor,  // 선택된 것
                   checkmarkColor: theme.colorScheme.onPrimary,  // 체크마크 (흰색)
                   labelStyle: ResponsiveHelper.bodyStyle(context).copyWith(
@@ -888,7 +888,7 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
                       });
                     },
                     // ⭐ Theme 사용
-                    backgroundColor: theme.colorScheme.surfaceVariant,  // 선택 안 된 것
+                    backgroundColor: theme.colorScheme.surfaceContainerHighest,  // 선택 안 된 것
                     selectedColor: theme.primaryColor,  // 선택된 것
                     checkmarkColor: theme.colorScheme.onPrimary,  // 체크마크 (흰색)
                     labelStyle: ResponsiveHelper.bodyStyle(context).copyWith(

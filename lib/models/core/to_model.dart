@@ -9,6 +9,9 @@ class TOModel {
   // ✅ 사업장 연결
   final String businessId; // 사업장 ID
   final String businessName; // 사업장명
+  final String? businessAddress;   // 사업장 주소
+  final String? businessCity;      // 시/구 (예: 오산시, 강남구)
+  final String? businessDistrict;  // 동 (예: 세교동, 역삼동)
   final String jobType; // "short" (단기, ~30일) 또는 "long_term" (1개월+)
   final List<String>? workDays; // 장기 근무 요일 (예: ['월', '수', '금'])  // ⭐ 이 줄 추가
   
@@ -37,6 +40,12 @@ class TOModel {
   final int totalPending;        // ✅ 추가
   final int totalApplications;   // ✅ 추가
 
+  // ✅ 급여 정보 (겉 카드 표시용)
+  final int? minWage;            // 최소 급여
+  final int? maxWage;            // 최대 급여
+  final String? wageType;        // 급여 타입 (hourly, daily, monthly)
+  final int workDetailCount;     // 업무 개수
+
   // ✅ 그룹 마스터 전용 통계 (마스터 TO에만 저장)
   final int? groupTotalRequired;   // 그룹 전체 필요 인원
   final int? groupTotalConfirmed;  // 그룹 전체 확정 인원
@@ -63,7 +72,10 @@ class TOModel {
     required this.id,
     required this.businessId,
     required this.businessName,
-    this.jobType = 'short', // ✅ NEW: 기본값 'short' (하위 호환성)
+    this.businessAddress,
+    this.businessCity,
+    this.businessDistrict,
+    this.jobType = 'short',
     this.workDays,
     this.groupId,
     this.groupName,
@@ -81,6 +93,11 @@ class TOModel {
     this.totalConfirmed = 0,
     this.totalPending = 0,        // ✅ 추가
     this.totalApplications = 0,   // ✅ 추가
+    // ✅ 급여 정보
+    this.minWage,
+    this.maxWage,
+    this.wageType,
+    this.workDetailCount = 1,
     // ✅ 그룹 마스터 통계
     this.groupTotalRequired,
     this.groupTotalConfirmed,
@@ -109,7 +126,10 @@ class TOModel {
       id: documentId,
       businessId: data['businessId'] ?? '',
       businessName: data['businessName'] ?? '',
-      jobType: data['jobType'] ?? 'short', // ✅ NEW: 기본값 'short'
+      businessAddress: data['businessAddress'],
+      businessCity: data['businessCity'],
+      businessDistrict: data['businessDistrict'],
+      jobType: data['jobType'] ?? 'short',
       workDays: data['workDays'] != null  // ⭐ 이 3줄 추가
         ? List<String>.from(data['workDays'])
         : null,
@@ -144,6 +164,11 @@ class TOModel {
       totalConfirmed: data['totalConfirmed'] ?? 0,
       totalPending: data['totalPending'] ?? 0,           // ✅ 추가
       totalApplications: data['totalApplications'] ?? 0, // ✅ 추가
+      // ✅ 급여 정보
+      minWage: data['minWage'],
+      maxWage: data['maxWage'],
+      wageType: data['wageType'],
+      workDetailCount: data['workDetailCount'] ?? 1,
       // ✅ 그룹 마스터 통계
       groupTotalRequired: data['groupTotalRequired'],
       groupTotalConfirmed: data['groupTotalConfirmed'],
@@ -180,7 +205,10 @@ class TOModel {
     return {
       'businessId': businessId,
       'businessName': businessName,
-      'jobType': jobType, // ✅ NEW
+      'businessAddress': businessAddress,
+      'businessCity': businessCity,
+      'businessDistrict': businessDistrict,
+      'jobType': jobType,
       'workDays': workDays,
       'groupId': groupId,
       'groupName': groupName,
@@ -196,6 +224,11 @@ class TOModel {
       'deadlineType': deadlineType,
       'hoursBeforeStart': hoursBeforeStart,
       'totalRequired': totalRequired,
+      // ✅ 급여 정보
+      'minWage': minWage,
+      'maxWage': maxWage,
+      'wageType': wageType,
+      'workDetailCount': workDetailCount,
       // ✅ 그룹 마스터 통계 (null이면 저장 안함)
       if (groupTotalRequired != null) 'groupTotalRequired': groupTotalRequired,
       if (groupTotalConfirmed != null) 'groupTotalConfirmed': groupTotalConfirmed,
@@ -223,7 +256,10 @@ class TOModel {
     String? id,
     String? businessId,
     String? businessName,
-    String? jobType, // ✅ NEW
+    String? businessAddress,
+    String? businessCity,
+    String? businessDistrict,
+    String? jobType,
     List<String>? workDays,
     String? groupId,
     String? groupName,
@@ -240,6 +276,11 @@ class TOModel {
     int? hoursBeforeStart,
     int? totalRequired,
     int? totalConfirmed,
+    // ✅ 급여 정보
+    int? minWage,
+    int? maxWage,
+    String? wageType,
+    int? workDetailCount,
     // ✅ 그룹 마스터 통계
     int? groupTotalRequired,
     int? groupTotalConfirmed,
@@ -264,7 +305,9 @@ class TOModel {
       id: id ?? this.id,
       businessId: businessId ?? this.businessId,
       businessName: businessName ?? this.businessName,
-      workDays: workDays ?? this.workDays,
+      businessAddress: businessAddress ?? this.businessAddress,
+      businessCity: businessCity ?? this.businessCity,
+      businessDistrict: businessDistrict ?? this.businessDistrict,
       jobType: jobType ?? this.jobType,
       groupId: groupId ?? this.groupId,
       groupName: groupName ?? this.groupName,
@@ -281,6 +324,11 @@ class TOModel {
       hoursBeforeStart: hoursBeforeStart ?? this.hoursBeforeStart,
       totalRequired: totalRequired ?? this.totalRequired,
       totalConfirmed: totalConfirmed ?? this.totalConfirmed,
+      // ✅ 급여 정보
+      minWage: minWage ?? this.minWage,
+      maxWage: maxWage ?? this.maxWage,
+      wageType: wageType ?? this.wageType,
+      workDetailCount: workDetailCount ?? this.workDetailCount,
       // ✅ 그룹 마스터 통계
       groupTotalRequired: groupTotalRequired ?? this.groupTotalRequired,
       groupTotalConfirmed: groupTotalConfirmed ?? this.groupTotalConfirmed,
@@ -509,6 +557,11 @@ class TOModel {
       final now = DateTime.now();
       final today = DateTime(now.year, now.month, now.day);
       
+      // ✅ 장기 공고: applicationDeadline 기준
+      if (isLongTerm) {
+        return now.isAfter(applicationDeadline);
+      }
+      
       // 🔥 그룹 TO면 엄격하게 체크 안 함 (각 날짜별 시간이 다름)
       if (isGrouped) {
         // 그룹의 경우 endDate까지는 진행중
@@ -518,7 +571,7 @@ class TOModel {
         }
       }
       
-      // 단일 TO만 시간 체크
+      // 단기 TO만 시간 체크
       final workDate = DateTime(date.year, date.month, date.day);
       
       if (workDate.isBefore(today)) {

@@ -391,9 +391,9 @@ class _JobPostingScreenState extends State<JobPostingScreen> {
               ],
             ),
           ],
-           ],
-          ),
-        );
+        ],
+      ),
+    );
   }
 
   // TO 정보 카드
@@ -553,7 +553,7 @@ class _JobPostingScreenState extends State<JobPostingScreen> {
         color: Colors.transparent,
         borderRadius: BorderRadius.circular(20),
         child: InkWell(
-          onTap: hasDetailInfo ? () => _showWorkTypeDetail(context, work, workType!) : null,
+          onTap: hasDetailInfo ? () => _showWorkTypeDetail(context, work, workType) : null,
           borderRadius: BorderRadius.circular(20),
           child: Padding(
             padding: ResponsiveHelper.cardPadding(context),
@@ -672,23 +672,24 @@ class _JobPostingScreenState extends State<JobPostingScreen> {
 
                 SizedBox(height: ResponsiveHelper.spacing(context, 8)),
 
-                // 실제 마감시간
-                Row(
-                  children: [
-                    Icon(
-                      Icons.schedule,
-                      size: ResponsiveHelper.iconSize(context, 16),
-                      color: work.isClosed ? Colors.red[400] : Colors.orange[600],
-                    ),
-                    SizedBox(width: ResponsiveHelper.spacing(context, 6)),
-                    Text(
-                      '마감: ${work.applicationDeadline != null ? FormatHelper.formatDateTime(work.applicationDeadline!) : '미정'}',
-                      style: ResponsiveHelper.smallStyle(context).copyWith(
-                        color: work.isClosed ? Colors.red[400] : Colors.orange[700],
+                // ✅ 단기 공고만 업무별 마감시간 표시
+                if (!_to!.isLongTerm && work.applicationDeadline != null)
+                  Row(
+                    children: [
+                      Icon(
+                        Icons.schedule,
+                        size: ResponsiveHelper.iconSize(context, 16),
+                        color: work.isTimeExpired ? Colors.red[400] : Colors.orange[600],
                       ),
-                    ),
-                  ],
-                ),
+                      SizedBox(width: ResponsiveHelper.spacing(context, 6)),
+                      Text(
+                        '마감: ${FormatHelper.formatDateTime(work.applicationDeadline!)}',
+                        style: ResponsiveHelper.smallStyle(context).copyWith(
+                          color: work.isTimeExpired ? Colors.red[400] : Colors.orange[700],
+                        ),
+                      ),
+                    ],
+                  ),
               ],
             ),
           ),

@@ -96,8 +96,8 @@ class _TOGroupCardState extends State<TOGroupCard> {
       if (toItem.isWorkDetailLoaded && toItem.workDetails.isNotEmpty) {
         for (var work in toItem.workDetails) {
           final stats = toItem.workDetailStats?[work.workType];
-          totalConfirmed += (stats?['confirmed'] ?? 0) as int;
-          totalPending += (stats?['pending'] ?? 0) as int;
+          totalConfirmed += (stats?['confirmed'] ?? 0);
+          totalPending += (stats?['pending'] ?? 0);
         }
         totalRequired += toItem.totalRequired;
       } else {

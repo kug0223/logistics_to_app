@@ -141,11 +141,13 @@ class AppColors {
   /// 단기 근무 색상
   static const Color shortTerm = info;
   static const Color shortTermBg = infoBg;
+  static const Color shortTermLight = infoLight;
   static const Color shortTermDark = infoDark;
   
   /// 장기 근무 색상
   static const Color longTerm = purple;
   static const Color longTermBg = purpleBg;
+  static const Color longTermLight = purpleLight;
   static const Color longTermDark = purpleDark;
   
   // --- 지원 상태 ---

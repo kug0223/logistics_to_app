@@ -69,8 +69,8 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
   // 날짜 선택
   final List<DateTime> _selectedDates = [];
   final List<String> _selectedWeekdays = [];
-  DateTime _focusedDay = DateTime.now();
-  bool _isCalendarExpanded = true; // ✅ 기본 펼침으로 변경
+  final DateTime _focusedDay = DateTime.now();
+  final bool _isCalendarExpanded = true; // ✅ 기본 펼침으로 변경
   DateTime? _rangeStart;
   DateTime? _rangeEnd;
 
@@ -1041,7 +1041,7 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
   Widget _buildBusinessSelector(ThemeData theme) {
     return TOSectionContainer(
       child: DropdownButtonFormField<BusinessModel>(
-        value: _selectedBusiness,
+        initialValue: _selectedBusiness,
         isExpanded: true,
         decoration: InputDecoration(
           labelText: '사업장 선택',
@@ -1224,7 +1224,7 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
                     }
                   });
                 },
-                activeColor: theme.primaryColor,
+                activeThumbColor: theme.primaryColor,
               ),
             ],
           ),
@@ -1244,7 +1244,7 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
               )
             else
               DropdownButtonFormField<String>(
-                value: _myRecentTOs.any((to) => to.groupId == _selectedGroupId)
+                initialValue: _myRecentTOs.any((to) => to.groupId == _selectedGroupId)
                     ? _selectedGroupId
                     : null,
                 decoration: InputDecoration(

@@ -55,8 +55,8 @@ class _WorkTypeDetailScreenState extends State<WorkTypeDetailScreen> {
 
   // 이미지 관련
   File? _newThumbnail;
-  List<File> _newImages = [];
-  List<String> _imagesToDelete = [];
+  final List<File> _newImages = [];
+  final List<String> _imagesToDelete = [];
 
   @override
   void initState() {

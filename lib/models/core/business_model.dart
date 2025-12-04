@@ -8,6 +8,8 @@ class BusinessModel {
   final String category;         // 업종 카테고리
   final String subCategory;      // 세부 업종
   final String address;          // 주소
+  final String? city;            // 시/구 (예: 오산시, 강남구)
+  final String? district;        // 동/읍/면 (예: 세교동, 역삼동)
   final String? detailAddress;   // 세부주소
   final double? latitude;
   final double? longitude;
@@ -64,6 +66,8 @@ class BusinessModel {
     required this.subCategory,
     required this.address,
     this.detailAddress,
+    this.city,
+    this.district,
     this.latitude,
     this.longitude,
     required this.ownerId,
@@ -106,6 +110,8 @@ class BusinessModel {
       subCategory: map['subCategory'] ?? '',
       address: map['address'] ?? '',
       detailAddress: map['detailAddress'],
+      city: map['city'],
+      district: map['district'],
       latitude: map['latitude'] != null ? (map['latitude'] as num).toDouble() : null,
       longitude: map['longitude'] != null ? (map['longitude'] as num).toDouble() : null,
       ownerId: map['ownerId'] ?? '',
@@ -161,6 +167,8 @@ class BusinessModel {
       'subCategory': subCategory,
       'address': address,
       'detailAddress': detailAddress,
+      'city': city,
+      'district': district,
       'latitude': latitude,
       'longitude': longitude,
       'ownerId': ownerId,
@@ -209,6 +217,8 @@ class BusinessModel {
     String? subCategory,
     String? address,
     String? detailAddress,
+    String? city,
+    String? district,
     double? latitude,
     double? longitude,
     String? ownerId,
@@ -243,6 +253,8 @@ class BusinessModel {
       subCategory: subCategory ?? this.subCategory,
       address: address ?? this.address,
       detailAddress: detailAddress ?? this.detailAddress,
+      city: city ?? this.city,
+      district: district ?? this.district,
       latitude: latitude ?? this.latitude,
       longitude: longitude ?? this.longitude,
       ownerId: ownerId ?? this.ownerId,
@@ -257,7 +269,7 @@ class BusinessModel {
       oneLineIntro: oneLineIntro ?? this.oneLineIntro,
       detailedDescription: detailedDescription ?? this.detailedDescription,
       parkingAvailable: parkingAvailable ?? this.parkingAvailable,
-      mealsProvided: mealsProvided ?? this.mealsProvided,
+      mealsProvided: mealsProvided ?? mealsProvided,
       uniformProvided: uniformProvided ?? this.uniformProvided,
       facilities: facilities ?? this.facilities,
       nearestStation: nearestStation ?? this.nearestStation,

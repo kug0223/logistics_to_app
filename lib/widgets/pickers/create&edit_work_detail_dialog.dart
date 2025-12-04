@@ -424,7 +424,7 @@ class WorkDetailDialog {
               color: Colors.purple[700],
             ),
             helperText: currentCount > 0
-                ? '현재 ${currentCount}명 확정됨 (최소 ${currentCount}명 이상)'
+                ? '현재 $currentCount명 확정됨 (최소 $currentCount명 이상)'
                 : null,
             helperStyle: ResponsiveHelper.smallStyle(context).copyWith(
               color: Colors.orange[700],

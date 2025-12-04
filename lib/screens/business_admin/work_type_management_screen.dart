@@ -10,9 +10,7 @@ import '../../widgets/work_type_icon.dart';
 import '../../utils/toast_helper.dart';
 import '../../utils/format_helper.dart';
 import '../../utils/responsive_helper.dart';
-import '../../utils/navigation_helper.dart';
 import 'work_type_detail_screen.dart';
-import '../../utils/dialog_helper.dart';
 import '../../widgets/dialogs/styled_dialog.dart';
 
 /// ✨ 세련된 업무 유형 관리 화면

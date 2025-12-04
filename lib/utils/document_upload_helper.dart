@@ -1,7 +1,6 @@
 // lib/utils/document_upload_helper.dart
 import 'dart:io';
 import 'package:flutter/material.dart';
-import 'package:flutter/foundation.dart' show kIsWeb;
 import '../widgets/dialogs/ocr_verification_dialog.dart';
 import 'ocr_verification_helper.dart';
 import 'responsive_helper.dart';
