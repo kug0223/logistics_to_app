@@ -197,10 +197,10 @@ class _UserTOCardState extends State<UserTOCard> {
       return;
     }
     
-    // 캐시에 없으면 조회
+    // 캐시에 없으면 조회 (이전 데이터는 유지하면서 로딩)
     setState(() {
       _selectedDateTO = to;
-      _workDetails = [];
+      // _workDetails = [];  // ❌ 이전 데이터 지우지 않음
       _isLoadingWorkDetails = true;
     });
     
@@ -270,6 +270,18 @@ class _UserTOCardState extends State<UserTOCard> {
 
   /// 급여 금액만 (타입 제외)
   String _getWageAmount() {
+    // ✅ 그룹 TO에서 날짜 선택됐으면 해당 날짜의 workDetails 기준
+    if (_isGroupTO && _selectedDateTO != null && _workDetails.isNotEmpty) {
+      final wages = _workDetails.map((w) => w.wage).toList();
+      final minWage = wages.reduce((a, b) => a < b ? a : b);
+      final maxWage = wages.reduce((a, b) => a > b ? a : b);
+      
+      if (minWage == maxWage) {
+        return FormatHelper.formatWage(maxWage);
+      }
+      return '~${FormatHelper.formatNumber(maxWage)}원';
+    }
+    
     // TOModel에서 직접 가져오기
     if (widget.to.maxWage != null) {
       if (widget.to.minWage == widget.to.maxWage) {
@@ -892,7 +904,8 @@ class _UserTOCardState extends State<UserTOCard> {
 
   /// 업무 목록
   Widget _buildWorkDetailsList(BuildContext context) {
-    if (_isLoadingWorkDetails) {
+    // ✅ 로딩 중이어도 이전 데이터 있으면 그대로 표시 + 오버레이 로딩
+    if (_isLoadingWorkDetails && _workDetails.isEmpty) {
       return Center(
         child: Padding(
           padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 16)),

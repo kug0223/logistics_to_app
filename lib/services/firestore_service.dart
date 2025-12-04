@@ -5167,10 +5167,26 @@ class FirestoreService {
       int groupTotalConfirmed = 0;
       int groupTotalPending = 0;
       
+      // ✅ 그룹 전체 급여 정보 (최대/최소)
+      int? groupMinWage;
+      int? groupMaxWage;
+      
       for (var to in groupTOs) {
         groupTotalRequired += to.totalRequired;
         groupTotalConfirmed += to.totalConfirmed;
         groupTotalPending += to.totalPending;
+        
+        // 급여 정보 비교
+        if (to.minWage != null) {
+          if (groupMinWage == null || to.minWage! < groupMinWage) {
+            groupMinWage = to.minWage;
+          }
+        }
+        if (to.maxWage != null) {
+          if (groupMaxWage == null || to.maxWage! > groupMaxWage) {
+            groupMaxWage = to.maxWage;
+          }
+        }
       }
       
       // 4. 마스터 TO 업데이트
@@ -5178,6 +5194,9 @@ class FirestoreService {
         'groupTotalRequired': groupTotalRequired,
         'groupTotalConfirmed': groupTotalConfirmed,
         'groupTotalPending': groupTotalPending,
+        // ✅ 그룹 전체 급여 정보
+        'minWage': groupMinWage,
+        'maxWage': groupMaxWage,
         'groupStatsUpdatedAt': FieldValue.serverTimestamp(),
       });
       
