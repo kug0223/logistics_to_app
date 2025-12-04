@@ -335,6 +335,51 @@ class AuthService {
       throw Exception('계정 삭제 실패: $e');
     }
   }
+  /// ⭐ 비밀번호 변경
+  Future<bool> changePassword({
+    required String currentPassword,
+    required String newPassword,
+  }) async {
+    try {
+      final user = _auth.currentUser;
+      if (user == null || user.email == null) {
+        ToastHelper.showError('로그인이 필요합니다');
+        return false;
+      }
+      
+      // 1. 현재 비밀번호로 재인증
+      final credential = EmailAuthProvider.credential(
+        email: user.email!,
+        password: currentPassword,
+      );
+      await user.reauthenticateWithCredential(credential);
+      
+      // 2. 비밀번호 변경
+      await user.updatePassword(newPassword);
+      
+      return true;
+    } on FirebaseAuthException catch (e) {
+      String message = '비밀번호 변경에 실패했습니다';
+      switch (e.code) {
+        case 'wrong-password':
+        case 'invalid-credential':
+          message = '현재 비밀번호가 일치하지 않습니다';
+          break;
+        case 'weak-password':
+          message = '새 비밀번호가 너무 약합니다';
+          break;
+        case 'requires-recent-login':
+          message = '보안을 위해 다시 로그인해주세요';
+          break;
+      }
+      ToastHelper.showError(message);
+      return false;
+    } catch (e) {
+      print('❌ 비밀번호 변경 실패: $e');
+      ToastHelper.showError('비밀번호 변경 중 오류가 발생했습니다');
+      return false;
+    }
+  }
 
   // ⭐ NEW: 이메일 인증 발송 (이메일 인증 기능용)
   Future<void> sendEmailVerification() async {

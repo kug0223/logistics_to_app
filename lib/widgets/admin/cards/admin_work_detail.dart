@@ -72,7 +72,7 @@ class _WorkDetailRowState extends State<WorkDetailRow> {
     final isClosed = widget.work.isClosed || widget.work.isTimeExpired || widget.work.isFull;
     final isEmergency = widget.work.isEmergencyOpen;
     
-    // 상태별 색상
+    // 상태별 색상 (장기/단기 구분)
     Color statusColor;
     if (isClosed) {
       statusColor = AppColors.grey400;
@@ -81,7 +81,7 @@ class _WorkDetailRowState extends State<WorkDetailRow> {
     } else if (isFull) {
       statusColor = AppColors.success;
     } else {
-      statusColor = AppColors.info;
+      statusColor = widget.toItem.to.isLongTerm ? AppColors.longTerm : AppColors.shortTerm;
     }
 
     return Container(

@@ -269,7 +269,7 @@ class _ProfileEditScreenState extends State<ProfileEditScreen> {
               ),
               StyledDialogButton.primary(
                 text: '변경하기',
-                onPressed: () {
+                onPressed: () async {
                   // 검증
                   if (currentPasswordController.text.isEmpty) {
                     ToastHelper.showWarning('현재 비밀번호를 입력해주세요');
@@ -296,7 +296,17 @@ class _ProfileEditScreenState extends State<ProfileEditScreen> {
                     return;
                   }
 
-                  Navigator.pop(context, true);
+                  // ✅ 실제 비밀번호 변경 실행
+                  final success = await _authService.changePassword(
+                    currentPassword: currentPasswordController.text,
+                    newPassword: newPasswordController.text,
+                  );
+                  
+                  if (success) {
+                    if (context.mounted) {
+                      Navigator.of(context).pop(true);
+                    }
+                  }
                 },
               ),
             ],
@@ -305,14 +315,14 @@ class _ProfileEditScreenState extends State<ProfileEditScreen> {
       ),
     );
 
-    if (result == true) {
-      // TODO: 실제 비밀번호 변경 로직 구현
-      ToastHelper.showSuccess('비밀번호가 변경되었습니다');
-    }
-
+    // ✅ dispose 먼저 하고 Toast는 나중에
     currentPasswordController.dispose();
     newPasswordController.dispose();
     confirmPasswordController.dispose();
+    
+    if (result == true && mounted) {
+      ToastHelper.showSuccess('비밀번호가 변경되었습니다');
+    }
   }
 
   /// 저장

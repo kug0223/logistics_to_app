@@ -122,14 +122,14 @@ class _TOItemCardState extends State<TOItemCard> {
           work.isClosed || work.isTimeExpired || work.isFull);
     }
 
-    // 상태별 컬러
+    // 상태별 컬러 (장기/단기 구분)
     Color statusColor;
     if (allClosed) {
       statusColor = AppColors.grey400;
     } else if (isFull) {
       statusColor = AppColors.success;
     } else {
-      statusColor = theme.primaryColor;
+      statusColor = widget.toItem.to.isLongTerm ? AppColors.longTerm : AppColors.shortTerm;
     }
 
     return Container(
@@ -147,7 +147,7 @@ class _TOItemCardState extends State<TOItemCard> {
                 Container(
                   width: 2,
                   height: ResponsiveHelper.spacing(context, 8),
-                  color: AppColors.grey300,
+                  color: widget.isExpanded ? statusColor : AppColors.grey300,
                 ),
                 // 연결 점
                 Container(
@@ -162,7 +162,7 @@ class _TOItemCardState extends State<TOItemCard> {
                 Expanded(
                   child: Container(
                     width: 2,
-                    color: AppColors.grey300,
+                    color: widget.isExpanded ? statusColor : AppColors.grey300,
                   ),
                 ),
               ],

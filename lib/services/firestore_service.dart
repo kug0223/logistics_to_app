@@ -5017,48 +5017,28 @@ class FirestoreService {
     }
   }
 
-  /// 2단계: 그룹 펼칠 때 - 그룹 내 TO 목록 + 기본 통계 로드
+  /// 2단계: 그룹 펼칠 때 - 그룹 내 TO 목록만 로드 (WorkDetails는 개별 펼침 시)
   Future<List<TOItem>> loadGroupTOsLight(String groupId) async {
     try {
       print('🔍 [Lazy] 그룹 내 TO 목록 로드: $groupId');
       
+      // ✅ TO 목록만 조회 (WorkDetails, Applications 조회 제거!)
       final groupTOs = await getTOsByGroup(groupId);
-      final toIds = groupTOs.map((to) => to.id).toList();
-      
-      // ✨ 병렬로 WorkDetails 개수 + 지원자 통계 로드
-      final results = await Future.wait([
-        getWorkDetailsBatch(toIds),
-        getApplicationsByTOs(groupTOs),  // ✅ TO 정보 전달 - 중복 조회 제거
-      ]);
-      
-      final workDetailsMap = results[0] as Map<String, List<WorkDetailModel>>;
-      final applicationsMap = results[1] as Map<String, List<ApplicationModel>>;
       
       List<TOItem> toItems = [];
       for (var to in groupTOs) {
-        final workDetails = workDetailsMap[to.id] ?? [];
-        final apps = applicationsMap[to.id] ?? [];
-        
-        // 통계 계산
-        int totalRequired = 0;
-        for (var work in workDetails) {
-          totalRequired += work.requiredCount;
-        }
-        
-        int confirmed = apps.where((a) => a.status == 'CONFIRMED').length;
-        int pending = apps.where((a) => a.status == 'PENDING').length;
-        
         toItems.add(TOItem(
           to: to,
-          workDetails: null,  // 업무별 상세는 펼칠 때 로드
-          confirmedCount: confirmed,
-          pendingCount: pending,
-          totalRequired: totalRequired,
-          isWorkDetailLoaded: false,
+          workDetails: null,                    // ✅ 펼칠 때 로드
+          confirmedCount: to.totalConfirmed,    // ✅ TO 문서 값 사용
+          pendingCount: to.totalPending,
+          totalRequired: to.totalRequired,
+          workDetailStats: null,                // ✅ 펼칠 때 로드
+          isWorkDetailLoaded: false,            // ✅ 아직 안 로드됨
         ));
       }
       
-      print('✅ [Lazy] 그룹 TO 로드 완료: ${toItems.length}개 (통계 포함)');
+      print('✅ [Lazy] 그룹 TO 로드 완료: ${toItems.length}개 (경량)');
       return toItems;
     } catch (e) {
       print('❌ [Lazy] 그룹 TO 로드 실패: $e');
