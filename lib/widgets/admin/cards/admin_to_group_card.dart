@@ -600,8 +600,14 @@ class _TOGroupCardState extends State<TOGroupCard> {
     if (masterTO.isLongTerm) {
       return masterTO.longTermPeriodWithDays;
     } else if (widget.groupItem.isGrouped) {
-      // ✅ 항상 실제 로드된 개수 사용 (로드 전이면 groupTOs에 masterTO만 있음)
-      final count = widget.groupItem.groupTOs.length;
+      // ✅ 로드됐으면 실제 개수, 아니면 마스터에 저장된 개수 사용
+      final int count;
+      if (widget.groupItem.isGroupDetailLoaded && widget.groupItem.groupTOs.length > 1) {
+        count = widget.groupItem.groupTOs.length;
+      } else {
+        count = masterTO.groupActualDaysCount ?? masterTO.groupDaysCount ?? 1;
+      }
+      
       if (count <= 1) {
         return FormatHelper.formatDate(masterTO.date);
       }

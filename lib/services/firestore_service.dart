@@ -1304,6 +1304,39 @@ class FirestoreService {
       return [];
     }
   }
+  /// 여러 TO의 지원자를 한 번에 조회 (TO 정보 전달 - 중복 조회 제거)
+  Future<Map<String, List<ApplicationModel>>> getApplicationsByTOs(List<TOModel> tos) async {
+    try {
+      if (tos.isEmpty) return {};
+      
+      print('🔍 배치 지원자 조회 시작: ${tos.length}개 TO (TO 정보 재사용)');
+      
+      final futures = tos.map((to) async {
+        // ✅ TO 정보는 이미 있음 - 재조회 안 함!
+        final snapshot = await _firestore
+            .collection('applications')
+            .where('businessId', isEqualTo: to.businessId)
+            .where('toTitle', isEqualTo: to.title)
+            .where('workDate', isEqualTo: Timestamp.fromDate(to.date))
+            .get();
+
+        final apps = snapshot.docs
+            .map((doc) => ApplicationModel.fromFirestore(doc))
+            .toList();
+        
+        return MapEntry(to.id, apps);
+      }).toList();
+      
+      final results = await Future.wait(futures);
+      final result = Map.fromEntries(results);
+      
+      print('✅ 배치 지원자 조회 완료: ${tos.length}개 TO, ${result.values.fold(0, (sum, list) => sum + list.length)}명');
+      return result;
+    } catch (e) {
+      print('❌ 배치 지원자 조회 실패: $e');
+      return {};
+    }
+  }
 
   /// 여러 TO의 WorkDetails를 한 번에 조회 (병렬)
   Future<Map<String, List<WorkDetailModel>>> getWorkDetailsBatch(
@@ -2452,6 +2485,9 @@ class FirestoreService {
       // ✅ TO의 totalRequired 업데이트
       await _recalculateTotalRequired(toId);
       
+      // ✅ 그룹 TO면 마스터 통계도 동기화
+      await syncGroupMasterStats(toId);
+      
       return docRef.id;
     } catch (e) {
       print('❌ [FirestoreService] WorkDetail 추가 실패: $e');
@@ -2480,6 +2516,9 @@ class FirestoreService {
           updates.containsKey('wage') || 
           updates.containsKey('wageType')) {
         await _recalculateTOWorkInfo(toId);
+        
+        // ✅ 그룹 TO면 마스터 통계도 동기화
+        await syncGroupMasterStats(toId);
       }
     } catch (e) {
       print('❌ [FirestoreService] WorkDetail 수정 실패: $e');
@@ -2502,6 +2541,9 @@ class FirestoreService {
       
       // ✅ TO의 totalRequired 업데이트
       await _recalculateTotalRequired(toId);
+      
+      // ✅ 그룹 TO면 마스터 통계도 동기화
+      await syncGroupMasterStats(toId);
       
       print('✅ [FirestoreService] WorkDetail 삭제 완료');
     } catch (e) {
@@ -4986,7 +5028,7 @@ class FirestoreService {
       // ✨ 병렬로 WorkDetails 개수 + 지원자 통계 로드
       final results = await Future.wait([
         getWorkDetailsBatch(toIds),
-        getApplicationsByTOIds(toIds),
+        getApplicationsByTOs(groupTOs),  // ✅ TO 정보 전달 - 중복 조회 제거
       ]);
       
       final workDetailsMap = results[0] as Map<String, List<WorkDetailModel>>;
@@ -5197,6 +5239,8 @@ class FirestoreService {
         // ✅ 그룹 전체 급여 정보
         'minWage': groupMinWage,
         'maxWage': groupMaxWage,
+        // ✅ 그룹 실제 날짜 개수
+        'groupActualDaysCount': groupTOs.length,
         'groupStatsUpdatedAt': FieldValue.serverTimestamp(),
       });
       

@@ -22,6 +22,7 @@ class TOModel {
   final DateTime? endDate; // 그룹 종료일 (nullable)
   final bool isGroupMaster; // 대표 TO 여부 (목록 표시용, 기본값 false)
   
+  
   // ✅ 제목
   final String title; // TO 제목 (예: "물류센터 파트타임알바")
   
@@ -50,6 +51,8 @@ class TOModel {
   final int? groupTotalRequired;   // 그룹 전체 필요 인원
   final int? groupTotalConfirmed;  // 그룹 전체 확정 인원
   final int? groupTotalPending;    // 그룹 전체 대기 인원
+  final int? groupActualDaysCount;  // ✅ 실제 TO 개수
+  
   
   final String? description; // 전체 설명
   final String creatorUID; // 생성한 관리자 UID
@@ -102,6 +105,7 @@ class TOModel {
     this.groupTotalRequired,
     this.groupTotalConfirmed,
     this.groupTotalPending,
+    this.groupActualDaysCount,
 
     this.description,
     required this.creatorUID,
@@ -173,6 +177,7 @@ class TOModel {
       groupTotalRequired: data['groupTotalRequired'],
       groupTotalConfirmed: data['groupTotalConfirmed'],
       groupTotalPending: data['groupTotalPending'],
+      groupActualDaysCount: data['groupActualDaysCount'],
 
       description: data['description'],
       creatorUID: data['creatorUID'] ?? '',
@@ -333,6 +338,7 @@ class TOModel {
       groupTotalRequired: groupTotalRequired ?? this.groupTotalRequired,
       groupTotalConfirmed: groupTotalConfirmed ?? this.groupTotalConfirmed,
       groupTotalPending: groupTotalPending ?? this.groupTotalPending,
+      groupActualDaysCount: groupActualDaysCount ?? this.groupActualDaysCount,
       description: description ?? this.description,
       creatorUID: creatorUID ?? this.creatorUID,
       createdAt: createdAt ?? this.createdAt,
