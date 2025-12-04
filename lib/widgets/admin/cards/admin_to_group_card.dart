@@ -154,16 +154,13 @@ class _TOGroupCardState extends State<TOGroupCard> {
             return toItem.workDetails.every((work) =>
                 work.isClosed || work.isTimeExpired || work.isFull);
           });
-    // ✨ 상태별 컬러바 색상 결정
+    // ✨ 컬러바 색상 결정 (장기: 보라, 단기: 초록)
     Color statusBarColor;
     if (allClosed) {
       statusBarColor = AppColors.grey400;
-    } else if (isFull) {
-      statusBarColor = AppColors.success;
     } else {
-      statusBarColor = theme.primaryColor;
+      statusBarColor = masterTO.isLongTerm ? AppColors.longTerm : AppColors.shortTerm;
     }
-
     return Container(
       margin: EdgeInsets.only(
         bottom: ResponsiveHelper.spacing(context, 12),
@@ -217,16 +214,40 @@ class _TOGroupCardState extends State<TOGroupCard> {
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              // ✨ 첫째 줄: 사업장 + 타입 아이콘 + 메뉴
+                              // ✨ 첫째 줄: 배지 + 사업장 + 등록시간 + 메뉴
                               Row(
                                 children: [
-                                  // 사업장 아이콘
-                                  Icon(
-                                    Icons.business,
-                                    size: ResponsiveHelper.iconSize(context, 14),
-                                    color: AppColors.grey500,
+                                  // 장기/단기 텍스트 배지 (맨 앞)
+                                  Container(
+                                    padding: EdgeInsets.symmetric(
+                                      horizontal: ResponsiveHelper.spacing(context, 8),
+                                      vertical: ResponsiveHelper.spacing(context, 3),
+                                    ),
+                                    decoration: BoxDecoration(
+                                      color: masterTO.isLongTerm 
+                                          ? AppColors.longTermBg 
+                                          : AppColors.shortTermBg,
+                                      borderRadius: BorderRadius.circular(6),
+                                      border: Border.all(
+                                        color: masterTO.isLongTerm 
+                                            ? AppColors.longTermLight 
+                                            : AppColors.shortTermLight,
+                                      ),
+                                    ),
+                                    child: Text(
+                                      masterTO.isLongTerm ? '고정' : '단기',
+                                      style: ResponsiveHelper.smallStyle(
+                                        context,
+                                        color: masterTO.isLongTerm 
+                                            ? AppColors.longTermDark 
+                                            : AppColors.shortTermDark,
+                                        fontWeight: FontWeight.bold,
+                                      ),
+                                    ),
                                   ),
-                                  SizedBox(width: ResponsiveHelper.spacing(context, 4)),
+                                  
+                                  SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+                                  
                                   // 사업장명
                                   Expanded(
                                     child: Text(
@@ -239,6 +260,17 @@ class _TOGroupCardState extends State<TOGroupCard> {
                                     ),
                                   ),
                                   
+                                  // 등록시간
+                                  Text(
+                                    _getCreatedAtText(masterTO.createdAt),
+                                    style: ResponsiveHelper.tinyStyle(
+                                      context,
+                                      color: AppColors.grey500,
+                                    ),
+                                  ),
+                                  
+                                  SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+                                  
                                   // 그룹/단일 표시 (아이콘만)
                                   if (widget.groupItem.isGrouped)
                                     _buildMiniIconBadge(
@@ -248,23 +280,8 @@ class _TOGroupCardState extends State<TOGroupCard> {
                                       bgColor: AppColors.successBg,
                                     ),
                                   
-                                  SizedBox(width: ResponsiveHelper.spacing(context, 6)),
-                                  
-                                  // 장기/단기 아이콘
-                                  _buildMiniIconBadge(
-                                    context,
-                                    icon: masterTO.isLongTerm 
-                                        ? Icons.calendar_month 
-                                        : Icons.today,
-                                    color: masterTO.isLongTerm 
-                                        ? AppColors.purpleDark 
-                                        : AppColors.infoDark,
-                                    bgColor: masterTO.isLongTerm 
-                                        ? AppColors.purpleBg 
-                                        : AppColors.infoBg,
-                                  ),
-                                  
-                                  SizedBox(width: ResponsiveHelper.spacing(context, 4)),
+                                  if (widget.groupItem.isGrouped)
+                                    SizedBox(width: ResponsiveHelper.spacing(context, 4)),
                                   
                                   // 메뉴 버튼
                                   widget.groupItem.isGrouped
@@ -562,19 +579,31 @@ class _TOGroupCardState extends State<TOGroupCard> {
   // ═══════════════════════════════════════════════════════════════
   // ✨ 새로운 간소화된 위젯들
   // ═══════════════════════════════════════════════════════════════
+  /// 등록일 텍스트
+  String _getCreatedAtText(DateTime created) {
+    final now = DateTime.now();
+    final diff = now.difference(created);
+    
+    if (diff.inMinutes < 60) {
+      return '${diff.inMinutes}분 전';
+    } else if (diff.inHours < 24) {
+      return '${diff.inHours}시간 전';
+    } else if (diff.inDays < 7) {
+      return '${diff.inDays}일 전';
+    } else {
+      return '${created.month}/${created.day}';
+    }
+  }
 
   /// 날짜 텍스트 생성
   String _getDateText(dynamic masterTO) {
     if (masterTO.isLongTerm) {
       return masterTO.longTermPeriodWithDays;
     } else if (widget.groupItem.isGrouped) {
-      // ✅ 그룹 상세 로드됐으면 실제 개수, 아니면 마스터의 groupDaysCount 사용
-      final int count;
-      if (widget.groupItem.isGroupDetailLoaded && widget.groupItem.groupTOs.isNotEmpty) {
-        count = widget.groupItem.groupTOs.length;
-      } else {
-        // masterTO의 startDate ~ endDate에서 일수 계산
-        count = masterTO.groupDaysCount ?? 1;
+      // ✅ 항상 실제 로드된 개수 사용 (로드 전이면 groupTOs에 masterTO만 있음)
+      final count = widget.groupItem.groupTOs.length;
+      if (count <= 1) {
+        return FormatHelper.formatDate(masterTO.date);
       }
       return '${FormatHelper.formatDate(masterTO.date)} 외 ${count - 1}일';
     } else {

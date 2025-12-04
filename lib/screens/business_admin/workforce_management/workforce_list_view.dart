@@ -593,9 +593,18 @@ class _WorkforceListViewState extends State<WorkforceListView> {
     
     // 이미 펼쳐져 있으면 접기만
     if (_expandedGroups.contains(key)) {
-      setState(() => _expandedGroups.remove(key));
+      setState(() {
+        _expandedGroups.remove(key);
+        _expandedTOs.clear();
+      });
       return;
     }
+    
+    // ✅ 다른 그룹 접기
+    setState(() {
+      _expandedGroups.clear();
+      _expandedTOs.clear();
+    });
     
     // 그룹 TO이고 아직 상세 로드 안됐으면 로드
     if (groupItem.needsGroupDetailLoad) {
@@ -648,6 +657,9 @@ class _WorkforceListViewState extends State<WorkforceListView> {
       setState(() => _expandedTOs.remove(key));
       return;
     }
+    
+    // ✅ 다른 TO 접기
+    setState(() => _expandedTOs.clear());
     
     // 아직 WorkDetails 로드 안됐으면 로드
     if (toItem.needsWorkDetailLoad) {

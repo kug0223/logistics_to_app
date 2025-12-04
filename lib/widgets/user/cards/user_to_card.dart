@@ -53,19 +53,68 @@ class _UserTOCardState extends State<UserTOCard> {
   final FirestoreService _firestoreService = FirestoreService();
   List<WorkDetailModel> _workDetails = [];
   bool _isLoadingWorkDetails = false;
+  
+  // 그룹 날짜 선택용
+  List<TOModel> _groupTOs = [];
+  TOModel? _selectedDateTO;
+  bool _isLoadingGroupTOs = false;
+  
+  // 날짜별 workDetails 캐시 (toId → workDetails)
+  final Map<String, List<WorkDetailModel>> _workDetailsCache = {};
 
   @override
   void didUpdateWidget(UserTOCard oldWidget) {
     super.didUpdateWidget(oldWidget);
     
-    // 선택 상태가 변경되면 업무 로드
+    // 선택 상태가 변경되면
     if (widget.isSelected && !oldWidget.isSelected) {
-      _loadWorkDetails();
+      // 그룹 TO면 날짜 목록 로드, 아니면 업무 로드
+      if (_isGroupTO) {
+        _loadGroupTOs();
+      } else {
+        _loadWorkDetails();
+      }
+    }
+    
+    // 접히면 선택 초기화
+    if (!widget.isSelected && oldWidget.isSelected) {
+      _selectedDateTO = null;
+      _workDetails = [];
     }
   }
 
+  /// 그룹 TO 여부
+  bool get _isGroupTO => widget.to.groupId != null && !widget.to.isLongTerm;
+
+  /// 업무 개수 표시 여부
+  bool get _shouldShowWorkCount {
+    // 그룹 단기 TO: 날짜 선택 후에만 표시
+    if (_isGroupTO) {
+      return _selectedDateTO != null && _workDetails.isNotEmpty;
+    }
+    // 장기 공고 또는 단일 TO: 항상 표시
+    return true;
+  }
+
+  /// 현재 업무 개수
+  int get _currentWorkCount {
+    // workDetails 로드됐으면 그거 사용
+    if (_workDetails.isNotEmpty) {
+      return _workDetails.length;
+    }
+    // 아니면 TOModel의 workDetailCount 사용
+    return widget.to.workDetailCount > 0 ? widget.to.workDetailCount : 1;
+  }
   /// 업무 상세 로드
   Future<void> _loadWorkDetails() async {
+    // 캐시에 있으면 바로 사용
+    if (_workDetailsCache.containsKey(widget.to.id)) {
+      setState(() {
+        _workDetails = _workDetailsCache[widget.to.id]!;
+      });
+      return;
+    }
+    
     if (_workDetails.isNotEmpty) return;
     
     setState(() => _isLoadingWorkDetails = true);
@@ -74,6 +123,9 @@ class _UserTOCardState extends State<UserTOCard> {
       final workDetails = await _firestoreService.getWorkDetails(widget.to.id);
       
       if (mounted) {
+        // 캐시에 저장
+        _workDetailsCache[widget.to.id] = workDetails;
+        
         setState(() {
           _workDetails = workDetails;
           _isLoadingWorkDetails = false;
@@ -86,6 +138,92 @@ class _UserTOCardState extends State<UserTOCard> {
       }
     }
   }
+
+  /// 그룹 TO 날짜 목록 로드
+  Future<void> _loadGroupTOs() async {
+    if (widget.to.groupId == null) return;
+    
+    // 이미 로드됐으면 선택만 다시
+    if (_groupTOs.isNotEmpty) {
+      _autoSelectDate();
+      return;
+    }
+    
+    setState(() => _isLoadingGroupTOs = true);
+    
+    try {
+      final groupTOs = await _firestoreService.getTOsByGroup(widget.to.groupId!);
+      
+      if (mounted) {
+        setState(() {
+          _groupTOs = groupTOs..sort((a, b) => a.date.compareTo(b.date));
+          _isLoadingGroupTOs = false;
+        });
+        
+        _autoSelectDate();
+      }
+    } catch (e) {
+      debugPrint('❌ 그룹 TO 로드 실패: $e');
+      if (mounted) {
+        setState(() => _isLoadingGroupTOs = false);
+      }
+    }
+  }
+  /// 오늘 기준 가장 가까운 날짜 자동 선택
+  void _autoSelectDate() {
+    if (_groupTOs.isEmpty) return;
+    
+    final today = DateTime.now();
+    final todayOnly = DateTime(today.year, today.month, today.day);
+    
+    // 오늘 이후 날짜 중 가장 가까운 것
+    final futureTO = _groupTOs.cast<TOModel?>().firstWhere(
+      (to) => !to!.date.isBefore(todayOnly),
+      orElse: () => null,
+    );
+    
+    // 있으면 그거, 없으면 마지막 날짜 (과거 공고)
+    _selectDate(futureTO ?? _groupTOs.last);
+  }
+
+  /// 날짜 선택
+  Future<void> _selectDate(TOModel to) async {
+    // 캐시에 있으면 바로 사용
+    if (_workDetailsCache.containsKey(to.id)) {
+      setState(() {
+        _selectedDateTO = to;
+        _workDetails = _workDetailsCache[to.id]!;
+      });
+      return;
+    }
+    
+    // 캐시에 없으면 조회
+    setState(() {
+      _selectedDateTO = to;
+      _workDetails = [];
+      _isLoadingWorkDetails = true;
+    });
+    
+    try {
+      final workDetails = await _firestoreService.getWorkDetails(to.id);
+      
+      if (mounted) {
+        // 캐시에 저장
+        _workDetailsCache[to.id] = workDetails;
+        
+        setState(() {
+          _workDetails = workDetails;
+          _isLoadingWorkDetails = false;
+        });
+      }
+    } catch (e) {
+      debugPrint('❌ 업무 로드 실패: $e');
+      if (mounted) {
+        setState(() => _isLoadingWorkDetails = false);
+      }
+    }
+  }
+  
 
   /// 내가 해당 TO에 지원했는지 확인
   bool get _hasAppliedToTO {
@@ -372,7 +510,7 @@ class _UserTOCardState extends State<UserTOCard> {
         ),
       ),
       child: Text(
-        isLongTerm ? '장기' : '단기',
+        isLongTerm ? '고정' : '단기',
         style: ResponsiveHelper.smallStyle(
           context,
           color: isLongTerm ? AppColors.longTermDark : AppColors.shortTermDark,
@@ -514,19 +652,20 @@ class _UserTOCardState extends State<UserTOCard> {
           ),
         ),
         
-        SizedBox(width: ResponsiveHelper.spacing(context, 12)),
-        
-        // 업무 개수
-        Icon(
-          Icons.work_outline,
-          size: ResponsiveHelper.iconSize(context, 16),
-          color: AppColors.grey600,
-        ),
-        SizedBox(width: ResponsiveHelper.spacing(context, 4)),
-        Text(
-          '$workCount개',
-          style: ResponsiveHelper.bodyStyle(context, color: AppColors.grey700),
-        ),
+        // 업무 개수 (그룹 TO에서 날짜 선택 시 또는 단일/장기 TO)
+        if (_shouldShowWorkCount) ...[
+          SizedBox(width: ResponsiveHelper.spacing(context, 12)),
+          Icon(
+            Icons.work_outline,
+            size: ResponsiveHelper.iconSize(context, 16),
+            color: AppColors.grey600,
+          ),
+          SizedBox(width: ResponsiveHelper.spacing(context, 4)),
+          Text(
+            '${_currentWorkCount}개',
+            style: ResponsiveHelper.bodyStyle(context, color: AppColors.grey700),
+          ),
+        ],
         
         const Spacer(),
         
@@ -636,8 +775,119 @@ class _UserTOCardState extends State<UserTOCard> {
   Widget _buildExpandedContent(BuildContext context) {
     return Padding(
       padding: ResponsiveHelper.cardPadding(context),
-      child: _buildWorkDetailsList(context),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // 그룹 TO면 날짜 선택 UI 표시
+          if (_isGroupTO) ...[
+            _buildDateSelector(context),
+            SizedBox(height: ResponsiveHelper.spacing(context, 12)),
+          ],
+          
+          // 업무 목록
+          _buildWorkDetailsList(context),
+        ],
+      ),
     );
+  }
+
+  /// 날짜 선택 UI
+  Widget _buildDateSelector(BuildContext context) {
+    final theme = Theme.of(context);
+    
+    // 로딩 중
+    if (_isLoadingGroupTOs) {
+      return Center(
+        child: Padding(
+          padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 8)),
+          child: SizedBox(
+            width: ResponsiveHelper.spacing(context, 20),
+            height: ResponsiveHelper.spacing(context, 20),
+            child: const CircularProgressIndicator(strokeWidth: 2),
+          ),
+        ),
+      );
+    }
+    
+    // 날짜 없음
+    if (_groupTOs.isEmpty) {
+      return Text(
+        '날짜 정보를 불러올 수 없습니다',
+        style: ResponsiveHelper.smallStyle(context, color: AppColors.grey500),
+      );
+    }
+    
+    // 5일 이하: Wrap, 6일 이상: 가로 스크롤
+    if (_groupTOs.length <= 5) {
+      return Wrap(
+        spacing: ResponsiveHelper.spacing(context, 8),
+        runSpacing: ResponsiveHelper.spacing(context, 8),
+        children: _groupTOs.map((to) => _buildDateChip(context, to)).toList(),
+      );
+    } else {
+      return SingleChildScrollView(
+        scrollDirection: Axis.horizontal,
+        child: Row(
+          children: _groupTOs.map((to) => Padding(
+            padding: EdgeInsets.only(right: ResponsiveHelper.spacing(context, 8)),
+            child: _buildDateChip(context, to),
+          )).toList(),
+        ),
+      );
+    }
+  }
+
+  /// 날짜 칩
+  Widget _buildDateChip(BuildContext context, TOModel to) {
+    final theme = Theme.of(context);
+    final isSelected = _selectedDateTO?.id == to.id;
+    final dayOfWeek = _getDayOfWeek(to.date);
+    final dayColor = _getDayColor(to.date, isSelected);
+    
+    return GestureDetector(
+      onTap: () => _selectDate(to),
+      child: Container(
+        padding: EdgeInsets.symmetric(
+          horizontal: ResponsiveHelper.spacing(context, 10),
+          vertical: ResponsiveHelper.spacing(context, 6),
+        ),
+        decoration: BoxDecoration(
+          color: isSelected ? theme.primaryColor : AppColors.grey100,
+          borderRadius: BorderRadius.circular(6),
+          border: Border.all(
+            color: isSelected ? theme.primaryColor : AppColors.grey300,
+          ),
+        ),
+        child: Text(
+          '${to.date.month}/${to.date.day}($dayOfWeek)',
+          style: ResponsiveHelper.smallStyle(
+            context,
+            color: isSelected ? Colors.white : dayColor,
+            fontWeight: FontWeight.w600,
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// 요일별 색상
+  Color _getDayColor(DateTime date, bool isSelected) {
+    if (isSelected) return Colors.white;
+    
+    switch (date.weekday) {
+      case 6: // 토요일
+        return Colors.blue;
+      case 7: // 일요일
+        return Colors.red;
+      default:
+        return AppColors.grey700;
+    }
+  }
+
+  /// 요일 텍스트
+  String _getDayOfWeek(DateTime date) {
+    const days = ['월', '화', '수', '목', '금', '토', '일'];
+    return days[date.weekday - 1];
   }
 
   /// 업무 목록
@@ -663,9 +913,9 @@ class _UserTOCardState extends State<UserTOCard> {
     }
 
     return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
       children: _workDetails.map((work) {
         final hasApplied = _hasAppliedToWork(work.workType);
-        
         return _buildWorkDetailItem(context, work, hasApplied);
       }).toList(),
     );
@@ -989,6 +1239,8 @@ class _UserTOCardState extends State<UserTOCard> {
       work: _workDetails.first,
       to: widget.to,
       onSuccess: () {
+        // 캐시 클리어 후 콜백
+        _workDetailsCache.clear();
         widget.onApplySuccess();
         if (mounted) {
           setState(() {});
