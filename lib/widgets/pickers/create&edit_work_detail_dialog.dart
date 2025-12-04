@@ -135,11 +135,22 @@ class WorkDetailDialog {
     );
   }
   /// ✨ 업무 수정 다이얼로그 표시
+  /// [businessWorkTypes] 전달 시 업무 유형 변경 가능 (TO 생성 시)
   static Future<Map<String, dynamic>?> showEditDialog({
     required BuildContext context,
     required WorkDetailModel work,
+    List<BusinessWorkTypeModel>? businessWorkTypes,
   }) async {
     final theme = Theme.of(context);
+    
+    // ✅ 업무 유형 선택 (businessWorkTypes가 있을 때만 변경 가능)
+    BusinessWorkTypeModel? selectedWorkType;
+    if (businessWorkTypes != null && businessWorkTypes.isNotEmpty) {
+      selectedWorkType = businessWorkTypes.firstWhere(
+        (wt) => wt.name == work.workType,
+        orElse: () => businessWorkTypes.first,
+      );
+    }
     
     String selectedWageType = work.wageType;
     String startTime = work.startTime;
@@ -177,8 +188,20 @@ class WorkDetailDialog {
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          // ⚠️ 업무유형 변경 불가 안내
-                          _buildEditWarningCard(context),
+                          // 업무 유형 (변경 가능/불가)
+                          if (businessWorkTypes != null && businessWorkTypes.isNotEmpty)
+                            _buildWorkTypeSection(
+                              context,
+                              theme,
+                              businessWorkTypes,
+                              selectedWorkType,
+                              setDialogState,
+                              (newWorkType) {
+                                selectedWorkType = newWorkType;
+                              },
+                            )
+                          else
+                            _buildEditWarningCard(context),
                           SizedBox(height: ResponsiveHelper.spacing(context, 24)),
                           
                           // 급여 타입 선택
@@ -240,6 +263,7 @@ class WorkDetailDialog {
                     wageController,
                     countController,
                     selectedWageType,
+                    selectedWorkType,  // ✅ 추가
                   ),
                 ],
               ),
@@ -462,6 +486,7 @@ class WorkDetailDialog {
     TextEditingController wageController,
     TextEditingController countController,
     String selectedWageType,
+    BusinessWorkTypeModel? selectedWorkType,
   ) {
     return Container(
       padding: ResponsiveHelper.cardPadding(context),
@@ -539,6 +564,13 @@ class WorkDetailDialog {
                     }
 
                     Navigator.pop(context, {
+                      // 업무 유형 (변경된 경우)
+                      if (selectedWorkType != null) ...{
+                        'workType': selectedWorkType.name,
+                        'workTypeIcon': selectedWorkType.icon,
+                        'workTypeColor': selectedWorkType.color,
+                        'workTypeBackgroundColor': selectedWorkType.backgroundColor,
+                      },
                       'wage': wage,
                       'wageType': selectedWageType,
                       'requiredCount': count,

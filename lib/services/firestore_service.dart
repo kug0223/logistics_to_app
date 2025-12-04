@@ -352,6 +352,20 @@ class FirestoreService {
       for (var detail in workDetailsData) {
         totalRequired += (detail['requiredCount'] as int);
       }
+      // ✅ 사업장 주소 정보 조회
+      String? businessAddress;
+      String? businessCity;
+      String? businessDistrict;
+      try {
+        final business = await getBusinessById(businessId);
+        if (business != null) {
+          businessAddress = business.address;
+          businessCity = business.city;
+          businessDistrict = business.district;
+        }
+      } catch (e) {
+        print('⚠️ 사업장 주소 조회 실패: $e');
+      }
 
       // ✅ 급여 정보 계산
       final wages = workDetailsData.map((d) => d['wage'] as int).toList();
@@ -552,6 +566,20 @@ class FirestoreService {
       for (var work in workDetails) {
         totalRequired += (work['requiredCount'] as int?) ?? 0;
       }
+      // ✅ 사업장 주소 정보 조회
+      String? businessAddress;
+      String? businessCity;
+      String? businessDistrict;
+      try {
+        final business = await getBusinessById(businessId);
+        if (business != null) {
+          businessAddress = business.address;
+          businessCity = business.city;
+          businessDistrict = business.district;
+        }
+      } catch (e) {
+        print('⚠️ 사업장 주소 조회 실패: $e');
+      }
       // ✅ 급여 정보 계산
       final wages = workDetails.map((d) => d['wage'] as int).toList();
       final minWage = wages.isNotEmpty ? wages.reduce((a, b) => a < b ? a : b) : 0;
@@ -564,6 +592,9 @@ class FirestoreService {
         final toData = {
           'businessId': businessId,
           'businessName': businessName,
+          'businessAddress': businessAddress,
+          'businessCity': businessCity,
+          'businessDistrict': businessDistrict,
           'groupId': groupId,
           'groupName': groupName,
           'startDate': Timestamp.fromDate(startDate),
@@ -750,7 +781,7 @@ class FirestoreService {
       // 각 날짜별 TO 생성
       for (int i = 0; i < dates.length; i++) {
         final date = dates[i];
-        
+
         // TO 기본 정보
         final toData = {
           'businessId': businessId,

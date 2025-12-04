@@ -8,6 +8,7 @@ import '../../../models/core/business_model.dart';
 import '../../../models/core/to_model.dart';
 import '../../../models/core/business_work_type_model.dart';
 import '../../../models/work_detail_input.dart';
+import '../../../models/core/work_detail_model.dart';
 
 // Services & Providers
 import '../../../services/firestore_service.dart';
@@ -532,6 +533,50 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
       });
     }
   }
+  /// 업무 수정 다이얼로그
+  Future<void> _editWorkDetail(int index) async {
+    final detail = _workDetails[index];
+    
+    // WorkDetailInput → 임시 WorkDetailModel 변환
+    final tempModel = WorkDetailModel(
+      id: 'temp',
+      workType: detail.workType!,
+      workTypeIcon: detail.workTypeIcon,
+      workTypeColor: detail.workTypeColor,
+      workTypeBackgroundColor: detail.workTypeBackgroundColor,
+      wage: detail.wage!,
+      wageType: detail.wageType,
+      requiredCount: detail.requiredCount!,
+      currentCount: 0,
+      startTime: detail.startTime!,
+      endTime: detail.endTime!,
+      order: index,
+      createdAt: DateTime.now(),
+    );
+
+    final result = await WorkDetailDialog.showEditDialog(
+      context: context,
+      work: tempModel,
+      businessWorkTypes: _businessWorkTypes,  // ✅ 업무 유형 변경 가능
+    );
+
+    if (result != null) {
+      setState(() {
+        _workDetails[index] = WorkDetailInput(
+          workType: result['workType'] ?? detail.workType,
+          workTypeIcon: result['workTypeIcon'] ?? detail.workTypeIcon,
+          workTypeColor: result['workTypeColor'] ?? detail.workTypeColor,
+          workTypeBackgroundColor: result['workTypeBackgroundColor'] ?? detail.workTypeBackgroundColor,
+          wage: result['wage'],
+          wageType: result['wageType'],
+          requiredCount: result['requiredCount'],
+          startTime: result['startTime'],
+          endTime: result['endTime'],
+        );
+      });
+    }
+  }
+  
 
   /// 업무 삭제
   void _removeWorkDetail(int index) {
@@ -763,16 +808,7 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
         businessName: _selectedBusiness!.name,
         title: _titleController.text.trim(),
         date: date,
-        workDetailsData: _workDetails.map((w) => {
-          'workType': w.workType!,
-          'workTypeIcon': w.workTypeIcon,
-          'workTypeColor': w.workTypeColor,
-          'workTypeBackgroundColor': w.workTypeBackgroundColor,
-          'wage': w.wage!,
-          'requiredCount': w.requiredCount!,
-          'startTime': w.startTime!,
-          'endTime': w.endTime!,
-        }).toList(),
+        workDetailsData: _workDetails.map((w) => w.toMap()).toList(),
         applicationDeadline: finalDeadline,
         description: _descriptionController.text.trim(),
         creatorUID: creatorUID,
@@ -844,16 +880,7 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
           businessName: _selectedBusiness!.name,
           title: _titleController.text.trim(),
           date: date,
-          workDetailsData: _workDetails.map((w) => {
-            'workType': w.workType!,
-            'workTypeIcon': w.workTypeIcon,
-            'workTypeColor': w.workTypeColor,
-            'workTypeBackgroundColor': w.workTypeBackgroundColor,
-            'wage': w.wage!,
-            'requiredCount': w.requiredCount!,
-            'startTime': w.startTime!,
-            'endTime': w.endTime!,
-          }).toList(),
+          workDetailsData: _workDetails.map((w) => w.toMap()).toList(),
           applicationDeadline: finalDeadline,
           description: _descriptionController.text.trim(),
           creatorUID: creatorUID,
@@ -943,6 +970,7 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
               TOWorkDetailsSection(
                 workDetailInputs: _workDetails,
                 onAddWork: _showAddWorkDetailDialog,
+                onEditWorkByIndex: _editWorkDetail,
                 onRemoveWorkByIndex: _removeWorkDetail,
                 showNoWorkTypeWarning: _businessWorkTypes.isEmpty,
               ),

@@ -20,6 +20,9 @@ class TOWorkDetailsSection extends StatelessWidget {
   /// 업무 삭제 콜백 (index 기반 - create용)
   final void Function(int index)? onRemoveWorkByIndex;
   
+  /// 업무 수정 콜백 (index 기반 - create용)
+  final void Function(int index)? onEditWorkByIndex;
+  
   /// 업무 수정 콜백 (WorkDetailModel - edit용)
   final void Function(WorkDetailModel work)? onEditWork;
   
@@ -35,6 +38,7 @@ class TOWorkDetailsSection extends StatelessWidget {
     this.workDetailModels,
     required this.onAddWork,
     this.onRemoveWorkByIndex,
+    this.onEditWorkByIndex,
     this.onEditWork,
     this.onDeleteWork,
     this.showNoWorkTypeWarning = false,
@@ -196,6 +200,9 @@ class TOWorkDetailsSection extends StatelessWidget {
           final detail = entry.value;
           return TOWorkDetailCard.fromInput(
             detail: detail,
+            onEdit: onEditWorkByIndex != null
+                ? () => onEditWorkByIndex!(index)
+                : null,
             onDelete: onRemoveWorkByIndex != null 
                 ? () => onRemoveWorkByIndex!(index)
                 : null,
