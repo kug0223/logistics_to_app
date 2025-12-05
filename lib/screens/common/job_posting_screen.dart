@@ -15,6 +15,8 @@ import '../../services/firestore_service.dart';
 import '../../utils/responsive_helper.dart';
 import '../../utils/format_helper.dart';
 import '../../utils/toast_helper.dart';
+import '../../utils/image_helper.dart';
+
 
 // Widgets
 import '../../widgets/common/common_widgets.dart';
@@ -661,11 +663,23 @@ class _JobPostingScreenState extends State<JobPostingScreen> {
                       ],
                     ),
                     if (hasDetailInfo)
-                      Text(
-                        '상세보기 →',
-                        style: ResponsiveHelper.smallStyle(context).copyWith(
-                          color: theme.primaryColor,
-                        ),
+                      Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(
+                            Icons.info_outline,
+                            size: ResponsiveHelper.iconSize(context, 14),
+                            color: theme.primaryColor,
+                          ),
+                          SizedBox(width: ResponsiveHelper.spacing(context, 4)),
+                          Text(
+                            '상세보기',
+                            style: ResponsiveHelper.smallStyle(context).copyWith(
+                              color: theme.primaryColor,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ],
                       ),
                   ],
                 ),
@@ -888,10 +902,10 @@ class _JobPostingScreenState extends State<JobPostingScreen> {
           margin: EdgeInsets.only(
             right: ResponsiveHelper.spacing(context, 12),
           ),
-          decoration: BoxDecoration(
+          child: ClipRRect(
             borderRadius: BorderRadius.circular(16),
-            image: DecorationImage(
-              image: NetworkImage(images[index]),
+            child: ImageHelper.buildCachedImage(
+              images[index],
               fit: BoxFit.cover,
             ),
           ),

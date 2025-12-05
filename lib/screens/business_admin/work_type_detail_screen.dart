@@ -441,7 +441,7 @@ class _WorkTypeDetailScreenState extends State<WorkTypeDetailScreen> {
   }
 
   Widget _buildImageWidget(dynamic image, {BoxFit fit = BoxFit.cover}) {
-    return ImageHelper.buildImageWidget(
+    return ImageHelper.buildCachedImageWidget(
       image,
       fit: fit,
       width: double.infinity,

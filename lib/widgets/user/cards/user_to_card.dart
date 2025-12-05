@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:intl/intl.dart';
 
 // Models
 import '../../../models/core/to_model.dart';
@@ -12,6 +13,7 @@ import '../../../services/firestore_service.dart';
 import '../../../utils/responsive_helper.dart';
 import '../../../utils/format_helper.dart';
 import '../../../utils/navigation_helper.dart';
+import '../../../utils/toast_helper.dart';
 
 // Theme
 import '../../../theme/app_colors.dart';
@@ -22,6 +24,7 @@ import '../../work_type_icon.dart';
 // Screens
 import '../../../screens/common/job_posting_screen.dart';
 import '../../../screens/user/dialogs/apply_dialog.dart';
+import '../../dialogs/apply/apply_work_dialog.dart';
 
 /// 지원자용 TO 카드 위젯
 /// 
@@ -305,57 +308,6 @@ class _UserTOCardState extends State<UserTOCard> {
     return '-';
   }
 
-  /// 급여 범위 계산 (workDetails에서)
-  String _getWageRange() {
-    if (_workDetails.isEmpty) {
-      // workDetails 로드 전에는 TO의 정보 사용
-      return FormatHelper.formatWageWithType(
-        widget.to.totalRequired > 0 ? 10030 : 0, // 기본값
-        'hourly',
-      );
-    }
-    
-    final wages = _workDetails.map((w) => w.wage).toList();
-    final minWage = wages.reduce((a, b) => a < b ? a : b);
-    final maxWage = wages.reduce((a, b) => a > b ? a : b);
-    
-    // wageType은 첫 번째 workDetail에서 가져옴 (보통 동일)
-    final wageType = _workDetails.first.wageType ?? 'hourly';
-    
-    return FormatHelper.formatWageRange(minWage, maxWage, wageType);
-  }
-
-  String _getWorkPeriodText() {
-    final startDate = widget.to.startDate ?? widget.to.date;
-    final endDate = widget.to.endDate;
-    final isLongTerm = widget.to.isLongTerm;
-    final isGrouped = widget.to.groupId != null && endDate != null;
-    
-    // 날짜 부분
-    String dateText;
-    if (isLongTerm) {
-      // 장기: 시작~끝 또는 시작~ 장기
-      if (endDate != null) {
-        dateText = '${FormatHelper.formatDateCompact(startDate)}~${FormatHelper.formatDateCompact(endDate)}';
-      } else {
-        dateText = '${FormatHelper.formatDateCompact(startDate)}~ 장기';
-      }
-    } else if (isGrouped) {
-      // 그룹 단기: 시작~끝 표시
-      dateText = '${FormatHelper.formatDateCompact(startDate)}~${FormatHelper.formatDateCompact(endDate!)}';
-    } else {
-      // 단일 단기: 날짜 하나만
-      dateText = FormatHelper.formatDateCompact(widget.to.date);
-    }
-    
-    // 요일 부분 (장기일 때만)
-    if (isLongTerm && widget.to.workDays != null && widget.to.workDays!.isNotEmpty) {
-      final workDaysText = FormatHelper.formatWorkDays(widget.to.workDays);
-      return '$dateText · $workDaysText';
-    }
-    
-    return dateText;
-  }
 
   /// 지역 텍스트 (시/구 + 동)
   String _getLocationText() {
@@ -364,22 +316,6 @@ class _UserTOCardState extends State<UserTOCard> {
       city: widget.to.businessCity,
       district: widget.to.businessDistrict,
     );
-  }
-  /// 등록일 텍스트
-  String _getCreatedAtText() {
-    final now = DateTime.now();
-    final created = widget.to.createdAt;
-    final diff = now.difference(created);
-    
-    if (diff.inMinutes < 60) {
-      return '${diff.inMinutes}분 전';
-    } else if (diff.inHours < 24) {
-      return '${diff.inHours}시간 전';
-    } else if (diff.inDays < 7) {
-      return '${diff.inDays}일 전';
-    } else {
-      return '${created.month}/${created.day}';
-    }
   }
 
   @override
@@ -433,22 +369,27 @@ class _UserTOCardState extends State<UserTOCard> {
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            // 1️⃣ 첫 줄: 배지 + 사업장명
-                            _buildFirstRow(context),
+                            // 1️⃣ 배지 + 위치
+                            _buildBadgeAndLocation(context),
                             
                             SizedBox(height: ResponsiveHelper.spacing(context, 8)),
                             
                             // 2️⃣ 제목 (2줄까지)
                             _buildTitle(context),
                             
-                            SizedBox(height: ResponsiveHelper.spacing(context, 12)),
+                            SizedBox(height: ResponsiveHelper.spacing(context, 8)),
                             
-                            // 3️⃣ 지역 + 날짜
-                            _buildLocationAndDate(context),
+                            // 3️⃣ 날짜
+                            _buildDateRow(context),
                             
                             SizedBox(height: ResponsiveHelper.spacing(context, 6)),
                             
-                            // 4️⃣ 급여 + 업무 개수
+                            // 4️⃣ 사업장 + 등록시간
+                            _buildBusinessAndTime(context),
+                            
+                            SizedBox(height: ResponsiveHelper.spacing(context, 8)),
+                            
+                            // 5️⃣ 급여 + 업무 개수
                             _buildWageAndWorkCount(context),
                           ],
                         ),
@@ -475,8 +416,11 @@ class _UserTOCardState extends State<UserTOCard> {
     );
   }
 
-  /// 1️⃣ 첫 줄: 배지 + 사업장명
-  Widget _buildFirstRow(BuildContext context) {
+  /// 1️⃣ 배지 + 위치
+  Widget _buildBadgeAndLocation(BuildContext context) {
+    final theme = Theme.of(context);
+    final locationText = _getLocationText();
+    
     return Row(
       children: [
         // 단기/장기 배지
@@ -484,12 +428,19 @@ class _UserTOCardState extends State<UserTOCard> {
         
         SizedBox(width: ResponsiveHelper.spacing(context, 10)),
         
-        // 사업장명 (1줄, 넘치면 말줄임)
+        // 위치 (강조)
+        Icon(
+          Icons.location_on,
+          size: ResponsiveHelper.iconSize(context, 16),
+          color: theme.primaryColor,
+        ),
+        SizedBox(width: ResponsiveHelper.spacing(context, 4)),
         Expanded(
           child: Text(
-            widget.to.businessName,
+            locationText.isNotEmpty ? locationText : '위치 미정',
             style: ResponsiveHelper.subtitleStyle(context).copyWith(
               fontWeight: FontWeight.w600,
+              color: theme.primaryColor,
             ),
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
@@ -568,59 +519,95 @@ class _UserTOCardState extends State<UserTOCard> {
     );
   }
 
-  /// 3️⃣ 지역 + 날짜 (두 줄)
-  Widget _buildLocationAndDate(BuildContext context) {
-    final locationText = _getLocationText();
-    
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
+  /// 3️⃣ 날짜
+  Widget _buildDateRow(BuildContext context) {
+    return Row(
       children: [
-        // 지역 + 등록일
-        Row(
-          children: [
-            Icon(
-              Icons.location_on_outlined,
-              size: ResponsiveHelper.iconSize(context, 16),
-              color: AppColors.grey600,
-            ),
-            SizedBox(width: ResponsiveHelper.spacing(context, 4)),
-            Expanded(
-              child: Text(
-                locationText.isNotEmpty ? locationText : '-',
-                style: ResponsiveHelper.bodyStyle(context, color: AppColors.grey700),
-                overflow: TextOverflow.ellipsis,
-              ),
-            ),
-            // 등록일
-            Text(
-              _getCreatedAtText(),
-              style: ResponsiveHelper.smallStyle(context, color: AppColors.grey500),
-            ),
-          ],
+        Icon(
+          Icons.calendar_today,
+          size: ResponsiveHelper.iconSize(context, 16),
+          color: AppColors.grey600,
         ),
-        
-        SizedBox(height: ResponsiveHelper.spacing(context, 4)),
-        
-        // 날짜
-        Row(
-          children: [
-            Icon(
-              Icons.calendar_today_outlined,
-              size: ResponsiveHelper.iconSize(context, 16),
-              color: AppColors.grey600,
+        SizedBox(width: ResponsiveHelper.spacing(context, 4)),
+        Expanded(
+          child: Text(
+            _getDateText(),
+            style: ResponsiveHelper.bodyStyle(context).copyWith(
+              fontWeight: FontWeight.w500,
             ),
-            SizedBox(width: ResponsiveHelper.spacing(context, 4)),
-            Expanded(
-              child: Text(
-                _getWorkPeriodText(),
-                style: ResponsiveHelper.bodyStyle(context, color: AppColors.grey700),
-                overflow: TextOverflow.ellipsis,
-              ),
-            ),
-          ],
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+          ),
         ),
       ],
     );
+  }
+  
+  /// 4️⃣ 사업장 + 등록시간
+  Widget _buildBusinessAndTime(BuildContext context) {
+    return Row(
+      children: [
+        Icon(
+          Icons.business_outlined,
+          size: ResponsiveHelper.iconSize(context, 14),
+          color: AppColors.grey500,
+        ),
+        SizedBox(width: ResponsiveHelper.spacing(context, 4)),
+        Expanded(
+          child: Text(
+            widget.to.businessName,
+            style: ResponsiveHelper.smallStyle(context, color: AppColors.grey600),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+          ),
+        ),
+        // 등록시간 (우측)
+        Text(
+          _getTimeAgo(),
+          style: ResponsiveHelper.tinyStyle(context, color: AppColors.grey500),
+        ),
+      ],
+    );
+  }
+  
+  /// 등록시간 포맷 (몇 분/시간/일 전)
+  String _getTimeAgo() {
+    final createdAt = widget.to.createdAt;
+    final now = DateTime.now();
+    final diff = now.difference(createdAt);
+    
+    if (diff.inMinutes < 60) {
+      return '${diff.inMinutes}분전';
+    } else if (diff.inHours < 24) {
+      return '${diff.inHours}시간전';
+    } else {
+      return '${diff.inDays}일전';
+    }
+  }
+  
+  /// 날짜 텍스트 포맷
+  String _getDateText() {
+    final to = widget.to;
+    
+    // 장기 공고
+    if (to.isLongTerm && to.startDate != null && to.endDate != null) {
+      final start = DateFormat('M/d(E)', 'ko_KR').format(to.startDate!);
+      final end = DateFormat('M/d(E)', 'ko_KR').format(to.endDate!);
+      final workDaysLabel = to.workDays != null && to.workDays!.isNotEmpty
+          ? ' · ${to.workDaysLabel}'
+          : '';
+      return '$start~$end$workDaysLabel';
+    }
+    
+    // 그룹 TO
+    if (to.groupId != null && to.startDate != null && to.endDate != null) {
+      final start = DateFormat('M/d(E)', 'ko_KR').format(to.startDate!);
+      final end = DateFormat('M/d(E)', 'ko_KR').format(to.endDate!);
+      return '$start~$end';
+    }
+    
+    // 단일 TO
+    return DateFormat('M/d(E)', 'ko_KR').format(to.date);
   }
 
   /// 4️⃣ 급여 + 업무 개수 + 버튼
@@ -1231,37 +1218,115 @@ class _UserTOCardState extends State<UserTOCard> {
   }
 
   /// 상세보기 화면 이동
-  void _goToJobPosting() {
+  void _goToJobPosting() async {
+    // 그룹 TO: 날짜 선택 필수
+    if (_isGroupTO) {
+      if (_selectedDateTO == null) {
+        ToastHelper.showInfo('날짜를 먼저 선택해주세요');
+        return;
+      }
+      NavigationHelper.push(
+        context,
+        destination: JobPostingScreen(
+          to: _selectedDateTO!,
+          workDetails: _workDetails,
+        ),
+      );
+      return;
+    }
+
+    // 단일/장기 TO: workDetails 없으면 로드 후 이동
+    List<WorkDetailModel> workDetailsToPass = _workDetails;
+    
+    if (workDetailsToPass.isEmpty) {
+      // 로딩 표시
+      showDialog(
+        context: context,
+        barrierDismissible: false,
+        builder: (_) => const Center(child: CircularProgressIndicator()),
+      );
+      
+      try {
+        workDetailsToPass = await _firestoreService.getWorkDetails(widget.to.id);
+      } catch (e) {
+        Navigator.pop(context);
+        ToastHelper.showError('데이터를 불러오는데 실패했습니다');
+        return;
+      }
+      
+      Navigator.pop(context);
+    }
+
     NavigationHelper.push(
       context,
       destination: JobPostingScreen(
         to: widget.to,
-        workDetails: _workDetails,
+        workDetails: workDetailsToPass,
       ),
     );
   }
 
   /// 지원 다이얼로그 열기
   void _openApplyDialog() async {
-    // workDetails가 없으면 리턴
-    if (_workDetails.isEmpty) return;
-    
-    // 첫 번째 업무로 지원 (TODO: 업무 선택 UI 추가 필요)
-    final result = await ApplyDialog.show(
-      context: context,
-      work: _workDetails.first,
-      to: widget.to,
-      onSuccess: () {
-        // 캐시 클리어 후 콜백
+    // 그룹 TO인 경우
+    if (_isGroupTO) {
+      // 그룹 TO 목록이 없으면 로드
+      if (_groupTOs.isEmpty) {
+        await _loadGroupTOs();
+      }
+      
+      // 날짜별 TO 맵 생성
+      final groupTOsByDate = <DateTime, TOModel>{};
+      final groupWorkDetailsByDate = <DateTime, List<WorkDetailModel>>{};
+      
+      for (final to in _groupTOs) {
+        final dateKey = DateTime(to.date.year, to.date.month, to.date.day);
+        groupTOsByDate[dateKey] = to;
+        
+        // 캐시에 있으면 사용, 없으면 로드
+        if (_workDetailsCache.containsKey(to.id)) {
+          groupWorkDetailsByDate[dateKey] = _workDetailsCache[to.id]!;
+        } else {
+          final details = await _firestoreService.getWorkDetails(to.id);
+          _workDetailsCache[to.id] = details;
+          groupWorkDetailsByDate[dateKey] = details;
+        }
+      }
+      
+      final result = await ApplyWorkDialog.show(
+        context: context,
+        to: widget.to,
+        workDetails: [],
+        groupTOsByDate: groupTOsByDate,
+        groupWorkDetailsByDate: groupWorkDetailsByDate,
+        businessName: widget.to.businessName,
+      );
+      
+      if (result?.hasChanges == true && mounted) {
         _workDetailsCache.clear();
         widget.onApplySuccess();
-        if (mounted) {
-          setState(() {});
-        }
-      },
+        setState(() {});
+      }
+      return;
+    }
+    
+    // 단일/장기 TO인 경우
+    if (_workDetails.isEmpty) {
+      await _loadWorkDetails();
+    }
+    
+    if (_workDetails.isEmpty) return;
+    
+    final result = await ApplyWorkDialog.show(
+      context: context,
+      to: widget.to,
+      workDetails: _workDetails,
+      businessName: widget.to.businessName,
     );
     
-    if (result == true && mounted) {
+    if (result?.hasChanges == true && mounted) {
+      _workDetailsCache.clear();
+      widget.onApplySuccess();
       setState(() {});
     }
   }

@@ -10,6 +10,8 @@ import 'package:flutter_image_compress/flutter_image_compress.dart';
 import 'package:path_provider/path_provider.dart';
 import 'responsive_helper.dart';
 import 'toast_helper.dart';
+import 'package:cached_network_image/cached_network_image.dart';
+import 'package:shimmer/shimmer.dart';
 
 /// 🖼️ 이미지 관련 공용 헬퍼
 /// 
@@ -534,7 +536,104 @@ class ImageHelper {
       );
     }
 
+  return imageWidget;
+  }
+
+  /// 🖼️ 캐시된 네트워크 이미지 위젯 (추천!)
+  /// 
+  /// - 디스크/메모리 캐싱 자동
+  /// - Shimmer 로딩 효과
+  /// - fadeIn 애니메이션
+  static Widget buildCachedImage(
+    String imageUrl, {
+    BoxFit fit = BoxFit.cover,
+    double? width,
+    double? height,
+    BorderRadius? borderRadius,
+    Duration fadeInDuration = const Duration(milliseconds: 300),
+  }) {
+    Widget imageWidget = CachedNetworkImage(
+      imageUrl: imageUrl,
+      fit: fit,
+      width: width ?? double.infinity,
+      height: height,
+      fadeInDuration: fadeInDuration,
+      placeholder: (context, url) => Shimmer.fromColors(
+        baseColor: Colors.grey[300]!,
+        highlightColor: Colors.grey[100]!,
+        child: Container(
+          width: width ?? double.infinity,
+          height: height,
+          color: Colors.white,
+        ),
+      ),
+      errorWidget: (context, url, error) => Container(
+        width: width ?? double.infinity,
+        height: height,
+        color: Colors.grey[200],
+        child: Icon(
+          Icons.broken_image,
+          color: Colors.grey[400],
+          size: 48,
+        ),
+      ),
+    );
+
+    if (borderRadius != null) {
+      return ClipRRect(
+        borderRadius: borderRadius,
+        child: imageWidget,
+      );
+    }
+
     return imageWidget;
+  }
+
+  /// 🖼️ File 또는 URL에서 캐시 이미지 위젯 생성 (통합)
+  /// 
+  /// File이면 Image.file, URL이면 CachedNetworkImage 사용
+  static Widget buildCachedImageWidget(
+    dynamic image, {
+    BoxFit fit = BoxFit.cover,
+    double? width,
+    double? height,
+    BorderRadius? borderRadius,
+  }) {
+    if (image is File) {
+      Widget imageWidget = Image.file(
+        image,
+        fit: fit,
+        width: width ?? double.infinity,
+        height: height,
+      );
+      
+      if (borderRadius != null) {
+        return ClipRRect(
+          borderRadius: borderRadius,
+          child: imageWidget,
+        );
+      }
+      return imageWidget;
+    } else if (image is String && image.isNotEmpty) {
+      return buildCachedImage(
+        image,
+        fit: fit,
+        width: width,
+        height: height,
+        borderRadius: borderRadius,
+      );
+    } else {
+      return Container(
+        width: width ?? double.infinity,
+        height: height,
+        color: Colors.grey[200],
+        child: Icon(
+          Icons.image_not_supported,
+          color: Colors.grey[400],
+          size: 48,
+        ),
+      );
+    }
   }
 
   /// 📷 빈 이미지 플레이스홀더

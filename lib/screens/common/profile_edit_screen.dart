@@ -163,6 +163,7 @@ class _ProfileEditScreenState extends State<ProfileEditScreen> {
     bool obscureNew = true;
     bool obscureConfirm = true;
     int passwordStrength = 0;
+    bool isChanging = false; 
 
     // 비밀번호 강도 체크
     void checkPasswordStrength(String password) {
@@ -265,14 +266,15 @@ class _ProfileEditScreenState extends State<ProfileEditScreen> {
             ),
             actions: [
               StyledDialogButton.cancel(
-                onPressed: () => Navigator.pop(context, false),
+                onPressed: () {
+                  if (isChanging) return;  // 🔥 로딩 중이면 무시
+                  Navigator.pop(context, false);
+                },
               ),
               StyledDialogButton.primary(
-                text: '변경하기',
+                text: isChanging ? '변경 중...' : '변경하기',
                 onPressed: () async {
-                  // ✅ Navigator 미리 캡처 (async 전에)
-                  final navigator = Navigator.of(context);
-                  
+                  if (isChanging) return;  // 🔥 로딩 중이면 무시
                   // 검증
                   if (currentPasswordController.text.isEmpty) {
                     ToastHelper.showWarning('현재 비밀번호를 입력해주세요');
@@ -299,14 +301,43 @@ class _ProfileEditScreenState extends State<ProfileEditScreen> {
                     return;
                   }
 
+                  // 🔥 로딩 상태 시작
+                  setDialogState(() => isChanging = true);
+
                   // ✅ 실제 비밀번호 변경 실행
                   final success = await _authService.changePassword(
                     currentPassword: currentPasswordController.text,
                     newPassword: newPasswordController.text,
                   );
                   
-                  if (success) {
-                    navigator.pop(true);  // ✅ 캡처한 navigator 사용
+                  if (success && context.mounted) {
+                    // 🔥 성공 다이얼로그 띄우고, 확인 누르면 둘 다 닫기
+                    await showDialog(
+                      context: context,
+                      barrierDismissible: false,
+                      builder: (resultContext) => StyledDialog(
+                        title: '비밀번호 변경 완료',
+                        subtitle: null,
+                        icon: Icons.check_circle,
+                        headerColor: Colors.green[600],
+                        content: Text(
+                          '비밀번호가 성공적으로 변경되었습니다.',
+                          style: ResponsiveHelper.bodyStyle(context),
+                          textAlign: TextAlign.center,
+                        ),
+                        actions: [
+                          StyledDialogButton.primary(
+                            text: '확인',
+                            onPressed: () {
+                              Navigator.pop(resultContext);  // 성공 다이얼로그 닫기
+                              Navigator.pop(context, true);  // 비밀번호 변경 다이얼로그 닫기
+                            },
+                          ),
+                        ],
+                      ),
+                    );
+                  } else {
+                    setDialogState(() => isChanging = false);
                   }
                 },
               ),

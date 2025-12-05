@@ -5920,5 +5920,207 @@ class FirestoreService {
         .snapshots()
         .map((snapshot) => snapshot.docs.length);
   }
+  // ═══════════════════════════════════════════════════════════════════════════
+// 📌 FirestoreService에 추가할 메서드들
+// 
+// 이 파일의 내용을 lib/services/firestore_service.dart에 추가하세요.
+// ═══════════════════════════════════════════════════════════════════════════
+
+  // ═══════════════════════════════════════════════════════════
+  // 지원 다이얼로그용 메서드
+  // ═══════════════════════════════════════════════════════════
+
+  /// 특정 TO에 대한 사용자의 지원 목록 조회
+  /// 
+  /// [toId] - TO 문서 ID
+  /// [uid] - 사용자 UID
+  /// 
+  /// 반환: 해당 사용자가 이 TO에 지원한 모든 지원서
+  Future<List<ApplicationModel>> getApplicationsForTO({
+    required String toId,
+    required String uid,
+  }) async {
+    try {
+      // TO 정보 먼저 조회
+      final toDoc = await _firestore.collection('tos').doc(toId).get();
+      if (!toDoc.exists) return [];
+
+      final toData = toDoc.data()!;
+      final businessId = toData['businessId'];
+      final toTitle = toData['title'];
+      final workDate = toData['date'] as Timestamp;
+
+      // 지원서 조회
+      final snapshot = await _firestore
+          .collection('applications')
+          .where('uid', isEqualTo: uid)
+          .where('businessId', isEqualTo: businessId)
+          .where('toTitle', isEqualTo: toTitle)
+          .where('workDate', isEqualTo: workDate)
+          .get();
+
+      return snapshot.docs
+          .map((doc) => ApplicationModel.fromFirestore(doc))
+          .toList();
+    } catch (e) {
+      print('❌ TO 지원 목록 조회 실패: $e');
+      return [];
+    }
+  }
+
+  /// TO에 지원하기 (간편 버전)
+  /// 
+  /// apply_work_dialog에서 사용
+  Future<bool> applyForTO({
+    required String toId,
+    required String workDetailId,
+    required String workType,
+    required String uid,
+  }) async {
+    try {
+      // 1. TO 정보 조회
+      final toDoc = await _firestore.collection('tos').doc(toId).get();
+      if (!toDoc.exists) {
+        ToastHelper.showError('TO를 찾을 수 없습니다');
+        return false;
+      }
+
+      final toData = toDoc.data()!;
+      final to = TOModel.fromMap(toData, toId);
+
+      // 2. WorkDetail 정보 조회
+      final workDetailDoc = await _firestore
+          .collection('tos')
+          .doc(toId)
+          .collection('workDetails')
+          .doc(workDetailId)
+          .get();
+
+      if (!workDetailDoc.exists) {
+        ToastHelper.showError('업무 정보를 찾을 수 없습니다');
+        return false;
+      }
+
+      final workDetail = WorkDetailModel.fromMap(workDetailDoc.data()!, workDetailId);
+
+      // 3. 기존 applyToTOWithWorkType 호출
+      return await applyToTOWithWorkType(
+        uid: uid,
+        businessId: to.businessId,
+        businessName: to.businessName,
+        toTitle: to.title,
+        workDate: to.date,
+        selectedWorkType: workType,
+        wage: workDetail.wage,
+        startTime: workDetail.startTime,
+        endTime: workDetail.endTime,
+        workEndDate: to.endDate,
+        workDays: to.workDays,
+        type: to.isLongTerm ? 'long_term' : 'short',
+      );
+    } catch (e) {
+      print('❌ TO 지원 실패: $e');
+      ToastHelper.showError('지원에 실패했습니다');
+      return false;
+    }
+  }
+
+  /// 확정된 지원 취소 (노쇼 패널티 포함)
+  /// 
+  /// [applicationId] - 지원서 ID
+  /// [applyNoShowPenalty] - true면 노쇼 카운트 증가
+  Future<bool> cancelConfirmedApplication(
+    String applicationId, {
+    bool applyNoShowPenalty = false,
+  }) async {
+    try {
+      // 1. 지원서 조회
+      final appDoc = await _firestore
+          .collection('applications')
+          .doc(applicationId)
+          .get();
+
+      if (!appDoc.exists) {
+        ToastHelper.showError('지원서를 찾을 수 없습니다');
+        return false;
+      }
+
+      final appData = appDoc.data()!;
+      final uid = appData['uid'] as String;
+
+      // 2. 상태 확인
+      if (appData['status'] != 'CONFIRMED') {
+        ToastHelper.showError('확정된 지원만 취소할 수 있습니다');
+        return false;
+      }
+
+      // 3. Batch로 처리
+      final batch = _firestore.batch();
+
+      // 3-1. 지원서 상태 변경
+      batch.update(
+        _firestore.collection('applications').doc(applicationId),
+        {
+          'status': 'CANCELED',
+          'canceledAt': FieldValue.serverTimestamp(),
+          'cancelReason': applyNoShowPenalty ? 'SAME_DAY_CANCEL' : 'USER_CANCELED',
+        },
+      );
+
+      // 3-2. 노쇼 패널티 적용
+      if (applyNoShowPenalty) {
+        batch.update(
+          _firestore.collection('users').doc(uid),
+          {
+            'noShowCount': FieldValue.increment(1),
+          },
+        );
+
+        // 노쇼 3회 체크 → 3일 이용 제한
+        final userDoc = await _firestore.collection('users').doc(uid).get();
+        final currentNoShow = (userDoc.data()?['noShowCount'] ?? 0) as int;
+        
+        if (currentNoShow >= 2) { // 이번 취소 포함해서 3회
+          final restrictedUntil = DateTime.now().add(const Duration(days: 3));
+          batch.update(
+            _firestore.collection('users').doc(uid),
+            {
+              'restrictedUntil': Timestamp.fromDate(restrictedUntil),
+              'noShowCount': 0, // 리셋
+            },
+          );
+        }
+      }
+
+      await batch.commit();
+
+      // 4. TO 통계 재계산
+      final businessId = appData['businessId'];
+      final toTitle = appData['toTitle'];
+      final workDate = appData['workDate'] as Timestamp;
+
+      final toSnapshot = await _firestore
+          .collection('tos')
+          .where('businessId', isEqualTo: businessId)
+          .where('title', isEqualTo: toTitle)
+          .where('date', isEqualTo: workDate)
+          .limit(1)
+          .get();
+
+      if (toSnapshot.docs.isNotEmpty) {
+        final toId = toSnapshot.docs.first.id;
+        await recalculateTOStats(toId);
+        clearCache(toId: toId);
+        await syncGroupMasterStats(toId);
+      }
+
+      print('✅ 확정 취소 완료 (패널티: $applyNoShowPenalty)');
+      return true;
+    } catch (e) {
+      print('❌ 확정 취소 실패: $e');
+      ToastHelper.showError('확정 취소에 실패했습니다');
+      return false;
+    }
+  }
   
 }

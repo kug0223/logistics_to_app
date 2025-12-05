@@ -54,6 +54,10 @@ dependencies:
   # 이미지 압축
   flutter_image_compress: ^2.1.0
   
+  # 이미지 캐싱
+  cached_network_image: ^3.3.1
+  shimmer: ^3.0.0
+  
   # OCR (텍스트 인식 - 신분증/서류 검증용)
   google_mlkit_text_recognition: ^0.15.0
 
