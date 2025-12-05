@@ -270,6 +270,9 @@ class _ProfileEditScreenState extends State<ProfileEditScreen> {
               StyledDialogButton.primary(
                 text: '변경하기',
                 onPressed: () async {
+                  // ✅ Navigator 미리 캡처 (async 전에)
+                  final navigator = Navigator.of(context);
+                  
                   // 검증
                   if (currentPasswordController.text.isEmpty) {
                     ToastHelper.showWarning('현재 비밀번호를 입력해주세요');
@@ -303,9 +306,7 @@ class _ProfileEditScreenState extends State<ProfileEditScreen> {
                   );
                   
                   if (success) {
-                    if (context.mounted) {
-                      Navigator.of(context).pop(true);
-                    }
+                    navigator.pop(true);  // ✅ 캡처한 navigator 사용
                   }
                 },
               ),

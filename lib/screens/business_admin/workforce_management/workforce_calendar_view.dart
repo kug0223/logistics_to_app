@@ -21,6 +21,7 @@ import '../../../utils/responsive_helper.dart';
 
 // Widgets
 import '../../../widgets/common/loading_widget.dart';
+import '../../../theme/app_colors.dart';
 
 // Dialogs
 import '../dialogs/to_list_dialogs.dart';
@@ -226,7 +227,7 @@ class _WorkforceCalendarViewState extends State<WorkforceCalendarView> {
         runSpacing: ResponsiveHelper.spacing(context, 8),
         children: [
           _buildLegendItem(theme.primaryColor, '단기 진행중', isLongTerm: false),
-          _buildLegendItem(Colors.amber[700]!, '장기 진행중', isLongTerm: true),
+          _buildLegendItem(AppColors.longTerm, '장기 진행중', isLongTerm: false),  // ✅ 보라색 + 원형
           _buildLegendItem(Colors.grey[400]!, '과거/마감', isLongTerm: false),
         ],
       ),
@@ -284,7 +285,7 @@ class _WorkforceCalendarViewState extends State<WorkforceCalendarView> {
 
           // ⭐ 회색 또는 기본 색상
           final Color shortColor = isPastOrClosed ? Colors.grey[400]! : Theme.of(context).primaryColor;
-          final Color longColor = isPastOrClosed ? Colors.grey[400]! : Colors.amber[700]!;
+          final Color longColor = isPastOrClosed ? Colors.grey[400]! : AppColors.longTerm;  // ✅ 보라색
 
           return Positioned(
             bottom: 3,
@@ -302,12 +303,16 @@ class _WorkforceCalendarViewState extends State<WorkforceCalendarView> {
                       color: shortColor,
                     ),
                   ),
-                // ⭐ 장기 TO: 별표
+                // ⭐ 장기 TO: 원형 (단기와 동일)
                 if (hasLong)
-                  Icon(
-                    Icons.star,
-                    size: 10,
-                    color: longColor,
+                  Container(
+                    width: 7,
+                    height: 7,
+                    margin: const EdgeInsets.symmetric(horizontal: 1.5),
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      color: longColor,
+                    ),
                   ),
               ],
             ),
