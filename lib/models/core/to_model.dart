@@ -538,11 +538,13 @@ class TOModel {
   DateTime get effectiveDeadline {
     if (deadlineType == 'HOURS_BEFORE' && hoursBeforeStart != null) {
       try {
+        // 🔥 UTC → 로컬 변환 후 날짜 추출
+        final localDate = date.toLocal();
         final timeParts = startTime.split(':');
         final startDateTime = DateTime(
-          date.year,
-          date.month,
-          date.day,
+          localDate.year,
+          localDate.month,
+          localDate.day,
           int.parse(timeParts[0]),
           int.parse(timeParts[1]),
         );
@@ -568,17 +570,21 @@ class TOModel {
         return now.isAfter(applicationDeadline);
       }
       
+      // 🔥 UTC → 로컬 변환
+      final localDate = date.toLocal();
+      
       // 🔥 그룹 TO면 엄격하게 체크 안 함 (각 날짜별 시간이 다름)
       if (isGrouped) {
         // 그룹의 경우 endDate까지는 진행중
         if (endDate != null) {
-          final groupEndDate = DateTime(endDate!.year, endDate!.month, endDate!.day);
+          final localEndDate = endDate!.toLocal();
+          final groupEndDate = DateTime(localEndDate.year, localEndDate.month, localEndDate.day);
           return groupEndDate.isBefore(today);
         }
       }
       
       // 단기 TO만 시간 체크
-      final workDate = DateTime(date.year, date.month, date.day);
+      final workDate = DateTime(localDate.year, localDate.month, localDate.day);
       
       if (workDate.isBefore(today)) {
         return true;
@@ -589,9 +595,9 @@ class TOModel {
           final timeParts = startTime.split(':');
           if (timeParts.length >= 2) {
             final workStart = DateTime(
-              date.year,
-              date.month,
-              date.day,
+              localDate.year,
+              localDate.month,
+              localDate.day,
               int.parse(timeParts[0]),
               int.parse(timeParts[1]),
             );

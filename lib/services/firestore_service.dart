@@ -452,10 +452,12 @@ class FirestoreService {
           if (deadlineType == 'HOURS_BEFORE') {
             final startTime = data['startTime'] as String;
             final timeParts = startTime.split(':');
+            // 🔥 UTC → 로컬 변환 후 날짜 추출
+            final localDate = date.toLocal();
             final workStartDateTime = DateTime(
-              date.year,
-              date.month,
-              date.day,
+              localDate.year,
+              localDate.month,
+              localDate.day,
               int.parse(timeParts[0]),
               int.parse(timeParts[1]),
             );
@@ -3746,11 +3748,13 @@ class FirestoreService {
         final startTime = workData['startTime'] as String;
         
         // 🔥 각 업무 시작 N시간 전으로 마감시간 계산
+        // 🔥 UTC → 로컬 변환 후 날짜 추출
+        final localWorkDate = workDate.toLocal();
         final timeParts = startTime.split(':');
         final workStartDateTime = DateTime(
-          workDate.year,
-          workDate.month,
-          workDate.day,
+          localWorkDate.year,
+          localWorkDate.month,
+          localWorkDate.day,
           int.parse(timeParts[0]),
           int.parse(timeParts[1]),
         );
@@ -3842,7 +3846,8 @@ class FirestoreService {
       for (var toDoc in tosSnapshot.docs) {
         final toData = toDoc.data();
         final toId = toDoc.id;
-        final date = (toData['date'] as Timestamp).toDate();
+        // 🔥 UTC → 로컬 변환
+        final date = (toData['date'] as Timestamp).toDate().toLocal();
         final deadlineType = toData['deadlineType'] ?? 'HOURS_BEFORE';
         final hoursBeforeStart = toData['hoursBeforeStart'] ?? 2;
         
