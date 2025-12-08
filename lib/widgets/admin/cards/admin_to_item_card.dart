@@ -67,7 +67,6 @@ class TOItemCard extends StatefulWidget {
 
 class _TOItemCardState extends State<TOItemCard> {
   @override
-  @override
   Widget build(BuildContext context) {
     final to = widget.toItem.to;
     final theme = Theme.of(context);

@@ -2002,12 +2002,6 @@ class FirestoreService {
       }
 
       final toId = toSnapshot.docs.first.id;
-      final workDetailId = await findWorkDetailIdByType(toId, selectedWorkType);
-      
-      if (workDetailId == null) {
-        ToastHelper.showError('업무유형 정보를 찾을 수 없습니다.');
-        return false;
-      }
 
       // 1. 중복 지원 확인 - ⭐ workDetailId 기준으로 변경
       final existingApp = await _firestore
