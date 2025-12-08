@@ -181,6 +181,7 @@ class ApplyDialog {
         toTitle: to.title,
         workDate: to.date,
         selectedWorkType: work.workType,
+        workDetailId: work.id,
         wage: work.wage,
         startTime: work.startTime,
         endTime: work.endTime,

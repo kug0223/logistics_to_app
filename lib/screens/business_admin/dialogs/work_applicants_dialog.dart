@@ -18,6 +18,7 @@ import '../../../models/ui/admin_to_list_ui_models.dart';
 import '../../../theme/app_colors.dart';
 import '../../../utils/id_card_helper.dart';
 import 'fixed_worker_management_dialog.dart';
+import '../../../widgets/common/loading_button.dart';
 
 /// 업무별 지원자 관리 다이얼로그 - 개선된 버전
 class WorkApplicantsDialog extends StatefulWidget {
@@ -49,6 +50,8 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog> {
   Map<String, String> _idCardStatusMap = {};
   // ⭐ 변경 여부 추적
   bool _hasChanges = false;
+  // ✅ 로딩 상태
+  bool _isProcessing = false;
   // 신분증 일괄 요청 모드
   bool _isIdCardSelectMode = false;
   final Set<String> _selectedIdCardUserIds = {};
@@ -1427,34 +1430,22 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog> {
           const Spacer(),
           
           // 거절 버튼
-          OutlinedButton.icon(
-            onPressed: hasSelection ? () => _batchReject() : null,
-            icon: Icon(Icons.close, size: ResponsiveHelper.iconSize(context, 16)),
-            label: const Text('거절'),
-            style: OutlinedButton.styleFrom(
-              foregroundColor: AppColors.error,
-              side: BorderSide(color: hasSelection ? AppColors.error : AppColors.grey300),
-              padding: EdgeInsets.symmetric(
-                horizontal: ResponsiveHelper.spacing(context, 16),
-                vertical: ResponsiveHelper.spacing(context, 10),
-              ),
-            ),
+          LoadingButton.outlined(
+            text: '거절',
+            icon: Icons.close,
+            borderColor: AppColors.error,
+            foregroundColor: AppColors.error,
+            disabled: !hasSelection,
+            onPressed: () async => await _batchReject(),
           ),
           SizedBox(width: ResponsiveHelper.spacing(context, 8)),
           
           // 승인 버튼
-          ElevatedButton.icon(
-            onPressed: hasSelection ? () => _batchApprove() : null,
-            icon: Icon(Icons.check, size: ResponsiveHelper.iconSize(context, 16)),
-            label: const Text('승인'),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: AppColors.success,
-              foregroundColor: Colors.white,
-              padding: EdgeInsets.symmetric(
-                horizontal: ResponsiveHelper.spacing(context, 16),
-                vertical: ResponsiveHelper.spacing(context, 10),
-              ),
-            ),
+          LoadingButton.success(
+            text: '승인',
+            icon: Icons.check,
+            disabled: !hasSelection,
+            onPressed: () async => await _batchApprove(),
           ),
         ],
       ),
@@ -1463,7 +1454,7 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog> {
 
   /// 일괄 승인
   Future<void> _batchApprove() async {
-    if (_selectedIds.isEmpty) return;
+    if (_selectedIds.isEmpty || _isProcessing) return;
 
     // 인원 체크
     final stats = widget.toItem.workDetailStats?[widget.work.workType];
@@ -1484,6 +1475,8 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog> {
 
     if (confirm != true) return;
 
+    setState(() => _isProcessing = true);
+
     try {
       final userProvider = context.read<UserProvider>();
       final adminUID = userProvider.currentUser?.uid;
@@ -1499,15 +1492,17 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog> {
       ToastHelper.showSuccess('${_selectedIds.length}명이 승인되었습니다');
       _selectedIds.clear();
       await _loadApplicants();
-      await _updateLocalStats();  // ⭐ 로컬 통계 갱신
+      await _updateLocalStats();
     } catch (e) {
       ToastHelper.showError('승인 처리 중 오류가 발생했습니다');
+    } finally {
+      if (mounted) setState(() => _isProcessing = false);
     }
   }
 
   /// 일괄 거절
   Future<void> _batchReject() async {
-    if (_selectedIds.isEmpty) return;
+    if (_selectedIds.isEmpty || _isProcessing) return;
 
     final reason = await DialogHelper.showRejectReasonPicker(
       context,
@@ -1516,6 +1511,8 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog> {
     );
 
     if (reason == null) return;
+
+    setState(() => _isProcessing = true);
 
     try {
       final userProvider = context.read<UserProvider>();
@@ -1536,6 +1533,8 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog> {
       await _updateLocalStats();
     } catch (e) {
       ToastHelper.showError('거절 처리 중 오류가 발생했습니다');
+    } finally {
+      if (mounted) setState(() => _isProcessing = false);
     }
   }
   /// 로컬 통계 갱신 (부모 toItem의 workDetailStats 업데이트)

@@ -350,6 +350,7 @@ class TestDataHelper {
         'endTime': workData['endTime'] ?? endTime ?? '',
         'uid': uid,
         'selectedWorkType': workData['workType'],
+        'workDetailId': workDetail.id,
         'wage': workData['wage'],
         'status': isConfirmed ? 'CONFIRMED' : 'PENDING',
         'appliedAt': now,

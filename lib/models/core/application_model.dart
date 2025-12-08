@@ -21,6 +21,7 @@ class ApplicationModel {
   
   // 업무 유형 및 금액
   final String selectedWorkType; // 현재 지원한 업무 유형 (예: "피킹")
+  final String? workDetailId;  // ✅ 추가: WorkDetail 고유 ID
   final int wage; // 지원 시점의 금액 (업무유형 변경 시 함께 업데이트)
   
   // 업무 변경 이력
@@ -77,6 +78,7 @@ class ApplicationModel {
     required this.endTime,
     required this.uid,
     required this.selectedWorkType,
+    this.workDetailId,  // ✅ 추가
     required this.wage,
     this.originalWorkType,
     this.originalWage,
@@ -137,6 +139,7 @@ class ApplicationModel {
       endTime: data['endTime'] ?? '',
       uid: data['uid'] ?? '',
       selectedWorkType: data['selectedWorkType'] ?? '',
+      workDetailId: data['workDetailId'],  // ✅ 추가
       wage: data['wage'] ?? 0,
       originalWorkType: data['originalWorkType'],
       originalWage: data['originalWage'],
@@ -224,6 +227,7 @@ class ApplicationModel {
       'endTime': endTime,
       'uid': uid,
       'selectedWorkType': selectedWorkType,
+      'workDetailId': workDetailId,  // ✅ 추가
       'wage': wage,
       'originalWorkType': originalWorkType,
       'originalWage': originalWage,

@@ -1828,6 +1828,7 @@ class FirestoreService {
     required DateTime workDate,
     required String uid,
     required String selectedWorkType,
+    required String workDetailId,  // ✅ 추가
     required int wage,
     required String startTime,
     required String endTime,
@@ -1945,6 +1946,7 @@ class FirestoreService {
         'businessName': businessName,
         'toTitle': toTitle,
         'selectedWorkType': selectedWorkType,
+        'workDetailId': workDetailId,
         'wage': wage,
         'workDate': Timestamp.fromDate(workDate),
         'startTime': startTime,
@@ -3552,22 +3554,35 @@ class FirestoreService {
       
       for (var workDetailDoc in workDetailsSnapshot.docs) {
         final workDetailId = workDetailDoc.id;
-        final workType = workDetailDoc.data()['workType'];
+        final workDetailData = workDetailDoc.data();
+        final workType = workDetailData['workType'];
+        final workStartTime = workDetailData['startTime'] ?? '';
+        final workEndTime = workDetailData['endTime'] ?? '';
         
-        // 해당 workType의 지원자 수 계산
+        // 해당 WorkDetail의 지원자 수 계산
         int confirmedCount = 0;
         int pendingCount = 0;
         
         for (var appDoc in appsSnapshot.docs) {
           final appData = appDoc.data();
+          final appWorkDetailId = appData['workDetailId'];
           final selectedWorkType = appData['selectedWorkType'];
+          final appStartTime = appData['startTime'] ?? '';
+          final appEndTime = appData['endTime'] ?? '';
           final status = appData['status'];
           
-          // 더미 데이터 제외 (옵션)
-          //final isDummy = appData['isDummy'] ?? false;
-          //if (isDummy) continue;
+          // ✅ workDetailId가 있으면 정확히 매칭, 없으면 시간으로 폴백
+          bool isMatch = false;
+          if (appWorkDetailId != null && appWorkDetailId.isNotEmpty) {
+            isMatch = (appWorkDetailId == workDetailId);
+          } else {
+            // 기존 데이터 호환: workType + 시간으로 매칭
+            isMatch = (selectedWorkType == workType &&
+                       appStartTime == workStartTime &&
+                       appEndTime == workEndTime);
+          }
           
-          if (selectedWorkType == workType) {
+          if (isMatch) {
             if (status == 'CONFIRMED') confirmedCount++;
             if (status == 'PENDING') pendingCount++;
           }
@@ -6011,6 +6026,7 @@ class FirestoreService {
         toTitle: to.title,
         workDate: to.date,
         selectedWorkType: workType,
+        workDetailId: workDetailId,  // ✅ 추가
         wage: workDetail.wage,
         startTime: workDetail.startTime,
         endTime: workDetail.endTime,
