@@ -432,6 +432,9 @@ class FirestoreService {
         'isPublished': shouldPublishImmediately,  // 즉시 공개 또는 과거 날짜면 true
         'publishDaysBefore': publishDaysBefore,
         'publishTime': publishTime,
+        // ✅ Phase 4: 상태 필드
+        'status': 'ACTIVE',
+        'statusUpdatedAt': FieldValue.serverTimestamp(),
       };
 
       // 3. TO 문서 생성
@@ -494,11 +497,15 @@ class FirestoreService {
       await batch.commit();
       print('✅ WorkDetails 생성 완료: ${workDetailsData.length}개');
 
+      // ✅ 그룹 TO면 마스터 통계 동기화
+      if (groupId != null) {
+        await _updateGroupMasterStats(groupId);
+      }
+
       //ToastHelper.showSuccess('TO가 생성되었습니다!');
       return toDoc.id;
     } catch (e) {
       print('❌ [FirestoreService] TO 생성 실패: $e');
-      ToastHelper.showError('TO 생성에 실패했습니다.');
       return null;
     }
   }
@@ -621,6 +628,9 @@ class FirestoreService {
           'description': description,
           'creatorUID': creatorUID,
           'createdAt': FieldValue.serverTimestamp(),
+          // ✅ Phase 4: 상태 필드
+          'status': 'ACTIVE',
+          'statusUpdatedAt': FieldValue.serverTimestamp(),
         };
         
         // TO 문서 생성
@@ -810,6 +820,9 @@ class FirestoreService {
           'description': description ?? '',
           'creatorUID': creatorUID,
           'createdAt': FieldValue.serverTimestamp(),
+          // ✅ Phase 4: 상태 필드
+          'status': 'ACTIVE',
+          'statusUpdatedAt': FieldValue.serverTimestamp(),
         };
 
         final toDoc = _firestore.collection('tos').doc();
@@ -5193,15 +5206,26 @@ class FirestoreService {
         print('      - ${app.selectedWorkType}: ${app.status} (workDate: ${app.workDate})');
       }
       
-      // 업무별 통계 계산
+      // 업무별 통계 계산 (workDetailId로 구분!)
       Map<String, Map<String, int>> workStats = {};
       for (var work in workDetails) {
-        final workApps = apps.where((a) => a.selectedWorkType == work.workType);
-        workStats[work.workType] = {
+        // ✅ workDetailId로 매칭 (없으면 workType + 시간으로 폴백)
+        final workApps = apps.where((a) {
+          if (a.workDetailId != null && a.workDetailId!.isNotEmpty) {
+            return a.workDetailId == work.id;
+          }
+          // 기존 데이터 호환: workType + 시간으로 매칭
+          return a.selectedWorkType == work.workType &&
+                 a.startTime == work.startTime &&
+                 a.endTime == work.endTime;
+        });
+        
+        // ✅ key를 workDetailId로 변경
+        workStats[work.id] = {
           'confirmed': workApps.where((a) => a.status == 'CONFIRMED').length,
           'pending': workApps.where((a) => a.status == 'PENDING').length,
         };
-        print('   📊 ${work.workType}: 확정=${workStats[work.workType]!['confirmed']}, 대기=${workStats[work.workType]!['pending']}');
+        print('   📊 ${work.workType} (${work.id}): 확정=${workStats[work.id]!['confirmed']}, 대기=${workStats[work.id]!['pending']}');
       }
       
       // 시간 범위 설정

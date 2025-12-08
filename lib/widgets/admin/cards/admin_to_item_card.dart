@@ -85,7 +85,8 @@ class _TOItemCardState extends State<TOItemCard> {
     } else {
       // 상세 로드됨 - workDetails에서 계산
       for (var work in widget.toItem.workDetails) {
-        final stats = widget.toItem.workDetailStats?[work.workType];
+        // ✅ workDetailId로 조회
+        final stats = widget.toItem.workDetailStats?[work.id];
         confirmed += (stats?['confirmed'] ?? 0);
         pending += (stats?['pending'] ?? 0);
         required += work.requiredCount;

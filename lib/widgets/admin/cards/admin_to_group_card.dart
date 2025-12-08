@@ -96,7 +96,8 @@ class _TOGroupCardState extends State<TOGroupCard> with SingleTickerProviderStat
       // ✅ workDetails 로드됐으면 각 업무별로 workDetailStats에서 합산
       if (toItem.isWorkDetailLoaded && toItem.workDetails.isNotEmpty) {
         for (var work in toItem.workDetails) {
-          final stats = toItem.workDetailStats?[work.workType];
+          // ✅ workDetailId로 조회
+          final stats = toItem.workDetailStats?[work.id];
           totalConfirmed += (stats?['confirmed'] ?? 0);
           totalPending += (stats?['pending'] ?? 0);
         }

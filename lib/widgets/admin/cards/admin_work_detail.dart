@@ -54,14 +54,14 @@ class WorkDetailRow extends StatefulWidget {
 
 class _WorkDetailRowState extends State<WorkDetailRow> {
   
-  // ⭐ 로컬 통계 (toItem.workDetailStats에서 가져오거나 초기값 사용)
+  // ✅ workDetailId로 조회
   int get _confirmedCount {
-    final stats = widget.toItem.workDetailStats?[widget.work.workType];
+    final stats = widget.toItem.workDetailStats?[widget.work.id];
     return stats?['confirmed'] ?? widget.confirmedCount;
   }
   
   int get _pendingCount {
-    final stats = widget.toItem.workDetailStats?[widget.work.workType];
+    final stats = widget.toItem.workDetailStats?[widget.work.id];
     return stats?['pending'] ?? widget.pendingCount;
   }
   
