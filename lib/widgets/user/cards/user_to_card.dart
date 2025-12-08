@@ -1123,7 +1123,7 @@ class _UserTOCardState extends State<UserTOCard> {
         // 지원하기 버튼
         Expanded(
           child: ElevatedButton.icon(
-            onPressed: _hasAppliedToTO ? null : _openApplyDialog,
+            onPressed: _openApplyDialog,
             icon: Icon(
               _hasAppliedToTO ? Icons.check : Icons.send,
               size: ResponsiveHelper.iconSize(context, 18),
@@ -1181,7 +1181,7 @@ class _UserTOCardState extends State<UserTOCard> {
         
         // 지원하기 버튼
         InkWell(
-          onTap: _hasAppliedToTO ? null : _openApplyDialog,
+          onTap: _openApplyDialog,
           borderRadius: BorderRadius.circular(8),
           child: Container(
             padding: EdgeInsets.symmetric(
@@ -1202,7 +1202,7 @@ class _UserTOCardState extends State<UserTOCard> {
                 ),
                 SizedBox(width: ResponsiveHelper.spacing(context, 6)),
                 Text(
-                  _hasAppliedToTO ? '지원완료' : '지원하기',
+                  _hasAppliedToTO ? '지원관리' : '지원하기',
                   style: ResponsiveHelper.smallStyle(
                     context,
                     color: Colors.white,

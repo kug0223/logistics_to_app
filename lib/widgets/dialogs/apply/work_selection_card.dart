@@ -101,8 +101,6 @@ class WorkSelectionCard extends StatelessWidget {
               
               SizedBox(height: ResponsiveHelper.spacing(context, 12)),
               
-              // 하단: 액션 버튼
-              _buildActionButton(context, theme),
             ],
           ),
         ),
@@ -122,17 +120,17 @@ class WorkSelectionCard extends StatelessWidget {
           iconString: workDetail.workTypeIcon,
           iconColor: workDetail.workTypeColor,
           backgroundColor: workDetail.workTypeBackgroundColor,
-          size: ResponsiveHelper.spacing(context, 20),
-          containerSize: ResponsiveHelper.spacing(context, 36),
+          size: ResponsiveHelper.spacing(context, 16),
+          containerSize: ResponsiveHelper.spacing(context, 32),
         ),
         
-        SizedBox(width: ResponsiveHelper.spacing(context, 12)),
+        SizedBox(width: ResponsiveHelper.spacing(context, 10)),
         
         // 업무명
         Expanded(
           child: Text(
             workDetail.workType,
-            style: ResponsiveHelper.subtitleStyle(context).copyWith(
+            style: ResponsiveHelper.bodyStyle(context).copyWith(
               fontWeight: FontWeight.bold,
             ),
           ),
@@ -140,6 +138,11 @@ class WorkSelectionCard extends StatelessWidget {
         
         // 상태 뱃지
         _buildStatusBadge(context),
+        
+        SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+        
+        // 액션 버튼 (인라인)
+        _buildInlineActionButton(context, theme),
       ],
     );
   }
@@ -151,7 +154,7 @@ class WorkSelectionCard extends StatelessWidget {
 
     // 충돌이 BLOCKED면 최우선
     if (conflictInfo.level == ConflictLevel.blocked) {
-      text = '시간 충돌';
+      text = '시간충돌';
       bgColor = AppColors.errorBg;
       textColor = AppColors.errorDark;
     } else {
@@ -172,13 +175,15 @@ class WorkSelectionCard extends StatelessWidget {
           textColor = AppColors.grey600;
           break;
         case WorkApplicationStatus.notApplied:
-          // 마감 여부 체크
-          if (workDetail.isFull) {
+          // 마감/모집중 표시
+          if (workDetail.isFull || workDetail.isClosed) {
             text = '마감';
             bgColor = AppColors.grey200;
             textColor = AppColors.grey600;
           } else {
-            return const SizedBox.shrink(); // 미지원은 뱃지 없음
+            text = '모집중';
+            bgColor = AppColors.successBg;
+            textColor = AppColors.successDark;
           }
           break;
       }
@@ -209,34 +214,35 @@ class WorkSelectionCard extends StatelessWidget {
   // ═══════════════════════════════════════════════════════════
 
   Widget _buildDetails(BuildContext context, ThemeData theme) {
-    return Row(
-      children: [
-        // 시간
-        _buildDetailItem(
-          context,
-          icon: Icons.access_time,
-          text: workDetail.timeRange,
-        ),
-        
-        SizedBox(width: ResponsiveHelper.spacing(context, 16)),
-        
-        // 급여
-        _buildDetailItem(
-          context,
-          icon: Icons.payments_outlined,
-          text: '${FormatHelper.formatNumber(workDetail.wage)}원/${workDetail.wageTypeLabel}',
-        ),
-        
-        SizedBox(width: ResponsiveHelper.spacing(context, 16)),
-        
-        // 인원
-        _buildDetailItem(
-          context,
-          icon: Icons.people_outline,
-          text: workDetail.countInfo,
-          highlight: workDetail.isFull,
-        ),
-      ],
+    return Padding(
+      padding: EdgeInsets.only(
+        left: ResponsiveHelper.spacing(context, 42), // 아이콘 너비만큼 들여쓰기
+      ),
+      child: Row(
+        children: [
+          Icon(
+            Icons.access_time,
+            size: ResponsiveHelper.iconSize(context, 14),
+            color: AppColors.grey500,
+          ),
+          SizedBox(width: ResponsiveHelper.spacing(context, 4)),
+          Text(
+            workDetail.timeRange,
+            style: ResponsiveHelper.smallStyle(context, color: AppColors.grey700),
+          ),
+          SizedBox(width: ResponsiveHelper.spacing(context, 12)),
+          Icon(
+            Icons.payments_outlined,
+            size: ResponsiveHelper.iconSize(context, 14),
+            color: AppColors.grey500,
+          ),
+          SizedBox(width: ResponsiveHelper.spacing(context, 4)),
+          Text(
+            '${FormatHelper.formatNumber(workDetail.wage)}원/${workDetail.wageTypeLabel}',
+            style: ResponsiveHelper.smallStyle(context, color: AppColors.grey700),
+          ),
+        ],
+      ),
     );
   }
 
@@ -265,6 +271,75 @@ class WorkSelectionCard extends StatelessWidget {
           ),
         ),
       ],
+    );
+  }
+  /// 인라인 액션 버튼 (작은 버튼)
+  Widget _buildInlineActionButton(BuildContext context, ThemeData theme) {
+    // 로딩 중
+    if (isLoading) {
+      return SizedBox(
+        width: ResponsiveHelper.spacing(context, 20),
+        height: ResponsiveHelper.spacing(context, 20),
+        child: CircularProgressIndicator(
+          strokeWidth: 2,
+          color: theme.primaryColor,
+        ),
+      );
+    }
+
+    // BLOCKED면 선택 불가
+    if (conflictInfo.level == ConflictLevel.blocked) {
+      return _buildSmallButton(context, '불가', AppColors.grey400, null);
+    }
+
+    // 상태별 버튼
+    switch (status) {
+      case WorkApplicationStatus.notApplied:
+        if (workDetail.isFull || workDetail.isClosed) {
+          return _buildSmallButton(context, '마감', AppColors.grey400, null);
+        }
+        return _buildSmallButton(context, '지원', AppColors.success, onApply);
+        
+      case WorkApplicationStatus.pending:
+        return _buildSmallButton(context, '취소', AppColors.grey500, onCancelApplication);
+        
+      case WorkApplicationStatus.confirmed:
+        return _buildSmallButton(context, '확정됨', AppColors.info, null);
+        
+      case WorkApplicationStatus.closed:
+        return _buildSmallButton(context, '마감', AppColors.grey400, null);
+    }
+  }
+
+  Widget _buildSmallButton(BuildContext context, String text, Color color, VoidCallback? onTap, {IconData? icon}) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(6),
+      child: Container(
+        padding: EdgeInsets.symmetric(
+          horizontal: ResponsiveHelper.spacing(context, 10),
+          vertical: ResponsiveHelper.spacing(context, 5),
+        ),
+        decoration: BoxDecoration(
+          color: onTap != null ? color : color.withOpacity(0.5),
+          borderRadius: BorderRadius.circular(6),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (icon != null) ...[
+              Icon(icon, size: ResponsiveHelper.iconSize(context, 12), color: Colors.white),
+              SizedBox(width: ResponsiveHelper.spacing(context, 4)),
+            ],
+            Text(
+              text,
+              style: ResponsiveHelper.smallStyle(context, color: Colors.white).copyWith(
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 
@@ -336,20 +411,19 @@ class WorkSelectionCard extends StatelessWidget {
     // 상태별 버튼
     switch (status) {
       case WorkApplicationStatus.notApplied:
-        // 마감 체크
         if (workDetail.isFull || workDetail.isClosed) {
-          return _buildDisabledButton(context, '마감');
+          return _buildSmallButton(context, '마감', AppColors.grey400, null, icon: Icons.block);
         }
-        return _buildApplyButton(context, theme);
+        return _buildSmallButton(context, '지원', AppColors.success, onApply, icon: Icons.send);
         
       case WorkApplicationStatus.pending:
-        return _buildCancelApplicationButton(context);
+        return _buildSmallButton(context, '취소', AppColors.grey500, onCancelApplication, icon: Icons.close);
         
       case WorkApplicationStatus.confirmed:
-        return _buildCancelConfirmButton(context);
+        return _buildSmallButton(context, '확정', AppColors.info, null, icon: Icons.check);
         
       case WorkApplicationStatus.closed:
-        return _buildDisabledButton(context, '마감');
+        return _buildSmallButton(context, '마감', AppColors.grey400, null, icon: Icons.block);
     }
   }
 

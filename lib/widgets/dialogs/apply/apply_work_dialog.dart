@@ -185,10 +185,17 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
           uid: _currentUserId!,
         );
         
+        print('📋 로드된 지원서 수: ${applications.length}');
+        for (final app in applications) {
+          print('  - ${app.selectedWorkType}: ${app.status}');
+        }
+        
         _applicationsByDate[widget.mainTO.date] = {
-          for (final app in applications)
-            app.selectedWorkType: app
-        };
+        for (final app in applications)
+          _makeWorkKey(app.selectedWorkType, app.startTime, app.endTime): app
+      };
+        
+        print('📋 _applicationsByDate 키: ${_applicationsByDate[widget.mainTO.date]?.keys.toList()}');
         
         // 충돌 체크
         final conflicts = await _conflictService.checkConflictsForWorkDetails(
@@ -384,9 +391,12 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
           SizedBox(height: ResponsiveHelper.spacing(context, 8)),
           
           ...widget.workDetails.map((work) {
-            final application = _applicationsByDate[widget.mainTO.date]?[work.workType];
+            final workKey = _makeWorkKey(work.workType, work.startTime, work.endTime);
+            final application = _applicationsByDate[widget.mainTO.date]?[workKey];
             final conflictInfo = _conflictCache[_dateKey(widget.mainTO.date)]?[work.id] 
                 ?? ConflictInfo.ok;
+            
+            print('🔍 ${work.workType}: application=${application?.status}, status=${_getApplicationStatus(application)}');
             
             return WorkSelectionCard(
               workDetail: work,
@@ -592,7 +602,8 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
         
         // 업무 목록
         ...workDetails.map((work) {
-          final application = _applicationsByDate[date]?[work.workType];
+          final workKey = _makeWorkKey(work.workType, work.startTime, work.endTime);
+          final application = _applicationsByDate[date]?[workKey];
           final conflictInfo = _conflictCache[_dateKey(date)]?[work.id] 
               ?? ConflictInfo.ok;
           
@@ -898,5 +909,9 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
     } catch (e) {
       print('❌ 상태 새로고침 실패: $e');
     }
+  }
+  /// 업무 고유 키 생성 (workType + 시간)
+  String _makeWorkKey(String workType, String startTime, String endTime) {
+    return '${workType}_${startTime}_$endTime';
   }
 }
