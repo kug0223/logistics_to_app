@@ -20,6 +20,7 @@ import '../../theme/app_colors.dart';
 import '../../utils/id_card_helper.dart';
 import 'styled_dialog.dart';
 import '../../screens/business_admin/dialogs/fixed_worker_management_dialog.dart';
+import '../common/loading_button.dart';
 
 /// 공통 근무자/지원자 상세 다이얼로그
 /// 
@@ -932,28 +933,20 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
             
             // 거절 버튼
             Expanded(
-              child: OutlinedButton(
-                onPressed: () => _updateStatus('REJECTED'),
-                style: OutlinedButton.styleFrom(
-                  foregroundColor: AppColors.error,
-                  side: BorderSide(color: AppColors.error),
-                  padding: EdgeInsets.symmetric(vertical: ResponsiveHelper.spacing(context, 12)),
-                ),
-                child: const Text('거절'),
+              child: LoadingButton.outlined(
+                text: '거절',
+                borderColor: AppColors.error,
+                foregroundColor: AppColors.error,
+                onPressed: () async => await _updateStatus('REJECTED'),
               ),
             ),
             SizedBox(width: ResponsiveHelper.spacing(context, 8)),
             
             // 승인 버튼
             Expanded(
-              child: ElevatedButton(
-                onPressed: () => _updateStatus('CONFIRMED'),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: AppColors.success,
-                  foregroundColor: Colors.white,
-                  padding: EdgeInsets.symmetric(vertical: ResponsiveHelper.spacing(context, 12)),
-                ),
-                child: const Text('승인'),
+              child: LoadingButton.success(
+                text: '승인',
+                onPressed: () async => await _updateStatus('CONFIRMED'),
               ),
             ),
           ],
@@ -982,18 +975,12 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
             ] else ...[
               // 단기 확정자: 확정취소 버튼
               Expanded(
-                child: OutlinedButton.icon(
-                  onPressed: _cancelConfirmation,
-                  icon: Icon(
-                    Icons.cancel_outlined,
-                    size: ResponsiveHelper.iconSize(context, 18),
-                  ),
-                  label: const Text('확정취소'),
-                  style: OutlinedButton.styleFrom(
-                    foregroundColor: AppColors.error,
-                    side: BorderSide(color: AppColors.error),
-                    padding: EdgeInsets.symmetric(vertical: ResponsiveHelper.spacing(context, 12)),
-                  ),
+                child: LoadingButton.outlined(
+                  text: '확정취소',
+                  icon: Icons.cancel_outlined,
+                  borderColor: AppColors.error,
+                  foregroundColor: AppColors.error,
+                  onPressed: () async => await _cancelConfirmation(),
                 ),
               ),
             ],

@@ -18,7 +18,7 @@ ALfit
 
 냉동분류
 
-git add . ; if ($?) { git commit -m "지원확정 오류 및 마감시간 오류 개선 UI/UX 251208-2" } ; if ($?) { git push }
+git add . ; if ($?) { git commit -m "지원확정 오류 및 마감시간 오류 개선 UI/UX 251208-3" } ; if ($?) { git push }
 
 flutter clean
 flutter pub get

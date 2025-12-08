@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 import 'package:intl/intl.dart';
 import '../../models/core/application_model.dart';
 import '../../models/core/attendance_model.dart';
+import '../../widgets/common/loading_button.dart';
 import '../../services/firestore_service.dart';
 import '../../providers/user_provider.dart';
 import '../../utils/location_helper.dart';
@@ -392,29 +393,21 @@ class _AttendanceCheckScreenState extends State<AttendanceCheckScreen> {
 
             // 출근/퇴근 버튼
             if (!hasCheckedIn)
-              SizedBox(
-                width: double.infinity,
-                child: ElevatedButton.icon(
-                  onPressed: _isProcessing ? null : () => _checkIn(work),
-                  icon: const Icon(Icons.login),
-                  label: const Text('출근하기'),
-                  style: ElevatedButton.styleFrom(
-                    padding: const EdgeInsets.symmetric(vertical: 16),
-                  ),
-                ),
+              LoadingButton.primary(
+                text: '출근하기',
+                icon: Icons.login,
+                expand: true,
+                isLoading: _isProcessing,
+                onPressed: () async => await _checkIn(work),
               )
             else if (!hasCheckedOut)
-              SizedBox(
-                width: double.infinity,
-                child: ElevatedButton.icon(
-                  onPressed: _isProcessing ? null : () => _checkOut(work, attendance!),
-                  icon: const Icon(Icons.logout),
-                  label: const Text('퇴근하기'),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: Colors.orange[700],
-                    padding: const EdgeInsets.symmetric(vertical: 16),
-                  ),
-                ),
+              LoadingButton(
+                text: '퇴근하기',
+                icon: Icons.logout,
+                expand: true,
+                backgroundColor: Colors.orange[700],
+                isLoading: _isProcessing,
+                onPressed: () async => await _checkOut(work, attendance!),
               )
             else
               Container(

@@ -17,6 +17,7 @@ import '../../../utils/toast_helper.dart';
 
 // Theme
 import '../../../theme/app_colors.dart';
+import '../../common/loading_button.dart';
 
 // Widgets
 import '../../work_type_icon.dart';
@@ -1120,97 +1121,15 @@ class _UserTOCardState extends State<UserTOCard> {
         
         SizedBox(width: ResponsiveHelper.spacing(context, 12)),
         
-        // 지원하기 버튼
+        // 지원하기/지원관리 버튼
         Expanded(
-          child: ElevatedButton.icon(
-            onPressed: _openApplyDialog,
-            icon: Icon(
-              _hasAppliedToTO ? Icons.check : Icons.send,
-              size: ResponsiveHelper.iconSize(context, 18),
-            ),
-            label: Text(
-              _hasAppliedToTO ? '지원완료' : '지원하기',
-              style: ResponsiveHelper.bodyStyle(context, color: Colors.white),
-            ),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: _hasAppliedToTO 
-                  ? AppColors.grey400 
-                  : theme.primaryColor,
-              foregroundColor: Colors.white,
-              disabledBackgroundColor: AppColors.grey400,
-              disabledForegroundColor: Colors.white,
-              padding: EdgeInsets.symmetric(
-                vertical: ResponsiveHelper.spacing(context, 12),
-              ),
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(8),
-              ),
-            ),
-          ),
-        ),
-      ],
-    );
-  }
-  /// 상단 작은 버튼들
-  Widget _buildCompactActionButtons(BuildContext context) {
-    final theme = Theme.of(context);
-    
-    return Row(
-      mainAxisAlignment: MainAxisAlignment.end,
-      children: [
-        // 상세보기 (아이콘만)
-        InkWell(
-          onTap: _goToJobPosting,
-          borderRadius: BorderRadius.circular(8),
-          child: Container(
-            padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 8)),
-            decoration: BoxDecoration(
-              color: AppColors.grey100,
-              borderRadius: BorderRadius.circular(8),
-              border: Border.all(color: AppColors.grey300),
-            ),
-            child: Icon(
-              Icons.info_outline,
-              size: ResponsiveHelper.iconSize(context, 18),
-              color: AppColors.grey700,
-            ),
-          ),
-        ),
-        
-        SizedBox(width: ResponsiveHelper.spacing(context, 8)),
-        
-        // 지원하기 버튼
-        InkWell(
-          onTap: _openApplyDialog,
-          borderRadius: BorderRadius.circular(8),
-          child: Container(
-            padding: EdgeInsets.symmetric(
-              horizontal: ResponsiveHelper.spacing(context, 14),
-              vertical: ResponsiveHelper.spacing(context, 8),
-            ),
-            decoration: BoxDecoration(
-              color: _hasAppliedToTO ? AppColors.grey300 : theme.primaryColor,
-              borderRadius: BorderRadius.circular(8),
-            ),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Icon(
-                  _hasAppliedToTO ? Icons.check : Icons.send,
-                  size: ResponsiveHelper.iconSize(context, 16),
-                  color: Colors.white,
-                ),
-                SizedBox(width: ResponsiveHelper.spacing(context, 6)),
-                Text(
-                  _hasAppliedToTO ? '지원관리' : '지원하기',
-                  style: ResponsiveHelper.smallStyle(
-                    context,
-                    color: Colors.white,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-              ],
-            ),
+          child: LoadingButton(
+            text: _hasAppliedToTO ? '지원관리' : '지원하기',
+            icon: _hasAppliedToTO ? Icons.settings : Icons.send,
+            backgroundColor: _hasAppliedToTO 
+                ? AppColors.info 
+                : theme.primaryColor,
+            onPressed: () async => _openApplyDialog(),
           ),
         ),
       ],

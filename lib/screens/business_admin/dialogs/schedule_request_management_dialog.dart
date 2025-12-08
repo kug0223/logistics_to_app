@@ -9,6 +9,8 @@ import '../../../providers/user_provider.dart';
 import '../../../utils/toast_helper.dart';
 import '../../../utils/responsive_helper.dart';
 import '../../../widgets/common/loading_widget.dart';
+import '../../../widgets/common/loading_button.dart';
+
 
 /// 스케줄 변경 요청 관리 다이얼로그 (관리자용)
 class ScheduleRequestManagementDialog extends StatefulWidget {
@@ -449,32 +451,20 @@ class _ScheduleRequestManagementDialogState
               Row(
                 children: [
                   Expanded(
-                    child: OutlinedButton.icon(
-                      onPressed: () => _handleReject(item),
-                      icon: const Icon(Icons.cancel),
-                      label: const Text('거절'),
-                      style: OutlinedButton.styleFrom(
-                        foregroundColor: Colors.red,
-                        side: const BorderSide(color: Colors.red),
-                        padding: EdgeInsets.symmetric(
-                          vertical: ResponsiveHelper.spacing(context, 12),
-                        ),
-                      ),
+                    child: LoadingButton.outlined(
+                      text: '거절',
+                      icon: Icons.cancel,
+                      borderColor: Colors.red,
+                      foregroundColor: Colors.red,
+                      onPressed: () async => await _handleReject(item),
                     ),
                   ),
                   SizedBox(width: ResponsiveHelper.spacing(context, 12)),
                   Expanded(
-                    child: ElevatedButton.icon(
-                      onPressed: () => _handleApprove(item),
-                      icon: const Icon(Icons.check_circle),
-                      label: const Text('승인'),
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: Colors.green,
-                        foregroundColor: Colors.white,
-                        padding: EdgeInsets.symmetric(
-                          vertical: ResponsiveHelper.spacing(context, 12),
-                        ),
-                      ),
+                    child: LoadingButton.success(
+                      text: '승인',
+                      icon: Icons.check_circle,
+                      onPressed: () async => await _handleApprove(item),
                     ),
                   ),
                 ],
