@@ -101,17 +101,25 @@ class _ConfirmedListDialogWidgetState
       final confirmed =
           applications.where((app) => app.status == 'CONFIRMED').toList();
 
-      final futures = confirmed.map((app) async {
-        final user = await widget.firestoreService.getUser(app.uid);
+      // ✅ 1. 중복 제거된 UID 목록
+      final uniqueUids = confirmed.map((app) => app.uid).toSet().toList();
+      
+      // ✅ 2. 사용자 정보 한 번만 조회 (병렬)
+      final userFutures = uniqueUids.map((uid) async {
+        final user = await widget.firestoreService.getUser(uid);
+        return MapEntry(uid, user);
+      });
+      final userEntries = await Future.wait(userFutures);
+      final userMap = Map.fromEntries(userEntries);
+      
+      // ✅ 3. 결과 매핑 (추가 조회 없음)
+      final results = confirmed.map((app) {
         return {
           'application': app,
-          'user': user,
+          'user': userMap[app.uid],
           'workType': app.selectedWorkType,
         };
       }).toList();
-
-      final results = await Future.wait(futures);
-
       final Map<String, List<Map<String, dynamic>>> groupedByWork = {};
 
       for (var result in results) {
@@ -281,13 +289,18 @@ class _ConfirmedListDialogWidgetState
           _buildIdCardRequestSection(totalRequestableCount),
         SizedBox(height: ResponsiveHelper.spacing(context, 16)),
         ..._confirmedByWork.entries.map((entry) {
-          final workType = entry.key;
+          final groupKey = entry.key;
           final workers = entry.value;
+          
+          // ✅ workDetailId로 먼저 찾고, 없으면 workType으로 폴백
           final workDetail = widget.toItem.workDetails.firstWhere(
-            (w) => w.workType == workType,
-            orElse: () => widget.toItem.workDetails.first,
+            (w) => w.id == groupKey,
+            orElse: () => widget.toItem.workDetails.firstWhere(
+              (w) => w.workType == groupKey,
+              orElse: () => widget.toItem.workDetails.first,
+            ),
           );
-          return _buildWorkSection(workType, workers, workDetail);
+          return _buildWorkSection(workDetail.workType, workers, workDetail);
         }),
       ],
     );
@@ -491,19 +504,26 @@ class _ConfirmedListDialogWidgetState
                   ),
                   child: Row(
                     children: [
-                      // 체크박스 (선택 모드 + 미요청자만)
-                      if (_isIdCardSelectMode && idCardStatus == 'none') ...[
-                        SizedBox(
-                          width: 24,
-                          height: 24,
-                          child: Checkbox(
-                            value: isIdCardSelected,
-                            onChanged: (_) => _toggleIdCardSelection(user.uid),
-                            activeColor: AppColors.info,
-                          ),
-                        ),
-                        SizedBox(width: ResponsiveHelper.spacing(context, 8)),
-                      ],
+                      // ✅ 체크박스 영역 (애니메이션)
+                      AnimatedContainer(
+                        duration: const Duration(milliseconds: 200),
+                        width: _isIdCardSelectMode ? 32 : 0,
+                        child: _isIdCardSelectMode
+                            ? (idCardStatus == 'none'
+                                ? SizedBox(
+                                    width: 24,
+                                    height: 24,
+                                    child: Checkbox(
+                                      value: isIdCardSelected,
+                                      onChanged: (_) => _toggleIdCardSelection(user.uid),
+                                      activeColor: AppColors.info,
+                                      materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                                      visualDensity: VisualDensity.compact,
+                                    ),
+                                  )
+                                : const SizedBox(width: 24))  // 이미 요청된 사용자는 빈 공간
+                            : const SizedBox.shrink(),
+                      ),
                       // 순번
                       CircleAvatar(
                         radius: ResponsiveHelper.spacing(context, 16),

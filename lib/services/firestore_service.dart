@@ -16,6 +16,16 @@ import '../models/core/review_model.dart';
 import '../models/core/id_card_access_request_model.dart';
 import '../models/core/notification_model.dart';
 
+/// 배치 처리 결과
+class BatchResult {
+  final int success;
+  final int failed;
+  
+  BatchResult({required this.success, required this.failed});
+  
+  int get total => success + failed;
+  bool get hasFailures => failed > 0;
+}
 class FirestoreService {
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
   // ✅ 캐시 추가
@@ -1588,7 +1598,7 @@ class FirestoreService {
 
       print('✅ 지원서 상태 업데이트: $status');
       
-      // ✅ TO 통계 재계산 (REJECTED 시)
+      // ✅ REJECTED: Increment 방식으로 처리
       if (status == 'REJECTED') {
         final appDoc = await _firestore
             .collection('applications')
@@ -1597,6 +1607,8 @@ class FirestoreService {
         
         if (appDoc.exists) {
           final appData = appDoc.data()!;
+          final workDetailId = appData['workDetailId'] as String?;
+          
           final toSnapshot = await _firestore
               .collection('tos')
               .where('businessId', isEqualTo: appData['businessId'])
@@ -1606,10 +1618,51 @@ class FirestoreService {
               .get();
           
           if (toSnapshot.docs.isNotEmpty) {
-            final toId = toSnapshot.docs.first.id;
-            await recalculateTOStats(toId);
+            final toDoc = toSnapshot.docs.first;
+            final toId = toDoc.id;
+            final toData = toDoc.data();
+            final groupId = toData['groupId'] as String?;
+            
+            final batch = _firestore.batch();
+            
+            // TO 통계 Increment
+            batch.update(toDoc.reference, {
+              'totalPending': FieldValue.increment(-1),
+            });
+            
+            // WorkDetail 통계 Increment
+            if (workDetailId != null && workDetailId.isNotEmpty) {
+              batch.update(
+                _firestore
+                    .collection('tos')
+                    .doc(toId)
+                    .collection('workDetails')
+                    .doc(workDetailId),
+                {
+                  'pendingCount': FieldValue.increment(-1),
+                },
+              );
+            }
+            
+            // 그룹 마스터 통계 Increment
+            if (groupId != null) {
+              final masterSnapshot = await _firestore
+                  .collection('tos')
+                  .where('groupId', isEqualTo: groupId)
+                  .where('isGroupMaster', isEqualTo: true)
+                  .limit(1)
+                  .get();
+              
+              if (masterSnapshot.docs.isNotEmpty) {
+                batch.update(masterSnapshot.docs.first.reference, {
+                  'groupTotalPending': FieldValue.increment(-1),
+                });
+              }
+            }
+            
+            await batch.commit();
             clearCache(toId: toId);
-            print('📊 TO 통계 재계산 완료: $toId');
+            print('📊 TO 통계 Increment 완료: $toId');
           }
         }
       }
@@ -1619,14 +1672,14 @@ class FirestoreService {
     }
   }
   
-  /// 확정 처리 + 충돌하는 지원 자동 취소
+  /// 확정 처리 (Increment 방식 - 재계산 없음!)
   Future<void> _confirmWithConflictCheck({
     required String applicationId,
     String? confirmedBy,
     String? message,
   }) async {
     try {
-      // 1. 확정할 지원서 조회
+      // 1. 지원서 조회
       final appDoc = await _firestore
           .collection('applications')
           .doc(applicationId)
@@ -1637,9 +1690,36 @@ class FirestoreService {
       }
       
       final appData = appDoc.data()!;
-      final app = ApplicationModel.fromMap(appData, appDoc.id);
+      final currentStatus = appData['status'];
       
-      // 2. 충돌하는 대기중 지원서 찾기
+      // 이미 확정/취소된 경우
+      if (currentStatus == 'CONFIRMED') return;
+      if (currentStatus == 'CANCELED') {
+        throw Exception('취소된 지원서는 확정할 수 없습니다');
+      }
+      
+      final app = ApplicationModel.fromMap(appData, appDoc.id);
+      final workDetailId = appData['workDetailId'] as String?;
+      
+      // 2. TO 찾기
+      final toSnapshot = await _firestore
+          .collection('tos')
+          .where('businessId', isEqualTo: app.businessId)
+          .where('title', isEqualTo: app.toTitle)
+          .where('date', isEqualTo: Timestamp.fromDate(app.workDate))
+          .limit(1)
+          .get();
+      
+      if (toSnapshot.docs.isEmpty) {
+        throw Exception('TO를 찾을 수 없습니다');
+      }
+      
+      final toDoc = toSnapshot.docs.first;
+      final toId = toDoc.id;
+      final toData = toDoc.data();
+      final groupId = toData['groupId'] as String?;
+      
+      // 3. 충돌하는 대기중 지원서 찾기
       final conflictingApps = await findConflictingApplications(
         uid: app.uid,
         workDate: app.workDate,
@@ -1649,70 +1729,83 @@ class FirestoreService {
         status: 'PENDING',
       );
       
-      // 3. 배치로 처리
-      final batch = _firestore.batch();
+      print('✅ 충돌하는 지원서 ${conflictingApps.length}개 발견');
       
-      // 3-1. 확정 처리
+      // 4. Batch 처리 (모든 업데이트를 한 번에!)
+      final batch = _firestore.batch();
+      final now = FieldValue.serverTimestamp();
+      
+      // 4-1. 지원서 확정
       final confirmUpdates = <String, dynamic>{
         'status': 'CONFIRMED',
-        'confirmedAt': FieldValue.serverTimestamp(),
+        'confirmedAt': now,
       };
-      if (confirmedBy != null) {
-        confirmUpdates['confirmedBy'] = confirmedBy;
-      }
-      if (message != null) {
-        confirmUpdates['confirmMessage'] = message;  // ⭐ Phase 2
-      }
+      if (confirmedBy != null) confirmUpdates['confirmedBy'] = confirmedBy;
+      if (message != null) confirmUpdates['confirmMessage'] = message;
       
-      batch.update(
-        _firestore.collection('applications').doc(applicationId),
-        confirmUpdates,
-      );
+      batch.update(appDoc.reference, confirmUpdates);
       
-      // 3-2. 충돌하는 지원들 자동 취소
-      for (var conflictApp in conflictingApps) {
+      // 4-2. TO 통계 Increment (PENDING → CONFIRMED)
+      batch.update(toDoc.reference, {
+        'totalConfirmed': FieldValue.increment(1),
+        'totalPending': FieldValue.increment(-1),
+      });
+      
+      // 4-3. WorkDetail 통계 Increment
+      if (workDetailId != null && workDetailId.isNotEmpty) {
         batch.update(
-          _firestore.collection('applications').doc(conflictApp.id),
+          _firestore
+              .collection('tos')
+              .doc(toId)
+              .collection('workDetails')
+              .doc(workDetailId),
           {
-            'status': 'AUTO_CANCELED',  // ⭐ 새로운 상태
-            'canceledAt': FieldValue.serverTimestamp(),
-            'cancelReason': 'SCHEDULE_CONFLICT',
-            'conflictingAppId': applicationId,
-            'conflictingBusiness': app.businessName,
-            'conflictingTime': '${app.startTime}~${app.endTime}',
+            'currentCount': FieldValue.increment(1),
+            'pendingCount': FieldValue.increment(-1),
           },
         );
       }
       
-      await batch.commit();
-      
-      print('✅ 확정 완료 + ${conflictingApps.length}개 자동 취소');
-      
-      // 4. ✅ TO 통계 재계산
-      // TO 찾기
-      final toSnapshot = await _firestore
-          .collection('tos')
-          .where('businessId', isEqualTo: app.businessId)
-          .where('title', isEqualTo: app.toTitle)
-          .where('date', isEqualTo: Timestamp.fromDate(app.workDate))
-          .limit(1)
-          .get();
-      
-      if (toSnapshot.docs.isNotEmpty) {
-        final toId = toSnapshot.docs.first.id;
-        await recalculateTOStats(toId);
-        clearCache(toId: toId);
+      // 4-4. 그룹 마스터 통계 Increment
+      if (groupId != null) {
+        final masterSnapshot = await _firestore
+            .collection('tos')
+            .where('groupId', isEqualTo: groupId)
+            .where('isGroupMaster', isEqualTo: true)
+            .limit(1)
+            .get();
         
-        // ✅ 그룹 마스터 통계 동기화
-        await syncGroupMasterStats(toId);
-        print('📊 TO 통계 재계산 + 그룹 동기화 완료: $toId');
+        if (masterSnapshot.docs.isNotEmpty) {
+          batch.update(masterSnapshot.docs.first.reference, {
+            'groupTotalConfirmed': FieldValue.increment(1),
+            'groupTotalPending': FieldValue.increment(-1),
+          });
+        }
       }
       
-      // 4. 알림 발송 (나중에 구현)
-      // TODO: Phase 2-D에서 구현
+      // 4-5. 충돌 지원 자동 취소
+      for (var conflictApp in conflictingApps) {
+        batch.update(
+          _firestore.collection('applications').doc(conflictApp.id),
+          {
+            'status': 'AUTO_CANCELED',
+            'canceledAt': now,
+            'cancelReason': 'SCHEDULE_CONFLICT',
+            'conflictingAppId': applicationId,
+          },
+        );
+      }
+      
+      // 5. 한 번에 커밋!
+      await batch.commit();
+      
+      // 6. 캐시만 클리어 (재계산 없음!)
+      clearCache(toId: toId);
+      
+      print('✅ 확정 완료 + ${conflictingApps.length}개 자동 취소 (Increment 방식)');
       
     } catch (e) {
-      print('❌ 확정 + 충돌 처리 실패: $e');
+      print('❌ 확정 처리 실패: $e');
       rethrow;
     }
   }
@@ -1993,18 +2086,30 @@ class FirestoreService {
         },
       );
 
-      // ✅ 🔥 Batch commit 추가! (이게 없어서 지원서가 저장 안 됨!)
-      await batch.commit();
-      print('✅ Batch commit 완료');
-
-      /// ✅ 통계 재계산 (통합 로직 사용)
-      print('📊 지원 생성 후 통계 재계산...');
-      await recalculateTOStats(toId);
-      clearCache(toId: toId);
+      // 4-4. 그룹 마스터 통계 Increment (그룹 TO인 경우)
+      final toDoc = await _firestore.collection('tos').doc(toId).get();
+      final groupId = toDoc.data()?['groupId'] as String?;
       
-      // ✅ 그룹 마스터 통계 동기화
-      await syncGroupMasterStats(toId);
-      print('🗑️ 지원 후 캐시 클리어 + 그룹 동기화 완료');
+      if (groupId != null) {
+        final masterSnapshot = await _firestore
+            .collection('tos')
+            .where('groupId', isEqualTo: groupId)
+            .where('isGroupMaster', isEqualTo: true)
+            .limit(1)
+            .get();
+        
+        if (masterSnapshot.docs.isNotEmpty) {
+          batch.update(masterSnapshot.docs.first.reference, {
+            'groupTotalPending': FieldValue.increment(1),
+          });
+        }
+      }
+
+      await batch.commit();
+      print('✅ Batch commit 완료 (Increment 방식)');
+      
+      // ✅ 캐시만 클리어 (재계산 없음!)
+      clearCache(toId: toId);
 
       print('✅ 지원 완료: businessId=$businessId, toTitle=$toTitle, WorkType=$selectedWorkType');
       return true;
@@ -2224,10 +2329,7 @@ class FirestoreService {
         updateData['rejectMessage'] = rejectMessage;
       }
       
-      await _firestore.collection('applications').doc(applicationId).update(updateData);
-
-      // ✅ 통계 재계산
-      print('📊 지원자 거절 후 통계 재계산...');
+      // ✅ TO 찾기
       final toSnapshot = await _firestore
           .collection('tos')
           .where('businessId', isEqualTo: businessId)
@@ -2236,14 +2338,63 @@ class FirestoreService {
           .limit(1)
           .get();
 
-      if (toSnapshot.docs.isNotEmpty) {
-        final toId = toSnapshot.docs.first.id;
-        await recalculateTOStats(toId);
-        clearCache(toId: toId);
-        
-        // ✅ 그룹 마스터 통계 동기화
-        await syncGroupMasterStats(toId);
+      if (toSnapshot.docs.isEmpty) {
+        await _firestore.collection('applications').doc(applicationId).update(updateData);
+        print('✅ 지원자 거절 완료 (TO 없음)');
+        return true;
       }
+
+      final toDoc = toSnapshot.docs.first;
+      final toId = toDoc.id;
+      final toData = toDoc.data();
+      final groupId = toData['groupId'] as String?;
+      final workDetailId = appData['workDetailId'] as String?;
+
+      // ✅ Batch로 한 번에 처리
+      final batch = _firestore.batch();
+
+      // 1. 지원서 거절
+      batch.update(_firestore.collection('applications').doc(applicationId), updateData);
+
+      // 2. TO 통계 Increment (PENDING인 경우만)
+      if (appData['status'] == 'PENDING') {
+        batch.update(toDoc.reference, {
+          'totalPending': FieldValue.increment(-1),
+        });
+
+        // 3. WorkDetail 통계 Increment
+        if (workDetailId != null && workDetailId.isNotEmpty) {
+          batch.update(
+            _firestore
+                .collection('tos')
+                .doc(toId)
+                .collection('workDetails')
+                .doc(workDetailId),
+            {
+              'pendingCount': FieldValue.increment(-1),
+            },
+          );
+        }
+
+        // 4. 그룹 마스터 통계 Increment
+        if (groupId != null) {
+          final masterSnapshot = await _firestore
+              .collection('tos')
+              .where('groupId', isEqualTo: groupId)
+              .where('isGroupMaster', isEqualTo: true)
+              .limit(1)
+              .get();
+
+          if (masterSnapshot.docs.isNotEmpty) {
+            batch.update(masterSnapshot.docs.first.reference, {
+              'groupTotalPending': FieldValue.increment(-1),
+            });
+          }
+        }
+      }
+
+      await batch.commit();
+      clearCache(toId: toId);
 
       print('✅ 지원자 거절 완료');
       ToastHelper.showSuccess('지원자가 거절되었습니다.');
@@ -2287,13 +2438,7 @@ class FirestoreService {
       final toTitle = appData['toTitle'];
       final workDate = appData['workDate'] as Timestamp;
 
-      // 지원서 취소 처리
-      await _firestore.collection('applications').doc(applicationId).update({
-        'status': 'CANCELED',
-      });
-
-      // ✅ 통계 재계산
-      print('📊 지원 취소 후 통계 재계산...');
+      // ✅ TO 찾기
       final toSnapshot = await _firestore
           .collection('tos')
           .where('businessId', isEqualTo: businessId)
@@ -2302,14 +2447,66 @@ class FirestoreService {
           .limit(1)
           .get();
 
-      if (toSnapshot.docs.isNotEmpty) {
-        final toId = toSnapshot.docs.first.id;
-        await recalculateTOStats(toId);
-        clearCache(toId: toId);
-        
-        // ✅ 그룹 마스터 통계 동기화
-        await syncGroupMasterStats(toId);
+      if (toSnapshot.docs.isEmpty) {
+        await _firestore.collection('applications').doc(applicationId).update({
+          'status': 'CANCELED',
+        });
+        ToastHelper.showSuccess('지원이 취소되었습니다.');
+        return true;
       }
+
+      final toDoc = toSnapshot.docs.first;
+      final toId = toDoc.id;
+      final toData = toDoc.data();
+      final groupId = toData['groupId'] as String?;
+      final workDetailId = appData['workDetailId'] as String?;
+
+      // ✅ Batch로 한 번에 처리
+      final batch = _firestore.batch();
+
+      // 1. 지원서 취소
+      batch.update(_firestore.collection('applications').doc(applicationId), {
+        'status': 'CANCELED',
+        'canceledAt': FieldValue.serverTimestamp(),
+      });
+
+      // 2. TO 통계 Increment
+      batch.update(toDoc.reference, {
+        'totalPending': FieldValue.increment(-1),
+      });
+
+      // 3. WorkDetail 통계 Increment
+      if (workDetailId != null && workDetailId.isNotEmpty) {
+        batch.update(
+          _firestore
+              .collection('tos')
+              .doc(toId)
+              .collection('workDetails')
+              .doc(workDetailId),
+          {
+            'pendingCount': FieldValue.increment(-1),
+          },
+        );
+      }
+
+      // 4. 그룹 마스터 통계 Increment
+      if (groupId != null) {
+        final masterSnapshot = await _firestore
+            .collection('tos')
+            .where('groupId', isEqualTo: groupId)
+            .where('isGroupMaster', isEqualTo: true)
+            .limit(1)
+            .get();
+
+        if (masterSnapshot.docs.isNotEmpty) {
+          batch.update(masterSnapshot.docs.first.reference, {
+            'groupTotalPending': FieldValue.increment(-1),
+          });
+        }
+      }
+
+      await batch.commit();
+      clearCache(toId: toId);
 
       ToastHelper.showSuccess('지원이 취소되었습니다.');
       return true;
@@ -6237,12 +6434,11 @@ class FirestoreService {
         }
       }
 
-      await batch.commit();
-
-      // 4. TO 통계 재계산
+      // 4. TO 찾기 및 통계 Increment
       final businessId = appData['businessId'];
       final toTitle = appData['toTitle'];
       final workDate = appData['workDate'] as Timestamp;
+      final workDetailId = appData['workDetailId'] as String?;
 
       final toSnapshot = await _firestore
           .collection('tos')
@@ -6253,10 +6449,50 @@ class FirestoreService {
           .get();
 
       if (toSnapshot.docs.isNotEmpty) {
-        final toId = toSnapshot.docs.first.id;
-        await recalculateTOStats(toId);
+        final toDoc = toSnapshot.docs.first;
+        final toId = toDoc.id;
+        final toData = toDoc.data();
+        final groupId = toData['groupId'] as String?;
+
+        // TO 통계 Increment (CONFIRMED → CANCELED)
+        batch.update(toDoc.reference, {
+          'totalConfirmed': FieldValue.increment(-1),
+        });
+
+        // WorkDetail 통계 Increment
+        if (workDetailId != null && workDetailId.isNotEmpty) {
+          batch.update(
+            _firestore
+                .collection('tos')
+                .doc(toId)
+                .collection('workDetails')
+                .doc(workDetailId),
+            {
+              'currentCount': FieldValue.increment(-1),
+            },
+          );
+        }
+
+        // 그룹 마스터 통계 Increment
+        if (groupId != null) {
+          final masterSnapshot = await _firestore
+              .collection('tos')
+              .where('groupId', isEqualTo: groupId)
+              .where('isGroupMaster', isEqualTo: true)
+              .limit(1)
+              .get();
+
+          if (masterSnapshot.docs.isNotEmpty) {
+            batch.update(masterSnapshot.docs.first.reference, {
+              'groupTotalConfirmed': FieldValue.increment(-1),
+            });
+          }
+        }
+
+        await batch.commit();
         clearCache(toId: toId);
-        await syncGroupMasterStats(toId);
+      } else {
+        await batch.commit();
       }
 
       print('✅ 확정 취소 완료 (패널티: $applyNoShowPenalty)');
@@ -6267,5 +6503,286 @@ class FirestoreService {
       return false;
     }
   }
-  
+  // ═══════════════════════════════════════════════════════════
+  // 일괄 처리 메서드 (Batch Operations)
+  // ═══════════════════════════════════════════════════════════
+
+  /// 지원서 일괄 확정 (Increment 방식)
+  Future<BatchResult> batchConfirmApplications({
+    required List<String> applicationIds,
+    required String adminUID,
+  }) async {
+    if (applicationIds.isEmpty) {
+      return BatchResult(success: 0, failed: 0);
+    }
+    
+    try {
+      print('📦 [Batch] 일괄 확정 시작: ${applicationIds.length}건');
+      
+      // 1. 모든 지원서 조회 (병렬)
+      final appFutures = applicationIds.map((id) => 
+        _firestore.collection('applications').doc(id).get()
+      );
+      final appDocs = await Future.wait(appFutures);
+      
+      // 2. TO 정보 한 번만 조회
+      String? toId;
+      String? groupId;
+      DocumentReference? toRef;
+      DocumentReference? masterRef;
+      
+      for (var appDoc in appDocs) {
+        if (!appDoc.exists) continue;
+        final appData = appDoc.data()!;
+        
+        if (toId == null) {
+          final toSnapshot = await _firestore
+              .collection('tos')
+              .where('businessId', isEqualTo: appData['businessId'])
+              .where('title', isEqualTo: appData['toTitle'])
+              .where('date', isEqualTo: appData['workDate'])
+              .limit(1)
+              .get();
+          
+          if (toSnapshot.docs.isNotEmpty) {
+            toRef = toSnapshot.docs.first.reference;
+            toId = toSnapshot.docs.first.id;
+            groupId = toSnapshot.docs.first.data()['groupId'] as String?;
+            
+            // 마스터 TO 찾기
+            if (groupId != null) {
+              final masterSnapshot = await _firestore
+                  .collection('tos')
+                  .where('groupId', isEqualTo: groupId)
+                  .where('isGroupMaster', isEqualTo: true)
+                  .limit(1)
+                  .get();
+              
+              if (masterSnapshot.docs.isNotEmpty) {
+                masterRef = masterSnapshot.docs.first.reference;
+              }
+            }
+          }
+        }
+        break;
+      }
+      
+      // 3. Batch 처리
+      final batch = _firestore.batch();
+      final now = Timestamp.now();
+      int successCount = 0;
+      int failedCount = 0;
+      
+      // WorkDetail별 카운트 집계
+      Map<String, int> workDetailCounts = {};
+      
+      for (var appDoc in appDocs) {
+        if (!appDoc.exists) {
+          failedCount++;
+          continue;
+        }
+        
+        final appData = appDoc.data()!;
+        
+        if (appData['status'] == 'CONFIRMED' || appData['status'] == 'CANCELED') {
+          failedCount++;
+          continue;
+        }
+        
+        // 지원서 확정
+        batch.update(appDoc.reference, {
+          'status': 'CONFIRMED',
+          'confirmedAt': now,
+          'confirmedBy': adminUID,
+        });
+        
+        // WorkDetail 카운트 집계
+        final workDetailId = appData['workDetailId'] as String?;
+        if (workDetailId != null && workDetailId.isNotEmpty) {
+          workDetailCounts[workDetailId] = (workDetailCounts[workDetailId] ?? 0) + 1;
+        }
+        
+        successCount++;
+      }
+      
+      // TO 통계 한 번에 업데이트
+      if (toRef != null && successCount > 0) {
+        batch.update(toRef, {
+          'totalConfirmed': FieldValue.increment(successCount),
+          'totalPending': FieldValue.increment(-successCount),
+        });
+      }
+      
+      // WorkDetail 통계 한 번에 업데이트
+      for (var entry in workDetailCounts.entries) {
+        batch.update(
+          _firestore
+              .collection('tos')
+              .doc(toId)
+              .collection('workDetails')
+              .doc(entry.key),
+          {
+            'currentCount': FieldValue.increment(entry.value),
+            'pendingCount': FieldValue.increment(-entry.value),
+          },
+        );
+      }
+      
+      // 그룹 마스터 통계 한 번에 업데이트
+      if (masterRef != null && successCount > 0) {
+        batch.update(masterRef, {
+          'groupTotalConfirmed': FieldValue.increment(successCount),
+          'groupTotalPending': FieldValue.increment(-successCount),
+        });
+      }
+      
+      await batch.commit();
+      
+      if (toId != null) clearCache(toId: toId);
+      
+      print('✅ [Batch] 확정 완료: $successCount건 성공, $failedCount건 실패');
+      return BatchResult(success: successCount, failed: failedCount);
+    } catch (e) {
+      print('❌ [Batch] 일괄 확정 실패: $e');
+      rethrow;
+    }
+  }
+
+  /// 지원서 일괄 거절 (Increment 방식)
+  Future<BatchResult> batchRejectApplications({
+    required List<String> applicationIds,
+    required String adminUID,
+    String? message,
+  }) async {
+    if (applicationIds.isEmpty) {
+      return BatchResult(success: 0, failed: 0);
+    }
+    
+    try {
+      print('📦 [Batch] 일괄 거절 시작: ${applicationIds.length}건');
+      
+      final appFutures = applicationIds.map((id) => 
+        _firestore.collection('applications').doc(id).get()
+      );
+      final appDocs = await Future.wait(appFutures);
+      
+      String? toId;
+      String? groupId;
+      DocumentReference? toRef;
+      DocumentReference? masterRef;
+      
+      for (var appDoc in appDocs) {
+        if (!appDoc.exists) continue;
+        final appData = appDoc.data()!;
+        
+        if (toId == null) {
+          final toSnapshot = await _firestore
+              .collection('tos')
+              .where('businessId', isEqualTo: appData['businessId'])
+              .where('title', isEqualTo: appData['toTitle'])
+              .where('date', isEqualTo: appData['workDate'])
+              .limit(1)
+              .get();
+          
+          if (toSnapshot.docs.isNotEmpty) {
+            toRef = toSnapshot.docs.first.reference;
+            toId = toSnapshot.docs.first.id;
+            groupId = toSnapshot.docs.first.data()['groupId'] as String?;
+            
+            if (groupId != null) {
+              final masterSnapshot = await _firestore
+                  .collection('tos')
+                  .where('groupId', isEqualTo: groupId)
+                  .where('isGroupMaster', isEqualTo: true)
+                  .limit(1)
+                  .get();
+              
+              if (masterSnapshot.docs.isNotEmpty) {
+                masterRef = masterSnapshot.docs.first.reference;
+              }
+            }
+          }
+        }
+        break;
+      }
+      
+      final batch = _firestore.batch();
+      final now = Timestamp.now();
+      int successCount = 0;
+      int failedCount = 0;
+      
+      Map<String, int> workDetailCounts = {};
+      
+      for (var appDoc in appDocs) {
+        if (!appDoc.exists) {
+          failedCount++;
+          continue;
+        }
+        
+        final appData = appDoc.data()!;
+        
+        if (appData['status'] == 'CANCELED') {
+          failedCount++;
+          continue;
+        }
+        
+        final updates = <String, dynamic>{
+          'status': 'REJECTED',
+          'rejectedAt': now,
+          'rejectedBy': adminUID,
+        };
+        if (message != null) updates['rejectMessage'] = message;
+        
+        batch.update(appDoc.reference, updates);
+        
+        // PENDING인 경우만 카운트
+        if (appData['status'] == 'PENDING') {
+          final workDetailId = appData['workDetailId'] as String?;
+          if (workDetailId != null && workDetailId.isNotEmpty) {
+            workDetailCounts[workDetailId] = (workDetailCounts[workDetailId] ?? 0) + 1;
+          }
+        }
+        
+        successCount++;
+      }
+      
+      // PENDING 거절 수만큼 통계 감소
+      final pendingRejectCount = workDetailCounts.values.fold(0, (sum, v) => sum + v);
+      
+      if (toRef != null && pendingRejectCount > 0) {
+        batch.update(toRef, {
+          'totalPending': FieldValue.increment(-pendingRejectCount),
+        });
+      }
+      
+      for (var entry in workDetailCounts.entries) {
+        batch.update(
+          _firestore
+              .collection('tos')
+              .doc(toId)
+              .collection('workDetails')
+              .doc(entry.key),
+          {
+            'pendingCount': FieldValue.increment(-entry.value),
+          },
+        );
+      }
+      
+      if (masterRef != null && pendingRejectCount > 0) {
+        batch.update(masterRef, {
+          'groupTotalPending': FieldValue.increment(-pendingRejectCount),
+        });
+      }
+      
+      await batch.commit();
+      
+      if (toId != null) clearCache(toId: toId);
+      
+      print('✅ [Batch] 거절 완료: $successCount건');
+      return BatchResult(success: successCount, failed: failedCount);
+    } catch (e) {
+      print('❌ [Batch] 일괄 거절 실패: $e');
+      rethrow;
+    }
+  }
 }

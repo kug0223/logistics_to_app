@@ -729,8 +729,9 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog> {
             child: Row(
               crossAxisAlignment: CrossAxisAlignment.center,
               children: [
-                // 체크박스 (대기 중)
+                // ✅ 체크박스 영역 (레이아웃 안정화)
                 if (isPending) ...[
+                  // 대기중: 항상 체크박스 표시
                   SizedBox(
                     width: 24,
                     height: 24,
@@ -738,23 +739,32 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog> {
                       value: isSelected,
                       onChanged: (_) => _toggleSelection(app.id),
                       activeColor: Theme.of(context).primaryColor,
+                      materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                      visualDensity: VisualDensity.compact,
                     ),
                   ),
                   SizedBox(width: ResponsiveHelper.spacing(context, 8)),
-                ],
-                
-                // 체크박스 (확정 + 신분증 선택 모드 + 미요청자만)
-                if (!isPending && _isIdCardSelectMode && idCardStatus == 'none') ...[
-                  SizedBox(
-                    width: 24,
-                    height: 24,
-                    child: Checkbox(
-                      value: _selectedIdCardUserIds.contains(user?.uid ?? ''),
-                      onChanged: (_) => _toggleIdCardSelection(user?.uid ?? ''),
-                      activeColor: AppColors.info,
-                    ),
+                ] else ...[
+                  // 확정: 신분증 모드에 따라 애니메이션
+                  AnimatedContainer(
+                    duration: const Duration(milliseconds: 200),
+                    width: _isIdCardSelectMode ? 32 : 0,
+                    child: _isIdCardSelectMode
+                        ? (idCardStatus == 'none'
+                            ? SizedBox(
+                                width: 24,
+                                height: 24,
+                                child: Checkbox(
+                                  value: _selectedIdCardUserIds.contains(user?.uid ?? ''),
+                                  onChanged: (_) => _toggleIdCardSelection(user?.uid ?? ''),
+                                  activeColor: AppColors.info,
+                                  materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                                  visualDensity: VisualDensity.compact,
+                                ),
+                              )
+                            : const SizedBox(width: 24))  // 이미 요청된 사용자는 빈 공간
+                        : const SizedBox.shrink(),
                   ),
-                  SizedBox(width: ResponsiveHelper.spacing(context, 8)),
                 ],
                 
                 // 순번
@@ -815,7 +825,7 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog> {
                       ),
                       SizedBox(height: ResponsiveHelper.spacing(context, 4)),
                       
-                      // 3줄: 지원시간
+                      // 3줄: 지원시간 + 신분증 배지 (확정자만)
                       Row(
                         children: [
                           Icon(
@@ -828,11 +838,16 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog> {
                             _formatAppliedTime(app.appliedAt),
                             style: ResponsiveHelper.smallStyle(context, color: AppColors.grey500),
                           ),
+                          // ✅ 확정자의 신분증 배지를 지원시간 옆으로 이동
+                          if (!isPending) ...[
+                            SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+                            IdCardHelper.buildStatusBadge(context, idCardStatus),
+                          ],
                         ],
                       ),
                       SizedBox(height: ResponsiveHelper.spacing(context, 6)),
                       
-                      // 3줄: 신뢰도 + 평점 + 신분증 상태 (확정자만)
+                      // 4줄: 신뢰도 + 평점
                       Row(
                         children: [
                           _buildTrustBadge(context, trustScore),
@@ -850,9 +865,6 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog> {
                             ),
                             SizedBox(width: ResponsiveHelper.spacing(context, 8)),
                           ],
-                          // 신분증 상태 (확정자만)
-                          if (!isPending)
-                            IdCardHelper.buildStatusBadge(context, idCardStatus)
                         ],
                       ),
                       
