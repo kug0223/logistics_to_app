@@ -70,8 +70,6 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
   // 날짜 선택
   final List<DateTime> _selectedDates = [];
   final List<String> _selectedWeekdays = [];
-  final DateTime _focusedDay = DateTime.now();
-  final bool _isCalendarExpanded = true; // ✅ 기본 펼침으로 변경
   DateTime? _rangeStart;
   DateTime? _rangeEnd;
 

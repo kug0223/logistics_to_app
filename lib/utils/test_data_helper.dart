@@ -744,17 +744,16 @@ class TestDataHelper {
     '기본적인 업무는 잘 수행해요.',
   ];
 
-  /// ⭐ 더미 리뷰 생성 (더미 사용자 대상)
+  /// ⭐ 더미 리뷰 생성 (더미 사용자 대상 - 전체)
   static Future<void> createDummyReviews({
     required String businessId,
     required String businessName,
     required String reviewerId,
     required String reviewerName,
-    int count = 10,
   }) async {
     print('');
     print('⭐ ═══════════════════════════════════════');
-    print('⭐ 더미 리뷰 $count개 생성 시작...');
+    print('⭐ 더미 리뷰 생성 시작 (모든 더미 사용자 대상)...');
     print('⭐ ═══════════════════════════════════════');
     print('');
 
@@ -767,14 +766,14 @@ class TestDataHelper {
       
       final dummyUsers = usersSnapshot.docs.where((doc) {
         return doc.id.startsWith('dummy_user_');
-      }).take(count).toList();
+      }).toList();  // ✅ .take(count) 제거 - 모든 더미 사용자 대상
 
       if (dummyUsers.isEmpty) {
         print('⚠️ 더미 사용자가 없습니다. 먼저 더미 지원자를 생성해주세요.');
         return;
       }
 
-      print('📋 더미 사용자 ${dummyUsers.length}명 발견');
+      print('📋 더미 사용자 ${dummyUsers.length}명 발견 (전체 대상)');
 
       int createdCount = 0;
       final now = DateTime.now();

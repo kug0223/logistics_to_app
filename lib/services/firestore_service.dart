@@ -1810,29 +1810,45 @@ class FirestoreService {
     }
   }
   /// TO의 모든 지원서 조회 (businessId, title, date 기준)
+  /// [isLongTerm] - 장기 TO인 경우 날짜 필터 제외
   Future<List<ApplicationModel>> getApplicationsByTO(
     String businessId,
     String title,
-    DateTime date,
-  ) async {
+    DateTime date, {
+    bool isLongTerm = false,
+  }) async {
     try {
-      // ✅ 날짜 범위로 조회 (시간 무관하게 해당 날짜 전체)
-      final dateStart = DateTime(date.year, date.month, date.day);
-      final dateEnd = dateStart.add(const Duration(days: 1));
+      QuerySnapshot snapshot;
       
-      final snapshot = await _firestore
-          .collection('applications')
-          .where('businessId', isEqualTo: businessId)
-          .where('toTitle', isEqualTo: title)
-          .where('workDate', isGreaterThanOrEqualTo: Timestamp.fromDate(dateStart))
-          .where('workDate', isLessThan: Timestamp.fromDate(dateEnd))
-          .get();
+      if (isLongTerm) {
+        // ✅ 장기 TO: businessId + toTitle로만 조회 (날짜 필터 제외)
+        snapshot = await _firestore
+            .collection('applications')
+            .where('businessId', isEqualTo: businessId)
+            .where('toTitle', isEqualTo: title)
+            .get();
+        
+        print('✅ 장기 TO 지원서 조회: ${snapshot.docs.length}개 (businessId=$businessId, title=$title)');
+      } else {
+        // ✅ 단기 TO: 날짜 범위로 조회
+        final dateStart = DateTime(date.year, date.month, date.day);
+        final dateEnd = dateStart.add(const Duration(days: 1));
+        
+        snapshot = await _firestore
+            .collection('applications')
+            .where('businessId', isEqualTo: businessId)
+            .where('toTitle', isEqualTo: title)
+            .where('workDate', isGreaterThanOrEqualTo: Timestamp.fromDate(dateStart))
+            .where('workDate', isLessThan: Timestamp.fromDate(dateEnd))
+            .get();
+        
+        print('✅ 단기 TO 지원서 조회: ${snapshot.docs.length}개 (businessId=$businessId, title=$title, date=$dateStart~$dateEnd)');
+      }
 
       final apps = snapshot.docs
           .map((doc) => ApplicationModel.fromFirestore(doc))
           .toList();
 
-      print('✅ TO 지원서 조회: ${apps.length}개 (businessId=$businessId, title=$title, date=$dateStart~$dateEnd)');
       return apps;
     } catch (e) {
       print('❌ TO 지원서 조회 실패: $e');
@@ -5391,7 +5407,7 @@ class FirestoreService {
       // 병렬로 WorkDetails와 지원자 조회
       final results = await Future.wait([
         getWorkDetails(to.id, forceRefresh: true),
-        getApplicationsByTO(to.businessId, to.title, to.date),
+        getApplicationsByTO(to.businessId, to.title, to.date, isLongTerm: to.isLongTerm),
       ]);
       
       final workDetails = results[0] as List<WorkDetailModel>;

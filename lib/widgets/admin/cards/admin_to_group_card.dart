@@ -77,7 +77,6 @@ class TOGroupCard extends StatefulWidget {
 
 class _TOGroupCardState extends State<TOGroupCard> with SingleTickerProviderStateMixin {
   @override
-  @override
   Widget build(BuildContext context) {
     final masterTO = widget.groupItem.masterTO;
     final theme = Theme.of(context);

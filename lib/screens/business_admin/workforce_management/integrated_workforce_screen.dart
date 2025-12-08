@@ -442,6 +442,31 @@ class _IntegratedWorkforceScreenState extends State<IntegratedWorkforceScreen> {
                 await _clearAttendanceData();
               },
             ),
+
+            const Divider(),
+            
+            // ⭐ 더미 리뷰 삭제
+            ListTile(
+              leading: Icon(
+                Icons.star_border, 
+                color: Colors.amber[700],
+                size: ResponsiveHelper.iconSize(context, 24),
+              ),
+              title: Text(
+                '더미 리뷰 삭제',
+                style: ResponsiveHelper.bodyStyle(context).copyWith(
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+              subtitle: Text(
+                '모든 더미 리뷰 삭제',
+                style: ResponsiveHelper.smallStyle(context),
+              ),
+              onTap: () async {
+                Navigator.pop(context);
+                await _clearDummyReviews();
+              },
+            ),
             
             const Divider(),
             
@@ -789,6 +814,49 @@ class _IntegratedWorkforceScreenState extends State<IntegratedWorkforceScreen> {
       ToastHelper.showError('출근 데이터 삭제 실패: $e');
     }
   }
+
+  /// 더미 리뷰 삭제
+  Future<void> _clearDummyReviews() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('더미 리뷰 삭제'),
+        content: const Text('모든 더미 리뷰를 삭제하시겠습니까?'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('취소'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, true),
+            style: TextButton.styleFrom(
+              foregroundColor: Theme.of(context).colorScheme.error,
+            ),
+            child: const Text('삭제'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed != true) return;
+
+    try {
+      ToastHelper.showInfo('더미 리뷰 삭제 중...');
+      
+      await TestDataHelper.clearDummyReviews();
+      
+      ToastHelper.showSuccess('더미 리뷰가 삭제되었습니다!');
+      
+      _firestoreService.clearCache();
+      
+      if (mounted) {
+        setState(() {});
+      }
+    } catch (e) {
+      print('❌ 더미 리뷰 삭제 실패: $e');
+      ToastHelper.showError('더미 리뷰 삭제 실패: $e');
+    }
+  }
   /// 더미 리뷰 생성
   Future<void> _createDummyReviews() async {
     if (_selectedBusinessId == null) {
@@ -826,7 +894,6 @@ class _IntegratedWorkforceScreenState extends State<IntegratedWorkforceScreen> {
         businessName: businessName,
         reviewerId: currentUser.uid,
         reviewerName: currentUser.name,
-        count: 10,
       );
       
       ToastHelper.showSuccess('더미 리뷰 생성 완료!');
