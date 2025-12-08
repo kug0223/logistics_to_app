@@ -232,24 +232,36 @@ class _UserTOCardState extends State<UserTOCard> {
   /// 내가 해당 TO에 지원했는지 확인
   bool get _hasAppliedToTO {
     return widget.myApplications.any((app) {
-      final dateMatch = app.workDate.year == widget.to.date.year &&
-                        app.workDate.month == widget.to.date.month &&
-                        app.workDate.day == widget.to.date.day;
       final businessMatch = app.businessId == widget.to.businessId;
       final titleMatch = app.toTitle == widget.to.title;
       final isActive = app.status != 'CANCELED' && 
                        app.status != 'REJECTED' &&
                        app.status != 'AUTO_CANCELED';
+      
+      // ✅ 그룹 TO: 같은 사업장 + 같은 제목이면 OK (날짜 비교 생략)
+      if (_isGroupTO) {
+        return businessMatch && titleMatch && isActive;
+      }
+      
+      // 단일/장기 TO: 기존 로직 (날짜 포함)
+      final dateMatch = app.workDate.year == widget.to.date.year &&
+                        app.workDate.month == widget.to.date.month &&
+                        app.workDate.day == widget.to.date.day;
       return dateMatch && businessMatch && titleMatch && isActive;
     });
   }
 
   /// 내가 해당 업무에 지원했는지 확인
   bool _hasAppliedToWork(String workType) {
+    // ✅ 그룹 TO + 날짜 선택된 경우: 선택된 날짜 기준
+    final targetDate = (_isGroupTO && _selectedDateTO != null) 
+        ? _selectedDateTO!.date 
+        : widget.to.date;
+    
     return widget.myApplications.any((app) {
-      final dateMatch = app.workDate.year == widget.to.date.year &&
-                        app.workDate.month == widget.to.date.month &&
-                        app.workDate.day == widget.to.date.day;
+      final dateMatch = app.workDate.year == targetDate.year &&
+                        app.workDate.month == targetDate.month &&
+                        app.workDate.day == targetDate.day;
       final businessMatch = app.businessId == widget.to.businessId;
       final titleMatch = app.toTitle == widget.to.title;
       final workTypeMatch = app.selectedWorkType == workType;

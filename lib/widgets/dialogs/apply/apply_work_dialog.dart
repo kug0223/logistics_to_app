@@ -741,7 +741,9 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
     if (apps == null) return [];
     
     return workDetails.where((work) {
-      final app = apps[work.workType];
+      // ✅ 수정: _makeWorkKey로 키 생성
+      final workKey = _makeWorkKey(work.workType, work.startTime, work.endTime);
+      final app = apps[workKey];
       return app != null && app.status == 'PENDING';
     }).toList();
   }
@@ -751,7 +753,9 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
     if (apps == null) return [];
     
     return workDetails.where((work) {
-      final app = apps[work.workType];
+      // ✅ 수정: _makeWorkKey로 키 생성
+      final workKey = _makeWorkKey(work.workType, work.startTime, work.endTime);
+      final app = apps[workKey];
       return app != null && app.status == 'CONFIRMED';
     }).toList();
   }
@@ -902,7 +906,8 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
         setState(() {
           _applicationsByDate[date] = {
             for (final app in applications)
-              app.selectedWorkType: app
+              // ✅ 수정: _makeWorkKey로 키 생성
+              _makeWorkKey(app.selectedWorkType, app.startTime, app.endTime): app
           };
         });
       }
