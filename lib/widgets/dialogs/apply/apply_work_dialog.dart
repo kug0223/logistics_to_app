@@ -18,6 +18,8 @@ import '../../../theme/app_colors.dart';
 import 'work_selection_card.dart';
 import 'apply_summary_section.dart';
 import 'confirm_cancel_dialog.dart';
+import '../../../utils/navigation_helper.dart';
+import '../../../screens/common/job_posting_screen.dart';
 
 /// 지원 다이얼로그 결과
 class ApplyDialogResult {
@@ -995,6 +997,20 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
                 '${workDetails.length}개 업무',
                 style: ResponsiveHelper.smallStyle(context, color: theme.primaryColor),
               ),
+              SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+              // ✅ 상세보기 아이콘
+              InkWell(
+                onTap: () => _goToJobPosting(to!, workDetails),
+                borderRadius: BorderRadius.circular(4),
+                child: Padding(
+                  padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 4)),
+                  child: Icon(
+                    Icons.visibility_outlined,
+                    size: ResponsiveHelper.iconSize(context, 18),
+                    color: theme.primaryColor,
+                  ),
+                ),
+              ),
             ],
           ),
         ),
@@ -1333,5 +1349,17 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
     } catch (e) {
       print('❌ 상태 새로고침 실패: $e');
     }
+  }
+  /// 상세보기 화면 이동
+  void _goToJobPosting(TOModel to, List<WorkDetailModel> workDetails) {
+    Navigator.pop(context); // 다이얼로그 닫기
+    
+    NavigationHelper.push(
+      context,
+      destination: JobPostingScreen(
+        to: to,
+        workDetails: workDetails,
+      ),
+    );
   }
 }

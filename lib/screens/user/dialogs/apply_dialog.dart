@@ -150,7 +150,9 @@ class ApplyDialog {
           .where('businessId', isEqualTo: to.businessId)
           .where('toTitle', isEqualTo: to.title)
           .where('workDate', isEqualTo: Timestamp.fromDate(to.date))
-          .where('workDetailId', isEqualTo: work.id)
+          .where('selectedWorkType', isEqualTo: work.workType)
+          .where('startTime', isEqualTo: work.startTime)
+          .where('endTime', isEqualTo: work.endTime)
           .limit(1)
           .get();
 

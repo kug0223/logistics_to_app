@@ -2003,30 +2003,66 @@ class FirestoreService {
 
       final toId = toSnapshot.docs.first.id;
 
-      // 1. 중복 지원 확인 - ⭐ workDetailId 기준으로 변경
+      // 1. 기존 지원서 확인 (상태 무관)
       final existingApp = await _firestore
           .collection('applications')
           .where('businessId', isEqualTo: businessId)
           .where('toTitle', isEqualTo: toTitle)
           .where('workDate', isEqualTo: Timestamp.fromDate(workDate))
           .where('uid', isEqualTo: uid)
-          .where('workDetailId', isEqualTo: workDetailId)
+          .where('selectedWorkType', isEqualTo: selectedWorkType)
+          .where('startTime', isEqualTo: startTime)
+          .where('endTime', isEqualTo: endTime)
           .limit(1)
           .get();
+      
+      // 기존 지원서가 있는 경우
       if (existingApp.docs.isNotEmpty) {
-        final app = ApplicationModel.fromFirestore(existingApp.docs.first);
-        print('🔍 기존 지원서 발견: status = ${app.status}'); // ⭐ 디버그 로그
+        final existingDoc = existingApp.docs.first;
+        final existingStatus = existingDoc.data()['status'];
         
-        // ⭐ 취소/거절된 지원은 다시 지원 가능
-        if (app.status == 'CANCELED' || 
-            app.status == 'AUTO_CANCELED' || 
-            app.status == 'REJECTED') {
-          print('✅ 이전 지원이 취소/거절됨 → 재지원 허용');
-          // 중복 체크 통과, 아래 로직 계속 진행
-        } else {
+        // 이미 활성 상태면 차단
+        if (existingStatus == 'PENDING' || existingStatus == 'CONFIRMED') {
+          print('🔍 활성 지원서 발견: 이미 지원한 업무');
           ToastHelper.showWarning('이미 지원한 업무입니다.');
           return false;
         }
+        
+        // 취소/거절 상태면 → 재지원 (status만 업데이트)
+        print('✅ 기존 지원서 재활성화: ${existingDoc.id}');
+        
+        final batch = _firestore.batch();
+        
+        // 지원서 상태 업데이트
+        batch.update(existingDoc.reference, {
+          'status': 'PENDING',
+          'appliedAt': FieldValue.serverTimestamp(),
+          'canceledAt': null,
+          'cancelReason': null,
+        });
+        
+        // TO 통계 업데이트
+        batch.update(_firestore.collection('tos').doc(toId), {
+          'totalPending': FieldValue.increment(1),
+        });
+        
+        // WorkDetail pendingCount 증가
+        batch.update(
+          _firestore
+              .collection('tos')
+              .doc(toId)
+              .collection('workDetails')
+              .doc(workDetailId),
+          {
+            'pendingCount': FieldValue.increment(1),
+          },
+        );
+        
+        await batch.commit();
+        clearCache(toId: toId);
+        
+        print('✅ 재지원 완료 (기존 문서 업데이트)');
+        return true;
       }
       // ⭐ Phase 2-C: 확정된 근무와 충돌 체크
       final confirmedSchedules = await getConfirmedSchedules(
