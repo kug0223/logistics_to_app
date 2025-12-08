@@ -111,7 +111,7 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
     }
   }
 
-  /// 전체 데이터 로드
+  /// 전체 데이터 로드 (병렬 처리로 최적화)
   Future<void> _loadData() async {
     setState(() {
       _isLoading = true;
@@ -120,23 +120,28 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
     });
 
     try {
-      // 1. 확정 근무자 조회
-      final confirmedWorkers = await _getConfirmedWorkersForDate();
-
-      // 2. 출근 기록 조회
-      final attendanceMap = await _getAttendanceRecords(
-        confirmedWorkers.map((app) => app.id).toList(),
-      );
-
-      // 3. 사용자 정보 조회
+      // ✅ 1단계: 독립적인 쿼리들 병렬 실행
+      final step1Results = await Future.wait([
+        _getConfirmedWorkersForDate(),  // [0] 확정 근무자
+        _getWorkTypeInfo(),              // [1] 업무유형 정보
+        _getWorkDetailTimes(),           // [2] WorkDetail 시간 정보
+      ]);
+      
+      final confirmedWorkers = step1Results[0] as List<ApplicationModel>;
+      final workTypeMap = step1Results[1] as Map<String, BusinessWorkTypeModel>;
+      final workDetailTimeMap = step1Results[2] as Map<String, dynamic>;
+      
+      // ✅ 2단계: 근무자 기반 쿼리들 병렬 실행
       final uids = confirmedWorkers.map((app) => app.uid).toSet().toList();
-      final userMap = await _getUserInfoBatch(uids);
+      final appIds = confirmedWorkers.map((app) => app.id).toList();
       
-      // 4. 업무유형 정보 조회
-      final workTypeMap = await _getWorkTypeInfo();
+      final step2Results = await Future.wait([
+        _getAttendanceRecords(appIds),   // [0] 출근 기록
+        _getUserInfoBatch(uids),          // [1] 사용자 정보
+      ]);
       
-      // 5. WorkDetail 시간 정보 조회
-      final workDetailTimeMap = await _getWorkDetailTimes();
+      final attendanceMap = step2Results[0] as Map<String, AttendanceModel>;
+      final userMap = step2Results[1] as Map<String, UserModel>;
 
       setState(() {
         _confirmedWorkers = confirmedWorkers;
@@ -146,6 +151,8 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
         _workDetailTimeMap = workDetailTimeMap;
         _isLoading = false;
       });
+      
+      print('✅ 인원현황 로드 완료: ${confirmedWorkers.length}명');
     } catch (e) {
       print('❌ 인원현황 데이터 로드 실패: $e');
       setState(() => _isLoading = false);

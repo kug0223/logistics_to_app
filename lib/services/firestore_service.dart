@@ -26,14 +26,15 @@ class FirestoreService {
   final Map<String, UserModel> _userCache = {};
   final Map<String, DateTime> _userCacheTimestamps = {};
   final Duration _userCacheValidDuration = const Duration(hours: 1);
-  // ⭐ TO 목록 캐시 추가!
+  // ⭐ TO 목록 캐시
   List<TOModel>? _activeTOsCache;
   List<TOModel>? _closedTOsCache;
   DateTime? _activeTOsCacheTime;
   DateTime? _closedTOsCacheTime;
   
-  // 캐시 유효 시간 (5분)
-  final Duration _cacheValidDuration = const Duration(minutes: 5);
+  // 캐시 유효 시간
+  final Duration _cacheValidDuration = const Duration(minutes: 5);  // 상세 데이터용
+  final Duration _listCacheValidDuration = const Duration(seconds: 30);  // ✅ 목록용 (짧게)
   final Map<String, DateTime> _cacheTimestamps = {};
 
   // ═══════════════════════════════════════════════════════════
@@ -2385,6 +2386,14 @@ class FirestoreService {
       return [];
     }
   }
+  /// ✅ TO 목록 캐시만 무효화 (TO 변경 시 호출)
+  void invalidateListCache() {
+    _activeTOsCache = null;
+    _closedTOsCache = null;
+    _activeTOsCacheTime = null;
+    _closedTOsCacheTime = null;
+    print('🗑️ TO 목록 캐시 무효화');
+  }
   /// 캐시 초기화 (TO 수정/삭제 시 호출)
   void clearCache({String? toId}) {
     if (toId != null) {
@@ -3098,18 +3107,42 @@ class FirestoreService {
 
   /// 진행중인 TO 목록 조회 (대표 TO + 단일 TO)
   /// [publishedOnly] true면 공개된 TO만 (사용자용), false면 전체 (관리자용)
-  Future<List<TOModel>> getActiveTOs({bool publishedOnly = false}) async {
+  /// 
+  /// ✅ Phase 1 최적화: WorkDetails 조회 없이 TO 문서 필드만으로 판단
+  /// - 쿼리: N+1 → 1회
+  /// - 예상 효과: 50% 이상 속도 개선
+  Future<List<TOModel>> getActiveTOs({
+    bool publishedOnly = false,
+    bool forceRefresh = false,
+  }) async {
     try {
+      // ✅ Phase 3: 캐시 체크
+      if (!forceRefresh && _activeTOsCache != null && _activeTOsCacheTime != null) {
+        final cacheAge = DateTime.now().difference(_activeTOsCacheTime!);
+        if (cacheAge < _listCacheValidDuration) {
+          print('📦 [캐시] 진행중 TO 캐시 사용 (${cacheAge.inSeconds}초 경과)');
+          
+          if (publishedOnly) {
+            return _activeTOsCache!.where((to) => to.isPublished).toList();
+          }
+          return _activeTOsCache!;
+        }
+      }
+      
+      // ✅ Phase 4-3: 서버 필터링 적용
       final snapshot = await _firestore
           .collection('tos')
+          .where('status', isEqualTo: 'ACTIVE')  // 🔥 서버에서 바로 필터링!
           .orderBy('date', descending: false)
           .get();
 
       final allTOs = snapshot.docs
           .map((doc) => TOModel.fromMap(doc.data(), doc.id))
           .toList();
+      
+      print('✅ [서버필터] ACTIVE TO: ${allTOs.length}개 조회됨');
 
-      // 1. 대표 TO 또는 단일 TO만 필터링
+      // 1. 대표 TO 또는 단일 TO만 필터링 (그룹 마스터만)
       final masterOrSingleTOs = allTOs.where((to) {
         if (to.groupId != null) {
           return to.isGroupMaster;
@@ -3117,74 +3150,22 @@ class FirestoreService {
         return true;
       }).toList();
 
-      // 2. 진행중인 것만 필터링
-      List<TOModel> activeTOs = [];
-      
-      for (var masterTO in masterOrSingleTOs) {
-        if (masterTO.isManualClosed) continue; // 🔥 수동 마감 제외
-        
-        // 그룹 TO인 경우
-        if (masterTO.groupId != null) {
-          final groupTOs = allTOs.where((to) => to.groupId == masterTO.groupId).toList();
-          
-          // 🔥 모든 TO의 모든 WorkDetail이 마감됐는지 확인
-          bool allClosed = true;
-          
-          for (var to in groupTOs) {
-            if (to.isManualClosed) continue; // 개별 TO가 수동 마감된 경우 스킵
-            
-            final workDetails = await getWorkDetails(to.id);
-            
-            // 하나라도 진행중이면 그룹 전체가 진행중
-            for (var work in workDetails) {
-              if (!work.isClosed && !work.isTimeExpired && !work.isFull) {
-                allClosed = false;
-                break;
-              }
-            }
-            
-            if (!allClosed) break;
-          }
-          
-          // 하나라도 진행중이면 포함
-          if (!allClosed) {
-            activeTOs.add(masterTO);
-          }
-        } 
-        // 단일 TO인 경우
-        else {
-          // 🔥 장기공고: TO 레벨의 applicationDeadline 기준
-          if (masterTO.isLongTerm) {
-            if (!masterTO.isDeadlinePassed) {
-              activeTOs.add(masterTO);
-            }
-            continue;
-          }
-          
-          // 단기공고: WorkDetails 기준
-          final workDetails = await getWorkDetails(masterTO.id);
-          
-          // 🔥 모든 WorkDetail이 마감됐는지 확인
-          bool allClosed = workDetails.isNotEmpty && 
-            workDetails.every((work) => 
-              work.isClosed || work.isTimeExpired || work.isFull
-            );
-          
-          // 하나라도 진행중이면 포함
-          if (!allClosed) {
-            activeTOs.add(masterTO);
-          }
-        }
-      }
+      // 2. ✅ Phase 4-3: 서버에서 ACTIVE만 가져왔으므로 간소화
+      // 그룹 마스터만 최종 목록에 포함 (이미 masterOrSingleTOs에서 필터링됨)
+      List<TOModel> activeTOs = masterOrSingleTOs;
 
-      // ✅ 공개 필터링 (사용자용)
+      // ✅ Phase 3: 캐시 저장
+      _activeTOsCache = activeTOs;
+      _activeTOsCacheTime = DateTime.now();
+      
+      // 공개 필터링 (사용자용)
       if (publishedOnly) {
         final publishedTOs = activeTOs.where((to) => to.isPublished).toList();
-        print('✅ 공개된 진행중 TO: ${publishedTOs.length}개 (전체 ${activeTOs.length}개 중)');
+        print('✅ [최적화] 공개된 진행중 TO: ${publishedTOs.length}개 (서버 조회)');
         return publishedTOs;
       }
       
-      print('✅ 진행중 TO 조회: ${activeTOs.length}개 (그룹 대표 + 단일 TO)');
+      print('✅ [최적화] 진행중 TO 조회: ${activeTOs.length}개 (서버 조회)');
       return activeTOs;
     } catch (e) {
       print('❌ 진행중 TO 조회 실패: $e');
@@ -3238,17 +3219,32 @@ class FirestoreService {
   }
 
   /// 마감된 TO 목록 조회 (대표 TO + 단일 TO)
-  Future<List<TOModel>> getClosedTOs() async {
+  /// 
+  /// ✅ Phase 1 최적화: WorkDetails 조회 없이 TO 문서 필드만으로 판단
+  Future<List<TOModel>> getClosedTOs({bool forceRefresh = false}) async {
     try {
-      // 1. 모든 TO 가져오기
+      // ✅ Phase 3: 캐시 체크
+      if (!forceRefresh && _closedTOsCache != null && _closedTOsCacheTime != null) {
+        final cacheAge = DateTime.now().difference(_closedTOsCacheTime!);
+        if (cacheAge < _listCacheValidDuration) {
+          print('📦 [캐시] 마감 TO 캐시 사용 (${cacheAge.inSeconds}초 경과)');
+          return _closedTOsCache!;
+        }
+      }
+      
+      // ✅ Phase 4-3: 서버 필터링 - 마감 상태들 조회 (CLOSED, FULL, EXPIRED)
       final snapshot = await _firestore
           .collection('tos')
-          .orderBy('date', descending: false)
+          .where('status', whereIn: ['CLOSED', 'FULL', 'EXPIRED'])  // 🔥 서버 필터링!
+          .orderBy('date', descending: true)  // 최근 날짜순
+          .limit(50)  // 최근 50개만
           .get();
 
       final allTOs = snapshot.docs
           .map((doc) => TOModel.fromMap(doc.data(), doc.id))
           .toList();
+      
+      print('✅ [서버필터] 마감된 TO: ${allTOs.length}개 조회됨');
 
       // 2. 대표 TO 또는 단일 TO만 필터링
       final masterOrSingleTOs = allTOs.where((to) {
@@ -3258,79 +3254,16 @@ class FirestoreService {
         return true;
       }).toList();
 
-      // 3. 마감된 것만 필터링
-      List<TOModel> closedTOs = [];
+      // 3. ✅ Phase 4-3: 서버에서 마감된 것만 가져왔으므로 간소화
+      // 최대 5개만 반환
+      final recentClosedTOs = masterOrSingleTOs.take(5).toList();
+
+      // ✅ Phase 3: 캐시 저장
+      _closedTOsCache = recentClosedTOs;
+      _closedTOsCacheTime = DateTime.now();
       
-      for (var masterTO in masterOrSingleTOs) {
-        // 수동 마감된 경우 무조건 포함
-        if (masterTO.isManualClosed) {
-          closedTOs.add(masterTO);
-          continue;
-        }
-        
-        // 그룹 TO인 경우
-        if (masterTO.groupId != null) {
-          final groupTOs = allTOs.where((to) => to.groupId == masterTO.groupId).toList();
-          
-          // 🔥 모든 TO의 모든 WorkDetail이 마감됐는지 확인
-          bool allClosed = true;
-          
-          for (var to in groupTOs) {
-            final workDetails = await getWorkDetails(to.id);
-            
-            // 하나라도 진행중이면 그룹은 마감 아님
-            for (var work in workDetails) {
-              if (!work.isClosed && !work.isTimeExpired && !work.isFull) {
-                allClosed = false;
-                break;
-              }
-            }
-            
-            if (!allClosed) break;
-          }
-          
-          // 모두 마감됐으면 포함
-          if (allClosed) {
-            closedTOs.add(masterTO);
-          }
-        } 
-        // 단일 TO인 경우
-        else {
-          // 🔥 장기공고: TO 레벨의 applicationDeadline 기준
-          if (masterTO.isLongTerm) {
-            if (masterTO.isDeadlinePassed) {
-              closedTOs.add(masterTO);
-            }
-            continue;
-          }
-          
-          // 단기공고: WorkDetails 기준
-          final workDetails = await getWorkDetails(masterTO.id);
-          
-          // 🔥 모든 WorkDetail이 마감됐는지 확인
-          bool allClosed = workDetails.isNotEmpty && 
-            workDetails.every((work) => 
-              work.isClosed || work.isTimeExpired || work.isFull
-            );
-          
-          // 모두 마감됐으면 포함
-          if (allClosed) {
-            closedTOs.add(masterTO);
-          }
-        }
-      }
-
-      // 4. 최근 마감 순으로 정렬
-      closedTOs.sort((a, b) {
-        final aDate = a.closedAt ?? a.date;
-        final bDate = b.closedAt ?? b.date;
-        return bDate.compareTo(aDate);
-      });
-      final recentClosedTOs = closedTOs.take(5).toList();
-
-      // ⭐ 로그 수정
-      print('✅ 마감된 TO 조회: ${recentClosedTOs.length}개 (전체 ${closedTOs.length}개 중)');
-      return recentClosedTOs;  // ⭐ 변경
+      print('✅ [최적화] 마감된 TO: ${recentClosedTOs.length}개 (서버 조회)');
+      return recentClosedTOs;
     } catch (e) {
       print('❌ 마감된 TO 조회 실패: $e');
       return [];
@@ -3344,8 +3277,12 @@ class FirestoreService {
         'isManualClosed': true,
         'closedAt': FieldValue.serverTimestamp(),
         'closedBy': adminUID,
+        // ✅ Phase 4: status 필드 업데이트
+        'status': 'CLOSED',
+        'statusUpdatedAt': FieldValue.serverTimestamp(),
       });
       clearCache(toId: toId);
+      invalidateListCache();  // ✅ 목록 캐시도 무효화
 
       print('✅ TO 수동 마감 완료: $toId');
       return true;
@@ -3358,12 +3295,18 @@ class FirestoreService {
   /// TO 재오픈 (마감 취소)
   Future<bool> reopenTO(String toId, String adminUID) async {
     try {
+      // ✅ Phase 4: 재오픈 시 상태 재계산 필요
       await _firestore.collection('tos').doc(toId).update({
         'isManualClosed': false,
         'reopenedAt': FieldValue.serverTimestamp(),
         'reopenedBy': adminUID,
       });
+      
+      // status는 재계산해서 업데이트 (FULL/EXPIRED일 수 있음)
+      await updateTOStatus(toId);
+      
       clearCache(toId: toId);
+      invalidateListCache();  // ✅ 목록 캐시도 무효화
 
       print('✅ TO 재오픈 완료: $toId');
       return true;
@@ -3397,6 +3340,9 @@ class FirestoreService {
           'isManualClosed': true,
           'closedAt': FieldValue.serverTimestamp(),
           'closedBy': adminUID,
+          // ✅ Phase 4: status 필드 업데이트
+          'status': 'CLOSED',
+          'statusUpdatedAt': FieldValue.serverTimestamp(),
         });
         
         print('   📝 TO 마감: ${doc.id}');
@@ -3432,6 +3378,7 @@ class FirestoreService {
         clearCache(toId: doc.id);
       }
 
+      invalidateListCache();  // ✅ 목록 캐시 무효화
       print('✅ 그룹 전체 마감 완료: $groupId');
       return true;
     } catch (e) {
@@ -3498,6 +3445,12 @@ class FirestoreService {
         clearCache(toId: doc.id);
       }
 
+      // ✅ Phase 4: 각 TO 상태 재계산
+      for (var doc in snapshot.docs) {
+        await updateTOStatus(doc.id);
+      }
+      
+      invalidateListCache();  // ✅ 목록 캐시 무효화
       print('✅ 그룹 전체 재오픈 완료: $groupId');
       return true;
     } catch (e) {
@@ -3505,6 +3458,155 @@ class FirestoreService {
       return false;
     }
   }
+
+  // ═══════════════════════════════════════════════════════════
+  // ✅ Phase 4 최적화: TO 상태 관리 (TO Status Management)
+  // ═══════════════════════════════════════════════════════════
+
+  /// TO 상태 계산 (status 필드용)
+  String _calculateTOStatus(Map<String, dynamic> data) {
+    // 1. 수동 마감
+    if (data['isManualClosed'] == true) {
+      return 'CLOSED';
+    }
+    
+    // 2. 인원 충족
+    final totalConfirmed = data['totalConfirmed'] ?? 0;
+    final totalRequired = data['totalRequired'] ?? 0;
+    if (totalRequired > 0 && totalConfirmed >= totalRequired) {
+      return 'FULL';
+    }
+    
+    // 3. 시간 초과 체크
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    
+    // 장기공고: applicationDeadline 기준
+    final jobType = data['jobType'] ?? 'short';
+    if (jobType == 'long_term') {
+      final deadline = data['applicationDeadline'];
+      if (deadline != null) {
+        final deadlineDate = (deadline as Timestamp).toDate();
+        if (now.isAfter(deadlineDate)) {
+          return 'EXPIRED';
+        }
+      }
+      return 'ACTIVE';
+    }
+    
+    // 단기공고: 근무일 + 시작시간 기준
+    final dateTimestamp = data['date'];
+    if (dateTimestamp != null) {
+      final workDate = (dateTimestamp as Timestamp).toDate().toLocal();
+      final workDateOnly = DateTime(workDate.year, workDate.month, workDate.day);
+      
+      // 과거 날짜
+      if (workDateOnly.isBefore(today)) {
+        return 'EXPIRED';
+      }
+      
+      // 오늘인 경우 시작시간 체크
+      if (workDateOnly.isAtSameMomentAs(today)) {
+        final startTime = data['startTime'] as String?;
+        if (startTime != null && startTime.contains(':')) {
+          final parts = startTime.split(':');
+          if (parts.length >= 2) {
+            final workStart = DateTime(
+              workDate.year, workDate.month, workDate.day,
+              int.parse(parts[0]), int.parse(parts[1]),
+            );
+            if (now.isAfter(workStart)) {
+              return 'EXPIRED';
+            }
+          }
+        }
+      }
+    }
+    
+    return 'ACTIVE';
+  }
+
+  /// 단일 TO 상태 업데이트
+  Future<bool> updateTOStatus(String toId) async {
+    try {
+      final doc = await _firestore.collection('tos').doc(toId).get();
+      if (!doc.exists) return false;
+      
+      final data = doc.data()!;
+      final newStatus = _calculateTOStatus(data);
+      final currentStatus = data['status'] ?? 'ACTIVE';
+      
+      // 상태가 변경된 경우에만 업데이트
+      if (newStatus != currentStatus) {
+        await _firestore.collection('tos').doc(toId).update({
+          'status': newStatus,
+          'statusUpdatedAt': FieldValue.serverTimestamp(),
+        });
+        print('✅ TO 상태 업데이트: $toId → $newStatus');
+      }
+      
+      return true;
+    } catch (e) {
+      print('❌ TO 상태 업데이트 실패: $e');
+      return false;
+    }
+  }
+
+  /// 기존 TO 데이터 마이그레이션 (status 필드 추가)
+  /// 🔥 일회성 실행 - 앱 첫 로드 시 또는 수동 실행
+  Future<int> migrateToStatusField() async {
+    try {
+      print('🔄 TO status 필드 마이그레이션 시작...');
+      
+      final snapshot = await _firestore.collection('tos').get();
+      
+      int migrated = 0;
+      int skipped = 0;
+      WriteBatch batch = _firestore.batch();
+      int batchCount = 0;
+      
+      for (var doc in snapshot.docs) {
+        final data = doc.data();
+        
+        // 이미 status 필드가 있으면 스킵
+        if (data['status'] != null) {
+          skipped++;
+          continue;
+        }
+        
+        // 상태 계산
+        final status = _calculateTOStatus(data);
+        
+        batch.update(doc.reference, {
+          'status': status,
+          'statusUpdatedAt': FieldValue.serverTimestamp(),
+        });
+        
+        migrated++;
+        batchCount++;
+        
+        // 배치 제한 (500개)
+        if (batchCount >= 500) {
+          await batch.commit();
+          print('   진행: $migrated개 마이그레이션됨');
+          batch = _firestore.batch();
+          batchCount = 0;
+        }
+      }
+      
+      // 남은 배치 커밋
+      if (batchCount > 0) {
+        await batch.commit();
+      }
+      
+      print('✅ 마이그레이션 완료: $migrated개 업데이트, $skipped개 스킵');
+      return migrated;
+    } catch (e) {
+      print('❌ 마이그레이션 실패: $e');
+      return -1;
+    }
+  }
+
   // ═══════════════════════════════════════════════════════════
   // 통계 재계산 함수들 (Statistics Recalculation)
   // ═══════════════════════════════════════════════════════════
@@ -3671,6 +3773,9 @@ class FirestoreService {
       
       // 5. WorkDetails 통계 재계산
       await recalculateWorkDetailStats(toId);
+      
+      // 6. ✅ Phase 4: TO 상태 업데이트
+      await updateTOStatus(toId);
       
       print('✅ TO 전체 통계 재계산 완료');
       return true;

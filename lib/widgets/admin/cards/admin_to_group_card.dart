@@ -75,7 +75,8 @@ class TOGroupCard extends StatefulWidget {
   State<TOGroupCard> createState() => _TOGroupCardState();
 }
 
-class _TOGroupCardState extends State<TOGroupCard> {
+class _TOGroupCardState extends State<TOGroupCard> with SingleTickerProviderStateMixin {
+  @override
   @override
   Widget build(BuildContext context) {
     final masterTO = widget.groupItem.masterTO;
@@ -154,6 +155,7 @@ class _TOGroupCardState extends State<TOGroupCard> {
             return toItem.workDetails.every((work) =>
                 work.isClosed || work.isTimeExpired || work.isFull);
           });
+
     // ✨ 컬러바 색상 결정 (장기: 보라, 단기: 초록)
     Color statusBarColor;
     if (allClosed) {
@@ -161,279 +163,346 @@ class _TOGroupCardState extends State<TOGroupCard> {
     } else {
       statusBarColor = masterTO.isLongTerm ? AppColors.longTerm : AppColors.shortTerm;
     }
+
     return Container(
       margin: EdgeInsets.only(
         bottom: ResponsiveHelper.spacing(context, 12),
       ),
-      child: IntrinsicHeight(
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            // ✨ 좌측 상태 컬러바
-            Container(
-              width: 4,
-              decoration: BoxDecoration(
-                color: statusBarColor,
-                borderRadius: BorderRadius.circular(2),
+      child: Stack(
+        children: [
+          // ✅ 메인 카드
+          Container(
+            margin: const EdgeInsets.only(left: 4),  // 좌측 컬러바 공간
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(16),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withOpacity(0.06),
+                  blurRadius: 8,
+                  offset: const Offset(0, 2),
+                ),
+              ],
+              border: Border.all(
+                color: widget.isExpanded ? theme.primaryColor : AppColors.grey200,
+                width: widget.isExpanded ? 1.5 : 1,
               ),
             ),
-            SizedBox(width: ResponsiveHelper.spacing(context, 8)),
-            
-            // ✨ 메인 카드
-            Expanded(
-              child: Container(
-                decoration: BoxDecoration(
-                  color: Colors.white,
-                  borderRadius: BorderRadius.circular(16),
-                  boxShadow: [
-                    BoxShadow(
-                      color: Colors.black.withOpacity(0.06),
-                      blurRadius: 8,
-                      offset: const Offset(0, 2),
-                    ),
-                  ],
-                  border: widget.isExpanded
-                      ? Border.all(color: theme.primaryColor, width: 1.5)
-                      : Border.all(color: AppColors.grey200, width: 1),
+            child: Material(
+          color: Colors.transparent,
+          child: Column(
+            children: [
+              // ✨ 헤더 (클릭 가능)
+              InkWell(
+                onTap: widget.onToggleExpand,
+                borderRadius: BorderRadius.only(
+                  topLeft: Radius.circular(16),
+                  topRight: Radius.circular(16),
+                  bottomLeft: Radius.circular(widget.isExpanded ? 0 : 16),
+                  bottomRight: Radius.circular(widget.isExpanded ? 0 : 16),
                 ),
-                child: Material(
-                  color: Colors.transparent,
+                child: Padding(
+                  padding: ResponsiveHelper.cardPadding(context),
                   child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      // ✨ 헤더 (클릭 가능)
-                      InkWell(
-                        onTap: widget.onToggleExpand,
-                        borderRadius: BorderRadius.only(
-                          topLeft: Radius.circular(16),
-                          topRight: Radius.circular(16),
-                          bottomLeft: Radius.circular(widget.isExpanded ? 0 : 16),
-                          bottomRight: Radius.circular(widget.isExpanded ? 0 : 16),
+                      // ✨ 첫째 줄: 배지 + 사업장 + 등록시간 + 메뉴
+                      Row(
+                        children: [
+                          // 장기/단기 텍스트 배지 (맨 앞)
+                          Container(
+                            padding: EdgeInsets.symmetric(
+                              horizontal: ResponsiveHelper.spacing(context, 8),
+                              vertical: ResponsiveHelper.spacing(context, 3),
+                            ),
+                            decoration: BoxDecoration(
+                              color: masterTO.isLongTerm 
+                                  ? AppColors.longTermBg 
+                                  : AppColors.shortTermBg,
+                              borderRadius: BorderRadius.circular(6),
+                              border: Border.all(
+                                color: masterTO.isLongTerm 
+                                    ? AppColors.longTermLight 
+                                    : AppColors.shortTermLight,
+                              ),
+                            ),
+                            child: Text(
+                              masterTO.isLongTerm ? '고정' : '단기',
+                              style: ResponsiveHelper.smallStyle(
+                                context,
+                                color: masterTO.isLongTerm 
+                                    ? AppColors.longTermDark 
+                                    : AppColors.shortTermDark,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                          ),
+                          
+                          SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+                          
+                          // 사업장명
+                          Expanded(
+                            child: Text(
+                              masterTO.businessName,
+                              style: ResponsiveHelper.smallStyle(
+                                context,
+                                color: AppColors.grey600,
+                              ),
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                          
+                          // 등록시간
+                          Text(
+                            _getCreatedAtText(masterTO.createdAt),
+                            style: ResponsiveHelper.tinyStyle(
+                              context,
+                              color: AppColors.grey500,
+                            ),
+                          ),
+                          
+                          SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+                          
+                          // 그룹/단일 표시 (아이콘만)
+                          if (widget.groupItem.isGrouped)
+                            _buildMiniIconBadge(
+                              context,
+                              icon: Icons.folder,
+                              color: AppColors.successDark,
+                              bgColor: AppColors.successBg,
+                            ),
+                          
+                          if (widget.groupItem.isGrouped)
+                            SizedBox(width: ResponsiveHelper.spacing(context, 4)),
+                          
+                          // 메뉴 버튼
+                          widget.groupItem.isGrouped
+                              ? _buildGroupTOMenu(context)
+                              : _buildSingleTOMenu(context),
+                        ],
+                      ),
+                      
+                      SizedBox(height: ResponsiveHelper.spacing(context, 10)),
+                      
+                      // ✨ 둘째 줄: 제목 (크게 강조!)
+                      Text(
+                        masterTO.groupName ?? masterTO.title,
+                        style: ResponsiveHelper.titleStyle(context).copyWith(
+                          fontWeight: FontWeight.bold,
+                          color: AppColors.textPrimary,
+                          height: 1.3,
                         ),
-                        child: Padding(
-                          padding: ResponsiveHelper.cardPadding(context),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              // ✨ 첫째 줄: 배지 + 사업장 + 등록시간 + 메뉴
-                              Row(
-                                children: [
-                                  // 장기/단기 텍스트 배지 (맨 앞)
-                                  Container(
-                                    padding: EdgeInsets.symmetric(
-                                      horizontal: ResponsiveHelper.spacing(context, 8),
-                                      vertical: ResponsiveHelper.spacing(context, 3),
-                                    ),
-                                    decoration: BoxDecoration(
-                                      color: masterTO.isLongTerm 
-                                          ? AppColors.longTermBg 
-                                          : AppColors.shortTermBg,
-                                      borderRadius: BorderRadius.circular(6),
-                                      border: Border.all(
-                                        color: masterTO.isLongTerm 
-                                            ? AppColors.longTermLight 
-                                            : AppColors.shortTermLight,
-                                      ),
-                                    ),
-                                    child: Text(
-                                      masterTO.isLongTerm ? '고정' : '단기',
-                                      style: ResponsiveHelper.smallStyle(
-                                        context,
-                                        color: masterTO.isLongTerm 
-                                            ? AppColors.longTermDark 
-                                            : AppColors.shortTermDark,
-                                        fontWeight: FontWeight.bold,
-                                      ),
-                                    ),
-                                  ),
-                                  
-                                  SizedBox(width: ResponsiveHelper.spacing(context, 8)),
-                                  
-                                  // 사업장명
-                                  Expanded(
-                                    child: Text(
-                                      masterTO.businessName,
-                                      style: ResponsiveHelper.smallStyle(
-                                        context,
-                                        color: AppColors.grey600,
-                                      ),
-                                      overflow: TextOverflow.ellipsis,
-                                    ),
-                                  ),
-                                  
-                                  // 등록시간
-                                  Text(
-                                    _getCreatedAtText(masterTO.createdAt),
-                                    style: ResponsiveHelper.tinyStyle(
-                                      context,
-                                      color: AppColors.grey500,
-                                    ),
-                                  ),
-                                  
-                                  SizedBox(width: ResponsiveHelper.spacing(context, 8)),
-                                  
-                                  // 그룹/단일 표시 (아이콘만)
-                                  if (widget.groupItem.isGrouped)
-                                    _buildMiniIconBadge(
-                                      context,
-                                      icon: Icons.folder,
-                                      color: AppColors.successDark,
-                                      bgColor: AppColors.successBg,
-                                    ),
-                                  
-                                  if (widget.groupItem.isGrouped)
-                                    SizedBox(width: ResponsiveHelper.spacing(context, 4)),
-                                  
-                                  // 메뉴 버튼
-                                  widget.groupItem.isGrouped
-                                      ? _buildGroupTOMenu(context)
-                                      : _buildSingleTOMenu(context),
-                                ],
-                              ),
-                              
-                              SizedBox(height: ResponsiveHelper.spacing(context, 10)),
-                              
-                              // ✨ 둘째 줄: 제목 (크게 강조!)
-                              Text(
-                                masterTO.groupName ?? masterTO.title,
-                                style: ResponsiveHelper.titleStyle(context).copyWith(
-                                  fontWeight: FontWeight.bold,
-                                  color: AppColors.textPrimary,
-                                  height: 1.3,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                      
+                      SizedBox(height: ResponsiveHelper.spacing(context, 12)),
+                      
+                      // ✨ 셋째 줄: 날짜 + 인원현황 (핵심 정보만!)
+                      Row(
+                        children: [
+                          // 날짜 정보
+                          Expanded(
+                            child: Row(
+                              children: [
+                                Icon(
+                                  Icons.event,
+                                  size: ResponsiveHelper.iconSize(context, 14),
+                                  color: AppColors.grey500,
                                 ),
-                                maxLines: 2,
-                                overflow: TextOverflow.ellipsis,
-                              ),
-                              
-                              SizedBox(height: ResponsiveHelper.spacing(context, 12)),
-                              
-                              // ✨ 셋째 줄: 날짜 + 인원현황 (핵심 정보만!)
-                              Row(
-                                children: [
-                                  // 날짜 정보
-                                  Expanded(
-                                    child: Row(
-                                      children: [
-                                        Icon(
-                                          Icons.event,
-                                          size: ResponsiveHelper.iconSize(context, 14),
-                                          color: AppColors.grey500,
-                                        ),
-                                        SizedBox(width: ResponsiveHelper.spacing(context, 4)),
-                                        Expanded(
-                                          child: Text(
-                                            _getDateText(masterTO),
-                                            style: ResponsiveHelper.bodyStyle(
-                                              context,
-                                              color: AppColors.grey700,
-                                            ),
-                                            overflow: TextOverflow.ellipsis,
-                                          ),
-                                        ),
-                                      ],
+                                SizedBox(width: ResponsiveHelper.spacing(context, 4)),
+                                Expanded(
+                                  child: Text(
+                                    _getDateText(masterTO),
+                                    style: ResponsiveHelper.bodyStyle(
+                                      context,
+                                      color: AppColors.grey700,
                                     ),
+                                    overflow: TextOverflow.ellipsis,
                                   ),
-                                  
-                                  SizedBox(width: ResponsiveHelper.spacing(context, 12)),
-                                  
-                                  // ✨ 인원 현황 (핵심!)
-                                  _buildPersonnelBadge(
+                                ),
+                              ],
+                            ),
+                          ),
+                          
+                          SizedBox(width: ResponsiveHelper.spacing(context, 12)),
+                          
+                          // ✨ 인원 현황 (핵심!)
+                          _buildPersonnelBadge(
+                            context,
+                            confirmed: totalConfirmed,
+                            required: totalRequired,
+                            pending: totalPending,
+                            isFull: isFull,
+                          ),
+                        ],
+                      ),
+                      
+                      // ✨ 예약 공개 표시 (있는 경우만)
+                      if (!widget.groupItem.isGrouped && masterTO.isPendingPublish) ...[
+                        SizedBox(height: ResponsiveHelper.spacing(context, 8)),
+                        _buildScheduledInfo(context, masterTO),
+                      ],
+                      
+                      // ✨ 장기공고 마감일시 표시 (장기공고인 경우)
+                      if (masterTO.isLongTerm && !allClosed) ...[
+                        SizedBox(height: ResponsiveHelper.spacing(context, 8)),
+                        Row(
+                          children: [
+                            Icon(
+                              Icons.timer_outlined,
+                              size: ResponsiveHelper.iconSize(context, 14),
+                              color: masterTO.isDeadlinePassed 
+                                  ? AppColors.grey500 
+                                  : AppColors.warningDark,
+                            ),
+                            SizedBox(width: ResponsiveHelper.spacing(context, 6)),
+                            Text(
+                              '지원마감 ${masterTO.formattedDeadline}',
+                              style: ResponsiveHelper.smallStyle(
+                                context,
+                                color: masterTO.isDeadlinePassed 
+                                    ? AppColors.grey500 
+                                    : AppColors.warningDark,
+                              ),
+                            ),
+                            if (masterTO.isDeadlineSoon && !masterTO.isDeadlinePassed) ...[
+                              SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+                              Container(
+                                padding: EdgeInsets.symmetric(
+                                  horizontal: ResponsiveHelper.spacing(context, 6),
+                                  vertical: ResponsiveHelper.spacing(context, 2),
+                                ),
+                                decoration: BoxDecoration(
+                                  color: AppColors.warningBg,
+                                  borderRadius: BorderRadius.circular(4),
+                                ),
+                                child: Text(
+                                  '마감임박',
+                                  style: ResponsiveHelper.tinyStyle(
                                     context,
-                                    confirmed: totalConfirmed,
-                                    required: totalRequired,
-                                    pending: totalPending,
-                                    isFull: isFull,
-                                  ),
-                                ],
-                              ),
-                              
-                              // ✨ 예약 공개 표시 (있는 경우만)
-                              if (!widget.groupItem.isGrouped && masterTO.isPendingPublish) ...[
-                                SizedBox(height: ResponsiveHelper.spacing(context, 8)),
-                                _buildScheduledInfo(context, masterTO),
-                              ],
-                              
-                              // ✨ 장기공고 마감일시 표시 (장기공고인 경우)
-                              if (masterTO.isLongTerm && !allClosed) ...[
-                                SizedBox(height: ResponsiveHelper.spacing(context, 8)),
-                                Row(
-                                  children: [
-                                    Icon(
-                                      Icons.timer_outlined,
-                                      size: ResponsiveHelper.iconSize(context, 14),
-                                      color: masterTO.isDeadlinePassed 
-                                          ? AppColors.grey500 
-                                          : AppColors.warningDark,
-                                    ),
-                                    SizedBox(width: ResponsiveHelper.spacing(context, 6)),
-                                    Text(
-                                      '지원마감 ${masterTO.formattedDeadline}',
-                                      style: ResponsiveHelper.smallStyle(
-                                        context,
-                                        color: masterTO.isDeadlinePassed 
-                                            ? AppColors.grey500 
-                                            : AppColors.warningDark,
-                                      ),
-                                    ),
-                                    if (masterTO.isDeadlineSoon && !masterTO.isDeadlinePassed) ...[
-                                      SizedBox(width: ResponsiveHelper.spacing(context, 8)),
-                                      Container(
-                                        padding: EdgeInsets.symmetric(
-                                          horizontal: ResponsiveHelper.spacing(context, 6),
-                                          vertical: ResponsiveHelper.spacing(context, 2),
-                                        ),
-                                        decoration: BoxDecoration(
-                                          color: AppColors.warningBg,
-                                          borderRadius: BorderRadius.circular(4),
-                                        ),
-                                        child: Text(
-                                          '마감임박',
-                                          style: ResponsiveHelper.tinyStyle(
-                                            context,
-                                            color: AppColors.warningDark,
-                                          ).copyWith(fontWeight: FontWeight.bold),
-                                        ),
-                                      ),
-                                    ],
-                                  ],
-                                ),
-                              ],
-                              
-                              // ✨ 상태 표시 (마감된 경우만)
-                              if (allClosed) ...[
-                                SizedBox(height: ResponsiveHelper.spacing(context, 8)),
-                                _buildClosedBadge(context),
-                              ],
-                              
-                              // 펼침 힌트
-                              SizedBox(height: ResponsiveHelper.spacing(context, 8)),
-                              Center(
-                                child: Icon(
-                                  widget.isExpanded 
-                                      ? Icons.keyboard_arrow_up 
-                                      : Icons.keyboard_arrow_down,
-                                  size: ResponsiveHelper.iconSize(context, 20),
-                                  color: AppColors.grey400,
+                                    color: AppColors.warningDark,
+                                  ).copyWith(fontWeight: FontWeight.bold),
                                 ),
                               ),
                             ],
-                          ),
+                          ],
+                        ),
+                      ],
+                      
+                      // ✨ 상태 표시 (마감된 경우만)
+                      if (allClosed) ...[
+                        SizedBox(height: ResponsiveHelper.spacing(context, 8)),
+                        _buildClosedBadge(context),
+                      ],
+                      
+                      // 펼침 힌트
+                      SizedBox(height: ResponsiveHelper.spacing(context, 8)),
+                      Center(
+                        child: Icon(
+                          widget.isExpanded 
+                              ? Icons.keyboard_arrow_up 
+                              : Icons.keyboard_arrow_down,
+                          size: ResponsiveHelper.iconSize(context, 20),
+                          color: AppColors.grey400,
                         ),
                       ),
-                      
-                      // ✨ 펼쳐진 경우: 그룹 TO 목록
-                      if (widget.isExpanded && widget.groupItem.isGrouped) ...[
-                        Divider(height: 1, color: AppColors.grey200),
-                        Container(
-                          decoration: BoxDecoration(
-                            color: AppColors.grey50,
-                            borderRadius: BorderRadius.only(
-                              bottomLeft: Radius.circular(16),
-                              bottomRight: Radius.circular(16),
+                    ],
+                  ),
+                ),
+              ),
+              
+              // ✨ 펼쳐진 경우: 그룹 TO 목록 (애니메이션 적용)
+              AnimatedSize(
+                duration: const Duration(milliseconds: 250),
+                curve: Curves.easeOutCubic,
+                alignment: Alignment.topCenter,
+                clipBehavior: Clip.hardEdge,
+                child: widget.isExpanded && widget.groupItem.isGrouped
+                    ? Column(
+                        children: [
+                          Divider(height: 1, color: AppColors.grey200),
+                          Container(
+                            decoration: BoxDecoration(
+                              color: AppColors.grey50,
+                              borderRadius: BorderRadius.only(
+                                bottomLeft: Radius.circular(16),
+                                bottomRight: Radius.circular(16),
+                              ),
+                            ),
+                            child: Padding(
+                              padding: ResponsiveHelper.cardPadding(context),
+                              child: widget.isGroupLoading
+                                  // ✨ 로딩 중 스피너
+                                  ? Center(
+                                      child: Padding(
+                                        padding: EdgeInsets.all(
+                                          ResponsiveHelper.spacing(context, 24),
+                                        ),
+                                        child: Column(
+                                          children: [
+                                            SizedBox(
+                                              width: 24,
+                                              height: 24,
+                                              child: CircularProgressIndicator(
+                                                strokeWidth: 2,
+                                                color: theme.primaryColor,
+                                              ),
+                                            ),
+                                            SizedBox(height: ResponsiveHelper.spacing(context, 8)),
+                                            Text(
+                                              '불러오는 중...',
+                                              style: ResponsiveHelper.smallStyle(context).copyWith(
+                                                color: AppColors.grey500,
+                                              ),
+                                            ),
+                                          ],
+                                        ),
+                                      ),
+                                    )
+                                  // ✨ 로드 완료 - TO 목록 표시
+                                  : Column(
+                                      children: _getFilteredGroupTOs().map((toItem) {
+                                        return TOItemCard(
+                                          toItem: toItem,
+                                          groupItem: widget.groupItem,
+                                          firestoreService: widget.firestoreService,
+                                          dialogs: widget.dialogs,
+                                          onChanged: widget.onChanged,
+                                          isExpanded: widget.expandedTOs.contains(toItem.to.id),
+                                          onToggleExpand: () => widget.onToggleTOExpand(toItem.to.id),
+                                          isLoading: widget.loadingTOs.contains(toItem.to.id),
+                                          onLocalStatsChanged: () => setState(() {}),
+                                        );
+                                      }).toList(),
+                                    ),
                             ),
                           ),
-                          child: Padding(
+                        ],
+                      )
+                    : const SizedBox.shrink(),
+              ),
+              
+              // ✨ 펼쳐진 경우: 단일 TO 업무 상세 (애니메이션 적용)
+              AnimatedSize(
+                duration: const Duration(milliseconds: 250),
+                curve: Curves.easeOutCubic,
+                alignment: Alignment.topCenter,
+                clipBehavior: Clip.hardEdge,
+                child: widget.isExpanded && !widget.groupItem.isGrouped
+                    ? Column(
+                        children: [
+                          Divider(height: 1, color: AppColors.grey200),
+                          Container(
                             padding: ResponsiveHelper.cardPadding(context),
-                            child: widget.isGroupLoading
+                            decoration: BoxDecoration(
+                              color: AppColors.grey50,
+                              borderRadius: BorderRadius.only(
+                                bottomLeft: Radius.circular(16),
+                                bottomRight: Radius.circular(16),
+                              ),
+                            ),
+                            child: widget.loadingTOs.contains(widget.groupItem.groupTOs.first.to.id)
                                 // ✨ 로딩 중 스피너
                                 ? Center(
                                     child: Padding(
@@ -452,7 +521,7 @@ class _TOGroupCardState extends State<TOGroupCard> {
                                           ),
                                           SizedBox(height: ResponsiveHelper.spacing(context, 8)),
                                           Text(
-                                            '불러오는 중...',
+                                            '업무 정보 불러오는 중...',
                                             style: ResponsiveHelper.smallStyle(context).copyWith(
                                               color: AppColors.grey500,
                                             ),
@@ -461,117 +530,74 @@ class _TOGroupCardState extends State<TOGroupCard> {
                                       ),
                                     ),
                                   )
-                                // ✨ 로드 완료 - TO 목록 표시
+                                // ✨ 로드 완료 - 업무 상세 표시
                                 : Column(
-                                    children: _getFilteredGroupTOs().map((toItem) {
-                                      return TOItemCard(
-                                        toItem: toItem,
-                                        groupItem: widget.groupItem,
-                                        firestoreService: widget.firestoreService,
-                                        dialogs: widget.dialogs,
-                                        onChanged: widget.onChanged,
-                                        isExpanded: widget.expandedTOs.contains(toItem.to.id),
-                                        onToggleExpand: () => widget.onToggleTOExpand(toItem.to.id),
-                                        isLoading: widget.loadingTOs.contains(toItem.to.id),
-                                        onLocalStatsChanged: () => setState(() {}),  // ✅ 추가: 그룹카드 rebuild
-                                      );
-                                    }).toList(),
-                                  ),
-                          ),
-                        ),
-                      ],
-                      
-                      // ✨ 펼쳐진 경우: 단일 TO 업무 상세
-                      if (widget.isExpanded && !widget.groupItem.isGrouped) ...[
-                        Divider(height: 1, color: AppColors.grey200),
-                        Container(
-                          padding: ResponsiveHelper.cardPadding(context),
-                          decoration: BoxDecoration(
-                            color: AppColors.grey50,
-                            borderRadius: BorderRadius.only(
-                              bottomLeft: Radius.circular(16),
-                              bottomRight: Radius.circular(16),
-                            ),
-                          ),
-                          child: widget.loadingTOs.contains(widget.groupItem.groupTOs.first.to.id)
-                              // ✨ 로딩 중 스피너
-                              ? Center(
-                                  child: Padding(
-                                    padding: EdgeInsets.all(
-                                      ResponsiveHelper.spacing(context, 24),
-                                    ),
-                                    child: Column(
-                                      children: [
-                                        SizedBox(
-                                          width: 24,
-                                          height: 24,
-                                          child: CircularProgressIndicator(
-                                            strokeWidth: 2,
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    children: [
+                                      // 업무 상세 헤더
+                                      Row(
+                                        children: [
+                                          Icon(
+                                            Icons.assignment,
+                                            size: ResponsiveHelper.iconSize(context, 16),
                                             color: theme.primaryColor,
                                           ),
-                                        ),
-                                        SizedBox(height: ResponsiveHelper.spacing(context, 8)),
-                                        Text(
-                                          '업무 정보 불러오는 중...',
-                                          style: ResponsiveHelper.smallStyle(context).copyWith(
-                                            color: AppColors.grey500,
+                                          SizedBox(width: ResponsiveHelper.spacing(context, 6)),
+                                          Text(
+                                            '업무 상세',
+                                            style: ResponsiveHelper.subtitleStyle(context).copyWith(
+                                              fontWeight: FontWeight.bold,
+                                            ),
                                           ),
-                                        ),
-                                      ],
-                                    ),
-                                  ),
-                                )
-                              // ✨ 로드 완료 - 업무 상세 표시
-                              : Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              // 업무 상세 헤더
-                              Row(
-                                children: [
-                                  Icon(
-                                    Icons.assignment,
-                                    size: ResponsiveHelper.iconSize(context, 16),
-                                    color: theme.primaryColor,
-                                  ),
-                                  SizedBox(width: ResponsiveHelper.spacing(context, 6)),
-                                  Text(
-                                    '업무 상세',
-                                    style: ResponsiveHelper.subtitleStyle(context).copyWith(
-                                      fontWeight: FontWeight.bold,
-                                    ),
-                                  ),
-                                ],
-                              ),
-                              SizedBox(height: ResponsiveHelper.spacing(context, 12)),
-                              
-                              // 업무 목록
-                              ...widget.groupItem.groupTOs.first.workDetails.map((work) {
-                                final stats = widget.groupItem.groupTOs.first
-                                    .workDetailStats?[work.workType];
-                                final confirmed = stats?['confirmed'] ?? 0;
-                                final pending = stats?['pending'] ?? 0;
+                                        ],
+                                      ),
+                                      SizedBox(height: ResponsiveHelper.spacing(context, 12)),
+                                      
+                                      // 업무 목록
+                                      ...widget.groupItem.groupTOs.first.workDetails.map((work) {
+                                        final stats = widget.groupItem.groupTOs.first
+                                            .workDetailStats?[work.workType];
+                                        final confirmed = stats?['confirmed'] ?? 0;
+                                        final pending = stats?['pending'] ?? 0;
 
-                                return WorkDetailRow(
-                                  work: work,
-                                  confirmedCount: confirmed,
-                                  pendingCount: pending,
-                                  toItem: widget.groupItem.groupTOs.first,
-                                  firestoreService: widget.firestoreService,
-                                  onChanged: widget.onChanged,
-                                  onLocalStatsChanged: () => setState(() {}),
-                                );
-                              }),
-                            ],
+                                        return WorkDetailRow(
+                                          work: work,
+                                          confirmedCount: confirmed,
+                                          pendingCount: pending,
+                                          toItem: widget.groupItem.groupTOs.first,
+                                          firestoreService: widget.firestoreService,
+                                          onChanged: widget.onChanged,
+                                          onLocalStatsChanged: () => setState(() {}),
+                                        );
+                                      }),
+                                    ],
+                                  ),
                           ),
-                        ),
-                      ],
-                    ],
-                  ),
+                        ],
+                      )
+                    : const SizedBox.shrink(),
+              ),
+            ],
+          ),
+        ),
+          ),
+          // ✅ 좌측 컬러바 (Stack으로 위에 덮기)
+          Positioned(
+            left: 0,
+            top: 0,
+            bottom: 0,
+            child: Container(
+              width: 4,
+              decoration: BoxDecoration(
+                color: statusBarColor,
+                borderRadius: BorderRadius.only(
+                  topLeft: Radius.circular(16),
+                  bottomLeft: Radius.circular(16),
                 ),
               ),
             ),
-          ],
-        ),
+          ),
+        ],
       ),
     );
   }

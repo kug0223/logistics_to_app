@@ -64,6 +64,10 @@ class TOModel {
   final DateTime? reopenedAt;       // 재오픈 시각
   final String? reopenedBy;         // 재오픈 처리자 UID
 
+  // ✅ Phase 4 최적화: 상태 필드 (서버 필터링용)
+  final String status;              // ACTIVE | CLOSED | FULL | EXPIRED
+  final DateTime? statusUpdatedAt;  // 상태 변경 시각
+
   // ✅ 예약 공개 관리
   final String publishMode;         // 'immediate' (즉시) | 'scheduled' (예약)
   final DateTime? publishAt;        // 예약 공개 시간
@@ -116,6 +120,9 @@ class TOModel {
     this.closedBy,
     this.reopenedAt,
     this.reopenedBy,
+    // ✅ Phase 4 최적화: 상태 필드
+    this.status = 'ACTIVE',         // 기본값: 진행중
+    this.statusUpdatedAt,
     // ✅ 예약 공개 관리
     this.publishMode = 'immediate',   // 기본값: 즉시 공개
     this.publishAt,
@@ -194,6 +201,11 @@ class TOModel {
           ? (data['reopenedAt'] as Timestamp).toDate()
           : null,
       reopenedBy: data['reopenedBy'],
+      // ✅ Phase 4 최적화: 상태 필드
+      status: data['status'] ?? 'ACTIVE',  // 기존 데이터 호환
+      statusUpdatedAt: data['statusUpdatedAt'] != null
+          ? (data['statusUpdatedAt'] as Timestamp).toDate()
+          : null,
       // ✅ 예약 공개 관리
       publishMode: data['publishMode'] ?? 'immediate',
       publishAt: data['publishAt'] != null
@@ -247,6 +259,9 @@ class TOModel {
       'closedBy': closedBy,
       'reopenedAt': reopenedAt != null ? Timestamp.fromDate(reopenedAt!) : null,
       'reopenedBy': reopenedBy,
+      // ✅ Phase 4 최적화: 상태 필드
+      'status': status,
+      'statusUpdatedAt': statusUpdatedAt != null ? Timestamp.fromDate(statusUpdatedAt!) : null,
       // ✅ 예약 공개 관리
       'publishMode': publishMode,
       'publishAt': publishAt != null ? Timestamp.fromDate(publishAt!) : null,
@@ -299,6 +314,9 @@ class TOModel {
     String? closedBy,
     DateTime? reopenedAt,
     String? reopenedBy,
+    // ✅ Phase 4 최적화
+    String? status,
+    DateTime? statusUpdatedAt,
     // ✅ 예약 공개 관리
     String? publishMode,
     DateTime? publishAt,
@@ -348,6 +366,9 @@ class TOModel {
       closedBy: closedBy ?? this.closedBy,
       reopenedAt: reopenedAt ?? this.reopenedAt,
       reopenedBy: reopenedBy ?? this.reopenedBy,
+      // ✅ Phase 4 최적화
+      status: status ?? this.status,
+      statusUpdatedAt: statusUpdatedAt ?? this.statusUpdatedAt,
       // ✅ 예약 공개 관리
       publishMode: publishMode ?? this.publishMode,
       publishAt: publishAt ?? this.publishAt,
@@ -619,6 +640,16 @@ class TOModel {
   /// TO가 마감되었는지 확인 (수동 마감 or 시간 초과 or 인원 충족)
   bool get isClosed {
     return isManualClosed || isTimeExpired || isFull;
+  }
+  /// ✅ Phase 4: status 필드 기반 활성 여부
+  bool get isActive => status == 'ACTIVE';
+  
+  /// ✅ Phase 4: 현재 상태 계산 (status 필드 업데이트용)
+  String get calculatedStatus {
+    if (isManualClosed) return 'CLOSED';
+    if (isFull) return 'FULL';
+    if (isTimeExpired) return 'EXPIRED';
+    return 'ACTIVE';
   }
 
   /// 마감 사유 문자열

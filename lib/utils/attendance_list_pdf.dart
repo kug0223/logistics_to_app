@@ -475,11 +475,46 @@ class AttendanceListPdf {
   }
 }
 
-/// PDF 미리보기 바텀시트
-class _PreviewBottomSheet extends StatelessWidget {
+/// PDF 미리보기 바텀시트 (성능 최적화 + 핀치 줌)
+class _PreviewBottomSheet extends StatefulWidget {
   final AttendanceListData data;
 
   const _PreviewBottomSheet({required this.data});
+
+  @override
+  State<_PreviewBottomSheet> createState() => _PreviewBottomSheetState();
+}
+
+class _PreviewBottomSheetState extends State<_PreviewBottomSheet> {
+  Uint8List? _pdfBytes;
+  bool _isLoading = true;
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    _generatePdf();
+  }
+
+  /// ✅ PDF 미리 생성 (한 번만)
+  Future<void> _generatePdf() async {
+    try {
+      final bytes = await AttendanceListPdf.generatePdf(widget.data);
+      if (mounted) {
+        setState(() {
+          _pdfBytes = bytes;
+          _isLoading = false;
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _error = e.toString();
+          _isLoading = false;
+        });
+      }
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -509,13 +544,26 @@ class _PreviewBottomSheet extends StatelessWidget {
               children: [
                 const Icon(Icons.description_outlined, color: Colors.blue),
                 const SizedBox(width: 8),
-                const Expanded(
-                  child: Text(
-                    '명단 미리보기',
-                    style: TextStyle(
-                      fontSize: 18,
-                      fontWeight: FontWeight.bold,
-                    ),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text(
+                        '명단 미리보기',
+                        style: TextStyle(
+                          fontSize: 18,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                      // ✅ 줌 힌트 추가
+                      Text(
+                        '두 손가락으로 확대/축소 가능',
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: Colors.grey[600],
+                        ),
+                      ),
+                    ],
                   ),
                 ),
                 IconButton(
@@ -530,28 +578,49 @@ class _PreviewBottomSheet extends StatelessWidget {
 
           // PDF 미리보기
           Expanded(
-            child: PdfPreview(
-              build: (format) => AttendanceListPdf.generatePdf(data),
-              canChangeOrientation: false,
-              canChangePageFormat: false,
-              canDebug: false,
-              allowPrinting: true,
-              allowSharing: true,
-              pdfFileName: '${data.businessName}_근무명단_${data.date.year}${data.date.month.toString().padLeft(2, '0')}${data.date.day.toString().padLeft(2, '0')}.pdf',
-              loadingWidget: const Center(
-                child: CircularProgressIndicator(),
-              ),
-              onError: (context, error) => Center(
-                child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    const Icon(Icons.error_outline, size: 48, color: Colors.red),
-                    const SizedBox(height: 16),
-                    Text('PDF 생성 실패\n$error', textAlign: TextAlign.center),
-                  ],
-                ),
-              ),
-            ),
+            child: _isLoading
+                ? const Center(
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        CircularProgressIndicator(),
+                        SizedBox(height: 16),
+                        Text('PDF 생성 중...'),
+                      ],
+                    ),
+                  )
+                : _error != null
+                    ? Center(
+                        child: Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            const Icon(Icons.error_outline, size: 48, color: Colors.red),
+                            const SizedBox(height: 16),
+                            Text('PDF 생성 실패\n$_error', textAlign: TextAlign.center),
+                          ],
+                        ),
+                      )
+                    // ✅ 미리 생성된 PDF 사용 + InteractiveViewer로 줌 지원
+                    : PdfPreview(
+                        build: (format) async => _pdfBytes!,
+                        canChangeOrientation: false,
+                        canChangePageFormat: false,
+                        canDebug: false,
+                        allowPrinting: true,
+                        allowSharing: true,
+                        useActions: true,
+                        pdfPreviewPageDecoration: BoxDecoration(
+                          color: Colors.white,
+                          boxShadow: [
+                            BoxShadow(
+                              color: Colors.black.withOpacity(0.1),
+                              blurRadius: 10,
+                              offset: const Offset(0, 2),
+                            ),
+                          ],
+                        ),
+                        pdfFileName: '${widget.data.businessName}_근무명단_${widget.data.date.year}${widget.data.date.month.toString().padLeft(2, '0')}${widget.data.date.day.toString().padLeft(2, '0')}.pdf',
+                      ),
           ),
         ],
       ),

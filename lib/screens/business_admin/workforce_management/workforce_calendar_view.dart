@@ -74,6 +74,9 @@ class _WorkforceCalendarViewState extends State<WorkforceCalendarView> {
 
   /// ✨ 데이터 로드 (Lazy Loading - 겉 카드만)
   Future<void> _loadData() async {
+    // ✅ Phase 3: 새로고침 시 목록 캐시 무효화
+    _firestoreService.invalidateListCache();
+    
     setState(() => _isLoading = true);
 
     try {
