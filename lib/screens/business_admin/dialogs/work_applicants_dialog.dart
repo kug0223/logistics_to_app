@@ -76,9 +76,16 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog> {
         widget.toItem.to.date,
       );
 
-      final filtered = apps.where((app) => 
-        app.selectedWorkType == widget.work.workType
-      ).toList();
+      final filtered = apps.where((app) {
+        // ✅ workDetailId로 매칭 (없으면 workType + 시간으로 폴백)
+        if (app.workDetailId != null && app.workDetailId!.isNotEmpty) {
+          return app.workDetailId == widget.work.id;
+        }
+        // 기존 데이터 호환
+        return app.selectedWorkType == widget.work.workType &&
+               app.startTime == widget.work.startTime &&
+               app.endTime == widget.work.endTime;
+      }).toList();
 
       // 병렬로 사용자 정보 조회
       final futures = filtered.map((app) async {
@@ -1550,9 +1557,9 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog> {
       if (app.status == 'CONFIRMED') confirmed++;
     }
     
-    // workDetailStats 갱신
+    // workDetailStats 갱신 (workDetailId 사용)
     widget.toItem.workDetailStats ??= {};
-    widget.toItem.workDetailStats![widget.work.workType] = {
+    widget.toItem.workDetailStats![widget.work.id] = {
       'pending': pending,
       'confirmed': confirmed,
     };

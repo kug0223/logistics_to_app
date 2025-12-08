@@ -388,6 +388,13 @@ class TestDataHelper {
     } else {
       print('⚠️  TO 통계 재계산 실패');
     }
+    
+    // ✅ 그룹 마스터 통계 동기화
+    await _firestoreService.syncGroupMasterStats(toId);
+    print('✅ 그룹 마스터 통계 동기화 완료');
+    
+    // ✅ 캐시 클리어
+    _firestoreService.clearCache();
     print('');
   }
 

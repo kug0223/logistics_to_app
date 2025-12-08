@@ -42,7 +42,7 @@ class WorkDetailManagementDialog {
             final firstSelected = toItem.workDetails.firstWhere(
               (w) => selectedWorkDetails.contains(w.id),
             );
-            final stats = toItem.workDetailStats?[firstSelected.workType];
+            final stats = toItem.workDetailStats?[firstSelected.id];
             final confirmed = stats?['confirmed'] ?? 0;
             selectedStatus = _getWorkStatus(firstSelected, confirmed);
           } else {
@@ -52,7 +52,7 @@ class WorkDetailManagementDialog {
           // 선택 가능한 업무들
           final selectableWorks = toItem.workDetails.where((work) {
             if (selectedStatus == null) return true;
-            final stats = toItem.workDetailStats?[work.workType];
+            final stats = toItem.workDetailStats?[work.id];
             final confirmed = stats?['confirmed'] ?? 0;
             final workStatus = _getWorkStatus(work, confirmed);
             return workStatus == selectedStatus;

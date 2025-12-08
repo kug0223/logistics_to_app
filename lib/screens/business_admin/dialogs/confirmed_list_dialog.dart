@@ -671,9 +671,13 @@ class _ConfirmedListDialogWidgetState
         
         // 5. 부모 toItem.workDetailStats 업데이트
         widget.toItem.workDetailStats ??= {};
-        final stats = widget.toItem.workDetailStats![workType];
-        if (stats != null) {
-          stats['confirmed'] = ((stats['confirmed'] ?? 1)) - 1;
+        // ✅ workDetailId로 조회 (application에서 가져옴)
+        final workDetailId = application.workDetailId;
+        if (workDetailId != null) {
+          final stats = widget.toItem.workDetailStats![workDetailId];
+          if (stats != null) {
+            stats['confirmed'] = ((stats['confirmed'] ?? 1)) - 1;
+          }
         }
       });
     } else {
