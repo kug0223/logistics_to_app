@@ -21,6 +21,9 @@ enum WorkApplicationStatus {
   
   /// 마감됨
   closed,
+  
+  /// 자동취소됨 (시간 충돌)
+  autoCanceled,
 }
 
 /// 업무 선택 카드
@@ -174,7 +177,12 @@ class WorkSelectionCard extends StatelessWidget {
           bgColor = AppColors.grey200;
           textColor = AppColors.grey600;
           break;
-        case WorkApplicationStatus.notApplied:
+        case WorkApplicationStatus.autoCanceled:
+          text = '자동취소';
+          bgColor = AppColors.warningBg;
+          textColor = AppColors.warningDark;
+          break;
+      case WorkApplicationStatus.notApplied:
           // 마감/모집중 표시
           if (workDetail.isFull || workDetail.isClosed) {
             text = '마감';
@@ -308,6 +316,9 @@ class WorkSelectionCard extends StatelessWidget {
         
       case WorkApplicationStatus.closed:
         return _buildSmallButton(context, '마감', AppColors.grey400, null);
+        
+      case WorkApplicationStatus.autoCanceled:
+        return _buildSmallButton(context, '재지원', AppColors.warning, onApply);
     }
   }
 
@@ -424,6 +435,9 @@ class WorkSelectionCard extends StatelessWidget {
         
       case WorkApplicationStatus.closed:
         return _buildSmallButton(context, '마감', AppColors.grey400, null, icon: Icons.block);
+        
+      case WorkApplicationStatus.autoCanceled:
+        return _buildSmallButton(context, '재지원', AppColors.warning, onApply, icon: Icons.refresh);
     }
   }
 
@@ -557,6 +571,7 @@ class WorkSelectionCard extends StatelessWidget {
     if (status == WorkApplicationStatus.closed) return false;
     if (workDetail.isFull && status == WorkApplicationStatus.notApplied) return false;
     
+    // autoCanceled는 재지원 가능
     return true;
   }
 
@@ -572,6 +587,8 @@ class WorkSelectionCard extends StatelessWidget {
         return AppColors.infoBg.withOpacity(0.3);
       case WorkApplicationStatus.closed:
         return AppColors.grey100;
+      case WorkApplicationStatus.autoCanceled:
+        return AppColors.warningBg.withOpacity(0.3);
       case WorkApplicationStatus.notApplied:
         return Colors.white;
     }
@@ -589,6 +606,8 @@ class WorkSelectionCard extends StatelessWidget {
         return AppColors.info.withOpacity(0.5);
       case WorkApplicationStatus.closed:
         return AppColors.grey300;
+      case WorkApplicationStatus.autoCanceled:
+        return AppColors.warning.withOpacity(0.5);
       case WorkApplicationStatus.notApplied:
         return AppColors.grey300;
     }

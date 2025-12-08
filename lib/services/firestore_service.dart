@@ -1986,17 +1986,39 @@ class FirestoreService {
         ToastHelper.showError('통장사본 등록이 필요합니다.');
         return false;
       }
-      // 1. 중복 지원 확인 - ⭐ Phase 2: 취소/거절된 지원은 제외
+      // 1. 중복 지원 확인 - ✅ workDetailId 기준으로 체크 (시간대 다르면 다른 업무)
+      // 먼저 workDetailId 찾기
+      final toSnapshot = await _firestore
+          .collection('tos')
+          .where('businessId', isEqualTo: businessId)
+          .where('title', isEqualTo: toTitle)
+          .where('date', isEqualTo: Timestamp.fromDate(workDate))
+          .limit(1)
+          .get();
+
+      if (toSnapshot.docs.isEmpty) {
+        ToastHelper.showError('TO를 찾을 수 없습니다.');
+        return false;
+      }
+
+      final toId = toSnapshot.docs.first.id;
+      final workDetailId = await findWorkDetailIdByType(toId, selectedWorkType);
+      
+      if (workDetailId == null) {
+        ToastHelper.showError('업무유형 정보를 찾을 수 없습니다.');
+        return false;
+      }
+
+      // 1. 중복 지원 확인 - ⭐ workDetailId 기준으로 변경
       final existingApp = await _firestore
           .collection('applications')
           .where('businessId', isEqualTo: businessId)
           .where('toTitle', isEqualTo: toTitle)
           .where('workDate', isEqualTo: Timestamp.fromDate(workDate))
           .where('uid', isEqualTo: uid)
-          .where('selectedWorkType', isEqualTo: selectedWorkType)
+          .where('workDetailId', isEqualTo: workDetailId)
           .limit(1)
           .get();
-
       if (existingApp.docs.isNotEmpty) {
         final app = ApplicationModel.fromFirestore(existingApp.docs.first);
         print('🔍 기존 지원서 발견: status = ${app.status}'); // ⭐ 디버그 로그
@@ -2033,29 +2055,6 @@ class FirestoreService {
           );
           return false;
         }
-      }
-
-      // 2. TO 문서 찾기
-      final toSnapshot = await _firestore
-          .collection('tos')
-          .where('businessId', isEqualTo: businessId)
-          .where('title', isEqualTo: toTitle)
-          .where('date', isEqualTo: Timestamp.fromDate(workDate))
-          .limit(1)
-          .get();
-
-      if (toSnapshot.docs.isEmpty) {
-        ToastHelper.showError('TO를 찾을 수 없습니다.');
-        return false;
-      }
-
-      final toId = toSnapshot.docs.first.id;
-
-      // 3. WorkDetail ID 찾기
-      final workDetailId = await findWorkDetailIdByType(toId, selectedWorkType);
-      if (workDetailId == null) {
-        ToastHelper.showError('업무유형 정보를 찾을 수 없습니다.');
-        return false;
       }
 
       // 4. Batch로 한번에 처리

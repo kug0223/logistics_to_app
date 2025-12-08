@@ -143,14 +143,14 @@ class ApplyDialog {
 
       final firestoreService = FirestoreService();
 
-      // 중복 지원 체크 (직접 쿼리)
+      // 중복 지원 체크 (직접 쿼리) - ⭐ workDetailId 기준으로 변경
       final snapshot = await FirebaseFirestore.instance
           .collection('applications')
           .where('uid', isEqualTo: uid)
           .where('businessId', isEqualTo: to.businessId)
           .where('toTitle', isEqualTo: to.title)
           .where('workDate', isEqualTo: Timestamp.fromDate(to.date))
-          .where('selectedWorkType', isEqualTo: work.workType)
+          .where('workDetailId', isEqualTo: work.id)
           .limit(1)
           .get();
 

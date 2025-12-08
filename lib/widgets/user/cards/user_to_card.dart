@@ -695,9 +695,9 @@ class _UserTOCardState extends State<UserTOCard> {
         // 지원 버튼
         _buildMiniButton(
           context,
-          icon: _hasAppliedToTO ? Icons.check : Icons.send,
-          label: _hasAppliedToTO ? '완료' : '지원',
-          onTap: _hasAppliedToTO ? null : _openApplyDialog,
+          icon: _hasAppliedToTO ? Icons.settings : Icons.send,
+          label: _hasAppliedToTO ? '지원관리' : '지원',
+          onTap: _openApplyDialog,
           isPrimary: !_hasAppliedToTO,
         ),
       ],
