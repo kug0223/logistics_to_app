@@ -1083,7 +1083,20 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog> {
         if (isConfirmed) ...[
           const PopupMenuDivider(),
           if (isLongTerm) ...[
-            // 장기: 고정근무 관리
+            // 장기: 근무 시작 전이면 확정취소도 가능
+            if (!_hasWorkStarted()) ...[
+              PopupMenuItem<String>(
+                value: 'cancel_confirmation',
+                child: Row(
+                  children: [
+                    Icon(Icons.cancel_outlined, size: ResponsiveHelper.iconSize(context, 18), color: AppColors.error),
+                    SizedBox(width: ResponsiveHelper.spacing(context, 12)),
+                    Text('확정취소', style: ResponsiveHelper.bodyStyle(context, color: AppColors.error)),
+                  ],
+                ),
+              ),
+            ],
+            // 장기: 고정근무 관리 (항상)
             PopupMenuItem<String>(
               value: 'fixed_worker_management',
               child: Row(
@@ -1615,5 +1628,11 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog> {
         'confirmed': confirmed,
       };
     }
+  }
+  /// 근무가 이미 시작됐는지 확인
+  bool _hasWorkStarted() {
+    final today = DateTime.now();
+    final workStartDate = widget.toItem.to.date;
+    return !workStartDate.isAfter(today);  // 시작일 <= 오늘
   }
 }

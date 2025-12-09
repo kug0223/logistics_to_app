@@ -7281,4 +7281,19 @@ class FirestoreService {
       rethrow;
     }
   }
+  /// 해당 application에 출퇴근 기록이 있는지 확인
+  Future<bool> hasAttendanceRecord(String applicationId) async {
+    try {
+      final snapshot = await _firestore
+          .collection('attendances')
+          .where('applicationId', isEqualTo: applicationId)
+          .limit(1)
+          .get();
+      return snapshot.docs.isNotEmpty;
+    } catch (e) {
+      print('❌ 출퇴근 기록 확인 실패: $e');
+      return false;
+    }
+  }
+  
 }

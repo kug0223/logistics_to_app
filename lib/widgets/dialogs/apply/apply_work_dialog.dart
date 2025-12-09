@@ -120,6 +120,11 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
   // 내 확정 스케줄 (해당 날짜)
   List<ApplicationModel> _myConfirmedSchedules = [];
 
+  // ✅ 출퇴근 기록이 있는 application ID (장기공고용)
+  final Set<String> _hasAttendanceIds = {};
+  // ✅ 장기공고 희망 시작일
+  DateTime? _desiredStartDate;
+
   // ═══════════════════════════════════════════════════════════
   // Getter
   // ═══════════════════════════════════════════════════════════
@@ -156,6 +161,14 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
       ToastHelper.showError('로그인이 필요합니다');
       Navigator.pop(context);
       return;
+    }
+
+    // ✅ 장기공고: 희망 시작일 기본값 = 오늘 또는 공고 시작일 중 늦은 날짜
+    if (_isLongTerm) {
+      final today = DateTime.now();
+      final todayOnly = DateTime(today.year, today.month, today.day);
+      final startDate = widget.mainTO.date;
+      _desiredStartDate = todayOnly.isAfter(startDate) ? todayOnly : startDate;
     }
 
     // 그룹 TO인 경우 첫 날짜 자동 선택
@@ -231,6 +244,16 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
         for (final app in applications)
           _makeWorkKey(app.selectedWorkType, app.startTime, app.endTime): app
       };
+
+      // ✅ 장기공고: 확정된 application의 출퇴근 기록 확인
+      if (_isLongTerm) {
+        for (final app in applications.where((a) => a.status == 'CONFIRMED')) {
+          final hasRecord = await _firestoreService.hasAttendanceRecord(app.id);
+          if (hasRecord) {
+            _hasAttendanceIds.add(app.id);
+          }
+        }
+      }
     } catch (e) {
       print('❌ 지원 상태 로드 실패: $e');
     }
@@ -440,12 +463,47 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
           // 업무 선택 섹션
           _buildSectionTitle(context, '업무 선택'),
           
+          // ✅ 장기공고 + 출퇴근 기록 있으면 안내
+          if (_isLongTerm && _hasAttendanceIds.isNotEmpty) ...[
+            SizedBox(height: ResponsiveHelper.spacing(context, 8)),
+            Container(
+              padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 10)),
+              decoration: BoxDecoration(
+                color: AppColors.infoBg,
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: AppColors.infoLight),
+              ),
+              child: Row(
+                children: [
+                  Icon(
+                    Icons.info_outline,
+                    size: ResponsiveHelper.iconSize(context, 16),
+                    color: AppColors.infoDark,
+                  ),
+                  SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+                  Expanded(
+                    child: Text(
+                      '출퇴근 기록이 있어 단순 취소가 불가합니다.\n퇴사를 원하시면 내 스케줄 > 고정근무 관리를 이용하세요.',
+                      style: ResponsiveHelper.smallStyle(context, color: AppColors.infoDark),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+          
+          SizedBox(height: ResponsiveHelper.spacing(context, 8)),
+          
           ...widget.workDetails.map((work) {
             final workKey = _makeWorkKey(work.workType, work.startTime, work.endTime);
             final application = _applicationsByDate[widget.mainTO.date]?[workKey];
             final conflictInfo = _conflictCache[_dateKey(widget.mainTO.date)]?[work.id] 
                 ?? ConflictInfo.ok;
             
+            // ✅ 장기공고 + 출퇴근 기록 있으면 확정취소 불가
+            final canCancelConfirm = application != null && 
+                !(_isLongTerm && _hasAttendanceIds.contains(application.id));
+
             return WorkSelectionCard(
               workDetail: work,
               status: _getApplicationStatus(application),
@@ -455,8 +513,8 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
               onCancelApplication: application != null
                   ? () => _cancelApplication(application)
                   : null,
-              onCancelConfirm: application != null
-                  ? () => _cancelConfirm(application, work)
+              onCancelConfirm: canCancelConfirm
+                  ? () => _cancelConfirm(application!, work)
                   : null,
             );
           }),
@@ -481,13 +539,18 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
   // 장기공고 캘린더 섹션 (읽기전용)
   // ═══════════════════════════════════════════════════════════
 
-  /// 장기공고용 읽기전용 캘린더
-  /// - 전체 기간 표시 (선택 불가)
-  /// - 근무 요일 강조
+  /// 장기공고용 캘린더 (희망 시작일 선택 가능)
   Widget _buildLongTermCalendarSection(BuildContext context, ThemeData theme) {
     final startDate = widget.mainTO.date;
     final endDate = widget.mainTO.endDate ?? widget.mainTO.date;
     final workDays = widget.mainTO.workDays ?? [];
+    
+    // 오늘 날짜
+    final today = DateTime.now();
+    final todayOnly = DateTime(today.year, today.month, today.day);
+    
+    // 선택 가능한 시작일: 오늘 또는 공고시작일 중 늦은 날짜부터
+    final selectableStartDate = todayOnly.isAfter(startDate) ? todayOnly : startDate;
     
     return Container(
       decoration: BoxDecoration(
@@ -506,7 +569,7 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
       ),
       child: Column(
         children: [
-          // 헤더: 근무 기간 안내
+          // 헤더: 희망 시작일 선택 안내
           Container(
             padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 12)),
             decoration: BoxDecoration(
@@ -519,14 +582,14 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
             child: Row(
               children: [
                 Icon(
-                  Icons.date_range,
+                  Icons.touch_app,
                   size: ResponsiveHelper.iconSize(context, 18),
                   color: AppColors.longTermDark,
                 ),
                 SizedBox(width: ResponsiveHelper.spacing(context, 8)),
                 Expanded(
                   child: Text(
-                    '근무 기간 (전체 선택됨)',
+                    '희망 시작일을 선택하세요',
                     style: ResponsiveHelper.bodyStyle(context, color: AppColors.longTermDark).copyWith(
                       fontWeight: FontWeight.w600,
                     ),
@@ -541,21 +604,41 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
             locale: 'ko_KR',
             firstDay: DateTime(startDate.year, startDate.month, 1),
             lastDay: DateTime(endDate.year, endDate.month + 1, 0),
-            focusedDay: startDate,
+            focusedDay: _desiredStartDate ?? selectableStartDate,
             calendarFormat: CalendarFormat.month,
             
             // 컴팩트한 사이즈
             daysOfWeekHeight: ResponsiveHelper.spacing(context, 28),
             rowHeight: ResponsiveHelper.spacing(context, 40),
             
-            // 선택 비활성화 (읽기전용 - 선택해도 아무 동작 안함)
-            selectedDayPredicate: (day) => false,
-            enabledDayPredicate: (day) => true, // 표시는 하되
-            
-            // 선택해도 아무 동작 안함 (읽기전용)
-            onDaySelected: (selectedDay, focusedDay) {
-              // 아무 동작 안함 - 읽기전용
+            // ✅ 선택된 날짜 (희망 시작일)
+            selectedDayPredicate: (day) {
+              if (_desiredStartDate == null) return false;
+              return DateUtils.isSameDay(_desiredStartDate, day);
             },
+            
+            // ✅ 선택 가능한 날짜: 오늘 이후 + 근무기간 내 + 근무요일
+            enabledDayPredicate: (day) {
+              // 과거 날짜 불가
+              if (day.isBefore(selectableStartDate)) return false;
+              // 종료일 이후 불가
+              if (day.isAfter(endDate)) return false;
+              // 근무 요일 체크
+              if (workDays.isNotEmpty) {
+                const dayNames = ['월', '화', '수', '목', '금', '토', '일'];
+                final dayName = dayNames[day.weekday - 1];
+                if (!workDays.contains(dayName)) return false;
+              }
+              return true;
+            },
+            
+            // ✅ 날짜 선택 시 희망 시작일 업데이트
+            onDaySelected: (selectedDay, focusedDay) {
+              setState(() {
+                _desiredStartDate = selectedDay;
+              });
+            },
+            
             onPageChanged: (focusedDay) {},
             
             // 헤더 스타일
@@ -580,22 +663,25 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
             // 요일 헤더 스타일
             daysOfWeekStyle: DaysOfWeekStyle(
               weekdayStyle: ResponsiveHelper.smallStyle(context, color: AppColors.grey600),
-              weekendStyle: ResponsiveHelper.smallStyle(context, color: AppColors.error),
+              weekendStyle: ResponsiveHelper.smallStyle(context, color: Colors.red),
             ),
             
-            // 커스텀 빌더 (근무일 강조)
+            // 커스텀 빌더
             calendarBuilders: CalendarBuilders(
               defaultBuilder: (context, day, focusedDay) {
-                return _buildLongTermDayCell(context, day, startDate, endDate, workDays, false);
+                return _buildLongTermDayCell(context, day, startDate, endDate, workDays, selectableStartDate, false);
               },
               outsideBuilder: (context, day, focusedDay) {
-                return _buildLongTermDayCell(context, day, startDate, endDate, workDays, true);
+                return _buildLongTermDayCell(context, day, startDate, endDate, workDays, selectableStartDate, true);
               },
               todayBuilder: (context, day, focusedDay) {
-                return _buildLongTermDayCell(context, day, startDate, endDate, workDays, false, isToday: true);
+                return _buildLongTermDayCell(context, day, startDate, endDate, workDays, selectableStartDate, false, isToday: true);
+              },
+              selectedBuilder: (context, day, focusedDay) {
+                return _buildLongTermDayCell(context, day, startDate, endDate, workDays, selectableStartDate, false, isSelected: true);
               },
               disabledBuilder: (context, day, focusedDay) {
-                return _buildLongTermDayCell(context, day, startDate, endDate, workDays, true);
+                return _buildLongTermDayCell(context, day, startDate, endDate, workDays, selectableStartDate, true);
               },
             ),
           ),
@@ -610,12 +696,12 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
                 SizedBox(width: ResponsiveHelper.spacing(context, 12)),
                 _buildLegendItem(context, Colors.orange, '대기'),
                 SizedBox(width: ResponsiveHelper.spacing(context, 12)),
-                _buildLegendItem(context, AppColors.grey400, '지원가능'),
+                _buildLegendItem(context, AppColors.longTerm, '선택가능'),
               ],
             ),
           ),
           
-          // ✅ 안내 메시지 (일괄 지원 + 여러 업무 안내)
+          // ✅ 동적 안내 메시지
           Container(
             margin: EdgeInsets.fromLTRB(
               ResponsiveHelper.spacing(context, 12),
@@ -631,7 +717,7 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
             ),
             child: Column(
               children: [
-                // 일괄 지원 안내
+                // 일괄 지원 안내 (동적)
                 Row(
                   children: [
                     Icon(
@@ -642,7 +728,9 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
                     SizedBox(width: ResponsiveHelper.spacing(context, 8)),
                     Expanded(
                       child: Text(
-                        '고정 근무는 전체 기간에 대해 일괄 지원됩니다.\n${widget.mainTO.workDaysLabel}',
+                        _desiredStartDate != null
+                            ? '${DateFormat('M/d (E)', 'ko_KR').format(_desiredStartDate!)}부터 ${DateFormat('M/d', 'ko_KR').format(endDate)}까지 일괄 지원됩니다.\n${widget.mainTO.workDaysLabel}'
+                            : '희망 시작일을 선택하면 해당일부터 종료일까지 일괄 지원됩니다.\n${widget.mainTO.workDaysLabel}',
                         style: ResponsiveHelper.smallStyle(context, color: AppColors.infoDark),
                       ),
                     ),
@@ -674,24 +762,28 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
     );
   }
 
-  /// 장기공고 캘린더 날짜 셀
   Widget _buildLongTermDayCell(
     BuildContext context,
     DateTime day,
     DateTime startDate,
     DateTime endDate,
     List<String> workDays,
+    DateTime selectableStartDate,
     bool isOutside, {
     bool isToday = false,
+    bool isSelected = false,
   }) {
     // 근무 기간 내인지 확인
     final isInRange = !day.isBefore(startDate) && !day.isAfter(endDate);
+    
+    // 선택 가능한지 확인 (과거 아니고, 근무요일이면)
+    bool isSelectable = isInRange && !day.isBefore(selectableStartDate);
     
     // 근무 요일인지 확인
     bool isWorkDay = false;
     if (isInRange) {
       if (workDays.isEmpty) {
-        isWorkDay = true; // 요일 설정 없으면 매일 근무
+        isWorkDay = true;
       } else {
         const dayNames = ['월', '화', '수', '목', '금', '토', '일'];
         final dayName = dayNames[day.weekday - 1];
@@ -699,18 +791,32 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
       }
     }
     
-    // 배경색 결정
+    // 선택 가능 여부 최종 결정
+    isSelectable = isSelectable && isWorkDay;
+    
+    // 배경색/텍스트색 결정
     Color bgColor;
     Color textColor;
-    if (isOutside) {
+    
+    if (isSelected) {
+      // 선택된 날짜 (희망 시작일)
+      bgColor = AppColors.longTerm;
+      textColor = Colors.white;
+    } else if (isOutside) {
       bgColor = Colors.transparent;
       textColor = AppColors.grey300;
-    } else if (isInRange && isWorkDay) {
+    } else if (isSelectable) {
+      // 선택 가능한 날짜
       bgColor = AppColors.longTerm.withOpacity(0.3);
       textColor = AppColors.longTermDark;
+    } else if (isInRange && isWorkDay) {
+      // 근무일이지만 과거 (선택 불가)
+      bgColor = AppColors.grey200;
+      textColor = AppColors.grey400;
     } else if (isInRange) {
+      // 휴무일
       bgColor = AppColors.grey100;
-      textColor = AppColors.grey500;
+      textColor = AppColors.grey400;
     } else {
       bgColor = Colors.transparent;
       textColor = AppColors.grey400;
@@ -721,13 +827,17 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
       decoration: BoxDecoration(
         color: bgColor,
         shape: BoxShape.circle,
-        border: isToday ? Border.all(color: Theme.of(context).primaryColor, width: 2) : null,
+        border: isToday 
+            ? Border.all(color: Theme.of(context).primaryColor, width: 2) 
+            : isSelected 
+                ? Border.all(color: AppColors.longTermDark, width: 2)
+                : null,
       ),
       child: Center(
         child: Text(
           '${day.day}',
           style: ResponsiveHelper.smallStyle(context, color: textColor).copyWith(
-            fontWeight: isInRange && isWorkDay ? FontWeight.bold : FontWeight.normal,
+            fontWeight: (isSelected || isToday) ? FontWeight.bold : FontWeight.normal,
           ),
         ),
       ),
@@ -1659,5 +1769,11 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
         workDetails: workDetails,
       ),
     );
+  }
+  /// 근무가 이미 시작됐는지 확인
+  bool _hasWorkStarted() {
+    final today = DateTime.now();
+    final workStartDate = widget.mainTO.date;
+    return !workStartDate.isAfter(today);  // 시작일 <= 오늘
   }
 }
