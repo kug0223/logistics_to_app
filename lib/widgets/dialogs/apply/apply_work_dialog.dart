@@ -249,11 +249,8 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
       
       if (mounted) {
         setState(() {
-          // ✅ 현재 TO의 확정 근무는 제외 (다른 사업장만 경고)
-          _myConfirmedSchedules = schedules.where((schedule) {
-            return schedule.businessId != widget.mainTO.businessId ||
-                   schedule.toTitle != widget.mainTO.title;
-          }).toList();
+          // ✅ 해당 날짜의 모든 확정 근무 표시 (같은 TO 포함)
+          _myConfirmedSchedules = schedules;
         });
       }
     } catch (e) {
@@ -1606,8 +1603,12 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
         _userNoShowCount++;
       }
       
-      // 상태 새로고침
-      await _refreshApplicationStatus(date ?? application.workDate, application.selectedWorkType);
+      final targetDate = date ?? application.workDate;
+      
+      // ✅ 전체 상태 새로고침 (지원상태 + 확정스케줄 + 충돌정보)
+      await _refreshApplicationStatus(targetDate, application.selectedWorkType);
+      await _loadMyConfirmedSchedules(targetDate);
+      await _loadConflictsForDate(targetDate);
       
       _hasChanges = true;
       

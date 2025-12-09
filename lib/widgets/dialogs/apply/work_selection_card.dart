@@ -98,8 +98,8 @@ class WorkSelectionCard extends StatelessWidget {
               // 중단: 시간 + 급여 + 인원
               _buildDetails(context, theme),
               
-              // 충돌 경고 메시지
-              if (conflictInfo.hasConflict)
+              // 충돌 경고 메시지 (확정 상태면 숨김)
+              if (conflictInfo.hasConflict && status != WorkApplicationStatus.confirmed)
                 _buildConflictMessage(context),
               
               SizedBox(height: ResponsiveHelper.spacing(context, 12)),
@@ -301,6 +301,11 @@ class WorkSelectionCard extends StatelessWidget {
       );
     }
 
+    // ✅ 확정 상태면 최우선 (BLOCKED보다 먼저)
+    if (status == WorkApplicationStatus.confirmed) {
+      return _buildSmallButton(context, '확정취소', AppColors.error, onCancelConfirm, icon: Icons.cancel_outlined);
+    }
+
     // BLOCKED면 선택 불가
     if (conflictInfo.level == ConflictLevel.blocked) {
       return _buildSmallButton(context, '불가', AppColors.grey400, null, icon: Icons.block);
@@ -318,7 +323,8 @@ class WorkSelectionCard extends StatelessWidget {
         return _buildSmallButton(context, '취소', AppColors.grey500, onCancelApplication, icon: Icons.close);
         
       case WorkApplicationStatus.confirmed:
-        return _buildSmallButton(context, '확정됨', AppColors.info, null, icon: Icons.check);
+        // ✅ 확정취소 버튼 활성화
+        return _buildSmallButton(context, '확정취소', AppColors.error, onCancelConfirm, icon: Icons.cancel_outlined);
         
       case WorkApplicationStatus.closed:
         return _buildSmallButton(context, '마감', AppColors.grey400, null, icon: Icons.block);
@@ -576,6 +582,9 @@ class WorkSelectionCard extends StatelessWidget {
   // ═══════════════════════════════════════════════════════════
 
   bool _canInteract() {
+    // ✅ 확정 상태면 항상 활성화 (확정취소 가능)
+    if (status == WorkApplicationStatus.confirmed) return true;
+    
     // BLOCKED면 불가
     if (conflictInfo.level == ConflictLevel.blocked) return false;
     
@@ -588,6 +597,11 @@ class WorkSelectionCard extends StatelessWidget {
   }
 
   Color _getBackgroundColor() {
+    // ✅ 확정 상태면 충돌 무시하고 확정 색상
+    if (status == WorkApplicationStatus.confirmed) {
+      return AppColors.successBg.withOpacity(0.3);
+    }
+    
     if (conflictInfo.level == ConflictLevel.blocked) {
       return AppColors.grey100;
     }
@@ -607,6 +621,11 @@ class WorkSelectionCard extends StatelessWidget {
   }
 
   Color _getBorderColor(ThemeData theme) {
+    // ✅ 확정 상태면 충돌 무시하고 확정 색상
+    if (status == WorkApplicationStatus.confirmed) {
+      return AppColors.success.withOpacity(0.5);
+    }
+    
     if (conflictInfo.level == ConflictLevel.blocked) {
       return AppColors.grey300;
     }
