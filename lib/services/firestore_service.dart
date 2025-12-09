@@ -1522,8 +1522,12 @@ class FirestoreService {
   
   /// 특정 날짜에 근무하는지 확인 (장기 공고 고려)
   bool _isWorkingOnDate(ApplicationModel app, DateTime targetDate) {
+    // ✅ 단기 판단: workEndDate가 있어도 workDate와 같으면 단기
+    final isTrulyLongTerm = app.workEndDate != null && 
+                            !_isSameDate(app.workDate, app.workEndDate!);
+    
     // 단기: workDate만 체크
-    if (!app.isLongTermApplication) {
+    if (!isTrulyLongTerm) {
       return _isSameDate(app.workDate, targetDate);
     }
     

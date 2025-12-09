@@ -237,6 +237,7 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
   }
 
   /// 특정 날짜의 내 확정 스케줄 로드
+  /// ✅ 현재 보고 있는 TO의 확정 근무는 제외 (이미 표시되니까)
   Future<void> _loadMyConfirmedSchedules(DateTime date) async {
     if (_currentUserId == null) return;
 
@@ -248,7 +249,11 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
       
       if (mounted) {
         setState(() {
-          _myConfirmedSchedules = schedules;
+          // ✅ 현재 TO의 확정 근무는 제외 (다른 사업장만 경고)
+          _myConfirmedSchedules = schedules.where((schedule) {
+            return schedule.businessId != widget.mainTO.businessId ||
+                   schedule.toTitle != widget.mainTO.title;
+          }).toList();
         });
       }
     } catch (e) {
