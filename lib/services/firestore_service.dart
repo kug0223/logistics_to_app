@@ -1444,6 +1444,8 @@ class FirestoreService {
     return int.parse(parts[0]) * 60 + int.parse(parts[1]);
   }
   
+  
+  
   /// 충돌하는 지원서 찾기 (장기 공고 날짜 확장 포함)
   Future<List<ApplicationModel>> findConflictingApplications({
     required String uid,
@@ -1517,6 +1519,71 @@ class FirestoreService {
     } catch (e) {
       print('❌ 확정 일정 조회 실패: $e');
       return [];
+    }
+  }
+  // ============================================================
+  // 🧹 지원서 연관 데이터 정리 (공통)
+  // ============================================================
+
+  /// 지원서 취소/거절 시 연관 데이터 정리
+  /// - 신분증 요청 무효화
+  /// - 출근 데이터 삭제
+  /// - 스케줄 변경 요청 취소
+  Future<void> _cleanupApplicationRelatedData({
+    required String applicationId,
+    required String uid,
+    WriteBatch? batch,
+  }) async {
+    print('🧹 [Cleanup] 연관 데이터 정리 시작: $applicationId');
+    
+    final useBatch = batch != null;
+    final localBatch = batch ?? _firestore.batch();
+    
+    try {
+      // 1. 신분증 요청 무효화 (pending → canceled)
+      final idCardRequests = await _firestore
+          .collection('idCardAccessRequests')
+          .where('applicationId', isEqualTo: applicationId)
+          .where('status', isEqualTo: 'pending')
+          .get();
+      
+      for (var doc in idCardRequests.docs) {
+        localBatch.update(doc.reference, {
+          'status': 'canceled',
+          'canceledAt': FieldValue.serverTimestamp(),
+          'cancelReason': 'APPLICATION_CANCELED',
+        });
+      }
+      print('   📋 신분증 요청 ${idCardRequests.docs.length}건 무효화');
+      
+      // 2. 출근 데이터는 유지 (근무 이력 보존)
+      // 확정 취소되어도 이미 출근한 기록은 남겨둠
+      
+      // 3. 스케줄 변경 요청 취소 (PENDING → CANCELED)
+      final scheduleRequests = await _firestore
+          .collection('scheduleChangeRequests')
+          .where('applicationId', isEqualTo: applicationId)
+          .where('status', isEqualTo: 'PENDING')
+          .get();
+      
+      for (var doc in scheduleRequests.docs) {
+        localBatch.update(doc.reference, {
+          'status': 'CANCELED',
+          'canceledAt': FieldValue.serverTimestamp(),
+          'cancelReason': 'APPLICATION_CANCELED',
+        });
+      }
+      print('   📋 스케줄 요청 ${scheduleRequests.docs.length}건 취소');
+      
+      // batch가 외부에서 제공되지 않은 경우에만 commit
+      if (!useBatch) {
+        await localBatch.commit();
+      }
+      
+      print('✅ [Cleanup] 연관 데이터 정리 완료');
+    } catch (e) {
+      print('❌ [Cleanup] 연관 데이터 정리 실패: $e');
+      // 실패해도 메인 로직은 계속 진행
     }
   }
   
@@ -1737,14 +1804,33 @@ class FirestoreService {
       final groupId = toData['groupId'] as String?;
       
       // 3. 충돌하는 대기중 지원서 찾기
-      final conflictingApps = await findConflictingApplications(
-        uid: app.uid,
-        workDate: app.workDate,
-        startTime: app.startTime,
-        endTime: app.endTime,
-        excludeId: applicationId,
-        status: 'PENDING',
-      );
+      // ✅ 장기공고인 경우 모든 근무일에 대해 충돌 체크
+      final isConfirmingLongTerm = app.workDays != null && app.workDays!.isNotEmpty;
+      
+      List<ApplicationModel> conflictingApps;
+      
+      if (isConfirmingLongTerm && app.workEndDate != null) {
+        // 장기공고: 모든 근무일에 대해 충돌 체크
+        conflictingApps = await _findConflictingForLongTerm(
+          uid: app.uid,
+          startDate: app.workDate,
+          endDate: app.workEndDate!,
+          workDays: app.workDays!,
+          startTime: app.startTime,
+          endTime: app.endTime,
+          excludeId: applicationId,
+        );
+      } else {
+        // 단기공고: 해당 날짜만 체크
+        conflictingApps = await findConflictingApplications(
+          uid: app.uid,
+          workDate: app.workDate,
+          startTime: app.startTime,
+          endTime: app.endTime,
+          excludeId: applicationId,
+          status: 'PENDING',
+        );
+      }
       
       print('✅ 충돌하는 지원서 ${conflictingApps.length}개 발견');
       
@@ -1800,7 +1886,7 @@ class FirestoreService {
         }
       }
       
-      // 4-5. 충돌 지원 자동 취소
+      // 4-5. 충돌 지원 자동 취소 + TO 통계 감소
       for (var conflictApp in conflictingApps) {
         batch.update(
           _firestore.collection('applications').doc(conflictApp.id),
@@ -1809,12 +1895,78 @@ class FirestoreService {
             'canceledAt': now,
             'cancelReason': 'SCHEDULE_CONFLICT',
             'conflictingAppId': applicationId,
+            'conflictingBusiness': app.businessName,
+            'conflictingTime': '${app.startTime}~${app.endTime}',
           },
         );
       }
       
       // 5. 한 번에 커밋!
       await batch.commit();
+      
+      // 5-1. ✅ AUTO_CANCELED 된 지원서들의 TO 통계 업데이트 (별도 batch)
+      if (conflictingApps.isNotEmpty) {
+        final statsBatch = _firestore.batch();
+        
+        for (var conflictApp in conflictingApps) {
+          // 충돌 지원서의 TO 찾기
+          final conflictTOSnapshot = await _firestore
+              .collection('tos')
+              .where('businessId', isEqualTo: conflictApp.businessId)
+              .where('title', isEqualTo: conflictApp.toTitle)
+              .where('date', isEqualTo: Timestamp.fromDate(conflictApp.workDate))
+              .limit(1)
+              .get();
+          
+          if (conflictTOSnapshot.docs.isNotEmpty) {
+            final conflictTODoc = conflictTOSnapshot.docs.first;
+            final conflictTOData = conflictTODoc.data();
+            final conflictGroupId = conflictTOData['groupId'] as String?;
+            
+            // TO pendingCount 감소
+            statsBatch.update(conflictTODoc.reference, {
+              'totalPending': FieldValue.increment(-1),
+            });
+            
+            // WorkDetail pendingCount 감소
+            final conflictWorkDetailId = conflictApp.workDetailId;
+            if (conflictWorkDetailId != null && conflictWorkDetailId.isNotEmpty) {
+              statsBatch.update(
+                _firestore
+                    .collection('tos')
+                    .doc(conflictTODoc.id)
+                    .collection('workDetails')
+                    .doc(conflictWorkDetailId),
+                {
+                  'pendingCount': FieldValue.increment(-1),
+                },
+              );
+            }
+            
+            // 그룹 마스터 통계 감소
+            if (conflictGroupId != null) {
+              final conflictMasterSnapshot = await _firestore
+                  .collection('tos')
+                  .where('groupId', isEqualTo: conflictGroupId)
+                  .where('isGroupMaster', isEqualTo: true)
+                  .limit(1)
+                  .get();
+              
+              if (conflictMasterSnapshot.docs.isNotEmpty) {
+                statsBatch.update(conflictMasterSnapshot.docs.first.reference, {
+                  'groupTotalPending': FieldValue.increment(-1),
+                });
+              }
+            }
+            
+            // 캐시 클리어
+            clearCache(toId: conflictTODoc.id);
+          }
+        }
+        
+        await statsBatch.commit();
+        print('✅ AUTO_CANCELED ${conflictingApps.length}건의 TO 통계 업데이트 완료');
+      }
       
       // 6. 캐시만 클리어 (재계산 없음!)
       clearCache(toId: toId);
@@ -1824,6 +1976,70 @@ class FirestoreService {
     } catch (e) {
       print('❌ 확정 처리 실패: $e');
       rethrow;
+    }
+  }
+  /// 장기공고 확정 시 모든 근무일에 대해 충돌하는 지원서 찾기
+  Future<List<ApplicationModel>> _findConflictingForLongTerm({
+    required String uid,
+    required DateTime startDate,
+    required DateTime endDate,
+    required List<String> workDays,
+    required String startTime,
+    required String endTime,
+    required String excludeId,
+  }) async {
+    try {
+      print('📅 [LongTerm] 장기공고 충돌 체크 시작');
+      print('   기간: ${startDate.month}/${startDate.day} ~ ${endDate.month}/${endDate.day}');
+      print('   요일: $workDays');
+      
+      // 1. 해당 사용자의 모든 PENDING 지원서 조회
+      final snapshot = await _firestore
+          .collection('applications')
+          .where('uid', isEqualTo: uid)
+          .where('status', isEqualTo: 'PENDING')
+          .get();
+      
+      final conflicts = <ApplicationModel>{};  // Set으로 중복 방지
+      
+      // 2. 장기공고의 모든 근무일 생성
+      final workingDates = <DateTime>[];
+      var currentDate = startDate;
+      
+      while (!currentDate.isAfter(endDate)) {
+        final dayOfWeek = _getKoreanDayOfWeek(currentDate);
+        if (workDays.contains(dayOfWeek)) {
+          workingDates.add(currentDate);
+        }
+        currentDate = currentDate.add(const Duration(days: 1));
+      }
+      
+      print('   근무일 수: ${workingDates.length}일');
+      
+      // 3. 각 근무일에 대해 충돌 체크
+      for (var doc in snapshot.docs) {
+        if (doc.id == excludeId) continue;
+        
+        final app = ApplicationModel.fromFirestore(doc);
+        
+        // 각 근무일과 비교
+        for (var workDate in workingDates) {
+          // 해당 날짜에 근무하는 지원서인지 확인
+          if (!_isWorkingOnDate(app, workDate)) continue;
+          
+          // 시간대 겹침 확인
+          if (_hasTimeOverlap(startTime, endTime, app.startTime, app.endTime)) {
+            conflicts.add(app);
+            break;  // 이미 충돌 확인됐으면 다음 지원서로
+          }
+        }
+      }
+      
+      print('✅ [LongTerm] 충돌 지원서 ${conflicts.length}개 발견');
+      return conflicts.toList();
+    } catch (e) {
+      print('❌ [LongTerm] 충돌 조회 실패: $e');
+      return [];
     }
   }
   /// TO의 모든 지원서 조회 (businessId, title, date 기준)
@@ -2569,6 +2785,12 @@ class FirestoreService {
 
       await batch.commit();
       clearCache(toId: toId);
+      
+      // ✅ 연관 데이터 정리 (신분증 요청 등)
+      await _cleanupApplicationRelatedData(
+        applicationId: applicationId,
+        uid: uid,
+      );
 
       ToastHelper.showSuccess('지원이 취소되었습니다.');
       return true;
@@ -6723,6 +6945,12 @@ class FirestoreService {
       } else {
         await batch.commit();
       }
+      
+      // ✅ 연관 데이터 정리 (신분증 요청, 출근 기록, 스케줄 요청)
+      await _cleanupApplicationRelatedData(
+        applicationId: applicationId,
+        uid: uid,
+      );
 
       print('✅ 확정 취소 완료 (패널티: $applyNoShowPenalty)');
       return true;
