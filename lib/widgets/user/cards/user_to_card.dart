@@ -276,6 +276,31 @@ class _UserTOCardState extends State<UserTOCard> {
       return dateMatch && businessMatch && titleMatch && workTypeMatch && isActive;
     });
   }
+  // ✅ 추가: 해당 업무의 Application 가져오기
+  ApplicationModel? _getApplicationForWork(String workType) {
+    final targetDate = (_isGroupTO && _selectedDateTO != null) 
+        ? _selectedDateTO!.date 
+        : widget.to.date;
+    
+    try {
+      return widget.myApplications.firstWhere(
+        (app) {
+          final dateMatch = app.workDate.year == targetDate.year &&
+                            app.workDate.month == targetDate.month &&
+                            app.workDate.day == targetDate.day;
+          final businessMatch = app.businessId == widget.to.businessId;
+          final titleMatch = app.toTitle == widget.to.title;
+          final workTypeMatch = app.selectedWorkType == workType;
+          final isActive = app.status != 'CANCELED' && 
+                           app.status != 'REJECTED' &&
+                           app.status != 'AUTO_CANCELED';
+          return dateMatch && businessMatch && titleMatch && workTypeMatch && isActive;
+        },
+      );
+    } catch (e) {
+      return null;  // 찾지 못하면 null 반환
+    }
+  }
   /// 급여 타입 라벨
   String _getWageTypeLabel() {
     // TOModel에서 직접 가져오기
@@ -933,8 +958,8 @@ class _UserTOCardState extends State<UserTOCard> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: _workDetails.map((work) {
-        final hasApplied = _hasAppliedToWork(work.workType);
-        return _buildWorkDetailItem(context, work, hasApplied);
+        final application = _getApplicationForWork(work.workType);
+        return _buildWorkDetailItem(context, work, application);
       }).toList(),
     );
   }
@@ -943,16 +968,23 @@ class _UserTOCardState extends State<UserTOCard> {
   Widget _buildWorkDetailItem(
     BuildContext context, 
     WorkDetailModel work, 
-    bool hasApplied,
+    ApplicationModel? application,
   ) {
+    final hasApplied = application != null && application.id.isNotEmpty;
+    final isConfirmed = application?.status == 'CONFIRMED';
+    
     return Container(
       margin: EdgeInsets.only(bottom: ResponsiveHelper.spacing(context, 8)),
       padding: ResponsiveHelper.cardPadding(context),
       decoration: BoxDecoration(
-        color: hasApplied ? AppColors.successBg : AppColors.grey100,
+        color: isConfirmed 
+            ? AppColors.successBg 
+            : (hasApplied ? AppColors.infoBg : AppColors.grey100),
         borderRadius: BorderRadius.circular(8),
         border: Border.all(
-          color: hasApplied ? AppColors.successLight : AppColors.grey300,
+          color: isConfirmed 
+              ? AppColors.successLight 
+              : (hasApplied ? AppColors.infoLight : AppColors.grey300),
         ),
       ),
       child: Row(
@@ -1030,7 +1062,7 @@ class _UserTOCardState extends State<UserTOCard> {
           ),
           
           // 상태 배지
-          _buildWorkStatusBadge(context, work, hasApplied),
+          _buildWorkStatusBadge(context, work, application),
         ],
       ),
     );
@@ -1039,11 +1071,16 @@ class _UserTOCardState extends State<UserTOCard> {
   Widget _buildWorkStatusBadge(
     BuildContext context, 
     WorkDetailModel work, 
-    bool hasApplied,
+    ApplicationModel? application,
   ) {
-    // 지원완료 우선
-    if (hasApplied) {
-      return _buildStatusChip(context, '지원완료', AppColors.success, Colors.white);
+    final hasApplied = application != null && application.id.isNotEmpty;
+    
+    // ✅ 확정/대기 구분
+    if (application != null) {
+      if (application.status == 'CONFIRMED') {
+        return _buildStatusChip(context, '확정', AppColors.success, Colors.white);
+      }
+      return _buildStatusChip(context, '대기중', AppColors.info, Colors.white);
     }
     
     // ✅ 장기 공고: TO의 applicationDeadline 기준

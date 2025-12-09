@@ -155,14 +155,20 @@ class WorkSelectionCard extends StatelessWidget {
     Color bgColor;
     Color textColor;
 
-    // 충돌이 BLOCKED면 최우선
-    if (conflictInfo.level == ConflictLevel.blocked) {
+    // ✅ 확정 상태면 최우선 (시간충돌보다 우선)
+    if (status == WorkApplicationStatus.confirmed) {
+      text = '확정';
+      bgColor = AppColors.successBg;
+      textColor = AppColors.successDark;
+    } else if (conflictInfo.level == ConflictLevel.blocked) {
+      // 충돌이 BLOCKED면 (미확정 상태에서만)
       text = '시간충돌';
       bgColor = AppColors.errorBg;
       textColor = AppColors.errorDark;
     } else {
       switch (status) {
         case WorkApplicationStatus.confirmed:
+          // 위에서 처리됨
           text = '확정';
           bgColor = AppColors.successBg;
           textColor = AppColors.successDark;

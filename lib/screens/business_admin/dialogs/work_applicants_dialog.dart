@@ -234,7 +234,8 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog> {
             Flexible(
               child: _isLoading
                   ? Center(child: CircularProgressIndicator())
-                  : _applicants.isEmpty
+                  // ✅ pending과 confirmed 둘 다 비어있으면 빈 상태 표시
+                  : (pending.isEmpty && confirmed.isEmpty)
                       ? _buildEmptyState(context)
                       : _buildApplicantList(context, pending, confirmed),
             ),
@@ -1012,7 +1013,8 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog> {
     final app = item['application'] as ApplicationModel;
     final user = item['user'] as UserModel?;
     final isConfirmed = app.status == 'CONFIRMED';
-    final isLongTerm = app.isLongTermApplication;
+    // ✅ TO 자체가 장기인지 확인 (Application 기준 X)
+    final isLongTerm = widget.toItem.to.isLongTerm;
 
     return SizedBox(
       width: ResponsiveHelper.spacing(context, 32),

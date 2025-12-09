@@ -905,8 +905,8 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
   /// 하단 버튼
   Widget _buildBottomButtons(BuildContext context, bool isPending) {
     final isConfirmed = widget.application?.status == 'CONFIRMED';
-    final isLongTerm = widget.application?.workEndDate != null;
-
+    // ✅ TO 자체가 장기인지 확인 (toItem 우선, 없으면 fallback)
+    final isLongTerm = widget.toItem?.to.isLongTerm ?? false;
     return Container(
       padding: ResponsiveHelper.cardPadding(context),
       decoration: BoxDecoration(
