@@ -409,17 +409,22 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog> {
 
   /// 빈 상태
   Widget _buildEmptyState(BuildContext context) {
-    return Center(
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Icon(Icons.people_outline, size: 64, color: AppColors.grey300),
-          SizedBox(height: ResponsiveHelper.spacing(context, 16)),
-          Text(
-            '지원자가 없습니다',
-            style: ResponsiveHelper.bodyStyle(context, color: AppColors.grey500),
-          ),
+    return Container(
+      constraints: BoxConstraints(
+        minHeight: ResponsiveHelper.spacing(context, 200),
+      ),
+      child: Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(Icons.people_outline, size: 64, color: AppColors.grey300),
+            SizedBox(height: ResponsiveHelper.spacing(context, 16)),
+            Text(
+              '지원자가 없습니다',
+              style: ResponsiveHelper.bodyStyle(context, color: AppColors.grey500),
+            ),
         ],
+      ),
       ),
     );
   }
@@ -889,8 +894,8 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog> {
                         ),
                       ],
                       
-                      // 장기 근무 정보 (있는 경우)
-                      if (app.isLongTermApplication && app.workPeriodDisplay.isNotEmpty) ...[
+                      // 장기 근무 정보 (있는 경우) - ✅ TO도 장기인지 확인
+                      if (widget.toItem.to.isLongTerm && app.isLongTermApplication && app.workPeriodDisplay.isNotEmpty) ...[
                         SizedBox(height: ResponsiveHelper.spacing(context, 6)),
                         Container(
                           padding: EdgeInsets.symmetric(
@@ -1557,23 +1562,56 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog> {
     }
   }
   /// 로컬 통계 갱신 (부모 toItem의 workDetailStats 업데이트)
+  /// ✅ 자동취소로 인해 다른 업무의 통계도 변경될 수 있으므로 전체 업무 통계 갱신
   Future<void> _updateLocalStats() async {
     _hasChanges = true;  // ⭐ 변경 표시
-    // 현재 지원자 목록에서 통계 계산
-    int pending = 0;
-    int confirmed = 0;
     
-    for (var item in _applicants) {
-      final app = item['application'] as ApplicationModel;
-      if (app.status == 'PENDING') pending++;
-      if (app.status == 'CONFIRMED') confirmed++;
+    try {
+      // ✅ 전체 업무의 지원서를 서버에서 다시 가져오기
+      final allApplications = await _firestoreService.getApplicationsByTOId(
+        widget.toItem.to.id,
+      );
+      
+      // 업무별 통계 계산
+      final Map<String, Map<String, int>> newStats = {};
+      
+      for (final work in widget.toItem.workDetails) {
+        int pending = 0;
+        int confirmed = 0;
+        
+        for (final app in allApplications) {
+          if (app.selectedWorkType == work.workType &&
+              app.startTime == work.startTime &&
+              app.endTime == work.endTime) {
+            if (app.status == 'PENDING') pending++;
+            if (app.status == 'CONFIRMED') confirmed++;
+          }
+        }
+        
+        newStats[work.id] = {
+          'pending': pending,
+          'confirmed': confirmed,
+        };
+      }
+      
+      widget.toItem.workDetailStats = newStats;
+      
+    } catch (e) {
+      // 실패 시 현재 업무만 업데이트
+      int pending = 0;
+      int confirmed = 0;
+      
+      for (var item in _applicants) {
+        final app = item['application'] as ApplicationModel;
+        if (app.status == 'PENDING') pending++;
+        if (app.status == 'CONFIRMED') confirmed++;
+      }
+      
+      widget.toItem.workDetailStats ??= {};
+      widget.toItem.workDetailStats![widget.work.id] = {
+        'pending': pending,
+        'confirmed': confirmed,
+      };
     }
-    
-    // workDetailStats 갱신 (workDetailId 사용)
-    widget.toItem.workDetailStats ??= {};
-    widget.toItem.workDetailStats![widget.work.id] = {
-      'pending': pending,
-      'confirmed': confirmed,
-    };
   }
 }

@@ -229,7 +229,7 @@ class _UserTOCardState extends State<UserTOCard> {
   }
   
 
-  /// 내가 해당 TO에 지원했는지 확인
+  //// 내가 해당 TO에 지원했는지 확인
   bool get _hasAppliedToTO {
     return widget.myApplications.any((app) {
       final businessMatch = app.businessId == widget.to.businessId;
@@ -243,7 +243,12 @@ class _UserTOCardState extends State<UserTOCard> {
         return businessMatch && titleMatch && isActive;
       }
       
-      // 단일/장기 TO: 기존 로직 (날짜 포함)
+      // ✅ 장기 TO: 같은 사업장 + 같은 제목이면 OK (기간 전체 지원이므로 날짜 비교 생략)
+      if (widget.to.isLongTerm) {
+        return businessMatch && titleMatch && isActive;
+      }
+      
+      // 단일 단기 TO: 날짜 포함 비교
       final dateMatch = app.workDate.year == widget.to.date.year &&
                         app.workDate.month == widget.to.date.month &&
                         app.workDate.day == widget.to.date.day;

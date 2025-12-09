@@ -295,9 +295,17 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
     // 다이얼로그 높이 계산 (화면의 90%)
     final dialogHeight = mediaQuery.size.height * 0.9;
 
-    return Container(
-      height: dialogHeight,
-      decoration: BoxDecoration(
+    // ⭐ PopScope 추가: 외부 탭으로 닫아도 변경 여부 반환
+    return PopScope(
+      canPop: false,
+      onPopInvokedWithResult: (didPop, result) {
+        if (!didPop) {
+          Navigator.pop(context, ApplyDialogResult(hasChanges: _hasChanges));
+        }
+      },
+      child: Container(
+        height: dialogHeight,
+        decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.vertical(
           top: Radius.circular(ResponsiveHelper.spacing(context, 24)),
@@ -325,7 +333,8 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
           _buildBottomButton(context, theme),
         ],
       ),
-    );
+    ),  // ⭐ PopScope child 닫기
+    );  // ⭐ PopScope 닫기
   }
 
   Widget _buildHandle(BuildContext context) {

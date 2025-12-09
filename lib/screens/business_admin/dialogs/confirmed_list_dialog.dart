@@ -569,8 +569,8 @@ class _ConfirmedListDialogWidgetState
                                 ],
                               ],
                             ),
-                            // 3줄: 장기 근무 정보 (있는 경우)
-                            if (application.isLongTermApplication && application.workPeriodDisplay.isNotEmpty) ...[
+                            // 3줄: 장기 근무 정보 (있는 경우) - ✅ TO도 장기인지 확인
+                            if (widget.toItem.to.isLongTerm && application.isLongTermApplication && application.workPeriodDisplay.isNotEmpty) ...[
                               SizedBox(height: ResponsiveHelper.spacing(context, 6)),
                               Container(
                                 padding: EdgeInsets.symmetric(

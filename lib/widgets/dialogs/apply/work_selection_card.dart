@@ -297,28 +297,28 @@ class WorkSelectionCard extends StatelessWidget {
 
     // BLOCKED면 선택 불가
     if (conflictInfo.level == ConflictLevel.blocked) {
-      return _buildSmallButton(context, '불가', AppColors.grey400, null);
+      return _buildSmallButton(context, '불가', AppColors.grey400, null, icon: Icons.block);
     }
 
     // 상태별 버튼
     switch (status) {
       case WorkApplicationStatus.notApplied:
         if (workDetail.isFull || workDetail.isClosed) {
-          return _buildSmallButton(context, '마감', AppColors.grey400, null);
+          return _buildSmallButton(context, '마감', AppColors.grey400, null, icon: Icons.block);
         }
-        return _buildSmallButton(context, '지원', AppColors.success, onApply);
+        return _buildSmallButton(context, '지원', AppColors.success, onApply, icon: Icons.send);
         
       case WorkApplicationStatus.pending:
-        return _buildSmallButton(context, '취소', AppColors.grey500, onCancelApplication);
+        return _buildSmallButton(context, '취소', AppColors.grey500, onCancelApplication, icon: Icons.close);
         
       case WorkApplicationStatus.confirmed:
-        return _buildSmallButton(context, '확정됨', AppColors.info, null);
+        return _buildSmallButton(context, '확정됨', AppColors.info, null, icon: Icons.check);
         
       case WorkApplicationStatus.closed:
-        return _buildSmallButton(context, '마감', AppColors.grey400, null);
+        return _buildSmallButton(context, '마감', AppColors.grey400, null, icon: Icons.block);
         
       case WorkApplicationStatus.autoCanceled:
-        return _buildSmallButton(context, '재지원', AppColors.warning, onApply);
+        return _buildSmallButton(context, '재지원', AppColors.warning, onApply, icon: Icons.refresh);
     }
   }
 
