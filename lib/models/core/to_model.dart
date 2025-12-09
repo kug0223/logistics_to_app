@@ -637,9 +637,9 @@ class TOModel {
   /// 인원이 모두 충족되었는지 확인
   bool get isFull => totalConfirmed >= totalRequired;
 
-  /// TO가 마감되었는지 확인 (수동 마감 or 시간 초과 or 인원 충족)
+  /// TO가 마감되었는지 확인 (수동 마감 or 시간 초과 or 인원 충족 or status가 CLOSED)
   bool get isClosed {
-    return isManualClosed || isTimeExpired || isFull;
+    return isManualClosed || isTimeExpired || isFull || status == 'CLOSED';
   }
   /// ✅ Phase 4: status 필드 기반 활성 여부
   bool get isActive => status == 'ACTIVE';

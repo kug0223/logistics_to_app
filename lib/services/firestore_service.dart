@@ -1530,8 +1530,21 @@ class FirestoreService {
     // 장기: 시작일~종료일 범위 + 근무 요일 체크
     if (app.workEndDate == null) return false;
     
-    // 날짜 범위 체크
-    final isInRange = !targetDate.isBefore(app.workDate) && 
+    // ✅ 시작일 계산: 확정일이 공고 시작일보다 이후면 확정일 기준
+    DateTime effectiveStartDate = app.workDate;
+    if (app.confirmedAt != null) {
+      final confirmedDate = DateTime(
+        app.confirmedAt!.year,
+        app.confirmedAt!.month,
+        app.confirmedAt!.day,
+      );
+      if (confirmedDate.isAfter(app.workDate)) {
+        effectiveStartDate = confirmedDate;
+      }
+    }
+    
+    // 날짜 범위 체크 (확정일 기준 시작)
+    final isInRange = !targetDate.isBefore(effectiveStartDate) && 
                       !targetDate.isAfter(app.workEndDate!);
     
     if (!isInRange) return false;
@@ -2839,12 +2852,17 @@ class FirestoreService {
       
       clearCache(toId: toId);
       print('✅ WorkDetail 마감 완료: $workDetailId');
+      
+      // ✅ 모든 WorkDetail이 마감됐는지 체크 → TO status 업데이트
+      await _checkAndUpdateTOStatusAfterWorkDetailClose(toId, adminUID);
+      
       return true;
     } catch (e) {
       print('❌ WorkDetail 마감 실패: $e');
       return false;
     }
   }
+  /// WorkDetail 재오픈
   /// WorkDetail 재오픈
   Future<bool> reopenWorkDetail({
     required String toId,
@@ -2866,10 +2884,80 @@ class FirestoreService {
       
       clearCache(toId: toId);
       print('✅ WorkDetail 재오픈 완료: $workDetailId');
+      
+      // ✅ WorkDetail 재오픈 시 TO status도 ACTIVE로 업데이트
+      await _checkAndUpdateTOStatusAfterWorkDetailReopen(toId, adminUID);
+      
       return true;
     } catch (e) {
       print('❌ WorkDetail 재오픈 실패: $e');
       return false;
+    }
+  }
+  /// WorkDetail 마감 후 TO status 체크 및 업데이트
+  /// - 모든 WorkDetail이 마감됐으면 TO status = CLOSED
+  Future<void> _checkAndUpdateTOStatusAfterWorkDetailClose(String toId, String adminUID) async {
+    try {
+      // 1. 해당 TO의 모든 WorkDetail 조회
+      final workDetailsSnapshot = await _firestore
+          .collection('tos')
+          .doc(toId)
+          .collection('workDetails')
+          .get();
+      
+      if (workDetailsSnapshot.docs.isEmpty) return;
+      
+      // 2. 모든 WorkDetail이 마감됐는지 체크
+      final allClosed = workDetailsSnapshot.docs.every((doc) {
+        final data = doc.data();
+        return data['closedAt'] != null;
+      });
+      
+      print('🔍 WorkDetail 마감 체크: 전체 ${workDetailsSnapshot.docs.length}개, 모두 마감: $allClosed');
+      
+      // 3. 모두 마감이면 TO status 업데이트
+      if (allClosed) {
+        await _firestore.collection('tos').doc(toId).update({
+          'status': 'CLOSED',
+          'statusUpdatedAt': FieldValue.serverTimestamp(),
+        });
+        print('   ✅ TO status → CLOSED');
+        
+        // 4. 그룹 TO면 마스터 status도 재계산
+        final toDoc = await _firestore.collection('tos').doc(toId).get();
+        final groupId = toDoc.data()?['groupId'] as String?;
+        if (groupId != null) {
+          await _updateGroupMasterStatus(groupId);
+        }
+        
+        invalidateListCache();
+      }
+    } catch (e) {
+      print('⚠️ TO status 업데이트 실패: $e');
+    }
+  }
+  
+  /// WorkDetail 재오픈 후 TO status 업데이트
+  /// - 하나라도 열리면 TO status = ACTIVE
+  Future<void> _checkAndUpdateTOStatusAfterWorkDetailReopen(String toId, String adminUID) async {
+    try {
+      // TO status를 ACTIVE로 업데이트 (하나라도 열려있으면 활성)
+      await _firestore.collection('tos').doc(toId).update({
+        'status': 'ACTIVE',
+        'statusUpdatedAt': FieldValue.serverTimestamp(),
+      });
+      print('   ✅ TO status → ACTIVE');
+      
+      // 그룹 TO면 마스터 status도 재계산
+      final toDoc = await _firestore.collection('tos').doc(toId).get();
+      final groupId = toDoc.data()?['groupId'] as String?;
+      if (groupId != null) {
+        await _updateGroupMasterStatus(groupId);
+      }
+      
+      invalidateListCache();
+    } catch (e) {
+      print('⚠️ TO status 업데이트 실패: $e');
     }
   }
   /// WorkDetail 긴급 모집 시작
@@ -3526,8 +3614,16 @@ class FirestoreService {
   }
 
   /// TO 수동 마감
+  /// TO 수동 마감
   Future<bool> closeTOManually(String toId, String adminUID) async {
     try {
+      // 1. TO 정보 먼저 조회 (그룹 확인용)
+      final toDoc = await _firestore.collection('tos').doc(toId).get();
+      final toData = toDoc.data();
+      final groupId = toData?['groupId'] as String?;
+      final isGroupMaster = toData?['isGroupMaster'] ?? false;
+      
+      // 2. TO 마감 처리
       await _firestore.collection('tos').doc(toId).update({
         'isManualClosed': true,
         'closedAt': FieldValue.serverTimestamp(),
@@ -3538,6 +3634,11 @@ class FirestoreService {
       });
       clearCache(toId: toId);
       invalidateListCache();  // ✅ 목록 캐시도 무효화
+
+      // 3. ✅ 그룹 TO면 마스터 status 재계산
+      if (groupId != null && !isGroupMaster) {
+        await _updateGroupMasterStatus(groupId);
+      }
 
       print('✅ TO 수동 마감 완료: $toId');
       return true;
@@ -3550,7 +3651,12 @@ class FirestoreService {
   /// TO 재오픈 (마감 취소)
   Future<bool> reopenTO(String toId, String adminUID) async {
     try {
-      // ✅ Phase 4: 재오픈 시 상태 재계산 필요
+      // 1. TO 정보 먼저 조회 (그룹 확인용)
+      final toDoc = await _firestore.collection('tos').doc(toId).get();
+      final toData = toDoc.data();
+      final groupId = toData?['groupId'] as String?;
+      
+      // 2. ✅ Phase 4: 재오픈 시 상태 재계산 필요
       await _firestore.collection('tos').doc(toId).update({
         'isManualClosed': false,
         'reopenedAt': FieldValue.serverTimestamp(),
@@ -3562,6 +3668,11 @@ class FirestoreService {
       
       clearCache(toId: toId);
       invalidateListCache();  // ✅ 목록 캐시도 무효화
+
+      // 3. ✅ 그룹 TO면 마스터 status 재계산
+      if (groupId != null) {
+        await _updateGroupMasterStatus(groupId);
+      }
 
       print('✅ TO 재오픈 완료: $toId');
       return true;
@@ -5619,6 +5730,75 @@ class FirestoreService {
       return true;
     } catch (e) {
       print('❌ [Sync] 그룹 마스터 통계 업데이트 실패: $e');
+      return false;
+    }
+  }
+  /// 그룹 마스터 TO의 status 재계산
+  /// - 그룹 내 활성 TO가 1개라도 있으면 → ACTIVE
+  /// - 그룹 내 모든 TO가 마감이면 → CLOSED
+  Future<bool> _updateGroupMasterStatus(String groupId) async {
+    try {
+      print('📊 [Sync] 그룹 마스터 status 재계산: $groupId');
+      
+      // 1. 그룹의 모든 TO 조회
+      final snapshot = await _firestore
+          .collection('tos')
+          .where('groupId', isEqualTo: groupId)
+          .get();
+      
+      if (snapshot.docs.isEmpty) return false;
+      
+      // 2. 마스터 TO 찾기
+      DocumentSnapshot? masterDoc;
+      bool hasActiveTO = false;
+      
+      for (var doc in snapshot.docs) {
+        final data = doc.data() as Map<String, dynamic>;
+        
+        if (data['isGroupMaster'] == true) {
+          masterDoc = doc;
+        }
+        
+        // 마스터가 아닌 TO 중 활성 상태 체크
+        if (data['isGroupMaster'] != true) {
+          final status = data['status'] ?? 'ACTIVE';
+          if (status == 'ACTIVE') {
+            hasActiveTO = true;
+          }
+        }
+      }
+      
+      if (masterDoc == null) {
+        print('   ⚠️ 마스터 TO를 찾을 수 없음');
+        return false;
+      }
+      
+      // 3. 마스터 status 결정
+      final masterData = masterDoc.data() as Map<String, dynamic>;
+      final isManualClosed = masterData['isManualClosed'] ?? false;
+      
+      String newStatus;
+      if (isManualClosed) {
+        // 마스터가 수동 마감이면 CLOSED 유지
+        newStatus = 'CLOSED';
+      } else if (hasActiveTO) {
+        // 활성 TO가 있으면 ACTIVE
+        newStatus = 'ACTIVE';
+      } else {
+        // 모든 TO가 마감이면 CLOSED
+        newStatus = 'CLOSED';
+      }
+      
+      // 4. 마스터 status 업데이트
+      await masterDoc.reference.update({
+        'status': newStatus,
+        'statusUpdatedAt': FieldValue.serverTimestamp(),
+      });
+      
+      print('   ✅ 마스터 status 업데이트: $newStatus (활성 TO: $hasActiveTO)');
+      return true;
+    } catch (e) {
+      print('❌ [Sync] 그룹 마스터 status 업데이트 실패: $e');
       return false;
     }
   }

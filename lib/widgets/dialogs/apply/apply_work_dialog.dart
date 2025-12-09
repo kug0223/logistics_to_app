@@ -182,9 +182,12 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
 
     try {
       if (_isGroupTO) {
-        // 그룹 TO: 선택된 날짜의 지원 상태 로드
+        // 그룹 TO: ✅ 모든 날짜의 지원 상태 로드 (마커 표시용)
+        final allDates = widget.groupTOsByDate!.keys.toList();
+        await Future.wait(allDates.map((date) => _loadDateApplications(date)));
+        
+        // 선택된 날짜의 충돌/스케줄 로드
         if (_selectedDate != null) {
-          await _loadDateApplications(_selectedDate!);
           await _loadMyConfirmedSchedules(_selectedDate!);
           await _loadConflictsForDate(_selectedDate!);
         }
@@ -413,7 +416,7 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
                   SizedBox(width: ResponsiveHelper.spacing(context, 8)),
                   Expanded(
                     child: Text(
-                      '장기 근무는 전체 기간에 대해 일괄 지원됩니다.\n${widget.mainTO.workDaysLabel}',
+                      '고정 근무는 전체 기간에 대해 일괄 지원됩니다.\n${widget.mainTO.workDaysLabel}',
                       style: ResponsiveHelper.smallStyle(
                         context,
                         color: AppColors.infoDark,
@@ -450,6 +453,12 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
           // 내 확정 스케줄 경고
           if (_myConfirmedSchedules.isNotEmpty)
             _buildMyScheduleWarning(context, theme),
+          
+          // ✅ 장기공고 캘린더 (읽기전용 - 전체 기간 표시)
+          if (_isLongTerm) ...[
+            _buildLongTermCalendarSection(context, theme),
+            SizedBox(height: ResponsiveHelper.spacing(context, 16)),
+          ],
           
           // 업무 선택 섹션
           _buildSectionTitle(context, '업무 선택'),
@@ -490,6 +499,261 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
           ),
         ],
       ),
+    );
+  }
+  // ═══════════════════════════════════════════════════════════
+  // 장기공고 캘린더 섹션 (읽기전용)
+  // ═══════════════════════════════════════════════════════════
+
+  /// 장기공고용 읽기전용 캘린더
+  /// - 전체 기간 표시 (선택 불가)
+  /// - 근무 요일 강조
+  Widget _buildLongTermCalendarSection(BuildContext context, ThemeData theme) {
+    final startDate = widget.mainTO.date;
+    final endDate = widget.mainTO.endDate ?? widget.mainTO.date;
+    final workDays = widget.mainTO.workDays ?? [];
+    
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(
+          ResponsiveHelper.spacing(context, 12),
+        ),
+        border: Border.all(color: AppColors.longTermLight),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.03),
+            blurRadius: 8,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+      child: Column(
+        children: [
+          // 헤더: 근무 기간 안내
+          Container(
+            padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 12)),
+            decoration: BoxDecoration(
+              color: AppColors.longTermBg,
+              borderRadius: BorderRadius.only(
+                topLeft: Radius.circular(ResponsiveHelper.spacing(context, 11)),
+                topRight: Radius.circular(ResponsiveHelper.spacing(context, 11)),
+              ),
+            ),
+            child: Row(
+              children: [
+                Icon(
+                  Icons.date_range,
+                  size: ResponsiveHelper.iconSize(context, 18),
+                  color: AppColors.longTermDark,
+                ),
+                SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+                Expanded(
+                  child: Text(
+                    '근무 기간 (전체 선택됨)',
+                    style: ResponsiveHelper.bodyStyle(context, color: AppColors.longTermDark).copyWith(
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          
+          // 캘린더
+          TableCalendar(
+            locale: 'ko_KR',
+            firstDay: DateTime(startDate.year, startDate.month, 1),
+            lastDay: DateTime(endDate.year, endDate.month + 1, 0),
+            focusedDay: startDate,
+            calendarFormat: CalendarFormat.month,
+            
+            // 컴팩트한 사이즈
+            daysOfWeekHeight: ResponsiveHelper.spacing(context, 28),
+            rowHeight: ResponsiveHelper.spacing(context, 40),
+            
+            // 선택 비활성화 (읽기전용 - 선택해도 아무 동작 안함)
+            selectedDayPredicate: (day) => false,
+            enabledDayPredicate: (day) => true, // 표시는 하되
+            
+            // 선택해도 아무 동작 안함 (읽기전용)
+            onDaySelected: (selectedDay, focusedDay) {
+              // 아무 동작 안함 - 읽기전용
+            },
+            onPageChanged: (focusedDay) {},
+            
+            // 헤더 스타일
+            headerStyle: HeaderStyle(
+              formatButtonVisible: false,
+              titleCentered: true,
+              titleTextStyle: ResponsiveHelper.subtitleStyle(context).copyWith(
+                fontWeight: FontWeight.bold,
+              ),
+              leftChevronIcon: Icon(
+                Icons.chevron_left,
+                color: AppColors.grey600,
+                size: ResponsiveHelper.iconSize(context, 20),
+              ),
+              rightChevronIcon: Icon(
+                Icons.chevron_right,
+                color: AppColors.grey600,
+                size: ResponsiveHelper.iconSize(context, 20),
+              ),
+            ),
+            
+            // 요일 헤더 스타일
+            daysOfWeekStyle: DaysOfWeekStyle(
+              weekdayStyle: ResponsiveHelper.smallStyle(context, color: AppColors.grey600),
+              weekendStyle: ResponsiveHelper.smallStyle(context, color: AppColors.error),
+            ),
+            
+            // 커스텀 빌더 (근무일 강조)
+            calendarBuilders: CalendarBuilders(
+              defaultBuilder: (context, day, focusedDay) {
+                return _buildLongTermDayCell(context, day, startDate, endDate, workDays, false);
+              },
+              outsideBuilder: (context, day, focusedDay) {
+                return _buildLongTermDayCell(context, day, startDate, endDate, workDays, true);
+              },
+              todayBuilder: (context, day, focusedDay) {
+                return _buildLongTermDayCell(context, day, startDate, endDate, workDays, false, isToday: true);
+              },
+              disabledBuilder: (context, day, focusedDay) {
+                return _buildLongTermDayCell(context, day, startDate, endDate, workDays, true);
+              },
+            ),
+          ),
+          
+          // 범례
+          Padding(
+            padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 8)),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                _buildLegendItem(context, theme.primaryColor, '확정'),
+                SizedBox(width: ResponsiveHelper.spacing(context, 12)),
+                _buildLegendItem(context, Colors.orange, '대기'),
+                SizedBox(width: ResponsiveHelper.spacing(context, 12)),
+                _buildLegendItem(context, AppColors.grey400, '지원가능'),
+              ],
+            ),
+          ),
+          
+          // ✅ 안내 메시지
+          Container(
+            margin: EdgeInsets.fromLTRB(
+              ResponsiveHelper.spacing(context, 12),
+              0,
+              ResponsiveHelper.spacing(context, 12),
+              ResponsiveHelper.spacing(context, 12),
+            ),
+            padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 10)),
+            decoration: BoxDecoration(
+              color: AppColors.infoBg,
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(color: AppColors.infoLight),
+            ),
+            child: Row(
+              children: [
+                Icon(
+                  Icons.lightbulb_outline,
+                  size: ResponsiveHelper.iconSize(context, 16),
+                  color: AppColors.infoDark,
+                ),
+                SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+                Expanded(
+                  child: Text(
+                    '같은 시간대에 여러 업무 지원 가능! \n확정 시 겹치는 지원은 자동 취소돼요.',
+                    style: ResponsiveHelper.smallStyle(context, color: AppColors.infoDark),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// 장기공고 캘린더 날짜 셀
+  Widget _buildLongTermDayCell(
+    BuildContext context,
+    DateTime day,
+    DateTime startDate,
+    DateTime endDate,
+    List<String> workDays,
+    bool isOutside, {
+    bool isToday = false,
+  }) {
+    // 근무 기간 내인지 확인
+    final isInRange = !day.isBefore(startDate) && !day.isAfter(endDate);
+    
+    // 근무 요일인지 확인
+    bool isWorkDay = false;
+    if (isInRange) {
+      if (workDays.isEmpty) {
+        isWorkDay = true; // 요일 설정 없으면 매일 근무
+      } else {
+        const dayNames = ['월', '화', '수', '목', '금', '토', '일'];
+        final dayName = dayNames[day.weekday - 1];
+        isWorkDay = workDays.contains(dayName);
+      }
+    }
+    
+    // 배경색 결정
+    Color bgColor;
+    Color textColor;
+    if (isOutside) {
+      bgColor = Colors.transparent;
+      textColor = AppColors.grey300;
+    } else if (isInRange && isWorkDay) {
+      bgColor = AppColors.longTerm.withOpacity(0.3);
+      textColor = AppColors.longTermDark;
+    } else if (isInRange) {
+      bgColor = AppColors.grey100;
+      textColor = AppColors.grey500;
+    } else {
+      bgColor = Colors.transparent;
+      textColor = AppColors.grey400;
+    }
+    
+    return Container(
+      margin: const EdgeInsets.all(2),
+      decoration: BoxDecoration(
+        color: bgColor,
+        shape: BoxShape.circle,
+        border: isToday ? Border.all(color: Theme.of(context).primaryColor, width: 2) : null,
+      ),
+      child: Center(
+        child: Text(
+          '${day.day}',
+          style: ResponsiveHelper.smallStyle(context, color: textColor).copyWith(
+            fontWeight: isInRange && isWorkDay ? FontWeight.bold : FontWeight.normal,
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// 범례 아이템
+  Widget _buildLegendItem(BuildContext context, Color color, String label) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Container(
+          width: ResponsiveHelper.spacing(context, 12),
+          height: ResponsiveHelper.spacing(context, 12),
+          decoration: BoxDecoration(
+            color: color,
+            shape: BoxShape.circle,
+          ),
+        ),
+        SizedBox(width: ResponsiveHelper.spacing(context, 4)),
+        Text(
+          label,
+          style: ResponsiveHelper.smallStyle(context, color: AppColors.grey600),
+        ),
+      ],
     );
   }
 
@@ -775,9 +1039,6 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
             ),
             decoration: BoxDecoration(
               color: AppColors.grey50,
-              borderRadius: BorderRadius.vertical(
-                bottom: Radius.circular(ResponsiveHelper.spacing(context, 12)),
-              ),
             ),
             child: Row(
               mainAxisAlignment: MainAxisAlignment.center,
@@ -790,10 +1051,44 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
               ],
             ),
           ),
+          
+          // ✅ 안내 메시지
+          Container(
+            padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 10)),
+            margin: EdgeInsets.fromLTRB(
+              ResponsiveHelper.spacing(context, 12),
+              0,
+              ResponsiveHelper.spacing(context, 12),
+              ResponsiveHelper.spacing(context, 12),
+            ),
+            decoration: BoxDecoration(
+              color: AppColors.infoBg,
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(color: AppColors.infoLight),
+            ),
+            child: Row(
+              children: [
+                Icon(
+                  Icons.lightbulb_outline,
+                  size: ResponsiveHelper.iconSize(context, 16),
+                  color: AppColors.infoDark,
+                ),
+                SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+                Expanded(
+                  child: Text(
+                    '같은 시간대에 여러 업무 지원 가능! \n확정 시 겹치는 지원은 자동 취소돼요.',
+                    style: ResponsiveHelper.smallStyle(context, color: AppColors.infoDark),
+                  ),
+                ),
+              ],
+            ),
+          ),
         ],
       ),
     );
   }
+
+  /// 날짜 셀 빌드
 
   /// 날짜 셀 빌드
   Widget _buildDayCell(
@@ -839,28 +1134,6 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
           ),
         ),
       ),
-    );
-  }
-
-  /// 범례 아이템
-  Widget _buildLegendItem(BuildContext context, Color color, String label) {
-    return Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Container(
-          width: ResponsiveHelper.spacing(context, 8),
-          height: ResponsiveHelper.spacing(context, 8),
-          decoration: BoxDecoration(
-            color: color,
-            shape: BoxShape.circle,
-          ),
-        ),
-        SizedBox(width: ResponsiveHelper.spacing(context, 4)),
-        Text(
-          label,
-          style: ResponsiveHelper.smallStyle(context, color: AppColors.grey600),
-        ),
-      ],
     );
   }
 
@@ -998,16 +1271,38 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
                 style: ResponsiveHelper.smallStyle(context, color: theme.primaryColor),
               ),
               SizedBox(width: ResponsiveHelper.spacing(context, 8)),
-              // ✅ 상세보기 아이콘
+              // ✅ 상세보기 버튼 (텍스트 포함)
               InkWell(
                 onTap: () => _goToJobPosting(to!, workDetails),
-                borderRadius: BorderRadius.circular(4),
-                child: Padding(
-                  padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 4)),
-                  child: Icon(
-                    Icons.visibility_outlined,
-                    size: ResponsiveHelper.iconSize(context, 18),
-                    color: theme.primaryColor,
+                borderRadius: BorderRadius.circular(6),
+                child: Container(
+                  padding: EdgeInsets.symmetric(
+                    horizontal: ResponsiveHelper.spacing(context, 8),
+                    vertical: ResponsiveHelper.spacing(context, 4),
+                  ),
+                  decoration: BoxDecoration(
+                    color: theme.primaryColor.withOpacity(0.15),
+                    borderRadius: BorderRadius.circular(6),
+                    border: Border.all(color: theme.primaryColor.withOpacity(0.3)),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(
+                        Icons.visibility_outlined,
+                        size: ResponsiveHelper.iconSize(context, 14),
+                        color: theme.primaryColor,
+                      ),
+                      SizedBox(width: ResponsiveHelper.spacing(context, 4)),
+                      Text(
+                        '상세',
+                        style: ResponsiveHelper.smallStyle(
+                          context,
+                          color: theme.primaryColor,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ],
                   ),
                 ),
               ),

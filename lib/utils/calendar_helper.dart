@@ -44,8 +44,21 @@ class CalendarHelper {
     final endDate = app.actualResignDate ?? app.workEndDate;
     if (endDate == null) return false;
     
-    // 날짜 범위 체크
-    final isInRange = !targetDate.isBefore(app.workDate) && 
+    // ✅ 시작일 계산: 확정일이 공고 시작일보다 이후면 확정일 기준
+    DateTime effectiveStartDate = app.workDate;
+    if (app.confirmedAt != null) {
+      final confirmedDate = DateTime(
+        app.confirmedAt!.year,
+        app.confirmedAt!.month,
+        app.confirmedAt!.day,
+      );
+      if (confirmedDate.isAfter(app.workDate)) {
+        effectiveStartDate = confirmedDate;
+      }
+    }
+    
+    // 날짜 범위 체크 (확정일 기준 시작)
+    final isInRange = !targetDate.isBefore(effectiveStartDate) && 
                       !targetDate.isAfter(endDate);
     
     if (!isInRange) return false;

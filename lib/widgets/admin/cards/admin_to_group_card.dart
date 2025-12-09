@@ -120,7 +120,7 @@ class _TOGroupCardState extends State<TOGroupCard> with SingleTickerProviderStat
               return toItem.confirmedCount >= toItem.totalRequired && toItem.totalRequired > 0;
             }
             return toItem.workDetails.every((work) {
-              final stats = toItem.workDetailStats?[work.workType];
+              final stats = toItem.workDetailStats?[work.id];
               final confirmed = stats?['confirmed'] ?? 0;
               return confirmed >= work.requiredCount;
             });
@@ -556,7 +556,7 @@ class _TOGroupCardState extends State<TOGroupCard> with SingleTickerProviderStat
                                       // 업무 목록
                                       ...widget.groupItem.groupTOs.first.workDetails.map((work) {
                                         final stats = widget.groupItem.groupTOs.first
-                                            .workDetailStats?[work.workType];
+                                            .workDetailStats?[work.id];
                                         final confirmed = stats?['confirmed'] ?? 0;
                                         final pending = stats?['pending'] ?? 0;
 

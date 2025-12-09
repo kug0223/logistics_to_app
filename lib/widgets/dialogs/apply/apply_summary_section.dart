@@ -73,10 +73,7 @@ class ApplySummarySection extends StatelessWidget {
     
     // 실제 지원/확정이 있는 날짜만 필터
     final activeInfos = applicationInfos.where((info) => info.hasApplications).toList();
-    
-    // 총 예상 급여
-    final totalWage = activeInfos.fold<int>(0, (sum, info) => sum + info.totalWage);
-    
+       
     return Container(
       decoration: BoxDecoration(
         color: theme.primaryColor.withOpacity(0.05),
@@ -104,10 +101,6 @@ class ApplySummarySection extends StatelessWidget {
             _buildEmptyState(context)
           else
             _buildContent(context, theme, activeInfos),
-          
-          // 총 예상 급여 (내용이 있을 때만)
-          if (activeInfos.isNotEmpty)
-            _buildTotalWage(context, theme, totalWage),
         ],
       ),
     );

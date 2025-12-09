@@ -339,12 +339,18 @@ class WorkSelectionCard extends StatelessWidget {
           mainAxisSize: MainAxisSize.min,
           children: [
             if (icon != null) ...[
-              Icon(icon, size: ResponsiveHelper.iconSize(context, 12), color: Colors.white),
+              Icon(
+                icon,
+                size: ResponsiveHelper.iconSize(context, 14),
+                color: Colors.white,
+              ),
               SizedBox(width: ResponsiveHelper.spacing(context, 4)),
             ],
             Text(
               text,
-              style: ResponsiveHelper.smallStyle(context, color: Colors.white).copyWith(
+              style: ResponsiveHelper.smallStyle(
+                context,
+                color: Colors.white,
                 fontWeight: FontWeight.w600,
               ),
             ),
@@ -431,7 +437,7 @@ class WorkSelectionCard extends StatelessWidget {
         return _buildSmallButton(context, '취소', AppColors.grey500, onCancelApplication, icon: Icons.close);
         
       case WorkApplicationStatus.confirmed:
-        return _buildSmallButton(context, '확정', AppColors.info, null, icon: Icons.check);
+        return _buildSmallButton(context, '확정됨', AppColors.info, null, icon: Icons.check);
         
       case WorkApplicationStatus.closed:
         return _buildSmallButton(context, '마감', AppColors.grey400, null, icon: Icons.block);
