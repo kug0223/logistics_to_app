@@ -404,40 +404,6 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
               ),
             ],
           ),
-          
-          // 장기 공고 안내
-          if (_isLongTerm) ...[
-            SizedBox(height: ResponsiveHelper.spacing(context, 12)),
-            Container(
-              padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 12)),
-              decoration: BoxDecoration(
-                color: AppColors.infoBg,
-                borderRadius: BorderRadius.circular(
-                  ResponsiveHelper.spacing(context, 8),
-                ),
-                border: Border.all(color: AppColors.infoLight),
-              ),
-              child: Row(
-                children: [
-                  Icon(
-                    Icons.info_outline,
-                    size: ResponsiveHelper.iconSize(context, 18),
-                    color: AppColors.infoDark,
-                  ),
-                  SizedBox(width: ResponsiveHelper.spacing(context, 8)),
-                  Expanded(
-                    child: Text(
-                      '고정 근무는 전체 기간에 대해 일괄 지원됩니다.\n${widget.mainTO.workDaysLabel}',
-                      style: ResponsiveHelper.smallStyle(
-                        context,
-                        color: AppColors.infoDark,
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ],
         ],
       ),
     );
@@ -461,19 +427,18 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // 내 확정 스케줄 경고
-          if (_myConfirmedSchedules.isNotEmpty)
-            _buildMyScheduleWarning(context, theme),
-          
-          // ✅ 장기공고 캘린더 (읽기전용 - 전체 기간 표시)
+          // ✅ 장기공고 캘린더 (읽기전용 - 전체 기간 표시) - 맨 위로!
           if (_isLongTerm) ...[
             _buildLongTermCalendarSection(context, theme),
             SizedBox(height: ResponsiveHelper.spacing(context, 16)),
           ],
           
+          // 내 확정 스케줄 경고 - 캘린더 아래로
+          if (_myConfirmedSchedules.isNotEmpty)
+            _buildMyScheduleWarning(context, theme),
+          
           // 업무 선택 섹션
           _buildSectionTitle(context, '업무 선택'),
-          SizedBox(height: ResponsiveHelper.spacing(context, 8)),
           
           ...widget.workDetails.map((work) {
             final workKey = _makeWorkKey(work.workType, work.startTime, work.endTime);
@@ -650,7 +615,7 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
             ),
           ),
           
-          // ✅ 안내 메시지
+          // ✅ 안내 메시지 (일괄 지원 + 여러 업무 안내)
           Container(
             margin: EdgeInsets.fromLTRB(
               ResponsiveHelper.spacing(context, 12),
@@ -664,19 +629,42 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
               borderRadius: BorderRadius.circular(8),
               border: Border.all(color: AppColors.infoLight),
             ),
-            child: Row(
+            child: Column(
               children: [
-                Icon(
-                  Icons.lightbulb_outline,
-                  size: ResponsiveHelper.iconSize(context, 16),
-                  color: AppColors.infoDark,
+                // 일괄 지원 안내
+                Row(
+                  children: [
+                    Icon(
+                      Icons.info_outline,
+                      size: ResponsiveHelper.iconSize(context, 16),
+                      color: AppColors.infoDark,
+                    ),
+                    SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+                    Expanded(
+                      child: Text(
+                        '고정 근무는 전체 기간에 대해 일괄 지원됩니다.\n${widget.mainTO.workDaysLabel}',
+                        style: ResponsiveHelper.smallStyle(context, color: AppColors.infoDark),
+                      ),
+                    ),
+                  ],
                 ),
-                SizedBox(width: ResponsiveHelper.spacing(context, 8)),
-                Expanded(
-                  child: Text(
-                    '같은 시간대에 여러 업무 지원 가능! \n확정 시 겹치는 지원은 자동 취소돼요.',
-                    style: ResponsiveHelper.smallStyle(context, color: AppColors.infoDark),
-                  ),
+                SizedBox(height: ResponsiveHelper.spacing(context, 8)),
+                // 여러 업무 지원 안내
+                Row(
+                  children: [
+                    Icon(
+                      Icons.lightbulb_outline,
+                      size: ResponsiveHelper.iconSize(context, 16),
+                      color: AppColors.infoDark,
+                    ),
+                    SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+                    Expanded(
+                      child: Text(
+                        '같은 시간대에 여러 업무 지원 가능!\n확정 시 겹치는 지원은 자동 취소돼요.',
+                        style: ResponsiveHelper.smallStyle(context, color: AppColors.infoDark),
+                      ),
+                    ),
+                  ],
                 ),
               ],
             ),
