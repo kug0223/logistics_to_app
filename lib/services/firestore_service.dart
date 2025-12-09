@@ -6465,6 +6465,8 @@ class FirestoreService {
     }
   }
 
+
+
   /// 신분증 열람 권한 확인 (pending, approved 모두 조회)
   Future<IdCardAccessRequestModel?> checkIdCardAccess({
     required String requesterId,
@@ -6499,6 +6501,43 @@ class FirestoreService {
     } catch (e) {
       print('❌ 열람 권한 확인 실패: $e');
       return null;
+    }
+  }
+  /// 사용자에게 온 신분증 열람 요청 조회 (지원자/근무자용)
+  Future<List<IdCardAccessRequestModel>> getPendingIdCardRequestsForUser(String userId) async {
+    try {
+      final snapshot = await _firestore
+          .collection('idCardAccessRequests')
+          .where('targetUserId', isEqualTo: userId)
+          .where('status', isEqualTo: 'pending')
+          .orderBy('requestedAt', descending: true)
+          .get();
+
+      return snapshot.docs
+          .map((doc) => IdCardAccessRequestModel.fromFirestore(doc))
+          .toList();
+    } catch (e) {
+      print('❌ 신분증 요청 조회 실패: $e');
+      return [];
+    }
+  }
+
+  /// 사용자에게 온 계약해지 요청 조회 (근무자용)
+  Future<List<ApplicationModel>> getMyTerminationRequests(String uid) async {
+    try {
+      final snapshot = await _firestore
+          .collection('applications')
+          .where('uid', isEqualTo: uid)
+          .where('status', isEqualTo: 'CONFIRMED')
+          .where('terminationStatus', isEqualTo: 'PENDING')
+          .get();
+
+      return snapshot.docs
+          .map((doc) => ApplicationModel.fromFirestore(doc))
+          .toList();
+    } catch (e) {
+      print('❌ 계약해지 요청 조회 실패: $e');
+      return [];
     }
   }
 

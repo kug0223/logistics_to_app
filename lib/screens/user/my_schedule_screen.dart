@@ -13,6 +13,7 @@ import '../../widgets/user/cards/monthly_stats_card.dart';
 import '../../widgets/calendar/schedule_card.dart';
 import '../../widgets/dialogs/long_term_work_management_dialog.dart';
 import 'dialogs/my_requests_dialog.dart';
+import '../../models/core/id_card_access_request_model.dart';
 
 /// ✨ 내 근무 스케줄 화면 (홈 화면 디자인 통일)
 class MyScheduleScreen extends StatefulWidget {
@@ -33,6 +34,10 @@ class _MyScheduleScreenState extends State<MyScheduleScreen> {
   List<ApplicationModel> _applications = [];
   bool _isLoading = true;
   String _selectedFilter = 'ALL'; // ALL, CONFIRMED, PENDING
+
+  // 🔔 알림 관련
+  List<IdCardAccessRequestModel> _pendingIdCardRequests = [];
+  List<ApplicationModel> _pendingTerminations = [];
   
   @override
   void initState() {
@@ -54,12 +59,26 @@ class _MyScheduleScreenState extends State<MyScheduleScreen> {
         return;
       }
       
-      final applications = await _firestoreService.getMyApplications(uid);
+      // 병렬 로딩
+      final results = await Future.wait([
+        _firestoreService.getMyApplications(uid),
+        _firestoreService.getPendingIdCardRequestsForUser(uid),
+        _firestoreService.getMyTerminationRequests(uid),
+      ]);
+      
+      final applications = results[0] as List<ApplicationModel>;
+      final idCardRequests = results[1] as List<IdCardAccessRequestModel>;
+      final terminations = results[2] as List<ApplicationModel>;
       
       setState(() {
         _applications = applications;
+        _pendingIdCardRequests = idCardRequests;
+        _pendingTerminations = terminations;
         _isLoading = false;
       });
+      
+      print('✅ 지원 내역 로드 완료: ${applications.length}개');
+      print('🔔 신분증 요청: ${idCardRequests.length}건, 계약해지: ${terminations.length}건');
       
       print('✅ 지원 내역 로드 완료: ${applications.length}개');
     } catch (e) {
@@ -627,6 +646,7 @@ class _MyScheduleScreenState extends State<MyScheduleScreen> {
   }
 
   /// 대기중인 요청 개수 조회
+  /// 스케줄 변경 요청 + 신분증 요청 + 계약해지 요청
   Future<int> _getPendingRequestCount() async {
     final userProvider = context.read<UserProvider>();
     final uid = userProvider.currentUser?.uid;
@@ -635,14 +655,19 @@ class _MyScheduleScreenState extends State<MyScheduleScreen> {
     
     try {
       final requests = await _firestoreService.getMyScheduleChangeRequests(uid);
-      final pending = requests.where((r) => 
+      final scheduleRequests = requests.where((r) => 
         r.isPending && r.isAdminRequest
       ).length;
       
-      return pending;
+      // ✅ 신분증 요청 + 계약해지 요청도 포함
+      final total = scheduleRequests + 
+                    _pendingIdCardRequests.length + 
+                    _pendingTerminations.length;
+      
+      return total;
     } catch (e) {
       print('❌ 대기중인 요청 개수 조회 실패: $e');
-      return 0;
+      return _pendingIdCardRequests.length + _pendingTerminations.length;
     }
   }
 

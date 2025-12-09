@@ -18,7 +18,7 @@ ALfit
 
 냉동분류
 
-git add . ; git commit -m "지원자 공고지원하기 개선 UI/UX 251209-6" ; git push
+git add . ; git commit -m "지원자 공고지원하기 개선 UI/UX 251209-8" ; git push
 
 flutter clean
 flutter pub get
@@ -43,6 +43,7 @@ flutter build appbundle --release
 시뮬레이터 갤러리 사진 불러오기
 adb shell am broadcast -a android.intent.action.MEDIA_SCANNER_SCAN_FILE -d file:///sdcard/Pictures/
 
+내 지침 무시하지말고 꼼꼼히 확인할것(제일중요!)
 mnt/project 절대 보지 말것!!!!
 project_knowledge_search 도구를 사용해서
 실제 업로드된 dart 코드 파일들을 검색할것!
@@ -56,7 +57,7 @@ lib의 모든 하위 폴더와 파일구조
 색상 하드코딩 금지!"
 코드 생성할때 반응형으로 작성할것!(프로젝트파일 확인)
 
-내 지침 무시하지말고 꼼꼼히 확인할것
+
 
 
 
