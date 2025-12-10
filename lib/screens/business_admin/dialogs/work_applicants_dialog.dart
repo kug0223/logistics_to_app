@@ -834,7 +834,9 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog> {
                           SizedBox(width: ResponsiveHelper.spacing(context, 6)),
                           Expanded(
                             child: Text(
-                              '${user?.gender ?? ''}${user?.age != null ? ' · ${user!.age}세' : ''}',
+                              user?.gender != null || user?.age != null
+                                  ? '(${user?.gender ?? ''}${user?.age != null ? ' · ${user!.age}세' : ''})'
+                                  : '',
                               style: ResponsiveHelper.smallStyle(context, color: AppColors.grey500),
                             ),
                           ),
@@ -923,38 +925,34 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog> {
                         ),
                       ],
                       
-                      // 장기 근무 정보 (있는 경우) - ✅ TO도 장기인지 확인
+                      // 장기 근무 정보 (있는 경우) - 희망 시작일만 강조
                       if (widget.toItem.to.isLongTerm && app.isLongTermApplication && app.workPeriodDisplay.isNotEmpty) ...[
                         SizedBox(height: ResponsiveHelper.spacing(context, 6)),
-                        Container(
-                          padding: EdgeInsets.symmetric(
-                            horizontal: ResponsiveHelper.spacing(context, 8),
-                            vertical: ResponsiveHelper.spacing(context, 4),
-                          ),
-                          decoration: BoxDecoration(
-                            color: Colors.purple.withOpacity(0.1),
-                            borderRadius: BorderRadius.circular(6),
-                          ),
-                          child: Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Icon(
-                                Icons.event_note,
-                                size: ResponsiveHelper.iconSize(context, 12),
-                                color: Colors.purple,
+                        Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(
+                              Icons.date_range,
+                              size: ResponsiveHelper.iconSize(context, 12),
+                              color: app.desiredStartDate != null 
+                                  ? Theme.of(context).primaryColor 
+                                  : AppColors.grey500,
+                            ),
+                            SizedBox(width: ResponsiveHelper.spacing(context, 4)),
+                            Text(
+                              app.desiredStartDate != null
+                                  ? '희망: ${app.desiredStartDate!.month}/${app.desiredStartDate!.day}~ (${app.workEndDate!.month}/${app.workEndDate!.day}까지)'
+                                  : '장기: ${app.workPeriodDisplay}',
+                              style: ResponsiveHelper.smallStyle(
+                                context, 
+                                color: app.desiredStartDate != null 
+                                    ? Theme.of(context).primaryColor 
+                                    : AppColors.grey600,
+                              ).copyWith(
+                                fontWeight: app.desiredStartDate != null ? FontWeight.w600 : FontWeight.normal,
                               ),
-                              SizedBox(width: ResponsiveHelper.spacing(context, 4)),
-                              Text(
-                                // ✅ 희망 시작일이 있으면 표시
-                                app.desiredStartDate != null
-                                    ? '희망: ${app.desiredStartDate!.month}/${app.desiredStartDate!.day}~ (${app.workEndDate!.month}/${app.workEndDate!.day}까지)'
-                                    : '장기: ${app.workPeriodDisplay}',
-                                style: ResponsiveHelper.tinyStyle(context, color: Colors.purple).copyWith(
-                                  fontWeight: FontWeight.w600,
-                                ),
-                              ),
-                            ],
-                          ),
+                            ),
+                          ],
                         ),
                       ],
                     ],
@@ -982,41 +980,46 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog> {
     return score.clamp(0, 100);
   }
 
-  /// 신뢰도 배지
+  /// 신뢰도 배지 (높음/보통/주의 3단계)
   Widget _buildTrustBadge(BuildContext context, int score) {
-    Color color;
-    if (score >= 80) {
-      color = AppColors.success;
-    } else if (score >= 60) {
+    // 80+: 초록, 40~79: 회색, 40 미만: 빨강
+    final Color color;
+    final Color bgColor;
+    final bool isLow = score < 40;
+    
+    if (score >= 70) {
       color = AppColors.info;
-    } else if (score >= 40) {
-      color = AppColors.warning;
-    } else {
+      bgColor = AppColors.infoBg;
+    } else if (isLow) {
       color = AppColors.error;
+      bgColor = AppColors.errorBg;
+    } else {
+      color = AppColors.grey600;
+      bgColor = AppColors.grey100;
     }
-
+    
     return Container(
       padding: EdgeInsets.symmetric(
         horizontal: ResponsiveHelper.spacing(context, 6),
         vertical: ResponsiveHelper.spacing(context, 2),
       ),
       decoration: BoxDecoration(
-        color: color.withOpacity(0.15),
+        color: bgColor,
         borderRadius: BorderRadius.circular(8),
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
           Icon(
-            Icons.shield,
+            isLow ? Icons.shield : Icons.shield_outlined,
             size: ResponsiveHelper.iconSize(context, 10),
             color: color,
           ),
           SizedBox(width: ResponsiveHelper.spacing(context, 3)),
           Text(
-            '신뢰 $score',
+            '신뢰$score',
             style: ResponsiveHelper.tinyStyle(context, color: color).copyWith(
-              fontWeight: FontWeight.bold,
+              fontWeight: FontWeight.w600,
             ),
           ),
         ],

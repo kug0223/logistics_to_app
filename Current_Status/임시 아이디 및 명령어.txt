@@ -18,7 +18,7 @@ ALfit
 
 냉동분류
 
-git add . ; git commit -m "Firesotre_Service 최종분리완료 251210-10" ; git push
+git add . ; git commit -m "Firesotre_Service 최종분리완료 251210-11" ; git push
 
 flutter clean
 flutter pub get

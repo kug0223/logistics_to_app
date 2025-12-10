@@ -546,7 +546,9 @@ class _ConfirmedListDialogWidgetState
                                 Text(user.name, style: ResponsiveHelper.bodyStyle(context).copyWith(fontWeight: FontWeight.w600)),
                                 SizedBox(width: ResponsiveHelper.spacing(context, 6)),
                                 Text(
-                                  '${user.gender ?? ''}${user.age != null ? ' · ${user.age}세' : ''}',
+                                  user.gender != null || user.age != null
+                                      ? '(${user.gender ?? ''}${user.age != null ? ' · ${user.age}세' : ''})'
+                                      : '',
                                   style: ResponsiveHelper.smallStyle(context, color: AppColors.grey600),
                                 ),
                                 SizedBox(width: ResponsiveHelper.spacing(context, 4)),
@@ -559,47 +561,43 @@ class _ConfirmedListDialogWidgetState
                               children: [
                                 _buildTrustBadge(user),
                                 SizedBox(width: ResponsiveHelper.spacing(context, 8)),
-                                IdCardHelper.buildStatusBadge(context, idCardStatus),
-                                SizedBox(width: ResponsiveHelper.spacing(context, 8)),
                                 if (user.averageRating > 0) ...[
                                   Icon(Icons.star, size: ResponsiveHelper.iconSize(context, 12), color: Colors.amber),
                                   SizedBox(width: ResponsiveHelper.spacing(context, 2)),
                                   Text(user.averageRating.toStringAsFixed(1), style: ResponsiveHelper.smallStyle(context, color: AppColors.grey600)),
                                 ],
+                                SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+                                IdCardHelper.buildStatusBadge(context, idCardStatus),
                               ],
                             ),
-                            // 3줄: 장기 근무 정보 (있는 경우) - ✅ TO도 장기인지 확인
+                            // 3줄: 장기 근무 정보 (있는 경우) - 희망 시작일만 강조
                             if (widget.toItem.to.isLongTerm && application.isLongTermApplication && application.workPeriodDisplay.isNotEmpty) ...[
                               SizedBox(height: ResponsiveHelper.spacing(context, 6)),
-                              Container(
-                                padding: EdgeInsets.symmetric(
-                                  horizontal: ResponsiveHelper.spacing(context, 8),
-                                  vertical: ResponsiveHelper.spacing(context, 4),
-                                ),
-                                decoration: BoxDecoration(
-                                  color: AppColors.longTermBg,
-                                  borderRadius: BorderRadius.circular(6),
-                                ),
-                                child: Row(
-                                  mainAxisSize: MainAxisSize.min,
-                                  children: [
-                                    Icon(
-                                      Icons.event_note,
-                                      size: ResponsiveHelper.iconSize(context, 12),
-                                      color: AppColors.longTermDark,
+                              Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Icon(
+                                    Icons.date_range,
+                                    size: ResponsiveHelper.iconSize(context, 12),
+                                    color: application.desiredStartDate != null 
+                                        ? Theme.of(context).primaryColor 
+                                        : AppColors.grey500,
+                                  ),
+                                  SizedBox(width: ResponsiveHelper.spacing(context, 4)),
+                                  Text(
+                                    application.desiredStartDate != null
+                                        ? '희망: ${application.desiredStartDate!.month}/${application.desiredStartDate!.day}~ (${application.workEndDate!.month}/${application.workEndDate!.day}까지)'
+                                        : '장기: ${application.workPeriodDisplay}',
+                                    style: ResponsiveHelper.smallStyle(
+                                      context, 
+                                      color: application.desiredStartDate != null 
+                                          ? Theme.of(context).primaryColor 
+                                          : AppColors.grey600,
+                                    ).copyWith(
+                                      fontWeight: application.desiredStartDate != null ? FontWeight.w600 : FontWeight.normal,
                                     ),
-                                    SizedBox(width: ResponsiveHelper.spacing(context, 4)),
-                                    Text(
-                                      // ✅ 희망 시작일이 있으면 표시
-                                      application.desiredStartDate != null
-                                          ? '희망: ${application.desiredStartDate!.month}/${application.desiredStartDate!.day}~ (${application.workEndDate!.month}/${application.workEndDate!.day}까지)'
-                                          : '장기: ${application.workPeriodDisplay}',
-                                      style: ResponsiveHelper.tinyStyle(context, color: AppColors.longTermDark).copyWith(
-                                        fontWeight: FontWeight.w600,
-                                      ),
-                                    ),
-                                  ],
-                                ),
+                                  ),
+                                ],
                               ),
                             ],
                           ],
@@ -618,20 +616,49 @@ class _ConfirmedListDialogWidgetState
 
   Widget _buildTrustBadge(UserModel user) {
     final trustScore = _calculateTrustScore(user);
-    Color badgeColor;
-    if (trustScore >= 80) {
-      badgeColor = AppColors.success;
-    } else if (trustScore >= 60) {
-      badgeColor = AppColors.info;
-    } else if (trustScore >= 40) {
-      badgeColor = AppColors.warning;
+    
+    // 70+: 파랑, 40~69: 회색, 40 미만: 빨강
+    final Color color;
+    final Color bgColor;
+    final bool isLow = trustScore < 40;
+    
+    if (trustScore >= 70) {
+      color = AppColors.info;
+      bgColor = AppColors.infoBg;
+    } else if (isLow) {
+      color = AppColors.error;
+      bgColor = AppColors.errorBg;
     } else {
-      badgeColor = AppColors.error;
+      color = AppColors.grey600;
+      bgColor = AppColors.grey100;
     }
+    
     return Container(
-      padding: EdgeInsets.symmetric(horizontal: ResponsiveHelper.spacing(context, 6), vertical: ResponsiveHelper.spacing(context, 2)),
-      decoration: BoxDecoration(color: badgeColor.withOpacity(0.15), borderRadius: BorderRadius.circular(8)),
-      child: Text('신뢰 $trustScore', style: ResponsiveHelper.tinyStyle(context, color: badgeColor).copyWith(fontWeight: FontWeight.bold)),
+      padding: EdgeInsets.symmetric(
+        horizontal: ResponsiveHelper.spacing(context, 6), 
+        vertical: ResponsiveHelper.spacing(context, 2),
+      ),
+      decoration: BoxDecoration(
+        color: bgColor, 
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(
+            isLow ? Icons.shield : Icons.shield_outlined,
+            size: ResponsiveHelper.iconSize(context, 10),
+            color: color,
+          ),
+          SizedBox(width: ResponsiveHelper.spacing(context, 3)),
+          Text(
+            '신뢰$trustScore', 
+            style: ResponsiveHelper.tinyStyle(context, color: color).copyWith(
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+        ],
+      ),
     );
   }
 
