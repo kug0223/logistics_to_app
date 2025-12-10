@@ -8,7 +8,7 @@ extension UserFirestore on FirestoreService {
   
   /// 사용자 정보 저장
   Future<void> saveUser(UserModel user) async {
-    await db.collection('users').doc(user.uid).set(user.toMap());
+    await _firestore.collection('users').doc(user.uid).set(user.toMap());
   }
 
   /// 사용자 정보 조회 (캐싱 적용!)
@@ -17,16 +17,16 @@ extension UserFirestore on FirestoreService {
       print('🔍 getUser 호출: $uid, forceRefresh=$forceRefresh');
       
       // 🔥 강제 새로고침이 아닐 때만 캐시 확인
-      if (!forceRefresh && userCache.containsKey(uid)) {
-        final cacheTime = userCacheTimestamps[uid];
-        if (cacheTime != null && DateTime.now().difference(cacheTime) < userCacheValidDuration) {
+      if (!forceRefresh && _userCache.containsKey(uid)) {
+        final cacheTime = _userCacheTimestamps[uid];
+        if (cacheTime != null && DateTime.now().difference(cacheTime) < _userCacheValidDuration) {
           print('📦 User 캐시 사용: $uid');
-          return userCache[uid];
+          return _userCache[uid];
         }
       }
       
       print('🔄 User Firestore 조회: $uid');
-      final doc = await db.collection('users').doc(uid).get();
+      final doc = await _firestore.collection('users').doc(uid).get();
       
       if (!doc.exists) {
         print('❌ 사용자를 찾을 수 없습니다: $uid');
@@ -36,8 +36,8 @@ extension UserFirestore on FirestoreService {
       final user = UserModel.fromMap(doc.data()!, doc.id);
       
       // ✅ 캐시 저장
-      userCache[uid] = user;
-      userCacheTimestamps[uid] = DateTime.now();
+      _userCache[uid] = user;
+      _userCacheTimestamps[uid] = DateTime.now();
       
       print('✅ User 조회 완료: ${user.name}');
       return user;
@@ -49,19 +49,18 @@ extension UserFirestore on FirestoreService {
 
   /// 마지막 로그인 시간 업데이트
   Future<void> updateLastLogin(String uid) async {
-    await db.collection('users').doc(uid).update({
+    await _firestore.collection('users').doc(uid).update({
       'lastLoginAt': FieldValue.serverTimestamp(),
     });
   }
 
-  /// 사용자 문서 업데이트
   Future<void> updateUserDocument(String uid, Map<String, dynamic> data) async {
     try {
-      await db.collection('users').doc(uid).update(data);
+      await _firestore.collection('users').doc(uid).update(data);
       
       // 캐시 무효화
-      userCache.remove(uid);
-      userCacheTimestamps.remove(uid);
+      _userCache.remove(uid);
+      _userCacheTimestamps.remove(uid);
       
       print('✅ 사용자 정보 업데이트 완료: $uid');
     } catch (e) {
@@ -69,4 +68,5 @@ extension UserFirestore on FirestoreService {
       rethrow;
     }
   }
+  
 }
