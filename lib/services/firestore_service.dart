@@ -7296,7 +7296,7 @@ class FirestoreService {
   Future<bool> hasAttendanceRecord(String applicationId) async {
     try {
       final snapshot = await _firestore
-          .collection('attendances')
+          .collection('attendance')
           .where('applicationId', isEqualTo: applicationId)
           .limit(1)
           .get();
