@@ -591,7 +591,10 @@ class _ConfirmedListDialogWidgetState
                                     ),
                                     SizedBox(width: ResponsiveHelper.spacing(context, 4)),
                                     Text(
-                                      '장기: ${application.workPeriodDisplay}',
+                                      // ✅ 희망 시작일이 있으면 표시
+                                      application.desiredStartDate != null
+                                          ? '희망: ${application.desiredStartDate!.month}/${application.desiredStartDate!.day}~ (${application.workEndDate!.month}/${application.workEndDate!.day}까지)'
+                                          : '장기: ${application.workPeriodDisplay}',
                                       style: ResponsiveHelper.tinyStyle(context, color: AppColors.longTermDark).copyWith(
                                         fontWeight: FontWeight.w600,
                                       ),

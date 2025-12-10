@@ -56,6 +56,8 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog> {
   // 신분증 일괄 요청 모드
   bool _isIdCardSelectMode = false;
   final Set<String> _selectedIdCardUserIds = {};
+  // ✅ 장기공고 출퇴근 기록 맵 (applicationId -> hasAttendance)
+  Map<String, bool> _hasAttendanceMap = {};
 
   @override
   void initState() {
@@ -135,6 +137,17 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog> {
         requesterId: currentUserId,
         targetUserIds: confirmedUserIds,
       );
+
+      // ✅ 장기공고인 경우 확정자들의 출퇴근 기록 확인
+      if (widget.toItem.to.isLongTerm) {
+        for (var item in applicantsWithUserInfo) {
+          final app = item['application'] as ApplicationModel;
+          if (app.status == 'CONFIRMED') {
+            final hasRecord = await _firestoreService.hasAttendanceRecord(app.id);
+            _hasAttendanceMap[app.id] = hasRecord;
+          }
+        }
+      }
 
       setState(() {
         _applicants = applicantsWithUserInfo;
@@ -1087,8 +1100,8 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog> {
         if (isConfirmed) ...[
           const PopupMenuDivider(),
           if (isLongTerm) ...[
-            // 장기: 근무 시작 전이면 확정취소도 가능
-            if (!_hasWorkStarted()) ...[
+            // 장기: 출퇴근 기록이 없으면 확정취소 가능
+            if (!(_hasAttendanceMap[app.id] ?? false)) ...[
               PopupMenuItem<String>(
                 value: 'cancel_confirmation',
                 child: Row(
@@ -1632,11 +1645,5 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog> {
         'confirmed': confirmed,
       };
     }
-  }
-  /// 근무가 이미 시작됐는지 확인
-  bool _hasWorkStarted() {
-    final today = DateTime.now();
-    final workStartDate = widget.toItem.to.date;
-    return !workStartDate.isAfter(today);  // 시작일 <= 오늘
   }
 }
