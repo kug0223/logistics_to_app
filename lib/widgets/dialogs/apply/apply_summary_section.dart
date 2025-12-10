@@ -12,11 +12,21 @@ class DateApplicationInfo {
   final DateTime date;
   final List<WorkDetailModel> appliedWorks;   // 지원한 업무들
   final List<WorkDetailModel> confirmedWorks; // 확정된 업무들
+  
+  // ✅ 장기공고용 추가 필드
+  final bool isLongTerm;
+  final DateTime? desiredStartDate;
+  final DateTime? endDate;
+  final List<String>? workDays;
 
   const DateApplicationInfo({
     required this.date,
     this.appliedWorks = const [],
     this.confirmedWorks = const [],
+    this.isLongTerm = false,
+    this.desiredStartDate,
+    this.endDate,
+    this.workDays,
   });
 
   /// 해당 날짜에 지원/확정된 업무가 있는지
@@ -87,8 +97,8 @@ class ApplySummarySection extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // 헤더
-          _buildHeader(context, theme, activeInfos.length),
+          // 헤더 (장기공고면 일수 뱃지 숨김)
+          _buildHeader(context, theme, activeInfos),
           
           // 구분선
           Divider(
@@ -110,7 +120,10 @@ class ApplySummarySection extends StatelessWidget {
   // 헤더
   // ═══════════════════════════════════════════════════════════
 
-  Widget _buildHeader(BuildContext context, ThemeData theme, int count) {
+  Widget _buildHeader(BuildContext context, ThemeData theme, List<DateApplicationInfo> activeInfos) {
+    final count = activeInfos.length;
+    final hasLongTerm = activeInfos.any((info) => info.isLongTerm);
+    
     return Padding(
       padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 12)),
       child: Row(
@@ -129,7 +142,8 @@ class ApplySummarySection extends StatelessWidget {
             ),
           ),
           const Spacer(),
-          if (count > 0)
+          // ✅ 장기공고가 아닐 때만 일수 뱃지 표시
+          if (count > 0 && !hasLongTerm)
             Container(
               padding: EdgeInsets.symmetric(
                 horizontal: ResponsiveHelper.spacing(context, 8),
@@ -219,6 +233,14 @@ class ApplySummarySection extends StatelessWidget {
   ) {
     final dateFormat = DateFormat('M/d (E)', 'ko_KR');
     
+    // ✅ 장기공고면 희망시작일 ~ 종료일 표시
+    String dateDisplay;
+    if (info.isLongTerm && info.desiredStartDate != null && info.endDate != null) {
+      dateDisplay = '${dateFormat.format(info.desiredStartDate!)} ~ ${dateFormat.format(info.endDate!)}';
+    } else {
+      dateDisplay = dateFormat.format(info.date);
+    }
+    
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -226,18 +248,36 @@ class ApplySummarySection extends StatelessWidget {
         Row(
           children: [
             Icon(
-              Icons.calendar_today,
+              info.isLongTerm ? Icons.date_range : Icons.calendar_today,
               size: ResponsiveHelper.iconSize(context, 14),
-              color: theme.primaryColor,
+              color: info.isLongTerm ? AppColors.longTerm : theme.primaryColor,
             ),
             SizedBox(width: ResponsiveHelper.spacing(context, 6)),
-            Text(
-              dateFormat.format(info.date),
-              style: ResponsiveHelper.bodyStyle(context).copyWith(
-                fontWeight: FontWeight.w600,
-                color: theme.primaryColor,
+            Expanded(
+              child: Text(
+                dateDisplay,
+                style: ResponsiveHelper.bodyStyle(context).copyWith(
+                  fontWeight: FontWeight.w600,
+                  color: info.isLongTerm ? AppColors.longTerm : theme.primaryColor,
+                ),
               ),
             ),
+            // ✅ 장기공고 뱃지
+            if (info.isLongTerm)
+              Container(
+                padding: EdgeInsets.symmetric(
+                  horizontal: ResponsiveHelper.spacing(context, 6),
+                  vertical: ResponsiveHelper.spacing(context, 2),
+                ),
+                decoration: BoxDecoration(
+                  color: AppColors.longTermBg,
+                  borderRadius: BorderRadius.circular(4),
+                ),
+                child: Text(
+                  '장기',
+                  style: ResponsiveHelper.tinyStyle(context, color: AppColors.longTermDark),
+                ),
+              ),
           ],
         ),
         

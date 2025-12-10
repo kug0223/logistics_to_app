@@ -50,6 +50,8 @@ class ApplicationModel {
   // 🔥 Phase A: 퇴사 관리 시스템
   final DateTime? resignRequestedAt;    // 퇴사 요청 시각
   final DateTime? resignRequestDate;    // 퇴사 희망일
+  // ⭐ 장기공고 희망 시작일
+  final DateTime? desiredStartDate;
   // 🔥 Phase B: 스케줄 변경 관리
   final List<DateTime>? leaveDates;      // 승인된 휴무 날짜들
   final List<DateTime>? extraWorkDates;  // 승인된 추가 근무 날짜들
@@ -113,6 +115,8 @@ class ApplicationModel {
     this.terminationRequestedByUid,
     this.terminationRespondedAt,
     this.terminationRejectReason,
+    // ⭐ 장기공고 희망 시작일
+    this.desiredStartDate,
     // ⭐ 여기에 추가
     this.leaveDates,
     this.extraWorkDates,
@@ -194,6 +198,10 @@ class ApplicationModel {
           ? (data['terminationRespondedAt'] as Timestamp).toDate()
           : null,
       terminationRejectReason: data['terminationRejectReason'],
+      // ⭐ 장기공고 희망 시작일
+      desiredStartDate: data['desiredStartDate'] != null
+          ? (data['desiredStartDate'] as Timestamp).toDate()
+          : null,
       // ⭐ 여기에 추가
       leaveDates: data['leaveDates'] != null
           ? (data['leaveDates'] as List)
@@ -223,6 +231,7 @@ class ApplicationModel {
       'workDate': Timestamp.fromDate(workDate),
       'workEndDate': workEndDate != null ? Timestamp.fromDate(workEndDate!) : null,  // ⭐
       'workDays': workDays,  // ⭐
+      'desiredStartDate': desiredStartDate != null ? Timestamp.fromDate(desiredStartDate!) : null,  // ⭐ 희망 시작일
       'startTime': startTime,
       'endTime': endTime,
       'uid': uid,
@@ -262,6 +271,7 @@ class ApplicationModel {
       'terminationRequestedByUid': terminationRequestedByUid,
       'terminationRespondedAt': terminationRespondedAt != null ? Timestamp.fromDate(terminationRespondedAt!) : null,
       'terminationRejectReason': terminationRejectReason,
+      
       // ⭐ 여기에 추가
       'leaveDates': leaveDates?.map((e) => Timestamp.fromDate(e)).toList(),
       'extraWorkDates': extraWorkDates?.map((e) => Timestamp.fromDate(e)).toList(),
@@ -359,6 +369,7 @@ class ApplicationModel {
     String? terminationRequestedByUid,
     DateTime? terminationRespondedAt,
     String? terminationRejectReason,
+    DateTime? desiredStartDate,
     List<DateTime>? leaveDates,
     List<DateTime>? extraWorkDates,
     
@@ -371,6 +382,7 @@ class ApplicationModel {
       workDate: workDate ?? this.workDate,
       workEndDate: workEndDate ?? this.workEndDate,     // ⭐
       workDays: workDays ?? this.workDays,               // ⭐
+      desiredStartDate: desiredStartDate ?? this.desiredStartDate,  // ⭐ 희망 시작일        // ⭐
       startTime: startTime ?? this.startTime,
       endTime: endTime ?? this.endTime,
       uid: uid ?? this.uid,

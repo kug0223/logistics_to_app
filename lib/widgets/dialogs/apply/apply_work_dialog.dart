@@ -18,6 +18,7 @@ import '../../../theme/app_colors.dart';
 import 'work_selection_card.dart';
 import 'apply_summary_section.dart';
 import 'confirm_cancel_dialog.dart';
+import 'apply_confirm_dialog.dart';
 import '../../../utils/navigation_helper.dart';
 import '../../../screens/common/job_posting_screen.dart';
 
@@ -244,7 +245,6 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
         for (final app in applications)
           _makeWorkKey(app.selectedWorkType, app.startTime, app.endTime): app
       };
-
       // ✅ 장기공고: 확정된 application의 출퇴근 기록 확인
       if (_isLongTerm) {
         for (final app in applications.where((a) => a.status == 'CONFIRMED')) {
@@ -252,6 +252,17 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
           if (hasRecord) {
             _hasAttendanceIds.add(app.id);
           }
+        }
+        
+        // ✅ 기존 지원서의 희망 시작일 불러오기
+        final activeApp = applications.where((a) => 
+          a.status == 'PENDING' || a.status == 'CONFIRMED'
+        ).firstOrNull;
+        
+        if (activeApp?.desiredStartDate != null && mounted) {
+          setState(() {
+            _desiredStartDate = activeApp!.desiredStartDate;
+          });
         }
       }
     } catch (e) {
@@ -460,8 +471,48 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
           if (_myConfirmedSchedules.isNotEmpty)
             _buildMyScheduleWarning(context, theme),
           
-          // 업무 선택 섹션
-          _buildSectionTitle(context, '업무 선택'),
+          // 업무 선택 섹션 + 상세보기 버튼
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              _buildSectionTitle(context, '업무 선택'),
+              // ✅ 상세보기 버튼 추가
+              InkWell(
+                onTap: () => _goToJobPosting(widget.mainTO, widget.workDetails),
+                borderRadius: BorderRadius.circular(8),
+                child: Container(
+                  padding: EdgeInsets.symmetric(
+                    horizontal: ResponsiveHelper.spacing(context, 10),
+                    vertical: ResponsiveHelper.spacing(context, 6),
+                  ),
+                  decoration: BoxDecoration(
+                    color: theme.primaryColor.withOpacity(0.1),
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(color: theme.primaryColor.withOpacity(0.3)),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(
+                        Icons.visibility_outlined,
+                        size: ResponsiveHelper.iconSize(context, 14),
+                        color: theme.primaryColor,
+                      ),
+                      SizedBox(width: ResponsiveHelper.spacing(context, 4)),
+                      Text(
+                        '상세보기',
+                        style: ResponsiveHelper.smallStyle(
+                          context,
+                          color: theme.primaryColor,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ],
+          ),
           
           // ✅ 장기공고 + 출퇴근 기록 있으면 안내
           if (_isLongTerm && _hasAttendanceIds.isNotEmpty) ...[
@@ -528,6 +579,11 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
                 date: widget.mainTO.date,
                 appliedWorks: _getAppliedWorks(widget.mainTO.date, widget.workDetails),
                 confirmedWorks: _getConfirmedWorks(widget.mainTO.date, widget.workDetails),
+                // ✅ 장기공고 정보 추가
+                isLongTerm: _isLongTerm,
+                desiredStartDate: _desiredStartDate,
+                endDate: widget.mainTO.endDate,
+                workDays: widget.mainTO.workDays,
               ),
             ],
           ),
@@ -1404,7 +1460,7 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
                       ),
                       SizedBox(width: ResponsiveHelper.spacing(context, 4)),
                       Text(
-                        '상세',
+                        '상세보기',
                         style: ResponsiveHelper.smallStyle(
                           context,
                           color: theme.primaryColor,
@@ -1599,6 +1655,20 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
 
   /// 지원하기
   Future<void> _applyForWork(TOModel to, WorkDetailModel work, {DateTime? date}) async {
+    // ✅ 지원 확인 팝업
+    final confirmed = await ApplyConfirmDialog.show(
+      context: context,
+      businessName: widget.businessName,
+      work: work,
+      isLongTerm: _isLongTerm,
+      workDate: date ?? to.date,
+      desiredStartDate: _isLongTerm ? _desiredStartDate : null,
+      endDate: _isLongTerm ? to.endDate : null,
+      workDays: _isLongTerm ? to.workDays : null,
+    );
+    
+    if (!confirmed) return;  // 취소 시 종료
+    
     final loadingKey = date != null 
         ? '${date.millisecondsSinceEpoch}_${work.id}' 
         : work.id;
@@ -1611,6 +1681,7 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
         workDetailId: work.id,
         workType: work.workType,
         uid: _currentUserId!,
+        desiredStartDate: _isLongTerm ? _desiredStartDate : null,
       );
 
       // 상태 새로고침

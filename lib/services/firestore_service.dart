@@ -2192,6 +2192,8 @@ class FirestoreService {
     DateTime? workEndDate,
     List<String>? workDays,
     String type = 'short',
+    // ✅ 장기공고 희망 시작일
+    DateTime? desiredStartDate,
   }) async {
     try {
       // ✅ 서버 레벨 서류 체크
@@ -2344,6 +2346,10 @@ class FirestoreService {
             ? Timestamp.fromDate(workEndDate) 
             : null,
         'workDays': workDays,
+        // ✅ 장기공고 희망 시작일
+        'desiredStartDate': desiredStartDate != null 
+            ? Timestamp.fromDate(desiredStartDate) 
+            : null,
       });
 
       // 4-2. TO 통계 업데이트
@@ -6807,6 +6813,7 @@ class FirestoreService {
     required String workDetailId,
     required String workType,
     required String uid,
+    DateTime? desiredStartDate,  // ✅ 장기공고 희망 시작일
   }) async {
     try {
       // 1. TO 정보 조회
@@ -6849,6 +6856,7 @@ class FirestoreService {
         workEndDate: to.endDate,
         workDays: to.workDays,
         type: to.isLongTerm ? 'long_term' : 'short',
+        desiredStartDate: desiredStartDate,  // ✅ 희망 시작일 전달
       );
     } catch (e) {
       print('❌ TO 지원 실패: $e');
