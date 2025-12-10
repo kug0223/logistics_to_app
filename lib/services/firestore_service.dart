@@ -2274,6 +2274,9 @@ class FirestoreService {
           'appliedAt': FieldValue.serverTimestamp(),
           'canceledAt': null,
           'cancelReason': null,
+          // ✅ 장기공고 희망 시작일도 업데이트
+          if (desiredStartDate != null) 
+            'desiredStartDate': Timestamp.fromDate(desiredStartDate),
         });
         
         // TO 통계 업데이트

@@ -495,12 +495,19 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
           ],
           if (app != null && app.isLongTermApplication) ...[
             _buildInfoRow(context, '근무 기간', app.workPeriodDisplay),
+            // ✅ 희망 시작일 표시
+            if (app.desiredStartDate != null)
+              _buildInfoRow(context, '희망 시작일', '${app.desiredStartDate!.month}/${app.desiredStartDate!.day} (${_getWeekdayName(app.desiredStartDate!)})'),
             if (app.workDaysDisplay != null)
               _buildInfoRow(context, '근무 요일', app.workDaysDisplay!),
           ],
         ],
       ),
     );
+  }
+  String _getWeekdayName(DateTime date) {
+    const weekdays = ['월', '화', '수', '목', '금', '토', '일'];
+    return weekdays[date.weekday - 1];
   }
 
   /// 근무 통계

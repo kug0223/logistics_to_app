@@ -19,6 +19,7 @@ import '../../../theme/app_colors.dart';
 import '../../../utils/id_card_helper.dart';
 import 'fixed_worker_management_dialog.dart';
 import '../../../widgets/common/loading_button.dart';
+import '../../../utils/format_helper.dart';
 
 /// 업무별 지원자 관리 다이얼로그 - 개선된 버전
 class WorkApplicantsDialog extends StatefulWidget {
@@ -824,7 +825,7 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog> {
                           ),
                           SizedBox(width: ResponsiveHelper.spacing(context, 4)),
                           Text(
-                            user?.phone ?? '-',
+                            user?.phone != null ? FormatHelper.formatPhone(user!.phone!) : '-',
                             style: ResponsiveHelper.smallStyle(context, color: AppColors.grey600),
                           ),
                         ],
@@ -917,7 +918,10 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog> {
                               ),
                               SizedBox(width: ResponsiveHelper.spacing(context, 4)),
                               Text(
-                                '장기: ${app.workPeriodDisplay}',
+                                // ✅ 희망 시작일이 있으면 표시
+                                app.desiredStartDate != null
+                                    ? '희망: ${app.desiredStartDate!.month}/${app.desiredStartDate!.day}~ (${app.workEndDate!.month}/${app.workEndDate!.day}까지)'
+                                    : '장기: ${app.workPeriodDisplay}',
                                 style: ResponsiveHelper.tinyStyle(context, color: Colors.purple).copyWith(
                                   fontWeight: FontWeight.w600,
                                 ),

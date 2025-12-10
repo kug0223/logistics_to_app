@@ -259,9 +259,10 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
           a.status == 'PENDING' || a.status == 'CONFIRMED'
         ).firstOrNull;
         
-        if (activeApp?.desiredStartDate != null && mounted) {
+        if (activeApp != null && mounted) {
           setState(() {
-            _desiredStartDate = activeApp!.desiredStartDate;
+            // desiredStartDate가 있으면 사용, 없으면 workDate 사용 (기존 데이터 호환)
+            _desiredStartDate = activeApp.desiredStartDate ?? activeApp.workDate;
           });
         }
       }
