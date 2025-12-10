@@ -58,17 +58,26 @@ class _ScheduleRequestManagementDialogState
         return request.requestedBy == RequesterType.APPLICANT;
       }).toList();
 
-      // 사용자 정보와 함께 조회
-      final futures = workerRequests.map((request) async {  // ⭐ 변경!
-        final user = await _firestoreService.getUser(request.applicantUid);
+      // ✅ 1. 중복 제거된 UID 목록
+      final uniqueUids = workerRequests.map((r) => r.applicantUid).toSet().toList();
+      
+      // ✅ 2. 사용자 정보 병렬 조회 (중복 없이)
+      final userFutures = uniqueUids.map((uid) async {
+        final user = await _firestoreService.getUser(uid);
+        return MapEntry(uid, user);
+      });
+      final userEntries = await Future.wait(userFutures);
+      final userMap = Map.fromEntries(userEntries);
+      
+      // ✅ 3. 결과 매핑 (추가 조회 없음)
+      final results = workerRequests.map((request) {
+        final user = userMap[request.applicantUid];
         return _RequestWithUser(
           request: request,
           userName: user?.name ?? '이름 없음',
           userPhone: user?.phone ?? '전화번호 없음',
         );
       }).toList();
-
-      final results = await Future.wait(futures);
 
       setState(() {
         _allRequests = results;

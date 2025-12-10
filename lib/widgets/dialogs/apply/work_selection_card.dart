@@ -557,10 +557,6 @@ class WorkSelectionCard extends StatelessWidget {
       height: ResponsiveHelper.spacing(context, 40),
       child: ElevatedButton(
         onPressed: null,
-        child: Text(
-          text,
-          style: ResponsiveHelper.bodyStyle(context, color: AppColors.grey500),
-        ),
         style: ElevatedButton.styleFrom(
           backgroundColor: AppColors.grey200,
           foregroundColor: AppColors.grey500,
@@ -572,6 +568,10 @@ class WorkSelectionCard extends StatelessWidget {
             ),
           ),
           elevation: 0,
+        ),
+        child: Text(
+          text,
+          style: ResponsiveHelper.bodyStyle(context, color: AppColors.grey500),
         ),
       ),
     );

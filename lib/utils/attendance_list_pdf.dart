@@ -70,6 +70,11 @@ class AttendanceListPdf {
     }
   }
 
+  /// ✅ 폰트 미리 로딩 (외부에서 호출 가능)
+  static Future<void> preloadFonts() async {
+    await _loadFonts();
+  }
+
   /// 바텀시트로 PDF 미리보기 표시
   static Future<void> showPreview({
     required BuildContext context,
@@ -88,6 +93,23 @@ class AttendanceListPdf {
       print('❌ PDF 미리보기 오류: $e');
       rethrow;
     }
+  }
+
+  /// ✅ 미리 생성된 PDF로 바로 미리보기 표시 (로딩 없음)
+  static Future<void> showPreviewWithBytes({
+    required BuildContext context,
+    required AttendanceListData data,
+    required Uint8List pdfBytes,
+  }) async {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (context) => _PreviewBottomSheetWithBytes(
+        data: data,
+        pdfBytes: pdfBytes,
+      ),
+    );
   }
 
   /// PDF 문서 생성
@@ -621,6 +643,104 @@ class _PreviewBottomSheetState extends State<_PreviewBottomSheet> {
                         ),
                         pdfFileName: '${widget.data.businessName}_근무명단_${widget.data.date.year}${widget.data.date.month.toString().padLeft(2, '0')}${widget.data.date.day.toString().padLeft(2, '0')}.pdf',
                       ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// ✅ 미리 생성된 PDF로 바로 표시하는 바텀시트 (로딩 없음)
+class _PreviewBottomSheetWithBytes extends StatelessWidget {
+  final AttendanceListData data;
+  final Uint8List pdfBytes;
+
+  const _PreviewBottomSheetWithBytes({
+    required this.data,
+    required this.pdfBytes,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      height: MediaQuery.of(context).size.height * 0.85,
+      decoration: const BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      child: Column(
+        children: [
+          // 핸들바
+          Container(
+            margin: const EdgeInsets.only(top: 12),
+            width: 40,
+            height: 4,
+            decoration: BoxDecoration(
+              color: Colors.grey[300],
+              borderRadius: BorderRadius.circular(2),
+            ),
+          ),
+
+          // 헤더
+          Padding(
+            padding: const EdgeInsets.all(16),
+            child: Row(
+              children: [
+                const Icon(Icons.description_outlined, color: Colors.blue),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text(
+                        '명단 미리보기',
+                        style: TextStyle(
+                          fontSize: 18,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                      Text(
+                        '두 손가락으로 확대/축소 가능',
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: Colors.grey[600],
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                IconButton(
+                  icon: const Icon(Icons.close),
+                  onPressed: () => Navigator.pop(context),
+                ),
+              ],
+            ),
+          ),
+
+          const Divider(height: 1),
+
+          // ✅ PDF 바로 표시 (로딩 없음!)
+          Expanded(
+            child: PdfPreview(
+              build: (format) async => pdfBytes,
+              canChangeOrientation: false,
+              canChangePageFormat: false,
+              canDebug: false,
+              allowPrinting: true,
+              allowSharing: true,
+              useActions: true,
+              pdfPreviewPageDecoration: BoxDecoration(
+                color: Colors.white,
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withOpacity(0.1),
+                    blurRadius: 10,
+                    offset: const Offset(0, 2),
+                  ),
+                ],
+              ),
+              pdfFileName: '${data.businessName}_근무명단_${data.date.year}${data.date.month.toString().padLeft(2, '0')}${data.date.day.toString().padLeft(2, '0')}.pdf',
+            ),
           ),
         ],
       ),

@@ -13,12 +13,10 @@ import '../../models/ui/admin_to_list_ui_models.dart';
 import '../../services/firestore_service.dart';
 import '../../providers/user_provider.dart';
 import '../../utils/toast_helper.dart';
-import '../../utils/format_helper.dart';
 import '../../utils/responsive_helper.dart';
 import '../../utils/dialog_helper.dart';
 import '../../theme/app_colors.dart';
 import '../../utils/id_card_helper.dart';
-import 'styled_dialog.dart';
 import '../../screens/business_admin/dialogs/fixed_worker_management_dialog.dart';
 import '../common/loading_button.dart';
 
@@ -86,6 +84,7 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
   String? _workTime;  // 🔥 근무 시간 (장기용)
   List<ReviewModel> _recentReviews = [];
   IdCardAccessRequestModel? _idCardAccess;
+  bool _hasAttendance = false;  // ✅ 출퇴근 기록 여부 (장기 확정자용)
 
   @override
   void initState() {
@@ -134,8 +133,16 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
       _recentReviews = results[1] as List<ReviewModel>;
       _idCardAccess = results[2] as IdCardAccessRequestModel?;
       
-      // 🔥 근무 시간 조회 (장기 지원자용 - toItem 없을 때)
+      // ✅ 장기 확정자인 경우 출퇴근 기록 체크
       final app = widget.application;
+      if (app != null && 
+          widget.isConfirmed && 
+          (app.isLongTermApplication || widget.toItem?.to.isLongTerm == true)) {
+        _hasAttendance = await _firestoreService.hasAttendanceRecord(app.id);
+        print('📋 출퇴근 기록 여부: $_hasAttendance (appId: ${app.id})');
+      }
+      
+      // 🔥 근무 시간 조회 (장기 지원자용 - toItem 없을 때)
       if (app != null && widget.toItem == null) {
         if (app.startTime.isNotEmpty && app.endTime.isNotEmpty) {
           _workTime = '${app.startTime} ~ ${app.endTime}';
@@ -495,14 +502,18 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
           ],
           if (app != null && app.isLongTermApplication) ...[
             _buildInfoRow(context, '근무 기간', app.workPeriodDisplay),
-            // ✅ 희망 시작일 표시
+            // ✅ 희망 시작일 강조 표시
             if (app.desiredStartDate != null)
-              _buildInfoRow(context, '희망 시작일', '${app.desiredStartDate!.month}/${app.desiredStartDate!.day} (${_getWeekdayName(app.desiredStartDate!)})'),
-            if (app.workDaysDisplay != null)
-              _buildInfoRow(context, '근무 요일', app.workDaysDisplay!),
-          ],
+              _buildInfoRow(
+                context, 
+                '희망 시작일', 
+                '${app.desiredStartDate!.month}/${app.desiredStartDate!.day} (${_getWeekdayName(app.desiredStartDate!)})',
+                highlight: true,
+              ),
+        ],
         ],
       ),
+      
     );
   }
   String _getWeekdayName(DateTime date) {
@@ -885,7 +896,8 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
     );
   }
 
-  Widget _buildInfoRow(BuildContext context, String label, String value) {
+  Widget _buildInfoRow(BuildContext context, String label, String value, {bool highlight = false}) {
+    final theme = Theme.of(context);
     return Padding(
       padding: EdgeInsets.only(bottom: ResponsiveHelper.spacing(context, 8)),
       child: Row(
@@ -901,7 +913,12 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
           Expanded(
             child: Text(
               value,
-              style: ResponsiveHelper.bodyStyle(context),
+              style: ResponsiveHelper.bodyStyle(
+                context, 
+                color: highlight ? theme.primaryColor : null,
+              ).copyWith(
+                fontWeight: highlight ? FontWeight.bold : FontWeight.normal,
+              ),
             ),
           ),
         ],
@@ -964,8 +981,29 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
           if (isConfirmed && widget.application != null) ...[
             SizedBox(width: ResponsiveHelper.spacing(context, 8)),
             
-            if (isLongTerm) ...[
-              // 장기 확정자: 고정근무 관리 버튼
+            // ✅ 장기 + 로딩 중: 로딩 스피너
+            if (_isLoading && isLongTerm) ...[
+              Expanded(
+                child: Container(
+                  height: ResponsiveHelper.spacing(context, 44),
+                  decoration: BoxDecoration(
+                    color: AppColors.grey100,
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Center(
+                    child: SizedBox(
+                      width: ResponsiveHelper.spacing(context, 20),
+                      height: ResponsiveHelper.spacing(context, 20),
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        color: AppColors.grey400,
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            // ✅ 장기 + 출퇴근 있음: 고정근무 관리
+            ] else if (isLongTerm && _hasAttendance) ...[
               Expanded(
                 child: ElevatedButton.icon(
                   onPressed: _openFixedWorkerManagement,
@@ -981,8 +1019,8 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
                   ),
                 ),
               ),
+            // ✅ 장기 + 출퇴근 없음 OR 단기: 확정취소
             ] else ...[
-              // 단기 확정자: 확정취소 버튼
               Expanded(
                 child: LoadingButton.outlined(
                   text: '확정취소',

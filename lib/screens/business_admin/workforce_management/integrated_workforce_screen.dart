@@ -12,6 +12,7 @@ import '../dialogs/fixed_worker_management_dialog.dart';
 import '../../../utils/test_data_helper.dart';
 import '../../../models/core/to_model.dart';
 import '../dialogs/schedule_request_management_dialog.dart';
+import '../../../utils/dialog_helper.dart';
 
 /// ✨ 세련된 통합 인력 관리 화면 (business_home_screen 테마 적용)
 class IntegratedWorkforceScreen extends StatefulWidget {
@@ -104,6 +105,15 @@ class _IntegratedWorkforceScreenState extends State<IntegratedWorkforceScreen> {
       appBar: AppBar(
         title: Text(_isCalendarView ? '공고-캘린더' : '공고-리스트'),
             actions: [
+              // ✅ 통계 재계산 버튼 (임시 디버그용)
+              IconButton(
+                icon: Icon(
+                  Icons.sync,
+                  size: ResponsiveHelper.iconSize(context, 24),
+                ),
+                onPressed: _recalculateAllStats,
+                tooltip: '통계 재계산',
+              ),
               // 더미 데이터 버튼
               IconButton(
                 icon: Icon(
@@ -1005,6 +1015,76 @@ class _IntegratedWorkforceScreenState extends State<IntegratedWorkforceScreen> {
         ],
       ),
     );
+  }
+  /// ✅ 전체 TO 통계 재계산 (디버그용)
+  Future<void> _recalculateAllStats() async {
+    final confirmed = await DialogHelper.showConfirm(
+      context,
+      title: '통계 재계산',
+      message: '모든 TO의 통계를 재계산합니다.\n시간이 걸릴 수 있습니다.\n\n계속하시겠습니까?',
+      confirmText: '재계산',
+    );
+    
+    if (!confirmed) return;
+    
+    // 로딩 표시
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => PopScope(
+        canPop: false,
+        child: Center(
+          child: Container(
+            padding: const EdgeInsets.all(24),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(16),
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const CircularProgressIndicator(),
+                const SizedBox(height: 16),
+                Text(
+                  '통계 재계산 중...',
+                  style: ResponsiveHelper.bodyStyle(context),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+    
+    try {
+      // 1. 모든 TO 통계 재계산
+      final snapshot = await FirebaseFirestore.instance.collection('tos').get();
+      int count = 0;
+      
+      for (var doc in snapshot.docs) {
+        await _firestoreService.recalculateTOStats(doc.id);
+        count++;
+        print('📊 [$count/${snapshot.docs.length}] ${doc.id} 재계산 완료');
+      }
+      
+      // 2. 그룹 마스터 통계 동기화
+      final groupCount = await _firestoreService.migrateAllGroupMasterStats();
+      
+      // 3. 캐시 클리어
+      _firestoreService.clearCache();
+      
+      if (mounted) Navigator.pop(context);
+      
+      ToastHelper.showSuccess('$count개 TO, $groupCount개 그룹 통계 재계산 완료');
+      
+      // 화면 새로고침
+      setState(() {});
+      
+    } catch (e) {
+      if (mounted) Navigator.pop(context);
+      print('❌ 통계 재계산 실패: $e');
+      ToastHelper.showError('통계 재계산 실패: $e');
+    }
   }
   
 }

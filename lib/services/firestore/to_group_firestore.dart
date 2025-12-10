@@ -802,7 +802,7 @@ extension TOGroupFirestore on FirestoreService {
       bool hasActiveTO = false;
       
       for (var doc in snapshot.docs) {
-        final data = doc.data() as Map<String, dynamic>;
+        final data = doc.data();
         
         if (data['isGroupMaster'] == true) {
           masterDoc = doc;

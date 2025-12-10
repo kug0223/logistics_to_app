@@ -57,7 +57,7 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog> {
   bool _isIdCardSelectMode = false;
   final Set<String> _selectedIdCardUserIds = {};
   // ✅ 장기공고 출퇴근 기록 맵 (applicationId -> hasAttendance)
-  Map<String, bool> _hasAttendanceMap = {};
+  final Map<String, bool> _hasAttendanceMap = {};
 
   @override
   void initState() {
@@ -90,16 +90,24 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog> {
                app.endTime == widget.work.endTime;
       }).toList();
 
-      // 병렬로 사용자 정보 조회
-      final futures = filtered.map((app) async {
-        final user = await _firestoreService.getUser(app.uid);
+      // ✅ 1. 중복 제거된 UID 목록 추출
+      final uniqueUids = filtered.map((app) => app.uid).toSet().toList();
+      
+      // ✅ 2. 사용자 정보 한 번만 병렬 조회
+      final userFutures = uniqueUids.map((uid) async {
+        final user = await _firestoreService.getUser(uid);
+        return MapEntry(uid, user);
+      });
+      final userEntries = await Future.wait(userFutures);
+      final userMap = Map.fromEntries(userEntries);
+      
+      // ✅ 3. 결과 매핑 (추가 조회 없음)
+      final applicantsWithUserInfo = filtered.map((app) {
         return {
           'application': app,
-          'user': user,
+          'user': userMap[app.uid],
         };
       }).toList();
-
-      final applicantsWithUserInfo = await Future.wait(futures);
       
       // 성별 → 나이순 정렬
       applicantsWithUserInfo.sort((a, b) {
@@ -138,14 +146,20 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog> {
         targetUserIds: confirmedUserIds,
       );
 
-      // ✅ 장기공고인 경우 확정자들의 출퇴근 기록 확인
+      // ✅ 장기공고인 경우 확정자들의 출퇴근 기록 병렬 확인
       if (widget.toItem.to.isLongTerm) {
-        for (var item in applicantsWithUserInfo) {
-          final app = item['application'] as ApplicationModel;
-          if (app.status == 'CONFIRMED') {
+        final confirmedApps = applicantsWithUserInfo
+            .where((item) => (item['application'] as ApplicationModel).status == 'CONFIRMED')
+            .map((item) => item['application'] as ApplicationModel)
+            .toList();
+        
+        if (confirmedApps.isNotEmpty) {
+          final attendanceFutures = confirmedApps.map((app) async {
             final hasRecord = await _firestoreService.hasAttendanceRecord(app.id);
-            _hasAttendanceMap[app.id] = hasRecord;
-          }
+            return MapEntry(app.id, hasRecord);
+          });
+          final attendanceEntries = await Future.wait(attendanceFutures);
+          _hasAttendanceMap.addAll(Map.fromEntries(attendanceEntries));
         }
       }
 
@@ -1100,7 +1114,7 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog> {
         if (isConfirmed) ...[
           const PopupMenuDivider(),
           if (isLongTerm) ...[
-            // 장기: 출퇴근 기록이 없으면 확정취소 가능
+            // 장기 + 출퇴근 기록 없음: 확정취소만
             if (!(_hasAttendanceMap[app.id] ?? false)) ...[
               PopupMenuItem<String>(
                 value: 'cancel_confirmation',
@@ -1112,18 +1126,19 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog> {
                   ],
                 ),
               ),
-            ],
-            // 장기: 고정근무 관리 (항상)
-            PopupMenuItem<String>(
-              value: 'fixed_worker_management',
-              child: Row(
-                children: [
-                  Icon(Icons.settings, size: ResponsiveHelper.iconSize(context, 18), color: AppColors.longTermDark),
-                  SizedBox(width: ResponsiveHelper.spacing(context, 12)),
-                  Text('고정근무 관리', style: ResponsiveHelper.bodyStyle(context, color: AppColors.longTermDark)),
-                ],
+            ] else ...[
+              // 장기 + 출퇴근 기록 있음: 고정근무 관리만
+              PopupMenuItem<String>(
+                value: 'fixed_worker_management',
+                child: Row(
+                  children: [
+                    Icon(Icons.settings, size: ResponsiveHelper.iconSize(context, 18), color: AppColors.longTermDark),
+                    SizedBox(width: ResponsiveHelper.spacing(context, 12)),
+                    Text('고정근무 관리', style: ResponsiveHelper.bodyStyle(context, color: AppColors.longTermDark)),
+                  ],
+                ),
               ),
-            ),
+            ],
           ] else ...[
             // 단기: 확정취소
             PopupMenuItem<String>(

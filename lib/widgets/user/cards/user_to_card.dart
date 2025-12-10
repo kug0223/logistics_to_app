@@ -704,7 +704,7 @@ class _UserTOCardState extends State<UserTOCard> {
           ),
           SizedBox(width: ResponsiveHelper.spacing(context, 4)),
           Text(
-            '${_currentWorkCount}개',
+            '$_currentWorkCount개',
             style: ResponsiveHelper.bodyStyle(context, color: AppColors.grey700),
           ),
         ],

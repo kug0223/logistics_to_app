@@ -295,7 +295,7 @@ class FormatHelper {
     // 단기 여러일
     final endStr = formatDateCompact(endDate);
     final days = dayCount ?? endDate.difference(startDate).inDays + 1;
-    return '$startStr~$endStr · ${days}일';
+    return '$startStr~$endStr · $days일';
   }
 
   /// 두 날짜가 같은 날인지 비교
@@ -485,7 +485,7 @@ class FormatHelper {
     }
     
     // 그 외: 주N일(요일나열)
-    return '주${count}일(${sorted.join(",")})';
+    return '주$count일(${sorted.join(",")})';
   }
   
 }

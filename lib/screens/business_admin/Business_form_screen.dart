@@ -8,7 +8,6 @@ import 'dart:io';
 
 // Models
 import '../../models/core/business_model.dart';
-import '../../models/core/user_model.dart';
 
 // Providers
 import '../../providers/user_provider.dart';
@@ -30,7 +29,6 @@ import '../../widgets/common/common_widgets.dart';
 import '../../widgets/inputs/daum_address_search.dart';
 
 // Screen
-import '../auth/register_screen.dart';
 import '../auth/login_screen.dart';
 import '../../utils/navigation_helper.dart';
 import '../../utils/format_helper.dart';

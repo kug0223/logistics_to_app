@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-import 'package:table_calendar/table_calendar.dart';
 import 'package:intl/intl.dart';
 
 // Models
@@ -16,7 +15,6 @@ import '../../../providers/user_provider.dart';
 
 // Utils
 import '../../../utils/toast_helper.dart';
-import '../../../utils/format_helper.dart';
 import '../../../utils/responsive_helper.dart';
 import '../../../utils/navigation_helper.dart';
 import '../../../utils/dialog_helper.dart';
@@ -26,7 +24,6 @@ import '../../../theme/app_colors.dart';
 
 // Widgets
 import '../../../widgets/pickers/create&edit_work_detail_dialog.dart';
-import '../../../widgets/work_type_icon.dart';
 
 // 공통 위젯
 import 'widgets/to_widgets.dart';

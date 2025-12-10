@@ -1513,14 +1513,21 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
         workTypeMap: _workDetailTimeMap,
       );
 
+      // ✅ PDF 미리 생성 (폰트 로딩 + PDF 생성까지 완료)
+      await AttendanceListPdf.preloadFonts();
+      final pdfBytes = await AttendanceListPdf.generatePdf(data);
+
       // 로딩 닫기
       if (mounted) Navigator.pop(context);
 
-      // 미리보기 표시
-      await AttendanceListPdf.showPreview(
-        context: context,
-        data: data,
-      );
+      // ✅ 미리 생성된 PDF로 바로 미리보기 표시
+      if (mounted) {
+        await AttendanceListPdf.showPreviewWithBytes(
+          context: context,
+          data: data,
+          pdfBytes: pdfBytes,
+        );
+      }
     } catch (e, stack) {
       // 로딩 닫기
       if (mounted) Navigator.pop(context);

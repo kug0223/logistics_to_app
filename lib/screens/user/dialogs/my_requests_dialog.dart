@@ -320,7 +320,7 @@ class _MyRequestsDialogState extends State<MyRequestsDialog> {
         subtitle: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text('${request.requesterBusinessName}'),
+            Text(request.requesterBusinessName),
             Text(
               '요청자: ${request.requesterName}',
               style: ResponsiveHelper.tinyStyle(
@@ -385,7 +385,7 @@ class _MyRequestsDialogState extends State<MyRequestsDialog> {
         subtitle: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text('${app.businessName}'),
+            Text(app.businessName),
             if (app.terminationReason != null)
               Text(
                 '사유: ${app.terminationReason}',

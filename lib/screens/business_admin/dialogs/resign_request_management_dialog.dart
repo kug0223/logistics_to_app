@@ -45,17 +45,26 @@ class _ResignRequestManagementDialogState
         widget.businessId,
       );
 
-      // 사용자 정보와 함께 조회
-      final futures = applications.map((app) async {
-        final user = await _firestoreService.getUser(app.uid);
+      // ✅ 1. 중복 제거된 UID 목록
+      final uniqueUids = applications.map((app) => app.uid).toSet().toList();
+      
+      // ✅ 2. 사용자 정보 병렬 조회 (중복 없이)
+      final userFutures = uniqueUids.map((uid) async {
+        final user = await _firestoreService.getUser(uid);
+        return MapEntry(uid, user);
+      });
+      final userEntries = await Future.wait(userFutures);
+      final userMap = Map.fromEntries(userEntries);
+      
+      // ✅ 3. 결과 매핑 (추가 조회 없음)
+      final results = applications.map((app) {
+        final user = userMap[app.uid];
         return _ResignRequestWithUser(
           application: app,
           userName: user?.name ?? '이름 없음',
           userPhone: user?.phone ?? '전화번호 없음',
         );
       }).toList();
-
-      final results = await Future.wait(futures);
 
       // 요청일 최신순 정렬
       results.sort((a, b) => b.application.resignRequestedAt!

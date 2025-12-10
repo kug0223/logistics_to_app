@@ -356,7 +356,7 @@ class TOModel {
       groupTotalRequired: groupTotalRequired ?? this.groupTotalRequired,
       groupTotalConfirmed: groupTotalConfirmed ?? this.groupTotalConfirmed,
       groupTotalPending: groupTotalPending ?? this.groupTotalPending,
-      groupActualDaysCount: groupActualDaysCount ?? this.groupActualDaysCount,
+      groupActualDaysCount: groupActualDaysCount ?? groupActualDaysCount,
       description: description ?? this.description,
       creatorUID: creatorUID ?? this.creatorUID,
       createdAt: createdAt ?? this.createdAt,

@@ -19,9 +19,7 @@ import '../../../providers/user_provider.dart';
 import '../../../utils/toast_helper.dart';
 import '../../../utils/responsive_helper.dart';
 import '../../../utils/dialog_helper.dart';
-import '../../../utils/format_helper.dart';
 import '../../../widgets/common/loading_widget.dart';
-import '../../../widgets/dialogs/styled_dialog.dart';
 import '../../../widgets/dialogs/worker_detail_dialog.dart';
 import '../../../theme/app_colors.dart';
 import '../../../widgets/work_type_icon.dart';
@@ -69,33 +67,33 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
             app.resignStatus != 'AUTO_APPROVED';
       }).toList();
 
-      // 사용자 정보 + 업무 아이콘 병렬 조회
-      final futures = filtered.map((app) async {
-        final user = await _firestoreService.getUser(app.uid);
-        
-        // 업무 아이콘 조회 (BusinessWorkType에서 가져오기)
-        String? workTypeIcon;
-        String? workTypeColor;
-        final businessWorkTypes = await _firestoreService.getBusinessWorkTypes(app.businessId);        
-        final matched = businessWorkTypes.where((w) => w.name == app.selectedWorkType).firstOrNull;
-        
-        String? workTypeBackgroundColor;  // 🔥 추가
-        if (matched != null) {
-          workTypeIcon = matched.icon;
-          workTypeColor = matched.color;
-          workTypeBackgroundColor = matched.backgroundColor;
-        }
+      // ✅ 1. 업무유형 정보 한 번만 조회 (중복 제거!)
+      final businessWorkTypes = await _firestoreService.getBusinessWorkTypes(widget.businessId);
+      final workTypeMap = { for (var w in businessWorkTypes) w.name: w };
+      
+      // ✅ 2. 중복 제거된 UID 목록
+      final uniqueUids = filtered.map((app) => app.uid).toSet().toList();
+      
+      // ✅ 3. 사용자 정보 병렬 조회 (중복 없이)
+      final userFutures = uniqueUids.map((uid) async {
+        final user = await _firestoreService.getUser(uid);
+        return MapEntry(uid, user);
+      });
+      final userEntries = await Future.wait(userFutures);
+      final userMap = Map.fromEntries(userEntries);
+      
+      // ✅ 4. 결과 매핑 (추가 조회 없음)
+      final results = filtered.map((app) {
+        final matched = workTypeMap[app.selectedWorkType];
         
         return _FixedWorkerItem(
           application: app, 
-          user: user,
-          workTypeIcon: workTypeIcon,
-          workTypeColor: workTypeColor,
-          workTypeBackgroundColor: workTypeBackgroundColor,  // 🔥 추가
+          user: userMap[app.uid],
+          workTypeIcon: matched?.icon,
+          workTypeColor: matched?.color,
+          workTypeBackgroundColor: matched?.backgroundColor,
         );
       }).toList();
-
-      final results = await Future.wait(futures);
 
       // 최신 확정순 정렬
       results.sort((a, b) => b.application.confirmedAt!.compareTo(a.application.confirmedAt!));

@@ -566,7 +566,7 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
                   ? () => _cancelApplication(application)
                   : null,
               onCancelConfirm: canCancelConfirm
-                  ? () => _cancelConfirm(application!, work)
+                  ? () => _cancelConfirm(application, work)
                   : null,
             );
           }),
@@ -1439,7 +1439,7 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
               SizedBox(width: ResponsiveHelper.spacing(context, 8)),
               // ✅ 상세보기 버튼 (텍스트 포함)
               InkWell(
-                onTap: () => _goToJobPosting(to!, workDetails),
+                onTap: () => _goToJobPosting(to, workDetails),
                 borderRadius: BorderRadius.circular(6),
                 child: Container(
                   padding: EdgeInsets.symmetric(
