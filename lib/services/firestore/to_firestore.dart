@@ -451,4 +451,832 @@ extension TOFirestore on FirestoreService {
       return null;
     }
   }
+  // ═══════════════════════════════════════════════════════════
+  // TO 목록 조회 (Active/Closed)
+  // ═══════════════════════════════════════════════════════════
+
+  /// 진행중인 TO 목록 조회 (대표 TO + 단일 TO)
+  Future<List<TOModel>> getActiveTOs({
+    bool publishedOnly = false,
+    bool forceRefresh = false,
+  }) async {
+    try {
+      // ✅ Phase 3: 캐시 체크
+      if (!forceRefresh && activeTOsCacheData != null && activeTOsCacheTime != null) {
+        final cacheAge = DateTime.now().difference(activeTOsCacheTime!);
+        if (cacheAge < listCacheValidDuration) {
+          print('📦 [캐시] 진행중 TO 캐시 사용 (${cacheAge.inSeconds}초 경과)');
+          
+          if (publishedOnly) {
+            return activeTOsCacheData!.where((to) => to.isPublished).toList();
+          }
+          return activeTOsCacheData!;
+        }
+      }
+      
+      // ✅ Phase 4-3: 서버 필터링 적용
+      final snapshot = await db
+          .collection('tos')
+          .where('status', isEqualTo: 'ACTIVE')
+          .orderBy('date', descending: false)
+          .get();
+
+      final allTOs = snapshot.docs
+          .map((doc) => TOModel.fromMap(doc.data(), doc.id))
+          .toList();
+
+      // 대표 TO 또는 단일 TO만 필터링
+      final masterOrSingleTOs = allTOs.where((to) {
+        if (to.groupId != null) {
+          return to.isGroupMaster;
+        }
+        return true;
+      }).toList();
+
+      // ✅ Phase 3: 캐시 저장
+      activeTOsCacheData = masterOrSingleTOs;
+      activeTOsCacheTime = DateTime.now();
+
+      if (publishedOnly) {
+        return masterOrSingleTOs.where((to) => to.isPublished).toList();
+      }
+
+      print('✅ [최적화] 진행중 TO: ${masterOrSingleTOs.length}개');
+      return masterOrSingleTOs;
+    } catch (e) {
+      print('❌ 진행중 TO 조회 실패: $e');
+      return [];
+    }
+  }
+
+  /// 마감된 TO 목록 조회 (대표 TO + 단일 TO)
+  Future<List<TOModel>> getClosedTOs({bool forceRefresh = false}) async {
+    try {
+      // ✅ Phase 3: 캐시 체크
+      if (!forceRefresh && closedTOsCacheData != null && closedTOsCacheTime != null) {
+        final cacheAge = DateTime.now().difference(closedTOsCacheTime!);
+        if (cacheAge < listCacheValidDuration) {
+          print('📦 [캐시] 마감 TO 캐시 사용 (${cacheAge.inSeconds}초 경과)');
+          return closedTOsCacheData!;
+        }
+      }
+      
+      // ✅ Phase 4-3: 서버 필터링
+      final snapshot = await db
+          .collection('tos')
+          .where('status', whereIn: ['CLOSED', 'FULL', 'EXPIRED'])
+          .orderBy('date', descending: true)
+          .limit(50)
+          .get();
+
+      final allTOs = snapshot.docs
+          .map((doc) => TOModel.fromMap(doc.data(), doc.id))
+          .toList();
+
+      // 대표 TO 또는 단일 TO만 필터링
+      final masterOrSingleTOs = allTOs.where((to) {
+        if (to.groupId != null) {
+          return to.isGroupMaster;
+        }
+        return true;
+      }).toList();
+
+      final recentClosedTOs = masterOrSingleTOs.take(5).toList();
+
+      // ✅ Phase 3: 캐시 저장
+      closedTOsCacheData = recentClosedTOs;
+      closedTOsCacheTime = DateTime.now();
+      
+      print('✅ [최적화] 마감된 TO: ${recentClosedTOs.length}개');
+      return recentClosedTOs;
+    } catch (e) {
+      print('❌ 마감된 TO 조회 실패: $e');
+      return [];
+    }
+  }
+
+  /// 사업장별 진행중 TO 조회
+  Future<List<TOModel>> getActiveTOsByBusinessId(String businessId) async {
+    try {
+      final snapshot = await db
+          .collection('tos')
+          .where('businessId', isEqualTo: businessId)
+          .where('status', isEqualTo: 'ACTIVE')
+          .orderBy('date', descending: false)
+          .get();
+
+      return snapshot.docs
+          .map((doc) => TOModel.fromMap(doc.data(), doc.id))
+          .toList();
+    } catch (e) {
+      print('❌ 사업장 진행중 TO 조회 실패: $e');
+      return [];
+    }
+  }
+
+  /// 사업장별 마감 TO 조회
+  Future<List<TOModel>> getClosedTOsByBusinessId(String businessId) async {
+    try {
+      final snapshot = await db
+          .collection('tos')
+          .where('businessId', isEqualTo: businessId)
+          .where('status', whereIn: ['CLOSED', 'FULL', 'EXPIRED'])
+          .orderBy('date', descending: true)
+          .limit(20)
+          .get();
+
+      return snapshot.docs
+          .map((doc) => TOModel.fromMap(doc.data(), doc.id))
+          .toList();
+    } catch (e) {
+      print('❌ 사업장 마감 TO 조회 실패: $e');
+      return [];
+    }
+  }
+
+  // ═══════════════════════════════════════════════════════════
+  // TO 마감/재오픈
+  // ═══════════════════════════════════════════════════════════
+
+  /// TO 수동 마감
+  Future<bool> closeTOManually(String toId, String adminUID) async {
+    try {
+      final toDoc = await db.collection('tos').doc(toId).get();
+      final toData = toDoc.data();
+      final groupId = toData?['groupId'] as String?;
+      final isGroupMaster = toData?['isGroupMaster'] ?? false;
+      
+      await db.collection('tos').doc(toId).update({
+        'isManualClosed': true,
+        'closedAt': FieldValue.serverTimestamp(),
+        'closedBy': adminUID,
+        'status': 'CLOSED',
+        'statusUpdatedAt': FieldValue.serverTimestamp(),
+      });
+      
+      clearCache(toId: toId);
+      invalidateListCache();
+
+      if (groupId != null && !isGroupMaster) {
+        await _updateGroupMasterStatus(groupId);
+      }
+
+      print('✅ TO 수동 마감 완료: $toId');
+      return true;
+    } catch (e) {
+      print('❌ TO 수동 마감 실패: $e');
+      return false;
+    }
+  }
+
+  /// TO 재오픈 (마감 취소)
+  Future<bool> reopenTO(String toId, String adminUID) async {
+    try {
+      final toDoc = await db.collection('tos').doc(toId).get();
+      final toData = toDoc.data();
+      final groupId = toData?['groupId'] as String?;
+      
+      await db.collection('tos').doc(toId).update({
+        'isManualClosed': false,
+        'reopenedAt': FieldValue.serverTimestamp(),
+        'reopenedBy': adminUID,
+      });
+      
+      await updateTOStatus(toId);
+      
+      clearCache(toId: toId);
+      invalidateListCache();
+
+      if (groupId != null) {
+        await _updateGroupMasterStatus(groupId);
+      }
+
+      print('✅ TO 재오픈 완료: $toId');
+      return true;
+    } catch (e) {
+      print('❌ TO 재오픈 실패: $e');
+      return false;
+    }
+  }
+
+  /// 그룹 TO 전체 마감
+  Future<bool> closeGroupTOs(String groupId, String adminUID) async {
+    try {
+      print('🔒 [closeGroupTOs] 시작: $groupId');
+      
+      final snapshot = await db
+          .collection('tos')
+          .where('groupId', isEqualTo: groupId)
+          .get();
+
+      if (snapshot.docs.isEmpty) {
+        print('❌ 그룹 TO를 찾을 수 없음');
+        return false;
+      }
+
+      final batch = db.batch();
+      
+      for (var doc in snapshot.docs) {
+        batch.update(doc.reference, {
+          'isManualClosed': true,
+          'closedAt': FieldValue.serverTimestamp(),
+          'closedBy': adminUID,
+          'status': 'CLOSED',
+          'statusUpdatedAt': FieldValue.serverTimestamp(),
+        });
+      }
+
+      await batch.commit();
+
+      // 각 TO의 WorkDetails 마감
+      for (var doc in snapshot.docs) {
+        final workDetailsSnapshot = await db
+            .collection('tos')
+            .doc(doc.id)
+            .collection('workDetails')
+            .get();
+
+        if (workDetailsSnapshot.docs.isNotEmpty) {
+          final workBatch = db.batch();
+          
+          for (var workDoc in workDetailsSnapshot.docs) {
+            workBatch.update(workDoc.reference, {
+              'isManualClosed': true,
+              'closedAt': FieldValue.serverTimestamp(),
+              'closedBy': adminUID,
+            });
+          }
+          
+          await workBatch.commit();
+        }
+        
+        clearCache(toId: doc.id);
+      }
+
+      invalidateListCache();
+      print('✅ 그룹 전체 마감 완료: $groupId');
+      return true;
+    } catch (e) {
+      print('❌ 그룹 마감 실패: $e');
+      return false;
+    }
+  }
+
+  /// 그룹 TO 전체 재오픈
+  Future<bool> reopenGroupTOs(String groupId, String adminUID) async {
+    try {
+      print('🔓 [reopenGroupTOs] 시작: $groupId');
+      
+      final snapshot = await db
+          .collection('tos')
+          .where('groupId', isEqualTo: groupId)
+          .get();
+
+      if (snapshot.docs.isEmpty) {
+        print('❌ 그룹 TO를 찾을 수 없음');
+        return false;
+      }
+
+      final batch = db.batch();
+      
+      for (var doc in snapshot.docs) {
+        batch.update(doc.reference, {
+          'isManualClosed': false,
+          'reopenedAt': FieldValue.serverTimestamp(),
+          'reopenedBy': adminUID,
+        });
+      }
+
+      await batch.commit();
+
+      // 각 TO의 WorkDetails 재오픈
+      for (var doc in snapshot.docs) {
+        final workDetailsSnapshot = await db
+            .collection('tos')
+            .doc(doc.id)
+            .collection('workDetails')
+            .get();
+
+        if (workDetailsSnapshot.docs.isNotEmpty) {
+          final workBatch = db.batch();
+          
+          for (var workDoc in workDetailsSnapshot.docs) {
+            workBatch.update(workDoc.reference, {
+              'isManualClosed': false,
+              'closedAt': FieldValue.delete(),
+              'closedBy': FieldValue.delete(),
+            });
+          }
+          
+          await workBatch.commit();
+        }
+        
+        clearCache(toId: doc.id);
+      }
+
+      // 각 TO 상태 재계산
+      for (var doc in snapshot.docs) {
+        await updateTOStatus(doc.id);
+      }
+      
+      invalidateListCache();
+      print('✅ 그룹 전체 재오픈 완료: $groupId');
+      return true;
+    } catch (e) {
+      print('❌ 그룹 재오픈 실패: $e');
+      return false;
+    }
+  }
+
+  // ═══════════════════════════════════════════════════════════
+  // TO 상태 관리
+  // ═══════════════════════════════════════════════════════════
+
+  /// TO 상태 업데이트
+  Future<bool> updateTOStatus(String toId) async {
+    try {
+      final toDoc = await db.collection('tos').doc(toId).get();
+      if (!toDoc.exists) return false;
+      
+      final data = toDoc.data()!;
+      final newStatus = _calculateTOStatus(data);
+      
+      await db.collection('tos').doc(toId).update({
+        'status': newStatus,
+        'statusUpdatedAt': FieldValue.serverTimestamp(),
+      });
+      
+      print('✅ TO status 업데이트: $toId → $newStatus');
+      return true;
+    } catch (e) {
+      print('❌ TO status 업데이트 실패: $e');
+      return false;
+    }
+  }
+
+  /// TO 상태 계산
+  String _calculateTOStatus(Map<String, dynamic> data) {
+    // 1. 수동 마감
+    if (data['isManualClosed'] == true) {
+      return 'CLOSED';
+    }
+    
+    // 2. 인원 충족
+    final totalConfirmed = data['totalConfirmed'] ?? 0;
+    final totalRequired = data['totalRequired'] ?? 0;
+    if (totalRequired > 0 && totalConfirmed >= totalRequired) {
+      return 'FULL';
+    }
+    
+    // 3. 시간 초과 체크
+    if (_isTimeExpired(data)) {
+      return 'EXPIRED';
+    }
+    
+    return 'ACTIVE';
+  }
+
+  /// 시간 만료 체크
+  bool _isTimeExpired(Map<String, dynamic> data) {
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    
+    final jobType = data['jobType'] ?? 'short';
+    
+    if (jobType == 'long_term') {
+      final deadline = (data['applicationDeadline'] as Timestamp?)?.toDate();
+      if (deadline != null && now.isAfter(deadline)) {
+        return true;
+      }
+    } else {
+      final workDate = (data['date'] as Timestamp?)?.toDate();
+      if (workDate != null) {
+        final workDay = DateTime(workDate.year, workDate.month, workDate.day);
+        if (workDay.isBefore(today)) {
+          return true;
+        }
+      }
+    }
+    
+    return false;
+  }
+
+  /// status 필드 마이그레이션
+  Future<int> migrateToStatusField() async {
+    try {
+      print('🔄 [Migration] TO status 필드 마이그레이션 시작...');
+      
+      final snapshot = await db
+          .collection('tos')
+          .where('status', isNull: true)
+          .get();
+      
+      int count = 0;
+      for (var doc in snapshot.docs) {
+        final status = _calculateTOStatus(doc.data());
+        await doc.reference.update({
+          'status': status,
+          'statusUpdatedAt': FieldValue.serverTimestamp(),
+        });
+        count++;
+      }
+      
+      print('✅ [Migration] 완료: $count개 TO 업데이트');
+      return count;
+    } catch (e) {
+      print('❌ [Migration] 실패: $e');
+      return 0;
+    }
+  }
+
+  // ═══════════════════════════════════════════════════════════
+  // 통계 재계산
+  // ═══════════════════════════════════════════════════════════
+
+  /// TO 통계 재계산
+  Future<bool> recalculateTOStats(String toId) async {
+    try {
+      print('🔄 TO 통계 재계산: $toId');
+      
+      final apps = await getApplicationsByTOId(toId);
+      
+      final totalPending = apps.where((a) => a.status == 'PENDING').length;
+      final totalConfirmed = apps.where((a) => a.status == 'CONFIRMED').length;
+      
+      await db.collection('tos').doc(toId).update({
+        'totalPending': totalPending,
+        'totalConfirmed': totalConfirmed,
+      });
+      
+      // WorkDetail 통계도 재계산
+      await recalculateWorkDetailStats(toId);
+      
+      // status 업데이트
+      await updateTOStatus(toId);
+      
+      clearCache(toId: toId);
+      print('✅ TO 통계 재계산 완료: 대기=$totalPending, 확정=$totalConfirmed');
+      return true;
+    } catch (e) {
+      print('❌ TO 통계 재계산 실패: $e');
+      return false;
+    }
+  }
+
+  /// WorkDetail 통계 재계산
+  Future<bool> recalculateWorkDetailStats(String toId) async {
+    try {
+      final apps = await getApplicationsByTOId(toId);
+      final workDetailsSnapshot = await db
+          .collection('tos')
+          .doc(toId)
+          .collection('workDetails')
+          .get();
+      
+      final batch = db.batch();
+      
+      for (var workDoc in workDetailsSnapshot.docs) {
+        final workData = workDoc.data();
+        final workType = workData['workType'];
+        final startTime = workData['startTime'];
+        final endTime = workData['endTime'];
+        
+        final workApps = apps.where((a) {
+          if (a.workDetailId == workDoc.id) return true;
+          return a.selectedWorkType == workType &&
+                 a.startTime == startTime &&
+                 a.endTime == endTime;
+        });
+        
+        final pendingCount = workApps.where((a) => a.status == 'PENDING').length;
+        final currentCount = workApps.where((a) => a.status == 'CONFIRMED').length;
+        
+        batch.update(workDoc.reference, {
+          'pendingCount': pendingCount,
+          'currentCount': currentCount,
+        });
+      }
+      
+      await batch.commit();
+      print('✅ WorkDetail 통계 재계산 완료');
+      return true;
+    } catch (e) {
+      print('❌ WorkDetail 통계 재계산 실패: $e');
+      return false;
+    }
+  }
+
+  /// 그룹 통계 재계산
+  Future<bool> recalculateGroupStats(String groupId) async {
+    try {
+      print('🔄 그룹 통계 재계산: $groupId');
+      
+      final groupTOs = await getTOsByGroup(groupId);
+      
+      if (groupTOs.isEmpty) {
+        print('❌ 그룹 TO를 찾을 수 없습니다: $groupId');
+        return false;
+      }
+      
+      final results = await Future.wait(
+        groupTOs.map((to) => recalculateTOStats(to.id))
+      );
+      final successCount = results.where((r) => r).length;
+      
+      print('✅ 그룹 통계 재계산 완료: $successCount/${groupTOs.length}개 성공');
+      return successCount == groupTOs.length;
+    } catch (e) {
+      print('❌ 그룹 통계 재계산 실패: $e');
+      return false;
+    }
+  }
+
+  /// TO의 totalRequired + 급여 정보 재계산
+  Future<void> _recalculateTOWorkInfo(String toId) async {
+    try {
+      final workDetails = await getWorkDetails(toId, forceRefresh: true);
+      
+      if (workDetails.isEmpty) {
+        await db.collection('tos').doc(toId).update({
+          'totalRequired': 0,
+          'minWage': null,
+          'maxWage': null,
+          'wageType': null,
+          'workDetailCount': 0,
+        });
+        return;
+      }
+      
+      int totalRequired = 0;
+      for (var work in workDetails) {
+        totalRequired += work.requiredCount;
+      }
+      
+      final wages = workDetails.map((w) => w.wage).toList();
+      final minWage = wages.reduce((a, b) => a < b ? a : b);
+      final maxWage = wages.reduce((a, b) => a > b ? a : b);
+      
+      await db.collection('tos').doc(toId).update({
+        'totalRequired': totalRequired,
+        'minWage': minWage,
+        'maxWage': maxWage,
+        'wageType': workDetails.first.wageType,
+        'workDetailCount': workDetails.length,
+      });
+      
+      print('📊 TO 정보 업데이트: 필요인원=$totalRequired, 급여=$minWage~$maxWage');
+    } catch (e) {
+      print('❌ TO 정보 재계산 실패: $e');
+    }
+  }
+
+  /// TO의 totalRequired만 재계산
+  Future<void> _recalculateTotalRequired(String toId) async {
+    try {
+      final workDetails = await getWorkDetails(toId, forceRefresh: true);
+      
+      int totalRequired = 0;
+      for (var work in workDetails) {
+        totalRequired += work.requiredCount;
+      }
+      
+      await db.collection('tos').doc(toId).update({
+        'totalRequired': totalRequired,
+        'workDetailCount': workDetails.length,
+      });
+      
+      print('📊 totalRequired 업데이트: $totalRequired');
+    } catch (e) {
+      print('❌ totalRequired 재계산 실패: $e');
+    }
+  }
+
+  // ═══════════════════════════════════════════════════════════
+  // 캐시 관리
+  // ═══════════════════════════════════════════════════════════
+
+  /// 캐시 초기화
+  void clearCache({String? toId}) {
+    if (toId != null) {
+      print('🗑️ 캐시 삭제: $toId');
+      applicationCache.remove(toId);
+      workDetailCache.remove(toId);
+      timeRangeCache.remove(toId);
+      
+      cacheTimestamps.remove('application_$toId');
+      cacheTimestamps.remove('workDetail_$toId');
+      cacheTimestamps.remove('timeRange_$toId');
+    } else {
+      print('🗑️ 전체 캐시 삭제');
+      applicationCache.clear();
+      workDetailCache.clear();
+      timeRangeCache.clear();
+      cacheTimestamps.clear();
+
+      activeTOsCacheData = null;
+      closedTOsCacheData = null;
+      activeTOsCacheTime = null;
+      closedTOsCacheTime = null;
+      
+      userCache.clear();
+      userCacheTimestamps.clear();
+    }
+  }
+
+  /// TO 목록 캐시만 무효화
+  void invalidateListCache() {
+    activeTOsCacheData = null;
+    closedTOsCacheData = null;
+    activeTOsCacheTime = null;
+    closedTOsCacheTime = null;
+    print('🗑️ TO 목록 캐시 무효화');
+  }
+
+  // ═══════════════════════════════════════════════════════════
+  // Lazy Loading
+  // ═══════════════════════════════════════════════════════════
+
+  /// 그룹 TO 아이템 경량 조회 (목록용)
+  Future<List<Map<String, dynamic>>> getTOGroupItemsLight(String groupId) async {
+    try {
+      final groupTOs = await getTOsByGroup(groupId);
+      
+      return groupTOs.map((to) => {
+        'to': to,
+        'workDetails': <WorkDetailModel>[],
+        'workStats': <String, Map<String, int>>{},
+      }).toList();
+    } catch (e) {
+      print('❌ 그룹 TO 경량 조회 실패: $e');
+      return [];
+    }
+  }
+
+  /// 그룹 TO 목록 경량 로드
+  Future<List<TOModel>> loadGroupTOsLight(String groupId) async {
+    return await getTOsByGroup(groupId);
+  }
+
+  /// TO의 WorkDetails + 통계 로드
+  Future<Map<String, dynamic>> loadTOWorkDetails(TOModel to) async {
+    try {
+      final workDetails = await getWorkDetails(to.id);
+      final apps = await getApplicationsByTOId(to.id);
+      
+      Map<String, Map<String, int>> workStats = {};
+      for (var work in workDetails) {
+        final workApps = apps.where((a) {
+          if (a.workDetailId != null && a.workDetailId!.isNotEmpty) {
+            return a.workDetailId == work.id;
+          }
+          return a.selectedWorkType == work.workType &&
+                 a.startTime == work.startTime &&
+                 a.endTime == work.endTime;
+        });
+        
+        workStats[work.id] = {
+          'confirmed': workApps.where((a) => a.status == 'CONFIRMED').length,
+          'pending': workApps.where((a) => a.status == 'PENDING').length,
+        };
+      }
+      
+      // 시간 범위 설정
+      if (workDetails.isNotEmpty) {
+        String? minStart;
+        String? maxEnd;
+        
+        for (var work in workDetails) {
+          if (minStart == null || work.startTime.compareTo(minStart) < 0) {
+            minStart = work.startTime;
+          }
+          if (maxEnd == null || work.endTime.compareTo(maxEnd) > 0) {
+            maxEnd = work.endTime;
+          }
+        }
+        
+        if (minStart != null && maxEnd != null) {
+          to.setTimeRange(minStart, maxEnd);
+        }
+      }
+      
+      return {
+        'workDetails': workDetails,
+        'workStats': workStats,
+      };
+    } catch (e) {
+      print('❌ TO 상세 로드 실패: $e');
+      return {
+        'workDetails': <WorkDetailModel>[],
+        'workStats': <String, Map<String, int>>{},
+      };
+    }
+  }
+  /// 그룹 마스터 TO의 status 업데이트
+  /// - 그룹 내 TO들의 상태에 따라 마스터 status 결정
+  Future<bool> _updateGroupMasterStatus(String groupId) async {
+    try {
+      print('📊 [Sync] 그룹 마스터 status 업데이트: $groupId');
+      
+      // 1. 그룹의 모든 TO 조회
+      final snapshot = await db
+          .collection('tos')
+          .where('groupId', isEqualTo: groupId)
+          .get();
+      
+      if (snapshot.docs.isEmpty) return false;
+      
+      // 2. 마스터 TO 찾기
+      final masterDoc = snapshot.docs.firstWhere(
+        (doc) => doc.data()['isGroupMaster'] == true,
+        orElse: () => snapshot.docs.first,
+      );
+      
+      // 3. 그룹 내 활성 TO 여부 확인
+      bool hasActiveTO = false;
+      for (var doc in snapshot.docs) {
+        final data = doc.data();
+        final status = data['status'] ?? 'ACTIVE';
+        if (status == 'ACTIVE') {
+          hasActiveTO = true;
+          break;
+        }
+      }
+      
+      // 마스터 status 결정
+      final masterData = masterDoc.data();
+      final isManualClosed = masterData['isManualClosed'] ?? false;
+      
+      String newStatus;
+      if (isManualClosed) {
+        newStatus = 'CLOSED';
+      } else if (hasActiveTO) {
+        newStatus = 'ACTIVE';
+      } else {
+        newStatus = 'CLOSED';
+      }
+      
+      // 4. 마스터 status 업데이트
+      await masterDoc.reference.update({
+        'status': newStatus,
+        'statusUpdatedAt': FieldValue.serverTimestamp(),
+      });
+      
+      print('   ✅ 마스터 status 업데이트: $newStatus (활성 TO: $hasActiveTO)');
+      return true;
+    } catch (e) {
+      print('❌ [Sync] 그룹 마스터 status 업데이트 실패: $e');
+      return false;
+    }
+  }
+
+  /// 공개 메서드: TO의 그룹 마스터 통계 동기화
+  /// - toId로 해당 TO의 groupId를 찾아서 마스터 통계 업데이트
+  Future<bool> syncGroupMasterStats(String toId) async {
+    try {
+      final to = await getTO(toId);
+      if (to == null) return false;
+      
+      // 그룹 TO가 아니면 스킵
+      if (to.groupId == null) {
+        print('   ℹ️ 단일 TO - 그룹 동기화 스킵');
+        return true;
+      }
+      
+      return await updateGroupMasterStats(to.groupId!);
+    } catch (e) {
+      print('❌ syncGroupMasterStats 실패: $e');
+      return false;
+    }
+  }
+
+  /// 그룹 마스터 통계 전체 재계산 (마이그레이션/수동 보정용)
+  Future<int> migrateAllGroupMasterStats() async {
+    try {
+      print('🔄 [Migration] 전체 그룹 마스터 통계 마이그레이션 시작...');
+      
+      // 모든 그룹 마스터 TO 조회
+      final snapshot = await db
+          .collection('tos')
+          .where('isGroupMaster', isEqualTo: true)
+          .get();
+      
+      int successCount = 0;
+      final groupIds = <String>{};
+      
+      for (var doc in snapshot.docs) {
+        final groupId = doc.data()['groupId'] as String?;
+        if (groupId != null && !groupIds.contains(groupId)) {
+          groupIds.add(groupId);
+          final success = await updateGroupMasterStats(groupId);
+          if (success) successCount++;
+        }
+      }
+      
+      print('✅ [Migration] 완료: $successCount/${groupIds.length}개 그룹');
+      return successCount;
+    } catch (e) {
+      print('❌ [Migration] 실패: $e');
+      return 0;
+    }
+  }
 }
