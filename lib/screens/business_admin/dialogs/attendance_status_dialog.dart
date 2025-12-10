@@ -184,8 +184,9 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
       // 장기 근무
       if (app.workEndDate == null) return false;
 
-      // 기간 체크
-      final isInRange = !dateStart.isBefore(app.workDate) &&
+      // ✅ 기간 체크 - 희망 시작일 기준 (없으면 workDate 폴백)
+      final effectiveStartDate = app.desiredStartDate ?? app.workDate;
+      final isInRange = !dateStart.isBefore(effectiveStartDate) &&
           !dateStart.isAfter(app.workEndDate!);
 
       if (!isInRange) return false;

@@ -65,8 +65,9 @@ class _AttendanceCheckScreenState extends State<AttendanceCheckScreen> {
         
         // 장기 근무
         if (app.isLongTermApplication && app.workEndDate != null) {
-          // 기간 체크
-          if (todayStart.isBefore(app.workDate) || todayStart.isAfter(app.workEndDate!)) {
+          // ✅ 기간 체크 - 희망 시작일 기준 (없으면 workDate 폴백)
+          final effectiveStartDate = app.desiredStartDate ?? app.workDate;
+          if (todayStart.isBefore(effectiveStartDate) || todayStart.isAfter(app.workEndDate!)) {
             return false;
           }
           
