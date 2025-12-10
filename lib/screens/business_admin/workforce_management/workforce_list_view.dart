@@ -71,6 +71,7 @@ class _WorkforceListViewState extends State<WorkforceListView> {
 
   /// ✨ TO 목록 로드 (Lazy Loading - 겉 카드만)
   Future<void> _loadTOsWithStats() async {
+    
     // ✅ Phase 3: 새로고침 시 목록 캐시 무효화
     _firestoreService.invalidateListCache();
     

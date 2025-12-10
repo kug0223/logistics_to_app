@@ -430,6 +430,25 @@ extension ApplicationFirestore on FirestoreService {
           },
         );
         
+        // ✅ 그룹 마스터 통계 Increment (그룹 TO인 경우) - 재지원에도 추가!
+        final toDoc = await _firestore.collection('tos').doc(toId).get();
+        final groupId = toDoc.data()?['groupId'] as String?;
+        
+        if (groupId != null) {
+          final masterSnapshot = await _firestore
+              .collection('tos')
+              .where('groupId', isEqualTo: groupId)
+              .where('isGroupMaster', isEqualTo: true)
+              .limit(1)
+              .get();
+          
+          if (masterSnapshot.docs.isNotEmpty) {
+            batch.update(masterSnapshot.docs.first.reference, {
+              'groupTotalPending': FieldValue.increment(1),
+            });
+          }
+        }
+        
         await batch.commit();
         clearCache(toId: toId);
         
