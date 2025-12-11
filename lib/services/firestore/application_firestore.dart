@@ -953,28 +953,45 @@ extension ApplicationFirestore on FirestoreService {
       final toTitle = appData['toTitle'];
       final workDate = appData['workDate'] as Timestamp;
 
-      // ✅ TO 찾기
-      final toSnapshot = await _firestore
-          .collection('tos')
-          .where('businessId', isEqualTo: businessId)
-          .where('title', isEqualTo: toTitle)
-          .where('date', isEqualTo: workDate)
-          .limit(1)
-          .get();
+      // 🔥 장기공고 여부 확인
+      final isLongTerm = appData['isLongTermApplication'] == true || 
+                         appData['type'] == 'long_term';
+      
+      // ✅ TO 찾기 (장기공고 고려)
+      QuerySnapshot toSnapshot;
+      if (isLongTerm) {
+        toSnapshot = await _firestore
+            .collection('tos')
+            .where('businessId', isEqualTo: businessId)
+            .where('title', isEqualTo: toTitle)
+            .where('isLongTerm', isEqualTo: true)
+            .limit(1)
+            .get();
+        print('🔍 [지원취소] 장기공고 TO 검색: ${toSnapshot.docs.length}건');
+      } else {
+        toSnapshot = await _firestore
+            .collection('tos')
+            .where('businessId', isEqualTo: businessId)
+            .where('title', isEqualTo: toTitle)
+            .where('date', isEqualTo: workDate)
+            .limit(1)
+            .get();
+        print('🔍 [지원취소] 단기공고 TO 검색: ${toSnapshot.docs.length}건');
+      }
 
       if (toSnapshot.docs.isEmpty) {
         await _firestore.collection('applications').doc(applicationId).update({
           'status': 'CANCELED',
         });
         ToastHelper.showSuccess('지원이 취소되었습니다.');
+        print('⚠️ [지원취소] TO 없음 - 지원서만 취소');
         return true;
       }
 
       final toDoc = toSnapshot.docs.first;
       final toId = toDoc.id;
-      final toData = toDoc.data();
+      final toData = toDoc.data() as Map<String, dynamic>;
       final groupId = toData['groupId'] as String?;
-      final workDetailId = appData['workDetailId'] as String?;
 
       // ✅ Batch로 한 번에 처리
       final batch = _firestore.batch();
@@ -1110,18 +1127,36 @@ extension ApplicationFirestore on FirestoreService {
       final workDate = appData['workDate'] as Timestamp;
       final workDetailId = appData['workDetailId'] as String?;
 
-      final toSnapshot = await _firestore
-          .collection('tos')
-          .where('businessId', isEqualTo: businessId)
-          .where('title', isEqualTo: toTitle)
-          .where('date', isEqualTo: workDate)
-          .limit(1)
-          .get();
+      // 🔥 장기공고 여부 확인
+      final isLongTerm = appData['isLongTermApplication'] == true;
+      
+      QuerySnapshot toSnapshot;
+      if (isLongTerm) {
+        // 장기공고: date 대신 isLongTerm + title로 검색
+        toSnapshot = await _firestore
+            .collection('tos')
+            .where('businessId', isEqualTo: businessId)
+            .where('title', isEqualTo: toTitle)
+            .where('isLongTerm', isEqualTo: true)
+            .limit(1)
+            .get();
+        print('🔍 [확정취소] 장기공고 TO 검색: ${toSnapshot.docs.length}건');
+      } else {
+        // 단기공고: 기존 방식
+        toSnapshot = await _firestore
+            .collection('tos')
+            .where('businessId', isEqualTo: businessId)
+            .where('title', isEqualTo: toTitle)
+            .where('date', isEqualTo: workDate)
+            .limit(1)
+            .get();
+        print('🔍 [확정취소] 단기공고 TO 검색: ${toSnapshot.docs.length}건');
+      }
 
       if (toSnapshot.docs.isNotEmpty) {
         final toDoc = toSnapshot.docs.first;
         final toId = toDoc.id;
-        final toData = toDoc.data();
+        final toData = toDoc.data() as Map<String, dynamic>;  // 🔥 캐스팅 추가
         final groupId = toData['groupId'] as String?;
 
         // TO 통계 Increment (CONFIRMED → CANCELED)
@@ -1496,18 +1531,34 @@ extension ApplicationFirestore on FirestoreService {
         final statsBatch = _firestore.batch();
         
         for (var conflictApp in conflictingApps) {
-          // 충돌 지원서의 TO 찾기
-          final conflictTOSnapshot = await _firestore
-              .collection('tos')
-              .where('businessId', isEqualTo: conflictApp.businessId)
-              .where('title', isEqualTo: conflictApp.toTitle)
-              .where('date', isEqualTo: Timestamp.fromDate(conflictApp.workDate))
-              .limit(1)
-              .get();
+          // 🔥 충돌 지원서가 장기공고인지 확인
+          final isConflictLongTerm = conflictApp.isLongTermApplication;
+          
+          // 충돌 지원서의 TO 찾기 (장기공고 고려)
+          QuerySnapshot conflictTOSnapshot;
+          if (isConflictLongTerm) {
+            conflictTOSnapshot = await _firestore
+                .collection('tos')
+                .where('businessId', isEqualTo: conflictApp.businessId)
+                .where('title', isEqualTo: conflictApp.toTitle)
+                .where('isLongTerm', isEqualTo: true)
+                .limit(1)
+                .get();
+            print('🔍 [충돌취소] 장기공고 TO 검색: ${conflictTOSnapshot.docs.length}건');
+          } else {
+            conflictTOSnapshot = await _firestore
+                .collection('tos')
+                .where('businessId', isEqualTo: conflictApp.businessId)
+                .where('title', isEqualTo: conflictApp.toTitle)
+                .where('date', isEqualTo: Timestamp.fromDate(conflictApp.workDate))
+                .limit(1)
+                .get();
+            print('🔍 [충돌취소] 단기공고 TO 검색: ${conflictTOSnapshot.docs.length}건');
+          }
           
           if (conflictTOSnapshot.docs.isNotEmpty) {
             final conflictTODoc = conflictTOSnapshot.docs.first;
-            final conflictTOData = conflictTODoc.data();
+            final conflictTOData = conflictTODoc.data() as Map<String, dynamic>;  // 🔥 캐스팅 추가
             final conflictGroupId = conflictTOData['groupId'] as String?;
             
             // 🔥 영향받은 TO ID 저장
