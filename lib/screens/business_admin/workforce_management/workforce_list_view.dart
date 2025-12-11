@@ -659,8 +659,13 @@ class _WorkforceListViewState extends State<WorkforceListView> {
     
     print('🔄 영향받은 TO ${affectedTOIds.length}개 새로고침: $affectedTOIds');
     
+    // ✅ 갱신된 그룹 마스터 ID 추적 (중복 갱신 방지)
+    final Set<String> updatedGroupIds = {};
+    
     for (var toId in affectedTOIds) {
-      // 모든 그룹에서 해당 TO 찾기
+      bool found = false;
+      
+      // 1. 모든 그룹에서 해당 TO 찾기
       for (var groupItem in _allGroupItems) {
         final toItem = groupItem.groupTOs.cast<TOItem?>().firstWhere(
           (item) => item?.to.id == toId,
@@ -668,6 +673,7 @@ class _WorkforceListViewState extends State<WorkforceListView> {
         );
         
         if (toItem != null) {
+          found = true;
           try {
             // ✅ 캐시 무효화
             _firestoreService.clearCache(toId: toId);
@@ -697,6 +703,39 @@ class _WorkforceListViewState extends State<WorkforceListView> {
             print('❌ TO $toId 새로고침 실패: $e');
           }
           break;  // 찾았으면 다음 toId로
+        }
+      }
+      
+      // 2. ✅ 찾지 못했으면 그룹 마스터 갱신 (그룹이 접혀있는 경우)
+      if (!found) {
+        try {
+          final toDoc = await _firestoreService.getTO(toId);
+          if (toDoc != null && toDoc.groupId != null) {
+            final groupId = toDoc.groupId!;
+            
+            // 이미 갱신한 그룹이면 스킵
+            if (updatedGroupIds.contains(groupId)) continue;
+            
+            // 그룹 마스터 찾기
+            for (var groupItem in _allGroupItems) {
+              if (groupItem.masterTO.groupId == groupId) {
+                // 마스터 TO 다시 조회
+                final masterDoc = await _firestoreService.getTO(groupItem.masterTO.id);
+                if (masterDoc != null && groupItem.groupTOs.isNotEmpty) {
+                  groupItem.groupTOs.first.updateOuterStats(
+                    confirmed: masterDoc.groupTotalConfirmed ?? masterDoc.totalConfirmed,
+                    pending: masterDoc.groupTotalPending ?? masterDoc.totalPending,
+                    required: masterDoc.groupTotalRequired ?? masterDoc.totalRequired,
+                  );
+                  updatedGroupIds.add(groupId);
+                  print('✅ 그룹 마스터 ${groupItem.masterTO.id} 통계 갱신: 대기=${masterDoc.groupTotalPending}');
+                }
+                break;
+              }
+            }
+          }
+        } catch (e) {
+          print('❌ 그룹 마스터 갱신 실패: $e');
         }
       }
     }

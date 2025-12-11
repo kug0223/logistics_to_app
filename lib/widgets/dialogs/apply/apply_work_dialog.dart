@@ -1719,7 +1719,13 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
 
     if (!confirmed) return;
 
-    setState(() => _loadingWorkIds.add(application.selectedWorkType));
+    // ✅ 로딩 키 통일 (applyForWork와 동일한 방식)
+    final loadingKey = _makeWorkKey(
+      application.selectedWorkType, 
+      application.startTime, 
+      application.endTime,
+    );
+    setState(() => _loadingWorkIds.add(loadingKey));
 
     try {
       await _firestoreService.cancelApplication(application.id, _currentUserId!);
@@ -1734,7 +1740,13 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
       ToastHelper.showError('지원 취소에 실패했습니다');
     } finally {
       if (mounted) {
-        setState(() => _loadingWorkIds.remove(application.selectedWorkType));
+        // ✅ 로딩 키 통일
+        final loadingKey = _makeWorkKey(
+          application.selectedWorkType, 
+          application.startTime, 
+          application.endTime,
+        );
+        setState(() => _loadingWorkIds.remove(loadingKey));
       }
     }
   }
@@ -1822,8 +1834,13 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
 
       if (mounted) {
         setState(() {
+          // ✅ PENDING, CONFIRMED만 유지 (CANCELED, REJECTED, AUTO_CANCELED 제외)
+          final activeApps = applications.where((app) => 
+            app.status == 'PENDING' || app.status == 'CONFIRMED'
+          ).toList();
+          
           _applicationsByDate[dateKey] = {
-            for (final app in applications)
+            for (final app in activeApps)
               _makeWorkKey(app.selectedWorkType, app.startTime, app.endTime): app
           };
         });

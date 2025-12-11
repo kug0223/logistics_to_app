@@ -1276,6 +1276,7 @@ extension ApplicationFirestore on FirestoreService {
       if (currentAppDoc.exists) {
         previousStatus = currentAppDoc.data()?['status'] as String?;
       }
+      print('🔍 [updateApplicationStatus] 이전상태: $previousStatus → 새상태: $status');
       
       // ⭐ Phase 2: 확정 시 충돌 처리
       if (status == 'CONFIRMED') {
@@ -1311,17 +1312,27 @@ extension ApplicationFirestore on FirestoreService {
       
       // ✅ REJECTED/CANCELED: Increment 방식으로 처리
       if (status == 'REJECTED' || status == 'CANCELED') {
+        print('🔍 [updateApplicationStatus] REJECTED/CANCELED 처리 시작, previousStatus=$previousStatus');
         if (currentAppDoc.exists) {
           final appData = currentAppDoc.data()!;
           // ✅ previousStatus는 위에서 이미 저장됨 - 중복 선언 제거
           final workDetailId = appData['workDetailId'] as String?;
           
-          // ✅ 장기공고 여부 확인
-          final isLongTerm = appData['isLongTermApplication'] == true || 
-                             appData['type'] == 'long_term';
-          
+          // ✅ TO 찾기 (단기 우선, 실패 시 장기 시도)
           QuerySnapshot toSnapshot;
-          if (isLongTerm) {
+          
+          // 1차: 단기공고로 검색 (날짜 포함)
+          toSnapshot = await _firestore
+              .collection('tos')
+              .where('businessId', isEqualTo: appData['businessId'])
+              .where('title', isEqualTo: appData['toTitle'])
+              .where('date', isEqualTo: appData['workDate'])
+              .limit(1)
+              .get();
+          print('🔍 [확정취소] 단기공고 TO 검색: ${toSnapshot.docs.length}건');
+          
+          // 2차: 단기 검색 실패 시 장기공고로 재시도
+          if (toSnapshot.docs.isEmpty) {
             toSnapshot = await _firestore
                 .collection('tos')
                 .where('businessId', isEqualTo: appData['businessId'])
@@ -1329,14 +1340,7 @@ extension ApplicationFirestore on FirestoreService {
                 .where('isLongTerm', isEqualTo: true)
                 .limit(1)
                 .get();
-          } else {
-            toSnapshot = await _firestore
-                .collection('tos')
-                .where('businessId', isEqualTo: appData['businessId'])
-                .where('title', isEqualTo: appData['toTitle'])
-                .where('date', isEqualTo: appData['workDate'])
-                .limit(1)
-                .get();
+            print('🔍 [확정취소] 장기공고 TO 재검색: ${toSnapshot.docs.length}건');
           }
           
           if (toSnapshot.docs.isNotEmpty) {
@@ -1591,12 +1595,21 @@ extension ApplicationFirestore on FirestoreService {
         final statsBatch = _firestore.batch();
         
         for (var conflictApp in conflictingApps) {
-          // 🔥 충돌 지원서가 장기공고인지 확인
-          final isConflictLongTerm = conflictApp.isLongTermApplication;
-          
-          // 충돌 지원서의 TO 찾기 (장기공고 고려)
+          // 🔥 충돌 지원서의 TO 찾기 (단기 우선, 실패 시 장기 시도)
           QuerySnapshot conflictTOSnapshot;
-          if (isConflictLongTerm) {
+          
+          // 1차: 단기공고로 검색 (날짜 포함)
+          conflictTOSnapshot = await _firestore
+              .collection('tos')
+              .where('businessId', isEqualTo: conflictApp.businessId)
+              .where('title', isEqualTo: conflictApp.toTitle)
+              .where('date', isEqualTo: Timestamp.fromDate(conflictApp.workDate))
+              .limit(1)
+              .get();
+          print('🔍 [충돌취소] 단기공고 TO 검색: ${conflictTOSnapshot.docs.length}건');
+          
+          // 2차: 단기 검색 실패 시 장기공고로 재시도
+          if (conflictTOSnapshot.docs.isEmpty) {
             conflictTOSnapshot = await _firestore
                 .collection('tos')
                 .where('businessId', isEqualTo: conflictApp.businessId)
@@ -1604,7 +1617,7 @@ extension ApplicationFirestore on FirestoreService {
                 .where('isLongTerm', isEqualTo: true)
                 .limit(1)
                 .get();
-            print('🔍 [충돌취소] 장기공고 TO 검색: ${conflictTOSnapshot.docs.length}건');
+            print('🔍 [충돌취소] 장기공고 TO 재검색: ${conflictTOSnapshot.docs.length}건');
           } else {
             conflictTOSnapshot = await _firestore
                 .collection('tos')
