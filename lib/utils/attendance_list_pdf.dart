@@ -464,6 +464,21 @@ class AttendanceListPdf {
         }
       }
     }
+    
+    // ✅ workTypeMap에서 못 찾은 업무는 Application에서 시간 정보 가져오기 (장기 공고 대응)
+    for (var entry in workTypeGroups.entries) {
+      final workType = entry.key;
+      if (!workTypeTimeMap.containsKey(workType) || workTypeTimeMap[workType]!.isEmpty) {
+        // 해당 업무의 첫 번째 Application에서 시간 가져오기
+        final firstApp = entry.value.firstWhere(
+          (app) => app.startTime.isNotEmpty && app.endTime.isNotEmpty,
+          orElse: () => entry.value.first,
+        );
+        if (firstApp.startTime.isNotEmpty && firstApp.endTime.isNotEmpty) {
+          workTypeTimeMap[workType] = '${firstApp.startTime}~${firstApp.endTime}';
+        }
+      }
+    }
 
     return AttendanceListData(
       businessName: businessName,

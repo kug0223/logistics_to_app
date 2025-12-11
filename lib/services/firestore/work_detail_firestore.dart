@@ -206,7 +206,7 @@ extension WorkDetailFirestore on FirestoreService {
       return false;
     }
   }
-  /// WorkDetail 재오픈
+
   /// WorkDetail 재오픈
   Future<bool> reopenWorkDetail({
     required String toId,
@@ -214,17 +214,56 @@ extension WorkDetailFirestore on FirestoreService {
     required String adminUID,
   }) async {
     try {
+      // 🔥 TO 정보 조회 (마감시간 재계산용)
+      final toDoc = await _firestore.collection('tos').doc(toId).get();
+      final toData = toDoc.data();
+      
+      // 🔥 WorkDetail 정보 조회
+      final workDoc = await _firestore
+          .collection('tos')
+          .doc(toId)
+          .collection('workDetails')
+          .doc(workDetailId)
+          .get();
+      final workData = workDoc.data();
+      
+      // 🔥 마감시간 재계산
+      DateTime? newDeadline;
+      if (toData != null && workData != null && toData['jobType'] != 'long_term') {
+        final workDate = (toData['date'] as Timestamp).toDate().toLocal();
+        final hoursBeforeStart = toData['hoursBeforeStart'] ?? 2;
+        final startTime = workData['startTime'] as String;
+        final timeParts = startTime.split(':');
+        
+        final workStartDateTime = DateTime(
+          workDate.year,
+          workDate.month,
+          workDate.day,
+          int.parse(timeParts[0]),
+          int.parse(timeParts[1]),
+        );
+        newDeadline = workStartDateTime.subtract(Duration(hours: hoursBeforeStart));
+      }
+      
+      final updates = <String, dynamic>{
+        'closedAt': FieldValue.delete(),
+        'closedBy': FieldValue.delete(),
+        'isManualClosed': false,
+        'reopenedAt': FieldValue.serverTimestamp(),
+        'reopenedBy': adminUID,
+      };
+      
+      // 🔥 단기공고만 마감시간 재계산
+      if (newDeadline != null) {
+        updates['applicationDeadline'] = Timestamp.fromDate(newDeadline);
+      }
+      
       await _firestore
           .collection('tos')
           .doc(toId)
           .collection('workDetails')
           .doc(workDetailId)
-          .update({
-        'closedAt': FieldValue.delete(),
-        'closedBy': FieldValue.delete(),
-        'reopenedAt': FieldValue.serverTimestamp(),
-        'reopenedBy': adminUID,
-      });
+          .update(updates);
       
       clearCache(toId: toId);
       print('✅ WorkDetail 재오픈 완료: $workDetailId');
@@ -678,5 +717,6 @@ extension WorkDetailFirestore on FirestoreService {
   Future<void> _recalculateTotalRequired(String toId) async {
     await _recalculateTOWorkInfo(toId);
   }
+  
   
 }

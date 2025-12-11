@@ -594,13 +594,18 @@ class TOModel {
       // 🔥 UTC → 로컬 변환
       final localDate = date.toLocal();
       
-      // 🔥 그룹 TO면 엄격하게 체크 안 함 (각 날짜별 시간이 다름)
+      // 🔥 그룹 TO: 개별 TO의 date 기준으로 마감 체크
       if (isGrouped) {
-        // 그룹의 경우 endDate까지는 진행중
-        if (endDate != null) {
+        // ✅ 그룹 마스터만 endDate 기준, 개별 TO는 자신의 date 기준
+        if (isGroupMaster && endDate != null) {
           final localEndDate = endDate!.toLocal();
           final groupEndDate = DateTime(localEndDate.year, localEndDate.month, localEndDate.day);
           return groupEndDate.isBefore(today);
+        }
+        // ✅ 개별 TO는 자신의 date가 과거면 마감
+        final workDate = DateTime(localDate.year, localDate.month, localDate.day);
+        if (workDate.isBefore(today)) {
+          return true;
         }
       }
       

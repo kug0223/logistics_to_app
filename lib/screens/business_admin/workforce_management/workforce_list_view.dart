@@ -68,7 +68,7 @@ class _WorkforceListViewState extends State<WorkforceListView> {
   // ✨ Lazy Loading 상태
   final Set<String> _loadingGroups = {};  // 로딩 중인 그룹
   final Set<String> _loadingTOs = {};     // 로딩 중인 TO
-
+  
   /// ✨ TO 목록 로드 (Lazy Loading - 겉 카드만)
   Future<void> _loadTOsWithStats() async {
     

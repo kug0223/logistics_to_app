@@ -358,10 +358,10 @@ class _WorkforceCalendarViewState extends State<WorkforceCalendarView> {
       statusColor = Colors.grey;
     } else if (isToday) {
       statusText = '오늘';
-      statusColor = Colors.green;
+      statusColor = theme.primaryColor;
     } else {
       statusText = '예정';
-      statusColor = theme.primaryColor;
+      statusColor = theme.primaryColor.withOpacity(0.6);
     }
 
     return Container(
@@ -447,13 +447,13 @@ class _WorkforceCalendarViewState extends State<WorkforceCalendarView> {
                     mainAxisSize: MainAxisSize.min,
                     children: [
                       Icon(
-                        Icons.groups,
+                        Icons.how_to_reg,
                         size: ResponsiveHelper.iconSize(context, 18),
                         color: _hasConfirmedWorkers ? Colors.white : Colors.grey[600],
                       ),
                       SizedBox(width: ResponsiveHelper.spacing(context, 6)),
                       Text(
-                        '인원현황',
+                        '당일명단',
                         style: ResponsiveHelper.smallStyle(context).copyWith(
                           color: _hasConfirmedWorkers ? Colors.white : Colors.grey[600],
                           fontWeight: FontWeight.bold,

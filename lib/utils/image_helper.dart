@@ -769,6 +769,39 @@ class ImageHelper {
       ),
     );
   }
+  // ==================== 전체화면 이미지 뷰어 ====================
+
+  /// 🔍 전체화면 이미지 뷰어 표시
+  /// 
+  /// - 핀치 줌 (확대/축소)
+  /// - 90도씩 회전
+  /// - 닫기 버튼
+  /// 
+  /// [imageUrl]: 네트워크 이미지 URL
+  /// [imageFile]: 로컬 파일 (imageUrl이 없을 때 사용)
+  /// [title]: 상단 타이틀 (선택)
+  static Future<void> showFullScreenViewer(
+    BuildContext context, {
+    String? imageUrl,
+    File? imageFile,
+    String? title,
+  }) async {
+    if (imageUrl == null && imageFile == null) {
+      ToastHelper.showError('이미지를 불러올 수 없습니다');
+      return;
+    }
+
+    await showDialog(
+      context: context,
+      barrierColor: Colors.black87,
+      builder: (context) => _FullScreenImageViewer(
+        imageUrl: imageUrl,
+        imageFile: imageFile,
+        title: title,
+      ),
+    );
+  }
+  
 }
 
 // ==================== 지원 클래스 ====================
@@ -814,4 +847,141 @@ class ImageFileInfo {
 
   @override
   String toString() => '${width}x$height, ${sizeInKB}KB ($sizeInMB MB)';
+}
+
+/// 🔍 전체화면 이미지 뷰어 위젯
+class _FullScreenImageViewer extends StatefulWidget {
+  final String? imageUrl;
+  final File? imageFile;
+  final String? title;
+
+  const _FullScreenImageViewer({
+    this.imageUrl,
+    this.imageFile,
+    this.title,
+  });
+
+  @override
+  State<_FullScreenImageViewer> createState() => _FullScreenImageViewerState();
+}
+
+class _FullScreenImageViewerState extends State<_FullScreenImageViewer> {
+  final TransformationController _transformController = TransformationController();
+  int _rotationQuarter = 0;  // 0, 1, 2, 3 (90도씩)
+  bool _isLoading = true;
+
+  @override
+  void dispose() {
+    _transformController.dispose();
+    super.dispose();
+  }
+
+  void _rotateLeft() {
+    setState(() {
+      _rotationQuarter = (_rotationQuarter - 1) % 4;
+    });
+  }
+
+  void _rotateRight() {
+    setState(() {
+      _rotationQuarter = (_rotationQuarter + 1) % 4;
+    });
+  }
+
+  void _resetView() {
+    setState(() {
+      _transformController.value = Matrix4.identity();
+      _rotationQuarter = 0;
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: Colors.black,
+      appBar: AppBar(
+        backgroundColor: Colors.black,
+        foregroundColor: Colors.white,
+        elevation: 0,
+        leading: IconButton(
+          icon: const Icon(Icons.close),
+          onPressed: () => Navigator.pop(context),
+        ),
+        title: widget.title != null
+            ? Text(
+                widget.title!,
+                style: const TextStyle(color: Colors.white, fontSize: 16),
+              )
+            : null,
+        centerTitle: true,
+        actions: [
+          // 왼쪽 회전
+          IconButton(
+            icon: const Icon(Icons.rotate_left),
+            onPressed: _rotateLeft,
+            tooltip: '왼쪽으로 회전',
+          ),
+          // 오른쪽 회전
+          IconButton(
+            icon: const Icon(Icons.rotate_right),
+            onPressed: _rotateRight,
+            tooltip: '오른쪽으로 회전',
+          ),
+          // 초기화
+          IconButton(
+            icon: const Icon(Icons.refresh),
+            onPressed: _resetView,
+            tooltip: '초기화',
+          ),
+        ],
+      ),
+      body: Center(
+        child: InteractiveViewer(
+          transformationController: _transformController,
+          minScale: 0.5,
+          maxScale: 4.0,
+          child: RotatedBox(
+            quarterTurns: _rotationQuarter,
+            child: _buildImage(),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildImage() {
+    if (widget.imageFile != null) {
+      return Image.file(
+        widget.imageFile!,
+        fit: BoxFit.contain,
+      );
+    }
+
+    if (widget.imageUrl != null) {
+      return CachedNetworkImage(
+        imageUrl: widget.imageUrl!,
+        fit: BoxFit.contain,
+        placeholder: (context, url) => const Center(
+          child: CircularProgressIndicator(color: Colors.white),
+        ),
+        errorWidget: (context, url, error) => const Center(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(Icons.broken_image, color: Colors.white54, size: 48),
+              SizedBox(height: 8),
+              Text(
+                '이미지를 불러올 수 없습니다',
+                style: TextStyle(color: Colors.white54),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
+    return const Center(
+      child: Icon(Icons.image_not_supported, color: Colors.white54, size: 48),
+    );
+  }
 }

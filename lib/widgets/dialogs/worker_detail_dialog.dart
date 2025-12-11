@@ -1,6 +1,6 @@
 // lib/widgets/dialogs/worker_detail_dialog.dart
 // 공통 근무자/지원자 상세 다이얼로그
-
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
@@ -19,6 +19,7 @@ import '../../theme/app_colors.dart';
 import '../../utils/id_card_helper.dart';
 import '../../screens/business_admin/dialogs/fixed_worker_management_dialog.dart';
 import '../common/loading_button.dart';
+import '../../utils/image_helper.dart';
 
 /// 공통 근무자/지원자 상세 다이얼로그
 /// 
@@ -777,18 +778,53 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
           ),
           SizedBox(height: ResponsiveHelper.spacing(context, 12)),
           if (widget.user.idCardImageUrl != null)
-            ClipRRect(
-              borderRadius: BorderRadius.circular(8),
-              child: Image.network(
-                widget.user.idCardImageUrl!,
-                height: ResponsiveHelper.spacing(context, 150),
-                width: double.infinity,
-                fit: BoxFit.cover,
-                errorBuilder: (_, __, ___) => Container(
-                  height: ResponsiveHelper.spacing(context, 150),
-                  color: AppColors.grey100,
-                  child: Center(child: Icon(Icons.image_not_supported, color: AppColors.grey400)),
-                ),
+            GestureDetector(
+              onTap: () => ImageHelper.showFullScreenViewer(
+                context,
+                imageUrl: widget.user.idCardImageUrl,
+                title: '신분증',
+              ),
+              child: Stack(
+                children: [
+                  Container(
+                    height: ResponsiveHelper.spacing(context, 150),
+                    width: double.infinity,
+                    decoration: BoxDecoration(
+                      color: AppColors.grey100,
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: ClipRRect(
+                      borderRadius: BorderRadius.circular(8),
+                      child: CachedNetworkImage(
+                        imageUrl: widget.user.idCardImageUrl!,
+                        fit: BoxFit.contain,  // ✅ 잘리지 않게 전체 표시
+                        placeholder: (context, url) => const Center(
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        ),
+                        errorWidget: (context, url, error) => Center(
+                          child: Icon(Icons.image_not_supported, color: AppColors.grey400),
+                        ),
+                      ),
+                    ),
+                  ),
+                  // 확대 아이콘 힌트
+                  Positioned(
+                    right: 8,
+                    bottom: 8,
+                    child: Container(
+                      padding: const EdgeInsets.all(4),
+                      decoration: BoxDecoration(
+                        color: Colors.black54,
+                        borderRadius: BorderRadius.circular(4),
+                      ),
+                      child: const Icon(
+                        Icons.zoom_in,
+                        color: Colors.white,
+                        size: 18,
+                      ),
+                    ),
+                  ),
+                ],
               ),
             ),
         ],

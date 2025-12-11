@@ -105,6 +105,30 @@ class _IntegratedWorkforceScreenState extends State<IntegratedWorkforceScreen> {
       appBar: AppBar(
         title: Text(_isCalendarView ? '공고-캘린더' : '공고-리스트'),
             actions: [
+              // 🔥 마감시간 재계산 버튼 (일회성 - 실행 후 삭제!)
+              IconButton(
+                icon: Icon(
+                  Icons.build,
+                  size: ResponsiveHelper.iconSize(context, 24),
+                  color: Colors.orange,
+                ),
+                onPressed: () async {
+                  final confirm = await DialogHelper.showConfirm(
+                    context,
+                    title: '마감시간 재계산',
+                    message: '모든 단기 TO의 마감시간을 재계산합니다.\n\n이 작업은 한번만 실행하세요!',
+                    confirmText: '실행',
+                    confirmColor: Colors.orange,
+                  );
+                  
+                  if (confirm) {
+                    ToastHelper.showInfo('마이그레이션 시작...');
+                    await _firestoreService.fixAllDeadlines();
+                    ToastHelper.showSuccess('마감시간 재계산 완료!');
+                  }
+                },
+                tooltip: '마감시간 재계산',
+              ),
               // ✅ 통계 재계산 버튼 (임시 디버그용)
               IconButton(
                 icon: Icon(

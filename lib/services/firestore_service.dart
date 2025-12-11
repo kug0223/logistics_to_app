@@ -359,12 +359,73 @@ class FirestoreService {
       final toDoc = await _firestore.collection('tos').doc(toId).get();
       final toData = toDoc.data();
       final groupId = toData?['groupId'] as String?;
+      final jobType = toData?['jobType'] ?? 'short';
+      final workDate = (toData?['date'] as Timestamp?)?.toDate().toLocal() ?? DateTime.now();
+      final hoursBeforeStart = toData?['hoursBeforeStart'] ?? 2;
       
-      await _firestore.collection('tos').doc(toId).update({
+      // 🔥 WorkDetails 조회 및 마감시간 재계산
+      final workDetailsSnapshot = await _firestore
+          .collection('tos')
+          .doc(toId)
+          .collection('workDetails')
+          .get();
+      
+      if (workDetailsSnapshot.docs.isNotEmpty) {
+        final workBatch = _firestore.batch();
+        
+        for (var workDoc in workDetailsSnapshot.docs) {
+          final workData = workDoc.data();
+          
+          final updates = <String, dynamic>{
+            'isManualClosed': false,
+            'closedAt': FieldValue.delete(),
+            'closedBy': FieldValue.delete(),
+          };
+          
+          // 🔥 단기공고만 마감시간 재계산
+          if (jobType != 'long_term') {
+            final startTime = workData['startTime'] as String;
+            final timeParts = startTime.split(':');
+            final workStartDateTime = DateTime(
+              workDate.year,
+              workDate.month,
+              workDate.day,
+              int.parse(timeParts[0]),
+              int.parse(timeParts[1]),
+            );
+            final newDeadline = workStartDateTime.subtract(Duration(hours: hoursBeforeStart));
+            updates['applicationDeadline'] = Timestamp.fromDate(newDeadline);
+          }
+          
+          workBatch.update(workDoc.reference, updates);
+        }
+        
+        await workBatch.commit();
+        print('   ✅ WorkDetails 재오픈 + 마감시간 재계산: ${workDetailsSnapshot.docs.length}개');
+      }
+      
+      // 🔥 TO 문서 업데이트 (단기공고는 마감시간도 재계산)
+      final toUpdates = <String, dynamic>{
         'isManualClosed': false,
         'reopenedAt': FieldValue.serverTimestamp(),
         'reopenedBy': adminUID,
-      });
+      };
+      
+      if (jobType != 'long_term' && workDetailsSnapshot.docs.isNotEmpty) {
+        final firstWorkStart = workDetailsSnapshot.docs.first.data()['startTime'] as String;
+        final timeParts = firstWorkStart.split(':');
+        final startDateTime = DateTime(
+          workDate.year,
+          workDate.month,
+          workDate.day,
+          int.parse(timeParts[0]),
+          int.parse(timeParts[1]),
+        );
+        final newTODeadline = startDateTime.subtract(Duration(hours: hoursBeforeStart));
+        toUpdates['applicationDeadline'] = Timestamp.fromDate(newTODeadline);
+      }
+      
+      await _firestore.collection('tos').doc(toId).update(toUpdates);
       
       await updateTOStatus(toId);
       
@@ -478,6 +539,11 @@ class FirestoreService {
       print('✅ TO 재오픈 완료: ${snapshot.docs.length}개');
 
       for (var doc in snapshot.docs) {
+        final toData = doc.data();
+        final jobType = toData['jobType'] ?? 'short';
+        final workDate = (toData['date'] as Timestamp).toDate().toLocal();
+        final hoursBeforeStart = toData['hoursBeforeStart'] ?? 2;
+        
         final workDetailsSnapshot = await _firestore
             .collection('tos')
             .doc(doc.id)
@@ -488,15 +554,54 @@ class FirestoreService {
           final workBatch = _firestore.batch();
           
           for (var workDoc in workDetailsSnapshot.docs) {
-            workBatch.update(workDoc.reference, {
+            final workData = workDoc.data();
+            
+            final updates = <String, dynamic>{
               'isManualClosed': false,
               'closedAt': FieldValue.delete(),
               'closedBy': FieldValue.delete(),
-            });
+            };
+            
+            // 🔥 단기공고만 마감시간 재계산
+            if (jobType != 'long_term') {
+              final startTime = workData['startTime'] as String;
+              final timeParts = startTime.split(':');
+              final workStartDateTime = DateTime(
+                workDate.year,
+                workDate.month,
+                workDate.day,
+                int.parse(timeParts[0]),
+                int.parse(timeParts[1]),
+              );
+              final newDeadline = workStartDateTime.subtract(Duration(hours: hoursBeforeStart));
+              updates['applicationDeadline'] = Timestamp.fromDate(newDeadline);
+            }
+            
+            workBatch.update(workDoc.reference, updates);
           }
           
           await workBatch.commit();
-          print('   ✅ WorkDetails 재오픈: ${workDetailsSnapshot.docs.length}개');
+          print('   ✅ WorkDetails 재오픈 + 마감시간 재계산: ${workDetailsSnapshot.docs.length}개');
+        }
+        
+        // 🔥 TO 문서의 applicationDeadline도 재계산 (단기공고만)
+        if (jobType != 'long_term') {
+          final firstWorkStart = workDetailsSnapshot.docs.isNotEmpty
+              ? workDetailsSnapshot.docs.first.data()['startTime'] as String
+              : '09:00';
+          final timeParts = firstWorkStart.split(':');
+          final startDateTime = DateTime(
+            workDate.year,
+            workDate.month,
+            workDate.day,
+            int.parse(timeParts[0]),
+            int.parse(timeParts[1]),
+          );
+          final newTODeadline = startDateTime.subtract(Duration(hours: hoursBeforeStart));
+          
+          await _firestore.collection('tos').doc(doc.id).update({
+            'applicationDeadline': Timestamp.fromDate(newTODeadline),
+          });
         }
         
         clearCache(toId: doc.id);
@@ -909,6 +1014,92 @@ class FirestoreService {
         'averageRating': null,
         'reviews': <ReviewModel>[],
       };
+    }
+  }
+  /// 🔥 일회성: 모든 단기 TO의 마감시간 재계산 (UTC 오류 수정)
+  Future<void> fixAllDeadlines() async {
+    try {
+      print('🔄 전체 마감시간 재계산 시작...');
+      
+      // 단기 TO만 조회
+      final tosSnapshot = await _firestore
+          .collection('tos')
+          .where('jobType', isEqualTo: 'short')
+          .get();
+      
+      int totalTOsFixed = 0;
+      int totalWorkDetailsFixed = 0;
+      
+      for (var toDoc in tosSnapshot.docs) {
+        final toData = toDoc.data();
+        final toId = toDoc.id;
+        final workDate = (toData['date'] as Timestamp).toDate().toLocal();
+        final hoursBeforeStart = toData['hoursBeforeStart'] ?? 2;
+        
+        // WorkDetails 조회
+        final workDetailsSnapshot = await _firestore
+            .collection('tos')
+            .doc(toId)
+            .collection('workDetails')
+            .get();
+        
+        if (workDetailsSnapshot.docs.isEmpty) continue;
+        
+        final batch = _firestore.batch();
+        String? firstStartTime;
+        
+        for (var workDoc in workDetailsSnapshot.docs) {
+          final workData = workDoc.data();
+          final startTime = workData['startTime'] as String;
+          firstStartTime ??= startTime;
+          
+          // 마감시간 재계산
+          final timeParts = startTime.split(':');
+          final workStartDateTime = DateTime(
+            workDate.year,
+            workDate.month,
+            workDate.day,
+            int.parse(timeParts[0]),
+            int.parse(timeParts[1]),
+          );
+          final newDeadline = workStartDateTime.subtract(Duration(hours: hoursBeforeStart));
+          
+          batch.update(workDoc.reference, {
+            'applicationDeadline': Timestamp.fromDate(newDeadline),
+          });
+          
+          totalWorkDetailsFixed++;
+        }
+        
+        // TO 문서 마감시간도 재계산
+        if (firstStartTime != null) {
+          final timeParts = firstStartTime.split(':');
+          final startDateTime = DateTime(
+            workDate.year,
+            workDate.month,
+            workDate.day,
+            int.parse(timeParts[0]),
+            int.parse(timeParts[1]),
+          );
+          final newTODeadline = startDateTime.subtract(Duration(hours: hoursBeforeStart));
+          
+          batch.update(toDoc.reference, {
+            'applicationDeadline': Timestamp.fromDate(newTODeadline),
+          });
+        }
+        
+        await batch.commit();
+        totalTOsFixed++;
+        
+        print('   ✅ ${toData['title']} (${workDate.month}/${workDate.day}): ${workDetailsSnapshot.docs.length}개 WorkDetail 수정');
+      }
+      
+      print('✅ 마감시간 재계산 완료!');
+      print('   - TO: $totalTOsFixed개');
+      print('   - WorkDetails: $totalWorkDetailsFixed개');
+      
+    } catch (e) {
+      print('❌ 마감시간 재계산 실패: $e');
     }
   }
 }

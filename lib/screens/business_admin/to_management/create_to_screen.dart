@@ -859,12 +859,14 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
       for (int i = 0; i < sortedDates.length; i++) {
         final date = sortedDates[i];
         
+        // 🔥 UTC → 로컬 변환 후 날짜 추출
+        final localDate = date.toLocal();
         final firstWorkStart = _workDetails.first.startTime!;
         final timeParts = firstWorkStart.split(':');
         final startDateTime = DateTime(
-          date.year,
-          date.month,
-          date.day,
+          localDate.year,
+          localDate.month,
+          localDate.day,
           int.parse(timeParts[0]),
           int.parse(timeParts[1]),
         );

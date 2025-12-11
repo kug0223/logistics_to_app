@@ -1,5 +1,5 @@
 // lib/screens/business_admin/dialogs/attendance_status_dialog.dart
-// 인원현황 다이얼로그 - 출퇴근 관리 기능 포함
+// 당일명단 다이얼로그 - 출퇴근 관리 기능 포함
 // 
 // 주요 기능:
 // - 사업장별 확정 인원 조회
@@ -38,7 +38,7 @@ import '../../../utils/attendance_list_pdf.dart';
 // Dialogs
 import 'fixed_worker_management_dialog.dart';
 
-/// 인원현황 다이얼로그 - 출퇴근 관리 기능 포함
+/// 당일명단 다이얼로그 - 출퇴근 관리 기능 포함
 class AttendanceStatusDialog extends StatefulWidget {
   final DateTime date;
   final List<String> businessIds;
@@ -152,9 +152,9 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
         _isLoading = false;
       });
       
-      print('✅ 인원현황 로드 완료: ${confirmedWorkers.length}명');
+      print('✅ 당일명단 로드 완료: ${confirmedWorkers.length}명');
     } catch (e) {
-      print('❌ 인원현황 데이터 로드 실패: $e');
+      print('❌ 당일명단 데이터 로드 실패: $e');
       setState(() => _isLoading = false);
       ToastHelper.showError('데이터 로드 실패');
     }
@@ -466,7 +466,7 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
             // 내용
             Flexible(
               child: _isLoading
-                  ? const LoadingWidget(message: '인원현황 조회 중...')
+                  ? const LoadingWidget(message: '당일명단 조회 중...')
                   : _confirmedWorkers.isEmpty
                       ? _buildEmptyState()
                       : _buildContent(theme),
@@ -511,7 +511,7 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
                   borderRadius: BorderRadius.circular(12),
                 ),
                 child: Icon(
-                  Icons.people_alt,
+                  Icons.how_to_reg,
                   color: Colors.white,
                   size: ResponsiveHelper.iconSize(context, 24),
                 ),
@@ -522,7 +522,7 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      '인원현황',
+                      '당일명단',
                       style: ResponsiveHelper.titleStyle(context).copyWith(
                         color: Colors.white,
                         fontWeight: FontWeight.bold,
@@ -982,6 +982,15 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
       final endTime = workDetailTime['endTime'] ?? '';
       if (startTime.isNotEmpty && endTime.isNotEmpty) {
         timeStr = '$startTime ~ $endTime';
+      }
+    }
+    
+    // ✅ WorkDetail에서 못 찾으면 Application에서 시간 정보 가져오기 (장기 공고 대응)
+    if (timeStr.isEmpty && workers.isNotEmpty) {
+      final firstApp = workers.first;
+      if (firstApp.startTime != null && firstApp.endTime != null &&
+          firstApp.startTime!.isNotEmpty && firstApp.endTime!.isNotEmpty) {
+        timeStr = '${firstApp.startTime} ~ ${firstApp.endTime}';
       }
     }
     
