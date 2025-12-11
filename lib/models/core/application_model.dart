@@ -148,20 +148,20 @@ class ApplicationModel {
       originalWorkType: data['originalWorkType'],
       originalWage: data['originalWage'],
       changedAt: data['changedAt'] != null
-          ? (data['changedAt'] as Timestamp).toDate()
+          ? (data['changedAt'] as Timestamp).toDate().toLocal()  // 🔥 .toLocal() 추가
           : null,
       changedBy: data['changedBy'],
       status: data['status'] ?? 'PENDING',
       appliedAt: data['appliedAt'] != null
-          ? (data['appliedAt'] as Timestamp).toDate()
+          ? (data['appliedAt'] as Timestamp).toDate().toLocal()  // 🔥 .toLocal() 추가
           : DateTime.now(),
       confirmedAt: data['confirmedAt'] != null
-          ? (data['confirmedAt'] as Timestamp).toDate()
+          ? (data['confirmedAt'] as Timestamp).toDate().toLocal()  // 🔥 .toLocal() 추가
           : null,
       confirmedBy: data['confirmedBy'],
       // ⭐ Phase 2: 추가
       canceledAt: data['canceledAt'] != null
-          ? (data['canceledAt'] as Timestamp).toDate()
+          ? (data['canceledAt'] as Timestamp).toDate().toLocal()  // 🔥 .toLocal() 추가
           : null,
       cancelReason: data['cancelReason'],
       conflictingAppId: data['conflictingAppId'],
@@ -173,14 +173,14 @@ class ApplicationModel {
       cancelMessage: data['cancelMessage'],
       // 🔥 Phase A: 퇴사 관리
       resignRequestedAt: data['resignRequestedAt'] != null
-          ? (data['resignRequestedAt'] as Timestamp).toDate()
+          ? (data['resignRequestedAt'] as Timestamp).toDate().toLocal()  // 🔥 .toLocal() 추가
           : null,
       resignRequestDate: data['resignRequestDate'] != null
           ? (data['resignRequestDate'] as Timestamp).toDate()
           : null,
       resignStatus: data['resignStatus'],
       resignApprovedAt: data['resignApprovedAt'] != null
-          ? (data['resignApprovedAt'] as Timestamp).toDate()
+          ? (data['resignApprovedAt'] as Timestamp).toDate().toLocal()  // 🔥 .toLocal() 추가
           : null,
       resignApprovedBy: data['resignApprovedBy'],
       resignRejectReason: data['resignRejectReason'],
@@ -190,12 +190,12 @@ class ApplicationModel {
       // 🔥 Phase C: 계약해지 관리
       terminationStatus: data['terminationStatus'],
       terminationRequestedAt: data['terminationRequestedAt'] != null
-          ? (data['terminationRequestedAt'] as Timestamp).toDate()
+          ? (data['terminationRequestedAt'] as Timestamp).toDate().toLocal()  // 🔥 .toLocal() 추가
           : null,
       terminationReason: data['terminationReason'],
       terminationRequestedByUid: data['terminationRequestedByUid'],
       terminationRespondedAt: data['terminationRespondedAt'] != null
-          ? (data['terminationRespondedAt'] as Timestamp).toDate()
+          ? (data['terminationRespondedAt'] as Timestamp).toDate().toLocal()  // 🔥 .toLocal() 추가
           : null,
       terminationRejectReason: data['terminationRejectReason'],
       // ⭐ 장기공고 희망 시작일

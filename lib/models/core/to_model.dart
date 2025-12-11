@@ -158,7 +158,7 @@ class TOModel {
       startTime: data['startTime'] ?? '',
       endTime: data['endTime'] ?? '',
       applicationDeadline: data['applicationDeadline'] != null
-          ? (data['applicationDeadline'] as Timestamp).toDate()
+          ? (data['applicationDeadline'] as Timestamp).toDate().toLocal()  // 🔥 .toLocal() 추가
           : DateTime(
               (data['date'] as Timestamp).toDate().year,
               (data['date'] as Timestamp).toDate().month,
@@ -209,7 +209,7 @@ class TOModel {
       // ✅ 예약 공개 관리
       publishMode: data['publishMode'] ?? 'immediate',
       publishAt: data['publishAt'] != null
-          ? (data['publishAt'] as Timestamp).toDate()
+          ? (data['publishAt'] as Timestamp).toDate().toLocal()  // 🔥 .toLocal() 추가
           : null,
       isPublished: data['isPublished'] ?? true,  // 기존 데이터는 공개 상태
       publishDaysBefore: data['publishDaysBefore'],

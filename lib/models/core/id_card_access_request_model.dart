@@ -68,9 +68,9 @@ class IdCardAccessRequestModel {
       reason: _reasonFromString(map['reason'] ?? 'other'),
       customReason: map['customReason'],
       status: _statusFromString(map['status'] ?? 'pending'),
-      requestedAt: (map['requestedAt'] as Timestamp?)?.toDate() ?? DateTime.now(),
-      respondedAt: (map['respondedAt'] as Timestamp?)?.toDate(),
-      expiresAt: (map['expiresAt'] as Timestamp?)?.toDate(),
+      requestedAt: (map['requestedAt'] as Timestamp?)?.toDate().toLocal() ?? DateTime.now(),  // 🔥 .toLocal() 추가
+      respondedAt: (map['respondedAt'] as Timestamp?)?.toDate().toLocal(),  // 🔥 .toLocal() 추가
+      expiresAt: (map['expiresAt'] as Timestamp?)?.toDate().toLocal(),  // 🔥 .toLocal() 추가
       applicationId: map['applicationId'],
       rejectionReason: map['rejectionReason'],
     );

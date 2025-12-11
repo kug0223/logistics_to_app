@@ -52,8 +52,8 @@ class ReviewModel {
       rating: map['rating'] ?? 0,
       comment: map['comment'],
       wouldRehire: map['wouldRehire'] ?? true,
-      createdAt: (map['createdAt'] as Timestamp?)?.toDate() ?? DateTime.now(),
-      updatedAt: (map['updatedAt'] as Timestamp?)?.toDate(),
+      createdAt: (map['createdAt'] as Timestamp?)?.toDate().toLocal() ?? DateTime.now(),  // 🔥 .toLocal() 추가
+      updatedAt: (map['updatedAt'] as Timestamp?)?.toDate().toLocal(),  // 🔥 .toLocal() 추가
     );
   }
 

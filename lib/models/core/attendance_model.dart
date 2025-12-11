@@ -100,14 +100,14 @@ class AttendanceModel {
       checkInLng: map['checkInLng']?.toDouble(),
       checkInMethod: map['checkInMethod'],
       checkInTime: map['checkInTime'] != null 
-          ? (map['checkInTime'] as Timestamp).toDate() 
+          ? (map['checkInTime'] as Timestamp).toDate().toLocal()  // 🔥 .toLocal() 추가
           : null,
       checkOut: map['checkOut'],
       checkOutLat: map['checkOutLat']?.toDouble(),
       checkOutLng: map['checkOutLng']?.toDouble(),
       checkOutMethod: map['checkOutMethod'],
       checkOutTime: map['checkOutTime'] != null
-          ? (map['checkOutTime'] as Timestamp).toDate()
+          ? (map['checkOutTime'] as Timestamp).toDate().toLocal()  // 🔥 .toLocal() 추가
           : null,
       status: map['status'] ?? 'absent',
       isModified: map['isModified'] ?? false,
@@ -115,13 +115,13 @@ class AttendanceModel {
       modifyReason: map['modifyReason'],
       modifiedBy: map['modifiedBy'],
       modifiedAt: map['modifiedAt'] != null
-          ? (map['modifiedAt'] as Timestamp).toDate()
+          ? (map['modifiedAt'] as Timestamp).toDate().toLocal()  // 🔥 .toLocal() 추가
           : null,
       workHours: map['workHours']?.toDouble(),
       calculatedWage: map['calculatedWage'],
       confirmedBy: map['confirmedBy'],
       confirmedAt: map['confirmedAt'] != null
-          ? (map['confirmedAt'] as Timestamp).toDate()
+          ? (map['confirmedAt'] as Timestamp).toDate().toLocal()  // 🔥 .toLocal() 추가
           : null,
       createdAt: (map['createdAt'] as Timestamp).toDate(),
       updatedAt: map['updatedAt'] != null

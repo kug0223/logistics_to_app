@@ -143,12 +143,12 @@ class ScheduleChangeRequestModel {
       requestType: _requestTypeFromString(map['requestType']),
       requestedBy: _requesterTypeFromString(map['requestedBy']),
       requestedByUid: map['requestedByUid'] ?? '',
-      requestedAt: (map['requestedAt'] as Timestamp).toDate(),
+      requestedAt: (map['requestedAt'] as Timestamp).toDate().toLocal(),  // 🔥 .toLocal() 추가
       reason: map['reason'],
       status: _statusFromString(map['status']),
       respondedByUid: map['respondedByUid'],
       respondedAt: map['respondedAt'] != null 
-          ? (map['respondedAt'] as Timestamp).toDate() 
+          ? (map['respondedAt'] as Timestamp).toDate().toLocal()  // 🔥 .toLocal() 추가
           : null,
       rejectReason: map['rejectReason'],
       affectsSalary: map['affectsSalary'] ?? true,
