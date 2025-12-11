@@ -60,8 +60,8 @@ class NotificationModel {
       body: map['body'] ?? '',
       data: map['data'],
       isRead: map['isRead'] ?? false,
-      createdAt: (map['createdAt'] as Timestamp?)?.toDate() ?? DateTime.now(),
-      readAt: (map['readAt'] as Timestamp?)?.toDate(),
+      createdAt: (map['createdAt'] as Timestamp?)?.toDate().toLocal() ?? DateTime.now(),  // 🔥 .toLocal() 추가
+      readAt: (map['readAt'] as Timestamp?)?.toDate().toLocal(),  // 🔥 .toLocal() 추가
     );
   }
 
