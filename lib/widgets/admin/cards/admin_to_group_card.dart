@@ -53,6 +53,7 @@ class TOGroupCard extends StatefulWidget {
   // ✨ Lazy Loading 상태
   final bool isGroupLoading;      // 그룹 로딩 중
   final Set<String> loadingTOs;   // 로딩 중인 TO 목록
+  final void Function(Set<String> affectedTOIds)? onAffectedTOsChanged;  // 🔥 추가
 
   const TOGroupCard({
     super.key,
@@ -68,6 +69,7 @@ class TOGroupCard extends StatefulWidget {
     this.selectedDate,
     this.isGroupLoading = false,
     this.loadingTOs = const {},
+    this.onAffectedTOsChanged,  // 🔥 추가
   });
 
   @override
@@ -472,6 +474,7 @@ class _TOGroupCardState extends State<TOGroupCard> with SingleTickerProviderStat
                                           onToggleExpand: () => widget.onToggleTOExpand(toItem.to.id),
                                           isLoading: widget.loadingTOs.contains(toItem.to.id),
                                           onLocalStatsChanged: () => setState(() {}),
+                                          onAffectedTOsChanged: widget.onAffectedTOsChanged,  // 🔥 추가
                                         );
                                       }).toList(),
                                     ),
@@ -567,6 +570,7 @@ class _TOGroupCardState extends State<TOGroupCard> with SingleTickerProviderStat
                                           firestoreService: widget.firestoreService,
                                           onChanged: widget.onChanged,
                                           onLocalStatsChanged: () => setState(() {}),
+                                          onAffectedTOsChanged: widget.onAffectedTOsChanged,  // 🔥 추가
                                         );
                                       }),
                                     ],

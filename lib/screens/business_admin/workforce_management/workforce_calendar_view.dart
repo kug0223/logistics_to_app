@@ -584,6 +584,7 @@ class _WorkforceCalendarViewState extends State<WorkforceCalendarView> {
                   groupItem.masterTO.groupId ?? groupItem.masterTO.id
                 ),
                 loadingTOs: _loadingTOs,
+                onAffectedTOsChanged: _refreshAffectedTOs,  // 🔥 추가
               ),
             );
           },
@@ -687,6 +688,43 @@ class _WorkforceCalendarViewState extends State<WorkforceCalendarView> {
     
     // 펼치기
     setState(() => _expandedTOs.add(key));
+  }
+  /// 🔥 영향받은 TO들만 개별 새로고침 (카드 접힘 상태 유지)
+  Future<void> _refreshAffectedTOs(Set<String> affectedTOIds) async {
+    if (affectedTOIds.isEmpty) return;
+    
+    print('🔄 [캘린더] 영향받은 TO ${affectedTOIds.length}개 새로고침: $affectedTOIds');
+    
+    for (var toId in affectedTOIds) {
+      // 모든 그룹에서 해당 TO 찾기
+      for (var groupItem in _allGroupItems) {
+        final toItem = groupItem.groupTOs.cast<TOItem?>().firstWhere(
+          (item) => item?.to.id == toId,
+          orElse: () => null,
+        );
+        
+        if (toItem != null) {
+          try {
+            // TO 통계 새로고침 (캐시 무효화 후 다시 로드)
+            _firestoreService.clearCache(toId: toId);
+            
+            final result = await _firestoreService.loadTOWorkDetails(toItem.to);
+            toItem.setWorkDetails(
+              result['workDetails'] as List<WorkDetailModel>,
+              result['workStats'] as Map<String, Map<String, int>>,
+            );
+            
+            print('✅ [캘린더] TO $toId 새로고침 완료');
+          } catch (e) {
+            print('❌ [캘린더] TO $toId 새로고침 실패: $e');
+          }
+          break;  // 찾았으면 다음 toId로
+        }
+      }
+    }
+    
+    // UI 갱신
+    if (mounted) setState(() {});
   }
 
 

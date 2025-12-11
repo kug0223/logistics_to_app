@@ -827,14 +827,31 @@ extension ApplicationFirestore on FirestoreService {
         updateData['rejectMessage'] = rejectMessage;
       }
       
-      // ✅ TO 찾기
-      final toSnapshot = await _firestore
-          .collection('tos')
-          .where('businessId', isEqualTo: businessId)
-          .where('title', isEqualTo: toTitle)
-          .where('date', isEqualTo: workDate)
-          .limit(1)
-          .get();
+      // ✅ TO 찾기 (장기공고 고려)
+      final isLongTerm = appData['isLongTermApplication'] == true;
+      
+      QuerySnapshot toSnapshot;
+      if (isLongTerm) {
+        // 🔥 장기공고: date 대신 isLongTerm + title로 검색
+        toSnapshot = await _firestore
+            .collection('tos')
+            .where('businessId', isEqualTo: businessId)
+            .where('title', isEqualTo: toTitle)
+            .where('isLongTerm', isEqualTo: true)
+            .limit(1)
+            .get();
+        print('🔍 [확정취소] 장기공고 TO 검색: ${toSnapshot.docs.length}건');
+      } else {
+        // 단기공고: 기존 방식
+        toSnapshot = await _firestore
+            .collection('tos')
+            .where('businessId', isEqualTo: businessId)
+            .where('title', isEqualTo: toTitle)
+            .where('date', isEqualTo: workDate)
+            .limit(1)
+            .get();
+        print('🔍 [확정취소] 단기공고 TO 검색: ${toSnapshot.docs.length}건');
+      }
 
       if (toSnapshot.docs.isEmpty) {
         await _firestore.collection('applications').doc(applicationId).update(updateData);
@@ -844,7 +861,7 @@ extension ApplicationFirestore on FirestoreService {
 
       final toDoc = toSnapshot.docs.first;
       final toId = toDoc.id;
-      final toData = toDoc.data();
+      final toData = toDoc.data() as Map<String, dynamic>;  // 🔥 캐스팅 추가
       final groupId = toData['groupId'] as String?;
       final workDetailId = appData['workDetailId'] as String?;
 

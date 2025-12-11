@@ -21,6 +21,17 @@ import 'fixed_worker_management_dialog.dart';
 import '../../../widgets/common/loading_button.dart';
 import '../../../utils/format_helper.dart';
 
+/// 다이얼로그 결과
+class WorkApplicantsDialogResult {
+  final bool hasChanges;
+  final Set<String> affectedTOIds;  // 충돌로 영향받은 다른 TO ID
+  
+  const WorkApplicantsDialogResult({
+    this.hasChanges = false,
+    this.affectedTOIds = const {},
+  });
+}
+
 /// 업무별 지원자 관리 다이얼로그 - 개선된 버전
 class WorkApplicantsDialog extends StatefulWidget {
   final WorkDetailModel work;
@@ -223,7 +234,10 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog> {
         canPop: false,
         onPopInvokedWithResult: (didPop, result) {
           if (!didPop) {
-            Navigator.pop(context, _hasChanges);
+            Navigator.pop(context, WorkApplicantsDialogResult(
+              hasChanges: _hasChanges,
+              affectedTOIds: _affectedOtherTOIds,
+            ));
           }
         },
         child: Dialog(
@@ -328,7 +342,10 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog> {
           
           // 닫기 버튼
           IconButton(
-            onPressed: () => Navigator.pop(context, _hasChanges),  // ✅ 변경 여부 반환
+            onPressed: () => Navigator.pop(context, WorkApplicantsDialogResult(
+              hasChanges: _hasChanges,
+              affectedTOIds: _affectedOtherTOIds,
+            )),
             icon: Icon(Icons.close, color: Colors.white),
             padding: EdgeInsets.zero,
             constraints: BoxConstraints(),

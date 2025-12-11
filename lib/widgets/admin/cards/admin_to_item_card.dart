@@ -45,7 +45,8 @@ class TOItemCard extends StatefulWidget {
   final bool isExpanded;
   final VoidCallback onToggleExpand;
   final bool isLoading;  // ✨ 추가: WorkDetails 로딩 중
-  final VoidCallback? onLocalStatsChanged;  // ✅ 추가: 로컬 통계 변경 콜백
+  final VoidCallback? onLocalStatsChanged;
+  final void Function(Set<String> affectedTOIds)? onAffectedTOsChanged;  // 🔥 추가
 
   const TOItemCard({
     super.key,
@@ -56,8 +57,9 @@ class TOItemCard extends StatefulWidget {
     required this.onChanged,
     required this.isExpanded,
     required this.onToggleExpand,
-    this.isLoading = false,  // ✨ 추가
-    this.onLocalStatsChanged,  // ✅ 추가
+    this.isLoading = false,
+    this.onLocalStatsChanged,
+    this.onAffectedTOsChanged,  // 🔥 추가
   });
 
   @override
@@ -331,6 +333,7 @@ class _TOItemCardState extends State<TOItemCard> {
                                                 setState(() {});
                                                 widget.onLocalStatsChanged?.call();
                                               },
+                                              onAffectedTOsChanged: widget.onAffectedTOsChanged,  // 🔥 추가
                                             );
                                           }),
                                         ],

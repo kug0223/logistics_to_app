@@ -509,7 +509,7 @@ class _WorkforceListViewState extends State<WorkforceListView> {
                 groupItem.masterTO.groupId ?? groupItem.masterTO.id
               ),
               expandedTOs: _expandedTOs,
-              onToggleExpand: () => _handleGroupExpand(groupItem),  // ✨ 변경
+              onToggleExpand: () => _handleGroupExpand(groupItem),
               onToggleTOExpand: (toId) async {
                 // toId로 해당 TOItem 찾기
                 if (groupItem.groupTOs.isEmpty) return;
@@ -524,6 +524,7 @@ class _WorkforceListViewState extends State<WorkforceListView> {
                 groupItem.masterTO.groupId ?? groupItem.masterTO.id
               ),
               loadingTOs: _loadingTOs,
+              onAffectedTOsChanged: _refreshAffectedTOs,  // 🔥 추가
             ),
           );
         },
@@ -651,6 +652,43 @@ class _WorkforceListViewState extends State<WorkforceListView> {
     
     // 펼치기
     setState(() => _expandedGroups.add(key));
+  }
+  /// 🔥 영향받은 TO들만 개별 새로고침 (카드 접힘 상태 유지)
+  Future<void> _refreshAffectedTOs(Set<String> affectedTOIds) async {
+    if (affectedTOIds.isEmpty) return;
+    
+    print('🔄 영향받은 TO ${affectedTOIds.length}개 새로고침: $affectedTOIds');
+    
+    for (var toId in affectedTOIds) {
+      // 모든 그룹에서 해당 TO 찾기
+      for (var groupItem in _allGroupItems) {
+        final toItem = groupItem.groupTOs.cast<TOItem?>().firstWhere(
+          (item) => item?.to.id == toId,
+          orElse: () => null,
+        );
+        
+        if (toItem != null) {
+          try {
+            // TO 통계 새로고침 (캐시 무효화 후 다시 로드)
+            _firestoreService.clearCache(toId: toId);
+            
+            final result = await _firestoreService.loadTOWorkDetails(toItem.to);
+            toItem.setWorkDetails(
+              result['workDetails'] as List<WorkDetailModel>,
+              result['workStats'] as Map<String, Map<String, int>>,
+            );
+            
+            print('✅ TO $toId 새로고침 완료');
+          } catch (e) {
+            print('❌ TO $toId 새로고침 실패: $e');
+          }
+          break;  // 찾았으면 다음 toId로
+        }
+      }
+    }
+    
+    // UI 갱신
+    if (mounted) setState(() {});
   }
 
   /// ✨ TO 카드 펼침 핸들러 (Lazy Loading)

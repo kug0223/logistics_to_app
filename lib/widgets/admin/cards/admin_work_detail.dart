@@ -35,7 +35,8 @@ class WorkDetailRow extends StatefulWidget {
   final TOItem toItem;
   final FirestoreService firestoreService;
   final VoidCallback onChanged;
-  final VoidCallback? onLocalStatsChanged;  // ✅ 추가: 로컬 통계 변경 콜백
+  final VoidCallback? onLocalStatsChanged;
+  final void Function(Set<String> affectedTOIds)? onAffectedTOsChanged;  // 🔥 추가
 
   const WorkDetailRow({
     super.key,
@@ -45,7 +46,8 @@ class WorkDetailRow extends StatefulWidget {
     required this.toItem,
     required this.firestoreService,
     required this.onChanged,
-    this.onLocalStatsChanged,  // ✅ 추가
+    this.onLocalStatsChanged,
+    this.onAffectedTOsChanged,  // 🔥 추가
   });
 
   @override
@@ -336,7 +338,7 @@ class _WorkDetailRowState extends State<WorkDetailRow> {
 
   /// 지원자 다이얼로그 표시
   Future<void> _showApplicantsDialog(BuildContext context) async {
-    final hasChanges = await showDialog<bool>(
+    final result = await showDialog<WorkApplicantsDialogResult>(
       context: context,
       builder: (context) => WorkApplicantsDialog(
         toItem: widget.toItem,
@@ -346,9 +348,14 @@ class _WorkDetailRowState extends State<WorkDetailRow> {
     );
     
     // ⭐ 다이얼로그 닫힌 후 로컬 업데이트 반영
-    if (hasChanges == true && mounted) {
+    if (result != null && result.hasChanges && mounted) {
       setState(() {});  // 자기 자신 rebuild
       widget.onLocalStatsChanged?.call();  // 부모 TOGroupCard rebuild
+      
+      // 🔥 충돌로 영향받은 다른 TO가 있으면 상위에 알림
+      if (result.affectedTOIds.isNotEmpty) {
+        widget.onAffectedTOsChanged?.call(result.affectedTOIds);
+      }
     }
   }
 }
