@@ -669,16 +669,30 @@ class _WorkforceListViewState extends State<WorkforceListView> {
         
         if (toItem != null) {
           try {
-            // TO 통계 새로고침 (캐시 무효화 후 다시 로드)
+            // ✅ 캐시 무효화
             _firestoreService.clearCache(toId: toId);
             
-            final result = await _firestoreService.loadTOWorkDetails(toItem.to);
-            toItem.setWorkDetails(
-              result['workDetails'] as List<WorkDetailModel>,
-              result['workStats'] as Map<String, Map<String, int>>,
-            );
+            // ✅ TO 문서 직접 조회 (Increment된 정확한 값)
+            final toDoc = await _firestoreService.getTO(toId);
+            if (toDoc != null) {
+              // 겉 카드 통계 즉시 업데이트
+              toItem.updateOuterStats(
+                confirmed: toDoc.totalConfirmed,
+                pending: toDoc.totalPending,
+                required: toDoc.totalRequired,
+              );
+              print('✅ TO $toId 겉 통계 갱신: 확정=${toDoc.totalConfirmed}, 대기=${toDoc.totalPending}');
+            }
             
-            print('✅ TO $toId 새로고침 완료');
+            // 펼쳐진 상태면 WorkDetails도 새로고침
+            if (_expandedTOs.contains(toId)) {
+              final result = await _firestoreService.loadTOWorkDetails(toItem.to);
+              toItem.setWorkDetails(
+                result['workDetails'] as List<WorkDetailModel>,
+                result['workStats'] as Map<String, Map<String, int>>,
+              );
+              print('✅ TO $toId WorkDetails도 갱신');
+            }
           } catch (e) {
             print('❌ TO $toId 새로고침 실패: $e');
           }

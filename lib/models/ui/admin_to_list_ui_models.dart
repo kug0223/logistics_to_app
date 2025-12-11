@@ -38,10 +38,10 @@ class TOItem {
   List<WorkDetailModel>? _workDetails;  // nullable - 필요할 때 로드
   bool isWorkDetailLoaded;  // 업무 상세 로드 여부
   
-  // 통계 (겉 카드용 - TO 문서에서 가져옴)
-  final int confirmedCount;
-  final int pendingCount;
-  final int totalRequired;
+  // 통계 (겉 카드용 - TO 문서에서 가져옴) - ✅ final 제거
+  int confirmedCount;
+  int pendingCount;
+  int totalRequired;
   
   // 업무별 통계 (펼쳤을 때 로드)
   Map<String, Map<String, int>>? workDetailStats;
@@ -64,6 +64,27 @@ class TOItem {
     _workDetails = details;
     workDetailStats = stats;
     isWorkDetailLoaded = true;
+    
+    // ✅ workStats에서 겉 카드 통계도 동기화
+    int totalConfirmed = 0;
+    int totalPending = 0;
+    for (var stat in stats.values) {
+      totalConfirmed += stat['confirmed'] ?? 0;
+      totalPending += stat['pending'] ?? 0;
+    }
+    confirmedCount = totalConfirmed;
+    pendingCount = totalPending;
+  }
+  
+  // ✅ 겉 카드 통계만 업데이트 (TO 문서 기준)
+  void updateOuterStats({
+    required int confirmed,
+    required int pending,
+    int? required,
+  }) {
+    confirmedCount = confirmed;
+    pendingCount = pending;
+    if (required != null) totalRequired = required;
   }
   
   // 로드 필요 여부

@@ -861,9 +861,9 @@ extension ApplicationFirestore on FirestoreService {
 
       final toDoc = toSnapshot.docs.first;
       final toId = toDoc.id;
-      final toData = toDoc.data() as Map<String, dynamic>;  // 🔥 캐스팅 추가
+      final toData = toDoc.data() as Map<String, dynamic>;
       final groupId = toData['groupId'] as String?;
-      final workDetailId = appData['workDetailId'] as String?;
+      final workDetailId = appData['workDetailId'] as String?; 
 
       // ✅ Batch로 한 번에 처리
       final batch = _firestore.batch();
@@ -992,6 +992,7 @@ extension ApplicationFirestore on FirestoreService {
       final toId = toDoc.id;
       final toData = toDoc.data() as Map<String, dynamic>;
       final groupId = toData['groupId'] as String?;
+      final workDetailId = appData['workDetailId'] as String?;  // ✅ 추가
 
       // ✅ Batch로 한 번에 처리
       final batch = _firestore.batch();
