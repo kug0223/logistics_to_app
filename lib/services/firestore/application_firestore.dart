@@ -486,10 +486,17 @@ extension ApplicationFirestore on FirestoreService {
       
       // 4-1. 지원서 생성
       final appRef = _firestore.collection('applications').doc();
+      
+      // ✅ groupId 조회 (이미 toDoc을 아래에서 조회하므로 여기서 미리 조회)
+      final toDocForGroup = await _firestore.collection('tos').doc(toId).get();
+      final groupIdForSave = toDocForGroup.data()?['groupId'] as String?;
+      
       batch.set(appRef, {
         'uid': uid,
         'businessId': businessId,
         'businessName': businessName,
+        'toId': toId,              // ✅ TO 고유 ID 저장
+        'groupId': groupIdForSave, // ✅ 그룹 ID 저장
         'toTitle': toTitle,
         'selectedWorkType': selectedWorkType,
         'workDetailId': workDetailId,

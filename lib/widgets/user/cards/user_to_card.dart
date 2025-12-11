@@ -232,27 +232,38 @@ class _UserTOCardState extends State<UserTOCard> {
   //// 내가 해당 TO에 지원했는지 확인
   bool get _hasAppliedToTO {
     return widget.myApplications.any((app) {
-      final businessMatch = app.businessId == widget.to.businessId;
-      final titleMatch = app.toTitle == widget.to.title;
       final isActive = app.status != 'CANCELED' && 
                        app.status != 'REJECTED' &&
                        app.status != 'AUTO_CANCELED';
       
-      // ✅ 그룹 TO: 같은 사업장 + 같은 제목이면 OK (날짜 비교 생략)
+      if (!isActive) return false;
+      
+      // ✅ toId가 있으면 정확히 매칭 (신규 데이터)
+      if (app.toId != null && app.toId!.isNotEmpty) {
+        // 그룹 TO: groupId로 매칭
+        if (_isGroupTO && app.groupId != null) {
+          return app.groupId == widget.to.groupId;
+        }
+        // 장기/단일 TO: toId로 매칭
+        return app.toId == widget.to.id;
+      }
+      
+      // ✅ toId 없으면 기존 로직 (레거시 데이터 호환)
+      final businessMatch = app.businessId == widget.to.businessId;
+      final titleMatch = app.toTitle == widget.to.title;
+      
       if (_isGroupTO) {
-        return businessMatch && titleMatch && isActive;
+        return businessMatch && titleMatch;
       }
       
-      // ✅ 장기 TO: 같은 사업장 + 같은 제목이면 OK (기간 전체 지원이므로 날짜 비교 생략)
       if (widget.to.isLongTerm) {
-        return businessMatch && titleMatch && isActive;
+        return businessMatch && titleMatch;
       }
       
-      // 단일 단기 TO: 날짜 포함 비교
       final dateMatch = app.workDate.year == widget.to.date.year &&
                         app.workDate.month == widget.to.date.month &&
                         app.workDate.day == widget.to.date.day;
-      return dateMatch && businessMatch && titleMatch && isActive;
+      return dateMatch && businessMatch && titleMatch;
     });
   }
 
@@ -276,29 +287,38 @@ class _UserTOCardState extends State<UserTOCard> {
       return dateMatch && businessMatch && titleMatch && workTypeMatch && isActive;
     });
   }
-  // ✅ 추가: 해당 업무의 Application 가져오기
   ApplicationModel? _getApplicationForWork(String workType) {
-    final targetDate = (_isGroupTO && _selectedDateTO != null) 
-        ? _selectedDateTO!.date 
-        : widget.to.date;
+    // ✅ 그룹 TO + 날짜 선택된 경우: 선택된 날짜의 TO 기준
+    final targetTO = (_isGroupTO && _selectedDateTO != null) 
+        ? _selectedDateTO! 
+        : widget.to;
     
     try {
       return widget.myApplications.firstWhere(
         (app) {
-          final dateMatch = app.workDate.year == targetDate.year &&
-                            app.workDate.month == targetDate.month &&
-                            app.workDate.day == targetDate.day;
-          final businessMatch = app.businessId == widget.to.businessId;
-          final titleMatch = app.toTitle == widget.to.title;
           final workTypeMatch = app.selectedWorkType == workType;
           final isActive = app.status != 'CANCELED' && 
                            app.status != 'REJECTED' &&
                            app.status != 'AUTO_CANCELED';
-          return dateMatch && businessMatch && titleMatch && workTypeMatch && isActive;
+          
+          if (!workTypeMatch || !isActive) return false;
+          
+          // ✅ toId가 있으면 정확히 매칭 (신규 데이터)
+          if (app.toId != null && app.toId!.isNotEmpty) {
+            return app.toId == targetTO.id;
+          }
+          
+          // ✅ toId 없으면 기존 로직 (레거시 데이터 호환)
+          final dateMatch = app.workDate.year == targetTO.date.year &&
+                            app.workDate.month == targetTO.date.month &&
+                            app.workDate.day == targetTO.date.day;
+          final businessMatch = app.businessId == targetTO.businessId;
+          final titleMatch = app.toTitle == targetTO.title;
+          return dateMatch && businessMatch && titleMatch;
         },
       );
     } catch (e) {
-      return null;  // 찾지 못하면 null 반환
+      return null;
     }
   }
   /// 급여 타입 라벨
@@ -367,7 +387,12 @@ class _UserTOCardState extends State<UserTOCard> {
     final isLongTerm = widget.to.isLongTerm;
     final barColor = isLongTerm ? AppColors.longTerm : AppColors.shortTerm;
     
-    return Card(
+    // ✅ 예약 공개 대기 중인지 확인
+    final isPendingPublish = widget.to.isPendingPublish;
+    
+    return Opacity(
+      opacity: isPendingPublish ? 0.6 : 1.0,
+      child: Card(
       margin: EdgeInsets.only(bottom: ResponsiveHelper.spacing(context, 12)),
       elevation: widget.isSelected ? 4 : 1,
       shape: RoundedRectangleBorder(
@@ -456,7 +481,8 @@ class _UserTOCardState extends State<UserTOCard> {
           ],
         ),
       ),
-    );
+      ),  // ✅ Card 닫기
+    );    // ✅ Opacity 닫기
   }
 
   /// 1️⃣ 배지 + 위치
@@ -468,6 +494,12 @@ class _UserTOCardState extends State<UserTOCard> {
       children: [
         // 단기/장기 배지
         _buildJobTypeBadge(context),
+        
+        // ✅ 오픈 예정 배지 (예약 공개 대기 중일 때)
+        if (widget.to.isPendingPublish) ...[
+          SizedBox(width: ResponsiveHelper.spacing(context, 6)),
+          _buildOpenScheduleBadge(context),
+        ],
         
         SizedBox(width: ResponsiveHelper.spacing(context, 10)),
         
@@ -496,6 +528,71 @@ class _UserTOCardState extends State<UserTOCard> {
           _buildAppliedBadge(context),
         ],
       ],
+    );
+  }
+  /// 오픈 예정 배지
+  Widget _buildOpenScheduleBadge(BuildContext context) {
+    final publishAt = widget.to.publishAt;
+    final displayText = publishAt != null 
+        ? '${publishAt.month}/${publishAt.day} ${publishAt.hour.toString().padLeft(2, '0')}:${publishAt.minute.toString().padLeft(2, '0')} 오픈'
+        : '오픈 예정';
+    
+    return Container(
+      padding: EdgeInsets.symmetric(
+        horizontal: ResponsiveHelper.spacing(context, 8),
+        vertical: ResponsiveHelper.spacing(context, 3),
+      ),
+      decoration: BoxDecoration(
+        color: AppColors.warningBg,
+        borderRadius: BorderRadius.circular(4),
+        border: Border.all(color: AppColors.warningLight),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(
+            Icons.schedule,
+            size: ResponsiveHelper.iconSize(context, 12),
+            color: AppColors.warningDark,
+          ),
+          SizedBox(width: ResponsiveHelper.spacing(context, 4)),
+          Text(
+            displayText,
+            style: ResponsiveHelper.tinyStyle(
+              context,
+              color: AppColors.warningDark,
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+  /// 오픈 대기 버튼 (예약 공개 대기 중)
+  Widget _buildPendingButton(BuildContext context) {
+    return Container(
+      padding: EdgeInsets.symmetric(
+        vertical: ResponsiveHelper.spacing(context, 12),
+      ),
+      decoration: BoxDecoration(
+        color: AppColors.grey200,
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Icon(
+            Icons.lock_outline,
+            size: ResponsiveHelper.iconSize(context, 18),
+            color: AppColors.grey500,
+          ),
+          SizedBox(width: ResponsiveHelper.spacing(context, 6)),
+          Text(
+            '오픈 후 지원가능',
+            style: ResponsiveHelper.bodyStyle(context, color: AppColors.grey500),
+          ),
+        ],
+      ),
     );
   }
 
@@ -886,26 +983,51 @@ class _UserTOCardState extends State<UserTOCard> {
     final dayOfWeek = _getDayOfWeek(to.date);
     final dayColor = _getDayColor(to.date, isSelected);
     
+    // ✅ 예약 공개 대기 중인지 확인
+    final isPending = to.isPendingPublish;
+    
     return GestureDetector(
-      onTap: () => _selectDate(to),
-      child: Container(
-        padding: EdgeInsets.symmetric(
-          horizontal: ResponsiveHelper.spacing(context, 10),
-          vertical: ResponsiveHelper.spacing(context, 6),
-        ),
-        decoration: BoxDecoration(
-          color: isSelected ? theme.primaryColor : AppColors.grey100,
-          borderRadius: BorderRadius.circular(6),
-          border: Border.all(
-            color: isSelected ? theme.primaryColor : AppColors.grey300,
+      onTap: isPending ? null : () => _selectDate(to),
+      child: Opacity(
+        opacity: isPending ? 0.5 : 1.0,
+        child: Container(
+          padding: EdgeInsets.symmetric(
+            horizontal: ResponsiveHelper.spacing(context, 10),
+            vertical: ResponsiveHelper.spacing(context, 6),
           ),
-        ),
-        child: Text(
-          '${to.date.month}/${to.date.day}($dayOfWeek)',
-          style: ResponsiveHelper.smallStyle(
-            context,
-            color: isSelected ? Colors.white : dayColor,
-            fontWeight: FontWeight.w600,
+          decoration: BoxDecoration(
+            color: isPending 
+                ? AppColors.grey100 
+                : (isSelected ? theme.primaryColor : AppColors.grey100),
+            borderRadius: BorderRadius.circular(6),
+            border: Border.all(
+              color: isPending
+                  ? AppColors.warningLight
+                  : (isSelected ? theme.primaryColor : AppColors.grey300),
+            ),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              if (isPending) ...[
+                Icon(
+                  Icons.schedule,
+                  size: ResponsiveHelper.iconSize(context, 12),
+                  color: AppColors.warningDark,
+                ),
+                SizedBox(width: ResponsiveHelper.spacing(context, 4)),
+              ],
+              Text(
+                '${to.date.month}/${to.date.day}($dayOfWeek)',
+                style: ResponsiveHelper.smallStyle(
+                  context,
+                  color: isPending 
+                      ? AppColors.warningDark 
+                      : (isSelected ? Colors.white : dayColor),
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ],
           ),
         ),
       ),
@@ -1151,13 +1273,14 @@ class _UserTOCardState extends State<UserTOCard> {
   /// 버튼들
   Widget _buildActionButtons(BuildContext context) {
     final theme = Theme.of(context);
+    final isPendingPublish = widget.to.isPendingPublish;
     
     return Row(
       children: [
         // 상세보기 버튼
         Expanded(
           child: OutlinedButton.icon(
-            onPressed: _goToJobPosting,
+            onPressed: isPendingPublish ? null : _goToJobPosting,
             icon: Icon(
               Icons.info_outline,
               size: ResponsiveHelper.iconSize(context, 18),
@@ -1183,14 +1306,16 @@ class _UserTOCardState extends State<UserTOCard> {
         
         // 지원하기/지원관리 버튼
         Expanded(
-          child: LoadingButton(
-            text: _hasAppliedToTO ? '지원관리' : '지원하기',
-            icon: _hasAppliedToTO ? Icons.settings : Icons.send,
-            backgroundColor: _hasAppliedToTO 
-                ? AppColors.info 
-                : theme.primaryColor,
-            onPressed: () async => _openApplyDialog(),
-          ),
+          child: isPendingPublish
+              ? _buildPendingButton(context)
+              : LoadingButton(
+                  text: _hasAppliedToTO ? '지원관리' : '지원하기',
+                  icon: _hasAppliedToTO ? Icons.settings : Icons.send,
+                  backgroundColor: _hasAppliedToTO 
+                      ? AppColors.info 
+                      : theme.primaryColor,
+                  onPressed: () async => _openApplyDialog(),
+                ),
         ),
       ],
     );

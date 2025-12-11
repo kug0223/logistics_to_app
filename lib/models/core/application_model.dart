@@ -22,6 +22,8 @@ class ApplicationModel {
   // 업무 유형 및 금액
   final String selectedWorkType; // 현재 지원한 업무 유형 (예: "피킹")
   final String? workDetailId;  // ✅ 추가: WorkDetail 고유 ID
+  final String? toId;          // ✅ TO 고유 ID
+  final String? groupId;       // ✅ 그룹 ID
   final int wage; // 지원 시점의 금액 (업무유형 변경 시 함께 업데이트)
   
   // 업무 변경 이력
@@ -81,6 +83,8 @@ class ApplicationModel {
     required this.uid,
     required this.selectedWorkType,
     this.workDetailId,  // ✅ 추가
+    this.toId,          // ✅ TO 고유 ID
+    this.groupId,       // ✅ 그룹 ID
     required this.wage,
     this.originalWorkType,
     this.originalWage,
@@ -144,6 +148,8 @@ class ApplicationModel {
       uid: data['uid'] ?? '',
       selectedWorkType: data['selectedWorkType'] ?? '',
       workDetailId: data['workDetailId'],  // ✅ 추가
+      toId: data['toId'],                  // ✅ TO 고유 ID
+      groupId: data['groupId'],            // ✅ 그룹 ID
       wage: data['wage'] ?? 0,
       originalWorkType: data['originalWorkType'],
       originalWage: data['originalWage'],
@@ -237,6 +243,8 @@ class ApplicationModel {
       'uid': uid,
       'selectedWorkType': selectedWorkType,
       'workDetailId': workDetailId,  // ✅ 추가
+      'toId': toId,                  // ✅ TO 고유 ID
+      'groupId': groupId,            // ✅ 그룹 ID
       'wage': wage,
       'originalWorkType': originalWorkType,
       'originalWage': originalWage,
@@ -335,6 +343,8 @@ class ApplicationModel {
     String? endTime,
     String? uid,
     String? selectedWorkType,
+    String? toId,      // ✅ 추가
+    String? groupId,   // ✅ 추가
     int? wage,
     String? originalWorkType,
     int? originalWage,
@@ -387,6 +397,8 @@ class ApplicationModel {
       endTime: endTime ?? this.endTime,
       uid: uid ?? this.uid,
       selectedWorkType: selectedWorkType ?? this.selectedWorkType,
+      toId: toId ?? this.toId,          // ✅ 추가
+      groupId: groupId ?? this.groupId,  // ✅ 추가
       wage: wage ?? this.wage,
       originalWorkType: originalWorkType ?? this.originalWorkType,
       originalWage: originalWage ?? this.originalWage,
