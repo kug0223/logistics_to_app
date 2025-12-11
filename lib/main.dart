@@ -20,6 +20,7 @@ import 'screens/common/splash_screen.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  // 🔥 타임존 디버깅 (확인 후 삭제)
   await initializeDateFormatting('ko_KR', null);
   try {
     await Firebase.initializeApp(

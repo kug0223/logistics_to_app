@@ -369,6 +369,14 @@ class TestDataHelper {
         if (workDays != null && workDays.isNotEmpty) {
           applicationData['workDays'] = workDays;
         }
+        
+        // 🔥 희망 시작일 랜덤 생성 (오늘 ~ 7일 후 중 랜덤)
+        final daysToAdd = _random.nextInt(8); // 0~7일
+        final desiredStart = DateTime.now().add(Duration(days: daysToAdd));
+        final desiredStartDate = DateTime(desiredStart.year, desiredStart.month, desiredStart.day);
+        applicationData['desiredStartDate'] = Timestamp.fromDate(desiredStartDate);
+        
+        print('     📅 희망시작일: ${desiredStartDate.month}/${desiredStartDate.day}');
       }
       
       final appDoc = await _firestore.collection('applications').add(applicationData);

@@ -750,6 +750,7 @@ class _IntegratedWorkforceScreenState extends State<IntegratedWorkforceScreen> {
       ToastHelper.showSuccess('지원자가 생성되었습니다!');
 
       _firestoreService.clearCache(toId: selectedTO!.id);
+      _firestoreService.invalidateListCache();  // 🔥 목록 캐시도 무효화
       
       if (mounted) {
         setState(() {});
@@ -773,6 +774,7 @@ class _IntegratedWorkforceScreenState extends State<IntegratedWorkforceScreen> {
       ToastHelper.showSuccess('출근 데이터가 생성되었습니다!');
       
       _firestoreService.clearCache();
+      _firestoreService.invalidateListCache();  // 🔥 목록 캐시도 무효화
       
       if (mounted) {
         setState(() {});
@@ -953,9 +955,10 @@ class _IntegratedWorkforceScreenState extends State<IntegratedWorkforceScreen> {
       await TestDataHelper.clearDummyAttendance();
       await TestDataHelper.clearAllDummyData();
       
-      ToastHelper.showSuccess('모든 더미 데이터가 삭제되었습니다!');
-      
       _firestoreService.clearCache();
+      _firestoreService.invalidateListCache();
+      
+      ToastHelper.showSuccess('모든 더미 데이터가 삭제되었습니다!');
       
       if (mounted) {
         setState(() {});

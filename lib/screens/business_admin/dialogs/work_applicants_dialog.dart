@@ -58,6 +58,8 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog> {
   final Set<String> _selectedIdCardUserIds = {};
   // ✅ 장기공고 출퇴근 기록 맵 (applicationId -> hasAttendance)
   final Map<String, bool> _hasAttendanceMap = {};
+  // 🔥 충돌로 취소된 다른 TO ID 목록
+  final Set<String> _affectedOtherTOIds = {};
 
   @override
   void initState() {
@@ -1339,11 +1341,17 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog> {
       final userProvider = context.read<UserProvider>();
       final adminUID = userProvider.currentUser?.uid;
 
-      await _firestoreService.updateApplicationStatus(
+      final affectedTOIds = await _firestoreService.updateApplicationStatus(
         applicationId: app.id,
         status: 'CONFIRMED',
         confirmedBy: adminUID,
       );
+      
+      // 🔥 충돌로 취소된 TO ID 수집
+      if (affectedTOIds.isNotEmpty) {
+        _affectedOtherTOIds.addAll(affectedTOIds);
+        print('⚠️ 충돌로 ${affectedTOIds.length}개 TO 영향: $affectedTOIds');
+      }
 
       ToastHelper.showSuccess('${user?.name ?? '지원자'}님이 승인되었습니다');
       await _loadApplicants();
@@ -1556,17 +1564,30 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog> {
       final adminUID = userProvider.currentUser?.uid;
       
       for (final appId in _selectedIds) {
-        await _firestoreService.updateApplicationStatus(
+        final affectedTOIds = await _firestoreService.updateApplicationStatus(
           applicationId: appId,
           status: 'CONFIRMED',
           confirmedBy: adminUID,
         );
+        // 🔥 충돌로 취소된 TO ID 수집
+        if (affectedTOIds.isNotEmpty) {
+          _affectedOtherTOIds.addAll(affectedTOIds);
+        }
+      }
+      
+      if (_affectedOtherTOIds.isNotEmpty) {
+        print('⚠️ 일괄 승인 중 충돌로 ${_affectedOtherTOIds.length}개 TO 영향');
       }
 
       ToastHelper.showSuccess('${_selectedIds.length}명이 승인되었습니다');
       _selectedIds.clear();
       await _loadApplicants();
-      await _updateLocalStats();
+      _updateLocalStats();
+      
+      // 🔥 충돌로 영향받은 다른 TO 캐시 무효화
+      for (var toId in _affectedOtherTOIds) {
+        _firestoreService.clearCache(toId: toId);
+      }
     } catch (e) {
       ToastHelper.showError('승인 처리 중 오류가 발생했습니다');
     } finally {

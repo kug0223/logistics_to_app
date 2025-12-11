@@ -548,7 +548,9 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
           
           ...widget.workDetails.map((work) {
             final workKey = _makeWorkKey(work.workType, work.startTime, work.endTime);
-            final application = _applicationsByDate[widget.mainTO.date]?[workKey];
+            // 🔥 dateKey를 동일한 방식으로 생성
+            final dateKey = DateTime(widget.mainTO.date.year, widget.mainTO.date.month, widget.mainTO.date.day);
+            final application = _applicationsByDate[dateKey]?[workKey];
             final conflictInfo = _conflictCache[_dateKey(widget.mainTO.date)]?[work.id] 
                 ?? ConflictInfo.ok;
             

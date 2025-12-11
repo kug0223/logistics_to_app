@@ -1205,7 +1205,8 @@ extension ApplicationFirestore on FirestoreService {
     }
   }
   /// 지원서 상태 업데이트 (승인/거절) - Phase 2: 자동 취소 추가
-  Future<void> updateApplicationStatus({
+  /// 반환: 충돌로 취소된 TO ID 목록 (확정 시에만, 그 외는 빈 목록)
+  Future<List<String>> updateApplicationStatus({
     required String applicationId,
     required String status,
     String? confirmedBy,
@@ -1215,12 +1216,12 @@ extension ApplicationFirestore on FirestoreService {
     try {
       // ⭐ Phase 2: 확정 시 충돌 처리
       if (status == 'CONFIRMED') {
-        await _confirmWithConflictCheck(
+        final affectedTOIds = await _confirmWithConflictCheck(
           applicationId: applicationId,
           confirmedBy: confirmedBy,
           message: message,
         );
-        return;
+        return affectedTOIds;
       }
       
       // 기존 로직 (거절 등)
@@ -1313,6 +1314,9 @@ extension ApplicationFirestore on FirestoreService {
           }
         }
       }
+    // 🔥 확정이 아닌 경우 빈 목록 반환
+      return [];
+      
     } catch (e) {
       print('❌ 지원서 상태 업데이트 실패: $e');
       rethrow;
@@ -1320,7 +1324,8 @@ extension ApplicationFirestore on FirestoreService {
   }
   
   /// 확정 처리 (Increment 방식 - 재계산 없음!)
-  Future<void> _confirmWithConflictCheck({
+  /// 반환: 충돌로 취소된 TO ID 목록
+  Future<List<String>> _confirmWithConflictCheck({
     required String applicationId,
     String? confirmedBy,
     String? message,
@@ -1340,7 +1345,7 @@ extension ApplicationFirestore on FirestoreService {
       final currentStatus = appData['status'];
       
       // 이미 확정/취소된 경우
-      if (currentStatus == 'CONFIRMED') return;
+      if (currentStatus == 'CONFIRMED') return [];
       if (currentStatus == 'CANCELED') {
         throw Exception('취소된 지원서는 확정할 수 없습니다');
       }
@@ -1468,6 +1473,8 @@ extension ApplicationFirestore on FirestoreService {
       await batch.commit();
       
       // 5-1. ✅ AUTO_CANCELED 된 지원서들의 TO 통계 업데이트 (별도 batch)
+      final Set<String> affectedTOIds = {};  // 🔥 충돌 취소된 TO ID 수집
+      
       if (conflictingApps.isNotEmpty) {
         final statsBatch = _firestore.batch();
         
@@ -1485,6 +1492,11 @@ extension ApplicationFirestore on FirestoreService {
             final conflictTODoc = conflictTOSnapshot.docs.first;
             final conflictTOData = conflictTODoc.data();
             final conflictGroupId = conflictTOData['groupId'] as String?;
+            
+            // 🔥 영향받은 TO ID 저장
+            affectedTOIds.add(conflictTODoc.id);
+            
+            // TO pendingCount 감소
             
             // TO pendingCount 감소
             statsBatch.update(conflictTODoc.reference, {
@@ -1535,6 +1547,9 @@ extension ApplicationFirestore on FirestoreService {
       clearCache(toId: toId);
       
       print('✅ 확정 완료 + ${conflictingApps.length}개 자동 취소 (Increment 방식)');
+      
+      // 🔥 충돌 취소된 TO ID 목록 반환
+      return affectedTOIds.toList();
       
     } catch (e) {
       print('❌ 확정 처리 실패: $e');
