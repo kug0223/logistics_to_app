@@ -443,7 +443,6 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
   // ═══════════════════════════════════════════════════════════
 
   @override
-  @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final dateStr = DateFormat('MM월 dd일 (E)', 'ko_KR').format(widget.date);

@@ -190,7 +190,7 @@ class WorkSelectionCard extends StatelessWidget {
           break;
       case WorkApplicationStatus.notApplied:
           // 마감/모집중 표시
-          if (workDetail.isFull || workDetail.isClosed) {
+          if (workDetail.isFull || workDetail.isClosed || workDetail.isTimeExpired) {
             text = '마감';
             bgColor = AppColors.grey200;
             textColor = AppColors.grey600;
@@ -314,7 +314,7 @@ class WorkSelectionCard extends StatelessWidget {
     // 상태별 버튼
     switch (status) {
       case WorkApplicationStatus.notApplied:
-        if (workDetail.isFull || workDetail.isClosed) {
+        if (workDetail.isFull || workDetail.isClosed || workDetail.isTimeExpired) {
           return _buildSmallButton(context, '마감', AppColors.grey400, null, icon: Icons.block);
         }
         return _buildSmallButton(context, '지원', AppColors.success, onApply, icon: Icons.send);
@@ -440,7 +440,7 @@ class WorkSelectionCard extends StatelessWidget {
     // 상태별 버튼
     switch (status) {
       case WorkApplicationStatus.notApplied:
-        if (workDetail.isFull || workDetail.isClosed) {
+        if (workDetail.isFull || workDetail.isClosed || workDetail.isTimeExpired) {
           return _buildSmallButton(context, '마감', AppColors.grey400, null, icon: Icons.block);
         }
         return _buildSmallButton(context, '지원', AppColors.success, onApply, icon: Icons.send);
@@ -590,7 +590,7 @@ class WorkSelectionCard extends StatelessWidget {
     
     // 마감이면 불가
     if (status == WorkApplicationStatus.closed) return false;
-    if (workDetail.isFull && status == WorkApplicationStatus.notApplied) return false;
+    if ((workDetail.isFull || workDetail.isClosed || workDetail.isTimeExpired) && status == WorkApplicationStatus.notApplied) return false;
     
     // autoCanceled는 재지원 가능
     return true;

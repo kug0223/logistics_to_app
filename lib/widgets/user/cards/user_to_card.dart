@@ -973,20 +973,25 @@ class _UserTOCardState extends State<UserTOCard> {
     final hasApplied = application != null && application.id.isNotEmpty;
     final isConfirmed = application?.status == 'CONFIRMED';
     
-    return Container(
-      margin: EdgeInsets.only(bottom: ResponsiveHelper.spacing(context, 8)),
-      padding: ResponsiveHelper.cardPadding(context),
-      decoration: BoxDecoration(
-        color: isConfirmed 
-            ? AppColors.successBg 
-            : (hasApplied ? AppColors.infoBg : AppColors.grey100),
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(
+    // ✅ 마감 여부 판단 (지원하지 않은 경우만 비활성화)
+    final isClosed = !hasApplied && (work.isClosed || work.isTimeExpired || work.isFull);
+    
+    return Opacity(
+      opacity: isClosed ? 0.5 : 1.0,
+      child: Container(
+        margin: EdgeInsets.only(bottom: ResponsiveHelper.spacing(context, 8)),
+        padding: ResponsiveHelper.cardPadding(context),
+        decoration: BoxDecoration(
           color: isConfirmed 
-              ? AppColors.successLight 
-              : (hasApplied ? AppColors.infoLight : AppColors.grey300),
+              ? AppColors.successBg 
+              : (hasApplied ? AppColors.infoBg : AppColors.grey100),
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(
+            color: isConfirmed 
+                ? AppColors.successLight 
+                : (hasApplied ? AppColors.infoLight : AppColors.grey300),
+          ),
         ),
-      ),
       child: Row(
         children: [
           // 업무 아이콘
@@ -1065,7 +1070,8 @@ class _UserTOCardState extends State<UserTOCard> {
           _buildWorkStatusBadge(context, work, application),
         ],
       ),
-    );
+      ),  // ✅ Container 닫기
+    );    // ✅ Opacity 닫기
   }
   /// 업무 상태 배지
   Widget _buildWorkStatusBadge(
