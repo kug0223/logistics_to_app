@@ -852,12 +852,6 @@ class _WorkforceCalendarViewState extends State<WorkforceCalendarView> {
   /// ⭐ 확정 인원 체크 (모든 관리 사업장)
   Future<void> _checkConfirmedWorkers(DateTime date) async {
     setState(() => _isCheckingWorkers = true);
-    
-    print('');
-    print('═══════════════════════════════════════════════════════');
-    print('🔍 [당일명단] 확정 인원 체크 시작');
-    print('   📅 선택 날짜: ${date.year}-${date.month}-${date.day} (${_getKoreanDayOfWeek(date)})');
-    print('═══════════════════════════════════════════════════════');
 
     try {
       final userProvider = Provider.of<UserProvider>(context, listen: false);
@@ -920,20 +914,12 @@ class _WorkforceCalendarViewState extends State<WorkforceCalendarView> {
       });
     }
   }
-  
-  /// 요일을 한글로 변환
-  String _getKoreanDayOfWeek(DateTime date) {
-    const days = ['월', '화', '수', '목', '금', '토', '일'];
-    return days[date.weekday - 1];
-  }
-
   /// ⭐ 해당 날짜의 확정 근무자 조회
   Future<List<ApplicationModel>> _getConfirmedWorkersForDate(
     DateTime date,
     String businessId,
   ) async {
     final dateStart = DateTime(date.year, date.month, date.day);
-    final targetDayOfWeek = _getKoreanDayOfWeek(date);
 
     try {
       final snapshot = await FirebaseFirestore.instance
@@ -946,95 +932,41 @@ class _WorkforceCalendarViewState extends State<WorkforceCalendarView> {
           .map((doc) => ApplicationModel.fromFirestore(doc))
           .toList();
 
-      print('      📋 전체 확정 지원서: ${allConfirmed.length}개');
-
       // 단기 + 장기 필터링
       final result = <ApplicationModel>[];
       
       for (final app in allConfirmed) {
-        print('');
-        print('      ─────────────────────────────────────');
-        print('      📄 지원서: ${app.id}');
-        print('         - uid: ${app.uid}');
-        print('         - 업무: ${app.selectedWorkType}');
-        print('         - workDate: ${app.workDate}');
-        print('         - workEndDate: ${app.workEndDate}');
-        print('         - workDays: ${app.workDays}');
-        print('         - isLongTermApplication: ${app.isLongTermApplication}');
-        
-        // ✅ 장기 판단 로직 상세 출력
-        final hasWorkEndDate = app.workEndDate != null;
-        final hasWorkDays = app.workDays != null && app.workDays!.isNotEmpty;
-        print('         - hasWorkEndDate: $hasWorkEndDate');
-        print('         - hasWorkDays: $hasWorkDays');
-        
         // ✅ 진짜 장기인지 판단: workDays가 있어야 장기
-        // workEndDate만 있고 workDays가 없으면 단기로 취급
-        final isReallyLongTerm = hasWorkDays;
-        print('         - isReallyLongTerm (workDays 기준): $isReallyLongTerm');
+        final isReallyLongTerm = app.workDays != null && app.workDays!.isNotEmpty;
         
         // 단기 근무 (workDays가 없으면 단기)
         if (!isReallyLongTerm) {
-          final isSameDay = DateUtils.isSameDay(app.workDate, dateStart);
-          print('         🏷️ 단기 판정');
-          print('         - 날짜 일치: $isSameDay (${app.workDate} vs $dateStart)');
-          
-          if (isSameDay) {
-            print('         ✅ 포함');
+          if (DateUtils.isSameDay(app.workDate, dateStart)) {
             result.add(app);
-          } else {
-            print('         ❌ 제외 (날짜 불일치)');
           }
           continue;
         }
         
         // 장기 근무
-        print('         🏷️ 장기 판정 (workDays 기준)');
-        
-        if (app.workEndDate == null) {
-          print('         ❌ 제외 (workEndDate가 null)');
-          continue;
-        }
+        if (app.workEndDate == null) continue;
 
         // 기간 체크 (시간 제거하고 날짜만 비교)
         final workDateOnly = DateTime(app.workDate.year, app.workDate.month, app.workDate.day);
         final workEndDateOnly = DateTime(app.workEndDate!.year, app.workEndDate!.month, app.workEndDate!.day);
-        final isBeforeStart = dateStart.isBefore(workDateOnly);
-        final isAfterEnd = dateStart.isAfter(workEndDateOnly);
-        print('         - 기간: $workDateOnly ~ $workEndDateOnly (시간 제거)');
-        print('         - 선택일($dateStart)이 시작일 이전: $isBeforeStart');
-        print('         - 선택일($dateStart)이 종료일 이후: $isAfterEnd');
         
-        if (isBeforeStart || isAfterEnd) {
-          print('         ❌ 제외 (기간 범위 밖)');
+        if (dateStart.isBefore(workDateOnly) || dateStart.isAfter(workEndDateOnly)) {
           continue;
         }
 
         // 요일 체크
-        if (app.workDays == null || app.workDays!.isEmpty) {
-          print('         - 근무요일: 매일 (workDays 없음)');
-          print('         ✅ 포함');
-          result.add(app);
-          continue;
-        }
-
-        final isWorkDay = app.workDays!.contains(targetDayOfWeek);
-        print('         - 근무요일: ${app.workDays}');
-        print('         - 선택일 요일: $targetDayOfWeek');
-        print('         - 요일 일치: $isWorkDay');
+        final weekdays = ['월', '화', '수', '목', '금', '토', '일'];
+        final dayWeekday = weekdays[date.weekday - 1];
         
-        if (isWorkDay) {
-          print('         ✅ 포함');
+        if (app.workDays!.contains(dayWeekday)) {
           result.add(app);
-        } else {
-          print('         ❌ 제외 (요일 불일치)');
         }
       }
 
-      print('');
-      print('      ─────────────────────────────────────');
-      print('      📊 필터링 결과: ${result.length}명');
-      
       return result;
     } catch (e) {
       print('❌ 확정 근무자 조회 실패: $e');

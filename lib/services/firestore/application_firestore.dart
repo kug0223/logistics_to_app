@@ -481,6 +481,9 @@ extension ApplicationFirestore on FirestoreService {
       // 4. Batch로 한번에 처리
       final batch = _firestore.batch();
 
+      // ✅ 장기공고 여부 판단: workDays가 있어야 진짜 장기
+      final isReallyLongTerm = type == 'long_term' && workDays != null && workDays.isNotEmpty;
+      
       // 4-1. 지원서 생성
       final appRef = _firestore.collection('applications').doc();
       batch.set(appRef, {
@@ -496,14 +499,14 @@ extension ApplicationFirestore on FirestoreService {
         'endTime': endTime,
         'status': 'PENDING',
         'appliedAt': FieldValue.serverTimestamp(),
-        // ⭐ Phase 1: 장기 공고 정보 추가
-        'type': type,
-        'workEndDate': workEndDate != null 
+        // ✅ 장기 공고일 때만 추가 필드 저장 (단기는 null)
+        'type': isReallyLongTerm ? 'long_term' : 'short',
+        'workEndDate': isReallyLongTerm && workEndDate != null 
             ? Timestamp.fromDate(workEndDate) 
             : null,
-        'workDays': workDays,
-        // ✅ 장기공고 희망 시작일
-        'desiredStartDate': desiredStartDate != null 
+        'workDays': isReallyLongTerm ? workDays : null,
+        // ✅ 장기공고 희망 시작일 (장기일 때만)
+        'desiredStartDate': isReallyLongTerm && desiredStartDate != null 
             ? Timestamp.fromDate(desiredStartDate) 
             : null,
       });

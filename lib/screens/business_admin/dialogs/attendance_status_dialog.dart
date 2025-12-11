@@ -175,31 +175,40 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
         .toList();
 
     // 단기 + 장기 필터링
-    final result = allConfirmed.where((app) {
-      // 단기 근무
-      if (!app.isLongTermApplication) {
-        return DateUtils.isSameDay(app.workDate, dateStart);
+    final result = <ApplicationModel>[];
+    
+    for (final app in allConfirmed) {
+      // ✅ 진짜 장기인지 판단: workDays가 있어야 장기
+      final isReallyLongTerm = app.workDays != null && app.workDays!.isNotEmpty;
+      
+      // 단기 근무 (workDays가 없으면 단기)
+      if (!isReallyLongTerm) {
+        if (DateUtils.isSameDay(app.workDate, dateStart)) {
+          result.add(app);
+        }
+        continue;
       }
-
+      
       // 장기 근무
-      if (app.workEndDate == null) return false;
+      if (app.workEndDate == null) continue;
 
-      // ✅ 기간 체크 - 희망 시작일 기준 (없으면 workDate 폴백)
+      // 기간 체크 (시간 제거하고 날짜만 비교)
       final effectiveStartDate = app.desiredStartDate ?? app.workDate;
-      final isInRange = !dateStart.isBefore(effectiveStartDate) &&
-          !dateStart.isAfter(app.workEndDate!);
-
-      if (!isInRange) return false;
+      final startDateOnly = DateTime(effectiveStartDate.year, effectiveStartDate.month, effectiveStartDate.day);
+      final endDateOnly = DateTime(app.workEndDate!.year, app.workEndDate!.month, app.workEndDate!.day);
+      
+      if (dateStart.isBefore(startDateOnly) || dateStart.isAfter(endDateOnly)) {
+        continue;
+      }
 
       // 요일 체크
-      if (app.workDays == null || app.workDays!.isEmpty) {
-        return true; // 매일 근무
-      }
-
       final weekdays = ['월', '화', '수', '목', '금', '토', '일'];
       final dayWeekday = weekdays[widget.date.weekday - 1];
-      return app.workDays!.contains(dayWeekday);
-    }).toList();
+      
+      if (app.workDays!.contains(dayWeekday)) {
+        result.add(app);
+      }
+    }
 
     return result;
   }

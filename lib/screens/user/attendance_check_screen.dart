@@ -54,35 +54,42 @@ class _AttendanceCheckScreenState extends State<AttendanceCheckScreen> {
       final today = DateTime.now();
       final todayStart = DateTime(today.year, today.month, today.day);
       
-      final todayWorks = allApplications.where((app) {
-        if (app.status != 'CONFIRMED') return false;
+      final todayWorks = <ApplicationModel>[];
+      
+      for (final app in allApplications) {
+        if (app.status != 'CONFIRMED') continue;
         
-        // 단기 근무
-        if (!app.isLongTermApplication) {
-          return DateUtils.isSameDay(app.workDate, todayStart);
+        // ✅ 진짜 장기인지 판단: workDays가 있어야 장기
+        final isReallyLongTerm = app.workDays != null && app.workDays!.isNotEmpty;
+        
+        // 단기 근무 (workDays가 없으면 단기)
+        if (!isReallyLongTerm) {
+          if (DateUtils.isSameDay(app.workDate, todayStart)) {
+            todayWorks.add(app);
+          }
+          continue;
         }
-
         
         // 장기 근무
-        if (app.isLongTermApplication && app.workEndDate != null) {
-          // ✅ 기간 체크 - 희망 시작일 기준 (없으면 workDate 폴백)
-          final effectiveStartDate = app.desiredStartDate ?? app.workDate;
-          if (todayStart.isBefore(effectiveStartDate) || todayStart.isAfter(app.workEndDate!)) {
-            return false;
-          }
-          
-          // 요일 체크
-          if (app.workDays != null && app.workDays!.isNotEmpty) {
-            final weekdays = ['월', '화', '수', '목', '금', '토', '일'];
-            final todayWeekday = weekdays[today.weekday - 1];
-            return app.workDays!.contains(todayWeekday);
-          }
-          
-          return true;
+        if (app.workEndDate == null) continue;
+        
+        // 기간 체크 (시간 제거하고 날짜만 비교)
+        final effectiveStartDate = app.desiredStartDate ?? app.workDate;
+        final startDateOnly = DateTime(effectiveStartDate.year, effectiveStartDate.month, effectiveStartDate.day);
+        final endDateOnly = DateTime(app.workEndDate!.year, app.workEndDate!.month, app.workEndDate!.day);
+        
+        if (todayStart.isBefore(startDateOnly) || todayStart.isAfter(endDateOnly)) {
+          continue;
         }
         
-        return false;
-      }).toList();
+        // 요일 체크
+        final weekdays = ['월', '화', '수', '목', '금', '토', '일'];
+        final todayWeekday = weekdays[today.weekday - 1];
+        
+        if (app.workDays!.contains(todayWeekday)) {
+          todayWorks.add(app);
+        }
+      }
 
       // 3. 각 근무의 출근 기록 조회
       for (var work in todayWorks) {
