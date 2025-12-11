@@ -998,7 +998,7 @@ class _WorkforceCalendarViewState extends State<WorkforceCalendarView> {
       final businessIds = businesses.map((b) => b.id).toList();
       final currentBusinessId = userProvider.currentUser?.businessId;
 
-      await showDialog(
+      final hasChanges = await showDialog<bool>(
         context: context,
         builder: (context) => AttendanceStatusDialog(
           date: _selectedDay!,
@@ -1006,6 +1006,11 @@ class _WorkforceCalendarViewState extends State<WorkforceCalendarView> {
           initialBusinessId: currentBusinessId,
         ),
       );
+      
+      // ✅ 변경 사항 있으면 데이터 새로고침
+      if (hasChanges == true && mounted) {
+        await _loadData();
+      }
     } catch (e) {
       print('❌ 사업장 조회 실패: $e');
       ToastHelper.showError('사업장 정보를 불러올 수 없습니다');

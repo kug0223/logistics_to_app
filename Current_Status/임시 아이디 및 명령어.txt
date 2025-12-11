@@ -18,7 +18,7 @@ ALfit
 
 냉동분류
 
-git add . ; git commit -m "통계 오류 개선진행 251211-12" ; git push
+git add . ; git commit -m "통계 오류 개선진행 251211-13" ; git push
 
 flutter clean
 flutter pub get

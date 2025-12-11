@@ -72,6 +72,7 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
   bool _isLoading = true;
   bool _isProcessing = false;
   String? _selectedBusinessId;
+  bool _hasChanges = false;  // ✅ 변경 여부 추적
   
   // 선택 상태
   final Set<String> _selectedIds = {};
@@ -442,48 +443,57 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
   // ═══════════════════════════════════════════════════════════
 
   @override
+  @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final dateStr = DateFormat('MM월 dd일 (E)', 'ko_KR').format(widget.date);
 
-    return Dialog(
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(24),
-      ),
-      child: Container(
-        width: MediaQuery.of(context).size.width * 0.95,
-        constraints: BoxConstraints(
-          maxHeight: MediaQuery.of(context).size.height * 0.9,
-        ),
-        decoration: BoxDecoration(
-          color: Colors.white,
+    return PopScope(
+      canPop: false,
+      onPopInvokedWithResult: (didPop, result) {
+        if (!didPop) {
+          Navigator.pop(context, _hasChanges);
+        }
+      },
+      child: Dialog(
+        shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(24),
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withOpacity(0.1),
-              blurRadius: 30,
-              offset: const Offset(0, 10),
-            ),
-          ],
         ),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            // 헤더
-            _buildHeader(theme, dateStr),
+        child: Container(
+          width: MediaQuery.of(context).size.width * 0.95,
+          constraints: BoxConstraints(
+            maxHeight: MediaQuery.of(context).size.height * 0.9,
+          ),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(24),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withOpacity(0.1),
+                blurRadius: 30,
+                offset: const Offset(0, 10),
+              ),
+            ],
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              // 헤더
+              _buildHeader(theme, dateStr),
 
-            // 내용
-            Flexible(
-              child: _isLoading
-                  ? const LoadingWidget(message: '당일명단 조회 중...')
-                  : _confirmedWorkers.isEmpty
-                      ? _buildEmptyState()
-                      : _buildContent(theme),
-            ),
+              // 내용
+              Flexible(
+                child: _isLoading
+                    ? const LoadingWidget(message: '당일명단 조회 중...')
+                    : _confirmedWorkers.isEmpty
+                        ? _buildEmptyState()
+                        : _buildContent(theme),
+              ),
 
-            // 하단 버튼
-            _buildBottomBar(theme),
-          ],
+              // 하단 버튼
+              _buildBottomBar(theme),
+            ],
+          ),
         ),
       ),
     );
@@ -1287,7 +1297,10 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
                 businessId: _selectedBusinessId,
                 isConfirmed: true,
                 showApprovalButtons: false,
-                onStatusChanged: _loadData,
+                onStatusChanged: () {
+                  _hasChanges = true;  // ✅ 변경 표시
+                  _loadData();
+                },
               );
             }
             break;
