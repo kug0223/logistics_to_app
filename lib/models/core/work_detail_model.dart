@@ -81,7 +81,7 @@ class WorkDetailModel {
       order: map['order'] ?? 0,
       createdAt: (map['createdAt'] as Timestamp?)?.toDate() ?? DateTime.now(),
       pendingCount: map['pendingCount'] ?? 0,
-      applicationDeadline: (map['applicationDeadline'] as Timestamp?)?.toDate(),
+      applicationDeadline: (map['applicationDeadline'] as Timestamp?)?.toDate().toLocal(),
       closedAt: (map['closedAt'] as Timestamp?)?.toDate(),
       closedBy: map['closedBy'],
       isManualClosed: map['isManualClosed'] ?? false,

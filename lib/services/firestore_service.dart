@@ -394,7 +394,7 @@ class FirestoreService {
               int.parse(timeParts[1]),
             );
             final newDeadline = workStartDateTime.subtract(Duration(hours: hoursBeforeStart));
-            updates['applicationDeadline'] = Timestamp.fromDate(newDeadline);
+            updates['applicationDeadline'] = Timestamp.fromDate(newDeadline.toUtc());  // 🔥 .toUtc() 추가
           }
           
           workBatch.update(workDoc.reference, updates);
@@ -422,7 +422,7 @@ class FirestoreService {
           int.parse(timeParts[1]),
         );
         final newTODeadline = startDateTime.subtract(Duration(hours: hoursBeforeStart));
-        toUpdates['applicationDeadline'] = Timestamp.fromDate(newTODeadline);
+        toUpdates['applicationDeadline'] = Timestamp.fromDate(newTODeadline.toUtc());  // 🔥 .toUtc() 추가
       }
       
       await _firestore.collection('tos').doc(toId).update(toUpdates);
@@ -574,7 +574,7 @@ class FirestoreService {
                 int.parse(timeParts[1]),
               );
               final newDeadline = workStartDateTime.subtract(Duration(hours: hoursBeforeStart));
-              updates['applicationDeadline'] = Timestamp.fromDate(newDeadline);
+              updates['applicationDeadline'] = Timestamp.fromDate(newDeadline.toUtc());  // 🔥 .toUtc() 추가
             }
             
             workBatch.update(workDoc.reference, updates);
@@ -600,7 +600,7 @@ class FirestoreService {
           final newTODeadline = startDateTime.subtract(Duration(hours: hoursBeforeStart));
           
           await _firestore.collection('tos').doc(doc.id).update({
-            'applicationDeadline': Timestamp.fromDate(newTODeadline),
+            'applicationDeadline': Timestamp.fromDate(newTODeadline.toUtc()),  // 🔥 .toUtc() 추가
           });
         }
         
@@ -1016,16 +1016,25 @@ class FirestoreService {
       };
     }
   }
-  /// 🔥 일회성: 모든 단기 TO의 마감시간 재계산 (UTC 오류 수정)
+  
+  /// 🔥 일회성: 모든 단기 TO의 마감시간 재계산 (UTC 직접 계산)
   Future<void> fixAllDeadlines() async {
     try {
-      print('🔄 전체 마감시간 재계산 시작...');
+      print('🔄🔄🔄 전체 마감시간 재계산 시작 (V7 - UTC 직접 계산)...');
       
-      // 단기 TO만 조회
+      const kstOffsetHours = 9;  // KST = UTC + 9
+      
       final tosSnapshot = await _firestore
           .collection('tos')
           .where('jobType', isEqualTo: 'short')
           .get();
+      
+      print('📋 대상 TO: ${tosSnapshot.docs.length}개');
+      
+      if (tosSnapshot.docs.isEmpty) {
+        print('⚠️ 단기 TO가 없습니다!');
+        return;
+      }
       
       int totalTOsFixed = 0;
       int totalWorkDetailsFixed = 0;
@@ -1033,73 +1042,100 @@ class FirestoreService {
       for (var toDoc in tosSnapshot.docs) {
         final toData = toDoc.data();
         final toId = toDoc.id;
-        final workDate = (toData['date'] as Timestamp).toDate().toLocal();
+        final dateTimestamp = toData['date'] as Timestamp?;
+        
+        if (dateTimestamp == null) {
+          print('   ⚠️ ${toData['title']}: date 없음, 스킵');
+          continue;
+        }
+        
+        // date는 UTC 기준 자정 (KST 09:00)
+        final dateUTC = dateTimestamp.toDate();
         final hoursBeforeStart = toData['hoursBeforeStart'] ?? 2;
         
-        // WorkDetails 조회
+        print('');
+        print('   📝 [${totalTOsFixed + 1}] ${toData['title']}');
+        print('      🆔 TO ID: $toId');
+        print('      날짜(UTC): $dateUTC');
+        print('      hoursBeforeStart: $hoursBeforeStart');
+        
         final workDetailsSnapshot = await _firestore
             .collection('tos')
             .doc(toId)
             .collection('workDetails')
             .get();
         
-        if (workDetailsSnapshot.docs.isEmpty) continue;
+        if (workDetailsSnapshot.docs.isEmpty) {
+          print('      ⚠️ WorkDetails 없음, 스킵');
+          continue;
+        }
         
         final batch = _firestore.batch();
-        String? firstStartTime;
+        DateTime? firstDeadlineUTC;
         
         for (var workDoc in workDetailsSnapshot.docs) {
           final workData = workDoc.data();
-          final startTime = workData['startTime'] as String;
-          firstStartTime ??= startTime;
+          final startTime = workData['startTime'] as String?;
           
-          // 마감시간 재계산
+          if (startTime == null || startTime.isEmpty) {
+            print('      ⚠️ ${workDoc.id}: startTime 없음, 스킵');
+            continue;
+          }
+          
           final timeParts = startTime.split(':');
-          final workStartDateTime = DateTime(
-            workDate.year,
-            workDate.month,
-            workDate.day,
-            int.parse(timeParts[0]),
-            int.parse(timeParts[1]),
-          );
-          final newDeadline = workStartDateTime.subtract(Duration(hours: hoursBeforeStart));
+          final startHour = int.parse(timeParts[0]);
+          final startMinute = int.parse(timeParts[1]);
+          
+          // 🔥 KST startTime을 UTC로 직접 계산
+          // KST 18:00 = UTC 09:00 (KST - 9시간)
+          final startTimeUTC = DateTime.utc(
+            dateUTC.year,
+            dateUTC.month,
+            dateUTC.day,
+            startHour,
+            startMinute,
+          ).subtract(Duration(hours: kstOffsetHours));
+          
+          // 마감시간 = 시작시간 - hoursBeforeStart
+          final deadlineUTC = startTimeUTC.subtract(Duration(hours: hoursBeforeStart));
+          
+          firstDeadlineUTC ??= deadlineUTC;
+          
+          // 🔥 KST로 환산해서 로그 출력
+          final deadlineKST = deadlineUTC.add(Duration(hours: kstOffsetHours));
+          
+          print('      ✅ ${workData['workType']}: KST $startTime → 마감 KST ${deadlineKST.month}/${deadlineKST.day} ${deadlineKST.hour}:${deadlineKST.minute.toString().padLeft(2, '0')} (UTC: ${deadlineUTC.hour}:${deadlineUTC.minute.toString().padLeft(2, '0')})');
           
           batch.update(workDoc.reference, {
-            'applicationDeadline': Timestamp.fromDate(newDeadline),
+            'applicationDeadline': Timestamp.fromDate(deadlineUTC),
           });
           
           totalWorkDetailsFixed++;
         }
         
-        // TO 문서 마감시간도 재계산
-        if (firstStartTime != null) {
-          final timeParts = firstStartTime.split(':');
-          final startDateTime = DateTime(
-            workDate.year,
-            workDate.month,
-            workDate.day,
-            int.parse(timeParts[0]),
-            int.parse(timeParts[1]),
-          );
-          final newTODeadline = startDateTime.subtract(Duration(hours: hoursBeforeStart));
-          
+        // TO 마감시간 업데이트
+        if (firstDeadlineUTC != null) {
           batch.update(toDoc.reference, {
-            'applicationDeadline': Timestamp.fromDate(newTODeadline),
+            'applicationDeadline': Timestamp.fromDate(firstDeadlineUTC),
           });
+          
+          final toDeadlineKST = firstDeadlineUTC.add(Duration(hours: kstOffsetHours));
+          print('      📌 TO 마감: KST ${toDeadlineKST.month}/${toDeadlineKST.day} ${toDeadlineKST.hour}:${toDeadlineKST.minute.toString().padLeft(2, '0')}');
         }
         
         await batch.commit();
+        print('      ✅ Batch commit 완료!');
         totalTOsFixed++;
-        
-        print('   ✅ ${toData['title']} (${workDate.month}/${workDate.day}): ${workDetailsSnapshot.docs.length}개 WorkDetail 수정');
       }
       
-      print('✅ 마감시간 재계산 완료!');
+      print('');
+      print('🎉🎉🎉 마감시간 재계산 완료!');
       print('   - TO: $totalTOsFixed개');
       print('   - WorkDetails: $totalWorkDetailsFixed개');
       
-    } catch (e) {
+    } catch (e, stack) {
       print('❌ 마감시간 재계산 실패: $e');
+      print('Stack: $stack');
     }
   }
 }

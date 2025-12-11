@@ -527,9 +527,9 @@ extension WorkDetailFirestore on FirestoreService {
           Duration(hours: hoursBeforeStart)
         );
         
-        // 기본 업데이트
+       // 기본 업데이트
         final Map<String, dynamic> updates = {
-          'applicationDeadline': Timestamp.fromDate(workDeadline),
+          'applicationDeadline': Timestamp.fromDate(workDeadline.toUtc()),  // 🔥 .toUtc() 추가
         };
         
         if (resetClosedStatus) {

@@ -382,9 +382,9 @@ extension TOFirestore on FirestoreService {
             );
             workDeadline = workStartDateTime.subtract(
               Duration(hours: hoursBeforeStart ?? 2)
-            );
+            ).toUtc();  // 🔥 .toUtc() 추가
           } else {
-            workDeadline = applicationDeadline;
+            workDeadline = applicationDeadline.toUtc();  // 🔥 .toUtc() 추가
           }
         }
         

@@ -789,13 +789,13 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
           int.parse(timeParts[0]),
           int.parse(timeParts[1]),
         );
-        finalDeadline = startDateTime.subtract(Duration(hours: _hoursBeforeStart));
+        finalDeadline = startDateTime.subtract(Duration(hours: _hoursBeforeStart)).toUtc();  // 🔥 .toUtc() 추가
       } else {
         if (_fixedDeadline == null) {
           ToastHelper.showError('지원 마감 시간을 설정해주세요');
           return false;
         }
-        finalDeadline = _fixedDeadline!;
+        finalDeadline = _fixedDeadline!.toUtc();  // 🔥 .toUtc() 추가
       }
       
       final toId = await _firestoreService.createTOWithDetails(
@@ -870,7 +870,7 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
           int.parse(timeParts[0]),
           int.parse(timeParts[1]),
         );
-        final finalDeadline = startDateTime.subtract(Duration(hours: _hoursBeforeStart));
+        final finalDeadline = startDateTime.subtract(Duration(hours: _hoursBeforeStart)).toUtc();  // 🔥 .toUtc() 추가
 
         final toId = await _firestoreService.createTOWithDetails(
           businessId: _selectedBusiness!.id,
