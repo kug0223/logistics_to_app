@@ -868,7 +868,7 @@ class _FullScreenImageViewer extends StatefulWidget {
 class _FullScreenImageViewerState extends State<_FullScreenImageViewer> {
   final TransformationController _transformController = TransformationController();
   int _rotationQuarter = 0;  // 0, 1, 2, 3 (90도씩)
-  bool _isLoading = true;
+  final bool _isLoading = true;
 
   @override
   void dispose() {

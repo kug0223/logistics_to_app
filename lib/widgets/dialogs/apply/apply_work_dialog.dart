@@ -1315,20 +1315,10 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
               return DateUtils.isSameDay(_selectedDate, day);
             },
             
-            // 활성화된 날짜 (등록된 날짜 + 공개된 날짜만)
+            // 활성화된 날짜 (등록된 날짜만 - 예약 포함)
             enabledDayPredicate: (day) {
               // 등록된 날짜인지 확인
-              final isAvailable = _availableDates.any((d) => DateUtils.isSameDay(d, day));
-              if (!isAvailable) return false;
-              
-              // ✅ 예약 공개 체크: 해당 날짜의 TO가 공개되었는지 확인
-              final dateKey = DateTime(day.year, day.month, day.day);
-              final to = widget.groupTOsByDate?[dateKey];
-              if (to != null && to.isPendingPublish) {
-                return false;  // 예약 중이면 선택 불가
-              }
-              
-              return true;
+              return _availableDates.any((d) => DateUtils.isSameDay(d, day));
             },
             
             // 날짜 선택
@@ -1601,33 +1591,22 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
       backgroundColor = Colors.transparent;
       textColor = AppColors.grey300;
     }
-    // ✅ 예약 중이면 주황색 배경 + 시간 표시
+    // ✅ 예약 중이면 주황색 배경 (동그란 모양)
     if (isPendingPublish && isAvailable) {
       return Container(
         margin: EdgeInsets.all(ResponsiveHelper.spacing(context, 2)),
         decoration: BoxDecoration(
           color: AppColors.warningBg,
-          borderRadius: BorderRadius.circular(8),
+          shape: BoxShape.circle,
           border: Border.all(color: AppColors.warningLight),
         ),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Text(
-              '${day.day}',
-              style: ResponsiveHelper.smallStyle(context, color: AppColors.warningDark).copyWith(
-                fontWeight: FontWeight.bold,
-              ),
+        child: Center(
+          child: Text(
+            '${day.day}',
+            style: ResponsiveHelper.bodyStyle(context, color: AppColors.warningDark).copyWith(
+              fontWeight: FontWeight.bold,
             ),
-            if (publishAt != null)
-              Text(
-                '${publishAt.hour}:${publishAt.minute.toString().padLeft(2, '0')}',
-                style: TextStyle(
-                  fontSize: 8,
-                  color: AppColors.warningDark,
-                ),
-              ),
-          ],
+          ),
         ),
       );
     }
@@ -1749,6 +1728,9 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
       );
     }
 
+    // ✅ 예약 공개 체크
+    final isPending = to.isPendingPublish;
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -1825,36 +1807,78 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
         
         SizedBox(height: ResponsiveHelper.spacing(context, 8)),
         
-        // 업무 목록
-        ...workDetails.map((work) {
-          final workKey = _makeWorkKey(work.workType, work.startTime, work.endTime);
-          final application = _applicationsByDate[dateKey]?[workKey];
-          final conflictInfo = _conflictCache[_dateKey(date)]?[work.id] 
-              ?? ConflictInfo.ok;
-          
-          // ✅ 예약 공개 체크
-          final isPending = to?.isPendingPublish ?? false;
-          
-          return WorkSelectionCard(
-            workDetail: work,
-            status: isPending ? WorkApplicationStatus.closed : _getApplicationStatus(application),
-            conflictInfo: isPending 
-                ? ConflictInfo(
-                    level: ConflictLevel.blocked,
-                    message: '${to?.publishAtDisplay ?? ""} 오픈 예정',
-                  )
-                : conflictInfo,
-            isLoading: _loadingWorkIds.contains('${date.millisecondsSinceEpoch}_${work.id}'),
-            onApply: isPending ? null : () => _applyForWork(to, work, date: date),
-            onCancelApplication: application != null
-                ? () => _cancelApplication(application)
-                : null,
-            onCancelConfirm: application != null
-                ? () => _cancelConfirm(application, work, date: date)
-                : null,
-          );
-        }),
+        // ✅ 예약 공개 대기 중이면 오픈 예정 메시지
+        if (isPending) ...[
+          _buildPendingPublishNotice(context, to),
+          SizedBox(height: ResponsiveHelper.spacing(context, 8)),
+        ],
+        
+        // 업무 목록 (예약 중이면 반투명)
+        Opacity(
+          opacity: isPending ? 0.4 : 1.0,
+          child: Column(
+            children: workDetails.map((work) {
+              final workKey = _makeWorkKey(work.workType, work.startTime, work.endTime);
+              final application = _applicationsByDate[dateKey]?[workKey];
+              final conflictInfo = _conflictCache[_dateKey(date)]?[work.id] 
+                  ?? ConflictInfo.ok;
+              
+              return WorkSelectionCard(
+                workDetail: work,
+                status: isPending ? WorkApplicationStatus.closed : _getApplicationStatus(application),
+                conflictInfo: isPending 
+                    ? const ConflictInfo(
+                        level: ConflictLevel.blocked,
+                        message: '예약',
+                      )
+                    : conflictInfo,
+                isLoading: _loadingWorkIds.contains('${date.millisecondsSinceEpoch}_${work.id}'),
+                onApply: isPending ? null : () => _applyForWork(to, work, date: date),
+                onCancelApplication: application != null
+                    ? () => _cancelApplication(application)
+                    : null,
+                onCancelConfirm: application != null
+                    ? () => _cancelConfirm(application, work, date: date)
+                    : null,
+              );
+            }).toList(),
+          ),
+        ),
       ],
+    );
+  }
+  /// ✅ 예약 공개 대기 메시지
+  Widget _buildPendingPublishNotice(BuildContext context, TOModel to) {
+    final publishAt = to.publishAt;
+    final displayText = publishAt != null 
+        ? '${publishAt.month}/${publishAt.day} ${publishAt.hour.toString().padLeft(2, '0')}:${publishAt.minute.toString().padLeft(2, '0')}에 오픈됩니다'
+        : '곧 오픈 예정입니다';
+    
+    return Container(
+      padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 12)),
+      decoration: BoxDecoration(
+        color: AppColors.warningBg,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: AppColors.warningLight),
+      ),
+      child: Row(
+        children: [
+          Icon(
+            Icons.schedule,
+            size: ResponsiveHelper.iconSize(context, 18),
+            color: AppColors.warningDark,
+          ),
+          SizedBox(width: ResponsiveHelper.spacing(context, 10)),
+          Expanded(
+            child: Text(
+              displayText,
+              style: ResponsiveHelper.bodyStyle(context, color: AppColors.warningDark).copyWith(
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ),
+        ],
+      ),
     );
   }
 

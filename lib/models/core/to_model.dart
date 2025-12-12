@@ -689,8 +689,18 @@ class TOModel {
   /// 예약 공개 모드인지 확인
   bool get isScheduledPublish => publishMode == 'scheduled';
 
-  /// 공개 대기 중인지 확인 (예약 모드 + 미공개)
-  bool get isPendingPublish => isScheduledPublish && !isPublished;
+  /// 공개 대기 중인지 확인 (예약 모드 + 미공개 + 시간 안 지남)
+  bool get isPendingPublish {
+    if (!isScheduledPublish) return false;
+    if (isPublished) return false;
+    
+    // ✅ publishAt이 있고 현재 시간이 지났으면 공개됨
+    if (publishAt != null && DateTime.now().isAfter(publishAt!)) {
+      return false;
+    }
+    
+    return true;
+  }
 
   /// 공개 예정 시간 표시 (예: "11/27 14:00")
   String? get publishAtDisplay {

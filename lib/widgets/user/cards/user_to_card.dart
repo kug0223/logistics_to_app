@@ -24,7 +24,6 @@ import '../../work_type_icon.dart';
 
 // Screens
 import '../../../screens/common/job_posting_screen.dart';
-import '../../../screens/user/dialogs/apply_dialog.dart';
 import '../../dialogs/apply/apply_work_dialog.dart';
 
 /// 지원자용 TO 카드 위젯
@@ -912,6 +911,10 @@ class _UserTOCardState extends State<UserTOCard> {
 
   /// 펼친 상태 컨텐츠
   Widget _buildExpandedContent(BuildContext context) {
+    // ✅ 선택된 날짜의 예약 상태 확인
+    final selectedTO = _isGroupTO ? _selectedDateTO : widget.to;
+    final isPendingPublish = selectedTO?.isPendingPublish ?? false;
+    
     return Padding(
       padding: ResponsiveHelper.cardPadding(context),
       child: Column(
@@ -923,8 +926,51 @@ class _UserTOCardState extends State<UserTOCard> {
             SizedBox(height: ResponsiveHelper.spacing(context, 12)),
           ],
           
-          // 업무 목록
-          _buildWorkDetailsList(context),
+          // ✅ 예약 공개 대기 중이면 오픈 예정 메시지
+          if (isPendingPublish) ...[
+            _buildPendingPublishNotice(context, selectedTO!),
+            SizedBox(height: ResponsiveHelper.spacing(context, 12)),
+          ],
+          
+          // 업무 목록 (예약 중이면 반투명)
+          Opacity(
+            opacity: isPendingPublish ? 0.4 : 1.0,
+            child: _buildWorkDetailsList(context),
+          ),
+        ],
+      ),
+    );
+  }
+  /// ✅ 예약 공개 대기 메시지
+  Widget _buildPendingPublishNotice(BuildContext context, TOModel to) {
+    final publishAt = to.publishAt;
+    final displayText = publishAt != null 
+        ? '${publishAt.month}/${publishAt.day} ${publishAt.hour.toString().padLeft(2, '0')}:${publishAt.minute.toString().padLeft(2, '0')}에 오픈됩니다'
+        : '곧 오픈 예정입니다';
+    
+    return Container(
+      padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 12)),
+      decoration: BoxDecoration(
+        color: AppColors.warningBg,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: AppColors.warningLight),
+      ),
+      child: Row(
+        children: [
+          Icon(
+            Icons.schedule,
+            size: ResponsiveHelper.iconSize(context, 18),
+            color: AppColors.warningDark,
+          ),
+          SizedBox(width: ResponsiveHelper.spacing(context, 10)),
+          Expanded(
+            child: Text(
+              displayText,
+              style: ResponsiveHelper.bodyStyle(context, color: AppColors.warningDark).copyWith(
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ),
         ],
       ),
     );
@@ -987,7 +1033,7 @@ class _UserTOCardState extends State<UserTOCard> {
     final isPending = to.isPendingPublish;
     
     return GestureDetector(
-      onTap: isPending ? null : () => _selectDate(to),
+      onTap: () => _selectDate(to),
       child: Opacity(
         opacity: isPending ? 0.5 : 1.0,
         child: Container(

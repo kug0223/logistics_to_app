@@ -1006,8 +1006,8 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
     // ✅ WorkDetail에서 못 찾으면 Application에서 시간 정보 가져오기 (장기 공고 대응)
     if (timeStr.isEmpty && workers.isNotEmpty) {
       final firstApp = workers.first;
-      if (firstApp.startTime != null && firstApp.endTime != null &&
-          firstApp.startTime!.isNotEmpty && firstApp.endTime!.isNotEmpty) {
+      if (firstApp.endTime != null &&
+          firstApp.startTime.isNotEmpty && firstApp.endTime.isNotEmpty) {
         timeStr = '${firstApp.startTime} ~ ${firstApp.endTime}';
       }
     }

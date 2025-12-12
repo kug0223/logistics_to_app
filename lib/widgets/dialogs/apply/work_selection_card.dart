@@ -162,9 +162,16 @@ class WorkSelectionCard extends StatelessWidget {
       textColor = AppColors.successDark;
     } else if (conflictInfo.level == ConflictLevel.blocked) {
       // 충돌이 BLOCKED면 (미확정 상태에서만)
-      text = '시간충돌';
-      bgColor = AppColors.errorBg;
-      textColor = AppColors.errorDark;
+      // ✅ 예약 상태면 '예약' 표시
+      if (conflictInfo.message == '예약') {
+        text = '예약';
+        bgColor = AppColors.warningBg;
+        textColor = AppColors.warningDark;
+      } else {
+        text = '시간충돌';
+        bgColor = AppColors.errorBg;
+        textColor = AppColors.errorDark;
+      }
     } else {
       switch (status) {
         case WorkApplicationStatus.confirmed:
