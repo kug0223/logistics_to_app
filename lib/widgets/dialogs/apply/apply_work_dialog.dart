@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
 import 'package:table_calendar/table_calendar.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 
 import '../../../models/core/to_model.dart';
 import '../../../models/core/work_detail_model.dart';
@@ -111,9 +112,13 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
   // key: DateTime, value: Map<workKey, ApplicationModel>
   final Map<DateTime, Map<String, ApplicationModel>> _applicationsByDate = {};
 
-  // 날짜별 충돌 정보 캐시
-  // key: 'yyyy-MM-dd', value: Map<workDetailId, ConflictInfo>
+  // 충돌 정보 캐시: Map<날짜키, Map<workDetailId, ConflictInfo>>
   final Map<String, Map<String, ConflictInfo>> _conflictCache = {};
+  
+  // ✅ 장기공고용: 확정된 근무가 있는 날짜 Set
+  Set<DateTime> _confirmedDatesInRange = {};
+  Map<DateTime, ApplicationModel> _conflictInfoByDate = {};  // 날짜별 충돌 스케줄
+  DateTime? _firstSelectableDate;  // 첫 선택 가능 날짜
 
   // 로딩 중인 업무 ID 목록
   final Set<String> _loadingWorkIds = {};
@@ -210,6 +215,11 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
         await _loadDateApplications(widget.mainTO.date);
         await _loadMyConfirmedSchedules(widget.mainTO.date);
         await _loadConflictsForDate(widget.mainTO.date);
+        
+        // ✅ 장기공고: 전체 기간 내 확정 날짜 로드
+        if (_isLongTerm) {
+          await _loadConfirmedDatesInRange();
+        }
       }
     } catch (e) {
       print('❌ 초기 데이터 로드 실패: $e');
@@ -291,6 +301,149 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
     } catch (e) {
       print('❌ 확정 스케줄 로드 실패: $e');
     }
+  }
+  /// ✅ 장기공고용: 전체 기간 내 확정된 근무가 있는 날짜 조회 (성능 최적화)
+  Future<void> _loadConfirmedDatesInRange() async {
+    if (_currentUserId == null) return;
+    
+    final startDate = widget.mainTO.date;
+    final endDate = widget.mainTO.endDate ?? widget.mainTO.date;
+    final workDays = widget.mainTO.workDays ?? [];
+    final workStartTime = widget.workDetails.isNotEmpty ? widget.workDetails.first.startTime : '';
+    final workEndTime = widget.workDetails.isNotEmpty ? widget.workDetails.first.endTime : '';
+    
+    try {
+      // ✅ 1. 사용자의 모든 CONFIRMED 지원서 한 번에 조회
+      final snapshot = await FirebaseFirestore.instance
+          .collection('applications')
+          .where('uid', isEqualTo: _currentUserId)
+          .where('status', isEqualTo: 'CONFIRMED')
+          .get();
+      
+      final allConfirmed = snapshot.docs
+          .map((doc) => ApplicationModel.fromFirestore(doc))
+          .toList();
+      
+      print('📅 [장기충돌] 전체 CONFIRMED: ${allConfirmed.length}개');
+      
+      final confirmedDates = <DateTime>{};
+      final conflictInfoByDate = <DateTime, ApplicationModel>{};
+      
+      // ✅ 2. 기간 내 모든 근무 요일에 대해 충돌 체크 (메모리에서!)
+      var currentDate = startDate;
+      while (!currentDate.isAfter(endDate)) {
+        final dayOfWeek = ['월', '화', '수', '목', '금', '토', '일'][currentDate.weekday - 1];
+        
+        // 근무 요일인 경우만 체크
+        if (workDays.isEmpty || workDays.contains(dayOfWeek)) {
+          // 해당 날짜에 근무하는 확정 스케줄 찾기
+          for (final app in allConfirmed) {
+            if (_isWorkingOnDate(app, currentDate)) {
+              // 시간 충돌 체크
+              if (_hasTimeOverlap(workStartTime, workEndTime, app.startTime, app.endTime)) {
+                final dateKey = DateTime(currentDate.year, currentDate.month, currentDate.day);
+                confirmedDates.add(dateKey);
+                conflictInfoByDate[dateKey] = app;
+                break;
+              }
+            }
+          }
+        }
+        
+        currentDate = currentDate.add(const Duration(days: 1));
+      }
+      
+      // ✅ 3. 첫 선택 가능 날짜 계산 (충돌 이후 첫 근무일)
+      DateTime? firstSelectable;
+      final today = DateTime.now();
+      final todayOnly = DateTime(today.year, today.month, today.day);
+      final selectableStart = todayOnly.isAfter(startDate) ? todayOnly : startDate;
+      
+      var checkDate = selectableStart;
+      while (!checkDate.isAfter(endDate)) {
+        final dayOfWeek = ['월', '화', '수', '목', '금', '토', '일'][checkDate.weekday - 1];
+        final dateKey = DateTime(checkDate.year, checkDate.month, checkDate.day);
+        
+        // 근무 요일이고 충돌 없으면 → 첫 선택 가능일!
+        if ((workDays.isEmpty || workDays.contains(dayOfWeek)) && !confirmedDates.contains(dateKey)) {
+          // 이 날짜부터 끝까지 충돌 없는지 확인
+          bool hasConflictAfter = false;
+          var futureDate = checkDate;
+          while (!futureDate.isAfter(endDate)) {
+            final futureDayOfWeek = ['월', '화', '수', '목', '금', '토', '일'][futureDate.weekday - 1];
+            final futureDateKey = DateTime(futureDate.year, futureDate.month, futureDate.day);
+            if ((workDays.isEmpty || workDays.contains(futureDayOfWeek)) && confirmedDates.contains(futureDateKey)) {
+              hasConflictAfter = true;
+              break;
+            }
+            futureDate = futureDate.add(const Duration(days: 1));
+          }
+          
+          if (!hasConflictAfter) {
+            firstSelectable = checkDate;
+            break;
+          }
+        }
+        
+        checkDate = checkDate.add(const Duration(days: 1));
+      }
+      
+      if (mounted) {
+        setState(() {
+          _confirmedDatesInRange = confirmedDates;
+          _conflictInfoByDate = conflictInfoByDate;
+          _firstSelectableDate = firstSelectable;
+        });
+      }
+      
+      print('✅ [장기충돌] 충돌 날짜: ${confirmedDates.length}개, 첫 선택 가능: ${firstSelectable?.toString() ?? "없음"}');
+    } catch (e) {
+      print('❌ 확정 날짜 로드 실패: $e');
+    }
+  }
+  
+  /// 특정 날짜에 근무하는지 확인 (장기공고 포함)
+  bool _isWorkingOnDate(ApplicationModel app, DateTime targetDate) {
+    final isLongTerm = app.workDays != null && app.workDays!.isNotEmpty;
+    
+    // 단기: workDate만 비교
+    if (!isLongTerm) {
+      return app.workDate.year == targetDate.year &&
+             app.workDate.month == targetDate.month &&
+             app.workDate.day == targetDate.day;
+    }
+    
+    // 장기: 기간 + 요일 체크
+    if (app.workEndDate == null) return false;
+    
+    final targetOnly = DateTime(targetDate.year, targetDate.month, targetDate.day);
+    final startOnly = DateTime(app.workDate.year, app.workDate.month, app.workDate.day);
+    final endOnly = DateTime(app.workEndDate!.year, app.workEndDate!.month, app.workEndDate!.day);
+    
+    // 기간 체크
+    if (targetOnly.isBefore(startOnly) || targetOnly.isAfter(endOnly)) return false;
+    
+    // 요일 체크
+    final dayOfWeek = ['월', '화', '수', '목', '금', '토', '일'][targetDate.weekday - 1];
+    return app.workDays!.contains(dayOfWeek);
+  }
+  
+  /// 시간 겹침 체크 헬퍼
+  bool _hasTimeOverlap(String start1, String end1, String start2, String end2) {
+    if (start1.isEmpty || end1.isEmpty || start2.isEmpty || end2.isEmpty) return false;
+    
+    int toMinutes(String time) {
+      final parts = time.split(':');
+      if (parts.length < 2) return 0;
+      return int.parse(parts[0]) * 60 + int.parse(parts[1]);
+    }
+    
+    final s1 = toMinutes(start1);
+    final e1 = toMinutes(end1);
+    final s2 = toMinutes(start2);
+    final e2 = toMinutes(end2);
+    
+    return !(e1 <= s2 || e2 <= s1);
   }
 
   /// 특정 날짜의 충돌 정보 로드
@@ -597,6 +750,127 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
   // ═══════════════════════════════════════════════════════════
   // 장기공고 캘린더 섹션 (읽기전용)
   // ═══════════════════════════════════════════════════════════
+  /// ✅ 충돌 경고 박스
+  Widget _buildConflictWarningBox(BuildContext context) {
+    if (_conflictInfoByDate.isEmpty) return const SizedBox.shrink();
+    
+    // 첫 충돌 정보
+    final sortedDates = _conflictInfoByDate.keys.toList()..sort();
+    final firstConflictDate = sortedDates.first;
+    final firstConflict = _conflictInfoByDate[firstConflictDate]!;
+    
+    // 선택 가능 날짜 텍스트
+    String selectableText = '';
+    if (_firstSelectableDate != null) {
+      final dayOfWeek = ['월', '화', '수', '목', '금', '토', '일'][_firstSelectableDate!.weekday - 1];
+      selectableText = '${_firstSelectableDate!.month}/${_firstSelectableDate!.day}($dayOfWeek)부터 선택 가능';
+    } else {
+      selectableText = '선택 가능한 날짜가 없습니다';
+    }
+    
+    return Container(
+      margin: EdgeInsets.only(bottom: ResponsiveHelper.spacing(context, 12)),
+      padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 12)),
+      decoration: BoxDecoration(
+        color: AppColors.warningBg,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: AppColors.warningLight),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(
+                Icons.warning_amber_rounded,
+                size: ResponsiveHelper.iconSize(context, 18),
+                color: AppColors.warningDark,
+              ),
+              SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+              Expanded(
+                child: Text(
+                  '기간 내 확정된 근무가 있습니다',
+                  style: ResponsiveHelper.bodyStyle(context, color: AppColors.warningDark).copyWith(
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          SizedBox(height: ResponsiveHelper.spacing(context, 8)),
+          
+          // 충돌 날짜 목록 (최대 3개)
+          ...sortedDates.take(3).map((date) {
+            final app = _conflictInfoByDate[date]!;
+            final dayOfWeek = ['월', '화', '수', '목', '금', '토', '일'][date.weekday - 1];
+            return Padding(
+              padding: EdgeInsets.only(
+                left: ResponsiveHelper.spacing(context, 26),
+                bottom: ResponsiveHelper.spacing(context, 4),
+              ),
+              child: Row(
+                children: [
+                  Container(
+                    width: 6,
+                    height: 6,
+                    decoration: const BoxDecoration(
+                      color: AppColors.warningDark,
+                      shape: BoxShape.circle,
+                    ),
+                  ),
+                  SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+                  Expanded(
+                    child: Text(
+                      '${date.month}/${date.day}($dayOfWeek) ${app.startTime}~${app.endTime} (${app.businessName})',
+                      style: ResponsiveHelper.smallStyle(context, color: AppColors.warningDark),
+                    ),
+                  ),
+                ],
+              ),
+            );
+          }),
+          
+          if (sortedDates.length > 3)
+            Padding(
+              padding: EdgeInsets.only(left: ResponsiveHelper.spacing(context, 26)),
+              child: Text(
+                '외 ${sortedDates.length - 3}개 날짜',
+                style: ResponsiveHelper.smallStyle(context, color: AppColors.grey600),
+              ),
+            ),
+          
+          SizedBox(height: ResponsiveHelper.spacing(context, 8)),
+          
+          // 선택 가능 날짜 안내
+          Container(
+            padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 8)),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(6),
+            ),
+            child: Row(
+              children: [
+                Icon(
+                  Icons.info_outline,
+                  size: ResponsiveHelper.iconSize(context, 16),
+                  color: AppColors.info,
+                ),
+                SizedBox(width: ResponsiveHelper.spacing(context, 6)),
+                Expanded(
+                  child: Text(
+                    selectableText,
+                    style: ResponsiveHelper.smallStyle(context, color: AppColors.info).copyWith(
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
 
   /// 장기공고용 캘린더 (희망 시작일 선택 가능)
   Widget _buildLongTermCalendarSection(BuildContext context, ThemeData theme) {
@@ -611,12 +885,14 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
     // 선택 가능한 시작일: 오늘 또는 공고시작일 중 늦은 날짜부터
     final selectableStartDate = todayOnly.isAfter(startDate) ? todayOnly : startDate;
     
-    return Container(
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(
-          ResponsiveHelper.spacing(context, 12),
-        ),
+    return Column(
+      children: [        
+        Container(
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(
+              ResponsiveHelper.spacing(context, 12),
+            ),
         border: Border.all(color: AppColors.longTermLight),
         boxShadow: [
           BoxShadow(
@@ -676,7 +952,7 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
               return DateUtils.isSameDay(_desiredStartDate, day);
             },
             
-            // ✅ 선택 가능한 날짜: 오늘 이후 + 근무기간 내 + 근무요일
+            // ✅ 선택 가능한 날짜: 오늘 이후 + 근무기간 내 + 근무요일 + 확정 근무 없음
             enabledDayPredicate: (day) {
               // 과거 날짜 불가
               if (day.isBefore(selectableStartDate)) return false;
@@ -688,6 +964,16 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
                 final dayName = dayNames[day.weekday - 1];
                 if (!workDays.contains(dayName)) return false;
               }
+              
+              // ✅ 이 날짜 선택 시, 이후 충돌 있으면 선택 불가
+              final dayOnly = DateTime(day.year, day.month, day.day);
+              for (final conflictDate in _confirmedDatesInRange) {
+                if (!conflictDate.isBefore(dayOnly)) {
+                  // dayOnly 이후에 충돌 날짜 있으면 선택 불가
+                  return false;
+                }
+              }
+              
               return true;
             },
             
@@ -818,6 +1104,15 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
           ),
         ],
       ),
+        ),
+        // ✅ 충돌 경고 메시지 (캘린더 아래)
+        if (_conflictInfoByDate.isNotEmpty) 
+          Padding(
+            padding: EdgeInsets.only(top: ResponsiveHelper.spacing(context, 12)),
+            child: _buildConflictWarningBox(context),
+          ),
+      ],
+      
     );
   }
 
@@ -1020,9 +1315,20 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
               return DateUtils.isSameDay(_selectedDate, day);
             },
             
-            // 활성화된 날짜 (등록된 날짜만)
+            // 활성화된 날짜 (등록된 날짜 + 공개된 날짜만)
             enabledDayPredicate: (day) {
-              return _availableDates.any((d) => DateUtils.isSameDay(d, day));
+              // 등록된 날짜인지 확인
+              final isAvailable = _availableDates.any((d) => DateUtils.isSameDay(d, day));
+              if (!isAvailable) return false;
+              
+              // ✅ 예약 공개 체크: 해당 날짜의 TO가 공개되었는지 확인
+              final dateKey = DateTime(day.year, day.month, day.day);
+              final to = widget.groupTOsByDate?[dateKey];
+              if (to != null && to.isPendingPublish) {
+                return false;  // 예약 중이면 선택 불가
+              }
+              
+              return true;
             },
             
             // 날짜 선택
@@ -1112,12 +1418,19 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
                   (d) => DateUtils.isSameDay(d, day),
                 );
                 
+                // ✅ 예약 공개 체크
+                final dateKey = DateTime(day.year, day.month, day.day);
+                final to = widget.groupTOsByDate?[dateKey];
+                final isPending = to?.isPendingPublish ?? false;
+                
                 return _buildDayCell(
                   context,
                   day,
                   isAvailable: isAvailable,
                   isSelected: false,
                   isToday: false,
+                  isPendingPublish: isPending,
+                  publishAt: to?.publishAt,
                 );
               },
               
@@ -1265,6 +1578,8 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
     required bool isAvailable,
     required bool isSelected,
     required bool isToday,
+    bool isPendingPublish = false,
+    DateTime? publishAt,
   }) {
     final theme = Theme.of(context);
     
@@ -1285,6 +1600,36 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
     } else {
       backgroundColor = Colors.transparent;
       textColor = AppColors.grey300;
+    }
+    // ✅ 예약 중이면 주황색 배경 + 시간 표시
+    if (isPendingPublish && isAvailable) {
+      return Container(
+        margin: EdgeInsets.all(ResponsiveHelper.spacing(context, 2)),
+        decoration: BoxDecoration(
+          color: AppColors.warningBg,
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(color: AppColors.warningLight),
+        ),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Text(
+              '${day.day}',
+              style: ResponsiveHelper.smallStyle(context, color: AppColors.warningDark).copyWith(
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+            if (publishAt != null)
+              Text(
+                '${publishAt.hour}:${publishAt.minute.toString().padLeft(2, '0')}',
+                style: TextStyle(
+                  fontSize: 8,
+                  color: AppColors.warningDark,
+                ),
+              ),
+          ],
+        ),
+      );
     }
     
     return Container(
@@ -1487,12 +1832,20 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
           final conflictInfo = _conflictCache[_dateKey(date)]?[work.id] 
               ?? ConflictInfo.ok;
           
+          // ✅ 예약 공개 체크
+          final isPending = to?.isPendingPublish ?? false;
+          
           return WorkSelectionCard(
             workDetail: work,
-            status: _getApplicationStatus(application),
-            conflictInfo: conflictInfo,
+            status: isPending ? WorkApplicationStatus.closed : _getApplicationStatus(application),
+            conflictInfo: isPending 
+                ? ConflictInfo(
+                    level: ConflictLevel.blocked,
+                    message: '${to?.publishAtDisplay ?? ""} 오픈 예정',
+                  )
+                : conflictInfo,
             isLoading: _loadingWorkIds.contains('${date.millisecondsSinceEpoch}_${work.id}'),
-            onApply: () => _applyForWork(to, work, date: date),
+            onApply: isPending ? null : () => _applyForWork(to, work, date: date),
             onCancelApplication: application != null
                 ? () => _cancelApplication(application)
                 : null,

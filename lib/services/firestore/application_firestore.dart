@@ -455,34 +455,64 @@ extension ApplicationFirestore on FirestoreService {
         print('✅ 재지원 완료 (기존 문서 업데이트)');
         return true;
       }
+      // ✅ 장기공고 여부 판단: workDays가 있어야 진짜 장기 (충돌 체크 전에 선언)
+      final isReallyLongTerm = type == 'long_term' && workDays != null && workDays.isNotEmpty;
+
       // ⭐ Phase 2-C: 확정된 근무와 충돌 체크
-      final confirmedSchedules = await getConfirmedSchedules(
-        uid: uid,
-        workDate: workDate,
-      );
-      
-      for (var schedule in confirmedSchedules) {
-        if (_hasTimeOverlap(
-          startTime,
-          endTime,
-          schedule.startTime,
-          schedule.endTime,
-        )) {
-          // ⚠️ 충돌 발견!
-          ToastHelper.showError(
-            '이미 ${schedule.startTime}~${schedule.endTime}에\n'
-            '${schedule.businessName}에서 확정된 근무가 있습니다.\n\n'
-            '해당 시간대에는 추가 지원이 불가능합니다.'
-          );
-          return false;
+      // ✅ 장기공고인 경우 전체 기간 체크
+      if (isReallyLongTerm && workEndDate != null) {
+        // 장기공고: 전체 근무일에 대해 충돌 체크
+        var currentDate = workDate;
+        while (!currentDate.isAfter(workEndDate)) {
+          final dayOfWeek = _getKoreanDayOfWeek(currentDate);
+          
+          // 근무 요일인 경우만 체크
+          if (workDays!.contains(dayOfWeek)) {
+            final schedules = await getConfirmedSchedules(
+              uid: uid,
+              workDate: currentDate,
+            );
+            
+            for (var schedule in schedules) {
+              if (_hasTimeOverlap(startTime, endTime, schedule.startTime, schedule.endTime)) {
+                ToastHelper.showError(
+                  '${currentDate.month}/${currentDate.day}에\n'
+                  '${schedule.startTime}~${schedule.endTime} (${schedule.businessName})\n'
+                  '확정된 근무가 있어 지원할 수 없습니다.'
+                );
+                return false;
+              }
+            }
+          }
+          
+          currentDate = currentDate.add(const Duration(days: 1));
+        }
+      } else {
+        // 단기공고: 해당 날짜만 체크
+        final confirmedSchedules = await getConfirmedSchedules(
+          uid: uid,
+          workDate: workDate,
+        );
+        
+        for (var schedule in confirmedSchedules) {
+          if (_hasTimeOverlap(
+            startTime,
+            endTime,
+            schedule.startTime,
+            schedule.endTime,
+          )) {
+            ToastHelper.showError(
+              '이미 ${schedule.startTime}~${schedule.endTime}에\n'
+              '${schedule.businessName}에서 확정된 근무가 있습니다.\n\n'
+              '해당 시간대에는 추가 지원이 불가능합니다.'
+            );
+            return false;
+          }
         }
       }
 
       // 4. Batch로 한번에 처리
       final batch = _firestore.batch();
-
-      // ✅ 장기공고 여부 판단: workDays가 있어야 진짜 장기
-      final isReallyLongTerm = type == 'long_term' && workDays != null && workDays.isNotEmpty;
       
       // 4-1. 지원서 생성
       final appRef = _firestore.collection('applications').doc();
@@ -2579,5 +2609,10 @@ extension ApplicationFirestore on FirestoreService {
       print('❌ 장기 근무 지원자 조회 실패: $e');
       return [];
     }
+  }
+  /// 요일을 한글로 변환
+  String _getKoreanDayOfWeek(DateTime date) {
+    const days = ['월', '화', '수', '목', '금', '토', '일'];
+    return days[date.weekday - 1];
   }
 }
