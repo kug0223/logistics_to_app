@@ -245,10 +245,10 @@ class AttendanceListPdf {
     required pw.TextStyle headerStyle,
     required pw.TextStyle bodyStyle,
   }) {
-    // 업무명 (시간 포함)
-    final workTypeLabel = workTime.isNotEmpty 
-        ? '■ $workType ($workTime)' 
-        : '■ $workType';
+    // ✅ 업무명 (이미 시간이 포함되어 있으면 그대로, 아니면 추가)
+    final workTypeLabel = workType.contains('~') 
+        ? '■ $workType'  // 이미 시간 포함
+        : (workTime.isNotEmpty ? '■ $workType ($workTime)' : '■ $workType');
     
     return pw.Container(
       margin: const pw.EdgeInsets.only(bottom: 20),
@@ -383,37 +383,44 @@ class AttendanceListPdf {
     required Map<String, UserModel> userMap,
     Map<String, dynamic>? workTypeMap,  // 업무유형별 시간 정보
   }) {
-    // 업무별 그룹화
+    // ✅ workType + 시간 조합으로 그룹화 (장기/단기 합침)
     final Map<String, List<ApplicationModel>> workTypeGroups = {};
+    
     for (var app in confirmedWorkers) {
-      final workType = app.selectedWorkType;
-      workTypeGroups.putIfAbsent(workType, () => []);
-      workTypeGroups[workType]!.add(app);
+      // 항상 workType + startTime + endTime 조합으로 그룹화
+      final groupKey = '${app.selectedWorkType}_${app.startTime}_${app.endTime}';
+      
+      workTypeGroups.putIfAbsent(groupKey, () => []);
+      workTypeGroups[groupKey]!.add(app);
     }
 
-    // 각 그룹 내 정렬 (출근시간 → 성별 → 이름 가나다순)
-    for (var entry in workTypeGroups.entries) {
-      final workType = entry.key;
-      final workers = entry.value;
-      // workTypeMap에서 기본 시간 정보 가져오기
-      final workTypeInfo = workTypeMap?[workType];
-      final defaultStartTime = workTypeInfo?['startTime'] ?? '';
-      
-      workers.sort((a, b) {
-        // 1. 출근시간 정렬 (빠른 순)
-        final startTimeA = a.startTime.isNotEmpty ? a.startTime : defaultStartTime;
-        final startTimeB = b.startTime.isNotEmpty ? b.startTime : defaultStartTime;
+    // ✅ 시간순 정렬 (빠른 시간 먼저)
+    final sortedEntries = workTypeGroups.entries.toList()
+      ..sort((a, b) {
+        final appA = a.value.first;
+        final appB = b.value.first;
         
-        if (startTimeA != startTimeB) {
-          return startTimeA.compareTo(startTimeB);
-        }
+        // 1. 시작시간 기준 정렬
+        final timeCompare = appA.startTime.compareTo(appB.startTime);
+        if (timeCompare != 0) return timeCompare;
         
+        // 2. 같은 시작시간이면 종료시간 기준
+        final endCompare = appA.endTime.compareTo(appB.endTime);
+        if (endCompare != 0) return endCompare;
+        
+        // 3. 같은 시간이면 업무명 기준
+        return appA.selectedWorkType.compareTo(appB.selectedWorkType);
+      });
+
+    // 각 그룹 내 정렬 (성별 → 이름 가나다순)
+    for (var entry in sortedEntries) {
+      entry.value.sort((a, b) {
         final userA = userMap[a.uid];
         final userB = userMap[b.uid];
 
         if (userA == null || userB == null) return 0;
 
-        // 2. 성별 정렬 (남성 먼저)
+        // 1. 성별 정렬 (남성 먼저)
         final genderOrder = {'남성': 0, '여성': 1};
         final genderA = genderOrder[userA.gender] ?? 2;
         final genderB = genderOrder[userB.gender] ?? 2;
@@ -422,62 +429,38 @@ class AttendanceListPdf {
           return genderA.compareTo(genderB);
         }
 
-        // 3. 이름 가나다순
+        // 2. 이름 가나다순
         return (userA.name ?? '').compareTo(userB.name ?? '');
       });
     }
 
-    // AttendanceListItem으로 변환
+    // AttendanceListItem으로 변환 + workTypeTimeMap 생성
     final Map<String, List<AttendanceListItem>> convertedGroups = {};
-    for (var entry in workTypeGroups.entries) {
-      final workType = entry.key;
-      // workTypeMap에서 시간 정보 가져오기
-      final workTypeInfo = workTypeMap?[workType];
-      final defaultStartTime = workTypeInfo?['startTime'] ?? '';
-      final defaultEndTime = workTypeInfo?['endTime'] ?? '';
+    final Map<String, String> workTypeTimeMap = {};
+    
+    for (var entry in sortedEntries) {
+      final firstApp = entry.value.first;
+      final workType = firstApp.selectedWorkType;
+      final startTime = firstApp.startTime;
+      final endTime = firstApp.endTime;
       
-      convertedGroups[entry.key] = entry.value.map((app) {
+      // ✅ 표시 키: workType만 (시간은 workTypeTimeMap에서)
+      // 같은 workType이 다른 시간대로 있을 수 있으므로 고유 키 생성
+      final displayKey = '$workType ($startTime~$endTime)';
+      
+      // 시간 정보 저장 (빈 문자열로 - 이미 displayKey에 포함)
+      workTypeTimeMap[displayKey] = '';
+      
+      convertedGroups[displayKey] = entry.value.map((app) {
         final user = userMap[app.uid];
-        // ApplicationModel의 시간이 비어있으면 workTypeMap에서 가져오기
-        final startTime = app.startTime.isNotEmpty ? app.startTime : defaultStartTime;
-        final endTime = app.endTime.isNotEmpty ? app.endTime : defaultEndTime;
         
         return AttendanceListItem(
           name: user?.name ?? 'Unknown',
           gender: user?.gender ?? '',
           phone: _formatPhone(user?.phone ?? ''),
-          workTime: _formatWorkTime(startTime, endTime),
+          workTime: '${app.startTime}~${app.endTime}',
         );
       }).toList();
-    }
-
-    // 업무별 근무시간 Map 생성
-    final Map<String, String> workTypeTimeMap = {};
-    if (workTypeMap != null) {
-      for (var entry in workTypeMap.entries) {
-        final workType = entry.key;
-        final info = entry.value;
-        final startTime = info['startTime'] ?? '';
-        final endTime = info['endTime'] ?? '';
-        if (startTime.isNotEmpty && endTime.isNotEmpty) {
-          workTypeTimeMap[workType] = '$startTime~$endTime';
-        }
-      }
-    }
-    
-    // ✅ workTypeMap에서 못 찾은 업무는 Application에서 시간 정보 가져오기 (장기 공고 대응)
-    for (var entry in workTypeGroups.entries) {
-      final workType = entry.key;
-      if (!workTypeTimeMap.containsKey(workType) || workTypeTimeMap[workType]!.isEmpty) {
-        // 해당 업무의 첫 번째 Application에서 시간 가져오기
-        final firstApp = entry.value.firstWhere(
-          (app) => app.startTime.isNotEmpty && app.endTime.isNotEmpty,
-          orElse: () => entry.value.first,
-        );
-        if (firstApp.startTime.isNotEmpty && firstApp.endTime.isNotEmpty) {
-          workTypeTimeMap[workType] = '${firstApp.startTime}~${firstApp.endTime}';
-        }
-      }
     }
 
     return AttendanceListData(

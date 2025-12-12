@@ -939,13 +939,15 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
 
   /// 업무별 그룹
   Widget _buildWorkTypeGroups(ThemeData theme) {
-    // 업무 유형별로 그룹화
+    // ✅ workType + 시간 조합으로 그룹화 (장기/단기 합침)
     final Map<String, List<ApplicationModel>> workTypeGroups = {};
 
     for (var app in _confirmedWorkers) {
-      final workType = app.selectedWorkType;
-      workTypeGroups.putIfAbsent(workType, () => []);
-      workTypeGroups[workType]!.add(app);
+      // 항상 workType + startTime + endTime 조합으로 그룹화
+      final groupKey = '${app.selectedWorkType}_${app.startTime}_${app.endTime}';
+      
+      workTypeGroups.putIfAbsent(groupKey, () => []);
+      workTypeGroups[groupKey]!.add(app);
     }
 
     // 각 그룹 내 정렬 (장단기 → 성별 → 나이순)
@@ -980,34 +982,77 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
       });
     }
 
+    // ✅ 시간순 정렬 (빠른 시간 먼저)
+    final sortedEntries = workTypeGroups.entries.toList()
+      ..sort((a, b) {
+        final appA = a.value.first;
+        final appB = b.value.first;
+        
+        // 1. 시작시간 기준 정렬
+        final timeCompare = appA.startTime.compareTo(appB.startTime);
+        if (timeCompare != 0) return timeCompare;
+        
+        // 2. 같은 시작시간이면 종료시간 기준
+        final endCompare = appA.endTime.compareTo(appB.endTime);
+        if (endCompare != 0) return endCompare;
+        
+        // 3. 같은 시간이면 업무명 기준
+        return appA.selectedWorkType.compareTo(appB.selectedWorkType);
+      });
+
     return Column(
-      children: workTypeGroups.entries.map((entry) {
+      children: sortedEntries.map((entry) {
+        // ✅ 그룹의 첫 번째 앱에서 실제 workType 추출
+        final firstApp = entry.value.first;
+        final displayWorkType = firstApp.selectedWorkType;
+        final displayStartTime = firstApp.startTime;
+        final displayEndTime = firstApp.endTime;
+        
         return Padding(
           padding: EdgeInsets.only(bottom: ResponsiveHelper.spacing(context, 16)),
-          child: _buildWorkTypeSection(theme, entry.key, entry.value),
+          child: _buildWorkTypeSection(
+            theme, 
+            displayWorkType, 
+            entry.value,
+            startTime: displayStartTime,
+            endTime: displayEndTime,
+          ),
         );
       }).toList(),
     );
   }
 
   /// 업무 유형 섹션
-  Widget _buildWorkTypeSection(ThemeData theme, String workType, List<ApplicationModel> workers) {
-    // WorkDetail에서 해당 업무의 공식 근무시간 가져오기
-    final workDetailTime = _workDetailTimeMap[workType];
+  Widget _buildWorkTypeSection(
+    ThemeData theme, 
+    String workType, 
+    List<ApplicationModel> workers, {
+    String? startTime,
+    String? endTime,
+  }) {
+    // ✅ 파라미터로 받은 시간 우선 사용
     String timeStr = '';
-    if (workDetailTime != null) {
-      final startTime = workDetailTime['startTime'] ?? '';
-      final endTime = workDetailTime['endTime'] ?? '';
-      if (startTime.isNotEmpty && endTime.isNotEmpty) {
-        timeStr = '$startTime ~ $endTime';
+    if (startTime != null && startTime.isNotEmpty && 
+        endTime != null && endTime.isNotEmpty) {
+      timeStr = '$startTime ~ $endTime';
+    }
+    
+    // 폴백: WorkDetail에서 시간 조회
+    if (timeStr.isEmpty) {
+      final workDetailTime = _workDetailTimeMap[workType];
+      if (workDetailTime != null) {
+        final wdStartTime = workDetailTime['startTime'] ?? '';
+        final wdEndTime = workDetailTime['endTime'] ?? '';
+        if (wdStartTime.isNotEmpty && wdEndTime.isNotEmpty) {
+          timeStr = '$wdStartTime ~ $wdEndTime';
+        }
       }
     }
     
-    // ✅ WorkDetail에서 못 찾으면 Application에서 시간 정보 가져오기 (장기 공고 대응)
+    // 최종 폴백: Application에서 시간 정보 가져오기
     if (timeStr.isEmpty && workers.isNotEmpty) {
       final firstApp = workers.first;
-      if (firstApp.endTime != null &&
-          firstApp.startTime.isNotEmpty && firstApp.endTime.isNotEmpty) {
+      if (firstApp.startTime.isNotEmpty && firstApp.endTime.isNotEmpty) {
         timeStr = '${firstApp.startTime} ~ ${firstApp.endTime}';
       }
     }

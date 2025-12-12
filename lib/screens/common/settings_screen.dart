@@ -20,6 +20,13 @@ import 'document_management_screen.dart';
 import 'profile_edit_screen.dart';
 import '../business_admin/business_list_screen.dart';
 
+// Services
+import '../../services/firestore_service.dart';
+
+// Utils
+import '../../utils/toast_helper.dart';
+import '../../utils/dialog_helper.dart';
+
 /// ✨ 통합 설정 화면 (역할별 메뉴 자동 표시)
 class SettingsScreen extends StatelessWidget {
   const SettingsScreen({super.key});
@@ -176,7 +183,23 @@ class SettingsScreen extends StatelessWidget {
             ),
             
             SizedBox(height: ResponsiveHelper.spacing(context, 24)),
+            
+            // 🔧 개발자 도구 섹션
+            _buildSectionHeader(context, '개발자 도구', Icons.developer_mode),
+            SizedBox(height: ResponsiveHelper.spacing(context, 12)),
+            
+            _buildMenuCard(
+              context,
+              icon: Icons.sync,
+              iconColor: Colors.orange,
+              title: 'Application 마이그레이션',
+              subtitle: 'workDetailId/toId/groupId 채우기',
+              onTap: () => _runApplicationMigration(context),
+            ),
+            
+            SizedBox(height: ResponsiveHelper.spacing(context, 24)),
           ],
+
 
           // ✨ 알림 섹션 (공통)
           _buildSectionHeader(context, '알림', Icons.notifications_outlined),
@@ -222,6 +245,8 @@ class SettingsScreen extends StatelessWidget {
       ),
     );
   }
+  
+  
 
   /// ✨ 세련된 프로필 카드
   Widget _buildProfileCard(BuildContext context, UserProvider userProvider) {
@@ -615,5 +640,78 @@ class SettingsScreen extends StatelessWidget {
         ),
       ),
     );
+  }
+// ... _buildMenuCard 메서드 끝나는 부분
+
+  /// 🔄 Application 마이그레이션 실행
+  void _runApplicationMigration(BuildContext context) async {
+    // 확인 다이얼로그
+    final confirmed = await DialogHelper.showConfirm(
+      context,
+      title: 'Application 마이그레이션',
+      message: '기존 지원서에 누락된 workDetailId, toId, groupId를 채웁니다.\n\n'
+               '⚠️ 데이터가 많으면 시간이 걸릴 수 있습니다.\n'
+               '계속하시겠습니까?',
+      confirmText: '실행',
+      cancelText: '취소',
+      icon: Icons.sync,
+      iconColor: Colors.orange,
+    );
+
+    if (!confirmed) return;
+
+    // 로딩 다이얼로그 표시
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => PopScope(
+        canPop: false,
+        child: AlertDialog(
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const CircularProgressIndicator(),
+              SizedBox(height: ResponsiveHelper.spacing(context, 16)),
+              Text(
+                '마이그레이션 진행 중...\n잠시만 기다려주세요.',
+                textAlign: TextAlign.center,
+                style: ResponsiveHelper.bodyStyle(context),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+
+    try {
+      // 마이그레이션 실행
+      final result = await FirestoreService().migrateApplicationWorkDetailIds();
+      
+      // 로딩 닫기
+      if (context.mounted) Navigator.pop(context);
+
+      // 결과 표시
+      final migrated = result['migrated'] ?? 0;
+      final skipped = result['skipped'] ?? 0;
+      final failed = result['failed'] ?? 0;
+
+      if (context.mounted) {
+        if (failed == -1) {
+          ToastHelper.showError('마이그레이션 실패');
+        } else {
+          await DialogHelper.showInfo(
+            context,
+            title: '마이그레이션 완료',
+            message: '✅ 마이그레이션: $migrated개\n'
+                     '⏭️ 스킵 (이미 있음): $skipped개\n'
+                     '❌ 실패: $failed개',
+          );
+        }
+      }
+    } catch (e) {
+      // 로딩 닫기
+      if (context.mounted) Navigator.pop(context);
+      ToastHelper.showError('마이그레이션 오류: $e');
+    }
   }
 }

@@ -754,6 +754,215 @@ class FirestoreService {
       return -1;
     }
   }
+  /// 🔄 Application workDetailId/toId/groupId 마이그레이션
+  /// 기존 지원서에 누락된 workDetailId, toId, groupId를 채워넣음
+  Future<Map<String, int>> migrateApplicationWorkDetailIds() async {
+    try {
+      print('🔄 [Migration] Application workDetailId 마이그레이션 시작...');
+      
+      int migrated = 0;
+      int skipped = 0;
+      int failed = 0;
+      
+      // 1. workDetailId가 없는 applications 조회
+      final snapshot = await _firestore
+          .collection('applications')
+          .get();
+      
+      print('   📊 전체 지원서: ${snapshot.docs.length}개');
+      
+      // TO 캐시 (중복 조회 방지)
+      final Map<String, DocumentSnapshot> toCache = {};
+      final Map<String, List<QueryDocumentSnapshot>> workDetailCache = {};
+      
+      WriteBatch batch = _firestore.batch();
+      int batchCount = 0;
+      
+      for (var appDoc in snapshot.docs) {
+        final appData = appDoc.data();
+        final existingWorkDetailId = appData['workDetailId'] as String?;
+        final existingToId = appData['toId'] as String?;
+        final existingGroupId = appData['groupId'] as String?;
+        
+        // 모두 있으면 스킵
+        if (existingWorkDetailId != null && existingWorkDetailId.isNotEmpty &&
+            existingToId != null && existingToId.isNotEmpty) {
+          skipped++;
+          continue;
+        }
+        
+        try {
+          // 2. TO 찾기
+          final businessId = appData['businessId'] as String?;
+          final toTitle = appData['toTitle'] as String?;
+          final workDate = appData['workDate'] as Timestamp?;
+          
+          if (businessId == null || toTitle == null || workDate == null) {
+            print('   ⚠️ 필수 필드 누락: ${appDoc.id}');
+            failed++;
+            continue;
+          }
+          
+          // 캐시 키
+          final toCacheKey = '${businessId}_${toTitle}_${workDate.toDate().toIso8601String().split('T')[0]}';
+          
+          DocumentSnapshot? toDoc;
+          if (toCache.containsKey(toCacheKey)) {
+            toDoc = toCache[toCacheKey];
+          } else {
+            // TO 조회 (단기 공고)
+            final toSnapshot = await _firestore
+                .collection('tos')
+                .where('businessId', isEqualTo: businessId)
+                .where('title', isEqualTo: toTitle)
+                .where('date', isEqualTo: workDate)
+                .limit(1)
+                .get();
+            
+            if (toSnapshot.docs.isEmpty) {
+              // 장기 공고 시도
+              final longTermSnapshot = await _firestore
+                  .collection('tos')
+                  .where('businessId', isEqualTo: businessId)
+                  .where('title', isEqualTo: toTitle)
+                  .where('jobType', isEqualTo: 'long_term')
+                  .limit(1)
+                  .get();
+              
+              if (longTermSnapshot.docs.isNotEmpty) {
+                toDoc = longTermSnapshot.docs.first;
+              }
+            } else {
+              toDoc = toSnapshot.docs.first;
+            }
+            
+            if (toDoc != null) {
+              toCache[toCacheKey] = toDoc;
+            }
+          }
+          
+          if (toDoc == null) {
+            print('   ⚠️ TO를 찾을 수 없음: ${appDoc.id}');
+            failed++;
+            continue;
+          }
+          
+          final toId = toDoc.id;
+          final toData = toDoc.data() as Map<String, dynamic>;
+          final groupId = toData['groupId'] as String?;
+          
+          // 3. WorkDetail 찾기
+          String? foundWorkDetailId;
+          
+          if (existingWorkDetailId == null || existingWorkDetailId.isEmpty) {
+            final selectedWorkType = appData['selectedWorkType'] as String?;
+            final startTime = appData['startTime'] as String?;
+            final endTime = appData['endTime'] as String?;
+            
+            if (selectedWorkType != null && startTime != null && endTime != null) {
+              // WorkDetails 캐시
+              List<QueryDocumentSnapshot>? workDetails;
+              if (workDetailCache.containsKey(toId)) {
+                workDetails = workDetailCache[toId];
+              } else {
+                final workDetailSnapshot = await _firestore
+                    .collection('tos')
+                    .doc(toId)
+                    .collection('workDetails')
+                    .get();
+                workDetails = workDetailSnapshot.docs;
+                workDetailCache[toId] = workDetails;
+              }
+              
+              // workType + startTime + endTime 매칭
+              for (var wd in workDetails!) {
+                final wdData = wd.data() as Map<String, dynamic>;
+                if (wdData['workType'] == selectedWorkType &&
+                    wdData['startTime'] == startTime &&
+                    wdData['endTime'] == endTime) {
+                  foundWorkDetailId = wd.id;
+                  break;
+                }
+              }
+              
+              // 시간이 다를 경우 workType만으로 매칭 (폴백)
+              if (foundWorkDetailId == null) {
+                for (var wd in workDetails) {
+                  final wdData = wd.data() as Map<String, dynamic>;
+                  if (wdData['workType'] == selectedWorkType) {
+                    foundWorkDetailId = wd.id;
+                    print('   ⚠️ 시간 불일치, workType만 매칭: ${appDoc.id}');
+                    break;
+                  }
+                }
+              }
+            }
+          }
+          
+          // 4. 업데이트할 필드 결정
+          final updates = <String, dynamic>{};
+          
+          if ((existingWorkDetailId == null || existingWorkDetailId.isEmpty) && 
+              foundWorkDetailId != null) {
+            updates['workDetailId'] = foundWorkDetailId;
+          }
+          
+          if (existingToId == null || existingToId.isEmpty) {
+            updates['toId'] = toId;
+          }
+          
+          if ((existingGroupId == null || existingGroupId.isEmpty) && groupId != null) {
+            updates['groupId'] = groupId;
+          }
+          
+          if (updates.isEmpty) {
+            skipped++;
+            continue;
+          }
+          
+          // 5. Batch 업데이트
+          batch.update(appDoc.reference, updates);
+          migrated++;
+          batchCount++;
+          
+          // 500개마다 커밋
+          if (batchCount >= 500) {
+            await batch.commit();
+            print('   📦 진행: $migrated개 마이그레이션됨');
+            batch = _firestore.batch();
+            batchCount = 0;
+          }
+          
+        } catch (e) {
+          print('   ❌ 처리 실패 (${appDoc.id}): $e');
+          failed++;
+        }
+      }
+      
+      // 남은 배치 커밋
+      if (batchCount > 0) {
+        await batch.commit();
+      }
+      
+      print('✅ [Migration] 완료!');
+      print('   ✅ 마이그레이션: $migrated개');
+      print('   ⏭️ 스킵 (이미 있음): $skipped개');
+      print('   ❌ 실패: $failed개');
+      
+      return {
+        'migrated': migrated,
+        'skipped': skipped,
+        'failed': failed,
+      };
+    } catch (e) {
+      print('❌ [Migration] 마이그레이션 실패: $e');
+      return {
+        'migrated': 0,
+        'skipped': 0,
+        'failed': -1,
+      };
+    }
+  }
 
   // ═══════════════════════════════════════════════════════════
   // 통계 재계산
