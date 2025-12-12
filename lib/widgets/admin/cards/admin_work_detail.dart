@@ -176,26 +176,9 @@ class _WorkDetailRowState extends State<WorkDetailRow> {
                                         color: isClosed ? AppColors.grey500 : AppColors.warningDark,
                                       ),
                                     ),
-                                    if (isClosed) ...[
-                                      SizedBox(width: ResponsiveHelper.spacing(context, 6)),
-                                      Container(
-                                        padding: EdgeInsets.symmetric(
-                                          horizontal: ResponsiveHelper.spacing(context, 6),
-                                          vertical: ResponsiveHelper.spacing(context, 2),
-                                        ),
-                                        decoration: BoxDecoration(
-                                          color: AppColors.grey200,
-                                          borderRadius: BorderRadius.circular(4),
-                                        ),
-                                        child: Text(
-                                          '마감됨',
-                                          style: ResponsiveHelper.tinyStyle(
-                                            context,
-                                            color: AppColors.grey600,
-                                          ),
-                                        ),
-                                      ),
-                                    ],
+                                    // ✨ 상태 배지 (마감/예약/모집중)
+                                    SizedBox(width: ResponsiveHelper.spacing(context, 6)),
+                                    _buildWorkStatusBadge(context, isClosed: isClosed),
                                   ],
                                 ),
                               ],
@@ -331,6 +314,71 @@ class _WorkDetailRowState extends State<WorkDetailRow> {
             size: ResponsiveHelper.iconSize(context, 18),
             color: theme.primaryColor,
           ),
+        ),
+      ),
+    );
+  }
+  /// ✨ 업무 상태 배지 (마감/예약/모집중)
+  Widget _buildWorkStatusBadge(BuildContext context, {required bool isClosed}) {
+    final to = widget.toItem.to;
+    
+    // 1. 마감됨
+    if (isClosed) {
+      return Container(
+        padding: EdgeInsets.symmetric(
+          horizontal: ResponsiveHelper.spacing(context, 6),
+          vertical: ResponsiveHelper.spacing(context, 2),
+        ),
+        decoration: BoxDecoration(
+          color: AppColors.grey200,
+          borderRadius: BorderRadius.circular(4),
+        ),
+        child: Text(
+          '마감됨',
+          style: ResponsiveHelper.tinyStyle(
+            context,
+            color: AppColors.grey600,
+          ),
+        ),
+      );
+    }
+    
+    // 2. 예약 공개 대기
+    if (to.isPendingPublish) {
+      return Container(
+        padding: EdgeInsets.symmetric(
+          horizontal: ResponsiveHelper.spacing(context, 6),
+          vertical: ResponsiveHelper.spacing(context, 2),
+        ),
+        decoration: BoxDecoration(
+          color: AppColors.scheduledBg,
+          borderRadius: BorderRadius.circular(4),
+        ),
+        child: Text(
+          '예약',
+          style: ResponsiveHelper.tinyStyle(
+            context,
+            color: AppColors.scheduledDark,
+          ),
+        ),
+      );
+    }
+    
+    // 3. 모집중
+    return Container(
+      padding: EdgeInsets.symmetric(
+        horizontal: ResponsiveHelper.spacing(context, 6),
+        vertical: ResponsiveHelper.spacing(context, 2),
+      ),
+      decoration: BoxDecoration(
+        color: AppColors.successBg,
+        borderRadius: BorderRadius.circular(4),
+      ),
+      child: Text(
+        '모집중',
+        style: ResponsiveHelper.tinyStyle(
+          context,
+          color: AppColors.successDark,
         ),
       ),
     );

@@ -127,10 +127,10 @@ class _TOGroupCardState extends State<TOGroupCard> with SingleTickerProviderStat
             });
           });
 
-    // 전체 마감 여부
-    final allClosed = widget.groupItem.groupTOs.isEmpty
+    // 전체 마감 여부 (캘린더 뷰: 선택된 날짜 기준)
+    final allClosed = targetTOs.isEmpty
         ? false
-        : widget.groupItem.groupTOs.every((toItem) {
+        : targetTOs.every((toItem) {
             // 장기공고: endDate 또는 applicationDeadline 기준
             if (toItem.to.isLongTerm) {
               if (toItem.to.isManualClosed) return true;
@@ -339,12 +339,6 @@ class _TOGroupCardState extends State<TOGroupCard> with SingleTickerProviderStat
                         ],
                       ),
                       
-                      // ✨ 예약 공개 표시 (있는 경우만)
-                      if (!widget.groupItem.isGrouped && masterTO.isPendingPublish) ...[
-                        SizedBox(height: ResponsiveHelper.spacing(context, 8)),
-                        _buildScheduledInfo(context, masterTO),
-                      ],
-                      
                       // ✨ 장기공고 마감일시 표시 (장기공고인 경우)
                       if (masterTO.isLongTerm && !allClosed) ...[
                         SizedBox(height: ResponsiveHelper.spacing(context, 8)),
@@ -391,11 +385,9 @@ class _TOGroupCardState extends State<TOGroupCard> with SingleTickerProviderStat
                         ),
                       ],
                       
-                      // ✨ 상태 표시 (마감된 경우만)
-                      if (allClosed) ...[
-                        SizedBox(height: ResponsiveHelper.spacing(context, 8)),
-                        _buildClosedBadge(context),
-                      ],
+                      // ✨ 상태 표시 (마감/예약/모집중) - targetTOs 기준
+                      SizedBox(height: ResponsiveHelper.spacing(context, 8)),
+                      _buildStatusBadge(context, allClosed: allClosed, targetTOs: targetTOs),
                       
                       // 펼침 힌트
                       SizedBox(height: ResponsiveHelper.spacing(context, 8)),
@@ -735,6 +727,95 @@ class _TOGroupCardState extends State<TOGroupCard> with SingleTickerProviderStat
           ),
         ),
       ],
+    );
+  }
+  /// ✨ 상태 배지 (마감/예약/모집중) - targetTOs 기준
+  Widget _buildStatusBadge(BuildContext context, {
+    required bool allClosed,
+    required List<TOItem> targetTOs,
+  }) {
+    // 1. 마감됨
+    if (allClosed) {
+      return _buildClosedBadge(context);
+    }
+    
+    // 2. 예약 (targetTOs 중 하나라도 예약 상태면)
+    final hasScheduled = targetTOs.any((toItem) => toItem.to.isPendingPublish);
+    if (hasScheduled) {
+      final scheduledTO = targetTOs.firstWhere((toItem) => toItem.to.isPendingPublish);
+      return _buildScheduledBadge(context, scheduledTO.to.publishAt);
+    }
+    
+    // 3. 모집중
+    return _buildRecruitingBadge(context);
+  }
+
+  /// ✨ 예약 배지 (오픈 예정)
+  Widget _buildScheduledBadge(BuildContext context, DateTime? publishAt) {
+    String displayText = '예약';
+    if (publishAt != null) {
+      displayText = '${publishAt.month}/${publishAt.day} ${publishAt.hour.toString().padLeft(2, '0')}:${publishAt.minute.toString().padLeft(2, '0')} 오픈';
+    }
+    
+    return Container(
+      padding: EdgeInsets.symmetric(
+        horizontal: ResponsiveHelper.spacing(context, 8),
+        vertical: ResponsiveHelper.spacing(context, 4),
+      ),
+      decoration: BoxDecoration(
+        color: AppColors.scheduledBg,
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(
+            Icons.schedule,
+            size: ResponsiveHelper.iconSize(context, 12),
+            color: AppColors.scheduledDark,
+          ),
+          SizedBox(width: ResponsiveHelper.spacing(context, 4)),
+          Text(
+            displayText,
+            style: ResponsiveHelper.smallStyle(
+              context,
+              color: AppColors.scheduledDark,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// ✨ 모집중 배지
+  Widget _buildRecruitingBadge(BuildContext context) {
+    return Container(
+      padding: EdgeInsets.symmetric(
+        horizontal: ResponsiveHelper.spacing(context, 8),
+        vertical: ResponsiveHelper.spacing(context, 4),
+      ),
+      decoration: BoxDecoration(
+        color: AppColors.successBg,
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(
+            Icons.campaign,
+            size: ResponsiveHelper.iconSize(context, 12),
+            color: AppColors.successDark,
+          ),
+          SizedBox(width: ResponsiveHelper.spacing(context, 4)),
+          Text(
+            '모집중',
+            style: ResponsiveHelper.smallStyle(
+              context,
+              color: AppColors.successDark,
+            ),
+          ),
+        ],
+      ),
     );
   }
 

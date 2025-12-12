@@ -221,11 +221,9 @@ class _TOItemCardState extends State<TOItemCard> {
                               
                               Spacer(),
                               
-                              // 마감 표시
-                              if (allClosed) ...[
-                                _buildClosedBadge(context),
-                                SizedBox(width: ResponsiveHelper.spacing(context, 8)),
-                              ],
+                              // 상태 배지 (마감/예약/모집중)
+                              _buildStatusBadge(context, allClosed: allClosed),
+                              SizedBox(width: ResponsiveHelper.spacing(context, 8)),
                               
                               // 메뉴 버튼
                               _buildPopupMenu(context),
@@ -422,6 +420,92 @@ class _TOItemCardState extends State<TOItemCard> {
           ),
         ],
       ],
+    );
+  }
+  /// ✨ 상태 배지 (마감/예약/모집중)
+  Widget _buildStatusBadge(BuildContext context, {required bool allClosed}) {
+    final to = widget.toItem.to;
+    
+    // 1. 마감됨
+    if (allClosed) {
+      return _buildClosedBadge(context);
+    }
+    
+    // 2. 예약 공개 대기
+    if (to.isPendingPublish) {
+      return _buildScheduledBadge(context, to.publishAt);
+    }
+    
+    // 3. 모집중
+    return _buildRecruitingBadge(context);
+  }
+
+  /// ✨ 예약 배지 (오픈 예정)
+  Widget _buildScheduledBadge(BuildContext context, DateTime? publishAt) {
+    String displayText = '예약';
+    if (publishAt != null) {
+      displayText = '${publishAt.month}/${publishAt.day} ${publishAt.hour.toString().padLeft(2, '0')}:${publishAt.minute.toString().padLeft(2, '0')} 오픈';
+    }
+    
+    return Container(
+      padding: EdgeInsets.symmetric(
+        horizontal: ResponsiveHelper.spacing(context, 6),
+        vertical: ResponsiveHelper.spacing(context, 3),
+      ),
+      decoration: BoxDecoration(
+        color: AppColors.scheduledBg,
+        borderRadius: BorderRadius.circular(6),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(
+            Icons.schedule,
+            size: ResponsiveHelper.iconSize(context, 10),
+            color: AppColors.scheduledDark,
+          ),
+          SizedBox(width: ResponsiveHelper.spacing(context, 2)),
+          Text(
+            displayText,
+            style: ResponsiveHelper.tinyStyle(
+              context,
+              color: AppColors.scheduledDark,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// ✨ 모집중 배지
+  Widget _buildRecruitingBadge(BuildContext context) {
+    return Container(
+      padding: EdgeInsets.symmetric(
+        horizontal: ResponsiveHelper.spacing(context, 6),
+        vertical: ResponsiveHelper.spacing(context, 3),
+      ),
+      decoration: BoxDecoration(
+        color: AppColors.successBg,
+        borderRadius: BorderRadius.circular(6),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(
+            Icons.campaign,
+            size: ResponsiveHelper.iconSize(context, 10),
+            color: AppColors.successDark,
+          ),
+          SizedBox(width: ResponsiveHelper.spacing(context, 2)),
+          Text(
+            '모집중',
+            style: ResponsiveHelper.tinyStyle(
+              context,
+              color: AppColors.successDark,
+            ),
+          ),
+        ],
+      ),
     );
   }
 
@@ -650,6 +734,7 @@ class _TOItemCardState extends State<TOItemCard> {
           firestoreService: widget.firestoreService,
           onLocalStatsChanged: () {
             if (mounted) setState(() {});
+            widget.onLocalStatsChanged?.call();  // ✅ 상위로 전파
           },
         ).show();
         break;
@@ -686,6 +771,7 @@ class _TOItemCardState extends State<TOItemCard> {
           onComplete: widget.onChanged,
           onLocalStatsChanged: () {
             if (mounted) setState(() {});
+            widget.onLocalStatsChanged?.call();  // ✅ 상위로 전파
           },
         ).show();
         break;
