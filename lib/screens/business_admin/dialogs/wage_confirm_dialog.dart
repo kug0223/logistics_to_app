@@ -1,12 +1,8 @@
 // lib/screens/business_admin/dialogs/wage_confirm_dialog.dart
-// 급여 확정 다이얼로그
+// 급여 확정 다이얼로그 - 탭 구조
 // 
-// 기능:
-// - 당일 확정 근무자 급여 계산
-// - 개별/일괄 급여 확정
-// - 시급제/일급제 자동 계산
-// - 연장/야간수당 적용
-// - 추가수당/메모 입력
+// 탭 1: 미확정 (pending) → 급여 확정 → calculated
+// 탭 2: 급여확정 (calculated) → 최종 확정 → confirmed
 
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -56,42 +52,59 @@ class WageConfirmDialog extends StatefulWidget {
   State<WageConfirmDialog> createState() => _WageConfirmDialogState();
 }
 
-class _WageConfirmDialogState extends State<WageConfirmDialog> {
+class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTickerProviderStateMixin {
   // ═══════════════════════════════════════════════════════════
   // 상태 변수
   // ═══════════════════════════════════════════════════════════
   
+  late TabController _tabController;
   bool _isProcessing = false;
   bool _hasChanges = false;
   
-  // 선택 상태
-  final Set<String> _selectedIds = {};
-  bool _selectAll = false;
+  // 선택 상태 (탭별로 분리)
+  final Set<String> _pendingSelectedIds = {};
+  final Set<String> _calculatedSelectedIds = {};
   
   // 계산된 급여 정보 캐시
   final Map<String, WageDetailModel> _calculatedWages = {};
   
-  // 확정 가능한 근무자 (출퇴근 완료)
-  List<ApplicationModel> _confirmableWorkers = [];
+  // 근무자 목록 (상태별 분리)
+  List<ApplicationModel> _pendingWorkers = [];      // 미확정 (퇴근완료, pending)
+  List<ApplicationModel> _calculatedWorkers = [];   // 급여확정 (calculated)
 
   @override
   void initState() {
     super.initState();
+    _tabController = TabController(length: 2, vsync: this);
     _initData();
+  }
+
+  @override
+  void dispose() {
+    _tabController.dispose();
+    super.dispose();
   }
 
   /// 초기 데이터 설정
   void _initData() {
-    // 퇴근 완료된 근무자만 필터 (급여 확정 가능)
-    _confirmableWorkers = widget.workers.where((app) {
+    _pendingWorkers = [];
+    _calculatedWorkers = [];
+    
+    for (var app in widget.workers) {
       final attendance = widget.attendanceMap[app.id];
-      if (attendance == null) return false;
+      if (attendance == null) continue;
       
-      // 퇴근 완료 & 급여 미확정
-      final hasCheckOut = attendance.checkOut != null;
-      final notConfirmed = attendance.wageStatus != 'confirmed';
-      return hasCheckOut && notConfirmed;
-    }).toList();
+      // 퇴근 완료된 근무자만
+      if (attendance.checkOut == null) continue;
+      
+      // 상태별 분류
+      if (attendance.wageStatus == 'calculated') {
+        _calculatedWorkers.add(app);
+      } else if (attendance.wageStatus == 'pending' || attendance.wageStatus == null) {
+        _pendingWorkers.add(app);
+      }
+      // confirmed는 이미 최종확정이므로 표시 안함
+    }
     
     // 급여 미리 계산
     _calculateAllWages();
@@ -99,7 +112,8 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> {
 
   /// 전체 급여 계산
   void _calculateAllWages() {
-    for (var app in _confirmableWorkers) {
+    final allWorkers = [..._pendingWorkers, ..._calculatedWorkers];
+    for (var app in allWorkers) {
       final wage = _calculateWageForWorker(app);
       if (wage != null) {
         _calculatedWages[app.id] = wage;
@@ -114,16 +128,19 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> {
       return null;
     }
     
+    // 이미 계산된 급여가 있으면 그것 사용 (calculated 상태)
+    if (attendance.wageDetail != null) {
+      return attendance.wageDetail;
+    }
+    
     // WorkDetail에서 시간/급여 정보 가져오기
     final workTimeInfo = widget.workDetailTimeMap[app.selectedWorkType];
     final scheduledStart = workTimeInfo?['startTime'] ?? app.startTime;
     final scheduledEnd = workTimeInfo?['endTime'] ?? app.endTime;
     
-    // 급여 타입 및 단가 (workDetailTimeMap에서 가져오기)
+    // 급여 타입 및 단가
     final wageType = workTimeInfo?['wageType'] ?? 'hourly';
     final baseWage = workTimeInfo?['wage'] ?? 0;
-    
-    // 휴게시간 (기본 0분)
     final breakMinutes = workTimeInfo?['breakMinutes'] ?? 0;
     
     try {
@@ -145,39 +162,11 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> {
   }
 
   // ═══════════════════════════════════════════════════════════
-  // 선택 관련
+  // 급여 확정 처리 (pending → calculated)
   // ═══════════════════════════════════════════════════════════
 
-  void _toggleSelectAll(bool value) {
-    setState(() {
-      _selectAll = value;
-      if (value) {
-        _selectedIds.clear();
-        _selectedIds.addAll(_confirmableWorkers.map((a) => a.id));
-      } else {
-        _selectedIds.clear();
-      }
-    });
-  }
-
-  void _toggleSelection(String appId) {
-    setState(() {
-      if (_selectedIds.contains(appId)) {
-        _selectedIds.remove(appId);
-        _selectAll = false;
-      } else {
-        _selectedIds.add(appId);
-        _selectAll = _selectedIds.length == _confirmableWorkers.length;
-      }
-    });
-  }
-
-  // ═══════════════════════════════════════════════════════════
-  // 급여 확정 처리
-  // ═══════════════════════════════════════════════════════════
-
-  Future<void> _confirmSelectedWages() async {
-    if (_selectedIds.isEmpty) {
+  Future<void> _confirmWages() async {
+    if (_pendingSelectedIds.isEmpty) {
       ToastHelper.showWarning('급여 확정할 인원을 선택해주세요');
       return;
     }
@@ -185,7 +174,7 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> {
     final confirmed = await DialogHelper.showConfirm(
       context,
       title: '급여 확정',
-      message: '선택한 ${_selectedIds.length}명의 급여를 확정하시겠습니까?\n확정 후에는 수정이 제한됩니다.',
+      message: '선택한 ${_pendingSelectedIds.length}명의 급여를 확정하시겠습니까?',
       confirmText: '확정',
     );
     
@@ -199,8 +188,9 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> {
       
       int successCount = 0;
       int failCount = 0;
+      final confirmedIds = <String>{};
       
-      for (var appId in _selectedIds) {
+      for (var appId in _pendingSelectedIds) {
         final wage = _calculatedWages[appId];
         final attendance = widget.attendanceMap[appId];
         
@@ -210,24 +200,24 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> {
         }
         
         try {
-          final confirmedWage = wage.copyWith(
+          final calculatedWage = wage.copyWith(
             calculatedBy: adminUid,
             calculatedAt: DateTime.now(),
-            confirmedBy: adminUid,
-            confirmedAt: DateTime.now(),
           );
           
           await FirebaseFirestore.instance
               .collection('attendance')
               .doc(attendance.id)
               .update({
-            'wageStatus': 'confirmed',
-            'finalWage': confirmedWage.totalAmount,
-            'wageDetail': confirmedWage.toMap(),
+            'wageStatus': 'calculated',
+            'finalWage': calculatedWage.totalAmount,
+            'wageDetail': calculatedWage.toMap(),
             'updatedAt': FieldValue.serverTimestamp(),
           });
           
           successCount++;
+          confirmedIds.add(appId);
+          _calculatedWages[appId] = calculatedWage;
         } catch (e) {
           debugPrint('❌ 급여 확정 실패 ($appId): $e');
           failCount++;
@@ -240,11 +230,13 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> {
         widget.onConfirmed?.call();
         
         setState(() {
-          _selectedIds.clear();
-          _selectAll = false;
-          _confirmableWorkers.removeWhere((app) => 
-            _calculatedWages.containsKey(app.id) && successCount > 0
-          );
+          // 확정된 근무자를 calculated 탭으로 이동
+          for (var id in confirmedIds) {
+            final worker = _pendingWorkers.firstWhere((w) => w.id == id);
+            _calculatedWorkers.add(worker);
+          }
+          _pendingWorkers.removeWhere((app) => confirmedIds.contains(app.id));
+          _pendingSelectedIds.clear();
         });
       }
       
@@ -259,8 +251,98 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> {
     }
   }
 
-  /// 개별 급여 상세 다이얼로그
-  Future<void> _showWageDetailDialog(ApplicationModel app) async {
+  // ═══════════════════════════════════════════════════════════
+  // 최종 확정 처리 (calculated → confirmed)
+  // ═══════════════════════════════════════════════════════════
+
+  Future<void> _finalConfirm() async {
+    if (_calculatedSelectedIds.isEmpty) {
+      ToastHelper.showWarning('최종 확정할 인원을 선택해주세요');
+      return;
+    }
+    
+    final confirmed = await DialogHelper.showConfirm(
+      context,
+      title: '최종 확정',
+      message: '선택한 ${_calculatedSelectedIds.length}명의 급여를 최종 확정하시겠습니까?\n\n⚠️ 최종 확정 후에는 수정이 불가합니다.',
+      confirmText: '최종 확정',
+    );
+    
+    if (!confirmed) return;
+    
+    setState(() => _isProcessing = true);
+    
+    try {
+      final userProvider = Provider.of<UserProvider>(context, listen: false);
+      final adminUid = userProvider.currentUser?.uid;
+      
+      int successCount = 0;
+      int failCount = 0;
+      final confirmedIds = <String>{};
+      
+      for (var appId in _calculatedSelectedIds) {
+        final wage = _calculatedWages[appId];
+        final attendance = widget.attendanceMap[appId];
+        
+        if (wage == null || attendance == null) {
+          failCount++;
+          continue;
+        }
+        
+        try {
+          final finalWage = wage.copyWith(
+            confirmedBy: adminUid,
+            confirmedAt: DateTime.now(),
+          );
+          
+          await FirebaseFirestore.instance
+              .collection('attendance')
+              .doc(attendance.id)
+              .update({
+            'wageStatus': 'confirmed',
+            'finalWage': finalWage.totalAmount,
+            'wageDetail': finalWage.toMap(),
+            'updatedAt': FieldValue.serverTimestamp(),
+          });
+          
+          successCount++;
+          confirmedIds.add(appId);
+        } catch (e) {
+          debugPrint('❌ 최종 확정 실패 ($appId): $e');
+          failCount++;
+        }
+      }
+      
+      if (successCount > 0) {
+        _hasChanges = true;
+        ToastHelper.showSuccess('$successCount명 최종 확정 완료');
+        widget.onConfirmed?.call();
+        
+        setState(() {
+          _calculatedWorkers.removeWhere((app) => confirmedIds.contains(app.id));
+          for (var id in confirmedIds) {
+            _calculatedWages.remove(id);
+          }
+          _calculatedSelectedIds.clear();
+        });
+      }
+      
+      if (failCount > 0) {
+        ToastHelper.showWarning('$failCount명 처리 실패');
+      }
+    } catch (e) {
+      debugPrint('❌ 일괄 최종 확정 실패: $e');
+      ToastHelper.showError('최종 확정에 실패했습니다');
+    } finally {
+      setState(() => _isProcessing = false);
+    }
+  }
+
+  // ═══════════════════════════════════════════════════════════
+  // 개별 급여 상세 다이얼로그
+  // ═══════════════════════════════════════════════════════════
+
+  Future<void> _showWageDetailDialog(ApplicationModel app, {bool isCalculated = false}) async {
     final wage = _calculatedWages[app.id];
     final user = widget.userMap[app.uid];
     final attendance = widget.attendanceMap[app.id];
@@ -270,55 +352,183 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> {
       return;
     }
     
-    final result = await showDialog<bool>(
+    final result = await showDialog<Map<String, dynamic>>(
       context: context,
       builder: (context) => _WageDetailSubDialog(
         app: app,
         user: user,
         attendance: attendance,
         wage: wage,
-        onConfirm: (updatedWage) async {
-          try {
-            final userProvider = Provider.of<UserProvider>(context, listen: false);
-            final adminUid = userProvider.currentUser?.uid;
-            
-            final confirmedWage = updatedWage.copyWith(
-              calculatedBy: adminUid,
-              calculatedAt: DateTime.now(),
-              confirmedBy: adminUid,
-              confirmedAt: DateTime.now(),
-            );
-            
-            await FirebaseFirestore.instance
-                .collection('attendance')
-                .doc(attendance.id)
-                .update({
-              'wageStatus': 'confirmed',
-              'finalWage': confirmedWage.totalAmount,
-              'wageDetail': confirmedWage.toMap(),
-              'updatedAt': FieldValue.serverTimestamp(),
-            });
-            
-            return true;
-          } catch (e) {
-            debugPrint('❌ 개별 급여 확정 실패: $e');
-            return false;
-          }
-        },
+        isCalculated: isCalculated,
       ),
     );
     
-    if (result == true) {
+    if (result == null) return;
+    
+    final action = result['action'] as String;
+    final updatedWage = result['wage'] as WageDetailModel?;
+    
+    if (action == 'confirm' && updatedWage != null) {
+      // 급여 확정 (pending → calculated)
+      await _processIndividualConfirm(app, attendance, updatedWage);
+    } else if (action == 'update' && updatedWage != null) {
+      // 급여 수정 (calculated 상태에서)
+      await _processWageUpdate(app, attendance, updatedWage);
+    } else if (action == 'final_confirm' && updatedWage != null) {
+      // 최종 확정 (calculated → confirmed)
+      await _processIndividualFinalConfirm(app, attendance, updatedWage);
+    } else if (action == 'cancel') {
+      // 급여 취소 (calculated → pending)
+      await _processWageCancel(app, attendance);
+    }
+  }
+
+  /// 개별 급여 확정
+  Future<void> _processIndividualConfirm(ApplicationModel app, AttendanceModel attendance, WageDetailModel wage) async {
+    try {
+      final userProvider = Provider.of<UserProvider>(context, listen: false);
+      final adminUid = userProvider.currentUser?.uid;
+      final user = widget.userMap[app.uid];
+      
+      final calculatedWage = wage.copyWith(
+        calculatedBy: adminUid,
+        calculatedAt: DateTime.now(),
+      );
+      
+      await FirebaseFirestore.instance
+          .collection('attendance')
+          .doc(attendance.id)
+          .update({
+        'wageStatus': 'calculated',
+        'finalWage': calculatedWage.totalAmount,
+        'wageDetail': calculatedWage.toMap(),
+        'updatedAt': FieldValue.serverTimestamp(),
+      });
+      
       _hasChanges = true;
       widget.onConfirmed?.call();
       
       setState(() {
-        _confirmableWorkers.removeWhere((a) => a.id == app.id);
-        _calculatedWages.remove(app.id);
-        _selectedIds.remove(app.id);
+        _calculatedWages[app.id] = calculatedWage;
+        _pendingWorkers.removeWhere((w) => w.id == app.id);
+        _calculatedWorkers.add(app);
+        _pendingSelectedIds.remove(app.id);
       });
       
       ToastHelper.showSuccess('${user?.name ?? '근무자'} 급여 확정 완료');
+    } catch (e) {
+      debugPrint('❌ 개별 급여 확정 실패: $e');
+      ToastHelper.showError('급여 확정에 실패했습니다');
+    }
+  }
+
+  /// 급여 수정
+  Future<void> _processWageUpdate(ApplicationModel app, AttendanceModel attendance, WageDetailModel wage) async {
+    try {
+      final userProvider = Provider.of<UserProvider>(context, listen: false);
+      final adminUid = userProvider.currentUser?.uid;
+      final user = widget.userMap[app.uid];
+      
+      final updatedWage = wage.copyWith(
+        calculatedBy: adminUid,
+        calculatedAt: DateTime.now(),
+      );
+      
+      await FirebaseFirestore.instance
+          .collection('attendance')
+          .doc(attendance.id)
+          .update({
+        'finalWage': updatedWage.totalAmount,
+        'wageDetail': updatedWage.toMap(),
+        'updatedAt': FieldValue.serverTimestamp(),
+      });
+      
+      _hasChanges = true;
+      widget.onConfirmed?.call();
+      
+      setState(() {
+        _calculatedWages[app.id] = updatedWage;
+      });
+      
+      ToastHelper.showSuccess('${user?.name ?? '근무자'} 급여 수정 완료');
+    } catch (e) {
+      debugPrint('❌ 급여 수정 실패: $e');
+      ToastHelper.showError('급여 수정에 실패했습니다');
+    }
+  }
+
+  /// 개별 최종 확정
+  Future<void> _processIndividualFinalConfirm(ApplicationModel app, AttendanceModel attendance, WageDetailModel wage) async {
+    try {
+      final userProvider = Provider.of<UserProvider>(context, listen: false);
+      final adminUid = userProvider.currentUser?.uid;
+      final user = widget.userMap[app.uid];
+      
+      final finalWage = wage.copyWith(
+        confirmedBy: adminUid,
+        confirmedAt: DateTime.now(),
+      );
+      
+      await FirebaseFirestore.instance
+          .collection('attendance')
+          .doc(attendance.id)
+          .update({
+        'wageStatus': 'confirmed',
+        'finalWage': finalWage.totalAmount,
+        'wageDetail': finalWage.toMap(),
+        'updatedAt': FieldValue.serverTimestamp(),
+      });
+      
+      _hasChanges = true;
+      widget.onConfirmed?.call();
+      
+      setState(() {
+        _calculatedWorkers.removeWhere((w) => w.id == app.id);
+        _calculatedWages.remove(app.id);
+        _calculatedSelectedIds.remove(app.id);
+      });
+      
+      ToastHelper.showSuccess('${user?.name ?? '근무자'} 최종 확정 완료');
+    } catch (e) {
+      debugPrint('❌ 개별 최종 확정 실패: $e');
+      ToastHelper.showError('최종 확정에 실패했습니다');
+    }
+  }
+
+  /// 급여 취소 (calculated → pending)
+  Future<void> _processWageCancel(ApplicationModel app, AttendanceModel attendance) async {
+    try {
+      final user = widget.userMap[app.uid];
+      
+      await FirebaseFirestore.instance
+          .collection('attendance')
+          .doc(attendance.id)
+          .update({
+        'wageStatus': 'pending',
+        'finalWage': FieldValue.delete(),
+        'wageDetail': FieldValue.delete(),
+        'updatedAt': FieldValue.serverTimestamp(),
+      });
+      
+      _hasChanges = true;
+      widget.onConfirmed?.call();
+      
+      // 급여 재계산
+      final newWage = _calculateWageForWorker(app);
+      
+      setState(() {
+        _calculatedWorkers.removeWhere((w) => w.id == app.id);
+        _pendingWorkers.add(app);
+        _calculatedSelectedIds.remove(app.id);
+        if (newWage != null) {
+          _calculatedWages[app.id] = newWage;
+        }
+      });
+      
+      ToastHelper.showSuccess('${user?.name ?? '근무자'} 급여 확정 취소');
+    } catch (e) {
+      debugPrint('❌ 급여 취소 실패: $e');
+      ToastHelper.showError('급여 취소에 실패했습니다');
     }
   }
 
@@ -326,9 +536,9 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> {
   // 합계 계산
   // ═══════════════════════════════════════════════════════════
 
-  int get _selectedTotalWage {
+  int _getSelectedTotal(Set<String> selectedIds) {
     int total = 0;
-    for (var appId in _selectedIds) {
+    for (var appId in selectedIds) {
       total += _calculatedWages[appId]?.totalAmount ?? 0;
     }
     return total;
@@ -363,14 +573,16 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> {
           child: Column(
             children: [
               _buildHeader(context, theme, dateStr),
-              if (_confirmableWorkers.isNotEmpty)
-                _buildSelectionBar(context, theme),
+              _buildTabBar(context, theme),
               Expanded(
-                child: _confirmableWorkers.isEmpty
-                    ? _buildEmptyState(context, theme)
-                    : _buildWorkerList(context, theme),
+                child: TabBarView(
+                  controller: _tabController,
+                  children: [
+                    _buildPendingTab(context, theme),
+                    _buildCalculatedTab(context, theme),
+                  ],
+                ),
               ),
-              _buildBottomSection(context, theme),
             ],
           ),
         ),
@@ -416,7 +628,7 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  '급여 확정',
+                  '급여 관리',
                   style: ResponsiveHelper.subtitleStyle(context).copyWith(
                     color: Colors.white,
                     fontWeight: FontWeight.bold,
@@ -447,9 +659,129 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> {
     );
   }
 
+  /// 탭바
+  Widget _buildTabBar(BuildContext context, ThemeData theme) {
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.white,
+        border: Border(bottom: BorderSide(color: theme.dividerColor)),
+      ),
+      child: TabBar(
+        controller: _tabController,
+        labelColor: theme.primaryColor,
+        unselectedLabelColor: AppColors.grey500,
+        indicatorColor: theme.primaryColor,
+        indicatorWeight: 3,
+        labelStyle: ResponsiveHelper.bodyStyle(context).copyWith(fontWeight: FontWeight.bold),
+        unselectedLabelStyle: ResponsiveHelper.bodyStyle(context),
+        tabs: [
+          Tab(
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Text('미확정'),
+                if (_pendingWorkers.isNotEmpty) ...[
+                  SizedBox(width: ResponsiveHelper.spacing(context, 6)),
+                  Container(
+                    padding: ResponsiveHelper.symmetricPadding(context, horizontal: 8, vertical: 2),
+                    decoration: BoxDecoration(
+                      color: AppColors.warning,
+                      borderRadius: BorderRadius.circular(ResponsiveHelper.spacing(context, 10)),
+                    ),
+                    child: Text(
+                      '${_pendingWorkers.length}',
+                      style: ResponsiveHelper.tinyStyle(context).copyWith(
+                        color: Colors.white,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
+          Tab(
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Text('급여확정'),
+                if (_calculatedWorkers.isNotEmpty) ...[
+                  SizedBox(width: ResponsiveHelper.spacing(context, 6)),
+                  Container(
+                    padding: ResponsiveHelper.symmetricPadding(context, horizontal: 8, vertical: 2),
+                    decoration: BoxDecoration(
+                      color: theme.primaryColor,
+                      borderRadius: BorderRadius.circular(ResponsiveHelper.spacing(context, 10)),
+                    ),
+                    child: Text(
+                      '${_calculatedWorkers.length}',
+                      style: ResponsiveHelper.tinyStyle(context).copyWith(
+                        color: Colors.white,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// 미확정 탭
+  Widget _buildPendingTab(BuildContext context, ThemeData theme) {
+    if (_pendingWorkers.isEmpty) {
+      return _buildEmptyState(context, theme, '미확정 인원이 없습니다', '퇴근 완료된 근무자가 여기에 표시됩니다');
+    }
+
+    return Column(
+      children: [
+        _buildSelectionBar(context, theme, _pendingWorkers, _pendingSelectedIds, true),
+        Expanded(
+          child: ListView.builder(
+            padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 16)),
+            itemCount: _pendingWorkers.length,
+            itemBuilder: (context, index) {
+              final app = _pendingWorkers[index];
+              return _buildWorkerCard(context, theme, app, _pendingSelectedIds, true);
+            },
+          ),
+        ),
+        _buildBottomSection(context, theme, _pendingSelectedIds, true),
+      ],
+    );
+  }
+
+  /// 급여확정 탭
+  Widget _buildCalculatedTab(BuildContext context, ThemeData theme) {
+    if (_calculatedWorkers.isEmpty) {
+      return _buildEmptyState(context, theme, '급여 확정된 인원이 없습니다', '급여 확정 후 여기에 표시됩니다');
+    }
+
+    return Column(
+      children: [
+        _buildSelectionBar(context, theme, _calculatedWorkers, _calculatedSelectedIds, false),
+        Expanded(
+          child: ListView.builder(
+            padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 16)),
+            itemCount: _calculatedWorkers.length,
+            itemBuilder: (context, index) {
+              final app = _calculatedWorkers[index];
+              return _buildWorkerCard(context, theme, app, _calculatedSelectedIds, false);
+            },
+          ),
+        ),
+        _buildBottomSection(context, theme, _calculatedSelectedIds, false),
+      ],
+    );
+  }
+
   /// 선택 바
-  Widget _buildSelectionBar(BuildContext context, ThemeData theme) {
-    final hasSelection = _selectedIds.isNotEmpty;
+  Widget _buildSelectionBar(BuildContext context, ThemeData theme, List<ApplicationModel> workers, Set<String> selectedIds, bool isPending) {
+    final hasSelection = selectedIds.isNotEmpty;
+    final selectAll = selectedIds.length == workers.length && workers.isNotEmpty;
     
     return Container(
       padding: ResponsiveHelper.symmetricPadding(context, horizontal: 16, vertical: 12),
@@ -463,8 +795,16 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> {
             width: ResponsiveHelper.spacing(context, 24),
             height: ResponsiveHelper.spacing(context, 24),
             child: Checkbox(
-              value: _selectAll,
-              onChanged: (value) => _toggleSelectAll(value ?? false),
+              value: selectAll,
+              onChanged: (value) {
+                setState(() {
+                  if (value == true) {
+                    selectedIds.addAll(workers.map((a) => a.id));
+                  } else {
+                    selectedIds.clear();
+                  }
+                });
+              },
               activeColor: theme.primaryColor,
             ),
           ),
@@ -478,18 +818,18 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> {
             Container(
               padding: ResponsiveHelper.symmetricPadding(context, horizontal: 8, vertical: 2),
               decoration: BoxDecoration(
-                color: theme.primaryColor,
+                color: isPending ? AppColors.warning : theme.primaryColor,
                 borderRadius: BorderRadius.circular(ResponsiveHelper.spacing(context, 10)),
               ),
               child: Text(
-                '${_selectedIds.length}명',
+                '${selectedIds.length}명',
                 style: ResponsiveHelper.tinyStyle(context).copyWith(color: Colors.white),
               ),
             ),
           ],
           const Spacer(),
           Text(
-            '총 ${_confirmableWorkers.length}명',
+            '총 ${workers.length}명',
             style: ResponsiveHelper.smallStyle(context, color: AppColors.grey600),
           ),
         ],
@@ -498,7 +838,7 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> {
   }
 
   /// 빈 상태
-  Widget _buildEmptyState(BuildContext context, ThemeData theme) {
+  Widget _buildEmptyState(BuildContext context, ThemeData theme, String title, String subtitle) {
     return Center(
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
@@ -510,14 +850,14 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> {
           ),
           SizedBox(height: ResponsiveHelper.spacing(context, 16)),
           Text(
-            '급여 확정할 인원이 없습니다',
+            title,
             style: ResponsiveHelper.subtitleStyle(context).copyWith(
               color: AppColors.grey500,
             ),
           ),
           SizedBox(height: ResponsiveHelper.spacing(context, 8)),
           Text(
-            '퇴근 완료된 근무자만 급여를 확정할 수 있습니다',
+            subtitle,
             style: ResponsiveHelper.smallStyle(context, color: AppColors.grey400),
             textAlign: TextAlign.center,
           ),
@@ -526,24 +866,12 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> {
     );
   }
 
-  /// 근무자 목록
-  Widget _buildWorkerList(BuildContext context, ThemeData theme) {
-    return ListView.builder(
-      padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 16)),
-      itemCount: _confirmableWorkers.length,
-      itemBuilder: (context, index) {
-        final app = _confirmableWorkers[index];
-        return _buildWorkerCard(context, theme, app);
-      },
-    );
-  }
-
   /// 근무자 카드
-  Widget _buildWorkerCard(BuildContext context, ThemeData theme, ApplicationModel app) {
+  Widget _buildWorkerCard(BuildContext context, ThemeData theme, ApplicationModel app, Set<String> selectedIds, bool isPending) {
     final user = widget.userMap[app.uid];
     final attendance = widget.attendanceMap[app.id];
     final wage = _calculatedWages[app.id];
-    final isSelected = _selectedIds.contains(app.id);
+    final isSelected = selectedIds.contains(app.id);
     
     final name = user?.name ?? '이름 없음';
     final genderAge = _formatGenderAge(user);
@@ -551,150 +879,201 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> {
     final workHours = wage?.workHours.toStringAsFixed(1) ?? '-';
     final totalAmount = wage?.formattedTotal ?? '계산 불가';
     
+    final borderColor = isPending 
+        ? (isSelected ? AppColors.warning : theme.dividerColor)
+        : (isSelected ? theme.primaryColor : theme.dividerColor);
+    
     return Container(
       margin: EdgeInsets.only(bottom: ResponsiveHelper.spacing(context, 12)),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(ResponsiveHelper.spacing(context, 16)),
-        border: Border.all(
-          color: isSelected ? theme.primaryColor : theme.dividerColor,
-          width: isSelected ? 2 : 1,
-        ),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.05),
-            blurRadius: ResponsiveHelper.spacing(context, 8),
-            offset: Offset(0, ResponsiveHelper.spacing(context, 2)),
-          ),
-        ],
-      ),
-      child: Material(
-        color: Colors.transparent,
-        child: InkWell(
-          onTap: () => _showWageDetailDialog(app),
-          borderRadius: BorderRadius.circular(ResponsiveHelper.spacing(context, 16)),
-          child: Padding(
-            padding: ResponsiveHelper.cardPadding(context),
-            child: Row(
-              children: [
-                // 체크박스
-                SizedBox(
-                  width: ResponsiveHelper.spacing(context, 24),
-                  height: ResponsiveHelper.spacing(context, 24),
-                  child: Checkbox(
-                    value: isSelected,
-                    onChanged: (_) => _toggleSelection(app.id),
-                    activeColor: theme.primaryColor,
-                  ),
+      child: Stack(
+        clipBehavior: Clip.none,
+        children: [
+          // 메인 카드
+          Container(
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(ResponsiveHelper.spacing(context, 16)),
+              border: Border.all(
+                color: borderColor,
+                width: isSelected ? 2 : 1,
+              ),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withOpacity(0.05),
+                  blurRadius: ResponsiveHelper.spacing(context, 8),
+                  offset: Offset(0, ResponsiveHelper.spacing(context, 2)),
                 ),
-                SizedBox(width: ResponsiveHelper.spacing(context, 12)),
-                
-                // 정보
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
+              ],
+            ),
+            child: Material(
+              color: Colors.transparent,
+              child: InkWell(
+                onTap: () => _showWageDetailDialog(app, isCalculated: !isPending),
+                borderRadius: BorderRadius.circular(ResponsiveHelper.spacing(context, 16)),
+                child: Padding(
+                  padding: ResponsiveHelper.cardPadding(context),
+                  child: Row(
                     children: [
-                      // 이름
-                      Row(
-                        children: [
-                          Flexible(
-                            child: Text(
-                              name,
-                              style: ResponsiveHelper.bodyStyle(context).copyWith(
-                                fontWeight: FontWeight.bold,
-                                color: Colors.black87,
-                              ),
-                              overflow: TextOverflow.ellipsis,
+                      // 정보
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            // 1줄: 이름 + (성별, 나이)
+                            Row(
+                              children: [
+                                Text(
+                                  name,
+                                  style: ResponsiveHelper.bodyStyle(context).copyWith(
+                                    fontWeight: FontWeight.bold,
+                                    color: Colors.black87,
+                                  ),
+                                ),
+                                if (genderAge.isNotEmpty) ...[
+                                  SizedBox(width: ResponsiveHelper.spacing(context, 4)),
+                                  Text(
+                                    genderAge,
+                                    style: ResponsiveHelper.smallStyle(context, color: AppColors.grey500),
+                                  ),
+                                ],
+                              ],
                             ),
-                          ),
-                          if (genderAge.isNotEmpty) ...[
-                            SizedBox(width: ResponsiveHelper.spacing(context, 4)),
-                            Text(
-                              genderAge,
-                              style: ResponsiveHelper.smallStyle(context, color: AppColors.grey500),
+                            SizedBox(height: ResponsiveHelper.spacing(context, 4)),
+                            
+                            // 2줄: 업무타입 배지
+                            Container(
+                              padding: ResponsiveHelper.symmetricPadding(context, horizontal: 8, vertical: 3),
+                              decoration: BoxDecoration(
+                                color: theme.primaryColor.withOpacity(0.1),
+                                borderRadius: BorderRadius.circular(ResponsiveHelper.spacing(context, 6)),
+                              ),
+                              child: Text(
+                                app.selectedWorkType,
+                                style: ResponsiveHelper.tinyStyle(context).copyWith(
+                                  color: theme.primaryColor,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                            ),
+                            SizedBox(height: ResponsiveHelper.spacing(context, 4)),
+                            
+                            // 3줄: 출퇴근 시간
+                            Row(
+                              children: [
+                                Icon(
+                                  Icons.schedule,
+                                  size: ResponsiveHelper.iconSize(context, 14),
+                                  color: AppColors.grey500,
+                                ),
+                                SizedBox(width: ResponsiveHelper.spacing(context, 4)),
+                                Text(
+                                  '$workTime · ${workHours}시간',
+                                  style: ResponsiveHelper.smallStyle(context, color: AppColors.grey600),
+                                ),
+                              ],
                             ),
                           ],
+                        ),
+                      ),
+                      
+                      SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+                      
+                      // 급여
+                      Column(
+                        crossAxisAlignment: CrossAxisAlignment.end,
+                        children: [
+                          Text(
+                            totalAmount,
+                            style: ResponsiveHelper.subtitleStyle(context).copyWith(
+                              fontWeight: FontWeight.bold,
+                              color: isPending ? AppColors.warning : theme.primaryColor,
+                            ),
+                          ),
+                          Text(
+                            wage?.wageTypeLabel ?? '',
+                            style: ResponsiveHelper.tinyStyle(context, color: AppColors.grey500),
+                          ),
                         ],
                       ),
-                      SizedBox(height: ResponsiveHelper.spacing(context, 6)),
                       
-                      // 업무 + 시간 (한 줄로)
-                      Row(
-                        children: [
-                          Container(
-                            padding: ResponsiveHelper.symmetricPadding(context, horizontal: 8, vertical: 3),
-                            decoration: BoxDecoration(
-                              color: theme.primaryColor.withOpacity(0.1),
-                              borderRadius: BorderRadius.circular(ResponsiveHelper.spacing(context, 6)),
-                            ),
-                            child: Text(
-                              app.selectedWorkType,
-                              style: ResponsiveHelper.tinyStyle(context).copyWith(
-                                color: theme.primaryColor,
-                                fontWeight: FontWeight.w600,
-                              ),
-                            ),
-                          ),
-                          SizedBox(width: ResponsiveHelper.spacing(context, 8)),
-                          Flexible(
-                            child: Text(
-                              '$workTime · ${workHours}h',
-                              style: ResponsiveHelper.smallStyle(context, color: AppColors.grey600),
-                              overflow: TextOverflow.ellipsis,
-                            ),
-                          ),
-                        ],
+                      SizedBox(width: ResponsiveHelper.spacing(context, 4)),
+                      Icon(
+                        Icons.chevron_right,
+                        color: theme.disabledColor,
+                        size: ResponsiveHelper.iconSize(context, 20),
                       ),
                     ],
                   ),
                 ),
-                
-                SizedBox(width: ResponsiveHelper.spacing(context, 8)),
-                
-                // 급여
-                Column(
-                  crossAxisAlignment: CrossAxisAlignment.end,
-                  children: [
-                    Text(
-                      totalAmount,
-                      style: ResponsiveHelper.subtitleStyle(context).copyWith(
-                        fontWeight: FontWeight.bold,
-                        color: theme.primaryColor,
-                      ),
-                    ),
-                    Text(
-                      wage?.wageTypeLabel ?? '',
-                      style: ResponsiveHelper.tinyStyle(context, color: AppColors.grey500),
+              ),
+            ),
+          ),
+          
+          // 체크박스 오버레이 (좌상단)
+          Positioned(
+            top: ResponsiveHelper.spacing(context, -6),
+            left: ResponsiveHelper.spacing(context, -6),
+            child: GestureDetector(
+              onTap: () {
+                setState(() {
+                  if (selectedIds.contains(app.id)) {
+                    selectedIds.remove(app.id);
+                  } else {
+                    selectedIds.add(app.id);
+                  }
+                });
+              },
+              child: Container(
+                width: ResponsiveHelper.spacing(context, 24),
+                height: ResponsiveHelper.spacing(context, 24),
+                decoration: BoxDecoration(
+                  color: isSelected 
+                      ? (isPending ? AppColors.warning : theme.primaryColor) 
+                      : Colors.white,
+                  shape: BoxShape.circle,
+                  border: Border.all(
+                    color: isSelected 
+                        ? (isPending ? AppColors.warning : theme.primaryColor) 
+                        : AppColors.grey300,
+                    width: 2,
+                  ),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withOpacity(0.1),
+                      blurRadius: ResponsiveHelper.spacing(context, 4),
+                      offset: Offset(0, ResponsiveHelper.spacing(context, 1)),
                     ),
                   ],
                 ),
-                
-                SizedBox(width: ResponsiveHelper.spacing(context, 4)),
-                Icon(
-                  Icons.chevron_right,
-                  color: theme.disabledColor,
-                  size: ResponsiveHelper.iconSize(context, 20),
-                ),
-              ],
+                child: isSelected
+                    ? Icon(
+                        Icons.check,
+                        size: ResponsiveHelper.iconSize(context, 14),
+                        color: Colors.white,
+                      )
+                    : null,
+              ),
             ),
           ),
-        ),
+        ],
       ),
     );
   }
 
   /// 하단 섹션
-  Widget _buildBottomSection(BuildContext context, ThemeData theme) {
-    final hasSelection = _selectedIds.isNotEmpty;
+  Widget _buildBottomSection(BuildContext context, ThemeData theme, Set<String> selectedIds, bool isPending) {
+    final hasSelection = selectedIds.isNotEmpty;
+    final totalWage = _getSelectedTotal(selectedIds);
+    
+    final buttonColor = isPending ? AppColors.warning : theme.primaryColor;
+    final buttonText = isPending 
+        ? '급여 확정 (${selectedIds.length}명)'
+        : '최종 확정 (${selectedIds.length}명)';
     
     return Container(
       padding: ResponsiveHelper.cardPadding(context),
       decoration: BoxDecoration(
         color: theme.scaffoldBackgroundColor,
-        borderRadius: BorderRadius.only(
-          bottomLeft: Radius.circular(ResponsiveHelper.spacing(context, 20)),
-          bottomRight: Radius.circular(ResponsiveHelper.spacing(context, 20)),
-        ),
         border: Border(top: BorderSide(color: theme.dividerColor)),
       ),
       child: Column(
@@ -706,7 +1085,7 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> {
               padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 12)),
               margin: EdgeInsets.only(bottom: ResponsiveHelper.spacing(context, 12)),
               decoration: BoxDecoration(
-                color: theme.primaryColor.withOpacity(0.1),
+                color: buttonColor.withOpacity(0.1),
                 borderRadius: BorderRadius.circular(ResponsiveHelper.spacing(context, 12)),
               ),
               child: Row(
@@ -714,7 +1093,7 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> {
                 children: [
                   Icon(
                     Icons.payments,
-                    color: theme.primaryColor,
+                    color: buttonColor,
                     size: ResponsiveHelper.iconSize(context, 20),
                   ),
                   SizedBox(width: ResponsiveHelper.spacing(context, 8)),
@@ -723,10 +1102,10 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> {
                     style: ResponsiveHelper.bodyStyle(context).copyWith(color: Colors.black87),
                   ),
                   Text(
-                    _formatCurrency(_selectedTotalWage),
+                    _formatCurrency(totalWage),
                     style: ResponsiveHelper.subtitleStyle(context).copyWith(
                       fontWeight: FontWeight.bold,
-                      color: theme.primaryColor,
+                      color: buttonColor,
                     ),
                   ),
                 ],
@@ -760,7 +1139,7 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> {
                 flex: 2,
                 child: ElevatedButton.icon(
                   onPressed: (hasSelection && !_isProcessing) 
-                      ? _confirmSelectedWages 
+                      ? (isPending ? _confirmWages : _finalConfirm)
                       : null,
                   icon: _isProcessing
                       ? SizedBox(
@@ -771,16 +1150,19 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> {
                             color: Colors.white,
                           ),
                         )
-                      : Icon(Icons.check, size: ResponsiveHelper.iconSize(context, 20)),
+                      : Icon(
+                          isPending ? Icons.check : Icons.verified,
+                          size: ResponsiveHelper.iconSize(context, 20),
+                        ),
                   label: Text(
-                    _isProcessing ? '처리 중...' : '선택 급여 확정 (${_selectedIds.length}명)',
+                    _isProcessing ? '처리 중...' : buttonText,
                     style: ResponsiveHelper.bodyStyle(context).copyWith(
                       color: Colors.white,
                       fontWeight: FontWeight.w600,
                     ),
                   ),
                   style: ElevatedButton.styleFrom(
-                    backgroundColor: hasSelection ? theme.primaryColor : theme.disabledColor,
+                    backgroundColor: hasSelection ? buttonColor : theme.disabledColor,
                     foregroundColor: Colors.white,
                     padding: EdgeInsets.symmetric(
                       vertical: ResponsiveHelper.spacing(context, 14),
@@ -831,14 +1213,14 @@ class _WageDetailSubDialog extends StatefulWidget {
   final UserModel? user;
   final AttendanceModel attendance;
   final WageDetailModel wage;
-  final Future<bool> Function(WageDetailModel) onConfirm;
+  final bool isCalculated;
 
   const _WageDetailSubDialog({
     required this.app,
     required this.user,
     required this.attendance,
     required this.wage,
-    required this.onConfirm,
+    required this.isCalculated,
   });
 
   @override
@@ -881,17 +1263,42 @@ class _WageDetailSubDialogState extends State<_WageDetailSubDialog> {
     });
   }
 
-  Future<void> _confirm() async {
-    setState(() => _isProcessing = true);
-    
+  Future<void> _onAction(String action) async {
     _updateWage();
-    final success = await widget.onConfirm(_wage);
     
-    if (success && mounted) {
-      Navigator.pop(context, true);
-    } else {
-      setState(() => _isProcessing = false);
-      ToastHelper.showError('급여 확정에 실패했습니다');
+    String confirmTitle;
+    String confirmMessage;
+    
+    switch (action) {
+      case 'confirm':
+        confirmTitle = '급여 확정';
+        confirmMessage = '${widget.user?.name ?? '근무자'}의 급여를 확정하시겠습니까?\n\n총 급여: ${_formatCurrency(_wage.totalAmount)}';
+        break;
+      case 'update':
+        confirmTitle = '급여 수정';
+        confirmMessage = '${widget.user?.name ?? '근무자'}의 급여를 수정하시겠습니까?\n\n총 급여: ${_formatCurrency(_wage.totalAmount)}';
+        break;
+      case 'final_confirm':
+        confirmTitle = '최종 확정';
+        confirmMessage = '${widget.user?.name ?? '근무자'}의 급여를 최종 확정하시겠습니까?\n\n총 급여: ${_formatCurrency(_wage.totalAmount)}\n\n⚠️ 최종 확정 후에는 수정이 불가합니다.';
+        break;
+      case 'cancel':
+        confirmTitle = '급여 확정 취소';
+        confirmMessage = '${widget.user?.name ?? '근무자'}의 급여 확정을 취소하시겠습니까?\n\n미확정 상태로 되돌아갑니다.';
+        break;
+      default:
+        return;
+    }
+    
+    final confirmed = await DialogHelper.showConfirm(
+      context,
+      title: confirmTitle,
+      message: confirmMessage,
+      confirmText: action == 'cancel' ? '취소하기' : '확인',
+    );
+    
+    if (confirmed) {
+      Navigator.pop(context, {'action': action, 'wage': _wage});
     }
   }
 
@@ -915,7 +1322,7 @@ class _WageDetailSubDialogState extends State<_WageDetailSubDialog> {
             Container(
               padding: ResponsiveHelper.cardPadding(context),
               decoration: BoxDecoration(
-                color: theme.primaryColor,
+                color: widget.isCalculated ? theme.primaryColor : AppColors.warning,
                 borderRadius: BorderRadius.only(
                   topLeft: Radius.circular(ResponsiveHelper.spacing(context, 20)),
                   topRight: Radius.circular(ResponsiveHelper.spacing(context, 20)),
@@ -930,12 +1337,23 @@ class _WageDetailSubDialogState extends State<_WageDetailSubDialog> {
                   ),
                   SizedBox(width: ResponsiveHelper.spacing(context, 12)),
                   Expanded(
-                    child: Text(
-                      '$name 급여 상세',
-                      style: ResponsiveHelper.subtitleStyle(context).copyWith(
-                        color: Colors.white,
-                        fontWeight: FontWeight.bold,
-                      ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          '$name 급여 상세',
+                          style: ResponsiveHelper.subtitleStyle(context).copyWith(
+                            color: Colors.white,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                        Text(
+                          widget.isCalculated ? '급여 확정됨 (수정 가능)' : '미확정',
+                          style: ResponsiveHelper.tinyStyle(context).copyWith(
+                            color: Colors.white.withOpacity(0.8),
+                          ),
+                        ),
+                      ],
                     ),
                   ),
                   IconButton(
@@ -972,74 +1390,127 @@ class _WageDetailSubDialogState extends State<_WageDetailSubDialog> {
             ),
 
             // 하단 버튼
-            Container(
-              padding: ResponsiveHelper.cardPadding(context),
-              decoration: BoxDecoration(
-                color: theme.scaffoldBackgroundColor,
-                borderRadius: BorderRadius.only(
-                  bottomLeft: Radius.circular(ResponsiveHelper.spacing(context, 20)),
-                  bottomRight: Radius.circular(ResponsiveHelper.spacing(context, 20)),
-                ),
-              ),
-              child: Row(
-                children: [
-                  Expanded(
-                    child: OutlinedButton(
-                      onPressed: _isProcessing ? null : () => Navigator.pop(context),
-                      style: OutlinedButton.styleFrom(
-                        padding: EdgeInsets.symmetric(
-                          vertical: ResponsiveHelper.spacing(context, 14),
-                        ),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(ResponsiveHelper.spacing(context, 12)),
-                        ),
-                      ),
-                      child: Text(
-                        '취소',
-                        style: ResponsiveHelper.bodyStyle(context),
-                      ),
-                    ),
-                  ),
-                  SizedBox(width: ResponsiveHelper.spacing(context, 12)),
-                  Expanded(
-                    flex: 2,
-                    child: ElevatedButton.icon(
-                      onPressed: _isProcessing ? null : _confirm,
-                      icon: _isProcessing
-                          ? SizedBox(
-                              width: ResponsiveHelper.spacing(context, 18),
-                              height: ResponsiveHelper.spacing(context, 18),
-                              child: CircularProgressIndicator(
-                                strokeWidth: ResponsiveHelper.spacing(context, 2),
-                                color: Colors.white,
-                              ),
-                            )
-                          : Icon(Icons.check, size: ResponsiveHelper.iconSize(context, 20)),
-                      label: Text(
-                        _isProcessing ? '처리 중...' : '급여 확정',
-                        style: ResponsiveHelper.bodyStyle(context).copyWith(
-                          color: Colors.white,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: theme.primaryColor,
-                        foregroundColor: Colors.white,
-                        padding: EdgeInsets.symmetric(
-                          vertical: ResponsiveHelper.spacing(context, 14),
-                        ),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(ResponsiveHelper.spacing(context, 12)),
-                        ),
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ),
+            _buildBottomButtons(context, theme),
           ],
         ),
       ),
+    );
+  }
+
+  Widget _buildBottomButtons(BuildContext context, ThemeData theme) {
+    return Container(
+      padding: ResponsiveHelper.cardPadding(context),
+      decoration: BoxDecoration(
+        color: theme.scaffoldBackgroundColor,
+        borderRadius: BorderRadius.only(
+          bottomLeft: Radius.circular(ResponsiveHelper.spacing(context, 20)),
+          bottomRight: Radius.circular(ResponsiveHelper.spacing(context, 20)),
+        ),
+      ),
+      child: widget.isCalculated
+          ? Column(
+              children: [
+                // 급여 수정 + 최종 확정
+                Row(
+                  children: [
+                    Expanded(
+                      child: OutlinedButton(
+                        onPressed: () => _onAction('update'),
+                        style: OutlinedButton.styleFrom(
+                          foregroundColor: theme.primaryColor,
+                          side: BorderSide(color: theme.primaryColor),
+                          padding: EdgeInsets.symmetric(
+                            vertical: ResponsiveHelper.spacing(context, 12),
+                          ),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(ResponsiveHelper.spacing(context, 12)),
+                          ),
+                        ),
+                        child: Text('급여 수정', style: ResponsiveHelper.bodyStyle(context)),
+                      ),
+                    ),
+                    SizedBox(width: ResponsiveHelper.spacing(context, 12)),
+                    Expanded(
+                      flex: 2,
+                      child: ElevatedButton.icon(
+                        onPressed: () => _onAction('final_confirm'),
+                        icon: Icon(Icons.verified, size: ResponsiveHelper.iconSize(context, 20)),
+                        label: Text(
+                          '최종 확정',
+                          style: ResponsiveHelper.bodyStyle(context).copyWith(
+                            color: Colors.white,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: AppColors.success,
+                          foregroundColor: Colors.white,
+                          padding: EdgeInsets.symmetric(
+                            vertical: ResponsiveHelper.spacing(context, 12),
+                          ),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(ResponsiveHelper.spacing(context, 12)),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+                SizedBox(height: ResponsiveHelper.spacing(context, 8)),
+                // 급여 취소
+                TextButton(
+                  onPressed: () => _onAction('cancel'),
+                  child: Text(
+                    '급여 확정 취소',
+                    style: ResponsiveHelper.smallStyle(context, color: AppColors.error),
+                  ),
+                ),
+              ],
+            )
+          : Row(
+              // 미확정: 취소 + 급여 확정
+              children: [
+                Expanded(
+                  child: OutlinedButton(
+                    onPressed: () => Navigator.pop(context),
+                    style: OutlinedButton.styleFrom(
+                      padding: EdgeInsets.symmetric(
+                        vertical: ResponsiveHelper.spacing(context, 14),
+                      ),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(ResponsiveHelper.spacing(context, 12)),
+                      ),
+                    ),
+                    child: Text('취소', style: ResponsiveHelper.bodyStyle(context)),
+                  ),
+                ),
+                SizedBox(width: ResponsiveHelper.spacing(context, 12)),
+                Expanded(
+                  flex: 2,
+                  child: ElevatedButton.icon(
+                    onPressed: () => _onAction('confirm'),
+                    icon: Icon(Icons.check, size: ResponsiveHelper.iconSize(context, 20)),
+                    label: Text(
+                      '급여 확정',
+                      style: ResponsiveHelper.bodyStyle(context).copyWith(
+                        color: Colors.white,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: AppColors.warning,
+                      foregroundColor: Colors.white,
+                      padding: EdgeInsets.symmetric(
+                        vertical: ResponsiveHelper.spacing(context, 14),
+                      ),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(ResponsiveHelper.spacing(context, 12)),
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
     );
   }
 
@@ -1068,6 +1539,8 @@ class _WageDetailSubDialogState extends State<_WageDetailSubDialog> {
   }
 
   Widget _buildWageSection(BuildContext context, ThemeData theme) {
+    final accentColor = widget.isCalculated ? theme.primaryColor : AppColors.warning;
+    
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -1090,7 +1563,7 @@ class _WageDetailSubDialogState extends State<_WageDetailSubDialog> {
         Container(
           padding: ResponsiveHelper.symmetricPadding(context, horizontal: 12, vertical: 10),
           decoration: BoxDecoration(
-            color: theme.primaryColor.withOpacity(0.1),
+            color: accentColor.withOpacity(0.1),
             borderRadius: BorderRadius.circular(ResponsiveHelper.spacing(context, 8)),
           ),
           child: Row(
@@ -1107,7 +1580,7 @@ class _WageDetailSubDialogState extends State<_WageDetailSubDialog> {
                 _formatCurrency(_wage.totalAmount),
                 style: ResponsiveHelper.subtitleStyle(context).copyWith(
                   fontWeight: FontWeight.bold,
-                  color: theme.primaryColor,
+                  color: accentColor,
                 ),
               ),
             ],
@@ -1179,20 +1652,28 @@ class _WageDetailSubDialogState extends State<_WageDetailSubDialog> {
   }
 
   Widget _buildInfoRow(BuildContext context, ThemeData theme, String label, String value, {bool highlight = false}) {
+    final accentColor = widget.isCalculated ? theme.primaryColor : AppColors.warning;
+    
     return Padding(
       padding: EdgeInsets.symmetric(vertical: ResponsiveHelper.spacing(context, 4)),
       child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
-          Text(
-            label,
-            style: ResponsiveHelper.smallStyle(context, color: AppColors.grey600),
+          SizedBox(
+            width: ResponsiveHelper.spacing(context, 70),
+            child: Text(
+              label,
+              style: ResponsiveHelper.smallStyle(context, color: AppColors.grey600),
+            ),
           ),
-          Text(
-            value,
-            style: ResponsiveHelper.bodyStyle(context).copyWith(
-              color: highlight ? theme.primaryColor : Colors.black87,
-              fontWeight: highlight ? FontWeight.w600 : null,
+          Expanded(
+            child: Text(
+              value,
+              style: ResponsiveHelper.bodyStyle(context).copyWith(
+                color: highlight ? accentColor : Colors.black87,
+                fontWeight: highlight ? FontWeight.w600 : null,
+              ),
+              textAlign: TextAlign.end,
+              overflow: TextOverflow.ellipsis,
             ),
           ),
         ],
@@ -1201,6 +1682,8 @@ class _WageDetailSubDialogState extends State<_WageDetailSubDialog> {
   }
 
   Widget _buildWageRow(BuildContext context, ThemeData theme, String label, int amount, {bool highlight = false}) {
+    final accentColor = widget.isCalculated ? theme.primaryColor : AppColors.warning;
+    
     return Padding(
       padding: EdgeInsets.symmetric(vertical: ResponsiveHelper.spacing(context, 4)),
       child: Row(
@@ -1213,7 +1696,7 @@ class _WageDetailSubDialogState extends State<_WageDetailSubDialog> {
           Text(
             _formatCurrency(amount),
             style: ResponsiveHelper.bodyStyle(context).copyWith(
-              color: highlight ? theme.primaryColor : Colors.black87,
+              color: highlight ? accentColor : Colors.black87,
               fontWeight: highlight ? FontWeight.w600 : null,
             ),
           ),

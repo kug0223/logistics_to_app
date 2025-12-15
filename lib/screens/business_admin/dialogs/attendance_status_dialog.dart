@@ -13,12 +13,14 @@
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:intl/intl.dart';
+import 'package:provider/provider.dart';
 
 // Models
 import '../../../models/core/application_model.dart';
 import '../../../models/core/attendance_model.dart';
 import '../../../models/core/user_model.dart';
 import '../../../models/core/business_work_type_model.dart';
+import '../../../models/core/wage_detail_model.dart';
 
 // Utils
 import '../../../utils/toast_helper.dart';
@@ -38,6 +40,7 @@ import '../../../utils/attendance_list_pdf.dart';
 // Dialogs
 import 'fixed_worker_management_dialog.dart';
 import 'wage_confirm_dialog.dart';
+import '../../../providers/user_provider.dart';
 
 /// 당일명단 다이얼로그 - 출퇴근 관리 기능 포함
 class AttendanceStatusDialog extends StatefulWidget {
@@ -338,6 +341,27 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
 
     // 퇴근 완료
     if (attendance?.checkOut != null) {
+      // 최종 확정
+      if (attendance?.wageStatus == 'confirmed') {
+        return {
+          'status': 'final_confirmed',
+          'color': AppColors.success,
+          'icon': Icons.verified,
+          'text': '최종확정',
+          'timeText': '${attendance!.checkIn} ~ ${attendance.checkOut}',
+        };
+      }
+      // 급여 확정 (수정 가능)
+      if (attendance?.wageStatus == 'calculated') {
+        return {
+          'status': 'wage_confirmed',
+          'color': AppColors.warning,
+          'icon': Icons.paid,
+          'text': '급여확정',
+          'timeText': '${attendance!.checkIn} ~ ${attendance.checkOut}',
+        };
+      }
+      // 일반 퇴근
       return {
         'status': 'checkout',
         'color': Colors.purple,
@@ -1364,6 +1388,18 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
           case 'cancel_noshow':
             _cancelNoShow(app);
             break;
+          case 'edit_wage':
+            _showEditWageDialog(app);
+            break;
+          case 'final_confirm':
+            _processFinalConfirm(app);
+            break;
+          case 'cancel_wage':
+            _processCancelWage(app);
+            break;
+          case 'view_wage':
+            _showViewWageDialog(app);
+            break;
         }
       },
       itemBuilder: (context) {
@@ -1429,7 +1465,7 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
             ),
           ));
         } else if (status == 'checkout') {
-          // 퇴근 완료
+          // 퇴근 완료 (급여 미확정)
           items.add(PopupMenuItem(
             value: 'edit_time',
             child: Row(
@@ -1437,6 +1473,50 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
                 Icon(Icons.edit_outlined, size: 20, color: AppColors.info),
                 const SizedBox(width: 12),
                 const Text('시간 수정'),
+              ],
+            ),
+          ));
+        } else if (status == 'wage_confirmed') {
+          // 급여 확정 (수정 가능)
+          items.add(PopupMenuItem(
+            value: 'edit_wage',
+            child: Row(
+              children: [
+                Icon(Icons.edit_outlined, size: 20, color: AppColors.warning),
+                const SizedBox(width: 12),
+                const Text('급여 수정'),
+              ],
+            ),
+          ));
+          items.add(PopupMenuItem(
+            value: 'final_confirm',
+            child: Row(
+              children: [
+                Icon(Icons.verified, size: 20, color: AppColors.success),
+                const SizedBox(width: 12),
+                const Text('최종 확정'),
+              ],
+            ),
+          ));
+          items.add(PopupMenuItem(
+            value: 'cancel_wage',
+            child: Row(
+              children: [
+                Icon(Icons.undo, size: 20, color: AppColors.error),
+                const SizedBox(width: 12),
+                const Text('급여 취소'),
+              ],
+            ),
+          ));
+        } else if (status == 'final_confirmed') {
+          // 최종 확정 (수정 불가)
+          items.add(PopupMenuItem(
+            value: 'view_wage',
+            child: Row(
+              children: [
+                Icon(Icons.receipt_long, size: 20, color: AppColors.success),
+                const SizedBox(width: 12),
+                const Text('급여 상세'),
               ],
             ),
           ));
@@ -2431,5 +2511,843 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
     } finally {
       setState(() => _isProcessing = false);
     }
+  }
+  /// 급여 수정 다이얼로그
+  Future<void> _showEditWageDialog(ApplicationModel app) async {
+    final attendance = _attendanceMap[app.id];
+    final user = _userMap[app.uid];
+    if (attendance == null || attendance.wageDetail == null) {
+      ToastHelper.showWarning('급여 정보가 없습니다');
+      return;
+    }
+    
+    final result = await showDialog<WageDetailModel>(
+      context: context,
+      builder: (context) => _WageEditDialog(
+        app: app,
+        user: user,
+        attendance: attendance!,
+        wage: attendance.wageDetail!,
+      ),
+    );
+    
+    if (result != null) {
+      await _processWageUpdate(app, attendance, result);
+    }
+  }
+
+  /// 급여 업데이트 처리
+  Future<void> _processWageUpdate(ApplicationModel app, AttendanceModel attendance, WageDetailModel wage) async {
+    setState(() => _isProcessing = true);
+    
+    try {
+      final userProvider = Provider.of<UserProvider>(context, listen: false);
+      final adminUid = userProvider.currentUser?.uid;
+      final user = _userMap[app.uid];
+      
+      final updatedWage = wage.copyWith(
+        calculatedBy: adminUid,
+        calculatedAt: DateTime.now(),
+      );
+      
+      await FirebaseFirestore.instance
+          .collection('attendance')
+          .doc(attendance.id)
+          .update({
+        'finalWage': updatedWage.totalAmount,
+        'wageDetail': updatedWage.toMap(),
+        'updatedAt': FieldValue.serverTimestamp(),
+      });
+      
+      _hasChanges = true;
+      ToastHelper.showSuccess('${user?.name ?? '근무자'} 급여 수정 완료');
+      await _loadData();
+    } catch (e) {
+      debugPrint('❌ 급여 수정 실패: $e');
+      ToastHelper.showError('급여 수정에 실패했습니다');
+    } finally {
+      setState(() => _isProcessing = false);
+    }
+  }
+
+  /// 최종 확정 처리
+  Future<void> _processFinalConfirm(ApplicationModel app) async {
+    final attendance = _attendanceMap[app.id];
+    final user = _userMap[app.uid];
+    if (attendance == null) return;
+    
+    final confirmed = await DialogHelper.showConfirm(
+      context,
+      title: '최종 확정',
+      message: '${user?.name ?? '근무자'}의 급여를 최종 확정하시겠습니까?\n\n⚠️ 최종 확정 후에는 수정이 불가합니다.',
+      confirmText: '최종 확정',
+    );
+    
+    if (!confirmed) return;
+    
+    setState(() => _isProcessing = true);
+    
+    try {
+      final userProvider = Provider.of<UserProvider>(context, listen: false);
+      final adminUid = userProvider.currentUser?.uid;
+      
+      final wageDetail = attendance.wageDetail?.copyWith(
+        confirmedBy: adminUid,
+        confirmedAt: DateTime.now(),
+      );
+      
+      await FirebaseFirestore.instance
+          .collection('attendance')
+          .doc(attendance.id)
+          .update({
+        'wageStatus': 'confirmed',
+        'wageDetail': wageDetail?.toMap(),
+        'updatedAt': FieldValue.serverTimestamp(),
+      });
+      
+      _hasChanges = true;
+      ToastHelper.showSuccess('${user?.name ?? '근무자'} 최종 확정 완료');
+      await _loadData();
+    } catch (e) {
+      debugPrint('❌ 최종 확정 실패: $e');
+      ToastHelper.showError('최종 확정에 실패했습니다');
+    } finally {
+      setState(() => _isProcessing = false);
+    }
+  }
+
+  /// 급여 취소 처리 (calculated → pending)
+  Future<void> _processCancelWage(ApplicationModel app) async {
+    final attendance = _attendanceMap[app.id];
+    final user = _userMap[app.uid];
+    if (attendance == null) return;
+    
+    final confirmed = await DialogHelper.showConfirm(
+      context,
+      title: '급여 확정 취소',
+      message: '${user?.name ?? '근무자'}의 급여 확정을 취소하시겠습니까?\n\n미확정 상태로 되돌아갑니다.',
+      confirmText: '취소하기',
+    );
+    
+    if (!confirmed) return;
+    
+    setState(() => _isProcessing = true);
+    
+    try {
+      await FirebaseFirestore.instance
+          .collection('attendance')
+          .doc(attendance.id)
+          .update({
+        'wageStatus': 'pending',
+        'finalWage': FieldValue.delete(),
+        'wageDetail': FieldValue.delete(),
+        'updatedAt': FieldValue.serverTimestamp(),
+      });
+      
+      _hasChanges = true;
+      ToastHelper.showSuccess('${user?.name ?? '근무자'} 급여 확정 취소');
+      await _loadData();
+    } catch (e) {
+      debugPrint('❌ 급여 취소 실패: $e');
+      ToastHelper.showError('급여 취소에 실패했습니다');
+    } finally {
+      setState(() => _isProcessing = false);
+    }
+  }
+
+  /// 급여 상세 보기 (읽기 전용)
+  Future<void> _showViewWageDialog(ApplicationModel app) async {
+    final attendance = _attendanceMap[app.id];
+    final user = _userMap[app.uid];
+    if (attendance?.wageDetail == null) {
+      ToastHelper.showWarning('급여 정보가 없습니다');
+      return;
+    }
+    
+    final wage = attendance!.wageDetail!;
+    final theme = Theme.of(context);
+    final name = user?.name ?? '근무자';
+    
+    await showDialog(
+      context: context,
+      builder: (context) => Dialog(
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(ResponsiveHelper.spacing(context, 20)),
+        ),
+        child: Container(
+          width: MediaQuery.of(context).size.width * 0.9,
+          padding: EdgeInsets.zero,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              // 헤더
+              Container(
+                padding: ResponsiveHelper.cardPadding(context),
+                decoration: BoxDecoration(
+                  color: AppColors.success,
+                  borderRadius: BorderRadius.only(
+                    topLeft: Radius.circular(ResponsiveHelper.spacing(context, 20)),
+                    topRight: Radius.circular(ResponsiveHelper.spacing(context, 20)),
+                  ),
+                ),
+                child: Row(
+                  children: [
+                    Container(
+                      padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 8)),
+                      decoration: BoxDecoration(
+                        color: Colors.white.withOpacity(0.2),
+                        borderRadius: BorderRadius.circular(ResponsiveHelper.spacing(context, 10)),
+                      ),
+                      child: Icon(
+                        Icons.verified,
+                        color: Colors.white,
+                        size: ResponsiveHelper.iconSize(context, 24),
+                      ),
+                    ),
+                    SizedBox(width: ResponsiveHelper.spacing(context, 12)),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            '$name 급여 상세',
+                            style: ResponsiveHelper.subtitleStyle(context).copyWith(
+                              color: Colors.white,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                          Text(
+                            '최종 확정됨',
+                            style: ResponsiveHelper.tinyStyle(context).copyWith(
+                              color: Colors.white.withOpacity(0.9),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    IconButton(
+                      onPressed: () => Navigator.pop(context),
+                      icon: Icon(
+                        Icons.close,
+                        color: Colors.white,
+                        size: ResponsiveHelper.iconSize(context, 24),
+                      ),
+                      padding: EdgeInsets.zero,
+                      constraints: const BoxConstraints(),
+                    ),
+                  ],
+                ),
+              ),
+              
+              // 내용
+              Padding(
+                padding: ResponsiveHelper.cardPadding(context),
+                child: Column(
+                  children: [
+                    // 근무 정보
+                    _buildViewInfoSection(context, theme, app, attendance),
+                    
+                    Divider(height: ResponsiveHelper.spacing(context, 24)),
+                    
+                    // 급여 상세
+                    _buildViewWageSection(context, theme, wage),
+                    
+                    SizedBox(height: ResponsiveHelper.spacing(context, 16)),
+                    
+                    // 최종 확정 안내
+                    Container(
+                      padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 12)),
+                      decoration: BoxDecoration(
+                        color: AppColors.successBg,
+                        borderRadius: BorderRadius.circular(ResponsiveHelper.spacing(context, 12)),
+                        border: Border.all(color: AppColors.success.withOpacity(0.3)),
+                      ),
+                      child: Row(
+                        children: [
+                          Icon(
+                            Icons.lock,
+                            color: AppColors.success,
+                            size: ResponsiveHelper.iconSize(context, 18),
+                          ),
+                          SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+                          Expanded(
+                            child: Text(
+                              '최종 확정된 급여입니다. 수정이 불가합니다.',
+                              style: ResponsiveHelper.smallStyle(context).copyWith(
+                                color: AppColors.success,
+                                fontWeight: FontWeight.w500,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              
+              // 하단 버튼
+              Container(
+                padding: ResponsiveHelper.cardPadding(context),
+                child: SizedBox(
+                  width: double.infinity,
+                  child: ElevatedButton(
+                    onPressed: () => Navigator.pop(context),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: AppColors.success,
+                      foregroundColor: Colors.white,
+                      padding: EdgeInsets.symmetric(
+                        vertical: ResponsiveHelper.spacing(context, 14),
+                      ),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(ResponsiveHelper.spacing(context, 12)),
+                      ),
+                    ),
+                    child: Text(
+                      '확인',
+                      style: ResponsiveHelper.bodyStyle(context).copyWith(
+                        color: Colors.white,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// 급여 상세 보기 - 근무 정보 섹션
+  Widget _buildViewInfoSection(BuildContext context, ThemeData theme, ApplicationModel app, AttendanceModel attendance) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          '근무 정보',
+          style: ResponsiveHelper.bodyStyle(context).copyWith(
+            fontWeight: FontWeight.bold,
+            color: Colors.black87,
+          ),
+        ),
+        SizedBox(height: ResponsiveHelper.spacing(context, 12)),
+        _buildViewRow(context, '업무', app.selectedWorkType),
+        _buildViewRow(context, '출근', attendance.checkIn ?? '-'),
+        _buildViewRow(context, '퇴근', attendance.checkOut ?? '-'),
+        if (attendance.wageDetail != null)
+          _buildViewRow(context, '근무시간', '${attendance.wageDetail!.workHours.toStringAsFixed(1)}시간'),
+      ],
+    );
+  }
+
+  /// 급여 상세 보기 - 급여 섹션
+  Widget _buildViewWageSection(BuildContext context, ThemeData theme, WageDetailModel wage) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          '급여 상세',
+          style: ResponsiveHelper.bodyStyle(context).copyWith(
+            fontWeight: FontWeight.bold,
+            color: Colors.black87,
+          ),
+        ),
+        SizedBox(height: ResponsiveHelper.spacing(context, 12)),
+        _buildViewRow(context, '기본급', _formatCurrency(wage.baseAmount)),
+        if (wage.overtimeAmount > 0)
+          _buildViewRow(context, '연장수당', _formatCurrency(wage.overtimeAmount), highlight: true),
+        if (wage.nightAmount > 0)
+          _buildViewRow(context, '야간수당', _formatCurrency(wage.nightAmount), highlight: true),
+        if (wage.additionalAmount > 0)
+          _buildViewRow(context, '추가수당', _formatCurrency(wage.additionalAmount)),
+        SizedBox(height: ResponsiveHelper.spacing(context, 8)),
+        Container(
+          padding: ResponsiveHelper.symmetricPadding(context, horizontal: 12, vertical: 10),
+          decoration: BoxDecoration(
+            color: AppColors.success.withOpacity(0.1),
+            borderRadius: BorderRadius.circular(ResponsiveHelper.spacing(context, 8)),
+          ),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Text(
+                '총 급여',
+                style: ResponsiveHelper.bodyStyle(context).copyWith(
+                  fontWeight: FontWeight.bold,
+                  color: Colors.black87,
+                ),
+              ),
+              Text(
+                _formatCurrency(wage.totalAmount),
+                style: ResponsiveHelper.subtitleStyle(context).copyWith(
+                  fontWeight: FontWeight.bold,
+                  color: AppColors.success,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  /// 급여 상세 보기 - 행
+  Widget _buildViewRow(BuildContext context, String label, String value, {bool highlight = false}) {
+    return Padding(
+      padding: EdgeInsets.symmetric(vertical: ResponsiveHelper.spacing(context, 4)),
+      child: Row(
+        children: [
+          SizedBox(
+            width: ResponsiveHelper.spacing(context, 70),
+            child: Text(
+              label,
+              style: ResponsiveHelper.smallStyle(context, color: AppColors.grey600),
+            ),
+          ),
+          Expanded(
+            child: Text(
+              value,
+              style: ResponsiveHelper.bodyStyle(context).copyWith(
+                color: highlight ? AppColors.success : Colors.black87,
+                fontWeight: highlight ? FontWeight.w600 : null,
+              ),
+              textAlign: TextAlign.end,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// 금액 포맷
+  String _formatCurrency(int amount) {
+    return '${amount.toString().replaceAllMapped(
+      RegExp(r'(\d{1,3})(?=(\d{3})+(?!\d))'),
+      (Match m) => '${m[1]},',
+    )}원';
+  }
+  
+}
+// ═══════════════════════════════════════════════════════════
+// 급여 수정 다이얼로그
+// ═══════════════════════════════════════════════════════════
+
+class _WageEditDialog extends StatefulWidget {
+  final ApplicationModel app;
+  final UserModel? user;
+  final AttendanceModel attendance;
+  final WageDetailModel wage;
+
+  const _WageEditDialog({
+    required this.app,
+    required this.user,
+    required this.attendance,
+    required this.wage,
+  });
+
+  @override
+  State<_WageEditDialog> createState() => _WageEditDialogState();
+}
+
+class _WageEditDialogState extends State<_WageEditDialog> {
+  late WageDetailModel _wage;
+  final _additionalController = TextEditingController();
+  final _memoController = TextEditingController();
+
+  @override
+  void initState() {
+    super.initState();
+    _wage = widget.wage;
+    _additionalController.text = widget.wage.additionalAmount > 0 
+        ? widget.wage.additionalAmount.toString() 
+        : '';
+    _memoController.text = widget.wage.memo ?? '';
+  }
+
+  @override
+  void dispose() {
+    _additionalController.dispose();
+    _memoController.dispose();
+    super.dispose();
+  }
+
+  void _updateWage() {
+    final additional = int.tryParse(_additionalController.text) ?? 0;
+    final newTotal = _wage.baseAmount + _wage.overtimeAmount + _wage.nightAmount + additional;
+    
+    setState(() {
+      _wage = _wage.copyWith(
+        additionalAmount: additional,
+        totalAmount: newTotal,
+        memo: _memoController.text.trim().isNotEmpty ? _memoController.text.trim() : null,
+      );
+    });
+  }
+
+  Future<void> _onSave() async {
+    _updateWage();
+    
+    final confirmed = await DialogHelper.showConfirm(
+      context,
+      title: '급여 수정',
+      message: '${widget.user?.name ?? '근무자'}의 급여를 수정하시겠습니까?\n\n총 급여: ${_formatCurrency(_wage.totalAmount)}',
+      confirmText: '저장',
+    );
+    
+    if (confirmed) {
+      Navigator.pop(context, _wage);
+    }
+  }
+
+  String _formatCurrency(int amount) {
+    return '${amount.toString().replaceAllMapped(
+      RegExp(r'(\d{1,3})(?=(\d{3})+(?!\d))'),
+      (Match m) => '${m[1]},',
+    )}원';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final name = widget.user?.name ?? '이름 없음';
+    final screenWidth = MediaQuery.of(context).size.width;
+
+    return Dialog(
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(ResponsiveHelper.spacing(context, 20)),
+      ),
+      child: Container(
+        width: screenWidth * 0.9,
+        constraints: BoxConstraints(maxWidth: screenWidth * 0.95),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            // 헤더
+            Container(
+              padding: ResponsiveHelper.cardPadding(context),
+              decoration: BoxDecoration(
+                color: AppColors.warning,
+                borderRadius: BorderRadius.only(
+                  topLeft: Radius.circular(ResponsiveHelper.spacing(context, 20)),
+                  topRight: Radius.circular(ResponsiveHelper.spacing(context, 20)),
+                ),
+              ),
+              child: Row(
+                children: [
+                  Container(
+                    padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 8)),
+                    decoration: BoxDecoration(
+                      color: Colors.white.withOpacity(0.2),
+                      borderRadius: BorderRadius.circular(ResponsiveHelper.spacing(context, 10)),
+                    ),
+                    child: Icon(
+                      Icons.edit_outlined,
+                      color: Colors.white,
+                      size: ResponsiveHelper.iconSize(context, 24),
+                    ),
+                  ),
+                  SizedBox(width: ResponsiveHelper.spacing(context, 12)),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          '$name 급여 수정',
+                          style: ResponsiveHelper.subtitleStyle(context).copyWith(
+                            color: Colors.white,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                        Text(
+                          '급여 확정 상태 (수정 가능)',
+                          style: ResponsiveHelper.tinyStyle(context).copyWith(
+                            color: Colors.white.withOpacity(0.9),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  IconButton(
+                    onPressed: () => Navigator.pop(context),
+                    icon: Icon(
+                      Icons.close,
+                      color: Colors.white,
+                      size: ResponsiveHelper.iconSize(context, 24),
+                    ),
+                    padding: EdgeInsets.zero,
+                    constraints: const BoxConstraints(),
+                  ),
+                ],
+              ),
+            ),
+
+            // 내용
+            Flexible(
+              child: SingleChildScrollView(
+                padding: ResponsiveHelper.cardPadding(context),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    _buildInfoSection(context, theme),
+                    Divider(height: ResponsiveHelper.spacing(context, 24)),
+                    _buildWageSection(context, theme),
+                    Divider(height: ResponsiveHelper.spacing(context, 24)),
+                    _buildAdditionalSection(context, theme),
+                    SizedBox(height: ResponsiveHelper.spacing(context, 16)),
+                    _buildMemoSection(context, theme),
+                  ],
+                ),
+              ),
+            ),
+
+            // 하단 버튼
+            Container(
+              padding: ResponsiveHelper.cardPadding(context),
+              decoration: BoxDecoration(
+                color: theme.scaffoldBackgroundColor,
+                borderRadius: BorderRadius.only(
+                  bottomLeft: Radius.circular(ResponsiveHelper.spacing(context, 20)),
+                  bottomRight: Radius.circular(ResponsiveHelper.spacing(context, 20)),
+                ),
+              ),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: OutlinedButton(
+                      onPressed: () => Navigator.pop(context),
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: AppColors.grey600,
+                        side: BorderSide(color: theme.dividerColor),
+                        padding: EdgeInsets.symmetric(
+                          vertical: ResponsiveHelper.spacing(context, 14),
+                        ),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(ResponsiveHelper.spacing(context, 12)),
+                        ),
+                      ),
+                      child: Text(
+                        '취소',
+                        style: ResponsiveHelper.bodyStyle(context),
+                      ),
+                    ),
+                  ),
+                  SizedBox(width: ResponsiveHelper.spacing(context, 12)),
+                  Expanded(
+                    flex: 2,
+                    child: ElevatedButton.icon(
+                      onPressed: _onSave,
+                      icon: Icon(Icons.save, size: ResponsiveHelper.iconSize(context, 20)),
+                      label: Text(
+                        '저장',
+                        style: ResponsiveHelper.bodyStyle(context).copyWith(
+                          color: Colors.white,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: AppColors.warning,
+                        foregroundColor: Colors.white,
+                        padding: EdgeInsets.symmetric(
+                          vertical: ResponsiveHelper.spacing(context, 14),
+                        ),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(ResponsiveHelper.spacing(context, 12)),
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildInfoSection(BuildContext context, ThemeData theme) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          '근무 정보',
+          style: ResponsiveHelper.bodyStyle(context).copyWith(
+            fontWeight: FontWeight.bold,
+            color: Colors.black87,
+          ),
+        ),
+        SizedBox(height: ResponsiveHelper.spacing(context, 12)),
+        _buildInfoRow(context, '업무', widget.app.selectedWorkType),
+        _buildInfoRow(context, '출근', widget.attendance.checkIn ?? '-'),
+        _buildInfoRow(context, '퇴근', widget.attendance.checkOut ?? '-'),
+        _buildInfoRow(context, '근무시간', '${_wage.workHours.toStringAsFixed(1)}시간'),
+        if (_wage.overtimeMinutes > 0)
+          _buildInfoRow(context, '연장근무', '${_wage.overtimeHours.toStringAsFixed(1)}시간', highlight: true),
+        if (_wage.nightMinutes > 0)
+          _buildInfoRow(context, '야간근무', '${_wage.nightHours.toStringAsFixed(1)}시간', highlight: true),
+      ],
+    );
+  }
+
+  Widget _buildWageSection(BuildContext context, ThemeData theme) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          '급여 상세',
+          style: ResponsiveHelper.bodyStyle(context).copyWith(
+            fontWeight: FontWeight.bold,
+            color: Colors.black87,
+          ),
+        ),
+        SizedBox(height: ResponsiveHelper.spacing(context, 12)),
+        _buildWageRow(context, '기본급', _wage.baseAmount),
+        if (_wage.overtimeAmount > 0)
+          _buildWageRow(context, '연장수당', _wage.overtimeAmount, highlight: true),
+        if (_wage.nightAmount > 0)
+          _buildWageRow(context, '야간수당', _wage.nightAmount, highlight: true),
+        if (_wage.additionalAmount > 0)
+          _buildWageRow(context, '추가수당', _wage.additionalAmount),
+        SizedBox(height: ResponsiveHelper.spacing(context, 8)),
+        Container(
+          padding: ResponsiveHelper.symmetricPadding(context, horizontal: 12, vertical: 10),
+          decoration: BoxDecoration(
+            color: AppColors.warning.withOpacity(0.1),
+            borderRadius: BorderRadius.circular(ResponsiveHelper.spacing(context, 8)),
+          ),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Text(
+                '총 급여',
+                style: ResponsiveHelper.bodyStyle(context).copyWith(
+                  fontWeight: FontWeight.bold,
+                  color: Colors.black87,
+                ),
+              ),
+              Text(
+                _formatCurrency(_wage.totalAmount),
+                style: ResponsiveHelper.subtitleStyle(context).copyWith(
+                  fontWeight: FontWeight.bold,
+                  color: AppColors.warning,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildAdditionalSection(BuildContext context, ThemeData theme) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          '추가수당',
+          style: ResponsiveHelper.bodyStyle(context).copyWith(
+            fontWeight: FontWeight.bold,
+            color: Colors.black87,
+          ),
+        ),
+        SizedBox(height: ResponsiveHelper.spacing(context, 8)),
+        TextField(
+          controller: _additionalController,
+          keyboardType: TextInputType.number,
+          style: ResponsiveHelper.bodyStyle(context).copyWith(color: Colors.black87),
+          decoration: InputDecoration(
+            hintText: '0',
+            hintStyle: ResponsiveHelper.bodyStyle(context, color: AppColors.grey400),
+            suffixText: '원',
+            suffixStyle: ResponsiveHelper.bodyStyle(context),
+            border: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(ResponsiveHelper.spacing(context, 12)),
+            ),
+            contentPadding: ResponsiveHelper.symmetricPadding(context, horizontal: 12, vertical: 12),
+          ),
+          onChanged: (_) => _updateWage(),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildMemoSection(BuildContext context, ThemeData theme) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          '메모',
+          style: ResponsiveHelper.bodyStyle(context).copyWith(
+            fontWeight: FontWeight.bold,
+            color: Colors.black87,
+          ),
+        ),
+        SizedBox(height: ResponsiveHelper.spacing(context, 8)),
+        TextField(
+          controller: _memoController,
+          maxLines: 2,
+          style: ResponsiveHelper.bodyStyle(context).copyWith(color: Colors.black87),
+          decoration: InputDecoration(
+            hintText: '메모 입력 (선택)',
+            hintStyle: ResponsiveHelper.bodyStyle(context, color: AppColors.grey400),
+            border: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(ResponsiveHelper.spacing(context, 12)),
+            ),
+            contentPadding: EdgeInsets.all(ResponsiveHelper.spacing(context, 12)),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildInfoRow(BuildContext context, String label, String value, {bool highlight = false}) {
+    return Padding(
+      padding: EdgeInsets.symmetric(vertical: ResponsiveHelper.spacing(context, 4)),
+      child: Row(
+        children: [
+          SizedBox(
+            width: ResponsiveHelper.spacing(context, 70),
+            child: Text(
+              label,
+              style: ResponsiveHelper.smallStyle(context, color: AppColors.grey600),
+            ),
+          ),
+          Expanded(
+            child: Text(
+              value,
+              style: ResponsiveHelper.bodyStyle(context).copyWith(
+                color: highlight ? AppColors.warning : Colors.black87,
+                fontWeight: highlight ? FontWeight.w600 : null,
+              ),
+              textAlign: TextAlign.end,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildWageRow(BuildContext context, String label, int amount, {bool highlight = false}) {
+    return Padding(
+      padding: EdgeInsets.symmetric(vertical: ResponsiveHelper.spacing(context, 4)),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          Text(
+            label,
+            style: ResponsiveHelper.smallStyle(context, color: AppColors.grey600),
+          ),
+          Text(
+            _formatCurrency(amount),
+            style: ResponsiveHelper.bodyStyle(context).copyWith(
+              color: highlight ? AppColors.warning : Colors.black87,
+              fontWeight: highlight ? FontWeight.w600 : null,
+            ),
+          ),
+        ],
+      ),
+    );
   }
 }
