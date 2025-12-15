@@ -18,7 +18,7 @@ ALfit
 
 냉동분류
 
-git add . ; git commit -m "급여계산시스템구축 251215-6" ; git push
+git add . ; git commit -m "급여계산시스템구축 251215-7" ; git push
 
 flutter clean
 flutter pub get
