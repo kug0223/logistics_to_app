@@ -22,6 +22,8 @@ import '../../../utils/dialog_helper.dart';
 import '../../../utils/wage_calculator.dart';
 import '../../../theme/app_colors.dart';
 
+import '../../../widgets/dialogs/wage/wage_detail_dialog.dart';
+
 // Providers
 import '../../../providers/user_provider.dart';
 
@@ -352,34 +354,32 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
       return;
     }
     
-    final result = await showDialog<Map<String, dynamic>>(
+    final mode = isCalculated ? WageDialogMode.calculated : WageDialogMode.pending;
+    
+    final result = await WageDetailDialog.show(
       context: context,
-      builder: (context) => _WageDetailSubDialog(
-        app: app,
-        user: user,
-        attendance: attendance,
-        wage: wage,
-        isCalculated: isCalculated,
-      ),
+      app: app,
+      user: user,
+      attendance: attendance,
+      wage: wage,
+      mode: mode,
     );
     
     if (result == null) return;
     
-    final action = result['action'] as String;
-    final updatedWage = result['wage'] as WageDetailModel?;
-    
-    if (action == 'confirm' && updatedWage != null) {
-      // 급여 확정 (pending → calculated)
-      await _processIndividualConfirm(app, attendance, updatedWage);
-    } else if (action == 'update' && updatedWage != null) {
-      // 급여 수정 (calculated 상태에서)
-      await _processWageUpdate(app, attendance, updatedWage);
-    } else if (action == 'final_confirm' && updatedWage != null) {
-      // 최종 확정 (calculated → confirmed)
-      await _processIndividualFinalConfirm(app, attendance, updatedWage);
-    } else if (action == 'cancel') {
-      // 급여 취소 (calculated → pending)
-      await _processWageCancel(app, attendance);
+    switch (result.action) {
+      case 'confirm':
+        await _processIndividualConfirm(app, attendance, result.wage);
+        break;
+      case 'update':
+        await _processWageUpdate(app, attendance, result.wage);
+        break;
+      case 'final_confirm':
+        await _processIndividualFinalConfirm(app, attendance, result.wage);
+        break;
+      case 'cancel':
+        await _processWageCancel(app, attendance);
+        break;
     }
   }
 
