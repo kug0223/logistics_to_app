@@ -120,7 +120,7 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
       // 장기 근무 확정자만 필터 (퇴사 완료 제외)
       final filtered = allApps.where((app) {
         return app.status == 'CONFIRMED' &&
-            app.workEndDate != null &&
+            app.isLongTermApplication &&  // ✅ 장기 TO 여부 확인
             app.resignStatus != 'APPROVED' &&
             app.resignStatus != 'AUTO_APPROVED';
       }).toList();

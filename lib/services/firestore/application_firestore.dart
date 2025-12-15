@@ -397,20 +397,37 @@ extension ApplicationFirestore on FirestoreService {
           return false;
         }
         
-        // 취소/거절 상태면 → 재지원 (status만 업데이트)
+        // 취소/거절 상태면 → 재지원 (기존 문서 재활성화)
         print('✅ 기존 지원서 재활성화: ${existingDoc.id}');
         
         final batch = _firestore.batch();
         
-        // 지원서 상태 업데이트
+        // 지원서 상태 업데이트 (거절/취소 관련 필드 초기화)
         batch.update(existingDoc.reference, {
           'status': 'PENDING',
           'appliedAt': FieldValue.serverTimestamp(),
+          // ✅ 취소 관련 필드 초기화
           'canceledAt': null,
           'cancelReason': null,
-          // ✅ 장기공고 희망 시작일도 업데이트
+          'conflictingAppId': null,
+          'conflictingBusiness': null,
+          'conflictingTime': null,
+          // ✅ 거절 관련 필드 초기화
+          'rejectedAt': null,
+          'rejectedBy': null,
+          'rejectMessage': null,
+          // ✅ 확정 관련 필드 초기화
+          'confirmedAt': null,
+          'confirmedBy': null,
+          'confirmMessage': null,
+          // ✅ 장기공고 필드 업데이트
           if (desiredStartDate != null) 
             'desiredStartDate': Timestamp.fromDate(desiredStartDate),
+          if (workEndDate != null)
+            'workEndDate': Timestamp.fromDate(workEndDate),
+          if (workDays != null && workDays.isNotEmpty)
+            'workDays': workDays,
+          'type': (workDays != null && workDays.isNotEmpty) ? 'long_term' : 'short',
         });
         
         // TO 통계 업데이트
