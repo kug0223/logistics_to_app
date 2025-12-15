@@ -37,6 +37,7 @@ import '../../../widgets/pickers/time_picker_bottom_sheet.dart';
 import '../../../utils/attendance_list_pdf.dart';
 // Dialogs
 import 'fixed_worker_management_dialog.dart';
+import 'wage_confirm_dialog.dart';
 
 /// 당일명단 다이얼로그 - 출퇴근 관리 기능 포함
 class AttendanceStatusDialog extends StatefulWidget {
@@ -1523,14 +1524,41 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
     );
   }
   /// 급여 확정 다이얼로그 열기
-  void _showWageConfirmDialog() {
+  Future<void> _showWageConfirmDialog() async {
     if (_confirmedWorkers.isEmpty) {
       ToastHelper.showWarning('급여 확정할 인원이 없습니다');
       return;
     }
 
-    // TODO: 급여 확정 다이얼로그 구현 (5단계에서)
-    ToastHelper.showInfo('급여 확정 기능 준비 중');
+    if (_selectedBusinessId == null) {
+      ToastHelper.showWarning('사업장을 선택해주세요');
+      return;
+    }
+
+    final businessName = _businessNameMap[_selectedBusinessId] ?? '사업장';
+
+    final hasChanges = await showDialog<bool>(
+      context: context,
+      builder: (context) => WageConfirmDialog(
+        date: widget.date,
+        businessId: _selectedBusinessId!,
+        businessName: businessName,
+        workers: _confirmedWorkers,
+        attendanceMap: _attendanceMap,
+        userMap: _userMap,
+        workDetailTimeMap: _workDetailTimeMap,
+        onConfirmed: () {
+          // 급여 확정 시 데이터 새로고침
+          _loadData();
+        },
+      ),
+    );
+
+    // 변경사항 있으면 당일명단도 변경 표시
+    if (hasChanges == true && mounted) {
+      _hasChanges = true;
+      await _loadData();
+    }
   }
 
   // ═══════════════════════════════════════════════════════════
@@ -1646,6 +1674,9 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
           timeInfoMap[workType] = {
             'startTime': data['startTime'] ?? '',
             'endTime': data['endTime'] ?? '',
+            'wage': data['wage'] ?? 0,
+            'wageType': data['wageType'] ?? 'hourly',
+            'breakMinutes': data['breakMinutes'] ?? 0,
           };
         }
       }

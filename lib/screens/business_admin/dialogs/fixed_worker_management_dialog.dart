@@ -67,11 +67,13 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
       // 여러 사업장 모드 (캘린더에서 호출)
       _businessIds = widget.businessIds!;
       _selectedBusinessId = widget.initialBusinessId ?? _businessIds.first;
+      _showBusinessSelector = true;  // ✅ 드롭다운 표시
       await _loadBusinessNames();
     } else if (widget.initialBusinessId != null) {
       // 단일 사업장 모드 (기존 호출)
       _businessIds = [widget.initialBusinessId!];
       _selectedBusinessId = widget.initialBusinessId;
+      _showBusinessSelector = false;  // ✅ 드롭다운 숨김
       await _loadBusinessNames();
     }
     
