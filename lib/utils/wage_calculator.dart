@@ -210,8 +210,23 @@ class WageCalculator {
     final regularMinutes = workMinutes - overtimeMinutes;
     final baseAmount = (regularMinutes * hourlyWage / 60).round();
     
-    // 연장수당: 연장시간 × 최저시급 × 1.5
-    final overtimeAmount = (overtimeMinutes * minimumWage * overtimeRate / 60).round();
+    // 연장수당 계산 (8시간 기준)
+    int overtimeAmount = 0;
+    if (overtimeMinutes > 0) {
+    if (workMinutes <= standardWorkMinutes) {
+      // 총 근무 8시간 이하: 연장분 1배
+      overtimeAmount = (overtimeMinutes * minimumWage / 60).round();
+    } else {
+      // 총 근무 8시간 초과: 8시간 초과분만 1.5배
+      final over8Hours = workMinutes - standardWorkMinutes;  // 8시간 초과분
+      final within8Hours = overtimeMinutes - over8Hours;     // 8시간 이내 연장분
+      
+      final amount1x = (within8Hours.clamp(0, 9999) * minimumWage / 60).round();
+      final amount15x = (over8Hours.clamp(0, 9999) * minimumWage * overtimeRate / 60).round();
+      
+      overtimeAmount = amount1x + amount15x;
+   }
+ }
     
     // 야간수당: 야간시간 × 최저시급 × 0.5
     int nightAmount = 0;
@@ -253,8 +268,23 @@ class WageCalculator {
       baseAmount = (dailyWage * workMinutes / scheduledWorkMinutes).round();
     }
     
-    // 연장수당: 예정 초과분 × 최저시급 × 1.5
-    final overtimeAmount = (overtimeMinutes * minimumWage * overtimeRate / 60).round();
+    // 연장수당: 총 근무 8시간 이하면 1배, 8시간 초과분만 1.5배
+    int overtimeAmount = 0;
+    if (overtimeMinutes > 0) {
+      if (workMinutes <= standardWorkMinutes) {
+        // 총 근무 8시간 이하: 연장분 전체 1배
+        overtimeAmount = (overtimeMinutes * minimumWage / 60).round();
+      } else {
+        // 총 근무 8시간 초과: 8시간 초과분만 1.5배
+        final over8Hours = workMinutes - standardWorkMinutes;
+        final within8Hours = (overtimeMinutes - over8Hours).clamp(0, overtimeMinutes);
+        
+        final amount1x = (within8Hours * minimumWage / 60).round();
+        final amount15x = (over8Hours.clamp(0, overtimeMinutes) * minimumWage * overtimeRate / 60).round();
+        
+        overtimeAmount = amount1x + amount15x;
+      }
+    }
     
     // 야간수당: 야간시간 × 최저시급 × 0.5
     int nightAmount = 0;

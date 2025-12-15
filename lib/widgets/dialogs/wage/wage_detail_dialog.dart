@@ -113,7 +113,7 @@ class _WageDetailDialogState extends State<WageDetailDialog> {
   // ═══════════════════════════════════════════════════════════
 
   void _updateWage() {
-    final additional = int.tryParse(_additionalController.text) ?? 0;
+    final additional = int.tryParse(_additionalController.text.replaceAll(',', '')) ?? 0;
     final newTotal = _wage.baseAmount + _wage.overtimeAmount + _wage.nightAmount + additional;
 
     setState(() {
@@ -261,6 +261,8 @@ class _WageDetailDialogState extends State<WageDetailDialog> {
                     _buildWageSection(context, theme),
                     if (_isEditable) ...[
                       Divider(height: ResponsiveHelper.spacing(context, 24)),
+                      _buildEditGuide(context),
+                      SizedBox(height: ResponsiveHelper.spacing(context, 16)),
                       _buildAdditionalSection(context, theme),
                       SizedBox(height: ResponsiveHelper.spacing(context, 16)),
                       _buildMemoSection(context, theme),
@@ -429,6 +431,67 @@ class _WageDetailDialogState extends State<WageDetailDialog> {
       ),
     );
   }
+  // ═══════════════════════════════════════════════════════════
+  // 수정 안내 메시지
+  // ═══════════════════════════════════════════════════════════
+
+  Widget _buildEditGuide(BuildContext context) {
+  return Container(
+    padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 12)),
+    decoration: BoxDecoration(
+      color: AppColors.infoBg,
+      borderRadius: BorderRadius.circular(ResponsiveHelper.spacing(context, 10)),
+      border: Border.all(color: AppColors.infoLight),
+    ),
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Icon(
+              Icons.info_outline,
+              color: AppColors.infoDark,
+              size: ResponsiveHelper.iconSize(context, 18),
+            ),
+            SizedBox(width: ResponsiveHelper.spacing(context, 10)),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    '급여 계산 안내',
+                    style: ResponsiveHelper.smallStyle(context).copyWith(
+                      color: AppColors.infoDark,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                  SizedBox(height: ResponsiveHelper.spacing(context, 6)),
+                  Text(
+                    '• 기본급: 출퇴근 시간 기준 자동 계산\n'
+                    '• 연장수당: 예정 시간 초과분 \n(8시간 이하 1배, 초과 1.5배)\n'
+                    '• 야간수당: 22:00~06:00 근무시간 0.5배 가산',
+                    style: ResponsiveHelper.tinyStyle(context).copyWith(
+                      color: AppColors.infoDark,
+                      height: 1.5,
+                    ),
+                  ),
+                  SizedBox(height: ResponsiveHelper.spacing(context, 6)),
+                  Text(
+                    '※ 수정이 필요하면 급여 취소 후 시간을 수정해주세요.',
+                    style: ResponsiveHelper.tinyStyle(context).copyWith(
+                      color: AppColors.grey600,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ],
+    ),
+  );
+}
 
   // ═══════════════════════════════════════════════════════════
   // 추가수당 섹션
@@ -449,6 +512,7 @@ class _WageDetailDialogState extends State<WageDetailDialog> {
         TextField(
           controller: _additionalController,
           keyboardType: TextInputType.number,
+          inputFormatters: [NumberInputFormatter()],
           style: ResponsiveHelper.bodyStyle(context).copyWith(color: Colors.black87),
           decoration: InputDecoration(
             hintText: '0',

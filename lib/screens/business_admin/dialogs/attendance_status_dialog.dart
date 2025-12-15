@@ -1411,7 +1411,8 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
           value: 'detail',
           child: Row(
             children: [
-              Icon(Icons.person_outline, size: 20, color: theme.primaryColor),
+              // ✅ 수정
+              Icon(Icons.person_outline, size: ResponsiveHelper.iconSize(context, 20), color: theme.primaryColor),
               SizedBox(width: ResponsiveHelper.spacing(context, 12)),
               const Text('상세보기'),
             ],
