@@ -47,7 +47,6 @@ export const publishScheduledTOs = onSchedule(
         });
         console.log(`  → ${doc.id} 공개 처리`);
 
-        // ✅ 그룹 ID 수집 (마스터 업데이트용)
         if (data.groupId) {
           affectedGroupIds.add(data.groupId);
         }
@@ -56,9 +55,8 @@ export const publishScheduledTOs = onSchedule(
       await batch.commit();
       console.log(`✅ ${snapshot.size}개 TO 공개 완료!`);
 
-      // ✅ 그룹 마스터 상태 업데이트
       for (const groupId of affectedGroupIds) {
-        await updateGroupMasterStatus(db, groupId);
+        await updateGroupMasterPublishStatus(db, groupId);
       }
     } catch (error) {
       console.error("❌ 예약 공개 처리 실패:", error);
@@ -85,6 +83,7 @@ export const closeExpiredTOs = onSchedule(
       const snapshot = await db
         .collection("tos")
         .where("applicationDeadline", "<=", now)
+        .where("status", "==", "ACTIVE")
         .get();
 
       if (snapshot.empty) {
@@ -94,7 +93,7 @@ export const closeExpiredTOs = onSchedule(
 
       const tosToClose = snapshot.docs.filter((doc) => {
         const data = doc.data();
-        return !data.isManualClosed && !data.isClosed;
+        return !data.isManualClosed;
       });
 
       if (tosToClose.length === 0) {
@@ -105,19 +104,31 @@ export const closeExpiredTOs = onSchedule(
       console.log(`📋 마감 대상 TO: ${tosToClose.length}개`);
 
       const batch = db.batch();
+      const affectedGroupIds = new Set<string>();
 
       tosToClose.forEach((doc) => {
+        const data = doc.data();
+
         batch.update(doc.ref, {
           isClosed: true,
           closedAt: now,
           closedReason: "TIME_EXPIRED",
+          status: "CLOSED",
+          statusUpdatedAt: now,
         });
         console.log(`  → ${doc.id} 마감 처리`);
+
+        if (data.groupId) {
+          affectedGroupIds.add(data.groupId);
+        }
       });
 
       await batch.commit();
-
       console.log(`✅ ${tosToClose.length}개 TO 마감 완료!`);
+
+      for (const groupId of affectedGroupIds) {
+        await updateGroupMasterCloseStatus(db, groupId);
+      }
     } catch (error) {
       console.error("❌ 마감 처리 실패:", error);
     }
@@ -130,7 +141,7 @@ export const closeExpiredTOs = onSchedule(
  * @param {Firestore} firestore - Firestore 인스턴스
  * @param {string} groupId - 그룹 ID
  */
-async function updateGroupMasterStatus(
+async function updateGroupMasterPublishStatus(
   firestore: Firestore,
   groupId: string
 ): Promise<void> {
@@ -142,12 +153,10 @@ async function updateGroupMasterStatus(
 
     if (groupSnapshot.empty) return;
 
-    // 공개된 TO가 있는지 확인
     const hasPublished = groupSnapshot.docs.some(
       (doc) => doc.data().isPublished === true
     );
 
-    // 마스터 찾기
     const masterDoc = groupSnapshot.docs.find(
       (doc) => doc.data().isGroupMaster === true
     );
@@ -157,6 +166,70 @@ async function updateGroupMasterStatus(
       console.log(`  ✓ 그룹 마스터 공개: ${masterDoc.id}`);
     }
   } catch (error) {
-    console.error(`❌ 그룹 마스터 업데이트 실패 (${groupId}):`, error);
+    console.error(`❌ 그룹 마스터 공개 업데이트 실패 (${groupId}):`, error);
+  }
+}
+
+/**
+ * 그룹 마스터 마감 상태 업데이트
+ * - 그룹 내 모든 TO가 마감되면 마스터도 마감
+ * - 하나라도 ACTIVE면 마스터는 ACTIVE 유지
+ * @param {Firestore} firestore - Firestore 인스턴스
+ * @param {string} groupId - 그룹 ID
+ */
+async function updateGroupMasterCloseStatus(
+  firestore: Firestore,
+  groupId: string
+): Promise<void> {
+  try {
+    const groupSnapshot = await firestore
+      .collection("tos")
+      .where("groupId", "==", groupId)
+      .get();
+
+    if (groupSnapshot.empty) return;
+
+    const hasActiveTO = groupSnapshot.docs.some((doc) => {
+      const data = doc.data();
+      return !data.isGroupMaster && data.status === "ACTIVE";
+    });
+
+    const masterDoc = groupSnapshot.docs.find(
+      (doc) => doc.data().isGroupMaster === true
+    );
+
+    if (!masterDoc) {
+      console.log(`  ⚠️ 그룹 마스터 없음: ${groupId}`);
+      return;
+    }
+
+    const masterData = masterDoc.data();
+
+    if (masterData.isManualClosed) {
+      return;
+    }
+
+    if (hasActiveTO) {
+      if (masterData.status !== "ACTIVE") {
+        await masterDoc.ref.update({
+          status: "ACTIVE",
+          statusUpdatedAt: Timestamp.now(),
+        });
+        console.log(`  ✓ 그룹 마스터 ACTIVE 유지: ${masterDoc.id}`);
+      }
+    } else {
+      if (masterData.status !== "CLOSED") {
+        await masterDoc.ref.update({
+          status: "CLOSED",
+          isClosed: true,
+          closedAt: Timestamp.now(),
+          closedReason: "ALL_CHILDREN_CLOSED",
+          statusUpdatedAt: Timestamp.now(),
+        });
+        console.log(`  ✓ 그룹 마스터 마감: ${masterDoc.id}`);
+      }
+    }
+  } catch (error) {
+    console.error(`❌ 그룹 마스터 마감 업데이트 실패 (${groupId}):`, error);
   }
 }
