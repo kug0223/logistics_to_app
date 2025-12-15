@@ -494,12 +494,6 @@ class _UserTOCardState extends State<UserTOCard> {
         // 단기/장기 배지
         _buildJobTypeBadge(context),
         
-        // ✅ 오픈 예정 배지 (예약 공개 대기 중일 때)
-        if (widget.to.isPendingPublish) ...[
-          SizedBox(width: ResponsiveHelper.spacing(context, 6)),
-          _buildOpenScheduleBadge(context),
-        ],
-        
         SizedBox(width: ResponsiveHelper.spacing(context, 10)),
         
         // 위치 (강조)
@@ -527,44 +521,6 @@ class _UserTOCardState extends State<UserTOCard> {
           _buildAppliedBadge(context),
         ],
       ],
-    );
-  }
-  /// 오픈 예정 배지
-  Widget _buildOpenScheduleBadge(BuildContext context) {
-    final publishAt = widget.to.publishAt;
-    final displayText = publishAt != null 
-        ? '${publishAt.month}/${publishAt.day} ${publishAt.hour.toString().padLeft(2, '0')}:${publishAt.minute.toString().padLeft(2, '0')} 오픈'
-        : '오픈 예정';
-    
-    return Container(
-      padding: EdgeInsets.symmetric(
-        horizontal: ResponsiveHelper.spacing(context, 8),
-        vertical: ResponsiveHelper.spacing(context, 3),
-      ),
-      decoration: BoxDecoration(
-        color: AppColors.warningBg,
-        borderRadius: BorderRadius.circular(4),
-        border: Border.all(color: AppColors.warningLight),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(
-            Icons.schedule,
-            size: ResponsiveHelper.iconSize(context, 12),
-            color: AppColors.warningDark,
-          ),
-          SizedBox(width: ResponsiveHelper.spacing(context, 4)),
-          Text(
-            displayText,
-            style: ResponsiveHelper.tinyStyle(
-              context,
-              color: AppColors.warningDark,
-              fontWeight: FontWeight.bold,
-            ),
-          ),
-        ],
-      ),
     );
   }
   /// 오픈 대기 버튼 (예약 공개 대기 중)

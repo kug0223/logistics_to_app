@@ -26,6 +26,7 @@ import '../../../theme/app_colors.dart';
 // Dialogs
 import '../dialogs/to_list_dialogs.dart';
 import '../dialogs/attendance_status_dialog.dart';
+import '../dialogs/fixed_worker_management_dialog.dart';
 
 // Local Widgets
 import '../../../widgets/admin/cards/admin_to_group_card.dart';
@@ -344,25 +345,17 @@ class _WorkforceCalendarViewState extends State<WorkforceCalendarView> {
     );
   }
 
-  /// ✨ 날짜 헤더 - 그라데이션 배경
+  /// ✨ 날짜 헤더 - 간결한 디자인 + 고정근무 버튼
   Widget _buildDateHeader() {
     final theme = Theme.of(context);
-    final isToday = DateUtils.isSameDay(_selectedDay, DateTime.now());
-    final isPast = _selectedDay!.isBefore(DateTime.now()) && !isToday;
-
-    String statusText = '';
-    Color statusColor = theme.primaryColor;
-
-    if (isPast) {
-      statusText = '과거';
-      statusColor = Colors.grey;
-    } else if (isToday) {
-      statusText = '오늘';
-      statusColor = theme.primaryColor;
-    } else {
-      statusText = '예정';
-      statusColor = theme.primaryColor.withOpacity(0.6);
-    }
+    
+    // 날짜 포맷: "25년 12월 15일(월)"
+    final year = _selectedDay!.year.toString().substring(2);
+    final month = _selectedDay!.month;
+    final day = _selectedDay!.day;
+    final weekdays = ['월', '화', '수', '목', '금', '토', '일'];
+    final weekday = weekdays[_selectedDay!.weekday - 1];
+    final dateStr = '$year/$month/$day($weekday)';
 
     return Container(
       padding: EdgeInsets.symmetric(
@@ -374,43 +367,46 @@ class _WorkforceCalendarViewState extends State<WorkforceCalendarView> {
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
           colors: [
-            statusColor.withOpacity(0.12),
-            statusColor.withOpacity(0.06),
+            theme.primaryColor.withOpacity(0.12),
+            theme.primaryColor.withOpacity(0.06),
           ],
         ),
         border: Border(
           bottom: BorderSide(
-            color: statusColor.withOpacity(0.3),
+            color: theme.primaryColor.withOpacity(0.3),
             width: 1.5,
           ),
         ),
       ),
       child: Row(
         children: [
+          // 날짜 아이콘
           Container(
             padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 8)),
             decoration: BoxDecoration(
-              color: statusColor.withOpacity(0.15),
+              color: theme.primaryColor.withOpacity(0.15),
               borderRadius: BorderRadius.circular(8),
             ),
             child: Icon(
               Icons.event,
-              color: statusColor,
+              color: theme.primaryColor,
               size: ResponsiveHelper.iconSize(context, 20),
             ),
           ),
           SizedBox(width: ResponsiveHelper.spacing(context, 12)),
+          
+          // 날짜 텍스트
           Text(
-            DateFormat('yyyy년 M월 d일 (E)', 'ko_KR').format(_selectedDay!),
+            dateStr,
             style: ResponsiveHelper.subtitleStyle(context).copyWith(
               fontWeight: FontWeight.bold,
-              color: statusColor,
+              color: theme.primaryColor,
             ),
           ),
           
           const Spacer(),
           
-          // ✨ 인원현황 버튼 - 테마 기반
+          // ✨ 당일명단 버튼 (기존 유지)
           Container(
             decoration: BoxDecoration(
               gradient: _hasConfirmedWorkers
@@ -468,40 +464,85 @@ class _WorkforceCalendarViewState extends State<WorkforceCalendarView> {
           
           SizedBox(width: ResponsiveHelper.spacing(context, 12)),
           
-          // 상태 배지
+          // ✨ 고정근무 버튼 (신규 추가)
           Container(
-            padding: EdgeInsets.symmetric(
-              horizontal: ResponsiveHelper.spacing(context, 12),
-              vertical: ResponsiveHelper.spacing(context, 6),
-            ),
             decoration: BoxDecoration(
-              gradient: LinearGradient(
-                colors: [
-                  statusColor,
-                  statusColor.withOpacity(0.85),
-                ],
-              ),
+              color: AppColors.longTermLight,
               borderRadius: BorderRadius.circular(12),
-              boxShadow: [
-                BoxShadow(
-                  color: statusColor.withOpacity(0.3),
-                  blurRadius: 4,
-                  offset: const Offset(0, 2),
-                ),
-              ],
+              border: Border.all(color: AppColors.longTerm.withOpacity(0.3)),
             ),
-            child: Text(
-              statusText,
-              style: ResponsiveHelper.smallStyle(
-                context,
-                color: Colors.white,
-                fontWeight: FontWeight.bold,
+            child: Material(
+              color: Colors.transparent,
+              child: InkWell(
+                onTap: _openFixedWorkerManagement,
+                borderRadius: BorderRadius.circular(12),
+                child: Padding(
+                  padding: EdgeInsets.symmetric(
+                    horizontal: ResponsiveHelper.spacing(context, 14),
+                    vertical: ResponsiveHelper.spacing(context, 10),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(
+                        Icons.settings,
+                        size: ResponsiveHelper.iconSize(context, 18),
+                        color: AppColors.longTermDark,
+                      ),
+                      SizedBox(width: ResponsiveHelper.spacing(context, 6)),
+                      Text(
+                        '고정관리',
+                        style: ResponsiveHelper.smallStyle(context).copyWith(
+                          color: AppColors.longTermDark,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
               ),
             ),
           ),
         ],
       ),
     );
+  }
+
+  /// 고정근무 관리 다이얼로그 열기
+  void _openFixedWorkerManagement() async {
+    final userProvider = Provider.of<UserProvider>(context, listen: false);
+    final uid = userProvider.currentUser?.uid;
+
+    if (uid == null) {
+      ToastHelper.showWarning('로그인 정보를 찾을 수 없습니다');
+      return;
+    }
+
+    try {
+      final businesses = await _firestoreService.getMyBusiness(uid);
+      
+      if (businesses.isEmpty) {
+        ToastHelper.showWarning('등록된 사업장이 없습니다');
+        return;
+      }
+
+      if (!mounted) return;
+
+      final businessIds = businesses.map((b) => b.id).toList();
+
+      showDialog(
+        context: context,
+        builder: (context) => FixedWorkerManagementDialog(
+          businessIds: businessIds,
+          onChanged: () {
+            _loadData();
+          },
+        ),
+      );
+    } catch (e) {
+      print('❌ 사업장 조회 실패: $e');
+      ToastHelper.showError('사업장 정보를 불러올 수 없습니다');
+    }
   }
 
   /// 선택한 날짜의 TO 목록 (Sliver 버전)

@@ -9,6 +9,7 @@
 // - 계약해지 요청 (NEW)
 
 import 'package:flutter/material.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:provider/provider.dart';
 import 'package:intl/intl.dart';
 import '../../../models/core/application_model.dart';
@@ -26,12 +27,14 @@ import '../../../widgets/work_type_icon.dart';
 
 /// 고정근무자 관리 다이얼로그
 class FixedWorkerManagementDialog extends StatefulWidget {
-  final String businessId;
+  final List<String>? businessIds;  // 여러 사업장 (캘린더에서 호출 시)
+  final String? initialBusinessId;  // 초기 선택 사업장
   final VoidCallback onChanged;
 
   const FixedWorkerManagementDialog({
     super.key,
-    required this.businessId,
+    this.businessIds,
+    this.initialBusinessId,
     required this.onChanged,
   });
 
@@ -45,19 +48,72 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
   // 고정근무자 목록 (사용자 정보 포함)
   List<_FixedWorkerItem> _fixedWorkers = [];
   bool _isLoading = true;
+  
+  // 사업장 선택
+  String? _selectedBusinessId;
+  Map<String, String> _businessNameMap = {};
+  List<String> _businessIds = [];
+  bool _showBusinessSelector = false;
 
   @override
   void initState() {
     super.initState();
+    _initBusinessData();
+  }
+
+  /// 사업장 데이터 초기화
+  Future<void> _initBusinessData() async {
+    if (widget.businessIds != null && widget.businessIds!.isNotEmpty) {
+      // 여러 사업장 모드 (캘린더에서 호출)
+      _businessIds = widget.businessIds!;
+      _selectedBusinessId = widget.initialBusinessId ?? _businessIds.first;
+      await _loadBusinessNames();
+    } else if (widget.initialBusinessId != null) {
+      // 단일 사업장 모드 (기존 호출)
+      _businessIds = [widget.initialBusinessId!];
+      _selectedBusinessId = widget.initialBusinessId;
+      await _loadBusinessNames();
+    }
+    
     _loadFixedWorkers();
+  }
+
+  /// 사업장명 조회
+  Future<void> _loadBusinessNames() async {
+    try {
+      final nameMap = <String, String>{};
+      for (final id in _businessIds) {
+        final doc = await FirebaseFirestore.instance
+            .collection('businesses')
+            .doc(id)
+            .get();
+        if (doc.exists) {
+          nameMap[id] = doc.data()?['name'] ?? 'Unknown';
+        } else {
+          nameMap[id] = 'Unknown';
+        }
+      }
+      if (mounted) {
+        setState(() {
+          _businessNameMap = nameMap;
+        });
+      }
+    } catch (e) {
+      print('❌ 사업장명 조회 실패: $e');
+    }
   }
 
   /// 고정근무자 로드
   Future<void> _loadFixedWorkers() async {
+    if (_selectedBusinessId == null) {
+      setState(() => _isLoading = false);
+      return;
+    }
+    
     setState(() => _isLoading = true);
 
     try {
-      final allApps = await _firestoreService.getApplicationsByBusinessId(widget.businessId);
+      final allApps = await _firestoreService.getApplicationsByBusinessId(_selectedBusinessId!);
 
       // 장기 근무 확정자만 필터 (퇴사 완료 제외)
       final filtered = allApps.where((app) {
@@ -68,7 +124,7 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
       }).toList();
 
       // ✅ 1. 업무유형 정보 한 번만 조회 (중복 제거!)
-      final businessWorkTypes = await _firestoreService.getBusinessWorkTypes(widget.businessId);
+      final businessWorkTypes = await _firestoreService.getBusinessWorkTypes(_selectedBusinessId!);
       final workTypeMap = { for (var w in businessWorkTypes) w.name: w };
       
       // ✅ 2. 중복 제거된 UID 목록
@@ -155,48 +211,106 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
           topRight: Radius.circular(20),
         ),
       ),
-      child: Row(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Container(
-            padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 10)),
-            decoration: BoxDecoration(
-              color: Colors.white.withOpacity(0.2),
-              borderRadius: BorderRadius.circular(12),
-            ),
-            child: Icon(
-              Icons.manage_accounts,
-              color: Colors.white,
-              size: ResponsiveHelper.iconSize(context, 24),
-            ),
-          ),
-          SizedBox(width: ResponsiveHelper.spacing(context, 12)),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
+          // 제목 행
+          Row(
+            children: [
+              Container(
+                padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 10)),
+                decoration: BoxDecoration(
+                  color: Colors.white.withOpacity(0.2),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Icon(
+                  Icons.manage_accounts,
+                  color: Colors.white,
+                  size: ResponsiveHelper.iconSize(context, 24),
+                ),
+              ),
+              SizedBox(width: ResponsiveHelper.spacing(context, 12)),
+              Expanded(
+                child: Text(
                   '고정근무자 관리',
                   style: ResponsiveHelper.subtitleStyle(context).copyWith(
                     color: Colors.white,
                     fontWeight: FontWeight.bold,
                   ),
                 ),
-                Text(
-                  '장기 근무 확정자 관리',
-                  style: ResponsiveHelper.smallStyle(context, color: Colors.white70),
-                ),
-              ],
-            ),
+              ),
+              // 닫기 버튼
+              IconButton(
+                onPressed: () => Navigator.pop(context),
+                icon: const Icon(Icons.close, color: Colors.white),
+                padding: EdgeInsets.zero,
+                constraints: const BoxConstraints(),
+              ),
+            ],
           ),
-          IconButton(
-            onPressed: () => Navigator.pop(context),
-            icon: Icon(
-              Icons.close,
-              color: Colors.white,
-              size: ResponsiveHelper.iconSize(context, 24),
-            ),
-          ),
+          
+          // 사업장 드롭다운 (여러 사업장일 때만 표시)
+          if (_showBusinessSelector) ...[
+            SizedBox(height: ResponsiveHelper.spacing(context, 12)),
+            _buildBusinessDropdown(context),
+          ],
         ],
+      ),
+    );
+  }
+
+  /// 사업장 선택 드롭다운
+  Widget _buildBusinessDropdown(BuildContext context) {
+    return Container(
+      padding: EdgeInsets.symmetric(
+        horizontal: ResponsiveHelper.spacing(context, 12),
+        vertical: ResponsiveHelper.spacing(context, 4),
+      ),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: DropdownButtonHideUnderline(
+        child: DropdownButton<String>(
+          value: _selectedBusinessId,
+          isExpanded: true,
+          icon: Icon(
+            Icons.keyboard_arrow_down,
+            color: AppColors.longTermDark,
+          ),
+          items: _businessIds.map((id) {
+            return DropdownMenuItem<String>(
+              value: id,
+              child: Row(
+                children: [
+                  Icon(
+                    Icons.business,
+                    size: ResponsiveHelper.iconSize(context, 18),
+                    color: AppColors.longTermDark,
+                  ),
+                  SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+                  Expanded(
+                    child: Text(
+                      _businessNameMap[id] ?? 'Loading...',
+                      style: ResponsiveHelper.bodyStyle(context).copyWith(
+                        fontWeight: FontWeight.w600,
+                      ),
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                ],
+              ),
+            );
+          }).toList(),
+          onChanged: (value) {
+            if (value != null && value != _selectedBusinessId) {
+              setState(() {
+                _selectedBusinessId = value;
+              });
+              _loadFixedWorkers();
+            }
+          },
+        ),
       ),
     );
   }
@@ -735,7 +849,7 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
       context: context,
       user: item.user!,
       application: item.application,
-      businessId: widget.businessId,
+      businessId: _selectedBusinessId!,
       isConfirmed: true,
       showApprovalButtons: false,
       onStatusChanged: () {
@@ -1084,7 +1198,7 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
 
     final request = ScheduleChangeRequestModel(
       id: '',
-      businessId: widget.businessId,
+      businessId: _selectedBusinessId!,
       applicationId: app.id,
       applicantUid: app.uid,
       applicantName: workerName,

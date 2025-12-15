@@ -126,6 +126,9 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
   // 내 확정 스케줄 (해당 날짜)
   List<ApplicationModel> _myConfirmedSchedules = [];
 
+  // ✅ 이미 알림 표시한 날짜 (중복 표시 방지)
+  final Set<DateTime> _shownAlertDates = {};
+
   // ✅ 출퇴근 기록이 있는 application ID (장기공고용)
   final Set<String> _hasAttendanceIds = {};
   // ✅ 장기공고 희망 시작일
@@ -191,6 +194,10 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
       
       _selectedDate = futureDate ?? sortedDates.last;
       _focusedDay = _selectedDate!;
+    } else if (!_isLongTerm) {
+      // ✅ 단일 단기공고: 날짜 자동 선택 (하나뿐이니까)
+      _selectedDate = widget.mainTO.date;
+      _focusedDay = _selectedDate!;
     }
 
     await _loadInitialData();
@@ -223,10 +230,31 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
       }
     } catch (e) {
       print('❌ 초기 데이터 로드 실패: $e');
-    } finally {
+     } finally {
       if (mounted) {
         setState(() => _isLoading = false);
+        
+        // ✅ 초기 로드 완료 후 알림 표시 (UI 빌드 완료 후)
+        Future.delayed(const Duration(milliseconds: 300), () {
+          if (mounted) {
+            _showInitialAlert();
+          }
+        });
       }
+    }
+  }
+
+  /// ✅ 초기 알림 표시 (TO 타입별 분기)
+  Future<void> _showInitialAlert() async {
+    if (_isGroupTO && _selectedDate != null) {
+      // 그룹 TO: 선택된 날짜 알림
+      await _checkAndShowDateAlert(_selectedDate!);
+    } else if (_isLongTerm) {
+      // 장기공고: 충돌 날짜 알림
+      await _checkAndShowLongTermAlert();
+    } else {
+      // 단일 단기공고: 메인 날짜 알림
+      await _checkAndShowSingleTOAlert();
     }
   }
 
@@ -615,9 +643,13 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // ✅ 장기공고 캘린더 (읽기전용 - 전체 기간 표시) - 맨 위로!
+          // ✅ 캘린더 (단일 단기 / 장기 모두 표시)
           if (_isLongTerm) ...[
             _buildLongTermCalendarSection(context, theme),
+            SizedBox(height: ResponsiveHelper.spacing(context, 16)),
+          ] else ...[
+            // ✅ 단일 단기: 기존 캘린더 재활용 (날짜 1개)
+            _buildCalendarSection(context, theme, [widget.mainTO.date]),
             SizedBox(height: ResponsiveHelper.spacing(context, 16)),
           ],
           
@@ -1317,14 +1349,14 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
             
             // 활성화된 날짜 (등록된 날짜만 - 예약 포함)
             enabledDayPredicate: (day) {
-              // 등록된 날짜인지 확인
-              return _availableDates.any((d) => DateUtils.isSameDay(d, day));
+              // 등록된 날짜인지 확인 (파라미터 사용)
+              return availableDates.any((d) => DateUtils.isSameDay(d, day));
             },
             
             // 날짜 선택
             onDaySelected: (selectedDay, focusedDay) {
-              // 등록된 날짜인지 확인
-              final isAvailable = _availableDates.any(
+              // 등록된 날짜인지 확인 (파라미터 사용)
+              final isAvailable = availableDates.any(
                 (d) => DateUtils.isSameDay(d, selectedDay),
               );
               
@@ -1340,6 +1372,9 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
               _loadDateApplications(selectedDay);
               _loadMyConfirmedSchedules(selectedDay);
               _loadConflictsForDate(selectedDay);
+              
+              // ✅ 상황별 알림 다이얼로그 표시
+              _checkAndShowDateAlert(selectedDay);
             },
             
             onPageChanged: (focusedDay) {
@@ -1404,7 +1439,7 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
             calendarBuilders: CalendarBuilders(
               // 기본 날짜
               defaultBuilder: (context, day, focusedDay) {
-                final isAvailable = _availableDates.any(
+                final isAvailable = availableDates.any(
                   (d) => DateUtils.isSameDay(d, day),
                 );
                 
@@ -1437,7 +1472,7 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
               
               // 오늘
               todayBuilder: (context, day, focusedDay) {
-                final isAvailable = _availableDates.any(
+                final isAvailable = availableDates.any(
                   (d) => DateUtils.isSameDay(d, day),
                 );
                 final isSelected = _selectedDate != null && 
@@ -2238,10 +2273,321 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
       ),
     );
   }
-  /// 근무가 이미 시작됐는지 확인
-  bool _hasWorkStarted() {
-    final today = DateTime.now();
-    final workStartDate = widget.mainTO.date;
-    return !workStartDate.isAfter(today);  // 시작일 <= 오늘
+  // ═══════════════════════════════════════════════════════════
+  // ✅ 날짜 선택 시 상황별 알림 다이얼로그
+  // ═══════════════════════════════════════════════════════════
+
+  /// 그룹 TO 날짜 선택 시 특이사항 체크 및 알림 표시
+  Future<void> _checkAndShowDateAlert(DateTime selectedDay) async {
+    final dateKey = DateTime(selectedDay.year, selectedDay.month, selectedDay.day);
+    
+    // 이미 알림 표시한 날짜면 스킵
+    if (_shownAlertDates.contains(dateKey)) return;
+    
+    // 해당 날짜의 TO 정보
+    final to = widget.groupTOsByDate?[dateKey];
+    final workDetails = widget.groupWorkDetailsByDate?[dateKey] ?? [];
+    
+    // 1. 예약 대기 체크
+    if (to?.isPendingPublish == true) {
+      _shownAlertDates.add(dateKey);
+      await _showScheduledAlert(selectedDay, to!);
+      return;
+    }
+    
+    // 2. 전체 마감 체크
+    final allClosed = workDetails.isNotEmpty && 
+        workDetails.every((w) => w.isClosed || w.isTimeExpired || w.isFull);
+    if (allClosed) {
+      _shownAlertDates.add(dateKey);
+      await _showClosedAlert(selectedDay);
+      return;
+    }
+    
+    // 3. 확정 근무 있음 체크 (로드 후)
+    await _loadMyConfirmedSchedules(selectedDay);
+    if (_myConfirmedSchedules.isNotEmpty && !_shownAlertDates.contains(dateKey)) {
+      _shownAlertDates.add(dateKey);
+      await _showConfirmedScheduleAlert(selectedDay, _myConfirmedSchedules);
+      return;
+    }
+    
+    // 4. 부분 마감 체크
+    final hasClosed = workDetails.any((w) => w.isClosed || w.isTimeExpired || w.isFull);
+    final hasOpen = workDetails.any((w) => !w.isClosed && !w.isTimeExpired && !w.isFull);
+    if (hasClosed && hasOpen) {
+      _shownAlertDates.add(dateKey);
+      await _showPartialClosedAlert(selectedDay);
+      return;
+    }
   }
+
+  /// 장기공고 초기 알림 체크
+  Future<void> _checkAndShowLongTermAlert() async {
+    // 1. 확정 근무로 인한 충돌 날짜가 있으면 알림
+    if (_confirmedDatesInRange.isNotEmpty) {
+      await _showLongTermConflictAlert();
+      return;
+    }
+    
+    // 2. 전체 마감 체크
+    final workDetails = widget.workDetails;
+    final allClosed = workDetails.isNotEmpty && 
+        workDetails.every((w) => w.isClosed || w.isTimeExpired || w.isFull);
+    if (allClosed) {
+      await _showClosedAlert(widget.mainTO.date);
+      return;
+    }
+    
+    // 3. 부분 마감 체크
+    final hasClosed = workDetails.any((w) => w.isClosed || w.isTimeExpired || w.isFull);
+    final hasOpen = workDetails.any((w) => !w.isClosed && !w.isTimeExpired && !w.isFull);
+    if (hasClosed && hasOpen) {
+      await _showPartialClosedAlert(widget.mainTO.date);
+      return;
+    }
+  }
+
+  /// 단일 단기공고 초기 알림 체크
+  Future<void> _checkAndShowSingleTOAlert() async {
+    final workDate = widget.mainTO.date;
+    final workDetails = widget.workDetails;
+    
+    // 1. 전체 마감 체크
+    final allClosed = workDetails.isNotEmpty && 
+        workDetails.every((w) => w.isClosed || w.isTimeExpired || w.isFull);
+    if (allClosed) {
+      await _showClosedAlert(workDate);
+      return;
+    }
+    
+    // 2. 확정 근무 있음 체크
+    if (_myConfirmedSchedules.isNotEmpty) {
+      await _showConfirmedScheduleAlert(workDate, _myConfirmedSchedules);
+      return;
+    }
+    
+    // 3. 부분 마감 체크
+    final hasClosed = workDetails.any((w) => w.isClosed || w.isTimeExpired || w.isFull);
+    final hasOpen = workDetails.any((w) => !w.isClosed && !w.isTimeExpired && !w.isFull);
+    if (hasClosed && hasOpen) {
+      await _showPartialClosedAlert(workDate);
+      return;
+    }
+  }
+
+  /// 예약 대기 알림
+  Future<void> _showScheduledAlert(DateTime date, TOModel to) async {
+    final dateStr = DateFormat('M/d (E)', 'ko_KR').format(date);
+    final publishAt = to.publishAt;
+    final publishStr = publishAt != null
+        ? '${publishAt.month}/${publishAt.day} ${publishAt.hour.toString().padLeft(2, '0')}:${publishAt.minute.toString().padLeft(2, '0')}'
+        : '예정된 시간';
+
+    await _showAlertDialog(
+      icon: Icons.schedule,
+      iconColor: AppColors.info,
+      bgColor: AppColors.infoBg,
+      title: '$dateStr 안내',
+      message: '이 날짜의 공고는 아직 오픈되지 않았습니다.',
+      detail: '$publishStr에 오픈 예정입니다.',
+    );
+  }
+
+  /// 전체 마감 알림
+  Future<void> _showClosedAlert(DateTime date) async {
+    final dateStr = DateFormat('M/d (E)', 'ko_KR').format(date);
+
+    await _showAlertDialog(
+      icon: Icons.lock,
+      iconColor: AppColors.error,
+      bgColor: AppColors.errorBg,
+      title: '$dateStr 안내',
+      message: '이 날짜의 모든 업무가 마감되었습니다.',
+      detail: '다른 날짜를 선택해주세요.',
+    );
+  }
+
+  /// 확정 근무 있음 알림
+  Future<void> _showConfirmedScheduleAlert(
+    DateTime date, 
+    List<ApplicationModel> confirmedSchedules,
+  ) async {
+    final dateStr = DateFormat('M/d (E)', 'ko_KR').format(date);
+    
+    final scheduleInfo = confirmedSchedules.map((app) {
+      return '${app.businessName} ${app.startTime}~${app.endTime}';
+    }).join('\n');
+
+    await _showAlertDialog(
+      icon: Icons.event_busy,
+      iconColor: AppColors.warning,
+      bgColor: AppColors.warningBg,
+      title: '$dateStr 안내',
+      message: '이 날짜에 확정된 근무가 있습니다.',
+      detail: scheduleInfo,
+      subMessage: '시간이 겹치는 업무는 지원할 수 없습니다.',
+    );
+  }
+
+  /// 부분 마감 알림
+  Future<void> _showPartialClosedAlert(DateTime date) async {
+    final dateStr = DateFormat('M/d (E)', 'ko_KR').format(date);
+
+    await _showAlertDialog(
+      icon: Icons.info_outline,
+      iconColor: AppColors.warning,
+      bgColor: AppColors.warningBg,
+      title: '$dateStr 안내',
+      message: '일부 업무가 마감되었습니다.',
+      detail: '지원 가능한 업무를 확인해주세요.',
+    );
+  }
+
+  /// 장기공고 충돌 날짜 알림
+  Future<void> _showLongTermConflictAlert() async {
+    final startDate = widget.mainTO.date;
+    final endDate = widget.mainTO.endDate ?? widget.mainTO.date;
+    
+    final sortedConflicts = _confirmedDatesInRange.toList()..sort();
+    final conflictDatesStr = sortedConflicts.take(3).map((d) {
+      final dayOfWeek = ['월', '화', '수', '목', '금', '토', '일'][d.weekday - 1];
+      final app = _conflictInfoByDate[d];
+      final timeInfo = app != null ? ' ${app.startTime}~${app.endTime}' : '';
+      return '${d.month}/${d.day}($dayOfWeek)$timeInfo';
+    }).join('\n');
+    
+    final extraCount = sortedConflicts.length > 3 ? '\n외 ${sortedConflicts.length - 3}일' : '';
+
+    await _showAlertDialog(
+      icon: Icons.event_busy,
+      iconColor: AppColors.warning,
+      bgColor: AppColors.warningBg,
+      title: '장기공고 안내',
+      message: '근무 기간 내 확정된 일정이 있습니다.',
+      detail: '$conflictDatesStr$extraCount',
+      subMessage: '충돌 날짜 이전까지만 지원 가능합니다.\n희망 시작일을 선택해주세요.',
+    );
+  }
+
+  /// 공통 알림 다이얼로그
+  Future<void> _showAlertDialog({
+    required IconData icon,
+    required Color iconColor,
+    required Color bgColor,
+    required String title,
+    required String message,
+    String? detail,
+    String? subMessage,
+  }) async {
+    await showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(ResponsiveHelper.spacing(context, 20)),
+        ),
+        contentPadding: EdgeInsets.zero,
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            // 헤더
+            Container(
+              width: double.infinity,
+              padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 20)),
+              decoration: BoxDecoration(
+                color: bgColor,
+                borderRadius: BorderRadius.only(
+                  topLeft: Radius.circular(ResponsiveHelper.spacing(context, 20)),
+                  topRight: Radius.circular(ResponsiveHelper.spacing(context, 20)),
+                ),
+              ),
+              child: Column(
+                children: [
+                  Container(
+                    padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 12)),
+                    decoration: const BoxDecoration(
+                      color: Colors.white,
+                      shape: BoxShape.circle,
+                    ),
+                    child: Icon(icon, size: ResponsiveHelper.iconSize(context, 28), color: iconColor),
+                  ),
+                  SizedBox(height: ResponsiveHelper.spacing(context, 12)),
+                  Text(
+                    title,
+                    style: ResponsiveHelper.subtitleStyle(context).copyWith(
+                      fontWeight: FontWeight.bold,
+                      color: iconColor,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            
+            // 내용
+            Padding(
+              padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 20)),
+              child: Column(
+                children: [
+                  Text(
+                    message,
+                    style: ResponsiveHelper.bodyStyle(context).copyWith(fontWeight: FontWeight.w600),
+                    textAlign: TextAlign.center,
+                  ),
+                  if (detail != null) ...[
+                    SizedBox(height: ResponsiveHelper.spacing(context, 12)),
+                    Container(
+                      width: double.infinity,
+                      padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 12)),
+                      decoration: BoxDecoration(
+                        color: AppColors.grey100,
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: Text(
+                        detail,
+                        style: ResponsiveHelper.smallStyle(context, color: AppColors.grey700),
+                        textAlign: TextAlign.center,
+                      ),
+                    ),
+                  ],
+                  if (subMessage != null) ...[
+                    SizedBox(height: ResponsiveHelper.spacing(context, 12)),
+                    Text(
+                      subMessage,
+                      style: ResponsiveHelper.smallStyle(context, color: AppColors.grey600),
+                      textAlign: TextAlign.center,
+                    ),
+                  ],
+                ],
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          SizedBox(
+            width: double.infinity,
+            child: TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              style: TextButton.styleFrom(
+                backgroundColor: iconColor,
+                foregroundColor: Colors.white,
+                padding: EdgeInsets.symmetric(vertical: ResponsiveHelper.spacing(context, 12)),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+              ),
+              child: Text(
+                '확인',
+                style: ResponsiveHelper.bodyStyle(context, color: Colors.white).copyWith(fontWeight: FontWeight.bold),
+              ),
+            ),
+          ),
+        ],
+        actionsPadding: EdgeInsets.fromLTRB(
+          ResponsiveHelper.spacing(context, 20),
+          0,
+          ResponsiveHelper.spacing(context, 20),
+          ResponsiveHelper.spacing(context, 16),
+        ),
+      ),
+    );
+  }
+
 }

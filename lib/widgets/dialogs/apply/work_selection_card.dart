@@ -98,8 +98,10 @@ class WorkSelectionCard extends StatelessWidget {
               // 중단: 시간 + 급여 + 인원
               _buildDetails(context, theme),
               
-              // 충돌 경고 메시지 (확정 상태면 숨김)
-              if (conflictInfo.hasConflict && status != WorkApplicationStatus.confirmed)
+              // 충돌 경고 메시지 (확정 상태면 숨김, 예약 메시지도 숨김)
+              if (conflictInfo.hasConflict && 
+                  status != WorkApplicationStatus.confirmed &&
+                  conflictInfo.message != '예약')
                 _buildConflictMessage(context),
               
               SizedBox(height: ResponsiveHelper.spacing(context, 12)),

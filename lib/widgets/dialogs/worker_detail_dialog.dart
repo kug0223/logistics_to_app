@@ -1456,7 +1456,8 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
     showDialog(
       context: context,
       builder: (context) => FixedWorkerManagementDialog(
-        businessId: businessId,
+        businessIds: [businessId],
+        initialBusinessId: businessId,
         onChanged: () {
           widget.onStatusChanged?.call();
         },

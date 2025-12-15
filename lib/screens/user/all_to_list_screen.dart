@@ -54,12 +54,12 @@ class _AllTOListScreenState extends State<AllTOListScreen> {
       
       // 병렬 로딩
       final results = await Future.wait([
-        _firestoreService.getActiveTOs(publishedOnly: false), // ✅ 예약 공고도 포함
+        _firestoreService.getActiveTOs(publishedOnly: true), // ✅ 공개된 공고만 (예약 제외)
         uid != null 
             ? _firestoreService.getMyApplications(uid)
             : Future.value(<ApplicationModel>[]),
       ]);
-
+      
       final toList = results[0] as List<TOModel>;
       final myApps = results[1] as List<ApplicationModel>;
 

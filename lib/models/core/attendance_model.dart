@@ -1,4 +1,5 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'wage_detail_model.dart';
 
 /// 출근 기록 모델
 class AttendanceModel {
@@ -38,11 +39,21 @@ class AttendanceModel {
   
   // 급여 계산
   final double? workHours;
-  final int? calculatedWage;
+  final int? calculatedWage;       // ⚠️ 하위 호환용 (deprecated)
   
-  // 관리자 확인
+  // 관리자 확인 (⚠️ 하위 호환용 - deprecated)
   final String? confirmedBy;
   final DateTime? confirmedAt;
+  
+  // ========== 급여 관련 (신규) ==========
+  /// 급여 상태 - 'pending' | 'calculated' | 'confirmed'
+  final String wageStatus;
+  
+  /// 최종 확정된 급여 (인덱싱/쿼리용, confirmed 시 totalAmount 복사)
+  final int? finalWage;
+  
+  /// 급여 상세 정보 (임베디드)
+  final WageDetailModel? wageDetail;
   
   final DateTime createdAt;
   final DateTime? updatedAt;
@@ -77,6 +88,10 @@ class AttendanceModel {
     this.confirmedAt,
     required this.createdAt,
     this.updatedAt,
+    // 급여 관련 (신규)
+    this.wageStatus = 'pending',
+    this.finalWage,
+    this.wageDetail,
   });
 
   /// Firestore → AttendanceModel
@@ -121,11 +136,17 @@ class AttendanceModel {
       calculatedWage: map['calculatedWage'],
       confirmedBy: map['confirmedBy'],
       confirmedAt: map['confirmedAt'] != null
-          ? (map['confirmedAt'] as Timestamp).toDate().toLocal()  // 🔥 .toLocal() 추가
+          ? (map['confirmedAt'] as Timestamp).toDate().toLocal()
           : null,
       createdAt: (map['createdAt'] as Timestamp).toDate(),
       updatedAt: map['updatedAt'] != null
           ? (map['updatedAt'] as Timestamp).toDate()
+          : null,
+      // 급여 관련 (신규)
+      wageStatus: map['wageStatus'] ?? 'pending',
+      finalWage: map['finalWage'],
+      wageDetail: map['wageDetail'] != null
+          ? WageDetailModel.fromMap(map['wageDetail'] as Map<String, dynamic>)
           : null,
     );
   }
@@ -171,6 +192,10 @@ class AttendanceModel {
       'updatedAt': updatedAt != null
           ? Timestamp.fromDate(updatedAt!)
           : null,
+      // 급여 관련 (신규)
+      'wageStatus': wageStatus,
+      'finalWage': finalWage,
+      'wageDetail': wageDetail?.toMap(),
     };
   }
 
@@ -197,6 +222,43 @@ class AttendanceModel {
       default:
         return '미출근';
     }
+  }
+
+  // ========== 급여 관련 Getter ==========
+  
+  /// 급여 미계산 상태
+  bool get isWagePending => wageStatus == 'pending';
+  
+  /// 급여 1차 확정 상태 (관리자 검토중)
+  bool get isWageCalculated => wageStatus == 'calculated';
+  
+  /// 급여 최종 확정 상태 (지원자 노출)
+  bool get isWageConfirmed => wageStatus == 'confirmed';
+  
+  /// 급여 상태 라벨
+  String get wageStatusLabel {
+    switch (wageStatus) {
+      case 'pending':
+        return '미계산';
+      case 'calculated':
+        return '검토중';
+      case 'confirmed':
+        return '확정';
+      default:
+        return '미계산';
+    }
+  }
+  
+  /// 표시용 급여 (지원자용 - confirmed만 표시)
+  int? get displayWage => isWageConfirmed ? finalWage : null;
+  
+  /// 포맷팅된 표시용 급여
+  String get formattedDisplayWage {
+    if (displayWage == null) return '-';
+    return '${displayWage.toString().replaceAllMapped(
+      RegExp(r'(\d{1,3})(?=(\d{3})+(?!\d))'),
+      (Match m) => '${m[1]},',
+    )}원';
   }
 
   /// 복사
@@ -230,6 +292,10 @@ class AttendanceModel {
     DateTime? confirmedAt,
     DateTime? createdAt,
     DateTime? updatedAt,
+    // 급여 관련 (신규)
+    String? wageStatus,
+    int? finalWage,
+    WageDetailModel? wageDetail,
   }) {
     return AttendanceModel(
       id: id ?? this.id,
@@ -261,6 +327,10 @@ class AttendanceModel {
       confirmedAt: confirmedAt ?? this.confirmedAt,
       createdAt: createdAt ?? this.createdAt,
       updatedAt: updatedAt ?? this.updatedAt,
+      // 급여 관련 (신규)
+      wageStatus: wageStatus ?? this.wageStatus,
+      finalWage: finalWage ?? this.finalWage,
+      wageDetail: wageDetail ?? this.wageDetail,
     );
   }
 }

@@ -1498,17 +1498,22 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
 
           SizedBox(width: ResponsiveHelper.spacing(context, 12)),
 
-          // 고정근무 관리 버튼 (WorkerDetailDialog와 동일)
+          // 급여 확정 버튼
           Expanded(
             child: ElevatedButton.icon(
-              onPressed: _selectedBusinessId != null ? _openFixedWorkerManagement : null,
-              icon: Icon(Icons.settings, size: ResponsiveHelper.iconSize(context, 18)),
-              label: const Text('고정근무 관리'),
+              onPressed: _confirmedWorkers.isNotEmpty ? _showWageConfirmDialog : null,
+              icon: Icon(Icons.payments, size: ResponsiveHelper.iconSize(context, 18)),
+              label: const Text('급여 확정'),
               style: ElevatedButton.styleFrom(
-                backgroundColor: AppColors.longTermDark,
+                backgroundColor: _confirmedWorkers.isNotEmpty 
+                    ? theme.primaryColor 
+                    : AppColors.grey300,
                 foregroundColor: Colors.white,
                 padding: EdgeInsets.symmetric(
                   vertical: ResponsiveHelper.spacing(context, 12),
+                ),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
                 ),
               ),
             ),
@@ -1517,22 +1522,15 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
       ),
     );
   }
-  /// 고정근무 관리 다이얼로그 열기
-  void _openFixedWorkerManagement() {
-    if (_selectedBusinessId == null) {
-      ToastHelper.showWarning('사업장을 선택해주세요');
+  /// 급여 확정 다이얼로그 열기
+  void _showWageConfirmDialog() {
+    if (_confirmedWorkers.isEmpty) {
+      ToastHelper.showWarning('급여 확정할 인원이 없습니다');
       return;
     }
 
-    showDialog(
-      context: context,
-      builder: (context) => FixedWorkerManagementDialog(
-        businessId: _selectedBusinessId!,
-        onChanged: () {
-          _loadData(); // 데이터 새로고침
-        },
-      ),
-    );
+    // TODO: 급여 확정 다이얼로그 구현 (5단계에서)
+    ToastHelper.showInfo('급여 확정 기능 준비 중');
   }
 
   // ═══════════════════════════════════════════════════════════

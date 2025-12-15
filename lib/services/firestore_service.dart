@@ -231,7 +231,8 @@ class FirestoreService {
           print('📦 [캐시] 진행중 TO 캐시 사용 (${cacheAge.inSeconds}초 경과)');
           
           if (publishedOnly) {
-            return _activeTOsCache!.where((to) => to.isPublished).toList();
+            // ✅ isPendingPublish로 실시간 체크 (시간 지나면 자동 공개)
+            return _activeTOsCache!.where((to) => !to.isPendingPublish).toList();
           }
           return _activeTOsCache!;
         }
@@ -262,7 +263,8 @@ class FirestoreService {
       _activeTOsCacheTime = DateTime.now();
       
       if (publishedOnly) {
-        final publishedTOs = activeTOs.where((to) => to.isPublished).toList();
+        // ✅ isPendingPublish로 실시간 체크 (시간 지나면 자동 공개)
+        final publishedTOs = activeTOs.where((to) => !to.isPendingPublish).toList();
         print('✅ [최적화] 공개된 진행중 TO: ${publishedTOs.length}개 (서버 조회)');
         return publishedTOs;
       }

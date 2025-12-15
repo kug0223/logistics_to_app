@@ -264,44 +264,6 @@ class _IntegratedWorkforceScreenState extends State<IntegratedWorkforceScreen> {
     );
   }
   
-  /// 고정근무자 관리 관련 개수 조회
-  Future<Map<String, int>> _getFixedWorkerManagementCounts() async {
-    if (_selectedBusinessId == null) {
-      return {'resign': 0, 'schedule': 0};
-    }
-    
-    try {
-      final resignCount = await _firestoreService.getResignRequests(_selectedBusinessId!);
-      final scheduleCount = await _firestoreService.getPendingScheduleChangeRequestCount(_selectedBusinessId!);
-      
-      return {
-        'resign': resignCount.length,
-        'schedule': scheduleCount,
-      };
-    } catch (e) {
-      print('❌ 개수 조회 실패: $e');
-      return {'resign': 0, 'schedule': 0};
-    }
-  }
-
-  /// 고정근무자 관리 다이얼로그 표시
-  void _showFixedWorkerManagement() {
-    if (_selectedBusinessId == null) {
-      ToastHelper.showWarning('사업장 정보를 찾을 수 없습니다.');
-      return;
-    }
-    
-    showDialog(
-      context: context,
-      builder: (context) => FixedWorkerManagementDialog(
-        businessId: _selectedBusinessId!,
-        onChanged: () {
-          setState(() {});
-        },
-      ),
-    );
-  }
-  
   /// 스케줄 변경 요청 관리 다이얼로그 표시
   void _showScheduleRequestManagement() {
     if (_selectedBusinessId == null) {
