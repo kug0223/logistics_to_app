@@ -282,9 +282,9 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
         ),
-        borderRadius: const BorderRadius.only(
-          topLeft: Radius.circular(20),
-          topRight: Radius.circular(20),
+        borderRadius: BorderRadius.only(
+          topLeft: Radius.circular(ResponsiveHelper.spacing(context, 20)),
+          topRight: Radius.circular(ResponsiveHelper.spacing(context, 20)),
         ),
       ),
       child: Column(

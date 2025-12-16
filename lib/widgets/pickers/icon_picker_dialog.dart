@@ -507,7 +507,7 @@ class _IconPickerWidgetState extends State<_IconPickerWidget> {
   Widget build(BuildContext context) {
     return Dialog(
       shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(24),
+        borderRadius: BorderRadius.circular(ResponsiveHelper.spacing(context, 24)),
       ),
       child: Container(
         constraints: BoxConstraints(

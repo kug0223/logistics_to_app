@@ -484,7 +484,7 @@ extension ApplicationFirestore on FirestoreService {
           final dayOfWeek = _getKoreanDayOfWeek(currentDate);
           
           // 근무 요일인 경우만 체크
-          if (workDays!.contains(dayOfWeek)) {
+          if (workDays.contains(dayOfWeek)) {
             final schedules = await getConfirmedSchedules(
               uid: uid,
               workDate: currentDate,

@@ -243,7 +243,7 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog> {
         child: Dialog(
           backgroundColor: Colors.transparent,
           shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(24),
+            borderRadius: BorderRadius.circular(ResponsiveHelper.spacing(context, 24)),
           ),
           child: Container(
         constraints: BoxConstraints(
@@ -252,7 +252,7 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog> {
         ),
         decoration: BoxDecoration(
           color: Colors.white,
-          borderRadius: BorderRadius.circular(20),
+          borderRadius: BorderRadius.circular(ResponsiveHelper.spacing(context, 20)),
           boxShadow: [
             BoxShadow(
               color: Colors.black.withOpacity(0.15),
@@ -303,9 +303,9 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog> {
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
         ),
-        borderRadius: const BorderRadius.only(
-          topLeft: Radius.circular(20),
-          topRight: Radius.circular(20),
+        borderRadius: BorderRadius.only(
+          topLeft: Radius.circular(ResponsiveHelper.spacing(context, 20)),
+          topRight: Radius.circular(ResponsiveHelper.spacing(context, 20)),
         ),
       ),
       child: Row(

@@ -102,7 +102,7 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
       // 상태별 분류
       if (attendance.wageStatus == 'calculated') {
         _calculatedWorkers.add(app);
-      } else if (attendance.wageStatus == 'pending' || attendance.wageStatus == null) {
+      } else if (attendance.wageStatus == 'pending') {
         _pendingWorkers.add(app);
       }
       // confirmed는 이미 최종확정이므로 표시 안함
@@ -967,7 +967,7 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
                                 ),
                                 SizedBox(width: ResponsiveHelper.spacing(context, 4)),
                                 Text(
-                                  '$workTime · ${workHours}시간',
+                                  '$workTime · $workHours시간',
                                   style: ResponsiveHelper.smallStyle(context, color: AppColors.grey600),
                                 ),
                               ],

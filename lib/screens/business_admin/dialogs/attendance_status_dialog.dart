@@ -39,7 +39,6 @@ import '../../../widgets/dialogs/wage/wage_detail_dialog.dart';
 // PDF
 import '../../../utils/attendance_list_pdf.dart';
 // Dialogs
-import 'fixed_worker_management_dialog.dart';
 import 'wage_confirm_dialog.dart';
 import '../../../providers/user_provider.dart';
 
@@ -482,7 +481,7 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
       },
       child: Dialog(
         shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(24),
+          borderRadius: BorderRadius.circular(ResponsiveHelper.spacing(context, 24)),
         ),
         child: Container(
           width: MediaQuery.of(context).size.width * 0.95,
@@ -491,7 +490,7 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
           ),
           decoration: BoxDecoration(
             color: Colors.white,
-            borderRadius: BorderRadius.circular(24),
+            borderRadius: BorderRadius.circular(ResponsiveHelper.spacing(context, 24)),
             boxShadow: [
               BoxShadow(
                 color: Colors.black.withOpacity(0.1),
@@ -537,9 +536,9 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
             theme.primaryColor.withOpacity(0.85),
           ],
         ),
-        borderRadius: const BorderRadius.only(
-          topLeft: Radius.circular(24),
-          topRight: Radius.circular(24),
+        borderRadius: BorderRadius.only(
+          topLeft: Radius.circular(ResponsiveHelper.spacing(context, 24)),
+          topRight: Radius.circular(ResponsiveHelper.spacing(context, 24)),
         ),
       ),
       child: Column(
@@ -1658,23 +1657,23 @@ SizedBox(width: ResponsiveHelper.spacing(context, 12)),
     showDialog(
       context: context,
       barrierDismissible: false,
-      builder: (context) => PopScope(
+      builder: (loadingContext) => PopScope(
         canPop: false,
         child: Center(
           child: Container(
-            padding: const EdgeInsets.all(24),
+            padding: ResponsiveHelper.cardPadding(loadingContext),
             decoration: BoxDecoration(
               color: Colors.white,
-              borderRadius: BorderRadius.circular(16),
+              borderRadius: BorderRadius.circular(ResponsiveHelper.spacing(loadingContext, 16)),
             ),
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
                 const CircularProgressIndicator(),
-                const SizedBox(height: 16),
+                SizedBox(height: ResponsiveHelper.spacing(loadingContext, 16)),
                 Text(
                   '명단 생성 중...',
-                  style: ResponsiveHelper.bodyStyle(context),
+                  style: ResponsiveHelper.bodyStyle(loadingContext),
                 ),
               ],
             ),

@@ -172,11 +172,11 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
     final theme = Theme.of(context);
 
     return Dialog(
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(ResponsiveHelper.spacing(context, 20))),
       child: Container(
         width: MediaQuery.of(context).size.width * 0.92,
         height: MediaQuery.of(context).size.height * 0.85,
-        constraints: const BoxConstraints(maxWidth: 500),
+        constraints: BoxConstraints(maxWidth: ResponsiveHelper.spacing(context, 500)),
         child: Column(
           children: [
             // 헤더
@@ -208,9 +208,9 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
       padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 16)),
       decoration: BoxDecoration(
         color: AppColors.longTermDark,
-        borderRadius: const BorderRadius.only(
-          topLeft: Radius.circular(20),
-          topRight: Radius.circular(20),
+        borderRadius: BorderRadius.only(
+          topLeft: Radius.circular(ResponsiveHelper.spacing(context, 20)),
+          topRight: Radius.circular(ResponsiveHelper.spacing(context, 20)),
         ),
       ),
       child: Column(
