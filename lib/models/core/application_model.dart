@@ -464,11 +464,14 @@ class ApplicationModel {
   }
   
   /// 근무 기간 표시 (예: "11/1~11/30")
+  /// 🔥 희망 시작일/퇴사일 우선 적용
   String get workPeriodDisplay {
-    if (workEndDate == null) return '';
+    final effectiveEnd = actualResignDate ?? workEndDate;
+    if (effectiveEnd == null) return '';
     
-    final startStr = '${workDate.month}/${workDate.day}';
-    final endStr = '${workEndDate!.month}/${workEndDate!.day}';
+    final effectiveStart = desiredStartDate ?? workDate;
+    final startStr = '${effectiveStart.month}/${effectiveStart.day}';
+    final endStr = '${effectiveEnd.month}/${effectiveEnd.day}';
     return '$startStr~$endStr';
   }
   
