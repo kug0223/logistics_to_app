@@ -140,7 +140,9 @@ class FirestoreService {
       return _isSameDate(app.workDate, targetDate);
     }
     
-    if (app.workEndDate == null) return false;
+    // 🔥 퇴사일이 있으면 그 날짜까지만
+    final endDate = app.actualResignDate ?? app.workEndDate;
+    if (endDate == null) return false;
     
     DateTime effectiveStartDate = app.workDate;
     if (app.confirmedAt != null) {
@@ -155,7 +157,7 @@ class FirestoreService {
     }
     
     final isInRange = !targetDate.isBefore(effectiveStartDate) && 
-                      !targetDate.isAfter(app.workEndDate!);
+                      !targetDate.isAfter(endDate);
     
     if (!isInRange) return false;
     

@@ -117,12 +117,14 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
     try {
       final allApps = await _firestoreService.getApplicationsByBusinessId(_selectedBusinessId!);
 
-      // 장기 근무 확정자만 필터 (퇴사 완료 제외)
+      // 장기 근무 확정자만 필터 (퇴사/해지 완료 제외)
       final filtered = allApps.where((app) {
         return app.status == 'CONFIRMED' &&
             app.isLongTermApplication &&  // ✅ 장기 TO 여부 확인
             app.resignStatus != 'APPROVED' &&
-            app.resignStatus != 'AUTO_APPROVED';
+            app.resignStatus != 'AUTO_APPROVED' &&
+            app.terminationStatus != 'APPROVED' &&      // 🔥 계약해지 완료 제외
+            app.terminationStatus != 'AUTO_APPROVED';   // 🔥 자동해지 완료 제외
       }).toList();
 
       // ✅ 1. 업무유형 정보 한 번만 조회 (중복 제거!)
@@ -541,10 +543,15 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
                           ],
                         ),
                         SizedBox(height: ResponsiveHelper.spacing(context, 2)),
-                        Text(
-                          '${DateFormat('M/d').format(app.workDate)} ~ ${DateFormat('M/d').format(app.workEndDate!)}',
+                        // 🔥 시작일: 희망시작일 우선, 종료일: 퇴사일 우선
+                        Builder(builder: (_) {
+                          final effectiveStartDate = app.desiredStartDate ?? app.workDate;
+                          final effectiveEndDate = app.actualResignDate ?? app.workEndDate;
+                          return Text(
+                            '${DateFormat('M/d').format(effectiveStartDate)} ~ ${effectiveEndDate != null ? DateFormat('M/d').format(effectiveEndDate) : '미정'}',
                           style: ResponsiveHelper.tinyStyle(context, color: AppColors.grey500),
-                        ),
+                        );
+                        }),
                       ],
                     ),
                   ),
@@ -863,12 +870,21 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
 
   /// 추가 근무 요청 다이얼로그
   Future<void> _showExtraWorkRequestDialog(ApplicationModel app) async {
+    // 🔥 실제 근무 기간 계산 (희망시작일/퇴사일 우선)
+    final effectiveStartDate = app.desiredStartDate ?? app.workDate;
+    final effectiveEndDate = app.actualResignDate ?? app.workEndDate;
+    
+    if (effectiveEndDate == null) {
+      ToastHelper.showError('근무 종료일 정보가 없습니다');
+      return;
+    }
+    
     // 선택 가능한 첫 날짜 찾기
     DateTime? findFirstSelectableDate() {
       final now = DateTime.now();
       final today = DateTime(now.year, now.month, now.day);
-      final workStart = DateTime(app.workDate.year, app.workDate.month, app.workDate.day);
-      final workEnd = DateTime(app.workEndDate!.year, app.workEndDate!.month, app.workEndDate!.day);
+      final workStart = DateTime(effectiveStartDate.year, effectiveStartDate.month, effectiveStartDate.day);
+      final workEnd = DateTime(effectiveEndDate.year, effectiveEndDate.month, effectiveEndDate.day);
 
       DateTime checkDate = now.isAfter(workStart) ? today : workStart;
 
@@ -909,7 +925,7 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
       context: context,
       initialDate: initialDate,
       firstDate: DateTime.now(),
-      lastDate: app.workEndDate ?? DateTime.now().add(const Duration(days: 365)),
+      lastDate: effectiveEndDate,  // 🔥 퇴사일 우선 적용
       locale: const Locale('ko', 'KR'),
       builder: (context, child) {
         return Theme(
@@ -922,8 +938,8 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
         );
       },
       selectableDayPredicate: (date) {
-        final workStart = DateTime(app.workDate.year, app.workDate.month, app.workDate.day);
-        final workEnd = DateTime(app.workEndDate!.year, app.workEndDate!.month, app.workEndDate!.day);
+        final workStart = DateTime(effectiveStartDate.year, effectiveStartDate.month, effectiveStartDate.day);
+        final workEnd = DateTime(effectiveEndDate.year, effectiveEndDate.month, effectiveEndDate.day);
         final targetDate = DateTime(date.year, date.month, date.day);
 
         if (targetDate.isBefore(workStart) || targetDate.isAfter(workEnd)) return false;
@@ -1029,12 +1045,21 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
 
   /// 미출근 요청 다이얼로그
   Future<void> _showNoWorkRequestDialog(ApplicationModel app) async {
+    // 🔥 실제 근무 기간 계산 (희망시작일/퇴사일 우선)
+    final effectiveStartDate = app.desiredStartDate ?? app.workDate;
+    final effectiveEndDate = app.actualResignDate ?? app.workEndDate;
+    
+    if (effectiveEndDate == null) {
+      ToastHelper.showError('근무 종료일 정보가 없습니다');
+      return;
+    }
+    
     // 선택 가능한 첫 날짜 찾기
     DateTime? findFirstSelectableDate() {
       final now = DateTime.now();
       final today = DateTime(now.year, now.month, now.day);
-      final workStart = DateTime(app.workDate.year, app.workDate.month, app.workDate.day);
-      final workEnd = DateTime(app.workEndDate!.year, app.workEndDate!.month, app.workEndDate!.day);
+      final workStart = DateTime(effectiveStartDate.year, effectiveStartDate.month, effectiveStartDate.day);
+      final workEnd = DateTime(effectiveEndDate.year, effectiveEndDate.month, effectiveEndDate.day);
 
       DateTime checkDate = now.isAfter(workStart) ? today : workStart;
 
@@ -1071,7 +1096,7 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
       context: context,
       initialDate: initialDate,
       firstDate: DateTime.now(),
-      lastDate: app.workEndDate ?? DateTime.now().add(const Duration(days: 365)),
+      lastDate: effectiveEndDate,  // 🔥 퇴사일 우선 적용
       locale: const Locale('ko', 'KR'),
       builder: (context, child) {
         return Theme(
@@ -1084,8 +1109,8 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
         );
       },
       selectableDayPredicate: (date) {
-        final workStart = DateTime(app.workDate.year, app.workDate.month, app.workDate.day);
-        final workEnd = DateTime(app.workEndDate!.year, app.workEndDate!.month, app.workEndDate!.day);
+        final workStart = DateTime(effectiveStartDate.year, effectiveStartDate.month, effectiveStartDate.day);
+        final workEnd = DateTime(effectiveEndDate.year, effectiveEndDate.month, effectiveEndDate.day);
         final targetDate = DateTime(date.year, date.month, date.day);
 
         if (targetDate.isBefore(workStart) || targetDate.isAfter(workEnd)) return false;
