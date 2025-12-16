@@ -39,14 +39,20 @@ class CalendarHelper {
       return _isSameDay(app.workDate, targetDate);
     }
     
+    // 🔥 퇴사/해지 완료된 경우 표시 안함
+    if (app.resignStatus == 'APPROVED' || app.resignStatus == 'AUTO_APPROVED' ||
+        app.terminationStatus == 'APPROVED' || app.terminationStatus == 'AUTO_APPROVED') {
+      return false;
+    }
+    
     // 확정된 장기 근무: 근무 기간 + 요일 체크
     // 🔥 actualResignDate(실제 퇴사일)가 있으면 그 날짜까지만
     final endDate = app.actualResignDate ?? app.workEndDate;
     if (endDate == null) return false;
     
-    // ✅ 시작일 계산: 확정일이 공고 시작일보다 이후면 확정일 기준
-    DateTime effectiveStartDate = app.workDate;
-    if (app.confirmedAt != null) {
+    // 🔥 시작일 계산: desiredStartDate 우선 → confirmedAt → workDate
+    DateTime effectiveStartDate = app.desiredStartDate ?? app.workDate;
+    if (app.confirmedAt != null && app.desiredStartDate == null) {
       final confirmedDate = DateTime(
         app.confirmedAt!.year,
         app.confirmedAt!.month,
@@ -107,6 +113,14 @@ class CalendarHelper {
   
   /// 필터 통과 여부
   static bool _passesFilter(ApplicationModel app, String selectedFilter) {
+    // 🔥 퇴사/해지 완료된 장기 근무는 모든 필터에서 제외
+    if (app.isLongTermApplication) {
+      if (app.resignStatus == 'APPROVED' || app.resignStatus == 'AUTO_APPROVED' ||
+          app.terminationStatus == 'APPROVED' || app.terminationStatus == 'AUTO_APPROVED') {
+        return false;
+      }
+    }
+    
     if (selectedFilter == 'CONFIRMED') {
       return app.status == 'CONFIRMED';
     } else if (selectedFilter == 'PENDING') {

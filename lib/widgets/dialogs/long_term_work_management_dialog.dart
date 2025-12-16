@@ -29,10 +29,15 @@ class _LongTermWorkManagementDialogState
 
   @override
   Widget build(BuildContext context) {
-    // 확정된 장기 근무만 필터링
+    // 확정된 장기 근무만 필터링 (퇴사/해지 완료 제외)
     final longTermWorks = widget.applications
         .where((app) =>
-            app.isLongTermApplication && app.status == 'CONFIRMED')
+            app.isLongTermApplication && 
+            app.status == 'CONFIRMED' &&
+            app.resignStatus != 'APPROVED' &&        // 🔥 퇴사 완료 제외
+            app.resignStatus != 'AUTO_APPROVED' &&   // 🔥 자동 퇴사 제외
+            app.terminationStatus != 'APPROVED' &&   // 🔥 해지 완료 제외
+            app.terminationStatus != 'AUTO_APPROVED') // 🔥 자동 해지 제외
         .toList();
 
     return Dialog(

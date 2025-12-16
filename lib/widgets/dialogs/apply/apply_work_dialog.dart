@@ -172,12 +172,10 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
       return;
     }
 
-    // ✅ 장기공고: 희망 시작일 기본값 = 오늘 또는 공고 시작일 중 늦은 날짜
+    // ✅ 장기공고: 희망 시작일 기본값 = null (사용자가 직접 선택해야 함)
+    // 🔥 기본값 설정 제거 - 사용자가 캘린더에서 선택 가능한 날짜를 직접 선택해야 함
     if (_isLongTerm) {
-      final today = DateTime.now();
-      final todayOnly = DateTime(today.year, today.month, today.day);
-      final startDate = widget.mainTO.date;
-      _desiredStartDate = todayOnly.isAfter(startDate) ? todayOnly : startDate;
+      _desiredStartDate = null;  // 사용자가 선택해야 함
     }
 
     // 그룹 TO인 경우 첫 날짜 자동 선택
@@ -2094,6 +2092,55 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
 
   /// 지원하기
   Future<void> _applyForWork(TOModel to, WorkDetailModel work, {DateTime? date}) async {
+    // 🔥 장기공고: 희망 시작일 유효성 검사
+    if (_isLongTerm) {
+      // 1. 희망 시작일이 선택되지 않은 경우
+      if (_desiredStartDate == null) {
+        ToastHelper.showWarning('희망 시작일을 선택해주세요');
+        return;
+      }
+      
+      // 2. 선택된 날짜가 선택 가능한 날짜인지 확인
+      final today = DateTime.now();
+      final todayOnly = DateTime(today.year, today.month, today.day);
+      final startDate = to.date;
+      final endDate = to.endDate ?? to.date;
+      final workDays = to.workDays ?? [];
+      final selectableStartDate = todayOnly.isAfter(startDate) ? todayOnly : startDate;
+      
+      final selectedDayOnly = DateTime(_desiredStartDate!.year, _desiredStartDate!.month, _desiredStartDate!.day);
+      
+      // 과거 날짜인지
+      if (selectedDayOnly.isBefore(selectableStartDate)) {
+        ToastHelper.showWarning('선택한 날짜는 지원할 수 없습니다.\n캘린더에서 희망 시작일을 다시 선택해주세요.');
+        return;
+      }
+      
+      // 종료일 이후인지
+      if (selectedDayOnly.isAfter(endDate)) {
+        ToastHelper.showWarning('선택한 날짜가 근무 종료일 이후입니다.');
+        return;
+      }
+      
+      // 근무 요일인지
+      if (workDays.isNotEmpty) {
+        const dayNames = ['월', '화', '수', '목', '금', '토', '일'];
+        final dayName = dayNames[selectedDayOnly.weekday - 1];
+        if (!workDays.contains(dayName)) {
+          ToastHelper.showWarning('선택한 날짜는 근무 요일이 아닙니다.');
+          return;
+        }
+      }
+      
+      // 충돌 날짜인지 (이 날짜 이후에 확정 근무가 있으면 불가)
+      for (final conflictDate in _confirmedDatesInRange) {
+        if (!conflictDate.isBefore(selectedDayOnly)) {
+          ToastHelper.showWarning('선택한 시작일 이후에 확정된 근무가 있습니다.\n다른 날짜를 선택해주세요.');
+          return;
+        }
+      }
+    }
+    
     // ✅ 지원 확인 팝업
     final confirmed = await ApplyConfirmDialog.show(
       context: context,

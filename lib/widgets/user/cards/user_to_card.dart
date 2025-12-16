@@ -237,6 +237,14 @@ class _UserTOCardState extends State<UserTOCard> {
       
       if (!isActive) return false;
       
+      // 🔥 장기공고: 퇴사/해지 완료된 경우 미지원 취급
+      if (app.isLongTermApplication) {
+        if (app.resignStatus == 'APPROVED' || app.resignStatus == 'AUTO_APPROVED' ||
+            app.terminationStatus == 'APPROVED' || app.terminationStatus == 'AUTO_APPROVED') {
+          return false;
+        }
+      }
+      
       // ✅ toId가 있으면 정확히 매칭 (신규 데이터)
       if (app.toId != null && app.toId!.isNotEmpty) {
         // 그룹 TO: groupId로 매칭
@@ -283,7 +291,18 @@ class _UserTOCardState extends State<UserTOCard> {
       final isActive = app.status != 'CANCELED' && 
                        app.status != 'REJECTED' &&
                        app.status != 'AUTO_CANCELED';
-      return dateMatch && businessMatch && titleMatch && workTypeMatch && isActive;
+      
+      if (!isActive) return false;
+      
+      // 🔥 장기공고: 퇴사/해지 완료된 경우 미지원 취급
+      if (app.isLongTermApplication) {
+        if (app.resignStatus == 'APPROVED' || app.resignStatus == 'AUTO_APPROVED' ||
+            app.terminationStatus == 'APPROVED' || app.terminationStatus == 'AUTO_APPROVED') {
+          return false;
+        }
+      }
+      
+      return dateMatch && businessMatch && titleMatch && workTypeMatch;
     });
   }
   ApplicationModel? _getApplicationForWork(String workType) {
@@ -301,6 +320,14 @@ class _UserTOCardState extends State<UserTOCard> {
                            app.status != 'AUTO_CANCELED';
           
           if (!workTypeMatch || !isActive) return false;
+          
+          // 🔥 장기공고: 퇴사/해지 완료된 경우 미지원 취급
+          if (app.isLongTermApplication) {
+            if (app.resignStatus == 'APPROVED' || app.resignStatus == 'AUTO_APPROVED' ||
+                app.terminationStatus == 'APPROVED' || app.terminationStatus == 'AUTO_APPROVED') {
+              return false;
+            }
+          }
           
           // ✅ toId가 있으면 정확히 매칭 (신규 데이터)
           if (app.toId != null && app.toId!.isNotEmpty) {
@@ -778,7 +805,7 @@ class _UserTOCardState extends State<UserTOCard> {
         _buildMiniButton(
           context,
           icon: _hasAppliedToTO ? Icons.settings : Icons.send,
-          label: _hasAppliedToTO ? '지원관리' : '지원',
+          label: _hasAppliedToTO ? '지원관리' : '지원하기',
           onTap: _openApplyDialog,
           isPrimary: !_hasAppliedToTO,
         ),
