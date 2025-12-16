@@ -277,8 +277,19 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
       );
 
       final dateKey = DateTime(date.year, date.month, date.day);
+      // 🔥 퇴사/해지 완료된 장기공고 필터링
+      final activeApplications = applications.where((app) {
+        if (app.isLongTermApplication) {
+          if (app.resignStatus == 'APPROVED' || app.resignStatus == 'AUTO_APPROVED' ||
+              app.terminationStatus == 'APPROVED' || app.terminationStatus == 'AUTO_APPROVED') {
+            return false;
+          }
+        }
+        return true;
+      }).toList();
+      
       _applicationsByDate[dateKey] = {
-        for (final app in applications)
+        for (final app in activeApplications)
           _makeWorkKey(app.selectedWorkType, app.startTime, app.endTime): app
       };
       // ✅ 장기공고: 확정된 application의 출퇴근 기록 확인
@@ -2029,6 +2040,14 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
 
   WorkApplicationStatus _getApplicationStatus(ApplicationModel? application) {
     if (application == null) return WorkApplicationStatus.notApplied;
+    
+    // 🔥 퇴사/해지 완료된 장기공고는 미지원 취급
+    if (application.isLongTermApplication) {
+      if (application.resignStatus == 'APPROVED' || application.resignStatus == 'AUTO_APPROVED' ||
+          application.terminationStatus == 'APPROVED' || application.terminationStatus == 'AUTO_APPROVED') {
+        return WorkApplicationStatus.notApplied;
+      }
+    }
     
     switch (application.status) {
       case 'CONFIRMED':
