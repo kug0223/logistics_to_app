@@ -355,15 +355,30 @@ extension ApplicationFirestore on FirestoreService {
         ToastHelper.showError('통장사본 등록이 필요합니다.');
         return false;
       }
-      // 1. 중복 지원 확인 - ✅ workDetailId 기준으로 체크 (시간대 다르면 다른 업무)
-      // 먼저 workDetailId 찾기
-      final toSnapshot = await _firestore
+      // 1. TO 찾기 (단기 우선, 실패 시 장기 재검색)
+      QuerySnapshot toSnapshot;
+      
+      // 1차: 단기공고로 검색
+      toSnapshot = await _firestore
           .collection('tos')
           .where('businessId', isEqualTo: businessId)
           .where('title', isEqualTo: toTitle)
           .where('date', isEqualTo: Timestamp.fromDate(workDate))
           .limit(1)
           .get();
+      print('🔍 [지원] 단기공고 TO 검색: ${toSnapshot.docs.length}건');
+      
+      // 2차: 단기 검색 실패 시 장기공고로 재검색
+      if (toSnapshot.docs.isEmpty) {
+        toSnapshot = await _firestore
+            .collection('tos')
+            .where('businessId', isEqualTo: businessId)
+            .where('title', isEqualTo: toTitle)
+            .where('isLongTerm', isEqualTo: true)
+            .limit(1)
+            .get();
+        print('🔍 [지원] 장기공고 TO 재검색: ${toSnapshot.docs.length}건');
+      }
 
       if (toSnapshot.docs.isEmpty) {
         ToastHelper.showError('TO를 찾을 수 없습니다.');
@@ -1526,14 +1541,30 @@ extension ApplicationFirestore on FirestoreService {
       final app = ApplicationModel.fromMap(appData, appDoc.id);
       final workDetailId = appData['workDetailId'] as String?;
       
-      // 2. TO 찾기
-      final toSnapshot = await _firestore
+      // 2. TO 찾기 (단기 우선, 실패 시 장기 재검색)
+      QuerySnapshot toSnapshot;
+      
+      // 1차: 단기공고로 검색
+      toSnapshot = await _firestore
           .collection('tos')
           .where('businessId', isEqualTo: app.businessId)
           .where('title', isEqualTo: app.toTitle)
           .where('date', isEqualTo: Timestamp.fromDate(app.workDate))
           .limit(1)
           .get();
+      print('🔍 [확정] 단기공고 TO 검색: ${toSnapshot.docs.length}건');
+      
+      // 2차: 단기 검색 실패 시 장기공고로 재검색
+      if (toSnapshot.docs.isEmpty) {
+        toSnapshot = await _firestore
+            .collection('tos')
+            .where('businessId', isEqualTo: app.businessId)
+            .where('title', isEqualTo: app.toTitle)
+            .where('isLongTerm', isEqualTo: true)
+            .limit(1)
+            .get();
+        print('🔍 [확정] 장기공고 TO 재검색: ${toSnapshot.docs.length}건');
+      }
       
       if (toSnapshot.docs.isEmpty) {
         throw Exception('TO를 찾을 수 없습니다');
@@ -1541,7 +1572,7 @@ extension ApplicationFirestore on FirestoreService {
       
       final toDoc = toSnapshot.docs.first;
       final toId = toDoc.id;
-      final toData = toDoc.data();
+      final toData = toDoc.data() as Map<String, dynamic>;
       final groupId = toData['groupId'] as String?;
       
       // 3. 충돌하는 대기중 지원서 찾기

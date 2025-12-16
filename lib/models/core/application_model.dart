@@ -447,9 +447,20 @@ class ApplicationModel {
   // ⭐ Phase 1-B: 장기 공고 표시용 헬퍼
   
   /// 장기 지원인지 확인
-  /// ✅ workDays가 있어야 진짜 장기 (workEndDate만 있으면 단기로 취급)
+  /// ✅ workDays가 있거나, workEndDate가 시작일과 다르면 장기
   bool get isLongTermApplication {
-    return workDays != null && workDays!.isNotEmpty;
+    // 1. workDays가 있으면 확실히 장기
+    if (workDays != null && workDays!.isNotEmpty) return true;
+    
+    // 2. workEndDate가 있고 workDate와 다르면 장기로 판단
+    if (workEndDate != null) {
+      final isSameDay = workDate.year == workEndDate!.year &&
+                        workDate.month == workEndDate!.month &&
+                        workDate.day == workEndDate!.day;
+      if (!isSameDay) return true;
+    }
+    
+    return false;
   }
   
   /// 근무 기간 표시 (예: "11/1~11/30")

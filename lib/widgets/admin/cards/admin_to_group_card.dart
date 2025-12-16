@@ -739,15 +739,18 @@ class _TOGroupCardState extends State<TOGroupCard> with SingleTickerProviderStat
       return _buildClosedBadge(context);
     }
     
-    // 2. 예약 (targetTOs 중 하나라도 예약 상태면)
-    final hasScheduled = targetTOs.any((toItem) => toItem.to.isPendingPublish);
-    if (hasScheduled) {
-      final scheduledTO = targetTOs.firstWhere((toItem) => toItem.to.isPendingPublish);
-      return _buildScheduledBadge(context, scheduledTO.to.publishAt);
+    // 2. 모집중 (하나라도 공개된 TO가 있으면)
+    final hasRecruiting = targetTOs.any((toItem) => !toItem.to.isPendingPublish);
+    if (hasRecruiting) {
+      return _buildRecruitingBadge(context);
     }
     
-    // 3. 모집중
-    return _buildRecruitingBadge(context);
+    // 3. 예약 (모두 예약 상태일 때만)
+    final scheduledTO = targetTOs.firstWhere(
+      (toItem) => toItem.to.isPendingPublish,
+      orElse: () => targetTOs.first,
+    );
+    return _buildScheduledBadge(context, scheduledTO.to.publishAt);
   }
 
   /// ✨ 예약 배지 (오픈 예정)
