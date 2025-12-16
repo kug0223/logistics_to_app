@@ -442,14 +442,38 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
     }
     
     // 장기: 기간 + 요일 체크
-    if (app.workEndDate == null) return false;
+    // 🔥 퇴사일이 있으면 그 날짜까지만
+    final endDate = app.actualResignDate ?? app.workEndDate;
+    if (endDate == null) return false;
+    
+    // 🔥 시작일 계산: 확정일이 공고 시작일보다 이후면 확정일 기준
+    DateTime effectiveStartDate = app.workDate;
+    if (app.confirmedAt != null) {
+      final confirmedDate = DateTime(
+        app.confirmedAt!.year,
+        app.confirmedAt!.month,
+        app.confirmedAt!.day,
+      );
+      if (confirmedDate.isAfter(app.workDate)) {
+        effectiveStartDate = confirmedDate;
+      }
+    }
     
     final targetOnly = DateTime(targetDate.year, targetDate.month, targetDate.day);
-    final startOnly = DateTime(app.workDate.year, app.workDate.month, app.workDate.day);
-    final endOnly = DateTime(app.workEndDate!.year, app.workEndDate!.month, app.workEndDate!.day);
+    final startOnly = DateTime(effectiveStartDate.year, effectiveStartDate.month, effectiveStartDate.day);
+    final endOnly = DateTime(endDate.year, endDate.month, endDate.day);
     
     // 기간 체크
     if (targetOnly.isBefore(startOnly) || targetOnly.isAfter(endOnly)) return false;
+    
+    // 🔥 휴무일 체크 - 휴무일이면 근무 안함
+    if (app.leaveDates != null && app.leaveDates!.isNotEmpty) {
+      final isLeaveDay = app.leaveDates!.any((leaveDate) =>
+          leaveDate.year == targetOnly.year &&
+          leaveDate.month == targetOnly.month &&
+          leaveDate.day == targetOnly.day);
+      if (isLeaveDay) return false;
+    }
     
     // 요일 체크
     final dayOfWeek = ['월', '화', '수', '목', '금', '토', '일'][targetDate.weekday - 1];

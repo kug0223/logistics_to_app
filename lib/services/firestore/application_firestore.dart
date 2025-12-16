@@ -1200,8 +1200,10 @@ extension ApplicationFirestore on FirestoreService {
       final workDate = appData['workDate'] as Timestamp;
       final workDetailId = appData['workDetailId'] as String?;
 
-      // 🔥 장기공고 여부 확인
-      final isLongTerm = appData['isLongTermApplication'] == true;
+      // 🔥 장기공고 여부 확인 (type 필드 또는 workDays로 판단)
+      final workDaysList = appData['workDays'] as List?;
+      final isLongTerm = appData['type'] == 'long_term' ||
+                         (workDaysList != null && workDaysList.isNotEmpty);
       
       QuerySnapshot toSnapshot;
       if (isLongTerm) {

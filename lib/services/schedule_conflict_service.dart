@@ -211,7 +211,9 @@ class ScheduleConflictService {
     }
 
     // 장기: 시작일~종료일 범위 + 근무요일 체크
-    if (app.workEndDate == null) return false;
+    // 🔥 퇴사일이 있으면 그 날짜까지만
+    final endDate = app.actualResignDate ?? app.workEndDate;
+    if (endDate == null) return false;
 
     // ✅ 시작일 계산: 확정일이 공고 시작일보다 이후면 확정일 기준
     DateTime effectiveStartDate = app.workDate;
@@ -229,7 +231,7 @@ class ScheduleConflictService {
     // 날짜 범위 체크
     final targetOnly = DateTime(targetDate.year, targetDate.month, targetDate.day);
     final isInRange = !targetOnly.isBefore(effectiveStartDate) &&
-                      !targetOnly.isAfter(app.workEndDate!);
+                      !targetOnly.isAfter(endDate);
 
     if (!isInRange) return false;
 
