@@ -280,6 +280,10 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
       // 🔥 퇴사/해지 완료된 장기공고 필터링
       final activeApplications = applications.where((app) {
         if (app.isLongTermApplication) {
+          // ✅ PENDING/CONFIRMED 상태면 무조건 활성 (재지원 케이스 포함)
+          if (app.status == 'PENDING' || app.status == 'CONFIRMED') {
+            return true;
+          }
           if (app.resignStatus == 'APPROVED' || app.resignStatus == 'AUTO_APPROVED' ||
               app.terminationStatus == 'APPROVED' || app.terminationStatus == 'AUTO_APPROVED') {
             return false;
@@ -292,6 +296,15 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
         for (final app in activeApplications)
           _makeWorkKey(app.selectedWorkType, app.startTime, app.endTime): app
       };
+      
+      // 🔍 디버그: 저장된 workKey 확인
+      print('🔍 [_loadDateApplications] dateKey: $dateKey');
+      print('   activeApplications: ${activeApplications.length}개');
+      for (final app in activeApplications) {
+        final wk = _makeWorkKey(app.selectedWorkType, app.startTime, app.endTime);
+        print('   workKey: "$wk" → status: ${app.status}');
+      }
+      
       // ✅ 장기공고: 확정된 application의 출퇴근 기록 확인
       if (_isLongTerm) {
         for (final app in applications.where((a) => a.status == 'CONFIRMED')) {
@@ -769,6 +782,17 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
             // 🔥 dateKey를 동일한 방식으로 생성
             final dateKey = DateTime(widget.mainTO.date.year, widget.mainTO.date.month, widget.mainTO.date.day);
             final application = _applicationsByDate[dateKey]?[workKey];
+            
+            // 🔍 디버그: workKey 매칭 확인
+            final statusResult = _getApplicationStatus(application);
+            print('🔍 [UI] WorkDetail workKey: "$workKey"');
+            print('   찾은 application: ${application?.status ?? "없음"}');
+            print('   _getApplicationStatus 반환: $statusResult');
+            if (application != null) {
+              print('   app.resignStatus: ${application.resignStatus}');
+              print('   app.terminationStatus: ${application.terminationStatus}');
+              print('   app.isLongTermApplication: ${application.isLongTermApplication}');
+            }
             final conflictInfo = _conflictCache[_dateKey(widget.mainTO.date)]?[work.id] 
                 ?? ConflictInfo.ok;
             
