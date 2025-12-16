@@ -854,7 +854,7 @@ class WorkDetailDialog {
                 selectedValue: selectedWageType,
                 onTap: () {
                   setDialogState(() {
-                    onWageTypeChanged('hourly');  // ⭐ 콜백 호출
+                    onWageTypeChanged('hourly');
                   });
                 },
               ),
@@ -870,27 +870,12 @@ class WorkDetailDialog {
                 selectedValue: selectedWageType,
                 onTap: () {
                   setDialogState(() {
-                    onWageTypeChanged('daily');  // ⭐ 콜백 호출
+                    onWageTypeChanged('daily');
                   });
                 },
               ),
             ),
-            SizedBox(width: ResponsiveHelper.spacing(context, 8)),
-            Expanded(
-              child: _buildWageTypeButton(
-                context: context,
-                theme: theme,
-                label: '월급',
-                value: 'monthly',
-                icon: Icons.calendar_month,
-                selectedValue: selectedWageType,
-                onTap: () {
-                  setDialogState(() {
-                    onWageTypeChanged('monthly');  // ⭐ 콜백 호출
-                  });
-                },
-              ),
-            ),
+            // 🔥 월급 버튼 제거됨
           ],
         ),
       ],

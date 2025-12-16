@@ -301,8 +301,8 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
           }
         }
         
-        // ✅ 기존 지원서의 희망 시작일 불러오기
-        final activeApp = applications.where((a) => 
+        // activeApplications = 필터링 후
+        final activeApp = activeApplications.where((a) => 
           a.status == 'PENDING' || a.status == 'CONFIRMED'
         ).firstOrNull;
         
