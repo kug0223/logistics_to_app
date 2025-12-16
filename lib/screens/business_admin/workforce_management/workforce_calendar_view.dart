@@ -105,7 +105,7 @@ class _WorkforceCalendarViewState extends State<WorkforceCalendarView> {
       });
     } catch (e) {
       print('❌ 데이터 로드 실패: $e');
-      setState(() => _isLoading = false);
+      if (mounted) setState(() => _isLoading = false);
       ToastHelper.showError('데이터를 불러오는데 실패했습니다.');
     }
   }

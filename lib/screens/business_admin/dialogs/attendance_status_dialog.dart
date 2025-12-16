@@ -2146,9 +2146,9 @@ SizedBox(width: ResponsiveHelper.spacing(context, 12)),
           ),
           if (onDelete != null)
             IconButton(
-              icon: Icon(Icons.close, color: AppColors.error, size: 20),
+              icon: Icon(Icons.close, color: AppColors.error, size: ResponsiveHelper.iconSize(context, 20)),
               onPressed: onDelete,
-              constraints: const BoxConstraints(),
+              constraints: BoxConstraints(),
               padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 4)),
             ),
           SizedBox(width: ResponsiveHelper.spacing(context, 4)),
@@ -2219,7 +2219,7 @@ SizedBox(width: ResponsiveHelper.spacing(context, 12)),
       print('❌ 일괄 출근 처리 실패: $e');
       ToastHelper.showError('일괄 출근 처리 실패');
     } finally {
-      setState(() => _isProcessing = false);
+      if (mounted) setState(() => _isProcessing = false);
     }
   }
 
@@ -2265,7 +2265,7 @@ SizedBox(width: ResponsiveHelper.spacing(context, 12)),
       print('❌ 일괄 퇴근 처리 실패: $e');
       ToastHelper.showError('일괄 퇴근 처리 실패');
     } finally {
-      setState(() => _isProcessing = false);
+      if (mounted) setState(() => _isProcessing = false);
     }
   }
 
@@ -2281,21 +2281,21 @@ SizedBox(width: ResponsiveHelper.spacing(context, 12)),
       print('❌ 출근 처리 실패: $e');
       ToastHelper.showError('출근 처리 실패');
     } finally {
-      setState(() => _isProcessing = false);
+      if (mounted) setState(() => _isProcessing = false);
     }
   }
 
   /// 개별 퇴근 처리
   Future<void> _processCheckOut(ApplicationModel app, String time) async {
+    final attendance = _attendanceMap[app.id];
+    if (attendance == null) {
+      ToastHelper.showError('출근 기록이 없습니다');
+      return;
+    }
+
     setState(() => _isProcessing = true);
 
     try {
-      final attendance = _attendanceMap[app.id];
-      if (attendance == null) {
-        ToastHelper.showError('출근 기록이 없습니다');
-        return;
-      }
-
       await FirebaseFirestore.instance
           .collection('attendance')
           .doc(attendance.id)
@@ -2312,7 +2312,7 @@ SizedBox(width: ResponsiveHelper.spacing(context, 12)),
       print('❌ 퇴근 처리 실패: $e');
       ToastHelper.showError('퇴근 처리 실패');
     } finally {
-      setState(() => _isProcessing = false);
+      if (mounted) setState(() => _isProcessing = false);
     }
   }
 
@@ -2366,9 +2366,10 @@ SizedBox(width: ResponsiveHelper.spacing(context, 12)),
       print('❌ 시간 수정 실패: $e');
       ToastHelper.showError('시간 수정 실패');
     } finally {
-      setState(() => _isProcessing = false);
+      if (mounted) setState(() => _isProcessing = false);
     }
   }
+
 
   /// Attendance 생성 또는 업데이트
   Future<void> _createOrUpdateAttendance({
@@ -2465,7 +2466,7 @@ SizedBox(width: ResponsiveHelper.spacing(context, 12)),
       print('❌ 노쇼 처리 실패: $e');
       ToastHelper.showError('노쇼 처리 실패');
     } finally {
-      setState(() => _isProcessing = false);
+      if (mounted) setState(() => _isProcessing = false);
     }
   }
 
@@ -2510,7 +2511,7 @@ SizedBox(width: ResponsiveHelper.spacing(context, 12)),
       print('❌ 노쇼 해제 실패: $e');
       ToastHelper.showError('노쇼 해제 실패');
     } finally {
-      setState(() => _isProcessing = false);
+      if (mounted) setState(() => _isProcessing = false);
     }
   }
   /// 급여 수정 다이얼로그
@@ -2566,7 +2567,7 @@ SizedBox(width: ResponsiveHelper.spacing(context, 12)),
       debugPrint('❌ 급여 수정 실패: $e');
       ToastHelper.showError('급여 수정에 실패했습니다');
     } finally {
-      setState(() => _isProcessing = false);
+      if (mounted) setState(() => _isProcessing = false);
     }
   }
 
@@ -2612,7 +2613,7 @@ SizedBox(width: ResponsiveHelper.spacing(context, 12)),
       debugPrint('❌ 최종 확정 실패: $e');
       ToastHelper.showError('최종 확정에 실패했습니다');
     } finally {
-      setState(() => _isProcessing = false);
+      if (mounted) setState(() => _isProcessing = false);
     }
   }
 
@@ -2651,7 +2652,7 @@ SizedBox(width: ResponsiveHelper.spacing(context, 12)),
       debugPrint('❌ 급여 취소 실패: $e');
       ToastHelper.showError('급여 취소에 실패했습니다');
     } finally {
-      setState(() => _isProcessing = false);
+      if (mounted) setState(() => _isProcessing = false);
     }
   }
 

@@ -102,7 +102,8 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
       // 상태별 분류
       if (attendance.wageStatus == 'calculated') {
         _calculatedWorkers.add(app);
-      } else if (attendance.wageStatus == 'pending') {
+      } else if (attendance.wageStatus == 'pending' || attendance.wageStatus == null) {
+        // null도 pending으로 처리 (신규 출퇴근 기록)
         _pendingWorkers.add(app);
       }
       // confirmed는 이미 최종확정이므로 표시 안함
@@ -249,7 +250,7 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
       debugPrint('❌ 일괄 급여 확정 실패: $e');
       ToastHelper.showError('급여 확정에 실패했습니다');
     } finally {
-      setState(() => _isProcessing = false);
+      if (mounted) setState(() => _isProcessing = false);
     }
   }
 
@@ -336,7 +337,7 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
       debugPrint('❌ 일괄 최종 확정 실패: $e');
       ToastHelper.showError('최종 확정에 실패했습니다');
     } finally {
-      setState(() => _isProcessing = false);
+      if (mounted) setState(() => _isProcessing = false);
     }
   }
 
@@ -408,12 +409,14 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
       _hasChanges = true;
       widget.onConfirmed?.call();
       
-      setState(() {
-        _calculatedWages[app.id] = calculatedWage;
-        _pendingWorkers.removeWhere((w) => w.id == app.id);
-        _calculatedWorkers.add(app);
-        _pendingSelectedIds.remove(app.id);
-      });
+      if (mounted) {
+        setState(() {
+          _calculatedWages[app.id] = calculatedWage;
+          _pendingWorkers.removeWhere((w) => w.id == app.id);
+          _calculatedWorkers.add(app);
+          _pendingSelectedIds.remove(app.id);
+        });
+      }
       
       ToastHelper.showSuccess('${user?.name ?? '근무자'} 급여 확정 완료');
     } catch (e) {
@@ -446,9 +449,11 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
       _hasChanges = true;
       widget.onConfirmed?.call();
       
-      setState(() {
-        _calculatedWages[app.id] = updatedWage;
-      });
+      if (mounted) {
+        setState(() {
+          _calculatedWages[app.id] = updatedWage;
+        });
+      }
       
       ToastHelper.showSuccess('${user?.name ?? '근무자'} 급여 수정 완료');
     } catch (e) {
@@ -482,11 +487,13 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
       _hasChanges = true;
       widget.onConfirmed?.call();
       
-      setState(() {
-        _calculatedWorkers.removeWhere((w) => w.id == app.id);
-        _calculatedWages.remove(app.id);
-        _calculatedSelectedIds.remove(app.id);
-      });
+      if (mounted) {
+        setState(() {
+          _calculatedWorkers.removeWhere((w) => w.id == app.id);
+          _calculatedWages.remove(app.id);
+          _calculatedSelectedIds.remove(app.id);
+        });
+      }
       
       ToastHelper.showSuccess('${user?.name ?? '근무자'} 최종 확정 완료');
     } catch (e) {
@@ -516,14 +523,16 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
       // 급여 재계산
       final newWage = _calculateWageForWorker(app);
       
-      setState(() {
-        _calculatedWorkers.removeWhere((w) => w.id == app.id);
-        _pendingWorkers.add(app);
-        _calculatedSelectedIds.remove(app.id);
-        if (newWage != null) {
-          _calculatedWages[app.id] = newWage;
-        }
-      });
+      if (mounted) {
+        setState(() {
+          _calculatedWorkers.removeWhere((w) => w.id == app.id);
+          _pendingWorkers.add(app);
+          _calculatedSelectedIds.remove(app.id);
+          if (newWage != null) {
+            _calculatedWages[app.id] = newWage;
+          }
+        });
+      }
       
       ToastHelper.showSuccess('${user?.name ?? '근무자'} 급여 확정 취소');
     } catch (e) {
