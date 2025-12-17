@@ -142,6 +142,26 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
       widget.groupTOsByDate != null && widget.groupTOsByDate!.isNotEmpty;
 
   bool get _isLongTerm => widget.mainTO.isLongTerm;
+  
+  // 🔥 이미 지원 완료 상태인지 체크
+  bool get _hasActiveApplication {
+    final dateKey = DateTime(widget.mainTO.date.year, widget.mainTO.date.month, widget.mainTO.date.day);
+    final apps = _applicationsByDate[dateKey];
+    if (apps == null) return false;
+    return apps.values.any((app) => app.status == 'PENDING' || app.status == 'CONFIRMED');
+  }
+  
+  // 🔥 지원된 희망시작일 가져오기
+  DateTime? get _appliedDesiredStartDate {
+    final dateKey = DateTime(widget.mainTO.date.year, widget.mainTO.date.month, widget.mainTO.date.day);
+    final apps = _applicationsByDate[dateKey];
+    if (apps == null) return null;
+    final activeApp = apps.values.cast<ApplicationModel?>().firstWhere(
+      (app) => app?.status == 'PENDING' || app?.status == 'CONFIRMED',
+      orElse: () => null,
+    );
+    return activeApp?.desiredStartDate ?? activeApp?.workDate;
+  }
 
   /// 등록된 날짜 목록 (그룹 TO)
   Set<DateTime> get _availableDates {
@@ -846,6 +866,13 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
   Widget _buildConflictWarningBox(BuildContext context) {
     if (_conflictInfoByDate.isEmpty) return const SizedBox.shrink();
     
+    // 🔥 FIX: 이미 지원한 상태면 경고 박스 숨김
+    final dateKey = DateTime(widget.mainTO.date.year, widget.mainTO.date.month, widget.mainTO.date.day);
+    final apps = _applicationsByDate[dateKey];
+    if (apps != null && apps.values.any((app) => app.status == 'PENDING' || app.status == 'CONFIRMED')) {
+      return const SizedBox.shrink();
+    }
+    
     // 첫 충돌 정보
     final sortedDates = _conflictInfoByDate.keys.toList()..sort();
     final firstConflictDate = sortedDates.first;
@@ -1046,6 +1073,9 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
             
             // ✅ 선택 가능한 날짜: 오늘 이후 + 근무기간 내 + 근무요일 + 확정 근무 없음
             enabledDayPredicate: (day) {
+              // 🔥 FIX: 이미 지원한 상태면 모든 날짜 선택 불가
+              if (_hasActiveApplication) return false;
+              
               // 과거 날짜 불가
               if (day.isBefore(selectableStartDate)) return false;
               // 종료일 이후 불가
@@ -1071,6 +1101,9 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
             
             // ✅ 날짜 선택 시 희망 시작일 업데이트
             onDaySelected: (selectedDay, focusedDay) {
+              // 🔥 FIX: 이미 지원한 상태면 선택 무시
+              if (_hasActiveApplication) return;
+              
               setState(() {
                 _desiredStartDate = selectedDay;
               });
@@ -1222,8 +1255,21 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
     // 근무 기간 내인지 확인
     final isInRange = !day.isBefore(startDate) && !day.isAfter(endDate);
     
+    // 🔥 지원 완료 상태 체크
+    final isApplied = _hasActiveApplication;
+    final appliedStart = _appliedDesiredStartDate;
+    
+    // 🔥 지원 완료 시: 희망시작일 ~ 종료일 범위 체크
+    final dayOnly = DateTime(day.year, day.month, day.day);
+    bool isInAppliedRange = false;
+    if (isApplied && appliedStart != null) {
+      final appliedStartOnly = DateTime(appliedStart.year, appliedStart.month, appliedStart.day);
+      isInAppliedRange = !dayOnly.isBefore(appliedStartOnly) && !dayOnly.isAfter(endDate);
+    }
+    
     // 선택 가능한지 확인 (과거 아니고, 근무요일이면)
-    bool isSelectable = isInRange && !day.isBefore(selectableStartDate);
+    // 🔥 지원 완료 시 선택 불가
+    bool isSelectable = !isApplied && isInRange && !day.isBefore(selectableStartDate);
     
     // 근무 요일인지 확인
     bool isWorkDay = false;
@@ -1244,7 +1290,16 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
     Color bgColor;
     Color textColor;
     
-    if (isSelected) {
+    // 🔥 지원 완료 상태일 때 스타일
+    if (isApplied && isInAppliedRange && isWorkDay) {
+      // 지원된 근무 기간 (희망시작일 ~ 종료일)
+      bgColor = AppColors.longTerm.withOpacity(0.5);
+      textColor = AppColors.longTermDark;
+    } else if (isApplied && isInAppliedRange) {
+      // 지원된 기간 내 휴무일
+      bgColor = AppColors.longTerm.withOpacity(0.15);
+      textColor = AppColors.grey500;
+    } else if (isSelected) {
       // 선택된 날짜 (희망 시작일)
       bgColor = AppColors.longTerm;
       textColor = Colors.white;
@@ -2441,6 +2496,14 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
 
   /// 장기공고 초기 알림 체크
   Future<void> _checkAndShowLongTermAlert() async {
+    // 🔥 FIX: 이미 지원한 상태면 충돌 알림 표시 안 함
+    final dateKey = DateTime(widget.mainTO.date.year, widget.mainTO.date.month, widget.mainTO.date.day);
+    final apps = _applicationsByDate[dateKey];
+    if (apps != null && apps.values.any((app) => app.status == 'PENDING' || app.status == 'CONFIRMED')) {
+      print('🔍 [장기공고] 이미 지원 중 - 충돌 알림 스킵');
+      return;  // 이미 지원했으면 알림 표시 안 함
+    }
+    
     // 1. 확정 근무로 인한 충돌 날짜가 있으면 알림
     if (_confirmedDatesInRange.isNotEmpty) {
       await _showLongTermConflictAlert();

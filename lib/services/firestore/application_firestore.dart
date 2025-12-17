@@ -448,8 +448,9 @@ extension ApplicationFirestore on FirestoreService {
       final isReallyLongTerm = type == 'long_term' && workDays != null && workDays.isNotEmpty;
 
       if (isReallyLongTerm && workEndDate != null) {
-        // 장기공고: 전체 근무일 충돌 체크
-        var currentDate = workDate;
+        // 🔥 FIX: 희망시작일(desiredStartDate)부터 충돌 체크 (TO 시작일 아님!)
+        final checkStartDate = desiredStartDate ?? workDate;
+        var currentDate = checkStartDate;
         while (!currentDate.isAfter(workEndDate)) {
           final dayOfWeek = _getKoreanDayOfWeek(currentDate);
           
