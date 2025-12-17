@@ -123,7 +123,13 @@ class _AllTOListScreenState extends State<AllTOListScreen> {
     final today = DateTime(now.year, now.month, now.day);
     
     filtered = filtered.where((to) {
-      // ✅ 단기: 당일 또는 미래만
+      // ✅ 그룹 단기공고: endDate(그룹 종료일) 기준
+      if (!to.isLongTerm && to.isGrouped && to.endDate != null) {
+        final endDate = DateTime(to.endDate!.year, to.endDate!.month, to.endDate!.day);
+        return endDate.isAtSameMomentAs(today) || endDate.isAfter(today);
+      }
+      
+      // ✅ 단일 단기: 당일 또는 미래만
       if (!to.isLongTerm) {
         final toDate = DateTime(to.date.year, to.date.month, to.date.day);
         return toDate.isAtSameMomentAs(today) || toDate.isAfter(today);

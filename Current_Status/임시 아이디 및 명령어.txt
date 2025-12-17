@@ -18,7 +18,7 @@ ALfit
 
 냉동분류
 
-git add . ; git commit -m "전체적인 오류 재점검 251217-1" ; git push
+git add . ; git commit -m "전체적인 오류 재점검 251217-4" ; git push
 
 flutter clean
 flutter pub get

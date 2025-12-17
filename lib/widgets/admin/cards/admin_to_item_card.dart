@@ -97,6 +97,8 @@ class _TOItemCardState extends State<TOItemCard> {
     
     // 전체 마감 여부
     bool allClosed;
+    // 🔍 디버깅 로그
+    final _debugTO = widget.toItem.to;
     if (widget.toItem.to.isLongTerm) {
       // 장기공고: endDate 또는 applicationDeadline 기준
       if (widget.toItem.to.isManualClosed) {
@@ -116,8 +118,42 @@ class _TOItemCardState extends State<TOItemCard> {
         }
       }
     } else if (!widget.toItem.isWorkDetailLoaded || widget.toItem.workDetails.isEmpty) {
-      // 단기공고 (로드 안됨): TO 문서 기준
-      allClosed = widget.toItem.to.isClosed;
+      // 🔥 단기공고 (로드 안됨): 개별 카드는 자신의 date 기준으로 직접 계산
+      // (그룹 마스터도 개별 카드로 표시될 때는 자신의 날짜 기준)
+      final to = widget.toItem.to;
+      if (to.isManualClosed || to.status == 'CLOSED') {
+        allClosed = true;
+      } else if (to.isFull) {
+        allClosed = true;
+      } else {
+        // 자신의 date 기준 시간 체크
+        final now = DateTime.now();
+        final today = DateTime(now.year, now.month, now.day);
+        final localDate = to.date.toLocal();
+        final workDate = DateTime(localDate.year, localDate.month, localDate.day);
+        
+        if (workDate.isBefore(today)) {
+          allClosed = true;
+        } else if (workDate.isAtSameMomentAs(today)) {
+          // 오늘이면 startTime 체크 (있는 경우)
+          if (to.startTime.isNotEmpty && to.startTime.contains(':')) {
+            try {
+              final timeParts = to.startTime.split(':');
+              final workStart = DateTime(
+                localDate.year, localDate.month, localDate.day,
+                int.parse(timeParts[0]), int.parse(timeParts[1]),
+              );
+              allClosed = now.isAfter(workStart);
+            } catch (e) {
+              allClosed = false;
+            }
+          } else {
+            allClosed = false;
+          }
+        } else {
+          allClosed = false;
+        }
+      }
     } else {
       // 단기공고 (로드됨): WorkDetails 기준
       allClosed = widget.toItem.workDetails.every((work) =>
