@@ -379,6 +379,12 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
   Future<void> _loadConfirmedDatesInRange() async {
     if (_currentUserId == null) return;
     
+    // 🔥 성능 최적화: 이미 지원한 상태면 충돌 체크 스킵
+    if (_hasActiveApplication) {
+      print('🔍 [장기충돌] 이미 지원 완료 - 충돌 체크 스킵');
+      return;
+    }
+    
     final startDate = widget.mainTO.date;
     final endDate = widget.mainTO.endDate ?? widget.mainTO.date;
     final workDays = widget.mainTO.workDays ?? [];
@@ -1004,6 +1010,10 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
     // 선택 가능한 시작일: 오늘 또는 공고시작일 중 늦은 날짜부터
     final selectableStartDate = todayOnly.isAfter(startDate) ? todayOnly : startDate;
     
+    // 🔥 성능 최적화: 지원 상태 한 번만 계산
+    final isApplied = _hasActiveApplication;
+    final appliedStart = _appliedDesiredStartDate;
+    
     return Column(
       children: [        
         Container(
@@ -1139,19 +1149,19 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
             // 커스텀 빌더
             calendarBuilders: CalendarBuilders(
               defaultBuilder: (context, day, focusedDay) {
-                return _buildLongTermDayCell(context, day, startDate, endDate, workDays, selectableStartDate, false);
+                return _buildLongTermDayCell(context, day, startDate, endDate, workDays, selectableStartDate, false, isApplied: isApplied, appliedStart: appliedStart);
               },
               outsideBuilder: (context, day, focusedDay) {
-                return _buildLongTermDayCell(context, day, startDate, endDate, workDays, selectableStartDate, true);
+                return _buildLongTermDayCell(context, day, startDate, endDate, workDays, selectableStartDate, true, isApplied: isApplied, appliedStart: appliedStart);
               },
               todayBuilder: (context, day, focusedDay) {
-                return _buildLongTermDayCell(context, day, startDate, endDate, workDays, selectableStartDate, false, isToday: true);
+                return _buildLongTermDayCell(context, day, startDate, endDate, workDays, selectableStartDate, false, isToday: true, isApplied: isApplied, appliedStart: appliedStart);
               },
               selectedBuilder: (context, day, focusedDay) {
-                return _buildLongTermDayCell(context, day, startDate, endDate, workDays, selectableStartDate, false, isSelected: true);
+                return _buildLongTermDayCell(context, day, startDate, endDate, workDays, selectableStartDate, false, isSelected: true, isApplied: isApplied, appliedStart: appliedStart);
               },
               disabledBuilder: (context, day, focusedDay) {
-                return _buildLongTermDayCell(context, day, startDate, endDate, workDays, selectableStartDate, true);
+                return _buildLongTermDayCell(context, day, startDate, endDate, workDays, selectableStartDate, false, isApplied: isApplied, appliedStart: appliedStart);
               },
             ),
           ),
@@ -1251,13 +1261,15 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
     bool isOutside, {
     bool isToday = false,
     bool isSelected = false,
+    // 🔥 성능 최적화: 파라미터로 전달
+    bool isApplied = false,
+    DateTime? appliedStart,
   }) {
     // 근무 기간 내인지 확인
     final isInRange = !day.isBefore(startDate) && !day.isAfter(endDate);
     
-    // 🔥 지원 완료 상태 체크
-    final isApplied = _hasActiveApplication;
-    final appliedStart = _appliedDesiredStartDate;
+    // 🔥 지원 완료 상태 - 파라미터로 전달받음 (성능 최적화)
+    // (isApplied, appliedStart는 파라미터로 받음)
     
     // 🔥 지원 완료 시: 희망시작일 ~ 종료일 범위 체크
     final dayOnly = DateTime(day.year, day.month, day.day);
