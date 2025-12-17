@@ -149,9 +149,40 @@ class _TOGroupCardState extends State<TOGroupCard> with SingleTickerProviderStat
               return toItem.to.isDeadlinePassed;
             }
             
-            // 단기공고: workDetails 로드 안됐으면 TO 문서의 마감 상태 사용
+            // 🔥 단기공고 (로드 안됨): 개별 TO의 date 기준으로 직접 계산
+            // (그룹 마스터도 캘린더 뷰에서 선택되면 자신의 날짜 기준)
             if (!toItem.isWorkDetailLoaded || toItem.workDetails.isEmpty) {
-              return toItem.to.isClosed;
+              final to = toItem.to;
+              if (to.isManualClosed || to.status == 'CLOSED') {
+                return true;
+              }
+              if (to.isFull) {
+                return true;
+              }
+              // 자신의 date 기준 시간 체크
+              final now = DateTime.now();
+              final today = DateTime(now.year, now.month, now.day);
+              final localDate = to.date.toLocal();
+              final workDate = DateTime(localDate.year, localDate.month, localDate.day);
+              
+              if (workDate.isBefore(today)) {
+                return true;
+              }
+              if (workDate.isAtSameMomentAs(today)) {
+                if (to.startTime.isNotEmpty && to.startTime.contains(':')) {
+                  try {
+                    final timeParts = to.startTime.split(':');
+                    final workStart = DateTime(
+                      localDate.year, localDate.month, localDate.day,
+                      int.parse(timeParts[0]), int.parse(timeParts[1]),
+                    );
+                    return now.isAfter(workStart);
+                  } catch (e) {
+                    return false;
+                  }
+                }
+              }
+              return false;
             }
             return toItem.workDetails.every((work) =>
                 work.isClosed || work.isTimeExpired || work.isFull);

@@ -694,8 +694,11 @@ class TOModel {
     if (!isScheduledPublish) return false;
     if (isPublished) return false;
     
-    // ✅ publishAt이 있고 현재 시간이 지났으면 공개됨
-    if (publishAt != null && DateTime.now().isAfter(publishAt!)) {
+    // 🔥 publishAt이 없으면 공개된 것으로 처리 (방어 코드)
+    if (publishAt == null) return false;
+    
+    // ✅ publishAt이 현재 시간 지났으면 공개됨
+    if (DateTime.now().isAfter(publishAt!)) {
       return false;
     }
     

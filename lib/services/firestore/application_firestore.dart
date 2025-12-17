@@ -2096,8 +2096,7 @@ extension ApplicationFirestore on FirestoreService {
       int successCount = 0;
       int failedCount = 0;
       
-      // WorkDetail별 카운트 집계
-      Map<String, int> workDetailCounts = {};
+      Map<String, int> workDetailCounts = {};  // PENDING용
       
       for (var appDoc in appDocs) {
         if (!appDoc.exists) {
@@ -2235,6 +2234,8 @@ extension ApplicationFirestore on FirestoreService {
       int failedCount = 0;
       
       Map<String, int> workDetailCounts = {};
+      Map<String, int> confirmedWorkDetailCounts = {};  // 🔥 CONFIRMED용
+      int confirmedRejectCount = 0;  // 🔥 CONFIRMED 거절 수
       
       for (var appDoc in appDocs) {
         if (!appDoc.exists) {
@@ -2258,12 +2259,19 @@ extension ApplicationFirestore on FirestoreService {
         
         batch.update(appDoc.reference, updates);
         
-        // PENDING인 경우만 카운트
+        // 🔥 상태별 카운트 분리
         if (appData['status'] == 'PENDING') {
           final workDetailId = appData['workDetailId'] as String?;
           if (workDetailId != null && workDetailId.isNotEmpty) {
             workDetailCounts[workDetailId] = (workDetailCounts[workDetailId] ?? 0) + 1;
           }
+        } else if (appData['status'] == 'CONFIRMED') {
+          // 🔥 CONFIRMED 거절 카운트
+          final workDetailId = appData['workDetailId'] as String?;
+          if (workDetailId != null && workDetailId.isNotEmpty) {
+            confirmedWorkDetailCounts[workDetailId] = (confirmedWorkDetailCounts[workDetailId] ?? 0) + 1;
+          }
+          confirmedRejectCount++;
         }
         
         successCount++;
@@ -2294,6 +2302,32 @@ extension ApplicationFirestore on FirestoreService {
       if (masterRef != null && pendingRejectCount > 0) {
         batch.update(masterRef, {
           'groupTotalPending': FieldValue.increment(-pendingRejectCount),
+        });
+      }
+      
+      // 🔥 CONFIRMED 거절 수만큼 통계 감소
+      if (toRef != null && confirmedRejectCount > 0) {
+        batch.update(toRef, {
+          'totalConfirmed': FieldValue.increment(-confirmedRejectCount),
+        });
+      }
+      
+      for (var entry in confirmedWorkDetailCounts.entries) {
+        batch.update(
+          _firestore
+              .collection('tos')
+              .doc(toId)
+              .collection('workDetails')
+              .doc(entry.key),
+          {
+            'currentCount': FieldValue.increment(-entry.value),
+          },
+        );
+      }
+      
+      if (masterRef != null && confirmedRejectCount > 0) {
+        batch.update(masterRef, {
+          'groupTotalConfirmed': FieldValue.increment(-confirmedRejectCount),
         });
       }
       
