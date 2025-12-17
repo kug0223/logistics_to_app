@@ -57,6 +57,8 @@ class ApplicationModel {
   // 🔥 Phase B: 스케줄 변경 관리
   final List<DateTime>? leaveDates;      // 승인된 휴무 날짜들
   final List<DateTime>? extraWorkDates;  // 승인된 추가 근무 날짜들
+  // 🔥 상태 변경 이력
+  final List<Map<String, dynamic>>? statusHistory;
   final String? resignStatus;           // 'PENDING', 'APPROVED', 'REJECTED', 'AUTO_APPROVED'
   final DateTime? resignApprovedAt;     // 승인/거절 시각
   final String? resignApprovedBy;       // 승인/거절자 UID
@@ -124,6 +126,8 @@ class ApplicationModel {
     // ⭐ 여기에 추가
     this.leaveDates,
     this.extraWorkDates,
+    // 🔥 상태 변경 이력
+    this.statusHistory,
     
   });
 
@@ -219,6 +223,12 @@ class ApplicationModel {
               .map((e) => (e as Timestamp).toDate())
               .toList()
           : null,
+          // 🔥 상태 변경 이력
+      statusHistory: data['statusHistory'] != null
+          ? (data['statusHistory'] as List)
+              .map((e) => Map<String, dynamic>.from(e as Map))
+              .toList()
+          : null,
     );
   }
   
@@ -283,6 +293,8 @@ class ApplicationModel {
       // ⭐ 여기에 추가
       'leaveDates': leaveDates?.map((e) => Timestamp.fromDate(e)).toList(),
       'extraWorkDates': extraWorkDates?.map((e) => Timestamp.fromDate(e)).toList(),
+      // 🔥 상태 변경 이력 (Timestamp 변환)
+      'statusHistory': statusHistory,
     };
   }
 
@@ -382,6 +394,8 @@ class ApplicationModel {
     DateTime? desiredStartDate,
     List<DateTime>? leaveDates,
     List<DateTime>? extraWorkDates,
+    // 🔥 상태 변경 이력
+    List<Map<String, dynamic>>? statusHistory,
     
   }) {
     return ApplicationModel(
@@ -435,6 +449,8 @@ class ApplicationModel {
       terminationRejectReason: terminationRejectReason ?? this.terminationRejectReason,
       leaveDates: leaveDates ?? this.leaveDates,
       extraWorkDates: extraWorkDates ?? this.extraWorkDates,
+      // 🔥 상태 변경 이력
+      statusHistory: statusHistory ?? this.statusHistory,
     );
   }
 

@@ -496,6 +496,13 @@ extension ApplicationFirestore on FirestoreService {
         batch.update(reactivatableApp.reference, {
           'status': 'PENDING',
           'appliedAt': FieldValue.serverTimestamp(),
+          // 🔥 이력 추가
+          'statusHistory': FieldValue.arrayUnion([{
+            'status': 'PENDING',
+            'at': Timestamp.now(),
+            'by': null,
+            'action': 'REAPPLY',
+          }]),
           // 취소 관련 필드 초기화
           'canceledAt': null,
           'cancelReason': null,
@@ -574,6 +581,13 @@ extension ApplicationFirestore on FirestoreService {
         'endTime': endTime,
         'status': 'PENDING',
         'appliedAt': FieldValue.serverTimestamp(),
+        // 🔥 이력 초기화
+        'statusHistory': [{
+          'status': 'PENDING',
+          'at': Timestamp.now(),
+          'by': null,
+          'action': 'APPLY',
+        }],
         'type': isReallyLongTerm ? 'long_term' : 'short',
         'isLongTermApplication': isReallyLongTerm,
         'workEndDate': isReallyLongTerm && workEndDate != null 
@@ -884,6 +898,14 @@ extension ApplicationFirestore on FirestoreService {
         'status': 'REJECTED',
         'rejectedAt': FieldValue.serverTimestamp(),
         'rejectedBy': adminUID,
+        // 🔥 이력 추가
+        'statusHistory': FieldValue.arrayUnion([{
+          'status': 'REJECTED',
+          'at': Timestamp.now(),
+          'by': adminUID,
+          'action': 'REJECT',
+          if (rejectMessage != null && rejectMessage.isNotEmpty) 'reason': rejectMessage,
+        }]),
       };
       
       if (rejectMessage != null && rejectMessage.isNotEmpty) {
@@ -1064,6 +1086,13 @@ extension ApplicationFirestore on FirestoreService {
       batch.update(_firestore.collection('applications').doc(applicationId), {
         'status': 'CANCELED',
         'canceledAt': FieldValue.serverTimestamp(),
+        // 🔥 이력 추가
+        'statusHistory': FieldValue.arrayUnion([{
+          'status': 'CANCELED',
+          'at': Timestamp.now(),
+          'by': uid,
+          'action': 'CANCEL',
+        }]),
       });
 
       // 2. TO 통계 Increment
@@ -1157,6 +1186,14 @@ extension ApplicationFirestore on FirestoreService {
           'status': 'CANCELED',
           'canceledAt': FieldValue.serverTimestamp(),
           'cancelReason': applyNoShowPenalty ? 'SAME_DAY_CANCEL' : 'USER_CANCELED',
+          // 🔥 이력 추가
+          'statusHistory': FieldValue.arrayUnion([{
+            'status': 'CANCELED',
+            'at': Timestamp.now(),
+            'by': uid,
+            'action': 'CONFIRM_CANCEL',
+            'reason': applyNoShowPenalty ? 'SAME_DAY_CANCEL' : 'USER_CANCELED',
+          }]),
         },
       );
 
@@ -1607,6 +1644,13 @@ extension ApplicationFirestore on FirestoreService {
       final confirmUpdates = <String, dynamic>{
         'status': 'CONFIRMED',
         'confirmedAt': now,
+        // 🔥 이력 추가
+        'statusHistory': FieldValue.arrayUnion([{
+          'status': 'CONFIRMED',
+          'at': Timestamp.now(),
+          'by': confirmedBy,
+          'action': 'CONFIRM',
+        }]),
       };
       if (confirmedBy != null) confirmUpdates['confirmedBy'] = confirmedBy;
       if (message != null) confirmUpdates['confirmMessage'] = message;
@@ -2299,8 +2343,9 @@ extension ApplicationFirestore on FirestoreService {
       final toData = toDoc.data()!;
       final businessId = toData['businessId'];
       final toTitle = toData['title'];
-      final jobType = toData['jobType'] ?? 'short';
-      final isLongTerm = jobType == 'long_term';
+      // 🔥 FIX: isLongTerm 필드와 jobType 모두 체크
+      final isLongTerm = toData['isLongTerm'] == true || 
+                         toData['jobType'] == 'long_term';
 
       QuerySnapshot snapshot;
       

@@ -276,7 +276,10 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
         uid: _currentUserId!,
       );
 
-      final dateKey = DateTime(date.year, date.month, date.day);
+      // 🔥 FIX: 장기공고는 TO 시작일을 고정 키로 사용 (desiredStartDate와 무관하게)
+      final dateKey = _isLongTerm 
+          ? DateTime(widget.mainTO.date.year, widget.mainTO.date.month, widget.mainTO.date.day)
+          : DateTime(date.year, date.month, date.day);
       // 🔥 퇴사/해지 완료된 장기공고 필터링
       final activeApplications = applications.where((app) {
         if (app.isLongTermApplication) {
