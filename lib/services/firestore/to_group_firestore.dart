@@ -217,13 +217,19 @@ extension TOGroupFirestore on FirestoreService {
       
       final targetMasterTO = targetGroupTOs.firstWhere((to) => to.isGroupMaster);
       
-      // TO를 새 그룹에 연결
+      // TO를 새 그룹에 연결 (기존 그룹 통계 필드는 삭제 - 마스터만 관리)
       await _firestore.collection('tos').doc(toId).update({
         'groupId': targetGroupId,
         'groupName': targetMasterTO.groupName,
         'isGroupMaster': false,
         'startDate': targetMasterTO.startDate,
         'endDate': targetMasterTO.endDate,
+        // ✅ 그룹 통계 필드 삭제 (마스터만 가지고 있어야 함)
+        'groupActualDaysCount': FieldValue.delete(),
+        'groupTotalConfirmed': FieldValue.delete(),
+        'groupTotalPending': FieldValue.delete(),
+        'groupTotalRequired': FieldValue.delete(),
+        'groupStatsUpdatedAt': FieldValue.delete(),
       });
       
       // 대상 그룹의 날짜 범위 재계산
@@ -588,6 +594,12 @@ extension TOGroupFirestore on FirestoreService {
             'isGroupMaster': false,
             'startDate': FieldValue.delete(),
             'endDate': FieldValue.delete(),
+            // ✅ 그룹 통계 필드도 삭제
+            'groupActualDaysCount': FieldValue.delete(),
+            'groupTotalConfirmed': FieldValue.delete(),
+            'groupTotalPending': FieldValue.delete(),
+            'groupTotalRequired': FieldValue.delete(),
+            'groupStatsUpdatedAt': FieldValue.delete(),
           });
           await _firestore.collection('groups').doc(groupId).delete();
           clearCache(toId: lastTO.id);
@@ -622,13 +634,19 @@ extension TOGroupFirestore on FirestoreService {
       
       final groupId = to.groupId!;
       
-      // 1. TO를 독립 TO로 변경
+      // 1. TO를 독립 TO로 변경 (그룹 관련 필드 모두 삭제)
       await _firestore.collection('tos').doc(toId).update({
         'groupId': FieldValue.delete(),
         'groupName': FieldValue.delete(),
         'isGroupMaster': false,
         'startDate': FieldValue.delete(),
         'endDate': FieldValue.delete(),
+        // ✅ 그룹 통계 필드도 삭제
+        'groupActualDaysCount': FieldValue.delete(),
+        'groupTotalConfirmed': FieldValue.delete(),
+        'groupTotalPending': FieldValue.delete(),
+        'groupTotalRequired': FieldValue.delete(),
+        'groupStatsUpdatedAt': FieldValue.delete(),
       });
 
       // 2. 남은 그룹 TO 확인 (최신 데이터 다시 조회)
@@ -646,7 +664,7 @@ extension TOGroupFirestore on FirestoreService {
         await _firestore.collection('groups').doc(groupId).delete();
         print('✅ 그룹 문서 삭제 (TO 없음): $groupId');
       } else if (remainingTOs.length == 1) {
-        // 마지막 TO도 독립 TO로 변경
+        // 마지막 TO도 독립 TO로 변경 (그룹 관련 필드 모두 삭제)
         final lastTO = remainingTOs.first;
         await _firestore.collection('tos').doc(lastTO.id).update({
           'groupId': FieldValue.delete(),
@@ -654,6 +672,12 @@ extension TOGroupFirestore on FirestoreService {
           'isGroupMaster': false,
           'startDate': FieldValue.delete(),
           'endDate': FieldValue.delete(),
+          // ✅ 그룹 통계 필드도 삭제
+          'groupActualDaysCount': FieldValue.delete(),
+          'groupTotalConfirmed': FieldValue.delete(),
+          'groupTotalPending': FieldValue.delete(),
+          'groupTotalRequired': FieldValue.delete(),
+          'groupStatsUpdatedAt': FieldValue.delete(),
         });
         print('✅ 마지막 TO도 독립 TO로 변경: ${lastTO.id}');
         clearCache(toId: lastTO.id);
