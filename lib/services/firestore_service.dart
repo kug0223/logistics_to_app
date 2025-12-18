@@ -254,14 +254,24 @@ class FirestoreService {
       
       print('✅ [서버필터] ACTIVE TO: ${allTOs.length}개 조회됨');
 
-      final masterOrSingleTOs = allTOs.where((to) {
-        if (to.groupId != null) {
-          return to.isGroupMaster;
-        }
-        return true;
-      }).toList();
-
-      List<TOModel> activeTOs = masterOrSingleTOs;
+      // ✅ Step 1: 단일 TO (groupId == null)
+      final singleTOs = allTOs.where((to) => to.groupId == null).toList();
+      print('   📦 단일 TO: ${singleTOs.length}개');
+      
+      // ✅ Step 2: groups 컬렉션에서 active 그룹 조회
+      final activeGroups = await getActiveGroups();
+      print('   📦 활성 그룹: ${activeGroups.length}개');
+      
+      // ✅ Step 3: 각 그룹을 대표 TOModel로 변환
+      final List<TOModel> groupRepresentativeTOs = activeGroups
+          .map((group) => TOModel.fromGroupModel(group))
+          .toList();
+      print('   📦 그룹 대표 TO: ${groupRepresentativeTOs.length}개');
+      
+      List<TOModel> activeTOs = [...singleTOs, ...groupRepresentativeTOs];
+      
+      // 날짜순 정렬
+      activeTOs.sort((a, b) => a.date.compareTo(b.date));
 
       _activeTOsCache = activeTOs;
       _activeTOsCacheTime = DateTime.now();

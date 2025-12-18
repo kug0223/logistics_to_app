@@ -397,9 +397,17 @@ class TestDataHelper {
       print('⚠️  TO 통계 재계산 실패');
     }
     
-    // ✅ 그룹 마스터 통계 동기화
+   // ✅ 그룹 마스터 통계 동기화 (tos 컬렉션)
     await _firestoreService.syncGroupMasterStats(toId);
     print('✅ 그룹 마스터 통계 동기화 완료');
+    
+    // ✅ groups 컬렉션 통계도 동기화
+    final toDoc2 = await _firestore.collection('tos').doc(toId).get();
+    final groupId = toDoc2.data()?['groupId'] as String?;
+    if (groupId != null) {
+      await _firestoreService.syncGroupStats(groupId);
+      print('✅ groups 컬렉션 통계 동기화 완료: $groupId');
+    }
     
     // ✅ 캐시 클리어
     _firestoreService.clearCache();
@@ -660,20 +668,32 @@ class TestDataHelper {
       final allTOsSnapshot = await _firestore.collection('tos').get();
       int recalculatedCount = 0;
       
+      // ✅ 영향받은 groupId 추적
+      Set<String> affectedGroupIds = {};
+      
       for (var toDoc in allTOsSnapshot.docs) {
         final toId = toDoc.id;
         await _firestoreService.recalculateTOStats(toId);
         
         // 그룹 마스터 통계 동기화
         final toData = toDoc.data();
-        if (toData['groupId'] != null) {
+        final groupId = toData['groupId'] as String?;
+        if (groupId != null) {
           await _firestoreService.syncGroupMasterStats(toId);
+          affectedGroupIds.add(groupId);
         }
         
         recalculatedCount++;
       }
       
       print('✅ $recalculatedCount개 TO 통계 재계산 완료');
+      
+      // ✅ groups 컬렉션 통계도 재계산
+      print('📊 6단계: groups 컬렉션 통계 재계산 중...');
+      for (var groupId in affectedGroupIds) {
+        await _firestoreService.syncGroupStats(groupId);
+      }
+      print('✅ ${affectedGroupIds.length}개 그룹 통계 재계산 완료');
 
       print('');
       print('🎉 ═══════════════════════════════════════');
@@ -681,6 +701,7 @@ class TestDataHelper {
       print('🎉 ═══════════════════════════════════════');
       print('   📊 총 $totalDeleted개 항목 삭제됨');
       print('   📊 $recalculatedCount개 TO 통계 재계산됨');
+      print('   📊 ${affectedGroupIds.length}개 그룹 통계 재계산됨');
       print('');
       // ✅ 캐시 클리어
       _firestoreService.clearCache();

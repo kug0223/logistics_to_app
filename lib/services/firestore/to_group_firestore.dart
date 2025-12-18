@@ -208,22 +208,20 @@ extension TOGroupFirestore on FirestoreService {
     required String targetGroupId,
   }) async {
     try {
-      // 대상 그룹의 정보 가져오기
-      final targetGroupTOs = await getTOsByGroup(targetGroupId);
-      if (targetGroupTOs.isEmpty) {
+      // ✅ groups 컬렉션에서 그룹 정보 가져오기
+      final targetGroup = await getGroup(targetGroupId);
+      if (targetGroup == null) {
         ToastHelper.showError('대상 그룹을 찾을 수 없습니다.');
         return false;
       }
       
-      final targetMasterTO = targetGroupTOs.firstWhere((to) => to.isGroupMaster);
-      
-      // TO를 새 그룹에 연결 (기존 그룹 통계 필드는 삭제 - 마스터만 관리)
+      // TO를 새 그룹에 연결 (기존 그룹 통계 필드는 삭제)
       await _firestore.collection('tos').doc(toId).update({
         'groupId': targetGroupId,
-        'groupName': targetMasterTO.groupName,
+        'groupName': targetGroup.groupName,
         'isGroupMaster': false,
-        'startDate': targetMasterTO.startDate,
-        'endDate': targetMasterTO.endDate,
+        'startDate': Timestamp.fromDate(targetGroup.startDate),
+        'endDate': Timestamp.fromDate(targetGroup.endDate),
         // ✅ 그룹 통계 필드 삭제 (마스터만 가지고 있어야 함)
         'groupActualDaysCount': FieldValue.delete(),
         'groupTotalConfirmed': FieldValue.delete(),

@@ -1,5 +1,6 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import '../../../utils/format_helper.dart';
+import 'group_model.dart';
 
 /// TO(근무 오더) 모델 - 하위 컬렉션 방식 + 그룹 기능
 /// workDetails 하위 컬렉션에 업무 상세 정보 저장
@@ -214,6 +215,48 @@ class TOModel {
       isPublished: data['isPublished'] ?? true,  // 기존 데이터는 공개 상태
       publishDaysBefore: data['publishDaysBefore'],
       publishTime: data['publishTime'],
+    );
+  }
+
+  /// GroupModel에서 대표 TOModel 생성 (지원자 목록용)
+  factory TOModel.fromGroupModel(GroupModel group) {
+    return TOModel(
+      id: group.id,
+      businessId: group.businessId,
+      businessName: group.businessName,
+      businessAddress: group.businessAddress,
+      businessCity: group.businessCity,
+      businessDistrict: group.businessDistrict,
+      jobType: 'short',  // 그룹은 단기
+      groupId: group.id,
+      groupName: group.groupName,
+      startDate: group.startDate,
+      endDate: group.endDate,
+      isGroupMaster: true,  // 가상 대표
+      title: group.title,
+      date: group.startDate,
+      startTime: '',
+      endTime: '',
+      applicationDeadline: group.endDate,
+      totalRequired: group.totalRequired,
+      totalConfirmed: group.totalConfirmed,
+      totalPending: group.totalPending,
+      minWage: group.minWage,
+      maxWage: group.maxWage,
+      wageType: group.wageType,
+      workDetailCount: group.workDetailCount,
+      description: group.description,
+      creatorUID: group.creatorUID,
+      createdAt: group.createdAt,
+      status: group.status,
+      publishMode: group.publishMode,
+      publishAt: group.publishAt,
+      isPublished: group.isPublished,
+      publishDaysBefore: group.publishDaysBefore,
+      publishTime: group.publishTime,
+      isManualClosed: group.isManualClosed,
+      closedAt: group.closedAt,
+      closedBy: group.closedBy,
     );
   }
 

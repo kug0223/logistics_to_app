@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../../../theme/app_colors.dart';
 import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
 import '../../../models/core/to_model.dart';
@@ -710,176 +711,264 @@ class TOListDialogs {
   /// 그룹 연결 다이얼로그 (기존 그룹 또는 새 그룹 생성)
   Future<void> showReconnectToGroupDialog(TOItem toItem, List<TOGroupItem> allGroups) async {
     final to = toItem.to;
+    final theme = Theme.of(context);
     
     // 동일 사업장의 그룹만 필터링
     final availableGroups = allGroups
         .where((item) => 
             item.isGrouped && 
-            item.masterTO.groupId != to.groupId &&
-            item.masterTO.businessId == to.businessId
+            item.id != to.groupId &&
+            item.businessId == to.businessId
         )
         .toList();
     
-    String? selectedOption = 'existing';
+    String selectedOption = 'existing';
     String? selectedGroupId;
     final newGroupNameController = TextEditingController();
     
     final confirmed = await showDialog<bool>(
       context: context,
-      builder: (context) => StatefulBuilder(
+      barrierDismissible: false,
+      builder: (dialogContext) => StatefulBuilder(
         builder: (context, setState) => AlertDialog(
-          title: Row(
-            children: [
-              Icon(Icons.link, color: Theme.of(context).primaryColor),
-              SizedBox(width: ResponsiveHelper.spacing(context, 12)),  // ⭐ 변경
-              const Text('그룹 연결'),
-            ],
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(24),
           ),
+          titlePadding: EdgeInsets.zero,
+          contentPadding: EdgeInsets.zero,
+          actionsPadding: EdgeInsets.all(ResponsiveHelper.spacing(context, 16)),
+          
+          // ✅ 헤더
+          title: Container(
+            padding: ResponsiveHelper.cardPadding(context),
+            decoration: BoxDecoration(
+              color: theme.primaryColor,
+              borderRadius: const BorderRadius.only(
+                topLeft: Radius.circular(24),
+                topRight: Radius.circular(24),
+              ),
+            ),
+            child: Row(
+              children: [
+                Icon(
+                  Icons.link,
+                  color: Colors.white,
+                  size: ResponsiveHelper.iconSize(context, 24),
+                ),
+                SizedBox(width: ResponsiveHelper.spacing(context, 12)),
+                Text(
+                  '그룹 연결',
+                  style: ResponsiveHelper.subtitleStyle(context).copyWith(
+                    color: Colors.white,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          
+          // ✅ 콘텐츠
           content: SingleChildScrollView(
+            padding: ResponsiveHelper.cardPadding(context),
             child: Column(
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(
-                  '다음 TO를 그룹에 연결합니다:\n\n'
-                  '📋 ${DateFormat('MM/dd (E)', 'ko_KR').format(to.date)} ${to.title}',
-                  style: ResponsiveHelper.bodyStyle(context),  // ⭐ 변경
-                ),
-                SizedBox(height: ResponsiveHelper.spacing(context, 20)),  // ⭐ 변경
-                
-                // 옵션 1: 기존 그룹에 연결
-                RadioListTile<String>(
-                  title: const Text('기존 그룹에 연결'),
-                  value: 'existing',
-                  groupValue: selectedOption,
-                  onChanged: availableGroups.isEmpty ? null : (value) {
-                    setState(() => selectedOption = value);
-                  },
-                  dense: true,
-                  contentPadding: EdgeInsets.zero,
-                ),
-                
-                if (selectedOption == 'existing') ...[
-                  SizedBox(height: ResponsiveHelper.spacing(context, 8)),  // ⭐ 변경
-                  if (availableGroups.isEmpty)
-                    Padding(
-                      padding: EdgeInsets.only(
-                        left: ResponsiveHelper.spacing(context, 16),  // ⭐ 변경
+                // 연결할 TO 정보
+                Container(
+                  padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 12)),
+                  decoration: BoxDecoration(
+                    color: AppColors.grey100,
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Row(
+                    children: [
+                      Icon(
+                        Icons.description_outlined,
+                        size: ResponsiveHelper.iconSize(context, 20),
+                        color: theme.primaryColor,
                       ),
-                      child: Text(
-                        '연결 가능한 그룹이 없습니다',
-                        style: ResponsiveHelper.smallStyle(  // ⭐ 변경
-                          context,
-                          color: Theme.of(context).textTheme.bodySmall?.color,
+                      SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+                      Expanded(
+                        child: Text(
+                          '${DateFormat('MM/dd (E)', 'ko_KR').format(to.date)} ${to.title}',
+                          style: ResponsiveHelper.bodyStyle(context).copyWith(
+                            fontWeight: FontWeight.w500,
+                          ),
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
                         ),
+                      ),
+                    ],
+                  ),
+                ),
+                
+                SizedBox(height: ResponsiveHelper.spacing(context, 20)),
+                
+                // ✅ 옵션 1: 기존 그룹에 연결
+                _buildOptionTile(
+                  context: context,
+                  title: '기존 그룹에 연결',
+                  icon: Icons.folder_open,
+                  isSelected: selectedOption == 'existing',
+                  isEnabled: availableGroups.isNotEmpty,
+                  onTap: availableGroups.isEmpty ? null : () {
+                    setState(() => selectedOption = 'existing');
+                  },
+                ),
+                
+                // 기존 그룹 선택 드롭다운 (항상 표시, 비선택 시 비활성화)
+                AnimatedOpacity(
+                  opacity: selectedOption == 'existing' ? 1.0 : 0.4,
+                  duration: const Duration(milliseconds: 200),
+                  child: IgnorePointer(
+                    ignoring: selectedOption != 'existing',
+                    child: Column(
+                      children: [
+                  SizedBox(height: ResponsiveHelper.spacing(context, 12)),
+                  if (availableGroups.isEmpty)
+                    Container(
+                      padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 12)),
+                      decoration: BoxDecoration(
+                        color: AppColors.warningBg,
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: Row(
+                        children: [
+                          Icon(
+                            Icons.info_outline,
+                            size: ResponsiveHelper.iconSize(context, 16),
+                            color: AppColors.warningDark,
+                          ),
+                          SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+                          Expanded(
+                            child: Text(
+                              '연결 가능한 그룹이 없습니다',
+                              style: ResponsiveHelper.smallStyle(context, color: AppColors.warningDark),
+                            ),
+                          ),
+                        ],
                       ),
                     )
                   else
-                    Padding(
-                      padding: EdgeInsets.only(
-                        left: ResponsiveHelper.spacing(context, 16),  // ⭐ 변경
-                      ),
-                      child: DropdownButtonFormField<String>(
-                        initialValue: selectedGroupId,
-                        decoration: const InputDecoration(
-                          labelText: '그룹 선택',
-                          border: OutlineInputBorder(),
-                          isDense: true,
+                    DropdownButtonFormField<String>(
+                      value: selectedGroupId,
+                      isExpanded: true,  // ✅ 전체 너비 사용
+                      decoration: InputDecoration(
+                        labelText: '그룹 선택',
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(12),
                         ),
-                        items: availableGroups.map((item) {
-                          final master = item.masterTO;
-                          return DropdownMenuItem(
-                            value: master.groupId,
-                            child: Text(
-                              '${master.groupName} (${master.businessName})',
-                              style: ResponsiveHelper.smallStyle(context),  // ⭐ 변경
-                            ),
-                          );
-                        }).toList(),
-                        onChanged: (value) {
-                          setState(() => selectedGroupId = value);
-                        },
+                        contentPadding: EdgeInsets.symmetric(
+                          horizontal: ResponsiveHelper.spacing(context, 12),
+                          vertical: ResponsiveHelper.spacing(context, 12),
+                        ),
                       ),
+                      items: availableGroups.map((item) {
+                        return DropdownMenuItem(
+                          value: item.id,
+                          child: Text(
+                            item.groupName,
+                            style: ResponsiveHelper.bodyStyle(context),
+                            overflow: TextOverflow.ellipsis,
+                            maxLines: 1,
+                          ),
+                        );
+                      }).toList(),
+                      onChanged: (value) {
+                        setState(() => selectedGroupId = value);
+                      },
                     ),
                 ],
-                
-                SizedBox(height: ResponsiveHelper.spacing(context, 16)),  // ⭐ 변경
-                
-                // 옵션 2: 새 그룹 생성
-                RadioListTile<String>(
-                  title: const Text('새 그룹 생성'),
-                  value: 'new',
-                  groupValue: selectedOption,
-                  onChanged: (value) {
-                    setState(() => selectedOption = value);
-                  },
-                  dense: true,
-                  contentPadding: EdgeInsets.zero,
+                    ),
+                  ),
                 ),
                 
-                if (selectedOption == 'new') ...[
-                  SizedBox(height: ResponsiveHelper.spacing(context, 8)),  // ⭐ 변경
-                  Padding(
-                    padding: EdgeInsets.only(
-                      left: ResponsiveHelper.spacing(context, 16),  // ⭐ 변경
-                    ),
+                SizedBox(height: ResponsiveHelper.spacing(context, 16)),
+                
+                // ✅ 옵션 2: 새 그룹 생성
+                _buildOptionTile(
+                  context: context,
+                  title: '새 그룹 생성',
+                  icon: Icons.create_new_folder,
+                  isSelected: selectedOption == 'new',
+                  isEnabled: true,
+                  onTap: () {
+                    setState(() => selectedOption = 'new');
+                  },
+                ),
+                
+                // 새 그룹명 입력 (항상 표시, 비선택 시 비활성화)
+                AnimatedOpacity(
+                  opacity: selectedOption == 'new' ? 1.0 : 0.4,
+                  duration: const Duration(milliseconds: 200),
+                  child: IgnorePointer(
+                    ignoring: selectedOption != 'new',
                     child: Column(
+                      children: [
+                  SizedBox(height: ResponsiveHelper.spacing(context, 12)),
+                  TextField(
+                    controller: newGroupNameController,
+                    decoration: InputDecoration(
+                      labelText: '새 그룹명',
+                      hintText: '예: 11월 1주차 모음',
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      prefixIcon: const Icon(Icons.edit),
+                      contentPadding: EdgeInsets.symmetric(
+                        horizontal: ResponsiveHelper.spacing(context, 12),
+                        vertical: ResponsiveHelper.spacing(context, 12),
+                      ),
+                    ),
+                  ),
+                  SizedBox(height: ResponsiveHelper.spacing(context, 12)),
+                  Container(
+                    padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 12)),
+                    decoration: BoxDecoration(
+                      color: theme.primaryColor.withOpacity(0.1),
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(
+                        color: theme.primaryColor.withOpacity(0.3),
+                      ),
+                    ),
+                    child: Row(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        TextField(
-                          controller: newGroupNameController,
-                          decoration: const InputDecoration(
-                            labelText: '새 그룹명',
-                            hintText: '예: 11월 1주차 모음',
-                            border: OutlineInputBorder(),
-                            isDense: true,
-                          ),
+                        Icon(
+                          Icons.info_outline,
+                          size: ResponsiveHelper.iconSize(context, 16),
+                          color: theme.primaryColor,
                         ),
-                        SizedBox(height: ResponsiveHelper.spacing(context, 12)),  // ⭐ 변경
-                        Container(
-                          padding: EdgeInsets.symmetric(
-                            horizontal: ResponsiveHelper.spacing(context, 12),  // ⭐ 변경
-                            vertical: ResponsiveHelper.spacing(context, 10),  // ⭐ 변경
-                          ),
-                          decoration: BoxDecoration(
-                            color: Theme.of(context).primaryColor.withOpacity(0.1),
-                            borderRadius: BorderRadius.circular(8),
-                            border: Border.all(
-                              color: Theme.of(context).primaryColor.withOpacity(0.3),
-                            ),
-                          ),
-                          child: Row(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Icon(
-                                Icons.info_outline, 
-                                size: ResponsiveHelper.iconSize(context, 16),  // ⭐ 변경
-                                color: Theme.of(context).primaryColor,
-                              ),
-                              SizedBox(width: ResponsiveHelper.spacing(context, 8)),  // ⭐ 변경
-                              Expanded(
-                                child: Text(
-                                  '이 TO가 새 그룹의 대표가 됩니다.\n나중에 다른 TO를 이 그룹에 추가할 수 있습니다.',
-                                  style: ResponsiveHelper.tinyStyle(  // ⭐ 변경
-                                    context,
-                                    color: Theme.of(context).textTheme.bodySmall?.color,
-                                  ).copyWith(height: 1.4),
-                                ),
-                              ),
-                            ],
+                        SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+                        Expanded(
+                          child: Text(
+                            '이 TO가 새 그룹의 대표가 됩니다.\n나중에 다른 TO를 이 그룹에 추가할 수 있습니다.',
+                            style: ResponsiveHelper.smallStyle(
+                              context,
+                              color: theme.primaryColor,
+                            ).copyWith(height: 1.4),
                           ),
                         ),
                       ],
                     ),
                   ),
                 ],
+                    ),
+                  ),
+                ),
               ],
             ),
           ),
+          
+          // ✅ 액션 버튼
           actions: [
             TextButton(
-              onPressed: () => Navigator.pop(context, false),
-              child: const Text('취소'),
+              onPressed: () => Navigator.pop(dialogContext, false),
+              child: Text(
+                '취소',
+                style: ResponsiveHelper.bodyStyle(context),
+              ),
             ),
             ElevatedButton(
               onPressed: () {
@@ -891,8 +980,19 @@ class TOListDialogs {
                   ToastHelper.showError('그룹명을 입력하세요');
                   return;
                 }
-                Navigator.pop(context, true);
+                Navigator.pop(dialogContext, true);
               },
+              style: ElevatedButton.styleFrom(
+                backgroundColor: theme.primaryColor,
+                foregroundColor: Colors.white,
+                padding: EdgeInsets.symmetric(
+                  horizontal: ResponsiveHelper.spacing(context, 24),
+                  vertical: ResponsiveHelper.spacing(context, 12),
+                ),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
+              ),
               child: const Text('연결'),
             ),
           ],
@@ -920,7 +1020,68 @@ class TOListDialogs {
         onChanged();
       }
     }
+    // ✅ dispose를 다음 프레임으로 지연 (다이얼로그 완전히 닫힌 후)
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      newGroupNameController.dispose();
+    });
+  }
+
+  /// 옵션 타일 빌더 (그룹 연결 다이얼로그용)
+  Widget _buildOptionTile({
+    required BuildContext context,
+    required String title,
+    required IconData icon,
+    required bool isSelected,
+    required bool isEnabled,
+    required VoidCallback? onTap,
+  }) {
+    final theme = Theme.of(context);
     
-    newGroupNameController.dispose();
+    return InkWell(
+      onTap: isEnabled ? onTap : null,
+      borderRadius: BorderRadius.circular(12),
+      child: Container(
+        padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 12)),
+        decoration: BoxDecoration(
+          color: isSelected 
+              ? theme.primaryColor.withOpacity(0.1) 
+              : (isEnabled ? Colors.transparent : AppColors.grey100),
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(
+            color: isSelected 
+                ? theme.primaryColor 
+                : (isEnabled ? AppColors.grey300 : AppColors.grey200),
+            width: isSelected ? 2 : 1,
+          ),
+        ),
+        child: Row(
+          children: [
+            Icon(
+              isSelected ? Icons.radio_button_checked : Icons.radio_button_unchecked,
+              color: isSelected 
+                  ? theme.primaryColor 
+                  : (isEnabled ? AppColors.grey500 : AppColors.grey400),
+              size: ResponsiveHelper.iconSize(context, 20),
+            ),
+            SizedBox(width: ResponsiveHelper.spacing(context, 12)),
+            Icon(
+              icon,
+              color: isSelected 
+                  ? theme.primaryColor 
+                  : (isEnabled ? AppColors.grey600 : AppColors.grey400),
+              size: ResponsiveHelper.iconSize(context, 20),
+            ),
+            SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+            Text(
+              title,
+              style: ResponsiveHelper.bodyStyle(context).copyWith(
+                fontWeight: isSelected ? FontWeight.w600 : FontWeight.normal,
+                color: isEnabled ? null : AppColors.grey400,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 }

@@ -79,17 +79,7 @@ class TOGroupCard extends StatefulWidget {
 class _TOGroupCardState extends State<TOGroupCard> with SingleTickerProviderStateMixin {
  @override
   Widget build(BuildContext context) {
-    // 🔍 디버깅: masterTO 접근 전 상태 확인
-    print('🔍 [DEBUG] TOGroupCard build 시작');
-    print('   isGrouped: ${widget.groupItem.isGrouped}');
-    print('   group: ${widget.groupItem.group != null}');
-    print('   singleTO: ${widget.groupItem.singleTO != null}');
-    print('   groupTOs.length: ${widget.groupItem.groupTOs.length}');
-    print('   isGroupDetailLoaded: ${widget.groupItem.isGroupDetailLoaded}');
-    
     final masterTO = widget.groupItem.masterTO;
-    print('   ✅ masterTO 접근 성공: ${masterTO.title}');
-    
     final theme = Theme.of(context);
     
     // ✅ targetTOs를 먼저 선언 (블록 밖에서도 사용 가능하도록)

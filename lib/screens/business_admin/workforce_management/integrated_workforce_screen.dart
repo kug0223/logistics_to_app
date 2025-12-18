@@ -487,36 +487,35 @@ class _IntegratedWorkforceScreenState extends State<IntegratedWorkforceScreen> {
     
     print('🔍 [DummyData] 선택된 사업장: $targetBusinessId');
     
-    final activeTOs = await _firestoreService.getActiveTOs();
-    
-    print('   진행중 TO: ${activeTOs.length}개');
-    
-    if (activeTOs.isEmpty) {
-      ToastHelper.showWarning('진행중인 TO가 없습니다.');
-      return;
-    }
-
-    final myTOs = activeTOs.where((to) => to.businessId == targetBusinessId).toList();
-    
-    print('   내 사업장 진행중 TO: ${myTOs.length}개');
-    
-    if (myTOs.isEmpty) {
-      ToastHelper.showWarning('내 사업장의 진행중인 TO가 없습니다.');
-      return;
-    }
-
     List<TOModel> allSelectableTOs = [];
     
-    for (var masterTO in myTOs) {
-      print('   📋 TO 체크: ${masterTO.title} (그룹: ${masterTO.isGrouped})');
-      
-      if (masterTO.isGrouped && masterTO.groupId != null) {
-        final groupTOs = await _firestoreService.getTOsByGroup(masterTO.groupId!);
-        print('      그룹 TO: ${groupTOs.length}개');
-        allSelectableTOs.addAll(groupTOs);
-      } else {
-        allSelectableTOs.add(masterTO);
-      }
+    // ✅ Step 1: groups 컬렉션에서 active 그룹 조회
+    final activeGroups = await _firestoreService.getActiveGroups(
+      businessId: targetBusinessId,
+    );
+    print('   active 그룹: ${activeGroups.length}개');
+    
+    // 각 그룹의 하위 TO들 가져오기
+    for (var group in activeGroups) {
+      final groupTOs = await _firestoreService.getTOsByGroup(group.id);
+      print('   📋 그룹 "${group.groupName}": ${groupTOs.length}개 TO');
+      allSelectableTOs.addAll(groupTOs);
+    }
+    
+    // ✅ Step 2: 단일 TO 조회 (groupId가 null인 것들)
+    final activeTOs = await _firestoreService.getActiveTOs();
+    final singleTOs = activeTOs.where((to) => 
+        to.groupId == null && 
+        to.businessId == targetBusinessId
+    ).toList();
+    print('   단일 TO: ${singleTOs.length}개');
+    allSelectableTOs.addAll(singleTOs);
+    
+    print('   🎯 총 선택 가능한 TO: ${allSelectableTOs.length}개');
+    
+    if (allSelectableTOs.isEmpty) {
+      ToastHelper.showWarning('선택 가능한 TO가 없습니다.');
+      return;
     }
 
     print('   🎯 선택 가능한 TO: ${allSelectableTOs.length}개');

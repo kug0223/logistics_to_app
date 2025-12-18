@@ -394,11 +394,13 @@ extension ApplicationFirestore on FirestoreService {
       // ═══════════════════════════════════════════════════════════
       // 3. 기존 지원서 확인 및 분기 처리
       // ═══════════════════════════════════════════════════════════
+      // ✅ 그룹 TO는 날짜별로 구분해서 중복 체크
       final existingAppQuery = await _firestore
           .collection('applications')
           .where('businessId', isEqualTo: businessId)
           .where('toTitle', isEqualTo: toTitle)
           .where('uid', isEqualTo: uid)
+          .where('workDate', isEqualTo: Timestamp.fromDate(workDate))  // ✅ 날짜 조건 추가!
           .where('selectedWorkType', isEqualTo: selectedWorkType)
           .where('startTime', isEqualTo: startTime)
           .where('endTime', isEqualTo: endTime)
@@ -539,21 +541,12 @@ extension ApplicationFirestore on FirestoreService {
           {'pendingCount': FieldValue.increment(1)},
         );
         
-        // 그룹 마스터 통계
-        if (groupId != null) {
-          final masterSnapshot = await _firestore
-              .collection('tos')
-              .where('groupId', isEqualTo: groupId)
-              .where('isGroupMaster', isEqualTo: true)
-              .limit(1)
-              .get();
-          
-          if (masterSnapshot.docs.isNotEmpty) {
-            batch.update(masterSnapshot.docs.first.reference, {
-              'groupTotalPending': FieldValue.increment(1),
-            });
-          }
-        }
+        // ✅ groups 컬렉션 통계 업데이트
+      if (groupId != null) {
+        batch.update(_firestore.collection('groups').doc(groupId), {
+          'totalPending': FieldValue.increment(1),
+        });
+      }
         
         await batch.commit();
         clearCache(toId: toId);
@@ -610,21 +603,13 @@ extension ApplicationFirestore on FirestoreService {
         {'pendingCount': FieldValue.increment(1)},
       );
 
-      // 그룹 마스터 통계
-      if (groupId != null) {
-        final masterSnapshot = await _firestore
-            .collection('tos')
-            .where('groupId', isEqualTo: groupId)
-            .where('isGroupMaster', isEqualTo: true)
-            .limit(1)
-            .get();
-        
-        if (masterSnapshot.docs.isNotEmpty) {
-          batch.update(masterSnapshot.docs.first.reference, {
-            'groupTotalPending': FieldValue.increment(1),
-          });
-        }
-      }
+      // ✅ groups 컬렉션 통계 업데이트
+            if (groupId != null) {
+              batch.update(_firestore.collection('groups').doc(groupId), {
+                'totalConfirmed': FieldValue.increment(1),
+                'totalPending': FieldValue.increment(-1),
+              });
+            }
 
       await batch.commit();
       clearCache(toId: toId);
@@ -977,20 +962,11 @@ extension ApplicationFirestore on FirestoreService {
           );
         }
 
-        // 4. 그룹 마스터 통계 Increment
+        // ✅ 4. groups 컬렉션 통계 Increment
         if (groupId != null) {
-          final masterSnapshot = await _firestore
-              .collection('tos')
-              .where('groupId', isEqualTo: groupId)
-              .where('isGroupMaster', isEqualTo: true)
-              .limit(1)
-              .get();
-
-          if (masterSnapshot.docs.isNotEmpty) {
-            batch.update(masterSnapshot.docs.first.reference, {
-              'groupTotalPending': FieldValue.increment(-1),
-            });
-          }
+          batch.update(_firestore.collection('groups').doc(groupId), {
+            'totalPending': FieldValue.increment(-1),
+          });
         }
       }
 
@@ -1115,21 +1091,12 @@ extension ApplicationFirestore on FirestoreService {
         );
       }
 
-      // 4. 그룹 마스터 통계 Increment
-      if (groupId != null) {
-        final masterSnapshot = await _firestore
-            .collection('tos')
-            .where('groupId', isEqualTo: groupId)
-            .where('isGroupMaster', isEqualTo: true)
-            .limit(1)
-            .get();
-
-        if (masterSnapshot.docs.isNotEmpty) {
-          batch.update(masterSnapshot.docs.first.reference, {
-            'groupTotalPending': FieldValue.increment(-1),
+      // ✅ 4. groups 컬렉션 통계 Increment
+        if (groupId != null) {
+          batch.update(_firestore.collection('groups').doc(groupId), {
+            'totalPending': FieldValue.increment(-1),
           });
         }
-      }
 
       await batch.commit();
       clearCache(toId: toId);
@@ -1282,20 +1249,11 @@ extension ApplicationFirestore on FirestoreService {
           );
         }
 
-        // 그룹 마스터 통계 Increment
+        // ✅ groups 컬렉션 통계 Increment
         if (groupId != null) {
-          final masterSnapshot = await _firestore
-              .collection('tos')
-              .where('groupId', isEqualTo: groupId)
-              .where('isGroupMaster', isEqualTo: true)
-              .limit(1)
-              .get();
-
-          if (masterSnapshot.docs.isNotEmpty) {
-            batch.update(masterSnapshot.docs.first.reference, {
-              'groupTotalConfirmed': FieldValue.increment(-1),
-            });
-          }
+          batch.update(_firestore.collection('groups').doc(groupId), {
+            'totalConfirmed': FieldValue.increment(-1),
+          });
         }
 
         await batch.commit();
@@ -1475,20 +1433,11 @@ extension ApplicationFirestore on FirestoreService {
                 );
               }
               
-              // 그룹 마스터 통계 감소
+              // ✅ groups 컬렉션 통계 감소
               if (groupId != null) {
-                final masterSnapshot = await _firestore
-                    .collection('tos')
-                    .where('groupId', isEqualTo: groupId)
-                    .where('isGroupMaster', isEqualTo: true)
-                    .limit(1)
-                    .get();
-                
-                if (masterSnapshot.docs.isNotEmpty) {
-                  batch.update(masterSnapshot.docs.first.reference, {
-                    'groupTotalConfirmed': FieldValue.increment(-1),
-                  });
-                }
+                batch.update(_firestore.collection('groups').doc(groupId), {
+                  'totalConfirmed': FieldValue.increment(-1),
+                });
               }
             } else if (previousStatus == 'PENDING') {
               // PENDING → REJECTED/CANCELED: totalPending 감소
@@ -1510,20 +1459,11 @@ extension ApplicationFirestore on FirestoreService {
                 );
               }
               
-              // 그룹 마스터 통계 감소
+              // ✅ groups 컬렉션 통계 감소
               if (groupId != null) {
-                final masterSnapshot = await _firestore
-                    .collection('tos')
-                    .where('groupId', isEqualTo: groupId)
-                    .where('isGroupMaster', isEqualTo: true)
-                    .limit(1)
-                    .get();
-                
-                if (masterSnapshot.docs.isNotEmpty) {
-                  batch.update(masterSnapshot.docs.first.reference, {
-                    'groupTotalPending': FieldValue.increment(-1),
-                  });
-                }
+                batch.update(_firestore.collection('groups').doc(groupId), {
+                  'totalPending': FieldValue.increment(-1),
+                });
               }
             }
             
@@ -1679,21 +1619,12 @@ extension ApplicationFirestore on FirestoreService {
         );
       }
       
-      // 4-4. 그룹 마스터 통계 Increment
+      // ✅ 4-4. groups 컬렉션 통계 Increment
       if (groupId != null) {
-        final masterSnapshot = await _firestore
-            .collection('tos')
-            .where('groupId', isEqualTo: groupId)
-            .where('isGroupMaster', isEqualTo: true)
-            .limit(1)
-            .get();
-        
-        if (masterSnapshot.docs.isNotEmpty) {
-          batch.update(masterSnapshot.docs.first.reference, {
-            'groupTotalConfirmed': FieldValue.increment(1),
-            'groupTotalPending': FieldValue.increment(-1),
-          });
-        }
+        batch.update(_firestore.collection('groups').doc(groupId), {
+          'totalConfirmed': FieldValue.increment(1),
+          'totalPending': FieldValue.increment(-1),
+        });
       }
       
       // 4-5. 충돌 지원 자동 취소 + TO 통계 감소
@@ -1785,21 +1716,12 @@ extension ApplicationFirestore on FirestoreService {
               );
             }
             
-            // 그룹 마스터 통계 감소
-            if (conflictGroupId != null) {
-              final conflictMasterSnapshot = await _firestore
-                  .collection('tos')
-                  .where('groupId', isEqualTo: conflictGroupId)
-                  .where('isGroupMaster', isEqualTo: true)
-                  .limit(1)
-                  .get();
-              
-              if (conflictMasterSnapshot.docs.isNotEmpty) {
-                statsBatch.update(conflictMasterSnapshot.docs.first.reference, {
-                  'groupTotalPending': FieldValue.increment(-1),
+            // ✅ groups 컬렉션 통계 감소
+              if (groupId != null) {
+                batch.update(_firestore.collection('groups').doc(groupId), {
+                  'totalConfirmed': FieldValue.increment(-1),
                 });
               }
-            }
             
             // 캐시 클리어
             clearCache(toId: conflictTODoc.id);
@@ -2150,11 +2072,11 @@ extension ApplicationFirestore on FirestoreService {
         );
       }
       
-      // 그룹 마스터 통계 한 번에 업데이트
-      if (masterRef != null && successCount > 0) {
-        batch.update(masterRef, {
-          'groupTotalConfirmed': FieldValue.increment(successCount),
-          'groupTotalPending': FieldValue.increment(-successCount),
+      // ✅ groups 컬렉션 통계 한 번에 업데이트
+      if (groupId != null && successCount > 0) {
+        batch.update(_firestore.collection('groups').doc(groupId), {
+          'totalConfirmed': FieldValue.increment(successCount),
+          'totalPending': FieldValue.increment(-successCount),
         });
       }
       

@@ -84,9 +84,14 @@ class MyApp extends StatelessWidget {
 }
 
 /// ✅ 인증 상태에 따라 화면 분기
-class AuthWrapper extends StatelessWidget {
+class AuthWrapper extends StatefulWidget {
   const AuthWrapper({super.key});
 
+  @override
+  State<AuthWrapper> createState() => _AuthWrapperState();
+}
+
+class _AuthWrapperState extends State<AuthWrapper> {
   @override
   Widget build(BuildContext context) {
     return Consumer<UserProvider>(
@@ -125,8 +130,12 @@ class AuthWrapper extends StatelessWidget {
           print('⚠️ currentUser가 null → LoginScreen');
           return const LoginScreen();
         }
-        WidgetsBinding.instance.addPostFrameCallback((_) {
-          context.read<ThemeProvider>().setRole(user.roleString);
+        
+        // ✅ 테마 설정 (빌드 완료 후 안전하게)
+        Future.microtask(() {
+          if (context.mounted) {
+            context.read<ThemeProvider>().setRole(user.roleString);
+          }
         });
 
         // 🎭 사용자 정보 출력
