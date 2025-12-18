@@ -302,58 +302,44 @@ class FirestoreService {
         }
       }
       
-      final snapshot = await _firestore
+      // ✅ Step 1: 단일 마감 TO (groupId == null)
+      final singleSnapshot = await _firestore
           .collection('tos')
           .where('status', whereIn: ['CLOSED', 'FULL', 'EXPIRED'])
+          .where('groupId', isNull: true)
           .orderBy('date', descending: true)
-          .limit(50)
+          .limit(10)
           .get();
 
-      final allTOs = snapshot.docs
+      final singleClosedTOs = singleSnapshot.docs
           .map((doc) => TOModel.fromMap(doc.data(), doc.id))
           .toList();
       
-      print('✅ [서버필터] 마감된 TO: ${allTOs.length}개 조회됨');
+      print('   📦 단일 마감 TO: ${singleClosedTOs.length}개');
+      
+      // ✅ Step 2: groups 컬렉션에서 마감 그룹 조회
+      final closedGroups = await getClosedGroups();
+      print('   📦 마감 그룹: ${closedGroups.length}개');
+      
+      // ✅ Step 3: 각 그룹을 대표 TOModel로 변환
+      final List<TOModel> groupRepresentativeTOs = closedGroups
+          .map((group) => TOModel.fromGroupModel(group))
+          .toList();
+      print('   📦 그룹 대표 TO: ${groupRepresentativeTOs.length}개');
+      
+      List<TOModel> closedTOs = [...singleClosedTOs, ...groupRepresentativeTOs];
+      
+      // 날짜순 정렬 (최신순)
+      closedTOs.sort((a, b) => b.date.compareTo(a.date));
+      
+      // 최근 5개만
+      final recentClosedTOs = closedTOs.take(5).toList();
 
-      final masterOrSingleTOs = allTOs.where((to) {
-        if (to.groupId != null) {
-          return to.isGroupMaster;
-        }
-        return true;
-      }).toList();
-
-      final recentClosedTOs = masterOrSingleTOs.take(5).toList();
-
-      // ✅ 그룹 마스터인 경우 하위 ACTIVE TO 있으면 제외 (status 불일치 보정)
-      final List<TOModel> verifiedClosedTOs = [];
-      for (var to in recentClosedTOs) {
-        if (to.isGroupMaster && to.groupId != null) {
-          // 그룹 내 ACTIVE TO 있는지 빠르게 체크
-          final activeCheck = await _firestore
-              .collection('tos')
-              .where('groupId', isEqualTo: to.groupId)
-              .where('status', isEqualTo: 'ACTIVE')
-              .limit(1)
-              .get();
-          
-          if (activeCheck.docs.isNotEmpty) {
-            // ACTIVE TO 있음 → 마스터 status 보정 후 마감 목록에서 제외
-            print('⚠️ [Status 보정] ${to.title} 마스터 → ACTIVE (하위 ACTIVE TO 존재)');
-            await _firestore.collection('tos').doc(to.id).update({
-              'status': 'ACTIVE',
-              'statusUpdatedAt': FieldValue.serverTimestamp(),
-            });
-            continue; // 마감 목록에서 제외
-          }
-        }
-        verifiedClosedTOs.add(to);
-      }
-
-      _closedTOsCache = verifiedClosedTOs;
+      _closedTOsCache = recentClosedTOs;
       _closedTOsCacheTime = DateTime.now();
       
-      print('✅ [최적화] 마감된 TO: ${verifiedClosedTOs.length}개 (서버 조회, ${recentClosedTOs.length - verifiedClosedTOs.length}개 보정됨)');
-      return verifiedClosedTOs;
+      print('✅ [최적화] 마감된 TO: ${recentClosedTOs.length}개 (서버 조회)');
+      return recentClosedTOs;
     } catch (e) {
       print('❌ 마감된 TO 조회 실패: $e');
       return [];

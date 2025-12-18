@@ -1974,7 +1974,6 @@ extension ApplicationFirestore on FirestoreService {
       String? toId;
       String? groupId;
       DocumentReference? toRef;
-      DocumentReference? masterRef;
       
       for (var appDoc in appDocs) {
         if (!appDoc.exists) continue;
@@ -1993,20 +1992,7 @@ extension ApplicationFirestore on FirestoreService {
             toRef = toSnapshot.docs.first.reference;
             toId = toSnapshot.docs.first.id;
             groupId = toSnapshot.docs.first.data()['groupId'] as String?;
-            
-            // 마스터 TO 찾기
-            if (groupId != null) {
-              final masterSnapshot = await _firestore
-                  .collection('tos')
-                  .where('groupId', isEqualTo: groupId)
-                  .where('isGroupMaster', isEqualTo: true)
-                  .limit(1)
-                  .get();
-              
-              if (masterSnapshot.docs.isNotEmpty) {
-                masterRef = masterSnapshot.docs.first.reference;
-              }
-            }
+
           }
         }
         break;
@@ -2113,8 +2099,7 @@ extension ApplicationFirestore on FirestoreService {
       String? toId;
       String? groupId;
       DocumentReference? toRef;
-      DocumentReference? masterRef;
-      
+    
       for (var appDoc in appDocs) {
         if (!appDoc.exists) continue;
         final appData = appDoc.data()!;
@@ -2132,19 +2117,7 @@ extension ApplicationFirestore on FirestoreService {
             toRef = toSnapshot.docs.first.reference;
             toId = toSnapshot.docs.first.id;
             groupId = toSnapshot.docs.first.data()['groupId'] as String?;
-            
-            if (groupId != null) {
-              final masterSnapshot = await _firestore
-                  .collection('tos')
-                  .where('groupId', isEqualTo: groupId)
-                  .where('isGroupMaster', isEqualTo: true)
-                  .limit(1)
-                  .get();
-              
-              if (masterSnapshot.docs.isNotEmpty) {
-                masterRef = masterSnapshot.docs.first.reference;
-              }
-            }
+
           }
         }
         break;
@@ -2221,9 +2194,10 @@ extension ApplicationFirestore on FirestoreService {
         );
       }
       
-      if (masterRef != null && pendingRejectCount > 0) {
-        batch.update(masterRef, {
-          'groupTotalPending': FieldValue.increment(-pendingRejectCount),
+      // ✅ groups 컬렉션 통계 (PENDING 거절)
+      if (groupId != null && pendingRejectCount > 0) {
+        batch.update(_firestore.collection('groups').doc(groupId), {
+          'totalPending': FieldValue.increment(-pendingRejectCount),
         });
       }
       
@@ -2247,9 +2221,10 @@ extension ApplicationFirestore on FirestoreService {
         );
       }
       
-      if (masterRef != null && confirmedRejectCount > 0) {
-        batch.update(masterRef, {
-          'groupTotalConfirmed': FieldValue.increment(-confirmedRejectCount),
+      // ✅ groups 컬렉션 통계 (CONFIRMED 거절)
+      if (groupId != null && confirmedRejectCount > 0) {
+        batch.update(_firestore.collection('groups').doc(groupId), {
+          'totalConfirmed': FieldValue.increment(-confirmedRejectCount),
         });
       }
       
