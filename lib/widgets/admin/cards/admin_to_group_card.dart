@@ -155,10 +155,10 @@ class _TOGroupCardState extends State<TOGroupCard> with SingleTickerProviderStat
           });
     // 🔍 디버그 로그
     print('🔍 [TOGroupCard] allClosed 계산 결과');
-    print('   masterTO.title: ${masterTO.title}');
-    print('   masterTO.status: ${masterTO.status}');
-    print('   masterTO.isManualClosed: ${masterTO.isManualClosed}');
-    print('   masterTO.isGroupMaster: ${masterTO.isGroupMaster}');
+    print('   groupItem.title: ${widget.groupItem.title}');
+    print('   groupItem.status: ${widget.groupItem.status}');
+    print('   groupItem.isManualClosed: ${widget.groupItem.isManualClosed}');
+    print('   groupItem.isGrouped: ${widget.groupItem.isGrouped}');
     print('   targetTOs.length: ${targetTOs.length}');
     print('   allClosed: $allClosed');
     for (var i = 0; i < targetTOs.length; i++) {
@@ -869,8 +869,6 @@ class _TOGroupCardState extends State<TOGroupCard> with SingleTickerProviderStat
 
   /// 단일 TO 메뉴
   Widget _buildSingleTOMenu(BuildContext context) {
-    final masterTO = widget.groupItem.masterTO;
-
     return PopupMenuButton<String>(
       icon: Icon(
         Icons.more_vert,
@@ -926,7 +924,7 @@ class _TOGroupCardState extends State<TOGroupCard> with SingleTickerProviderStat
             ],
           ),
         ),
-        if (masterTO.isShortTerm)
+        if (!widget.groupItem.isLongTerm)
           PopupMenuItem(
             value: 'link',
             child: Row(
@@ -975,8 +973,6 @@ class _TOGroupCardState extends State<TOGroupCard> with SingleTickerProviderStat
 
   /// 그룹 TO 메뉴
   Widget _buildGroupTOMenu(BuildContext context) {
-    final masterTO = widget.groupItem.masterTO;
-
     return PopupMenuButton<String>(
       icon: Icon(
         Icons.more_vert,

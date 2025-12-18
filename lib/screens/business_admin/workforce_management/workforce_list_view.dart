@@ -91,7 +91,7 @@ class _WorkforceListViewState extends State<WorkforceListView> {
 
       // 사업장 목록 추출
       final businessSet = groupItems
-          .map((TOGroupItem g) => g.masterTO.businessName)
+          .map((TOGroupItem g) => g.businessName)
           .where((String name) => name.isNotEmpty)
           .toSet();
       final businessList = businessSet.toList()..sort();
