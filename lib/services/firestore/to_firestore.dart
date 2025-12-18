@@ -428,7 +428,8 @@ extension TOFirestore on FirestoreService {
   // ✨ Lazy Loading 메서드 (성능 최적화)
   // ═══════════════════════════════════════════════════════════
 
-  /// 1단계: 겉 카드용 TO 목록 로드 (최적화 - 추가 쿼리 없음!)
+  /// 1단계: 겉 카드용 TO 목록 로드
+  /// 🔄 리팩토링: groups 컬렉션 + 단일 TO 조회
   Future<List<TOGroupItem>> getTOGroupItemsLight({
     bool activeOnly = true,
     bool closedOnly = false,
@@ -436,123 +437,60 @@ extension TOFirestore on FirestoreService {
     try {
       print('🔍 [Lazy] 겉 카드용 TO 목록 로드 시작...');
       
-      List<TOModel> masterTOs;
+      List<TOGroupItem> groupItems = [];
+      
+      // ═══════════════════════════════════════════════════════════
+      // 🆕 Step 1: groups 컬렉션에서 그룹 정보 조회
+      // ═══════════════════════════════════════════════════════════
+      List<GroupModel> groups = [];
+      
       if (closedOnly) {
-        masterTOs = await getClosedTOs();
+        groups = await getClosedGroups();
       } else if (activeOnly) {
-        masterTOs = await getActiveTOs();
+        groups = await getActiveGroups();
+      } else {
+        final active = await getActiveGroups();
+        final closed = await getClosedGroups();
+        groups = [...active, ...closed];
+      }
+      
+      print('   📦 groups 컬렉션: ${groups.length}개 조회');
+      
+      // 그룹 → TOGroupItem 변환
+      for (var group in groups) {
+        groupItems.add(TOGroupItem(
+          group: group,
+          singleTO: null,
+          groupTOs: null,  // Lazy Loading
+          isGroupDetailLoaded: false,
+        ));
+      }
+      
+      // ═══════════════════════════════════════════════════════════
+      // 🆕 Step 2: 단일 TO 조회 (groupId가 null인 것들)
+      // ═══════════════════════════════════════════════════════════
+      List<TOModel> singleTOs = [];
+      
+      if (closedOnly) {
+        final allClosed = await getClosedTOs();
+        singleTOs = allClosed.where((to) => to.groupId == null).toList();
+      } else if (activeOnly) {
+        final allActive = await getActiveTOs();
+        singleTOs = allActive.where((to) => to.groupId == null).toList();
       } else {
         final active = await getActiveTOs();
         final closed = await getClosedTOs();
-        masterTOs = [...active, ...closed];
+        final all = [...active, ...closed];
+        singleTOs = all.where((to) => to.groupId == null).toList();
       }
       
-      List<TOGroupItem> groupItems = [];
+      print('   📦 단일 TO: ${singleTOs.length}개 조회');
       
-      // ✨ 그룹 TO의 경우 전체 통계 계산을 위해 그룹별로 묶기
-      Map<String, List<TOModel>> groupMap = {};
-      List<TOModel> singleTOs = [];
-      
-      for (var to in masterTOs) {
-        if (to.isGrouped && to.groupId != null) {
-          // 그룹 마스터만 처리 (중복 방지)
-          if (to.isGroupMaster) {
-            groupMap[to.groupId!] = [to];  // ✨ 마스터 TO 임시 저장
-          }
-        } else {
-          singleTOs.add(to);
-        }
-      }
-      
-      // ✨ 그룹 TO 처리 (마스터 통계 우선 사용, 없으면 Fallback)
-      List<String> groupIdsNeedingFetch = [];  // 통계 없는 그룹만 조회
-      
-      for (var entry in groupMap.entries) {
-        final groupId = entry.key;
-        final masterTO = entry.value.first;  // 임시 저장된 마스터 TO
-        
-        // ✨ 마스터에 그룹 통계가 있으면 바로 사용 (추가 쿼리 없음!)
-        if (masterTO.groupTotalRequired != null) {
-          groupItems.add(TOGroupItem(
-            masterTO: masterTO,
-            groupTOs: [
-              TOItem(
-                to: masterTO,
-                workDetails: null,
-                confirmedCount: masterTO.groupTotalConfirmed ?? 0,
-                pendingCount: masterTO.groupTotalPending ?? 0,
-                totalRequired: masterTO.groupTotalRequired ?? 0,
-                isWorkDetailLoaded: false,
-              ),
-            ],
-            isGrouped: true,
-            isGroupDetailLoaded: false,
-          ));
-          print('   ✅ [Lazy] 그룹 $groupId: 마스터 통계 사용');
-        } else {
-          // 통계 없으면 Fallback 목록에 추가
-          groupIdsNeedingFetch.add(groupId);
-        }
-      }
-      
-      // ✨ Fallback: 통계 없는 그룹만 병렬 조회
-      if (groupIdsNeedingFetch.isNotEmpty) {
-        print('   ⚠️ [Lazy] ${groupIdsNeedingFetch.length}개 그룹 Fallback 조회...');
-        
-        final groupResults = await Future.wait(
-          groupIdsNeedingFetch.map((groupId) => getTOsByGroup(groupId))
-        );
-        
-        for (int i = 0; i < groupIdsNeedingFetch.length; i++) {
-          final groupId = groupIdsNeedingFetch[i];
-          final groupTOs = groupResults[i];
-          
-          if (groupTOs.isEmpty) continue;
-          
-          // 마스터 TO 찾기
-          final masterTO = groupTOs.firstWhere(
-            (to) => to.isGroupMaster,
-            orElse: () => groupTOs.first,
-          );
-          
-          // 그룹 전체 통계 합산
-          int totalRequired = 0;
-          int totalConfirmed = 0;
-          int totalPending = 0;
-          
-          for (var to in groupTOs) {
-            totalRequired += to.totalRequired;
-            totalConfirmed += to.totalConfirmed;
-            totalPending += to.totalPending;
-          }
-          
-          groupItems.add(TOGroupItem(
-            masterTO: masterTO,
-            groupTOs: [
-              TOItem(
-                to: masterTO,
-                workDetails: null,
-                confirmedCount: totalConfirmed,
-                pendingCount: totalPending,
-                totalRequired: totalRequired,
-                isWorkDetailLoaded: false,
-              ),
-            ],
-            isGrouped: true,
-            isGroupDetailLoaded: false,
-          ));
-          
-          // ⚠️ Fallback 발생 시 마스터 통계 자동 업데이트 (백그라운드)
-          _updateGroupMasterStats(groupId).catchError((e) {
-            print('   ⚠️ 마스터 통계 자동 업데이트 실패: $e');
-          });
-        }
-      }
-      
-      // 단일 TO 처리 (TO 문서의 값 직접 사용)
+      // 단일 TO → TOGroupItem 변환
       for (var to in singleTOs) {
         groupItems.add(TOGroupItem(
-          masterTO: to,
+          group: null,
+          singleTO: to,
           groupTOs: [
             TOItem(
               to: to,
@@ -563,12 +501,16 @@ extension TOFirestore on FirestoreService {
               isWorkDetailLoaded: false,
             ),
           ],
-          isGrouped: false,
-          isGroupDetailLoaded: true,
+          isGroupDetailLoaded: true,  // 단일 TO는 상세 로드 불필요
         ));
       }
       
-      print('✅ [Lazy] 겉 카드 로드 완료: ${groupItems.length}개');
+      // ═══════════════════════════════════════════════════════════
+      // 🆕 Step 3: 정렬 (날짜 기준)
+      // ═══════════════════════════════════════════════════════════
+      groupItems.sort((a, b) => a.startDate.compareTo(b.startDate));
+      
+      print('✅ [Lazy] 겉 카드 로드 완료: ${groupItems.length}개 (그룹: ${groups.length}, 단일: ${singleTOs.length})');
       return groupItems;
     } catch (e) {
       print('❌ [Lazy] 겉 카드 로드 실패: $e');

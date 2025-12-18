@@ -39,6 +39,7 @@ extension TOGroupFirestore on FirestoreService {
   }
 
   /// 그룹 TO 일괄 생성 (날짜 범위)
+  /// 🔄 리팩토링: groups 컬렉션 먼저 생성 후 개별 TO 생성
   Future<bool> createTOGroup({
     required String businessId,
     required String businessName,
@@ -54,9 +55,6 @@ extension TOGroupFirestore on FirestoreService {
     try {
       print('🔨 [FirestoreService] 그룹 TO 생성 시작...');
       print('   기간: ${startDate.toString().split(' ')[0]} ~ ${endDate.toString().split(' ')[0]}');
-      
-      final groupId = generateGroupId();
-      print('   생성된 그룹 ID: $groupId');
       
       // 시작일~종료일 사이의 모든 날짜 계산
       List<DateTime> dates = [];
@@ -74,6 +72,7 @@ extension TOGroupFirestore on FirestoreService {
       for (var work in workDetails) {
         totalRequired += (work['requiredCount'] as int?) ?? 0;
       }
+      
       // ✅ 사업장 주소 정보 조회
       String? businessAddress;
       String? businessCity;
@@ -88,6 +87,7 @@ extension TOGroupFirestore on FirestoreService {
       } catch (e) {
         print('⚠️ 사업장 주소 조회 실패: $e');
       }
+      
       // ✅ 급여 정보 계산
       final wages = workDetails.map((d) => d['wage'] as int).toList();
       final minWage = wages.isNotEmpty ? wages.reduce((a, b) => a < b ? a : b) : 0;
@@ -95,7 +95,38 @@ extension TOGroupFirestore on FirestoreService {
       final wageType = workDetails.isNotEmpty ? (workDetails.first['wageType'] ?? 'hourly') : 'hourly';
       final workDetailCount = workDetails.length;
 
-      // 각 날짜별 TO 생성
+      // ═══════════════════════════════════════════════════════════
+      // 🆕 Step 1: groups 컬렉션에 그룹 문서 먼저 생성
+      // ═══════════════════════════════════════════════════════════
+      final groupId = await createGroup(
+        groupName: groupName,
+        businessId: businessId,
+        businessName: businessName,
+        businessAddress: businessAddress,
+        businessCity: businessCity,
+        businessDistrict: businessDistrict,
+        title: title,
+        description: description,
+        startDate: startDate,
+        endDate: endDate,
+        totalRequired: totalRequired * dates.length,  // 전체 일수 * 일별 필요인원
+        minWage: minWage,
+        maxWage: maxWage,
+        wageType: wageType,
+        workDetailCount: workDetailCount,
+        creatorUID: creatorUID,
+      );
+      
+      if (groupId == null) {
+        print('❌ 그룹 생성 실패');
+        return false;
+      }
+      
+      print('   ✅ groups 컬렉션 그룹 생성 완료: $groupId');
+
+      // ═══════════════════════════════════════════════════════════
+      // 🆕 Step 2: 각 날짜별 TO 생성 (isGroupMaster 제거)
+      // ═══════════════════════════════════════════════════════════
       for (int i = 0; i < dates.length; i++) {
         final toData = {
           'businessId': businessId,
@@ -107,7 +138,8 @@ extension TOGroupFirestore on FirestoreService {
           'groupName': groupName,
           'startDate': Timestamp.fromDate(startDate),
           'endDate': Timestamp.fromDate(endDate),
-          'isGroupMaster': i == 0,
+          // 🔄 isGroupMaster 제거 - groups 컬렉션으로 대체
+          'isGroupMaster': false,  // 하위 호환성을 위해 false로 유지
           'title': title,
           'date': Timestamp.fromDate(dates[i]),
           'startTime': workDetails.isNotEmpty ? workDetails[0]['startTime'] ?? '' : '',
@@ -153,6 +185,12 @@ extension TOGroupFirestore on FirestoreService {
           });
         }
       }
+      
+      // ═══════════════════════════════════════════════════════════
+      // 🆕 Step 3: 그룹 통계 동기화
+      // ═══════════════════════════════════════════════════════════
+      await syncGroupStats(groupId);
+      await syncGroupStatus(groupId);
       
       print('✅ [FirestoreService] 그룹 TO 생성 완료: ${dates.length}개');
       //ToastHelper.showSuccess('${dates.length}개의 TO가 생성되었습니다!');
@@ -415,43 +453,6 @@ extension TOGroupFirestore on FirestoreService {
     }
   }
 
-  /// 그룹명 일괄 수정
-  Future<bool> updateGroupName(String groupId, String newGroupName) async {
-    try {
-      print('🔧 [FirestoreService] 그룹명 수정 시작...');
-      print('   그룹 ID: $groupId');
-      print('   새 그룹명: $newGroupName');
-
-      // 같은 groupId를 가진 모든 TO 조회
-      final snapshot = await _firestore
-          .collection('tos')
-          .where('groupId', isEqualTo: groupId)
-          .get();
-
-      if (snapshot.docs.isEmpty) {
-        ToastHelper.showError('그룹을 찾을 수 없습니다.');
-        return false;
-      }
-
-      // Batch 업데이트
-      final batch = _firestore.batch();
-      
-      for (var doc in snapshot.docs) {
-        batch.update(doc.reference, {'groupName': newGroupName});
-      }
-
-      await batch.commit();
-
-      print('✅ [FirestoreService] 그룹명 수정 완료: ${snapshot.docs.length}개 TO 업데이트');
-      ToastHelper.showSuccess('그룹명이 수정되었습니다.');
-      return true;
-    } catch (e) {
-      print('❌ [FirestoreService] 그룹명 수정 실패: $e');
-      ToastHelper.showError('그룹명 수정에 실패했습니다.');
-      return false;
-    }
-  }
-
   /// 그룹 전체 삭제
   Future<bool> deleteGroupTOs(String groupId) async {
     try {
@@ -628,34 +629,6 @@ extension TOGroupFirestore on FirestoreService {
       print('❌ TO 그룹 해제 실패: $e');
       ToastHelper.showError('그룹 해제에 실패했습니다.');
       return false;
-    }
-  }
-
-  /// 그룹 날짜 범위 재계산 (내부 헬퍼 함수)
-  Future<void> _updateGroupDateRange(String groupId) async {
-    try {
-      final groupTOs = await getTOsByGroup(groupId);
-      if (groupTOs.isEmpty) return;
-      
-      // 최소/최대 날짜 계산
-      DateTime minDate = groupTOs.first.date;
-      DateTime maxDate = groupTOs.first.date;
-      
-      for (var to in groupTOs) {
-        if (to.date.isBefore(minDate)) minDate = to.date;
-        if (to.date.isAfter(maxDate)) maxDate = to.date;
-      }
-      
-      // 대표 TO 업데이트
-      final masterTO = groupTOs.firstWhere((to) => to.isGroupMaster);
-      await _firestore.collection('tos').doc(masterTO.id).update({
-        'startDate': Timestamp.fromDate(minDate),
-        'endDate': Timestamp.fromDate(maxDate),
-      });
-      
-      print('✅ 그룹 날짜 범위 업데이트: $minDate ~ $maxDate');
-    } catch (e) {
-      print('❌ 그룹 날짜 범위 업데이트 실패: $e');
     }
   }
 
