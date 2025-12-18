@@ -26,6 +26,21 @@ extension AttendanceFirestore on FirestoreService {
       print('   applicationId: $applicationId');
       print('   workDate: $workDate');
       
+      // 🔥 0. 지원서 상태 확인 (CONFIRMED만 출근 가능)
+      final appDoc = await _firestore
+          .collection('applications')
+          .doc(applicationId)
+          .get();
+      
+      if (!appDoc.exists) {
+        throw Exception('지원서를 찾을 수 없습니다.');
+      }
+      
+      final appStatus = appDoc.data()?['status'] as String?;
+      if (appStatus != 'CONFIRMED') {
+        throw Exception('확정된 근무만 출퇴근 체크가 가능합니다. (현재 상태: $appStatus)');
+      }
+      
       // 1. 오늘 이미 출근했는지 확인
       final todayStart = DateTime(workDate.year, workDate.month, workDate.day);
       final todayEnd = todayStart.add(const Duration(days: 1));

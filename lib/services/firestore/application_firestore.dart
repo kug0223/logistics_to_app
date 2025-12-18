@@ -1637,6 +1637,15 @@ extension ApplicationFirestore on FirestoreService {
             'conflictingAppId': applicationId,
             'conflictingBusiness': app.businessName,
             'conflictingTime': '${app.startTime}~${app.endTime}',
+            // 🔥 statusHistory 추가
+            'statusHistory': FieldValue.arrayUnion([{
+              'status': 'AUTO_CANCELED',
+              'at': Timestamp.now(),
+              'by': 'SYSTEM',
+              'action': 'AUTO_CANCEL',
+              'reason': 'SCHEDULE_CONFLICT',
+              'conflictingAppId': applicationId,
+            }]),
           },
         );
       }
@@ -1715,12 +1724,12 @@ extension ApplicationFirestore on FirestoreService {
               );
             }
             
-            // ✅ groups 컬렉션 통계 감소
-              if (groupId != null) {
-                batch.update(_firestore.collection('groups').doc(groupId), {
-                  'totalConfirmed': FieldValue.increment(-1),
-                });
-              }
+            // ✅ groups 컬렉션 통계 감소 (PENDING → AUTO_CANCELED)
+            if (conflictGroupId != null) {
+              statsBatch.update(_firestore.collection('groups').doc(conflictGroupId), {
+                'totalPending': FieldValue.increment(-1),
+              });
+            }
             
             // 캐시 클리어
             clearCache(toId: conflictTODoc.id);

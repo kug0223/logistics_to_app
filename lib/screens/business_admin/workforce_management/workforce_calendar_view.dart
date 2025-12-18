@@ -789,16 +789,16 @@ class _WorkforceCalendarViewState extends State<WorkforceCalendarView> {
             // 그룹 마스터 찾기
             for (var groupItem in _allGroupItems) {
               if (groupItem.id == groupId) {
-                // 마스터 TO 다시 조회
-                final masterDoc = await _firestoreService.getTO(groupItem.masterTO.id);
-                if (masterDoc != null && groupItem.groupTOs.isNotEmpty) {
+                // ✅ groups 컬렉션에서 최신 통계 조회
+                final groupDoc = await _firestoreService.getGroup(groupId);
+                if (groupDoc != null && groupItem.groupTOs.isNotEmpty) {
                   groupItem.groupTOs.first.updateOuterStats(
-                    confirmed: masterDoc.groupTotalConfirmed ?? masterDoc.totalConfirmed,
-                    pending: masterDoc.groupTotalPending ?? masterDoc.totalPending,
-                    required: masterDoc.groupTotalRequired ?? masterDoc.totalRequired,
+                    confirmed: groupDoc.totalConfirmed,
+                    pending: groupDoc.totalPending,
+                    required: groupDoc.totalRequired,
                   );
                   updatedGroupIds.add(groupId);
-                  print('✅ 그룹 마스터 ${groupItem.masterTO.id} 통계 갱신: 대기=${masterDoc.groupTotalPending}');
+                  print('✅ 그룹 $groupId 통계 갱신 (groups 컬렉션): 대기=${groupDoc.totalPending}');
                 }
                 break;
               }
