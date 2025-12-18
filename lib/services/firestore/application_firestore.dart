@@ -1204,75 +1204,57 @@ extension ApplicationFirestore on FirestoreService {
         }
       }
 
-      // 4. TO 찾기 및 통계 Increment
-      final businessId = appData['businessId'];
-      final toTitle = appData['toTitle'];
-      final workDate = appData['workDate'] as Timestamp;
+      // 4. 🔥 toId로 직접 TO 찾기 (단순하고 확실함!)
+      final toId = appData['toId'] as String?;
       final workDetailId = appData['workDetailId'] as String?;
-
-      // 🔥 장기공고 여부 확인 (type 필드 또는 workDays로 판단)
-      final workDaysList = appData['workDays'] as List?;
-      final isLongTerm = appData['type'] == 'long_term' ||
-                         (workDaysList != null && workDaysList.isNotEmpty);
+      final groupId = appData['groupId'] as String?;
       
-      QuerySnapshot toSnapshot;
-      if (isLongTerm) {
-        // 장기공고: date 대신 isLongTerm + title로 검색
-        toSnapshot = await _firestore
-            .collection('tos')
-            .where('businessId', isEqualTo: businessId)
-            .where('title', isEqualTo: toTitle)
-            .where('isLongTerm', isEqualTo: true)
-            .limit(1)
-            .get();
-        print('🔍 [확정취소] 장기공고 TO 검색: ${toSnapshot.docs.length}건');
-      } else {
-        // 단기공고: 기존 방식
-        toSnapshot = await _firestore
-            .collection('tos')
-            .where('businessId', isEqualTo: businessId)
-            .where('title', isEqualTo: toTitle)
-            .where('date', isEqualTo: workDate)
-            .limit(1)
-            .get();
-        print('🔍 [확정취소] 단기공고 TO 검색: ${toSnapshot.docs.length}건');
-      }
+      print('🔍 [확정취소] toId: $toId, workDetailId: $workDetailId, groupId: $groupId');
 
-      if (toSnapshot.docs.isNotEmpty) {
-        final toDoc = toSnapshot.docs.first;
-        final toId = toDoc.id;
-        final toData = toDoc.data() as Map<String, dynamic>;  // 🔥 캐스팅 추가
-        final groupId = toData['groupId'] as String?;
+      if (toId != null && toId.isNotEmpty) {
+        final toDoc = await _firestore.collection('tos').doc(toId).get();
+        
+        if (toDoc.exists) {
+          print('✅ [확정취소] TO 찾음: $toId');
 
-        // TO 통계 Increment (CONFIRMED → CANCELED)
-        batch.update(toDoc.reference, {
-          'totalConfirmed': FieldValue.increment(-1),
-        });
-
-        // WorkDetail 통계 Increment
-        if (workDetailId != null && workDetailId.isNotEmpty) {
-          batch.update(
-            _firestore
-                .collection('tos')
-                .doc(toId)
-                .collection('workDetails')
-                .doc(workDetailId),
-            {
-              'currentCount': FieldValue.increment(-1),
-            },
-          );
-        }
-
-        // ✅ groups 컬렉션 통계 Increment
-        if (groupId != null) {
-          batch.update(_firestore.collection('groups').doc(groupId), {
+          // TO 통계 Increment (CONFIRMED → CANCELED)
+          batch.update(toDoc.reference, {
             'totalConfirmed': FieldValue.increment(-1),
           });
-        }
 
-        await batch.commit();
-        clearCache(toId: toId);
+          // WorkDetail 통계 Increment
+          if (workDetailId != null && workDetailId.isNotEmpty) {
+            batch.update(
+              _firestore
+                  .collection('tos')
+                  .doc(toId)
+                  .collection('workDetails')
+                  .doc(workDetailId),
+              {
+                'currentCount': FieldValue.increment(-1),
+              },
+            );
+            print('✅ [확정취소] WorkDetail 통계 감소: $workDetailId');
+          } else {
+            print('⚠️ [확정취소] workDetailId 없음 - WorkDetail 통계 미업데이트');
+          }
+
+          // ✅ groups 컬렉션 통계 Increment
+          if (groupId != null && groupId.isNotEmpty) {
+            batch.update(_firestore.collection('groups').doc(groupId), {
+              'totalConfirmed': FieldValue.increment(-1),
+            });
+            print('✅ [확정취소] groups 통계 감소: $groupId');
+          }
+
+          await batch.commit();
+          clearCache(toId: toId);
+        } else {
+          print('⚠️ [확정취소] TO 문서 없음: $toId');
+          await batch.commit();
+        }
       } else {
+        print('⚠️ [확정취소] toId 없음 - 지원서만 취소');
         await batch.commit();
       }
       

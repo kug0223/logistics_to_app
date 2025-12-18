@@ -554,6 +554,10 @@ extension WorkDetailFirestore on FirestoreService {
       
       clearCache(toId: toId);
       print('✅ WorkDetail 마감시간 재계산 완료: ${workDetailsSnapshot.docs.length}개');
+      
+      // 🔥 TO status도 재계산
+      await updateTOStatus(toId);
+      
       return true;
     } catch (e) {
       print('❌ WorkDetail 마감시간 재계산 실패: $e');
@@ -591,6 +595,10 @@ extension WorkDetailFirestore on FirestoreService {
       
       clearCache(toId: toId);
       print('✅ WorkDetails 마감 상태 초기화 완료: ${workDetailsSnapshot.docs.length}개');
+      
+      // 🔥 TO status도 재계산 (열린 WorkDetail 있으면 ACTIVE로)
+      await updateTOStatus(toId);
+      
       return true;
     } catch (e) {
       print('❌ WorkDetails 마감 상태 초기화 실패: $e');
