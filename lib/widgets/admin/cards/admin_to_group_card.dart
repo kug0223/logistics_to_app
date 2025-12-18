@@ -82,17 +82,24 @@ class _TOGroupCardState extends State<TOGroupCard> with SingleTickerProviderStat
     final masterTO = widget.groupItem.masterTO;
     final theme = Theme.of(context);
     
-    // 전체 통계 계산 (캘린더 뷰 + 그룹 카드일 때만 선택된 날짜 필터링)
-    int totalConfirmed = 0;
-    int totalPending = 0;
-    int totalRequired = 0;
-    
+    // ✅ targetTOs를 먼저 선언 (블록 밖에서도 사용 가능하도록)
     final targetTOs = (widget.selectedDate != null && widget.groupItem.isGrouped)
         ? widget.groupItem.groupTOs.where((toItem) => 
             DateUtils.isSameDay(toItem.to.date, widget.selectedDate!)).toList()
         : widget.groupItem.groupTOs;
     
-    for (var toItem in targetTOs) {
+    // 전체 통계 계산
+    int totalConfirmed = 0;
+    int totalPending = 0;
+    int totalRequired = 0;
+    
+    // ✅ 그룹인데 groupTOs가 아직 로드 안 됐으면 groupItem에서 통계 사용
+    if (widget.groupItem.isGrouped && targetTOs.isEmpty) {
+      totalConfirmed = widget.groupItem.totalConfirmed;
+      totalPending = widget.groupItem.totalPending;
+      totalRequired = widget.groupItem.totalRequired;
+    } else {
+      for (var toItem in targetTOs) {
       // ✅ workDetails 로드됐으면 각 업무별로 workDetailStats에서 합산
       if (toItem.isWorkDetailLoaded && toItem.workDetails.isNotEmpty) {
         for (var work in toItem.workDetails) {
@@ -109,12 +116,13 @@ class _TOGroupCardState extends State<TOGroupCard> with SingleTickerProviderStat
         totalRequired += toItem.totalRequired;
       }
     }
+    }  // ✅ else 블록 닫기
     
     print('🔍 [TOGroupCard] 최종 통계: $totalConfirmed/$totalRequired (+$totalPending)');
     
-    // 인원 충족 여부 (workDetails 로드 안됐으면 TO 문서 기준)
+    // 인원 충족 여부 (groupTOs 로드 안됐으면 groupItem에서 직접 체크)
     final isFull = widget.groupItem.groupTOs.isEmpty 
-        ? false 
+        ? widget.groupItem.isFull 
         : widget.groupItem.groupTOs.every((toItem) {
             // workDetails 로드 안됐으면 TO 문서의 통계 사용
             if (!toItem.isWorkDetailLoaded || toItem.workDetails.isEmpty) {
@@ -127,10 +135,10 @@ class _TOGroupCardState extends State<TOGroupCard> with SingleTickerProviderStat
             });
           });
 
-    // ✅ 전체 마감 여부 (DB status 기준 - Function에서 동기화됨)
-    final allClosed = targetTOs.isEmpty
-        ? false
-        : targetTOs.every((toItem) {
+    // ✅ 전체 마감 여부 (groupTOs 로드 안됐으면 groupItem status 사용)
+    final allClosed = widget.groupItem.groupTOs.isEmpty
+        ? widget.groupItem.isClosed
+        : widget.groupItem.groupTOs.every((toItem) {
             final to = toItem.to;
             
             // ✅ DB status 기반 판단 (Function이 WorkDetail → TO → GroupMaster 동기화)
@@ -153,18 +161,6 @@ class _TOGroupCardState extends State<TOGroupCard> with SingleTickerProviderStat
             // ✅ WorkDetails 미로드: DB status가 ACTIVE면 모집중
             return false;
           });
-    // 🔍 디버그 로그
-    print('🔍 [TOGroupCard] allClosed 계산 결과');
-    print('   groupItem.title: ${widget.groupItem.title}');
-    print('   groupItem.status: ${widget.groupItem.status}');
-    print('   groupItem.isManualClosed: ${widget.groupItem.isManualClosed}');
-    print('   groupItem.isGrouped: ${widget.groupItem.isGrouped}');
-    print('   targetTOs.length: ${targetTOs.length}');
-    print('   allClosed: $allClosed');
-    for (var i = 0; i < targetTOs.length; i++) {
-      final t = targetTOs[i].to;
-      print('   [$i] ${t.title} - status: ${t.status}, isManualClosed: ${t.isManualClosed}');
-    }
 
     // ✨ 컬러바 색상 결정 (장기: 보라, 단기: 초록)
     Color statusBarColor;

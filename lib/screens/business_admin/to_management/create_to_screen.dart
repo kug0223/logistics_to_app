@@ -838,10 +838,12 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
       if (dates.isEmpty) return false;
 
       final sortedDates = List<DateTime>.from(dates)..sort();
-      final groupId = 'group_${DateTime.now().millisecondsSinceEpoch}';
       final startDate = sortedDates.first;
       final endDate = sortedDates.last;
 
+      // ═══════════════════════════════════════════════════════════
+      // Step 1: 그룹명 결정
+      // ═══════════════════════════════════════════════════════════
       String finalGroupName;
       if (_groupNameController.text.trim().isNotEmpty) {
         finalGroupName = _groupNameController.text.trim();
@@ -854,12 +856,81 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
         }
       }
 
+      // ═══════════════════════════════════════════════════════════
+      // Step 2: 그룹 정보 계산
+      // ═══════════════════════════════════════════════════════════
+      int totalRequiredPerDay = 0;
+      for (var detail in _workDetails) {
+        totalRequiredPerDay += detail.requiredCount ?? 0;
+      }
+      
+      final wages = _workDetails.map((d) => d.wage ?? 0).toList();
+      final minWage = wages.isNotEmpty ? wages.reduce((a, b) => a < b ? a : b) : 0;
+      final maxWage = wages.isNotEmpty ? wages.reduce((a, b) => a > b ? a : b) : 0;
+      final wageType = _workDetails.isNotEmpty ? (_workDetails.first.wageType ?? 'hourly') : 'hourly';
+      
+      // 예약 공개 시간 계산
+      DateTime? publishAt;
+      bool shouldPublishImmediately = _publishMode == 'immediate';
+      
+      if (_publishMode == 'scheduled') {
+        final targetDate = startDate.subtract(Duration(days: _publishDaysBefore));
+        final timeParts = _publishTime.split(':');
+        publishAt = DateTime(
+          targetDate.year,
+          targetDate.month,
+          targetDate.day,
+          int.parse(timeParts[0]),
+          int.parse(timeParts[1]),
+        );
+        
+        if (publishAt.isBefore(DateTime.now())) {
+          shouldPublishImmediately = true;
+        }
+      }
+
+      // ═══════════════════════════════════════════════════════════
+      // Step 3: groups 컬렉션에 그룹 문서 먼저 생성
+      // ═══════════════════════════════════════════════════════════
+      final groupId = await _firestoreService.createGroup(
+        groupName: finalGroupName,
+        businessId: _selectedBusiness!.id,
+        businessName: _selectedBusiness!.name,
+        businessAddress: _selectedBusiness!.address,
+        businessCity: _selectedBusiness!.city,
+        businessDistrict: _selectedBusiness!.district,
+        title: _titleController.text.trim(),
+        description: _descriptionController.text.trim(),
+        startDate: startDate,
+        endDate: endDate,
+        totalRequired: totalRequiredPerDay * sortedDates.length,
+        minWage: minWage,
+        maxWage: maxWage,
+        wageType: wageType,
+        workDetailCount: _workDetails.length,
+        publishMode: _publishMode,
+        publishAt: publishAt,
+        isPublished: shouldPublishImmediately,
+        publishDaysBefore: _publishMode == 'scheduled' ? _publishDaysBefore : null,
+        publishTime: _publishMode == 'scheduled' ? _publishTime : null,
+        creatorUID: creatorUID,
+      );
+      
+      if (groupId == null) {
+        ToastHelper.showError('그룹 생성에 실패했습니다.');
+        return false;
+      }
+      
+      print('✅ groups 컬렉션 문서 생성 완료: $groupId');
+
+      // ═══════════════════════════════════════════════════════════
+      // Step 4: 각 날짜별 TO 생성
+      // ═══════════════════════════════════════════════════════════
       bool allSuccess = true;
 
       for (int i = 0; i < sortedDates.length; i++) {
         final date = sortedDates[i];
         
-        // 🔥 UTC → 로컬 변환 후 날짜 추출
         final localDate = date.toLocal();
         final firstWorkStart = _workDetails.first.startTime!;
         final timeParts = firstWorkStart.split(':');
@@ -870,7 +941,7 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
           int.parse(timeParts[0]),
           int.parse(timeParts[1]),
         );
-        final finalDeadline = startDateTime.subtract(Duration(hours: _hoursBeforeStart)).toUtc();  // 🔥 .toUtc() 추가
+        final finalDeadline = startDateTime.subtract(Duration(hours: _hoursBeforeStart)).toUtc();
 
         final toId = await _firestoreService.createTOWithDetails(
           businessId: _selectedBusiness!.id,
@@ -886,8 +957,8 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
           groupName: finalGroupName,
           startDate: startDate,
           endDate: endDate,
-          isGroupMaster: i == 0,
-          // ✅ 예약 공개 설정
+          isGroupMaster: false,  // 🔄 groups 컬렉션 사용으로 모두 false
+          // 예약 공개 설정
           publishMode: _publishMode,
           publishDaysBefore: _publishMode == 'scheduled' ? _publishDaysBefore : null,
           publishTime: _publishMode == 'scheduled' ? _publishTime : null,
@@ -898,6 +969,11 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
           print('❌ TO 생성 실패: ${DateFormat('yyyy-MM-dd').format(date)}');
         }
       }
+
+      // ═══════════════════════════════════════════════════════════
+      // Step 5: 그룹 통계 동기화
+      // ═══════════════════════════════════════════════════════════
+      await _firestoreService.syncGroupStats(groupId);
 
       return allSuccess;
     } catch (e) {
