@@ -257,6 +257,9 @@ class TOItem {
   
   // 업무별 통계 (펼쳤을 때 로드)
   Map<String, Map<String, int>>? workDetailStats;
+  
+  // 🔥 열린 WorkDetail 존재 여부 (DB 조회 결과)
+  bool? hasOpenWorkDetails;
 
   TOItem({
     required this.to,
@@ -266,6 +269,7 @@ class TOItem {
     required this.totalRequired,
     this.workDetailStats,
     this.isWorkDetailLoaded = false,
+    this.hasOpenWorkDetails,  // 🔥 추가
   }) : _workDetails = workDetails;
   
   // Getter

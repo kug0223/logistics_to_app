@@ -526,20 +526,55 @@ extension TOFirestore on FirestoreService {
       // ✅ TO 목록만 조회 (WorkDetails, Applications 조회 제거!)
       final groupTOs = await getTOsByGroup(groupId);
       
-      List<TOItem> toItems = [];
-      for (var to in groupTOs) {
-        toItems.add(TOItem(
+      // 🔥 각 TO에 대해 열린 WorkDetail 존재 여부 병렬 확인
+      final now = DateTime.now();
+      final futures = groupTOs.map((to) async {
+        bool hasOpen = false;
+        
+        try {
+          final wdSnapshot = await _firestore
+              .collection('tos')
+              .doc(to.id)
+              .collection('workDetails')
+              .get();
+          
+          for (var wdDoc in wdSnapshot.docs) {
+            final data = wdDoc.data();
+            final closedAt = data['closedAt'];
+            final isManualClosed = data['isManualClosed'] ?? false;
+            final deadline = (data['applicationDeadline'] as Timestamp?)?.toDate();
+            final requiredCount = data['requiredCount'] ?? 0;
+            final currentCount = data['currentCount'] ?? 0;
+            
+            final isClosed = closedAt != null || isManualClosed;
+            final isExpired = deadline != null && now.isAfter(deadline);
+            final isFull = currentCount >= requiredCount && requiredCount > 0;
+            
+            if (!isClosed && !isExpired && !isFull) {
+              hasOpen = true;
+              break;
+            }
+          }
+        } catch (e) {
+          print('⚠️ WorkDetail 열림 체크 실패 (${to.id}): $e');
+          hasOpen = true;  // 실패 시 모집중으로 가정
+        }
+        
+        return TOItem(
           to: to,
-          workDetails: null,                    // ✅ 펼칠 때 로드
-          confirmedCount: to.totalConfirmed,    // ✅ TO 문서 값 사용
+          workDetails: null,
+          confirmedCount: to.totalConfirmed,
           pendingCount: to.totalPending,
           totalRequired: to.totalRequired,
-          workDetailStats: null,                // ✅ 펼칠 때 로드
-          isWorkDetailLoaded: false,            // ✅ 아직 안 로드됨
-        ));
-      }
+          workDetailStats: null,
+          isWorkDetailLoaded: false,
+          hasOpenWorkDetails: hasOpen,  // 🔥 추가
+        );
+      });
       
-      print('✅ [Lazy] 그룹 TO 로드 완료: ${toItems.length}개 (경량)');
+      final toItems = await Future.wait(futures);
+      
+      print('✅ [Lazy] 그룹 TO 로드 완료: ${toItems.length}개 (열림 체크 포함)');
       return toItems;
     } catch (e) {
       print('❌ [Lazy] 그룹 TO 로드 실패: $e');

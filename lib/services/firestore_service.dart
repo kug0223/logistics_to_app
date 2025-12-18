@@ -729,14 +729,16 @@ class FirestoreService {
     return 'ACTIVE';
   }
 
-  /// 단일 TO 상태 업데이트
+  /// 단일 TO 상태 업데이트 (WorkDetails 기반)
   Future<bool> updateTOStatus(String toId) async {
     try {
       final doc = await _firestore.collection('tos').doc(toId).get();
       if (!doc.exists) return false;
       
       final data = doc.data()!;
-      final newStatus = _calculateTOStatus(data);
+      
+      // 🔥 WorkDetails 기반으로 상태 계산
+      final newStatus = await _calculateTOStatusWithWorkDetails(toId, data);
       final currentStatus = data['status'] ?? 'ACTIVE';
       
       if (newStatus != currentStatus) {
@@ -752,6 +754,76 @@ class FirestoreService {
       print('❌ TO 상태 업데이트 실패: $e');
       return false;
     }
+  }
+  
+  /// 🔥 WorkDetails 기반 TO 상태 계산
+  Future<String> _calculateTOStatusWithWorkDetails(String toId, Map<String, dynamic> data) async {
+    // 1. 수동 마감
+    if (data['isManualClosed'] == true) {
+      return 'CLOSED';
+    }
+    
+    // 2. 인원 충족
+    final totalConfirmed = data['totalConfirmed'] ?? 0;
+    final totalRequired = data['totalRequired'] ?? 0;
+    if (totalRequired > 0 && totalConfirmed >= totalRequired) {
+      return 'FULL';
+    }
+    
+    // 3. 장기공고: applicationDeadline 기준
+    final jobType = data['jobType'] ?? 'short';
+    if (jobType == 'long_term') {
+      final deadline = data['applicationDeadline'];
+      if (deadline != null) {
+        final deadlineDate = (deadline as Timestamp).toDate();
+        if (DateTime.now().isAfter(deadlineDate)) {
+          return 'EXPIRED';
+        }
+      }
+      return 'ACTIVE';
+    }
+    
+    // 4. 🔥 단기공고: WorkDetails 전체 확인
+    final now = DateTime.now();
+    final workDetailsSnapshot = await _firestore
+        .collection('tos')
+        .doc(toId)
+        .collection('workDetails')
+        .get();
+    
+    if (workDetailsSnapshot.docs.isEmpty) {
+      // WorkDetails 없으면 기존 로직 사용
+      return _calculateTOStatus(data);
+    }
+    
+    // 🔥 하나라도 열린 WorkDetail이 있으면 ACTIVE
+    for (var wdDoc in workDetailsSnapshot.docs) {
+      final wdData = wdDoc.data();
+      
+      // 수동 마감 체크
+      if (wdData['closedAt'] != null || wdData['isManualClosed'] == true) {
+        continue;  // 마감됨
+      }
+      
+      // 인원 충족 체크
+      final requiredCount = wdData['requiredCount'] ?? 0;
+      final currentCount = wdData['currentCount'] ?? 0;
+      if (requiredCount > 0 && currentCount >= requiredCount) {
+        continue;  // 마감됨
+      }
+      
+      // 마감시간 체크
+      final deadline = (wdData['applicationDeadline'] as Timestamp?)?.toDate();
+      if (deadline != null && now.isAfter(deadline)) {
+        continue;  // 마감됨
+      }
+      
+      // 🔥 여기까지 왔으면 이 WorkDetail은 열려있음!
+      return 'ACTIVE';
+    }
+    
+    // 모든 WorkDetail이 마감됨
+    return 'EXPIRED';
   }
 
   /// 기존 TO 데이터 마이그레이션 (status 필드 추가)
