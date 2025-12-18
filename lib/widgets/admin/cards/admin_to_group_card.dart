@@ -135,14 +135,19 @@ class _TOGroupCardState extends State<TOGroupCard> with SingleTickerProviderStat
             });
           });
 
-    // ✅ 전체 마감 여부 (groupTOs 로드 안됐으면 groupItem status 사용)
+    // ✅ 전체 마감 여부 (WorkDetail 실제 상태 우선)
     final allClosed = widget.groupItem.groupTOs.isEmpty
         ? widget.groupItem.isClosed
         : widget.groupItem.groupTOs.every((toItem) {
             final to = toItem.to;
             
-            // ✅ DB status 기반 판단 (Function이 WorkDetail → TO → GroupMaster 동기화)
-            // CLOSED, EXPIRED, FULL 모두 마감 상태
+            // ✅ WorkDetails 로드된 경우: 실제 상태 우선!
+            if (toItem.isWorkDetailLoaded && toItem.workDetails.isNotEmpty) {
+              return toItem.workDetails.every((work) =>
+                  work.isClosed || work.isTimeExpired || work.isFull);
+            }
+            
+            // ✅ WorkDetails 미로드: DB status 기반 판단
             if (to.status == 'CLOSED' || to.status == 'EXPIRED' || to.status == 'FULL') {
               return true;
             }
@@ -152,13 +157,7 @@ class _TOGroupCardState extends State<TOGroupCard> with SingleTickerProviderStat
               return true;
             }
             
-            // ✅ WorkDetails 로드된 경우: 실제 WorkDetail 상태 확인
-            if (toItem.isWorkDetailLoaded && toItem.workDetails.isNotEmpty) {
-              return toItem.workDetails.every((work) =>
-                  work.isClosed || work.isTimeExpired || work.isFull);
-            }
-            
-            // ✅ WorkDetails 미로드: DB status가 ACTIVE면 모집중
+            // ✅ DB status가 ACTIVE면 모집중
             return false;
           });
 

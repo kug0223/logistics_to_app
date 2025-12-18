@@ -95,30 +95,23 @@ class _TOItemCardState extends State<TOItemCard> {
     
     final isFull = confirmed >= required && required > 0;
     
-    // ✅ 전체 마감 여부 (DB status 기준 - Function에서 동기화됨)
+    // ✅ 전체 마감 여부 (WorkDetail 실제 상태 우선)
     bool allClosed;
     
-    // ✅ DB status 기반 판단
-    if (to.status == 'CLOSED' || to.status == 'EXPIRED' || to.status == 'FULL') {
-      allClosed = true;
-    } else if (to.isManualClosed) {
-      allClosed = true;
-    } else if (widget.toItem.isWorkDetailLoaded && widget.toItem.workDetails.isNotEmpty) {
-      // ✅ WorkDetails 로드된 경우: 실제 상태 확인
+    // ✅ WorkDetails 로드된 경우: 실제 상태 우선!
+    if (widget.toItem.isWorkDetailLoaded && widget.toItem.workDetails.isNotEmpty) {
       allClosed = widget.toItem.workDetails.every((work) =>
           work.isClosed || work.isTimeExpired || work.isFull);
     } else {
-      // ✅ WorkDetails 미로드: DB status가 ACTIVE면 모집중
-      allClosed = false;
+      // ✅ WorkDetails 미로드: DB status 기반 판단
+      if (to.status == 'CLOSED' || to.status == 'EXPIRED' || to.status == 'FULL') {
+        allClosed = true;
+      } else if (to.isManualClosed) {
+        allClosed = true;
+      } else {
+        allClosed = false;
+      }
     }
-    // 🔍 디버그: 개별 TO 카드 allClosed
-    print('🔍 [TOItemCard] ${to.title}');
-    print('   date: ${to.date}');
-    print('   status: ${to.status}');
-    print('   isManualClosed: ${to.isManualClosed}');
-    print('   isWorkDetailLoaded: ${widget.toItem.isWorkDetailLoaded}');
-    print('   allClosed 결과: $allClosed');
-
     // 상태별 컬러 (장기/단기 구분)
     Color statusColor;
     if (allClosed) {

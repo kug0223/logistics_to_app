@@ -445,44 +445,59 @@ extension ApplicationFirestore on FirestoreService {
       }
 
       // ═══════════════════════════════════════════════════════════
-      // 4. 시간 충돌 체크
+      // 4. 시간 충돌 체크 (최적화: 1회 조회 → 메모리에서 비교)
       // ═══════════════════════════════════════════════════════════
       final isReallyLongTerm = type == 'long_term' && workDays != null && workDays.isNotEmpty;
 
+      // ✅ 모든 CONFIRMED 지원서 한 번에 조회
+      final confirmedSnapshot = await _firestore
+          .collection('applications')
+          .where('uid', isEqualTo: uid)
+          .where('status', isEqualTo: 'CONFIRMED')
+          .get();
+      
+      final allConfirmed = confirmedSnapshot.docs
+          .map((doc) => ApplicationModel.fromFirestore(doc))
+          .toList();
+      
+      print('🔍 [충돌체크] 전체 CONFIRMED: ${allConfirmed.length}개');
+
       if (isReallyLongTerm && workEndDate != null) {
-        // 🔥 FIX: 희망시작일(desiredStartDate)부터 충돌 체크 (TO 시작일 아님!)
+        // 장기공고: 희망시작일부터 종료일까지 메모리에서 체크
         final checkStartDate = desiredStartDate ?? workDate;
         var currentDate = checkStartDate;
+        
         while (!currentDate.isAfter(workEndDate)) {
           final dayOfWeek = _getKoreanDayOfWeek(currentDate);
           
           if (workDays.contains(dayOfWeek)) {
-            final schedules = await getConfirmedSchedules(uid: uid, workDate: currentDate);
-            
-            for (var schedule in schedules) {
-              if (_hasTimeOverlap(startTime, endTime, schedule.startTime, schedule.endTime)) {
-                ToastHelper.showError(
-                  '${currentDate.month}/${currentDate.day}에\n'
-                  '${schedule.startTime}~${schedule.endTime} (${schedule.businessName})\n'
-                  '확정된 근무가 있어 지원할 수 없습니다.'
-                );
-                return false;
+            // ✅ 메모리에서 해당 날짜에 근무하는 스케줄 찾기
+            for (var schedule in allConfirmed) {
+              if (_isWorkingOnDate(schedule, currentDate)) {
+                if (_hasTimeOverlap(startTime, endTime, schedule.startTime, schedule.endTime)) {
+                  ToastHelper.showError(
+                    '${currentDate.month}/${currentDate.day}에\n'
+                    '${schedule.startTime}~${schedule.endTime} (${schedule.businessName})\n'
+                    '확정된 근무가 있어 지원할 수 없습니다.'
+                  );
+                  return false;
+                }
               }
             }
           }
           currentDate = currentDate.add(const Duration(days: 1));
         }
       } else {
-        // 단기공고: 해당 날짜만 체크
-        final confirmedSchedules = await getConfirmedSchedules(uid: uid, workDate: workDate);
-        
-        for (var schedule in confirmedSchedules) {
-          if (_hasTimeOverlap(startTime, endTime, schedule.startTime, schedule.endTime)) {
-            ToastHelper.showError(
-              '이미 ${schedule.startTime}~${schedule.endTime}에\n'
-              '${schedule.businessName}에서 확정된 근무가 있습니다.'
-            );
-            return false;
+        // 단기공고: 해당 날짜만 체크 (메모리에서)
+        for (var schedule in allConfirmed) {
+          if (_isWorkingOnDate(schedule, workDate)) {
+            if (_hasTimeOverlap(startTime, endTime, schedule.startTime, schedule.endTime)) {
+              ToastHelper.showError(
+                '이미 ${schedule.startTime}~${schedule.endTime}에\n'
+                '${schedule.businessName}에서 확정된 근무가 있습니다.'
+              );
+              return false;
+            }
           }
         }
       }

@@ -17,6 +17,11 @@ class TOGroupItem {
   // ✨ Lazy Loading 지원
   List<TOItem>? _groupTOs;  // 그룹 내 TO 목록
   bool isGroupDetailLoaded;  // 그룹 상세(개별 TO 목록) 로드 여부
+  
+  // 🔥 캐시된 통계 (UI 갱신용 - mutable)
+  int? _cachedTotalConfirmed;
+  int? _cachedTotalPending;
+  int? _cachedTotalRequired;
 
   TOGroupItem({
     this.group,
@@ -66,17 +71,17 @@ class TOGroupItem {
   bool get isLongTerm => singleTO?.isLongTerm ?? false;
   
   // ═══════════════════════════════════════════════════════════
-  // Getter - 통계
+  // Getter - 통계 (🔥 캐시 우선 사용)
   // ═══════════════════════════════════════════════════════════
   
   /// 총 필요 인원
-  int get totalRequired => group?.totalRequired ?? singleTO!.totalRequired;
+  int get totalRequired => _cachedTotalRequired ?? group?.totalRequired ?? singleTO!.totalRequired;
   
   /// 총 확정 인원
-  int get totalConfirmed => group?.totalConfirmed ?? singleTO!.totalConfirmed;
+  int get totalConfirmed => _cachedTotalConfirmed ?? group?.totalConfirmed ?? singleTO!.totalConfirmed;
   
   /// 총 대기 인원
-  int get totalPending => group?.totalPending ?? singleTO!.totalPending;
+  int get totalPending => _cachedTotalPending ?? group?.totalPending ?? singleTO!.totalPending;
   
   /// 인원 충족 여부
   bool get isFull => group?.isFull ?? singleTO!.isFull;
@@ -221,9 +226,13 @@ class TOGroupItem {
     required int pending,
     int? required,
   }) {
-    // group은 immutable이므로 _groupTOs의 통계 업데이트
+    // 🔥 캐시 업데이트 (getter에서 우선 사용됨)
+    _cachedTotalConfirmed = confirmed;
+    _cachedTotalPending = pending;
+    if (required != null) _cachedTotalRequired = required;
+    
+    // groupTOs가 있으면 첫 번째 아이템도 업데이트
     if (_groupTOs != null && _groupTOs!.isNotEmpty) {
-      // 첫 번째 아이템에 합산 통계 저장 (표시용)
       _groupTOs!.first.updateOuterStats(
         confirmed: confirmed,
         pending: pending,

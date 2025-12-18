@@ -717,8 +717,9 @@ class _WorkforceListViewState extends State<WorkforceListView> {
               if (groupItem.id == groupId) {
                 // ✅ groups 컬렉션에서 최신 통계 조회
                 final groupDoc = await _firestoreService.getGroup(groupId);
-                if (groupDoc != null && groupItem.groupTOs.isNotEmpty) {
-                  groupItem.groupTOs.first.updateOuterStats(
+                if (groupDoc != null) {
+                  // 🔥 TOGroupItem 캐시 업데이트 (groupTOs 비어있어도 동작!)
+                  groupItem.updateGroupStats(
                     confirmed: groupDoc.totalConfirmed,
                     pending: groupDoc.totalPending,
                     required: groupDoc.totalRequired,
