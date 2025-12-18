@@ -794,7 +794,7 @@ class _WorkforceCalendarViewState extends State<WorkforceCalendarView> {
             
             // 그룹 마스터 찾기
             for (var groupItem in _allGroupItems) {
-              if (groupItem.masterTO.groupId == groupId) {
+              if (groupItem.id == groupId) {
                 // 마스터 TO 다시 조회
                 final masterDoc = await _firestoreService.getTO(groupItem.masterTO.id);
                 if (masterDoc != null && groupItem.groupTOs.isNotEmpty) {

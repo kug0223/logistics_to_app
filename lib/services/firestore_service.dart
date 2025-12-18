@@ -507,6 +507,16 @@ class FirestoreService {
       await batch.commit();
       print('✅ TO 마감 완료: ${snapshot.docs.length}개');
 
+      // ✅ groups 컬렉션 문서도 마감 처리
+      await _firestore.collection('groups').doc(groupId).update({
+        'status': 'CLOSED',
+        'isManualClosed': true,
+        'closedAt': FieldValue.serverTimestamp(),
+        'closedBy': adminUID,
+        'statusUpdatedAt': FieldValue.serverTimestamp(),
+      });
+      print('✅ groups 문서 마감 완료: $groupId');
+
       for (var doc in snapshot.docs) {
         final workDetailsSnapshot = await _firestore
             .collection('tos')
@@ -642,6 +652,18 @@ class FirestoreService {
         await updateTOStatus(doc.id);
       }
       
+      // ✅ groups 컬렉션 문서도 재오픈 처리
+      await _firestore.collection('groups').doc(groupId).update({
+        'status': 'ACTIVE',
+        'isManualClosed': false,
+        'closedAt': FieldValue.delete(),
+        'closedBy': FieldValue.delete(),
+        'reopenedAt': FieldValue.serverTimestamp(),
+        'reopenedBy': adminUID,
+        'statusUpdatedAt': FieldValue.serverTimestamp(),
+      });
+      print('✅ groups 문서 재오픈 완료: $groupId');
+
       invalidateListCache();
       print('✅ 그룹 전체 재오픈 완료: $groupId');
       return true;

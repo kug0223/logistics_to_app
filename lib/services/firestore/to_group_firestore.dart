@@ -459,8 +459,11 @@ extension TOGroupFirestore on FirestoreService {
       final groupTOs = await getTOsByGroup(groupId);
       
       if (groupTOs.isEmpty) {
-        ToastHelper.showError('그룹을 찾을 수 없습니다.');
-        return false;
+        // TO는 없지만 groups 문서는 있을 수 있으므로 삭제 시도
+        await _firestore.collection('groups').doc(groupId).delete();
+        print('⚠️ TO 없음, groups 문서만 삭제: $groupId');
+        ToastHelper.showSuccess('그룹이 삭제되었습니다.');
+        return true;
       }
       
       // 모든 TO 삭제
@@ -468,7 +471,11 @@ extension TOGroupFirestore on FirestoreService {
         await deleteTO(to.id);
       }
       
-      print('✅ 그룹 전체 삭제 완료: $groupId');
+      // ✅ groups 컬렉션 문서도 삭제
+      await _firestore.collection('groups').doc(groupId).delete();
+      
+      invalidateListCache();
+      print('✅ 그룹 전체 삭제 완료: $groupId (TO ${groupTOs.length}개 + groups 문서)');
       ToastHelper.showSuccess('그룹이 삭제되었습니다.');
       return true;
     } catch (e) {

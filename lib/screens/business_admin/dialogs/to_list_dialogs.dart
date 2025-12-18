@@ -144,17 +144,25 @@ class TOListDialogs {
   Future<void> showDeleteGroupDialog(TOGroupItem groupItem) async {
     final masterTO = groupItem.masterTO;
     
+    // groupTOs가 로드되지 않았으면 group 통계 사용
     int totalApplicants = 0;
-    for (var toItem in groupItem.groupTOs) {
-      totalApplicants += toItem.confirmedCount + toItem.pendingCount;
+    if (groupItem.groupTOs.isNotEmpty) {
+      for (var toItem in groupItem.groupTOs) {
+        totalApplicants += toItem.confirmedCount + toItem.pendingCount;
+      }
+    } else {
+      // 그룹 통계에서 가져옴
+      totalApplicants = groupItem.totalConfirmed + groupItem.totalPending;
     }
+    
+    final toCount = groupItem.group?.actualDaysCount ?? groupItem.groupTOs.length;
     
     final confirmed = await DialogHelper.showDangerConfirm(
       context,
       title: '⚠️ 그룹 전체 삭제',
       message: '다음 그룹을 전체 삭제하시겠습니까?\n\n'
           '🔗 ${masterTO.groupName}\n\n'
-          '포함된 TO: ${groupItem.groupTOs.length}개\n'
+          '포함된 TO: ${toCount}개\n'
           '⚠️ 총 $totalApplicants명의 지원자가 영향받습니다\n'
           '⚠️ 이 작업은 되돌릴 수 없습니다',
       confirmText: '전체 삭제',
@@ -427,7 +435,7 @@ class TOListDialogs {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    '포함된 TO: ${groupItem.groupTOs.length}개',
+                    '포함된 TO: ${groupItem.group?.actualDaysCount ?? groupItem.groupTOs.length}개',
                     style: ResponsiveHelper.bodyStyle(context).copyWith(  // ⭐ 변경
                       fontWeight: FontWeight.bold,
                     ),
@@ -493,7 +501,10 @@ class TOListDialogs {
 
   /// 그룹 전체 재오픈 다이얼로그
   Future<void> showReopenGroupDialog(TOGroupItem groupItem) async {
-    final hasExpiredTO = groupItem.groupTOs.any((toItem) => toItem.to.isTimeExpired);
+    // groupTOs가 비어있으면 체크 불가 - 일단 통과시키고 서버에서 처리
+    final hasExpiredTO = groupItem.groupTOs.isNotEmpty 
+        ? groupItem.groupTOs.any((toItem) => toItem.to.isTimeExpired)
+        : false;
     
     if (hasExpiredTO) {
       showDialog(
@@ -540,14 +551,14 @@ class TOListDialogs {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    '포함된 TO: ${groupItem.groupTOs.length}개',
+                    '포함된 TO: ${groupItem.group?.actualDaysCount ?? groupItem.groupTOs.length}개',
                     style: ResponsiveHelper.bodyStyle(context).copyWith(  // ⭐ 변경
                       fontWeight: FontWeight.bold,
                     ),
                   ),
                   SizedBox(height: ResponsiveHelper.spacing(context, 8)),  // ⭐ 변경
                   Text(
-                    '• 모든 TO가 재오픈됩니다', 
+                    '• 모든 TO가 재오픈됩니다',
                     style: ResponsiveHelper.smallStyle(context),  // ⭐ 변경
                   ),
                   Text(

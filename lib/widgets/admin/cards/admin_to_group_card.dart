@@ -505,7 +505,7 @@ class _TOGroupCardState extends State<TOGroupCard> with SingleTickerProviderStat
                                 bottomRight: Radius.circular(16),
                               ),
                             ),
-                            child: widget.loadingTOs.contains(widget.groupItem.groupTOs.first.to.id)
+                            child: (widget.groupItem.groupTOs.isEmpty || widget.loadingTOs.contains(widget.groupItem.groupTOs.first.to.id))
                                 // ✨ 로딩 중 스피너
                                 ? Center(
                                     child: Padding(
@@ -1100,10 +1100,18 @@ class _TOGroupCardState extends State<TOGroupCard> with SingleTickerProviderStat
         break;
 
       case 'delete':
+        if (widget.groupItem.groupTOs.isEmpty) {
+          ToastHelper.showError('TO 정보를 불러올 수 없습니다.');
+          return;
+        }
         widget.dialogs.showDeleteTODialog(widget.groupItem.groupTOs.first);
         break;
 
       case 'link':
+        if (widget.groupItem.groupTOs.isEmpty) {
+          ToastHelper.showError('TO 정보를 불러올 수 없습니다.');
+          return;
+        }
         widget.dialogs.showReconnectToGroupDialog(
           widget.groupItem.groupTOs.first,
           widget.allGroupItems,
@@ -1112,6 +1120,10 @@ class _TOGroupCardState extends State<TOGroupCard> with SingleTickerProviderStat
 
       case 'confirmedList':
         // ✅ WorkDetails 로드 확인 후 다이얼로그 열기
+        if (widget.groupItem.groupTOs.isEmpty) {
+          ToastHelper.showError('TO 정보를 불러올 수 없습니다.');
+          return;
+        }
         final toItemForConfirmed = widget.groupItem.groupTOs.first;
         
         if (!toItemForConfirmed.isWorkDetailLoaded || toItemForConfirmed.workDetails.isEmpty) {
@@ -1147,6 +1159,10 @@ class _TOGroupCardState extends State<TOGroupCard> with SingleTickerProviderStat
 
       case 'manageWorkDetails':
         // ✅ WorkDetails 로드 확인 후 다이얼로그 열기
+        if (widget.groupItem.groupTOs.isEmpty) {
+          ToastHelper.showError('TO 정보를 불러올 수 없습니다.');
+          return;
+        }
         final toItem = widget.groupItem.groupTOs.first;
         
         if (!toItem.isWorkDetailLoaded || toItem.workDetails.isEmpty) {
