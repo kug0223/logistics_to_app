@@ -604,12 +604,11 @@ extension ApplicationFirestore on FirestoreService {
       );
 
       // ✅ groups 컬렉션 통계 업데이트
-            if (groupId != null) {
-              batch.update(_firestore.collection('groups').doc(groupId), {
-                'totalConfirmed': FieldValue.increment(1),
-                'totalPending': FieldValue.increment(-1),
-              });
-            }
+      if (groupId != null) {
+        batch.update(_firestore.collection('groups').doc(groupId), {
+          'totalPending': FieldValue.increment(1),
+        });
+      }
 
       await batch.commit();
       clearCache(toId: toId);
