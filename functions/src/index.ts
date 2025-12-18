@@ -276,6 +276,8 @@ export const closeExpiredTOs = onSchedule(
  * WorkDetail 상태 기반으로 TO status 동기화
  * - 모든 WorkDetail 마감 → TO status = CLOSED
  * - 하나라도 열림 → TO status = ACTIVE
+ * @param {Firestore} firestore - Firestore 인스턴스
+ * @param {string} toId - TO 문서 ID
  */
 async function syncTOStatusFromWorkDetails(
   firestore: Firestore,
@@ -320,7 +322,9 @@ async function syncTOStatusFromWorkDetails(
           closedReason: "ALL_WORKDETAILS_CLOSED",
         }),
       });
-      console.log(`  ✓ TO ${toId} status: ${currentStatus} → ${newStatus}`);
+      console.log(
+        `  ✓ TO ${toId} status: ${currentStatus} → ${newStatus}`
+      );
     }
   } catch (error) {
     console.error(`❌ TO status 동기화 실패 (${toId}):`, error);
@@ -331,6 +335,8 @@ async function syncTOStatusFromWorkDetails(
  * 그룹 마스터 상태 동기화
  * - 하나라도 ACTIVE → 마스터 ACTIVE
  * - 모든 TO CLOSED → 마스터 CLOSED
+ * @param {Firestore} firestore - Firestore 인스턴스
+ * @param {string} groupId - 그룹 ID
  */
 async function syncGroupMasterStatus(
   firestore: Firestore,
@@ -396,7 +402,9 @@ async function syncGroupMasterStatus(
       }
 
       await masterDoc.ref.update(updateData);
-      console.log(`  ✓ 그룹 마스터 ${masterDoc.id}: ${currentStatus} → ${newStatus}`);
+      console.log(
+        `  ✓ 그룹 마스터 ${masterDoc.id}: ${currentStatus} → ${newStatus}`
+      );
     }
   } catch (error) {
     console.error(`❌ 그룹 마스터 동기화 실패 (${groupId}):`, error);
@@ -467,9 +475,13 @@ export const dailyStatusIntegrityCheck = onSchedule(
         }
       }
 
-      console.log(`✅ [정합성 검사] 완료: ${fixedCount}개 수정, ${processedGroupIds.size}개 그룹 동기화`);
+      console.log(
+        `✅ [정합성 검사] 완료: ${fixedCount}개 수정, ` +
+        `${processedGroupIds.size}개 그룹 동기화`
+      );
     } catch (error) {
       console.error("❌ [정합성 검사] 실패:", error);
     }
   }
 );
+
