@@ -312,11 +312,36 @@ class FirestoreService {
 
       final recentClosedTOs = masterOrSingleTOs.take(5).toList();
 
-      _closedTOsCache = recentClosedTOs;
+      // ✅ 그룹 마스터인 경우 하위 ACTIVE TO 있으면 제외 (status 불일치 보정)
+      final List<TOModel> verifiedClosedTOs = [];
+      for (var to in recentClosedTOs) {
+        if (to.isGroupMaster && to.groupId != null) {
+          // 그룹 내 ACTIVE TO 있는지 빠르게 체크
+          final activeCheck = await _firestore
+              .collection('tos')
+              .where('groupId', isEqualTo: to.groupId)
+              .where('status', isEqualTo: 'ACTIVE')
+              .limit(1)
+              .get();
+          
+          if (activeCheck.docs.isNotEmpty) {
+            // ACTIVE TO 있음 → 마스터 status 보정 후 마감 목록에서 제외
+            print('⚠️ [Status 보정] ${to.title} 마스터 → ACTIVE (하위 ACTIVE TO 존재)');
+            await _firestore.collection('tos').doc(to.id).update({
+              'status': 'ACTIVE',
+              'statusUpdatedAt': FieldValue.serverTimestamp(),
+            });
+            continue; // 마감 목록에서 제외
+          }
+        }
+        verifiedClosedTOs.add(to);
+      }
+
+      _closedTOsCache = verifiedClosedTOs;
       _closedTOsCacheTime = DateTime.now();
       
-      print('✅ [최적화] 마감된 TO: ${recentClosedTOs.length}개 (서버 조회)');
-      return recentClosedTOs;
+      print('✅ [최적화] 마감된 TO: ${verifiedClosedTOs.length}개 (서버 조회, ${recentClosedTOs.length - verifiedClosedTOs.length}개 보정됨)');
+      return verifiedClosedTOs;
     } catch (e) {
       print('❌ 마감된 TO 조회 실패: $e');
       return [];

@@ -127,66 +127,44 @@ class _TOGroupCardState extends State<TOGroupCard> with SingleTickerProviderStat
             });
           });
 
-    // 전체 마감 여부 (캘린더 뷰: 선택된 날짜 기준)
+    // ✅ 전체 마감 여부 (DB status 기준 - Function에서 동기화됨)
     final allClosed = targetTOs.isEmpty
         ? false
         : targetTOs.every((toItem) {
-            // 장기공고: endDate 또는 applicationDeadline 기준
-            if (toItem.to.isLongTerm) {
-              if (toItem.to.isManualClosed) return true;
-              
-              // endDate가 있으면 endDate 기준, 없으면 applicationDeadline 기준
-              final now = DateTime.now();
-              if (toItem.to.endDate != null) {
-                final endDate = DateTime(
-                  toItem.to.endDate!.year,
-                  toItem.to.endDate!.month,
-                  toItem.to.endDate!.day,
-                  23, 59, 59,
-                );
-                return now.isAfter(endDate);
-              }
-              return toItem.to.isDeadlinePassed;
+            final to = toItem.to;
+            
+            // ✅ DB status 기반 판단 (Function이 WorkDetail → TO → GroupMaster 동기화)
+            // CLOSED, EXPIRED, FULL 모두 마감 상태
+            if (to.status == 'CLOSED' || to.status == 'EXPIRED' || to.status == 'FULL') {
+              return true;
             }
             
-            // 🔥 단기공고 (로드 안됨): 개별 TO의 date 기준으로 직접 계산
-            // (그룹 마스터도 캘린더 뷰에서 선택되면 자신의 날짜 기준)
-            if (!toItem.isWorkDetailLoaded || toItem.workDetails.isEmpty) {
-              final to = toItem.to;
-              if (to.isManualClosed || to.status == 'CLOSED') {
-                return true;
-              }
-              if (to.isFull) {
-                return true;
-              }
-              // 자신의 date 기준 시간 체크
-              final now = DateTime.now();
-              final today = DateTime(now.year, now.month, now.day);
-              final localDate = to.date.toLocal();
-              final workDate = DateTime(localDate.year, localDate.month, localDate.day);
-              
-              if (workDate.isBefore(today)) {
-                return true;
-              }
-              if (workDate.isAtSameMomentAs(today)) {
-                if (to.startTime.isNotEmpty && to.startTime.contains(':')) {
-                  try {
-                    final timeParts = to.startTime.split(':');
-                    final workStart = DateTime(
-                      localDate.year, localDate.month, localDate.day,
-                      int.parse(timeParts[0]), int.parse(timeParts[1]),
-                    );
-                    return now.isAfter(workStart);
-                  } catch (e) {
-                    return false;
-                  }
-                }
-              }
-              return false;
+            // ✅ 수동 마감 체크
+            if (to.isManualClosed) {
+              return true;
             }
-            return toItem.workDetails.every((work) =>
-                work.isClosed || work.isTimeExpired || work.isFull);
+            
+            // ✅ WorkDetails 로드된 경우: 실제 WorkDetail 상태 확인
+            if (toItem.isWorkDetailLoaded && toItem.workDetails.isNotEmpty) {
+              return toItem.workDetails.every((work) =>
+                  work.isClosed || work.isTimeExpired || work.isFull);
+            }
+            
+            // ✅ WorkDetails 미로드: DB status가 ACTIVE면 모집중
+            return false;
           });
+    // 🔍 디버그 로그
+    print('🔍 [TOGroupCard] allClosed 계산 결과');
+    print('   masterTO.title: ${masterTO.title}');
+    print('   masterTO.status: ${masterTO.status}');
+    print('   masterTO.isManualClosed: ${masterTO.isManualClosed}');
+    print('   masterTO.isGroupMaster: ${masterTO.isGroupMaster}');
+    print('   targetTOs.length: ${targetTOs.length}');
+    print('   allClosed: $allClosed');
+    for (var i = 0; i < targetTOs.length; i++) {
+      final t = targetTOs[i].to;
+      print('   [$i] ${t.title} - status: ${t.status}, isManualClosed: ${t.isManualClosed}');
+    }
 
     // ✨ 컬러바 색상 결정 (장기: 보라, 단기: 초록)
     Color statusBarColor;
