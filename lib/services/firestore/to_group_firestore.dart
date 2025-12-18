@@ -229,8 +229,11 @@ extension TOGroupFirestore on FirestoreService {
       // 대상 그룹의 날짜 범위 재계산
       await _updateGroupDateRange(targetGroupId);
       
-      // ✅ 대상 그룹 마스터 통계 동기화
+      // ✅ 대상 그룹 마스터 통계 동기화 (tos 컬렉션)
       await _updateGroupMasterStats(targetGroupId);
+      
+      // ✅ groups 컬렉션 통계 동기화
+      await syncGroupStats(targetGroupId);
       
       print('✅ TO 그룹 재연결 완료: $toId → $targetGroupId');
       ToastHelper.showSuccess('그룹에 연결되었습니다.');
@@ -253,20 +256,47 @@ extension TOGroupFirestore on FirestoreService {
         return false;
       }
       
-      // 새 그룹 ID 생성
-      final groupId = 'group_${DateTime.now().millisecondsSinceEpoch}';
+      // ✅ groups 컬렉션에 그룹 문서 먼저 생성
+      final groupId = await createGroup(
+        groupName: groupName,
+        businessId: to.businessId,
+        businessName: to.businessName,
+        businessAddress: to.businessAddress,
+        businessCity: to.businessCity,
+        businessDistrict: to.businessDistrict,
+        title: to.title,
+        description: to.description,
+        startDate: to.date,
+        endDate: to.date,
+        totalRequired: to.totalRequired,
+        minWage: to.minWage,
+        maxWage: to.maxWage,
+        wageType: to.wageType,
+        workDetailCount: to.workDetailCount,
+        creatorUID: to.creatorUID,
+      );
+      
+      if (groupId == null) {
+        ToastHelper.showError('그룹 생성에 실패했습니다.');
+        return false;
+      }
       
       // TO를 그룹으로 변경
       await _firestore.collection('tos').doc(toId).update({
         'groupId': groupId,
         'groupName': groupName,
-        'isGroupMaster': true,  // 대표 TO로 지정
+        'isGroupMaster': true,  // 하위 호환성
         'startDate': Timestamp.fromDate(to.date),
         'endDate': Timestamp.fromDate(to.date),
       });
       
-      // ✅ 그룹 마스터 통계 초기화
+      // ✅ 그룹 마스터 통계 동기화 (tos 컬렉션)
       await _updateGroupMasterStats(groupId);
+      
+      // ✅ groups 컬렉션 통계 동기화
+      await syncGroupStats(groupId);
+      
+      invalidateListCache();
       
       print('✅ 새 그룹 생성 완료');
       print('   그룹 ID: $groupId');
@@ -419,6 +449,9 @@ extension TOGroupFirestore on FirestoreService {
       // ✅ 그룹 마스터 통계 동기화
       await _updateGroupMasterStats(groupId);
       
+      // ✅ groups 컬렉션 통계도 동기화
+      await syncGroupStats(groupId);
+      
       ToastHelper.showSuccess('${dates.length}개 TO가 그룹에 추가되었습니다!');
       return true;
       
@@ -539,14 +572,34 @@ extension TOGroupFirestore on FirestoreService {
         }
       }
       
-      // ✅ 그룹 마스터 통계 동기화 (그룹이 남아있는 경우만)
+      // ✅ 그룹 통계 동기화 (그룹이 남아있는 경우만)
       if (groupId != null) {
         final remainingTOs = await getTOsByGroup(groupId);
-        if (remainingTOs.isNotEmpty) {
+        if (remainingTOs.isEmpty) {
+          // ✅ 그룹에 TO가 없으면 groups 문서도 삭제
+          await _firestore.collection('groups').doc(groupId).delete();
+          print('   ✅ 그룹 문서 삭제 (TO 없음): $groupId');
+        } else if (remainingTOs.length == 1) {
+          // ✅ 1개만 남으면 독립 TO로 전환 + groups 삭제
+          final lastTO = remainingTOs.first;
+          await _firestore.collection('tos').doc(lastTO.id).update({
+            'groupId': FieldValue.delete(),
+            'groupName': FieldValue.delete(),
+            'isGroupMaster': false,
+            'startDate': FieldValue.delete(),
+            'endDate': FieldValue.delete(),
+          });
+          await _firestore.collection('groups').doc(groupId).delete();
+          clearCache(toId: lastTO.id);
+          print('   ✅ 마지막 TO 독립화 + 그룹 문서 삭제: $groupId');
+        } else {
+          // ✅ 2개 이상 남음 - 통계 동기화
           await _updateGroupMasterStats(groupId);
+          await syncGroupStats(groupId);
         }
       }
       
+      invalidateListCache();
       print('✅ [FirestoreService] TO 삭제 완료');
       ToastHelper.showSuccess('TO가 삭제되었습니다.');
       return true;
@@ -577,15 +630,6 @@ extension TOGroupFirestore on FirestoreService {
         'startDate': FieldValue.delete(),
         'endDate': FieldValue.delete(),
       });
-      
-      // 1. TO를 독립 TO로 변경
-      await _firestore.collection('tos').doc(toId).update({
-        'groupId': FieldValue.delete(),
-        'groupName': FieldValue.delete(),
-        'isGroupMaster': false,
-        'startDate': FieldValue.delete(),
-        'endDate': FieldValue.delete(),
-      });
 
       // 2. 남은 그룹 TO 확인 (최신 데이터 다시 조회)
       final remainingSnapshot = await _firestore
@@ -596,7 +640,12 @@ extension TOGroupFirestore on FirestoreService {
       final remainingTOs = remainingSnapshot.docs
           .map((doc) => TOModel.fromMap(doc.data(), doc.id))
           .toList();
-      if (remainingTOs.length == 1) {
+          
+      if (remainingTOs.isEmpty) {
+        // ✅ 그룹에 TO가 없으면 groups 문서도 삭제
+        await _firestore.collection('groups').doc(groupId).delete();
+        print('✅ 그룹 문서 삭제 (TO 없음): $groupId');
+      } else if (remainingTOs.length == 1) {
         // 마지막 TO도 독립 TO로 변경
         final lastTO = remainingTOs.first;
         await _firestore.collection('tos').doc(lastTO.id).update({
@@ -606,9 +655,14 @@ extension TOGroupFirestore on FirestoreService {
           'startDate': FieldValue.delete(),
           'endDate': FieldValue.delete(),
         });
-        print('✅ 마지막 TO도 독립 TO로 변경');
+        print('✅ 마지막 TO도 독립 TO로 변경: ${lastTO.id}');
         clearCache(toId: lastTO.id);
-      } else if (remainingTOs.isNotEmpty) {
+        
+        // ✅ groups 문서 삭제 (그룹 해체)
+        await _firestore.collection('groups').doc(groupId).delete();
+        print('✅ 그룹 문서 삭제 (1개 남음): $groupId');
+      } else {
+        // 2개 이상 남음 - 그룹 유지
         // 해제된 TO가 대표였다면 다음 TO를 대표로 지정
         if (to.isGroupMaster) {
           final newMasterTO = remainingTOs.first;
@@ -620,14 +674,16 @@ extension TOGroupFirestore on FirestoreService {
         
         // 그룹 날짜 범위 재계산
         await _updateGroupDateRange(groupId);
+        
+        // ✅ 그룹 마스터 통계 동기화 (tos 컬렉션)
+        await _updateGroupMasterStats(groupId);
+        
+        // ✅ groups 컬렉션 통계 동기화
+        await syncGroupStats(groupId);
       }
       
       clearCache(toId: toId);
-      
-      // ✅ 그룹 마스터 통계 동기화 (그룹이 남아있는 경우만)
-      if (remainingTOs.length > 1) {
-        await _updateGroupMasterStats(groupId);
-      }
+      invalidateListCache();
       
       print('✅ TO 그룹 해제 완료: $toId');
       ToastHelper.showSuccess('그룹에서 해제되었습니다.');

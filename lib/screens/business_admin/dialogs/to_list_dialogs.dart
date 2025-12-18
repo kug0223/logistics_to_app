@@ -169,7 +169,7 @@ class TOListDialogs {
     );
 
     if (confirmed) {
-      final success = await firestoreService.deleteGroupTOs(masterTO.groupId!);
+      final success = await firestoreService.deleteGroupTOs(groupItem.id);
       if (success) {
         onChanged();
       }
@@ -480,7 +480,7 @@ class TOListDialogs {
       final adminUID = userProvider.currentUser?.uid ?? '';
 
       final success = await firestoreService.closeGroupTOs(
-        groupItem.masterTO.groupId!,
+        groupItem.id,
         adminUID,
       );
 
@@ -596,7 +596,7 @@ class TOListDialogs {
       final adminUID = userProvider.currentUser?.uid ?? '';
 
       final success = await firestoreService.reopenGroupTOs(
-        groupItem.masterTO.groupId!,
+        groupItem.id,
         adminUID,
       );
 
