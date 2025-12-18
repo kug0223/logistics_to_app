@@ -142,8 +142,6 @@ class TOListDialogs {
 
   /// 그룹 전체 삭제 다이얼로그
   Future<void> showDeleteGroupDialog(TOGroupItem groupItem) async {
-    final masterTO = groupItem.masterTO;
-    
     // groupTOs가 로드되지 않았으면 group 통계 사용
     int totalApplicants = 0;
     if (groupItem.groupTOs.isNotEmpty) {
@@ -155,13 +153,13 @@ class TOListDialogs {
       totalApplicants = groupItem.totalConfirmed + groupItem.totalPending;
     }
     
-    final toCount = groupItem.group?.actualDaysCount ?? groupItem.groupTOs.length;
+    final toCount = groupItem.actualDaysCount;
     
     final confirmed = await DialogHelper.showDangerConfirm(
       context,
       title: '⚠️ 그룹 전체 삭제',
       message: '다음 그룹을 전체 삭제하시겠습니까?\n\n'
-          '🔗 ${masterTO.groupName}\n\n'
+          '🔗 ${groupItem.groupName}\n\n'
           '포함된 TO: ${toCount}개\n'
           '⚠️ 총 $totalApplicants명의 지원자가 영향받습니다\n'
           '⚠️ 이 작업은 되돌릴 수 없습니다',
@@ -423,7 +421,7 @@ class TOListDialogs {
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text('그룹 "${groupItem.masterTO.groupName}"의 모든 TO를 마감하시겠습니까?'),
+            Text('그룹 "${groupItem.groupName}"의 모든 TO를 마감하시겠습니까?'),
             SizedBox(height: ResponsiveHelper.spacing(context, 16)),  // ⭐ 변경
             Container(
               padding: ResponsiveHelper.cardPadding(context),  // ⭐ 변경
@@ -435,8 +433,8 @@ class TOListDialogs {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    '포함된 TO: ${groupItem.group?.actualDaysCount ?? groupItem.groupTOs.length}개',
-                    style: ResponsiveHelper.bodyStyle(context).copyWith(  // ⭐ 변경
+                    '포함된 TO: ${groupItem.actualDaysCount}개',
+                    style: ResponsiveHelper.bodyStyle(context).copyWith(
                       fontWeight: FontWeight.bold,
                     ),
                   ),
@@ -539,7 +537,7 @@ class TOListDialogs {
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text('그룹 "${groupItem.masterTO.groupName}"의 모든 TO를 재오픈하시겠습니까?'),
+            Text('그룹 "${groupItem.groupName}"의 모든 TO를 재오픈하시겠습니까?'),
             SizedBox(height: ResponsiveHelper.spacing(context, 16)),  // ⭐ 변경
             Container(
               padding: ResponsiveHelper.cardPadding(context),  // ⭐ 변경
@@ -551,8 +549,8 @@ class TOListDialogs {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    '포함된 TO: ${groupItem.group?.actualDaysCount ?? groupItem.groupTOs.length}개',
-                    style: ResponsiveHelper.bodyStyle(context).copyWith(  // ⭐ 변경
+                    '포함된 TO: ${groupItem.actualDaysCount}개',
+                    style: ResponsiveHelper.bodyStyle(context).copyWith(
                       fontWeight: FontWeight.bold,
                     ),
                   ),

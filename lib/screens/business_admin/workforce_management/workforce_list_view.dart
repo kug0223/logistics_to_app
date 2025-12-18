@@ -117,7 +117,7 @@ class _WorkforceListViewState extends State<WorkforceListView> {
       _filteredGroupItems = _allGroupItems.where((groupItem) {
         // 1. 사업장 필터
         if (_selectedBusiness != null && 
-            groupItem.masterTO.businessName != _selectedBusiness) {
+            groupItem.businessName != _selectedBusiness) {
           return false;
         }
         
@@ -505,9 +505,7 @@ class _WorkforceListViewState extends State<WorkforceListView> {
               dialogs: _dialogs,
               allGroupItems: _allGroupItems,
               onChanged: _loadTOsWithStats,
-              isExpanded: _expandedGroups.contains(
-                groupItem.masterTO.groupId ?? groupItem.masterTO.id
-              ),
+              isExpanded: _expandedGroups.contains(groupItem.id),
               expandedTOs: _expandedTOs,
               onToggleExpand: () => _handleGroupExpand(groupItem),
               onToggleTOExpand: (toId) async {
@@ -520,9 +518,7 @@ class _WorkforceListViewState extends State<WorkforceListView> {
                 await _handleTOExpand(toItem);
               },
               // ✨ 로딩 상태 전달 (카드에서 스피너 표시용)
-              isGroupLoading: _loadingGroups.contains(
-                groupItem.masterTO.groupId ?? groupItem.masterTO.id
-              ),
+              isGroupLoading: _loadingGroups.contains(groupItem.id),
               loadingTOs: _loadingTOs,
               onAffectedTOsChanged: _refreshAffectedTOs,  // 🔥 추가
             ),
@@ -595,7 +591,7 @@ class _WorkforceListViewState extends State<WorkforceListView> {
 
   /// ✨ 그룹 카드 펼침 핸들러 (Lazy Loading)
   Future<void> _handleGroupExpand(TOGroupItem groupItem) async {
-    final key = groupItem.masterTO.groupId ?? groupItem.masterTO.id;
+    final key = groupItem.id;
     
     // 이미 펼쳐져 있으면 접기만
     if (_expandedGroups.contains(key)) {
@@ -618,7 +614,7 @@ class _WorkforceListViewState extends State<WorkforceListView> {
       
       try {
         final toItems = await _firestoreService.loadGroupTOsLight(
-          groupItem.masterTO.groupId!
+          groupItem.id
         );
         groupItem.setGroupTOs(toItems);
       } catch (e) {

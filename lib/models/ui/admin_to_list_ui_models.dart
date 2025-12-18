@@ -108,6 +108,28 @@ class TOGroupItem {
   String? get wageType => group?.wageType ?? singleTO!.wageType;
   
   // ═══════════════════════════════════════════════════════════
+  // Getter - 추가 정보
+  // ═══════════════════════════════════════════════════════════
+  
+  /// 그룹명 (그룹이면 groupName, 단일이면 title)
+  String get groupName => group?.groupName ?? singleTO!.groupName ?? singleTO!.title;
+  
+  /// 생성일시
+  DateTime get createdAt => group?.createdAt ?? singleTO!.createdAt;
+  
+  /// 설명
+  String? get description => group?.description ?? singleTO!.description;
+  
+  /// 생성자 UID
+  String get creatorUID => group?.creatorUID ?? singleTO!.creatorUID;
+  
+  /// 실제 TO 개수 (그룹이면 actualDaysCount, 단일이면 1)
+  int get actualDaysCount => group?.actualDaysCount ?? 1;
+  
+  /// 업무 개수
+  int get workDetailCount => group?.workDetailCount ?? singleTO!.workDetailCount;
+  
+  // ═══════════════════════════════════════════════════════════
   // Getter - 그룹 TO 목록
   // ═══════════════════════════════════════════════════════════
   

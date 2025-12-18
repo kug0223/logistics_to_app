@@ -113,15 +113,14 @@ class _WorkforceCalendarViewState extends State<WorkforceCalendarView> {
   /// 특정 날짜의 TO 그룹 목록
   List<TOGroupItem> _getGroupItemsForDay(DateTime day) {
     return _allGroupItems.where((groupItem) {
-      final masterTO = groupItem.masterTO;
-      
-      if (masterTO.isLongTerm) {
+      if (groupItem.isLongTerm) {
         // 장기 TO: startDate ~ endDate 범위 확인
-        if (masterTO.startDate == null || masterTO.endDate == null) return false;
-        final isInRange = !day.isBefore(masterTO.startDate!) && !day.isAfter(masterTO.endDate!);
+        if (groupItem.startDate == null || groupItem.endDate == null) return false;
+        final isInRange = !day.isBefore(groupItem.startDate!) && !day.isAfter(groupItem.endDate!);
         if (!isInRange) return false;
 
-        // workDays 확인
+        // workDays 확인 (장기 TO는 masterTO에서 가져와야 함)
+        final masterTO = groupItem.masterTO;
         if (masterTO.workDays != null && masterTO.workDays!.isNotEmpty) {
           final weekdays = ['월', '화', '수', '목', '금', '토', '일'];
           final dayOfWeek = weekdays[day.weekday - 1];
@@ -129,23 +128,22 @@ class _WorkforceCalendarViewState extends State<WorkforceCalendarView> {
         }
         return true;
       } else if (groupItem.isGrouped) {
-      // ⭐ 그룹 상세 로드 전: masterTO의 그룹 기간으로 범위 확인
-      if (!groupItem.isGroupDetailLoaded) {
-        final masterTO = groupItem.masterTO;
-        if (masterTO.startDate != null && masterTO.endDate != null) {
-          return !day.isBefore(masterTO.startDate!) && !day.isAfter(masterTO.endDate!);
+        // ⭐ 그룹 상세 로드 전: groupItem의 기간으로 범위 확인
+        if (!groupItem.isGroupDetailLoaded) {
+          if (groupItem.startDate != null && groupItem.endDate != null) {
+            return !day.isBefore(groupItem.startDate!) && !day.isAfter(groupItem.endDate!);
+          }
+          // startDate/endDate 없으면 singleTO.date만 확인 (fallback)
+          return DateUtils.isSameDay(groupItem.singleTO?.date ?? groupItem.masterTO.date, day);
         }
-        // startDate/endDate 없으면 masterTO.date만 확인 (fallback)
-        return DateUtils.isSameDay(masterTO.date, day);
-      }
-      
-      // 그룹 상세 로드 후: 그룹 내 TO 중 하나라도 해당 날짜면 표시
-      return groupItem.groupTOs.any((toItem) => 
-        DateUtils.isSameDay(toItem.to.date, day)
-      );
-    } else {
+        
+        // 그룹 상세 로드 후: 그룹 내 TO 중 하나라도 해당 날짜면 표시
+        return groupItem.groupTOs.any((toItem) => 
+          DateUtils.isSameDay(toItem.to.date, day)
+        );
+      } else {
         // 단일 TO: 날짜 일치
-        return DateUtils.isSameDay(masterTO.date, day);
+        return DateUtils.isSameDay(groupItem.singleTO?.date ?? groupItem.masterTO.date, day);
       }
     }).toList();
   }
@@ -157,10 +155,10 @@ class _WorkforceCalendarViewState extends State<WorkforceCalendarView> {
     final dayGroupItems = _getGroupItemsForDay(day);
     
     // 장기 TO 확인
-    final hasLongTO = dayGroupItems.any((item) => item.masterTO.isLongTerm);
+    final hasLongTO = dayGroupItems.any((item) => item.isLongTerm);
     
     // 단기 TO 확인
-    final hasSingleTO = dayGroupItems.any((item) => !item.masterTO.isLongTerm);
+    final hasSingleTO = dayGroupItems.any((item) => !item.isLongTerm);
     
     if (hasLongTO) events.add('long');
     if (hasSingleTO) events.add('single');
@@ -284,7 +282,7 @@ class _WorkforceCalendarViewState extends State<WorkforceCalendarView> {
           // ⭐ 날짜가 지났거나 마감된 공고인지 확인
           final dayGroupItems = _getGroupItemsForDay(date);
           final isPastOrClosed = date.isBefore(DateTime.now().subtract(const Duration(days: 1))) ||
-              dayGroupItems.every((item) => item.masterTO.isManualClosed);
+              dayGroupItems.every((item) => item.isManualClosed);
 
           // ⭐ 회색 또는 기본 색상
           final Color shortColor = isPastOrClosed ? Colors.grey[400]! : Theme.of(context).primaryColor;
@@ -605,9 +603,7 @@ class _WorkforceCalendarViewState extends State<WorkforceCalendarView> {
                 dialogs: _dialogs,
                 allGroupItems: _allGroupItems,
                 onChanged: _loadData,
-                isExpanded: _expandedGroups.contains(
-                  groupItem.masterTO.groupId ?? groupItem.masterTO.id
-                ),
+                isExpanded: _expandedGroups.contains(groupItem.id),
                 expandedTOs: _expandedTOs,
                 onToggleExpand: () => _handleGroupToggle(groupItem),
                 onToggleTOExpand: (toId) async {
@@ -620,9 +616,7 @@ class _WorkforceCalendarViewState extends State<WorkforceCalendarView> {
                 },
                 selectedDate: _selectedDay,
                 // ✨ 로딩 상태 전달
-                isGroupLoading: _loadingGroups.contains(
-                  groupItem.masterTO.groupId ?? groupItem.masterTO.id
-                ),
+                isGroupLoading: _loadingGroups.contains(groupItem.id),
                 loadingTOs: _loadingTOs,
                 onAffectedTOsChanged: _refreshAffectedTOs,  // 🔥 추가
               ),
@@ -636,7 +630,7 @@ class _WorkforceCalendarViewState extends State<WorkforceCalendarView> {
 
   /// ✨ 그룹 카드 펼침 핸들러 (Lazy Loading)
   Future<void> _handleGroupToggle(TOGroupItem groupItem) async {
-    final key = groupItem.masterTO.groupId ?? groupItem.masterTO.id;
+    final key = groupItem.id;
     
     // 이미 펼쳐져 있으면 접기만
     if (_expandedGroups.contains(key)) {
@@ -659,7 +653,7 @@ class _WorkforceCalendarViewState extends State<WorkforceCalendarView> {
       
       try {
         final toItems = await _firestoreService.loadGroupTOsLight(
-          groupItem.masterTO.groupId!
+          groupItem.id
         );
         groupItem.setGroupTOs(toItems);
       } catch (e) {
@@ -869,13 +863,13 @@ class _WorkforceCalendarViewState extends State<WorkforceCalendarView> {
     for (var groupItem in dayGroupItems) {
       // 그룹 TO이고 상세 로드 안 됐으면 로드
       if (groupItem.isGrouped && !groupItem.isGroupDetailLoaded) {
-        final key = groupItem.masterTO.groupId ?? groupItem.masterTO.id;
+        final key = groupItem.id;
         
         setState(() => _loadingGroups.add(key));
         
         try {
           final toItems = await _firestoreService.loadGroupTOsLight(
-            groupItem.masterTO.groupId!
+            groupItem.id
           );
           groupItem.setGroupTOs(toItems);
         } catch (e) {

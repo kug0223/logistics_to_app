@@ -171,7 +171,7 @@ class _TOGroupCardState extends State<TOGroupCard> with SingleTickerProviderStat
     if (allClosed) {
       statusBarColor = AppColors.grey400;
     } else {
-      statusBarColor = masterTO.isLongTerm ? AppColors.longTerm : AppColors.shortTerm;
+      statusBarColor = widget.groupItem.isLongTerm ? AppColors.longTerm : AppColors.shortTerm;
     }
 
     return Container(
@@ -226,21 +226,21 @@ class _TOGroupCardState extends State<TOGroupCard> with SingleTickerProviderStat
                               vertical: ResponsiveHelper.spacing(context, 3),
                             ),
                             decoration: BoxDecoration(
-                              color: masterTO.isLongTerm 
+                              color: widget.groupItem.isLongTerm 
                                   ? AppColors.longTermBg 
                                   : AppColors.shortTermBg,
                               borderRadius: BorderRadius.circular(6),
                               border: Border.all(
-                                color: masterTO.isLongTerm 
+                                color: widget.groupItem.isLongTerm 
                                     ? AppColors.longTermLight 
                                     : AppColors.shortTermLight,
                               ),
                             ),
                             child: Text(
-                              masterTO.isLongTerm ? '고정' : '단기',
+                              widget.groupItem.isLongTerm ? '고정' : '단기',
                               style: ResponsiveHelper.smallStyle(
                                 context,
-                                color: masterTO.isLongTerm 
+                                color: widget.groupItem.isLongTerm 
                                     ? AppColors.longTermDark 
                                     : AppColors.shortTermDark,
                                 fontWeight: FontWeight.bold,
@@ -253,7 +253,7 @@ class _TOGroupCardState extends State<TOGroupCard> with SingleTickerProviderStat
                           // 사업장명
                           Expanded(
                             child: Text(
-                              masterTO.businessName,
+                              widget.groupItem.businessName,
                               style: ResponsiveHelper.smallStyle(
                                 context,
                                 color: AppColors.grey600,
@@ -264,7 +264,7 @@ class _TOGroupCardState extends State<TOGroupCard> with SingleTickerProviderStat
                           
                           // 등록시간
                           Text(
-                            _getCreatedAtText(masterTO.createdAt),
+                            _getCreatedAtText(widget.groupItem.createdAt),
                             style: ResponsiveHelper.tinyStyle(
                               context,
                               color: AppColors.grey500,
@@ -296,7 +296,7 @@ class _TOGroupCardState extends State<TOGroupCard> with SingleTickerProviderStat
                       
                       // ✨ 둘째 줄: 제목 (크게 강조!)
                       Text(
-                        masterTO.groupName ?? masterTO.title,
+                        widget.groupItem.groupName,
                         style: ResponsiveHelper.titleStyle(context).copyWith(
                           fontWeight: FontWeight.bold,
                           color: AppColors.textPrimary,
@@ -1005,16 +1005,16 @@ class _TOGroupCardState extends State<TOGroupCard> with SingleTickerProviderStat
           ),
         ),
         PopupMenuItem(
-          value: masterTO.isClosed ? 'reopenGroup' : 'closeGroup',
+          value: widget.groupItem.isClosed ? 'reopenGroup' : 'closeGroup',
           child: Row(
             children: [
               Icon(
-                masterTO.isClosed ? Icons.lock_open : Icons.lock,
+                widget.groupItem.isClosed ? Icons.lock_open : Icons.lock,
                 size: ResponsiveHelper.iconSize(context, 18),
-                color: masterTO.isClosed ? AppColors.success : AppColors.warning, 
+                color: widget.groupItem.isClosed ? AppColors.success : AppColors.warning, 
               ),
               SizedBox(width: ResponsiveHelper.spacing(context, 12)),
-              Text(masterTO.isClosed ? '그룹 재오픈' : '그룹 마감'),
+              Text(widget.groupItem.isClosed ? '그룹 재오픈' : '그룹 마감'),
             ],
           ),
         ),
