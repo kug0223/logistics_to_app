@@ -78,7 +78,7 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
   void initState() {
     super.initState();
     _tabController = TabController(length: 2, vsync: this);
-    _initData();
+    _initData();  // async지만 initState에서 호출 가능 (await 없이)
   }
 
   @override
@@ -87,8 +87,8 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
     super.dispose();
   }
 
-  /// 초기 데이터 설정
-  void _initData() {
+  /// 초기 데이터 설정 (async로 변경)
+  Future<void> _initData() async {
     _pendingWorkers = [];
     _calculatedWorkers = [];
     
@@ -109,23 +109,26 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
       // confirmed는 이미 최종확정이므로 표시 안함
     }
     
-    // 급여 미리 계산
-    _calculateAllWages();
+    // 급여 미리 계산 (async)
+    await _calculateAllWages();
+    
+    // ✅ 계산 완료 후 UI 갱신
+    if (mounted) setState(() {});
   }
 
-  /// 전체 급여 계산
-  void _calculateAllWages() {
+  /// 전체 급여 계산 (async로 변경)
+  Future<void> _calculateAllWages() async {
     final allWorkers = [..._pendingWorkers, ..._calculatedWorkers];
     for (var app in allWorkers) {
-      final wage = _calculateWageForWorker(app);
+      final wage = await _calculateWageForWorker(app);
       if (wage != null) {
         _calculatedWages[app.id] = wage;
       }
     }
   }
 
-  /// 개별 급여 계산
-  WageDetailModel? _calculateWageForWorker(ApplicationModel app) {
+  /// 개별 급여 계산 (async로 변경)
+  Future<WageDetailModel?> _calculateWageForWorker(ApplicationModel app) async {
     final attendance = widget.attendanceMap[app.id];
     if (attendance == null || attendance.checkIn == null || attendance.checkOut == null) {
       return null;
@@ -136,15 +139,34 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
       return attendance.wageDetail;
     }
     
-    // WorkDetail에서 시간/급여 정보 가져오기
-    final workTimeInfo = widget.workDetailTimeMap[app.selectedWorkType];
-    final scheduledStart = workTimeInfo?['startTime'] ?? app.startTime;
-    final scheduledEnd = workTimeInfo?['endTime'] ?? app.endTime;
+    // ✅ Application에 저장된 기본 정보 사용
+    final scheduledStart = app.startTime;
+    final scheduledEnd = app.endTime;
+    final baseWage = app.wage;
     
-    // 급여 타입 및 단가
-    final wageType = workTimeInfo?['wageType'] ?? 'hourly';
-    final baseWage = workTimeInfo?['wage'] ?? 0;
-    final breakMinutes = workTimeInfo?['breakMinutes'] ?? 0;
+    // ✅ wageType, breakMinutes는 WorkDetail에서 직접 조회
+    String wageType = 'hourly';
+    int breakMinutes = 0;
+    
+    if (app.toId != null && app.toId!.isNotEmpty && 
+        app.workDetailId != null && app.workDetailId!.isNotEmpty) {
+      try {
+        final workDetailDoc = await FirebaseFirestore.instance
+            .collection('tos')
+            .doc(app.toId)
+            .collection('workDetails')
+            .doc(app.workDetailId)
+            .get();
+        
+        if (workDetailDoc.exists) {
+          final data = workDetailDoc.data()!;
+          wageType = data['wageType'] ?? 'hourly';
+          breakMinutes = data['breakMinutes'] ?? 0;
+        }
+      } catch (e) {
+        debugPrint('⚠️ WorkDetail 조회 실패: $e');
+      }
+    }
     
     try {
       return WageCalculator.calculate(
@@ -521,7 +543,7 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
       widget.onConfirmed?.call();
       
       // 급여 재계산
-      final newWage = _calculateWageForWorker(app);
+      final newWage = await _calculateWageForWorker(app);
       
       if (mounted) {
         setState(() {

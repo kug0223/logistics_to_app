@@ -987,9 +987,9 @@ class _WorkforceCalendarViewState extends State<WorkforceCalendarView> {
         final endDate = app.actualResignDate ?? app.workEndDate;
         if (endDate == null) continue;
 
-        // 🔥 시작일 계산: 확정일이 공고 시작일보다 이후면 확정일 기준
-        DateTime effectiveStartDate = app.workDate;
-        if (app.confirmedAt != null) {
+        // 🔥 시작일 계산: desiredStartDate 우선 → confirmedAt → workDate
+        DateTime effectiveStartDate = app.desiredStartDate ?? app.workDate;
+        if (app.confirmedAt != null && app.desiredStartDate == null) {
           final confirmedDate = DateTime(
             app.confirmedAt!.year,
             app.confirmedAt!.month,
