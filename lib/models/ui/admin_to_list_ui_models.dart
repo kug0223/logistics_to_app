@@ -94,7 +94,7 @@ class TOGroupItem {
   DateTime get startDate => group?.startDate ?? singleTO!.date;
   
   /// 종료일
-  DateTime get endDate => group?.endDate ?? singleTO!.date;
+  DateTime get endDate => group?.endDate ?? singleTO!.endDate ?? singleTO!.date;
   
   /// 날짜 범위 문자열
   String get dateRangeString {

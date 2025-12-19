@@ -193,7 +193,7 @@ class _WorkDetailRowState extends State<WorkDetailRow> {
                                   ),
                                   SizedBox(width: ResponsiveHelper.spacing(context, 4)),
                                   Text(
-                                    FormatHelper.formatWage(widget.work.wage),
+                                    '${FormatHelper.formatWage(widget.work.wage)} / ${widget.work.wageTypeLabel}',
                                     style: ResponsiveHelper.smallStyle(
                                       context,
                                       color: AppColors.successDark,
