@@ -526,19 +526,36 @@ class TestDataHelper {
         final longitude = 127.0 + _random.nextDouble() * 0.1;
 
         // Firestore 저장
+        // 출근 시간 문자열 포맷
+        final checkInStr = '${checkInTime.hour.toString().padLeft(2, '0')}:${checkInTime.minute.toString().padLeft(2, '0')}:00';
+        final checkOutStr = checkOutTime != null 
+            ? '${checkOutTime.hour.toString().padLeft(2, '0')}:${checkOutTime.minute.toString().padLeft(2, '0')}:00'
+            : null;
+        
         await _firestore.collection('attendance').add({
           'applicationId': appId,
-          'uid': uid,
+          'userId': uid,                                    // ✅ uid → userId
           'businessId': businessId,
-          'date': Timestamp.fromDate(dateStart),
+          'businessName': appData['businessName'] ?? '',    // ✅ 추가
+          'workDate': Timestamp.fromDate(dateStart),        // ✅ date → workDate
+          'workType': appData['selectedWorkType'] ?? '',    // ✅ 추가
+          'checkIn': checkInStr,                            // ✅ 문자열 형식
           'checkInTime': Timestamp.fromDate(checkInTime),
+          'checkInLat': latitude,                           // ✅ checkInLatitude → checkInLat
+          'checkInLng': longitude,                          // ✅ checkInLongitude → checkInLng
+          'checkInMethod': 'manual',                        // ✅ 추가
+          'checkOut': checkOutStr,                          // ✅ 문자열 형식
           'checkOutTime': checkOutTime != null 
               ? Timestamp.fromDate(checkOutTime) 
               : null,
-          'checkInLatitude': latitude,
-          'checkInLongitude': longitude,
-          'checkOutLatitude': checkOutTime != null ? latitude : null,
-          'checkOutLongitude': checkOutTime != null ? longitude : null,
+          'checkOutLat': checkOutTime != null ? latitude : null,   // ✅ 수정
+          'checkOutLng': checkOutTime != null ? longitude : null,  // ✅ 수정
+          'checkOutMethod': checkOutTime != null ? 'manual' : null, // ✅ 추가
+          'status': 'present',                              // ✅ 추가
+          'isModified': false,                              // ✅ 추가
+          'modifyRequested': false,                         // ✅ 추가
+          'wageStatus': 'pending',                          // ✅ 추가
+          'createdAt': FieldValue.serverTimestamp(),        // ✅ 추가
           'isDummy': true,
         });
 

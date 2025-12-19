@@ -187,13 +187,24 @@ class CalendarHelper {
   
   /// 확정수입 계산 (wageStatus == 'confirmed'인 attendance의 finalWage 합산)
   static int getConfirmedIncome(List<AttendanceModel> attendances, DateTime focusedDay) {
-    return attendances
-        .where((att) =>
-          att.workDate.year == focusedDay.year &&
-          att.workDate.month == focusedDay.month &&
-          att.wageStatus == 'confirmed' &&
-          att.finalWage != null
-        )
-        .fold(0, (sum, att) => sum + (att.finalWage ?? 0));
+    print('🔍 [getConfirmedIncome] 확정수입 계산');
+    print('   전체 attendance: ${attendances.length}건');
+    
+    final confirmedList = attendances.where((att) =>
+      att.workDate.year == focusedDay.year &&
+      att.workDate.month == focusedDay.month &&
+      att.wageStatus == 'confirmed' &&
+      att.finalWage != null
+    ).toList();
+    
+    print('   confirmed 상태: ${confirmedList.length}건');
+    for (var att in confirmedList) {
+      print('   💰 ${att.workDate.toString().substring(0, 10)}: finalWage=${att.finalWage}');
+    }
+    
+    final total = confirmedList.fold(0, (sum, att) => sum + (att.finalWage ?? 0));
+    print('   총 확정수입: $total');
+    
+    return total;
   }
 }

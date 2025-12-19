@@ -79,9 +79,10 @@ extension AttendanceFirestore on FirestoreService {
         'checkInLng': longitude,
         'checkInMethod': method,
         'checkInTime': FieldValue.serverTimestamp(),
-        'status': 'present', // 기본값
+        'status': 'present',
         'isModified': false,
         'modifyRequested': false,
+        'wageStatus': 'pending',              // ✅ 추가
         'createdAt': FieldValue.serverTimestamp(),
       };
       
@@ -331,6 +332,23 @@ extension AttendanceFirestore on FirestoreService {
       final monthEnd = DateTime(year, month + 1, 1);
       
       print('🔍 [getMyMonthlyAttendances] $year년 $month월 출근 기록 조회');
+      print('   userId: $userId');
+      print('   monthStart: $monthStart');
+      print('   monthEnd: $monthEnd');
+      
+      // 🔍 디버그: userId만으로 전체 조회
+      final debugSnapshot = await _firestore
+          .collection('attendance')
+          .where('userId', isEqualTo: userId)
+          .get();
+      print('🔍 [DEBUG] userId로만 조회: ${debugSnapshot.docs.length}건');
+      for (var doc in debugSnapshot.docs) {
+        final data = doc.data();
+        print('   📋 docId: ${doc.id}');
+        print('      workDate: ${data['workDate']}');
+        print('      wageStatus: ${data['wageStatus']}');
+        print('      finalWage: ${data['finalWage']}');
+      }
       
       final snapshot = await _firestore
           .collection('attendance')
@@ -345,9 +363,22 @@ extension AttendanceFirestore on FirestoreService {
           .toList();
       
       print('✅ 월별 출근 기록: ${attendances.length}건');
+      
+      // 🔍 디버그: 각 attendance의 wageStatus, finalWage 출력
+      for (var att in attendances) {
+        print('   📋 ${att.workDate.toString().substring(0, 10)}: checkIn=${att.checkIn}, wageStatus=${att.wageStatus}, finalWage=${att.finalWage}');
+      }
+      
       return attendances;
-    } catch (e) {
+    } catch (e, stackTrace) {
       print('❌ 월별 출근 기록 조회 실패: $e');
+      print('📋 스택트레이스: $stackTrace');
+      
+      // 🔗 인덱스 생성 링크가 에러에 포함되어 있으면 출력
+      if (e.toString().contains('index')) {
+        print('⚠️ Firestore 복합 인덱스가 필요합니다!');
+        print('   위 에러 메시지의 링크를 클릭하여 인덱스를 생성하세요.');
+      }
       return [];
     }
   }
