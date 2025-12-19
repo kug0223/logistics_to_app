@@ -193,6 +193,8 @@ class ScheduleCard extends StatelessWidget {
                     value: '${application.startTime} ~ ${application.endTime}',
                     iconColor: Colors.blue[600]!,
                   ),
+                  // ✅ 더보기 메뉴 아이콘
+                  _buildPopupMenu(context),
                   
                   SizedBox(height: ResponsiveHelper.spacing(context, 10)),
                   
@@ -287,47 +289,7 @@ class ScheduleCard extends StatelessWidget {
                     
                     SizedBox(height: ResponsiveHelper.spacing(context, 12)),
                     
-                    Row(
-                      children: [
-                        // ✨ 하단 버튼
-                        Expanded(
-                          child: OutlinedButton(
-                            onPressed: () => _showDetailDialog(context),
-                            style: OutlinedButton.styleFrom(
-                              foregroundColor: theme.primaryColor,
-                              side: BorderSide(color: theme.primaryColor),
-                              padding: EdgeInsets.symmetric(
-                                vertical: ResponsiveHelper.spacing(context, 12),
-                              ),
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(12),
-                              ),
-                            ),
-                            child: Row(
-                              mainAxisAlignment: MainAxisAlignment.center,
-                              children: [
-                                Icon(
-                                  Icons.info_outline,
-                                  size: ResponsiveHelper.iconSize(context, 18),
-                                ),
-                                SizedBox(width: ResponsiveHelper.spacing(context, 6)),
-                                Text(
-                                  '상세 정보',
-                                  style: ResponsiveHelper.bodyStyle(context).copyWith(
-                                    fontWeight: FontWeight.bold,
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                        ),
-                        
-                        SizedBox(width: ResponsiveHelper.spacing(context, 8)),
-                        
-                        // ✅ 더보기 메뉴 버튼
-                        _buildMoreMenuButton(context, theme),
-                      ],
-                    ),
+                  
                   ],
                 ],
               ),
@@ -337,8 +299,8 @@ class ScheduleCard extends StatelessWidget {
       ),
     );
   }
-  /// ✅ 더보기 메뉴 버튼
-  Widget _buildMoreMenuButton(BuildContext context, ThemeData theme) {
+  /// ✅ 더보기 팝업 메뉴 (관리자 카드 스타일)
+  Widget _buildPopupMenu(BuildContext context) {
     return FutureBuilder<bool>(
       future: selectedDay != null && 
               application.isLongTermApplication && 
@@ -349,116 +311,123 @@ class ScheduleCard extends StatelessWidget {
         final hasPendingRequest = snapshot.data ?? false;
         
         return PopupMenuButton<String>(
-          onSelected: (value) => _handleMenuAction(context, value),
+          icon: Icon(
+            Icons.more_vert,
+            size: ResponsiveHelper.iconSize(context, 22),
+            color: Colors.grey[600],
+          ),
+          padding: EdgeInsets.zero,
+          tooltip: '메뉴',
           enabled: !hasPendingRequest,
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(12),
           ),
-          offset: const Offset(0, -100),
-          itemBuilder: (context) => _buildMenuItems(context),
-          child: Container(
-            padding: EdgeInsets.symmetric(
-              horizontal: ResponsiveHelper.spacing(context, 20),
-              vertical: ResponsiveHelper.spacing(context, 12),
-            ),
-            decoration: BoxDecoration(
-              border: Border.all(
-                color: hasPendingRequest ? Colors.grey : Colors.grey[400]!,
-              ),
-              borderRadius: BorderRadius.circular(12),
-            ),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Icon(
-                  hasPendingRequest ? Icons.schedule : Icons.more_horiz,
-                  size: ResponsiveHelper.iconSize(context, 20),
-                  color: hasPendingRequest ? Colors.grey : Colors.grey[700],
-                ),
-                SizedBox(width: ResponsiveHelper.spacing(context, 6)),
-                Text(
-                  hasPendingRequest ? '대기중' : '더보기',
-                  style: ResponsiveHelper.bodyStyle(context).copyWith(
-                    color: hasPendingRequest ? Colors.grey : Colors.grey[700],
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-              ],
-            ),
-          ),
+          onSelected: (value) => _handleMenuAction(context, value),
+          itemBuilder: (context) => _buildMenuItems(context, hasPendingRequest),
         );
       },
     );
   }
 
   /// ✅ 메뉴 아이템 빌드
-  List<PopupMenuEntry<String>> _buildMenuItems(BuildContext context) {
+  List<PopupMenuEntry<String>> _buildMenuItems(BuildContext context, bool hasPendingRequest) {
     final items = <PopupMenuEntry<String>>[];
     
-    // 1. 급여 명세서 (정산완료 상태만)
+    // 1. 상세 정보
+    items.add(
+      PopupMenuItem(
+        value: 'detail',
+        child: Row(
+          children: [
+            Icon(Icons.info_outline, color: Colors.blue[600], size: 20),
+            const SizedBox(width: 12),
+            const Text('상세 정보'),
+          ],
+        ),
+      ),
+    );
+    
+    // 2. 급여 명세서 (정산완료 상태만)
     if (attendance?.wageStatus == 'confirmed' && attendance?.wageDetail != null) {
       items.add(
         PopupMenuItem(
           value: 'wage_detail',
           child: Row(
             children: [
-              Icon(Icons.receipt_long, color: Colors.blue[600], size: 20),
+              Icon(Icons.receipt_long, color: Colors.green[600], size: 20),
               const SizedBox(width: 12),
               const Text('급여 명세서'),
             ],
           ),
         ),
       );
-      items.add(const PopupMenuDivider());
     }
     
-    // 2. 취소/휴무 관련 메뉴
-    final isLeaveDay = selectedDay != null && 
-        application.isLongTermApplication && 
-        application.isLeaveDateOn(selectedDay!);
+    // 구분선
+    items.add(const PopupMenuDivider());
     
-    final isExtraWorkDay = selectedDay != null && 
-        application.isLongTermApplication && 
-        application.isExtraWorkDateOn(selectedDay!);
-    
-    IconData menuIcon;
-    String menuText;
-    Color menuColor;
-    
-    if (isLeaveDay) {
-      menuIcon = Icons.refresh;
-      menuText = '휴무 취소';
-      menuColor = Colors.green;
-    } else if (isExtraWorkDay) {
-      menuIcon = Icons.remove_circle_outline;
-      menuText = '근무 취소';
-      menuColor = Colors.orange;
-    } else if (application.isLongTermApplication && application.status == 'CONFIRMED') {
-      menuIcon = Icons.beach_access;
-      menuText = '휴무 요청';
-      menuColor = Colors.red;
-    } else if (application.status == 'CONFIRMED') {
-      menuIcon = Icons.cancel_outlined;
-      menuText = '취소 요청';
-      menuColor = Colors.red;
-    } else {
-      menuIcon = Icons.cancel_outlined;
-      menuText = '지원 취소';
-      menuColor = Colors.red;
-    }
-    
-    items.add(
-      PopupMenuItem(
-        value: 'cancel',
-        child: Row(
-          children: [
-            Icon(menuIcon, color: menuColor, size: 20),
-            const SizedBox(width: 12),
-            Text(menuText, style: TextStyle(color: menuColor)),
-          ],
+    // 3. 취소/휴무 관련 메뉴
+    if (hasPendingRequest) {
+      items.add(
+        PopupMenuItem(
+          enabled: false,
+          child: Row(
+            children: [
+              Icon(Icons.schedule, color: Colors.grey, size: 20),
+              const SizedBox(width: 12),
+              Text('요청 대기중', style: TextStyle(color: Colors.grey)),
+            ],
+          ),
         ),
-      ),
-    );
+      );
+    } else {
+      final isLeaveDay = selectedDay != null && 
+          application.isLongTermApplication && 
+          application.isLeaveDateOn(selectedDay!);
+      
+      final isExtraWorkDay = selectedDay != null && 
+          application.isLongTermApplication && 
+          application.isExtraWorkDateOn(selectedDay!);
+      
+      IconData menuIcon;
+      String menuText;
+      Color menuColor;
+      
+      if (isLeaveDay) {
+        menuIcon = Icons.refresh;
+        menuText = '휴무 취소';
+        menuColor = Colors.green;
+      } else if (isExtraWorkDay) {
+        menuIcon = Icons.remove_circle_outline;
+        menuText = '근무 취소';
+        menuColor = Colors.orange;
+      } else if (application.isLongTermApplication && application.status == 'CONFIRMED') {
+        menuIcon = Icons.beach_access;
+        menuText = '휴무 요청';
+        menuColor = Colors.red;
+      } else if (application.status == 'CONFIRMED') {
+        menuIcon = Icons.cancel_outlined;
+        menuText = '취소 요청';
+        menuColor = Colors.red;
+      } else {
+        menuIcon = Icons.cancel_outlined;
+        menuText = '지원 취소';
+        menuColor = Colors.red;
+      }
+      
+      items.add(
+        PopupMenuItem(
+          value: 'cancel',
+          child: Row(
+            children: [
+              Icon(menuIcon, color: menuColor, size: 20),
+              const SizedBox(width: 12),
+              Text(menuText, style: TextStyle(color: menuColor)),
+            ],
+          ),
+        ),
+      );
+    }
     
     return items;
   }
@@ -466,6 +435,9 @@ class ScheduleCard extends StatelessWidget {
   /// ✅ 메뉴 액션 처리
   void _handleMenuAction(BuildContext context, String action) {
     switch (action) {
+      case 'detail':
+        _showDetailDialog(context);
+        break;
       case 'wage_detail':
         _showWageDetailDialog(context);
         break;
@@ -482,15 +454,22 @@ class ScheduleCard extends StatelessWidget {
       return;
     }
     
+    // 사용자 정보 조회
+    final firestoreService = FirestoreService();
+    final user = await firestoreService.getUser(application.uid);
+    
+    if (!context.mounted) return;
+    
     await WageDetailDialog.show(
       context: context,
       app: application,
-      user: null,
+      user: user,
       attendance: attendance!,
       wage: attendance!.wageDetail!,
       mode: WageDialogMode.confirmed,
     );
-  }
+  }  
+  
   
   /// ✨ 정보 행 위젯
   Widget _buildInfoRow(
