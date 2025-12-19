@@ -812,18 +812,15 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
             final dateKey = DateTime(widget.mainTO.date.year, widget.mainTO.date.month, widget.mainTO.date.day);
             final application = _applicationsByDate[dateKey]?[workKey];
             
-            // 🔍 디버그: workKey 매칭 확인
-            final statusResult = _getApplicationStatus(application);
-            print('🔍 [UI] WorkDetail workKey: "$workKey"');
-            print('   찾은 application: ${application?.status ?? "없음"}');
-            print('   _getApplicationStatus 반환: $statusResult');
-            if (application != null) {
-              print('   app.resignStatus: ${application.resignStatus}');
-              print('   app.terminationStatus: ${application.terminationStatus}');
-              print('   app.isLongTermApplication: ${application.isLongTermApplication}');
-            }
-            final conflictInfo = _conflictCache[_dateKey(widget.mainTO.date)]?[work.id] 
-                ?? ConflictInfo.ok;
+            // ✅ 장기공고: 상단에 충돌 경고 박스가 있으므로 개별 카드 충돌 메시지 숨김
+            // ✅ 희망시작일 미선택 + 충돌 날짜 있으면 지원 불가
+            final hasConflictAndNoDate = _confirmedDatesInRange.isNotEmpty && _desiredStartDate == null;
+            final conflictInfo = hasConflictAndNoDate
+                ? ConflictInfo(
+                    level: ConflictLevel.blocked,
+                    message: '희망 시작일을 먼저 선택해주세요',
+                  )
+                : ConflictInfo.ok;  // 장기공고는 개별 충돌 메시지 숨김
             
             // ✅ 장기공고 + 출퇴근 기록 있으면 확정취소 불가
             final canCancelConfirm = application != null && 
@@ -834,7 +831,7 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
               status: _getApplicationStatus(application),
               conflictInfo: conflictInfo,
               isLoading: _loadingWorkIds.contains(work.id),
-              onApply: () => _applyForWork(widget.mainTO, work),
+              onApply: hasConflictAndNoDate ? null : () => _applyForWork(widget.mainTO, work),
               onCancelApplication: application != null
                   ? () => _cancelApplication(application)
                   : null,
@@ -1298,6 +1295,16 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
     // 선택 가능 여부 최종 결정
     isSelectable = isSelectable && isWorkDay;
     
+    // ✅ 충돌로 인해 선택 불가 체크 (이 날짜 이후에 충돌 있으면 불가)
+    if (isSelectable && _confirmedDatesInRange.isNotEmpty) {
+      for (final conflictDate in _confirmedDatesInRange) {
+        if (!conflictDate.isBefore(dayOnly)) {
+          isSelectable = false;
+          break;
+        }
+      }
+    }
+    
     // 배경색/텍스트색 결정
     Color bgColor;
     Color textColor;
@@ -1400,9 +1407,9 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
           
           // 선택된 날짜가 있으면 상세 표시
           if (_selectedDate != null) ...[
-            // 내 확정 스케줄 경고
-            if (_myConfirmedSchedules.isNotEmpty)
-              _buildMyScheduleWarning(context, theme),
+            // 확정 근무 경고 (있으면) - 장기공고는 상단 ConflictWarningBox에서 이미 표시하므로 제외
+          if (_myConfirmedSchedules.isNotEmpty && !_isLongTerm)
+            _buildMyScheduleWarning(context, theme),
             
             // 업무 목록
             _buildDateWorkSection(context, theme, _selectedDate!),

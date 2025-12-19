@@ -431,27 +431,36 @@ class _UserTOCardState extends State<UserTOCard> {
         ),
       ),
       clipBehavior: Clip.antiAlias,
-      child: IntrinsicHeight(
-        child: Row(
-          children: [
-            // 🎨 왼쪽 컬러바
-            Container(
+      child: Stack(
+        children: [
+          // 🎨 왼쪽 컬러바 (Stack으로 전체 높이 차지)
+          Positioned(
+            left: 0,
+            top: 0,
+            bottom: 0,
+            child: Container(
               width: ResponsiveHelper.spacing(context, 6),
               decoration: BoxDecoration(
                 color: barColor,
+                borderRadius: BorderRadius.only(
+                  topLeft: Radius.circular(12),
+                  bottomLeft: Radius.circular(12),
+                ),
               ),
             ),
-            
-            // 본문
-            Expanded(
-              child: InkWell(
-                onTap: widget.onTap,
-                child: Container(
-                  decoration: BoxDecoration(
-                    color: widget.isSelected
-                        ? theme.primaryColor.withOpacity(0.03)
-                        : Colors.white,
-                  ),
+          ),
+          
+          // 본문 (컬러바 너비만큼 padding)
+          Padding(
+            padding: EdgeInsets.only(left: ResponsiveHelper.spacing(context, 6)),
+            child: InkWell(
+              onTap: widget.onTap,
+              child: Container(
+                decoration: BoxDecoration(
+                  color: widget.isSelected
+                      ? theme.primaryColor.withOpacity(0.03)
+                      : Colors.white,
+                ),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
@@ -493,12 +502,22 @@ class _UserTOCardState extends State<UserTOCard> {
                       _buildExpandIcon(context),
                       
                       // ═══════════════════════════════════════════════════
-                      // 펼친 상태
+                      // 펼친 상태 (애니메이션 적용)
                       // ═══════════════════════════════════════════════════
-                      if (widget.isSelected) ...[
-                        Divider(height: 1, color: AppColors.border),
-                        _buildExpandedContent(context),
-                      ],
+                      AnimatedSize(
+                        duration: const Duration(milliseconds: 250),
+                        curve: Curves.easeOutCubic,
+                        alignment: Alignment.topCenter,
+                        clipBehavior: Clip.hardEdge,
+                        child: widget.isSelected
+                            ? Column(
+                                children: [
+                                  Divider(height: 1, color: AppColors.border),
+                                  _buildExpandedContent(context),
+                                ],
+                              )
+                            : const SizedBox.shrink(),
+                      ),
                     ],
                   ),
                 ),
@@ -507,7 +526,6 @@ class _UserTOCardState extends State<UserTOCard> {
           ],
         ),
       ),
-      ),  // ✅ Card 닫기
     );    // ✅ Opacity 닫기
   }
 
@@ -1017,9 +1035,12 @@ class _UserTOCardState extends State<UserTOCard> {
     
     return GestureDetector(
       onTap: () => _selectDate(to),
-      child: Opacity(
+      child: AnimatedOpacity(
+        duration: const Duration(milliseconds: 200),
         opacity: isPending ? 0.5 : 1.0,
-        child: Container(
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 200),
+          curve: Curves.easeOutCubic,
           padding: EdgeInsets.symmetric(
             horizontal: ResponsiveHelper.spacing(context, 10),
             vertical: ResponsiveHelper.spacing(context, 6),
@@ -1033,7 +1054,17 @@ class _UserTOCardState extends State<UserTOCard> {
               color: isPending
                   ? AppColors.warningLight
                   : (isSelected ? theme.primaryColor : AppColors.grey300),
+              width: isSelected ? 2 : 1,
             ),
+            boxShadow: isSelected 
+                ? [
+                    BoxShadow(
+                      color: theme.primaryColor.withOpacity(0.3),
+                      blurRadius: 8,
+                      offset: const Offset(0, 2),
+                    ),
+                  ]
+                : null,
           ),
           child: Row(
             mainAxisSize: MainAxisSize.min,
