@@ -728,8 +728,8 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
             SizedBox(height: ResponsiveHelper.spacing(context, 16)),
           ],
           
-          // 내 확정 스케줄 경고 - 캘린더 아래로
-          if (_myConfirmedSchedules.isNotEmpty)
+          // 내 확정 스케줄 경고 - 캘린더 아래로 (장기공고는 ConflictWarningBox에서 표시하므로 제외)
+          if (_myConfirmedSchedules.isNotEmpty && !_isLongTerm)
             _buildMyScheduleWarning(context, theme),
           
           // 업무 선택 섹션 + 상세보기 버튼
