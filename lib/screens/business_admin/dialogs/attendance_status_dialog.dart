@@ -2436,19 +2436,22 @@ SizedBox(width: ResponsiveHelper.spacing(context, 12)),
     } else {
       // 새로 생성
       await FirebaseFirestore.instance.collection('attendance').add({
-          'applicationId': app.id,
-          'userId': app.uid,                  // ✅ uid → userId
-          'businessId': app.businessId,
-          'businessName': app.toTitle,        // ✅ toTitle → businessName
-          'workDate': Timestamp.fromDate(widget.date),
-          'workType': app.selectedWorkType ?? '',
-          'status': 'NO_SHOW',
-          'isModified': false,                // ✅ 추가
-          'modifyRequested': false,           // ✅ 추가
-          'wageStatus': 'pending',            // ✅ 추가
-          'createdAt': FieldValue.serverTimestamp(),
-          'updatedAt': FieldValue.serverTimestamp(),
-        });
+        'applicationId': app.id,
+        'userId': app.uid,
+        'businessId': app.businessId,
+        'businessName': app.toTitle,
+        'workDate': Timestamp.fromDate(widget.date),
+        'workType': app.selectedWorkType ?? '',
+        'checkIn': checkIn,                           // ✅ 추가 (출근 시간)
+        'checkInMethod': 'manual',                    // ✅ 추가
+        'checkInTime': FieldValue.serverTimestamp(),  // ✅ 추가
+        'status': 'present',                          // ✅ NO_SHOW → present
+        'isModified': false,
+        'modifyRequested': false,
+        'wageStatus': 'pending',
+        'createdAt': FieldValue.serverTimestamp(),
+        'updatedAt': FieldValue.serverTimestamp(),
+      });
     }
   }
 
@@ -2480,24 +2483,21 @@ SizedBox(width: ResponsiveHelper.spacing(context, 12)),
           'status': 'NO_SHOW',
           'updatedAt': FieldValue.serverTimestamp(),
         });
-      } else {
+       } else {
         await FirebaseFirestore.instance.collection('attendance').add({
-        'applicationId': app.id,
-        'userId': app.uid,                    // ✅ uid → userId
-        'businessId': app.businessId,
-        'businessName': app.toTitle,          // ✅ toTitle → businessName
-        'workDate': Timestamp.fromDate(widget.date),
-        'workType': app.selectedWorkType ?? '',
-        'checkIn': checkIn,
-        'checkInMethod': 'manual',
-        'checkInTime': FieldValue.serverTimestamp(),
-        'status': 'present',                  // ✅ CHECKED_IN → present
-        'isModified': false,                  // ✅ 추가
-        'modifyRequested': false,             // ✅ 추가
-        'wageStatus': 'pending',              // ✅ 추가
-        'createdAt': FieldValue.serverTimestamp(),
-        'updatedAt': FieldValue.serverTimestamp(),
-      });
+          'applicationId': app.id,
+          'userId': app.uid,
+          'businessId': app.businessId,
+          'businessName': app.toTitle,
+          'workDate': Timestamp.fromDate(widget.date),
+          'workType': app.selectedWorkType ?? '',
+          'status': 'NO_SHOW',                // ✅ 노쇼 상태
+          'isModified': false,
+          'modifyRequested': false,
+          'wageStatus': 'pending',
+          'createdAt': FieldValue.serverTimestamp(),
+          'updatedAt': FieldValue.serverTimestamp(),
+        });
       }
 
       // 사용자 noShowCount 증가
