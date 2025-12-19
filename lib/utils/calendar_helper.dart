@@ -1,4 +1,5 @@
 import '../models/core/application_model.dart';
+import '../models/core/attendance_model.dart';
 
 /// 캘린더 관련 헬퍼 함수
 class CalendarHelper {
@@ -162,5 +163,37 @@ class CalendarHelper {
     return applications
         .where((app) => app.status == 'CONFIRMED')
         .fold(0, (sum, app) => sum + app.wage);
+  }
+  // ↓ 추가할 코드 (getTotalIncome 메서드 뒤에)
+  
+  /// 실근무일수 계산 (출근 기록 있는 날짜 수, 날짜 기준 - 2잡도 1일로 카운트)
+  static int getActualWorkDays(List<AttendanceModel> attendances, DateTime focusedDay) {
+    // 이번 달 출근 기록만 필터링
+    final thisMonthAttendances = attendances.where((att) =>
+      att.workDate.year == focusedDay.year &&
+      att.workDate.month == focusedDay.month &&
+      att.checkIn != null  // 출근 기록 있는 것만
+    ).toList();
+    
+    // 날짜 기준으로 중복 제거 (같은 날 2잡도 1일로 카운트)
+    final uniqueDates = <String>{};
+    for (var att in thisMonthAttendances) {
+      final dateKey = '${att.workDate.year}-${att.workDate.month}-${att.workDate.day}';
+      uniqueDates.add(dateKey);
+    }
+    
+    return uniqueDates.length;
+  }
+  
+  /// 확정수입 계산 (wageStatus == 'confirmed'인 attendance의 finalWage 합산)
+  static int getConfirmedIncome(List<AttendanceModel> attendances, DateTime focusedDay) {
+    return attendances
+        .where((att) =>
+          att.workDate.year == focusedDay.year &&
+          att.workDate.month == focusedDay.month &&
+          att.wageStatus == 'confirmed' &&
+          att.finalWage != null
+        )
+        .fold(0, (sum, att) => sum + (att.finalWage ?? 0));
   }
 }

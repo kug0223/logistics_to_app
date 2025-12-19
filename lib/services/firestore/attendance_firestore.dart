@@ -320,6 +320,37 @@ extension AttendanceFirestore on FirestoreService {
       return [];
     }
   }
+  /// 사용자별 월별 출근 기록 조회
+  Future<List<AttendanceModel>> getMyMonthlyAttendances({
+    required String userId,
+    required int year,
+    required int month,
+  }) async {
+    try {
+      final monthStart = DateTime(year, month, 1);
+      final monthEnd = DateTime(year, month + 1, 1);
+      
+      print('🔍 [getMyMonthlyAttendances] $year년 $month월 출근 기록 조회');
+      
+      final snapshot = await _firestore
+          .collection('attendance')
+          .where('userId', isEqualTo: userId)
+          .where('workDate', isGreaterThanOrEqualTo: Timestamp.fromDate(monthStart))
+          .where('workDate', isLessThan: Timestamp.fromDate(monthEnd))
+          .orderBy('workDate', descending: false)
+          .get();
+      
+      final attendances = snapshot.docs
+          .map((doc) => AttendanceModel.fromFirestore(doc))
+          .toList();
+      
+      print('✅ 월별 출근 기록: ${attendances.length}건');
+      return attendances;
+    } catch (e) {
+      print('❌ 월별 출근 기록 조회 실패: $e');
+      return [];
+    }
+  }
   // ═══════════════════════════════════════════════════════════
   // 스케줄 변경 요청 관리 (Schedule Change Request Management)
   // ═══════════════════════════════════════════════════════════

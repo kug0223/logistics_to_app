@@ -14,6 +14,7 @@ import '../../widgets/calendar/schedule_card.dart';
 import '../../widgets/dialogs/long_term_work_management_dialog.dart';
 import 'dialogs/my_requests_dialog.dart';
 import '../../models/core/id_card_access_request_model.dart';
+import '../../models/core/attendance_model.dart';
 
 /// ✨ 내 근무 스케줄 화면 (홈 화면 디자인 통일)
 class MyScheduleScreen extends StatefulWidget {
@@ -38,6 +39,9 @@ class _MyScheduleScreenState extends State<MyScheduleScreen> {
   // 🔔 알림 관련
   List<IdCardAccessRequestModel> _pendingIdCardRequests = [];
   List<ApplicationModel> _pendingTerminations = [];
+  
+  // 📊 출근 기록 (통계용)
+  List<AttendanceModel> _attendances = [];
   
   @override
   void initState() {
@@ -64,16 +68,23 @@ class _MyScheduleScreenState extends State<MyScheduleScreen> {
         _firestoreService.getMyApplications(uid),
         _firestoreService.getPendingIdCardRequestsForUser(uid),
         _firestoreService.getMyTerminationRequests(uid),
+        _firestoreService.getMyMonthlyAttendances(
+          userId: uid,
+          year: _focusedDay.year,
+          month: _focusedDay.month,
+        ),
       ]);
       
       final applications = results[0] as List<ApplicationModel>;
       final idCardRequests = results[1] as List<IdCardAccessRequestModel>;
       final terminations = results[2] as List<ApplicationModel>;
+      final attendances = results[3] as List<AttendanceModel>;
       
       setState(() {
         _applications = applications;
         _pendingIdCardRequests = idCardRequests;
         _pendingTerminations = terminations;
+        _attendances = attendances;
         _isLoading = false;
       });
       
@@ -85,6 +96,29 @@ class _MyScheduleScreenState extends State<MyScheduleScreen> {
       print('❌ 지원 내역 로드 실패: $e');
       setState(() => _isLoading = false);
       ToastHelper.showError('데이터를 불러오는데 실패했습니다.');
+    }
+  }
+  /// 월별 출근 기록만 로드 (월 변경 시)
+  Future<void> _loadMonthlyAttendances(DateTime focusedDay) async {
+    final userProvider = Provider.of<UserProvider>(context, listen: false);
+    final uid = userProvider.currentUser?.uid;
+    
+    if (uid == null) return;
+    
+    try {
+      final attendances = await _firestoreService.getMyMonthlyAttendances(
+        userId: uid,
+        year: focusedDay.year,
+        month: focusedDay.month,
+      );
+      
+      if (mounted) {
+        setState(() {
+          _attendances = attendances;
+        });
+      }
+    } catch (e) {
+      print('❌ 월별 출근 기록 로드 실패: $e');
     }
   }
   
@@ -349,6 +383,8 @@ class _MyScheduleScreenState extends State<MyScheduleScreen> {
                   setState(() {
                     _focusedDay = focusedDay;
                   });
+                  // 월이 바뀌면 해당 월의 출근 기록 다시 로드
+                  _loadMonthlyAttendances(focusedDay);
                 },
               ),
             ),
@@ -375,6 +411,7 @@ class _MyScheduleScreenState extends State<MyScheduleScreen> {
             ),
             child: MonthlyStatsCard(
               applications: _applications,
+              attendances: _attendances,
               focusedDay: _focusedDay,
             ),
           ),
