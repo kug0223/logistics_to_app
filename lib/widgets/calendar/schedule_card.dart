@@ -1,29 +1,35 @@
 import 'package:flutter/material.dart';
 import '../../models/core/application_model.dart';
+import '../../models/core/attendance_model.dart';
+import '../../models/core/user_model.dart';
 import '../../utils/dialog_helper.dart';
 import '../../services/firestore_service.dart';
 import '../../utils/toast_helper.dart';
 import '../../utils/responsive_helper.dart';
+import '../../utils/format_helper.dart';
 import '../dialogs/schedule_detail_dialog.dart';
+import '../dialogs/wage/wage_detail_dialog.dart';
 import '../../models/core/schedule_change_request_model.dart';
 import 'package:intl/intl.dart';
 
 /// ✨ 개별 일정 카드 (세련된 디자인)
 class ScheduleCard extends StatelessWidget {
   final ApplicationModel application;
+  final AttendanceModel? attendance;  // ✅ 추가
   final VoidCallback? onChanged;
   final DateTime? selectedDay;
   
   const ScheduleCard({
     super.key,
     required this.application,
+    this.attendance,  // ✅ 추가
     this.onChanged,
     this.selectedDay, 
   });
   
   @override
   Widget build(BuildContext context) {
-    final statusInfo = _getStatusInfo(application.status);
+    final statusInfo = _getDisplayStatus();  // ✅ 변경
     final theme = Theme.of(context);
     
     return Container(
@@ -204,7 +210,7 @@ class ScheduleCard extends StatelessWidget {
                     context,
                     icon: Icons.payments,
                     label: '급여',
-                    value: application.formattedWage,
+                    value: _getWageDisplay(),  // ✅ 변경
                     iconColor: Colors.green[600]!,
                     valueColor: Colors.green[700]!,
                     valueBold: true,
@@ -283,7 +289,7 @@ class ScheduleCard extends StatelessWidget {
                     
                     Row(
                       children: [
-                        // 상세 보기 버튼
+                        // ✨ 하단 버튼
                         Expanded(
                           child: OutlinedButton(
                             onPressed: () => _showDetailDialog(context),
@@ -318,113 +324,8 @@ class ScheduleCard extends StatelessWidget {
                         
                         SizedBox(width: ResponsiveHelper.spacing(context, 8)),
                         
-                        // ⭐ 취소/휴무 버튼 (요청 대기중 상태 확인)
-                        Expanded(
-                          child: FutureBuilder<bool>(
-                            future: selectedDay != null && 
-                                    application.isLongTermApplication && 
-                                    application.status == 'CONFIRMED'
-                                ? _hasPendingRequest(selectedDay!)
-                                : Future.value(false),
-                            builder: (context, snapshot) {
-                              final hasPendingRequest = snapshot.data ?? false;
-                              
-                              // ⭐ 대기중인 요청이 있으면
-                              if (hasPendingRequest) {
-                                return OutlinedButton(
-                                  onPressed: null,
-                                  style: OutlinedButton.styleFrom(
-                                    foregroundColor: Colors.grey,
-                                    side: const BorderSide(color: Colors.grey),
-                                    padding: EdgeInsets.symmetric(
-                                      vertical: ResponsiveHelper.spacing(context, 12),
-                                    ),
-                                    shape: RoundedRectangleBorder(
-                                      borderRadius: BorderRadius.circular(12),
-                                    ),
-                                  ),
-                                  child: Row(
-                                    mainAxisAlignment: MainAxisAlignment.center,
-                                    children: [
-                                      Icon(
-                                        Icons.schedule,
-                                        size: ResponsiveHelper.iconSize(context, 18),
-                                      ),
-                                      SizedBox(width: ResponsiveHelper.spacing(context, 6)),
-                                      Text(
-                                        '요청 대기중',
-                                        style: ResponsiveHelper.bodyStyle(context).copyWith(
-                                          fontWeight: FontWeight.bold,
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                );
-                              }
-                              
-                              // ⭐ 일반 버튼
-                              final isLeaveDay = selectedDay != null && 
-                                  application.isLongTermApplication && 
-                                  application.isLeaveDateOn(selectedDay!);
-                              
-                              final isExtraWorkDay = selectedDay != null && 
-                                  application.isLongTermApplication && 
-                                  application.isExtraWorkDateOn(selectedDay!);
-                              
-                              final buttonColor = isLeaveDay ? Colors.green : Colors.red;
-                              
-                              IconData buttonIcon;
-                              String buttonText;
-                              
-                              if (isLeaveDay) {
-                                buttonIcon = Icons.refresh;
-                                buttonText = '휴무 취소';
-                              } else if (isExtraWorkDay) {
-                                buttonIcon = Icons.remove_circle_outline;
-                                buttonText = '근무 취소';
-                              } else if (application.isLongTermApplication && application.status == 'CONFIRMED') {
-                                buttonIcon = Icons.beach_access;
-                                buttonText = '휴무 요청';
-                              } else if (application.status == 'CONFIRMED') {
-                                buttonIcon = Icons.cancel_outlined;
-                                buttonText = '취소 요청';
-                              } else {
-                                buttonIcon = Icons.cancel_outlined;
-                                buttonText = '지원 취소';
-                              }
-                              
-                              return OutlinedButton(
-                                onPressed: () => _handleCancel(context),
-                                style: OutlinedButton.styleFrom(
-                                  foregroundColor: buttonColor,
-                                  side: BorderSide(color: buttonColor),
-                                  padding: EdgeInsets.symmetric(
-                                    vertical: ResponsiveHelper.spacing(context, 12),
-                                  ),
-                                  shape: RoundedRectangleBorder(
-                                    borderRadius: BorderRadius.circular(12),
-                                  ),
-                                ),
-                                child: Row(
-                                  mainAxisAlignment: MainAxisAlignment.center,
-                                  children: [
-                                    Icon(
-                                      buttonIcon,
-                                      size: ResponsiveHelper.iconSize(context, 18),
-                                    ),
-                                    SizedBox(width: ResponsiveHelper.spacing(context, 6)),
-                                    Text(
-                                      buttonText,
-                                      style: ResponsiveHelper.bodyStyle(context).copyWith(
-                                        fontWeight: FontWeight.bold,
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              );
-                            },
-                          ),
-                        ),
+                        // ✅ 더보기 메뉴 버튼
+                        _buildMoreMenuButton(context, theme),
                       ],
                     ),
                   ],
@@ -434,6 +335,160 @@ class ScheduleCard extends StatelessWidget {
           ),
         ),
       ),
+    );
+  }
+  /// ✅ 더보기 메뉴 버튼
+  Widget _buildMoreMenuButton(BuildContext context, ThemeData theme) {
+    return FutureBuilder<bool>(
+      future: selectedDay != null && 
+              application.isLongTermApplication && 
+              application.status == 'CONFIRMED'
+          ? _hasPendingRequest(selectedDay!)
+          : Future.value(false),
+      builder: (context, snapshot) {
+        final hasPendingRequest = snapshot.data ?? false;
+        
+        return PopupMenuButton<String>(
+          onSelected: (value) => _handleMenuAction(context, value),
+          enabled: !hasPendingRequest,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(12),
+          ),
+          offset: const Offset(0, -100),
+          itemBuilder: (context) => _buildMenuItems(context),
+          child: Container(
+            padding: EdgeInsets.symmetric(
+              horizontal: ResponsiveHelper.spacing(context, 20),
+              vertical: ResponsiveHelper.spacing(context, 12),
+            ),
+            decoration: BoxDecoration(
+              border: Border.all(
+                color: hasPendingRequest ? Colors.grey : Colors.grey[400]!,
+              ),
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(
+                  hasPendingRequest ? Icons.schedule : Icons.more_horiz,
+                  size: ResponsiveHelper.iconSize(context, 20),
+                  color: hasPendingRequest ? Colors.grey : Colors.grey[700],
+                ),
+                SizedBox(width: ResponsiveHelper.spacing(context, 6)),
+                Text(
+                  hasPendingRequest ? '대기중' : '더보기',
+                  style: ResponsiveHelper.bodyStyle(context).copyWith(
+                    color: hasPendingRequest ? Colors.grey : Colors.grey[700],
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  /// ✅ 메뉴 아이템 빌드
+  List<PopupMenuEntry<String>> _buildMenuItems(BuildContext context) {
+    final items = <PopupMenuEntry<String>>[];
+    
+    // 1. 급여 명세서 (정산완료 상태만)
+    if (attendance?.wageStatus == 'confirmed' && attendance?.wageDetail != null) {
+      items.add(
+        PopupMenuItem(
+          value: 'wage_detail',
+          child: Row(
+            children: [
+              Icon(Icons.receipt_long, color: Colors.blue[600], size: 20),
+              const SizedBox(width: 12),
+              const Text('급여 명세서'),
+            ],
+          ),
+        ),
+      );
+      items.add(const PopupMenuDivider());
+    }
+    
+    // 2. 취소/휴무 관련 메뉴
+    final isLeaveDay = selectedDay != null && 
+        application.isLongTermApplication && 
+        application.isLeaveDateOn(selectedDay!);
+    
+    final isExtraWorkDay = selectedDay != null && 
+        application.isLongTermApplication && 
+        application.isExtraWorkDateOn(selectedDay!);
+    
+    IconData menuIcon;
+    String menuText;
+    Color menuColor;
+    
+    if (isLeaveDay) {
+      menuIcon = Icons.refresh;
+      menuText = '휴무 취소';
+      menuColor = Colors.green;
+    } else if (isExtraWorkDay) {
+      menuIcon = Icons.remove_circle_outline;
+      menuText = '근무 취소';
+      menuColor = Colors.orange;
+    } else if (application.isLongTermApplication && application.status == 'CONFIRMED') {
+      menuIcon = Icons.beach_access;
+      menuText = '휴무 요청';
+      menuColor = Colors.red;
+    } else if (application.status == 'CONFIRMED') {
+      menuIcon = Icons.cancel_outlined;
+      menuText = '취소 요청';
+      menuColor = Colors.red;
+    } else {
+      menuIcon = Icons.cancel_outlined;
+      menuText = '지원 취소';
+      menuColor = Colors.red;
+    }
+    
+    items.add(
+      PopupMenuItem(
+        value: 'cancel',
+        child: Row(
+          children: [
+            Icon(menuIcon, color: menuColor, size: 20),
+            const SizedBox(width: 12),
+            Text(menuText, style: TextStyle(color: menuColor)),
+          ],
+        ),
+      ),
+    );
+    
+    return items;
+  }
+
+  /// ✅ 메뉴 액션 처리
+  void _handleMenuAction(BuildContext context, String action) {
+    switch (action) {
+      case 'wage_detail':
+        _showWageDetailDialog(context);
+        break;
+      case 'cancel':
+        _handleCancel(context);
+        break;
+    }
+  }
+
+  /// ✅ 급여 명세서 다이얼로그
+  Future<void> _showWageDetailDialog(BuildContext context) async {
+    if (attendance == null || attendance!.wageDetail == null) {
+      ToastHelper.showWarning('급여 정보가 없습니다');
+      return;
+    }
+    
+    await WageDetailDialog.show(
+      context: context,
+      app: application,
+      user: null,
+      attendance: attendance!,
+      wage: attendance!.wageDetail!,
+      mode: WageDialogMode.confirmed,
     );
   }
   
@@ -1155,6 +1210,76 @@ class ScheduleCard extends StatelessWidget {
       ),
     );
   }
+  /// ✅ 출근 기록 기반 표시 상태 결정
+  _StatusInfo _getDisplayStatus() {
+    // 1. CONFIRMED가 아니면 기존 로직
+    if (application.status != 'CONFIRMED') {
+      return _getStatusInfo(application.status);
+    }
+    
+    // 2. attendance 없으면 "확정"
+    if (attendance == null) {
+      return _StatusInfo(
+        text: '확정',
+        color: Colors.green,
+        icon: Icons.check_circle,
+      );
+    }
+    
+    // 3. 급여 최종 확정
+    if (attendance!.wageStatus == 'confirmed') {
+      return _StatusInfo(
+        text: '정산완료',
+        color: Colors.blue,
+        icon: Icons.verified,
+      );
+    }
+    
+    // 4. 급여 검토중
+    if (attendance!.wageStatus == 'calculated') {
+      return _StatusInfo(
+        text: '검토중',
+        color: Colors.orange,
+        icon: Icons.hourglass_bottom,
+      );
+    }
+    
+    // 5. 퇴근 완료
+    if (attendance!.checkOut != null) {
+      return _StatusInfo(
+        text: '근무완료',
+        color: Colors.purple,
+        icon: Icons.task_alt,
+      );
+    }
+    
+    // 6. 출근만 완료
+    if (attendance!.checkIn != null) {
+      return _StatusInfo(
+        text: '근무중',
+        color: Colors.teal,
+        icon: Icons.work,
+      );
+    }
+    
+    // 7. 기본 - 확정
+    return _StatusInfo(
+      text: '확정',
+      color: Colors.green,
+      icon: Icons.check_circle,
+    );
+  }
+  /// ✅ 급여 표시 (wageType 포함)
+  String _getWageDisplay() {
+    // 정산완료면 확정 급여 표시
+    if (attendance?.wageStatus == 'confirmed' && attendance?.finalWage != null) {
+      final wageTypeLabel = attendance!.wageDetail?.wageTypeLabel ?? '';
+      return '${FormatHelper.formatWage(attendance!.finalWage!)}${wageTypeLabel.isNotEmpty ? ' ($wageTypeLabel)' : ''}';
+    }
+    
+    // 기본 - application의 wage 표시
+    return application.formattedWage;
+  }
 }
 
 /// 상태 정보 클래스
@@ -1168,4 +1293,5 @@ class _StatusInfo {
     required this.text,
     required this.icon,
   });
+  
 }

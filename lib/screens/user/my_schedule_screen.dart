@@ -611,8 +611,30 @@ class _MyScheduleScreenState extends State<MyScheduleScreen> {
       sliver: SliverList(
         delegate: SliverChildBuilderDelegate(
           (context, index) {
+            final app = events[index];
+            // 해당 application의 attendance 찾기
+            final attendance = _attendances.firstWhere(
+              (att) => att.applicationId == app.id && 
+                       _selectedDay != null &&
+                       att.workDate.year == _selectedDay!.year &&
+                       att.workDate.month == _selectedDay!.month &&
+                       att.workDate.day == _selectedDay!.day,
+              orElse: () => AttendanceModel(
+                id: '',
+                applicationId: '',
+                userId: '',
+                businessId: '',
+                businessName: '',
+                workDate: DateTime.now(),
+                workType: '',
+                status: 'absent',
+                createdAt: DateTime.now(),
+              ),
+            );
+            
             return ScheduleCard(
-              application: events[index],
+              application: app,
+              attendance: attendance.id.isNotEmpty ? attendance : null,
               onChanged: _loadApplications,
               selectedDay: _selectedDay,
             );

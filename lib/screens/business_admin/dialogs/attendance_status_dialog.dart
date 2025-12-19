@@ -2540,7 +2540,7 @@ SizedBox(width: ResponsiveHelper.spacing(context, 12)),
             .collection('attendance')
             .doc(attendance.id)
             .update({
-          'status': 'PENDING',
+          'status': 'absent',     // ✅ 노쇼 해제 → 미출근(결근) 상태
           'updatedAt': FieldValue.serverTimestamp(),
         });
       }
