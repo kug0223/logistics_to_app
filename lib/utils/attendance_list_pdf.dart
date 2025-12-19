@@ -13,6 +13,7 @@
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart' show rootBundle;  // ✅ 추가
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 import 'package:printing/printing.dart';
@@ -56,43 +57,48 @@ class AttendanceListItem {
 class AttendanceListPdf {
   static pw.Font? _koreanFont;
   static pw.Font? _koreanBoldFont;
+  static bool _isLoading = false;  // ✅ 중복 로딩 방지
 
-  /// 한글 폰트 로드
+  /// 한글 폰트 로드 (Assets에서 - 빠름!)
   static Future<void> _loadFonts() async {
+    // 이미 로드됨
     if (_koreanFont != null) return;
+    
+    // 중복 로딩 방지
+    if (_isLoading) {
+      // 로딩 중이면 완료될 때까지 대기
+      while (_isLoading) {
+        await Future.delayed(const Duration(milliseconds: 50));
+      }
+      return;
+    }
 
+    _isLoading = true;
+    
     try {
-      // Google Fonts에서 Noto Sans KR 로드
-      _koreanFont = await PdfGoogleFonts.notoSansKRRegular();
-      _koreanBoldFont = await PdfGoogleFonts.notoSansKRBold();
+      print('📝 [PDF] 한글 폰트 로딩 시작 (Assets)...');
+      final stopwatch = Stopwatch()..start();
+      
+      // ✅ Assets에서 로드 (네트워크 다운로드 없음 - 즉시!)
+      final regularData = await rootBundle.load('assets/fonts/NotoSansKR-Regular.ttf');
+      final boldData = await rootBundle.load('assets/fonts/NotoSansKR-Bold.ttf');
+      
+      _koreanFont = pw.Font.ttf(regularData);
+      _koreanBoldFont = pw.Font.ttf(boldData);
+      
+      stopwatch.stop();
+      print('✅ [PDF] 한글 폰트 로드 완료: ${stopwatch.elapsedMilliseconds}ms');
     } catch (e) {
-      // 폴백: 기본 폰트 사용
+      print('⚠️ [PDF] 폰트 로드 실패: $e');
+      // 폴백: 기본 폰트 사용 (한글 깨질 수 있음)
+    } finally {
+      _isLoading = false;
     }
   }
 
   /// ✅ 폰트 미리 로딩 (외부에서 호출 가능)
   static Future<void> preloadFonts() async {
     await _loadFonts();
-  }
-
-  /// 바텀시트로 PDF 미리보기 표시
-  static Future<void> showPreview({
-    required BuildContext context,
-    required AttendanceListData data,
-  }) async {
-    try {
-      await _loadFonts();
-
-      showModalBottomSheet(
-        context: context,
-        isScrollControlled: true,
-        backgroundColor: Colors.transparent,
-        builder: (context) => _PreviewBottomSheet(data: data),
-      );
-    } catch (e) {
-      print('❌ PDF 미리보기 오류: $e');
-      rethrow;
-    }
   }
 
   /// ✅ 미리 생성된 PDF로 바로 미리보기 표시 (로딩 없음)

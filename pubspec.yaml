@@ -84,3 +84,12 @@ flutter:
   
   assets:
     - assets/icons/
+    - assets/fonts/
+  
+  # ✅ PDF용 한글 폰트 (Noto Sans KR)
+  fonts:
+    - family: NotoSansKR
+      fonts:
+        - asset: assets/fonts/NotoSansKR-Regular.ttf
+        - asset: assets/fonts/NotoSansKR-Bold.ttf
+          weight: 700

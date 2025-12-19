@@ -15,6 +15,8 @@ import 'screens/user/user_home_screen.dart';
 import 'screens/super_admin/super_admin_home_screen.dart';
 import 'screens/business_admin/business_admin_home_screen.dart';
 import 'screens/common/splash_screen.dart';
+// PDF 폰트 프리로드
+import 'utils/attendance_list_pdf.dart';
 
 
 
@@ -37,6 +39,9 @@ void main() async {
   } catch (e) {
     print('❌ Firebase 초기화 에러: $e');
   }
+  // ✅ PDF 한글 폰트 백그라운드 프리로드 (await 없이 - 병렬 실행)
+  AttendanceListPdf.preloadFonts();
+  
   
   runApp(const MyApp());
 }

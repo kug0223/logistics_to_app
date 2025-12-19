@@ -86,8 +86,15 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
   void initState() {
     super.initState();
     _selectedBusinessId = widget.initialBusinessId ?? widget.businessIds.first;
-    _loadBusinessNames();
-    _loadData();
+    _initializeData();
+  }
+
+  /// 초기 데이터 로드 (병렬)
+  Future<void> _initializeData() async {
+    await Future.wait([
+      _loadBusinessNames(),
+      _loadData(),
+    ]);
   }
 
   // ═══════════════════════════════════════════════════════════
@@ -165,36 +172,46 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
     }
   }
 
-  /// 확정 근무자 조회 (해당 날짜)
+  /// 확정 근무자 조회 (해당 날짜) - 최적화
   Future<List<ApplicationModel>> _getConfirmedWorkersForDate() async {
     final dateStart = DateTime(widget.date.year, widget.date.month, widget.date.day);
+    final dateEnd = dateStart.add(const Duration(days: 1));
+    
+    final result = <ApplicationModel>[];
 
-    final snapshot = await FirebaseFirestore.instance
+    // ✅ 1. 단기 공고: 서버에서 workDate 필터링 (빠름!)
+    final shortTermSnapshot = await FirebaseFirestore.instance
+        .collection('applications')
+        .where('businessId', isEqualTo: _selectedBusinessId)
+        .where('status', isEqualTo: 'CONFIRMED')
+        .where('workDate', isGreaterThanOrEqualTo: Timestamp.fromDate(dateStart))
+        .where('workDate', isLessThan: Timestamp.fromDate(dateEnd))
+        .get();
+    
+    // 단기만 필터 (workDays가 없는 것)
+    for (var doc in shortTermSnapshot.docs) {
+      final app = ApplicationModel.fromFirestore(doc);
+      if (app.workDays == null || app.workDays!.isEmpty) {
+        result.add(app);
+      }
+    }
+    
+    print('📋 [당일명단] 단기 확정자: ${result.length}명');
+
+    // ✅ 2. 장기 공고: 전체 조회 후 클라이언트 필터링 (workDays 필터는 Firestore에서 지원 안함)
+    final longTermSnapshot = await FirebaseFirestore.instance
         .collection('applications')
         .where('businessId', isEqualTo: _selectedBusinessId)
         .where('status', isEqualTo: 'CONFIRMED')
         .get();
 
-    final allConfirmed = snapshot.docs
-        .map((doc) => ApplicationModel.fromFirestore(doc))
-        .toList();
-
-    // 단기 + 장기 필터링
-    final result = <ApplicationModel>[];
-    
-    for (final app in allConfirmed) {
-      // ✅ 진짜 장기인지 판단: workDays가 있어야 장기
-      final isReallyLongTerm = app.workDays != null && app.workDays!.isNotEmpty;
+    int longTermCount = 0;
+    for (var doc in longTermSnapshot.docs) {
+      final app = ApplicationModel.fromFirestore(doc);
       
-      // 단기 근무 (workDays가 없으면 단기)
-      if (!isReallyLongTerm) {
-        if (DateUtils.isSameDay(app.workDate, dateStart)) {
-          result.add(app);
-        }
-        continue;
-      }
+      // 장기가 아니면 스킵 (단기는 위에서 이미 처리)
+      if (app.workDays == null || app.workDays!.isEmpty) continue;
       
-      // 장기 근무
       // 🔥 퇴사일이 있으면 그 날짜까지만
       final endDate = app.actualResignDate ?? app.workEndDate;
       if (endDate == null) continue;
@@ -235,8 +252,12 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
       
       if (app.workDays!.contains(dayWeekday)) {
         result.add(app);
+        longTermCount++;
       }
     }
+    
+    print('📋 [당일명단] 장기 확정자: ${longTermCount}명');
+    print('📋 [당일명단] 총 확정자: ${result.length}명');
 
     return result;
   }
@@ -1718,8 +1739,7 @@ SizedBox(width: ResponsiveHelper.spacing(context, 12)),
         workTypeMap: _workDetailTimeMap,
       );
 
-      // ✅ PDF 미리 생성 (폰트 로딩 + PDF 생성까지 완료)
-      await AttendanceListPdf.preloadFonts();
+      // ✅ PDF 생성 (폰트는 generatePdf 내부에서 자동 로드)
       final pdfBytes = await AttendanceListPdf.generatePdf(data);
 
       // 로딩 닫기
