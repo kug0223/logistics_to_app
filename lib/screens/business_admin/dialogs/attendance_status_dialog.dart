@@ -82,6 +82,30 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
   final Set<String> _selectedIds = {};
   bool _selectAll = false;
 
+  // ═══════════════════════════════════════════════════════════
+  // 처리현황 계산
+  // ═══════════════════════════════════════════════════════════
+
+  /// 처리 완료된 인원 수
+  int get _processedCount {
+    int count = 0;
+    for (var app in _confirmedWorkers) {
+      final attendance = _attendanceMap[app.id];
+      if (attendance == null) continue;
+      
+      if (attendance.status == 'NO_SHOW') {
+        count++;
+      } else if (attendance.checkIn != null && 
+          (attendance.wageStatus == 'calculated' || attendance.wageStatus == 'confirmed')) {
+        count++;
+      }
+    }
+    return count;
+  }
+
+  /// 전체 처리 완료 여부
+  bool get _isAllProcessed => _confirmedWorkers.isNotEmpty && _processedCount == _confirmedWorkers.length;
+
   @override
   void initState() {
     super.initState();
@@ -1598,11 +1622,17 @@ SizedBox(width: ResponsiveHelper.spacing(context, 12)),
           top: BorderSide(color: AppColors.border),
         ),
       ),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          // 명단 출력 버튼
-          Expanded(
+      child: Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        // 처리현황 + 마감 버튼
+        _buildProgressRow(theme),
+        SizedBox(height: ResponsiveHelper.spacing(context, 12)),
+        // 기존 버튼들
+        Row(
+          children: [
+            // 명단 출력 버튼
+            Expanded(
             child: OutlinedButton.icon(
               onPressed: _confirmedWorkers.isNotEmpty ? _showPrintPreview : null,
               icon: Icon(Icons.print_outlined, size: ResponsiveHelper.iconSize(context, 18)),
@@ -1624,15 +1654,15 @@ SizedBox(width: ResponsiveHelper.spacing(context, 12)),
 
           SizedBox(width: ResponsiveHelper.spacing(context, 12)),
 
-          // 급여 확정 버튼
+          // 마감 버튼
           Expanded(
             child: ElevatedButton.icon(
-              onPressed: _confirmedWorkers.isNotEmpty ? _showWageConfirmDialog : null,
-              icon: Icon(Icons.payments, size: ResponsiveHelper.iconSize(context, 18)),
-              label: const Text('급여 확정'),
+              onPressed: _isAllProcessed ? _showFinalCloseDialog : null,
+              icon: Icon(Icons.lock_outline, size: ResponsiveHelper.iconSize(context, 18)),
+              label: const Text('마감'),
               style: ElevatedButton.styleFrom(
-                backgroundColor: _confirmedWorkers.isNotEmpty 
-                    ? theme.primaryColor 
+                backgroundColor: _isAllProcessed 
+                    ? AppColors.success 
                     : AppColors.grey300,
                 foregroundColor: Colors.white,
                 padding: EdgeInsets.symmetric(
@@ -1642,12 +1672,74 @@ SizedBox(width: ResponsiveHelper.spacing(context, 12)),
                   borderRadius: BorderRadius.circular(12),
                 ),
               ),
+    ),
             ),
+            ],
           ),
         ],
       ),
     );
   }
+
+  /// 처리현황 + 마감 버튼 Row
+  Widget _buildProgressRow(ThemeData theme) {
+    final isAllProcessed = _isAllProcessed;
+    
+    return Row(
+      children: [
+        Icon(
+          isAllProcessed ? Icons.check_circle : Icons.pending,
+          size: ResponsiveHelper.iconSize(context, 18),
+          color: isAllProcessed ? AppColors.success : AppColors.grey500,
+        ),
+        SizedBox(width: ResponsiveHelper.spacing(context, 6)),
+        Text(
+          '처리현황: ',
+          style: ResponsiveHelper.bodyStyle(context, color: AppColors.grey600),
+        ),
+        Text(
+          '$_processedCount/${_confirmedWorkers.length}명',
+          style: ResponsiveHelper.bodyStyle(context).copyWith(
+            fontWeight: FontWeight.bold,
+            color: isAllProcessed ? AppColors.success : theme.primaryColor,
+          ),
+        ),
+        if (isAllProcessed)
+          Text(' ✓', style: ResponsiveHelper.bodyStyle(context, color: AppColors.success)),
+          const Spacer(),
+          SizedBox(
+            height: ResponsiveHelper.spacing(context, 36),
+            child: ElevatedButton.icon(
+              onPressed: _confirmedWorkers.isNotEmpty ? _showWageConfirmDialog : null,
+              icon: Icon(Icons.payments, size: ResponsiveHelper.iconSize(context, 16)),
+              label: Text(
+                '급여확정',
+                style: ResponsiveHelper.smallStyle(context, color: Colors.white).copyWith(
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: _confirmedWorkers.isNotEmpty ? theme.primaryColor : AppColors.grey300,
+              foregroundColor: Colors.white,
+              padding: EdgeInsets.symmetric(
+                horizontal: ResponsiveHelper.spacing(context, 16),
+              ),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(8),
+              ),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  /// 마감 확인 다이얼로그
+  Future<void> _showFinalCloseDialog() async {
+    // TODO: 마감 처리 로직 구현
+    ToastHelper.showInfo('마감 기능 준비 중');
+  }
+
   /// 급여 확정 다이얼로그 열기
   Future<void> _showWageConfirmDialog() async {
     if (_confirmedWorkers.isEmpty) {
