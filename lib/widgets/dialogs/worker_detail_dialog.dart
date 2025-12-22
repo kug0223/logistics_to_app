@@ -34,6 +34,7 @@ class WorkerDetailDialog extends StatefulWidget {
   final bool isConfirmed;
   final bool showApprovalButtons;
   final VoidCallback? onStatusChanged;
+  final String? attendanceStatus;  // ✅ 추가: 출퇴근/급여 상태
 
   const WorkerDetailDialog({
     super.key,
@@ -44,6 +45,7 @@ class WorkerDetailDialog extends StatefulWidget {
     this.isConfirmed = false,
     this.showApprovalButtons = false,
     this.onStatusChanged,
+    this.attendanceStatus,  // ✅ 추가
   });
 
   /// 다이얼로그 표시 헬퍼
@@ -56,6 +58,7 @@ class WorkerDetailDialog extends StatefulWidget {
     bool isConfirmed = false,
     bool showApprovalButtons = false,
     VoidCallback? onStatusChanged,
+    String? attendanceStatus,  // ✅ 추가
   }) {
     return showDialog<bool>(
       context: context,
@@ -67,6 +70,7 @@ class WorkerDetailDialog extends StatefulWidget {
         isConfirmed: isConfirmed,
         showApprovalButtons: showApprovalButtons,
         onStatusChanged: onStatusChanged,
+        attendanceStatus: attendanceStatus,  // ✅ 추가
       ),
     );
   }
@@ -1058,12 +1062,25 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
             // ✅ 장기 + 출퇴근 없음 OR 단기: 확정취소
             ] else ...[
               Expanded(
-                child: LoadingButton.outlined(
-                  text: '확정취소',
-                  icon: Icons.cancel_outlined,
-                  borderColor: AppColors.error,
-                  foregroundColor: AppColors.error,
-                  onPressed: () async => await _cancelConfirmation(),
+                child: Builder(
+                  builder: (context) {
+                    // 미출근 상태일 때만 확정취소 가능
+                    final canCancel = widget.attendanceStatus == null || 
+                                      widget.attendanceStatus == 'pending';
+                    return LoadingButton.outlined(
+                      text: '확정취소',
+                      icon: Icons.cancel_outlined,
+                      borderColor: canCancel ? AppColors.error : AppColors.grey400,
+                      foregroundColor: canCancel ? AppColors.error : AppColors.grey400,
+                      onPressed: () async {
+                        if (canCancel) {
+                          await _cancelConfirmation();
+                        } else {
+                          ToastHelper.showWarning('확정취소는 미출근 상태일 때만 가능합니다');
+                        }
+                      },
+                    );
+                  },
                 ),
               ),
             ],

@@ -142,8 +142,17 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
   /// 전체 처리 완료 여부 (마감 가능)
   bool get _isAllProcessed => _confirmedWorkers.isNotEmpty && _processedCount == _confirmedWorkers.length;
 
-  /// 마감 가능 여부 (모두 처리됨 + 마감 대기 인원 있음)
-  bool get _canClose => _isAllProcessed && _readyForCloseCount > _closedCount;
+  /// 마감 가능 여부 (calculated 인원이 1명이라도 있으면 마감 가능)
+  bool get _canClose {
+    for (var app in _confirmedWorkers) {
+      final attendance = _attendanceMap[app.id];
+      if (attendance == null) continue;
+      if (attendance.wageStatus == 'calculated') {
+        return true;
+      }
+    }
+    return false;
+  }
 
   /// 마감 완료 여부 (모두 confirmed 또는 noshow)
   bool get _isAllClosed {
@@ -1488,6 +1497,7 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
                 businessId: _selectedBusinessId,
                 isConfirmed: true,
                 showApprovalButtons: false,
+                attendanceStatus: status,  // ✅ 추가
                 onStatusChanged: () {
                   _hasChanges = true;  // ✅ 변경 표시
                   _loadData();
@@ -2861,6 +2871,7 @@ SizedBox(width: ResponsiveHelper.spacing(context, 12)),
       attendance: attendance,
       wage: attendance.wageDetail!,
       mode: WageDialogMode.editOnly,
+      businessName: _businessNameMap[app.businessId],  // ✅ 추가
     );
     
     if (result != null && result.action == 'update') {
@@ -3003,6 +3014,7 @@ SizedBox(width: ResponsiveHelper.spacing(context, 12)),
       attendance: attendance,
       wage: attendance.wageDetail!,
       mode: WageDialogMode.confirmed,
+      businessName: _businessNameMap[app.businessId],  // ✅ 추가
     );
   }
   /// 마감 취소 처리 (confirmed → calculated)

@@ -26,6 +26,7 @@ import '../../../theme/app_colors.dart';
 import '../dialogs/to_list_dialogs.dart';
 import '../dialogs/attendance_status_dialog.dart';
 import '../dialogs/fixed_worker_management_dialog.dart';
+import '../dialogs/close_management_dialog.dart';
 
 // Local Widgets
 import '../../../widgets/admin/cards/admin_to_group_card.dart';
@@ -342,11 +343,11 @@ class _WorkforceCalendarViewState extends State<WorkforceCalendarView> {
     );
   }
 
-  /// ✨ 날짜 헤더 - 간결한 디자인 + 고정근무 버튼
+  /// ✨ 날짜 헤더 - 날짜 위 + 버튼 3개 아래
   Widget _buildDateHeader() {
     final theme = Theme.of(context);
     
-    // 날짜 포맷: "25년 12월 15일(월)"
+    // 날짜 포맷: "25/12/19(금)"
     final year = _selectedDay!.year.toString().substring(2);
     final month = _selectedDay!.month;
     final day = _selectedDay!.day;
@@ -356,7 +357,7 @@ class _WorkforceCalendarViewState extends State<WorkforceCalendarView> {
 
     return Container(
       padding: EdgeInsets.symmetric(
-        vertical: ResponsiveHelper.spacing(context, 14),
+        vertical: ResponsiveHelper.spacing(context, 12),
         horizontal: ResponsiveHelper.spacing(context, 16),
       ),
       decoration: BoxDecoration(
@@ -375,132 +376,150 @@ class _WorkforceCalendarViewState extends State<WorkforceCalendarView> {
           ),
         ),
       ),
-      child: Row(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
         children: [
-          // 날짜 아이콘
-          Container(
-            padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 8)),
-            decoration: BoxDecoration(
-              color: theme.primaryColor.withOpacity(0.15),
-              borderRadius: BorderRadius.circular(8),
-            ),
-            child: Icon(
-              Icons.event,
-              color: theme.primaryColor,
-              size: ResponsiveHelper.iconSize(context, 20),
-            ),
-          ),
-          SizedBox(width: ResponsiveHelper.spacing(context, 12)),
-          
-          // 날짜 텍스트
-          Text(
-            dateStr,
-            style: ResponsiveHelper.subtitleStyle(context).copyWith(
-              fontWeight: FontWeight.bold,
-              color: theme.primaryColor,
-            ),
-          ),
-          
-          const Spacer(),
-          
-          // ✨ 당일명단 버튼 (기존 유지)
-          Container(
-            decoration: BoxDecoration(
-              gradient: _hasConfirmedWorkers
-                  ? LinearGradient(
-                      colors: [
-                        theme.primaryColor,
-                        theme.primaryColor.withOpacity(0.85),
-                      ],
-                    )
-                  : null,
-              color: _hasConfirmedWorkers ? null : Colors.grey[300],
-              borderRadius: BorderRadius.circular(12),
-              boxShadow: _hasConfirmedWorkers
-                  ? [
-                      BoxShadow(
-                        color: theme.primaryColor.withOpacity(0.3),
-                        blurRadius: 6,
-                        offset: const Offset(0, 2),
-                      ),
-                    ]
-                  : null,
-            ),
-            child: Material(
-              color: Colors.transparent,
-              child: InkWell(
-                onTap: _hasConfirmedWorkers ? _showAttendancePopup : null,
-                borderRadius: BorderRadius.circular(12),
-                child: Padding(
-                  padding: EdgeInsets.symmetric(
-                    horizontal: ResponsiveHelper.spacing(context, 14),
-                    vertical: ResponsiveHelper.spacing(context, 10),
-                  ),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(
-                        Icons.how_to_reg,
-                        size: ResponsiveHelper.iconSize(context, 18),
-                        color: _hasConfirmedWorkers ? Colors.white : Colors.grey[600],
-                      ),
-                      SizedBox(width: ResponsiveHelper.spacing(context, 6)),
-                      Text(
-                        '당일명단',
-                        style: ResponsiveHelper.smallStyle(context).copyWith(
-                          color: _hasConfirmedWorkers ? Colors.white : Colors.grey[600],
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                    ],
-                  ),
+          // 날짜 표시 (작게)
+          Row(
+            children: [
+              Icon(
+                Icons.event,
+                color: theme.primaryColor,
+                size: ResponsiveHelper.iconSize(context, 16),
+              ),
+              SizedBox(width: ResponsiveHelper.spacing(context, 6)),
+              Text(
+                dateStr,
+                style: ResponsiveHelper.smallStyle(context).copyWith(
+                  fontWeight: FontWeight.bold,
+                  color: theme.primaryColor,
                 ),
               ),
-            ),
+            ],
           ),
           
-          SizedBox(width: ResponsiveHelper.spacing(context, 12)),
+          SizedBox(height: ResponsiveHelper.spacing(context, 10)),
           
-          // ✨ 고정근무 버튼 (신규 추가)
-          Container(
-            decoration: BoxDecoration(
-              color: AppColors.longTermLight,
-              borderRadius: BorderRadius.circular(12),
-              border: Border.all(color: AppColors.longTerm.withOpacity(0.3)),
-            ),
-            child: Material(
-              color: Colors.transparent,
-              child: InkWell(
-                onTap: _openFixedWorkerManagement,
-                borderRadius: BorderRadius.circular(12),
-                child: Padding(
-                  padding: EdgeInsets.symmetric(
-                    horizontal: ResponsiveHelper.spacing(context, 14),
-                    vertical: ResponsiveHelper.spacing(context, 10),
-                  ),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(
-                        Icons.settings,
-                        size: ResponsiveHelper.iconSize(context, 18),
-                        color: AppColors.longTermDark,
-                      ),
-                      SizedBox(width: ResponsiveHelper.spacing(context, 6)),
-                      Text(
-                        '고정관리',
-                        style: ResponsiveHelper.smallStyle(context).copyWith(
-                          color: AppColors.longTermDark,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                    ],
-                  ),
+          // 버튼 3개
+          Row(
+            children: [
+              // ✨ 당일명단 버튼
+              Expanded(
+                child: _buildActionButton(
+                  icon: Icons.how_to_reg,
+                  label: '당일명단',
+                  isEnabled: _hasConfirmedWorkers,
+                  gradient: _hasConfirmedWorkers
+                      ? LinearGradient(
+                          colors: [
+                            theme.primaryColor,
+                            theme.primaryColor.withOpacity(0.85),
+                          ],
+                        )
+                      : null,
+                  backgroundColor: _hasConfirmedWorkers ? null : Colors.grey[300],
+                  foregroundColor: _hasConfirmedWorkers ? Colors.white : Colors.grey[600],
+                  onTap: _hasConfirmedWorkers ? _showAttendancePopup : null,
                 ),
               ),
-            ),
+              
+              SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+              
+              // ✨ 고정관리 버튼
+              Expanded(
+                child: _buildActionButton(
+                  icon: Icons.settings,
+                  label: '고정관리',
+                  isEnabled: true,
+                  backgroundColor: AppColors.longTermLight,
+                  foregroundColor: AppColors.longTermDark,
+                  borderColor: AppColors.longTerm.withOpacity(0.3),
+                  onTap: _openFixedWorkerManagement,
+                ),
+              ),
+              
+              SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+              
+              // ✨ 마감관리 버튼
+              Expanded(
+                child: _buildActionButton(
+                  icon: Icons.lock_outline,
+                  label: '마감관리',
+                  isEnabled: true,
+                  backgroundColor: AppColors.success.withOpacity(0.1),
+                  foregroundColor: AppColors.success,
+                  borderColor: AppColors.success.withOpacity(0.3),
+                  onTap: _openCloseManagement,
+                ),
+              ),
+            ],
           ),
         ],
+      ),
+    );
+  }
+
+  /// 액션 버튼 빌더
+  Widget _buildActionButton({
+    required IconData icon,
+    required String label,
+    required bool isEnabled,
+    Gradient? gradient,
+    Color? backgroundColor,
+    required Color? foregroundColor,
+    Color? borderColor,
+    VoidCallback? onTap,
+  }) {
+    return Container(
+      decoration: BoxDecoration(
+        gradient: gradient,
+        color: gradient == null ? backgroundColor : null,
+        borderRadius: BorderRadius.circular(10),
+        border: borderColor != null ? Border.all(color: borderColor) : null,
+        boxShadow: isEnabled && gradient != null
+            ? [
+                BoxShadow(
+                  color: foregroundColor?.withOpacity(0.3) ?? Colors.black12,
+                  blurRadius: 4,
+                  offset: const Offset(0, 2),
+                ),
+              ]
+            : null,
+      ),
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(10),
+          child: Padding(
+            padding: EdgeInsets.symmetric(
+              horizontal: ResponsiveHelper.spacing(context, 8),
+              vertical: ResponsiveHelper.spacing(context, 10),
+            ),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(
+                  icon,
+                  size: ResponsiveHelper.iconSize(context, 16),
+                  color: foregroundColor,
+                ),
+                SizedBox(width: ResponsiveHelper.spacing(context, 4)),
+                Flexible(
+                  child: Text(
+                    label,
+                    style: ResponsiveHelper.smallStyle(context).copyWith(
+                      color: foregroundColor,
+                      fontWeight: FontWeight.bold,
+                    ),
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
       ),
     );
   }
@@ -539,6 +558,40 @@ class _WorkforceCalendarViewState extends State<WorkforceCalendarView> {
     } catch (e) {
       print('❌ 사업장 조회 실패: $e');
       ToastHelper.showError('사업장 정보를 불러올 수 없습니다');
+    }
+  }
+  /// 마감관리 다이얼로그 열기
+  void _openCloseManagement() async {
+    final userProvider = Provider.of<UserProvider>(context, listen: false);
+    final uid = userProvider.currentUser?.uid;
+
+    if (uid == null) {
+      ToastHelper.showWarning('로그인 정보를 찾을 수 없습니다');
+      return;
+    }
+
+    // 사업장 목록 가져오기
+    final businesses = await _firestoreService.getMyBusiness(uid);
+    if (businesses.isEmpty) {
+      ToastHelper.showWarning('등록된 사업장이 없습니다');
+      return;
+    }
+
+    final businessIds = businesses.map((b) => b.id).toList();
+
+    if (!mounted) return;
+
+    final hasChanges = await showDialog<bool>(
+      context: context,
+      builder: (context) => CloseManagementDialog(
+        initialMonth: _focusedDay,
+        businessIds: businessIds,
+      ),
+    );
+    
+    // 변경사항 있으면 캘린더 새로고침
+    if (hasChanges == true && mounted) {
+      setState(() {});
     }
   }
 

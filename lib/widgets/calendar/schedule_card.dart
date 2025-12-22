@@ -458,6 +458,9 @@ class ScheduleCard extends StatelessWidget {
     final firestoreService = FirestoreService();
     final user = await firestoreService.getUser(application.uid);
     
+    // 사업장 이름 조회
+    final business = await firestoreService.getBusinessById(application.businessId);
+    
     if (!context.mounted) return;
     
     await WageDetailDialog.show(
@@ -467,8 +470,9 @@ class ScheduleCard extends StatelessWidget {
       attendance: attendance!,
       wage: attendance!.wageDetail!,
       mode: WageDialogMode.confirmed,
+      businessName: business?.name,  // ✅ 추가
     );
-  }  
+  }
   
   
   /// ✨ 정보 행 위젯

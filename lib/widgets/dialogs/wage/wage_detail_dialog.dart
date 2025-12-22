@@ -51,6 +51,7 @@ class WageDetailDialog extends StatefulWidget {
   final AttendanceModel attendance;
   final WageDetailModel wage;
   final WageDialogMode mode;
+  final String? businessName;  // ✅ 추가
 
   const WageDetailDialog({
     super.key,
@@ -59,6 +60,7 @@ class WageDetailDialog extends StatefulWidget {
     required this.attendance,
     required this.wage,
     required this.mode,
+    this.businessName,  // ✅ 추가
   });
 
   /// 다이얼로그 표시 (편의 메서드)
@@ -69,6 +71,7 @@ class WageDetailDialog extends StatefulWidget {
     required AttendanceModel attendance,
     required WageDetailModel wage,
     required WageDialogMode mode,
+    String? businessName,  // ✅ 추가
   }) {
     return showDialog<WageDialogResult>(
       context: context,
@@ -78,6 +81,7 @@ class WageDetailDialog extends StatefulWidget {
         attendance: attendance,
         wage: wage,
         mode: mode,
+        businessName: businessName,  // ✅ 추가
       ),
     );
   }
@@ -267,10 +271,6 @@ class _WageDetailDialogState extends State<WageDetailDialog> {
                       SizedBox(height: ResponsiveHelper.spacing(context, 16)),
                       _buildMemoSection(context, theme),
                     ],
-                    if (!_isEditable) ...[
-                      SizedBox(height: ResponsiveHelper.spacing(context, 16)),
-                      _buildConfirmedNotice(context),
-                    ],
                   ],
                 ),
               ),
@@ -351,6 +351,9 @@ class _WageDetailDialogState extends State<WageDetailDialog> {
   // ═══════════════════════════════════════════════════════════
 
   Widget _buildInfoSection(BuildContext context, ThemeData theme) {
+    // 날짜 포맷
+    final dateStr = '${widget.attendance.workDate.year}/${widget.attendance.workDate.month}/${widget.attendance.workDate.day}';
+    
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -362,9 +365,11 @@ class _WageDetailDialogState extends State<WageDetailDialog> {
           ),
         ),
         SizedBox(height: ResponsiveHelper.spacing(context, 12)),
+        _buildInfoRow(context, '날짜', dateStr),
+        _buildInfoRow(context, '사업장', widget.businessName ?? '-'),
         _buildInfoRow(context, '업무', widget.app.selectedWorkType),
         _buildInfoRow(context, '출근', widget.attendance.checkIn ?? '-'),
-        _buildInfoRow(context, '퇴근', widget.attendance.checkOut ?? '-'),
+         _buildInfoRow(context, '퇴근', widget.attendance.checkOut ?? '-'),
         _buildInfoRow(context, '근무시간', '${_wage.workHours.toStringAsFixed(1)}시간'),
         if (_wage.overtimeMinutes > 0)
           _buildInfoRow(context, '연장근무', '${_wage.overtimeHours.toStringAsFixed(1)}시간', highlight: true),
