@@ -320,6 +320,11 @@ extension ApplicationFirestore on FirestoreService {
     required String selectedWorkType,
     required String workDetailId,
     required int wage,
+    // 🔥 업무 상세 정보 추가
+    String? wageType,
+    String? workTypeIcon,
+    String? workTypeColor,
+    String? workTypeBackgroundColor,
     required String startTime,
     required String endTime,
     DateTime? workEndDate,
@@ -585,6 +590,11 @@ extension ApplicationFirestore on FirestoreService {
         'selectedWorkType': selectedWorkType,
         'workDetailId': workDetailId,
         'wage': wage,
+        // 🔥 업무 상세 정보 추가
+        'wageType': wageType,
+        'workTypeIcon': workTypeIcon,
+        'workTypeColor': workTypeColor,
+        'workTypeBackgroundColor': workTypeBackgroundColor,
         'workDate': Timestamp.fromDate(workDate),
         'startTime': startTime,
         'endTime': endTime,
@@ -680,14 +690,19 @@ extension ApplicationFirestore on FirestoreService {
         toTitle: to.title,
         workDate: to.date,
         selectedWorkType: workType,
-        workDetailId: workDetailId,  // ✅ 추가
+        workDetailId: workDetailId,
         wage: workDetail.wage,
+        // 🔥 업무 상세 정보 추가
+        wageType: workDetail.wageType,
+        workTypeIcon: workDetail.workTypeIcon,
+        workTypeColor: workDetail.workTypeColor,
+        workTypeBackgroundColor: workDetail.workTypeBackgroundColor,
         startTime: workDetail.startTime,
         endTime: workDetail.endTime,
         workEndDate: to.endDate,
         workDays: to.workDays,
         type: to.isLongTerm ? 'long_term' : 'short',
-        desiredStartDate: desiredStartDate,  // ✅ 희망 시작일 전달
+        desiredStartDate: desiredStartDate,
       );
     } catch (e) {
       print('❌ TO 지원 실패: $e');

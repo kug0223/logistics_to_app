@@ -90,8 +90,6 @@ class _MyScheduleScreenState extends State<MyScheduleScreen> {
       
       print('✅ 지원 내역 로드 완료: ${applications.length}개');
       print('🔔 신분증 요청: ${idCardRequests.length}건, 계약해지: ${terminations.length}건');
-      
-      print('✅ 지원 내역 로드 완료: ${applications.length}개');
     } catch (e) {
       print('❌ 지원 내역 로드 실패: $e');
       setState(() => _isLoading = false);
@@ -349,9 +347,15 @@ class _MyScheduleScreenState extends State<MyScheduleScreen> {
 
   /// ✨ 컨텐츠 영역 (스크롤 가능)
   Widget _buildContent() {
+    // 이번 달 통계 계산
+    final thisMonth = CalendarHelper.getThisMonthApplications(_applications, _focusedDay);
+    final confirmedCount = CalendarHelper.getConfirmedCount(thisMonth);
+    final pendingCount = CalendarHelper.getPendingCount(thisMonth);
+    final totalIncome = CalendarHelper.getTotalIncome(thisMonth);
+    
     return CustomScrollView(
       slivers: [
-        // 캘린더
+        // 1. 캘린더
         SliverToBoxAdapter(
           child: Container(
             margin: EdgeInsets.all(ResponsiveHelper.spacing(context, 16)),
@@ -383,7 +387,6 @@ class _MyScheduleScreenState extends State<MyScheduleScreen> {
                   setState(() {
                     _focusedDay = focusedDay;
                   });
-                  // 월이 바뀌면 해당 월의 출근 기록 다시 로드
                   _loadMonthlyAttendances(focusedDay);
                 },
               ),
@@ -391,33 +394,36 @@ class _MyScheduleScreenState extends State<MyScheduleScreen> {
           ),
         ),
         
-        // 월별 통계 카드
+        // 2. 범례 (캘린더 바로 아래) - 간소화
         SliverToBoxAdapter(
           child: Container(
             margin: EdgeInsets.symmetric(
               horizontal: ResponsiveHelper.spacing(context, 16),
+            ),
+            padding: EdgeInsets.symmetric(
+              horizontal: ResponsiveHelper.spacing(context, 12),
               vertical: ResponsiveHelper.spacing(context, 8),
             ),
             decoration: BoxDecoration(
               color: Colors.white,
-              borderRadius: BorderRadius.circular(20),
-              boxShadow: [
-                BoxShadow(
-                  color: Colors.black.withOpacity(0.05),
-                  blurRadius: 10,
-                  offset: const Offset(0, 4),
-                ),
-              ],
+              borderRadius: BorderRadius.circular(12),
             ),
-            child: MonthlyStatsCard(
-              applications: _applications,
-              attendances: _attendances,
-              focusedDay: _focusedDay,
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                _buildCompactLegendItem(Colors.green[600]!, '확정', false),
+                SizedBox(width: ResponsiveHelper.spacing(context, 12)),
+                _buildCompactLegendItem(Colors.green[400]!, '고정', true),
+                SizedBox(width: ResponsiveHelper.spacing(context, 12)),
+                _buildCompactLegendItem(Colors.orange[600]!, '대기', false),
+                SizedBox(width: ResponsiveHelper.spacing(context, 12)),
+                _buildCompactLegendItem(Colors.grey[400]!, '휴무', true),
+              ],
             ),
           ),
         ),
         
-        // 범례 (Legend)
+        // 3. 통계 2줄 (일수 + 금액)
         SliverToBoxAdapter(
           child: Container(
             margin: EdgeInsets.symmetric(
@@ -427,7 +433,7 @@ class _MyScheduleScreenState extends State<MyScheduleScreen> {
             padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 12)),
             decoration: BoxDecoration(
               color: Colors.white,
-              borderRadius: BorderRadius.circular(16),
+              borderRadius: BorderRadius.circular(12),
               boxShadow: [
                 BoxShadow(
                   color: Colors.black.withOpacity(0.03),
@@ -436,38 +442,75 @@ class _MyScheduleScreenState extends State<MyScheduleScreen> {
                 ),
               ],
             ),
-            child: LayoutBuilder(
-              builder: (context, constraints) {
-                final isSmall = constraints.maxWidth < 400;
-                final isVerySmall = constraints.maxWidth < 350;
-                
-                return Wrap(
-                  alignment: WrapAlignment.center,
-                  spacing: isVerySmall ? 6 : (isSmall ? 8 : 12),
-                  runSpacing: 4,
+            child: Column(
+              children: [
+                // 첫째 줄: 대기 → 확정 → 실근무 (일수)
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                   children: [
-                    _buildLegendItem(Colors.green[600]!, '단기 확정', isLongTerm: false, isSmall: isVerySmall),
-                    _buildLegendItem(Colors.green[400]!, '고정 확정', isLongTerm: true, isSmall: isVerySmall),
-                    _buildLegendItem(Colors.grey[400]!, '휴무일', isLongTerm: true, isSmall: isVerySmall),
-                    _buildLegendItem(Colors.orange[600]!, '단기 대기', isLongTerm: false, isSmall: isVerySmall),
-                    _buildLegendItem(Colors.orange[400]!, '고정 대기', isLongTerm: true, isSmall: isVerySmall),
+                    _buildCompactStatItem(
+                      icon: Icons.schedule,
+                      label: '대기',
+                      value: '$pendingCount건',
+                      color: Colors.orange,
+                    ),
+                    Container(width: 1, height: 24, color: Colors.grey[200]),
+                    _buildCompactStatItem(
+                      icon: Icons.check_circle,
+                      label: '확정',
+                      value: '$confirmedCount일',
+                      color: Colors.green,
+                    ),
+                    Container(width: 1, height: 24, color: Colors.grey[200]),
+                    _buildCompactStatItem(
+                      icon: Icons.directions_run,
+                      label: '실근무',
+                      value: '${CalendarHelper.getActualWorkDays(_attendances, _focusedDay)}일',
+                      color: Colors.teal,
+                    ),
                   ],
-                );
-              },
+                ),
+                // 구분선
+                Padding(
+                  padding: EdgeInsets.symmetric(vertical: ResponsiveHelper.spacing(context, 8)),
+                  child: Divider(height: 1, color: Colors.grey[200]),
+                ),
+                // 둘째 줄: 예상수입 → 확정수입 (금액)
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                  children: [
+                    _buildCompactStatItem(
+                      icon: Icons.payments,
+                      label: '예상수입',
+                      value: '${NumberFormat('#,###').format(totalIncome)}원',
+                      color: Colors.blue,
+                    ),
+                    Container(width: 1, height: 24, color: Colors.grey[200]),
+                    _buildCompactStatItem(
+                      icon: Icons.paid,
+                      label: '확정수입',
+                      value: '${NumberFormat('#,###').format(CalendarHelper.getConfirmedIncome(_attendances, _focusedDay))}원',
+                      color: Colors.green,
+                    ),
+                  ],
+                ),
+              ],
             ),
           ),
         ),
         
-        // 선택한 날짜 헤더
+        // 4. 선택한 날짜 헤더
         if (_selectedDay != null)
           SliverToBoxAdapter(
             child: Container(
-              margin: EdgeInsets.only(
-                left: ResponsiveHelper.spacing(context, 16),
-                right: ResponsiveHelper.spacing(context, 16),
-                top: ResponsiveHelper.spacing(context, 8),
+              margin: EdgeInsets.symmetric(
+                horizontal: ResponsiveHelper.spacing(context, 16),
+                vertical: ResponsiveHelper.spacing(context, 4),
               ),
-              padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 12)),
+              padding: EdgeInsets.symmetric(
+                horizontal: ResponsiveHelper.spacing(context, 12),
+                vertical: ResponsiveHelper.spacing(context, 10),
+              ),
               decoration: BoxDecoration(
                 gradient: LinearGradient(
                   colors: [
@@ -482,12 +525,12 @@ class _MyScheduleScreenState extends State<MyScheduleScreen> {
                   Icon(
                     Icons.event,
                     color: Theme.of(context).primaryColor,
-                    size: ResponsiveHelper.iconSize(context, 20),
+                    size: ResponsiveHelper.iconSize(context, 18),
                   ),
                   SizedBox(width: ResponsiveHelper.spacing(context, 8)),
                   Text(
-                    DateFormat('yyyy년 M월 d일 (E)', 'ko_KR').format(_selectedDay!),
-                    style: ResponsiveHelper.subtitleStyle(
+                    DateFormat('M월 d일 (E)', 'ko_KR').format(_selectedDay!),
+                    style: ResponsiveHelper.bodyStyle(
                       context,
                       color: Theme.of(context).primaryColor,
                     ).copyWith(fontWeight: FontWeight.bold),
@@ -497,12 +540,77 @@ class _MyScheduleScreenState extends State<MyScheduleScreen> {
             ),
           ),
         
-        // 일정 리스트
+        // 5. 일정 리스트
         _buildSliverScheduleList(),
         
         // 하단 여백
         SliverToBoxAdapter(
           child: SizedBox(height: ResponsiveHelper.spacing(context, 16)),
+        ),
+      ],
+    );
+  }
+  
+  /// 컴팩트 범례 아이템
+  Widget _buildCompactLegendItem(Color color, String label, bool isLongTerm) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        if (isLongTerm)
+          Icon(Icons.star, size: 10, color: color)
+        else
+          Container(
+            width: 8,
+            height: 8,
+            decoration: BoxDecoration(
+              color: color,
+              shape: BoxShape.circle,
+            ),
+          ),
+        SizedBox(width: 4),
+        Text(
+          label,
+          style: TextStyle(
+            fontSize: 11,
+            color: Colors.grey[600],
+          ),
+        ),
+      ],
+    );
+  }
+  
+  /// 컴팩트 통계 아이템
+  Widget _buildCompactStatItem({
+    required IconData icon,
+    required String label,
+    required String value,
+    required MaterialColor color,
+  }) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Icon(icon, size: 16, color: color[600]),
+        SizedBox(width: 6),
+        Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              label,
+              style: TextStyle(
+                fontSize: 10,
+                color: Colors.grey[500],
+              ),
+            ),
+            Text(
+              value,
+              style: TextStyle(
+                fontSize: 13,
+                fontWeight: FontWeight.bold,
+                color: color[700],
+              ),
+            ),
+          ],
         ),
       ],
     );

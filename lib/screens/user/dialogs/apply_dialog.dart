@@ -185,6 +185,11 @@ class ApplyDialog {
         selectedWorkType: work.workType,
         workDetailId: work.id,
         wage: work.wage,
+        // 🔥 업무 상세 정보 추가
+        wageType: work.wageType,
+        workTypeIcon: work.workTypeIcon,
+        workTypeColor: work.workTypeColor,
+        workTypeBackgroundColor: work.workTypeBackgroundColor,
         startTime: work.startTime,
         endTime: work.endTime,
         // ⭐ Phase 1: 장기 공고 정보 추가

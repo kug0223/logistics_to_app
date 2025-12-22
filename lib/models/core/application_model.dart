@@ -25,6 +25,11 @@ class ApplicationModel {
   final String? toId;          // ✅ TO 고유 ID
   final String? groupId;       // ✅ 그룹 ID
   final int wage; // 지원 시점의 금액 (업무유형 변경 시 함께 업데이트)
+  // 🔥 업무 상세 정보 (UI 표시용)
+  final String? wageType;              // 급여 타입 (hourly, daily)
+  final String? workTypeIcon;          // 업무 아이콘
+  final String? workTypeColor;         // 업무 색상
+  final String? workTypeBackgroundColor; // 업무 배경색
   
   // 업무 변경 이력
   final String? originalWorkType; // 최초 지원한 업무 유형 (변경 시에만 값 존재)
@@ -88,6 +93,11 @@ class ApplicationModel {
     this.toId,          // ✅ TO 고유 ID
     this.groupId,       // ✅ 그룹 ID
     required this.wage,
+    // 🔥 업무 상세 정보
+    this.wageType,
+    this.workTypeIcon,
+    this.workTypeColor,
+    this.workTypeBackgroundColor,
     this.originalWorkType,
     this.originalWage,
     this.changedAt,
@@ -155,6 +165,11 @@ class ApplicationModel {
       toId: data['toId'],                  // ✅ TO 고유 ID
       groupId: data['groupId'],            // ✅ 그룹 ID
       wage: data['wage'] ?? 0,
+      // 🔥 업무 상세 정보
+      wageType: data['wageType'],
+      workTypeIcon: data['workTypeIcon'],
+      workTypeColor: data['workTypeColor'],
+      workTypeBackgroundColor: data['workTypeBackgroundColor'],
       originalWorkType: data['originalWorkType'],
       originalWage: data['originalWage'],
       changedAt: data['changedAt'] != null
@@ -256,6 +271,11 @@ class ApplicationModel {
       'toId': toId,                  // ✅ TO 고유 ID
       'groupId': groupId,            // ✅ 그룹 ID
       'wage': wage,
+      // 🔥 업무 상세 정보
+      'wageType': wageType,
+      'workTypeIcon': workTypeIcon,
+      'workTypeColor': workTypeColor,
+      'workTypeBackgroundColor': workTypeBackgroundColor,
       'originalWorkType': originalWorkType,
       'originalWage': originalWage,
       'changedAt': changedAt != null ? Timestamp.fromDate(changedAt!) : null,
@@ -337,9 +357,15 @@ class ApplicationModel {
   /// 업무유형이 변경되었는지 여부
   bool get isWorkTypeChanged => originalWorkType != null;
   
-  /// 포맷팅된 금액 (예: "50,000원")
+   /// 포맷팅된 금액 (예: "50,000원")
   String get formattedWage {
     return FormatHelper.formatWage(wage);
+  }
+  
+  /// 🔥 급여 타입 라벨 (예: "시급")
+  String get wageTypeLabel {
+    if (wageType == null) return '';
+    return FormatHelper.getWageTypeLabel(wageType!);
   }
 
   /// 복사본 생성
@@ -358,6 +384,11 @@ class ApplicationModel {
     String? toId,      // ✅ 추가
     String? groupId,   // ✅ 추가
     int? wage,
+    // 🔥 업무 상세 정보
+    String? wageType,
+    String? workTypeIcon,
+    String? workTypeColor,
+    String? workTypeBackgroundColor,
     String? originalWorkType,
     int? originalWage,
     DateTime? changedAt,
@@ -414,6 +445,11 @@ class ApplicationModel {
       toId: toId ?? this.toId,          // ✅ 추가
       groupId: groupId ?? this.groupId,  // ✅ 추가
       wage: wage ?? this.wage,
+      // 🔥 업무 상세 정보
+      wageType: wageType ?? this.wageType,
+      workTypeIcon: workTypeIcon ?? this.workTypeIcon,
+      workTypeColor: workTypeColor ?? this.workTypeColor,
+      workTypeBackgroundColor: workTypeBackgroundColor ?? this.workTypeBackgroundColor,
       originalWorkType: originalWorkType ?? this.originalWorkType,
       originalWage: originalWage ?? this.originalWage,
       changedAt: changedAt ?? this.changedAt,

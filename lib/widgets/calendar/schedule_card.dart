@@ -10,296 +10,226 @@ import '../../utils/format_helper.dart';
 import '../dialogs/schedule_detail_dialog.dart';
 import '../dialogs/wage/wage_detail_dialog.dart';
 import '../../models/core/schedule_change_request_model.dart';
+import '../../theme/app_colors.dart';
 import 'package:intl/intl.dart';
+import '../work_type_icon.dart';
 
 /// ✨ 개별 일정 카드 (세련된 디자인)
 class ScheduleCard extends StatelessWidget {
   final ApplicationModel application;
-  final AttendanceModel? attendance;  // ✅ 추가
+  final AttendanceModel? attendance;
   final VoidCallback? onChanged;
   final DateTime? selectedDay;
   
   const ScheduleCard({
     super.key,
     required this.application,
-    this.attendance,  // ✅ 추가
+    this.attendance,
     this.onChanged,
     this.selectedDay, 
   });
   
   @override
   Widget build(BuildContext context) {
-    final statusInfo = _getDisplayStatus();  // ✅ 변경
+    final statusInfo = _getDisplayStatus();
     final theme = Theme.of(context);
     
     return Container(
       margin: EdgeInsets.only(
-        bottom: ResponsiveHelper.spacing(context, 12),
+        bottom: ResponsiveHelper.spacing(context, 8),
       ),
       decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(20),
+        color: theme.cardColor,
+        borderRadius: BorderRadius.circular(16),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.05),
-            blurRadius: 10,
-            offset: const Offset(0, 4),
+            color: Colors.black.withOpacity(0.04),
+            blurRadius: 8,
+            offset: const Offset(0, 2),
           ),
         ],
-        // ✨ 확정된 경우 테두리 강조
         border: application.status == 'CONFIRMED'
-            ? Border.all(color: Colors.green[300]!, width: 2)
+            ? Border.all(color: AppColors.success.withOpacity(0.5), width: 1.5)
             : null,
       ),
       child: Material(
         color: Colors.transparent,
         child: InkWell(
           onTap: () => _showDetailDialog(context),
-          borderRadius: BorderRadius.circular(20),
-          child: Container(
-            // ✨ 확정된 경우 은은한 그라데이션
-            decoration: application.status == 'CONFIRMED'
-                ? BoxDecoration(
-                    borderRadius: BorderRadius.circular(20),
-                    gradient: LinearGradient(
-                      colors: [
-                        Colors.green[50]!.withOpacity(0.3),
-                        Colors.white,
-                      ],
-                      begin: Alignment.topLeft,
-                      end: Alignment.bottomRight,
+          borderRadius: BorderRadius.circular(16),
+          child: Padding(
+            padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 12)),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // ═══════════════════════════════════════════════════
+                // 첫 번째 줄: 사업장명 + 상태배지 + 더보기
+                // ═══════════════════════════════════════════════════
+                Row(
+                  children: [
+                    // 사업장 아이콘
+                    Icon(
+                      Icons.business,
+                      size: ResponsiveHelper.iconSize(context, 16),
+                      color: AppColors.grey600,
                     ),
-                  )
-                : null,
-            child: Padding(
-              padding: ResponsiveHelper.cardPadding(context),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  // ✨ 첫 줄: 사업장명 + 상태 배지
-                  Row(
-                    children: [
-                      // 사업장명
-                      Expanded(
-                        child: Row(
-                          children: [
-                            Container(
-                              padding: EdgeInsets.all(
-                                ResponsiveHelper.spacing(context, 8),
-                              ),
-                              decoration: BoxDecoration(
-                                color: theme.primaryColor.withOpacity(0.1),
-                                borderRadius: BorderRadius.circular(10),
-                              ),
-                              child: Icon(
-                                Icons.business,
-                                size: ResponsiveHelper.iconSize(context, 20),
-                                color: theme.primaryColor,
-                              ),
-                            ),
-                            SizedBox(width: ResponsiveHelper.spacing(context, 12)),
-                            Expanded(
-                              child: Text(
-                                application.businessName,
-                                style: ResponsiveHelper.subtitleStyle(context).copyWith(
-                                  fontWeight: FontWeight.bold,
-                                ),
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                              ),
-                            ),
-                          ],
+                    SizedBox(width: ResponsiveHelper.spacing(context, 6)),
+                    // 사업장명
+                    Expanded(
+                      child: Text(
+                        application.businessName,
+                        style: ResponsiveHelper.bodyStyle(context).copyWith(
+                          fontWeight: FontWeight.bold,
+                        ),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                    SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+                    // 상태 배지
+                    _buildStatusBadgeCompact(context, statusInfo),
+                    // 더보기 버튼
+                    _buildPopupMenu(context),
+                  ],
+                ),
+                
+                SizedBox(height: ResponsiveHelper.spacing(context, 8)),
+                
+                // ═══════════════════════════════════════════════════
+                // 두 번째 줄: 근무시간 · 업무유형 · 급여
+                // ═══════════════════════════════════════════════════
+                Row(
+                  children: [
+                    // 근무시간
+                    Icon(
+                      Icons.access_time,
+                      size: ResponsiveHelper.iconSize(context, 14),
+                      color: AppColors.grey500,
+                    ),
+                    SizedBox(width: ResponsiveHelper.spacing(context, 4)),
+                    Text(
+                      '${application.startTime}~${application.endTime}',
+                      style: ResponsiveHelper.smallStyle(context, color: AppColors.grey700),
+                    ),
+                    SizedBox(width: ResponsiveHelper.spacing(context, 12)),
+                    // 업무유형 아이콘 (WorkTypeIcon 사용)
+                    if (application.workTypeIcon != null)
+                      WorkTypeIcon.buildWithBackground(
+                        iconString: application.workTypeIcon!,
+                        iconColor: application.workTypeColor,
+                        backgroundColor: application.workTypeBackgroundColor,
+                        size: 10,
+                        containerSize: 18,
+                      )
+                    else
+                      Container(
+                        padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 3)),
+                        decoration: BoxDecoration(
+                          color: AppColors.purple.withOpacity(0.15),
+                          borderRadius: BorderRadius.circular(4),
+                        ),
+                        child: Icon(
+                          Icons.work,
+                          size: ResponsiveHelper.iconSize(context, 12),
+                          color: AppColors.purple,
                         ),
                       ),
-                      SizedBox(width: ResponsiveHelper.spacing(context, 8)),
-                      _buildStatusBadge(context, statusInfo),
-                    ],
-                  ),
-                  
-                  // ✨ 두 번째 줄: 휴무/추가근무/요청 배지들
-                  if (selectedDay != null && application.isLongTermApplication) ...[
-                    SizedBox(height: ResponsiveHelper.spacing(context, 12)),
-                    Wrap(
-                      spacing: 6,
-                      runSpacing: 4,
+                    SizedBox(width: ResponsiveHelper.spacing(context, 4)),
+                    Expanded(
+                      child: Text(
+                        application.selectedWorkType,
+                        style: ResponsiveHelper.smallStyle(context, color: AppColors.grey700),
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                    // 급여 (금액 + 타입)
+                    Text(
+                      _getWageDisplay(),
+                      style: ResponsiveHelper.bodyStyle(context, color: AppColors.success).copyWith(
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ],
+                ),
+                
+                // ═══════════════════════════════════════════════════
+                // 장기 근무 정보 (있을 때만)
+                // ═══════════════════════════════════════════════════
+                if (application.isLongTermApplication) ...[
+                  SizedBox(height: ResponsiveHelper.spacing(context, 8)),
+                  Container(
+                    padding: EdgeInsets.symmetric(
+                      horizontal: ResponsiveHelper.spacing(context, 10),
+                      vertical: ResponsiveHelper.spacing(context, 6),
+                    ),
+                    decoration: BoxDecoration(
+                      color: AppColors.purple.withOpacity(0.1),
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
                       children: [
-                        // 휴무 배지
-                        if (application.isLeaveDateOn(selectedDay!))
-                          _buildSmallBadge(
-                            context,
-                            icon: Icons.block,
-                            label: '휴무',
-                            color: Colors.grey,
+                        Icon(
+                          Icons.star,
+                          size: ResponsiveHelper.iconSize(context, 12),
+                          color: AppColors.purple,
+                        ),
+                        SizedBox(width: ResponsiveHelper.spacing(context, 4)),
+                        Text(
+                          '고정근무',
+                          style: ResponsiveHelper.tinyStyle(context, color: AppColors.purple).copyWith(
+                            fontWeight: FontWeight.bold,
                           ),
-                        
-                        // 추가근무 배지
-                        if (application.isExtraWorkDateOn(selectedDay!))
-                          _buildSmallBadge(
-                            context,
-                            icon: Icons.add_circle,
-                            label: '추가근무',
-                            color: Colors.green,
-                          ),
-                        
-                        // 요청 대기중 배지
-                        FutureBuilder<ScheduleChangeRequestModel?>(
-                          future: _getPendingRequest(selectedDay!),
-                          builder: (context, snapshot) {
-                            if (!snapshot.hasData || snapshot.data == null) {
-                              return const SizedBox.shrink();
-                            }
-                            
-                            final request = snapshot.data!;
-                            String label;
-                            Color color;
-                            IconData icon;
-                            
-                            if (request.requestType == RequestType.LEAVE) {
-                              label = '휴무요청중';
-                              color = Colors.orange;
-                              icon = Icons.beach_access;
-                            } else if (request.requestType == RequestType.CANCEL_LEAVE) {
-                              label = '휴무취소중';
-                              color = Colors.blue;
-                              icon = Icons.refresh;
-                            } else if (request.requestType == RequestType.CANCEL_EXTRA) {
-                              label = '근무취소중';
-                              color = Colors.red;
-                              icon = Icons.remove_circle_outline;
-                            } else {
-                              return const SizedBox.shrink();
-                            }
-                            
-                            return _buildSmallBadge(
-                              context,
-                              icon: icon,
-                              label: label,
-                              color: color,
-                              outlined: true,
-                            );
-                          },
+                        ),
+                        SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+                        Text(
+                          '${application.workDaysDisplay ?? ""} · ${application.workPeriodDisplay}',
+                          style: ResponsiveHelper.tinyStyle(context, color: AppColors.purple),
                         ),
                       ],
                     ),
-                  ],
-                  
-                  SizedBox(height: ResponsiveHelper.spacing(context, 16)),
-                  
-                  // ✨ 정보 섹션 (아이콘 + 텍스트)
-                  _buildInfoRow(
-                    context,
-                    icon: Icons.access_time,
-                    label: '근무시간',
-                    value: '${application.startTime} ~ ${application.endTime}',
-                    iconColor: Colors.blue[600]!,
                   ),
-                  // ✅ 더보기 메뉴 아이콘
-                  _buildPopupMenu(context),
-                  
-                  SizedBox(height: ResponsiveHelper.spacing(context, 10)),
-                  
-                  _buildInfoRow(
-                    context,
-                    icon: Icons.work_outline,
-                    label: '업무유형',
-                    value: application.selectedWorkType,
-                    iconColor: Colors.purple[600]!,
-                  ),
-                  
-                  SizedBox(height: ResponsiveHelper.spacing(context, 10)),
-                  
-                  _buildInfoRow(
-                    context,
-                    icon: Icons.payments,
-                    label: '급여',
-                    value: _getWageDisplay(),  // ✅ 변경
-                    iconColor: Colors.green[600]!,
-                    valueColor: Colors.green[700]!,
-                    valueBold: true,
-                  ),
-                  
-                  // ✨ 장기 근무 정보
-                  if (application.isLongTermApplication) ...[
-                    SizedBox(height: ResponsiveHelper.spacing(context, 16)),
-                    Container(
-                      padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 12)),
-                      decoration: BoxDecoration(
-                        gradient: LinearGradient(
-                          colors: [
-                            Colors.purple[50]!,
-                            Colors.purple[50]!.withOpacity(0.3),
-                          ],
-                        ),
-                        borderRadius: BorderRadius.circular(12),
-                        border: Border.all(color: Colors.purple[200]!),
-                      ),
-                      child: Row(
-                        children: [
-                          Container(
-                            padding: EdgeInsets.all(
-                              ResponsiveHelper.spacing(context, 8),
-                            ),
-                            decoration: BoxDecoration(
-                              color: Colors.purple[100],
-                              borderRadius: BorderRadius.circular(8),
-                            ),
-                            child: Icon(
-                              Icons.calendar_month,
-                              size: ResponsiveHelper.iconSize(context, 18),
-                              color: Colors.purple[700],
-                            ),
-                          ),
-                          SizedBox(width: ResponsiveHelper.spacing(context, 12)),
-                          Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(
-                                  '고정 근무',
-                                  style: ResponsiveHelper.tinyStyle(
-                                    context,
-                                    color: Colors.purple[900],
-                                  ).copyWith(fontWeight: FontWeight.bold),
-                                ),
-                                SizedBox(height: ResponsiveHelper.spacing(context, 2)),
-                                Text(
-                                  '${application.workPeriodDisplay} ${application.workDaysDisplay ?? ""}',
-                                  style: ResponsiveHelper.smallStyle(
-                                    context,
-                                    color: Colors.purple[700],
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ],
-                  
-                  // ✨ 액션 버튼들
-                  if (application.status == 'PENDING' || application.status == 'CONFIRMED') ...[
-                    SizedBox(height: ResponsiveHelper.spacing(context, 16)),
-                    
-                    // 구분선
-                    Divider(
-                      height: 1,
-                      color: Colors.grey[200],
-                    ),
-                    
-                    SizedBox(height: ResponsiveHelper.spacing(context, 12)),
-                    
-                  
-                  ],
                 ],
-              ),
+              ],
             ),
           ),
         ),
       ),
     );
   }
-  /// ✅ 더보기 팝업 메뉴 (관리자 카드 스타일)
+
+  /// ✅ 상태 배지 (컴팩트)
+  Widget _buildStatusBadgeCompact(BuildContext context, _StatusInfo info) {
+    return Container(
+      padding: EdgeInsets.symmetric(
+        horizontal: ResponsiveHelper.spacing(context, 10),
+        vertical: ResponsiveHelper.spacing(context, 4),
+      ),
+      decoration: BoxDecoration(
+        color: info.color.withOpacity(0.15),
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(
+            info.icon,
+            size: ResponsiveHelper.iconSize(context, 14),
+            color: info.color[700],
+          ),
+          SizedBox(width: ResponsiveHelper.spacing(context, 4)),
+          Text(
+            info.text,
+            style: ResponsiveHelper.tinyStyle(context, color: info.color[700]).copyWith(
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// ✅ 더보기 팝업 메뉴
   Widget _buildPopupMenu(BuildContext context) {
     return FutureBuilder<bool>(
       future: selectedDay != null && 
@@ -314,7 +244,7 @@ class ScheduleCard extends StatelessWidget {
           icon: Icon(
             Icons.more_vert,
             size: ResponsiveHelper.iconSize(context, 22),
-            color: Colors.grey[600],
+            color: AppColors.grey600,
           ),
           padding: EdgeInsets.zero,
           tooltip: '메뉴',
@@ -332,6 +262,8 @@ class ScheduleCard extends StatelessWidget {
   /// ✅ 메뉴 아이템 빌드
   List<PopupMenuEntry<String>> _buildMenuItems(BuildContext context, bool hasPendingRequest) {
     final items = <PopupMenuEntry<String>>[];
+    final iconSize = ResponsiveHelper.iconSize(context, 20);
+    final spacing = ResponsiveHelper.spacing(context, 12);
     
     // 1. 상세 정보
     items.add(
@@ -339,9 +271,9 @@ class ScheduleCard extends StatelessWidget {
         value: 'detail',
         child: Row(
           children: [
-            Icon(Icons.info_outline, color: Colors.blue[600], size: 20),
-            const SizedBox(width: 12),
-            const Text('상세 정보'),
+            Icon(Icons.info_outline, color: AppColors.info, size: iconSize),
+            SizedBox(width: spacing),
+            Text('상세 정보', style: ResponsiveHelper.bodyStyle(context)),
           ],
         ),
       ),
@@ -354,79 +286,123 @@ class ScheduleCard extends StatelessWidget {
           value: 'wage_detail',
           child: Row(
             children: [
-              Icon(Icons.receipt_long, color: Colors.green[600], size: 20),
-              const SizedBox(width: 12),
-              const Text('급여 명세서'),
+              Icon(Icons.receipt_long, color: AppColors.success, size: iconSize),
+              SizedBox(width: spacing),
+              Text('급여 명세서', style: ResponsiveHelper.bodyStyle(context)),
             ],
           ),
         ),
       );
     }
     
-    // 구분선
-    items.add(const PopupMenuDivider());
+    // 3. 취소/휴무 관련 메뉴 (출근 이후는 취소 불가)
+    final isWageConfirmed = attendance?.wageStatus == 'confirmed';
+    final hasCheckedIn = attendance?.checkIn != null;
+    final isNoShow = attendance?.status == 'NO_SHOW';
     
-    // 3. 취소/휴무 관련 메뉴
-    if (hasPendingRequest) {
-      items.add(
-        PopupMenuItem(
-          enabled: false,
-          child: Row(
-            children: [
-              Icon(Icons.schedule, color: Colors.grey, size: 20),
-              const SizedBox(width: 12),
-              Text('요청 대기중', style: TextStyle(color: Colors.grey)),
-            ],
+    // 정산완료가 아닐 때만 구분선 + 취소 메뉴 표시
+    if (!isWageConfirmed) {
+      // 구분선
+      items.add(const PopupMenuDivider());
+      
+      if (isNoShow) {
+        // 노쇼 처리된 건
+        items.add(
+          PopupMenuItem(
+            enabled: false,
+            child: Row(
+              children: [
+                Icon(Icons.cancel, color: AppColors.error.withOpacity(0.5), size: iconSize),
+                SizedBox(width: spacing),
+                Text(
+                  '노쇼 처리됨', 
+                  style: ResponsiveHelper.bodyStyle(context, color: AppColors.error.withOpacity(0.5)),
+                ),
+              ],
+            ),
           ),
-        ),
-      );
-    } else {
-      final isLeaveDay = selectedDay != null && 
-          application.isLongTermApplication && 
-          application.isLeaveDateOn(selectedDay!);
-      
-      final isExtraWorkDay = selectedDay != null && 
-          application.isLongTermApplication && 
-          application.isExtraWorkDateOn(selectedDay!);
-      
-      IconData menuIcon;
-      String menuText;
-      Color menuColor;
-      
-      if (isLeaveDay) {
-        menuIcon = Icons.refresh;
-        menuText = '휴무 취소';
-        menuColor = Colors.green;
-      } else if (isExtraWorkDay) {
-        menuIcon = Icons.remove_circle_outline;
-        menuText = '근무 취소';
-        menuColor = Colors.orange;
-      } else if (application.isLongTermApplication && application.status == 'CONFIRMED') {
-        menuIcon = Icons.beach_access;
-        menuText = '휴무 요청';
-        menuColor = Colors.red;
-      } else if (application.status == 'CONFIRMED') {
-        menuIcon = Icons.cancel_outlined;
-        menuText = '취소 요청';
-        menuColor = Colors.red;
+        );
+      } else if (hasCheckedIn) {
+        // 출근 이후는 취소 불가 (급여 지급 대상)
+        items.add(
+          PopupMenuItem(
+            enabled: false,
+            child: Row(
+              children: [
+                Icon(Icons.block, color: AppColors.grey500, size: iconSize),
+                SizedBox(width: spacing),
+                Text(
+                  '출근완료 (취소불가)', 
+                  style: ResponsiveHelper.bodyStyle(context, color: AppColors.grey500),
+                ),
+              ],
+            ),
+          ),
+        );
+      } else if (hasPendingRequest) {
+        items.add(
+          PopupMenuItem(
+            enabled: false,
+            child: Row(
+              children: [
+                Icon(Icons.schedule, color: AppColors.grey500, size: iconSize),
+                SizedBox(width: spacing),
+                Text(
+                  '요청 대기중', 
+                  style: ResponsiveHelper.bodyStyle(context, color: AppColors.grey500),
+                ),
+              ],
+            ),
+          ),
+        );
       } else {
-        menuIcon = Icons.cancel_outlined;
-        menuText = '지원 취소';
-        menuColor = Colors.red;
-      }
-      
-      items.add(
-        PopupMenuItem(
-          value: 'cancel',
-          child: Row(
-            children: [
-              Icon(menuIcon, color: menuColor, size: 20),
-              const SizedBox(width: 12),
-              Text(menuText, style: TextStyle(color: menuColor)),
-            ],
+        final isLeaveDay = selectedDay != null && 
+            application.isLongTermApplication && 
+            application.isLeaveDateOn(selectedDay!);
+        
+        final isExtraWorkDay = selectedDay != null && 
+            application.isLongTermApplication && 
+            application.isExtraWorkDateOn(selectedDay!);
+        
+        IconData menuIcon;
+        String menuText;
+        Color menuColor;
+        
+        if (isLeaveDay) {
+          menuIcon = Icons.refresh;
+          menuText = '휴무 취소';
+          menuColor = AppColors.success;
+        } else if (isExtraWorkDay) {
+          menuIcon = Icons.remove_circle_outline;
+          menuText = '근무 취소';
+          menuColor = AppColors.warning;
+        } else if (application.isLongTermApplication && application.status == 'CONFIRMED') {
+          menuIcon = Icons.beach_access;
+          menuText = '휴무 요청';
+          menuColor = AppColors.error;
+        } else if (application.status == 'CONFIRMED') {
+          menuIcon = Icons.cancel_outlined;
+          menuText = '확정 취소';
+          menuColor = AppColors.error;
+        } else {
+          menuIcon = Icons.cancel_outlined;
+          menuText = '지원 취소';
+          menuColor = AppColors.error;
+        }
+        
+        items.add(
+          PopupMenuItem(
+            value: 'cancel',
+            child: Row(
+              children: [
+                Icon(menuIcon, color: menuColor, size: iconSize),
+                SizedBox(width: spacing),
+                Text(menuText, style: ResponsiveHelper.bodyStyle(context, color: menuColor)),
+              ],
+            ),
           ),
-        ),
-      );
+        );
+      }
     }
     
     return items;
@@ -470,61 +446,7 @@ class ScheduleCard extends StatelessWidget {
       attendance: attendance!,
       wage: attendance!.wageDetail!,
       mode: WageDialogMode.confirmed,
-      businessName: business?.name,  // ✅ 추가
-    );
-  }
-  
-  
-  /// ✨ 정보 행 위젯
-  Widget _buildInfoRow(
-    BuildContext context, {
-    required IconData icon,
-    required String label,
-    required String value,
-    required Color iconColor,
-    Color? valueColor,
-    bool valueBold = false,
-  }) {
-    return Row(
-      children: [
-        Container(
-          padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 6)),
-          decoration: BoxDecoration(
-            color: iconColor.withOpacity(0.1),
-            borderRadius: BorderRadius.circular(8),
-          ),
-          child: Icon(
-            icon,
-            size: ResponsiveHelper.iconSize(context, 16),
-            color: iconColor,
-          ),
-        ),
-        SizedBox(width: ResponsiveHelper.spacing(context, 12)),
-        Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                label,
-                style: ResponsiveHelper.tinyStyle(
-                  context,
-                  color: Colors.grey[600],
-                ),
-              ),
-              SizedBox(height: ResponsiveHelper.spacing(context, 2)),
-              Text(
-                value,
-                style: ResponsiveHelper.bodyStyle(
-                  context,
-                  color: valueColor ?? Colors.grey[800],
-                ).copyWith(
-                  fontWeight: valueBold ? FontWeight.bold : FontWeight.normal,
-                ),
-              ),
-            ],
-          ),
-        ),
-      ],
+      businessName: business?.name,
     );
   }
   
@@ -564,104 +486,7 @@ class ScheduleCard extends StatelessWidget {
       
     // 단기 근무 확정 → 취소 요청
     if (application.status == 'CONFIRMED') {
-      // ⭐ 확정된 경우 - 패널티 경고 후 취소 가능
-      final confirmed = await showDialog<bool>(
-        context: context,
-        builder: (context) => AlertDialog(
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(20),
-          ),
-          title: Row(
-            children: [
-              Icon(
-                Icons.warning_amber_rounded, 
-                color: Colors.orange[700], 
-                size: ResponsiveHelper.iconSize(context, 28)
-              ),
-              SizedBox(width: ResponsiveHelper.spacing(context, 8)),
-              const Text('확정 근무 취소'),
-            ],
-          ),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                '확정된 근무를 취소하시겠습니까?',
-                style: ResponsiveHelper.subtitleStyle(context).copyWith(
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
-              SizedBox(height: ResponsiveHelper.spacing(context, 16)),
-              Container(
-                padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 12)),
-                decoration: BoxDecoration(
-                  color: Colors.red[50],
-                  borderRadius: BorderRadius.circular(12),
-                  border: Border.all(color: Colors.red[200]!),
-                ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      children: [
-                        Icon(
-                          Icons.error_outline, 
-                          color: Colors.red[700], 
-                          size: ResponsiveHelper.iconSize(context, 20)
-                        ),
-                        SizedBox(width: ResponsiveHelper.spacing(context, 6)),
-                        Text(
-                          '⚠️ 주의사항',
-                          style: ResponsiveHelper.bodyStyle(
-                            context,
-                            color: Colors.red[900],
-                          ).copyWith(fontWeight: FontWeight.bold),
-                        ),
-                      ],
-                    ),
-                    SizedBox(height: ResponsiveHelper.spacing(context, 8)),
-                    Text(
-                      '• 확정 취소 시 패널티가 부과될 수 있습니다.\n'
-                      '• 반복적인 취소는 향후 지원에 불이익이 있을 수 있습니다.\n'
-                      '• 부득이한 사유가 있는 경우 관리자에게 먼저 연락해주세요.',
-                      style: ResponsiveHelper.smallStyle(
-                        context,
-                        color: Colors.red[800],
-                      ).copyWith(height: 1.5),
-                    ),
-                  ],
-                ),
-              ),
-              SizedBox(height: ResponsiveHelper.spacing(context, 12)),
-              Text(
-                '그래도 취소하시겠습니까?',
-                style: ResponsiveHelper.bodyStyle(
-                  context,
-                  color: Colors.grey[700],
-                ),
-              ),
-            ],
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context, false),
-              child: const Text('돌아가기'),
-            ),
-            ElevatedButton(
-              onPressed: () => Navigator.pop(context, true),
-              style: ElevatedButton.styleFrom(
-                backgroundColor: Colors.red,
-                foregroundColor: Colors.white,
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(12),
-                ),
-              ),
-              child: const Text('취소하기'),
-            ),
-          ],
-        ),
-      );
+      final confirmed = await _showConfirmedCancelDialog(context);
       
       if (confirmed != true) return;
       
@@ -696,6 +521,113 @@ class ScheduleCard extends StatelessWidget {
         onChanged?.call();
       }
     }
+  }
+
+  /// ✅ 확정 취소 다이얼로그
+  Future<bool?> _showConfirmedCancelDialog(BuildContext context) {
+    return showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(20),
+        ),
+        title: Row(
+          children: [
+            Icon(
+              Icons.warning_amber_rounded, 
+              color: AppColors.warning, 
+              size: ResponsiveHelper.iconSize(context, 28),
+            ),
+            SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+            Text(
+              '확정 근무 취소',
+              style: ResponsiveHelper.subtitleStyle(context).copyWith(
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+          ],
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              '확정된 근무를 취소하시겠습니까?',
+              style: ResponsiveHelper.bodyStyle(context).copyWith(
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+            SizedBox(height: ResponsiveHelper.spacing(context, 16)),
+            Container(
+              padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 12)),
+              decoration: BoxDecoration(
+                color: AppColors.error.withOpacity(0.1),
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: AppColors.error.withOpacity(0.3)),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Icon(
+                        Icons.error_outline, 
+                        color: AppColors.error, 
+                        size: ResponsiveHelper.iconSize(context, 20),
+                      ),
+                      SizedBox(width: ResponsiveHelper.spacing(context, 6)),
+                      Text(
+                        '⚠️ 주의사항',
+                        style: ResponsiveHelper.bodyStyle(context, color: AppColors.error).copyWith(
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ],
+                  ),
+                  SizedBox(height: ResponsiveHelper.spacing(context, 8)),
+                  Text(
+                    '• 확정 취소 시 패널티가 부과될 수 있습니다.\n'
+                    '• 반복적인 취소는 향후 지원에 불이익이 있을 수 있습니다.\n'
+                    '• 부득이한 사유가 있는 경우 관리자에게 먼저 연락해주세요.',
+                    style: ResponsiveHelper.smallStyle(context, color: AppColors.error).copyWith(
+                      height: 1.5,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            SizedBox(height: ResponsiveHelper.spacing(context, 12)),
+            Text(
+              '그래도 취소하시겠습니까?',
+              style: ResponsiveHelper.bodyStyle(context, color: AppColors.grey700),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: Text(
+              '돌아가기',
+              style: ResponsiveHelper.bodyStyle(context, color: AppColors.grey600),
+            ),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(context, true),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: AppColors.error,
+              foregroundColor: Colors.white,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(12),
+              ),
+            ),
+            child: Text(
+              '취소하기',
+              style: ResponsiveHelper.bodyStyle(context, color: Colors.white),
+            ),
+          ),
+        ],
+      ),
+    );
   }
 
   /// 상태 정보 가져오기
@@ -739,44 +671,6 @@ class ScheduleCard extends StatelessWidget {
         );
     }
   }
-  
-  /// ✨ 상태 배지 (더 세련되게)
-  Widget _buildStatusBadge(BuildContext context, _StatusInfo info) {
-    return Container(
-      padding: EdgeInsets.symmetric(
-        horizontal: ResponsiveHelper.spacing(context, 12),
-        vertical: ResponsiveHelper.spacing(context, 8),
-      ),
-      decoration: BoxDecoration(
-        gradient: LinearGradient(
-          colors: [
-            info.color[100]!,
-            info.color[50]!,
-          ],
-        ),
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: info.color[300]!, width: 1.5),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(
-            info.icon,
-            size: ResponsiveHelper.iconSize(context, 16),
-            color: info.color[700],
-          ),
-          SizedBox(width: ResponsiveHelper.spacing(context, 6)),
-          Text(
-            info.text,
-            style: ResponsiveHelper.bodyStyle(
-              context,
-              color: info.color[700],
-            ).copyWith(fontWeight: FontWeight.bold),
-          ),
-        ],
-      ),
-    );
-  }
 
   /// ⭐ 휴무 요청 다이얼로그 (장기 근무용)
   Future<void> _showLeaveRequestDialog(BuildContext context) async {
@@ -795,9 +689,14 @@ class ScheduleCard extends StatelessWidget {
         ),
         title: Row(
           children: [
-            const Icon(Icons.beach_access, color: Colors.orange),
+            Icon(Icons.beach_access, color: AppColors.warning),
             SizedBox(width: ResponsiveHelper.spacing(context, 8)),
-            const Text('휴무 요청'),
+            Text(
+              '휴무 요청',
+              style: ResponsiveHelper.subtitleStyle(context).copyWith(
+                fontWeight: FontWeight.bold,
+              ),
+            ),
           ],
         ),
         content: Column(
@@ -806,23 +705,29 @@ class ScheduleCard extends StatelessWidget {
           children: [
             Text(
               DateFormat('yyyy년 M월 d일 (E)', 'ko_KR').format(selectedDay!),
-              style: ResponsiveHelper.subtitleStyle(context)
-                  .copyWith(fontWeight: FontWeight.bold),
+              style: ResponsiveHelper.bodyStyle(context).copyWith(
+                fontWeight: FontWeight.bold,
+              ),
             ),
             SizedBox(height: ResponsiveHelper.spacing(context, 8)),
-            Text('${application.toTitle} - ${application.selectedWorkType}'),
+            Text(
+              '${application.toTitle} - ${application.selectedWorkType}',
+              style: ResponsiveHelper.smallStyle(context, color: AppColors.grey600),
+            ),
             Divider(height: ResponsiveHelper.spacing(context, 24)),
             Text(
               '휴무 사유',
-              style: ResponsiveHelper.bodyStyle(context)
-                  .copyWith(fontWeight: FontWeight.bold),
+              style: ResponsiveHelper.bodyStyle(context).copyWith(
+                fontWeight: FontWeight.bold,
+              ),
             ),
             SizedBox(height: ResponsiveHelper.spacing(context, 8)),
             TextField(
               controller: reasonController,
-              decoration: const InputDecoration(
+              decoration: InputDecoration(
                 hintText: '휴무 사유를 입력하세요',
-                border: OutlineInputBorder(),
+                hintStyle: ResponsiveHelper.bodyStyle(context, color: AppColors.grey400),
+                border: const OutlineInputBorder(),
               ),
               maxLines: 3,
             ),
@@ -831,17 +736,23 @@ class ScheduleCard extends StatelessWidget {
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context, false),
-            child: const Text('취소'),
+            child: Text(
+              '취소',
+              style: ResponsiveHelper.bodyStyle(context, color: AppColors.grey600),
+            ),
           ),
           ElevatedButton(
             onPressed: () => Navigator.pop(context, true),
             style: ElevatedButton.styleFrom(
-              backgroundColor: Colors.orange,
+              backgroundColor: AppColors.warning,
               shape: RoundedRectangleBorder(
                 borderRadius: BorderRadius.circular(12),
               ),
             ),
-            child: const Text('요청'),
+            child: Text(
+              '요청',
+              style: ResponsiveHelper.bodyStyle(context, color: Colors.white),
+            ),
           ),
         ],
       ),
@@ -891,9 +802,14 @@ class ScheduleCard extends StatelessWidget {
         ),
         title: Row(
           children: [
-            const Icon(Icons.remove_circle_outline, color: Colors.orange),
+            Icon(Icons.remove_circle_outline, color: AppColors.warning),
             SizedBox(width: ResponsiveHelper.spacing(context, 8)),
-            const Text('추가근무 취소 요청'),
+            Text(
+              '추가근무 취소 요청',
+              style: ResponsiveHelper.subtitleStyle(context).copyWith(
+                fontWeight: FontWeight.bold,
+              ),
+            ),
           ],
         ),
         content: Column(
@@ -902,34 +818,35 @@ class ScheduleCard extends StatelessWidget {
           children: [
             Text(
               DateFormat('yyyy년 M월 d일 (E)', 'ko_KR').format(selectedDay!),
-              style: ResponsiveHelper.subtitleStyle(context)
-                  .copyWith(fontWeight: FontWeight.bold),
+              style: ResponsiveHelper.bodyStyle(context).copyWith(
+                fontWeight: FontWeight.bold,
+              ),
             ),
             SizedBox(height: ResponsiveHelper.spacing(context, 8)),
-            const Text('추가 근무를 취소하시겠습니까?'),
+            Text(
+              '추가 근무를 취소하시겠습니까?',
+              style: ResponsiveHelper.bodyStyle(context),
+            ),
             SizedBox(height: ResponsiveHelper.spacing(context, 16)),
             Container(
               padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 12)),
               decoration: BoxDecoration(
-                color: Colors.blue[50],
+                color: AppColors.info.withOpacity(0.1),
                 borderRadius: BorderRadius.circular(12),
-                border: Border.all(color: Colors.blue[300]!),
+                border: Border.all(color: AppColors.info.withOpacity(0.3)),
               ),
               child: Row(
                 children: [
                   Icon(
                     Icons.info_outline, 
-                    color: Colors.blue[700], 
-                    size: ResponsiveHelper.iconSize(context, 20)
+                    color: AppColors.info, 
+                    size: ResponsiveHelper.iconSize(context, 20),
                   ),
                   SizedBox(width: ResponsiveHelper.spacing(context, 8)),
                   Expanded(
                     child: Text(
                       '관리자 승인 후 추가 근무가 취소됩니다.',
-                      style: ResponsiveHelper.smallStyle(
-                        context,
-                        color: Colors.blue[900],
-                      ),
+                      style: ResponsiveHelper.smallStyle(context, color: AppColors.info),
                     ),
                   ),
                 ],
@@ -938,15 +855,17 @@ class ScheduleCard extends StatelessWidget {
             SizedBox(height: ResponsiveHelper.spacing(context, 16)),
             Text(
               '취소 사유',
-              style: ResponsiveHelper.bodyStyle(context)
-                  .copyWith(fontWeight: FontWeight.bold),
+              style: ResponsiveHelper.bodyStyle(context).copyWith(
+                fontWeight: FontWeight.bold,
+              ),
             ),
             SizedBox(height: ResponsiveHelper.spacing(context, 8)),
             TextField(
               controller: reasonController,
-              decoration: const InputDecoration(
+              decoration: InputDecoration(
                 hintText: '취소 사유를 입력하세요',
-                border: OutlineInputBorder(),
+                hintStyle: ResponsiveHelper.bodyStyle(context, color: AppColors.grey400),
+                border: const OutlineInputBorder(),
               ),
               maxLines: 3,
             ),
@@ -955,17 +874,23 @@ class ScheduleCard extends StatelessWidget {
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context, false),
-            child: const Text('취소'),
+            child: Text(
+              '취소',
+              style: ResponsiveHelper.bodyStyle(context, color: AppColors.grey600),
+            ),
           ),
           ElevatedButton(
             onPressed: () => Navigator.pop(context, true),
             style: ElevatedButton.styleFrom(
-              backgroundColor: Colors.red,
+              backgroundColor: AppColors.error,
               shape: RoundedRectangleBorder(
                 borderRadius: BorderRadius.circular(12),
               ),
             ),
-            child: const Text('요청'),
+            child: Text(
+              '요청',
+              style: ResponsiveHelper.bodyStyle(context, color: Colors.white),
+            ),
           ),
         ],
       ),
@@ -1015,9 +940,14 @@ class ScheduleCard extends StatelessWidget {
         ),
         title: Row(
           children: [
-            const Icon(Icons.refresh, color: Colors.green),
+            Icon(Icons.refresh, color: AppColors.success),
             SizedBox(width: ResponsiveHelper.spacing(context, 8)),
-            const Text('휴무 취소 요청'),
+            Text(
+              '휴무 취소 요청',
+              style: ResponsiveHelper.subtitleStyle(context).copyWith(
+                fontWeight: FontWeight.bold,
+              ),
+            ),
           ],
         ),
         content: Column(
@@ -1026,34 +956,35 @@ class ScheduleCard extends StatelessWidget {
           children: [
             Text(
               DateFormat('yyyy년 M월 d일 (E)', 'ko_KR').format(selectedDay!),
-              style: ResponsiveHelper.subtitleStyle(context)
-                  .copyWith(fontWeight: FontWeight.bold),
+              style: ResponsiveHelper.bodyStyle(context).copyWith(
+                fontWeight: FontWeight.bold,
+              ),
             ),
             SizedBox(height: ResponsiveHelper.spacing(context, 8)),
-            const Text('휴무를 취소하고 출근하시겠습니까?'),
+            Text(
+              '휴무를 취소하고 출근하시겠습니까?',
+              style: ResponsiveHelper.bodyStyle(context),
+            ),
             SizedBox(height: ResponsiveHelper.spacing(context, 16)),
             Container(
               padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 12)),
               decoration: BoxDecoration(
-                color: Colors.blue[50],
+                color: AppColors.info.withOpacity(0.1),
                 borderRadius: BorderRadius.circular(12),
-                border: Border.all(color: Colors.blue[300]!),
+                border: Border.all(color: AppColors.info.withOpacity(0.3)),
               ),
               child: Row(
                 children: [
                   Icon(
                     Icons.info_outline, 
-                    color: Colors.blue[700], 
-                    size: ResponsiveHelper.iconSize(context, 20)
+                    color: AppColors.info, 
+                    size: ResponsiveHelper.iconSize(context, 20),
                   ),
                   SizedBox(width: ResponsiveHelper.spacing(context, 8)),
                   Expanded(
                     child: Text(
                       '관리자 승인 후 정상 출근으로 변경됩니다.',
-                      style: ResponsiveHelper.smallStyle(
-                        context,
-                        color: Colors.blue[900],
-                      ),
+                      style: ResponsiveHelper.smallStyle(context, color: AppColors.info),
                     ),
                   ),
                 ],
@@ -1062,15 +993,17 @@ class ScheduleCard extends StatelessWidget {
             SizedBox(height: ResponsiveHelper.spacing(context, 16)),
             Text(
               '취소 사유',
-              style: ResponsiveHelper.bodyStyle(context)
-                  .copyWith(fontWeight: FontWeight.bold),
+              style: ResponsiveHelper.bodyStyle(context).copyWith(
+                fontWeight: FontWeight.bold,
+              ),
             ),
             SizedBox(height: ResponsiveHelper.spacing(context, 8)),
             TextField(
               controller: reasonController,
-              decoration: const InputDecoration(
+              decoration: InputDecoration(
                 hintText: '출근 가능한 사유를 입력하세요',
-                border: OutlineInputBorder(),
+                hintStyle: ResponsiveHelper.bodyStyle(context, color: AppColors.grey400),
+                border: const OutlineInputBorder(),
               ),
               maxLines: 3,
             ),
@@ -1079,17 +1012,23 @@ class ScheduleCard extends StatelessWidget {
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context, false),
-            child: const Text('취소'),
+            child: Text(
+              '취소',
+              style: ResponsiveHelper.bodyStyle(context, color: AppColors.grey600),
+            ),
           ),
           ElevatedButton(
             onPressed: () => Navigator.pop(context, true),
             style: ElevatedButton.styleFrom(
-              backgroundColor: Colors.green,
+              backgroundColor: AppColors.success,
               shape: RoundedRectangleBorder(
                 borderRadius: BorderRadius.circular(12),
               ),
             ),
-            child: const Text('요청'),
+            child: Text(
+              '요청',
+              style: ResponsiveHelper.bodyStyle(context, color: Colors.white),
+            ),
           ),
         ],
       ),
@@ -1133,66 +1072,29 @@ class ScheduleCard extends StatelessWidget {
     return request != null;
   }
   
-  /// ⭐ 해당 날짜의 대기중인 요청 가져오기 (상세 정보 포함)
+  /// ⭐ 해당 날짜의 대기중인 요청 가져오기
   Future<ScheduleChangeRequestModel?> _getPendingRequest(DateTime date) async {
     final firestoreService = FirestoreService();
     
     try {
       final requests = await firestoreService.getMyScheduleChangeRequests(application.uid);
       
-      return requests.firstWhere(
-        (r) => 
-          r.isPending &&
-          r.applicationId == application.id &&
-          r.targetDate.year == date.year &&
-          r.targetDate.month == date.month &&
-          r.targetDate.day == date.day &&
-          r.isApplicantRequest,
-        orElse: () => null as ScheduleChangeRequestModel,
-      );
+      for (final r in requests) {
+        if (r.isPending &&
+            r.applicationId == application.id &&
+            r.targetDate.year == date.year &&
+            r.targetDate.month == date.month &&
+            r.targetDate.day == date.day &&
+            r.isApplicantRequest) {
+          return r;
+        }
+      }
+      return null;
     } catch (e) {
       return null;
     }
   }
 
-  /// 작은 배지 위젯
-  Widget _buildSmallBadge(
-    BuildContext context, {
-    required IconData icon,
-    required String label,
-    required Color color,
-    bool outlined = false,
-  }) {
-    return Container(
-      padding: EdgeInsets.symmetric(
-        horizontal: ResponsiveHelper.spacing(context, 8),
-        vertical: ResponsiveHelper.spacing(context, 4),
-      ),
-      decoration: BoxDecoration(
-        color: outlined ? color.withOpacity(0.1) : color.withOpacity(0.15),
-        borderRadius: BorderRadius.circular(8),
-        border: outlined ? Border.all(color: color.withOpacity(0.5)) : null,
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(
-            icon, 
-            size: ResponsiveHelper.iconSize(context, 12), 
-            color: color is MaterialColor ? color[700] : color
-          ),
-          SizedBox(width: ResponsiveHelper.spacing(context, 4)),
-          Text(
-            label,
-            style: ResponsiveHelper.tinyStyle(
-              context,
-              color: color is MaterialColor ? color[700] : color
-            ).copyWith(fontWeight: FontWeight.bold),
-          ),
-        ],
-      ),
-    );
-  }
   /// ✅ 출근 기록 기반 표시 상태 결정
   _StatusInfo _getDisplayStatus() {
     // 1. CONFIRMED가 아니면 기존 로직
@@ -1209,7 +1111,16 @@ class ScheduleCard extends StatelessWidget {
       );
     }
     
-    // 3. 급여 최종 확정
+    // 3. 노쇼 처리됨
+    if (attendance!.status == 'NO_SHOW') {
+      return _StatusInfo(
+        text: '노쇼',
+        color: Colors.red,
+        icon: Icons.cancel,
+      );
+    }
+    
+    // 4. 급여 최종 확정
     if (attendance!.wageStatus == 'confirmed') {
       return _StatusInfo(
         text: '정산완료',
@@ -1218,7 +1129,7 @@ class ScheduleCard extends StatelessWidget {
       );
     }
     
-    // 4. 급여 검토중
+    // 5. 급여 검토중
     if (attendance!.wageStatus == 'calculated') {
       return _StatusInfo(
         text: '검토중',
@@ -1227,7 +1138,7 @@ class ScheduleCard extends StatelessWidget {
       );
     }
     
-    // 5. 퇴근 완료
+    // 6. 퇴근 완료
     if (attendance!.checkOut != null) {
       return _StatusInfo(
         text: '근무완료',
@@ -1236,7 +1147,7 @@ class ScheduleCard extends StatelessWidget {
       );
     }
     
-    // 6. 출근만 완료
+    // 7. 출근만 완료
     if (attendance!.checkIn != null) {
       return _StatusInfo(
         text: '근무중',
@@ -1245,23 +1156,29 @@ class ScheduleCard extends StatelessWidget {
       );
     }
     
-    // 7. 기본 - 확정
+    // 8. 기본 - 확정
     return _StatusInfo(
       text: '확정',
       color: Colors.green,
       icon: Icons.check_circle,
     );
   }
-  /// ✅ 급여 표시 (wageType 포함)
+
+  /// ✅ 급여 표시 (wageType 포함) - 모든 상태 통일
   String _getWageDisplay() {
-    // 정산완료면 확정 급여 표시
+    // 1. 정산완료면 확정 급여 + wageType 표시
     if (attendance?.wageStatus == 'confirmed' && attendance?.finalWage != null) {
       final wageTypeLabel = attendance!.wageDetail?.wageTypeLabel ?? '';
       return '${FormatHelper.formatWage(attendance!.finalWage!)}${wageTypeLabel.isNotEmpty ? ' ($wageTypeLabel)' : ''}';
     }
     
-    // 기본 - application의 wage 표시
-    return application.formattedWage;
+    // 2. 기본 - application의 wageType 우선 사용
+    final wageTypeLabel = application.wageTypeLabel.isNotEmpty 
+        ? application.wageTypeLabel 
+        : (attendance?.wageDetail?.wageTypeLabel ?? '');
+    final formattedWage = FormatHelper.formatWage(application.wage);
+    
+    return wageTypeLabel.isNotEmpty ? '$formattedWage ($wageTypeLabel)' : formattedWage;
   }
 }
 
@@ -1276,5 +1193,4 @@ class _StatusInfo {
     required this.text,
     required this.icon,
   });
-  
 }
