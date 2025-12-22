@@ -632,14 +632,14 @@ extension TOGroupFirestore on FirestoreService {
       
       final groupId = to.groupId!;
       
-      // 1. TO를 독립 TO로 변경 (그룹 관련 필드 모두 삭제)
+      // 1. TO를 독립 TO로 변경 (그룹 관련 필드 null로 설정)
       await _firestore.collection('tos').doc(toId).update({
-        'groupId': FieldValue.delete(),
-        'groupName': FieldValue.delete(),
+        'groupId': null,  // ✅ delete() 대신 null
+        'groupName': null,  // ✅ delete() 대신 null
         'isGroupMaster': false,
-        'startDate': FieldValue.delete(),
-        'endDate': FieldValue.delete(),
-        // ✅ 그룹 통계 필드도 삭제
+        'startDate': null,  // ✅ delete() 대신 null
+        'endDate': null,  // ✅ delete() 대신 null
+        // ✅ 그룹 통계 필드는 삭제해도 됨 (쿼리에 안 쓰임)
         'groupActualDaysCount': FieldValue.delete(),
         'groupTotalConfirmed': FieldValue.delete(),
         'groupTotalPending': FieldValue.delete(),
@@ -840,74 +840,12 @@ extension TOGroupFirestore on FirestoreService {
       return false;
     }
   }
-  /// 그룹 마스터 TO의 status 재계산
+  /// 그룹 status 재계산 (groups 컬렉션 기반)
   /// - 그룹 내 활성 TO가 1개라도 있으면 → ACTIVE
   /// - 그룹 내 모든 TO가 마감이면 → CLOSED
   Future<bool> _updateGroupMasterStatus(String groupId) async {
-    try {
-      print('📊 [Sync] 그룹 마스터 status 재계산: $groupId');
-      
-      // 1. 그룹의 모든 TO 조회
-      final snapshot = await _firestore
-          .collection('tos')
-          .where('groupId', isEqualTo: groupId)
-          .get();
-      
-      if (snapshot.docs.isEmpty) return false;
-      
-      // 2. 마스터 TO 찾기
-      DocumentSnapshot? masterDoc;
-      bool hasActiveTO = false;
-      
-      for (var doc in snapshot.docs) {
-        final data = doc.data();
-        
-        if (data['isGroupMaster'] == true) {
-          masterDoc = doc;
-        }
-        
-        // 마스터가 아닌 TO 중 활성 상태 체크
-        if (data['isGroupMaster'] != true) {
-          final status = data['status'] ?? 'ACTIVE';
-          if (status == 'ACTIVE') {
-            hasActiveTO = true;
-          }
-        }
-      }
-      
-      if (masterDoc == null) {
-        print('   ⚠️ 마스터 TO를 찾을 수 없음');
-        return false;
-      }
-      
-      // 3. 마스터 status 결정
-      final masterData = masterDoc.data() as Map<String, dynamic>;
-      final isManualClosed = masterData['isManualClosed'] ?? false;
-      
-      String newStatus;
-      if (isManualClosed) {
-        // 마스터가 수동 마감이면 CLOSED 유지
-        newStatus = 'CLOSED';
-      } else if (hasActiveTO) {
-        // 활성 TO가 있으면 ACTIVE
-        newStatus = 'ACTIVE';
-      } else {
-        // 모든 TO가 마감이면 CLOSED
-        newStatus = 'CLOSED';
-      }
-      
-      // 4. 마스터 status 업데이트
-      await masterDoc.reference.update({
-        'status': newStatus,
-        'statusUpdatedAt': FieldValue.serverTimestamp(),
-      });
-      
-      print('   ✅ 마스터 status 업데이트: $newStatus (활성 TO: $hasActiveTO)');
-      return true;
-    } catch (e) {
-      print('❌ [Sync] 그룹 마스터 status 업데이트 실패: $e');
-      return false;
-    }
+    // ✅ 새 구조: groups 컬렉션의 syncGroupStatus() 사용
+    return await syncGroupStatus(groupId);
   }
 
   /// 공개 메서드: TO의 그룹 마스터 통계 동기화
