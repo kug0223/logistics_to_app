@@ -6,421 +6,44 @@ initializeApp();
 const db = getFirestore();
 
 // ═══════════════════════════════════════════════════════════
-// 1. 예약 공개 처리
+// 🔥 스케줄러 1: 주기적 작업 (10분마다)
+// - 예약 공개 처리
+// - WorkDetail 마감 처리
+// - TO 마감 처리
 // ═══════════════════════════════════════════════════════════
 
-/**
- * 예약 공개 TO 자동 처리
- * 매 시간 정각에 실행 (06:00, 07:00, ...)
- */
-export const publishScheduledTOs = onSchedule(
-  {
-    schedule: "0 * * * *",
-    timeZone: "Asia/Seoul",
-    region: "asia-northeast3",
-  },
-  async () => {
-    console.log("🕐 [예약공개] TO 처리 시작...");
-
-    try {
-      const now = Timestamp.now();
-
-      const snapshot = await db
-        .collection("tos")
-        .where("publishMode", "==", "scheduled")
-        .where("isPublished", "==", false)
-        .where("publishAt", "<=", now)
-        .get();
-
-      if (snapshot.empty) {
-        console.log("✅ [예약공개] 공개할 TO 없음");
-        return;
-      }
-
-      console.log(`📋 [예약공개] 대상 TO: ${snapshot.size}개`);
-
-      const batch = db.batch();
-      const affectedGroupIds = new Set<string>();
-
-      snapshot.docs.forEach((doc) => {
-        const data = doc.data();
-
-        batch.update(doc.ref, {
-          isPublished: true,
-          publishedAt: now,
-          status: "ACTIVE",
-          statusUpdatedAt: now,
-        });
-        console.log(`  → ${doc.id} 공개 처리`);
-
-        if (data.groupId) {
-          affectedGroupIds.add(data.groupId);
-        }
-      });
-
-      await batch.commit();
-      console.log(`✅ [예약공개] ${snapshot.size}개 TO 공개 완료!`);
-
-      // 그룹 마스터 상태 동기화
-      for (const groupId of affectedGroupIds) {
-        await syncGroupMasterStatus(db, groupId);
-      }
-    } catch (error) {
-      console.error("❌ [예약공개] 처리 실패:", error);
-    }
-  }
-);
-
-// ═══════════════════════════════════════════════════════════
-// 2. WorkDetail 시간 마감 처리 (핵심 추가!)
-// ═══════════════════════════════════════════════════════════
-
-/**
- * WorkDetail 시간 마감 자동 처리
- * 매 10분마다 실행 (더 정밀한 마감 처리)
- */
-export const closeExpiredWorkDetails = onSchedule(
+export const periodicTasks = onSchedule(
   {
     schedule: "*/10 * * * *",
     timeZone: "Asia/Seoul",
     region: "asia-northeast3",
   },
   async () => {
-    console.log("🔒 [WorkDetail 마감] 처리 시작...");
+    console.log("🚀 [주기적 작업] 시작...");
+    const now = Timestamp.now();
 
     try {
-      const now = Timestamp.now();
+      // 1️⃣ 예약 공개 처리
+      await processScheduledPublish(now);
 
-      // 모든 ACTIVE TO 조회
-      const tosSnapshot = await db
-        .collection("tos")
-        .where("status", "==", "ACTIVE")
-        .get();
+      // 2️⃣ WorkDetail 마감 처리
+      await processWorkDetailExpiry(now);
 
-      if (tosSnapshot.empty) {
-        console.log("✅ [WorkDetail 마감] 활성 TO 없음");
-        return;
-      }
+      // 3️⃣ TO 마감 처리
+      await processTOExpiry(now);
 
-      console.log(`📋 [WorkDetail 마감] 활성 TO: ${tosSnapshot.size}개 검사`);
-
-      let totalClosed = 0;
-      const affectedTOIds = new Set<string>();
-      const affectedGroupIds = new Set<string>();
-
-      // 각 TO의 WorkDetails 검사
-      for (const toDoc of tosSnapshot.docs) {
-        const toData = toDoc.data();
-        const toId = toDoc.id;
-
-        const workDetailsSnapshot = await db
-          .collection("tos")
-          .doc(toId)
-          .collection("workDetails")
-          .where("closedAt", "==", null)
-          .get();
-
-        if (workDetailsSnapshot.empty) continue;
-
-        const batch = db.batch();
-        let closedInThisTO = 0;
-
-        for (const wdDoc of workDetailsSnapshot.docs) {
-          const wdData = wdDoc.data();
-
-          // 긴급모집 중이면 스킵
-          if (wdData.isEmergencyOpen === true) continue;
-
-          // applicationDeadline 체크
-          const deadline = wdData.applicationDeadline as Timestamp | null;
-          if (deadline && deadline.toMillis() <= now.toMillis()) {
-            batch.update(wdDoc.ref, {
-              closedAt: now,
-              closedReason: "TIME_EXPIRED",
-            });
-            closedInThisTO++;
-            console.log(`  → ${toId}/${wdDoc.id} WorkDetail 마감`);
-          }
-        }
-
-        if (closedInThisTO > 0) {
-          await batch.commit();
-          totalClosed += closedInThisTO;
-          affectedTOIds.add(toId);
-
-          if (toData.groupId) {
-            affectedGroupIds.add(toData.groupId);
-          }
-        }
-      }
-
-      console.log(`✅ [WorkDetail 마감] ${totalClosed}개 마감 완료`);
-
-      // 영향받은 TO들의 status 동기화
-      for (const toId of affectedTOIds) {
-        await syncTOStatusFromWorkDetails(db, toId);
-      }
-
-      // 영향받은 그룹 마스터 동기화
-      for (const groupId of affectedGroupIds) {
-        await syncGroupMasterStatus(db, groupId);
-      }
+      console.log("✅ [주기적 작업] 완료!");
     } catch (error) {
-      console.error("❌ [WorkDetail 마감] 처리 실패:", error);
+      console.error("❌ [주기적 작업] 실패:", error);
     }
   }
 );
 
 // ═══════════════════════════════════════════════════════════
-// 3. TO 시간 마감 처리 (기존 보강)
+// 🔥 스케줄러 2: 일일 정합성 검사 (매일 새벽 3시)
 // ═══════════════════════════════════════════════════════════
 
-/**
- * TO 시간 마감 자동 처리
- * 매 시간 정각에 실행
- */
-export const closeExpiredTOs = onSchedule(
-  {
-    schedule: "0 * * * *",
-    timeZone: "Asia/Seoul",
-    region: "asia-northeast3",
-  },
-  async () => {
-    console.log("🔒 [TO 마감] 처리 시작...");
-
-    try {
-      const now = Timestamp.now();
-
-      // applicationDeadline이 지난 ACTIVE TO 조회
-      const snapshot = await db
-        .collection("tos")
-        .where("status", "==", "ACTIVE")
-        .where("applicationDeadline", "<=", now)
-        .get();
-
-      if (snapshot.empty) {
-        console.log("✅ [TO 마감] 처리할 TO 없음");
-        return;
-      }
-
-      // 수동 마감이 아닌 것만 필터
-      const tosToClose = snapshot.docs.filter((doc) => {
-        const data = doc.data();
-        return !data.isManualClosed;
-      });
-
-      if (tosToClose.length === 0) {
-        console.log("✅ [TO 마감] 새로 마감할 TO 없음");
-        return;
-      }
-
-      console.log(`📋 [TO 마감] 대상: ${tosToClose.length}개`);
-
-      const batch = db.batch();
-      const affectedGroupIds = new Set<string>();
-
-      for (const doc of tosToClose) {
-        const data = doc.data();
-
-        // TO 마감 처리
-        batch.update(doc.ref, {
-          status: "CLOSED",
-          closedAt: now,
-          closedReason: "TIME_EXPIRED",
-          statusUpdatedAt: now,
-        });
-
-        console.log(`  → ${doc.id} TO 마감`);
-
-        if (data.groupId) {
-          affectedGroupIds.add(data.groupId);
-        }
-
-        // 해당 TO의 모든 WorkDetails도 마감
-        const wdSnapshot = await db
-          .collection("tos")
-          .doc(doc.id)
-          .collection("workDetails")
-          .where("closedAt", "==", null)
-          .get();
-
-        for (const wdDoc of wdSnapshot.docs) {
-          const wdData = wdDoc.data();
-          if (wdData.isEmergencyOpen !== true) {
-            batch.update(wdDoc.ref, {
-              closedAt: now,
-              closedReason: "PARENT_TO_CLOSED",
-            });
-          }
-        }
-      }
-
-      await batch.commit();
-      console.log(`✅ [TO 마감] ${tosToClose.length}개 완료!`);
-
-      // 그룹 마스터 동기화
-      for (const groupId of affectedGroupIds) {
-        await syncGroupMasterStatus(db, groupId);
-      }
-    } catch (error) {
-      console.error("❌ [TO 마감] 처리 실패:", error);
-    }
-  }
-);
-
-// ═══════════════════════════════════════════════════════════
-// 4. 동기화 헬퍼 함수들
-// ═══════════════════════════════════════════════════════════
-
-/**
- * WorkDetail 상태 기반으로 TO status 동기화
- * - 모든 WorkDetail 마감 → TO status = CLOSED
- * - 하나라도 열림 → TO status = ACTIVE
- * @param {Firestore} firestore - Firestore 인스턴스
- * @param {string} toId - TO 문서 ID
- */
-async function syncTOStatusFromWorkDetails(
-  firestore: Firestore,
-  toId: string
-): Promise<void> {
-  try {
-    const wdSnapshot = await firestore
-      .collection("tos")
-      .doc(toId)
-      .collection("workDetails")
-      .get();
-
-    if (wdSnapshot.empty) return;
-
-    // 열린 WorkDetail 있는지 체크
-    const hasOpenWorkDetail = wdSnapshot.docs.some((doc) => {
-      const data = doc.data();
-      // 긴급모집 중이면 열린 것으로 간주
-      if (data.isEmergencyOpen === true) return true;
-      // closedAt이 없으면 열린 것
-      return data.closedAt == null;
-    });
-
-    const toDoc = await firestore.collection("tos").doc(toId).get();
-    if (!toDoc.exists) return;
-
-    const toData = toDoc.data();
-    if (!toData) return;
-
-    // 수동 마감된 TO는 건드리지 않음
-    if (toData.isManualClosed === true) return;
-
-    const currentStatus = toData.status;
-    const newStatus = hasOpenWorkDetail ? "ACTIVE" : "CLOSED";
-
-    if (currentStatus !== newStatus) {
-      await firestore.collection("tos").doc(toId).update({
-        status: newStatus,
-        statusUpdatedAt: Timestamp.now(),
-        ...(newStatus === "CLOSED" && {
-          closedAt: Timestamp.now(),
-          closedReason: "ALL_WORKDETAILS_CLOSED",
-        }),
-      });
-      console.log(
-        `  ✓ TO ${toId} status: ${currentStatus} → ${newStatus}`
-      );
-    }
-  } catch (error) {
-    console.error(`❌ TO status 동기화 실패 (${toId}):`, error);
-  }
-}
-
-/**
- * 그룹 마스터 상태 동기화
- * - 하나라도 ACTIVE → 마스터 ACTIVE
- * - 모든 TO CLOSED → 마스터 CLOSED
- * @param {Firestore} firestore - Firestore 인스턴스
- * @param {string} groupId - 그룹 ID
- */
-async function syncGroupMasterStatus(
-  firestore: Firestore,
-  groupId: string
-): Promise<void> {
-  try {
-    const groupSnapshot = await firestore
-      .collection("tos")
-      .where("groupId", "==", groupId)
-      .get();
-
-    if (groupSnapshot.empty) return;
-
-    // 마스터 TO 찾기
-    const masterDoc = groupSnapshot.docs.find(
-      (doc) => doc.data().isGroupMaster === true
-    );
-
-    if (!masterDoc) {
-      console.log(`  ⚠️ 그룹 마스터 없음: ${groupId}`);
-      return;
-    }
-
-    const masterData = masterDoc.data();
-
-    // 수동 마감된 마스터는 건드리지 않음
-    if (masterData.isManualClosed === true) return;
-
-    // 마스터가 아닌 TO 중 ACTIVE 체크
-    const hasActiveTO = groupSnapshot.docs.some((doc) => {
-      const data = doc.data();
-      return data.isGroupMaster !== true && data.status === "ACTIVE";
-    });
-
-    // 마스터가 아닌 TO 중 SCHEDULED(예약) 체크
-    const allScheduled = groupSnapshot.docs
-      .filter((doc) => doc.data().isGroupMaster !== true)
-      .every((doc) => {
-        const data = doc.data();
-        return data.isPublished === false;
-      });
-
-    const currentStatus = masterData.status;
-    let newStatus: string;
-
-    if (hasActiveTO) {
-      newStatus = "ACTIVE";
-    } else if (allScheduled) {
-      newStatus = "SCHEDULED";
-    } else {
-      newStatus = "CLOSED";
-    }
-
-    if (currentStatus !== newStatus) {
-      const updateData: Record<string, unknown> = {
-        status: newStatus,
-        statusUpdatedAt: Timestamp.now(),
-      };
-
-      if (newStatus === "CLOSED") {
-        updateData.closedAt = Timestamp.now();
-        updateData.closedReason = "ALL_CHILDREN_CLOSED";
-      }
-
-      await masterDoc.ref.update(updateData);
-      console.log(
-        `  ✓ 그룹 마스터 ${masterDoc.id}: ${currentStatus} → ${newStatus}`
-      );
-    }
-  } catch (error) {
-    console.error(`❌ 그룹 마스터 동기화 실패 (${groupId}):`, error);
-  }
-}
-
-// ═══════════════════════════════════════════════════════════
-// 5. 일일 정합성 검사 (선택적 - 안전장치)
-// ═══════════════════════════════════════════════════════════
-
-/**
- * 매일 새벽 3시에 전체 상태 정합성 검사
- * - 놓친 마감 처리
- * - 상태 불일치 수정
- */
-export const dailyStatusIntegrityCheck = onSchedule(
+export const dailyIntegrityCheck = onSchedule(
   {
     schedule: "0 3 * * *",
     timeZone: "Asia/Seoul",
@@ -442,10 +65,8 @@ export const dailyStatusIntegrityCheck = onSchedule(
       for (const toDoc of activeTOs.docs) {
         const toData = toDoc.data();
 
-        // 수동 마감은 스킵
         if (toData.isManualClosed === true) continue;
 
-        // applicationDeadline 체크
         const deadline = toData.applicationDeadline as Timestamp | null;
         if (deadline && deadline.toMillis() <= now.toMillis()) {
           await toDoc.ref.update({
@@ -485,3 +106,342 @@ export const dailyStatusIntegrityCheck = onSchedule(
   }
 );
 
+// ═══════════════════════════════════════════════════════════
+// 📦 작업 처리 함수들
+// ═══════════════════════════════════════════════════════════
+
+/**
+ * 1️⃣ 예약 공개 TO 처리
+ * @param {Timestamp} now - 현재 시간
+ */
+async function processScheduledPublish(now: Timestamp): Promise<void> {
+  console.log("  📢 [예약공개] 처리 중...");
+
+  const snapshot = await db
+    .collection("tos")
+    .where("publishMode", "==", "scheduled")
+    .where("isPublished", "==", false)
+    .where("publishAt", "<=", now)
+    .get();
+
+  if (snapshot.empty) {
+    console.log("  ✅ [예약공개] 공개할 TO 없음");
+    return;
+  }
+
+  console.log(`  📋 [예약공개] 대상 TO: ${snapshot.size}개`);
+
+  const batch = db.batch();
+  const affectedGroupIds = new Set<string>();
+
+  snapshot.docs.forEach((doc) => {
+    const data = doc.data();
+
+    batch.update(doc.ref, {
+      isPublished: true,
+      publishedAt: now,
+      status: "ACTIVE",
+      statusUpdatedAt: now,
+    });
+    console.log(`    → ${doc.id} 공개 처리`);
+
+    if (data.groupId) {
+      affectedGroupIds.add(data.groupId);
+    }
+  });
+
+  await batch.commit();
+  console.log(`  ✅ [예약공개] ${snapshot.size}개 TO 공개 완료!`);
+
+  // 그룹 마스터 상태 동기화
+  for (const groupId of affectedGroupIds) {
+    await syncGroupMasterStatus(db, groupId);
+  }
+}
+
+/**
+ * 2️⃣ WorkDetail 시간 마감 처리
+ * @param {Timestamp} now - 현재 시간
+ */
+async function processWorkDetailExpiry(now: Timestamp): Promise<void> {
+  console.log("  🔒 [WorkDetail 마감] 처리 중...");
+
+  const tosSnapshot = await db
+    .collection("tos")
+    .where("status", "==", "ACTIVE")
+    .get();
+
+  if (tosSnapshot.empty) {
+    console.log("  ✅ [WorkDetail 마감] 활성 TO 없음");
+    return;
+  }
+
+  console.log(`  📋 [WorkDetail 마감] 활성 TO: ${tosSnapshot.size}개 검사`);
+
+  let totalClosed = 0;
+  const affectedTOIds = new Set<string>();
+  const affectedGroupIds = new Set<string>();
+
+  for (const toDoc of tosSnapshot.docs) {
+    const toData = toDoc.data();
+    const toId = toDoc.id;
+
+    const workDetailsSnapshot = await db
+      .collection("tos")
+      .doc(toId)
+      .collection("workDetails")
+      .where("closedAt", "==", null)
+      .get();
+
+    if (workDetailsSnapshot.empty) continue;
+
+    const batch = db.batch();
+    let closedInThisTO = 0;
+
+    for (const wdDoc of workDetailsSnapshot.docs) {
+      const wdData = wdDoc.data();
+
+      if (wdData.isEmergencyOpen === true) continue;
+
+      const deadline = wdData.applicationDeadline as Timestamp | null;
+      if (deadline && deadline.toMillis() <= now.toMillis()) {
+        batch.update(wdDoc.ref, {
+          closedAt: now,
+          closedReason: "TIME_EXPIRED",
+        });
+        closedInThisTO++;
+        console.log(`    → ${toId}/${wdDoc.id} WorkDetail 마감`);
+      }
+    }
+
+    if (closedInThisTO > 0) {
+      await batch.commit();
+      totalClosed += closedInThisTO;
+      affectedTOIds.add(toId);
+
+      if (toData.groupId) {
+        affectedGroupIds.add(toData.groupId);
+      }
+    }
+  }
+
+  console.log(`  ✅ [WorkDetail 마감] ${totalClosed}개 마감 완료`);
+
+  // 영향받은 TO들의 status 동기화
+  for (const toId of affectedTOIds) {
+    await syncTOStatusFromWorkDetails(db, toId);
+  }
+
+  // 영향받은 그룹 마스터 동기화
+  for (const groupId of affectedGroupIds) {
+    await syncGroupMasterStatus(db, groupId);
+  }
+}
+
+/**
+ * 3️⃣ TO 시간 마감 처리
+ * @param {Timestamp} now - 현재 시간
+ */
+async function processTOExpiry(now: Timestamp): Promise<void> {
+  console.log("  🔒 [TO 마감] 처리 중...");
+
+  const snapshot = await db
+    .collection("tos")
+    .where("status", "==", "ACTIVE")
+    .where("applicationDeadline", "<=", now)
+    .get();
+
+  if (snapshot.empty) {
+    console.log("  ✅ [TO 마감] 처리할 TO 없음");
+    return;
+  }
+
+  const tosToClose = snapshot.docs.filter((doc) => {
+    const data = doc.data();
+    return !data.isManualClosed;
+  });
+
+  if (tosToClose.length === 0) {
+    console.log("  ✅ [TO 마감] 새로 마감할 TO 없음");
+    return;
+  }
+
+  console.log(`  📋 [TO 마감] 대상: ${tosToClose.length}개`);
+
+  const batch = db.batch();
+  const affectedGroupIds = new Set<string>();
+
+  for (const doc of tosToClose) {
+    const data = doc.data();
+
+    batch.update(doc.ref, {
+      status: "CLOSED",
+      closedAt: now,
+      closedReason: "TIME_EXPIRED",
+      statusUpdatedAt: now,
+    });
+
+    console.log(`    → ${doc.id} TO 마감`);
+
+    if (data.groupId) {
+      affectedGroupIds.add(data.groupId);
+    }
+
+    // 해당 TO의 모든 WorkDetails도 마감
+    const wdSnapshot = await db
+      .collection("tos")
+      .doc(doc.id)
+      .collection("workDetails")
+      .where("closedAt", "==", null)
+      .get();
+
+    for (const wdDoc of wdSnapshot.docs) {
+      const wdData = wdDoc.data();
+      if (wdData.isEmergencyOpen !== true) {
+        batch.update(wdDoc.ref, {
+          closedAt: now,
+          closedReason: "PARENT_TO_CLOSED",
+        });
+      }
+    }
+  }
+
+  await batch.commit();
+  console.log(`  ✅ [TO 마감] ${tosToClose.length}개 완료!`);
+
+  // 그룹 마스터 동기화
+  for (const groupId of affectedGroupIds) {
+    await syncGroupMasterStatus(db, groupId);
+  }
+}
+
+// ═══════════════════════════════════════════════════════════
+// 🔧 동기화 헬퍼 함수들
+// ═══════════════════════════════════════════════════════════
+
+/**
+ * WorkDetail 상태 기반으로 TO status 동기화
+ * @param {Firestore} firestore - Firestore 인스턴스
+ * @param {string} toId - TO 문서 ID
+ */
+async function syncTOStatusFromWorkDetails(
+  firestore: Firestore,
+  toId: string
+): Promise<void> {
+  try {
+    const wdSnapshot = await firestore
+      .collection("tos")
+      .doc(toId)
+      .collection("workDetails")
+      .get();
+
+    if (wdSnapshot.empty) return;
+
+    const hasOpenWorkDetail = wdSnapshot.docs.some((doc) => {
+      const data = doc.data();
+      if (data.isEmergencyOpen === true) return true;
+      return data.closedAt == null;
+    });
+
+    const toDoc = await firestore.collection("tos").doc(toId).get();
+    if (!toDoc.exists) return;
+
+    const toData = toDoc.data();
+    if (!toData) return;
+
+    if (toData.isManualClosed === true) return;
+
+    const currentStatus = toData.status;
+    const newStatus = hasOpenWorkDetail ? "ACTIVE" : "CLOSED";
+
+    if (currentStatus !== newStatus) {
+      await firestore.collection("tos").doc(toId).update({
+        status: newStatus,
+        statusUpdatedAt: Timestamp.now(),
+        ...(newStatus === "CLOSED" && {
+          closedAt: Timestamp.now(),
+          closedReason: "ALL_WORKDETAILS_CLOSED",
+        }),
+      });
+      console.log(
+        `    ✓ TO ${toId} status: ${currentStatus} → ${newStatus}`
+      );
+    }
+  } catch (error) {
+    console.error(`❌ TO status 동기화 실패 (${toId}):`, error);
+  }
+}
+
+/**
+ * 그룹 마스터 상태 동기화
+ * @param {Firestore} firestore - Firestore 인스턴스
+ * @param {string} groupId - 그룹 ID
+ */
+async function syncGroupMasterStatus(
+  firestore: Firestore,
+  groupId: string
+): Promise<void> {
+  try {
+    const groupSnapshot = await firestore
+      .collection("tos")
+      .where("groupId", "==", groupId)
+      .get();
+
+    if (groupSnapshot.empty) return;
+
+    const masterDoc = groupSnapshot.docs.find(
+      (doc) => doc.data().isGroupMaster === true
+    );
+
+    if (!masterDoc) {
+      console.log(`    ⚠️ 그룹 마스터 없음: ${groupId}`);
+      return;
+    }
+
+    const masterData = masterDoc.data();
+
+    if (masterData.isManualClosed === true) return;
+
+    const hasActiveTO = groupSnapshot.docs.some((doc) => {
+      const data = doc.data();
+      return data.isGroupMaster !== true && data.status === "ACTIVE";
+    });
+
+    const allScheduled = groupSnapshot.docs
+      .filter((doc) => doc.data().isGroupMaster !== true)
+      .every((doc) => {
+        const data = doc.data();
+        return data.isPublished === false;
+      });
+
+    const currentStatus = masterData.status;
+    let newStatus: string;
+
+    if (hasActiveTO) {
+      newStatus = "ACTIVE";
+    } else if (allScheduled) {
+      newStatus = "SCHEDULED";
+    } else {
+      newStatus = "CLOSED";
+    }
+
+    if (currentStatus !== newStatus) {
+      const updateData: Record<string, unknown> = {
+        status: newStatus,
+        statusUpdatedAt: Timestamp.now(),
+      };
+
+      if (newStatus === "CLOSED") {
+        updateData.closedAt = Timestamp.now();
+        updateData.closedReason = "ALL_CHILDREN_CLOSED";
+      }
+
+      await masterDoc.ref.update(updateData);
+      console.log(
+        `    ✓ 그룹 마스터 ${masterDoc.id}: ${currentStatus} → ${newStatus}`
+      );
+    }
+  } catch (error) {
+    console.error(`❌ 그룹 마스터 동기화 실패 (${groupId}):`, error);
+  }
+}
