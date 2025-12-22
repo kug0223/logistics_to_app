@@ -144,11 +144,21 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
     final scheduledEnd = app.endTime;
     final baseWage = app.wage;
     
-    // ✅ wageType, breakMinutes는 WorkDetail에서 직접 조회
+    // ✅ wageType, breakMinutes는 workDetailTimeMap에서 먼저 확인
     String wageType = 'hourly';
     int breakMinutes = 0;
     
-    if (app.toId != null && app.toId!.isNotEmpty && 
+    // 1순위: 이미 로드된 workDetailTimeMap에서 가져오기
+    if (app.workDetailId != null && widget.workDetailTimeMap.containsKey(app.workDetailId)) {
+      final cached = widget.workDetailTimeMap[app.workDetailId];
+      if (cached is Map<String, dynamic>) {
+        wageType = cached['wageType'] ?? 'hourly';
+        breakMinutes = cached['breakMinutes'] ?? 0;
+        debugPrint('✅ WorkDetail 캐시 사용: wageType=$wageType, breakMinutes=$breakMinutes');
+      }
+    }
+    // 2순위: Firestore에서 직접 조회
+    else if (app.toId != null && app.toId!.isNotEmpty && 
         app.workDetailId != null && app.workDetailId!.isNotEmpty) {
       try {
         final workDetailDoc = await FirebaseFirestore.instance
@@ -162,10 +172,15 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
           final data = workDetailDoc.data()!;
           wageType = data['wageType'] ?? 'hourly';
           breakMinutes = data['breakMinutes'] ?? 0;
+          debugPrint('✅ WorkDetail Firestore 조회: wageType=$wageType');
+        } else {
+          debugPrint('⚠️ WorkDetail 문서 없음: toId=${app.toId}, workDetailId=${app.workDetailId}');
         }
       } catch (e) {
         debugPrint('⚠️ WorkDetail 조회 실패: $e');
       }
+    } else {
+      debugPrint('⚠️ WorkDetail ID 없음: toId=${app.toId}, workDetailId=${app.workDetailId}');
     }
     
     try {
@@ -280,86 +295,31 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
   // 최종 확정 처리 (calculated → confirmed)
   // ═══════════════════════════════════════════════════════════
 
-  Future<void> _finalConfirm() async {
-    if (_calculatedSelectedIds.isEmpty) {
-      ToastHelper.showWarning('최종 확정할 인원을 선택해주세요');
-      return;
-    }
-    
-    final confirmed = await DialogHelper.showConfirm(
-      context,
-      title: '최종 확정',
-      message: '선택한 ${_calculatedSelectedIds.length}명의 급여를 최종 확정하시겠습니까?\n\n⚠️ 최종 확정 후에는 수정이 불가합니다.',
-      confirmText: '최종 확정',
-    );
-    
-    if (!confirmed) return;
-    
-    setState(() => _isProcessing = true);
-    
-    try {
-      final userProvider = Provider.of<UserProvider>(context, listen: false);
-      final adminUid = userProvider.currentUser?.uid;
+  /// 일괄 급여 수정 다이얼로그
+  Future<void> _openBatchEditDialog() async {
+    // 선택된 인원이 1명이면 개별 수정 다이얼로그로
+    if (_calculatedSelectedIds.length == 1) {
+      final appId = _calculatedSelectedIds.first;
+      final app = _calculatedWorkers.firstWhere((a) => a.id == appId);
+      final attendance = widget.attendanceMap[app.id];
+      final wage = _calculatedWages[app.id];
       
-      int successCount = 0;
-      int failCount = 0;
-      final confirmedIds = <String>{};
-      
-      for (var appId in _calculatedSelectedIds) {
-        final wage = _calculatedWages[appId];
-        final attendance = widget.attendanceMap[appId];
+      if (attendance != null && wage != null) {
+        final result = await WageDetailDialog.show(
+          context: context,
+          app: app,
+          user: widget.userMap[app.uid],  // ✅ applicantUID → uid
+          attendance: attendance,
+          wage: wage,
+          mode: WageDialogMode.editOnly,
+        );
         
-        if (wage == null || attendance == null) {
-          failCount++;
-          continue;
-        }
-        
-        try {
-          final finalWage = wage.copyWith(
-            confirmedBy: adminUid,
-            confirmedAt: DateTime.now(),
-          );
-          
-          await FirebaseFirestore.instance
-              .collection('attendance')
-              .doc(attendance.id)
-              .update({
-            'wageStatus': 'confirmed',
-            'finalWage': finalWage.totalAmount,
-            'wageDetail': finalWage.toMap(),
-            'updatedAt': FieldValue.serverTimestamp(),
-          });
-          
-          successCount++;
-          confirmedIds.add(appId);
-        } catch (e) {
-          debugPrint('❌ 최종 확정 실패 ($appId): $e');
-          failCount++;
+        if (result != null && result.action == 'update') {
+          await _processWageUpdate(app, attendance, result.wage);  // ✅ 기존 메서드 사용
         }
       }
-      
-      if (successCount > 0) {
-        _hasChanges = true;
-        ToastHelper.showSuccess('$successCount명 최종 확정 완료');
-        widget.onConfirmed?.call();
-        
-        setState(() {
-          _calculatedWorkers.removeWhere((app) => confirmedIds.contains(app.id));
-          for (var id in confirmedIds) {
-            _calculatedWages.remove(id);
-          }
-          _calculatedSelectedIds.clear();
-        });
-      }
-      
-      if (failCount > 0) {
-        ToastHelper.showWarning('$failCount명 처리 실패');
-      }
-    } catch (e) {
-      debugPrint('❌ 일괄 최종 확정 실패: $e');
-      ToastHelper.showError('최종 확정에 실패했습니다');
-    } finally {
-      if (mounted) setState(() => _isProcessing = false);
+    } else {
+      ToastHelper.showInfo('여러 명 수정은 개별 카드를 클릭해주세요');
     }
   }
 
@@ -1099,7 +1059,7 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
     final buttonColor = isPending ? AppColors.warning : theme.primaryColor;
     final buttonText = isPending 
         ? '급여 확정 (${selectedIds.length}명)'
-        : '최종 확정 (${selectedIds.length}명)';
+        : '급여 수정 (${selectedIds.length}명)';
     
     return Container(
       padding: ResponsiveHelper.cardPadding(context),
@@ -1170,7 +1130,7 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
                 flex: 2,
                 child: ElevatedButton.icon(
                   onPressed: (hasSelection && !_isProcessing) 
-                      ? (isPending ? _confirmWages : _finalConfirm)
+                      ? (isPending ? _confirmWages : _openBatchEditDialog)
                       : null,
                   icon: _isProcessing
                       ? SizedBox(
@@ -1182,7 +1142,7 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
                           ),
                         )
                       : Icon(
-                          isPending ? Icons.check : Icons.verified,
+                          isPending ? Icons.check : Icons.edit_outlined,
                           size: ResponsiveHelper.iconSize(context, 20),
                         ),
                   label: Text(

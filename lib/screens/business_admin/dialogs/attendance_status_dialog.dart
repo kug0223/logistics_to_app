@@ -86,8 +86,31 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
   // 처리현황 계산
   // ═══════════════════════════════════════════════════════════
 
-  /// 처리 완료된 인원 수
+  /// 처리 완료된 인원 수 (급여확정 또는 노쇼 - 마감 대기 상태)
   int get _processedCount {
+    int count = 0;
+    for (var app in _confirmedWorkers) {
+      final attendance = _attendanceMap[app.id];
+      if (attendance == null) continue;
+      
+      // 노쇼 처리됨
+      if (attendance.status == 'NO_SHOW') {
+        count++;
+      } 
+      // 급여확정 (calculated) - 마감 대기
+      else if (attendance.wageStatus == 'calculated') {
+        count++;
+      }
+      // 최종확정 (confirmed) - 이미 마감됨
+      else if (attendance.wageStatus == 'confirmed') {
+        count++;
+      }
+    }
+    return count;
+  }
+
+  /// 마감 대기 인원 수 (calculated만 - confirmed 제외)
+  int get _readyForCloseCount {
     int count = 0;
     for (var app in _confirmedWorkers) {
       final attendance = _attendanceMap[app.id];
@@ -95,16 +118,47 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
       
       if (attendance.status == 'NO_SHOW') {
         count++;
-      } else if (attendance.checkIn != null && 
-          (attendance.wageStatus == 'calculated' || attendance.wageStatus == 'confirmed')) {
+      } else if (attendance.wageStatus == 'calculated') {
         count++;
       }
     }
     return count;
   }
 
-  /// 전체 처리 완료 여부
+  /// 이미 마감된 인원 수 (confirmed)
+  int get _closedCount {
+    int count = 0;
+    for (var app in _confirmedWorkers) {
+      final attendance = _attendanceMap[app.id];
+      if (attendance == null) continue;
+      
+      if (attendance.wageStatus == 'confirmed') {
+        count++;
+      }
+    }
+    return count;
+  }
+
+  /// 전체 처리 완료 여부 (마감 가능)
   bool get _isAllProcessed => _confirmedWorkers.isNotEmpty && _processedCount == _confirmedWorkers.length;
+
+  /// 마감 가능 여부 (모두 처리됨 + 마감 대기 인원 있음)
+  bool get _canClose => _isAllProcessed && _readyForCloseCount > _closedCount;
+
+  /// 마감 완료 여부 (모두 confirmed 또는 noshow)
+  bool get _isAllClosed {
+    if (_confirmedWorkers.isEmpty) return false;
+    for (var app in _confirmedWorkers) {
+      final attendance = _attendanceMap[app.id];
+      if (attendance == null) return false;
+      
+      // noshow가 아니고 confirmed도 아니면 마감 미완료
+      if (attendance.status != 'NO_SHOW' && attendance.wageStatus != 'confirmed') {
+        return false;
+      }
+    }
+    return true;
+  }
 
   @override
   void initState() {
@@ -1468,6 +1522,9 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
           case 'view_wage':
             _showViewWageDialog(app);
             break;
+          case 'cancel_final':
+            _processCancelFinal(app);
+            break;
         }
       },
       itemBuilder: (context) {
@@ -1546,7 +1603,7 @@ SizedBox(width: ResponsiveHelper.spacing(context, 12)),
             ),
           ));
         } else if (status == 'wage_confirmed') {
-          // 급여 확정 (수정 가능)
+          // 급여 확정 (수정 가능, 최종확정은 마감 버튼으로 일괄 처리)
           items.add(PopupMenuItem(
             value: 'edit_wage',
             child: Row(
@@ -1554,16 +1611,6 @@ SizedBox(width: ResponsiveHelper.spacing(context, 12)),
                 Icon(Icons.edit_outlined, size: ResponsiveHelper.iconSize(context, 20), color: AppColors.warning),
                 SizedBox(width: ResponsiveHelper.spacing(context, 12)),
                 const Text('급여 수정'),
-              ],
-            ),
-          ));
-          items.add(PopupMenuItem(
-            value: 'final_confirm',
-            child: Row(
-              children: [
-                Icon(Icons.verified, size: ResponsiveHelper.iconSize(context, 20), color: AppColors.success),
-                SizedBox(width: ResponsiveHelper.spacing(context, 12)),
-                const Text('최종 확정'),
               ],
             ),
           ));
@@ -1578,7 +1625,7 @@ SizedBox(width: ResponsiveHelper.spacing(context, 12)),
             ),
           ));
         } else if (status == 'final_confirmed') {
-          // 최종 확정 (수정 불가)
+          // 최종 확정
           items.add(PopupMenuItem(
             value: 'view_wage',
             child: Row(
@@ -1586,6 +1633,16 @@ SizedBox(width: ResponsiveHelper.spacing(context, 12)),
                 Icon(Icons.receipt_long, size: ResponsiveHelper.iconSize(context, 20), color: AppColors.success),
                 SizedBox(width: ResponsiveHelper.spacing(context, 12)),
                 const Text('급여 상세'),
+              ],
+            ),
+          ));
+          items.add(PopupMenuItem(
+            value: 'cancel_final',
+            child: Row(
+              children: [
+                Icon(Icons.lock_open, size: ResponsiveHelper.iconSize(context, 20), color: AppColors.warning),
+                SizedBox(width: ResponsiveHelper.spacing(context, 12)),
+                const Text('마감 취소'),
               ],
             ),
           ));
@@ -1657,11 +1714,14 @@ SizedBox(width: ResponsiveHelper.spacing(context, 12)),
           // 마감 버튼
           Expanded(
             child: ElevatedButton.icon(
-              onPressed: _isAllProcessed ? _showFinalCloseDialog : null,
-              icon: Icon(Icons.lock_outline, size: ResponsiveHelper.iconSize(context, 18)),
-              label: const Text('마감'),
+              onPressed: _canClose ? _showFinalCloseDialog : null,
+              icon: Icon(
+                _isAllClosed ? Icons.lock : Icons.lock_outline, 
+                size: ResponsiveHelper.iconSize(context, 18),
+              ),
+              label: Text(_isAllClosed ? '마감완료' : '마감'),
               style: ElevatedButton.styleFrom(
-                backgroundColor: _isAllProcessed 
+                backgroundColor: _canClose 
                     ? AppColors.success 
                     : AppColors.grey300,
                 foregroundColor: Colors.white,
@@ -1672,8 +1732,8 @@ SizedBox(width: ResponsiveHelper.spacing(context, 12)),
                   borderRadius: BorderRadius.circular(12),
                 ),
               ),
-    ),
             ),
+          ),
             ],
           ),
         ],
@@ -1713,7 +1773,7 @@ SizedBox(width: ResponsiveHelper.spacing(context, 12)),
               onPressed: _confirmedWorkers.isNotEmpty ? _showWageConfirmDialog : null,
               icon: Icon(Icons.payments, size: ResponsiveHelper.iconSize(context, 16)),
               label: Text(
-                '급여확정',
+                '급여관리',
                 style: ResponsiveHelper.smallStyle(context, color: Colors.white).copyWith(
                   fontWeight: FontWeight.w600,
                 ),
@@ -1736,8 +1796,138 @@ SizedBox(width: ResponsiveHelper.spacing(context, 12)),
 
   /// 마감 확인 다이얼로그
   Future<void> _showFinalCloseDialog() async {
-    // TODO: 마감 처리 로직 구현
-    ToastHelper.showInfo('마감 기능 준비 중');
+    final theme = Theme.of(context);
+    
+    // 급여확정된 인원 수 계산
+    int calculatedCount = 0;
+    int noshowCount = 0;
+    for (var app in _confirmedWorkers) {
+      final attendance = _attendanceMap[app.id];
+      if (attendance?.status == 'NO_SHOW') {
+        noshowCount++;
+      } else if (attendance?.wageStatus == 'calculated') {
+        calculatedCount++;
+      }
+    }
+    
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(16),
+        ),
+        title: Row(
+          children: [
+            Icon(Icons.lock_outline, color: AppColors.success),
+            SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+            const Text('당일명단 마감'),
+          ],
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              '마감 처리하시겠습니까?',
+              style: ResponsiveHelper.bodyStyle(context),
+            ),
+            SizedBox(height: ResponsiveHelper.spacing(context, 16)),
+            Container(
+              padding: ResponsiveHelper.cardPadding(context),
+              decoration: BoxDecoration(
+                color: Colors.grey[100],
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Column(
+                children: [
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Text('급여확정 → 최종확정', style: ResponsiveHelper.smallStyle(context)),
+                      Text('$calculatedCount명', style: ResponsiveHelper.bodyStyle(context).copyWith(fontWeight: FontWeight.bold)),
+                    ],
+                  ),
+                  if (noshowCount > 0) ...[
+                    SizedBox(height: ResponsiveHelper.spacing(context, 4)),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        Text('노쇼', style: ResponsiveHelper.smallStyle(context, color: AppColors.error)),
+                        Text('$noshowCount명', style: ResponsiveHelper.bodyStyle(context, color: AppColors.error)),
+                      ],
+                    ),
+                  ],
+                ],
+              ),
+            ),
+            SizedBox(height: ResponsiveHelper.spacing(context, 12)),
+            Text(
+              '※ 마감 후 지원자에게 급여내역이 표시됩니다.',
+              style: ResponsiveHelper.smallStyle(context, color: AppColors.grey600),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: Text('취소', style: TextStyle(color: AppColors.grey600)),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: AppColors.success,
+              foregroundColor: Colors.white,
+            ),
+            child: const Text('마감하기'),
+          ),
+        ],
+      ),
+    );
+    
+    if (confirmed == true) {
+      await _processFinalClose();
+    }
+  }
+
+  /// 마감 처리 실행
+  Future<void> _processFinalClose() async {
+    setState(() => _isProcessing = true);
+    
+    try {
+      int successCount = 0;
+      
+      for (var app in _confirmedWorkers) {
+        final attendance = _attendanceMap[app.id];
+        if (attendance == null) continue;
+        
+        // 노쇼는 건너뜀
+        if (attendance.status == 'NO_SHOW') continue;
+        
+        // 급여확정 상태만 최종확정으로 변경
+        if (attendance.wageStatus == 'calculated') {
+          await FirebaseFirestore.instance
+              .collection('attendance')
+              .doc(attendance.id)
+              .update({
+            'wageStatus': 'confirmed',
+            'finalConfirmedAt': FieldValue.serverTimestamp(),
+          });
+          successCount++;
+        }
+      }
+      
+      _hasChanges = true;
+      await _loadData();
+      
+      ToastHelper.showSuccess('$successCount명 최종확정 완료');
+    } catch (e) {
+      print('❌ 마감 처리 실패: $e');
+      ToastHelper.showError('마감 처리 중 오류가 발생했습니다');
+    } finally {
+      if (mounted) {
+        setState(() => _isProcessing = false);
+      }
+    }
   }
 
   /// 급여 확정 다이얼로그 열기
@@ -2814,6 +3004,49 @@ SizedBox(width: ResponsiveHelper.spacing(context, 12)),
       wage: attendance.wageDetail!,
       mode: WageDialogMode.confirmed,
     );
+  }
+  /// 마감 취소 처리 (confirmed → calculated)
+  Future<void> _processCancelFinal(ApplicationModel app) async {
+    final attendance = _attendanceMap[app.id];
+    final user = _userMap[app.uid];
+    if (attendance == null) return;
+    
+    final confirmed = await DialogHelper.showConfirm(
+      context,
+      title: '마감 취소',
+      message: '${user?.name ?? '근무자'}의 마감을 취소하시겠습니까?\n\n급여확정 상태로 되돌아가며, 지원자에게 급여가 숨겨집니다.',
+      confirmText: '마감 취소',
+    );
+    
+    if (!confirmed) return;
+    
+    setState(() => _isProcessing = true);
+    
+    try {
+      // wageDetail에서 confirmedBy, confirmedAt 제거
+      final wageDetail = attendance.wageDetail?.copyWith(
+        confirmedBy: null,
+        confirmedAt: null,
+      );
+      
+      await FirebaseFirestore.instance
+          .collection('attendance')
+          .doc(attendance.id)
+          .update({
+        'wageStatus': 'calculated',
+        'wageDetail': wageDetail?.toMap(),
+        'updatedAt': FieldValue.serverTimestamp(),
+      });
+      
+      _hasChanges = true;
+      ToastHelper.showSuccess('${user?.name ?? '근무자'} 마감 취소 완료');
+      await _loadData();
+    } catch (e) {
+      debugPrint('❌ 마감 취소 실패: $e');
+      ToastHelper.showError('마감 취소에 실패했습니다');
+    } finally {
+      if (mounted) setState(() => _isProcessing = false);
+    }
   }
 
 }

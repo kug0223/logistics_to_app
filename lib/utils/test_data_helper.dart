@@ -344,6 +344,7 @@ class TestDataHelper {
       final applicationData = <String, dynamic>{
         'businessId': businessId,
         'businessName': businessName,
+        'toId': toId,  // ✅ 추가!
         'toTitle': toTitle,
         'workDate': Timestamp.fromDate(date),
         'startTime': workData['startTime'] ?? startTime ?? '',

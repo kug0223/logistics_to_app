@@ -615,10 +615,7 @@ class _WageDetailDialogState extends State<WageDetailDialog> {
         mainAxisSize: MainAxisSize.min,
         children: [
           _buildMainButtons(context, theme),
-          if (widget.mode == WageDialogMode.calculated) ...[
-            SizedBox(height: ResponsiveHelper.spacing(context, 8)),
-            _buildCancelLink(context),
-          ],
+          // 급여확정 취소는 당일명단에서 처리
         ],
       ),
     );
@@ -686,18 +683,16 @@ class _WageDetailDialogState extends State<WageDetailDialog> {
     );
   }
 
-  /// 급여확정 모드 버튼
+  /// 급여확정 모드 버튼 (저장만, 최종확정은 마감에서 일괄 처리)
   Widget _buildCalculatedButtons(BuildContext context, ThemeData theme) {
     return Row(
       children: [
         Expanded(
-          child: OutlinedButton.icon(
-            onPressed: () => _onAction('update'),
-            icon: Icon(Icons.save, size: ResponsiveHelper.iconSize(context, 18)),
-            label: Text('저장', style: ResponsiveHelper.bodyStyle(context)),
+          child: OutlinedButton(
+            onPressed: () => Navigator.pop(context),
             style: OutlinedButton.styleFrom(
-              foregroundColor: theme.primaryColor,
-              side: BorderSide(color: theme.primaryColor),
+              foregroundColor: AppColors.grey600,
+              side: BorderSide(color: theme.dividerColor),
               padding: EdgeInsets.symmetric(
                 vertical: ResponsiveHelper.spacing(context, 12),
               ),
@@ -705,23 +700,24 @@ class _WageDetailDialogState extends State<WageDetailDialog> {
                 borderRadius: BorderRadius.circular(ResponsiveHelper.spacing(context, 12)),
               ),
             ),
+            child: Text('취소', style: ResponsiveHelper.bodyStyle(context)),
           ),
         ),
         SizedBox(width: ResponsiveHelper.spacing(context, 12)),
         Expanded(
           flex: 2,
           child: ElevatedButton.icon(
-            onPressed: () => _onAction('final_confirm'),
-            icon: Icon(Icons.verified, size: ResponsiveHelper.iconSize(context, 20)),
+            onPressed: () => _onAction('update'),
+            icon: Icon(Icons.save, size: ResponsiveHelper.iconSize(context, 20)),
             label: Text(
-              '최종 확정',
+              '저장',
               style: ResponsiveHelper.bodyStyle(context).copyWith(
                 color: Colors.white,
                 fontWeight: FontWeight.w600,
               ),
             ),
             style: ElevatedButton.styleFrom(
-              backgroundColor: AppColors.success,
+              backgroundColor: theme.primaryColor,
               foregroundColor: Colors.white,
               padding: EdgeInsets.symmetric(
                 vertical: ResponsiveHelper.spacing(context, 14),
