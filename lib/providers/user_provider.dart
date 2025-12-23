@@ -3,6 +3,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import '../models/core/user_model.dart';
 import '../services/auth_service.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'notification_provider.dart';
 
 class UserProvider with ChangeNotifier {
   final AuthService _authService = AuthService();
@@ -10,6 +11,13 @@ class UserProvider with ChangeNotifier {
   UserModel? _currentUser;
   bool _isLoading = false;
   String? _error;
+  
+  // 🔔 NotificationProvider 연결용
+  NotificationProvider? _notificationProvider;
+  
+  void setNotificationProvider(NotificationProvider provider) {
+    _notificationProvider = provider;
+  }
 
   UserModel? get currentUser => _currentUser;
   bool get isLoading => _isLoading;
@@ -47,6 +55,9 @@ class UserProvider with ChangeNotifier {
       _currentUser = await _authService.getUserData(uid);
       
       if (_currentUser != null) {
+        // 🔔 알림 Provider 초기화
+        _notificationProvider?.setUser(_currentUser!.uid);
+        
         print('📋 ===== 사용자 권한 정보 =====');
         print('📧 이메일: ${_currentUser!.email}');
         print('👤 이름: ${_currentUser!.name}');
@@ -196,6 +207,9 @@ class UserProvider with ChangeNotifier {
   // 로그아웃
   Future<void> signOut() async {
     try {
+      // 🔔 알림 Provider 정리
+      _notificationProvider?.clearUser();
+      
       await _authService.signOut();
       _currentUser = null;
       _error = null;

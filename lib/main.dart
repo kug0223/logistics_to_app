@@ -7,6 +7,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'firebase_options.dart';
 import 'providers/user_provider.dart';
 import 'providers/theme_provider.dart';
+import 'providers/notification_provider.dart';
 import 'models/core/user_model.dart';
 
 // ⭐ 화면 import - 반드시 정확한 경로 확인!
@@ -52,16 +53,23 @@ class MyApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MultiProvider(  // 🔥 변경!
-      providers: [  // 🔥 변경!
+      providers: [
         ChangeNotifierProvider(
+          create: (_) => NotificationProvider(),
+        ),
+        ChangeNotifierProxyProvider<NotificationProvider, UserProvider>(
           create: (_) {
             print('📦 UserProvider 생성 중...');
             final provider = UserProvider();
             provider.initialize();
             return provider;
           },
+          update: (_, notificationProvider, userProvider) {
+            userProvider?.setNotificationProvider(notificationProvider);
+            return userProvider!;
+          },
         ),
-        ChangeNotifierProvider(  // 🔥 추가!
+        ChangeNotifierProvider(
           create: (_) => ThemeProvider(),
         ),
       ],

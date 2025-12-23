@@ -734,6 +734,64 @@ extension ApplicationFirestore on FirestoreService {
       print('⚠️ 지원 취소 알림 전송 실패: $e');
     }
   }
+  /// 🔔 계약해지 요청 알림 전송 (근무자에게)
+  Future<void> _sendTerminationRequestedNotification({
+    required String applicantUid,
+    required String businessName,
+    required String applicationId,
+    required String reason,
+  }) async {
+    try {
+      await createNotification(
+        NotificationModel.createTerminationRequested(
+          userId: applicantUid,
+          businessName: businessName,
+          terminationDate: DateTime.now(),  // 요청일
+          applicationId: applicationId,
+          reason: reason,
+        ),
+      );
+      
+      print('🔔 계약해지 요청 알림 전송 완료 → 근무자: $applicantUid');
+    } catch (e) {
+      print('⚠️ 계약해지 요청 알림 전송 실패: $e');
+    }
+  }
+
+  /// 🔔 계약해지 승인 알림 전송 (관리자에게)
+  Future<void> _sendTerminationApprovedNotification({
+    required String businessId,
+    required String applicantUid,
+    required String businessName,
+    required String applicationId,
+  }) async {
+    try {
+      // 1. 사업장 관리자 UID 조회
+      final businessDoc = await _firestore.collection('businesses').doc(businessId).get();
+      if (!businessDoc.exists) return;
+      
+      final adminUid = businessDoc.data()?['adminUid'] as String?;
+      if (adminUid == null || adminUid.isEmpty) return;
+      
+      // 2. 근무자 이름 조회
+      final userDoc = await _firestore.collection('users').doc(applicantUid).get();
+      final applicantName = userDoc.data()?['name'] as String? ?? '근무자';
+      
+      // 3. 알림 생성 (관리자에게 - 누가 승인했는지 알려줌)
+      await createNotification(
+        NotificationModel.createTerminationApproved(
+          userId: adminUid,
+          businessName: '$applicantName님',  // "OOO님과의 계약이 해지되었습니다"
+          applicationId: applicationId,
+          actualResignDate: DateTime.now(),
+        ),
+      );
+      
+      print('🔔 계약해지 승인 알림 전송 완료 → 관리자: $adminUid');
+    } catch (e) {
+      print('⚠️ 계약해지 승인 알림 전송 실패: $e');
+    }
+  }
 
   /// TO에 지원하기 (간편 버전)
   /// 
@@ -2715,6 +2773,10 @@ extension ApplicationFirestore on FirestoreService {
     required String requestedByUid,
   }) async {
     try {
+      // 1. 지원서 정보 먼저 조회 (알림용)
+      final appDoc = await _firestore.collection('applications').doc(applicationId).get();
+      
+      // 2. 상태 업데이트
       await _firestore.collection('applications').doc(applicationId).update({
         'terminationRequestedAt': Timestamp.fromDate(DateTime.now()),
         'terminationReason': reason,
@@ -2724,8 +2786,16 @@ extension ApplicationFirestore on FirestoreService {
 
       print('✅ 계약해지 요청 완료: $applicationId');
       
-      // TODO: 근무자에게 알림 발송
-      // await _sendTerminationNotification(applicationId);
+      // 🔔 근무자에게 알림 발송
+      if (appDoc.exists) {
+        final appData = appDoc.data()!;
+        _sendTerminationRequestedNotification(
+          applicantUid: appData['uid'] as String,
+          businessName: appData['businessName'] as String,
+          applicationId: applicationId,
+          reason: reason,
+        );
+      }
       
       return true;
     } catch (e) {
@@ -2757,6 +2827,10 @@ extension ApplicationFirestore on FirestoreService {
   /// 계약해지 승인 (근무자용)
   Future<bool> approveTermination(String applicationId) async {
     try {
+      // 1. 지원서 정보 먼저 조회 (알림용)
+      final appDoc = await _firestore.collection('applications').doc(applicationId).get();
+      
+      // 2. 상태 업데이트
       await _firestore.collection('applications').doc(applicationId).update({
         'terminationStatus': 'APPROVED',
         'terminationRespondedAt': Timestamp.fromDate(DateTime.now()),
@@ -2765,6 +2839,18 @@ extension ApplicationFirestore on FirestoreService {
       });
 
       print('✅ 계약해지 승인 완료: $applicationId');
+      
+      // 🔔 관리자에게 알림 발송
+      if (appDoc.exists) {
+        final appData = appDoc.data()!;
+        _sendTerminationApprovedNotification(
+          businessId: appData['businessId'] as String,
+          applicantUid: appData['uid'] as String,
+          businessName: appData['businessName'] as String,
+          applicationId: applicationId,
+        );
+      }
+      
       return true;
     } catch (e) {
       print('❌ 계약해지 승인 실패: $e');
