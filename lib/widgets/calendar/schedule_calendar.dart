@@ -36,6 +36,22 @@ class ScheduleCalendar extends StatelessWidget {
       
       selectedDayPredicate: (day) => DateUtils.isSameDay(selectedDay, day),
       
+      // ✅ 과거 날짜 + 일정 없음 → 비활성화
+      enabledDayPredicate: (day) {
+        final now = DateTime.now();
+        final today = DateTime(now.year, now.month, now.day);
+        final dayOnly = DateTime(day.year, day.month, day.day);
+        
+        // 오늘 이후는 항상 선택 가능
+        if (!dayOnly.isBefore(today)) {
+          return true;
+        }
+        
+        // 과거 날짜: 일정이 있으면 선택 가능, 없으면 비활성화
+        final events = CalendarHelper.getEventsForDay(day, applications, selectedFilter);
+        return events.isNotEmpty;
+      },
+      
       onDaySelected: onDaySelected,
       onPageChanged: onPageChanged,
       

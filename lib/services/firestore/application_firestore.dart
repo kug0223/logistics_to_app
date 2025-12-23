@@ -1317,6 +1317,23 @@ extension ApplicationFirestore on FirestoreService {
         applicationId: applicationId,
         uid: uid,
       );
+      
+      // 🔔 확정 취소 알림 생성 (지원자에게) - 관리자가 취소한 경우만
+      // (사용자 본인 취소는 알림 불필요)
+      final businessName = appData['businessName'] as String? ?? '';
+      final workType = appData['selectedWorkType'] as String? ?? '';
+      final workDate = (appData['workDate'] as Timestamp?)?.toDate() ?? DateTime.now();
+      
+      await createNotification(
+        NotificationModel.createConfirmationCanceled(
+          userId: uid,
+          businessName: businessName,
+          workType: workType,
+          workDate: workDate,
+          applicationId: applicationId,
+          cancelReason: applyNoShowPenalty ? '당일 취소' : null,
+        ),
+      );
 
       print('✅ 확정 취소 완료 (패널티: $applyNoShowPenalty)');
       return true;
@@ -1420,6 +1437,39 @@ extension ApplicationFirestore on FirestoreService {
           .update(updates);
 
       print('✅ 지원서 상태 업데이트: $status');
+      
+      // 🔔 거절/취소 시 알림 생성 (지원자에게)
+      if ((status == 'REJECTED' || status == 'CANCELED') && currentAppDoc.exists) {
+        final appData = currentAppDoc.data()!;
+        final applicantUid = appData['uid'] as String;
+        
+        // ⭐ 이전 상태에 따라 다른 알림 생성
+        if (previousStatus == 'CONFIRMED') {
+          // 확정 취소 알림
+          await createNotification(
+            NotificationModel.createConfirmationCanceled(
+              userId: applicantUid,
+              businessName: appData['businessName'] as String,
+              workType: appData['selectedWorkType'] as String,
+              workDate: (appData['workDate'] as Timestamp).toDate(),
+              applicationId: applicationId,
+              cancelReason: message,
+            ),
+          );
+        } else if (previousStatus == 'PENDING') {
+          // 지원 거절 알림
+          await createNotification(
+            NotificationModel.createApplicationRejected(
+              userId: applicantUid,
+              businessName: appData['businessName'] as String,
+              workType: appData['selectedWorkType'] as String,
+              workDate: (appData['workDate'] as Timestamp).toDate(),
+              applicationId: applicationId,
+              rejectReason: message,
+            ),
+          );
+        }
+      }
       
       // ✅ REJECTED/CANCELED: Increment 방식으로 처리
       if (status == 'REJECTED' || status == 'CANCELED') {
@@ -1795,6 +1845,17 @@ extension ApplicationFirestore on FirestoreService {
       clearCache(toId: toId);
       
       print('✅ 확정 완료 + ${conflictingApps.length}개 자동 취소 (Increment 방식)');
+      
+      // 🔔 알림 생성 (지원자에게)
+      await createNotification(
+        NotificationModel.createApplicationConfirmed(
+          userId: app.uid,
+          businessName: app.businessName,
+          workType: app.selectedWorkType,
+          workDate: app.workDate,
+          applicationId: applicationId,
+        ),
+      );
       
       // 🔥 충돌 취소된 TO ID 목록 반환
       return affectedTOIds.toList();

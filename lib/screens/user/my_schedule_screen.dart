@@ -15,6 +15,7 @@ import '../../widgets/dialogs/long_term_work_management_dialog.dart';
 import 'dialogs/my_requests_dialog.dart';
 import '../../models/core/id_card_access_request_model.dart';
 import '../../models/core/attendance_model.dart';
+import 'all_to_list_screen.dart';
 
 /// ✨ 내 근무 스케줄 화면 (홈 화면 디자인 통일)
 class MyScheduleScreen extends StatefulWidget {
@@ -665,6 +666,12 @@ class _MyScheduleScreenState extends State<MyScheduleScreen> {
     );
     
     if (events.isEmpty) {
+      // 오늘 이후인지 확인
+      final now = DateTime.now();
+      final today = DateTime(now.year, now.month, now.day);
+      final selectedDayOnly = DateTime(_selectedDay!.year, _selectedDay!.month, _selectedDay!.day);
+      final isFutureOrToday = !selectedDayOnly.isBefore(today);
+      
       return SliverFillRemaining(
         hasScrollBody: false,
         child: Center(
@@ -675,13 +682,17 @@ class _MyScheduleScreenState extends State<MyScheduleScreen> {
               mainAxisSize: MainAxisSize.min,
               children: [
                 Icon(
-                  Icons.event_busy,
+                  isFutureOrToday ? Icons.work_outline : Icons.event_busy,
                   size: ResponsiveHelper.iconSize(context, 64),
-                  color: Colors.grey[400],
+                  color: isFutureOrToday 
+                      ? Theme.of(context).primaryColor.withOpacity(0.5)
+                      : Colors.grey[400],
                 ),
                 SizedBox(height: ResponsiveHelper.spacing(context, 16)),
                 Text(
-                  '이 날짜에는 일정이 없습니다',
+                  isFutureOrToday 
+                      ? '이 날짜에 등록된 일정이 없습니다'
+                      : '기록이 없습니다',
                   style: ResponsiveHelper.subtitleStyle(
                     context,
                     color: Colors.grey[700],
@@ -690,13 +701,48 @@ class _MyScheduleScreenState extends State<MyScheduleScreen> {
                 ),
                 SizedBox(height: ResponsiveHelper.spacing(context, 8)),
                 Text(
-                  '다른 날짜를 선택해보세요',
+                  isFutureOrToday 
+                      ? '새로운 공고에 지원해보세요!'
+                      : '과거 날짜입니다',
                   style: ResponsiveHelper.bodyStyle(
                     context,
                     color: Colors.grey[500],
                   ),
                   textAlign: TextAlign.center,
                 ),
+                // 미래/오늘이면 지원 버튼 표시
+                if (isFutureOrToday) ...[
+                  SizedBox(height: ResponsiveHelper.spacing(context, 24)),
+                  ElevatedButton.icon(
+                    onPressed: () {
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (context) => const AllTOListScreen(),
+                        ),
+                      );
+                    },
+                    icon: Icon(Icons.search, size: ResponsiveHelper.iconSize(context, 18)),
+                    label: Text(
+                      '공고 보러가기',
+                      style: ResponsiveHelper.bodyStyle(context).copyWith(
+                        color: Colors.white,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Theme.of(context).primaryColor,
+                      foregroundColor: Colors.white,
+                      padding: EdgeInsets.symmetric(
+                        horizontal: ResponsiveHelper.spacing(context, 24),
+                        vertical: ResponsiveHelper.spacing(context, 12),
+                      ),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                    ),
+                  ),
+                ],
               ],
             ),
           ),
