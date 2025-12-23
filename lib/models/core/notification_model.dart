@@ -421,6 +421,7 @@ class NotificationModel {
     required String applicationId,
     required String toId,
     required String businessId,
+    required String workDetailId,
   }) {
     return NotificationModel(
       id: '',
@@ -432,6 +433,8 @@ class NotificationModel {
         'applicationId': applicationId,
         'toId': toId,
         'businessId': businessId,
+        'workDetailId': workDetailId,
+        'workType': workType,
         'action': 'applicantDetail',
       },
       createdAt: DateTime.now(),
@@ -446,6 +449,8 @@ class NotificationModel {
     required DateTime workDate,
     required String applicationId,
     required String businessId,
+    required String toId,
+    required String workDetailId,
   }) {
     return NotificationModel(
       id: '',
@@ -456,7 +461,10 @@ class NotificationModel {
       data: {
         'applicationId': applicationId,
         'businessId': businessId,
-        'action': 'toDetail',
+        'toId': toId,
+        'workDetailId': workDetailId,
+        'workType': workType,
+        'action': 'applicantDetail',
       },
       createdAt: DateTime.now(),
     );

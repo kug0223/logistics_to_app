@@ -616,7 +616,7 @@ extension AttendanceFirestore on FirestoreService {
       final businessDoc = await _firestore.collection('businesses').doc(businessId).get();
       if (!businessDoc.exists) return;
       
-      final adminUid = businessDoc.data()?['adminUid'] as String?;
+      final adminUid = businessDoc.data()?['ownerId'] as String?;
       if (adminUid == null || adminUid.isEmpty) return;
       
       await createNotification(

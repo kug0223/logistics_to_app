@@ -12,6 +12,12 @@ import '../user/my_applications_screen.dart';
 import '../user/my_schedule_screen.dart';
 import '../user/dialogs/my_requests_dialog.dart';
 import '../business_admin/workforce_management/integrated_workforce_screen.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
+import '../../models/core/to_model.dart';
+import '../../models/core/work_detail_model.dart';
+import '../../models/ui/admin_to_list_ui_models.dart';
+import '../../services/firestore_service.dart';
+import '../business_admin/dialogs/work_applicants_dialog.dart';
 
 /// 알림 목록 화면
 class NotificationScreen extends StatelessWidget {
@@ -135,11 +141,8 @@ class NotificationScreen extends StatelessWidget {
         
       case NotificationType.newApplication:
       case NotificationType.applicationCanceled:
-        // 관리자 → 인력 관리 화면
-        Navigator.push(
-          context,
-          MaterialPageRoute(builder: (_) => const IntegratedWorkforceScreen()),
-        );
+        // 관리자 → 해당 업무의 지원자 관리 다이얼로그
+        await _openWorkApplicantsFromNotification(context, notification);
         break;
         
       // ═══════════════════════════════════════════════════════════
@@ -242,5 +245,109 @@ class NotificationScreen extends StatelessWidget {
         onChanged: () {},
       ),
     );
+  }
+  /// 알림에서 지원자 관리 다이얼로그 열기
+  Future<void> _openWorkApplicantsFromNotification(
+    BuildContext context,
+    NotificationModel notification,
+  ) async {
+    final data = notification.data;
+    if (data == null) {
+      Navigator.push(
+        context,
+        MaterialPageRoute(builder: (_) => const IntegratedWorkforceScreen()),
+      );
+      return;
+    }
+
+    final toId = data['toId'] as String?;
+    final workDetailId = data['workDetailId'] as String?;
+
+    // 데이터 없으면 기존처럼 인력관리 화면으로
+    if (toId == null || toId.isEmpty || workDetailId == null || workDetailId.isEmpty) {
+      Navigator.push(
+        context,
+        MaterialPageRoute(builder: (_) => const IntegratedWorkforceScreen()),
+      );
+      return;
+    }
+
+    // 로딩 표시
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => const Center(child: CircularProgressIndicator()),
+    );
+
+    try {
+      final firestoreService = FirestoreService();
+      
+      // 1. TO 조회
+      final toDoc = await FirebaseFirestore.instance
+          .collection('tos')
+          .doc(toId)
+          .get();
+      
+      if (!toDoc.exists) {
+        Navigator.pop(context); // 로딩 닫기
+        ToastHelper.showError('공고를 찾을 수 없습니다');
+        Navigator.push(
+          context,
+          MaterialPageRoute(builder: (_) => const IntegratedWorkforceScreen()),
+        );
+        return;
+      }
+
+      final to = TOModel.fromMap(toDoc.data()!, toId);
+
+      // 2. WorkDetail 조회
+      final workDetailDoc = await FirebaseFirestore.instance
+          .collection('tos')
+          .doc(toId)
+          .collection('workDetails')
+          .doc(workDetailId)
+          .get();
+      
+      if (!workDetailDoc.exists) {
+        Navigator.pop(context); // 로딩 닫기
+        ToastHelper.showError('업무 정보를 찾을 수 없습니다');
+        Navigator.push(
+          context,
+          MaterialPageRoute(builder: (_) => const IntegratedWorkforceScreen()),
+        );
+        return;
+      }
+
+      final workDetail = WorkDetailModel.fromMap(workDetailDoc.data()!, workDetailId);
+
+      // 3. TOItem 생성
+      final toItem = TOItem(
+        to: to,
+        workDetails: [workDetail],
+        isExpanded: true,
+      );
+
+      Navigator.pop(context); // 로딩 닫기
+
+      // 4. 다이얼로그 열기
+      if (context.mounted) {
+        showDialog(
+          context: context,
+          builder: (_) => WorkApplicantsDialog(
+            work: workDetail,
+            toItem: toItem,
+            onChanged: () {},
+          ),
+        );
+      }
+    } catch (e) {
+      Navigator.pop(context); // 로딩 닫기
+      print('❌ 알림 네비게이션 실패: $e');
+      ToastHelper.showError('데이터를 불러오는데 실패했습니다');
+      Navigator.push(
+        context,
+        MaterialPageRoute(builder: (_) => const IntegratedWorkforceScreen()),
+      );
+    }
   }
 }

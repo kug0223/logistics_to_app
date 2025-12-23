@@ -572,6 +572,18 @@ extension ApplicationFirestore on FirestoreService {
         clearCache(toId: toId);
         
         print('✅ 재지원 완료 (기존 문서 재활성화)');
+        
+        // 🔔 알림 생성 (관리자에게) - 재지원도 신규 지원과 동일하게 알림
+        _sendNewApplicationNotification(
+          businessId: businessId,
+          applicantUid: uid,
+          workType: selectedWorkType,
+          workDate: workDate,
+          applicationId: reactivatableApp.id,
+          toId: toId,
+          workDetailId: workDetailId,
+        );
+        
         return true;
       }
       
@@ -648,6 +660,7 @@ extension ApplicationFirestore on FirestoreService {
         workDate: workDate,
         applicationId: appRef.id,
         toId: toId,
+        workDetailId: workDetailId,
       );
       
       return true;
@@ -665,13 +678,14 @@ extension ApplicationFirestore on FirestoreService {
     required DateTime workDate,
     required String applicationId,
     required String toId,
+    required String workDetailId,
   }) async {
     try {
       // 1. 사업장 관리자 UID 조회
       final businessDoc = await _firestore.collection('businesses').doc(businessId).get();
       if (!businessDoc.exists) return;
       
-      final adminUid = businessDoc.data()?['adminUid'] as String?;
+      final adminUid = businessDoc.data()?['ownerId'] as String?;
       if (adminUid == null || adminUid.isEmpty) return;
       
       // 2. 지원자 이름 조회
@@ -688,6 +702,7 @@ extension ApplicationFirestore on FirestoreService {
           applicationId: applicationId,
           toId: toId,
           businessId: businessId,
+          workDetailId: workDetailId,
         ),
       );
       
@@ -704,13 +719,15 @@ extension ApplicationFirestore on FirestoreService {
     required String workType,
     required DateTime workDate,
     required String applicationId,
+    required String toId,
+    required String workDetailId,
   }) async {
     try {
       // 1. 사업장 관리자 UID 조회
       final businessDoc = await _firestore.collection('businesses').doc(businessId).get();
       if (!businessDoc.exists) return;
       
-      final adminUid = businessDoc.data()?['adminUid'] as String?;
+      final adminUid = businessDoc.data()?['ownerId'] as String?;
       if (adminUid == null || adminUid.isEmpty) return;
       
       // 2. 지원자 이름 조회
@@ -726,6 +743,8 @@ extension ApplicationFirestore on FirestoreService {
           workDate: workDate,
           applicationId: applicationId,
           businessId: businessId,
+          toId: toId,
+          workDetailId: workDetailId,
         ),
       );
       
@@ -733,6 +752,7 @@ extension ApplicationFirestore on FirestoreService {
     } catch (e) {
       print('⚠️ 지원 취소 알림 전송 실패: $e');
     }
+  }
   }
   /// 🔔 계약해지 요청 알림 전송 (근무자에게)
   Future<void> _sendTerminationRequestedNotification({
@@ -770,7 +790,7 @@ extension ApplicationFirestore on FirestoreService {
       final businessDoc = await _firestore.collection('businesses').doc(businessId).get();
       if (!businessDoc.exists) return;
       
-      final adminUid = businessDoc.data()?['adminUid'] as String?;
+      final adminUid = businessDoc.data()?['ownerId'] as String?;
       if (adminUid == null || adminUid.isEmpty) return;
       
       // 2. 근무자 이름 조회
@@ -1329,6 +1349,8 @@ extension ApplicationFirestore on FirestoreService {
         workType: appData['selectedWorkType'] as String? ?? '',
         workDate: (appData['workDate'] as Timestamp).toDate(),
         applicationId: applicationId,
+        toId: toId ?? '',
+        workDetailId: workDetailId ?? '',
       );
 
       ToastHelper.showSuccess('지원이 취소되었습니다.');
