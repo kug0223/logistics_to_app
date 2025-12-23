@@ -9,6 +9,9 @@ import 'my_schedule_screen.dart';
 import 'attendance_check_screen.dart';
 import 'my_schedule_requests_screen.dart';
 import '../common/settings_screen.dart';
+import '../common/notification_screen.dart';
+import '../../widgets/common/notification_badge.dart';
+import '../../providers/notification_provider.dart';
 
 /// 일반 사용자 홈 화면 - 세련된 디자인
 class UserHomeScreen extends StatelessWidget {
@@ -76,28 +79,60 @@ class UserHomeScreen extends StatelessWidget {
                           ],
                         ),
                         
-                        // 로그아웃 버튼
-                        Material(
-                          color: Colors.white.withOpacity(0.2),
-                          borderRadius: BorderRadius.circular(12),
-                          child: InkWell(
-                            onTap: () async {
-                              final confirmed = await DialogHelper.showLogoutConfirm(context);
-                              if (confirmed && context.mounted) {
-                                context.read<ThemeProvider>().reset();
-                                await userProvider.signOut();
-                              }
-                            },
-                            borderRadius: BorderRadius.circular(12),
-                            child: Padding(
-                              padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 8)),
-                              child: Icon(
-                                Icons.logout,
-                                color: Colors.white,
-                                size: ResponsiveHelper.iconSize(context, 24),
+                        // 🔔 알림 + 로그아웃 버튼
+                        Row(
+                          children: [
+                            // 알림 버튼
+                            NotificationBadge(
+                              child: Material(
+                                color: Colors.white.withOpacity(0.2),
+                                borderRadius: BorderRadius.circular(12),
+                                child: InkWell(
+                                  onTap: () {
+                                    Navigator.push(
+                                      context,
+                                      MaterialPageRoute(
+                                        builder: (_) => const NotificationScreen(),
+                                      ),
+                                    );
+                                  },
+                                  borderRadius: BorderRadius.circular(12),
+                                  child: Padding(
+                                    padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 8)),
+                                    child: Icon(
+                                      Icons.notifications_outlined,
+                                      color: Colors.white,
+                                      size: ResponsiveHelper.iconSize(context, 24),
+                                    ),
+                                  ),
+                                ),
                               ),
                             ),
-                          ),
+                            SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+                            // 로그아웃 버튼
+                            Material(
+                              color: Colors.white.withOpacity(0.2),
+                              borderRadius: BorderRadius.circular(12),
+                              child: InkWell(
+                                onTap: () async {
+                                  final confirmed = await DialogHelper.showLogoutConfirm(context);
+                                  if (confirmed && context.mounted) {
+                                    context.read<ThemeProvider>().reset();
+                                    await userProvider.signOut();
+                                  }
+                                },
+                                borderRadius: BorderRadius.circular(12),
+                                child: Padding(
+                                  padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 8)),
+                                  child: Icon(
+                                    Icons.logout,
+                                    color: Colors.white,
+                                    size: ResponsiveHelper.iconSize(context, 24),
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ],
                         ),
                       ],
                     ),

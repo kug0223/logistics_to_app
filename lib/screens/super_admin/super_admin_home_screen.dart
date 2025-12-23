@@ -6,6 +6,8 @@ import 'all_businesses_screen.dart';
 import '../../utils/dialog_helper.dart';
 import '../../utils/responsive_helper.dart';
 import '../common/settings_screen.dart';
+import '../common/notification_screen.dart';
+import '../../widgets/common/notification_badge.dart';
 
 /// 최고관리자(SUPER_ADMIN) 홈 화면 - 세련된 디자인
 class AdminHomeScreen extends StatelessWidget {
