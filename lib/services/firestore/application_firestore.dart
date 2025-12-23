@@ -639,6 +639,17 @@ extension ApplicationFirestore on FirestoreService {
       clearCache(toId: toId);
 
       print('✅ 지원 완료: $toTitle / $selectedWorkType');
+      
+      // 🔔 알림 생성 (관리자에게) - 비동기로 처리 (메인 로직 지연 방지)
+      _sendNewApplicationNotification(
+        businessId: businessId,
+        applicantUid: uid,
+        workType: selectedWorkType,
+        workDate: workDate,
+        applicationId: appRef.id,
+        toId: toId,
+      );
+      
       return true;
     } catch (e) {
       print('❌ 지원 실패: $e');
@@ -646,6 +657,84 @@ extension ApplicationFirestore on FirestoreService {
       return false;
     }
   }
+  /// 🔔 신규 지원 알림 전송 (비동기 - fire and forget)
+  Future<void> _sendNewApplicationNotification({
+    required String businessId,
+    required String applicantUid,
+    required String workType,
+    required DateTime workDate,
+    required String applicationId,
+    required String toId,
+  }) async {
+    try {
+      // 1. 사업장 관리자 UID 조회
+      final businessDoc = await _firestore.collection('businesses').doc(businessId).get();
+      if (!businessDoc.exists) return;
+      
+      final adminUid = businessDoc.data()?['adminUid'] as String?;
+      if (adminUid == null || adminUid.isEmpty) return;
+      
+      // 2. 지원자 이름 조회
+      final userDoc = await _firestore.collection('users').doc(applicantUid).get();
+      final applicantName = userDoc.data()?['name'] as String? ?? '지원자';
+      
+      // 3. 알림 생성
+      await createNotification(
+        NotificationModel.createNewApplication(
+          userId: adminUid,
+          applicantName: applicantName,
+          workType: workType,
+          workDate: workDate,
+          applicationId: applicationId,
+          toId: toId,
+          businessId: businessId,
+        ),
+      );
+      
+      print('🔔 신규 지원 알림 전송 완료 → 관리자: $adminUid');
+    } catch (e) {
+      // 알림 실패해도 메인 로직은 이미 성공
+      print('⚠️ 신규 지원 알림 전송 실패: $e');
+    }
+  }
+  /// 🔔 지원 취소 알림 전송 (비동기 - fire and forget)
+  Future<void> _sendApplicationCanceledNotification({
+    required String businessId,
+    required String applicantUid,
+    required String workType,
+    required DateTime workDate,
+    required String applicationId,
+  }) async {
+    try {
+      // 1. 사업장 관리자 UID 조회
+      final businessDoc = await _firestore.collection('businesses').doc(businessId).get();
+      if (!businessDoc.exists) return;
+      
+      final adminUid = businessDoc.data()?['adminUid'] as String?;
+      if (adminUid == null || adminUid.isEmpty) return;
+      
+      // 2. 지원자 이름 조회
+      final userDoc = await _firestore.collection('users').doc(applicantUid).get();
+      final applicantName = userDoc.data()?['name'] as String? ?? '지원자';
+      
+      // 3. 알림 생성
+      await createNotification(
+        NotificationModel.createApplicationCanceled(
+          userId: adminUid,
+          applicantName: applicantName,
+          workType: workType,
+          workDate: workDate,
+          applicationId: applicationId,
+          businessId: businessId,
+        ),
+      );
+      
+      print('🔔 지원 취소 알림 전송 완료 → 관리자: $adminUid');
+    } catch (e) {
+      print('⚠️ 지원 취소 알림 전송 실패: $e');
+    }
+  }
+
   /// TO에 지원하기 (간편 버전)
   /// 
   /// apply_work_dialog에서 사용
@@ -1174,6 +1263,15 @@ extension ApplicationFirestore on FirestoreService {
         applicationId: applicationId,
         uid: uid,
       );
+      
+      // 🔔 알림 생성 (관리자에게) - 비동기로 처리
+      _sendApplicationCanceledNotification(
+        businessId: appData['businessId'] as String,
+        applicantUid: uid,
+        workType: appData['selectedWorkType'] as String? ?? '',
+        workDate: (appData['workDate'] as Timestamp).toDate(),
+        applicationId: applicationId,
+      );
 
       ToastHelper.showSuccess('지원이 취소되었습니다.');
       return true;
@@ -1317,24 +1415,6 @@ extension ApplicationFirestore on FirestoreService {
         applicationId: applicationId,
         uid: uid,
       );
-      
-      // 🔔 확정 취소 알림 생성 (지원자에게) - 관리자가 취소한 경우만
-      // (사용자 본인 취소는 알림 불필요)
-      final businessName = appData['businessName'] as String? ?? '';
-      final workType = appData['selectedWorkType'] as String? ?? '';
-      final workDate = (appData['workDate'] as Timestamp?)?.toDate() ?? DateTime.now();
-      
-      await createNotification(
-        NotificationModel.createConfirmationCanceled(
-          userId: uid,
-          businessName: businessName,
-          workType: workType,
-          workDate: workDate,
-          applicationId: applicationId,
-          cancelReason: applyNoShowPenalty ? '당일 취소' : null,
-        ),
-      );
-
       print('✅ 확정 취소 완료 (패널티: $applyNoShowPenalty)');
       return true;
     } catch (e) {

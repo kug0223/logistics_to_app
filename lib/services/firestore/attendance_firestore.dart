@@ -391,6 +391,19 @@ extension AttendanceFirestore on FirestoreService {
     try {
       final docRef = await _firestore.collection('schedule_change_requests').add(request.toMap());
       print('✅ 스케줄 변경 요청 생성 완료: ${docRef.id}');
+      
+      // 🔔 알림 생성 (관리자에게) - 지원자가 요청한 경우
+      if (request.requestedBy == RequesterType.APPLICANT) {
+        _sendScheduleChangeRequestNotification(
+          businessId: request.businessId,
+          requesterName: request.applicantName,
+          requestType: request.requestType.name,
+          targetDate: request.targetDate,
+          requestId: docRef.id,
+          reason: request.reason,
+        );
+      }
+      
       return docRef.id;
     } catch (e) {
       print('❌ 스케줄 변경 요청 생성 실패: $e');
@@ -530,6 +543,16 @@ extension AttendanceFirestore on FirestoreService {
       }
 
       print('✅ 스케줄 변경 요청 승인 완료: $requestId');
+      
+      // 🔔 알림 생성 (요청자에게)
+      _sendScheduleChangeApprovedNotification(
+        applicantUid: request.applicantUid,
+        businessId: request.businessId,
+        requestType: request.requestType.name,
+        targetDate: request.targetDate,
+        requestId: requestId,
+      );
+      
       return true;
     } catch (e) {
       print('❌ 스케줄 변경 요청 승인 실패: $e');
@@ -544,6 +567,13 @@ extension AttendanceFirestore on FirestoreService {
     String? rejectReason,
   }) async {
     try {
+      // 1. 요청 정보 먼저 조회 (알림용)
+      final requestDoc = await _firestore
+          .collection('schedule_change_requests')
+          .doc(requestId)
+          .get();
+      
+      // 2. 상태 업데이트
       await _firestore.collection('schedule_change_requests').doc(requestId).update({
         'status': 'REJECTED',
         'respondedByUid': rejectorUid,
@@ -552,12 +582,121 @@ extension AttendanceFirestore on FirestoreService {
       });
 
       print('✅ 스케줄 변경 요청 거절 완료: $requestId');
+      
+      // 🔔 알림 생성 (요청자에게)
+      if (requestDoc.exists) {
+        final request = ScheduleChangeRequestModel.fromMap(requestDoc.data()!, requestId);
+        _sendScheduleChangeRejectedNotification(
+          applicantUid: request.applicantUid,
+          businessId: request.businessId,
+          requestType: request.requestType.name,
+          targetDate: request.targetDate,
+          requestId: requestId,
+          rejectReason: rejectReason,
+        );
+      }
+      
       return true;
     } catch (e) {
       print('❌ 스케줄 변경 요청 거절 실패: $e');
       return false;
     }
   }
+  /// 🔔 스케줄 변경 요청 알림 전송 (관리자에게)
+  Future<void> _sendScheduleChangeRequestNotification({
+    required String businessId,
+    required String requesterName,
+    required String requestType,
+    required DateTime targetDate,
+    required String requestId,
+    String? reason,
+  }) async {
+    try {
+      // 사업장 관리자 UID 조회
+      final businessDoc = await _firestore.collection('businesses').doc(businessId).get();
+      if (!businessDoc.exists) return;
+      
+      final adminUid = businessDoc.data()?['adminUid'] as String?;
+      if (adminUid == null || adminUid.isEmpty) return;
+      
+      await createNotification(
+        NotificationModel.createScheduleChangeRequested(
+          userId: adminUid,
+          requesterName: requesterName,
+          requestType: requestType,
+          targetDate: targetDate,
+          requestId: requestId,
+          businessId: businessId,
+          reason: reason,
+        ),
+      );
+      
+      print('🔔 스케줄 변경 요청 알림 전송 완료 → 관리자: $adminUid');
+    } catch (e) {
+      print('⚠️ 스케줄 변경 요청 알림 전송 실패: $e');
+    }
+  }
+
+  /// 🔔 스케줄 변경 승인 알림 전송 (요청자에게)
+  Future<void> _sendScheduleChangeApprovedNotification({
+    required String applicantUid,
+    required String businessId,
+    required String requestType,
+    required DateTime targetDate,
+    required String requestId,
+  }) async {
+    try {
+      // 사업장 이름 조회
+      final businessDoc = await _firestore.collection('businesses').doc(businessId).get();
+      final businessName = businessDoc.data()?['name'] as String? ?? '';
+      
+      await createNotification(
+        NotificationModel.createScheduleChangeApproved(
+          userId: applicantUid,
+          requestType: requestType,
+          targetDate: targetDate,
+          requestId: requestId,
+          businessName: businessName,
+        ),
+      );
+      
+      print('🔔 스케줄 변경 승인 알림 전송 완료 → 지원자: $applicantUid');
+    } catch (e) {
+      print('⚠️ 스케줄 변경 승인 알림 전송 실패: $e');
+    }
+  }
+
+  /// 🔔 스케줄 변경 거절 알림 전송 (요청자에게)
+  Future<void> _sendScheduleChangeRejectedNotification({
+    required String applicantUid,
+    required String businessId,
+    required String requestType,
+    required DateTime targetDate,
+    required String requestId,
+    String? rejectReason,
+  }) async {
+    try {
+      // 사업장 이름 조회
+      final businessDoc = await _firestore.collection('businesses').doc(businessId).get();
+      final businessName = businessDoc.data()?['name'] as String? ?? '';
+      
+      await createNotification(
+        NotificationModel.createScheduleChangeRejected(
+          userId: applicantUid,
+          requestType: requestType,
+          targetDate: targetDate,
+          requestId: requestId,
+          businessName: businessName,
+          rejectReason: rejectReason,
+        ),
+      );
+      
+      print('🔔 스케줄 변경 거절 알림 전송 완료 → 지원자: $applicantUid');
+    } catch (e) {
+      print('⚠️ 스케줄 변경 거절 알림 전송 실패: $e');
+    }
+  }
+
 
   /// 스케줄 변경 요청 취소
   Future<bool> cancelScheduleChangeRequest({
