@@ -82,6 +82,20 @@ extension NotificationFirestore on FirestoreService {
     }
   }
 
+  /// 개별 알림 삭제
+  Future<bool> deleteNotification(String notificationId) async {
+    try {
+      await _firestore.collection('notifications').doc(notificationId).delete();
+      print('✅ 알림 삭제: $notificationId');
+      return true;
+    } catch (e) {
+      print('❌ 알림 삭제 실패: $e');
+      return false;
+    }
+  }
+
+  /// 모든 알림 읽음 처리
+
   /// 모든 알림 읽음 처리
   Future<bool> markAllNotificationsAsRead(String userId) async {
     try {

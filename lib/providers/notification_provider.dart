@@ -107,6 +107,11 @@ class NotificationProvider with ChangeNotifier {
     await _firestoreService.markAllNotificationsAsRead(_userId!);
   }
   
+  /// 개별 알림 삭제
+  Future<bool> deleteNotification(String notificationId) async {
+    return await _firestoreService.deleteNotification(notificationId);
+  }
+  
   /// 오래된 알림 삭제 (30일 이상)
   Future<int> deleteOldNotifications() async {
     if (_userId == null) return 0;
