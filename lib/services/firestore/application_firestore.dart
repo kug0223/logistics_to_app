@@ -753,7 +753,7 @@ extension ApplicationFirestore on FirestoreService {
       print('⚠️ 지원 취소 알림 전송 실패: $e');
     }
   }
-  }
+  
   /// 🔔 계약해지 요청 알림 전송 (근무자에게)
   Future<void> _sendTerminationRequestedNotification({
     required String applicantUid,

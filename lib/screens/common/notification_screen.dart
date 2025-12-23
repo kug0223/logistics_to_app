@@ -280,8 +280,6 @@ class NotificationScreen extends StatelessWidget {
     );
 
     try {
-      final firestoreService = FirestoreService();
-      
       // 1. TO 조회
       final toDoc = await FirebaseFirestore.instance
           .collection('tos')
@@ -324,7 +322,10 @@ class NotificationScreen extends StatelessWidget {
       final toItem = TOItem(
         to: to,
         workDetails: [workDetail],
-        isExpanded: true,
+        confirmedCount: workDetail.currentCount,
+        pendingCount: workDetail.pendingCount,
+        totalRequired: workDetail.requiredCount,
+        isWorkDetailLoaded: true,
       );
 
       Navigator.pop(context); // 로딩 닫기
