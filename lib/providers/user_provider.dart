@@ -4,6 +4,7 @@ import '../models/core/user_model.dart';
 import '../services/auth_service.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'notification_provider.dart';
+import '../../../services/fcm_service.dart';
 
 class UserProvider with ChangeNotifier {
   final AuthService _authService = AuthService();
@@ -58,18 +59,8 @@ class UserProvider with ChangeNotifier {
         // 🔔 알림 Provider 초기화
         _notificationProvider?.setUser(_currentUser!.uid);
         
-        print('📋 ===== 사용자 권한 정보 =====');
-        print('📧 이메일: ${_currentUser!.email}');
-        print('👤 이름: ${_currentUser!.name}');
-        print('🎭 역할: ${_currentUser!.role}');
-        print('🏢 사업장 ID: ${_currentUser!.businessId ?? "없음"}');
-        print('');
-        print('📊 권한 체크:');
-        print('  - isSuperAdmin: ${_currentUser!.isSuperAdmin}');
-        print('  - isBusinessAdmin: ${_currentUser!.isBusinessAdmin}');
-        print('  - isUser: ${_currentUser!.isUser}');
-        print('  - isAdmin: ${_currentUser!.isAdmin}');
-        print('============================');
+        // 🔔 FCM 푸시 알림 초기화
+        await FCMService().initialize(_currentUser!.uid);
       }
       
       notifyListeners();
@@ -209,6 +200,9 @@ class UserProvider with ChangeNotifier {
     try {
       // 🔔 알림 Provider 정리
       _notificationProvider?.clearUser();
+      
+      // 🔔 FCM 토큰 삭제
+      await FCMService().clearToken();
       
       await _authService.signOut();
       _currentUser = null;

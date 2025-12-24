@@ -7,6 +7,7 @@
     <!-- 인터넷 권한 -->
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
     
     <application
         android:label="알핏"
@@ -38,6 +39,21 @@
         <meta-data
             android:name="flutterEmbedding"
             android:value="2" />
+        <!-- FCM 알림 채널 -->
+        <meta-data
+            android:name="com.google.firebase.messaging.default_notification_channel_id"
+            android:value="alfit_notifications" />
+            
+        <!-- FCM 기본 아이콘 -->
+        <meta-data
+            android:name="com.google.firebase.messaging.default_notification_icon"
+            android:resource="@mipmap/ic_launcher" />
+            
+        <!-- FCM 기본 색상 -->
+        <meta-data
+            android:name="com.google.firebase.messaging.default_notification_color"
+            android:resource="@color/notification_color" />
+            
     </application>
     
     <!-- ⭐ URL 열기를 위한 queries 설정 추가 -->

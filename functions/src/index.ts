@@ -1,113 +1,71 @@
 import {onSchedule} from "firebase-functions/v2/scheduler";
 import {initializeApp} from "firebase-admin/app";
 import {getFirestore, Timestamp, Firestore} from "firebase-admin/firestore";
+import * as admin from "firebase-admin";
 
 initializeApp();
 const db = getFirestore();
 
 // ═══════════════════════════════════════════════════════════
-// 🔥 스케줄러 1: 주기적 작업 (10분마다)
-// - 예약 공개 처리
-// - WorkDetail 마감 처리
-// - TO 마감 처리
+// 🔥 통합 마스터 스케줄러 (10분마다 실행)
+// ═══════════════════════════════════════════════════════════
+// - Cloud Scheduler 1개만 사용 (비용 최적화)
+// - 시간대별로 필요한 작업 분기 처리
 // ═══════════════════════════════════════════════════════════
 
-export const periodicTasks = onSchedule(
+export const masterScheduler = onSchedule(
   {
     schedule: "*/10 * * * *",
     timeZone: "Asia/Seoul",
     region: "asia-northeast3",
   },
   async () => {
-    console.log("🚀 [주기적 작업] 시작...");
-    const now = Timestamp.now();
+    const now = new Date();
+    const hour = now.getHours();
+    const minute = now.getMinutes();
+    const timestamp = Timestamp.now();
+
+    console.log(`🚀 [마스터 스케줄러] 시작: ${hour}시 ${minute}분`);
 
     try {
+      // ═══════════════════════════════════════════════════════
+      // ✅ 매 10분마다 실행
+      // ═══════════════════════════════════════════════════════
+
       // 1️⃣ 예약 공개 처리
-      await processScheduledPublish(now);
+      await processScheduledPublish(timestamp);
 
       // 2️⃣ WorkDetail 마감 처리
-      await processWorkDetailExpiry(now);
+      await processWorkDetailExpiry(timestamp);
 
       // 3️⃣ TO 마감 처리
-      await processTOExpiry(now);
+      await processTOExpiry(timestamp);
 
-      console.log("✅ [주기적 작업] 완료!");
+      // ═══════════════════════════════════════════════════════
+      // ✅ 저녁 8시에만 실행 (20:00 ~ 20:09)
+      // ═══════════════════════════════════════════════════════
+      if (hour === 20 && minute < 10) {
+        console.log("📢 [리마인더] 내일 근무 알림 시작...");
+        await sendWorkReminders(timestamp);
+      }
+
+      // ═══════════════════════════════════════════════════════
+      // ✅ 새벽 3시에만 실행 (03:00 ~ 03:09)
+      // ═══════════════════════════════════════════════════════
+      if (hour === 3 && minute < 10) {
+        console.log("🔍 [정합성 검사] 시작...");
+        await runIntegrityCheck(timestamp);
+      }
+
+      console.log("✅ [마스터 스케줄러] 완료!");
     } catch (error) {
-      console.error("❌ [주기적 작업] 실패:", error);
+      console.error("❌ [마스터 스케줄러] 실패:", error);
     }
   }
 );
 
 // ═══════════════════════════════════════════════════════════
-// 🔥 스케줄러 2: 일일 정합성 검사 (매일 새벽 3시)
-// ═══════════════════════════════════════════════════════════
-
-export const dailyIntegrityCheck = onSchedule(
-  {
-    schedule: "0 3 * * *",
-    timeZone: "Asia/Seoul",
-    region: "asia-northeast3",
-  },
-  async () => {
-    console.log("🔍 [정합성 검사] 시작...");
-
-    try {
-      const now = Timestamp.now();
-      let fixedCount = 0;
-
-      // 1. 마감되어야 하는데 ACTIVE인 TO 수정
-      const activeTOs = await db
-        .collection("tos")
-        .where("status", "==", "ACTIVE")
-        .get();
-
-      for (const toDoc of activeTOs.docs) {
-        const toData = toDoc.data();
-
-        if (toData.isManualClosed === true) continue;
-
-        const deadline = toData.applicationDeadline as Timestamp | null;
-        if (deadline && deadline.toMillis() <= now.toMillis()) {
-          await toDoc.ref.update({
-            status: "CLOSED",
-            closedAt: now,
-            closedReason: "INTEGRITY_CHECK",
-            statusUpdatedAt: now,
-          });
-          fixedCount++;
-          console.log(`  → TO ${toDoc.id} 상태 수정`);
-        }
-      }
-
-      // 2. 모든 그룹 마스터 상태 재동기화
-      const masterTOs = await db
-        .collection("tos")
-        .where("isGroupMaster", "==", true)
-        .get();
-
-      const processedGroupIds = new Set<string>();
-
-      for (const masterDoc of masterTOs.docs) {
-        const groupId = masterDoc.data().groupId as string | undefined;
-        if (groupId && !processedGroupIds.has(groupId)) {
-          await syncGroupMasterStatus(db, groupId);
-          processedGroupIds.add(groupId);
-        }
-      }
-
-      console.log(
-        `✅ [정합성 검사] 완료: ${fixedCount}개 수정, ` +
-        `${processedGroupIds.size}개 그룹 동기화`
-      );
-    } catch (error) {
-      console.error("❌ [정합성 검사] 실패:", error);
-    }
-  }
-);
-
-// ═══════════════════════════════════════════════════════════
-// 📦 작업 처리 함수들
+// 📦 예약 공개 처리
 // ═══════════════════════════════════════════════════════════
 
 /**
@@ -158,6 +116,10 @@ async function processScheduledPublish(now: Timestamp): Promise<void> {
     await syncGroupMasterStatus(db, groupId);
   }
 }
+
+// ═══════════════════════════════════════════════════════════
+// 📦 WorkDetail 마감 처리
+// ═══════════════════════════════════════════════════════════
 
 /**
  * 2️⃣ WorkDetail 시간 마감 처리
@@ -238,6 +200,10 @@ async function processWorkDetailExpiry(now: Timestamp): Promise<void> {
   }
 }
 
+// ═══════════════════════════════════════════════════════════
+// 📦 TO 마감 처리
+// ═══════════════════════════════════════════════════════════
+
 /**
  * 3️⃣ TO 시간 마감 처리
  * @param {Timestamp} now - 현재 시간
@@ -312,6 +278,228 @@ async function processTOExpiry(now: Timestamp): Promise<void> {
   // 그룹 마스터 동기화
   for (const groupId of affectedGroupIds) {
     await syncGroupMasterStatus(db, groupId);
+  }
+}
+
+// ═══════════════════════════════════════════════════════════
+// 📦 근무 리마인더 (NEW)
+// ═══════════════════════════════════════════════════════════
+
+/**
+ * 내일 근무 예정자에게 리마인더 알림 전송
+ * @param {Timestamp} now - 현재 시간
+ */
+async function sendWorkReminders(now: Timestamp): Promise<void> {
+  console.log("  📢 [리마인더] 처리 중...");
+
+  try {
+    // 내일 날짜 계산 (KST 기준)
+    const tomorrow = new Date();
+    tomorrow.setDate(tomorrow.getDate() + 1);
+    tomorrow.setHours(0, 0, 0, 0);
+
+    const tomorrowEnd = new Date(tomorrow);
+    tomorrowEnd.setHours(23, 59, 59, 999);
+
+    // 내일 근무 확정된 지원서 조회
+    const applicationsSnapshot = await db
+      .collection("applications")
+      .where("status", "==", "CONFIRMED")
+      .where("workDate", ">=", Timestamp.fromDate(tomorrow))
+      .where("workDate", "<=", Timestamp.fromDate(tomorrowEnd))
+      .get();
+
+    if (applicationsSnapshot.empty) {
+      console.log("  ✅ [리마인더] 내일 근무 예정자 없음");
+      return;
+    }
+
+    console.log(`  📋 [리마인더] 대상: ${applicationsSnapshot.size}명`);
+
+    let sentCount = 0;
+    // 중복 방지
+    const processedUsers = new Set<string>();
+
+    for (const appDoc of applicationsSnapshot.docs) {
+      const appData = appDoc.data();
+      const userId = appData.uid as string;
+
+      // 같은 사용자에게 여러 근무가 있으면 한 번만 전송
+      if (processedUsers.has(userId)) {
+        continue;
+      }
+      processedUsers.add(userId);
+
+      // 앱 내 알림 생성
+      const notificationBody =
+        `${appData.businessName}에서 내일 ${appData.selectedWorkType} ` +
+        `근무가 있습니다.\n시간: ${appData.startTime}~${appData.endTime}`;
+
+      await db.collection("notifications").add({
+        userId: userId,
+        type: "workReminder",
+        title: "내일 근무 알림",
+        body: notificationBody,
+        data: {
+          applicationId: appDoc.id,
+          action: "applicationDetail",
+        },
+        isRead: false,
+        createdAt: now,
+      });
+
+      // FCM 푸시 전송
+      await sendFCMToUser(userId, {
+        title: "내일 근무 알림 📅",
+        body: `${appData.businessName} ${appData.startTime} 출근`,
+        data: {
+          type: "workReminder",
+          applicationId: appDoc.id,
+        },
+      });
+
+      sentCount++;
+    }
+
+    console.log(`  ✅ [리마인더] ${sentCount}명에게 알림 전송 완료`);
+  } catch (error) {
+    console.error("❌ [리마인더] 실패:", error);
+  }
+}
+
+// ═══════════════════════════════════════════════════════════
+// 📦 정합성 검사
+// ═══════════════════════════════════════════════════════════
+
+/**
+ * 일일 정합성 검사 (새벽 3시 실행)
+ * @param {Timestamp} now - 현재 시간
+ */
+async function runIntegrityCheck(now: Timestamp): Promise<void> {
+  try {
+    let fixedCount = 0;
+
+    // 1. 마감되어야 하는데 ACTIVE인 TO 수정
+    const activeTOs = await db
+      .collection("tos")
+      .where("status", "==", "ACTIVE")
+      .get();
+
+    for (const toDoc of activeTOs.docs) {
+      const toData = toDoc.data();
+
+      if (toData.isManualClosed === true) continue;
+
+      const deadline = toData.applicationDeadline as Timestamp | null;
+      if (deadline && deadline.toMillis() <= now.toMillis()) {
+        await toDoc.ref.update({
+          status: "CLOSED",
+          closedAt: now,
+          closedReason: "INTEGRITY_CHECK",
+          statusUpdatedAt: now,
+        });
+        fixedCount++;
+        console.log(`    → TO ${toDoc.id} 상태 수정`);
+      }
+    }
+
+    // 2. 모든 그룹 마스터 상태 재동기화
+    const masterTOs = await db
+      .collection("tos")
+      .where("isGroupMaster", "==", true)
+      .get();
+
+    const processedGroupIds = new Set<string>();
+
+    for (const masterDoc of masterTOs.docs) {
+      const groupId = masterDoc.data().groupId as string | undefined;
+      if (groupId && !processedGroupIds.has(groupId)) {
+        await syncGroupMasterStatus(db, groupId);
+        processedGroupIds.add(groupId);
+      }
+    }
+
+    console.log(
+      `  ✅ [정합성 검사] 완료: ${fixedCount}개 수정, ` +
+        `${processedGroupIds.size}개 그룹 동기화`
+    );
+  } catch (error) {
+    console.error("❌ [정합성 검사] 실패:", error);
+  }
+}
+
+// ═══════════════════════════════════════════════════════════
+// 📦 FCM 푸시 알림 (NEW)
+// ═══════════════════════════════════════════════════════════
+
+interface FCMPayload {
+  title: string;
+  body: string;
+  data?: Record<string, string>;
+}
+
+/**
+ * 특정 사용자에게 FCM 푸시 전송
+ * @param {string} userId - 사용자 UID
+ * @param {FCMPayload} payload - 알림 내용
+ */
+async function sendFCMToUser(
+  userId: string,
+  payload: FCMPayload
+): Promise<void> {
+  try {
+    // 사용자의 FCM 토큰 조회
+    const userDoc = await db.collection("users").doc(userId).get();
+    if (!userDoc.exists) return;
+
+    const userData = userDoc.data();
+    const fcmToken = userData?.fcmToken as string | undefined;
+
+    if (!fcmToken) {
+      console.log(`    ⚠️ FCM 토큰 없음: ${userId}`);
+      return;
+    }
+
+    // FCM 메시지 전송
+    await admin.messaging().send({
+      token: fcmToken,
+      notification: {
+        title: payload.title,
+        body: payload.body,
+      },
+      data: payload.data,
+      android: {
+        priority: "high",
+        notification: {
+          channelId: "alfit_notifications",
+          sound: "default",
+        },
+      },
+      apns: {
+        payload: {
+          aps: {
+            sound: "default",
+            badge: 1,
+          },
+        },
+      },
+    });
+
+    console.log(`    ✓ FCM 전송: ${userId}`);
+  } catch (error: unknown) {
+    // 토큰 만료 시 토큰 삭제
+    const errorMessage = error instanceof Error ? error.message : "";
+    if (
+      errorMessage.includes("not-registered") ||
+      errorMessage.includes("invalid-registration-token")
+    ) {
+      console.log(`    ⚠️ 만료된 FCM 토큰 삭제: ${userId}`);
+      await db.collection("users").doc(userId).update({
+        fcmToken: admin.firestore.FieldValue.delete(),
+      });
+    } else {
+      console.log(`    ⚠️ FCM 전송 실패 (${userId}):`, error);
+    }
   }
 }
 
