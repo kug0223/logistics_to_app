@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 
 // Models
 import '../../models/core/user_model.dart';
@@ -22,14 +23,84 @@ import '../business_admin/business_list_screen.dart';
 
 // Services
 import '../../services/firestore_service.dart';
+import 'package:permission_handler/permission_handler.dart';
+import '../../services/fcm_service.dart';
 
 // Utils
 import '../../utils/toast_helper.dart';
 import '../../utils/dialog_helper.dart';
 
 /// ✨ 통합 설정 화면 (역할별 메뉴 자동 표시)
-class SettingsScreen extends StatelessWidget {
+class SettingsScreen extends StatefulWidget {
   const SettingsScreen({super.key});
+
+  @override
+  State<SettingsScreen> createState() => _SettingsScreenState();
+}
+
+class _SettingsScreenState extends State<SettingsScreen> {
+  bool _isPushEnabled = true;
+  bool _isLoading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadNotificationStatus();
+  }
+
+  /// 알림 상태 로드
+  Future<void> _loadNotificationStatus() async {
+    final userProvider = context.read<UserProvider>();
+    final userId = userProvider.currentUser?.uid;
+    
+    if (userId != null) {
+      // Firestore에서 fcmToken 존재 여부로 판단
+      final doc = await FirebaseFirestore.instance
+          .collection('users')
+          .doc(userId)
+          .get();
+      
+      final hasFcmToken = doc.data()?['fcmToken'] != null;
+      
+      if (mounted) {
+        setState(() {
+          _isPushEnabled = hasFcmToken;
+          _isLoading = false;
+        });
+      }
+    } else {
+      setState(() => _isLoading = false);
+    }
+  }
+
+  /// 푸시 알림 토글
+  Future<void> _togglePushNotification(bool value) async {
+    setState(() => _isLoading = true);
+    
+    try {
+      final userProvider = context.read<UserProvider>();
+      final userId = userProvider.currentUser?.uid;
+      
+      if (userId == null) return;
+      
+      if (value) {
+        // 알림 켜기 → FCM 초기화
+        await FCMService().initialize(userId);
+        ToastHelper.showSuccess('푸시 알림이 활성화되었습니다');
+      } else {
+        // 알림 끄기 → FCM 토큰 삭제
+        await FCMService().clearToken();
+        ToastHelper.showSuccess('푸시 알림이 비활성화되었습니다');
+      }
+      
+      setState(() => _isPushEnabled = value);
+    } catch (e) {
+      print('❌ 알림 설정 변경 실패: $e');
+      ToastHelper.showError('알림 설정 변경에 실패했습니다');
+    } finally {
+      setState(() => _isLoading = false);
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -205,17 +276,20 @@ class SettingsScreen extends StatelessWidget {
           _buildSectionHeader(context, '알림', Icons.notifications_outlined),
           SizedBox(height: ResponsiveHelper.spacing(context, 12)),
           
+          // 푸시 알림 토글
+          _buildNotificationToggleCard(context),
+          
+          SizedBox(height: ResponsiveHelper.spacing(context, 12)),
+          
+          // 시스템 알림 설정
           _buildMenuCard(
             context,
-            icon: Icons.notifications_active,
-            iconColor: Colors.amber,
-            title: '알림 설정',
-            subtitle: '푸시 알림 및 이메일 알림 설정',
-            onTap: () {
-              // TODO: 알림 설정 화면
-              ScaffoldMessenger.of(context).showSnackBar(
-                SnackBar(content: Text('알림 설정 화면 (구현 예정)')),
-              );
+            icon: Icons.settings_applications,
+            iconColor: Colors.grey[600]!,
+            title: '시스템 알림 설정',
+            subtitle: '기기의 알림 설정을 변경합니다',
+            onTap: () async {
+              await openAppSettings();
             },
           ),
 
@@ -566,6 +640,101 @@ class SettingsScreen extends StatelessWidget {
               ],
             );
           },
+        ),
+      ),
+    );
+  }
+  /// ✨ 알림 토글 카드
+  Widget _buildNotificationToggleCard(BuildContext context) {
+    final theme = Theme.of(context);
+    const iconColor = Colors.amber;
+    
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(20),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.grey.withOpacity(0.1),
+            blurRadius: 10,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
+      child: Material(
+        color: Colors.transparent,
+        child: Padding(
+          padding: ResponsiveHelper.cardPadding(context),
+          child: Row(
+            children: [
+              // 아이콘 (buildMenuCard와 동일한 스타일)
+              Container(
+                padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 16)),
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    colors: [
+                      iconColor,
+                      iconColor.withOpacity(0.8),
+                    ],
+                  ),
+                  borderRadius: BorderRadius.circular(16),
+                  boxShadow: [
+                    BoxShadow(
+                      color: iconColor.withOpacity(0.3),
+                      blurRadius: 8,
+                      offset: const Offset(0, 4),
+                    ),
+                  ],
+                ),
+                child: Icon(
+                  Icons.notifications_active,
+                  color: Colors.white,
+                  size: ResponsiveHelper.iconSize(context, 28),
+                ),
+              ),
+              
+              SizedBox(width: ResponsiveHelper.spacing(context, 16)),
+              
+              // 텍스트
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      '푸시 알림',
+                      style: ResponsiveHelper.subtitleStyle(context).copyWith(
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                    SizedBox(height: ResponsiveHelper.spacing(context, 4)),
+                    Text(
+                      _isPushEnabled ? '알림을 받고 있습니다' : '알림이 꺼져 있습니다',
+                      style: ResponsiveHelper.smallStyle(
+                        context,
+                        color: Colors.grey[600],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              
+              // 토글 스위치 (화살표 대신)
+              _isLoading
+                  ? SizedBox(
+                      width: 24,
+                      height: 24,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        color: theme.primaryColor,
+                      ),
+                    )
+                  : Switch(
+                      value: _isPushEnabled,
+                      onChanged: _togglePushNotification,
+                      activeColor: theme.primaryColor,
+                    ),
+            ],
+          ),
         ),
       ),
     );

@@ -9,7 +9,7 @@ plugins {
 }
 
 android {
-    namespace = "com.example.ALfit"
+    namespace = "com.example.logistics_to_app"
     compileSdk = flutter.compileSdkVersion
     ndkVersion = flutter.ndkVersion
 
