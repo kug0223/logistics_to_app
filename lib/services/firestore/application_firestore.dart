@@ -1537,6 +1537,7 @@ extension ApplicationFirestore on FirestoreService {
     required String newWorkType,
     required int newWage,
     required String adminUID,
+    String? newWorkDetailId,  // 🔥 추가: 새 WorkDetail ID
   }) async {
     try {
       // 1. 기존 지원서 조회
@@ -1551,26 +1552,77 @@ extension ApplicationFirestore on FirestoreService {
       }
 
       final appData = appDoc.data()!;
-      final currentWorkType = appData['selectedWorkType'];
-      final currentWage = appData['wage'];
+      final currentWorkType = appData['selectedWorkType'] as String;
+      final currentWage = appData['wage'] as int;
+      final uid = appData['uid'] as String;
+      final businessName = appData['businessName'] as String? ?? '';
+      final workDate = (appData['workDate'] as Timestamp).toDate();
 
       // 2. 업무유형 변경
-      await _firestore.collection('applications').doc(applicationId).update({
+      final updateData = <String, dynamic>{
         'selectedWorkType': newWorkType,
         'wage': newWage,
         'originalWorkType': appData['originalWorkType'] ?? currentWorkType,
         'originalWage': appData['originalWage'] ?? currentWage,
         'changedAt': FieldValue.serverTimestamp(),
         'changedBy': adminUID,
-      });
+      };
+      
+      // 🔥 workDetailId도 함께 업데이트 (제공된 경우)
+      if (newWorkDetailId != null && newWorkDetailId.isNotEmpty) {
+        updateData['workDetailId'] = newWorkDetailId;
+      }
+      
+      await _firestore.collection('applications').doc(applicationId).update(updateData);
 
       print('✅ 업무유형 변경 완료: $currentWorkType → $newWorkType');
+      
+      // 🔔 알림 생성 (지원자에게)
+      _sendWorkTypeChangedNotification(
+        applicantUid: uid,
+        businessName: businessName,
+        workDate: workDate,
+        originalWorkType: currentWorkType,
+        newWorkType: newWorkType,
+        newWage: newWage,
+        applicationId: applicationId,
+      );
+      
       ToastHelper.showSuccess('업무유형이 변경되었습니다.');
       return true;
     } catch (e) {
       print('❌ 업무유형 변경 실패: $e');
       ToastHelper.showError('업무유형 변경에 실패했습니다.');
       return false;
+    }
+  }
+  
+  /// 🔔 파트 변경 알림 전송 (지원자에게)
+  Future<void> _sendWorkTypeChangedNotification({
+    required String applicantUid,
+    required String businessName,
+    required DateTime workDate,
+    required String originalWorkType,
+    required String newWorkType,
+    required int newWage,
+    required String applicationId,
+  }) async {
+    try {
+      await createNotification(
+        NotificationModel.createWorkTypeChanged(
+          userId: applicantUid,
+          businessName: businessName,
+          workDate: workDate,
+          originalWorkType: originalWorkType,
+          newWorkType: newWorkType,
+          newWage: newWage,
+          applicationId: applicationId,
+        ),
+      );
+      
+      print('🔔 파트 변경 알림 전송 완료 → 지원자: $applicantUid');
+    } catch (e) {
+      print('⚠️ 파트 변경 알림 전송 실패: $e');
     }
   }
   /// 지원서 상태 업데이트 (승인/거절) - Phase 2: 자동 취소 추가

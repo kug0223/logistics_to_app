@@ -1331,6 +1331,7 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog> {
         newWorkType: selectedWorkType,
         newWage: selectedWork.wage,
         adminUID: adminUID,
+        newWorkDetailId: selectedWork.id,  // 🔥 workDetailId도 함께 업데이트
       );
       ToastHelper.showSuccess('${user?.name ?? '지원자'}님의 파트가 $selectedWorkType(으)로 변경되었습니다');
       await _loadApplicants();

@@ -668,6 +668,80 @@ class NotificationModel {
       createdAt: DateTime.now(),
     );
   }
+  /// 지원 자동 취소 알림 생성 (시간 충돌로 인한 자동취소)
+  static NotificationModel createApplicationAutoCanceled({
+    required String userId,
+    required String businessName,
+    required String workType,
+    required DateTime workDate,
+    required String applicationId,
+    required String conflictingBusinessName,
+    required String conflictingTime,
+  }) {
+    return NotificationModel(
+      id: '',
+      userId: userId,
+      type: NotificationType.confirmationCanceled,  // 기존 타입 재사용
+      title: '지원 자동 취소',
+      body: '$businessName $workType 지원이 시간 충돌로 자동 취소되었습니다.\n확정된 근무: $conflictingBusinessName ($conflictingTime)',
+      data: {
+        'applicationId': applicationId,
+        'reason': 'SCHEDULE_CONFLICT',
+        'action': 'applicationDetail',
+      },
+      createdAt: DateTime.now(),
+    );
+  }
+  /// TO 취소/삭제 알림 생성 (지원자에게)
+  static NotificationModel createTOCanceled({
+    required String userId,
+    required String businessName,
+    required String toTitle,
+    required DateTime workDate,
+    required String status,  // 'PENDING' 또는 'CONFIRMED'
+  }) {
+    final statusText = status == 'CONFIRMED' ? '확정된 근무' : '지원';
+    return NotificationModel(
+      id: '',
+      userId: userId,
+      type: NotificationType.workCanceled,
+      title: '공고 취소',
+      body: '$businessName의 "$toTitle" 공고가 취소되어 $statusText이(가) 무효화되었습니다.\n근무일: ${workDate.month}/${workDate.day}',
+      data: {
+        'action': 'toList',
+        'reason': 'TO_DELETED',
+      },
+      createdAt: DateTime.now(),
+    );
+  }
+  /// 파트(업무유형) 변경 알림 생성 (지원자에게)
+  static NotificationModel createWorkTypeChanged({
+    required String userId,
+    required String businessName,
+    required DateTime workDate,
+    required String originalWorkType,
+    required String newWorkType,
+    required int newWage,
+    required String applicationId,
+  }) {
+    final formattedWage = newWage.toString().replaceAllMapped(
+      RegExp(r'(\d{1,3})(?=(\d{3})+(?!\d))'),
+      (Match m) => '${m[1]},',
+    );
+    
+    return NotificationModel(
+      id: '',
+      userId: userId,
+      type: NotificationType.applicationConfirmed,  // 기존 타입 재사용
+      title: '파트 변경',
+      body: '$businessName에서 귀하의 파트가 변경되었습니다.\n$originalWorkType → $newWorkType (${formattedWage}원)\n근무일: ${workDate.month}/${workDate.day}',
+      data: {
+        'applicationId': applicationId,
+        'action': 'applicationDetail',
+      },
+      createdAt: DateTime.now(),
+    );
+  }
 
   /// 급여 정산 완료 알림 생성 (지원자에게)
   static NotificationModel createWageConfirmed({
