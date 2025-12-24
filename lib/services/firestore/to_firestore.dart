@@ -74,12 +74,29 @@ extension TOFirestore on FirestoreService {
         await doc.reference.delete();
       }
       
-      // 2. Applications 삭제
+      // 2. Applications 조회 (알림용) 후 삭제
       final applicationsSnapshot = await _firestore
           .collection('applications')
           .where('toId', isEqualTo: toId)
           .get();
       
+      // 🔔 지원자들에게 알림 전송 (PENDING, CONFIRMED만)
+      for (var doc in applicationsSnapshot.docs) {
+        final appData = doc.data();
+        final status = appData['status'] as String?;
+        
+        if (status == 'PENDING' || status == 'CONFIRMED') {
+          _sendTOCanceledNotification(
+            applicantUid: appData['uid'] as String,
+            businessName: toDoc.businessName,
+            toTitle: toDoc.title,
+            workDate: toDoc.date,
+            status: status!,
+          );
+        }
+      }
+      
+      // Applications 삭제
       for (var doc in applicationsSnapshot.docs) {
         await doc.reference.delete();
       }
@@ -622,6 +639,30 @@ extension TOFirestore on FirestoreService {
         'workDetails': <WorkDetailModel>[],
         'workStats': <String, Map<String, int>>{},
       };
+    }
+  }
+  /// 🔔 TO 취소/삭제 알림 전송 (지원자에게)
+  Future<void> _sendTOCanceledNotification({
+    required String applicantUid,
+    required String businessName,
+    required String toTitle,
+    required DateTime workDate,
+    required String status,
+  }) async {
+    try {
+      await createNotification(
+        NotificationModel.createTOCanceled(
+          userId: applicantUid,
+          businessName: businessName,
+          toTitle: toTitle,
+          workDate: workDate,
+          status: status,
+        ),
+      );
+      
+      print('🔔 TO 취소 알림 전송 완료 → 지원자: $applicantUid (상태: $status)');
+    } catch (e) {
+      print('⚠️ TO 취소 알림 전송 실패: $e');
     }
   }
 }

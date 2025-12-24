@@ -812,6 +812,34 @@ extension ApplicationFirestore on FirestoreService {
       print('⚠️ 계약해지 승인 알림 전송 실패: $e');
     }
   }
+  /// 🔔 지원 자동 취소 알림 전송 (충돌로 인한 자동취소 - 지원자에게)
+  Future<void> _sendApplicationAutoCanceledNotification({
+    required String applicantUid,
+    required String businessName,
+    required String workType,
+    required DateTime workDate,
+    required String applicationId,
+    required String conflictingBusinessName,
+    required String conflictingTime,
+  }) async {
+    try {
+      await createNotification(
+        NotificationModel.createApplicationAutoCanceled(
+          userId: applicantUid,
+          businessName: businessName,
+          workType: workType,
+          workDate: workDate,
+          applicationId: applicationId,
+          conflictingBusinessName: conflictingBusinessName,
+          conflictingTime: conflictingTime,
+        ),
+      );
+      
+      print('🔔 자동 취소 알림 전송 완료 → 지원자: $applicantUid');
+    } catch (e) {
+      print('⚠️ 자동 취소 알림 전송 실패: $e');
+    }
+  }
 
   /// TO에 지원하기 (간편 버전)
   /// 
@@ -2016,6 +2044,19 @@ extension ApplicationFirestore on FirestoreService {
           applicationId: applicationId,
         ),
       );
+      
+      // 🔔 자동 취소된 지원서에 대한 알림 (각 지원자에게)
+      for (var conflictApp in conflictingApps) {
+        _sendApplicationAutoCanceledNotification(
+          applicantUid: conflictApp.uid,
+          businessName: conflictApp.businessName,
+          workType: conflictApp.selectedWorkType,
+          workDate: conflictApp.workDate,
+          applicationId: conflictApp.id,
+          conflictingBusinessName: app.businessName,
+          conflictingTime: '${app.startTime}~${app.endTime}',
+        );
+      }
       
       // 🔥 충돌 취소된 TO ID 목록 반환
       return affectedTOIds.toList();
