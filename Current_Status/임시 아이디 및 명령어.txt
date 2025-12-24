@@ -18,7 +18,7 @@ ALfit
 
 냉동분류
 
-git add . ; git commit -m "알람시스템 구축 진행 251224-5" ; git push
+git add . ; git commit -m "알람시스템 구축 진행 251224-6" ; git push
 
 flutter clean
 flutter pub get

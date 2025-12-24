@@ -9,11 +9,13 @@ plugins {
 }
 
 android {
-    namespace = "com.example.logistics_to_app"
+    namespace = "com.example.ALfit"
     compileSdk = flutter.compileSdkVersion
     ndkVersion = flutter.ndkVersion
 
     compileOptions {
+        // ✅ 추가: core library desugaring 활성화
+        isCoreLibraryDesugaringEnabled = true
         sourceCompatibility = JavaVersion.VERSION_11
         targetCompatibility = JavaVersion.VERSION_11
     }
@@ -31,6 +33,9 @@ android {
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode
         versionName = flutter.versionName
+        
+        // ✅ 추가: multidex 지원
+        multiDexEnabled = true
     }
 
     buildTypes {
@@ -45,10 +50,13 @@ android {
     }
 }
 
-
 flutter {
     source = "../.."
 }
+
 dependencies {
+    // ✅ 추가: core library desugaring
+    coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.0.4")
+    
     implementation("com.google.mlkit:text-recognition-korean:16.0.0")
 }
