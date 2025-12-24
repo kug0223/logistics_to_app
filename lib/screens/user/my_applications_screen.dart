@@ -1,19 +1,22 @@
 import 'package:flutter/material.dart';
-import 'package:provider/provider.dart';
 import 'package:flutter/gestures.dart';
+import 'package:provider/provider.dart';
+import 'package:intl/intl.dart';
+
 import '../../models/core/application_model.dart';
 import '../../models/core/to_model.dart';
 import '../../services/firestore_service.dart';
 import '../../providers/user_provider.dart';
 import '../../widgets/common/loading_widget.dart';
-import '../../widgets/common/styled_container.dart';
+import '../../widgets/common/common_widgets.dart';
+import '../../widgets/work_type_icon.dart';
 import '../../utils/toast_helper.dart';
-import 'package:intl/intl.dart';
 import '../../utils/dialog_helper.dart';
-import '../../utils/responsive_helper.dart';  // ⭐ 추가
+import '../../utils/responsive_helper.dart';
+import '../../utils/format_helper.dart';
+import '../../theme/app_colors.dart';
 
-
-/// 내 지원 내역 화면 - 신버전
+/// 내 지원 내역 화면 (리팩토링 버전)
 class MyApplicationsScreen extends StatefulWidget {
   const MyApplicationsScreen({super.key});
 
@@ -25,7 +28,7 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
   final FirestoreService _firestoreService = FirestoreService();
   List<_ApplicationWithTO> _applications = [];
   bool _isLoading = true;
-  String _selectedFilter = 'ALL'; // ALL, PENDING, CONFIRMED, REJECTED, CANCELED
+  String _selectedFilter = 'ALL';
 
   @override
   void initState() {
@@ -33,11 +36,8 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
     _loadApplications();
   }
 
-  /// 내 지원 내역 + TO 정보 함께 로드
   Future<void> _loadApplications() async {
-    setState(() {
-      _isLoading = true;
-    });
+    setState(() => _isLoading = true);
 
     try {
       final userProvider = Provider.of<UserProvider>(context, listen: false);
@@ -48,26 +48,18 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
         return;
       }
 
-      // 내 지원 내역 조회
       final applications = await _firestoreService.getMyApplications(uid);
-      print('✅ 조회된 지원 내역: ${applications.length}개');
 
-      // ✅ 병렬로 TO 정보 가져오기 (최적화!)
       final futures = applications.map((app) async {
         final to = await _firestoreService.getTOByApplication(app);
         if (to != null) {
-          return _ApplicationWithTO(
-            application: app,
-            to: to,
-          );
+          return _ApplicationWithTO(application: app, to: to);
         }
         return null;
       }).toList();
 
       final results = await Future.wait(futures);
       final appWithTOs = results.whereType<_ApplicationWithTO>().toList();
-
-      // 최신순 정렬
       appWithTOs.sort((a, b) => b.application.appliedAt.compareTo(a.application.appliedAt));
 
       setState(() {
@@ -77,21 +69,21 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
     } catch (e) {
       print('❌ 지원 내역 로드 실패: $e');
       ToastHelper.showError('지원 내역을 불러오는데 실패했습니다.');
-      setState(() {
-        _isLoading = false;
-      });
+      setState(() => _isLoading = false);
     }
   }
 
-  /// 필터링된 지원 목록
   List<_ApplicationWithTO> get _filteredApplications {
-    if (_selectedFilter == 'ALL') {
-      return _applications;
-    }
-    return _applications.where((item) => item.application.status == _selectedFilter).toList();
+    if (_selectedFilter == 'ALL') return _applications;
+    return _applications.where((item) {
+      final status = item.application.status;
+      if (_selectedFilter == 'CANCELED') {
+        return status == 'CANCELED' || status == 'AUTO_CANCELED';
+      }
+      return status == _selectedFilter;
+    }).toList();
   }
 
-  /// 지원 취소
   Future<void> _cancelApplication(String applicationId) async {
     final userProvider = Provider.of<UserProvider>(context, listen: false);
     final uid = userProvider.currentUser?.uid;
@@ -109,7 +101,6 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
 
     if (!confirmed) return;
 
-    // 취소 처리
     final success = await _firestoreService.cancelApplication(applicationId, uid);
     if (success && mounted) {
       ToastHelper.showSuccess('지원이 취소되었습니다.');
@@ -119,11 +110,14 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    
     return Scaffold(
       appBar: AppBar(
         title: const Text('내 지원 내역'),
-        backgroundColor: Colors.blue[700],
+        backgroundColor: theme.primaryColor,
         foregroundColor: Colors.white,
+        elevation: 0,
         actions: [
           IconButton(
             icon: const Icon(Icons.refresh),
@@ -133,10 +127,7 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
       ),
       body: Column(
         children: [
-          // 필터
           _buildFilterSection(),
-          
-          // 지원 목록
           Expanded(
             child: _isLoading
                 ? const LoadingWidget(message: '지원 내역을 불러오는 중...')
@@ -148,8 +139,7 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
                           padding: ResponsiveHelper.cardPadding(context),
                           itemCount: _filteredApplications.length,
                           itemBuilder: (context, index) {
-                            final item = _filteredApplications[index];
-                            return _buildApplicationCard(item);
+                            return _buildApplicationCard(_filteredApplications[index]);
                           },
                         ),
                       ),
@@ -159,19 +149,19 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
     );
   }
 
-  /// 필터 섹션
+  // ═══════════════════════════════════════════════════════════
+  // 필터 섹션
+  // ═══════════════════════════════════════════════════════════
+
   Widget _buildFilterSection() {
     return Container(
       padding: EdgeInsets.symmetric(
         vertical: ResponsiveHelper.spacing(context, 12),
       ),
-      color: Colors.grey[100],
+      color: AppColors.grey100,
       child: ScrollConfiguration(
         behavior: ScrollConfiguration.of(context).copyWith(
-          dragDevices: {
-            PointerDeviceKind.touch,
-            PointerDeviceKind.mouse,
-          },
+          dragDevices: {PointerDeviceKind.touch, PointerDeviceKind.mouse},
         ),
         child: SingleChildScrollView(
           scrollDirection: Axis.horizontal,
@@ -180,16 +170,15 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
           ),
           child: Row(
             children: [
-              _buildFilterChip('전체', 'ALL'),
+              _buildFilterChip('전체', 'ALL', Icons.list_alt, AppColors.info),
               SizedBox(width: ResponsiveHelper.spacing(context, 8)),
-              _buildFilterChip('대기중', 'PENDING'),
+              _buildFilterChip('대기중', 'PENDING', Icons.schedule, AppColors.warning),
               SizedBox(width: ResponsiveHelper.spacing(context, 8)),
-              _buildFilterChip('확정', 'CONFIRMED'),
+              _buildFilterChip('확정', 'CONFIRMED', Icons.check_circle, AppColors.success),
               SizedBox(width: ResponsiveHelper.spacing(context, 8)),
-              _buildFilterChip('거절', 'REJECTED'),
+              _buildFilterChip('거절', 'REJECTED', Icons.cancel, AppColors.error),
               SizedBox(width: ResponsiveHelper.spacing(context, 8)),
-              _buildFilterChip('취소', 'CANCELED'),
-              SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+              _buildFilterChip('취소', 'CANCELED', Icons.remove_circle_outline, AppColors.grey500),
             ],
           ),
         ),
@@ -197,77 +186,41 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
     );
   }
 
-  Widget _buildFilterChip(String label, String value) {
+  Widget _buildFilterChip(String label, String value, IconData icon, Color color) {
     final isSelected = _selectedFilter == value;
-    
-    // 상태별 아이콘 및 색상
-    IconData icon;
-    MaterialColor color;
-    
-    switch (value) {
-      case 'ALL':
-        icon = Icons.list_alt;
-        color = Colors.blue;
-        break;
-      case 'PENDING':
-        icon = Icons.schedule;
-        color = Colors.orange;
-        break;
-      case 'CONFIRMED':
-        icon = Icons.check_circle;
-        color = Colors.green;
-        break;
-      case 'REJECTED':
-        icon = Icons.cancel;
-        color = Colors.red;
-        break;
-      case 'CANCELED':
-        icon = Icons.remove_circle_outline;
-        color = Colors.grey;
-        break;
-      default:
-        icon = Icons.help_outline;
-        color = Colors.grey;
-    }
-    
-    return AnimatedContainer(
-      duration: const Duration(milliseconds: 200),
-      child: FilterChip(
-        avatar: Icon(
-          icon,
-          size: ResponsiveHelper.iconSize(context, 16),
-          color: isSelected ? color[700] : color[400],
-        ),
-        label: Text(label),
-        selected: isSelected,
-        onSelected: (_) {
-          setState(() {
-            _selectedFilter = value;
-          });
-        },
-        backgroundColor: Colors.white,
-        selectedColor: color[50],
-        side: BorderSide(
-          color: isSelected ? color[300]! : Colors.grey[300]!,
-          width: isSelected ? 2 : 1,
-        ),
-        checkmarkColor: color[700],
-        labelStyle: ResponsiveHelper.smallStyle(context).copyWith(
-          color: isSelected ? color[900] : Colors.grey[700],
-          fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
-        ),
-        padding: EdgeInsets.symmetric(
-          horizontal: ResponsiveHelper.spacing(context, 6),
-          vertical: ResponsiveHelper.spacing(context, 6),
-        ),
-        materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-        elevation: isSelected ? 2 : 0,
-        shadowColor: color[200],
+
+    return FilterChip(
+      avatar: Icon(
+        icon,
+        size: ResponsiveHelper.iconSize(context, 16),
+        color: isSelected ? color : AppColors.grey500,
       ),
+      label: Text(label),
+      selected: isSelected,
+      onSelected: (_) => setState(() => _selectedFilter = value),
+      backgroundColor: Colors.white,
+      selectedColor: color.withOpacity(0.15),
+      side: BorderSide(
+        color: isSelected ? color : AppColors.grey300,
+        width: isSelected ? 1.5 : 1,
+      ),
+      checkmarkColor: color,
+      labelStyle: ResponsiveHelper.smallStyle(context).copyWith(
+        color: isSelected ? color : AppColors.grey700,
+        fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+      ),
+      padding: EdgeInsets.symmetric(
+        horizontal: ResponsiveHelper.spacing(context, 6),
+        vertical: ResponsiveHelper.spacing(context, 4),
+      ),
+      materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
     );
   }
 
-  /// 빈 상태
+  // ═══════════════════════════════════════════════════════════
+  // 빈 상태
+  // ═══════════════════════════════════════════════════════════
+
   Widget _buildEmptyState() {
     return Center(
       child: Column(
@@ -276,518 +229,207 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
           Icon(
             Icons.assignment_outlined,
             size: ResponsiveHelper.iconSize(context, 80),
-            color: Colors.grey[400],
+            color: AppColors.grey400,
           ),
           SizedBox(height: ResponsiveHelper.spacing(context, 16)),
           Text(
             _selectedFilter == 'ALL' ? '지원 내역이 없습니다' : '해당 상태의 지원이 없습니다',
-            style: ResponsiveHelper.titleStyle(
-              context,
-              color: Colors.grey[600],
-            ).copyWith(fontWeight: FontWeight.w500),
+            style: ResponsiveHelper.titleStyle(context, color: AppColors.grey600),
           ),
           SizedBox(height: ResponsiveHelper.spacing(context, 8)),
           Text(
             'TO에 지원해보세요!',
-            style: ResponsiveHelper.bodyStyle(
-              context,
-              color: Colors.grey[500],
-            ),
+            style: ResponsiveHelper.bodyStyle(context, color: AppColors.grey500),
           ),
         ],
       ),
     );
   }
 
-  /// ✅ 지원서 카드 (업무유형 + 금액 표시)
+  // ═══════════════════════════════════════════════════════════
+  // 지원서 카드 (간소화된 디자인)
+  // ═══════════════════════════════════════════════════════════
+
   Widget _buildApplicationCard(_ApplicationWithTO item) {
     final app = item.application;
     final to = item.to;
-    final dateFormat = DateFormat('yyyy년 M월 d일');
-    
-    final isConfirmed = app.status == 'CONFIRMED';
+    final statusInfo = _getStatusInfo(app.status);
 
-    return Card(
-      margin: EdgeInsets.only(
-        bottom: ResponsiveHelper.spacing(context, 16),
-      ),
-      elevation: isConfirmed ? 4 : 2,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(12),
-        side: BorderSide(
-          color: isConfirmed ? Colors.green[300]! : Colors.transparent,
-          width: isConfirmed ? 2 : 0,
-        ),
-      ),
-      child: Container(
-        decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(12),
-          gradient: isConfirmed
-              ? LinearGradient(
-                  colors: [
-                    Colors.green[50]!,
-                    Colors.white,
-                  ],
-                  begin: Alignment.topLeft,
-                  end: Alignment.bottomRight,
-                )
-              : null,
-        ),
-        child: Padding(
-          padding: ResponsiveHelper.cardPadding(context),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              // 확정 배너
-              if (isConfirmed) ...[
-                _buildConfirmedBanner(),
-                SizedBox(height: ResponsiveHelper.spacing(context, 12)),
-              ],
-              
-              // 1행: 사업장명 + 상태 배지
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  Expanded(
-                    child: Text(
-                      to.businessName,
-                      style: ResponsiveHelper.titleStyle(context),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                  ),
-                  _buildStatusBadge(app.status),
-                ],
-              ),
-              
-              SizedBox(height: ResponsiveHelper.spacing(context, 8)),
-              
-              // TO 제목
-              Text(
-                to.title,
-                style: ResponsiveHelper.subtitleStyle(
-                  context,
-                  color: Colors.grey[800],
-                ).copyWith(fontWeight: FontWeight.w600),
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
-              ),
-              
-              // 장기 공고 정보 표시
-              if (app.isLongTermApplication) ...[
-                SizedBox(height: ResponsiveHelper.spacing(context, 8)),
-                Container(
-                  padding: EdgeInsets.symmetric(
-                    horizontal: ResponsiveHelper.spacing(context, 10),
-                    vertical: ResponsiveHelper.spacing(context, 6),
-                  ),
-                  decoration: BoxDecoration(
-                    color: Colors.purple[50],
-                    borderRadius: BorderRadius.circular(6),
-                    border: Border.all(color: Colors.purple[200]!),
-                  ),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(
-                        Icons.calendar_month, 
-                        size: ResponsiveHelper.iconSize(context, 16), 
-                        color: Colors.purple[700]
-                      ),
-                      SizedBox(width: ResponsiveHelper.spacing(context, 6)),
-                      Text(
-                        app.workPeriodDisplay,
-                        style: ResponsiveHelper.smallStyle(
-                          context,
-                          color: Colors.purple[700],
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                      if (app.workDaysDisplay != null) ...[
-                        SizedBox(width: ResponsiveHelper.spacing(context, 8)),
-                        Text(
-                          '•',
-                          style: TextStyle(color: Colors.purple[400]),
-                        ),
-                        SizedBox(width: ResponsiveHelper.spacing(context, 8)),
-                        Text(
-                          app.workDaysDisplay!,
-                          style: ResponsiveHelper.smallStyle(
-                            context,
-                            color: Colors.purple[600],
-                          ),
-                        ),
-                      ],
-                    ],
-                  ),
-                ),
-              ],
-              
-              SizedBox(height: ResponsiveHelper.spacing(context, 12)),
-              
-              // 날짜 정보
-              _buildInfoRow(
-                Icons.calendar_today,
-                '근무일',
-                '${dateFormat.format(to.date)} (${to.weekday})',
-              ),
-              SizedBox(height: ResponsiveHelper.spacing(context, 8)),
-              
-              // 시간 정보
-              _buildInfoRow(
-                Icons.access_time,
-                '근무시간',
-                to.timeRange,
-              ),
-              SizedBox(height: ResponsiveHelper.spacing(context, 8)),
-              
-              // 업무유형 + 금액
-              _buildInfoRow(
-                Icons.work_outline,
-                '지원 업무',
-                '${app.selectedWorkType} | ${app.formattedWage}',
-              ),
-              
-              // 업무유형 변경 이력 표시
-              if (app.isWorkTypeChanged) ...[
-                SizedBox(height: ResponsiveHelper.spacing(context, 8)),
-                Container(
-                  padding: ResponsiveHelper.cardPadding(context),
-                  decoration: BoxDecoration(
-                    color: Colors.orange[50],
-                    borderRadius: BorderRadius.circular(8),
-                    border: Border.all(color: Colors.orange.shade200),
-                  ),
-                  child: Row(
-                    children: [
-                      Icon(
-                        Icons.info_outline, 
-                        size: ResponsiveHelper.iconSize(context, 16), 
-                        color: Colors.orange[700]
-                      ),
-                      SizedBox(width: ResponsiveHelper.spacing(context, 8)),
-                      Expanded(
-                        child: Text(
-                          '업무 변경: ${app.originalWorkType} → ${app.selectedWorkType}',
-                          style: ResponsiveHelper.smallStyle(
-                            context,
-                            color: Colors.orange[900],
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ],
-              
-              SizedBox(height: ResponsiveHelper.spacing(context, 12)),
-              
-              // 지원 날짜
-              Text(
-                '지원일: ${DateFormat('yyyy.MM.dd HH:mm').format(app.appliedAt)}',
-                style: ResponsiveHelper.smallStyle(
-                  context,
-                  color: Colors.grey[600],
-                ),
-              ),
-              
-              // 자동 취소 상세 정보
-              if (app.status == 'AUTO_CANCELED' && app.conflictingBusiness != null) ...[
-                SizedBox(height: ResponsiveHelper.spacing(context, 12)),
-                _buildConflictInfoCard(app),
-              ],
-              
-              // 취소 버튼 (대기중일 때만)
-              if (app.status == 'PENDING') ...[
-                SizedBox(height: ResponsiveHelper.spacing(context, 12)),
-                SizedBox(
-                  width: double.infinity,
-                  child: OutlinedButton.icon(
-                    onPressed: () => _cancelApplication(app.id),
-                    icon: Icon(
-                      Icons.cancel_outlined, 
-                      size: ResponsiveHelper.iconSize(context, 18)
-                    ),
-                    label: const Text('지원 취소'),
-                    style: OutlinedButton.styleFrom(
-                      foregroundColor: Colors.red,
-                      side: const BorderSide(color: Colors.red),
-                    ),
-                  ),
-                ),
-              ],
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  /// Phase 4-2: 확정 근무 배너
-  Widget _buildConfirmedBanner() {
     return Container(
-      padding: EdgeInsets.symmetric(
-        horizontal: ResponsiveHelper.spacing(context, 12),
-        vertical: ResponsiveHelper.spacing(context, 10),
-      ),
+      margin: EdgeInsets.only(bottom: ResponsiveHelper.spacing(context, 12)),
       decoration: BoxDecoration(
-        gradient: LinearGradient(
-          colors: [Colors.green[400]!, Colors.green[600]!],
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(
+          color: statusInfo.color.withOpacity(0.3),
+          width: 1,
         ),
-        borderRadius: BorderRadius.circular(8),
         boxShadow: [
           BoxShadow(
-            color: Colors.green[200]!,
-            blurRadius: 8,
+            color: AppColors.grey300.withOpacity(0.5),
+            blurRadius: 4,
             offset: const Offset(0, 2),
           ),
         ],
       ),
-      child: Row(
-        children: [
-          Container(
-            padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 6)),
-            decoration: BoxDecoration(
-              color: Colors.white.withOpacity(0.3),
-              borderRadius: BorderRadius.circular(6),
-            ),
-            child: Icon(
-              Icons.check_circle,
-              size: ResponsiveHelper.iconSize(context, 20),
-              color: Colors.white,
-            ),
-          ),
-          SizedBox(width: ResponsiveHelper.spacing(context, 10)),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  '✨ 확정된 근무입니다',
-                  style: ResponsiveHelper.bodyStyle(
-                    context,
-                    color: Colors.white,
-                  ).copyWith(fontWeight: FontWeight.bold),
-                ),
-                SizedBox(height: ResponsiveHelper.spacing(context, 2)),
-                Text(
-                  '근무 당일 출퇴근 체크를 잊지 마세요!',
-                  style: ResponsiveHelper.tinyStyle(
-                    context,
-                    color: Colors.white,
-                  ),
-                ),
-              ],
-            ),
-          ),
-          Icon(
-            Icons.arrow_forward_ios,
-            size: ResponsiveHelper.iconSize(context, 16),
-            color: Colors.white,
-          ),
-        ],
-      ),
-    );
-  }
-
-  /// 자동 취소 충돌 정보 카드
-  Widget _buildConflictInfoCard(ApplicationModel app) {
-    return Container(
-      padding: ResponsiveHelper.cardPadding(context),
-      decoration: BoxDecoration(
-        color: Colors.orange[50],
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: Colors.orange[200]!, width: 1.5),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          // 헤더
-          Row(
-            children: [
-              Container(
-                padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 6)),
-                decoration: BoxDecoration(
-                  color: Colors.orange[100],
-                  borderRadius: BorderRadius.circular(6),
-                ),
-                child: Icon(
-                  Icons.schedule_outlined,
-                  size: ResponsiveHelper.iconSize(context, 18),
-                  color: Colors.orange[700],
-                ),
-              ),
-              SizedBox(width: ResponsiveHelper.spacing(context, 8)),
-              Expanded(
-                child: Text(
-                  '시간 충돌로 자동 취소됨',
-                  style: ResponsiveHelper.bodyStyle(
-                    context,
-                    color: Colors.orange[800],
-                  ).copyWith(fontWeight: FontWeight.bold),
-                ),
-              ),
-            ],
-          ),
-          
-          SizedBox(height: ResponsiveHelper.spacing(context, 10)),
-          
-          // 충돌한 공고 정보
-          Container(
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          onTap: () {
+            // TODO: 상세 다이얼로그 열기
+          },
+          borderRadius: BorderRadius.circular(16),
+          child: Padding(
             padding: ResponsiveHelper.cardPadding(context),
-            decoration: BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.circular(6),
-              border: Border.all(color: Colors.orange[100]!),
-            ),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Row(
-                  children: [
-                    Icon(
-                      Icons.business, 
-                      size: ResponsiveHelper.iconSize(context, 14), 
-                      color: Colors.grey[600]
-                    ),
-                    SizedBox(width: ResponsiveHelper.spacing(context, 6)),
-                    Expanded(
-                      child: Text(
-                        app.conflictingBusiness!,
-                        style: ResponsiveHelper.smallStyle(
-                          context,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                    ),
-                  ],
+                // 1줄: 사업장명 + 상태 배지
+                _buildCardHeader(app, to, statusInfo),
+                
+                SizedBox(height: ResponsiveHelper.spacing(context, 8)),
+                
+                // 2줄: TO 제목
+                Text(
+                  to.title,
+                  style: ResponsiveHelper.subtitleStyle(context).copyWith(
+                    fontWeight: FontWeight.w600,
+                  ),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
                 ),
+                
+                SizedBox(height: ResponsiveHelper.spacing(context, 10)),
+                
+                // 3줄: 근무일 · 근무시간
+                _buildDateTimeRow(app, to),
+                
                 SizedBox(height: ResponsiveHelper.spacing(context, 6)),
-                Row(
-                  children: [
-                    Icon(
-                      Icons.access_time, 
-                      size: ResponsiveHelper.iconSize(context, 14), 
-                      color: Colors.grey[600]
-                    ),
-                    SizedBox(width: ResponsiveHelper.spacing(context, 6)),
-                    Text(
-                      app.conflictingTime ?? '시간 정보 없음',
-                      style: ResponsiveHelper.smallStyle(
-                        context,
-                        color: Colors.grey[700],
-                      ),
-                    ),
-                    SizedBox(width: ResponsiveHelper.spacing(context, 8)),
-                    Container(
-                      padding: EdgeInsets.symmetric(
-                        horizontal: ResponsiveHelper.spacing(context, 8),
-                        vertical: ResponsiveHelper.spacing(context, 2),
-                      ),
-                      decoration: BoxDecoration(
-                        color: Colors.green[50],
-                        borderRadius: BorderRadius.circular(4),
-                        border: Border.all(color: Colors.green[200]!),
-                      ),
-                      child: Text(
-                        '확정됨',
-                        style: ResponsiveHelper.tinyStyle(
-                          context,
-                          color: Colors.green[700],
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                    ),
-                  ],
+                
+                // 4줄: 업무유형 · 급여
+                _buildWorkWageRow(app),
+                
+                // 지원일
+                SizedBox(height: ResponsiveHelper.spacing(context, 8)),
+                Text(
+                  '지원일: ${DateFormat('yyyy.MM.dd HH:mm').format(app.appliedAt)}',
+                  style: ResponsiveHelper.tinyStyle(context, color: AppColors.grey500),
                 ),
+                
+                // 자동 취소인 경우 충돌 정보
+                if (app.status == 'AUTO_CANCELED' && app.conflictingBusiness != null)
+                  _buildAutoCanceledInfo(app),
+                
+                // 대기 중인 경우 취소 버튼
+                if (app.status == 'PENDING')
+                  _buildCancelButton(app),
               ],
             ),
           ),
-          
-          SizedBox(height: ResponsiveHelper.spacing(context, 10)),
-          
-          // 안내 문구
-          Row(
-            children: [
-              Icon(
-                Icons.info_outline, 
-                size: ResponsiveHelper.iconSize(context, 14), 
-                color: Colors.orange[600]
-              ),
-              SizedBox(width: ResponsiveHelper.spacing(context, 6)),
-              Expanded(
-                child: Text(
-                  '위 근무가 확정되어 자동으로 취소되었습니다.',
-                  style: ResponsiveHelper.smallStyle(
-                    context,
-                    color: Colors.grey[700],
-                  ),
-                ),
-              ),
-            ],
-          ),
-          
-          SizedBox(height: ResponsiveHelper.spacing(context, 8)),
-          
-          // 재지원 안내
-          Container(
-            padding: ResponsiveHelper.cardPadding(context),
-            decoration: BoxDecoration(
-              color: Colors.blue[50],
-              borderRadius: BorderRadius.circular(6),
-            ),
-            child: Row(
-              children: [
-                Icon(
-                  Icons.touch_app, 
-                  size: ResponsiveHelper.iconSize(context, 14), 
-                  color: Colors.blue[700]
-                ),
-                SizedBox(width: ResponsiveHelper.spacing(context, 6)),
-                Expanded(
-                  child: Text(
-                    '다른 시간대 공고에는 다시 지원 가능합니다',
-                    style: ResponsiveHelper.smallStyle(
-                      context,
-                      color: Colors.blue[800],
-                      fontWeight: FontWeight.w500,
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ],
+        ),
       ),
     );
   }
 
-  /// 정보 행
-  Widget _buildInfoRow(IconData icon, String label, String value) {
+  Widget _buildCardHeader(ApplicationModel app, TOModel to, _StatusInfo statusInfo) {
     return Row(
       children: [
         Icon(
-          icon, 
-          size: ResponsiveHelper.iconSize(context, 16), 
-          color: Colors.grey[600]
+          Icons.business,
+          size: ResponsiveHelper.iconSize(context, 16),
+          color: AppColors.grey600,
         ),
-        SizedBox(width: ResponsiveHelper.spacing(context, 8)),
-        Text(
-          '$label: ',
-          style: ResponsiveHelper.bodyStyle(
-            context,
-            color: Colors.grey[700],
-          ).copyWith(fontWeight: FontWeight.w600),
-        ),
+        SizedBox(width: ResponsiveHelper.spacing(context, 6)),
         Expanded(
           child: Text(
-            value,
-            style: ResponsiveHelper.bodyStyle(
+            to.businessName,
+            style: ResponsiveHelper.bodyStyle(context).copyWith(
+              fontWeight: FontWeight.w500,
+            ),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+          ),
+        ),
+        _buildStatusBadge(statusInfo),
+      ],
+    );
+  }
+
+  Widget _buildDateTimeRow(ApplicationModel app, TOModel to) {
+    // ✅ 근무시간은 ApplicationModel에서 가져옴!
+    final timeDisplay = (app.startTime.isNotEmpty && app.endTime.isNotEmpty)
+        ? '${app.startTime} ~ ${app.endTime}'
+        : '--:-- ~ --:--';
+    
+    return Row(
+      children: [
+        // 근무일
+        Icon(
+          Icons.calendar_today,
+          size: ResponsiveHelper.iconSize(context, 14),
+          color: AppColors.grey500,
+        ),
+        SizedBox(width: ResponsiveHelper.spacing(context, 4)),
+        Text(
+          DateFormat('yyyy년 M월 d일 (E)', 'ko_KR').format(app.workDate),
+          style: ResponsiveHelper.smallStyle(context, color: AppColors.grey700),
+        ),
+        SizedBox(width: ResponsiveHelper.spacing(context, 12)),
+        // 근무시간
+        Icon(
+          Icons.access_time,
+          size: ResponsiveHelper.iconSize(context, 14),
+          color: AppColors.grey500,
+        ),
+        SizedBox(width: ResponsiveHelper.spacing(context, 4)),
+        Text(
+          timeDisplay,
+          style: ResponsiveHelper.smallStyle(context, color: AppColors.grey700),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildWorkWageRow(ApplicationModel app) {
+    return Row(
+      children: [
+        // 업무유형 아이콘
+        if (app.workTypeIcon != null)
+          WorkTypeIcon.buildWithBackground(
+            iconString: app.workTypeIcon!,
+            iconColor: app.workTypeColor,
+            backgroundColor: app.workTypeBackgroundColor,
+            size: ResponsiveHelper.iconSize(context, 14),
+            containerSize: ResponsiveHelper.spacing(context, 24),
+          )
+        else
+          Icon(
+            Icons.work_outline,
+            size: ResponsiveHelper.iconSize(context, 14),
+            color: AppColors.grey500,
+          ),
+        SizedBox(width: ResponsiveHelper.spacing(context, 6)),
+        Text(
+          app.selectedWorkType,
+          style: ResponsiveHelper.smallStyle(context, color: AppColors.grey700),
+        ),
+        SizedBox(width: ResponsiveHelper.spacing(context, 12)),
+        // 급여
+        Container(
+          padding: EdgeInsets.symmetric(
+            horizontal: ResponsiveHelper.spacing(context, 8),
+            vertical: ResponsiveHelper.spacing(context, 2),
+          ),
+          decoration: BoxDecoration(
+            color: AppColors.successBg,
+            borderRadius: BorderRadius.circular(4),
+          ),
+          child: Text(
+            app.formattedWage,
+            style: ResponsiveHelper.smallStyle(
               context,
-              color: Colors.black87,
+              color: AppColors.successDark,
+              fontWeight: FontWeight.w600,
             ),
           ),
         ),
@@ -795,80 +437,180 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
     );
   }
 
-  /// 상태 배지
-  Widget _buildStatusBadge(String status) {
+  Widget _buildStatusBadge(_StatusInfo statusInfo) {
+    return Container(
+      padding: EdgeInsets.symmetric(
+        horizontal: ResponsiveHelper.spacing(context, 10),
+        vertical: ResponsiveHelper.spacing(context, 4),
+      ),
+      decoration: BoxDecoration(
+        color: statusInfo.bgColor,
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Text(
+        statusInfo.label,
+        style: ResponsiveHelper.tinyStyle(
+          context,
+          color: statusInfo.color,
+          fontWeight: FontWeight.bold,
+        ),
+      ),
+    );
+  }
+
+  /// 자동 취소 충돌 정보 (간소화)
+  Widget _buildAutoCanceledInfo(ApplicationModel app) {
+    return Container(
+      margin: EdgeInsets.only(top: ResponsiveHelper.spacing(context, 10)),
+      padding: ResponsiveHelper.cardPadding(context),
+      decoration: BoxDecoration(
+        color: AppColors.warningBg,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: AppColors.warningLight),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(
+                Icons.info_outline,
+                size: ResponsiveHelper.iconSize(context, 16),
+                color: AppColors.warningDark,
+              ),
+              SizedBox(width: ResponsiveHelper.spacing(context, 6)),
+              Text(
+                '시간 충돌로 자동 취소됨',
+                style: ResponsiveHelper.smallStyle(
+                  context,
+                  color: AppColors.warningDark,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+            ],
+          ),
+          SizedBox(height: ResponsiveHelper.spacing(context, 6)),
+          // 충돌 공고 정보 (한 줄로 간소화)
+          Row(
+            children: [
+              Icon(
+                Icons.business,
+                size: ResponsiveHelper.iconSize(context, 12),
+                color: AppColors.grey600,
+              ),
+              SizedBox(width: ResponsiveHelper.spacing(context, 4)),
+              Expanded(
+                child: Text(
+                  '${app.conflictingBusiness ?? ''} · ${app.conflictingTime ?? ''}',
+                  style: ResponsiveHelper.tinyStyle(context, color: AppColors.grey700),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+              Container(
+                padding: EdgeInsets.symmetric(
+                  horizontal: ResponsiveHelper.spacing(context, 6),
+                  vertical: ResponsiveHelper.spacing(context, 2),
+                ),
+                decoration: BoxDecoration(
+                  color: AppColors.successBg,
+                  borderRadius: BorderRadius.circular(4),
+                ),
+                child: Text(
+                  '확정됨',
+                  style: ResponsiveHelper.tinyStyle(
+                    context,
+                    color: AppColors.successDark,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// 취소 버튼
+  Widget _buildCancelButton(ApplicationModel app) {
+    return Container(
+      margin: EdgeInsets.only(top: ResponsiveHelper.spacing(context, 10)),
+      width: double.infinity,
+      child: OutlinedButton.icon(
+        onPressed: () => _cancelApplication(app.id),
+        icon: Icon(
+          Icons.close,
+          size: ResponsiveHelper.iconSize(context, 16),
+        ),
+        label: Text(
+          '지원 취소',
+          style: ResponsiveHelper.smallStyle(context),
+        ),
+        style: OutlinedButton.styleFrom(
+          foregroundColor: AppColors.error,
+          side: const BorderSide(color: AppColors.error),
+          padding: EdgeInsets.symmetric(
+            vertical: ResponsiveHelper.spacing(context, 8),
+          ),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(8),
+          ),
+        ),
+      ),
+    );
+  }
+
+  // ═══════════════════════════════════════════════════════════
+  // 상태 정보 헬퍼
+  // ═══════════════════════════════════════════════════════════
+
+  _StatusInfo _getStatusInfo(String status) {
     switch (status) {
-      case 'PENDING':
-        return StyledBadge(
-          label: '대기중',
-          backgroundColor: Colors.orange.shade50,
-          textColor: Colors.orange.shade700,
-          fontSize: ResponsiveHelper.getFontSize(context, 12),
-          padding: EdgeInsets.symmetric(
-            horizontal: ResponsiveHelper.spacing(context, 12),
-            vertical: ResponsiveHelper.spacing(context, 6),
-          ),
-        );
       case 'CONFIRMED':
-        return StyledBadge(
+        return _StatusInfo(
           label: '확정',
-          backgroundColor: Colors.green.shade50,
-          textColor: Colors.green.shade700,
-          fontSize: ResponsiveHelper.getFontSize(context, 12),
-          padding: EdgeInsets.symmetric(
-            horizontal: ResponsiveHelper.spacing(context, 12),
-            vertical: ResponsiveHelper.spacing(context, 6),
-          ),
+          color: AppColors.successDark,
+          bgColor: AppColors.successBg,
+        );
+      case 'PENDING':
+        return _StatusInfo(
+          label: '대기중',
+          color: AppColors.warningDark,
+          bgColor: AppColors.warningBg,
         );
       case 'REJECTED':
-        return StyledBadge(
+        return _StatusInfo(
           label: '거절',
-          backgroundColor: Colors.red.shade50,
-          textColor: Colors.red.shade700,
-          fontSize: ResponsiveHelper.getFontSize(context, 12),
-          padding: EdgeInsets.symmetric(
-            horizontal: ResponsiveHelper.spacing(context, 12),
-            vertical: ResponsiveHelper.spacing(context, 6),
-          ),
+          color: AppColors.errorDark,
+          bgColor: AppColors.errorBg,
         );
       case 'CANCELED':
-        return StyledBadge(
+        return _StatusInfo(
           label: '취소',
-          backgroundColor: Colors.grey.shade100,
-          textColor: Colors.grey.shade600,
-          fontSize: ResponsiveHelper.getFontSize(context, 12),
-          padding: EdgeInsets.symmetric(
-            horizontal: ResponsiveHelper.spacing(context, 12),
-            vertical: ResponsiveHelper.spacing(context, 6),
-          ),
+          color: AppColors.grey600,
+          bgColor: AppColors.grey200,
         );
       case 'AUTO_CANCELED':
-        return StyledBadge(
+        return _StatusInfo(
           label: '자동 취소',
-          backgroundColor: Colors.orange.shade50,
-          textColor: Colors.orange.shade700,
-          fontSize: ResponsiveHelper.getFontSize(context, 12),
-          padding: EdgeInsets.symmetric(
-            horizontal: ResponsiveHelper.spacing(context, 12),
-            vertical: ResponsiveHelper.spacing(context, 6),
-          ),
+          color: AppColors.warningDark,
+          bgColor: AppColors.warningBg,
         );
       default:
-        return StyledBadge(
+        return _StatusInfo(
           label: '알 수 없음',
-          backgroundColor: Colors.grey.shade100,
-          textColor: Colors.grey.shade600,
-          fontSize: ResponsiveHelper.getFontSize(context, 12),
-          padding: EdgeInsets.symmetric(
-            horizontal: ResponsiveHelper.spacing(context, 12),
-            vertical: ResponsiveHelper.spacing(context, 6),
-          ),
+          color: AppColors.grey600,
+          bgColor: AppColors.grey200,
         );
     }
   }
 }
 
-/// 지원서 + TO 정보
+// ═══════════════════════════════════════════════════════════
+// 데이터 클래스
+// ═══════════════════════════════════════════════════════════
+
 class _ApplicationWithTO {
   final ApplicationModel application;
   final TOModel to;
@@ -876,5 +618,17 @@ class _ApplicationWithTO {
   _ApplicationWithTO({
     required this.application,
     required this.to,
+  });
+}
+
+class _StatusInfo {
+  final String label;
+  final Color color;
+  final Color bgColor;
+
+  _StatusInfo({
+    required this.label,
+    required this.color,
+    required this.bgColor,
   });
 }

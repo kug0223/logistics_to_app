@@ -7,7 +7,7 @@ import '../../utils/responsive_helper.dart';
 import 'all_to_list_screen.dart';
 import 'my_schedule_screen.dart';
 import 'attendance_check_screen.dart';
-import 'my_schedule_requests_screen.dart';
+import 'my_applications_screen.dart';
 import '../common/settings_screen.dart';
 import '../common/notification_screen.dart';
 import '../../widgets/common/notification_badge.dart';
@@ -248,18 +248,18 @@ class UserHomeScreen extends StatelessWidget {
                           },
                         ),
 
-                        // 4. 내 요청 내역
+                        // 4. 내 지원 내역
                         _buildMenuCard(
                           context,
-                          icon: Icons.edit_calendar,
-                          title: '내 요청 내역',
-                          subtitle: '스케줄 변경 요청',
+                          icon: Icons.assignment,
+                          title: '내 지원 내역',
+                          subtitle: '지원 현황 확인',
                           color: theme.primaryColor.withOpacity(0.6),
                           onTap: () {
                             Navigator.push(
                               context,
                               MaterialPageRoute(
-                                builder: (context) => const MyScheduleRequestsScreen(),
+                                builder: (context) => const MyApplicationsScreen(),
                               ),
                             );
                           },

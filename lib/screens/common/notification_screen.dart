@@ -150,8 +150,11 @@ class NotificationScreen extends StatelessWidget {
       // ═══════════════════════════════════════════════════════════
       case NotificationType.scheduleChangeRequested:
         if (isUser) {
-          // 지원자가 받은 경우 (관리자가 요청) → 내 요청 다이얼로그
-          _showMyRequestsDialog(context, userProvider.currentUser?.uid);
+          // 지원자가 받은 경우 → 내 스케줄 화면
+          Navigator.push(
+            context,
+            MaterialPageRoute(builder: (_) => const MyScheduleScreen()),
+          );
         } else {
           // 관리자가 받은 경우 → 인력 관리 화면
           Navigator.push(
@@ -174,8 +177,11 @@ class NotificationScreen extends StatelessWidget {
       // 계약해지 관련 알림
       // ═══════════════════════════════════════════════════════════
       case NotificationType.terminationRequested:
-        // 지원자 → 내 요청 다이얼로그
-        _showMyRequestsDialog(context, userProvider.currentUser?.uid);
+        // 지원자 → 내 스케줄 화면
+        Navigator.push(
+          context,
+          MaterialPageRoute(builder: (_) => const MyScheduleScreen()),
+        );
         break;
         
       case NotificationType.terminationApproved:
@@ -193,7 +199,7 @@ class NotificationScreen extends StatelessWidget {
           );
         }
         break;
-        
+      
       // ═══════════════════════════════════════════════════════════
       // 신분증 열람 관련 알림
       // ═══════════════════════════════════════════════════════════
