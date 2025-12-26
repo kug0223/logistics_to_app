@@ -53,7 +53,6 @@ class UserModel {
   final int reviewCount;                // 받은 리뷰 수
   final int noShowCount;                // 무단 결근 횟수
   final int lateCount;                  // 지각 횟수
-  
   // ━━━ 상태 정보 ━━━
   final bool isAvailable;               // 근무 가능 여부
   final String? unavailableReason;      // 불가 사유
@@ -64,6 +63,11 @@ class UserModel {
   final String? businessName;           // ✅ 추가: 상호명 (관리자용)
   final String? businessLicenseImageUrl; // ✅ 추가: 사업자등록증 이미지
   final String? ceoName;                 // ✅ 추가: 대표자명
+  // ━━━ 신뢰도 시스템 ━━━
+  final int? storedTrustScore;           // 저장된 신뢰도 점수
+  final double rehireRate;               // 재고용 희망률 (0.0~1.0)
+  final List<String> badges;             // 배지 ID 목록
+  final DateTime? lastRestartAt;         // 마지막 재시작 프로그램 일시
 
   UserModel({
     required this.uid,
@@ -108,6 +112,11 @@ class UserModel {
     this.businessName,     
     this.businessLicenseImageUrl,     // ✅ 추가
     this.ceoName,  // ✅ 추가
+    // ━━━ 신뢰도 시스템 ━━━
+    this.storedTrustScore,
+    this.rehireRate = 0.0,
+    this.badges = const [],
+    this.lastRestartAt,
   });
 
   // ━━━ 편의 메서드 ━━━
@@ -140,27 +149,39 @@ class UserModel {
   }
 
   /// 신뢰도 점수 (0~100)
+  /// 저장된 값 우선, 없으면 계산
   int get trustScore {
-    if (totalWorkDays == 0) return 0;
+    if (storedTrustScore != null) return storedTrustScore!;
+    if (totalWorkDays == 0) return 50;  // 신규는 50점 시작
     
-    // 기본 점수 60
-    int score = 60;
+    int score = 50;
+    score += totalWorkDays;  // 근무 완료 +1점/일
+    if (averageRating >= 4.5) score += 2;
+    if (averageRating <= 2.0 && reviewCount > 0) score -= 2;
+    score -= lateCount;
+    score -= noShowCount * 3;
     
-    // 평균 평점 가산 (최대 20점)
-    if (averageRating > 0) {
-      score += (averageRating * 4).toInt(); // 5.0 = 20점
-    }
-    
-    // 근무 일수 가산 (최대 15점)
-    score += (totalWorkDays / 10).clamp(0, 15).toInt();
-    
-    // 무단결근 감점 (-5점/회)
-    score -= noShowCount * 5;
-    
-    // 지각 감점 (-2점/회)
-    score -= lateCount * 2;
-    
-    return score.clamp(0, 100);
+    return score.clamp(0, 100).toInt();
+  }
+  
+  /// 신뢰도 등급
+  String get trustGrade {
+    final s = trustScore;
+    if (s >= 90) return '최우수';
+    if (s >= 70) return '우수';
+    if (s >= 50) return '보통';
+    if (s >= 30) return '주의';
+    return '경고';
+  }
+  
+  /// 신뢰도 등급 이모지
+  String get trustGradeEmoji {
+    final s = trustScore;
+    if (s >= 90) return '🌟';
+    if (s >= 70) return '✅';
+    if (s >= 50) return '😐';
+    if (s >= 30) return '⚠️';
+    return '🚨';
   }
 
   // ━━━ Firestore 변환 ━━━
@@ -222,6 +243,11 @@ class UserModel {
       businessName: map['businessName'],         
       businessLicenseImageUrl: map['businessLicenseImageUrl'], // ✅ 추가
       ceoName: map['ceoName'],  // ✅ 추가
+      // ━━━ 신뢰도 시스템 ━━━
+      storedTrustScore: map['trustScore'],
+      rehireRate: (map['rehireRate'] ?? 0.0).toDouble(),
+      badges: map['badges'] != null ? List<String>.from(map['badges']) : [],
+      lastRestartAt: map['lastRestartAt']?.toDate(),
     );
   }
 
@@ -273,6 +299,13 @@ class UserModel {
       'businessName': businessName,             
       'businessLicenseImageUrl': businessLicenseImageUrl, // ✅ 추가
       'ceoName': ceoName,  // ✅ 추가
+      // ━━━ 신뢰도 시스템 ━━━
+      'trustScore': storedTrustScore,
+      'rehireRate': rehireRate,
+      'badges': badges,
+      'lastRestartAt': lastRestartAt != null 
+          ? Timestamp.fromDate(lastRestartAt!) 
+          : null,
     };
   }
 
@@ -347,6 +380,11 @@ class UserModel {
     String? businessName,      
     String? businessLicenseImageUrl,     // ✅ 추가
     String? ceoName,  // ✅ 추가
+    // ━━━ 신뢰도 시스템 ━━━
+    int? storedTrustScore,
+    double? rehireRate,
+    List<String>? badges,
+    DateTime? lastRestartAt,
   }) {
     return UserModel(
       uid: uid ?? this.uid,
@@ -390,6 +428,11 @@ class UserModel {
       businessName: businessName ?? this.businessName,      
       businessLicenseImageUrl: businessLicenseImageUrl ?? this.businessLicenseImageUrl, // ✅ 추가
       ceoName: ceoName ?? this.ceoName,  // ✅ 추가
+      // ━━━ 신뢰도 시스템 ━━━
+      storedTrustScore: storedTrustScore ?? this.storedTrustScore,
+      rehireRate: rehireRate ?? this.rehireRate,
+      badges: badges ?? this.badges,
+      lastRestartAt: lastRestartAt ?? this.lastRestartAt,
     );
   }
   /// 안전한 DateTime 파싱

@@ -54,7 +54,7 @@ class TrustScoreService {
     int score = settings.startScore;
     
     // 1. 근무 완료 가산 (+1점/일)
-    final totalWorkDays = userData['totalWorkDays'] ?? 0;
+    final int totalWorkDays = (userData['totalWorkDays'] ?? 0) as int;
     final workCompleteRule = settings.increaseRules
         .firstWhere((r) => r.type == 'work_complete', 
             orElse: () => TrustRule(type: '', points: 1, description: ''));
@@ -92,7 +92,7 @@ class TrustScoreService {
     }
     
     // 4. 지각 감점
-    final lateCount = userData['lateCount'] ?? 0;
+    final int lateCount = (userData['lateCount'] ?? 0) as int;
     final lateRule = settings.decreaseRules
         .firstWhere((r) => r.type == 'late',
             orElse: () => TrustRule(type: '', points: -1, description: ''));
