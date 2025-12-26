@@ -15,6 +15,7 @@ import '../../utils/navigation_helper.dart';
 // Widgets
 import '../../widgets/common/common_widgets.dart';
 import '../../widgets/common/badge_display_widget.dart';
+import '../../widgets/dialogs/restart_program_dialog.dart';
 
 // Screens
 import '../business_admin/work_type_management_screen.dart';
@@ -512,6 +513,48 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       compact: true,
                     ),
                   ],
+                  
+                  // 🆕 재시작 프로그램 버튼 (신뢰도 50점 미만일 때 표시)
+                  if (user.trustScore < 50) ...[
+                    SizedBox(height: ResponsiveHelper.spacing(context, 12)),
+                    Divider(color: Colors.white.withOpacity(0.2), height: 1),
+                    SizedBox(height: ResponsiveHelper.spacing(context, 12)),
+                    InkWell(
+                      onTap: () => _showRestartProgramDialog(context, user),
+                      borderRadius: BorderRadius.circular(8),
+                      child: Container(
+                        padding: EdgeInsets.symmetric(
+                          horizontal: ResponsiveHelper.spacing(context, 12),
+                          vertical: ResponsiveHelper.spacing(context, 10),
+                        ),
+                        decoration: BoxDecoration(
+                          color: Colors.white.withOpacity(0.15),
+                          borderRadius: BorderRadius.circular(8),
+                          border: Border.all(
+                            color: Colors.white.withOpacity(0.3),
+                          ),
+                        ),
+                        child: Row(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Icon(
+                              Icons.refresh,
+                              size: ResponsiveHelper.iconSize(context, 18),
+                              color: Colors.white,
+                            ),
+                            SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+                            Text(
+                              '재시작 프로그램 신청',
+                              style: ResponsiveHelper.smallStyle(context).copyWith(
+                                color: Colors.white,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ],
                 ],
               ),
             ),
@@ -519,6 +562,26 @@ class _SettingsScreenState extends State<SettingsScreen> {
         ],
       ),
     );
+  }
+
+ /// 🆕 재시작 프로그램 다이얼로그 표시
+  Future<void> _showRestartProgramDialog(BuildContext context, UserModel user) async {
+    final result = await showRestartProgramDialog(
+      context,
+      userId: user.uid,
+      currentScore: user.trustScore,
+      noShowCount: user.noShowCount,
+      lateCount: user.lateCount,
+      onSuccess: () {
+        // 사용자 정보 새로고침
+        context.read<UserProvider>().refreshCurrentUser();
+      },
+    );
+    
+    if (result == true) {
+      // 성공 시 화면 새로고침
+      setState(() {});
+    }
   }
 
  /// 🆕 통계 아이템 (신뢰도 카드용)
