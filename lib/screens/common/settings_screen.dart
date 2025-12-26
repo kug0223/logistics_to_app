@@ -14,6 +14,7 @@ import '../../utils/navigation_helper.dart';
 
 // Widgets
 import '../../widgets/common/common_widgets.dart';
+import '../../widgets/common/badge_display_widget.dart';
 
 // Screens
 import '../business_admin/work_type_management_screen.dart';
@@ -483,6 +484,34 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       _buildStatItem(context, '노쇼', '${user.noShowCount}회'),
                     ],
                   ),
+                  // 🆕 배지 섹션
+                  if (user.badges.isNotEmpty) ...[
+                    SizedBox(height: ResponsiveHelper.spacing(context, 12)),
+                    Divider(color: Colors.white.withOpacity(0.2), height: 1),
+                    SizedBox(height: ResponsiveHelper.spacing(context, 12)),
+                    Row(
+                      children: [
+                        Icon(
+                          Icons.emoji_events,
+                          size: ResponsiveHelper.iconSize(context, 16),
+                          color: Colors.white.withOpacity(0.8),
+                        ),
+                        SizedBox(width: ResponsiveHelper.spacing(context, 6)),
+                        Text(
+                          '획득 배지',
+                          style: ResponsiveHelper.smallStyle(context).copyWith(
+                            color: Colors.white.withOpacity(0.8),
+                          ),
+                        ),
+                      ],
+                    ),
+                    SizedBox(height: ResponsiveHelper.spacing(context, 8)),
+                    BadgeDisplayWidget(
+                      badgeIds: user.badges,
+                      maxDisplay: 5,
+                      compact: true,
+                    ),
+                  ],
                 ],
               ),
             ),

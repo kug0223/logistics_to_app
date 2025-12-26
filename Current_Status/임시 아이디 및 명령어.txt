@@ -18,7 +18,7 @@ ALfit
 
 냉동분류
 
-git add . ; git commit -m "리뷰시스템구축 251226-5" ; git push
+git add . ; git commit -m "리뷰시스템구축 251226-7" ; git push
 
 flutter clean
 flutter pub get
