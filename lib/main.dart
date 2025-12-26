@@ -18,8 +18,10 @@ import 'screens/business_admin/business_admin_home_screen.dart';
 import 'screens/common/splash_screen.dart';
 // PDF 폰트 프리로드
 import 'utils/attendance_list_pdf.dart';
+import 'services/fcm_service.dart';
 
-
+/// 🔔 전역 Navigator Key (FCM 알림 클릭 시 화면 이동용)
+final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -43,6 +45,8 @@ void main() async {
   // ✅ PDF 한글 폰트 백그라운드 프리로드 (await 없이 - 병렬 실행)
   AttendanceListPdf.preloadFonts();
   
+  // 🔔 FCM에 Navigator Key 전달
+  FCMService().setNavigatorKey(navigatorKey);
   
   runApp(const MyApp());
 }
@@ -76,6 +80,7 @@ class MyApp extends StatelessWidget {
       child: Consumer<ThemeProvider>(  // 🔥 추가!
         builder: (context, themeProvider, child) {
           return MaterialApp(
+            navigatorKey: navigatorKey,
             title: 'ALfit(알핏)',
             debugShowCheckedModeBanner: false,
             localizationsDelegates: const [

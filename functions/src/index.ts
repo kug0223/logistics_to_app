@@ -1,10 +1,130 @@
 import {onSchedule} from "firebase-functions/v2/scheduler";
+import {onDocumentCreated} from "firebase-functions/v2/firestore";
 import {initializeApp} from "firebase-admin/app";
 import {getFirestore, Timestamp, Firestore} from "firebase-admin/firestore";
 import * as admin from "firebase-admin";
 
 initializeApp();
 const db = getFirestore();
+
+// ═══════════════════════════════════════════════════════════
+// 🔔 알림 생성 시 FCM 푸시 자동 발송 (onCreate 트리거)
+// ═══════════════════════════════════════════════════════════
+
+export const onNotificationCreated = onDocumentCreated(
+  {
+    document: "notifications/{notificationId}",
+    region: "asia-northeast3",
+  },
+  async (event) => {
+    const snapshot = event.data;
+    if (!snapshot) {
+      console.log("⚠️ [알림 트리거] 데이터 없음");
+      return;
+    }
+
+    const notificationData = snapshot.data();
+    const notificationId = event.params.notificationId;
+
+    console.log(`🔔 [알림 트리거] 새 알림 감지: ${notificationId}`);
+
+    // 필수 필드 확인
+    const userId = notificationData.userId as string | undefined;
+    const title = notificationData.title as string | undefined;
+    const body = notificationData.body as string | undefined;
+    const type = notificationData.type as string | undefined;
+
+    if (!userId || !title) {
+      console.log("⚠️ [알림 트리거] 필수 필드 누락");
+      return;
+    }
+
+    // 근무 리마인더는 masterScheduler에서 이미 FCM 발송하므로 스킵
+    if (type === "workReminder") {
+      console.log("ℹ️ [알림 트리거] workReminder는 스킵 (이미 발송됨)");
+      return;
+    }
+
+    // FCM 푸시 발송
+    try {
+      const userDoc = await db.collection("users").doc(userId).get();
+      if (!userDoc.exists) {
+        console.log(`⚠️ [알림 트리거] 사용자 없음: ${userId}`);
+        return;
+      }
+
+      const userData = userDoc.data();
+      const fcmToken = userData?.fcmToken as string | undefined;
+
+      if (!fcmToken) {
+        console.log(`⚠️ [알림 트리거] FCM 토큰 없음: ${userId}`);
+        return;
+      }
+
+      // data 필드 준비 (문자열만 허용)
+      const fcmData: Record<string, string> = {
+        notificationId: notificationId,
+        type: type || "general",
+      };
+
+      // 추가 data 필드가 있으면 병합
+      if (notificationData.data) {
+        const extraData = notificationData.data as Record<string, unknown>;
+        for (const [key, value] of Object.entries(extraData)) {
+          if (typeof value === "string") {
+            fcmData[key] = value;
+          } else if (value !== null && value !== undefined) {
+            fcmData[key] = String(value);
+          }
+        }
+      }
+
+      // FCM 메시지 전송
+      await admin.messaging().send({
+        token: fcmToken,
+        notification: {
+          title: title,
+          body: body || "",
+        },
+        data: fcmData,
+        android: {
+          priority: "high",
+          notification: {
+            channelId: "alfit_notifications",
+            sound: "default",
+          },
+        },
+        apns: {
+          payload: {
+            aps: {
+              sound: "default",
+              badge: 1,
+            },
+          },
+        },
+      });
+
+      console.log(`✅ [알림 트리거] FCM 발송 완료: ${userId}`);
+    } catch (error: unknown) {
+      const errorMessage = error instanceof Error ? error.message : "";
+
+      // 토큰 만료 시 삭제
+      if (
+        errorMessage.includes("not-registered") ||
+        errorMessage.includes("invalid-registration-token")
+      ) {
+        console.log(`⚠️ [알림 트리거] 만료 토큰 삭제: ${userId}`);
+        await db.collection("users").doc(userId).update({
+          fcmToken: admin.firestore.FieldValue.delete(),
+        });
+      } else {
+        console.error(`❌ [알림 트리거] FCM 실패 (${userId}):`, error);
+      }
+    }
+  }
+);
+
+// ═══════════════════════════════════════════════════════════
 
 // ═══════════════════════════════════════════════════════════
 // 🔥 통합 마스터 스케줄러 (10분마다 실행)

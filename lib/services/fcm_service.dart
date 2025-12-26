@@ -1,6 +1,8 @@
+import 'package:flutter/material.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import '../screens/common/notification_screen.dart';
 
 /// FCM 푸시 알림 서비스
 class FCMService {
@@ -14,6 +16,14 @@ class FCMService {
 
   String? _currentUserId;
   bool _isInitialized = false;
+  
+  /// 전역 Navigator Key (main.dart에서 설정)
+  GlobalKey<NavigatorState>? _navigatorKey;
+  
+  /// Navigator Key 설정
+  void setNavigatorKey(GlobalKey<NavigatorState> key) {
+    _navigatorKey = key;
+  }
 
   /// FCM 초기화 (로그인 후 호출)
   Future<void> initialize(String userId) async {
@@ -174,13 +184,25 @@ class FCMService {
   /// 알림 탭 처리
   void _onNotificationTap(NotificationResponse response) {
     print('🔔 알림 탭: ${response.payload}');
-    // TODO: NavigationHelper로 해당 화면 이동
+    _navigateToNotificationScreen();
   }
 
   /// 백그라운드 메시지 클릭 처리
   void _handleMessageOpenedApp(RemoteMessage message) {
     print('📩 백그라운드 메시지 클릭: ${message.data}');
-    // TODO: NavigationHelper로 해당 화면 이동
+    _navigateToNotificationScreen();
+  }
+  
+  /// 알림 화면으로 이동
+  void _navigateToNotificationScreen() {
+    if (_navigatorKey?.currentState == null) {
+      print('⚠️ Navigator가 아직 준비되지 않음');
+      return;
+    }
+    
+    _navigatorKey!.currentState!.push(
+      MaterialPageRoute(builder: (_) => const NotificationScreen()),
+    );
   }
 
   /// 로그아웃 시 토큰 삭제
