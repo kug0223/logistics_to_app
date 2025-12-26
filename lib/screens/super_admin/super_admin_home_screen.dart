@@ -8,6 +8,7 @@ import '../../utils/responsive_helper.dart';
 import '../common/settings_screen.dart';
 import '../common/notification_screen.dart';
 import '../../widgets/common/notification_badge.dart';
+import 'system_settings_screen.dart';
 
 /// 최고관리자(SUPER_ADMIN) 홈 화면 - 세련된 디자인
 class AdminHomeScreen extends StatelessWidget {
@@ -259,12 +260,29 @@ class AdminHomeScreen extends StatelessWidget {
                               },
                             ),
 
-                            // 5. 설정
+                            // 5. 시스템 설정 (슈퍼관리자 전용)
+                            _buildMenuCard(
+                              context,
+                              icon: Icons.admin_panel_settings,
+                              title: '시스템 설정',
+                              subtitle: '규칙/태그/배지',
+                              color: Colors.deepPurple,
+                              onTap: () {
+                                Navigator.push(
+                                  context,
+                                  MaterialPageRoute(
+                                    builder: (context) => const SystemSettingsScreen(),
+                                  ),
+                                );
+                              },
+                            ),
+
+                            // 6. 개인 설정
                             _buildMenuCard(
                               context,
                               icon: Icons.settings_outlined,
                               title: '설정',
-                              subtitle: '시스템 설정',
+                              subtitle: '개인 설정',
                               color: Colors.grey[600]!,
                               onTap: () {
                                 Navigator.push(

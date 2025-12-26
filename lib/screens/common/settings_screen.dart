@@ -16,6 +16,7 @@ import '../../utils/navigation_helper.dart';
 import '../../widgets/common/common_widgets.dart';
 import '../../widgets/common/badge_display_widget.dart';
 import '../../widgets/dialogs/restart_program_dialog.dart';
+import '../../widgets/dialogs/trust_score_info_dialog.dart';
 
 // Screens
 import '../business_admin/work_type_management_screen.dart';
@@ -469,6 +470,23 @@ class _SettingsScreenState extends State<SettingsScreen> {
                           style: ResponsiveHelper.smallStyle(context).copyWith(
                             color: Colors.white,
                             fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ),
+                      // 🆕 신뢰도 설명 버튼
+                      SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+                      GestureDetector(
+                        onTap: () => TrustScoreInfoDialog.show(context),
+                        child: Container(
+                          padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 4)),
+                          decoration: BoxDecoration(
+                            color: Colors.white.withOpacity(0.2),
+                            shape: BoxShape.circle,
+                          ),
+                          child: Icon(
+                            Icons.help_outline,
+                            size: ResponsiveHelper.iconSize(context, 16),
+                            color: Colors.white,
                           ),
                         ),
                       ),
