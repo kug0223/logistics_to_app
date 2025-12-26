@@ -160,6 +160,13 @@ export const masterScheduler = onSchedule(
 
       // 3️⃣ TO 마감 처리
       await processTOExpiry(timestamp);
+      // ═══════════════════════════════════════════════════════
+      // ✅ 자정에만 실행 (00:00 ~ 00:09) - 리뷰 공개
+      // ═══════════════════════════════════════════════════════
+      if (hour === 0 && minute < 10) {
+        console.log("📝 [리뷰 공개] 처리 시작...");
+        await publishDueReviews(timestamp);
+      }
 
       // ═══════════════════════════════════════════════════════
       // ✅ 저녁 8시에만 실행 (20:00 ~ 20:09)
@@ -183,6 +190,146 @@ export const masterScheduler = onSchedule(
     }
   }
 );
+// ═══════════════════════════════════════════════════════════
+  // 📦 리뷰 공개 처리 (매일 자정)
+  // ═══════════════════════════════════════════════════════════
+
+/**
+   * 공개 예정일이 지난 리뷰를 공개 처리
+   * @param {Timestamp} now - 현재 시간
+   */
+async function publishDueReviews(now: Timestamp): Promise<void> {
+  console.log("  📝 [리뷰 공개] 처리 중...");
+
+  try {
+    // 공개 예정일이 지났지만 아직 비공개인 리뷰 조회
+    const snapshot = await db
+      .collection("monthly_reviews")
+      .where("isPublished", "==", false)
+      .where("publishAt", "<=", now)
+      .get();
+
+    if (snapshot.empty) {
+      console.log("  ✅ [리뷰 공개] 공개할 리뷰 없음");
+      return;
+    }
+
+    console.log(`  📋 [리뷰 공개] 대상: ${snapshot.size}개`);
+
+    const batch = db.batch();
+    const userStatsToUpdate = new Set<string>();
+    const businessStatsToUpdate = new Set<string>();
+
+    for (const doc of snapshot.docs) {
+      const data = doc.data();
+
+      // 리뷰 공개 처리
+      batch.update(doc.ref, {
+        isPublished: true,
+        publishedAt: now,
+      });
+
+      console.log(`    → ${doc.id} 공개 처리`);
+
+      // 통계 업데이트 대상 수집
+      const reviewType = data.reviewType as string;
+      if (reviewType === "ADMIN_TO_USER" && data.targetUserId) {
+        userStatsToUpdate.add(data.targetUserId as string);
+      } else if (reviewType === "USER_TO_BUSINESS" && data.businessId) {
+        businessStatsToUpdate.add(data.businessId as string);
+      }
+    }
+
+    await batch.commit();
+    console.log(`  ✅ [리뷰 공개] ${snapshot.size}개 리뷰 공개 완료!`);
+
+    // 사용자 통계 업데이트
+    for (const userId of userStatsToUpdate) {
+      await updateUserReviewStats(userId);
+    }
+
+    // 사업장 통계 업데이트
+    for (const businessId of businessStatsToUpdate) {
+      await updateBusinessReviewStats(businessId);
+    }
+  } catch (error) {
+    console.error("❌ [리뷰 공개] 실패:", error);
+  }
+}
+
+/**
+   * 사용자 리뷰 통계 업데이트
+   * @param {string} userId - 사용자 UID
+   */
+async function updateUserReviewStats(userId: string): Promise<void> {
+  try {
+    const snapshot = await db
+      .collection("monthly_reviews")
+      .where("targetUserId", "==", userId)
+      .where("reviewType", "==", "ADMIN_TO_USER")
+      .where("isPublished", "==", true)
+      .get();
+
+    if (snapshot.empty) return;
+
+    let totalRating = 0;
+    let rehireYesCount = 0;
+
+    for (const doc of snapshot.docs) {
+      const data = doc.data();
+      totalRating += (data.rating as number) || 0;
+      if (data.wouldRehire === true) rehireYesCount++;
+    }
+
+    const avgRating = totalRating / snapshot.size;
+    const rehireRate = rehireYesCount / snapshot.size;
+
+    await db.collection("users").doc(userId).update({
+      averageRating: avgRating,
+      reviewCount: snapshot.size,
+      rehireRate: rehireRate,
+    });
+
+    console.log(`    ✓ 사용자 ${userId} 통계 업데이트`);
+  } catch (error) {
+    console.log(`    ⚠️ 사용자 통계 업데이트 실패 (${userId}):`, error);
+  }
+}
+
+/**
+   * 사업장 리뷰 통계 업데이트
+   * @param {string} businessId - 사업장 ID
+   */
+async function updateBusinessReviewStats(businessId: string): Promise<void> {
+  try {
+    const snapshot = await db
+      .collection("monthly_reviews")
+      .where("businessId", "==", businessId)
+      .where("reviewType", "==", "USER_TO_BUSINESS")
+      .where("isPublished", "==", true)
+      .get();
+
+    if (snapshot.empty) return;
+
+    let totalRating = 0;
+
+    for (const doc of snapshot.docs) {
+      const data = doc.data();
+      totalRating += (data.rating as number) || 0;
+    }
+
+    const avgRating = totalRating / snapshot.size;
+
+    await db.collection("businesses").doc(businessId).update({
+      rating: avgRating,
+      reviewCount: snapshot.size,
+    });
+
+    console.log(`    ✓ 사업장 ${businessId} 통계 업데이트`);
+  } catch (error) {
+    console.log(`    ⚠️ 사업장 통계 업데이트 실패 (${businessId}):`, error);
+  }
+}
 
 // ═══════════════════════════════════════════════════════════
 // 📦 예약 공개 처리
