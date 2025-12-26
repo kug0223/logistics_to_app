@@ -12,6 +12,7 @@ import '../common/settings_screen.dart';
 import '../common/notification_screen.dart';
 import '../../widgets/common/notification_badge.dart';
 import '../../providers/notification_provider.dart';
+import '../../models/core/user_model.dart';
 
 /// 일반 사용자 홈 화면 - 세련된 디자인
 class UserHomeScreen extends StatelessWidget {
@@ -150,16 +151,26 @@ class UserHomeScreen extends StatelessWidget {
                     
                     SizedBox(height: ResponsiveHelper.spacing(context, 8)),
                     
-                    // 사용자 이름
-                    Text(
-                      '${userProvider.currentUser?.name ?? '사용자'}님',
-                      style: ResponsiveHelper.titleStyle(context).copyWith(
-                        color: Colors.white,
-                        fontSize: ResponsiveHelper.titleStyle(context).fontSize! * 1.5,
-                        fontWeight: FontWeight.bold,
-                      ),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
+                    // 사용자 이름 + 신뢰도 배지
+                    Row(
+                      children: [
+                        Flexible(
+                          child: Text(
+                            '${userProvider.currentUser?.name ?? '사용자'}님',
+                            style: ResponsiveHelper.titleStyle(context).copyWith(
+                              color: Colors.white,
+                              fontSize: ResponsiveHelper.titleStyle(context).fontSize! * 1.5,
+                              fontWeight: FontWeight.bold,
+                            ),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                        SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+                        // 🆕 신뢰도 배지
+                        if (userProvider.currentUser != null)
+                          _buildTrustBadge(context, userProvider.currentUser!),
+                      ],
                     ),
                     
                     SizedBox(height: ResponsiveHelper.spacing(context, 4)),
@@ -365,6 +376,43 @@ class UserHomeScreen extends StatelessWidget {
             ),
           ),
         ),
+      ),
+    );
+  }
+  /// 🆕 신뢰도 배지
+  Widget _buildTrustBadge(BuildContext context, UserModel user) {
+    final score = user.trustScore;
+    final emoji = user.trustGradeEmoji;
+    
+    return Container(
+      padding: EdgeInsets.symmetric(
+        horizontal: ResponsiveHelper.spacing(context, 10),
+        vertical: ResponsiveHelper.spacing(context, 4),
+      ),
+      decoration: BoxDecoration(
+        color: Colors.white.withOpacity(0.2),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(
+          color: Colors.white.withOpacity(0.3),
+          width: 1,
+        ),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(
+            emoji,
+            style: TextStyle(fontSize: ResponsiveHelper.spacing(context, 14)),
+          ),
+          SizedBox(width: ResponsiveHelper.spacing(context, 4)),
+          Text(
+            '$score점',
+            style: ResponsiveHelper.smallStyle(context).copyWith(
+              color: Colors.white,
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+        ],
       ),
     );
   }

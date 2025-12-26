@@ -424,8 +424,93 @@ class _SettingsScreenState extends State<SettingsScreen> {
               ],
             ),
           ),
+          
+          // 🆕 지원자 신뢰도 섹션
+          if (user?.role == UserRole.USER) ...[
+            SizedBox(height: ResponsiveHelper.spacing(context, 16)),
+            Container(
+              padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 12)),
+              decoration: BoxDecoration(
+                color: Colors.white.withOpacity(0.15),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Column(
+                children: [
+                  // 신뢰도 점수
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Text(
+                        user!.trustGradeEmoji,
+                        style: TextStyle(fontSize: ResponsiveHelper.spacing(context, 24)),
+                      ),
+                      SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+                      Text(
+                        '신뢰도 ${user.trustScore}점',
+                        style: ResponsiveHelper.subtitleStyle(context).copyWith(
+                          color: Colors.white,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                      SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+                      Container(
+                        padding: EdgeInsets.symmetric(
+                          horizontal: ResponsiveHelper.spacing(context, 8),
+                          vertical: ResponsiveHelper.spacing(context, 2),
+                        ),
+                        decoration: BoxDecoration(
+                          color: Colors.white.withOpacity(0.2),
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: Text(
+                          user.trustGrade,
+                          style: ResponsiveHelper.smallStyle(context).copyWith(
+                            color: Colors.white,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                  SizedBox(height: ResponsiveHelper.spacing(context, 12)),
+                  // 근태 통계
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                    children: [
+                      _buildStatItem(context, '근무', '${user.totalWorkDays}일'),
+                      _buildStatItem(context, '평점', user.averageRating.toStringAsFixed(1)),
+                      _buildStatItem(context, '지각', '${user.lateCount}회'),
+                      _buildStatItem(context, '노쇼', '${user.noShowCount}회'),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          ],
         ],
       ),
+    );
+  }
+
+ /// 🆕 통계 아이템 (신뢰도 카드용)
+  Widget _buildStatItem(BuildContext context, String label, String value) {
+    return Column(
+      children: [
+        Text(
+          value,
+          style: ResponsiveHelper.bodyStyle(context).copyWith(
+            color: Colors.white,
+            fontWeight: FontWeight.bold,
+          ),
+        ),
+        SizedBox(height: ResponsiveHelper.spacing(context, 2)),
+        Text(
+          label,
+          style: ResponsiveHelper.tinyStyle(context).copyWith(
+            color: Colors.white.withOpacity(0.8),
+          ),
+        ),
+      ],
     );
   }
 

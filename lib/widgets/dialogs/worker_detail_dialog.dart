@@ -20,6 +20,7 @@ import '../../utils/id_card_helper.dart';
 import '../../screens/business_admin/dialogs/fixed_worker_management_dialog.dart';
 import '../common/loading_button.dart';
 import '../../utils/image_helper.dart';
+import 'monthly_review_dialog.dart';
 
 /// 공통 근무자/지원자 상세 다이얼로그
 /// 
@@ -1017,6 +1018,31 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
             ),
           ],
 
+          // 🆕 리뷰 버튼 (확정자 + businessId 있을 때)
+          if (isConfirmed && widget.application != null && widget.businessId != null) ...[
+            SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+            SizedBox(
+              width: ResponsiveHelper.spacing(context, 48),
+              child: OutlinedButton(
+                onPressed: _openReviewDialog,
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: Theme.of(context).primaryColor,
+                  side: BorderSide(color: Theme.of(context).primaryColor),
+                  padding: EdgeInsets.symmetric(
+                    vertical: ResponsiveHelper.spacing(context, 12),
+                  ),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                ),
+                child: Icon(
+                  Icons.rate_review,
+                  size: ResponsiveHelper.iconSize(context, 20),
+                ),
+              ),
+            ),
+          ],
+
           // 확정자 액션 버튼
           if (isConfirmed && widget.application != null) ...[
             SizedBox(width: ResponsiveHelper.spacing(context, 8)),
@@ -1455,6 +1481,42 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
       ),
     );
     return result;
+  }
+
+  /// 🆕 리뷰 작성 다이얼로그 열기
+  Future<void> _openReviewDialog() async {
+    final app = widget.application;
+    if (app == null || widget.businessId == null) return;
+    
+    final userProvider = context.read<UserProvider>();
+    final reviewer = userProvider.currentUser;
+    if (reviewer == null) return;
+    
+    // 현재 월 기준
+    final now = DateTime.now();
+    
+    // 해당 월 근무 일수 계산 (간단 버전 - 실제로는 출퇴근 기록 기반)
+    final workDays = _businessHistory?['totalDays'] ?? 1;
+    
+    final result = await showMonthlyReviewDialog(
+      context,
+      reviewerId: reviewer.uid,
+      reviewerName: reviewer.name,
+      businessId: widget.businessId!,
+      businessName: widget.toItem?.to.businessName ?? '',
+      targetUserId: widget.user.uid,
+      targetUserName: widget.user.name,
+      reviewYear: now.year,
+      reviewMonth: now.month,
+      workDaysInMonth: workDays,
+      normalAttendanceDays: workDays,  // TODO: 실제 출퇴근 기록 기반 계산
+      lateDays: 0,  // TODO: 실제 지각 횟수
+    );
+    
+    if (result == true) {
+      _hasChanges = true;
+      widget.onStatusChanged?.call();
+    }
   }
 
   /// 고정근무 관리 다이얼로그 열기
