@@ -13,6 +13,9 @@ import '../../models/core/schedule_change_request_model.dart';
 import '../../theme/app_colors.dart';
 import 'package:intl/intl.dart';
 import '../work_type_icon.dart';
+import '../dialogs/business_review_dialog.dart';
+import 'package:provider/provider.dart';
+import '../../providers/user_provider.dart';
 
 /// ✨ 개별 일정 카드 (세련된 디자인)
 class ScheduleCard extends StatelessWidget {
@@ -294,6 +297,23 @@ class ScheduleCard extends StatelessWidget {
         ),
       );
     }
+    // 3. 사업장 리뷰 작성 (근무 완료 후)
+    final hasWorked = attendance?.checkIn != null || 
+                      attendance?.wageStatus == 'confirmed';
+    if (hasWorked) {
+      items.add(
+        PopupMenuItem(
+          value: 'write_review',
+          child: Row(
+            children: [
+              Icon(Icons.rate_review, color: Theme.of(context).primaryColor, size: iconSize),
+              SizedBox(width: spacing),
+              Text('사업장 리뷰', style: ResponsiveHelper.bodyStyle(context)),
+            ],
+          ),
+        ),
+      );
+    }
     
     // 3. 취소/휴무 관련 메뉴 (출근 이후는 취소 불가)
     final isWageConfirmed = attendance?.wageStatus == 'confirmed';
@@ -417,6 +437,9 @@ class ScheduleCard extends StatelessWidget {
       case 'wage_detail':
         _showWageDetailDialog(context);
         break;
+      case 'write_review':
+          _showBusinessReviewDialog(context);
+          break;
       case 'cancel':
         _handleCancel(context);
         break;
@@ -520,6 +543,29 @@ class ScheduleCard extends StatelessWidget {
         ToastHelper.showSuccess('지원이 취소되었습니다.');
         onChanged?.call();
       }
+    }
+  }
+  /// 사업장 리뷰 다이얼로그
+  void _showBusinessReviewDialog(BuildContext context) async {
+    final workDate = application.workDate;
+    final userProvider = context.read<UserProvider>();
+    final currentUser = userProvider.currentUser;
+    
+    if (currentUser == null) return;
+    
+    final result = await showBusinessReviewDialog(
+      context,
+      reviewerId: application.uid,
+      reviewerName: currentUser.name,
+      businessId: application.businessId,
+      businessName: application.businessName,
+      reviewYear: workDate.year,
+      reviewMonth: workDate.month,
+      workDaysInMonth: 1, // TODO: 해당 월 실제 근무일수 계산
+    );
+    
+    if (result == true) {
+      onChanged?.call();
     }
   }
 
