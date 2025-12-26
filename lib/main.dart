@@ -16,6 +16,8 @@ import 'screens/user/user_home_screen.dart';
 import 'screens/super_admin/super_admin_home_screen.dart';
 import 'screens/business_admin/business_admin_home_screen.dart';
 import 'screens/common/splash_screen.dart';
+import 'screens/common/onboarding_screen.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 // PDF 폰트 프리로드
 import 'utils/attendance_list_pdf.dart';
 import 'services/fcm_service.dart';
@@ -110,6 +112,26 @@ class AuthWrapper extends StatefulWidget {
 }
 
 class _AuthWrapperState extends State<AuthWrapper> {
+  bool? _isOnboardingCompleted;
+
+  @override
+  void initState() {
+    super.initState();
+    _checkOnboarding();
+  }
+
+  Future<void> _checkOnboarding() async {
+    final prefs = await SharedPreferences.getInstance();
+    final completed = prefs.getBool('onboarding_completed') ?? false;
+    if (mounted) {
+      setState(() => _isOnboardingCompleted = completed);
+    }
+  }
+
+  void _completeOnboarding() {
+    setState(() => _isOnboardingCompleted = true);
+  }
+
   @override
   Widget build(BuildContext context) {
     return Consumer<UserProvider>(
@@ -168,6 +190,22 @@ class _AuthWrapperState extends State<AuthWrapper> {
         print('  - isUser: ${user.isUser}');
         print('  - isAdmin: ${user.isAdmin}');
         print('============================\n');
+
+        // 🆕 온보딩 체크
+        if (_isOnboardingCompleted == null) {
+          // 온보딩 상태 로딩 중
+          return const Scaffold(
+            body: Center(child: CircularProgressIndicator()),
+          );
+        }
+
+        if (_isOnboardingCompleted == false) {
+          print('📚 온보딩 미완료 → OnboardingScreen');
+          return OnboardingScreen(
+            role: user.roleString,
+            onComplete: _completeOnboarding,
+          );
+        }
 
         // ✅ 권한별 화면 분기 (에러 핸들링 추가)
         try {

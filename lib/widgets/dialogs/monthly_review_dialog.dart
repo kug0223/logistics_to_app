@@ -6,6 +6,7 @@ import '../../theme/app_colors.dart';
 import '../../models/core/monthly_review_model.dart';
 import '../../models/settings/trust_settings_model.dart';
 import '../../services/monthly_review_service.dart';
+import '../../services/tooltip_service.dart';
 import '../../utils/toast_helper.dart';
 import 'styled_dialog.dart';
 
@@ -183,6 +184,13 @@ class _MonthlyReviewDialogState extends State<MonthlyReviewDialog> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    
+    // 🆕 첫 리뷰 작성 툴팁 (1회만)
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) {
+        TooltipContents.showFirstReview(context);
+      }
+    });
     
     return Dialog(
       shape: RoundedRectangleBorder(

@@ -41,6 +41,7 @@ dependencies:
   intl: ^0.20.2
   http: ^1.2.2
   path_provider: ^2.1.1
+  shared_preferences: ^2.2.2  # 🆕 온보딩 상태 저장용
   
   # WebView (주소 검색용)
   webview_flutter: ^4.4.2

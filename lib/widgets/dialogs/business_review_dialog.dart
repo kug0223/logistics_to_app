@@ -164,6 +164,8 @@ class _BusinessReviewDialogState extends State<BusinessReviewDialog> {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     
+    // 🆕 첫 리뷰 작성 툴팁은 관리자 리뷰에서만 표시 (지원자 리뷰는 별도)
+    
     return Dialog(
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(24),

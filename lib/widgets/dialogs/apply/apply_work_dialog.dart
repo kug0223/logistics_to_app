@@ -2295,6 +2295,11 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
       
       _hasChanges = true;
       ToastHelper.showSuccess('지원이 완료되었습니다');
+      
+      // 🆕 첫 지원 툴팁
+      if (mounted) {
+        TooltipContents.showFirstApplication(context);
+      }
     } catch (e) {
       print('❌ 지원 실패: $e');
       ToastHelper.showError('지원에 실패했습니다');
