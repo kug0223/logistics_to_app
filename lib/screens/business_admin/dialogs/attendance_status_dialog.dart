@@ -24,6 +24,7 @@ import '../../../models/core/wage_detail_model.dart';
 
 // Utils
 import '../../../utils/toast_helper.dart';
+import '../../../services/trust_score_service.dart';
 import '../../../utils/responsive_helper.dart';
 import '../../../utils/dialog_helper.dart';
 import '../../../utils/format_helper.dart';
@@ -1922,6 +1923,17 @@ SizedBox(width: ResponsiveHelper.spacing(context, 12)),
             'wageStatus': 'confirmed',
             'finalConfirmedAt': FieldValue.serverTimestamp(),
           });
+          
+          // 🆕 근무 완료 신뢰도 반영 + totalWorkDays 증가
+          final trustService = TrustScoreService();
+          await trustService.onWorkComplete(app.uid);
+          await FirebaseFirestore.instance
+              .collection('users')
+              .doc(app.uid)
+              .update({
+            'totalWorkDays': FieldValue.increment(1),
+          });
+          
           successCount++;
         }
       }
@@ -2610,7 +2622,17 @@ SizedBox(width: ResponsiveHelper.spacing(context, 12)),
 
     try {
       await _createOrUpdateAttendance(app: app, checkIn: time);
-      ToastHelper.showSuccess('출근 처리 완료');
+      
+      // 🆕 지각 여부 체크 및 신뢰도 반영
+      final expectedStartTime = app.startTime.isNotEmpty ? app.startTime : '09:00';
+      if (_isLate(time, expectedStartTime)) {
+        final trustService = TrustScoreService();
+        await trustService.onLate(app.uid);
+        ToastHelper.showWarning('지각 처리 완료 (신뢰도 -1)');
+      } else {
+        ToastHelper.showSuccess('출근 처리 완료');
+      }
+      
       await _loadData();
     } catch (e) {
       print('❌ 출근 처리 실패: $e');
@@ -2792,14 +2814,9 @@ SizedBox(width: ResponsiveHelper.spacing(context, 12)),
         });
       }
 
-      // 사용자 noShowCount 증가
-      await FirebaseFirestore.instance
-          .collection('users')
-          .doc(app.uid)
-          .update({
-        'noShowCount': FieldValue.increment(1),
-        'updatedAt': FieldValue.serverTimestamp(),
-      });
+      // 🆕 신뢰도 서비스로 노쇼 처리 (noShowCount 증가 + 점수 감점)
+      final trustService = TrustScoreService();
+      await trustService.onNoShow(app.uid);
 
       ToastHelper.showSuccess('노쇼 처리 완료');
       await _loadData();
@@ -2946,6 +2963,16 @@ SizedBox(width: ResponsiveHelper.spacing(context, 12)),
         'wageStatus': 'confirmed',
         'wageDetail': wageDetail?.toMap(),
         'updatedAt': FieldValue.serverTimestamp(),
+      });
+      
+      // 🆕 근무 완료 신뢰도 반영 + totalWorkDays 증가
+      final trustService = TrustScoreService();
+      await trustService.onWorkComplete(app.uid);
+      await FirebaseFirestore.instance
+          .collection('users')
+          .doc(app.uid)
+          .update({
+        'totalWorkDays': FieldValue.increment(1),
       });
       
       _hasChanges = true;

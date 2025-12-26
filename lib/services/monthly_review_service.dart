@@ -191,6 +191,29 @@ class MonthlyReviewService {
   // 리뷰 조회
   // ═══════════════════════════════════════════════════════════
 
+  /// 특정 사업장이 작성한 리뷰 목록 조회 (관리자 → 지원자)
+  Future<List<MonthlyReviewModel>> getReviewsByBusiness({
+    required String businessId,
+    int limit = 50,
+  }) async {
+    try {
+      final snapshot = await _firestore
+          .collection('monthly_reviews')
+          .where('businessId', isEqualTo: businessId)
+          .where('reviewType', isEqualTo: ReviewType.ADMIN_TO_USER.name)
+          .orderBy('createdAt', descending: true)
+          .limit(limit)
+          .get();
+
+      return snapshot.docs
+          .map((doc) => MonthlyReviewModel.fromFirestore(doc))
+          .toList();
+    } catch (e) {
+      print('❌ 사업장 작성 리뷰 조회 실패: $e');
+      return [];
+    }
+  }
+
   /// 특정 사용자가 받은 리뷰 목록 조회 (관리자용 - 모든 리뷰)
   Future<List<MonthlyReviewModel>> getReviewsForUser({
     required String targetUserId,
