@@ -62,6 +62,10 @@ dependencies:
   cached_network_image: ^3.3.1
   shimmer: ^3.0.0
   
+  # 암호화 (주민번호·계좌번호 AES 암호화)
+  encrypt: ^5.0.3
+  pointycastle: ^3.7.3
+
   # OCR (텍스트 인식 - 신분증/서류 검증용)
   google_mlkit_text_recognition: ^0.15.0
 

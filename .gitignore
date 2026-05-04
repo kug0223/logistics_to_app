@@ -43,3 +43,7 @@ app.*.map.json
 /android/app/debug
 /android/app/profile
 /android/app/release
+
+
+# VSCode 실행 설정 (암호화 키 포함 - GitHub 업로드 금지!)
+.vscode/launch.json

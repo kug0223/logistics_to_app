@@ -1,6 +1,7 @@
 // lib/models/core/user_model.dart
 
 import 'package:cloud_firestore/cloud_firestore.dart';
+import '../../utils/encryption_helper.dart';
 
 // 사용자 권한 enum
 enum UserRole {
@@ -212,14 +213,14 @@ class UserModel {
       // 신규 필드
       gender: map['gender'],
       birthDate: map['birthDate']?.toDate(),
-      residentNumber: map['residentNumber'],
+      residentNumber: EncryptionHelper.decrypt(map['residentNumber']),
       address: map['address'],
       detailAddress: map['detailAddress'],
       idCardImageUrl: map['idCardImageUrl'],
       idCardVerifiedAt: _parseDateTime(map['idCardVerifiedAt']),
       isIdVerified: map['isIdVerified'] ?? false,
       bankName: map['bankName'],
-      accountNumber: map['accountNumber'],
+      accountNumber: EncryptionHelper.decrypt(map['accountNumber']),
       accountHolder: map['accountHolder'],
       bankbookImageUrl: map['bankbookImageUrl'],
       profileImageUrl: map['profileImageUrl'],
@@ -266,7 +267,7 @@ class UserModel {
       // 신규 필드
       'gender': gender,
       'birthDate': birthDate != null ? Timestamp.fromDate(birthDate!) : null,
-      'residentNumber': residentNumber, // ⚠️ 실제론 암호화 필요!
+      'residentNumber': EncryptionHelper.encrypt(residentNumber),
       'address': address,
       'detailAddress': detailAddress,
       'idCardImageUrl': idCardImageUrl,
@@ -275,7 +276,7 @@ class UserModel {
           : null,
       'isIdVerified': isIdVerified,
       'bankName': bankName,
-      'accountNumber': accountNumber, // ⚠️ 실제론 암호화 필요!
+      'accountNumber': EncryptionHelper.encrypt(accountNumber),
       'accountHolder': accountHolder,
       'bankbookImageUrl': bankbookImageUrl, 
       'profileImageUrl': profileImageUrl,
