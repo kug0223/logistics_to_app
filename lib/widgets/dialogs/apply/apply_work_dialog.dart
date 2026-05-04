@@ -22,6 +22,7 @@ import 'confirm_cancel_dialog.dart';
 import 'apply_confirm_dialog.dart';
 import '../../../utils/navigation_helper.dart';
 import '../../../screens/common/job_posting_screen.dart';
+import '../../../services/tooltip_service.dart';
 
 /// 지원 다이얼로그 결과
 class ApplyDialogResult {

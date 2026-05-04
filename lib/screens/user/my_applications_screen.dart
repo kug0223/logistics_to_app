@@ -48,8 +48,15 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
         return;
       }
 
+      // ✅ 1. 만료된 PENDING 자동 처리 (병렬 실행 - 메인 로직과 동시)
+      //       실패해도 무관하므로 await 없이 시작만 해도 되지만,
+      //       정확한 목록을 위해 먼저 완료 후 조회
+      await _firestoreService.autoExpirePendingApplications(uid);
+
+      // ✅ 2. 최신 지원 내역 조회
       final applications = await _firestoreService.getMyApplications(uid);
 
+      // ✅ 3. TO 정보 병렬 조회
       final futures = applications.map((app) async {
         final to = await _firestoreService.getTOByApplication(app);
         if (to != null) {
@@ -60,16 +67,21 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
 
       final results = await Future.wait(futures);
       final appWithTOs = results.whereType<_ApplicationWithTO>().toList();
-      appWithTOs.sort((a, b) => b.application.appliedAt.compareTo(a.application.appliedAt));
+      appWithTOs.sort(
+          (a, b) => b.application.appliedAt.compareTo(a.application.appliedAt));
 
-      setState(() {
-        _applications = appWithTOs;
-        _isLoading = false;
-      });
+      if (mounted) {
+        setState(() {
+          _applications = appWithTOs;
+          _isLoading = false;
+        });
+      }
     } catch (e) {
       print('❌ 지원 내역 로드 실패: $e');
-      ToastHelper.showError('지원 내역을 불러오는데 실패했습니다.');
-      setState(() => _isLoading = false);
+      if (mounted) {
+        ToastHelper.showError('지원 내역을 불러오는데 실패했습니다.');
+        setState(() => _isLoading = false);
+      }
     }
   }
 

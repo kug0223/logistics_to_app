@@ -20,6 +20,7 @@ import 'to_management/create_to_screen.dart';
 import 'workforce_management/integrated_workforce_screen.dart';
 import '../common/notification_screen.dart';
 import '../../widgets/common/notification_badge.dart';
+import 'admin_review_list_screen.dart';
 
 /// 사업장 관리자 홈 화면 - 세련된 디자인
 class BusinessAdminHomeScreen extends StatelessWidget {
@@ -291,6 +292,22 @@ class BusinessAdminHomeScreen extends StatelessWidget {
                               onTap: () {
                                 ScaffoldMessenger.of(context).showSnackBar(
                                   const SnackBar(content: Text('통계 화면 준비 중입니다')),
+                                );
+                              },
+                            ),
+                            // 3. 리뷰 관리
+                            _buildMenuCard(
+                              context,
+                              icon: Icons.rate_review_outlined,
+                              title: '리뷰 관리',
+                              subtitle: '평가 작성/조회',
+                              color: theme.primaryColor.withOpacity(0.6),
+                              onTap: () {
+                                Navigator.push(
+                                  context,
+                                  MaterialPageRoute(
+                                    builder: (context) => const AdminReviewListScreen(),
+                                  ),
                                 );
                               },
                             ),

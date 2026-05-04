@@ -3110,4 +3110,184 @@ extension ApplicationFirestore on FirestoreService {
     const days = ['월', '화', '수', '목', '금', '토', '일'];
     return days[date.weekday - 1];
   }
+  // ═══════════════════════════════════════════════════════════
+  // 📍 추가 위치: lib/services/firestore/application_firestore.dart
+  // extension ApplicationFirestore on FirestoreService { ... } 안에 추가
+  // ═══════════════════════════════════════════════════════════
+
+  /// 만료된 PENDING 지원서 자동 취소
+  ///
+  /// 호출 시점: getMyApplications() 또는 my_applications_screen 로드 시
+  ///
+  /// 처리 대상:
+  /// - 단기: workDate가 오늘 이전인 PENDING
+  /// - 장기: workEndDate가 오늘 이전인 PENDING
+  ///
+  /// 반환: 처리된 지원서 수
+  Future<int> autoExpirePendingApplications(String uid) async {
+    try {
+      final now = DateTime.now();
+      final todayStart = DateTime(now.year, now.month, now.day);
+
+      print('🔄 [autoExpire] PENDING 만료 체크 시작 (uid: $uid)');
+
+      // 1. 해당 사용자의 PENDING 지원서 전체 조회
+      final snapshot = await _firestore
+          .collection('applications')
+          .where('uid', isEqualTo: uid)
+          .where('status', isEqualTo: 'PENDING')
+          .get();
+
+      if (snapshot.docs.isEmpty) {
+        print('✅ [autoExpire] 만료 대상 없음');
+        return 0;
+      }
+
+      // 2. 만료 대상 필터링 (메모리에서)
+      final expiredDocs = snapshot.docs.where((doc) {
+        final data = doc.data();
+
+        // 장기 근무: workEndDate 기준
+        final isLongTerm = data['isLongTermApplication'] == true ||
+            (data['workDays'] != null &&
+                (data['workDays'] as List).isNotEmpty);
+
+        if (isLongTerm) {
+          final workEndDate = data['workEndDate'] != null
+              ? (data['workEndDate'] as Timestamp).toDate()
+              : null;
+          if (workEndDate == null) return false;
+          final endDateOnly = DateTime(
+              workEndDate.year, workEndDate.month, workEndDate.day);
+          return endDateOnly.isBefore(todayStart);
+        }
+
+        // 단기 근무: workDate 기준
+        final workDate = data['workDate'] != null
+            ? (data['workDate'] as Timestamp).toDate()
+            : null;
+        if (workDate == null) return false;
+        final workDateOnly =
+            DateTime(workDate.year, workDate.month, workDate.day);
+        return workDateOnly.isBefore(todayStart);
+      }).toList();
+
+      if (expiredDocs.isEmpty) {
+        print('✅ [autoExpire] 만료된 PENDING 없음');
+        return 0;
+      }
+
+      print('⚠️ [autoExpire] 만료 대상: ${expiredDocs.length}개');
+
+      // 3. Batch로 일괄 처리 (Firestore 500개 제한 대응)
+      const batchLimit = 400;
+      int totalProcessed = 0;
+
+      for (int i = 0; i < expiredDocs.length; i += batchLimit) {
+        final chunk =
+            expiredDocs.skip(i).take(batchLimit).toList();
+        final batch = _firestore.batch();
+
+        for (final doc in chunk) {
+          final data = doc.data();
+          final toId = data['toId'] as String?;
+          final workDetailId = data['workDetailId'] as String?;
+          final groupId = data['groupId'] as String?;
+
+          // 3-1. 지원서 상태 변경
+          batch.update(doc.reference, {
+            'status': 'AUTO_CANCELED',
+            'canceledAt': FieldValue.serverTimestamp(),
+            'cancelReason': 'EXPIRED',
+            'statusHistory': FieldValue.arrayUnion([
+              {
+                'status': 'AUTO_CANCELED',
+                'at': Timestamp.now(),
+                'by': null,
+                'action': 'AUTO_EXPIRE',
+              }
+            ]),
+          });
+
+          // 3-2. TO 통계 감소 (toId 있을 때만)
+          if (toId != null && toId.isNotEmpty) {
+            batch.update(
+              _firestore.collection('tos').doc(toId),
+              {'totalPending': FieldValue.increment(-1)},
+            );
+
+            // 3-3. WorkDetail 통계 감소
+            if (workDetailId != null && workDetailId.isNotEmpty) {
+              batch.update(
+                _firestore
+                    .collection('tos')
+                    .doc(toId)
+                    .collection('workDetails')
+                    .doc(workDetailId),
+                {'pendingCount': FieldValue.increment(-1)},
+              );
+            }
+
+            clearCache(toId: toId);
+          }
+
+          // 3-4. groups 통계 감소
+          if (groupId != null && groupId.isNotEmpty) {
+            batch.update(
+              _firestore.collection('groups').doc(groupId),
+              {'totalPending': FieldValue.increment(-1)},
+            );
+          }
+        }
+
+        await batch.commit();
+        totalProcessed += chunk.length;
+        print('✅ [autoExpire] Batch ${i ~/ batchLimit + 1} 완료: ${chunk.length}개');
+      }
+
+      print('✅ [autoExpire] 총 $totalProcessed개 AUTO_CANCELED 처리 완료');
+
+      // 4. 알림 전송 (fire-and-forget - 메인 로직 지연 방지)
+      _sendExpiredNotifications(expiredDocs);
+
+      return totalProcessed;
+    } catch (e) {
+      // 만료 처리 실패해도 메인 로직은 계속 진행
+      print('❌ [autoExpire] 실패 (무시하고 계속): $e');
+      return 0;
+    }
+  }
+
+  /// 만료 알림 전송 (fire-and-forget)
+  void _sendExpiredNotifications(
+      List<QueryDocumentSnapshot<Map<String, dynamic>>> docs) {
+    // 비동기로 처리 - 실패해도 무관
+    Future(() async {
+      for (final doc in docs) {
+        try {
+          final data = doc.data();
+          final userId = data['uid'] as String?;
+          final businessName = data['businessName'] as String? ?? '';
+          final workType = data['selectedWorkType'] as String? ?? '';
+          final workDate = data['workDate'] != null
+              ? (data['workDate'] as Timestamp).toDate()
+              : DateTime.now();
+
+          if (userId == null) continue;
+
+          await createNotification(
+            NotificationModel.createApplicationRejected(
+              userId: userId,
+              businessName: businessName,
+              workType: workType,
+              workDate: workDate,
+              applicationId: doc.id,
+            ),
+          );
+        } catch (e) {
+          print('⚠️ [autoExpire] 알림 전송 실패 (무시): $e');
+        }
+      }
+    });
+  }
 }

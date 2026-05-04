@@ -1,4 +1,3 @@
-
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:intl/intl.dart';
@@ -10,6 +9,8 @@ import '../../providers/user_provider.dart';
 import '../../utils/location_helper.dart';
 import '../../utils/toast_helper.dart';
 import '../../utils/dialog_helper.dart';
+import '../../utils/responsive_helper.dart';
+import '../../theme/app_colors.dart';
 import '../../widgets/common/loading_widget.dart';
 
 /// 출퇴근 체크 화면
@@ -22,9 +23,9 @@ class AttendanceCheckScreen extends StatefulWidget {
 
 class _AttendanceCheckScreenState extends State<AttendanceCheckScreen> {
   final FirestoreService _firestoreService = FirestoreService();
-  
+
   List<ApplicationModel> _todayWorks = [];
-  final Map<String, AttendanceModel?> _attendanceMap = {}; // applicationId -> AttendanceModel
+  final Map<String, AttendanceModel?> _attendanceMap = {};
   bool _isLoading = true;
   bool _isProcessing = false;
 
@@ -47,96 +48,100 @@ class _AttendanceCheckScreenState extends State<AttendanceCheckScreen> {
         return;
       }
 
-      // 1. 내 전체 지원 내역 조회
       final allApplications = await _firestoreService.getMyApplications(uid);
-      
-      // 2. 오늘 확정된 근무만 필터링
+
       final today = DateTime.now();
       final todayStart = DateTime(today.year, today.month, today.day);
-      
       final todayWorks = <ApplicationModel>[];
-      
+
       for (final app in allApplications) {
         if (app.status != 'CONFIRMED') continue;
-        
-        // ✅ 진짜 장기인지 판단: workDays가 있어야 장기
+
         final isReallyLongTerm = app.workDays != null && app.workDays!.isNotEmpty;
-        
-        // 단기 근무 (workDays가 없으면 단기)
+
         if (!isReallyLongTerm) {
           if (DateUtils.isSameDay(app.workDate, todayStart)) {
             todayWorks.add(app);
           }
           continue;
         }
-        
-        // 장기 근무
+
         if (app.workEndDate == null) continue;
-        
-        // 기간 체크 (시간 제거하고 날짜만 비교)
+
         final effectiveStartDate = app.desiredStartDate ?? app.workDate;
-        final startDateOnly = DateTime(effectiveStartDate.year, effectiveStartDate.month, effectiveStartDate.day);
-        final endDateOnly = DateTime(app.workEndDate!.year, app.workEndDate!.month, app.workEndDate!.day);
-        
+        final startDateOnly = DateTime(
+          effectiveStartDate.year,
+          effectiveStartDate.month,
+          effectiveStartDate.day,
+        );
+        final endDateOnly = DateTime(
+          app.workEndDate!.year,
+          app.workEndDate!.month,
+          app.workEndDate!.day,
+        );
+
         if (todayStart.isBefore(startDateOnly) || todayStart.isAfter(endDateOnly)) {
           continue;
         }
-        
-        // 요일 체크
+
         final weekdays = ['월', '화', '수', '목', '금', '토', '일'];
         final todayWeekday = weekdays[today.weekday - 1];
-        
+
         if (app.workDays!.contains(todayWeekday)) {
           todayWorks.add(app);
         }
       }
 
-      // 3. 각 근무의 출근 기록 조회
-      for (var work in todayWorks) {
-        final attendance = await _firestoreService.getTodayAttendance(
-          userId: uid,
-          applicationId: work.id,
-        );
-        _attendanceMap[work.id] = attendance;
-      }
+      // 각 근무의 출근 기록 병렬 조회 (성능 개선)
+      await Future.wait(
+        todayWorks.map((work) async {
+          final attendance = await _firestoreService.getTodayAttendance(
+            userId: uid,
+            applicationId: work.id,
+          );
+          _attendanceMap[work.id] = attendance;
+        }),
+      );
 
-      setState(() {
-        _todayWorks = todayWorks;
-        _isLoading = false;
-      });
+      if (mounted) {
+        setState(() {
+          _todayWorks = todayWorks;
+          _isLoading = false;
+        });
+      }
 
       print('✅ 오늘 근무: ${todayWorks.length}개');
     } catch (e) {
       print('❌ 오늘 근무 조회 실패: $e');
-      setState(() => _isLoading = false);
-      ToastHelper.showError('근무 정보를 불러오는데 실패했습니다.');
+      if (mounted) {
+        setState(() => _isLoading = false);
+        ToastHelper.showError('근무 정보를 불러오는데 실패했습니다.');
+      }
     }
   }
 
   /// 출근 체크
   Future<void> _checkIn(ApplicationModel work) async {
     if (_isProcessing) return;
-
     setState(() => _isProcessing = true);
 
     try {
-      // 1. GPS 권한 확인
       final hasPermission = await LocationHelper.checkAndRequestPermission();
       if (!hasPermission) {
-        await DialogHelper.showError(
-          context,
-          title: '위치 권한 필요',
-          message: '출퇴근 체크를 위해 위치 권한이 필요합니다.\n설정에서 권한을 허용해주세요.',
-        );
-        setState(() => _isProcessing = false);
+        if (mounted) {
+          await DialogHelper.showError(
+            context,
+            title: '위치 권한 필요',
+            message: '출퇴근 체크를 위해 위치 권한이 필요합니다.\n설정에서 권한을 허용해주세요.',
+          );
+        }
         return;
       }
 
-      // 2. 현재 위치 가져오기
-      DialogHelper.showLoading(context, message: 'GPS 확인 중...');
-      
+      if (mounted) DialogHelper.showLoading(context, message: 'GPS 확인 중...');
+
       final position = await LocationHelper.getCurrentPosition();
-      
+
       if (!mounted) return;
       Navigator.pop(context); // 로딩 닫기
 
@@ -145,21 +150,19 @@ class _AttendanceCheckScreenState extends State<AttendanceCheckScreen> {
           context,
           message: 'GPS 위치를 가져올 수 없습니다.\n잠시 후 다시 시도해주세요.',
         );
-        setState(() => _isProcessing = false);
         return;
       }
 
-      // 3. 사업장 정보 조회
       final business = await _firestoreService.getBusinessById(work.businessId);
       if (business == null) {
-        await DialogHelper.showError(context, message: '사업장 정보를 찾을 수 없습니다.');
-        setState(() => _isProcessing = false);
+        if (mounted) {
+          await DialogHelper.showError(context, message: '사업장 정보를 찾을 수 없습니다.');
+        }
         return;
       }
-      // ⭐ GPS 반경 설정 (사업장별 또는 기본값 100m)
+
       final gpsRadius = business.gpsRadius.toDouble();
 
-      // 4. 거리 확인 (100m 반경)
       final isNearby = LocationHelper.isWithinRadius(
         currentLat: position.latitude,
         currentLon: position.longitude,
@@ -169,25 +172,24 @@ class _AttendanceCheckScreenState extends State<AttendanceCheckScreen> {
       );
 
       if (!isNearby) {
-      final distance = LocationHelper.calculateDistance(
-        lat1: position.latitude,
-        lon1: position.longitude,
-        lat2: business.latitude ?? 0.0,
-        lon2: business.longitude ?? 0.0,
-      );
-        
-        await DialogHelper.showError(
-          context,
-          title: '출근 위치 오류',
-          message: '사업장에서 너무 멉니다.\n'
-              '현재 거리: ${LocationHelper.formatDistance(distance)}\n'
-              '사업장 근처(${gpsRadius.toInt()}m 이내)에서 출근해주세요.', 
+        final distance = LocationHelper.calculateDistance(
+          lat1: position.latitude,
+          lon1: position.longitude,
+          lat2: business.latitude ?? 0.0,
+          lon2: business.longitude ?? 0.0,
         );
-        setState(() => _isProcessing = false);
+        if (mounted) {
+          await DialogHelper.showError(
+            context,
+            title: '출근 위치 오류',
+            message: '사업장에서 너무 멉니다.\n'
+                '현재 거리: ${LocationHelper.formatDistance(distance)}\n'
+                '사업장 근처(${gpsRadius.toInt()}m 이내)에서 출근해주세요.',
+          );
+        }
         return;
       }
 
-      // 5. 출근 체크
       final userProvider = Provider.of<UserProvider>(context, listen: false);
       final uid = userProvider.currentUser?.uid;
 
@@ -203,9 +205,9 @@ class _AttendanceCheckScreenState extends State<AttendanceCheckScreen> {
         method: 'gps',
       );
 
-      if (attendanceId != null) {
+      if (attendanceId != null && mounted) {
         ToastHelper.showSuccess('출근이 완료되었습니다!');
-        await _loadTodayWorks(); // 새로고침
+        await _loadTodayWorks();
       }
     } catch (e) {
       print('❌ 출근 체크 실패: $e');
@@ -216,9 +218,7 @@ class _AttendanceCheckScreenState extends State<AttendanceCheckScreen> {
         );
       }
     } finally {
-      if (mounted) {
-        setState(() => _isProcessing = false);
-      }
+      if (mounted) setState(() => _isProcessing = false);
     }
   }
 
@@ -226,24 +226,21 @@ class _AttendanceCheckScreenState extends State<AttendanceCheckScreen> {
   Future<void> _checkOut(ApplicationModel work, AttendanceModel attendance) async {
     if (_isProcessing) return;
 
-    // 확인 다이얼로그
     final confirmed = await DialogHelper.showConfirm(
       context,
       title: '퇴근 확인',
       message: '퇴근 처리하시겠습니까?',
       confirmText: '퇴근',
     );
-
     if (!confirmed) return;
 
     setState(() => _isProcessing = true);
 
     try {
-      // 1. 현재 위치 가져오기
-      DialogHelper.showLoading(context, message: 'GPS 확인 중...');
-      
+      if (mounted) DialogHelper.showLoading(context, message: 'GPS 확인 중...');
+
       final position = await LocationHelper.getCurrentPosition();
-      
+
       if (!mounted) return;
       Navigator.pop(context);
 
@@ -252,11 +249,9 @@ class _AttendanceCheckScreenState extends State<AttendanceCheckScreen> {
           context,
           message: 'GPS 위치를 가져올 수 없습니다.',
         );
-        setState(() => _isProcessing = false);
         return;
       }
 
-      // 2. 퇴근 체크
       final success = await _firestoreService.checkOut(
         attendanceId: attendance.id,
         latitude: position.latitude,
@@ -264,7 +259,7 @@ class _AttendanceCheckScreenState extends State<AttendanceCheckScreen> {
         method: 'gps',
       );
 
-      if (success) {
+      if (success && mounted) {
         ToastHelper.showSuccess('퇴근이 완료되었습니다!');
         await _loadTodayWorks();
       }
@@ -277,20 +272,31 @@ class _AttendanceCheckScreenState extends State<AttendanceCheckScreen> {
         );
       }
     } finally {
-      if (mounted) {
-        setState(() => _isProcessing = false);
-      }
+      if (mounted) setState(() => _isProcessing = false);
     }
   }
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+
     return Scaffold(
       appBar: AppBar(
-        title: const Text('출퇴근 체크'),
+        title: Text(
+          '출퇴근 체크',
+          style: ResponsiveHelper.subtitleStyle(context).copyWith(
+            color: Colors.white,
+            fontWeight: FontWeight.bold,
+          ),
+        ),
+        backgroundColor: theme.primaryColor,
+        iconTheme: const IconThemeData(color: Colors.white),
         actions: [
           IconButton(
-            icon: const Icon(Icons.refresh),
+            icon: Icon(
+              Icons.refresh,
+              size: ResponsiveHelper.iconSize(context, 24),
+            ),
             onPressed: _loadTodayWorks,
           ),
         ],
@@ -302,7 +308,7 @@ class _AttendanceCheckScreenState extends State<AttendanceCheckScreen> {
               : RefreshIndicator(
                   onRefresh: _loadTodayWorks,
                   child: ListView.builder(
-                    padding: const EdgeInsets.all(16),
+                    padding: ResponsiveHelper.cardPadding(context),
                     itemCount: _todayWorks.length,
                     itemBuilder: (context, index) {
                       final work = _todayWorks[index];
@@ -320,14 +326,15 @@ class _AttendanceCheckScreenState extends State<AttendanceCheckScreen> {
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          Icon(Icons.event_busy, size: 80, color: Colors.grey[300]),
-          const SizedBox(height: 16),
+          Icon(
+            Icons.event_busy,
+            size: ResponsiveHelper.iconSize(context, 80),
+            color: AppColors.grey300,
+          ),
+          SizedBox(height: ResponsiveHelper.spacing(context, 16)),
           Text(
             '오늘 확정된 근무가 없습니다',
-            style: TextStyle(
-              fontSize: 16,
-              color: Colors.grey[600],
-            ),
+            style: ResponsiveHelper.bodyStyle(context, color: AppColors.grey600),
           ),
         ],
       ),
@@ -338,65 +345,81 @@ class _AttendanceCheckScreenState extends State<AttendanceCheckScreen> {
   Widget _buildWorkCard(ApplicationModel work, AttendanceModel? attendance) {
     final hasCheckedIn = attendance?.hasCheckedIn ?? false;
     final hasCheckedOut = attendance?.hasCheckedOut ?? false;
+    final theme = Theme.of(context);
 
     return Card(
-      margin: const EdgeInsets.only(bottom: 16),
+      margin: EdgeInsets.only(bottom: ResponsiveHelper.spacing(context, 16)),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(16),
+      ),
+      elevation: 2,
+      shadowColor: Colors.black.withOpacity(0.08),
       child: Padding(
-        padding: const EdgeInsets.all(16),
+        padding: ResponsiveHelper.cardPadding(context),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             // 사업장 정보
             Row(
               children: [
+                // 단기/장기 배지
                 Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                  padding: EdgeInsets.symmetric(
+                    horizontal: ResponsiveHelper.spacing(context, 8),
+                    vertical: ResponsiveHelper.spacing(context, 4),
+                  ),
                   decoration: BoxDecoration(
-                    color: Theme.of(context).primaryColor.withOpacity(0.1),
-                    borderRadius: BorderRadius.circular(4),
+                    color: work.isLongTermApplication
+                        ? AppColors.longTermBg
+                        : AppColors.shortTermBg,
+                    borderRadius: BorderRadius.circular(6),
                   ),
                   child: Text(
                     work.isLongTermApplication ? '장기' : '단기',
-                    style: TextStyle(
-                      fontSize: 12,
+                    style: ResponsiveHelper.smallStyle(context).copyWith(
                       fontWeight: FontWeight.bold,
-                      color: Theme.of(context).primaryColor,
+                      color: work.isLongTermApplication
+                          ? AppColors.longTermDark
+                          : AppColors.shortTermDark,
                     ),
                   ),
                 ),
-                const SizedBox(width: 8),
+                SizedBox(width: ResponsiveHelper.spacing(context, 8)),
                 Expanded(
                   child: Text(
                     work.businessName,
-                    style: const TextStyle(
-                      fontSize: 16,
+                    style: ResponsiveHelper.subtitleStyle(context).copyWith(
                       fontWeight: FontWeight.bold,
                     ),
                   ),
                 ),
               ],
             ),
-            const SizedBox(height: 12),
+
+            SizedBox(height: ResponsiveHelper.spacing(context, 12)),
 
             // 근무 정보
-            _buildInfoRow(Icons.work, work.selectedWorkType),
-            const SizedBox(height: 4),
+            _buildInfoRow(Icons.work_outline, work.selectedWorkType),
+            SizedBox(height: ResponsiveHelper.spacing(context, 4)),
             _buildInfoRow(
               Icons.access_time,
               '${work.startTime} ~ ${work.endTime}',
             ),
-            const SizedBox(height: 4),
+            SizedBox(height: ResponsiveHelper.spacing(context, 4)),
             _buildInfoRow(
-              Icons.payments,
+              Icons.payments_outlined,
               '${NumberFormat('#,###').format(work.wage)}원/시간',
             ),
 
-            const Divider(height: 24),
+            Divider(
+              height: ResponsiveHelper.spacing(context, 24),
+              color: AppColors.dividerLight,
+            ),
 
-            // 출근 상태
+            // 출근 상태 정보
             if (hasCheckedIn) ...[
               _buildAttendanceInfo(attendance!),
-              const SizedBox(height: 12),
+              SizedBox(height: ResponsiveHelper.spacing(context, 12)),
             ],
 
             // 출근/퇴근 버튼
@@ -413,30 +436,33 @@ class _AttendanceCheckScreenState extends State<AttendanceCheckScreen> {
                 text: '퇴근하기',
                 icon: Icons.logout,
                 expand: true,
-                backgroundColor: Colors.orange[700],
+                backgroundColor: AppColors.warningDark,
                 isLoading: _isProcessing,
                 onPressed: () async => await _checkOut(work, attendance!),
               )
             else
               Container(
                 width: double.infinity,
-                padding: const EdgeInsets.all(12),
+                padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 12)),
                 decoration: BoxDecoration(
-                  color: Colors.green[50],
+                  color: AppColors.successBg,
                   borderRadius: BorderRadius.circular(8),
-                  border: Border.all(color: Colors.green[200]!),
+                  border: Border.all(color: AppColors.successLight),
                 ),
                 child: Row(
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
-                    Icon(Icons.check_circle, color: Colors.green[700]),
-                    const SizedBox(width: 8),
+                    Icon(
+                      Icons.check_circle,
+                      color: AppColors.successDark,
+                      size: ResponsiveHelper.iconSize(context, 20),
+                    ),
+                    SizedBox(width: ResponsiveHelper.spacing(context, 8)),
                     Text(
                       '출퇴근 완료',
-                      style: TextStyle(
-                        fontSize: 16,
+                      style: ResponsiveHelper.bodyStyle(context).copyWith(
                         fontWeight: FontWeight.bold,
-                        color: Colors.green[700],
+                        color: AppColors.successDark,
                       ),
                     ),
                   ],
@@ -452,62 +478,66 @@ class _AttendanceCheckScreenState extends State<AttendanceCheckScreen> {
   Widget _buildInfoRow(IconData icon, String text) {
     return Row(
       children: [
-        Icon(icon, size: 16, color: Colors.grey[600]),
-        const SizedBox(width: 8),
+        Icon(
+          icon,
+          size: ResponsiveHelper.iconSize(context, 16),
+          color: AppColors.grey600,
+        ),
+        SizedBox(width: ResponsiveHelper.spacing(context, 8)),
         Text(
           text,
-          style: TextStyle(
-            fontSize: 14,
-            color: Colors.grey[700],
-          ),
+          style: ResponsiveHelper.bodyStyle(context, color: AppColors.grey700),
         ),
       ],
     );
   }
 
-  /// 출근 정보
+  /// 출근 정보 카드
   Widget _buildAttendanceInfo(AttendanceModel attendance) {
     return Container(
-      padding: const EdgeInsets.all(12),
+      padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 12)),
       decoration: BoxDecoration(
-        color: Colors.blue[50],
+        color: AppColors.infoBg,
         borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: Colors.blue[200]!),
+        border: Border.all(color: AppColors.infoLight),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
             children: [
-              Icon(Icons.check_circle, color: Colors.blue[700], size: 20),
-              const SizedBox(width: 8),
+              Icon(
+                Icons.check_circle,
+                color: AppColors.infoDark,
+                size: ResponsiveHelper.iconSize(context, 20),
+              ),
+              SizedBox(width: ResponsiveHelper.spacing(context, 8)),
               Text(
                 '출근 완료',
-                style: TextStyle(
-                  fontSize: 14,
+                style: ResponsiveHelper.bodyStyle(context).copyWith(
                   fontWeight: FontWeight.bold,
-                  color: Colors.blue[700],
+                  color: AppColors.infoDark,
                 ),
               ),
             ],
           ),
-          const SizedBox(height: 8),
+          SizedBox(height: ResponsiveHelper.spacing(context, 8)),
           Text(
             '출근 시각: ${attendance.checkIn}',
-            style: const TextStyle(fontSize: 13),
+            style: ResponsiveHelper.smallStyle(context, color: AppColors.grey700),
           ),
           if (attendance.hasCheckedOut) ...[
-            const SizedBox(height: 4),
+            SizedBox(height: ResponsiveHelper.spacing(context, 4)),
             Text(
               '퇴근 시각: ${attendance.checkOut}',
-              style: const TextStyle(fontSize: 13),
+              style: ResponsiveHelper.smallStyle(context, color: AppColors.grey700),
             ),
-            const SizedBox(height: 4),
+            SizedBox(height: ResponsiveHelper.spacing(context, 4)),
             Text(
               '근무 시간: ${attendance.workHours?.toStringAsFixed(1) ?? '-'}시간',
-              style: const TextStyle(
-                fontSize: 13,
+              style: ResponsiveHelper.smallStyle(context).copyWith(
                 fontWeight: FontWeight.bold,
+                color: AppColors.grey800,
               ),
             ),
           ],
