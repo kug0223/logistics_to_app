@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+﻿import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:flutter/services.dart';
 import '../../models/core/user_model.dart';
@@ -6,13 +6,17 @@ import '../../providers/user_provider.dart';
 import '../../widgets/common/loading_widget.dart';
 import '../../utils/responsive_helper.dart';
 import '../../services/auth_service.dart';
+import '';
 import '../../services/storage_service.dart';  // ✅ 추가
 import '../../widgets/inputs/daum_address_search.dart';
 import '../../utils/document_upload_helper.dart';
+import '';
 import '../../utils/toast_helper.dart';  // ✅ 추가
 import '../business_admin/business_form_screen.dart';
+import '';
 
 import 'package:flutter/foundation.dart' show kIsWeb;
+import '../../theme/app_colors.dart';
 
 /// 개선된 회원가입 화면 - 자동 스크롤 + 여백 최적화 + Storage 업로드
 class RegisterScreen extends StatefulWidget {
@@ -404,7 +408,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
           ),
           title: Row(
             children: [
-              Icon(Icons.warning_amber, color: Colors.orange[700]),
+              Icon(Icons.warning_amber, color: AppColors.warningDark),
               SizedBox(width: ResponsiveHelper.spacing(context, 8)),
               Text('사업자등록증 미등록', style: ResponsiveHelper.titleStyle(context)),
             ],
@@ -417,9 +421,9 @@ class _RegisterScreenState extends State<RegisterScreen> {
                 Container(
                   padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 12)),
                   decoration: BoxDecoration(
-                    color: Colors.orange[50],
+                    color: AppColors.warningBg,
                     borderRadius: BorderRadius.circular(12),
-                    border: Border.all(color: Colors.orange[200]!),
+                    border: Border.all(color: AppColors.warningLight!),
                   ),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
@@ -458,7 +462,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
                 _registerUser();
               },
               style: ElevatedButton.styleFrom(
-                backgroundColor: Colors.orange[700],
+                backgroundColor: AppColors.warningDark,
                 shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
               ),
               child: Text(
@@ -907,7 +911,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
                         : '추가 정보 (선택)',
                 style: ResponsiveHelper.smallStyle(
                   context,
-                  color: Colors.grey[600],
+                  color: AppColors.grey600,
                 ),
               ),
             ],
@@ -941,7 +945,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
             child: Container(
               height: ResponsiveHelper.spacing(context, 4),
               decoration: BoxDecoration(
-                color: _currentStep >= 1 ? theme.primaryColor : Colors.grey[300],
+                color: _currentStep >= 1 ? theme.primaryColor : AppColors.grey300,
                 borderRadius: BorderRadius.circular(2),
               ),
             ),
@@ -951,7 +955,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
             child: Container(
               height: ResponsiveHelper.spacing(context, 4),
               decoration: BoxDecoration(
-                color: _currentStep >= 2 ? theme.primaryColor : Colors.grey[300],
+                color: _currentStep >= 2 ? theme.primaryColor : AppColors.grey300,
                 borderRadius: BorderRadius.circular(2),
               ),
             ),
@@ -1102,7 +1106,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
                     style: ResponsiveHelper.bodyStyle(context),
                     decoration: InputDecoration(
                       hintText: '990101',
-                      hintStyle: TextStyle(color: Colors.grey[400]),
+                      hintStyle: TextStyle(color: AppColors.grey400),
                       prefixIcon: Icon(
                         Icons.credit_card,
                         color: Theme.of(context).primaryColor,
@@ -1112,7 +1116,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
                         borderRadius: BorderRadius.circular(10),
                       ),
                       filled: true,
-                      fillColor: Colors.grey[50],
+                      fillColor: AppColors.grey50,
                       isDense: true,
                       contentPadding: EdgeInsets.symmetric(
                         horizontal: ResponsiveHelper.spacing(context, 12),
@@ -1162,7 +1166,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
                         borderRadius: BorderRadius.circular(10),
                       ),
                       filled: true,
-                      fillColor: Colors.grey[50],
+                      fillColor: AppColors.grey50,
                       isDense: true,
                       contentPadding: EdgeInsets.symmetric(
                         horizontal: ResponsiveHelper.spacing(context, 12),
@@ -1209,8 +1213,8 @@ class _RegisterScreenState extends State<RegisterScreen> {
                   ),
                   decoration: BoxDecoration(
                     color: _parsedBirthDate != null && _parsedGender != null
-                        ? Colors.green[50]
-                        : Colors.red[50],
+                        ? AppColors.successBg
+                        : AppColors.errorBg,
                     borderRadius: BorderRadius.circular(8),
                   ),
                   child: Row(
@@ -1220,8 +1224,8 @@ class _RegisterScreenState extends State<RegisterScreen> {
                             ? Icons.check_circle
                             : Icons.error_outline,
                         color: _parsedBirthDate != null && _parsedGender != null
-                            ? Colors.green[700]
-                            : Colors.red[700],
+                            ? AppColors.successDark
+                            : AppColors.errorDark,
                         size: ResponsiveHelper.iconSize(context, 16),
                       ),
                       SizedBox(width: ResponsiveHelper.spacing(context, 6)),
@@ -1408,7 +1412,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
               suffixIcon: IconButton(
                 icon: Icon(
                   _obscurePassword ? Icons.visibility_off : Icons.visibility,
-                  color: Colors.grey[600],
+                  color: AppColors.grey600,
                   size: ResponsiveHelper.iconSize(context, 20),
                 ),
                 onPressed: () => setState(() => _obscurePassword = !_obscurePassword),
@@ -1427,7 +1431,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
                   Expanded(
                     child: LinearProgressIndicator(
                       value: _passwordStrength / 3,
-                      backgroundColor: Colors.grey[300],
+                      backgroundColor: AppColors.grey300,
                       color: _passwordStrength == 0
                           ? Colors.red
                           : _passwordStrength == 1
@@ -1477,7 +1481,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
               suffixIcon: IconButton(
                 icon: Icon(
                   _obscureConfirmPassword ? Icons.visibility_off : Icons.visibility,
-                  color: Colors.grey[600],
+                  color: AppColors.grey600,
                   size: ResponsiveHelper.iconSize(context, 20),
                 ),
                 onPressed: () => setState(() => _obscureConfirmPassword = !_obscureConfirmPassword),
@@ -1505,14 +1509,14 @@ class _RegisterScreenState extends State<RegisterScreen> {
         Container(
           padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 12)),
           decoration: BoxDecoration(
-            color: Colors.blue[50],
+            color: AppColors.infoBg,
             borderRadius: BorderRadius.circular(12),
           ),
           child: Row(
             children: [
               Icon(
                 Icons.help_outline,
-                color: Colors.blue[700],
+                color: AppColors.infoDark,
                 size: ResponsiveHelper.iconSize(context, 22),
               ),
               SizedBox(width: ResponsiveHelper.spacing(context, 10)),
@@ -1561,10 +1565,10 @@ class _RegisterScreenState extends State<RegisterScreen> {
           padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 12)),
           decoration: BoxDecoration(
             gradient: LinearGradient(
-              colors: [Colors.blue[50]!, Colors.blue[100]!],
+              colors: [AppColors.infoBg!, Colors.blue[100]!],
             ),
             borderRadius: BorderRadius.circular(14),
-            border: Border.all(color: Colors.blue[200]!, width: 1.5),
+            border: Border.all(color: AppColors.infoLight!, width: 1.5),
           ),
           child: Column(
             children: [
@@ -1598,7 +1602,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
                           '본인 명의 서류만 인증 가능합니다',
                           style: ResponsiveHelper.smallStyle(
                             context,
-                            color: Colors.blue[700],
+                            color: AppColors.infoDark,
                           ),
                         ),
                       ],
@@ -1642,14 +1646,14 @@ class _RegisterScreenState extends State<RegisterScreen> {
         Container(
           padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 10)),
           decoration: BoxDecoration(
-            color: Colors.grey[100],
+            color: AppColors.grey100,
             borderRadius: BorderRadius.circular(10),
           ),
           child: Row(
             children: [
               Icon(
                 Icons.info_outline,
-                color: Colors.grey[600],
+                color: AppColors.grey600,
                 size: ResponsiveHelper.iconSize(context, 18),
               ),
               SizedBox(width: ResponsiveHelper.spacing(context, 10)),
@@ -1658,7 +1662,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
                   '지금 등록하지 않아도 설정에서 추가할 수 있습니다.',
                   style: ResponsiveHelper.smallStyle(
                     context,
-                    color: Colors.grey[700],
+                    color: AppColors.grey700,
                   ),
                 ),
               ),
@@ -1693,7 +1697,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: Colors.grey[300]!),
+        border: Border.all(color: AppColors.grey300!),
         boxShadow: [
           BoxShadow(
             color: Colors.black.withOpacity(0.05),
@@ -1735,12 +1739,12 @@ class _RegisterScreenState extends State<RegisterScreen> {
             child: Container(
               height: ResponsiveHelper.spacing(context, 100),
               decoration: BoxDecoration(
-                color: Colors.grey[100],
+                color: AppColors.grey100,
                 borderRadius: BorderRadius.circular(10),
                 border: Border.all(
                   color: _idCardImagePath != null 
                       ? Colors.green[300]! 
-                      : Colors.grey[300]!,
+                      : AppColors.grey300!,
                   width: 2,
                 ),
               ),
@@ -1755,7 +1759,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
                       size: ResponsiveHelper.iconSize(context, 40),
                       color: _idCardImagePath != null 
                           ? Colors.green[600] 
-                          : Colors.grey[400],
+                          : AppColors.grey400,
                     ),
                     SizedBox(height: ResponsiveHelper.spacing(context, 6)),
                     Text(
@@ -1765,8 +1769,8 @@ class _RegisterScreenState extends State<RegisterScreen> {
                       style: ResponsiveHelper.smallStyle(
                         context,
                         color: _idCardImagePath != null 
-                            ? Colors.green[700] 
-                            : Colors.grey[600],
+                            ? AppColors.successDark 
+                            : AppColors.grey600,
                       ),
                     ),
                   ],
@@ -1786,7 +1790,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: Colors.grey[300]!),
+        border: Border.all(color: AppColors.grey300!),
         boxShadow: [
           BoxShadow(
             color: Colors.black.withOpacity(0.05),
@@ -1877,7 +1881,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
               children: [
                 Icon(
                   Icons.info_outline,
-                  color: Colors.green[700],
+                  color: AppColors.successDark,
                   size: ResponsiveHelper.iconSize(context, 16),
                 ),
                 SizedBox(width: ResponsiveHelper.spacing(context, 8)),
@@ -1902,12 +1906,12 @@ class _RegisterScreenState extends State<RegisterScreen> {
             child: Container(
               height: ResponsiveHelper.spacing(context, 100),
               decoration: BoxDecoration(
-                color: Colors.grey[100],
+                color: AppColors.grey100,
                 borderRadius: BorderRadius.circular(10),
                 border: Border.all(
                   color: _bankbookImagePath != null 
                       ? Colors.green[300]! 
-                      : Colors.grey[300]!,
+                      : AppColors.grey300!,
                   width: 2,
                 ),
               ),
@@ -1922,7 +1926,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
                       size: ResponsiveHelper.iconSize(context, 40),
                       color: _bankbookImagePath != null 
                           ? Colors.green[600] 
-                          : Colors.grey[400],
+                          : AppColors.grey400,
                     ),
                     SizedBox(height: ResponsiveHelper.spacing(context, 6)),
                     Text(
@@ -1932,8 +1936,8 @@ class _RegisterScreenState extends State<RegisterScreen> {
                       style: ResponsiveHelper.smallStyle(
                         context,
                         color: _bankbookImagePath != null 
-                            ? Colors.green[700] 
-                            : Colors.grey[600],
+                            ? AppColors.successDark 
+                            : AppColors.grey600,
                       ),
                     ),
                   ],
@@ -2062,14 +2066,14 @@ class _RegisterScreenState extends State<RegisterScreen> {
         Container(
           padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 10)),
           decoration: BoxDecoration(
-            color: Colors.grey[100],
+            color: AppColors.grey100,
             borderRadius: BorderRadius.circular(10),
           ),
           child: Row(
             children: [
               Icon(
                 Icons.info_outline,
-                color: Colors.grey[600],
+                color: AppColors.grey600,
                 size: ResponsiveHelper.iconSize(context, 18),
               ),
               SizedBox(width: ResponsiveHelper.spacing(context, 10)),
@@ -2078,7 +2082,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
                   '지금 등록하지 않아도 설정에서 추가할 수 있습니다.',
                   style: ResponsiveHelper.smallStyle(
                     context,
-                    color: Colors.grey[700],
+                    color: AppColors.grey700,
                   ),
                 ),
               ),
@@ -2111,7 +2115,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
             hintText: '0000000000',
             hintStyle: ResponsiveHelper.smallStyle(
               context,
-              color: Colors.grey[400],
+              color: AppColors.grey400,
             ),
             prefixIcon: Icon(
               Icons.badge_outlined,
@@ -2120,10 +2124,10 @@ class _RegisterScreenState extends State<RegisterScreen> {
             ),
             border: OutlineInputBorder(
               borderRadius: BorderRadius.circular(10),
-              borderSide: BorderSide(color: Colors.grey[300]!),
+              borderSide: BorderSide(color: AppColors.grey300!),
             ),
             filled: true,
-            fillColor: Colors.grey[50],
+            fillColor: AppColors.grey50,
             isDense: true,
             contentPadding: EdgeInsets.symmetric(
               horizontal: ResponsiveHelper.spacing(context, 12),
@@ -2148,7 +2152,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
               '형식: ${_formatBusinessNumber(_businessNumberController.text)}',
               style: ResponsiveHelper.tinyStyle(
                 context,
-                color: Colors.green[700],
+                color: AppColors.successDark,
               ),
             ),
           ),
@@ -2174,7 +2178,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
                   hintText: '예: 홍길동',
                   hintStyle: ResponsiveHelper.smallStyle(
                     context,
-                    color: Colors.grey[400],
+                    color: AppColors.grey400,
                   ),
                   prefixIcon: Icon(
                     Icons.person_outline,
@@ -2183,10 +2187,10 @@ class _RegisterScreenState extends State<RegisterScreen> {
                   ),
                   border: OutlineInputBorder(
                     borderRadius: BorderRadius.circular(10),
-                    borderSide: BorderSide(color: Colors.grey[300]!),
+                    borderSide: BorderSide(color: AppColors.grey300!),
                   ),
                   filled: true,
-                  fillColor: Colors.grey[50],
+                  fillColor: AppColors.grey50,
                   isDense: true,
                   contentPadding: EdgeInsets.symmetric(
                     horizontal: ResponsiveHelper.spacing(context, 12),
@@ -2254,7 +2258,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
           color: isUploaded ? color.withOpacity(0.1) : Colors.white,
           borderRadius: BorderRadius.circular(14),
           border: Border.all(
-            color: isUploaded ? color : Colors.grey[300]!,
+            color: isUploaded ? color : AppColors.grey300!,
             width: isUploaded ? 2 : 1,
           ),
           boxShadow: [
@@ -2295,7 +2299,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
                     description,
                     style: ResponsiveHelper.smallStyle(
                       context,
-                      color: Colors.grey[600],
+                      color: AppColors.grey600,
                     ),
                   ),
                 ],
@@ -2350,7 +2354,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
         hintText: hint,
         hintStyle: ResponsiveHelper.smallStyle(
           context,
-          color: Colors.grey[400],
+          color: AppColors.grey400,
         ),
         prefixIcon: Icon(
           icon,
@@ -2360,11 +2364,11 @@ class _RegisterScreenState extends State<RegisterScreen> {
         suffixIcon: suffixIcon,
         border: OutlineInputBorder(
           borderRadius: BorderRadius.circular(10),
-          borderSide: BorderSide(color: Colors.grey[300]!),
+          borderSide: BorderSide(color: AppColors.grey300!),
         ),
         enabledBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(10),
-          borderSide: BorderSide(color: Colors.grey[300]!),
+          borderSide: BorderSide(color: AppColors.grey300!),
         ),
         focusedBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(10),
@@ -2372,10 +2376,10 @@ class _RegisterScreenState extends State<RegisterScreen> {
         ),
         disabledBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(10),
-          borderSide: BorderSide(color: Colors.grey[200]!),
+          borderSide: BorderSide(color: AppColors.grey200!),
         ),
         filled: true,
-        fillColor: enabled ? Colors.grey[50] : Colors.grey[100],
+        fillColor: enabled ? AppColors.grey50 : AppColors.grey100,
         isDense: true,
         contentPadding: EdgeInsets.symmetric(
           horizontal: ResponsiveHelper.spacing(context, 12),
@@ -2407,7 +2411,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
           color: isSelected ? color.withOpacity(0.1) : Colors.white,
           borderRadius: BorderRadius.circular(16),
           border: Border.all(
-            color: isSelected ? color : Colors.grey[300]!,
+            color: isSelected ? color : AppColors.grey300!,
             width: isSelected ? 2 : 1,
           ),
           boxShadow: isSelected
@@ -2428,7 +2432,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
                 Container(
                   padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 10)),
                   decoration: BoxDecoration(
-                    color: isSelected ? color : Colors.grey[200],
+                    color: isSelected ? color : AppColors.grey200,
                     shape: BoxShape.circle,
                   ),
                   child: Icon(
@@ -2454,7 +2458,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
                         description,
                         style: ResponsiveHelper.smallStyle(
                           context,
-                          color: Colors.grey[600],
+                          color: AppColors.grey600,
                         ),
                       ),
                     ],
@@ -2462,13 +2466,13 @@ class _RegisterScreenState extends State<RegisterScreen> {
                 ),
                 Icon(
                   isSelected ? Icons.check_circle : Icons.radio_button_unchecked,
-                  color: isSelected ? color : Colors.grey[400],
+                  color: isSelected ? color : AppColors.grey400,
                   size: ResponsiveHelper.iconSize(context, 24),
                 ),
               ],
             ),
             SizedBox(height: ResponsiveHelper.spacing(context, 10)),
-            Divider(color: Colors.grey[300], height: 1),
+            Divider(color: AppColors.grey300, height: 1),
             SizedBox(height: ResponsiveHelper.spacing(context, 8)),
             ...features.map((feature) => Padding(
               padding: EdgeInsets.only(
@@ -2479,14 +2483,14 @@ class _RegisterScreenState extends State<RegisterScreen> {
                   Icon(
                     Icons.check,
                     size: ResponsiveHelper.iconSize(context, 14),
-                    color: isSelected ? color : Colors.grey[600],
+                    color: isSelected ? color : AppColors.grey600,
                   ),
                   SizedBox(width: ResponsiveHelper.spacing(context, 6)),
                   Text(
                     feature,
                     style: ResponsiveHelper.smallStyle(
                       context,
-                      color: isSelected ? Colors.black87 : Colors.grey[700],
+                      color: isSelected ? Colors.black87 : AppColors.grey700,
                     ),
                   ),
                 ],

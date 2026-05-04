@@ -1,6 +1,8 @@
-import 'package:flutter/material.dart';
+﻿import 'package:flutter/material.dart';
 import '../../../../utils/responsive_helper.dart';
 import 'to_section_container.dart';
+import '';
+import '../../../../theme/app_colors.dart';
 
 // 위젯 파일 위치: lib/screens/business_admin/to_management/widgets/
 
@@ -47,7 +49,7 @@ class TOTitleSection extends StatelessWidget {
               hintText: '예: 분류작업, 피킹업무',
               hintStyle: ResponsiveHelper.smallStyle(
                 context,
-                color: Colors.grey[400],
+                color: AppColors.grey400,
               ),
               prefixIcon: Icon(
                 Icons.title,
@@ -56,11 +58,11 @@ class TOTitleSection extends StatelessWidget {
               ),
               border: OutlineInputBorder(
                 borderRadius: BorderRadius.circular(12),
-                borderSide: BorderSide(color: Colors.grey[300]!),
+                borderSide: BorderSide(color: AppColors.grey300!),
               ),
               enabledBorder: OutlineInputBorder(
                 borderRadius: BorderRadius.circular(12),
-                borderSide: BorderSide(color: Colors.grey[300]!),
+                borderSide: BorderSide(color: AppColors.grey300!),
               ),
               focusedBorder: OutlineInputBorder(
                 borderRadius: BorderRadius.circular(12),
@@ -150,7 +152,7 @@ class TOTitleSection extends StatelessWidget {
                 hintText: '비워두면 자동으로 생성됩니다',
                 hintStyle: ResponsiveHelper.smallStyle(
                   context,
-                  color: Colors.grey[400],
+                  color: AppColors.grey400,
                 ),
                 border: OutlineInputBorder(
                   borderRadius: BorderRadius.circular(12),
@@ -160,7 +162,7 @@ class TOTitleSection extends StatelessWidget {
                 helperText: '비워두면 자동으로 생성됩니다',
                 helperStyle: ResponsiveHelper.smallStyle(
                   context,
-                  color: Colors.grey[600],
+                  color: AppColors.grey600,
                 ),
               ),
             ),

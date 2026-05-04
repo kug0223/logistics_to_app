@@ -1,29 +1,37 @@
-// lib/screens/common/profile_edit_screen.dart
+﻿// lib/screens/common/profile_edit_screen.dart
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
+import '';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:intl/intl.dart';
+import '';
 
 // Providers
 import '../../providers/user_provider.dart';
+import '';
 
 // Models
 import '../../models/core/user_model.dart';
+import '';
 
 // Services
 import '../../services/firestore_service.dart';
 import '../../services/auth_service.dart';
+import '';
 
 // Utils
 import '../../utils/responsive_helper.dart';
 import '../../utils/toast_helper.dart';
+import '';
 
 // Widgets
 import '../../widgets/common/common_widgets.dart';
 import '../../widgets/inputs/daum_address_search.dart';
+import '';
 import '../../widgets/dialogs/styled_dialog.dart';  // ⭐ 추가
+import '../../theme/app_colors.dart';
 
 /// ✨ 프로필 수정 화면
 class ProfileEditScreen extends StatefulWidget {
@@ -202,7 +210,7 @@ class _ProfileEditScreenState extends State<ProfileEditScreen> {
                   suffixIcon: IconButton(
                     icon: Icon(
                       obscureCurrent ? Icons.visibility_off : Icons.visibility,
-                      color: Colors.grey[600],
+                      color: AppColors.grey600,
                       size: ResponsiveHelper.iconSize(context, 22),
                     ),
                     onPressed: () => setDialogState(() => obscureCurrent = !obscureCurrent),
@@ -224,7 +232,7 @@ class _ProfileEditScreenState extends State<ProfileEditScreen> {
                   suffixIcon: IconButton(
                     icon: Icon(
                       obscureNew ? Icons.visibility_off : Icons.visibility,
-                      color: Colors.grey[600],
+                      color: AppColors.grey600,
                       size: ResponsiveHelper.iconSize(context, 22),
                     ),
                     onPressed: () => setDialogState(() => obscureNew = !obscureNew),
@@ -249,7 +257,7 @@ class _ProfileEditScreenState extends State<ProfileEditScreen> {
                   suffixIcon: IconButton(
                     icon: Icon(
                       obscureConfirm ? Icons.visibility_off : Icons.visibility,
-                      color: Colors.grey[600],
+                      color: AppColors.grey600,
                       size: ResponsiveHelper.iconSize(context, 22),
                     ),
                     onPressed: () => setDialogState(() => obscureConfirm = !obscureConfirm),
@@ -424,7 +432,7 @@ class _ProfileEditScreenState extends State<ProfileEditScreen> {
     }
 
     return Scaffold(
-      backgroundColor: Colors.grey[50],
+      backgroundColor: AppColors.grey50,
       appBar: AppBar(
         title: const Text('프로필 수정'),
         actions: [
@@ -810,7 +818,7 @@ class _ProfileEditScreenState extends State<ProfileEditScreen> {
                   ),
                   child: Icon(
                     Icons.lock_outline,
-                    color: Colors.orange[700],
+                    color: AppColors.warningDark,
                     size: ResponsiveHelper.iconSize(context, 24),
                   ),
                 ),
@@ -829,7 +837,7 @@ class _ProfileEditScreenState extends State<ProfileEditScreen> {
                       Text(
                         '계정 보안을 위해 주기적으로 변경하세요',
                         style: ResponsiveHelper.smallStyle(context).copyWith(
-                          color: Colors.grey[600],
+                          color: AppColors.grey600,
                         ),
                       ),
                     ],
@@ -837,7 +845,7 @@ class _ProfileEditScreenState extends State<ProfileEditScreen> {
                 ),
                 Icon(
                   Icons.chevron_right,
-                  color: Colors.grey[400],
+                  color: AppColors.grey400,
                   size: ResponsiveHelper.iconSize(context, 24),
                 ),
               ],
@@ -871,7 +879,7 @@ class _ProfileEditScreenState extends State<ProfileEditScreen> {
           Text(
             label,
             style: ResponsiveHelper.bodyStyle(context).copyWith(
-              color: Colors.grey[600],
+              color: AppColors.grey600,
             ),
           ),
           const Spacer(),
@@ -890,7 +898,7 @@ class _ProfileEditScreenState extends State<ProfileEditScreen> {
   Widget _buildDivider() {
     return Divider(
       height: 1,
-      color: Colors.grey[200],
+      color: AppColors.grey200,
     );
   }
 }

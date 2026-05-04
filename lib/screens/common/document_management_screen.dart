@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+﻿import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../providers/user_provider.dart';
 import '../../models/core/user_model.dart';
@@ -11,6 +11,8 @@ import '../../utils/format_helper.dart';
 import 'package:intl/intl.dart';
 import '../../services/storage_service.dart';
 import '../../utils/navigation_helper.dart';
+import '';
+import '../../theme/app_colors.dart';
 
 /// 📄 내 서류 관리 화면 (역할별 분기)
 /// - 지원자(USER): 신분증 + 통장 정보
@@ -129,7 +131,7 @@ class _DocumentManagementScreenState extends State<DocumentManagementScreen> {
                    '사업장 등록이 가능합니다.\n'
                    '아래 정보와 사업자등록증이 일치해야 합니다.',
           icon: Icons.warning_amber,
-          color: Colors.orange[700],
+          color: AppColors.warningDark,
         ),
         
         SizedBox(height: ResponsiveHelper.spacing(context, 24)),
@@ -187,7 +189,7 @@ class _DocumentManagementScreenState extends State<DocumentManagementScreen> {
               border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
               enabledBorder: OutlineInputBorder(
                 borderRadius: BorderRadius.circular(12),
-                borderSide: BorderSide(color: Colors.grey[300]!),
+                borderSide: BorderSide(color: AppColors.grey300!),
               ),
             ),
           ),
@@ -324,7 +326,7 @@ class _DocumentManagementScreenState extends State<DocumentManagementScreen> {
                   ),
                   child: Icon(
                     Icons.check_circle,
-                    color: Colors.green[700],
+                    color: AppColors.successDark,
                     size: ResponsiveHelper.iconSize(context, 32),
                   ),
                 ),
@@ -344,7 +346,7 @@ class _DocumentManagementScreenState extends State<DocumentManagementScreen> {
                       Text(
                         '등록 완료 ✓',
                         style: ResponsiveHelper.smallStyle(context).copyWith(
-                          color: Colors.green[700],
+                          color: AppColors.successDark,
                         ),
                       ),
                     ],
@@ -370,7 +372,7 @@ class _DocumentManagementScreenState extends State<DocumentManagementScreen> {
                       }
                     },
                     icon: Icons.refresh,
-                    color: Colors.blue[700],
+                    color: AppColors.infoDark,
                   ),
                 ),
                 SizedBox(width: ResponsiveHelper.spacing(context, 12)),
@@ -391,9 +393,9 @@ class _DocumentManagementScreenState extends State<DocumentManagementScreen> {
               padding: ResponsiveHelper.cardPadding(context),
               width: double.infinity,
               decoration: BoxDecoration(
-                color: Colors.grey[100],
+                color: AppColors.grey100,
                 borderRadius: BorderRadius.circular(12),
-                border: Border.all(color: Colors.grey[300]!),
+                border: Border.all(color: AppColors.grey300!),
               ),
               child: Column(
                 mainAxisAlignment: MainAxisAlignment.center,
@@ -402,13 +404,13 @@ class _DocumentManagementScreenState extends State<DocumentManagementScreen> {
                   Icon(
                     Icons.description_outlined,
                     size: ResponsiveHelper.iconSize(context, 64),
-                    color: Colors.grey[400],
+                    color: AppColors.grey400,
                   ),
                   SizedBox(height: ResponsiveHelper.spacing(context, 16)),
                   Text(
                     '사업자등록증이 등록되지 않았습니다',
                     style: ResponsiveHelper.bodyStyle(context).copyWith(
-                      color: Colors.grey[600],
+                      color: AppColors.grey600,
                     ),
                     textAlign: TextAlign.center,
                   ),
@@ -418,7 +420,7 @@ class _DocumentManagementScreenState extends State<DocumentManagementScreen> {
                         ? '위 정보와 일치하는 사업자등록증을 업로드해주세요'
                         : '먼저 사업자 정보를 입력하고 저장해주세요',
                     style: ResponsiveHelper.smallStyle(context).copyWith(
-                      color: hasBusinessInfo ? Colors.grey[500] : Colors.orange[700],
+                      color: hasBusinessInfo ? AppColors.grey500 : AppColors.warningDark,
                     ),
                     textAlign: TextAlign.center,
                   ),
@@ -447,7 +449,7 @@ class _DocumentManagementScreenState extends State<DocumentManagementScreen> {
                 child: Text(
                   '* 사업자 정보를 먼저 저장해주세요',
                   style: ResponsiveHelper.smallStyle(context).copyWith(
-                    color: Colors.orange[700],
+                    color: AppColors.warningDark,
                   ),
                   textAlign: TextAlign.center,
                 ),
@@ -581,7 +583,7 @@ class _DocumentManagementScreenState extends State<DocumentManagementScreen> {
           message: '본인 명의의 서류만 등록 가능합니다.\n'
               '신분증과 통장의 이름이 일치해야 합니다.',
           icon: Icons.info_outline,
-          color: Colors.blue[700],
+          color: AppColors.infoDark,
         ),
         
         SizedBox(height: ResponsiveHelper.spacing(context, 24)),
@@ -844,7 +846,7 @@ class _DocumentManagementScreenState extends State<DocumentManagementScreen> {
                   ),
                   child: Icon(
                     Icons.check_circle,
-                    color: Colors.green[700],
+                    color: AppColors.successDark,
                     size: ResponsiveHelper.iconSize(context, 32),
                   ),
                 ),
@@ -865,7 +867,7 @@ class _DocumentManagementScreenState extends State<DocumentManagementScreen> {
                         Text(
                           '등록일: ${DateFormat('yyyy.MM.dd HH:mm').format(user.idCardVerifiedAt!)}',
                           style: ResponsiveHelper.smallStyle(context).copyWith(
-                            color: Colors.grey[600],
+                            color: AppColors.grey600,
                           ),
                         ),
                     ],
@@ -885,7 +887,7 @@ class _DocumentManagementScreenState extends State<DocumentManagementScreen> {
                     text: '재업로드',
                     onPressed: _uploadIdCard,
                     icon: Icons.refresh,
-                    color: Colors.blue[700],
+                    color: AppColors.infoDark,
                   ),
                 ),
                 SizedBox(width: ResponsiveHelper.spacing(context, 12)),
@@ -906,9 +908,9 @@ class _DocumentManagementScreenState extends State<DocumentManagementScreen> {
               padding: ResponsiveHelper.cardPadding(context),
               width: double.infinity,
               decoration: BoxDecoration(
-                color: Colors.grey[100],
+                color: AppColors.grey100,
                 borderRadius: BorderRadius.circular(12),
-                border: Border.all(color: Colors.grey[300]!),
+                border: Border.all(color: AppColors.grey300!),
               ),
               child: Column(
                 mainAxisAlignment: MainAxisAlignment.center,
@@ -917,13 +919,13 @@ class _DocumentManagementScreenState extends State<DocumentManagementScreen> {
                   Icon(
                     Icons.badge_outlined,
                     size: ResponsiveHelper.iconSize(context, 64),
-                    color: Colors.grey[400],
+                    color: AppColors.grey400,
                   ),
                   SizedBox(height: ResponsiveHelper.spacing(context, 16)),
                   Text(
                     '신분증이 등록되지 않았습니다',
                     style: ResponsiveHelper.bodyStyle(context).copyWith(
-                      color: Colors.grey[600],
+                      color: AppColors.grey600,
                     ),
                     textAlign: TextAlign.center,
                   ),
@@ -931,7 +933,7 @@ class _DocumentManagementScreenState extends State<DocumentManagementScreen> {
                   Text(
                     '주민등록증 또는 운전면허증 앞면',
                     style: ResponsiveHelper.smallStyle(context).copyWith(
-                      color: Colors.grey[500],
+                      color: AppColors.grey500,
                     ),
                     textAlign: TextAlign.center,
                   ),
@@ -998,7 +1000,7 @@ class _DocumentManagementScreenState extends State<DocumentManagementScreen> {
                   children: [
                     Icon(
                       Icons.check_circle,
-                      color: Colors.green[700],
+                      color: AppColors.successDark,
                       size: ResponsiveHelper.iconSize(context, 20),
                     ),
                     SizedBox(width: ResponsiveHelper.spacing(context, 8)),
@@ -1023,7 +1025,7 @@ class _DocumentManagementScreenState extends State<DocumentManagementScreen> {
                   children: [
                     Icon(
                       Icons.warning_amber,
-                      color: Colors.orange[700],
+                      color: AppColors.warningDark,
                       size: ResponsiveHelper.iconSize(context, 20),
                     ),
                     SizedBox(width: ResponsiveHelper.spacing(context, 8)),
@@ -1061,7 +1063,7 @@ class _DocumentManagementScreenState extends State<DocumentManagementScreen> {
                       _showBankEditDialog();
                     },
                     icon: Icons.edit,
-                    color: Colors.blue[700],
+                    color: AppColors.infoDark,
                   ),
                 ),
                 SizedBox(width: ResponsiveHelper.spacing(context, 12)),
@@ -1082,9 +1084,9 @@ class _DocumentManagementScreenState extends State<DocumentManagementScreen> {
               padding: ResponsiveHelper.cardPadding(context),
               width: double.infinity,
               decoration: BoxDecoration(
-                color: Colors.grey[100],
+                color: AppColors.grey100,
                 borderRadius: BorderRadius.circular(12),
-                border: Border.all(color: Colors.grey[300]!),
+                border: Border.all(color: AppColors.grey300!),
               ),
               child: Column(
                 mainAxisAlignment: MainAxisAlignment.center,
@@ -1093,13 +1095,13 @@ class _DocumentManagementScreenState extends State<DocumentManagementScreen> {
                   Icon(
                     Icons.account_balance_wallet_outlined,
                     size: ResponsiveHelper.iconSize(context, 64),
-                    color: Colors.grey[400],
+                    color: AppColors.grey400,
                   ),
                   SizedBox(height: ResponsiveHelper.spacing(context, 16)),
                   Text(
                     '통장 정보가 등록되지 않았습니다',
                     style: ResponsiveHelper.bodyStyle(context).copyWith(
-                      color: Colors.grey[600],
+                      color: AppColors.grey600,
                     ),
                     textAlign: TextAlign.center,
                   ),
@@ -1107,7 +1109,7 @@ class _DocumentManagementScreenState extends State<DocumentManagementScreen> {
                   Text(
                     '급여 수령을 위한 통장 정보',
                     style: ResponsiveHelper.smallStyle(context).copyWith(
-                      color: Colors.grey[500],
+                      color: AppColors.grey500,
                     ),
                     textAlign: TextAlign.center,
                   ),
@@ -1157,7 +1159,7 @@ class _DocumentManagementScreenState extends State<DocumentManagementScreen> {
               Text(
                 label,
                 style: ResponsiveHelper.smallStyle(context).copyWith(
-                  color: Colors.grey[600],
+                  color: AppColors.grey600,
                 ),
               ),
               SizedBox(height: ResponsiveHelper.spacing(context, 2)),

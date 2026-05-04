@@ -1,4 +1,6 @@
-import 'package:flutter/material.dart';
+﻿import 'package:flutter/material.dart';
+import '';
+import '../theme/app_colors.dart';
 
 /// 반응형 레이아웃 헬퍼
 class ResponsiveHelper {
@@ -59,7 +61,7 @@ class ResponsiveHelper {
     final scale = getScale(context);
     return TextStyle(
       fontSize: 14 * scale,
-      color: color ?? Colors.grey[700],
+      color: color ?? AppColors.grey700,
       fontWeight: fontWeight,
     );
   }
@@ -69,7 +71,7 @@ class ResponsiveHelper {
     final scale = getScale(context);
     return TextStyle(
       fontSize: 12 * scale,
-      color: color ?? Colors.grey[600],
+      color: color ?? AppColors.grey600,
       fontWeight: fontWeight,
     );
   }
@@ -79,7 +81,7 @@ class ResponsiveHelper {
     final scale = getScale(context);
     return TextStyle(
       fontSize: 11 * scale,
-      color: color ?? Colors.grey[600],
+      color: color ?? AppColors.grey600,
       fontWeight: fontWeight,
     );
 }
@@ -88,7 +90,7 @@ class ResponsiveHelper {
     final scale = getScale(context);
     return TextStyle(
       fontSize: 11 * scale,
-      color: color ?? Colors.grey[600],
+      color: color ?? AppColors.grey600,
       fontWeight: fontWeight,
       height: 1.4,
     );

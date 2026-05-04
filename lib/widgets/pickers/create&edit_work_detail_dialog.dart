@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+﻿import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../../models/core/business_work_type_model.dart';
 import '../../utils/toast_helper.dart';
@@ -8,6 +8,8 @@ import '../../models/work_detail_input.dart';
 import '../work_type_icon.dart';
 import '../../utils/format_helper.dart';
 import '../../models/core/work_detail_model.dart';
+import '';
+import '../../theme/app_colors.dart';
 
 // ============================================================
 // 🎨 업무 추가 다이얼로그 (세련된 디자인)
@@ -354,15 +356,15 @@ class WorkDetailDialog {
     return Container(
       padding: ResponsiveHelper.cardPadding(context),
       decoration: BoxDecoration(
-        color: Colors.orange[50],
+        color: AppColors.warningBg,
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: Colors.orange[200]!),
+        border: Border.all(color: AppColors.warningLight!),
       ),
       child: Row(
         children: [
           Icon(
             Icons.info_outline,
-            color: Colors.orange[700],
+            color: AppColors.warningDark,
             size: ResponsiveHelper.iconSize(context, 20),
           ),
           SizedBox(width: ResponsiveHelper.spacing(context, 12)),
@@ -381,7 +383,7 @@ class WorkDetailDialog {
                 Text(
                   '업무유형을 변경하려면 삭제 후 재등록해주세요.\n지원자가 있는 경우 지원이 자동 취소됩니다.',
                   style: ResponsiveHelper.smallStyle(context).copyWith(
-                    color: Colors.orange[700],
+                    color: AppColors.warningDark,
                   ),
                 ),
               ],
@@ -436,11 +438,11 @@ class WorkDetailDialog {
           inputFormatters: [FilteringTextInputFormatter.digitsOnly],
           decoration: InputDecoration(
             filled: true,
-            fillColor: Colors.grey[50],
+            fillColor: AppColors.grey50,
             hintText: '필요한 인원 수를 입력하세요',
             hintStyle: ResponsiveHelper.bodyStyle(
               context,
-              color: Colors.grey[400],
+              color: AppColors.grey400,
             ),
             suffixText: '명',
             suffixStyle: ResponsiveHelper.bodyStyle(context).copyWith(
@@ -451,7 +453,7 @@ class WorkDetailDialog {
                 ? '현재 $currentCount명 확정됨 (최소 $currentCount명 이상)'
                 : null,
             helperStyle: ResponsiveHelper.smallStyle(context).copyWith(
-              color: Colors.orange[700],
+              color: AppColors.warningDark,
             ),
             prefixIcon: Icon(
               Icons.group_add,
@@ -460,11 +462,11 @@ class WorkDetailDialog {
             ),
             border: OutlineInputBorder(
               borderRadius: BorderRadius.circular(12),
-              borderSide: BorderSide(color: Colors.grey[300]!),
+              borderSide: BorderSide(color: AppColors.grey300!),
             ),
             enabledBorder: OutlineInputBorder(
               borderRadius: BorderRadius.circular(12),
-              borderSide: BorderSide(color: Colors.grey[300]!),
+              borderSide: BorderSide(color: AppColors.grey300!),
             ),
             focusedBorder: OutlineInputBorder(
               borderRadius: BorderRadius.circular(12),
@@ -493,7 +495,7 @@ class WorkDetailDialog {
       decoration: BoxDecoration(
         color: Colors.white,
         border: Border(
-          top: BorderSide(color: Colors.grey[200]!),
+          top: BorderSide(color: AppColors.grey200!),
         ),
         borderRadius: const BorderRadius.only(
           bottomLeft: Radius.circular(24),
@@ -512,7 +514,7 @@ class WorkDetailDialog {
                 shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(12),
                 ),
-                side: BorderSide(color: Colors.grey[300]!),
+                side: BorderSide(color: AppColors.grey300!),
               ),
               child: Text(
                 '취소',
@@ -729,12 +731,12 @@ class WorkDetailDialog {
         SizedBox(height: ResponsiveHelper.spacing(context, 12)),
         Container(
           decoration: BoxDecoration(
-            color: Colors.grey[50],
+            color: AppColors.grey50,
             borderRadius: BorderRadius.circular(12),
             border: Border.all(
               color: selectedWorkType != null 
                   ? theme.primaryColor 
-                  : Colors.grey[300]!,
+                  : AppColors.grey300!,
               width: selectedWorkType != null ? 2 : 1,
             ),
           ),
@@ -747,7 +749,7 @@ class WorkDetailDialog {
               hintText: '업무를 선택하세요',
               hintStyle: ResponsiveHelper.bodyStyle(
                 context,
-                color: Colors.grey[400],
+                color: AppColors.grey400,
               ),
             ),
             items: businessWorkTypes.map((workType) {
@@ -829,7 +831,7 @@ class WorkDetailDialog {
               child: Icon(
                 Icons.payments,
                 size: ResponsiveHelper.iconSize(context, 18),
-                color: Colors.green[700],
+                color: AppColors.successDark,
               ),
             ),
             SizedBox(width: ResponsiveHelper.spacing(context, 12)),
@@ -906,7 +908,7 @@ class WorkDetailDialog {
               child: Icon(
                 Icons.schedule,
                 size: ResponsiveHelper.iconSize(context, 18),
-                color: Colors.blue[700],
+                color: AppColors.infoDark,
               ),
             ),
             SizedBox(width: ResponsiveHelper.spacing(context, 12)),
@@ -926,12 +928,12 @@ class WorkDetailDialog {
             // 시작 시간
             Container(
               decoration: BoxDecoration(
-                color: Colors.grey[50],
+                color: AppColors.grey50,
                 borderRadius: BorderRadius.circular(12),
                 border: Border.all(
                   color: startTime != null 
                       ? theme.primaryColor 
-                      : Colors.grey[300]!,
+                      : AppColors.grey300!,
                   width: startTime != null ? 2 : 1,
                 ),
               ),
@@ -947,7 +949,7 @@ class WorkDetailDialog {
                   hintText: '시작 시간 선택',
                   hintStyle: ResponsiveHelper.smallStyle(
                     context,
-                    color: Colors.grey[400],
+                    color: AppColors.grey400,
                   ),
                   prefixIcon: Icon(
                     Icons.play_arrow,
@@ -981,12 +983,12 @@ class WorkDetailDialog {
             // 종료 시간
             Container(
               decoration: BoxDecoration(
-                color: Colors.grey[50],
+                color: AppColors.grey50,
                 borderRadius: BorderRadius.circular(12),
                 border: Border.all(
                   color: endTime != null 
                       ? theme.primaryColor 
-                      : Colors.grey[300]!,
+                      : AppColors.grey300!,
                   width: endTime != null ? 2 : 1,
                 ),
               ),
@@ -1002,7 +1004,7 @@ class WorkDetailDialog {
                   hintText: '종료 시간 선택',
                   hintStyle: ResponsiveHelper.smallStyle(
                     context,
-                    color: Colors.grey[400],
+                    color: AppColors.grey400,
                   ),
                   prefixIcon: Icon(
                     Icons.stop,
@@ -1072,16 +1074,16 @@ class WorkDetailDialog {
           ],
           decoration: InputDecoration(
             filled: true,
-            fillColor: Colors.grey[50],
+            fillColor: AppColors.grey50,
             hintText: '금액을 입력하세요',
             hintStyle: ResponsiveHelper.bodyStyle(
               context,
-              color: Colors.grey[400],
+              color: AppColors.grey400,
             ),
             suffixText: '원',
             suffixStyle: ResponsiveHelper.bodyStyle(context).copyWith(
               fontWeight: FontWeight.bold,
-              color: Colors.green[700],
+              color: AppColors.successDark,
             ),
             prefixIcon: Icon(
               Icons.attach_money,
@@ -1090,11 +1092,11 @@ class WorkDetailDialog {
             ),
             border: OutlineInputBorder(
               borderRadius: BorderRadius.circular(12),
-              borderSide: BorderSide(color: Colors.grey[300]!),
+              borderSide: BorderSide(color: AppColors.grey300!),
             ),
             enabledBorder: OutlineInputBorder(
               borderRadius: BorderRadius.circular(12),
-              borderSide: BorderSide(color: Colors.grey[300]!),
+              borderSide: BorderSide(color: AppColors.grey300!),
             ),
             focusedBorder: OutlineInputBorder(
               borderRadius: BorderRadius.circular(12),
@@ -1109,7 +1111,7 @@ class WorkDetailDialog {
             decoration: BoxDecoration(
               gradient: LinearGradient(
                 colors: [
-                  Colors.blue[50]!,
+                  AppColors.infoBg!,
                   Colors.blue[100]!,
                 ],
               ),
@@ -1120,7 +1122,7 @@ class WorkDetailDialog {
                 Icon(
                   Icons.info_outline,
                   size: ResponsiveHelper.iconSize(context, 16),
-                  color: Colors.blue[700],
+                  color: AppColors.infoDark,
                 ),
                 SizedBox(width: ResponsiveHelper.spacing(context, 8)),
                 Expanded(
@@ -1183,11 +1185,11 @@ class WorkDetailDialog {
           inputFormatters: [FilteringTextInputFormatter.digitsOnly],
           decoration: InputDecoration(
             filled: true,
-            fillColor: Colors.grey[50],
+            fillColor: AppColors.grey50,
             hintText: '필요한 인원 수를 입력하세요',
             hintStyle: ResponsiveHelper.bodyStyle(
               context,
-              color: Colors.grey[400],
+              color: AppColors.grey400,
             ),
             suffixText: '명',
             suffixStyle: ResponsiveHelper.bodyStyle(context).copyWith(
@@ -1201,11 +1203,11 @@ class WorkDetailDialog {
             ),
             border: OutlineInputBorder(
               borderRadius: BorderRadius.circular(12),
-              borderSide: BorderSide(color: Colors.grey[300]!),
+              borderSide: BorderSide(color: AppColors.grey300!),
             ),
             enabledBorder: OutlineInputBorder(
               borderRadius: BorderRadius.circular(12),
-              borderSide: BorderSide(color: Colors.grey[300]!),
+              borderSide: BorderSide(color: AppColors.grey300!),
             ),
             focusedBorder: OutlineInputBorder(
               borderRadius: BorderRadius.circular(12),
@@ -1233,7 +1235,7 @@ class WorkDetailDialog {
       decoration: BoxDecoration(
         color: Colors.white,
         border: Border(
-          top: BorderSide(color: Colors.grey[200]!),
+          top: BorderSide(color: AppColors.grey200!),
         ),
       ),
       child: Row(
@@ -1248,7 +1250,7 @@ class WorkDetailDialog {
                 shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(12),
                 ),
-                side: BorderSide(color: Colors.grey[300]!),
+                side: BorderSide(color: AppColors.grey300!),
               ),
               child: Text(
                 '취소',
@@ -1406,7 +1408,7 @@ class WorkDetailDialog {
           border: Border.all(
             color: isSelected 
                 ? theme.primaryColor
-                : Colors.grey[300]!,
+                : AppColors.grey300!,
             width: isSelected ? 2 : 1,
           ),
           borderRadius: BorderRadius.circular(12),
@@ -1424,14 +1426,14 @@ class WorkDetailDialog {
           children: [
             Icon(
               icon,
-              color: isSelected ? Colors.white : Colors.grey[600],
+              color: isSelected ? Colors.white : AppColors.grey600,
               size: ResponsiveHelper.iconSize(context, 20),
             ),
             SizedBox(height: ResponsiveHelper.spacing(context, 4)),
             Text(
               label,
               style: ResponsiveHelper.smallStyle(context).copyWith(
-                color: isSelected ? Colors.white : Colors.grey[700],
+                color: isSelected ? Colors.white : AppColors.grey700,
                 fontWeight: isSelected ? FontWeight.bold : FontWeight.w600,
               ),
             ),

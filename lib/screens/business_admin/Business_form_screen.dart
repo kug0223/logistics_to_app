@@ -1,37 +1,46 @@
-import 'package:ALfit/screens/common/document_management_screen.dart';
+﻿import 'package:ALfit/screens/common/document_management_screen.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:provider/provider.dart';
 import 'dart:io';
+import '';
 
 // Models
 import '../../models/core/business_model.dart';
+import '';
 
 // Providers
 import '../../providers/user_provider.dart';
+import '';
 
 // Helper
 import '../../utils/image_helper.dart';
+import '';
 // Services
 import '../../services/firestore_service.dart';
 import '../../services/storage_service.dart';
+import '';
 
 // Utils
 import '../../utils/responsive_helper.dart';
 import '../../utils/toast_helper.dart';
 import '../../utils/constants.dart';
 import '../../utils/dialog_helper.dart';
+import '';
 
 // Widgets
 import '../../widgets/common/common_widgets.dart';
 import '../../widgets/inputs/daum_address_search.dart';
+import '';
 
 // Screen
 import '../auth/login_screen.dart';
 import '../../utils/navigation_helper.dart';
 import '../../utils/format_helper.dart';
+import '';
+import '../../theme/app_colors.dart';
 
 /// 🏢 사업장 등록/수정 화면 (Stepper 방식)
 class BusinessFormScreen extends StatefulWidget {
@@ -340,7 +349,7 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
               border: Border.all(
                 color: _selectedCategory == entry.key
                     ? theme.primaryColor
-                    : Colors.grey[300]!,
+                    : AppColors.grey300!,
                 width: _selectedCategory == entry.key ? 2 : 1,
               ),
             ),
@@ -351,7 +360,7 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
                     _getCategoryIcon(entry.key),
                     color: _selectedCategory == entry.key
                         ? theme.primaryColor
-                        : Colors.grey[600],
+                        : AppColors.grey600,
                     size: ResponsiveHelper.iconSize(context, 24),
                   ),
                   SizedBox(width: ResponsiveHelper.spacing(context, 12)),
@@ -483,7 +492,7 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
               border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
               enabledBorder: OutlineInputBorder(
                 borderRadius: BorderRadius.circular(12),
-                borderSide: BorderSide(color: Colors.grey[300]!),
+                borderSide: BorderSide(color: AppColors.grey300!),
               ),
             ),
             onChanged: (value) {
@@ -576,9 +585,9 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
             width: double.infinity,
             height: 180,
             decoration: BoxDecoration(
-              color: Colors.grey[200],
+              color: AppColors.grey200,
               borderRadius: BorderRadius.circular(16),
-              border: Border.all(color: Colors.grey[300]!),
+              border: Border.all(color: AppColors.grey300!),
               image: _mainImage != null
                   ? DecorationImage(
                       image: FileImage(_mainImage!),
@@ -598,13 +607,13 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
                       Icon(
                         Icons.add_photo_alternate,
                         size: ResponsiveHelper.iconSize(context, 48),
-                        color: Colors.grey[400],
+                        color: AppColors.grey400,
                       ),
                       SizedBox(height: ResponsiveHelper.spacing(context, 8)),
                       Text(
                         '대표 이미지 추가 (선택)',
                         style: ResponsiveHelper.bodyStyle(context).copyWith(
-                          color: Colors.grey[600],
+                          color: AppColors.grey600,
                         ),
                       ),
                     ],
@@ -1033,9 +1042,9 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
       child: Container(
         width: 100,
         decoration: BoxDecoration(
-          color: Colors.grey[200],
+          color: AppColors.grey200,
           borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: Colors.grey[400]!),
+          border: Border.all(color: AppColors.grey400!),
         ),
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
@@ -1043,13 +1052,13 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
             Icon(
               Icons.add_photo_alternate,
               size: ResponsiveHelper.iconSize(context, 28),
-              color: Colors.grey[600],
+              color: AppColors.grey600,
             ),
             SizedBox(height: ResponsiveHelper.spacing(context, 4)),
             Text(
               '추가',
               style: ResponsiveHelper.smallStyle(context).copyWith(
-                color: Colors.grey[600],
+                color: AppColors.grey600,
               ),
             ),
           ],

@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+﻿import 'package:flutter/material.dart';
 import 'package:table_calendar/table_calendar.dart';
 import 'package:provider/provider.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -230,7 +230,7 @@ class _WorkforceCalendarViewState extends State<WorkforceCalendarView> {
         children: [
           _buildLegendItem(theme.primaryColor, '단기 진행중', isLongTerm: false),
           _buildLegendItem(AppColors.longTerm, '장기 진행중', isLongTerm: false),  // ✅ 보라색 + 원형
-          _buildLegendItem(Colors.grey[400]!, '과거/마감', isLongTerm: false),
+          _buildLegendItem(AppColors.grey400!, '과거/마감', isLongTerm: false),
         ],
       ),
     );
@@ -286,8 +286,8 @@ class _WorkforceCalendarViewState extends State<WorkforceCalendarView> {
               dayGroupItems.every((item) => item.isManualClosed);
 
           // ⭐ 회색 또는 기본 색상
-          final Color shortColor = isPastOrClosed ? Colors.grey[400]! : Theme.of(context).primaryColor;
-          final Color longColor = isPastOrClosed ? Colors.grey[400]! : AppColors.longTerm;  // ✅ 보라색
+          final Color shortColor = isPastOrClosed ? AppColors.grey400! : Theme.of(context).primaryColor;
+          final Color longColor = isPastOrClosed ? AppColors.grey400! : AppColors.longTerm;  // ✅ 보라색
 
           return Positioned(
             bottom: 3,
@@ -417,8 +417,8 @@ class _WorkforceCalendarViewState extends State<WorkforceCalendarView> {
                           ],
                         )
                       : null,
-                  backgroundColor: _hasConfirmedWorkers ? null : Colors.grey[300],
-                  foregroundColor: _hasConfirmedWorkers ? Colors.white : Colors.grey[600],
+                  backgroundColor: _hasConfirmedWorkers ? null : AppColors.grey300,
+                  foregroundColor: _hasConfirmedWorkers ? Colors.white : AppColors.grey600,
                   onTap: _hasConfirmedWorkers ? _showAttendancePopup : null,
                 ),
               ),
@@ -605,7 +605,7 @@ class _WorkforceCalendarViewState extends State<WorkforceCalendarView> {
             '날짜를 선택해주세요',
             style: ResponsiveHelper.subtitleStyle(
               context,
-              color: Colors.grey[600],
+              color: AppColors.grey600,
             ),
           ),
         ),
@@ -624,14 +624,14 @@ class _WorkforceCalendarViewState extends State<WorkforceCalendarView> {
               Icon(
                 Icons.event_busy, 
                 size: ResponsiveHelper.iconSize(context, 80), 
-                color: Colors.grey[300]
+                color: AppColors.grey300
               ),
               SizedBox(height: ResponsiveHelper.spacing(context, 16)),
               Text(
                 '이 날짜에 등록된 TO가 없습니다',
                 style: ResponsiveHelper.subtitleStyle(
                   context,
-                  color: Colors.grey[600],
+                  color: AppColors.grey600,
                 ),
               ),
             ],
@@ -902,7 +902,7 @@ class _WorkforceCalendarViewState extends State<WorkforceCalendarView> {
             label,
             style: ResponsiveHelper.tinyStyle(
               context,
-              color: Colors.grey[800],
+              color: AppColors.grey800,
               fontWeight: FontWeight.w600,
             ),
           ),

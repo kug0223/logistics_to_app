@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+﻿import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../models/core/business_work_type_model.dart';
 import '../../models/core/business_model.dart';
@@ -12,6 +12,8 @@ import '../../utils/format_helper.dart';
 import '../../utils/responsive_helper.dart';
 import 'work_type_detail_screen.dart';
 import '../../widgets/dialogs/styled_dialog.dart';
+import '';
+import '../../theme/app_colors.dart';
 
 /// ✨ 세련된 업무 유형 관리 화면
 class WorkTypeManagementScreen extends StatefulWidget {
@@ -552,7 +554,7 @@ class _WorkTypeManagementScreenState extends State<WorkTypeManagementScreen> {
       ),
       // ✨ 연한 회색 배경 (카드와 대비)
       body: Container(
-        color: Colors.grey[50],
+        color: AppColors.grey50,
         child: _isLoadingBusinesses
             ? const LoadingWidget(message: '사업장 정보를 불러오는 중...')
             : _myBusinesses.isEmpty
@@ -684,7 +686,7 @@ class _WorkTypeManagementScreenState extends State<WorkTypeManagementScreen> {
             borderRadius: BorderRadius.circular(12),
           ),
           filled: true,
-          fillColor: Colors.grey[50],
+          fillColor: AppColors.grey50,
         ),
         items: _myBusinesses.map((business) {
           return DropdownMenuItem(

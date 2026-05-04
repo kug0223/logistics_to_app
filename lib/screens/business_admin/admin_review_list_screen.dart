@@ -1,4 +1,4 @@
-// lib/screens/business_admin/admin_review_list_screen.dart
+﻿// lib/screens/business_admin/admin_review_list_screen.dart
 
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
@@ -108,7 +108,7 @@ class _AdminReviewListScreenState extends State<AdminReviewListScreen>
     final theme = Theme.of(context);
     
     return Scaffold(
-      backgroundColor: Colors.grey[50],
+      backgroundColor: AppColors.grey50,
       appBar: AppBar(
         title: Text(
           '리뷰 관리',

@@ -1,24 +1,30 @@
-import 'package:flutter/material.dart';
+﻿import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:flutter/services.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import '';
 
 // Models
 import '../../models/core/business_model.dart';
+import '';
 
 // Utils
 import '../../utils/responsive_helper.dart';
 import '../../utils/toast_helper.dart';
 import '../../utils/format_helper.dart';
+import '';
 
 // Widgets
 import '../../widgets/common/common_widgets.dart';
 import '../../widgets/maps/kakao_map_widget.dart';
 import '../../widgets/maps/full_map_dialog.dart';
+import '';
 
 // Screen
 import 'business_form_screen.dart';
 import '../../utils/navigation_helper.dart';
+import '';
+import '../../theme/app_colors.dart';
 
 
 /// 🏢 사업장 상세 화면
@@ -187,12 +193,12 @@ class _BusinessDetailScreenState extends State<BusinessDetailScreen> {
       // 이미지가 없을 때
       return Container(
         height: 250,
-        color: Colors.grey[200],
+        color: AppColors.grey200,
         child: Center(
           child: Icon(
             Icons.business,
             size: ResponsiveHelper.iconSize(context, 80),
-            color: Colors.grey[400],
+            color: AppColors.grey400,
           ),
         ),
       );
@@ -214,11 +220,11 @@ class _BusinessDetailScreenState extends State<BusinessDetailScreen> {
                 fit: BoxFit.cover,
                 errorBuilder: (context, error, stackTrace) {
                   return Container(
-                    color: Colors.grey[200],
+                    color: AppColors.grey200,
                     child: Icon(
                       Icons.broken_image,
                       size: ResponsiveHelper.iconSize(context, 48),
-                      color: Colors.grey[400],
+                      color: AppColors.grey400,
                     ),
                   );
                 },
@@ -298,7 +304,7 @@ class _BusinessDetailScreenState extends State<BusinessDetailScreen> {
                 Text(
                   ' (${_currentBusiness.reviewCount}명)',
                   style: ResponsiveHelper.smallStyle(context).copyWith(
-                    color: Colors.grey[600],
+                    color: AppColors.grey600,
                   ),
                 ),
             ],
@@ -588,7 +594,7 @@ class _BusinessDetailScreenState extends State<BusinessDetailScreen> {
                     Icon(
                       Icons.subway,
                       size: ResponsiveHelper.iconSize(context, 20),
-                      color: Colors.blue[700],
+                      color: AppColors.infoDark,
                     ),
                     SizedBox(width: ResponsiveHelper.spacing(context, 8)),
                     Expanded(
@@ -609,7 +615,7 @@ class _BusinessDetailScreenState extends State<BusinessDetailScreen> {
                     Icon(
                       Icons.directions_bus,
                       size: ResponsiveHelper.iconSize(context, 20),
-                      color: Colors.green[700],
+                      color: AppColors.successDark,
                     ),
                     SizedBox(width: ResponsiveHelper.spacing(context, 8)),
                     Expanded(
@@ -709,7 +715,7 @@ class _BusinessDetailScreenState extends State<BusinessDetailScreen> {
           context: context,
           message: _currentBusiness.precautions!,
           icon: Icons.info_outline,
-          color: Colors.orange[700],
+          color: AppColors.warningDark,
         ),
       ],
     );
@@ -729,7 +735,7 @@ class _BusinessDetailScreenState extends State<BusinessDetailScreen> {
           child: Text(
             label,
             style: ResponsiveHelper.bodyStyle(context).copyWith(
-              color: Colors.grey[600],
+              color: AppColors.grey600,
             ),
           ),
         ),
@@ -759,13 +765,13 @@ class _BusinessDetailScreenState extends State<BusinessDetailScreen> {
         Container(
           padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 8)),
           decoration: BoxDecoration(
-            color: isAvailable ? Colors.green[50] : Colors.grey[100],
+            color: isAvailable ? AppColors.successBg : AppColors.grey100,
             borderRadius: BorderRadius.circular(8),
           ),
           child: Icon(
             icon,
             size: ResponsiveHelper.iconSize(context, 20),
-            color: isAvailable ? Colors.green[700] : Colors.grey[600],
+            color: isAvailable ? AppColors.successDark : AppColors.grey600,
           ),
         ),
         SizedBox(width: ResponsiveHelper.spacing(context, 12)),
@@ -776,7 +782,7 @@ class _BusinessDetailScreenState extends State<BusinessDetailScreen> {
               Text(
                 label,
                 style: ResponsiveHelper.smallStyle(context).copyWith(
-                  color: Colors.grey[600],
+                  color: AppColors.grey600,
                 ),
               ),
               Text(

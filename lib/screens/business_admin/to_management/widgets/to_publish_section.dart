@@ -1,7 +1,9 @@
-import 'package:flutter/material.dart';
+﻿import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import '../../../../utils/responsive_helper.dart';
 import 'to_section_container.dart';
+import '';
+import '../../../../theme/app_colors.dart';
 
 /// ✨ TO 공개 설정 섹션
 /// create_to_screen, edit_to_screen에서 공통으로 사용
@@ -110,12 +112,12 @@ class TOPublishSection extends StatelessWidget {
         decoration: BoxDecoration(
           color: isSelected 
               ? theme.primaryColor.withOpacity(0.1) 
-              : Colors.grey[50],
+              : AppColors.grey50,
           borderRadius: BorderRadius.circular(12),
           border: Border.all(
             color: isSelected 
                 ? theme.primaryColor 
-                : Colors.grey[300]!,
+                : AppColors.grey300!,
             width: isSelected ? 2 : 1,
           ),
         ),
@@ -128,7 +130,7 @@ class TOPublishSection extends StatelessWidget {
               decoration: BoxDecoration(
                 shape: BoxShape.circle,
                 border: Border.all(
-                  color: isSelected ? theme.primaryColor : Colors.grey[400]!,
+                  color: isSelected ? theme.primaryColor : AppColors.grey400!,
                   width: 2,
                 ),
               ),
@@ -150,7 +152,7 @@ class TOPublishSection extends StatelessWidget {
             // 아이콘
             Icon(
               icon,
-              color: isSelected ? theme.primaryColor : Colors.grey[600],
+              color: isSelected ? theme.primaryColor : AppColors.grey600,
               size: ResponsiveHelper.iconSize(context, 24),
             ),
             SizedBox(width: ResponsiveHelper.spacing(context, 12)),
@@ -164,7 +166,7 @@ class TOPublishSection extends StatelessWidget {
                     title,
                     style: ResponsiveHelper.bodyStyle(context).copyWith(
                       fontWeight: FontWeight.bold,
-                      color: isSelected ? theme.primaryColor : Colors.grey[800],
+                      color: isSelected ? theme.primaryColor : AppColors.grey800,
                     ),
                   ),
                   SizedBox(height: ResponsiveHelper.spacing(context, 2)),
@@ -172,7 +174,7 @@ class TOPublishSection extends StatelessWidget {
                     subtitle,
                     style: ResponsiveHelper.smallStyle(
                       context,
-                      color: Colors.grey[600],
+                      color: AppColors.grey600,
                     ),
                   ),
                 ],
@@ -189,9 +191,9 @@ class TOPublishSection extends StatelessWidget {
     return Container(
       padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 16)),
       decoration: BoxDecoration(
-        color: Colors.orange[50],
+        color: AppColors.warningBg,
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: Colors.orange[200]!),
+        border: Border.all(color: AppColors.warningLight!),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -309,7 +311,7 @@ class TOPublishSection extends StatelessWidget {
     return Container(
       padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 12)),
       decoration: BoxDecoration(
-        color: Colors.grey[100],
+        color: AppColors.grey100,
         borderRadius: BorderRadius.circular(12),
       ),
       child: Column(
@@ -320,14 +322,14 @@ class TOPublishSection extends StatelessWidget {
               Icon(
                 Icons.info_outline,
                 size: ResponsiveHelper.iconSize(context, 16),
-                color: Colors.grey[600],
+                color: AppColors.grey600,
               ),
               SizedBox(width: ResponsiveHelper.spacing(context, 6)),
               Text(
                 '공개 일정 미리보기',
                 style: ResponsiveHelper.smallStyle(
                   context,
-                  color: Colors.grey[700],
+                  color: AppColors.grey700,
                   fontWeight: FontWeight.bold,
                 ),
               ),
@@ -353,14 +355,14 @@ class TOPublishSection extends StatelessWidget {
                   Icon(
                     Icons.arrow_forward,
                     size: ResponsiveHelper.iconSize(context, 14),
-                    color: Colors.grey[500],
+                    color: AppColors.grey500,
                   ),
                   SizedBox(width: ResponsiveHelper.spacing(context, 8)),
                   Text(
                     '${publishFormat.format(publishAt)} 공개',
                     style: ResponsiveHelper.smallStyle(
                       context,
-                      color: Colors.orange[700],
+                      color: AppColors.warningDark,
                       fontWeight: FontWeight.w500,
                     ),
                   ),
@@ -374,7 +376,7 @@ class TOPublishSection extends StatelessWidget {
               '외 ${previewDates.length - 3}개...',
               style: ResponsiveHelper.smallStyle(
                 context,
-                color: Colors.grey[500],
+                color: AppColors.grey500,
               ),
             ),
         ],

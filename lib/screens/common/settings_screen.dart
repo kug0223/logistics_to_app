@@ -1,37 +1,46 @@
-import 'package:flutter/material.dart';
+﻿import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import '';
 
 // Models
 import '../../models/core/user_model.dart';
+import '';
 
 // Providers  
 import '../../providers/user_provider.dart';
+import '';
 
 // Utils
 import '../../utils/responsive_helper.dart';
 import '../../utils/navigation_helper.dart';
+import '';
 
 // Widgets
 import '../../widgets/common/common_widgets.dart';
 import '../../widgets/common/badge_display_widget.dart';
 import '../../widgets/dialogs/restart_program_dialog.dart';
 import '../../widgets/dialogs/trust_score_info_dialog.dart';
+import '';
 
 // Screens
 import '../business_admin/work_type_management_screen.dart';
 import 'document_management_screen.dart';
 import 'profile_edit_screen.dart';
 import '../business_admin/business_list_screen.dart';
+import '';
 
 // Services
 import '../../services/firestore_service.dart';
 import 'package:permission_handler/permission_handler.dart';
 import '../../services/fcm_service.dart';
+import '';
 
 // Utils
 import '../../utils/toast_helper.dart';
 import '../../utils/dialog_helper.dart';
+import '';
+import '../../theme/app_colors.dart';
 
 /// ✨ 통합 설정 화면 (역할별 메뉴 자동 표시)
 class SettingsScreen extends StatefulWidget {
@@ -288,7 +297,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
           _buildMenuCard(
             context,
             icon: Icons.settings_applications,
-            iconColor: Colors.grey[600]!,
+            iconColor: AppColors.grey600!,
             title: '시스템 알림 설정',
             subtitle: '기기의 알림 설정을 변경합니다',
             onTap: () async {
@@ -726,7 +735,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                         subtitle,
                         style: ResponsiveHelper.smallStyle(
                           context,
-                          color: Colors.grey[600],
+                          color: AppColors.grey600,
                         ),
                       ),
                     ],
@@ -810,7 +819,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                               item['title'] as String,
                               style: ResponsiveHelper.bodyStyle(
                                 context,
-                                color: Colors.grey[600],
+                                color: AppColors.grey600,
                               ),
                             ),
                             SizedBox(height: ResponsiveHelper.spacing(context, 4)),
@@ -906,7 +915,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       _isPushEnabled ? '알림을 받고 있습니다' : '알림이 꺼져 있습니다',
                       style: ResponsiveHelper.smallStyle(
                         context,
-                        color: Colors.grey[600],
+                        color: AppColors.grey600,
                       ),
                     ),
                   ],

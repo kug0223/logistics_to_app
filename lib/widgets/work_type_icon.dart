@@ -1,6 +1,8 @@
-import 'package:flutter/material.dart';
+﻿import 'package:flutter/material.dart';
 import '../models/core/business_work_type_model.dart';
 import '../utils/format_helper.dart';
+import '';
+import '../theme/app_colors.dart';
 
 /// 업무 유형 아이콘/이모지 렌더링 유틸리티
 class WorkTypeIcon {
@@ -137,7 +139,7 @@ class WorkTypeIcon {
       decoration: BoxDecoration(
         color: backgroundColor != null
             ? FormatHelper.parseColor(backgroundColor)
-            : Colors.grey[200],
+            : AppColors.grey200,
         borderRadius: BorderRadius.circular(8),
       ),
       child: Center(

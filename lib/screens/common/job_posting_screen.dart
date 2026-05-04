@@ -1,21 +1,25 @@
-import 'package:flutter/material.dart';
+﻿import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:flutter/services.dart';
+import '';
 
 // Models
 import '../../models/core/business_model.dart';
 import '../../models/core/to_model.dart';
 import '../../models/core/work_detail_model.dart';
 import '../../models/core/business_work_type_model.dart';
+import '';
 
 // Services
 import '../../services/firestore_service.dart';
+import '';
 
 // Utils
 import '../../utils/responsive_helper.dart';
 import '../../utils/format_helper.dart';
 import '../../utils/toast_helper.dart';
 import '../../utils/image_helper.dart';
+import '';
 
 
 // Widgets
@@ -24,6 +28,8 @@ import '../../widgets/common/loading_widget.dart';
 import '../../widgets/work_type_icon.dart';
 import '../../widgets/maps/kakao_map_widget.dart';
 import '../../widgets/maps/full_map_dialog.dart';
+import '';
+import '../../theme/app_colors.dart';
 
 /// 📋 TO 공고 상세보기 화면
 /// - 지원자 모드: 공고 확인 + 지원하기
@@ -118,7 +124,7 @@ class _JobPostingScreenState extends State<JobPostingScreen> {
     final theme = Theme.of(context);
 
     return Scaffold(
-      backgroundColor: Colors.grey[50],
+      backgroundColor: AppColors.grey50,
       body: _isLoading
           ? const LoadingWidget(message: '공고 정보를 불러오는 중...')
           : _to == null
@@ -146,7 +152,7 @@ class _JobPostingScreenState extends State<JobPostingScreen> {
                                 context: context,
                                 message: _business!.precautions!,
                                 icon: Icons.warning_amber_outlined,
-                                color: Colors.orange[700],
+                                color: AppColors.warningDark,
                               ),
                             ),
 
@@ -192,13 +198,13 @@ class _JobPostingScreenState extends State<JobPostingScreen> {
           Icon(
             Icons.error_outline,
             size: ResponsiveHelper.iconSize(context, 64),
-            color: Colors.grey[400],
+            color: AppColors.grey400,
           ),
           SizedBox(height: ResponsiveHelper.spacing(context, 16)),
           Text(
             '공고를 찾을 수 없습니다',
             style: ResponsiveHelper.subtitleStyle(context).copyWith(
-              color: Colors.grey[600],
+              color: AppColors.grey600,
             ),
           ),
           SizedBox(height: ResponsiveHelper.spacing(context, 24)),
@@ -358,7 +364,7 @@ class _JobPostingScreenState extends State<JobPostingScreen> {
                       Text(
                         _business!.oneLineIntro!,
                         style: ResponsiveHelper.bodyStyle(context).copyWith(
-                          color: Colors.grey[600],
+                          color: AppColors.grey600,
                         ),
                       ),
                     ],
@@ -370,7 +376,7 @@ class _JobPostingScreenState extends State<JobPostingScreen> {
           // 사업장 소개
           if (_business!.detailedDescription != null && _business!.detailedDescription!.isNotEmpty) ...[
             SizedBox(height: ResponsiveHelper.spacing(context, 12)),
-            Divider(height: 1, color: Colors.grey[200]),
+            Divider(height: 1, color: AppColors.grey200),
             SizedBox(height: ResponsiveHelper.spacing(context, 12)),
             Row(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -378,14 +384,14 @@ class _JobPostingScreenState extends State<JobPostingScreen> {
                 Icon(
                   Icons.info_outline,
                   size: ResponsiveHelper.iconSize(context, 18),
-                  color: Colors.grey[500],
+                  color: AppColors.grey500,
                 ),
                 SizedBox(width: ResponsiveHelper.spacing(context, 8)),
                 Expanded(
                   child: Text(
                     _business!.detailedDescription!,
                     style: ResponsiveHelper.smallStyle(context).copyWith(
-                      color: Colors.grey[700],
+                      color: AppColors.grey700,
                       height: 1.5,
                     ),
                   ),
@@ -472,7 +478,7 @@ class _JobPostingScreenState extends State<JobPostingScreen> {
                     _to!.deadlineType == 'HOURS_BEFORE'
                         ? '업무시작 ${_to!.hoursBeforeStart ?? 2}시간 전'
                         : _to!.formattedDeadline,
-                    _to!.isDeadlineSoon ? Colors.red : Colors.grey[600]!,
+                    _to!.isDeadlineSoon ? Colors.red : AppColors.grey600!,
                   ),
                 ],
               ),
@@ -608,7 +614,7 @@ class _JobPostingScreenState extends State<JobPostingScreen> {
                           Text(
                             work.timeRange,
                             style: ResponsiveHelper.smallStyle(context).copyWith(
-                              color: Colors.grey[600],
+                              color: AppColors.grey600,
                             ),
                           ),
                         ],
@@ -638,7 +644,7 @@ class _JobPostingScreenState extends State<JobPostingScreen> {
                 ),
 
                 SizedBox(height: ResponsiveHelper.spacing(context, 16)),
-                Divider(height: 1, color: Colors.grey[200]),
+                Divider(height: 1, color: AppColors.grey200),
                 SizedBox(height: ResponsiveHelper.spacing(context, 12)),
 
                 // 급여 정보
@@ -657,7 +663,7 @@ class _JobPostingScreenState extends State<JobPostingScreen> {
                           '${work.wageTypeLabel} ${work.formattedWage}',
                           style: ResponsiveHelper.bodyStyle(context).copyWith(
                             fontWeight: FontWeight.bold,
-                            color: Colors.green[700],
+                            color: AppColors.successDark,
                           ),
                         ),
                       ],
@@ -699,7 +705,7 @@ class _JobPostingScreenState extends State<JobPostingScreen> {
                       Text(
                         '마감: ${FormatHelper.formatDateTime(work.applicationDeadline!)}',
                         style: ResponsiveHelper.smallStyle(context).copyWith(
-                          color: work.isTimeExpired ? Colors.red[400] : Colors.orange[700],
+                          color: work.isTimeExpired ? Colors.red[400] : AppColors.warningDark,
                         ),
                       ),
                     ],
@@ -745,7 +751,7 @@ class _JobPostingScreenState extends State<JobPostingScreen> {
                 width: 40,
                 height: 4,
                 decoration: BoxDecoration(
-                  color: Colors.grey[300],
+                  color: AppColors.grey300,
                   borderRadius: BorderRadius.circular(2),
                 ),
               ),
@@ -791,7 +797,7 @@ class _JobPostingScreenState extends State<JobPostingScreen> {
                                 Text(
                                   workType.oneLineIntro!,
                                   style: ResponsiveHelper.bodyStyle(context).copyWith(
-                                    color: Colors.grey[600],
+                                    color: AppColors.grey600,
                                   ),
                                 ),
                               ],
@@ -859,7 +865,7 @@ class _JobPostingScreenState extends State<JobPostingScreen> {
                         context: context,
                         message: workType.precautions!,
                         icon: Icons.warning_amber_outlined,
-                        color: Colors.orange[700],
+                        color: AppColors.warningDark,
                       ),
                     ],
 
@@ -1152,7 +1158,7 @@ class _JobPostingScreenState extends State<JobPostingScreen> {
               _to!.description!,
               style: ResponsiveHelper.bodyStyle(context).copyWith(
                 height: 1.6,
-                color: Colors.grey[700],
+                color: AppColors.grey700,
               ),
             ),
           ),
@@ -1247,7 +1253,7 @@ class _JobPostingScreenState extends State<JobPostingScreen> {
         Text(
           label,
           style: ResponsiveHelper.smallStyle(context).copyWith(
-            color: Colors.grey[600],
+            color: AppColors.grey600,
           ),
         ),
         const Spacer(),
@@ -1294,7 +1300,7 @@ class _JobPostingScreenState extends State<JobPostingScreen> {
           Text(
             label,
             style: ResponsiveHelper.tinyStyle(context).copyWith(
-              color: Colors.grey[600],
+              color: AppColors.grey600,
             ),
           ),
         ],
@@ -1334,14 +1340,14 @@ class _JobPostingScreenState extends State<JobPostingScreen> {
           width: double.infinity,
           padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 12)),
           decoration: BoxDecoration(
-            color: Colors.grey[100],
+            color: AppColors.grey100,
             borderRadius: BorderRadius.circular(8),
           ),
           child: Text(
             content,
             style: ResponsiveHelper.bodyStyle(context).copyWith(
               height: 1.5,
-              color: Colors.grey[700],
+              color: AppColors.grey700,
             ),
           ),
         ),
@@ -1420,7 +1426,7 @@ class _JobPostingScreenState extends State<JobPostingScreen> {
                 Text(
                   subtitle,
                   style: ResponsiveHelper.smallStyle(context).copyWith(
-                    color: Colors.grey[600],
+                    color: AppColors.grey600,
                   ),
                 ),
               ],
@@ -1454,13 +1460,13 @@ class _JobPostingScreenState extends State<JobPostingScreen> {
         Container(
           padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 8)),
           decoration: BoxDecoration(
-            color: isAvailable ? Colors.green[50] : Colors.grey[100],
+            color: isAvailable ? AppColors.successBg : AppColors.grey100,
             borderRadius: BorderRadius.circular(8),
           ),
           child: Icon(
             icon,
             size: ResponsiveHelper.iconSize(context, 20),
-            color: isAvailable ? Colors.green[600] : Colors.grey[400],
+            color: isAvailable ? Colors.green[600] : AppColors.grey400,
           ),
         ),
         SizedBox(width: ResponsiveHelper.spacing(context, 12)),
@@ -1471,7 +1477,7 @@ class _JobPostingScreenState extends State<JobPostingScreen> {
               Text(
                 label,
                 style: ResponsiveHelper.smallStyle(context).copyWith(
-                  color: Colors.grey[600],
+                  color: AppColors.grey600,
                 ),
               ),
               SizedBox(height: ResponsiveHelper.spacing(context, 2)),
@@ -1487,7 +1493,7 @@ class _JobPostingScreenState extends State<JobPostingScreen> {
         Icon(
           isAvailable ? Icons.check_circle : Icons.cancel,
           size: ResponsiveHelper.iconSize(context, 20),
-          color: isAvailable ? Colors.green : Colors.grey[400],
+          color: isAvailable ? Colors.green : AppColors.grey400,
         ),
       ],
     );

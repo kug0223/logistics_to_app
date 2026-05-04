@@ -1,18 +1,22 @@
-import 'package:flutter/material.dart';
+﻿import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import '';
 
 // Providers
 import '../../providers/user_provider.dart';
 import '../../providers/theme_provider.dart';
+import '';
 
 // Services
 import '../../services/auth_service.dart';
+import '';
 
 // Utils
 import '../../utils/dialog_helper.dart';
 import '../../utils/navigation_helper.dart';
 import '../../utils/responsive_helper.dart';
 import '../../utils/toast_helper.dart';
+import '';
 
 // Screens
 import '../common/settings_screen.dart';
@@ -21,6 +25,8 @@ import 'workforce_management/integrated_workforce_screen.dart';
 import '../common/notification_screen.dart';
 import '../../widgets/common/notification_badge.dart';
 import 'admin_review_list_screen.dart';
+import '';
+import '../../theme/app_colors.dart';
 
 /// 사업장 관리자 홈 화면 - 세련된 디자인
 class BusinessAdminHomeScreen extends StatelessWidget {
@@ -232,7 +238,7 @@ class BusinessAdminHomeScreen extends StatelessWidget {
                   Expanded(
                     child: Container(
                       decoration: BoxDecoration(
-                        color: Colors.grey[50],
+                        color: AppColors.grey50,
                         borderRadius: const BorderRadius.only(
                           topLeft: Radius.circular(32),
                           topRight: Radius.circular(32),
@@ -318,7 +324,7 @@ class BusinessAdminHomeScreen extends StatelessWidget {
                               icon: Icons.settings_outlined,
                               title: '설정',
                               subtitle: '앱 설정',
-                              color: Colors.grey[600]!,
+                              color: AppColors.grey600!,
                               onTap: () {
                                 Navigator.push(
                                   context,
@@ -404,7 +410,7 @@ class BusinessAdminHomeScreen extends StatelessWidget {
                   subtitle,
                   style: ResponsiveHelper.smallStyle(
                     context,
-                    color: Colors.grey[600],
+                    color: AppColors.grey600,
                   ),
                   textAlign: TextAlign.center,
                   maxLines: 2,

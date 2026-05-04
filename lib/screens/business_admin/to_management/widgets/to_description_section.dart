@@ -1,6 +1,8 @@
-import 'package:flutter/material.dart';
+﻿import 'package:flutter/material.dart';
 import '../../../../utils/responsive_helper.dart';
 import 'to_section_container.dart';
+import '';
+import '../../../../theme/app_colors.dart';
 
 /// ✨ TO 설명 입력 섹션
 /// create_to_screen, edit_to_screen에서 공통으로 사용
@@ -41,16 +43,16 @@ class TODescriptionSection extends StatelessWidget {
               hintText: hintText ?? '추가 안내사항을 입력하세요',
               hintStyle: ResponsiveHelper.smallStyle(
                 context,
-                color: Colors.grey[400],
+                color: AppColors.grey400,
               ),
               alignLabelWithHint: true,
               border: OutlineInputBorder(
                 borderRadius: BorderRadius.circular(12),
-                borderSide: BorderSide(color: Colors.grey[300]!),
+                borderSide: BorderSide(color: AppColors.grey300!),
               ),
               enabledBorder: OutlineInputBorder(
                 borderRadius: BorderRadius.circular(12),
-                borderSide: BorderSide(color: Colors.grey[300]!),
+                borderSide: BorderSide(color: AppColors.grey300!),
               ),
               focusedBorder: OutlineInputBorder(
                 borderRadius: BorderRadius.circular(12),

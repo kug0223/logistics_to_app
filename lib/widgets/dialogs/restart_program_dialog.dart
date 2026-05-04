@@ -1,4 +1,4 @@
-// lib/widgets/dialogs/restart_program_dialog.dart
+﻿// lib/widgets/dialogs/restart_program_dialog.dart
 
 import 'package:flutter/material.dart';
 import '../../utils/responsive_helper.dart';
@@ -220,7 +220,7 @@ class _RestartProgramDialogState extends State<RestartProgramDialog> {
     return Container(
       padding: ResponsiveHelper.cardPadding(context),
       decoration: BoxDecoration(
-        color: Colors.grey[50],
+        color: AppColors.grey50,
         borderRadius: BorderRadius.circular(12),
         border: Border.all(color: AppColors.grey200),
       ),

@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+﻿import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
 import '../../models/core/application_model.dart';
@@ -16,6 +16,8 @@ import 'dialogs/my_requests_dialog.dart';
 import '../../models/core/id_card_access_request_model.dart';
 import '../../models/core/attendance_model.dart';
 import 'all_to_list_screen.dart';
+import '';
+import '../../theme/app_colors.dart';
 
 /// ✨ 내 근무 스케줄 화면 (홈 화면 디자인 통일)
 class MyScheduleScreen extends StatefulWidget {
@@ -148,7 +150,7 @@ class _MyScheduleScreenState extends State<MyScheduleScreen> {
               Expanded(
                 child: Container(
                   decoration: BoxDecoration(
-                    color: Colors.grey[50],
+                    color: AppColors.grey50,
                     borderRadius: const BorderRadius.only(
                       topLeft: Radius.circular(32),
                       topRight: Radius.circular(32),
@@ -418,7 +420,7 @@ class _MyScheduleScreenState extends State<MyScheduleScreen> {
                 SizedBox(width: ResponsiveHelper.spacing(context, 12)),
                 _buildCompactLegendItem(Colors.orange[600]!, '대기', false),
                 SizedBox(width: ResponsiveHelper.spacing(context, 12)),
-                _buildCompactLegendItem(Colors.grey[400]!, '휴무', true),
+                _buildCompactLegendItem(AppColors.grey400!, '휴무', true),
               ],
             ),
           ),
@@ -455,14 +457,14 @@ class _MyScheduleScreenState extends State<MyScheduleScreen> {
                       value: '$pendingCount건',
                       color: Colors.orange,
                     ),
-                    Container(width: 1, height: 24, color: Colors.grey[200]),
+                    Container(width: 1, height: 24, color: AppColors.grey200),
                     _buildCompactStatItem(
                       icon: Icons.check_circle,
                       label: '확정',
                       value: '$confirmedCount일',
                       color: Colors.green,
                     ),
-                    Container(width: 1, height: 24, color: Colors.grey[200]),
+                    Container(width: 1, height: 24, color: AppColors.grey200),
                     _buildCompactStatItem(
                       icon: Icons.directions_run,
                       label: '실근무',
@@ -474,7 +476,7 @@ class _MyScheduleScreenState extends State<MyScheduleScreen> {
                 // 구분선
                 Padding(
                   padding: EdgeInsets.symmetric(vertical: ResponsiveHelper.spacing(context, 8)),
-                  child: Divider(height: 1, color: Colors.grey[200]),
+                  child: Divider(height: 1, color: AppColors.grey200),
                 ),
                 // 둘째 줄: 예상수입 → 확정수입 (금액)
                 Row(
@@ -486,7 +488,7 @@ class _MyScheduleScreenState extends State<MyScheduleScreen> {
                       value: '${NumberFormat('#,###').format(totalIncome)}원',
                       color: Colors.blue,
                     ),
-                    Container(width: 1, height: 24, color: Colors.grey[200]),
+                    Container(width: 1, height: 24, color: AppColors.grey200),
                     _buildCompactStatItem(
                       icon: Icons.paid,
                       label: '확정수입',
@@ -573,7 +575,7 @@ class _MyScheduleScreenState extends State<MyScheduleScreen> {
           label,
           style: TextStyle(
             fontSize: 11,
-            color: Colors.grey[600],
+            color: AppColors.grey600,
           ),
         ),
       ],
@@ -600,7 +602,7 @@ class _MyScheduleScreenState extends State<MyScheduleScreen> {
               label,
               style: TextStyle(
                 fontSize: 10,
-                color: Colors.grey[500],
+                color: AppColors.grey500,
               ),
             ),
             Text(
@@ -632,14 +634,14 @@ class _MyScheduleScreenState extends State<MyScheduleScreen> {
                 Icon(
                   Icons.touch_app,
                   size: ResponsiveHelper.iconSize(context, 64),
-                  color: Colors.grey[400],
+                  color: AppColors.grey400,
                 ),
                 SizedBox(height: ResponsiveHelper.spacing(context, 16)),
                 Text(
                   '날짜를 선택해주세요',
                   style: ResponsiveHelper.subtitleStyle(
                     context,
-                    color: Colors.grey[700],
+                    color: AppColors.grey700,
                   ).copyWith(fontWeight: FontWeight.w600),
                   textAlign: TextAlign.center,
                 ),
@@ -648,7 +650,7 @@ class _MyScheduleScreenState extends State<MyScheduleScreen> {
                   '캘린더에서 날짜를 클릭하면\n일정을 확인할 수 있습니다',
                   style: ResponsiveHelper.bodyStyle(
                     context,
-                    color: Colors.grey[500],
+                    color: AppColors.grey500,
                   ),
                   textAlign: TextAlign.center,
                 ),
@@ -686,7 +688,7 @@ class _MyScheduleScreenState extends State<MyScheduleScreen> {
                   size: ResponsiveHelper.iconSize(context, 64),
                   color: isFutureOrToday 
                       ? Theme.of(context).primaryColor.withOpacity(0.5)
-                      : Colors.grey[400],
+                      : AppColors.grey400,
                 ),
                 SizedBox(height: ResponsiveHelper.spacing(context, 16)),
                 Text(
@@ -695,7 +697,7 @@ class _MyScheduleScreenState extends State<MyScheduleScreen> {
                       : '기록이 없습니다',
                   style: ResponsiveHelper.subtitleStyle(
                     context,
-                    color: Colors.grey[700],
+                    color: AppColors.grey700,
                   ).copyWith(fontWeight: FontWeight.w600),
                   textAlign: TextAlign.center,
                 ),
@@ -706,7 +708,7 @@ class _MyScheduleScreenState extends State<MyScheduleScreen> {
                       : '과거 날짜입니다',
                   style: ResponsiveHelper.bodyStyle(
                     context,
-                    color: Colors.grey[500],
+                    color: AppColors.grey500,
                   ),
                   textAlign: TextAlign.center,
                 ),
@@ -838,7 +840,7 @@ class _MyScheduleScreenState extends State<MyScheduleScreen> {
           label,
           style: TextStyle(
             fontSize: isSmall ? 9 : 11,
-            color: Colors.grey[700],
+            color: AppColors.grey700,
           ),
         ),
       ],

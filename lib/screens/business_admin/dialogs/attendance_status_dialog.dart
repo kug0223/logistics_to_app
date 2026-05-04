@@ -1,4 +1,4 @@
-// lib/screens/business_admin/dialogs/attendance_status_dialog.dart
+﻿// lib/screens/business_admin/dialogs/attendance_status_dialog.dart
 // 당일명단 다이얼로그 - 출퇴근 관리 기능 포함
 // 
 // 주요 기능:
@@ -981,7 +981,7 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
     return Container(
       padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 12)),
       decoration: BoxDecoration(
-        color: Colors.grey[100],
+        color: AppColors.grey100,
         borderRadius: BorderRadius.circular(12),
         border: Border.all(color: AppColors.border),
       ),
@@ -1061,7 +1061,7 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
     final isEnabled = onPressed != null;
 
     return Material(
-      color: isEnabled ? color.withOpacity(0.1) : Colors.grey[200],
+      color: isEnabled ? color.withOpacity(0.1) : AppColors.grey200,
       borderRadius: BorderRadius.circular(8),
       child: InkWell(
         onTap: onPressed,
@@ -1225,7 +1225,7 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
 
     return Container(
       decoration: BoxDecoration(
-        color: Colors.grey[50],
+        color: AppColors.grey50,
         borderRadius: BorderRadius.circular(16),
         border: Border.all(color: AppColors.border, width: 1.5),
       ),
@@ -1681,7 +1681,7 @@ SizedBox(width: ResponsiveHelper.spacing(context, 12)),
     return Container(
       padding: ResponsiveHelper.cardPadding(context),
       decoration: BoxDecoration(
-        color: Colors.grey[50],
+        color: AppColors.grey50,
         borderRadius: const BorderRadius.only(
           bottomLeft: Radius.circular(24),
           bottomRight: Radius.circular(24),
@@ -1846,7 +1846,7 @@ SizedBox(width: ResponsiveHelper.spacing(context, 12)),
             Container(
               padding: ResponsiveHelper.cardPadding(context),
               decoration: BoxDecoration(
-                color: Colors.grey[100],
+                color: AppColors.grey100,
                 borderRadius: BorderRadius.circular(8),
               ),
               child: Column(
@@ -2460,7 +2460,7 @@ SizedBox(width: ResponsiveHelper.spacing(context, 12)),
     return Container(
       padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 12)),
       decoration: BoxDecoration(
-        color: Colors.grey[100],
+        color: AppColors.grey100,
         borderRadius: BorderRadius.circular(12),
       ),
       child: Row(

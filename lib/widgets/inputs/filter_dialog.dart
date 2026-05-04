@@ -1,5 +1,7 @@
-import 'package:flutter/material.dart';
+﻿import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
+import '';
+import '../../theme/app_colors.dart';
 
 class FilterDialog extends StatefulWidget {
   final String? selectedBusiness;
@@ -50,14 +52,14 @@ class _FilterDialogState extends State<FilterDialog> {
             Container(
               padding: const EdgeInsets.all(16),
               decoration: BoxDecoration(
-                color: Colors.blue[50],
+                color: AppColors.infoBg,
                 border: Border(
-                  bottom: BorderSide(color: Colors.blue[200]!),
+                  bottom: BorderSide(color: AppColors.infoLight!),
                 ),
               ),
               child: Row(
                 children: [
-                  Icon(Icons.filter_list, color: Colors.blue[700]),
+                  Icon(Icons.filter_list, color: AppColors.infoDark),
                   const SizedBox(width: 8),
                   const Text(
                     '필터',
@@ -130,12 +132,12 @@ class _FilterDialogState extends State<FilterDialog> {
                               vertical: 12,
                             ),
                             decoration: BoxDecoration(
-                              border: Border.all(color: Colors.grey[400]!),
+                              border: Border.all(color: AppColors.grey400!),
                               borderRadius: BorderRadius.circular(8),
                             ),
                             child: Row(
                               children: [
-                                Icon(Icons.calendar_today, size: 18, color: Colors.grey[700]),
+                                Icon(Icons.calendar_today, size: 18, color: AppColors.grey700),
                                 const SizedBox(width: 8),
                                 Expanded(
                                   child: Text(
@@ -144,7 +146,7 @@ class _FilterDialogState extends State<FilterDialog> {
                                         : '${DateFormat('MM/dd').format(_tempDateRange!.start)} - ${DateFormat('MM/dd').format(_tempDateRange!.end)}',
                                     style: TextStyle(
                                       fontSize: 14,
-                                      color: _tempDateRange == null ? Colors.grey[600] : Colors.black87,
+                                      color: _tempDateRange == null ? AppColors.grey600 : Colors.black87,
                                     ),
                                   ),
                                 ),
@@ -198,7 +200,7 @@ class _FilterDialogState extends State<FilterDialog> {
               padding: const EdgeInsets.all(16),
               decoration: BoxDecoration(
                 border: Border(
-                  top: BorderSide(color: Colors.grey[300]!),
+                  top: BorderSide(color: AppColors.grey300!),
                 ),
               ),
               child: Row(
@@ -214,7 +216,7 @@ class _FilterDialogState extends State<FilterDialog> {
                     child: ElevatedButton(
                       onPressed: _applyFilters,
                       style: ElevatedButton.styleFrom(
-                        backgroundColor: Colors.blue[700],
+                        backgroundColor: AppColors.infoDark,
                         foregroundColor: Colors.white,
                       ),
                       child: const Text('적용'),
@@ -294,9 +296,9 @@ class _FilterDialogState extends State<FilterDialog> {
         });
       },
       style: OutlinedButton.styleFrom(
-        backgroundColor: isSelected ? Colors.blue[50] : null,
+        backgroundColor: isSelected ? AppColors.infoBg : null,
         side: BorderSide(
-          color: isSelected ? Colors.blue[700]! : Colors.grey[400]!,
+          color: isSelected ? AppColors.infoDark! : AppColors.grey400!,
           width: isSelected ? 2 : 1,
         ),
         padding: const EdgeInsets.symmetric(vertical: 8),
@@ -306,7 +308,7 @@ class _FilterDialogState extends State<FilterDialog> {
         style: TextStyle(
           fontSize: 12,
           fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
-          color: isSelected ? Colors.blue[700] : Colors.grey[700],
+          color: isSelected ? AppColors.infoDark : AppColors.grey700,
         ),
       ),
     );
@@ -333,12 +335,12 @@ class _FilterDialogState extends State<FilterDialog> {
               Container(
                 padding: const EdgeInsets.all(16),
                 decoration: BoxDecoration(
-                  color: Colors.blue[50],
+                  color: AppColors.infoBg,
                   borderRadius: const BorderRadius.vertical(top: Radius.circular(16)),
                 ),
                 child: Row(
                   children: [
-                    Icon(Icons.date_range, color: Colors.blue[700]),
+                    Icon(Icons.date_range, color: AppColors.infoDark),
                     const SizedBox(width: 8),
                     const Text(
                       '날짜 범위 선택',
@@ -368,7 +370,7 @@ class _FilterDialogState extends State<FilterDialog> {
               // 안내 문구
               Container(
                 padding: const EdgeInsets.all(12),
-                color: Colors.grey[100],
+                color: AppColors.grey100,
                 child: const Text(
                   '💡 날짜를 선택하면 해당 날짜의 TO만 표시됩니다',
                   style: TextStyle(fontSize: 12, color: Colors.black54),

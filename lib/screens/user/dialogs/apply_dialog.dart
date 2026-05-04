@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+﻿import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import '../../../models/core/work_detail_model.dart';
@@ -8,6 +8,8 @@ import '../../../providers/user_provider.dart';
 import '../../../utils/toast_helper.dart';
 import '../../../utils/format_helper.dart';
 import '../../../widgets/work_type_icon.dart';
+import '';
+import '../../../theme/app_colors.dart';
 
 /// 지원하기 확인 다이얼로그
 class ApplyDialog {
@@ -29,14 +31,14 @@ class ApplyDialog {
               '다음 업무에 지원하시겠습니까?',
               style: TextStyle(
                 fontSize: 14,
-                color: Colors.grey[700],
+                color: AppColors.grey700,
               ),
             ),
             const SizedBox(height: 16),
             Container(
               padding: const EdgeInsets.all(12),
               decoration: BoxDecoration(
-                color: Colors.grey[100],
+                color: AppColors.grey100,
                 borderRadius: BorderRadius.circular(8),
               ),
               child: Column(
@@ -73,7 +75,7 @@ class ApplyDialog {
                   _buildInfoText(
                     icon: Icons.attach_money,
                     text: FormatHelper.formatWage(work.wage),
-                    color: Colors.green[700],
+                    color: AppColors.successDark,
                   ),
                 ],
               ),
@@ -112,13 +114,13 @@ class ApplyDialog {
   }) {
     return Row(
       children: [
-        Icon(icon, size: 14, color: color ?? Colors.grey[600]),
+        Icon(icon, size: 14, color: color ?? AppColors.grey600),
         const SizedBox(width: 6),
         Text(
           text,
           style: TextStyle(
             fontSize: 13,
-            color: color ?? Colors.grey[700],
+            color: color ?? AppColors.grey700,
           ),
         ),
       ],

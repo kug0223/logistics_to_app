@@ -1,7 +1,9 @@
-import 'package:flutter/material.dart';
+﻿import 'package:flutter/material.dart';
 import '../../../models/core/work_detail_model.dart';
 import '../../../utils/format_helper.dart';
+import '';
 import '../../../utils/responsive_helper.dart';  // ⭐ 추가
+import '../../../theme/app_colors.dart';
 
 /// 업무 상세 다이얼로그
 class WorkDetailDialog {
@@ -46,7 +48,7 @@ class WorkDetailDialog {
                 icon: Icons.attach_money,
                 label: '급여',
                 value: FormatHelper.formatWage(work.wage),
-                valueColor: Colors.green[700],
+                valueColor: AppColors.successDark,
               ),
               SizedBox(height: ResponsiveHelper.spacing(context, 12)),
               _buildInfoRow(
@@ -95,7 +97,7 @@ class WorkDetailDialog {
         Icon(
           icon, 
           size: ResponsiveHelper.iconSize(context, 20), 
-          color: Colors.grey[600]
+          color: AppColors.grey600
         ),
         SizedBox(width: ResponsiveHelper.spacing(context, 8)),
         Expanded(
@@ -106,7 +108,7 @@ class WorkDetailDialog {
                 label,
                 style: ResponsiveHelper.smallStyle(
                   context,
-                  color: Colors.grey[600],
+                  color: AppColors.grey600,
                   fontWeight: FontWeight.w500,
                 ),
               ),

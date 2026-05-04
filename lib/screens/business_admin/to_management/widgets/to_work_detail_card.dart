@@ -1,9 +1,11 @@
-import 'package:flutter/material.dart';
+﻿import 'package:flutter/material.dart';
 import '../../../../models/work_detail_input.dart';
 import '../../../../models/core/work_detail_model.dart';
 import '../../../../utils/responsive_helper.dart';
 import '../../../../utils/format_helper.dart';
 import '../../../../widgets/work_type_icon.dart';
+import '';
+import '../../../../theme/app_colors.dart';
 
 /// ✨ TO 업무 상세 카드
 /// WorkDetailInput (create) 또는 WorkDetailModel (edit) 모두 지원
@@ -125,13 +127,13 @@ class TOWorkDetailCard extends StatelessWidget {
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
           colors: [
-            Colors.grey[50]!,
-            Colors.grey[100]!,
+            AppColors.grey50!,
+            AppColors.grey100!,
           ],
         ),
         borderRadius: BorderRadius.circular(12),
         border: Border.all(
-          color: Colors.grey[300]!,
+          color: AppColors.grey300!,
           width: 1,
         ),
       ),
@@ -180,14 +182,14 @@ class TOWorkDetailCard extends StatelessWidget {
                         Icon(
                           Icons.access_time,
                           size: ResponsiveHelper.iconSize(context, 14),
-                          color: Colors.grey[600],
+                          color: AppColors.grey600,
                         ),
                         SizedBox(width: ResponsiveHelper.spacing(context, 4)),
                         Text(
                           '$startTime ~ $endTime',
                           style: ResponsiveHelper.smallStyle(
                             context,
-                            color: Colors.grey[700],
+                            color: AppColors.grey700,
                           ),
                         ),
                       ],
@@ -199,7 +201,7 @@ class TOWorkDetailCard extends StatelessWidget {
               // 수정 버튼 (edit 모드에서만)
               if (onEdit != null) ...[
                 Material(
-                  color: Colors.orange[50],
+                  color: AppColors.warningBg,
                   borderRadius: BorderRadius.circular(8),
                   child: InkWell(
                     onTap: onEdit,
@@ -208,7 +210,7 @@ class TOWorkDetailCard extends StatelessWidget {
                       padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 8)),
                       child: Icon(
                         Icons.edit,
-                        color: Colors.orange[700],
+                        color: AppColors.warningDark,
                         size: ResponsiveHelper.iconSize(context, 20),
                       ),
                     ),
@@ -220,7 +222,7 @@ class TOWorkDetailCard extends StatelessWidget {
               // 삭제 버튼
               if (onDelete != null)
                 Material(
-                  color: canDelete ? Colors.red[50] : Colors.grey[200],
+                  color: canDelete ? AppColors.errorBg : AppColors.grey200,
                   borderRadius: BorderRadius.circular(8),
                   child: InkWell(
                     onTap: canDelete ? onDelete : null,
@@ -229,7 +231,7 @@ class TOWorkDetailCard extends StatelessWidget {
                       padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 8)),
                       child: Icon(
                         Icons.delete_outline,
-                        color: canDelete ? Colors.red[700] : Colors.grey[400],
+                        color: canDelete ? AppColors.errorDark : AppColors.grey400,
                         size: ResponsiveHelper.iconSize(context, 20),
                       ),
                     ),
@@ -252,7 +254,7 @@ class TOWorkDetailCard extends StatelessWidget {
                       _wageTypeLabel,
                       style: ResponsiveHelper.smallStyle(
                         context,
-                        color: Colors.grey[600],
+                        color: AppColors.grey600,
                       ),
                     ),
                     SizedBox(height: ResponsiveHelper.spacing(context, 4)),
@@ -260,7 +262,7 @@ class TOWorkDetailCard extends StatelessWidget {
                       '$_formattedWage원',
                       style: ResponsiveHelper.subtitleStyle(context).copyWith(
                         fontWeight: FontWeight.bold,
-                        color: Colors.green[700],
+                        color: AppColors.successDark,
                       ),
                     ),
                   ],
@@ -270,7 +272,7 @@ class TOWorkDetailCard extends StatelessWidget {
               Container(
                 width: 1,
                 height: 40,
-                color: Colors.grey[300],
+                color: AppColors.grey300,
               ),
               SizedBox(width: ResponsiveHelper.spacing(context, 16)),
               
@@ -283,7 +285,7 @@ class TOWorkDetailCard extends StatelessWidget {
                       '필요 인원',
                       style: ResponsiveHelper.smallStyle(
                         context,
-                        color: Colors.grey[600],
+                        color: AppColors.grey600,
                       ),
                     ),
                     SizedBox(height: ResponsiveHelper.spacing(context, 4)),

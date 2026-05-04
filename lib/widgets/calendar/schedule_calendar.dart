@@ -1,7 +1,9 @@
-import 'package:flutter/material.dart';
+﻿import 'package:flutter/material.dart';
 import 'package:table_calendar/table_calendar.dart';
 import '../../models/core/application_model.dart';
 import '../../utils/calendar_helper.dart';
+import '';
+import '../../theme/app_colors.dart';
 
 /// 근무 스케줄 캘린더 위젯 (workforce_calendar_view 스타일 통일)
 class ScheduleCalendar extends StatelessWidget {
@@ -97,7 +99,7 @@ class ScheduleCalendar extends StatelessWidget {
             if (hasLongConfirmed) {
               if (hasLeaveDay) {
                 markers.add(_buildMarker(
-                  Colors.grey[400]!,
+                  AppColors.grey400!,
                   isLongTerm: true,
                 ));
               } else {

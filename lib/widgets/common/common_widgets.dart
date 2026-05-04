@@ -1,4 +1,4 @@
-// lib/widgets/common/common_widgets.dart
+﻿// lib/widgets/common/common_widgets.dart
 
 import 'package:flutter/material.dart';
 import '../../utils/responsive_helper.dart';
@@ -202,7 +202,7 @@ class CommonWidgets {
         hintText: hint,
         hintStyle: ResponsiveHelper.smallStyle(
           context,
-          color: Colors.grey[400],
+          color: AppColors.grey400,
         ),
         prefixIcon: icon != null
             ? Icon(

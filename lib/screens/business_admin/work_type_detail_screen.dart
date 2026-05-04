@@ -1,9 +1,11 @@
-import 'package:flutter/material.dart';
+﻿import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'dart:io';
+import '';
 
 // Models
 import '../../models/core/business_work_type_model.dart';
+import '';
 
 // Utils
 import '../../utils/responsive_helper.dart';
@@ -11,13 +13,17 @@ import '../../utils/toast_helper.dart';
 import '../../utils/navigation_helper.dart';
 import '../../utils/image_helper.dart';
 import '../../../utils/format_helper.dart';
+import '';
 
 // Widgets
 import '../../widgets/common/common_widgets.dart';
 import '../../../widgets/work_type_icon.dart';
+import '';
 
 // Services
 import '../../services/storage_service.dart';
+import '';
+import '../../theme/app_colors.dart';
 
 /// 📦 업무유형 상세 화면
 class WorkTypeDetailScreen extends StatefulWidget {
@@ -95,7 +101,7 @@ class _WorkTypeDetailScreenState extends State<WorkTypeDetailScreen> {
         }
       },
       child: Scaffold(
-        backgroundColor: Colors.grey[50],
+        backgroundColor: AppColors.grey50,
         appBar: AppBar(
           title: Text(_isEditing ? '업무유형 수정' : '업무유형 상세'),
           backgroundColor: theme.primaryColor,
@@ -330,9 +336,9 @@ class _WorkTypeDetailScreenState extends State<WorkTypeDetailScreen> {
               height: ResponsiveHelper.spacing(context, 200),
               margin: EdgeInsets.all(ResponsiveHelper.spacing(context, 16)),
               decoration: BoxDecoration(
-                color: Colors.grey[100],
+                color: AppColors.grey100,
                 borderRadius: BorderRadius.circular(12),
-                border: Border.all(color: Colors.grey[300]!),
+                border: Border.all(color: AppColors.grey300!),
               ),
               child: Center(
                 child: Column(
@@ -341,13 +347,13 @@ class _WorkTypeDetailScreenState extends State<WorkTypeDetailScreen> {
                     Icon(
                       Icons.image_outlined,
                       size: ResponsiveHelper.iconSize(context, 48),
-                      color: Colors.grey[400],
+                      color: AppColors.grey400,
                     ),
                     SizedBox(height: ResponsiveHelper.spacing(context, 8)),
                     Text(
                       _isEditing ? '사진을 추가해주세요' : '등록된 사진이 없습니다',
                       style: ResponsiveHelper.bodyStyle(context).copyWith(
-                        color: Colors.grey[500],
+                        color: AppColors.grey500,
                       ),
                     ),
                   ],
@@ -478,13 +484,13 @@ class _WorkTypeDetailScreenState extends State<WorkTypeDetailScreen> {
               width: double.infinity,
               padding: ResponsiveHelper.cardPadding(context),
               decoration: BoxDecoration(
-                color: Colors.grey[50],
+                color: AppColors.grey50,
                 borderRadius: BorderRadius.circular(8),
               ),
               child: Text(
                 _currentWorkType.description!,
                 style: ResponsiveHelper.bodyStyle(context).copyWith(
-                  color: Colors.grey[700],
+                  color: AppColors.grey700,
                   height: 1.5,
                 ),
               ),
@@ -493,7 +499,7 @@ class _WorkTypeDetailScreenState extends State<WorkTypeDetailScreen> {
             Text(
               '등록된 상세 설명이 없습니다',
               style: ResponsiveHelper.bodyStyle(context).copyWith(
-                color: Colors.grey[500],
+                color: AppColors.grey500,
                 fontStyle: FontStyle.italic,
               ),
             ),
@@ -527,7 +533,7 @@ class _WorkTypeDetailScreenState extends State<WorkTypeDetailScreen> {
                     Text(
                       '근무 환경을 선택하세요',
                       style: ResponsiveHelper.bodyStyle(context).copyWith(
-                        color: Colors.grey[600],
+                        color: AppColors.grey600,
                       ),
                     ),
                     SizedBox(height: ResponsiveHelper.spacing(context, 12)),
@@ -547,11 +553,11 @@ class _WorkTypeDetailScreenState extends State<WorkTypeDetailScreen> {
                           selectedColor: theme.primaryColor,
                           checkmarkColor: Colors.white,
                           labelStyle: ResponsiveHelper.bodyStyle(context).copyWith(
-                            color: isSelected ? Colors.white : Colors.grey[700],
+                            color: isSelected ? Colors.white : AppColors.grey700,
                             fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
                           ),
                           side: BorderSide(
-                            color: isSelected ? theme.primaryColor : Colors.grey[300]!,
+                            color: isSelected ? theme.primaryColor : AppColors.grey300!,
                           ),
                         );
                       }).toList(),
@@ -600,7 +606,7 @@ class _WorkTypeDetailScreenState extends State<WorkTypeDetailScreen> {
               Text(
                 label,
                 style: ResponsiveHelper.smallStyle(context).copyWith(
-                  color: Colors.grey[600],
+                  color: AppColors.grey600,
                 ),
               ),
               SizedBox(height: ResponsiveHelper.spacing(context, 2)),
@@ -733,13 +739,13 @@ class _WorkTypeDetailScreenState extends State<WorkTypeDetailScreen> {
             width: double.infinity,
             padding: ResponsiveHelper.cardPadding(context),
             decoration: BoxDecoration(
-              color: Colors.grey[50],
+              color: AppColors.grey50,
               borderRadius: BorderRadius.circular(8),
             ),
             child: Text(
               value!,
               style: ResponsiveHelper.bodyStyle(context).copyWith(
-                color: Colors.grey[700],
+                color: AppColors.grey700,
                 height: 1.5,
               ),
             ),
@@ -782,7 +788,7 @@ class _WorkTypeDetailScreenState extends State<WorkTypeDetailScreen> {
             context: context,
             message: _currentWorkType.precautions!,
             icon: Icons.info_outline,
-            color: Colors.orange[700],
+            color: AppColors.warningDark,
           ),
       ],
     );

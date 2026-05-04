@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+﻿import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import '../../../../utils/responsive_helper.dart';
 import '../../../../utils/format_helper.dart';
@@ -156,7 +156,7 @@ class _TODateSelectorState extends State<TODateSelector> {
             SizedBox(height: ResponsiveHelper.spacing(context, 16)),
             Row(
               children: [
-                Icon(Icons.event_repeat, size: ResponsiveHelper.iconSize(context, 18), color: Colors.grey[600]),
+                Icon(Icons.event_repeat, size: ResponsiveHelper.iconSize(context, 18), color: AppColors.grey600),
                 SizedBox(width: ResponsiveHelper.spacing(context, 8)),
                 Text(
                   '근무 요일: ${widget.displayWorkDays!.join(', ')}',

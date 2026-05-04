@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+﻿import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../providers/notification_provider.dart';
 import '../../models/core/notification_model.dart';
@@ -7,6 +7,7 @@ import '../../widgets/common/common_widgets.dart';
 import '../../utils/responsive_helper.dart';
 import '../../utils/toast_helper.dart';
 import '../../providers/user_provider.dart';
+import '';
 // 네비게이션 대상 화면들
 import '../user/my_applications_screen.dart';
 import '../user/my_schedule_screen.dart';
@@ -18,6 +19,8 @@ import '../../models/core/work_detail_model.dart';
 import '../../models/ui/admin_to_list_ui_models.dart';
 import '../../services/firestore_service.dart';
 import '../business_admin/dialogs/work_applicants_dialog.dart';
+import '';
+import '../../theme/app_colors.dart';
 
 /// 알림 목록 화면
 class NotificationScreen extends StatelessWidget {
@@ -98,14 +101,14 @@ class NotificationScreen extends StatelessWidget {
           Icon(
             Icons.notifications_none,
             size: ResponsiveHelper.iconSize(context, 80),
-            color: Colors.grey[300],
+            color: AppColors.grey300,
           ),
           SizedBox(height: ResponsiveHelper.spacing(context, 16)),
           Text(
             '알림이 없습니다',
             style: ResponsiveHelper.subtitleStyle(
               context,
-              color: Colors.grey[600],
+              color: AppColors.grey600,
             ),
           ),
         ],

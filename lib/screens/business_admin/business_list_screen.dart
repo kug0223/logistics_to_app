@@ -1,32 +1,40 @@
-import 'package:flutter/material.dart';
+﻿import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_storage/firebase_storage.dart';
+import '';
 
 // Models
 import '../../models/core/business_model.dart';
+import '';
 
 // Providers
 import '../../providers/user_provider.dart';
+import '';
 
 // Services
 import '../../services/firestore_service.dart';
+import '';
 
 // Utils
 import '../../utils/responsive_helper.dart';
 import '../../utils/toast_helper.dart';
 import '../../utils/dialog_helper.dart';
+import '';
 
 // Widgets
 import '../../widgets/common/common_widgets.dart';
 import '../common/document_management_screen.dart';
 import '../../utils/navigation_helper.dart';
 import '../../utils/cache_manager.dart';
+import '';
 
 // Screen
 import 'business_detail_screen.dart';
 import 'business_form_screen.dart';
 import 'to_management/create_to_screen.dart';
+import '';
+import '../../theme/app_colors.dart';
 
 /// 📋 내 사업장 관리 화면 (관리자 전용)
 class BusinessListScreen extends StatefulWidget {
@@ -198,20 +206,20 @@ class _BusinessListScreenState extends State<BusinessListScreen> {
           Icon(
             Icons.business_outlined,
             size: ResponsiveHelper.iconSize(context, 80),
-            color: Colors.grey[400],
+            color: AppColors.grey400,
           ),
           SizedBox(height: ResponsiveHelper.spacing(context, 24)),
           Text(
             '등록된 사업장이 없습니다',
             style: ResponsiveHelper.titleStyle(context).copyWith(
-              color: Colors.grey[600],
+              color: AppColors.grey600,
             ),
           ),
           SizedBox(height: ResponsiveHelper.spacing(context, 12)),
           Text(
             '사업장을 등록하고 TO를 관리해보세요',
             style: ResponsiveHelper.bodyStyle(context).copyWith(
-              color: Colors.grey[500],
+              color: AppColors.grey500,
             ),
           ),
           SizedBox(height: ResponsiveHelper.spacing(context, 32)),
@@ -350,14 +358,14 @@ class _BusinessListScreenState extends State<BusinessListScreen> {
                         Icon(
                           Icons.location_on_outlined,
                           size: ResponsiveHelper.iconSize(context, 14),
-                          color: Colors.grey[600],
+                          color: AppColors.grey600,
                         ),
                         SizedBox(width: ResponsiveHelper.spacing(context, 4)),
                         Expanded(
                           child: Text(
                             business.address,
                             style: ResponsiveHelper.smallStyle(context).copyWith(
-                              color: Colors.grey[600],
+                              color: AppColors.grey600,
                             ),
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
@@ -389,7 +397,7 @@ class _BusinessListScreenState extends State<BusinessListScreen> {
       width: ResponsiveHelper.iconSize(context, 80),
       height: ResponsiveHelper.iconSize(context, 80),
       decoration: BoxDecoration(
-        color: Colors.grey[200],
+        color: AppColors.grey200,
         borderRadius: BorderRadius.circular(12),
         image: business.mainImageUrl != null
             ? DecorationImage(
@@ -402,7 +410,7 @@ class _BusinessListScreenState extends State<BusinessListScreen> {
           ? Icon(
               Icons.business,
               size: ResponsiveHelper.iconSize(context, 40),
-              color: Colors.grey[400],
+              color: AppColors.grey400,
             )
           : null,
     );
@@ -430,7 +438,7 @@ class _BusinessListScreenState extends State<BusinessListScreen> {
           Container(
             width: 1,
             height: 12,
-            color: Colors.grey[300],
+            color: AppColors.grey300,
           ),
           SizedBox(width: ResponsiveHelper.spacing(context, 8)),
         ],
@@ -439,7 +447,7 @@ class _BusinessListScreenState extends State<BusinessListScreen> {
         Text(
           business.parkingAvailable ? '주차O' : '주차X',
           style: ResponsiveHelper.smallStyle(context).copyWith(
-            color: business.parkingAvailable ? Colors.green[700] : Colors.grey[500],
+            color: business.parkingAvailable ? AppColors.successDark : AppColors.grey500,
           ),
         ),
         
@@ -447,7 +455,7 @@ class _BusinessListScreenState extends State<BusinessListScreen> {
         Container(
           width: 1,
           height: 12,
-          color: Colors.grey[300],
+          color: AppColors.grey300,
         ),
         SizedBox(width: ResponsiveHelper.spacing(context, 8)),
         
@@ -458,8 +466,8 @@ class _BusinessListScreenState extends State<BusinessListScreen> {
               : '식사X',
           style: ResponsiveHelper.smallStyle(context).copyWith(
             color: business.mealsProvided != null && business.mealsProvided!.isNotEmpty
-                ? Colors.green[700] 
-                : Colors.grey[500],
+                ? AppColors.successDark 
+                : AppColors.grey500,
           ),
         ),
       ],

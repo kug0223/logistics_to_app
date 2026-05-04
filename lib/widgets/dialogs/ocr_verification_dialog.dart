@@ -1,7 +1,9 @@
-// lib/widgets/dialogs/ocr_verification_dialog.dart
+﻿// lib/widgets/dialogs/ocr_verification_dialog.dart
 
 import 'package:flutter/material.dart';
 import '../../utils/responsive_helper.dart';
+import '';
+import '../../theme/app_colors.dart';
 
 /// 📄 OCR 검증 결과 다이얼로그
 class OcrVerificationDialog {
@@ -30,7 +32,7 @@ class OcrVerificationDialog {
               ),
               child: Icon(
                 Icons.check_circle,
-                color: Colors.green[700],
+                color: AppColors.successDark,
                 size: ResponsiveHelper.iconSize(context, 32),
               ),
             ),
@@ -71,7 +73,7 @@ class OcrVerificationDialog {
                       Icon(
                         Icons.check,
                         size: ResponsiveHelper.iconSize(context, 18),
-                        color: Colors.green[700],
+                        color: AppColors.successDark,
                       ),
                       SizedBox(width: ResponsiveHelper.spacing(context, 8)),
                       Expanded(
@@ -87,8 +89,8 @@ class OcrVerificationDialog {
                   SizedBox(height: ResponsiveHelper.spacing(context, 8)),
                   LinearProgressIndicator(
                     value: confidence,
-                    backgroundColor: Colors.grey[300],
-                    color: Colors.green[700],
+                    backgroundColor: AppColors.grey300,
+                    color: AppColors.successDark,
                     minHeight: 4,
                   ),
                   SizedBox(height: ResponsiveHelper.spacing(context, 4)),
@@ -96,7 +98,7 @@ class OcrVerificationDialog {
                     '신뢰도: ${(confidence * 100).toInt()}%',
                     style: ResponsiveHelper.tinyStyle(
                       context,
-                      color: Colors.grey[600],
+                      color: AppColors.grey600,
                     ),
                   ),
                 ],
@@ -151,7 +153,7 @@ class OcrVerificationDialog {
               ),
               child: Icon(
                 Icons.warning_amber_rounded,
-                color: Colors.orange[700],
+                color: AppColors.warningDark,
                 size: ResponsiveHelper.iconSize(context, 32),
               ),
             ),
@@ -192,14 +194,14 @@ class OcrVerificationDialog {
                       context,
                       '입력 정보',
                       expectedInfo,
-                      Colors.blue[700]!,
+                      AppColors.infoDark!,
                     ),
                     SizedBox(height: ResponsiveHelper.spacing(context, 8)),
                     _buildInfoRow(
                       context,
                       '인식 정보',
                       extractedInfo ?? '인식 실패',
-                      Colors.orange[700]!,
+                      AppColors.warningDark!,
                     ),
                     if (reason != null) ...[
                       SizedBox(height: ResponsiveHelper.spacing(context, 12)),
@@ -207,7 +209,7 @@ class OcrVerificationDialog {
                         '💡 $reason',
                         style: ResponsiveHelper.smallStyle(
                           context,
-                          color: Colors.grey[700],
+                          color: AppColors.grey700,
                         ),
                       ),
                     ],
@@ -227,7 +229,7 @@ class OcrVerificationDialog {
                 '• 정확한 정보 입력을 위해 다시 촬영을 권장합니다',
                 style: ResponsiveHelper.smallStyle(
                   context,
-                  color: Colors.grey[600],
+                  color: AppColors.grey600,
                 ),
               ),
             ],
@@ -287,7 +289,7 @@ class OcrVerificationDialog {
               ),
               child: Icon(
                 Icons.error_outline,
-                color: Colors.red[700],
+                color: AppColors.errorDark,
                 size: ResponsiveHelper.iconSize(context, 32),
               ),
             ),
@@ -314,7 +316,7 @@ class OcrVerificationDialog {
             Container(
               padding: ResponsiveHelper.cardPadding(context),
               decoration: BoxDecoration(
-                color: Colors.grey[100],
+                color: AppColors.grey100,
                 borderRadius: BorderRadius.circular(12),
               ),
               child: Column(
@@ -340,7 +342,7 @@ class OcrVerificationDialog {
                 '오류: $errorMessage',
                 style: ResponsiveHelper.tinyStyle(
                   context,
-                  color: Colors.red[700],
+                  color: AppColors.errorDark,
                 ),
               ),
             ],
@@ -390,7 +392,7 @@ class OcrVerificationDialog {
             label,
             style: ResponsiveHelper.smallStyle(
               context,
-              color: Colors.grey[600],
+              color: AppColors.grey600,
             ),
           ),
         ),
@@ -422,14 +424,14 @@ class OcrVerificationDialog {
           Icon(
             Icons.check_circle_outline,
             size: ResponsiveHelper.iconSize(context, 14),
-            color: Colors.grey[600],
+            color: AppColors.grey600,
           ),
           SizedBox(width: ResponsiveHelper.spacing(context, 8)),
           Text(
             tip,
             style: ResponsiveHelper.smallStyle(
               context,
-              color: Colors.grey[700],
+              color: AppColors.grey700,
             ),
           ),
         ],

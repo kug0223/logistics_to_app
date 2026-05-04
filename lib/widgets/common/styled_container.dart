@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+﻿import 'package:flutter/material.dart';
 import '../../utils/responsive_helper.dart';  // ⭐ 추가
 import '../../theme/app_colors.dart';
 /// 공통 스타일 컨테이너 위젯 모음
@@ -12,7 +12,7 @@ import '../../theme/app_colors.dart';
 /// StyledBadge(
 ///   label: '단기',
 ///   backgroundColor: Colors.blue[100]!,
-///   textColor: Colors.blue[700]!,
+///   textColor: AppColors.infoDark!,
 /// )
 /// ```
 class StyledBadge extends StatelessWidget {
@@ -149,7 +149,7 @@ class StyledOutlineBadge extends StatelessWidget {
 /// ```dart
 /// StyledChip(
 ///   label: '11/01',
-///   backgroundColor: Colors.blue[700]!,
+///   backgroundColor: AppColors.infoDark!,
 ///   textColor: Colors.white,
 ///   onDelete: () => print('삭제'),
 /// )
@@ -237,8 +237,8 @@ class StyledChip extends StatelessWidget {
 /// 사용 예:
 /// ```dart
 /// StyledInfoCard(
-///   backgroundColor: Colors.green[50]!,
-///   borderColor: Colors.green[200]!,
+///   backgroundColor: AppColors.successBg!,
+///   borderColor: AppColors.successLight!,
 ///   child: Text('연속된 날짜입니다'),
 /// )
 /// ```
@@ -281,7 +281,7 @@ class StyledInfoCard extends StatelessWidget {
 /// StyledIconContainer(
 ///   icon: Icons.work,
 ///   backgroundColor: Colors.blue[100]!,
-///   iconColor: Colors.blue[700]!,
+///   iconColor: AppColors.infoDark!,
 /// )
 /// ```
 class StyledIconContainer extends StatelessWidget {

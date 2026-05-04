@@ -1,22 +1,28 @@
-// ============================================
+﻿// ============================================
 // daum_address_search_mobile.dart (Android/iOS) - 완전 리팩토링
 // ✨ StyledDialog + ResponsiveHelper + Theme 색상 + WebView 스케일 조정
 // ============================================
 import 'package:flutter/material.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 import 'dart:convert';
+import '';
 
 // Models
 import 'daum_address_search.dart';
+import '';
 
 // Services
 import '../../services/geocoding_service.dart';
+import '';
 
 // Utils
 import '../../utils/responsive_helper.dart';
+import '';
 
 // Widgets
 import '../dialogs/styled_dialog.dart';
+import '';
+import '../../theme/app_colors.dart';
 
 /// Mobile 플랫폼 구현체 - WebView로 다음 주소 API 연동
 class DaumAddressSearchImpl {
@@ -284,7 +290,7 @@ class _DaumPostcodeWebViewState extends State<_DaumPostcodeWebView> {
                       '주소 검색 로딩 중...',
                       style: ResponsiveHelper.bodyStyle(
                         context,
-                        color: Colors.grey[600],
+                        color: AppColors.grey600,
                       ),
                     ),
                   ],

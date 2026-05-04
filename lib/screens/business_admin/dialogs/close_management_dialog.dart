@@ -1,4 +1,4 @@
-// lib/screens/business_admin/dialogs/close_management_dialog.dart
+﻿// lib/screens/business_admin/dialogs/close_management_dialog.dart
 // 마감관리 다이얼로그 - 월별 당일명단 마감 현황 조회 및 관리
 //
 // 주요 기능:
@@ -448,7 +448,7 @@ class _CloseManagementDialogState extends State<CloseManagementDialog> {
       margin: ResponsiveHelper.cardPadding(context),
       padding: ResponsiveHelper.cardPadding(context),
       decoration: BoxDecoration(
-        color: Colors.grey[50],
+        color: AppColors.grey50,
         borderRadius: BorderRadius.circular(12),
         border: Border.all(color: AppColors.border),
       ),
@@ -734,7 +734,7 @@ class _CloseManagementDialogState extends State<CloseManagementDialog> {
     return Container(
       padding: ResponsiveHelper.cardPadding(context),
       decoration: BoxDecoration(
-        color: Colors.grey[50],
+        color: AppColors.grey50,
         borderRadius: BorderRadius.only(
           bottomLeft: Radius.circular(24),
           bottomRight: Radius.circular(24),

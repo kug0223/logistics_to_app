@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+﻿import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:intl/intl.dart';
 
@@ -1016,7 +1016,7 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
         ],
       ),
       body: Container(
-        color: Colors.grey[50],
+        color: AppColors.grey50,
         child: Form(
           key: _formKey,
           child: ListView(
@@ -1129,7 +1129,7 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
               '사업장을 먼저 등록해주세요',
               style: ResponsiveHelper.bodyStyle(
                 context,
-                color: Colors.grey[600],
+                color: AppColors.grey600,
               ),
             ),
           ],
@@ -1154,11 +1154,11 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
           ),
           border: OutlineInputBorder(
             borderRadius: BorderRadius.circular(12),
-            borderSide: BorderSide(color: Colors.grey[300]!),
+            borderSide: BorderSide(color: AppColors.grey300!),
           ),
           enabledBorder: OutlineInputBorder(
             borderRadius: BorderRadius.circular(12),
-            borderSide: BorderSide(color: Colors.grey[300]!),
+            borderSide: BorderSide(color: AppColors.grey300!),
           ),
           focusedBorder: OutlineInputBorder(
             borderRadius: BorderRadius.circular(12),
@@ -1247,7 +1247,7 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
                   ],
                 )
               : null,
-          color: isSelected ? null : Colors.grey[100],
+          color: isSelected ? null : AppColors.grey100,
           borderRadius: BorderRadius.circular(12),
           boxShadow: isSelected
               ? [
@@ -1264,14 +1264,14 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
           children: [
             Icon(
               icon,
-              color: isSelected ? Colors.white : Colors.grey[700],
+              color: isSelected ? Colors.white : AppColors.grey700,
               size: ResponsiveHelper.iconSize(context, 20),
             ),
             SizedBox(width: ResponsiveHelper.spacing(context, 8)),
             Text(
               label,
               style: ResponsiveHelper.subtitleStyle(context).copyWith(
-                color: isSelected ? Colors.white : Colors.grey[700],
+                color: isSelected ? Colors.white : AppColors.grey700,
                 fontWeight: FontWeight.bold,
               ),
             ),
@@ -1340,7 +1340,7 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
                 '연결할 수 있는 공고가 없습니다',
                 style: ResponsiveHelper.bodyStyle(
                   context,
-                  color: Colors.grey[600],
+                  color: AppColors.grey600,
                 ),
               )
             else

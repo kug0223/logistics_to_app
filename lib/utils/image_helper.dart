@@ -1,10 +1,12 @@
-// lib/utils/image_helper.dart
+﻿// lib/utils/image_helper.dart
 
 import 'dart:io';
 import 'dart:typed_data';
+import '';
 import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
+import '';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter_image_compress/flutter_image_compress.dart';
 import 'package:path_provider/path_provider.dart';
@@ -12,6 +14,8 @@ import 'responsive_helper.dart';
 import 'toast_helper.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:shimmer/shimmer.dart';
+import '';
+import '../theme/app_colors.dart';
 
 /// 🖼️ 이미지 관련 공용 헬퍼
 /// 
@@ -134,7 +138,7 @@ class ImageHelper {
                 height: 4,
                 margin: EdgeInsets.only(bottom: ResponsiveHelper.spacing(context, 16)),
                 decoration: BoxDecoration(
-                  color: Colors.grey[300],
+                  color: AppColors.grey300,
                   borderRadius: BorderRadius.circular(2),
                 ),
               ),
@@ -509,10 +513,10 @@ class ImageHelper {
         },
         errorBuilder: (context, error, stackTrace) {
           return errorWidget ?? Container(
-            color: Colors.grey[200],
+            color: AppColors.grey200,
             child: Icon(
               Icons.broken_image,
-              color: Colors.grey[400],
+              color: AppColors.grey400,
               size: 48,
             ),
           );
@@ -520,10 +524,10 @@ class ImageHelper {
       );
     } else {
       return errorWidget ?? Container(
-        color: Colors.grey[200],
+        color: AppColors.grey200,
         child: Icon(
           Icons.image_not_supported,
-          color: Colors.grey[400],
+          color: AppColors.grey400,
           size: 48,
         ),
       );
@@ -559,8 +563,8 @@ class ImageHelper {
       height: height,
       fadeInDuration: fadeInDuration,
       placeholder: (context, url) => Shimmer.fromColors(
-        baseColor: Colors.grey[300]!,
-        highlightColor: Colors.grey[100]!,
+        baseColor: AppColors.grey300!,
+        highlightColor: AppColors.grey100!,
         child: Container(
           width: width ?? double.infinity,
           height: height,
@@ -570,10 +574,10 @@ class ImageHelper {
       errorWidget: (context, url, error) => Container(
         width: width ?? double.infinity,
         height: height,
-        color: Colors.grey[200],
+        color: AppColors.grey200,
         child: Icon(
           Icons.broken_image,
-          color: Colors.grey[400],
+          color: AppColors.grey400,
           size: 48,
         ),
       ),
@@ -626,10 +630,10 @@ class ImageHelper {
       return Container(
         width: width ?? double.infinity,
         height: height,
-        color: Colors.grey[200],
+        color: AppColors.grey200,
         child: Icon(
           Icons.image_not_supported,
-          color: Colors.grey[400],
+          color: AppColors.grey400,
           size: 48,
         ),
       );
@@ -647,9 +651,9 @@ class ImageHelper {
     final content = Container(
       height: height ?? ResponsiveHelper.spacing(context, 200),
       decoration: BoxDecoration(
-        color: Colors.grey[100],
+        color: AppColors.grey100,
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: Colors.grey[300]!),
+        border: Border.all(color: AppColors.grey300!),
       ),
       child: Center(
         child: Column(
@@ -658,14 +662,14 @@ class ImageHelper {
             Icon(
               icon,
               size: ResponsiveHelper.iconSize(context, 48),
-              color: Colors.grey[400],
+              color: AppColors.grey400,
             ),
             if (message != null) ...[
               SizedBox(height: ResponsiveHelper.spacing(context, 8)),
               Text(
                 message,
                 style: ResponsiveHelper.bodyStyle(context).copyWith(
-                  color: Colors.grey[500],
+                  color: AppColors.grey500,
                 ),
                 textAlign: TextAlign.center,
               ),
@@ -740,10 +744,10 @@ class ImageHelper {
         width: size,
         height: size,
         decoration: BoxDecoration(
-          color: Colors.grey[100],
+          color: AppColors.grey100,
           borderRadius: BorderRadius.circular(8),
           border: Border.all(
-            color: Colors.grey[300]!,
+            color: AppColors.grey300!,
             style: BorderStyle.solid,
           ),
         ),
@@ -752,7 +756,7 @@ class ImageHelper {
           children: [
             Icon(
               Icons.add_photo_alternate,
-              color: Colors.grey[500],
+              color: AppColors.grey500,
               size: ResponsiveHelper.iconSize(context, 24),
             ),
             if (label != null) ...[
@@ -760,7 +764,7 @@ class ImageHelper {
               Text(
                 label,
                 style: ResponsiveHelper.smallStyle(context).copyWith(
-                  color: Colors.grey[500],
+                  color: AppColors.grey500,
                 ),
               ),
             ],

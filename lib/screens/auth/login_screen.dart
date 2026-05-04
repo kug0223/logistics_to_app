@@ -1,23 +1,30 @@
-import 'package:flutter/material.dart';
+﻿import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import '';
 
 // Providers
 import '../../providers/user_provider.dart';
+import '';
 
 // Utils
 import '../../utils/responsive_helper.dart';
 import '../../utils/toast_helper.dart';
+import '';
 
 // Widgets
 import '../../widgets/common/loading_widget.dart';
 import '../../widgets/alfit_splash_logo_widget.dart';
 import '../../widgets/dialogs/styled_dialog.dart';
+import '';
 
 // Services
 import '../../services/auth_service.dart';
+import '';
 
 // Screens
 import 'register_screen.dart';
+import '';
+import '../../theme/app_colors.dart';
 
 /// ALfit 로그인 화면 - 포커스 이동 + 아이디/비밀번호 찾기
 class LoginScreen extends StatefulWidget {
@@ -135,7 +142,7 @@ class _LoginScreenState extends State<LoginScreen> {
                           Container(
                             padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 20)),
                             decoration: BoxDecoration(
-                              color: Colors.grey[100],
+                              color: AppColors.grey100,
                               borderRadius: BorderRadius.circular(12),
                             ),
                             child: Column(
@@ -220,7 +227,7 @@ class _LoginScreenState extends State<LoginScreen> {
                         Container(
                           padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 20)),
                           decoration: BoxDecoration(
-                            color: Colors.grey[100],
+                            color: AppColors.grey100,
                             borderRadius: BorderRadius.circular(12),
                           ),
                           child: Column(
@@ -397,12 +404,12 @@ class _LoginScreenState extends State<LoginScreen> {
                             Container(
                               padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 16)),
                               decoration: BoxDecoration(
-                                color: Colors.blue[50],
+                                color: AppColors.infoBg,
                                 borderRadius: BorderRadius.circular(12),
                               ),
                               child: Row(
                                 children: [
-                                  Icon(Icons.info_outline, color: Colors.blue[700]),
+                                  Icon(Icons.info_outline, color: AppColors.infoDark),
                                   SizedBox(width: ResponsiveHelper.spacing(context, 12)),
                                   Expanded(
                                     child: Text(
@@ -467,12 +474,12 @@ class _LoginScreenState extends State<LoginScreen> {
                           Container(
                             padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 16)),
                             decoration: BoxDecoration(
-                              color: Colors.blue[50],
+                              color: AppColors.infoBg,
                               borderRadius: BorderRadius.circular(12),
                             ),
                             child: Row(
                               children: [
-                                Icon(Icons.info_outline, color: Colors.blue[700]),
+                                Icon(Icons.info_outline, color: AppColors.infoDark),
                                 SizedBox(width: ResponsiveHelper.spacing(context, 12)),
                                 Expanded(
                                   child: Text(
@@ -590,7 +597,7 @@ class _LoginScreenState extends State<LoginScreen> {
             textAlign: TextAlign.center,
             style: ResponsiveHelper.bodyStyle(
               context,
-              color: Colors.grey[600],
+              color: AppColors.grey600,
             ).copyWith(
               fontWeight: FontWeight.w500,
             ),
@@ -653,7 +660,7 @@ class _LoginScreenState extends State<LoginScreen> {
                     suffixIcon: IconButton(
                       icon: Icon(
                         _obscurePassword ? Icons.visibility_off : Icons.visibility,
-                        color: Colors.grey[600],
+                        color: AppColors.grey600,
                         size: ResponsiveHelper.iconSize(context, 20),
                       ),
                       onPressed: () {
@@ -711,7 +718,7 @@ class _LoginScreenState extends State<LoginScreen> {
               TextButton(
                 onPressed: _showFindUsernameDialog,
                 style: TextButton.styleFrom(
-                  foregroundColor: Colors.grey[700],
+                  foregroundColor: AppColors.grey700,
                   padding: EdgeInsets.symmetric(
                     horizontal: ResponsiveHelper.spacing(context, 8),
                     vertical: ResponsiveHelper.spacing(context, 4),
@@ -721,14 +728,14 @@ class _LoginScreenState extends State<LoginScreen> {
                 ),
                 child: Text(
                   '아이디 찾기',
-                  style: ResponsiveHelper.smallStyle(context, color: Colors.grey[700]),
+                  style: ResponsiveHelper.smallStyle(context, color: AppColors.grey700),
                 ),
               ),
               
               Container(
                 height: ResponsiveHelper.spacing(context, 12),
                 width: 1,
-                color: Colors.grey[400],
+                color: AppColors.grey400,
                 margin: EdgeInsets.symmetric(
                   horizontal: ResponsiveHelper.spacing(context, 8),
                 ),
@@ -737,7 +744,7 @@ class _LoginScreenState extends State<LoginScreen> {
               TextButton(
                 onPressed: _showFindPasswordDialog,
                 style: TextButton.styleFrom(
-                  foregroundColor: Colors.grey[700],
+                  foregroundColor: AppColors.grey700,
                   padding: EdgeInsets.symmetric(
                     horizontal: ResponsiveHelper.spacing(context, 8),
                     vertical: ResponsiveHelper.spacing(context, 4),
@@ -747,7 +754,7 @@ class _LoginScreenState extends State<LoginScreen> {
                 ),
                 child: Text(
                   '비밀번호 찾기',
-                  style: ResponsiveHelper.smallStyle(context, color: Colors.grey[700]),
+                  style: ResponsiveHelper.smallStyle(context, color: AppColors.grey700),
                 ),
               ),
             ],
@@ -812,7 +819,7 @@ class _LoginScreenState extends State<LoginScreen> {
                     '처음 이용하시나요? 회원가입을 진행해주세요.',
                     style: ResponsiveHelper.smallStyle(
                       context,
-                      color: Colors.grey[700],
+                      color: AppColors.grey700,
                     ),
                   ),
                 ),
@@ -849,7 +856,7 @@ class _LoginScreenState extends State<LoginScreen> {
       decoration: InputDecoration(
         labelText: label,
         hintText: hint,
-        hintStyle: ResponsiveHelper.smallStyle(context, color: Colors.grey[400]),
+        hintStyle: ResponsiveHelper.smallStyle(context, color: AppColors.grey400),
         prefixIcon: Icon(
           icon,
           color: theme.primaryColor,
@@ -858,11 +865,11 @@ class _LoginScreenState extends State<LoginScreen> {
         suffixIcon: suffixIcon,
         border: OutlineInputBorder(
           borderRadius: BorderRadius.circular(12),
-          borderSide: BorderSide(color: Colors.grey[300]!),
+          borderSide: BorderSide(color: AppColors.grey300!),
         ),
         enabledBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(12),
-          borderSide: BorderSide(color: Colors.grey[300]!),
+          borderSide: BorderSide(color: AppColors.grey300!),
         ),
         focusedBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(12),
@@ -872,7 +879,7 @@ class _LoginScreenState extends State<LoginScreen> {
           ),
         ),
         filled: true,
-        fillColor: Colors.grey[50],
+        fillColor: AppColors.grey50,
         contentPadding: EdgeInsets.symmetric(
           horizontal: ResponsiveHelper.spacing(context, 14),
           vertical: ResponsiveHelper.spacing(context, 14),

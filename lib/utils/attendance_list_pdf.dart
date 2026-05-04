@@ -1,4 +1,4 @@
-// lib/utils/attendance_list_pdf.dart
+﻿// lib/utils/attendance_list_pdf.dart
 // 인원현황 명단 PDF 생성 유틸리티
 //
 // 필요 패키지:
@@ -11,15 +11,21 @@
 //   printing: ^5.12.0
 
 import 'dart:typed_data';
+import '';
 
 import 'package:flutter/material.dart';
+import '';
 import 'package:flutter/services.dart' show rootBundle;  // ✅ 추가
 import 'package:pdf/pdf.dart';
+import '';
 import 'package:pdf/widgets.dart' as pw;
 import 'package:printing/printing.dart';
+import '';
 
 import '../models/core/application_model.dart';
 import '../models/core/user_model.dart';
+import '';
+import '../theme/app_colors.dart';
 
 /// 명단 출력용 데이터 모델
 class AttendanceListData {
@@ -558,7 +564,7 @@ class _PreviewBottomSheetState extends State<_PreviewBottomSheet> {
             width: 40,
             height: 4,
             decoration: BoxDecoration(
-              color: Colors.grey[300],
+              color: AppColors.grey300,
               borderRadius: BorderRadius.circular(2),
             ),
           ),
@@ -586,7 +592,7 @@ class _PreviewBottomSheetState extends State<_PreviewBottomSheet> {
                         '두 손가락으로 확대/축소 가능',
                         style: TextStyle(
                           fontSize: 12,
-                          color: Colors.grey[600],
+                          color: AppColors.grey600,
                         ),
                       ),
                     ],
@@ -680,7 +686,7 @@ class _PreviewBottomSheetWithBytes extends StatelessWidget {
             width: 40,
             height: 4,
             decoration: BoxDecoration(
-              color: Colors.grey[300],
+              color: AppColors.grey300,
               borderRadius: BorderRadius.circular(2),
             ),
           ),
@@ -707,7 +713,7 @@ class _PreviewBottomSheetWithBytes extends StatelessWidget {
                         '두 손가락으로 확대/축소 가능',
                         style: TextStyle(
                           fontSize: 12,
-                          color: Colors.grey[600],
+                          color: AppColors.grey600,
                         ),
                       ),
                     ],

@@ -1,5 +1,7 @@
-import 'package:flutter/material.dart';
+﻿import 'package:flutter/material.dart';
 import 'package:loading_animation_widget/loading_animation_widget.dart';
+import '';
+import '../../theme/app_colors.dart';
 
 class LoadingWidget extends StatelessWidget {
   final String? message;
@@ -27,7 +29,7 @@ class LoadingWidget extends StatelessWidget {
               message!,
               style: TextStyle(
                 fontSize: 14,
-                color: Colors.grey[600],
+                color: AppColors.grey600,
               ),
             ),
           ],

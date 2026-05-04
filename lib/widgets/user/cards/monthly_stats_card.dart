@@ -1,9 +1,11 @@
-import 'package:flutter/material.dart';
+﻿import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import '../../../models/core/application_model.dart';
 import '../../../models/core/attendance_model.dart';
 import '../../../utils/calendar_helper.dart';
 import '../../../utils/responsive_helper.dart';
+import '';
+import '../../../theme/app_colors.dart';
 
 /// 월별 통계 카드 (2행 레이아웃: 예정 + 완료)
 class MonthlyStatsCard extends StatelessWidget {
@@ -46,7 +48,7 @@ class MonthlyStatsCard extends StatelessWidget {
           // ═══════════════════════════════════════════════════════
           // 📅 예정 섹션
           // ═══════════════════════════════════════════════════════
-          _buildSectionHeader(context, '📅 예정', Colors.blue[700]!),
+          _buildSectionHeader(context, '📅 예정', AppColors.infoDark!),
           SizedBox(height: ResponsiveHelper.spacing(context, 12)),
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceAround,
@@ -80,9 +82,9 @@ class MonthlyStatsCard extends StatelessWidget {
           // ═══════════════════════════════════════════════════════
           if (hasCompletedData) ...[
             SizedBox(height: ResponsiveHelper.spacing(context, 16)),
-            Divider(color: Colors.grey[200], height: 1),
+            Divider(color: AppColors.grey200, height: 1),
             SizedBox(height: ResponsiveHelper.spacing(context, 16)),
-            _buildSectionHeader(context, '✅ 완료', Colors.green[700]!),
+            _buildSectionHeader(context, '✅ 완료', AppColors.successDark!),
             SizedBox(height: ResponsiveHelper.spacing(context, 12)),
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceEvenly,
@@ -144,7 +146,7 @@ class MonthlyStatsCard extends StatelessWidget {
           label,
           style: ResponsiveHelper.smallStyle(
             context,
-            color: Colors.grey[600],
+            color: AppColors.grey600,
           ),
         ),
         SizedBox(height: ResponsiveHelper.spacing(context, 2)),

@@ -1,9 +1,11 @@
-import 'package:flutter/material.dart';
+﻿import 'package:flutter/material.dart';
 import '../../../../models/work_detail_input.dart';
 import '../../../../models/core/work_detail_model.dart';
 import '../../../../utils/responsive_helper.dart';
 import 'to_section_container.dart';
 import 'to_work_detail_card.dart';
+import '';
+import '../../../../theme/app_colors.dart';
 
 /// ✨ TO 업무 상세 섹션
 /// create_to_screen, edit_to_screen에서 공통으로 사용
@@ -105,7 +107,7 @@ class TOWorkDetailsSection extends StatelessWidget {
 
   Widget _buildAddButton(BuildContext context, ThemeData theme) {
     return Material(
-      color: Colors.green[50],
+      color: AppColors.successBg,
       borderRadius: BorderRadius.circular(12),
       child: InkWell(
         onTap: onAddWork,
@@ -120,13 +122,13 @@ class TOWorkDetailsSection extends StatelessWidget {
               Icon(
                 Icons.add_circle_outline,
                 size: ResponsiveHelper.iconSize(context, 18),
-                color: Colors.green[700],
+                color: AppColors.successDark,
               ),
               SizedBox(width: ResponsiveHelper.spacing(context, 8)),
               Text(
                 '업무 추가',
                 style: ResponsiveHelper.bodyStyle(context).copyWith(
-                  color: Colors.green[700],
+                  color: AppColors.successDark,
                   fontWeight: FontWeight.bold,
                 ),
               ),
@@ -141,10 +143,10 @@ class TOWorkDetailsSection extends StatelessWidget {
     return Container(
       padding: ResponsiveHelper.cardPadding(context),
       decoration: BoxDecoration(
-        color: Colors.orange[50],
+        color: AppColors.warningBg,
         borderRadius: BorderRadius.circular(12),
         border: Border.all(
-          color: Colors.orange[200]!,
+          color: AppColors.warningLight!,
           width: 1,
         ),
       ),
@@ -152,7 +154,7 @@ class TOWorkDetailsSection extends StatelessWidget {
         children: [
           Icon(
             Icons.warning_amber,
-            color: Colors.orange[700],
+            color: AppColors.warningDark,
             size: ResponsiveHelper.iconSize(context, 20),
           ),
           SizedBox(width: ResponsiveHelper.spacing(context, 12)),
@@ -176,14 +178,14 @@ class TOWorkDetailsSection extends StatelessWidget {
           Icon(
             Icons.work_outline,
             size: ResponsiveHelper.iconSize(context, 48),
-            color: Colors.grey[400],
+            color: AppColors.grey400,
           ),
           SizedBox(height: ResponsiveHelper.spacing(context, 12)),
           Text(
             '등록된 업무가 없습니다',
             style: ResponsiveHelper.bodyStyle(
               context,
-              color: Colors.grey[600],
+              color: AppColors.grey600,
             ),
           ),
         ],

@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+﻿import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../providers/user_provider.dart';
 import '../../providers/theme_provider.dart';
@@ -9,6 +9,8 @@ import '../common/settings_screen.dart';
 import '../common/notification_screen.dart';
 import '../../widgets/common/notification_badge.dart';
 import 'system_settings_screen.dart';
+import '';
+import '../../theme/app_colors.dart';
 
 /// 최고관리자(SUPER_ADMIN) 홈 화면 - 세련된 디자인
 class AdminHomeScreen extends StatelessWidget {
@@ -188,7 +190,7 @@ class AdminHomeScreen extends StatelessWidget {
                   Expanded(
                     child: Container(
                       decoration: BoxDecoration(
-                        color: Colors.grey[50],
+                        color: AppColors.grey50,
                         borderRadius: const BorderRadius.only(
                           topLeft: Radius.circular(32),
                           topRight: Radius.circular(32),
@@ -283,7 +285,7 @@ class AdminHomeScreen extends StatelessWidget {
                               icon: Icons.settings_outlined,
                               title: '설정',
                               subtitle: '개인 설정',
-                              color: Colors.grey[600]!,
+                              color: AppColors.grey600!,
                               onTap: () {
                                 Navigator.push(
                                   context,
@@ -369,7 +371,7 @@ class AdminHomeScreen extends StatelessWidget {
                   subtitle,
                   style: ResponsiveHelper.smallStyle(
                     context,
-                    color: Colors.grey[600],
+                    color: AppColors.grey600,
                   ),
                   textAlign: TextAlign.center,
                   maxLines: 2,
