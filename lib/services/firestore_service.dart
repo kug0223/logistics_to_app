@@ -44,6 +44,11 @@ class BatchResult {
 }
 
 class FirestoreService {
+  // 싱글톤: 앱 전체에서 인스턴스 하나만 사용 → 캐시 공유, Firestore 읽기 절감
+  static final FirestoreService _instance = FirestoreService._internal();
+  factory FirestoreService() => _instance;
+  FirestoreService._internal();
+
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
   
   // ═══════════════════════════════════════════════════════════
