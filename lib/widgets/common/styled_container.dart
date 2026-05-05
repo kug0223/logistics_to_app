@@ -114,7 +114,7 @@ class StyledOutlineBadge extends StatelessWidget {
         vertical: ResponsiveHelper.spacing(context, 4),
       ),
       decoration: BoxDecoration(
-        color: backgroundColor ?? color.withOpacity(0.1),
+        color: backgroundColor ?? color.withValues(alpha: 0.1),
         borderRadius: BorderRadius.circular(borderRadius),
         border: Border.all(color: color, width: borderWidth),
       ),
@@ -215,7 +215,7 @@ class StyledChip extends StatelessWidget {
               child: Container(
                 padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 3)),
                 decoration: BoxDecoration(
-                  color: Colors.white.withOpacity(0.3),
+                  color: Colors.white.withValues(alpha: 0.3),
                   shape: BoxShape.circle,
                 ),
                 child: Icon(

@@ -181,13 +181,13 @@ class _AllBusinessesScreenState extends State<AllBusinessesScreen> {
                 business.isApproved
                     ? StyledBadge(
                         label: '승인됨',
-                        backgroundColor: Colors.green.withOpacity(0.1),
+                        backgroundColor: Colors.green.withValues(alpha: 0.1),
                         textColor: Colors.green,
                         fontSize: ResponsiveHelper.tinyStyle(context).fontSize!,  // ⭐ 변경
                       )
                     : StyledBadge(
                         label: '대기중',
-                        backgroundColor: Colors.orange.withOpacity(0.1),
+                        backgroundColor: Colors.orange.withValues(alpha: 0.1),
                         textColor: Colors.orange,
                         fontSize: ResponsiveHelper.tinyStyle(context).fontSize!,  // ⭐ 변경
                       ),

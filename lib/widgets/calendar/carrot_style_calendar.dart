@@ -135,7 +135,7 @@ class _CarrotStyleCalendarState extends State<CarrotStyleCalendar> {
         vertical: ResponsiveHelper.spacing(context, 12),
       ),
       decoration: BoxDecoration(
-        color: theme.primaryColor.withOpacity(0.05),
+        color: theme.primaryColor.withValues(alpha: 0.05),
         borderRadius: const BorderRadius.only(
           topLeft: Radius.circular(16),
           topRight: Radius.circular(16),
@@ -160,7 +160,7 @@ class _CarrotStyleCalendarState extends State<CarrotStyleCalendar> {
                 vertical: ResponsiveHelper.spacing(context, 8),
               ),
               decoration: BoxDecoration(
-                color: theme.primaryColor.withOpacity(0.1),
+                color: theme.primaryColor.withValues(alpha: 0.1),
                 borderRadius: BorderRadius.circular(20),
               ),
               child: Text(
@@ -325,7 +325,7 @@ class _CarrotStyleCalendarState extends State<CarrotStyleCalendar> {
       backgroundColor = theme.primaryColor;
     } else if (isInRange) {
       textColor = theme.primaryColor;
-      backgroundColor = theme.primaryColor.withOpacity(0.15);
+      backgroundColor = theme.primaryColor.withValues(alpha: 0.15);
       shape = BoxShape.rectangle;
       borderRadius = BorderRadius.zero;
       

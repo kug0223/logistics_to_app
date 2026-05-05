@@ -145,7 +145,7 @@ class TOWorkDetailsSection extends StatelessWidget {
         color: AppColors.warningBg,
         borderRadius: BorderRadius.circular(12),
         border: Border.all(
-          color: AppColors.warningLight!,
+          color: AppColors.warningLight,
           width: 1,
         ),
       ),

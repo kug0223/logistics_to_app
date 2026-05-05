@@ -285,7 +285,7 @@ class GroupModel {
     final weekdays = ['월', '화', '수', '목', '금', '토', '일'];
     final startWeekday = weekdays[startDate.weekday - 1];
     final days = endDate.difference(startDate).inDays + 1;
-    return '${startDate.month}/${startDate.day} ($startWeekday) 외 ${days}일';
+    return '${startDate.month}/${startDate.day} ($startWeekday) 외 $days일';
   }
 
   /// 날짜 범위 (예: "12/15~12/21")

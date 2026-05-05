@@ -190,8 +190,6 @@ class _BusinessListScreenState extends State<BusinessListScreen> {
 
   /// 빈 상태
   Widget _buildEmptyState(BuildContext context) {
-    final theme = Theme.of(context);
-
     return Center(
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
@@ -260,13 +258,13 @@ class _BusinessListScreenState extends State<BusinessListScreen> {
         // ⭐ 그림자 강화
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.08),
+            color: Colors.black.withValues(alpha: 0.08),
             blurRadius: 16,
             offset: const Offset(0, 4),
             spreadRadius: 1,
           ),
           BoxShadow(
-            color: theme.primaryColor.withOpacity(0.05),
+            color: theme.primaryColor.withValues(alpha: 0.05),
             blurRadius: 8,
             offset: const Offset(0, 2),
           ),
@@ -275,7 +273,7 @@ class _BusinessListScreenState extends State<BusinessListScreen> {
         border: business.isApproved 
             ? null 
             : Border.all(
-                color: theme.colorScheme.error.withOpacity(0.3),
+                color: theme.colorScheme.error.withValues(alpha: 0.3),
                 width: 1.5,
               ),
       ),
@@ -528,8 +526,8 @@ class _BusinessListScreenState extends State<BusinessListScreen> {
                 padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 8)),
                 decoration: BoxDecoration(
                   color: business.isApproved 
-                      ? theme.primaryColor.withOpacity(0.1)
-                      : theme.disabledColor.withOpacity(0.1),
+                      ? theme.primaryColor.withValues(alpha: 0.1)
+                      : theme.disabledColor.withValues(alpha: 0.1),
                   borderRadius: BorderRadius.circular(10),
                 ),
                 child: Icon(
@@ -569,7 +567,7 @@ class _BusinessListScreenState extends State<BusinessListScreen> {
               Container(
                 padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 8)),
                 decoration: BoxDecoration(
-                  color: Colors.blue.withOpacity(0.1),
+                  color: Colors.blue.withValues(alpha: 0.1),
                   borderRadius: BorderRadius.circular(10),
                 ),
                 child: Icon(
@@ -591,7 +589,7 @@ class _BusinessListScreenState extends State<BusinessListScreen> {
               Container(
                 padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 8)),
                 decoration: BoxDecoration(
-                  color: Colors.orange.withOpacity(0.1),
+                  color: Colors.orange.withValues(alpha: 0.1),
                   borderRadius: BorderRadius.circular(10),
                 ),
                 child: Icon(
@@ -613,7 +611,7 @@ class _BusinessListScreenState extends State<BusinessListScreen> {
               Container(
                 padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 8)),
                 decoration: BoxDecoration(
-                  color: theme.colorScheme.error.withOpacity(0.1),
+                  color: theme.colorScheme.error.withValues(alpha: 0.1),
                   borderRadius: BorderRadius.circular(10),
                 ),
                 child: Icon(
@@ -654,7 +652,7 @@ class _BusinessListScreenState extends State<BusinessListScreen> {
             ),
             decoration: BoxDecoration(
               border: Border.all(
-                color: theme.primaryColor.withOpacity(0.3),
+                color: theme.primaryColor.withValues(alpha: 0.3),
                 width: 2,
                 style: BorderStyle.solid,
               ),

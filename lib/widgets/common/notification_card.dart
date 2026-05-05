@@ -37,7 +37,7 @@ class NotificationCard extends StatelessWidget {
           padding: ResponsiveHelper.cardPadding(context),
           decoration: BoxDecoration(
             color: isUnread 
-                ? theme.primaryColor.withOpacity(0.05) 
+                ? theme.primaryColor.withValues(alpha: 0.05) 
                 : Colors.transparent,
             border: Border(
               bottom: BorderSide(
@@ -53,7 +53,7 @@ class NotificationCard extends StatelessWidget {
               Container(
                 padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 10)),
                 decoration: BoxDecoration(
-                  color: _getIconColor(notification.type).withOpacity(0.1),
+                  color: _getIconColor(notification.type).withValues(alpha: 0.1),
                   shape: BoxShape.circle,
                 ),
                 child: Icon(

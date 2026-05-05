@@ -179,7 +179,7 @@ class _ReviewTagsSettingsScreenState extends State<ReviewTagsSettingsScreen>
           controller: _tabController,
           indicatorColor: Colors.white,
           labelColor: Colors.white,
-          unselectedLabelColor: Colors.white.withOpacity(0.6),
+          unselectedLabelColor: Colors.white.withValues(alpha: 0.6),
           tabs: const [
             Tab(text: '지원자 평가'),
             Tab(text: '사업장 평가'),
@@ -280,7 +280,7 @@ class _ReviewTagsSettingsScreenState extends State<ReviewTagsSettingsScreen>
         borderRadius: BorderRadius.circular(16),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.05),
+            color: Colors.black.withValues(alpha: 0.05),
             blurRadius: 10,
             offset: const Offset(0, 2),
           ),
@@ -293,7 +293,7 @@ class _ReviewTagsSettingsScreenState extends State<ReviewTagsSettingsScreen>
           Container(
             padding: ResponsiveHelper.cardPadding(context),
             decoration: BoxDecoration(
-              color: color.withOpacity(0.1),
+              color: color.withValues(alpha: 0.1),
               borderRadius: const BorderRadius.only(
                 topLeft: Radius.circular(16),
                 topRight: Radius.circular(16),
@@ -376,9 +376,9 @@ class _ReviewTagsSettingsScreenState extends State<ReviewTagsSettingsScreen>
         vertical: ResponsiveHelper.spacing(context, 8),
       ),
       decoration: BoxDecoration(
-        color: color.withOpacity(0.1),
+        color: color.withValues(alpha: 0.1),
         borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: color.withOpacity(0.3)),
+        border: Border.all(color: color.withValues(alpha: 0.3)),
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,

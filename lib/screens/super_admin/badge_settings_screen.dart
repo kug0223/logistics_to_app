@@ -270,7 +270,7 @@ class _BadgeSettingsScreenState extends State<BadgeSettingsScreen> {
         borderRadius: BorderRadius.circular(16),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.05),
+            color: Colors.black.withValues(alpha: 0.05),
             blurRadius: 10,
             offset: const Offset(0, 2),
           ),
@@ -283,7 +283,7 @@ class _BadgeSettingsScreenState extends State<BadgeSettingsScreen> {
           Container(
             padding: ResponsiveHelper.cardPadding(context),
             decoration: BoxDecoration(
-              color: color.withOpacity(0.1),
+              color: color.withValues(alpha: 0.1),
               borderRadius: const BorderRadius.only(
                 topLeft: Radius.circular(16),
                 topRight: Radius.circular(16),
@@ -333,7 +333,7 @@ class _BadgeSettingsScreenState extends State<BadgeSettingsScreen> {
         height: ResponsiveHelper.spacing(context, 48),
         decoration: BoxDecoration(
           color: badge.isActive 
-              ? Colors.amber.withOpacity(0.15) 
+              ? Colors.amber.withValues(alpha: 0.15) 
               : AppColors.grey200,
           borderRadius: BorderRadius.circular(12),
         ),

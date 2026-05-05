@@ -47,7 +47,7 @@ class MonthlyStatsCard extends StatelessWidget {
           // ═══════════════════════════════════════════════════════
           // 📅 예정 섹션
           // ═══════════════════════════════════════════════════════
-          _buildSectionHeader(context, '📅 예정', AppColors.infoDark!),
+          _buildSectionHeader(context, '📅 예정', AppColors.infoDark),
           SizedBox(height: ResponsiveHelper.spacing(context, 12)),
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceAround,
@@ -83,7 +83,7 @@ class MonthlyStatsCard extends StatelessWidget {
             SizedBox(height: ResponsiveHelper.spacing(context, 16)),
             Divider(color: AppColors.grey200, height: 1),
             SizedBox(height: ResponsiveHelper.spacing(context, 16)),
-            _buildSectionHeader(context, '✅ 완료', AppColors.successDark!),
+            _buildSectionHeader(context, '✅ 완료', AppColors.successDark),
             SizedBox(height: ResponsiveHelper.spacing(context, 12)),
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceEvenly,

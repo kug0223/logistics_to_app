@@ -285,7 +285,7 @@ class WorkDetailDialog {
           end: Alignment.bottomRight,
           colors: [
             theme.primaryColor,
-            theme.primaryColor.withOpacity(0.8),
+            theme.primaryColor.withValues(alpha: 0.8),
           ],
         ),
         borderRadius: const BorderRadius.only(
@@ -298,7 +298,7 @@ class WorkDetailDialog {
           Container(
             padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 12)),
             decoration: BoxDecoration(
-              color: Colors.white.withOpacity(0.2),
+              color: Colors.white.withValues(alpha: 0.2),
               borderRadius: BorderRadius.circular(12),
             ),
             child: Icon(
@@ -323,14 +323,14 @@ class WorkDetailDialog {
                 Text(
                   '업무 정보를 수정합니다',
                   style: ResponsiveHelper.smallStyle(context).copyWith(
-                    color: Colors.white.withOpacity(0.9),
+                    color: Colors.white.withValues(alpha: 0.9),
                   ),
                 ),
               ],
             ),
           ),
           Material(
-            color: Colors.white.withOpacity(0.2),
+            color: Colors.white.withValues(alpha: 0.2),
             borderRadius: BorderRadius.circular(8),
             child: InkWell(
               onTap: () => Navigator.pop(context),
@@ -357,7 +357,7 @@ class WorkDetailDialog {
       decoration: BoxDecoration(
         color: AppColors.warningBg,
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: AppColors.warningLight!),
+        border: Border.all(color: AppColors.warningLight),
       ),
       child: Row(
         children: [
@@ -408,7 +408,7 @@ class WorkDetailDialog {
             Container(
               padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 8)),
               decoration: BoxDecoration(
-                color: Colors.purple.withOpacity(0.1),
+                color: Colors.purple.withValues(alpha: 0.1),
                 borderRadius: BorderRadius.circular(8),
               ),
               child: Icon(
@@ -461,11 +461,11 @@ class WorkDetailDialog {
             ),
             border: OutlineInputBorder(
               borderRadius: BorderRadius.circular(12),
-              borderSide: BorderSide(color: AppColors.grey300!),
+              borderSide: BorderSide(color: AppColors.grey300),
             ),
             enabledBorder: OutlineInputBorder(
               borderRadius: BorderRadius.circular(12),
-              borderSide: BorderSide(color: AppColors.grey300!),
+              borderSide: BorderSide(color: AppColors.grey300),
             ),
             focusedBorder: OutlineInputBorder(
               borderRadius: BorderRadius.circular(12),
@@ -494,7 +494,7 @@ class WorkDetailDialog {
       decoration: BoxDecoration(
         color: Colors.white,
         border: Border(
-          top: BorderSide(color: AppColors.grey200!),
+          top: BorderSide(color: AppColors.grey200),
         ),
         borderRadius: const BorderRadius.only(
           bottomLeft: Radius.circular(24),
@@ -513,7 +513,7 @@ class WorkDetailDialog {
                 shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(12),
                 ),
-                side: BorderSide(color: AppColors.grey300!),
+                side: BorderSide(color: AppColors.grey300),
               ),
               child: Text(
                 '취소',
@@ -533,13 +533,13 @@ class WorkDetailDialog {
                   end: Alignment.bottomRight,
                   colors: [
                     theme.primaryColor,
-                    theme.primaryColor.withOpacity(0.8),
+                    theme.primaryColor.withValues(alpha: 0.8),
                   ],
                 ),
                 borderRadius: BorderRadius.circular(12),
                 boxShadow: [
                   BoxShadow(
-                    color: theme.primaryColor.withOpacity(0.4),
+                    color: theme.primaryColor.withValues(alpha: 0.4),
                     blurRadius: 8,
                     offset: const Offset(0, 4),
                   ),
@@ -627,7 +627,7 @@ class WorkDetailDialog {
           end: Alignment.bottomRight,
           colors: [
             theme.primaryColor,
-            theme.primaryColor.withOpacity(0.8),
+            theme.primaryColor.withValues(alpha: 0.8),
           ],
         ),
         borderRadius: const BorderRadius.only(
@@ -640,7 +640,7 @@ class WorkDetailDialog {
           Container(
             padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 12)),
             decoration: BoxDecoration(
-              color: Colors.white.withOpacity(0.2),
+              color: Colors.white.withValues(alpha: 0.2),
               borderRadius: BorderRadius.circular(12),
             ),
             child: Icon(
@@ -665,14 +665,14 @@ class WorkDetailDialog {
                 Text(
                   '새로운 업무를 추가하세요',
                   style: ResponsiveHelper.smallStyle(context).copyWith(
-                    color: Colors.white.withOpacity(0.9),
+                    color: Colors.white.withValues(alpha: 0.9),
                   ),
                 ),
               ],
             ),
           ),
           Material(
-            color: Colors.white.withOpacity(0.2),
+            color: Colors.white.withValues(alpha: 0.2),
             borderRadius: BorderRadius.circular(8),
             child: InkWell(
               onTap: () => Navigator.pop(context),
@@ -709,7 +709,7 @@ class WorkDetailDialog {
             Container(
               padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 8)),
               decoration: BoxDecoration(
-                color: theme.primaryColor.withOpacity(0.1),
+                color: theme.primaryColor.withValues(alpha: 0.1),
                 borderRadius: BorderRadius.circular(8),
               ),
               child: Icon(
@@ -735,7 +735,7 @@ class WorkDetailDialog {
             border: Border.all(
               color: selectedWorkType != null 
                   ? theme.primaryColor 
-                  : AppColors.grey300!,
+                  : AppColors.grey300,
               width: selectedWorkType != null ? 2 : 1,
             ),
           ),
@@ -768,7 +768,7 @@ class WorkDetailDialog {
                           BoxShadow(
                             color: FormatHelper.parseColor(
                               workType.color ?? '#FFFFFF'
-                            ).withOpacity(0.3),
+                            ).withValues(alpha: 0.3),
                             blurRadius: 4,
                             offset: const Offset(0, 2),
                           ),
@@ -824,7 +824,7 @@ class WorkDetailDialog {
             Container(
               padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 8)),
               decoration: BoxDecoration(
-                color: Colors.green.withOpacity(0.1),
+                color: Colors.green.withValues(alpha: 0.1),
                 borderRadius: BorderRadius.circular(8),
               ),
               child: Icon(
@@ -901,7 +901,7 @@ class WorkDetailDialog {
             Container(
               padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 8)),
               decoration: BoxDecoration(
-                color: Colors.blue.withOpacity(0.1),
+                color: Colors.blue.withValues(alpha: 0.1),
                 borderRadius: BorderRadius.circular(8),
               ),
               child: Icon(
@@ -932,7 +932,7 @@ class WorkDetailDialog {
                 border: Border.all(
                   color: startTime != null 
                       ? theme.primaryColor 
-                      : AppColors.grey300!,
+                      : AppColors.grey300,
                   width: startTime != null ? 2 : 1,
                 ),
               ),
@@ -987,7 +987,7 @@ class WorkDetailDialog {
                 border: Border.all(
                   color: endTime != null 
                       ? theme.primaryColor 
-                      : AppColors.grey300!,
+                      : AppColors.grey300,
                   width: endTime != null ? 2 : 1,
                 ),
               ),
@@ -1042,7 +1042,7 @@ class WorkDetailDialog {
             Container(
               padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 8)),
               decoration: BoxDecoration(
-                color: Colors.amber.withOpacity(0.1),
+                color: Colors.amber.withValues(alpha: 0.1),
                 borderRadius: BorderRadius.circular(8),
               ),
               child: Icon(
@@ -1091,11 +1091,11 @@ class WorkDetailDialog {
             ),
             border: OutlineInputBorder(
               borderRadius: BorderRadius.circular(12),
-              borderSide: BorderSide(color: AppColors.grey300!),
+              borderSide: BorderSide(color: AppColors.grey300),
             ),
             enabledBorder: OutlineInputBorder(
               borderRadius: BorderRadius.circular(12),
-              borderSide: BorderSide(color: AppColors.grey300!),
+              borderSide: BorderSide(color: AppColors.grey300),
             ),
             focusedBorder: OutlineInputBorder(
               borderRadius: BorderRadius.circular(12),
@@ -1110,8 +1110,8 @@ class WorkDetailDialog {
             decoration: BoxDecoration(
               gradient: LinearGradient(
                 colors: [
-                  AppColors.infoBg!,
-                  AppColors.infoExtraLight!,
+                  AppColors.infoBg,
+                  AppColors.infoExtraLight,
                 ],
               ),
               borderRadius: BorderRadius.circular(8),
@@ -1155,7 +1155,7 @@ class WorkDetailDialog {
             Container(
               padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 8)),
               decoration: BoxDecoration(
-                color: Colors.purple.withOpacity(0.1),
+                color: Colors.purple.withValues(alpha: 0.1),
                 borderRadius: BorderRadius.circular(8),
               ),
               child: Icon(
@@ -1202,11 +1202,11 @@ class WorkDetailDialog {
             ),
             border: OutlineInputBorder(
               borderRadius: BorderRadius.circular(12),
-              borderSide: BorderSide(color: AppColors.grey300!),
+              borderSide: BorderSide(color: AppColors.grey300),
             ),
             enabledBorder: OutlineInputBorder(
               borderRadius: BorderRadius.circular(12),
-              borderSide: BorderSide(color: AppColors.grey300!),
+              borderSide: BorderSide(color: AppColors.grey300),
             ),
             focusedBorder: OutlineInputBorder(
               borderRadius: BorderRadius.circular(12),
@@ -1234,7 +1234,7 @@ class WorkDetailDialog {
       decoration: BoxDecoration(
         color: Colors.white,
         border: Border(
-          top: BorderSide(color: AppColors.grey200!),
+          top: BorderSide(color: AppColors.grey200),
         ),
       ),
       child: Row(
@@ -1249,7 +1249,7 @@ class WorkDetailDialog {
                 shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(12),
                 ),
-                side: BorderSide(color: AppColors.grey300!),
+                side: BorderSide(color: AppColors.grey300),
               ),
               child: Text(
                 '취소',
@@ -1269,13 +1269,13 @@ class WorkDetailDialog {
                   end: Alignment.bottomRight,
                   colors: [
                     theme.primaryColor,
-                    theme.primaryColor.withOpacity(0.8),
+                    theme.primaryColor.withValues(alpha: 0.8),
                   ],
                 ),
                 borderRadius: BorderRadius.circular(12),
                 boxShadow: [
                   BoxShadow(
-                    color: theme.primaryColor.withOpacity(0.4),
+                    color: theme.primaryColor.withValues(alpha: 0.4),
                     blurRadius: 8,
                     offset: const Offset(0, 4),
                   ),
@@ -1399,7 +1399,7 @@ class WorkDetailDialog {
                   end: Alignment.bottomRight,
                   colors: [
                     theme.primaryColor,
-                    theme.primaryColor.withOpacity(0.8),
+                    theme.primaryColor.withValues(alpha: 0.8),
                   ],
                 )
               : null,
@@ -1407,14 +1407,14 @@ class WorkDetailDialog {
           border: Border.all(
             color: isSelected 
                 ? theme.primaryColor
-                : AppColors.grey300!,
+                : AppColors.grey300,
             width: isSelected ? 2 : 1,
           ),
           borderRadius: BorderRadius.circular(12),
           boxShadow: isSelected
               ? [
                   BoxShadow(
-                    color: theme.primaryColor.withOpacity(0.3),
+                    color: theme.primaryColor.withValues(alpha: 0.3),
                     blurRadius: 8,
                     offset: const Offset(0, 4),
                   ),

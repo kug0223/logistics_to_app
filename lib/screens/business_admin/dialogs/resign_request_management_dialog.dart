@@ -176,7 +176,7 @@ class _ResignRequestManagementDialogState
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(12),
         side: BorderSide(
-          color: isUrgent ? Colors.red.withOpacity(0.5) : Theme.of(context).dividerColor,
+          color: isUrgent ? Colors.red.withValues(alpha: 0.5) : Theme.of(context).dividerColor,
           width: isUrgent ? 2 : 1,
         ),
       ),
@@ -189,7 +189,7 @@ class _ResignRequestManagementDialogState
             Row(
               children: [
                 CircleAvatar(
-                  backgroundColor: Theme.of(context).primaryColor.withOpacity(0.2),
+                  backgroundColor: Theme.of(context).primaryColor.withValues(alpha: 0.2),
                   child: Text(
                     item.userName[0],
                     style: ResponsiveHelper.bodyStyle(context).copyWith(  // ⭐ 변경
@@ -227,9 +227,9 @@ class _ResignRequestManagementDialogState
                       vertical: ResponsiveHelper.spacing(context, 4),  // ⭐ 변경
                     ),
                     decoration: BoxDecoration(
-                      color: Colors.red.withOpacity(0.1),
+                      color: Colors.red.withValues(alpha: 0.1),
                       borderRadius: BorderRadius.circular(4),
-                      border: Border.all(color: Colors.red.withOpacity(0.5)),
+                      border: Border.all(color: Colors.red.withValues(alpha: 0.5)),
                     ),
                     child: Row(
                       mainAxisSize: MainAxisSize.min,
@@ -287,9 +287,9 @@ class _ResignRequestManagementDialogState
             Container(
               padding: ResponsiveHelper.cardPadding(context),  // ⭐ 변경
               decoration: BoxDecoration(
-                color: Colors.orange.withOpacity(0.1),
+                color: Colors.orange.withValues(alpha: 0.1),
                 borderRadius: BorderRadius.circular(8),
-                border: Border.all(color: Colors.orange.withOpacity(0.3)),
+                border: Border.all(color: Colors.orange.withValues(alpha: 0.3)),
               ),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,

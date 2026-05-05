@@ -345,7 +345,6 @@ class _AttendanceCheckScreenState extends State<AttendanceCheckScreen> {
   Widget _buildWorkCard(ApplicationModel work, AttendanceModel? attendance) {
     final hasCheckedIn = attendance?.hasCheckedIn ?? false;
     final hasCheckedOut = attendance?.hasCheckedOut ?? false;
-    final theme = Theme.of(context);
 
     return Card(
       margin: EdgeInsets.only(bottom: ResponsiveHelper.spacing(context, 16)),
@@ -353,7 +352,7 @@ class _AttendanceCheckScreenState extends State<AttendanceCheckScreen> {
         borderRadius: BorderRadius.circular(16),
       ),
       elevation: 2,
-      shadowColor: Colors.black.withOpacity(0.08),
+      shadowColor: Colors.black.withValues(alpha: 0.08),
       child: Padding(
         padding: ResponsiveHelper.cardPadding(context),
         child: Column(

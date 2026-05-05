@@ -160,7 +160,7 @@ class _DatePickerBottomSheetState extends State<DatePickerBottomSheet> {
           Container(
             padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 10)),
             decoration: BoxDecoration(
-              color: theme.primaryColor.withOpacity(0.1),
+              color: theme.primaryColor.withValues(alpha: 0.1),
               borderRadius: BorderRadius.circular(12),
             ),
             child: Icon(
@@ -219,13 +219,13 @@ class _DatePickerBottomSheetState extends State<DatePickerBottomSheet> {
       decoration: BoxDecoration(
         gradient: LinearGradient(
           colors: [
-            theme.primaryColor.withOpacity(0.1),
-            theme.primaryColor.withOpacity(0.05),
+            theme.primaryColor.withValues(alpha: 0.1),
+            theme.primaryColor.withValues(alpha: 0.05),
           ],
         ),
         borderRadius: BorderRadius.circular(12),
         border: Border.all(
-          color: theme.primaryColor.withOpacity(0.3),
+          color: theme.primaryColor.withValues(alpha: 0.3),
         ),
       ),
       child: Row(
@@ -456,7 +456,7 @@ class _DateRangePickerBottomSheetState extends State<DateRangePickerBottomSheet>
           Container(
             padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 10)),
             decoration: BoxDecoration(
-              color: theme.primaryColor.withOpacity(0.1),
+              color: theme.primaryColor.withValues(alpha: 0.1),
               borderRadius: BorderRadius.circular(12),
             ),
             child: Icon(
@@ -499,8 +499,6 @@ class _DateRangePickerBottomSheetState extends State<DateRangePickerBottomSheet>
   }
 
   Widget _buildSelectedRangeDisplay(BuildContext context, ThemeData theme) {
-    final dateFormat = DateFormat('M월 d일 (E)', 'ko_KR');
-    
     return Container(
       margin: EdgeInsets.symmetric(
         horizontal: ResponsiveHelper.spacing(context, 16),
@@ -568,7 +566,7 @@ class _DateRangePickerBottomSheetState extends State<DateRangePickerBottomSheet>
       ),
       decoration: BoxDecoration(
         color: isSelected 
-            ? theme.primaryColor.withOpacity(0.1)
+            ? theme.primaryColor.withValues(alpha: 0.1)
             : AppColors.surface,
         borderRadius: BorderRadius.circular(8),
         border: Border.all(

@@ -80,8 +80,7 @@ class _DocumentManagementScreenState extends State<DocumentManagementScreen> {
   Widget build(BuildContext context) {
     final userProvider = context.watch<UserProvider>();
     final user = userProvider.currentUser;
-    final theme = Theme.of(context);
-    
+
     if (user == null) {
       return Scaffold(
         appBar: AppBar(title: Text('내 서류 관리')),
@@ -188,7 +187,7 @@ class _DocumentManagementScreenState extends State<DocumentManagementScreen> {
               border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
               enabledBorder: OutlineInputBorder(
                 borderRadius: BorderRadius.circular(12),
-                borderSide: BorderSide(color: AppColors.grey300!),
+                borderSide: BorderSide(color: AppColors.grey300),
               ),
             ),
           ),
@@ -320,7 +319,7 @@ class _DocumentManagementScreenState extends State<DocumentManagementScreen> {
                 Container(
                   padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 12)),
                   decoration: BoxDecoration(
-                    color: Colors.green.withOpacity(0.1),
+                    color: Colors.green.withValues(alpha: 0.1),
                     borderRadius: BorderRadius.circular(12),
                   ),
                   child: Icon(
@@ -394,7 +393,7 @@ class _DocumentManagementScreenState extends State<DocumentManagementScreen> {
               decoration: BoxDecoration(
                 color: AppColors.grey100,
                 borderRadius: BorderRadius.circular(12),
-                border: Border.all(color: AppColors.grey300!),
+                border: Border.all(color: AppColors.grey300),
               ),
               child: Column(
                 mainAxisAlignment: MainAxisAlignment.center,
@@ -840,7 +839,7 @@ class _DocumentManagementScreenState extends State<DocumentManagementScreen> {
                 Container(
                   padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 12)),
                   decoration: BoxDecoration(
-                    color: Colors.green.withOpacity(0.1),
+                    color: Colors.green.withValues(alpha: 0.1),
                     borderRadius: BorderRadius.circular(12),
                   ),
                   child: Icon(
@@ -909,7 +908,7 @@ class _DocumentManagementScreenState extends State<DocumentManagementScreen> {
               decoration: BoxDecoration(
                 color: AppColors.grey100,
                 borderRadius: BorderRadius.circular(12),
-                border: Border.all(color: AppColors.grey300!),
+                border: Border.all(color: AppColors.grey300),
               ),
               child: Column(
                 mainAxisAlignment: MainAxisAlignment.center,
@@ -991,9 +990,9 @@ class _DocumentManagementScreenState extends State<DocumentManagementScreen> {
               Container(
                 padding: ResponsiveHelper.cardPadding(context),
                 decoration: BoxDecoration(
-                  color: Colors.green.withOpacity(0.1),
+                  color: Colors.green.withValues(alpha: 0.1),
                   borderRadius: BorderRadius.circular(12),
-                  border: Border.all(color: Colors.green.withOpacity(0.3)),
+                  border: Border.all(color: Colors.green.withValues(alpha: 0.3)),
                 ),
                 child: Row(
                   children: [
@@ -1016,9 +1015,9 @@ class _DocumentManagementScreenState extends State<DocumentManagementScreen> {
               Container(
                 padding: ResponsiveHelper.cardPadding(context),
                 decoration: BoxDecoration(
-                  color: Colors.orange.withOpacity(0.1),
+                  color: Colors.orange.withValues(alpha: 0.1),
                   borderRadius: BorderRadius.circular(12),
-                  border: Border.all(color: Colors.orange.withOpacity(0.3)),
+                  border: Border.all(color: Colors.orange.withValues(alpha: 0.3)),
                 ),
                 child: Row(
                   children: [
@@ -1085,7 +1084,7 @@ class _DocumentManagementScreenState extends State<DocumentManagementScreen> {
               decoration: BoxDecoration(
                 color: AppColors.grey100,
                 borderRadius: BorderRadius.circular(12),
-                border: Border.all(color: AppColors.grey300!),
+                border: Border.all(color: AppColors.grey300),
               ),
               child: Column(
                 mainAxisAlignment: MainAxisAlignment.center,
@@ -1141,7 +1140,7 @@ class _DocumentManagementScreenState extends State<DocumentManagementScreen> {
         Container(
           padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 8)),
           decoration: BoxDecoration(
-            color: Theme.of(context).primaryColor.withOpacity(0.1),
+            color: Theme.of(context).primaryColor.withValues(alpha: 0.1),
             borderRadius: BorderRadius.circular(8),
           ),
           child: Icon(

@@ -344,7 +344,7 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
       }
     }
     
-    debugPrint('📋 [당일명단] 장기 확정자: ${longTermCount}명');
+    debugPrint('📋 [당일명단] 장기 확정자: $longTermCount명');
     debugPrint('📋 [당일명단] 총 확정자: ${result.length}명');
 
     return result;
@@ -625,7 +625,7 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
             borderRadius: BorderRadius.circular(ResponsiveHelper.spacing(context, 24)),
             boxShadow: [
               BoxShadow(
-                color: Colors.black.withOpacity(0.1),
+                color: Colors.black.withValues(alpha: 0.1),
                 blurRadius: 30,
                 offset: const Offset(0, 10),
               ),
@@ -665,7 +665,7 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
           end: Alignment.bottomRight,
           colors: [
             theme.primaryColor,
-            theme.primaryColor.withOpacity(0.85),
+            theme.primaryColor.withValues(alpha: 0.85),
           ],
         ),
         borderRadius: BorderRadius.only(
@@ -682,7 +682,7 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
               Container(
                 padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 10)),
                 decoration: BoxDecoration(
-                  color: Colors.white.withOpacity(0.2),
+                  color: Colors.white.withValues(alpha: 0.2),
                   borderRadius: BorderRadius.circular(12),
                 ),
                 child: Icon(
@@ -712,7 +712,7 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
               ),
               // 닫기 버튼
               Material(
-                color: Colors.white.withOpacity(0.2),
+                color: Colors.white.withValues(alpha: 0.2),
                 borderRadius: BorderRadius.circular(12),
                 child: InkWell(
                   onTap: () => Navigator.pop(context),
@@ -849,13 +849,13 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
           colors: [
-            theme.primaryColor.withOpacity(0.08),
-            theme.primaryColor.withOpacity(0.04),
+            theme.primaryColor.withValues(alpha: 0.08),
+            theme.primaryColor.withValues(alpha: 0.04),
           ],
         ),
         borderRadius: BorderRadius.circular(16),
         border: Border.all(
-          color: theme.primaryColor.withOpacity(0.2),
+          color: theme.primaryColor.withValues(alpha: 0.2),
           width: 1.5,
         ),
       ),
@@ -867,7 +867,7 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
               Container(
                 padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 8)),
                 decoration: BoxDecoration(
-                  color: theme.primaryColor.withOpacity(0.15),
+                  color: theme.primaryColor.withValues(alpha: 0.15),
                   borderRadius: BorderRadius.circular(10),
                 ),
                 child: Icon(
@@ -1061,7 +1061,7 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
     final isEnabled = onPressed != null;
 
     return Material(
-      color: isEnabled ? color.withOpacity(0.1) : AppColors.grey200,
+      color: isEnabled ? color.withValues(alpha: 0.1) : AppColors.grey200,
       borderRadius: BorderRadius.circular(8),
       child: InkWell(
         onTap: onPressed,
@@ -1221,7 +1221,7 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
         : theme.primaryColor;
     final bgColor = workTypeInfo?.backgroundColor != null
         ? FormatHelper.parseColor(workTypeInfo!.backgroundColor!)
-        : theme.primaryColor.withOpacity(0.1);
+        : theme.primaryColor.withValues(alpha: 0.1);
 
     return Container(
       decoration: BoxDecoration(
@@ -1236,7 +1236,7 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
           Container(
             padding: ResponsiveHelper.cardPadding(context),
             decoration: BoxDecoration(
-              color: theme.primaryColor.withOpacity(0.05),
+              color: theme.primaryColor.withValues(alpha: 0.05),
               borderRadius: const BorderRadius.only(
                 topLeft: Radius.circular(16),
                 topRight: Radius.circular(16),
@@ -1318,7 +1318,6 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
   /// 근무자 카드
   Widget _buildWorkerCard(ApplicationModel app) {
     final theme = Theme.of(context);
-    final user = _userMap[app.uid];
     final statusInfo = _getAttendanceStatus(app);
     final isSelected = _selectedIds.contains(app.id);
     final displayName = _getDisplayName(app.uid);
@@ -1328,7 +1327,7 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
       margin: EdgeInsets.only(bottom: ResponsiveHelper.spacing(context, 8)),
       decoration: BoxDecoration(
         color: isSelected 
-            ? theme.primaryColor.withOpacity(0.08) 
+            ? theme.primaryColor.withValues(alpha: 0.08) 
             : Colors.white,
         borderRadius: BorderRadius.circular(12),
         border: Border.all(
@@ -1337,7 +1336,7 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
         ),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.03),
+            color: Colors.black.withValues(alpha: 0.03),
             blurRadius: 6,
             offset: const Offset(0, 2),
           ),
@@ -1427,7 +1426,7 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
                               vertical: ResponsiveHelper.spacing(context, 2),
                             ),
                             decoration: BoxDecoration(
-                              color: (statusInfo['color'] as Color).withOpacity(0.15),
+                              color: (statusInfo['color'] as Color).withValues(alpha: 0.15),
                               borderRadius: BorderRadius.circular(4),
                             ),
                             child: Text(
@@ -1807,8 +1806,6 @@ SizedBox(width: ResponsiveHelper.spacing(context, 12)),
 
   /// 마감 확인 다이얼로그
   Future<void> _showFinalCloseDialog() async {
-    final theme = Theme.of(context);
-    
     // 급여확정된 인원 수 계산
     int calculatedCount = 0;
     int noshowCount = 0;
@@ -2282,7 +2279,7 @@ SizedBox(width: ResponsiveHelper.spacing(context, 12)),
                 Container(
                   padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 12)),
                   decoration: BoxDecoration(
-                    color: AppColors.info.withOpacity(0.1),
+                    color: AppColors.info.withValues(alpha: 0.1),
                     borderRadius: BorderRadius.circular(16),
                   ),
                   child: Icon(
@@ -2754,7 +2751,7 @@ SizedBox(width: ResponsiveHelper.spacing(context, 12)),
         'businessId': app.businessId,
         'businessName': app.toTitle,
         'workDate': Timestamp.fromDate(widget.date),
-        'workType': app.selectedWorkType ?? '',
+        'workType': app.selectedWorkType,
         'checkIn': checkIn,                           // ✅ 추가 (출근 시간)
         'checkInMethod': 'manual',                    // ✅ 추가
         'checkInTime': FieldValue.serverTimestamp(),  // ✅ 추가
@@ -2803,7 +2800,7 @@ SizedBox(width: ResponsiveHelper.spacing(context, 12)),
           'businessId': app.businessId,
           'businessName': app.toTitle,
           'workDate': Timestamp.fromDate(widget.date),
-          'workType': app.selectedWorkType ?? '',
+          'workType': app.selectedWorkType,
           'status': 'NO_SHOW',                // ✅ 노쇼 상태
           'isModified': false,
           'modifyRequested': false,

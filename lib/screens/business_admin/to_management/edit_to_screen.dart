@@ -334,8 +334,6 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    
     if (_isLoading) {
       return Scaffold(
         appBar: AppBar(title: const Text('TO 수정')),

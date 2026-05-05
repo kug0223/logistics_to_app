@@ -243,7 +243,7 @@ class _WorkDetailRowState extends State<WorkDetailRow> {
       child: Center(
         child: WorkTypeIcon.buildFromString(
           widget.work.workTypeIcon,
-          color: FormatHelper.parseColor(widget.work.workTypeColor ?? '#2196F3'),
+          color: FormatHelper.parseColor(widget.work.workTypeColor),
           size: ResponsiveHelper.iconSize(context, 18),
         ),
       ),
@@ -306,7 +306,7 @@ class _WorkDetailRowState extends State<WorkDetailRow> {
         child: Container(
           padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 8)),
           decoration: BoxDecoration(
-            color: theme.primaryColor.withOpacity(0.1),
+            color: theme.primaryColor.withValues(alpha: 0.1),
             borderRadius: BorderRadius.circular(8),
           ),
           child: Icon(

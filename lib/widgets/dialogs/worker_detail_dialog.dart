@@ -182,8 +182,8 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
     int score = 60; // 기본 점수
     score += ((user.averageRating) * 4).round(); // 평점 반영 (최대 20점)
     score += (user.totalWorkDays / 10).clamp(0, 15).round(); // 근무일 반영 (최대 15점)
-    score -= (user.noShowCount ?? 0) * 5; // 무단결근 감점
-    score -= (user.lateCount ?? 0) * 2; // 지각 감점
+    score -= user.noShowCount * 5; // 무단결근 감점
+    score -= user.lateCount * 2; // 지각 감점
     return score.clamp(0, 100);
   }
 
@@ -208,7 +208,7 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
           borderRadius: BorderRadius.circular(20),
           boxShadow: [
             BoxShadow(
-              color: Colors.black.withOpacity(0.15),
+              color: Colors.black.withValues(alpha: 0.15),
               blurRadius: 20,
               offset: const Offset(0, 10),
             ),
@@ -283,7 +283,7 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
       padding: ResponsiveHelper.cardPadding(context),
       decoration: BoxDecoration(
         gradient: LinearGradient(
-          colors: [theme.primaryColor, theme.primaryColor.withOpacity(0.8)],
+          colors: [theme.primaryColor, theme.primaryColor.withValues(alpha: 0.8)],
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
         ),
@@ -364,7 +364,7 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
                   vertical: ResponsiveHelper.spacing(context, 6),
                 ),
                 decoration: BoxDecoration(
-                  color: Colors.white.withOpacity(0.2),
+                  color: Colors.white.withValues(alpha: 0.2),
                   borderRadius: BorderRadius.circular(12),
                 ),
                 child: Column(
@@ -394,7 +394,7 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
               vertical: ResponsiveHelper.spacing(context, 8),
             ),
             decoration: BoxDecoration(
-              color: Colors.white.withOpacity(0.15),
+              color: Colors.white.withValues(alpha: 0.15),
               borderRadius: BorderRadius.circular(8),
             ),
             child: Row(
@@ -409,7 +409,7 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
                 if (widget.user.phone != null && widget.user.phone!.isNotEmpty) ...[
                   SizedBox(width: ResponsiveHelper.spacing(context, 12)),
                   Material(
-                    color: Colors.white.withOpacity(0.2),
+                    color: Colors.white.withValues(alpha: 0.2),
                     borderRadius: BorderRadius.circular(20),
                     child: InkWell(
                       onTap: () => _makePhoneCall(widget.user.phone),
@@ -539,9 +539,9 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
           SizedBox(width: ResponsiveHelper.spacing(context, 8)),
           _buildStatCard(context, '평균 평점', widget.user.averageRating > 0 ? widget.user.averageRating.toStringAsFixed(1) : '-', Colors.amber),
           SizedBox(width: ResponsiveHelper.spacing(context, 8)),
-          _buildStatCard(context, '무단결근', '${widget.user.noShowCount ?? 0}회', AppColors.error),
+          _buildStatCard(context, '무단결근', '${widget.user.noShowCount}회', AppColors.error),
           SizedBox(width: ResponsiveHelper.spacing(context, 8)),
-          _buildStatCard(context, '지각', '${widget.user.lateCount ?? 0}회', AppColors.warning),
+          _buildStatCard(context, '지각', '${widget.user.lateCount}회', AppColors.warning),
         ],
       ),
     );
@@ -555,7 +555,7 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
           vertical: ResponsiveHelper.spacing(context, 10),
         ),
         decoration: BoxDecoration(
-          color: color.withOpacity(0.1),
+          color: color.withValues(alpha: 0.1),
           borderRadius: BorderRadius.circular(8),
         ),
         child: Column(
@@ -754,7 +754,7 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
             decoration: BoxDecoration(
               color: AppColors.successBg,
               borderRadius: BorderRadius.circular(8),
-              border: Border.all(color: AppColors.success.withOpacity(0.3)),
+              border: Border.all(color: AppColors.success.withValues(alpha: 0.3)),
             ),
             child: Row(
               children: [
@@ -844,7 +844,7 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
         decoration: BoxDecoration(
           color: AppColors.warningBg,
           borderRadius: BorderRadius.circular(8),
-          border: Border.all(color: AppColors.warning.withOpacity(0.3)),
+          border: Border.all(color: AppColors.warning.withValues(alpha: 0.3)),
         ),
         child: Column(
           children: [
@@ -1274,7 +1274,6 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
 
   /// 확정취소 사유 선택 다이얼로그
   Future<String?> _showCancelReasonPicker() async {
-    final theme = Theme.of(context);
     String? selectedReason;
     final customReasonController = TextEditingController();
 

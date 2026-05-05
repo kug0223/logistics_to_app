@@ -15,7 +15,7 @@ class CommonWidgets {
       borderRadius: BorderRadius.circular(20),
       boxShadow: [
         BoxShadow(
-          color: AppColors.grey500.withOpacity(0.1),
+          color: AppColors.grey500.withValues(alpha: 0.1),
           blurRadius: 10,
           offset: const Offset(0, 4),
         ),
@@ -34,13 +34,13 @@ class CommonWidgets {
         end: Alignment.bottomRight,
         colors: [
           color,
-          color.withOpacity(opacity),
+          color.withValues(alpha: opacity),
         ],
       ),
       borderRadius: BorderRadius.circular(20),
       boxShadow: [
         BoxShadow(
-          color: color.withOpacity(0.3),
+          color: color.withValues(alpha: 0.3),
           blurRadius: 12,
           offset: const Offset(0, 6),
         ),
@@ -64,13 +64,13 @@ class CommonWidgets {
         gradient: LinearGradient(
           colors: [
             theme.primaryColor,
-            theme.primaryColor.withOpacity(0.8),
+            theme.primaryColor.withValues(alpha: 0.8),
           ],
         ),
         borderRadius: BorderRadius.circular(12),
         boxShadow: [
           BoxShadow(
-            color: theme.primaryColor.withOpacity(0.4),
+            color: theme.primaryColor.withValues(alpha: 0.4),
             blurRadius: 8,
             offset: const Offset(0, 4),
           ),
@@ -248,7 +248,7 @@ class CommonWidgets {
         Container(
           padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 8)),
           decoration: BoxDecoration(
-            color: theme.primaryColor.withOpacity(0.1),
+            color: theme.primaryColor.withValues(alpha: 0.1),
             borderRadius: BorderRadius.circular(8),
           ),
           child: Icon(
@@ -281,9 +281,9 @@ class CommonWidgets {
     return Container(
       padding: ResponsiveHelper.cardPadding(context),
       decoration: BoxDecoration(
-        color: cardColor.withOpacity(0.1),
+        color: cardColor.withValues(alpha: 0.1),
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: cardColor.withOpacity(0.3)),
+        border: Border.all(color: cardColor.withValues(alpha: 0.3)),
       ),
       child: Row(
         children: [
@@ -298,7 +298,7 @@ class CommonWidgets {
               message,
               style: ResponsiveHelper.bodyStyle(
                 context,
-                color: cardColor.withOpacity(0.9),
+                color: cardColor.withValues(alpha: 0.9),
               ),
             ),
           ),

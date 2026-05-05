@@ -301,7 +301,7 @@ class _WageDetailDialogState extends State<WageDetailDialog> {
           Container(
             padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 8)),
             decoration: BoxDecoration(
-              color: Colors.white.withOpacity(0.2),
+              color: Colors.white.withValues(alpha: 0.2),
               borderRadius: BorderRadius.circular(ResponsiveHelper.spacing(context, 10)),
             ),
             child: Icon(
@@ -325,7 +325,7 @@ class _WageDetailDialogState extends State<WageDetailDialog> {
                 Text(
                   _headerSubtitle,
                   style: ResponsiveHelper.tinyStyle(context).copyWith(
-                    color: Colors.white.withOpacity(0.9),
+                    color: Colors.white.withValues(alpha: 0.9),
                   ),
                 ),
               ],
@@ -412,7 +412,7 @@ class _WageDetailDialogState extends State<WageDetailDialog> {
     return Container(
       padding: ResponsiveHelper.symmetricPadding(context, horizontal: 12, vertical: 10),
       decoration: BoxDecoration(
-        color: _headerColor.withOpacity(0.1),
+        color: _headerColor.withValues(alpha: 0.1),
         borderRadius: BorderRadius.circular(ResponsiveHelper.spacing(context, 8)),
       ),
       child: Row(
@@ -578,7 +578,7 @@ class _WageDetailDialogState extends State<WageDetailDialog> {
       decoration: BoxDecoration(
         color: AppColors.successBg,
         borderRadius: BorderRadius.circular(ResponsiveHelper.spacing(context, 12)),
-        border: Border.all(color: AppColors.success.withOpacity(0.3)),
+        border: Border.all(color: AppColors.success.withValues(alpha: 0.3)),
       ),
       child: Row(
         children: [

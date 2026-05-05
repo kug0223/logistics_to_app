@@ -63,7 +63,7 @@ class TODeadlineSection extends StatelessWidget {
         Container(
           padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 8)),
           decoration: BoxDecoration(
-            color: theme.primaryColor.withOpacity(0.1),
+            color: theme.primaryColor.withValues(alpha: 0.1),
             borderRadius: BorderRadius.circular(8),
           ),
           child: Icon(
@@ -112,7 +112,7 @@ class TODeadlineSection extends StatelessWidget {
             gradient: LinearGradient(
               colors: [
                 AppColors.infoBg,
-                AppColors.infoBg.withOpacity(0.5),
+                AppColors.infoBg.withValues(alpha: 0.5),
               ],
             ),
             borderRadius: BorderRadius.circular(12),
@@ -126,7 +126,7 @@ class TODeadlineSection extends StatelessWidget {
               Container(
                 padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 6)),
                 decoration: BoxDecoration(
-                  color: AppColors.info.withOpacity(0.2),
+                  color: AppColors.info.withValues(alpha: 0.2),
                   borderRadius: BorderRadius.circular(8),
                 ),
                 child: Icon(
@@ -165,7 +165,7 @@ class TODeadlineSection extends StatelessWidget {
               Container(
                 padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 10)),
                 decoration: BoxDecoration(
-                  color: theme.primaryColor.withOpacity(0.1),
+                  color: theme.primaryColor.withValues(alpha: 0.1),
                   borderRadius: BorderRadius.circular(10),
                 ),
                 child: Icon(
@@ -291,7 +291,7 @@ class TODeadlineSection extends StatelessWidget {
             gradient: LinearGradient(
               colors: [
                 AppColors.warningBg,
-                AppColors.warningBg.withOpacity(0.5),
+                AppColors.warningBg.withValues(alpha: 0.5),
               ],
             ),
             borderRadius: BorderRadius.circular(12),
@@ -305,7 +305,7 @@ class TODeadlineSection extends StatelessWidget {
               Container(
                 padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 6)),
                 decoration: BoxDecoration(
-                  color: AppColors.warning.withOpacity(0.2),
+                  color: AppColors.warning.withValues(alpha: 0.2),
                   borderRadius: BorderRadius.circular(8),
                 ),
                 child: Icon(
@@ -340,7 +340,7 @@ class TODeadlineSection extends StatelessWidget {
               padding: ResponsiveHelper.cardPadding(context),
               decoration: BoxDecoration(
                 color: fixedDeadline != null 
-                    ? theme.primaryColor.withOpacity(0.05)
+                    ? theme.primaryColor.withValues(alpha: 0.05)
                     : AppColors.grey50,
                 border: Border.all(
                   color: fixedDeadline != null 
@@ -357,7 +357,7 @@ class TODeadlineSection extends StatelessWidget {
                     padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 10)),
                     decoration: BoxDecoration(
                       color: fixedDeadline != null
-                          ? theme.primaryColor.withOpacity(0.15)
+                          ? theme.primaryColor.withValues(alpha: 0.15)
                           : AppColors.grey200,
                       borderRadius: BorderRadius.circular(10),
                     ),
@@ -404,7 +404,7 @@ class TODeadlineSection extends StatelessWidget {
                   Container(
                     padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 8)),
                     decoration: BoxDecoration(
-                      color: theme.primaryColor.withOpacity(0.1),
+                      color: theme.primaryColor.withValues(alpha: 0.1),
                       borderRadius: BorderRadius.circular(8),
                     ),
                     child: Icon(
@@ -461,10 +461,10 @@ class TODeadlineSection extends StatelessWidget {
         vertical: ResponsiveHelper.spacing(context, 10),
       ),
       decoration: BoxDecoration(
-        color: statusColor.withOpacity(0.1),
+        color: statusColor.withValues(alpha: 0.1),
         borderRadius: BorderRadius.circular(10),
         border: Border.all(
-          color: statusColor.withOpacity(0.3),
+          color: statusColor.withValues(alpha: 0.3),
         ),
       ),
       child: Row(

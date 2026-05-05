@@ -102,10 +102,10 @@ class BadgeDisplayWidget extends StatelessWidget {
           width: ResponsiveHelper.spacing(context, size),
           height: ResponsiveHelper.spacing(context, size),
           decoration: BoxDecoration(
-            color: _getBadgeColor(badge.type).withOpacity(0.15),
+            color: _getBadgeColor(badge.type).withValues(alpha: 0.15),
             shape: BoxShape.circle,
             border: Border.all(
-              color: _getBadgeColor(badge.type).withOpacity(0.3),
+              color: _getBadgeColor(badge.type).withValues(alpha: 0.3),
               width: 1.5,
             ),
           ),
@@ -194,10 +194,10 @@ class BadgeDetailDialog extends StatelessWidget {
             width: ResponsiveHelper.spacing(context, 80),
             height: ResponsiveHelper.spacing(context, 80),
             decoration: BoxDecoration(
-              color: _getBadgeColor(badge.type).withOpacity(0.15),
+              color: _getBadgeColor(badge.type).withValues(alpha: 0.15),
               shape: BoxShape.circle,
               border: Border.all(
-                color: _getBadgeColor(badge.type).withOpacity(0.3),
+                color: _getBadgeColor(badge.type).withValues(alpha: 0.3),
                 width: 2,
               ),
             ),

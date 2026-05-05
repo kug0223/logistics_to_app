@@ -28,7 +28,7 @@ class AdminHomeScreen extends StatelessWidget {
                 end: Alignment.bottomRight,
                 colors: [
                   theme.primaryColor,
-                  theme.primaryColor.withOpacity(0.85),
+                  theme.primaryColor.withValues(alpha: 0.85),
                 ],
               ),
             ),
@@ -72,7 +72,7 @@ class AdminHomeScreen extends StatelessWidget {
                                         width: ResponsiveHelper.spacing(context, 4),
                                         height: ResponsiveHelper.spacing(context, 4),
                                         decoration: BoxDecoration(
-                                          color: Colors.white.withOpacity(0.8),
+                                          color: Colors.white.withValues(alpha: 0.8),
                                           shape: BoxShape.circle,
                                         ),
                                       ),
@@ -87,7 +87,7 @@ class AdminHomeScreen extends StatelessWidget {
                                     vertical: ResponsiveHelper.spacing(context, 5),
                                   ),
                                   decoration: BoxDecoration(
-                                    color: Colors.white.withOpacity(0.2),
+                                    color: Colors.white.withValues(alpha: 0.2),
                                     borderRadius: BorderRadius.circular(16),
                                   ),
                                   child: Row(
@@ -116,7 +116,7 @@ class AdminHomeScreen extends StatelessWidget {
                             
                             // 로그아웃 버튼
                             Material(
-                              color: Colors.white.withOpacity(0.2),
+                              color: Colors.white.withValues(alpha: 0.2),
                               borderRadius: BorderRadius.circular(12),
                               child: InkWell(
                                 onTap: () async {
@@ -147,7 +147,7 @@ class AdminHomeScreen extends StatelessWidget {
                           '안녕하세요! 👋',
                           style: ResponsiveHelper.bodyStyle(
                             context,
-                            color: Colors.white.withOpacity(0.95),
+                            color: Colors.white.withValues(alpha: 0.95),
                           ),
                         ),
                         
@@ -172,7 +172,7 @@ class AdminHomeScreen extends StatelessWidget {
                           user?.userEmail ?? '',
                           style: ResponsiveHelper.smallStyle(
                             context,
-                            color: Colors.white.withOpacity(0.9),
+                            color: Colors.white.withValues(alpha: 0.9),
                           ),
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
@@ -223,7 +223,7 @@ class AdminHomeScreen extends StatelessWidget {
                               icon: Icons.dashboard_outlined,
                               title: 'TO 모니터링',
                               subtitle: '전체 TO 현황',
-                              color: theme.primaryColor.withOpacity(0.8),
+                              color: theme.primaryColor.withValues(alpha: 0.8),
                               onTap: () {
                                 ScaffoldMessenger.of(context).showSnackBar(
                                   const SnackBar(content: Text('TO 모니터링 기능은 준비 중입니다')),
@@ -237,7 +237,7 @@ class AdminHomeScreen extends StatelessWidget {
                               icon: Icons.people_outline,
                               title: '사용자 관리',
                               subtitle: '회원 관리',
-                              color: theme.primaryColor.withOpacity(0.7),
+                              color: theme.primaryColor.withValues(alpha: 0.7),
                               onTap: () {
                                 ScaffoldMessenger.of(context).showSnackBar(
                                   const SnackBar(content: Text('사용자 관리 기능은 준비 중입니다')),
@@ -251,7 +251,7 @@ class AdminHomeScreen extends StatelessWidget {
                               icon: Icons.analytics_outlined,
                               title: '통계',
                               subtitle: '전체 통계 분석',
-                              color: theme.primaryColor.withOpacity(0.6),
+                              color: theme.primaryColor.withValues(alpha: 0.6),
                               onTap: () {
                                 ScaffoldMessenger.of(context).showSnackBar(
                                   const SnackBar(content: Text('통계 기능은 준비 중입니다')),
@@ -282,7 +282,7 @@ class AdminHomeScreen extends StatelessWidget {
                               icon: Icons.settings_outlined,
                               title: '설정',
                               subtitle: '개인 설정',
-                              color: AppColors.grey600!,
+                              color: AppColors.grey600,
                               onTap: () {
                                 Navigator.push(
                                   context,
@@ -317,7 +317,7 @@ class AdminHomeScreen extends StatelessWidget {
   }) {
     return Card(
       elevation: 3,
-      shadowColor: Colors.black.withOpacity(0.1),
+      shadowColor: Colors.black.withValues(alpha: 0.1),
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(20),
       ),
@@ -338,7 +338,7 @@ class AdminHomeScreen extends StatelessWidget {
                 Container(
                   padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 16)),
                   decoration: BoxDecoration(
-                    color: color.withOpacity(0.1),
+                    color: color.withValues(alpha: 0.1),
                     shape: BoxShape.circle,
                   ),
                   child: Icon(

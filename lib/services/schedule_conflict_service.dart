@@ -111,7 +111,7 @@ class ScheduleConflictService {
 
   /// 여러 업무에 대해 한번에 충돌 체크
   /// 
-  /// 반환: Map<workDetailId, ConflictInfo>
+  /// 반환: `Map<workDetailId, ConflictInfo>`
   Future<Map<String, ConflictInfo>> checkConflictsForWorkDetails({
     required String uid,
     required DateTime workDate,
@@ -335,7 +335,6 @@ class ScheduleConflictService {
       if (!userDoc.exists) return null;
       
       final data = userDoc.data()!;
-      final noShowCount = data['noShowCount'] ?? 0;
       final restrictedUntil = data['restrictedUntil'] as Timestamp?;
 
       // 이미 제한 중인지 확인

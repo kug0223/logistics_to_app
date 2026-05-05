@@ -264,7 +264,7 @@ class _LongTermWorkManagementDialogState
 
     switch (app.resignStatus) {
       case 'PENDING':
-        bgColor = Colors.orange.withOpacity(0.1);
+        bgColor = Colors.orange.withValues(alpha: 0.1);
         textColor = Colors.orange;
         icon = Icons.schedule;
         statusText = '퇴사 승인 대기중';
@@ -273,7 +273,7 @@ class _LongTermWorkManagementDialogState
         detailText = '$requestDate 퇴사 요청 ($daysLeft일 후 자동 승인)';
         break;
       case 'REJECTED':
-        bgColor = Colors.red.withOpacity(0.1);
+        bgColor = Colors.red.withValues(alpha: 0.1);
         textColor = Colors.red;
         icon = Icons.cancel;
         statusText = '퇴사 요청 거절됨';
@@ -281,7 +281,7 @@ class _LongTermWorkManagementDialogState
         break;
       case 'APPROVED':
       case 'AUTO_APPROVED':
-        bgColor = Colors.green.withOpacity(0.1);
+        bgColor = Colors.green.withValues(alpha: 0.1);
         textColor = Colors.green;
         icon = Icons.check_circle;
         statusText = app.resignStatus == 'AUTO_APPROVED' ? '퇴사 자동 승인됨' : '퇴사 승인됨';
@@ -297,7 +297,7 @@ class _LongTermWorkManagementDialogState
       decoration: BoxDecoration(
         color: bgColor,
         borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: textColor.withOpacity(0.3)),
+        border: Border.all(color: textColor.withValues(alpha: 0.3)),
       ),
       child: Row(
         children: [
@@ -324,7 +324,7 @@ class _LongTermWorkManagementDialogState
                   detailText,
                   style: ResponsiveHelper.tinyStyle(  // ⭐ 변경
                     context,
-                    color: textColor.withOpacity(0.8),
+                    color: textColor.withValues(alpha: 0.8),
                   ),
                 ),
               ],

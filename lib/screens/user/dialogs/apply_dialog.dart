@@ -47,7 +47,7 @@ class ApplyDialog {
                     children: [
                       // ✅ 공통 위젯 사용
                       WorkTypeIcon.buildWithBackground(
-                        iconString: work.workTypeIcon ?? 'work',
+                        iconString: work.workTypeIcon,
                         iconColor: work.workTypeColor,
                         backgroundColor: work.workTypeBackgroundColor,
                         size: 18,

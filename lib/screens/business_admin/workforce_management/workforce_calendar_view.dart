@@ -116,8 +116,7 @@ class _WorkforceCalendarViewState extends State<WorkforceCalendarView> {
     return _allGroupItems.where((groupItem) {
       if (groupItem.isLongTerm) {
         // 장기 TO: startDate ~ endDate 범위 확인
-        if (groupItem.startDate == null || groupItem.endDate == null) return false;
-        final isInRange = !day.isBefore(groupItem.startDate!) && !day.isAfter(groupItem.endDate!);
+        final isInRange = !day.isBefore(groupItem.startDate) && !day.isAfter(groupItem.endDate);
         if (!isInRange) return false;
 
         // workDays 확인 (장기 TO는 masterTO에서 가져와야 함)
@@ -131,11 +130,7 @@ class _WorkforceCalendarViewState extends State<WorkforceCalendarView> {
       } else if (groupItem.isGrouped) {
         // ⭐ 그룹 상세 로드 전: groupItem의 기간으로 범위 확인
         if (!groupItem.isGroupDetailLoaded) {
-          if (groupItem.startDate != null && groupItem.endDate != null) {
-            return !day.isBefore(groupItem.startDate!) && !day.isAfter(groupItem.endDate!);
-          }
-          // startDate/endDate 없으면 singleTO.date만 확인 (fallback)
-          return DateUtils.isSameDay(groupItem.singleTO?.date ?? groupItem.masterTO.date, day);
+          return !day.isBefore(groupItem.startDate) && !day.isAfter(groupItem.endDate);
         }
         
         // 그룹 상세 로드 후: 그룹 내 TO 중 하나라도 해당 날짜면 표시
@@ -218,8 +213,8 @@ class _WorkforceCalendarViewState extends State<WorkforceCalendarView> {
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
           colors: [
-            theme.primaryColor.withOpacity(0.05),
-            theme.primaryColor.withOpacity(0.02),
+            theme.primaryColor.withValues(alpha: 0.05),
+            theme.primaryColor.withValues(alpha: 0.02),
           ],
         ),
       ),
@@ -230,7 +225,7 @@ class _WorkforceCalendarViewState extends State<WorkforceCalendarView> {
         children: [
           _buildLegendItem(theme.primaryColor, '단기 진행중', isLongTerm: false),
           _buildLegendItem(AppColors.longTerm, '장기 진행중', isLongTerm: false),  // ✅ 보라색 + 원형
-          _buildLegendItem(AppColors.grey400!, '과거/마감', isLongTerm: false),
+          _buildLegendItem(AppColors.grey400, '과거/마감', isLongTerm: false),
         ],
       ),
     );
@@ -286,8 +281,8 @@ class _WorkforceCalendarViewState extends State<WorkforceCalendarView> {
               dayGroupItems.every((item) => item.isManualClosed);
 
           // ⭐ 회색 또는 기본 색상
-          final Color shortColor = isPastOrClosed ? AppColors.grey400! : Theme.of(context).primaryColor;
-          final Color longColor = isPastOrClosed ? AppColors.grey400! : AppColors.longTerm;  // ✅ 보라색
+          final Color shortColor = isPastOrClosed ? AppColors.grey400 : Theme.of(context).primaryColor;
+          final Color longColor = isPastOrClosed ? AppColors.grey400 : AppColors.longTerm;  // ✅ 보라색
 
           return Positioned(
             bottom: 3,
@@ -325,7 +320,7 @@ class _WorkforceCalendarViewState extends State<WorkforceCalendarView> {
       calendarStyle: CalendarStyle(
         markersMaxCount: 2,
         todayDecoration: BoxDecoration(
-          color: Theme.of(context).primaryColor.withOpacity(0.5),
+          color: Theme.of(context).primaryColor.withValues(alpha: 0.5),
           shape: BoxShape.circle,
         ),
         selectedDecoration: BoxDecoration(
@@ -365,13 +360,13 @@ class _WorkforceCalendarViewState extends State<WorkforceCalendarView> {
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
           colors: [
-            theme.primaryColor.withOpacity(0.12),
-            theme.primaryColor.withOpacity(0.06),
+            theme.primaryColor.withValues(alpha: 0.12),
+            theme.primaryColor.withValues(alpha: 0.06),
           ],
         ),
         border: Border(
           bottom: BorderSide(
-            color: theme.primaryColor.withOpacity(0.3),
+            color: theme.primaryColor.withValues(alpha: 0.3),
             width: 1.5,
           ),
         ),
@@ -413,7 +408,7 @@ class _WorkforceCalendarViewState extends State<WorkforceCalendarView> {
                       ? LinearGradient(
                           colors: [
                             theme.primaryColor,
-                            theme.primaryColor.withOpacity(0.85),
+                            theme.primaryColor.withValues(alpha: 0.85),
                           ],
                         )
                       : null,
@@ -433,7 +428,7 @@ class _WorkforceCalendarViewState extends State<WorkforceCalendarView> {
                   isEnabled: true,
                   backgroundColor: AppColors.longTermLight,
                   foregroundColor: AppColors.longTermDark,
-                  borderColor: AppColors.longTerm.withOpacity(0.3),
+                  borderColor: AppColors.longTerm.withValues(alpha: 0.3),
                   onTap: _openFixedWorkerManagement,
                 ),
               ),
@@ -446,9 +441,9 @@ class _WorkforceCalendarViewState extends State<WorkforceCalendarView> {
                   icon: Icons.lock_outline,
                   label: '마감관리',
                   isEnabled: true,
-                  backgroundColor: AppColors.success.withOpacity(0.1),
+                  backgroundColor: AppColors.success.withValues(alpha: 0.1),
                   foregroundColor: AppColors.success,
-                  borderColor: AppColors.success.withOpacity(0.3),
+                  borderColor: AppColors.success.withValues(alpha: 0.3),
                   onTap: _openCloseManagement,
                 ),
               ),
@@ -479,7 +474,7 @@ class _WorkforceCalendarViewState extends State<WorkforceCalendarView> {
         boxShadow: isEnabled && gradient != null
             ? [
                 BoxShadow(
-                  color: foregroundColor?.withOpacity(0.3) ?? Colors.black12,
+                  color: foregroundColor?.withValues(alpha: 0.3) ?? Colors.black12,
                   blurRadius: 4,
                   offset: const Offset(0, 2),
                 ),
@@ -880,7 +875,7 @@ class _WorkforceCalendarViewState extends State<WorkforceCalendarView> {
         color: Colors.white,
         borderRadius: BorderRadius.circular(8),
         border: Border.all(
-          color: color.withOpacity(0.3),
+          color: color.withValues(alpha: 0.3),
           width: 1,
         ),
       ),

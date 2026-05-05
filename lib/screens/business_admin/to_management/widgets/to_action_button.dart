@@ -59,13 +59,13 @@ class TOActionButton extends StatelessWidget {
           end: Alignment.bottomRight,
           colors: [
             bgColor,
-            bgColor.withOpacity(0.8),
+            bgColor.withValues(alpha: 0.8),
           ],
         ),
         borderRadius: BorderRadius.circular(16),
         boxShadow: [
           BoxShadow(
-            color: bgColor.withOpacity(0.4),
+            color: bgColor.withValues(alpha: 0.4),
             blurRadius: 12,
             offset: const Offset(0, 6),
           ),

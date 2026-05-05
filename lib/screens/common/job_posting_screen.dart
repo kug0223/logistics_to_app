@@ -232,11 +232,11 @@ class _JobPostingScreenState extends State<JobPostingScreen> {
                     _business!.mainImageUrl!,
                     fit: BoxFit.cover,
                     errorBuilder: (_, __, ___) => Container(
-                      color: theme.primaryColor.withOpacity(0.8),
+                      color: theme.primaryColor.withValues(alpha: 0.8),
                       child: Icon(
                         Icons.business,
                         size: ResponsiveHelper.iconSize(context, 64),
-                        color: Colors.white.withOpacity(0.5),
+                        color: Colors.white.withValues(alpha: 0.5),
                       ),
                     ),
                   ),
@@ -247,9 +247,9 @@ class _JobPostingScreenState extends State<JobPostingScreen> {
                         begin: Alignment.topCenter,
                         end: Alignment.bottomCenter,
                         colors: [
-                          Colors.black.withOpacity(0.3),
+                          Colors.black.withValues(alpha: 0.3),
                           Colors.transparent,
-                          Colors.black.withOpacity(0.5),
+                          Colors.black.withValues(alpha: 0.5),
                         ],
                       ),
                     ),
@@ -263,7 +263,7 @@ class _JobPostingScreenState extends State<JobPostingScreen> {
                     end: Alignment.bottomRight,
                     colors: [
                       theme.primaryColor,
-                      theme.primaryColor.withOpacity(0.8),
+                      theme.primaryColor.withValues(alpha: 0.8),
                     ],
                   ),
                 ),
@@ -273,7 +273,7 @@ class _JobPostingScreenState extends State<JobPostingScreen> {
         icon: Container(
           padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 8)),
           decoration: BoxDecoration(
-            color: Colors.black.withOpacity(0.3),
+            color: Colors.black.withValues(alpha: 0.3),
             shape: BoxShape.circle,
           ),
           child: Icon(
@@ -292,7 +292,7 @@ class _JobPostingScreenState extends State<JobPostingScreen> {
               vertical: ResponsiveHelper.spacing(context, 6),
             ),
             decoration: BoxDecoration(
-              color: Colors.orange.withOpacity(0.9),
+              color: Colors.orange.withValues(alpha: 0.9),
               borderRadius: BorderRadius.circular(20),
             ),
             child: Row(
@@ -333,7 +333,7 @@ class _JobPostingScreenState extends State<JobPostingScreen> {
               Container(
                 padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 10)),
                 decoration: BoxDecoration(
-                  color: theme.primaryColor.withOpacity(0.1),
+                  color: theme.primaryColor.withValues(alpha: 0.1),
                   borderRadius: BorderRadius.circular(12),
                 ),
                 child: Icon(
@@ -422,9 +422,9 @@ class _JobPostingScreenState extends State<JobPostingScreen> {
             Container(
               padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 12)),
               decoration: BoxDecoration(
-                color: theme.primaryColor.withOpacity(0.05),
+                color: theme.primaryColor.withValues(alpha: 0.05),
                 borderRadius: BorderRadius.circular(12),
-                border: Border.all(color: theme.primaryColor.withOpacity(0.1)),
+                border: Border.all(color: theme.primaryColor.withValues(alpha: 0.1)),
               ),
               child: Column(
                 children: [
@@ -473,7 +473,7 @@ class _JobPostingScreenState extends State<JobPostingScreen> {
                     _to!.deadlineType == 'HOURS_BEFORE'
                         ? '업무시작 ${_to!.hoursBeforeStart ?? 2}시간 전'
                         : _to!.formattedDeadline,
-                    _to!.isDeadlineSoon ? Colors.red : AppColors.grey600!,
+                    _to!.isDeadlineSoon ? Colors.red : AppColors.grey600,
                   ),
                 ],
               ),
@@ -623,8 +623,8 @@ class _JobPostingScreenState extends State<JobPostingScreen> {
                       ),
                       decoration: BoxDecoration(
                         color: work.isFull
-                            ? Colors.red.withOpacity(0.1)
-                            : theme.primaryColor.withOpacity(0.1),
+                            ? Colors.red.withValues(alpha: 0.1)
+                            : theme.primaryColor.withValues(alpha: 0.1),
                         borderRadius: BorderRadius.circular(20),
                       ),
                       child: Text(
@@ -719,8 +719,6 @@ class _JobPostingScreenState extends State<JobPostingScreen> {
     WorkDetailModel work,
     BusinessWorkTypeModel workType,
   ) {
-    final theme = Theme.of(context);
-
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
@@ -1170,7 +1168,7 @@ class _JobPostingScreenState extends State<JobPostingScreen> {
         color: Colors.white,
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.1),
+            color: Colors.black.withValues(alpha: 0.1),
             blurRadius: 10,
             offset: const Offset(0, -2),
           ),
@@ -1273,7 +1271,7 @@ class _JobPostingScreenState extends State<JobPostingScreen> {
     return Container(
       padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 12)),
       decoration: BoxDecoration(
-        color: color.withOpacity(0.1),
+        color: color.withValues(alpha: 0.1),
         borderRadius: BorderRadius.circular(12),
       ),
       child: Column(
@@ -1359,7 +1357,7 @@ class _JobPostingScreenState extends State<JobPostingScreen> {
         vertical: ResponsiveHelper.spacing(context, 8),
       ),
       decoration: BoxDecoration(
-        color: theme.primaryColor.withOpacity(0.1),
+        color: theme.primaryColor.withValues(alpha: 0.1),
         borderRadius: BorderRadius.circular(20),
       ),
       child: Row(
@@ -1396,7 +1394,7 @@ class _JobPostingScreenState extends State<JobPostingScreen> {
         Container(
           padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 8)),
           decoration: BoxDecoration(
-            color: theme.primaryColor.withOpacity(0.1),
+            color: theme.primaryColor.withValues(alpha: 0.1),
             borderRadius: BorderRadius.circular(8),
           ),
           child: Icon(

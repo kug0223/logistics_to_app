@@ -276,13 +276,13 @@ class ConfirmCancelDialog extends StatelessWidget {
       padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 10)),
       decoration: BoxDecoration(
         color: isHighlighted 
-            ? iconColor.withOpacity(0.1)
+            ? iconColor.withValues(alpha: 0.1)
             : Colors.transparent,
         borderRadius: BorderRadius.circular(
           ResponsiveHelper.spacing(context, 8),
         ),
         border: isHighlighted
-            ? Border.all(color: iconColor.withOpacity(0.3))
+            ? Border.all(color: iconColor.withValues(alpha: 0.3))
             : null,
       ),
       child: Row(
@@ -334,8 +334,8 @@ class ConfirmCancelDialog extends StatelessWidget {
         ),
         border: Border.all(
           color: hasPenalty 
-              ? AppColors.error.withOpacity(0.3) 
-              : AppColors.success.withOpacity(0.3),
+              ? AppColors.error.withValues(alpha: 0.3) 
+              : AppColors.success.withValues(alpha: 0.3),
         ),
       ),
       child: Column(

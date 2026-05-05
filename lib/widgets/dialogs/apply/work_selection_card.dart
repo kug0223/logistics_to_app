@@ -353,7 +353,7 @@ class WorkSelectionCard extends StatelessWidget {
           vertical: ResponsiveHelper.spacing(context, 5),
         ),
         decoration: BoxDecoration(
-          color: onTap != null ? color : color.withOpacity(0.5),
+          color: onTap != null ? color : color.withValues(alpha: 0.5),
           borderRadius: BorderRadius.circular(6),
         ),
         child: Row(
@@ -608,7 +608,7 @@ class WorkSelectionCard extends StatelessWidget {
   Color _getBackgroundColor() {
     // ✅ 확정 상태면 충돌 무시하고 확정 색상
     if (status == WorkApplicationStatus.confirmed) {
-      return AppColors.successBg.withOpacity(0.3);
+      return AppColors.successBg.withValues(alpha: 0.3);
     }
     
     if (conflictInfo.level == ConflictLevel.blocked) {
@@ -617,13 +617,13 @@ class WorkSelectionCard extends StatelessWidget {
     
     switch (status) {
       case WorkApplicationStatus.confirmed:
-        return AppColors.successBg.withOpacity(0.3);
+        return AppColors.successBg.withValues(alpha: 0.3);
       case WorkApplicationStatus.pending:
-        return AppColors.infoBg.withOpacity(0.3);
+        return AppColors.infoBg.withValues(alpha: 0.3);
       case WorkApplicationStatus.closed:
         return AppColors.grey100;
       case WorkApplicationStatus.autoCanceled:
-        return AppColors.warningBg.withOpacity(0.3);
+        return AppColors.warningBg.withValues(alpha: 0.3);
       case WorkApplicationStatus.notApplied:
         return Colors.white;
     }
@@ -632,7 +632,7 @@ class WorkSelectionCard extends StatelessWidget {
   Color _getBorderColor(ThemeData theme) {
     // ✅ 확정 상태면 충돌 무시하고 확정 색상
     if (status == WorkApplicationStatus.confirmed) {
-      return AppColors.success.withOpacity(0.5);
+      return AppColors.success.withValues(alpha: 0.5);
     }
     
     if (conflictInfo.level == ConflictLevel.blocked) {
@@ -641,13 +641,13 @@ class WorkSelectionCard extends StatelessWidget {
     
     switch (status) {
       case WorkApplicationStatus.confirmed:
-        return AppColors.success.withOpacity(0.5);
+        return AppColors.success.withValues(alpha: 0.5);
       case WorkApplicationStatus.pending:
-        return AppColors.info.withOpacity(0.5);
+        return AppColors.info.withValues(alpha: 0.5);
       case WorkApplicationStatus.closed:
         return AppColors.grey300;
       case WorkApplicationStatus.autoCanceled:
-        return AppColors.warning.withOpacity(0.5);
+        return AppColors.warning.withValues(alpha: 0.5);
       case WorkApplicationStatus.notApplied:
         return AppColors.grey300;
     }

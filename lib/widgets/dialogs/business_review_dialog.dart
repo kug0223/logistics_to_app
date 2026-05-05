@@ -262,7 +262,7 @@ class _BusinessReviewDialogState extends State<BusinessReviewDialog> {
         gradient: LinearGradient(
           colors: [
             theme.primaryColor,
-            theme.primaryColor.withOpacity(0.8),
+            theme.primaryColor.withValues(alpha: 0.8),
           ],
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
@@ -296,7 +296,7 @@ class _BusinessReviewDialogState extends State<BusinessReviewDialog> {
                     Text(
                       '${widget.reviewYear}년 ${widget.reviewMonth}월',
                       style: ResponsiveHelper.smallStyle(context).copyWith(
-                        color: Colors.white.withOpacity(0.9),
+                        color: Colors.white.withValues(alpha: 0.9),
                       ),
                     ),
                   ],
@@ -486,7 +486,7 @@ class _BusinessReviewDialogState extends State<BusinessReviewDialog> {
           vertical: ResponsiveHelper.spacing(context, 12),
         ),
         decoration: BoxDecoration(
-          color: isSelected ? color.withOpacity(0.1) : AppColors.grey50,
+          color: isSelected ? color.withValues(alpha: 0.1) : AppColors.grey50,
           borderRadius: BorderRadius.circular(12),
           border: Border.all(
             color: isSelected ? color : AppColors.grey200,
@@ -566,7 +566,7 @@ class _BusinessReviewDialogState extends State<BusinessReviewDialog> {
                   vertical: ResponsiveHelper.spacing(context, 8),
                 ),
                 decoration: BoxDecoration(
-                  color: isSelected ? iconColor.withOpacity(0.1) : AppColors.grey50,
+                  color: isSelected ? iconColor.withValues(alpha: 0.1) : AppColors.grey50,
                   borderRadius: BorderRadius.circular(20),
                   border: Border.all(
                     color: isSelected ? iconColor : AppColors.grey200,

@@ -78,13 +78,13 @@ class _IntegratedWorkforceScreenState extends State<IntegratedWorkforceScreen> {
               Container(
                 padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 24)),
                 decoration: BoxDecoration(
-                  color: theme.primaryColor.withOpacity(0.1),
+                  color: theme.primaryColor.withValues(alpha: 0.1),
                   shape: BoxShape.circle,
                 ),
                 child: Icon(
                   Icons.business_center,
                   size: ResponsiveHelper.iconSize(context, 64),
-                  color: theme.primaryColor.withOpacity(0.5),
+                  color: theme.primaryColor.withValues(alpha: 0.5),
                 ),
               ),
               SizedBox(height: ResponsiveHelper.spacing(context, 24)),
@@ -176,7 +176,7 @@ class _IntegratedWorkforceScreenState extends State<IntegratedWorkforceScreen> {
                 margin: EdgeInsets.only(right: ResponsiveHelper.spacing(context, 8)),
                 padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 4)),
                 decoration: BoxDecoration(
-                  color: Colors.white.withOpacity(0.3),
+                  color: Colors.white.withValues(alpha: 0.3),
                   borderRadius: BorderRadius.circular(10),
                 ),
                 child: Row(
@@ -235,7 +235,7 @@ class _IntegratedWorkforceScreenState extends State<IntegratedWorkforceScreen> {
           boxShadow: isSelected
               ? [
                   BoxShadow(
-                    color: Colors.black.withOpacity(0.1),
+                    color: Colors.black.withValues(alpha: 0.1),
                     blurRadius: 4,
                     offset: const Offset(0, 2),
                   ),
@@ -643,7 +643,7 @@ class _IntegratedWorkforceScreenState extends State<IntegratedWorkforceScreen> {
                 Container(
                   padding: ResponsiveHelper.cardPadding(context),
                   decoration: BoxDecoration(
-                    color: Theme.of(context).primaryColor.withOpacity(0.1),
+                    color: Theme.of(context).primaryColor.withValues(alpha: 0.1),
                     borderRadius: BorderRadius.circular(8),
                   ),
                   child: Row(

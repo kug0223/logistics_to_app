@@ -45,7 +45,7 @@ class ALfitSplashLogo extends StatelessWidget {
                   width: width * 0.025,
                   height: width * 0.025,
                   decoration: BoxDecoration(
-                    color: secondaryColor.withOpacity(0.9),
+                    color: secondaryColor.withValues(alpha: 0.9),
                     shape: BoxShape.circle,
                   ),
                 ),

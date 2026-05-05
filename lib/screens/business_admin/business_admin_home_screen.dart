@@ -5,9 +5,6 @@ import 'package:provider/provider.dart';
 import '../../providers/user_provider.dart';
 import '../../providers/theme_provider.dart';
 
-// Services
-import '../../services/auth_service.dart';
-
 // Utils
 import '../../utils/dialog_helper.dart';
 import '../../utils/navigation_helper.dart';
@@ -29,7 +26,6 @@ class BusinessAdminHomeScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final authService = AuthService();
     final theme = Theme.of(context);
 
     return Consumer<UserProvider>(
@@ -42,7 +38,7 @@ class BusinessAdminHomeScreen extends StatelessWidget {
                 end: Alignment.bottomRight,
                 colors: [
                   theme.primaryColor,
-                  theme.primaryColor.withOpacity(0.85),
+                  theme.primaryColor.withValues(alpha: 0.85),
                 ],
               ),
             ),
@@ -86,7 +82,7 @@ class BusinessAdminHomeScreen extends StatelessWidget {
                                         width: ResponsiveHelper.spacing(context, 4),
                                         height: ResponsiveHelper.spacing(context, 4),
                                         decoration: BoxDecoration(
-                                          color: Colors.white.withOpacity(0.8),
+                                          color: Colors.white.withValues(alpha: 0.8),
                                           shape: BoxShape.circle,
                                         ),
                                       ),
@@ -101,7 +97,7 @@ class BusinessAdminHomeScreen extends StatelessWidget {
                                     vertical: ResponsiveHelper.spacing(context, 5),
                                   ),
                                   decoration: BoxDecoration(
-                                    color: Colors.white.withOpacity(0.2),
+                                    color: Colors.white.withValues(alpha: 0.2),
                                     borderRadius: BorderRadius.circular(16),
                                   ),
                                   child: Row(
@@ -134,7 +130,7 @@ class BusinessAdminHomeScreen extends StatelessWidget {
                                 // 알림 버튼
                                 NotificationBadge(
                                   child: Material(
-                                    color: Colors.white.withOpacity(0.2),
+                                    color: Colors.white.withValues(alpha: 0.2),
                                     borderRadius: BorderRadius.circular(12),
                                     child: InkWell(
                                       onTap: () {
@@ -160,7 +156,7 @@ class BusinessAdminHomeScreen extends StatelessWidget {
                                 SizedBox(width: ResponsiveHelper.spacing(context, 8)),
                                 // 로그아웃 버튼
                                 Material(
-                                  color: Colors.white.withOpacity(0.2),
+                                  color: Colors.white.withValues(alpha: 0.2),
                                   borderRadius: BorderRadius.circular(12),
                                   child: InkWell(
                                     onTap: () async {
@@ -193,7 +189,7 @@ class BusinessAdminHomeScreen extends StatelessWidget {
                           '안녕하세요! 👋',
                           style: ResponsiveHelper.bodyStyle(
                             context,
-                            color: Colors.white.withOpacity(0.95),
+                            color: Colors.white.withValues(alpha: 0.95),
                           ),
                         ),
                         
@@ -218,7 +214,7 @@ class BusinessAdminHomeScreen extends StatelessWidget {
                           userProvider.currentUser?.userEmail ?? '',
                           style: ResponsiveHelper.smallStyle(
                             context,
-                            color: Colors.white.withOpacity(0.9),
+                            color: Colors.white.withValues(alpha: 0.9),
                           ),
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
@@ -252,7 +248,7 @@ class BusinessAdminHomeScreen extends StatelessWidget {
                               icon: Icons.add_circle_outline,
                               title: 'TO 생성',
                               subtitle: '새 근무 등록',
-                              color: theme.primaryColor.withOpacity(0.8),
+                              color: theme.primaryColor.withValues(alpha: 0.8),
                               onTap: () async {
                                 await NavigationHelper.push<bool>(
                                   context,
@@ -272,7 +268,7 @@ class BusinessAdminHomeScreen extends StatelessWidget {
                               icon: Icons.groups,
                               title: '인력 관리',
                               subtitle: 'TO 관리 & 현황',
-                              color: theme.primaryColor.withOpacity(0.7),
+                              color: theme.primaryColor.withValues(alpha: 0.7),
                               onTap: () {
                                 Navigator.push(
                                   context,
@@ -289,7 +285,7 @@ class BusinessAdminHomeScreen extends StatelessWidget {
                               icon: Icons.bar_chart_outlined,
                               title: '통계',
                               subtitle: 'TO 현황',
-                              color: theme.primaryColor.withOpacity(0.6),
+                              color: theme.primaryColor.withValues(alpha: 0.6),
                               onTap: () {
                                 ScaffoldMessenger.of(context).showSnackBar(
                                   const SnackBar(content: Text('통계 화면 준비 중입니다')),
@@ -302,7 +298,7 @@ class BusinessAdminHomeScreen extends StatelessWidget {
                               icon: Icons.rate_review_outlined,
                               title: '리뷰 관리',
                               subtitle: '평가 작성/조회',
-                              color: theme.primaryColor.withOpacity(0.6),
+                              color: theme.primaryColor.withValues(alpha: 0.6),
                               onTap: () {
                                 Navigator.push(
                                   context,
@@ -319,7 +315,7 @@ class BusinessAdminHomeScreen extends StatelessWidget {
                               icon: Icons.settings_outlined,
                               title: '설정',
                               subtitle: '앱 설정',
-                              color: AppColors.grey600!,
+                              color: AppColors.grey600,
                               onTap: () {
                                 Navigator.push(
                                   context,
@@ -354,7 +350,7 @@ class BusinessAdminHomeScreen extends StatelessWidget {
   }) {
     return Card(
       elevation: 3,
-      shadowColor: Colors.black.withOpacity(0.1),
+      shadowColor: Colors.black.withValues(alpha: 0.1),
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(20),
       ),
@@ -375,7 +371,7 @@ class BusinessAdminHomeScreen extends StatelessWidget {
                 Container(
                   padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 16)),
                   decoration: BoxDecoration(
-                    color: color.withOpacity(0.1),
+                    color: color.withValues(alpha: 0.1),
                     shape: BoxShape.circle,
                   ),
                   child: Icon(

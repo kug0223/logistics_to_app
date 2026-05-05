@@ -310,12 +310,12 @@ class _ConfirmedListDialogWidgetState
       padding: ResponsiveHelper.cardPadding(context),
       decoration: BoxDecoration(
         gradient: LinearGradient(
-          colors: [AppColors.success.withOpacity(0.1), AppColors.success.withOpacity(0.05)],
+          colors: [AppColors.success.withValues(alpha: 0.1), AppColors.success.withValues(alpha: 0.05)],
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
         ),
         borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: AppColors.success.withOpacity(0.3)),
+        border: Border.all(color: AppColors.success.withValues(alpha: 0.3)),
       ),
       child: Row(
         children: [
@@ -446,7 +446,7 @@ class _ConfirmedListDialogWidgetState
         color: Colors.white,
         borderRadius: BorderRadius.circular(16),
         border: Border.all(color: AppColors.border),
-        boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.04), blurRadius: 8, offset: const Offset(0, 2))],
+        boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.04), blurRadius: 8, offset: const Offset(0, 2))],
       ),
       child: Column(
         children: [
@@ -472,7 +472,7 @@ class _ConfirmedListDialogWidgetState
                 ),
                 Container(
                   padding: EdgeInsets.symmetric(horizontal: ResponsiveHelper.spacing(context, 10), vertical: ResponsiveHelper.spacing(context, 4)),
-                  decoration: BoxDecoration(color: AppColors.success.withOpacity(0.15), borderRadius: BorderRadius.circular(12)),
+                  decoration: BoxDecoration(color: AppColors.success.withValues(alpha: 0.15), borderRadius: BorderRadius.circular(12)),
                   child: Text('${workers.length}명', style: ResponsiveHelper.bodyStyle(context, color: AppColors.success).copyWith(fontWeight: FontWeight.bold)),
                 ),
               ],
@@ -526,7 +526,7 @@ class _ConfirmedListDialogWidgetState
                       // 순번
                       CircleAvatar(
                         radius: ResponsiveHelper.spacing(context, 16),
-                        backgroundColor: AppColors.success.withOpacity(0.15),
+                        backgroundColor: AppColors.success.withValues(alpha: 0.15),
                         child: Text(
                           '${index + 1}',
                           style: ResponsiveHelper.bodyStyle(context).copyWith(

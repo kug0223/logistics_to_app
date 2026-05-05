@@ -34,8 +34,6 @@ class WorkDetailManagementDialog {
       context: context,
       builder: (context) => StatefulBuilder(
         builder: (context, setDialogState) {
-          final theme = Theme.of(context);
-          
           // 선택된 상태 확인
           if (selectedWorkDetails.isNotEmpty) {
             final firstSelected = toItem.workDetails.firstWhere(
@@ -130,10 +128,10 @@ class WorkDetailManagementDialog {
     return Container(
       padding: ResponsiveHelper.cardPadding(context),
       decoration: BoxDecoration(
-        color: theme.primaryColor.withOpacity(0.05),
+        color: theme.primaryColor.withValues(alpha: 0.05),
         borderRadius: BorderRadius.circular(12),
         border: Border.all(
-          color: theme.primaryColor.withOpacity(0.2),
+          color: theme.primaryColor.withValues(alpha: 0.2),
         ),
       ),
       child: Row(
@@ -168,7 +166,7 @@ class WorkDetailManagementDialog {
               vertical: ResponsiveHelper.spacing(context, 4),
             ),
             decoration: BoxDecoration(
-              color: theme.primaryColor.withOpacity(0.1),
+              color: theme.primaryColor.withValues(alpha: 0.1),
               borderRadius: BorderRadius.circular(16),
             ),
             child: Text(
@@ -219,7 +217,7 @@ class WorkDetailManagementDialog {
             padding: ResponsiveHelper.cardPadding(context),
             decoration: BoxDecoration(
               color: isSelected
-                  ? statusInfo['color'].withOpacity(0.1)
+                  ? statusInfo['color'].withValues(alpha: 0.1)
                   : (isSelectable ? Colors.white : AppColors.grey50),
               borderRadius: BorderRadius.circular(12),
               border: Border.all(
@@ -282,7 +280,7 @@ class WorkDetailManagementDialog {
                               vertical: ResponsiveHelper.spacing(context, 2),
                             ),
                             decoration: BoxDecoration(
-                              color: statusInfo['color'].withOpacity(0.15),
+                              color: statusInfo['color'].withValues(alpha: 0.15),
                               borderRadius: BorderRadius.circular(12),
                             ),
                             child: Row(

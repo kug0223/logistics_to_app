@@ -128,7 +128,7 @@ class _TooltipDialog extends StatelessWidget {
             Container(
               padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 16)),
               decoration: BoxDecoration(
-                color: effectiveIconColor.withOpacity(0.1),
+                color: effectiveIconColor.withValues(alpha: 0.1),
                 shape: BoxShape.circle,
               ),
               child: Icon(
@@ -164,7 +164,7 @@ class _TooltipDialog extends StatelessWidget {
               Container(
                 padding: ResponsiveHelper.cardPadding(context),
                 decoration: BoxDecoration(
-                  color: AppColors.warning.withOpacity(0.1),
+                  color: AppColors.warning.withValues(alpha: 0.1),
                   borderRadius: BorderRadius.circular(12),
                 ),
                 child: Column(

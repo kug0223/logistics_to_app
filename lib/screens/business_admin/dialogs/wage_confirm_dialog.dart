@@ -102,8 +102,7 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
       // 상태별 분류
       if (attendance.wageStatus == 'calculated') {
         _calculatedWorkers.add(app);
-      } else if (attendance.wageStatus == 'pending' || attendance.wageStatus == null) {
-        // null도 pending으로 처리 (신규 출퇴근 기록)
+      } else if (attendance.wageStatus == 'pending') {
         _pendingWorkers.add(app);
       }
       // confirmed는 이미 최종확정이므로 표시 안함
@@ -591,7 +590,7 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
           end: Alignment.bottomRight,
           colors: [
             theme.primaryColor,
-            theme.primaryColor.withOpacity(0.85),
+            theme.primaryColor.withValues(alpha: 0.85),
           ],
         ),
         borderRadius: BorderRadius.only(
@@ -604,7 +603,7 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
           Container(
             padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 10)),
             decoration: BoxDecoration(
-              color: Colors.white.withOpacity(0.2),
+              color: Colors.white.withValues(alpha: 0.2),
               borderRadius: BorderRadius.circular(ResponsiveHelper.spacing(context, 12)),
             ),
             child: Icon(
@@ -629,7 +628,7 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
                 Text(
                   '$dateStr · ${widget.businessName}',
                   style: ResponsiveHelper.smallStyle(context).copyWith(
-                    color: Colors.white.withOpacity(0.9),
+                    color: Colors.white.withValues(alpha: 0.9),
                   ),
                 ),
               ],
@@ -890,7 +889,7 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
               ),
               boxShadow: [
                 BoxShadow(
-                  color: Colors.black.withOpacity(0.05),
+                  color: Colors.black.withValues(alpha: 0.05),
                   blurRadius: ResponsiveHelper.spacing(context, 8),
                   offset: Offset(0, ResponsiveHelper.spacing(context, 2)),
                 ),
@@ -935,7 +934,7 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
                             Container(
                               padding: ResponsiveHelper.symmetricPadding(context, horizontal: 8, vertical: 3),
                               decoration: BoxDecoration(
-                                color: theme.primaryColor.withOpacity(0.1),
+                                color: theme.primaryColor.withValues(alpha: 0.1),
                                 borderRadius: BorderRadius.circular(ResponsiveHelper.spacing(context, 6)),
                               ),
                               child: Text(
@@ -1030,7 +1029,7 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
                   ),
                   boxShadow: [
                     BoxShadow(
-                      color: Colors.black.withOpacity(0.1),
+                      color: Colors.black.withValues(alpha: 0.1),
                       blurRadius: ResponsiveHelper.spacing(context, 4),
                       offset: Offset(0, ResponsiveHelper.spacing(context, 1)),
                     ),
@@ -1076,7 +1075,7 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
               padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 12)),
               margin: EdgeInsets.only(bottom: ResponsiveHelper.spacing(context, 12)),
               decoration: BoxDecoration(
-                color: buttonColor.withOpacity(0.1),
+                color: buttonColor.withValues(alpha: 0.1),
                 borderRadius: BorderRadius.circular(ResponsiveHelper.spacing(context, 12)),
               ),
               child: Row(

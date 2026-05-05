@@ -355,7 +355,7 @@ class _UserTOCardState extends State<UserTOCard> {
     }
     // fallback: workDetails에서
     if (_workDetails.isNotEmpty) {
-      return FormatHelper.getWageTypeLabel(_workDetails.first.wageType ?? 'hourly');
+      return FormatHelper.getWageTypeLabel(_workDetails.first.wageType);
     }
     return '급여';
   }
@@ -458,7 +458,7 @@ class _UserTOCardState extends State<UserTOCard> {
               child: Container(
                 decoration: BoxDecoration(
                   color: widget.isSelected
-                      ? theme.primaryColor.withOpacity(0.03)
+                      ? theme.primaryColor.withValues(alpha: 0.03)
                       : Colors.white,
                 ),
                   child: Column(
@@ -752,13 +752,6 @@ class _UserTOCardState extends State<UserTOCard> {
 
   /// 4️⃣ 급여 + 업무 개수 + 버튼
   Widget _buildWageAndWorkCount(BuildContext context) {
-    final theme = Theme.of(context);
-    final workCount = widget.to.workDetailCount > 0
-        ? widget.to.workDetailCount
-        : _workDetails.isNotEmpty 
-            ? _workDetails.length 
-            : 1;
-    
     return Row(
       children: [
         // 급여타입 배지
@@ -979,8 +972,6 @@ class _UserTOCardState extends State<UserTOCard> {
 
   /// 날짜 선택 UI
   Widget _buildDateSelector(BuildContext context) {
-    final theme = Theme.of(context);
-    
     // 로딩 중
     if (_isLoadingGroupTOs) {
       return Center(
@@ -1059,7 +1050,7 @@ class _UserTOCardState extends State<UserTOCard> {
             boxShadow: isSelected 
                 ? [
                     BoxShadow(
-                      color: theme.primaryColor.withOpacity(0.3),
+                      color: theme.primaryColor.withValues(alpha: 0.3),
                       blurRadius: 8,
                       offset: const Offset(0, 2),
                     ),
@@ -1178,7 +1169,7 @@ class _UserTOCardState extends State<UserTOCard> {
         children: [
           // 업무 아이콘
           WorkTypeIcon.buildWithBackground(
-            iconString: work.workTypeIcon ?? 'work',
+            iconString: work.workTypeIcon,
             iconColor: work.workTypeColor,
             backgroundColor: work.workTypeBackgroundColor,
             containerSize: ResponsiveHelper.spacing(context, 36),
@@ -1225,7 +1216,7 @@ class _UserTOCardState extends State<UserTOCard> {
                         borderRadius: BorderRadius.circular(4),
                       ),
                       child: Text(
-                        FormatHelper.getWageTypeLabel(work.wageType ?? 'hourly'),
+                        FormatHelper.getWageTypeLabel(work.wageType),
                         style: ResponsiveHelper.tinyStyle(
                           context,
                           color: AppColors.successDark,
@@ -1261,8 +1252,6 @@ class _UserTOCardState extends State<UserTOCard> {
     WorkDetailModel work, 
     ApplicationModel? application,
   ) {
-    final hasApplied = application != null && application.id.isNotEmpty;
-    
     // ✅ 확정/대기 구분
     if (application != null) {
       if (application.status == 'CONFIRMED') {

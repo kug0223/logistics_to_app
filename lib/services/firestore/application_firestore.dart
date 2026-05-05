@@ -80,7 +80,7 @@ extension ApplicationFirestore on FirestoreService {
       final results = await Future.wait(futures);
       final result = Map.fromEntries(results);
       
-      debugPrint('✅ 배치 지원자 조회 완료 (병렬): ${toIds.length}개 TO, ${result.values.fold(0, (sum, list) => sum + list.length)}명');
+      debugPrint('✅ 배치 지원자 조회 완료 (병렬): ${toIds.length}개 TO, ${result.values.fold(0, (acc, apps) => acc + apps.length)}명');
       return result;
     } catch (e) {
       debugPrint('❌ 배치 지원자 조회 실패: $e');
@@ -134,7 +134,7 @@ extension ApplicationFirestore on FirestoreService {
       final results = await Future.wait(futures);
       final result = Map.fromEntries(results);
       
-      debugPrint('✅ 배치 지원자 조회 완료: ${tos.length}개 TO, ${result.values.fold(0, (sum, list) => sum + list.length)}명');
+      debugPrint('✅ 배치 지원자 조회 완료: ${tos.length}개 TO, ${result.values.fold(0, (acc, apps) => acc + apps.length)}명');
       return result;
     } catch (e) {
       debugPrint('❌ 배치 지원자 조회 실패: $e');
@@ -2604,7 +2604,7 @@ extension ApplicationFirestore on FirestoreService {
       }
       
       // PENDING 거절 수만큼 통계 감소
-      final pendingRejectCount = workDetailCounts.values.fold(0, (sum, v) => sum + v);
+      final pendingRejectCount = workDetailCounts.values.fold(0, (acc, v) => acc + v);
       
       if (toRef != null && pendingRejectCount > 0) {
         batch.update(toRef, {

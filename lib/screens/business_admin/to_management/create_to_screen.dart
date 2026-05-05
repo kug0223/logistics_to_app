@@ -396,7 +396,7 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
                   vertical: ResponsiveHelper.spacing(context, 6),
                 ),
                 decoration: BoxDecoration(
-                  color: to.isLongTerm ? AppColors.longTermBg : theme.primaryColor.withOpacity(0.1),
+                  color: to.isLongTerm ? AppColors.longTermBg : theme.primaryColor.withValues(alpha: 0.1),
                   borderRadius: BorderRadius.circular(8),
                 ),
                 child: Text(
@@ -867,7 +867,7 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
       final wages = _workDetails.map((d) => d.wage ?? 0).toList();
       final minWage = wages.isNotEmpty ? wages.reduce((a, b) => a < b ? a : b) : 0;
       final maxWage = wages.isNotEmpty ? wages.reduce((a, b) => a > b ? a : b) : 0;
-      final wageType = _workDetails.isNotEmpty ? (_workDetails.first.wageType ?? 'hourly') : 'hourly';
+      final wageType = _workDetails.isNotEmpty ? _workDetails.first.wageType : 'hourly';
       
       // 예약 공개 시간 계산
       DateTime? publishAt;
@@ -1108,13 +1108,13 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
             Container(
               padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 24)),
               decoration: BoxDecoration(
-                color: theme.primaryColor.withOpacity(0.1),
+                color: theme.primaryColor.withValues(alpha: 0.1),
                 shape: BoxShape.circle,
               ),
               child: Icon(
                 Icons.business_outlined,
                 size: ResponsiveHelper.iconSize(context, 64),
-                color: theme.primaryColor.withOpacity(0.5),
+                color: theme.primaryColor.withValues(alpha: 0.5),
               ),
             ),
             SizedBox(height: ResponsiveHelper.spacing(context, 24)),
@@ -1154,11 +1154,11 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
           ),
           border: OutlineInputBorder(
             borderRadius: BorderRadius.circular(12),
-            borderSide: BorderSide(color: AppColors.grey300!),
+            borderSide: BorderSide(color: AppColors.grey300),
           ),
           enabledBorder: OutlineInputBorder(
             borderRadius: BorderRadius.circular(12),
-            borderSide: BorderSide(color: AppColors.grey300!),
+            borderSide: BorderSide(color: AppColors.grey300),
           ),
           focusedBorder: OutlineInputBorder(
             borderRadius: BorderRadius.circular(12),
@@ -1243,7 +1243,7 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
                   end: Alignment.bottomRight,
                   colors: [
                     theme.primaryColor,
-                    theme.primaryColor.withOpacity(0.8),
+                    theme.primaryColor.withValues(alpha: 0.8),
                   ],
                 )
               : null,
@@ -1252,7 +1252,7 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
           boxShadow: isSelected
               ? [
                   BoxShadow(
-                    color: theme.primaryColor.withOpacity(0.3),
+                    color: theme.primaryColor.withValues(alpha: 0.3),
                     blurRadius: 8,
                     offset: const Offset(0, 4),
                   ),

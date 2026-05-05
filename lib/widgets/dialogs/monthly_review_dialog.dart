@@ -287,7 +287,7 @@ class _MonthlyReviewDialogState extends State<MonthlyReviewDialog> {
         gradient: LinearGradient(
           colors: [
             theme.primaryColor,
-            theme.primaryColor.withOpacity(0.8),
+            theme.primaryColor.withValues(alpha: 0.8),
           ],
         ),
         borderRadius: BorderRadius.only(
@@ -300,7 +300,7 @@ class _MonthlyReviewDialogState extends State<MonthlyReviewDialog> {
           Container(
             padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 12)),
             decoration: BoxDecoration(
-              color: Colors.white.withOpacity(0.2),
+              color: Colors.white.withValues(alpha: 0.2),
               borderRadius: BorderRadius.circular(16),
             ),
             child: Icon(
@@ -380,7 +380,7 @@ class _MonthlyReviewDialogState extends State<MonthlyReviewDialog> {
               _buildStatItem(context, '지각', '${widget.lateDays}회', 
                   widget.lateDays > 0 ? AppColors.warning : AppColors.grey400),
               if (absenceDays > 0)
-                _buildStatItem(context, '결근', '${absenceDays}일', AppColors.error),
+                _buildStatItem(context, '결근', '$absenceDays일', AppColors.error),
             ],
           ),
         ],
@@ -543,7 +543,7 @@ class _MonthlyReviewDialogState extends State<MonthlyReviewDialog> {
       child: Container(
         padding: ResponsiveHelper.cardPadding(context),
         decoration: BoxDecoration(
-          color: isSelected ? color.withOpacity(0.1) : Colors.white,
+          color: isSelected ? color.withValues(alpha: 0.1) : Colors.white,
           borderRadius: BorderRadius.circular(12),
           border: Border.all(
             color: isSelected ? color : AppColors.grey300,
@@ -628,7 +628,7 @@ class _MonthlyReviewDialogState extends State<MonthlyReviewDialog> {
                   vertical: ResponsiveHelper.spacing(context, 8),
                 ),
                 decoration: BoxDecoration(
-                  color: isSelected ? iconColor.withOpacity(0.1) : Colors.white,
+                  color: isSelected ? iconColor.withValues(alpha: 0.1) : Colors.white,
                   borderRadius: BorderRadius.circular(20),
                   border: Border.all(
                     color: isSelected ? iconColor : AppColors.grey300,
@@ -729,7 +729,7 @@ class _MonthlyReviewDialogState extends State<MonthlyReviewDialog> {
       decoration: BoxDecoration(
         color: AppColors.infoBg,
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: AppColors.info.withOpacity(0.3)),
+        border: Border.all(color: AppColors.info.withValues(alpha: 0.3)),
       ),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,

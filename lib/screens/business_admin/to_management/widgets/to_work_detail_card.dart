@@ -126,13 +126,13 @@ class TOWorkDetailCard extends StatelessWidget {
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
           colors: [
-            AppColors.grey50!,
-            AppColors.grey100!,
+            AppColors.grey50,
+            AppColors.grey100,
           ],
         ),
         borderRadius: BorderRadius.circular(12),
         border: Border.all(
-          color: AppColors.grey300!,
+          color: AppColors.grey300,
           width: 1,
         ),
       ),
@@ -150,7 +150,7 @@ class TOWorkDetailCard extends StatelessWidget {
                   borderRadius: BorderRadius.circular(12),
                   boxShadow: [
                     BoxShadow(
-                      color: iconColor.withOpacity(0.3),
+                      color: iconColor.withValues(alpha: 0.3),
                       blurRadius: 8,
                       offset: const Offset(0, 2),
                     ),

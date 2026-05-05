@@ -363,34 +363,34 @@ class AppColors {
   static LinearGradient getGradient(Color color, {double opacity = 0.1}) {
     return LinearGradient(
       colors: [
-        color.withOpacity(opacity),
-        color.withOpacity(opacity * 0.5),
+        color.withValues(alpha: opacity),
+        color.withValues(alpha: opacity * 0.5),
       ],
     );
   }
   
   /// 성공 그라데이션
   static LinearGradient get successGradient => LinearGradient(
-    colors: [successBg, successLight.withOpacity(0.3)],
+    colors: [successBg, successLight.withValues(alpha: 0.3)],
   );
   
   /// 경고 그라데이션
   static LinearGradient get warningGradient => LinearGradient(
-    colors: [warningBg, warningLight.withOpacity(0.3)],
+    colors: [warningBg, warningLight.withValues(alpha: 0.3)],
   );
   
   /// 에러 그라데이션
   static LinearGradient get errorGradient => LinearGradient(
-    colors: [errorBg, errorLight.withOpacity(0.3)],
+    colors: [errorBg, errorLight.withValues(alpha: 0.3)],
   );
   
   /// 정보 그라데이션
   static LinearGradient get infoGradient => LinearGradient(
-    colors: [infoBg, infoLight.withOpacity(0.3)],
+    colors: [infoBg, infoLight.withValues(alpha: 0.3)],
   );
   
   /// 보라 그라데이션
   static LinearGradient get purpleGradient => LinearGradient(
-    colors: [purpleBg, purpleLight.withOpacity(0.3)],
+    colors: [purpleBg, purpleLight.withValues(alpha: 0.3)],
   );
 }

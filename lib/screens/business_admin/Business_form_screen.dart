@@ -279,7 +279,6 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
 
   /// Stepper 컨트롤 버튼
   Widget _buildStepperControls(BuildContext context, ControlsDetails details) {
-    final theme = Theme.of(context);
     final isLastStep = _currentStep == 2;
 
     return Padding(
@@ -339,7 +338,7 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
               border: Border.all(
                 color: _selectedCategory == entry.key
                     ? theme.primaryColor
-                    : AppColors.grey300!,
+                    : AppColors.grey300,
                 width: _selectedCategory == entry.key ? 2 : 1,
               ),
             ),
@@ -374,7 +373,7 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
                   ),
                   decoration: BoxDecoration(
                     color: isSelected
-                        ? theme.primaryColor.withOpacity(0.1)
+                        ? theme.primaryColor.withValues(alpha: 0.1)
                         : Colors.transparent,
                     borderRadius: BorderRadius.circular(8),
                   ),
@@ -482,7 +481,7 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
               border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
               enabledBorder: OutlineInputBorder(
                 borderRadius: BorderRadius.circular(12),
-                borderSide: BorderSide(color: AppColors.grey300!),
+                borderSide: BorderSide(color: AppColors.grey300),
               ),
             ),
             onChanged: (value) {
@@ -577,7 +576,7 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
             decoration: BoxDecoration(
               color: AppColors.grey200,
               borderRadius: BorderRadius.circular(16),
-              border: Border.all(color: AppColors.grey300!),
+              border: Border.all(color: AppColors.grey300),
               image: _mainImage != null
                   ? DecorationImage(
                       image: FileImage(_mainImage!),
@@ -630,7 +629,7 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
               child: Container(
                 padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 6)),
                 decoration: BoxDecoration(
-                  color: Colors.black.withOpacity(0.6),
+                  color: Colors.black.withValues(alpha: 0.6),
                   shape: BoxShape.circle,
                 ),
                 child: Icon(
@@ -827,7 +826,7 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
                     width: isSelected ? 2 : 1,
                   ),
                   elevation: isSelected ? 2 : 0,
-                  shadowColor: theme.primaryColor.withOpacity(0.3),
+                  shadowColor: theme.primaryColor.withValues(alpha: 0.3),
                 );
               }).toList(),
               ),
@@ -901,7 +900,7 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
                       width: isSelected ? 2 : 1,
                     ),
                     elevation: isSelected ? 2 : 0,
-                    shadowColor: theme.primaryColor.withOpacity(0.3),
+                    shadowColor: theme.primaryColor.withValues(alpha: 0.3),
                   );
                 }).toList(),
               ),
@@ -1034,7 +1033,7 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
         decoration: BoxDecoration(
           color: AppColors.grey200,
           borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: AppColors.grey400!),
+          border: Border.all(color: AppColors.grey400),
         ),
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,

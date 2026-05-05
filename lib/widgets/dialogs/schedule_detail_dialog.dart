@@ -115,7 +115,7 @@ class _ScheduleDetailDialogState extends State<ScheduleDetailDialog> {
                   widget.application.businessName,
                   style: ResponsiveHelper.bodyStyle(  // ⭐ 변경
                     context,
-                    color: Colors.white.withOpacity(0.9),
+                    color: Colors.white.withValues(alpha: 0.9),
                   ),
                 ),
               ],
@@ -165,10 +165,10 @@ class _ScheduleDetailDialogState extends State<ScheduleDetailDialog> {
             Container(
               padding: ResponsiveHelper.cardPadding(context),  // ⭐ 변경
               decoration: BoxDecoration(
-                color: Theme.of(context).primaryColor.withOpacity(0.1),
+                color: Theme.of(context).primaryColor.withValues(alpha: 0.1),
                 borderRadius: BorderRadius.circular(8),
                 border: Border.all(
-                  color: Theme.of(context).primaryColor.withOpacity(0.3),
+                  color: Theme.of(context).primaryColor.withValues(alpha: 0.3),
                 ),
               ),
               child: Column(
@@ -249,9 +249,9 @@ class _ScheduleDetailDialogState extends State<ScheduleDetailDialog> {
           Container(
             padding: ResponsiveHelper.cardPadding(context),  // ⭐ 변경
             decoration: BoxDecoration(
-              color: Colors.orange.withOpacity(0.1),
+              color: Colors.orange.withValues(alpha: 0.1),
               borderRadius: BorderRadius.circular(8),
-              border: Border.all(color: Colors.orange.withOpacity(0.3)),
+              border: Border.all(color: Colors.orange.withValues(alpha: 0.3)),
             ),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,

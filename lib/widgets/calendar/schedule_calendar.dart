@@ -98,12 +98,12 @@ class ScheduleCalendar extends StatelessWidget {
             if (hasLongConfirmed) {
               if (hasLeaveDay) {
                 markers.add(_buildMarker(
-                  AppColors.grey400!,
+                  AppColors.grey400,
                   isLongTerm: true,
                 ));
               } else {
                 markers.add(_buildMarker(
-                  AppColors.amberDark!,  // ← workforce_calendar_view와 동일
+                  AppColors.amberDark,  // ← workforce_calendar_view와 동일
                   isLongTerm: true,
                 ));
               }
@@ -116,16 +116,16 @@ class ScheduleCalendar extends StatelessWidget {
             final hasLongPending = longTermApps.any((app) => app.status == 'PENDING');
             
             if (hasShortPending) {
-              markers.add(_buildMarker(AppColors.warningMedium!, isLongTerm: false));
+              markers.add(_buildMarker(AppColors.warningMedium, isLongTerm: false));
             }
             if (hasLongPending) {
-              markers.add(_buildMarker(AppColors.warningFaded!, isLongTerm: true));
+              markers.add(_buildMarker(AppColors.warningFaded, isLongTerm: true));
             }
           }
           
           // ✨ 거절 마커 (최대 3개까지만)
           if (hasRejected && markers.length < 3) {
-            markers.add(_buildMarker(AppColors.errorMedium!, isLongTerm: false));
+            markers.add(_buildMarker(AppColors.errorMedium, isLongTerm: false));
           }
           
           // 최대 3개까지만 표시
@@ -147,7 +147,7 @@ class ScheduleCalendar extends StatelessWidget {
       calendarStyle: CalendarStyle(
         markersMaxCount: 2,
         todayDecoration: BoxDecoration(
-          color: Theme.of(context).primaryColor.withOpacity(0.5),
+          color: Theme.of(context).primaryColor.withValues(alpha: 0.5),
           shape: BoxShape.circle,
         ),
         selectedDecoration: BoxDecoration(

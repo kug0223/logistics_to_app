@@ -183,8 +183,6 @@ class _ProfileEditScreenState extends State<ProfileEditScreen> {
       context: context,
       builder: (context) => StatefulBuilder(
         builder: (context, setDialogState) {
-          final theme = Theme.of(context);
-
           return StyledDialog(
             title: '비밀번호 변경',
             subtitle: '보안을 위해 안전한 비밀번호를 사용하세요',
@@ -415,7 +413,6 @@ class _ProfileEditScreenState extends State<ProfileEditScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
     final user = context.watch<UserProvider>().currentUser;
 
     if (user == null) {
@@ -509,7 +506,7 @@ class _ProfileEditScreenState extends State<ProfileEditScreen> {
           Container(
             padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 16)),
             decoration: BoxDecoration(
-              color: Colors.white.withOpacity(0.2),
+              color: Colors.white.withValues(alpha: 0.2),
               shape: BoxShape.circle,
             ),
             child: Icon(
@@ -537,7 +534,7 @@ class _ProfileEditScreenState extends State<ProfileEditScreen> {
                 Text(
                   '@${user.username}',
                   style: ResponsiveHelper.bodyStyle(context).copyWith(
-                    color: Colors.white.withOpacity(0.9),
+                    color: Colors.white.withValues(alpha: 0.9),
                   ),
                 ),
                 SizedBox(height: ResponsiveHelper.spacing(context, 8)),
@@ -575,7 +572,7 @@ class _ProfileEditScreenState extends State<ProfileEditScreen> {
         Container(
           padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 8)),
           decoration: BoxDecoration(
-            color: theme.primaryColor.withOpacity(0.1),
+            color: theme.primaryColor.withValues(alpha: 0.1),
             borderRadius: BorderRadius.circular(8),
           ),
           child: Icon(
@@ -790,8 +787,6 @@ class _ProfileEditScreenState extends State<ProfileEditScreen> {
 
   /// 보안 섹션
   Widget _buildSecuritySection() {
-    final theme = Theme.of(context);
-
     return Container(
       decoration: CommonWidgets.cardDecoration(),
       child: Material(
@@ -806,7 +801,7 @@ class _ProfileEditScreenState extends State<ProfileEditScreen> {
                 Container(
                   padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 12)),
                   decoration: BoxDecoration(
-                    color: Colors.orange.withOpacity(0.1),
+                    color: Colors.orange.withValues(alpha: 0.1),
                     borderRadius: BorderRadius.circular(12),
                   ),
                   child: Icon(
@@ -866,7 +861,7 @@ class _ProfileEditScreenState extends State<ProfileEditScreen> {
           Icon(
             icon,
             size: ResponsiveHelper.iconSize(context, 20),
-            color: theme.primaryColor.withOpacity(0.7),
+            color: theme.primaryColor.withValues(alpha: 0.7),
           ),
           SizedBox(width: ResponsiveHelper.spacing(context, 12)),
           Text(

@@ -230,13 +230,13 @@ class _WorkforceListViewState extends State<WorkforceListView> {
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
           colors: [
-            theme.primaryColor.withOpacity(0.1),
-            theme.primaryColor.withOpacity(0.05),
+            theme.primaryColor.withValues(alpha: 0.1),
+            theme.primaryColor.withValues(alpha: 0.05),
           ],
         ),
         borderRadius: BorderRadius.circular(12),
         border: Border.all(
-          color: theme.primaryColor.withOpacity(0.3),
+          color: theme.primaryColor.withValues(alpha: 0.3),
           width: 1.5,
         ),
       ),
@@ -245,7 +245,7 @@ class _WorkforceListViewState extends State<WorkforceListView> {
           Container(
             padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 8)),
             decoration: BoxDecoration(
-              color: theme.primaryColor.withOpacity(0.15),
+              color: theme.primaryColor.withValues(alpha: 0.15),
               borderRadius: BorderRadius.circular(8),
             ),
             child: Icon(
@@ -260,7 +260,7 @@ class _WorkforceListViewState extends State<WorkforceListView> {
               '최근 마감된 5개만 표시됩니다. 이전 마감은 캘린더를 이용하세요.',
               style: ResponsiveHelper.smallStyle(
                 context,
-                color: theme.primaryColor.withOpacity(0.9),
+                color: theme.primaryColor.withValues(alpha: 0.9),
               ),
             ),
           ),
@@ -285,13 +285,13 @@ class _WorkforceListViewState extends State<WorkforceListView> {
                   begin: Alignment.topLeft,
                   end: Alignment.bottomRight,
                   colors: [
-                    theme.primaryColor.withOpacity(0.08),
-                    theme.primaryColor.withOpacity(0.05),
+                    theme.primaryColor.withValues(alpha: 0.08),
+                    theme.primaryColor.withValues(alpha: 0.05),
                   ],
                 ),
                 borderRadius: BorderRadius.circular(16),
                 border: Border.all(
-                  color: theme.primaryColor.withOpacity(0.2),
+                  color: theme.primaryColor.withValues(alpha: 0.2),
                   width: 1.5,
                 ),
               ),
@@ -338,7 +338,7 @@ class _WorkforceListViewState extends State<WorkforceListView> {
                   end: Alignment.bottomRight,
                   colors: [
                     theme.primaryColor,
-                    theme.primaryColor.withOpacity(0.85),
+                    theme.primaryColor.withValues(alpha: 0.85),
                   ],
                 )
               : null,
@@ -347,7 +347,7 @@ class _WorkforceListViewState extends State<WorkforceListView> {
           boxShadow: isSelected
               ? [
                   BoxShadow(
-                    color: theme.primaryColor.withOpacity(0.4),
+                    color: theme.primaryColor.withValues(alpha: 0.4),
                     blurRadius: 8,
                     offset: const Offset(0, 3),
                   ),
@@ -360,14 +360,14 @@ class _WorkforceListViewState extends State<WorkforceListView> {
             Icon(
               icon,
               size: ResponsiveHelper.iconSize(context, 18),
-              color: isSelected ? Colors.white : theme.primaryColor.withOpacity(0.7),
+              color: isSelected ? Colors.white : theme.primaryColor.withValues(alpha: 0.7),
             ),
             SizedBox(width: ResponsiveHelper.spacing(context, 6)),
             Text(
               label,
               style: ResponsiveHelper.subtitleStyle(context).copyWith(
                 fontWeight: FontWeight.bold,
-                color: isSelected ? Colors.white : theme.primaryColor.withOpacity(0.7),
+                color: isSelected ? Colors.white : theme.primaryColor.withValues(alpha: 0.7),
               ),
             ),
           ],
@@ -383,7 +383,7 @@ class _WorkforceListViewState extends State<WorkforceListView> {
     
     return Material(
       color: hasFilters
-          ? theme.primaryColor.withOpacity(0.1)
+          ? theme.primaryColor.withValues(alpha: 0.1)
           : Colors.transparent,
       borderRadius: BorderRadius.circular(12),
       child: InkWell(
@@ -409,7 +409,7 @@ class _WorkforceListViewState extends State<WorkforceListView> {
                       gradient: LinearGradient(
                         colors: [
                           theme.primaryColor,
-                          theme.primaryColor.withOpacity(0.8),
+                          theme.primaryColor.withValues(alpha: 0.8),
                         ],
                       ),
                       shape: BoxShape.circle,
@@ -419,7 +419,7 @@ class _WorkforceListViewState extends State<WorkforceListView> {
                       ),
                       boxShadow: [
                         BoxShadow(
-                          color: theme.primaryColor.withOpacity(0.4),
+                          color: theme.primaryColor.withValues(alpha: 0.4),
                           blurRadius: 4,
                           offset: const Offset(0, 2),
                         ),
@@ -542,13 +542,13 @@ class _WorkforceListViewState extends State<WorkforceListView> {
             begin: Alignment.topLeft,
             end: Alignment.bottomRight,
             colors: [
-              theme.primaryColor.withOpacity(0.08),
-              theme.primaryColor.withOpacity(0.04),
+              theme.primaryColor.withValues(alpha: 0.08),
+              theme.primaryColor.withValues(alpha: 0.04),
             ],
           ),
           borderRadius: BorderRadius.circular(24),
           border: Border.all(
-            color: theme.primaryColor.withOpacity(0.2),
+            color: theme.primaryColor.withValues(alpha: 0.2),
             width: 1.5,
           ),
         ),
@@ -558,13 +558,13 @@ class _WorkforceListViewState extends State<WorkforceListView> {
             Container(
               padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 20)),
               decoration: BoxDecoration(
-                color: theme.primaryColor.withOpacity(0.1),
+                color: theme.primaryColor.withValues(alpha: 0.1),
                 shape: BoxShape.circle,
               ),
               child: Icon(
                 Icons.inbox_outlined,
                 size: ResponsiveHelper.iconSize(context, 64),
-                color: theme.primaryColor.withOpacity(0.4),
+                color: theme.primaryColor.withValues(alpha: 0.4),
               ),
             ),
             SizedBox(height: ResponsiveHelper.spacing(context, 24)),
@@ -572,7 +572,7 @@ class _WorkforceListViewState extends State<WorkforceListView> {
               '조건에 맞는 TO가 없습니다',
               style: ResponsiveHelper.titleStyle(context).copyWith(
                 fontWeight: FontWeight.bold,
-                color: theme.primaryColor.withOpacity(0.8),
+                color: theme.primaryColor.withValues(alpha: 0.8),
               ),
             ),
             SizedBox(height: ResponsiveHelper.spacing(context, 12)),

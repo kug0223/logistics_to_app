@@ -380,8 +380,8 @@ class _LoadingButtonState extends State<LoadingButton> {
     return ElevatedButton.styleFrom(
       backgroundColor: bgColor,
       foregroundColor: fgColor,
-      disabledBackgroundColor: bgColor.withOpacity(0.5),
-      disabledForegroundColor: fgColor.withOpacity(0.7),
+      disabledBackgroundColor: bgColor.withValues(alpha: 0.5),
+      disabledForegroundColor: fgColor.withValues(alpha: 0.7),
       padding: EdgeInsets.symmetric(
         horizontal: ResponsiveHelper.spacing(context, widget.horizontalPadding ?? 16),
         vertical: ResponsiveHelper.spacing(context, widget.verticalPadding ?? 12),
@@ -396,9 +396,9 @@ class _LoadingButtonState extends State<LoadingButton> {
   ButtonStyle _outlinedStyle(BuildContext context, Color borderColor, Color fgColor) {
     return OutlinedButton.styleFrom(
       foregroundColor: fgColor,
-      disabledForegroundColor: fgColor.withOpacity(0.5),
+      disabledForegroundColor: fgColor.withValues(alpha: 0.5),
       side: BorderSide(
-        color: (_isLoading || _isDisabled) ? borderColor.withOpacity(0.5) : borderColor,
+        color: (_isLoading || _isDisabled) ? borderColor.withValues(alpha: 0.5) : borderColor,
       ),
       padding: EdgeInsets.symmetric(
         horizontal: ResponsiveHelper.spacing(context, widget.horizontalPadding ?? 16),
@@ -413,7 +413,7 @@ class _LoadingButtonState extends State<LoadingButton> {
   ButtonStyle _textStyle(BuildContext context, Color fgColor) {
     return TextButton.styleFrom(
       foregroundColor: fgColor,
-      disabledForegroundColor: fgColor.withOpacity(0.5),
+      disabledForegroundColor: fgColor.withValues(alpha: 0.5),
       padding: EdgeInsets.symmetric(
         horizontal: ResponsiveHelper.spacing(context, widget.horizontalPadding ?? 12),
         vertical: ResponsiveHelper.spacing(context, widget.verticalPadding ?? 8),
@@ -500,7 +500,7 @@ class _LoadingIconButtonState extends State<LoadingIconButton> {
       child = Icon(
         widget.icon,
         size: iconSize,
-        color: _isDisabled ? color.withOpacity(0.5) : color,
+        color: _isDisabled ? color.withValues(alpha: 0.5) : color,
       );
     }
 

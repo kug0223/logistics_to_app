@@ -166,7 +166,7 @@ class _TOItemCardState extends State<TOItemCard> {
                                   vertical: ResponsiveHelper.spacing(context, 4),
                                 ),
                                 decoration: BoxDecoration(
-                                  color: theme.primaryColor.withOpacity(0.1),
+                                  color: theme.primaryColor.withValues(alpha: 0.1),
                                   borderRadius: BorderRadius.circular(6),
                                 ),
                                 child: Text(

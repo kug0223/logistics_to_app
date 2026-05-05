@@ -241,7 +241,7 @@ class _TrustRulesSettingsScreenState extends State<TrustRulesSettingsScreen> {
             child: Text(
               '초기화',
               style: ResponsiveHelper.bodyStyle(context).copyWith(
-                color: Colors.white.withOpacity(0.8),
+                color: Colors.white.withValues(alpha: 0.8),
               ),
             ),
           ),
@@ -415,7 +415,7 @@ class _TrustRulesSettingsScreenState extends State<TrustRulesSettingsScreen> {
         borderRadius: BorderRadius.circular(16),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.05),
+            color: Colors.black.withValues(alpha: 0.05),
             blurRadius: 10,
             offset: const Offset(0, 2),
           ),
@@ -428,7 +428,7 @@ class _TrustRulesSettingsScreenState extends State<TrustRulesSettingsScreen> {
           Container(
             padding: ResponsiveHelper.cardPadding(context),
             decoration: BoxDecoration(
-              color: (iconColor ?? theme.primaryColor).withOpacity(0.1),
+              color: (iconColor ?? theme.primaryColor).withValues(alpha: 0.1),
               borderRadius: const BorderRadius.only(
                 topLeft: Radius.circular(16),
                 topRight: Radius.circular(16),

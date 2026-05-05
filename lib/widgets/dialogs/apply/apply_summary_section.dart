@@ -86,12 +86,12 @@ class ApplySummarySection extends StatelessWidget {
        
     return Container(
       decoration: BoxDecoration(
-        color: theme.primaryColor.withOpacity(0.05),
+        color: theme.primaryColor.withValues(alpha: 0.05),
         borderRadius: BorderRadius.circular(
           ResponsiveHelper.spacing(context, 12),
         ),
         border: Border.all(
-          color: theme.primaryColor.withOpacity(0.2),
+          color: theme.primaryColor.withValues(alpha: 0.2),
         ),
       ),
       child: Column(
@@ -103,7 +103,7 @@ class ApplySummarySection extends StatelessWidget {
           // 구분선
           Divider(
             height: 1,
-            color: theme.primaryColor.withOpacity(0.1),
+            color: theme.primaryColor.withValues(alpha: 0.1),
           ),
           
           // 내용
@@ -217,7 +217,7 @@ class ApplySummarySection extends StatelessWidget {
               if (index < infos.length - 1)
                 Divider(
                   height: ResponsiveHelper.spacing(context, 16),
-                  color: theme.primaryColor.withOpacity(0.1),
+                  color: theme.primaryColor.withValues(alpha: 0.1),
                 ),
             ],
           );
@@ -366,7 +366,7 @@ class ApplySummarySection extends StatelessWidget {
     return Container(
       padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 12)),
       decoration: BoxDecoration(
-        color: theme.primaryColor.withOpacity(0.1),
+        color: theme.primaryColor.withValues(alpha: 0.1),
         borderRadius: BorderRadius.only(
           bottomLeft: Radius.circular(ResponsiveHelper.spacing(context, 12)),
           bottomRight: Radius.circular(ResponsiveHelper.spacing(context, 12)),

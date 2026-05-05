@@ -105,15 +105,12 @@ class TOListDialogs {
     final isGroupTO = to.groupId != null;
     final isMasterTO = to.isGroupMaster;
     
-    String title = 'TO 삭제 확인';
     String content = '';
-    
+
     if (isGroupTO) {
       if (isMasterTO) {
-        title = '⚠️ 대표 TO 삭제';
         content = '그룹: "${to.groupName}"의\n대표 TO를 삭제하시겠습니까?\n\n📋 ${DateFormat('MM/dd (E)', 'ko_KR').format(to.date)} ${to.title}\n\n⚠️ 다음 TO가 새로운 대표가 됩니다.\n✅ 그룹은 유지됩니다';
       } else {
-        title = '⚠️ TO 삭제 확인';
         content = '그룹: "${to.groupName}"에서\n다음 TO를 삭제하시겠습니까?\n\n📋 ${DateFormat('MM/dd (E)', 'ko_KR').format(to.date)} ${to.title}\n\n✅ 그룹은 유지됩니다\n✅ 다른 TO는 영향 없음';
       }
     } else {
@@ -161,7 +158,7 @@ class TOListDialogs {
       title: '⚠️ 그룹 전체 삭제',
       message: '다음 그룹을 전체 삭제하시겠습니까?\n\n'
           '🔗 ${groupItem.groupName}\n\n'
-          '포함된 TO: ${toCount}개\n'
+          '포함된 TO: $toCount개\n'
           '⚠️ 총 $totalApplicants명의 지원자가 영향받습니다\n'
           '⚠️ 이 작업은 되돌릴 수 없습니다',
       confirmText: '전체 삭제',
@@ -220,7 +217,7 @@ class TOListDialogs {
           Container(
             padding: ResponsiveHelper.cardPadding(context),  // ⭐ 변경
             decoration: BoxDecoration(
-              color: Colors.orange.withOpacity(0.1),
+              color: Colors.orange.withValues(alpha: 0.1),
               borderRadius: BorderRadius.circular(8),
             ),
             child: Column(
@@ -304,9 +301,9 @@ class TOListDialogs {
               Container(
                 padding: ResponsiveHelper.cardPadding(context),  // ⭐ 변경
                 decoration: BoxDecoration(
-                  color: Colors.orange.withOpacity(0.1),
+                  color: Colors.orange.withValues(alpha: 0.1),
                   borderRadius: BorderRadius.circular(8),
-                  border: Border.all(color: Colors.orange.withOpacity(0.3)),
+                  border: Border.all(color: Colors.orange.withValues(alpha: 0.3)),
                 ),
                 child: Row(
                   children: [
@@ -334,7 +331,7 @@ class TOListDialogs {
             Container(
               padding: ResponsiveHelper.cardPadding(context),  // ⭐ 변경
               decoration: BoxDecoration(
-                color: Colors.green.withOpacity(0.1),
+                color: Colors.green.withValues(alpha: 0.1),
                 borderRadius: BorderRadius.circular(8),
               ),
               child: Column(
@@ -427,7 +424,7 @@ class TOListDialogs {
             Container(
               padding: ResponsiveHelper.cardPadding(context),  // ⭐ 변경
               decoration: BoxDecoration(
-                color: Colors.orange.withOpacity(0.1),
+                color: Colors.orange.withValues(alpha: 0.1),
                 borderRadius: BorderRadius.circular(8),
               ),
               child: Column(
@@ -543,7 +540,7 @@ class TOListDialogs {
             Container(
               padding: ResponsiveHelper.cardPadding(context),  // ⭐ 변경
               decoration: BoxDecoration(
-                color: Colors.green.withOpacity(0.1),
+                color: Colors.green.withValues(alpha: 0.1),
                 borderRadius: BorderRadius.circular(8),
               ),
               child: Column(
@@ -643,9 +640,9 @@ class TOListDialogs {
             Container(
               padding: ResponsiveHelper.cardPadding(context),  // ⭐ 변경
               decoration: BoxDecoration(
-                color: Colors.red.withOpacity(0.1),
+                color: Colors.red.withValues(alpha: 0.1),
                 borderRadius: BorderRadius.circular(8),
-                border: Border.all(color: Colors.red.withOpacity(0.3)),
+                border: Border.all(color: Colors.red.withValues(alpha: 0.3)),
               ),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -926,10 +923,10 @@ class TOListDialogs {
                   Container(
                     padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 12)),
                     decoration: BoxDecoration(
-                      color: theme.primaryColor.withOpacity(0.1),
+                      color: theme.primaryColor.withValues(alpha: 0.1),
                       borderRadius: BorderRadius.circular(8),
                       border: Border.all(
-                        color: theme.primaryColor.withOpacity(0.3),
+                        color: theme.primaryColor.withValues(alpha: 0.3),
                       ),
                     ),
                     child: Row(
@@ -1044,7 +1041,7 @@ class TOListDialogs {
         padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 12)),
         decoration: BoxDecoration(
           color: isSelected 
-              ? theme.primaryColor.withOpacity(0.1) 
+              ? theme.primaryColor.withValues(alpha: 0.1) 
               : (isEnabled ? Colors.transparent : AppColors.grey100),
           borderRadius: BorderRadius.circular(12),
           border: Border.all(

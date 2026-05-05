@@ -82,7 +82,7 @@ class TODetailDialogs {
                       ),
                       child: ListTile(
                         leading: CircleAvatar(
-                          backgroundColor: Colors.green.withOpacity(0.2),
+                          backgroundColor: Colors.green.withValues(alpha: 0.2),
                           child: Icon(Icons.person, color: Colors.green),
                         ),
                         title: Text(
@@ -157,7 +157,7 @@ class TODetailDialogs {
                 Container(
                   padding: ResponsiveHelper.cardPadding(context),  // ⭐ 변경
                   decoration: BoxDecoration(
-                    color: Theme.of(context).primaryColor.withOpacity(0.1),
+                    color: Theme.of(context).primaryColor.withValues(alpha: 0.1),
                     borderRadius: BorderRadius.circular(8),
                   ),
                   child: Row(
@@ -250,7 +250,7 @@ class TODetailDialogs {
             vertical: ResponsiveHelper.spacing(context, 6),  // ⭐ 변경
           ),
           decoration: BoxDecoration(
-            color: color.withOpacity(0.1),
+            color: color.withValues(alpha: 0.1),
             borderRadius: BorderRadius.circular(6),
           ),
           child: Row(
@@ -335,7 +335,7 @@ class TODetailDialogs {
                     vertical: ResponsiveHelper.spacing(context, 4),  // ⭐ 변경
                   ),
                   decoration: BoxDecoration(
-                    color: statusColor.withOpacity(0.1),
+                    color: statusColor.withValues(alpha: 0.1),
                     borderRadius: BorderRadius.circular(4),
                     border: Border.all(color: statusColor),
                   ),

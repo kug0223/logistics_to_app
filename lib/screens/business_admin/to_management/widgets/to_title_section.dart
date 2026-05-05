@@ -57,11 +57,11 @@ class TOTitleSection extends StatelessWidget {
               ),
               border: OutlineInputBorder(
                 borderRadius: BorderRadius.circular(12),
-                borderSide: BorderSide(color: AppColors.grey300!),
+                borderSide: BorderSide(color: AppColors.grey300),
               ),
               enabledBorder: OutlineInputBorder(
                 borderRadius: BorderRadius.circular(12),
-                borderSide: BorderSide(color: AppColors.grey300!),
+                borderSide: BorderSide(color: AppColors.grey300),
               ),
               focusedBorder: OutlineInputBorder(
                 borderRadius: BorderRadius.circular(12),
@@ -97,19 +97,19 @@ class TOTitleSection extends StatelessWidget {
             end: Alignment.bottomRight,
             colors: enabled
                 ? [
-                    theme.primaryColor.withOpacity(0.1),
-                    theme.primaryColor.withOpacity(0.05),
+                    theme.primaryColor.withValues(alpha: 0.1),
+                    theme.primaryColor.withValues(alpha: 0.05),
                   ]
                 : [
-                    Colors.grey.withOpacity(0.1),
-                    Colors.grey.withOpacity(0.05),
+                    Colors.grey.withValues(alpha: 0.1),
+                    Colors.grey.withValues(alpha: 0.05),
                   ],
           ),
         borderRadius: BorderRadius.circular(12),
         border: Border.all(
           color: enabled 
-              ? theme.primaryColor.withOpacity(0.3)
-              : Colors.grey.withOpacity(0.3),
+              ? theme.primaryColor.withValues(alpha: 0.3)
+              : Colors.grey.withValues(alpha: 0.3),
           width: 1.5,
         ),
       ),
@@ -121,7 +121,7 @@ class TOTitleSection extends StatelessWidget {
               Container(
                 padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 8)),
                 decoration: BoxDecoration(
-                  color: theme.primaryColor.withOpacity(0.1),
+                  color: theme.primaryColor.withValues(alpha: 0.1),
                   borderRadius: BorderRadius.circular(8),
                 ),
                 child: Icon(

@@ -310,7 +310,7 @@ class _WorkTypeManagementScreenState extends State<WorkTypeManagementScreen> {
                     gradient: LinearGradient(
                       colors: [
                         Colors.red,
-                        Colors.red.withOpacity(0.8),
+                        Colors.red.withValues(alpha: 0.8),
                       ],
                     ),
                     borderRadius: const BorderRadius.only(
@@ -324,7 +324,7 @@ class _WorkTypeManagementScreenState extends State<WorkTypeManagementScreen> {
                         width: ResponsiveHelper.spacing(context, 48),
                         height: ResponsiveHelper.spacing(context, 48),
                         decoration: BoxDecoration(
-                          color: Theme.of(context).primaryColor.withOpacity(0.1),
+                          color: Theme.of(context).primaryColor.withValues(alpha: 0.1),
                           borderRadius: BorderRadius.circular(12),
                           image: _selectedBusiness?.mainImageUrl != null
                               ? DecorationImage(
@@ -362,7 +362,7 @@ class _WorkTypeManagementScreenState extends State<WorkTypeManagementScreen> {
                       Icon(
                         Icons.delete_forever,
                         size: ResponsiveHelper.iconSize(context, 64),
-                        color: Colors.red.withOpacity(0.5),
+                        color: Colors.red.withValues(alpha: 0.5),
                       ),
                       SizedBox(height: ResponsiveHelper.spacing(context, 16)),
                       Text(
@@ -417,13 +417,13 @@ class _WorkTypeManagementScreenState extends State<WorkTypeManagementScreen> {
                             gradient: LinearGradient(
                               colors: [
                                 Colors.red,
-                                Colors.red.withOpacity(0.8),
+                                Colors.red.withValues(alpha: 0.8),
                               ],
                             ),
                             borderRadius: BorderRadius.circular(12),
                             boxShadow: [
                               BoxShadow(
-                                color: Colors.red.withOpacity(0.4),
+                                color: Colors.red.withValues(alpha: 0.4),
                                 blurRadius: 8,
                                 offset: const Offset(0, 4),
                               ),
@@ -537,8 +537,6 @@ class _WorkTypeManagementScreenState extends State<WorkTypeManagementScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    
     return Scaffold(
       // ✨ 깔끔한 단색 AppBar
       appBar: AppBar(
@@ -585,13 +583,13 @@ class _WorkTypeManagementScreenState extends State<WorkTypeManagementScreen> {
         decoration: BoxDecoration(
           gradient: LinearGradient(
             colors: [
-              theme.primaryColor.withOpacity(0.1),
-              theme.primaryColor.withOpacity(0.05),
+              theme.primaryColor.withValues(alpha: 0.1),
+              theme.primaryColor.withValues(alpha: 0.05),
             ],
           ),
           borderRadius: BorderRadius.circular(16),
           border: Border.all(
-            color: theme.primaryColor.withOpacity(0.3),
+            color: theme.primaryColor.withValues(alpha: 0.3),
           ),
         ),
         child: Row(
@@ -609,7 +607,7 @@ class _WorkTypeManagementScreenState extends State<WorkTypeManagementScreen> {
                           width: ResponsiveHelper.spacing(context, 48),
                           height: ResponsiveHelper.spacing(context, 48),
                           decoration: BoxDecoration(
-                            color: theme.primaryColor.withOpacity(0.1),
+                            color: theme.primaryColor.withValues(alpha: 0.1),
                             borderRadius: BorderRadius.circular(12),
                           ),
                           child: Icon(
@@ -624,7 +622,7 @@ class _WorkTypeManagementScreenState extends State<WorkTypeManagementScreen> {
                       width: ResponsiveHelper.spacing(context, 48),
                       height: ResponsiveHelper.spacing(context, 48),
                       decoration: BoxDecoration(
-                        color: theme.primaryColor.withOpacity(0.1),
+                        color: theme.primaryColor.withValues(alpha: 0.1),
                         borderRadius: BorderRadius.circular(12),
                       ),
                       child: Icon(
@@ -670,7 +668,7 @@ class _WorkTypeManagementScreenState extends State<WorkTypeManagementScreen> {
         borderRadius: BorderRadius.circular(16),
         boxShadow: [
           BoxShadow(
-            color: Colors.grey.withOpacity(0.1),
+            color: Colors.grey.withValues(alpha: 0.1),
             blurRadius: 8,
             offset: const Offset(0, 2),
           ),
@@ -716,13 +714,13 @@ class _WorkTypeManagementScreenState extends State<WorkTypeManagementScreen> {
           Container(
             padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 24)),
             decoration: BoxDecoration(
-              color: theme.primaryColor.withOpacity(0.1),
+              color: theme.primaryColor.withValues(alpha: 0.1),
               shape: BoxShape.circle,
             ),
             child: Icon(
               Icons.business_outlined,
               size: ResponsiveHelper.iconSize(context, 80),
-              color: theme.primaryColor.withOpacity(0.5),
+              color: theme.primaryColor.withValues(alpha: 0.5),
             ),
           ),
           SizedBox(height: ResponsiveHelper.spacing(context, 24)),
@@ -756,13 +754,13 @@ class _WorkTypeManagementScreenState extends State<WorkTypeManagementScreen> {
           Container(
             padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 24)),
             decoration: BoxDecoration(
-              color: theme.primaryColor.withOpacity(0.1),
+              color: theme.primaryColor.withValues(alpha: 0.1),
               shape: BoxShape.circle,
             ),
             child: Icon(
               Icons.work_outline,
               size: ResponsiveHelper.iconSize(context, 80),
-              color: theme.primaryColor.withOpacity(0.5),
+              color: theme.primaryColor.withValues(alpha: 0.5),
             ),
           ),
           SizedBox(height: ResponsiveHelper.spacing(context, 24)),
@@ -806,7 +804,7 @@ class _WorkTypeManagementScreenState extends State<WorkTypeManagementScreen> {
             borderRadius: BorderRadius.circular(20),
             boxShadow: [
               BoxShadow(
-                color: Colors.grey.withOpacity(0.15),
+                color: Colors.grey.withValues(alpha: 0.15),
                 blurRadius: 15,
                 offset: const Offset(0, 4),
               ),
@@ -826,13 +824,13 @@ class _WorkTypeManagementScreenState extends State<WorkTypeManagementScreen> {
                 gradient: LinearGradient(
                   colors: [
                     FormatHelper.parseColor(workType.backgroundColor ?? '#2196F3'),
-                    FormatHelper.parseColor(workType.backgroundColor ?? '#2196F3').withOpacity(0.8),
+                    FormatHelper.parseColor(workType.backgroundColor ?? '#2196F3').withValues(alpha: 0.8),
                   ],
                 ),
                 borderRadius: BorderRadius.circular(16),
                 boxShadow: [
                   BoxShadow(
-                    color: FormatHelper.parseColor(workType.backgroundColor ?? '#2196F3').withOpacity(0.3),
+                    color: FormatHelper.parseColor(workType.backgroundColor ?? '#2196F3').withValues(alpha: 0.3),
                     blurRadius: 8,
                     offset: const Offset(0, 4),
                   ),
@@ -862,7 +860,7 @@ class _WorkTypeManagementScreenState extends State<WorkTypeManagementScreen> {
                       vertical: ResponsiveHelper.spacing(context, 4),
                     ),
                     decoration: BoxDecoration(
-                      color: theme.primaryColor.withOpacity(0.1),
+                      color: theme.primaryColor.withValues(alpha: 0.1),
                       borderRadius: BorderRadius.circular(8),
                     ),
                     child: Text(

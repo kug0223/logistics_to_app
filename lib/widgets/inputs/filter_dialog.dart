@@ -53,7 +53,7 @@ class _FilterDialogState extends State<FilterDialog> {
               decoration: BoxDecoration(
                 color: AppColors.infoBg,
                 border: Border(
-                  bottom: BorderSide(color: AppColors.infoLight!),
+                  bottom: BorderSide(color: AppColors.infoLight),
                 ),
               ),
               child: Row(
@@ -131,7 +131,7 @@ class _FilterDialogState extends State<FilterDialog> {
                               vertical: 12,
                             ),
                             decoration: BoxDecoration(
-                              border: Border.all(color: AppColors.grey400!),
+                              border: Border.all(color: AppColors.grey400),
                               borderRadius: BorderRadius.circular(8),
                             ),
                             child: Row(
@@ -199,7 +199,7 @@ class _FilterDialogState extends State<FilterDialog> {
               padding: const EdgeInsets.all(16),
               decoration: BoxDecoration(
                 border: Border(
-                  top: BorderSide(color: AppColors.grey300!),
+                  top: BorderSide(color: AppColors.grey300),
                 ),
               ),
               child: Row(
@@ -297,7 +297,7 @@ class _FilterDialogState extends State<FilterDialog> {
       style: OutlinedButton.styleFrom(
         backgroundColor: isSelected ? AppColors.infoBg : null,
         side: BorderSide(
-          color: isSelected ? AppColors.infoDark! : AppColors.grey400!,
+          color: isSelected ? AppColors.infoDark : AppColors.grey400,
           width: isSelected ? 2 : 1,
         ),
         padding: const EdgeInsets.symmetric(vertical: 8),

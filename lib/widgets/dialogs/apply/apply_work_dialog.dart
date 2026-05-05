@@ -748,9 +748,9 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
                     vertical: ResponsiveHelper.spacing(context, 6),
                   ),
                   decoration: BoxDecoration(
-                    color: theme.primaryColor.withOpacity(0.1),
+                    color: theme.primaryColor.withValues(alpha: 0.1),
                     borderRadius: BorderRadius.circular(8),
-                    border: Border.all(color: theme.primaryColor.withOpacity(0.3)),
+                    border: Border.all(color: theme.primaryColor.withValues(alpha: 0.3)),
                   ),
                   child: Row(
                     mainAxisSize: MainAxisSize.min,
@@ -877,11 +877,7 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
       return const SizedBox.shrink();
     }
     
-    // 첫 충돌 정보
     final sortedDates = _conflictInfoByDate.keys.toList()..sort();
-    final firstConflictDate = sortedDates.first;
-    final firstConflict = _conflictInfoByDate[firstConflictDate]!;
-    
     // 선택 가능 날짜 텍스트
     String selectableText = '';
     if (_firstSelectableDate != null) {
@@ -1023,7 +1019,7 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
         border: Border.all(color: AppColors.longTermLight),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.03),
+            color: Colors.black.withValues(alpha: 0.03),
             blurRadius: 8,
             offset: const Offset(0, 2),
           ),
@@ -1313,11 +1309,11 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
     // 🔥 지원 완료 상태일 때 스타일
     if (isApplied && isInAppliedRange && isWorkDay) {
       // 지원된 근무 기간 (희망시작일 ~ 종료일)
-      bgColor = AppColors.longTerm.withOpacity(0.5);
+      bgColor = AppColors.longTerm.withValues(alpha: 0.5);
       textColor = AppColors.longTermDark;
     } else if (isApplied && isInAppliedRange) {
       // 지원된 기간 내 휴무일
-      bgColor = AppColors.longTerm.withOpacity(0.15);
+      bgColor = AppColors.longTerm.withValues(alpha: 0.15);
       textColor = AppColors.grey500;
     } else if (isSelected) {
       // 선택된 날짜 (희망 시작일)
@@ -1328,7 +1324,7 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
       textColor = AppColors.grey300;
     } else if (isSelectable) {
       // 선택 가능한 날짜
-      bgColor = AppColors.longTerm.withOpacity(0.3);
+      bgColor = AppColors.longTerm.withValues(alpha: 0.3);
       textColor = AppColors.longTermDark;
     } else if (isInRange && isWorkDay) {
       // 근무일이지만 과거 (선택 불가)
@@ -1456,7 +1452,7 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
         border: Border.all(color: AppColors.grey200),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.03),
+            color: Colors.black.withValues(alpha: 0.03),
             blurRadius: 8,
             offset: const Offset(0, 2),
           ),
@@ -1751,11 +1747,11 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
       backgroundColor = theme.primaryColor;
       textColor = Colors.white;
     } else if (isToday && isAvailable) {
-      backgroundColor = theme.primaryColor.withOpacity(0.1);
+      backgroundColor = theme.primaryColor.withValues(alpha: 0.1);
       textColor = theme.primaryColor;
       border = Border.all(color: theme.primaryColor, width: 1.5);
     } else if (isAvailable) {
-      backgroundColor = theme.primaryColor.withOpacity(0.05);
+      backgroundColor = theme.primaryColor.withValues(alpha: 0.05);
       textColor = AppColors.grey800;
     } else {
       backgroundColor = Colors.transparent;
@@ -1911,7 +1907,7 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
             vertical: ResponsiveHelper.spacing(context, 10),
           ),
           decoration: BoxDecoration(
-            color: theme.primaryColor.withOpacity(0.1),
+            color: theme.primaryColor.withValues(alpha: 0.1),
             borderRadius: BorderRadius.circular(
               ResponsiveHelper.spacing(context, 8),
             ),
@@ -1946,9 +1942,9 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
                     vertical: ResponsiveHelper.spacing(context, 4),
                   ),
                   decoration: BoxDecoration(
-                    color: theme.primaryColor.withOpacity(0.15),
+                    color: theme.primaryColor.withValues(alpha: 0.15),
                     borderRadius: BorderRadius.circular(6),
-                    border: Border.all(color: theme.primaryColor.withOpacity(0.3)),
+                    border: Border.all(color: theme.primaryColor.withValues(alpha: 0.3)),
                   ),
                   child: Row(
                     mainAxisSize: MainAxisSize.min,
@@ -2099,7 +2095,7 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
         color: Colors.white,
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.05),
+            color: Colors.black.withValues(alpha: 0.05),
             blurRadius: 10,
             offset: const Offset(0, -5),
           ),
@@ -2651,9 +2647,6 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
 
   /// 장기공고 충돌 날짜 알림
   Future<void> _showLongTermConflictAlert() async {
-    final startDate = widget.mainTO.date;
-    final endDate = widget.mainTO.endDate ?? widget.mainTO.date;
-    
     final sortedConflicts = _confirmedDatesInRange.toList()..sort();
     final conflictDatesStr = sortedConflicts.take(3).map((d) {
       final dayOfWeek = ['월', '화', '수', '목', '금', '토', '일'][d.weekday - 1];

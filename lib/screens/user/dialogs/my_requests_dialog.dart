@@ -252,7 +252,7 @@ class _MyRequestsDialogState extends State<MyRequestsDialog> {
       margin: EdgeInsets.only(bottom: ResponsiveHelper.spacing(context, 12)),
       child: ListTile(
         leading: CircleAvatar(
-          backgroundColor: iconColor.withOpacity(0.2),
+          backgroundColor: iconColor.withValues(alpha: 0.2),
           child: Icon(icon, color: iconColor),
         ),
         title: Text(
@@ -308,7 +308,7 @@ class _MyRequestsDialogState extends State<MyRequestsDialog> {
       color: AppColors.infoBg,
       child: ListTile(
         leading: CircleAvatar(
-          backgroundColor: AppColors.info.withOpacity(0.2),
+          backgroundColor: AppColors.info.withValues(alpha: 0.2),
           child: Icon(Icons.badge, color: AppColors.info),
         ),
         title: Text(
@@ -372,7 +372,7 @@ class _MyRequestsDialogState extends State<MyRequestsDialog> {
       color: AppColors.warningBg,
       child: ListTile(
         leading: CircleAvatar(
-          backgroundColor: AppColors.warning.withOpacity(0.2),
+          backgroundColor: AppColors.warning.withValues(alpha: 0.2),
           child: Icon(Icons.warning_amber, color: AppColors.warning),
         ),
         title: Text(
@@ -437,7 +437,7 @@ class _MyRequestsDialogState extends State<MyRequestsDialog> {
         vertical: ResponsiveHelper.spacing(context, 4),
       ),
       decoration: BoxDecoration(
-        color: color.withOpacity(0.2),
+        color: color.withValues(alpha: 0.2),
         borderRadius: BorderRadius.circular(12),
       ),
       child: Text(

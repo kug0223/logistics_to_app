@@ -559,7 +559,7 @@ class _IconPickerWidgetState extends State<_IconPickerWidget> {
           end: Alignment.bottomRight,
           colors: [
             widget.theme.primaryColor,
-            widget.theme.primaryColor.withOpacity(0.8),
+            widget.theme.primaryColor.withValues(alpha: 0.8),
           ],
         ),
         borderRadius: const BorderRadius.only(
@@ -572,7 +572,7 @@ class _IconPickerWidgetState extends State<_IconPickerWidget> {
           Container(
             padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 12)),
             decoration: BoxDecoration(
-              color: AppColors.surface.withOpacity(0.2),
+              color: AppColors.surface.withValues(alpha: 0.2),
               borderRadius: BorderRadius.circular(12),
             ),
             child: Icon(
@@ -597,14 +597,14 @@ class _IconPickerWidgetState extends State<_IconPickerWidget> {
                 Text(
                   '${_filteredIcons.length}개 아이콘',
                   style: ResponsiveHelper.smallStyle(context).copyWith(
-                    color: AppColors.surface.withOpacity(0.9),
+                    color: AppColors.surface.withValues(alpha: 0.9),
                   ),
                 ),
               ],
             ),
           ),
           Material(
-            color: AppColors.surface.withOpacity(0.2),
+            color: AppColors.surface.withValues(alpha: 0.2),
             borderRadius: BorderRadius.circular(8),
             child: InkWell(
               onTap: () => Navigator.pop(context),
@@ -808,7 +808,7 @@ class _IconPickerWidgetState extends State<_IconPickerWidget> {
                         ? LinearGradient(
                             colors: [
                               FormatHelper.parseColor(_selectedBackgroundColor),
-                              FormatHelper.parseColor(_selectedBackgroundColor).withOpacity(0.8),
+                              FormatHelper.parseColor(_selectedBackgroundColor).withValues(alpha: 0.8),
                             ],
                           )
                         : null,
@@ -823,7 +823,7 @@ class _IconPickerWidgetState extends State<_IconPickerWidget> {
                     boxShadow: isSelected
                         ? [
                             BoxShadow(
-                              color: widget.theme.primaryColor.withOpacity(0.3),
+                              color: widget.theme.primaryColor.withValues(alpha: 0.3),
                               blurRadius: 8,
                               offset: const Offset(0, 4),
                             ),
@@ -875,7 +875,7 @@ class _IconPickerWidgetState extends State<_IconPickerWidget> {
         border: Border.all(color: AppColors.border),
         boxShadow: [
           BoxShadow(
-            color: AppColors.grey500.withOpacity(0.1),
+            color: AppColors.grey500.withValues(alpha: 0.1),
             blurRadius: 4,
             offset: const Offset(0, 2),
           ),
@@ -939,7 +939,7 @@ class _IconPickerWidgetState extends State<_IconPickerWidget> {
                           boxShadow: isSelected
                               ? [
                                   BoxShadow(
-                                    color: widget.theme.primaryColor.withOpacity(0.3),
+                                    color: widget.theme.primaryColor.withValues(alpha: 0.3),
                                     blurRadius: 8,
                                   ),
                                 ]
@@ -992,7 +992,7 @@ class _IconPickerWidgetState extends State<_IconPickerWidget> {
                           boxShadow: isSelected
                               ? [
                                   BoxShadow(
-                                    color: widget.theme.primaryColor.withOpacity(0.3),
+                                    color: widget.theme.primaryColor.withValues(alpha: 0.3),
                                     blurRadius: 8,
                                   ),
                                 ]
@@ -1050,13 +1050,13 @@ class _IconPickerWidgetState extends State<_IconPickerWidget> {
                 gradient: LinearGradient(
                   colors: [
                     widget.theme.primaryColor,
-                    widget.theme.primaryColor.withOpacity(0.8),
+                    widget.theme.primaryColor.withValues(alpha: 0.8),
                   ],
                 ),
                 borderRadius: BorderRadius.circular(12),
                 boxShadow: [
                   BoxShadow(
-                    color: widget.theme.primaryColor.withOpacity(0.4),
+                    color: widget.theme.primaryColor.withValues(alpha: 0.4),
                     blurRadius: 8,
                     offset: const Offset(0, 4),
                   ),

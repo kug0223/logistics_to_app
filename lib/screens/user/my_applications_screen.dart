@@ -209,7 +209,7 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
       selected: isSelected,
       onSelected: (_) => setState(() => _selectedFilter = value),
       backgroundColor: Colors.white,
-      selectedColor: color.withOpacity(0.15),
+      selectedColor: color.withValues(alpha: 0.15),
       side: BorderSide(
         color: isSelected ? color : AppColors.grey300,
         width: isSelected ? 1.5 : 1,
@@ -271,12 +271,12 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
         color: Colors.white,
         borderRadius: BorderRadius.circular(16),
         border: Border.all(
-          color: statusInfo.color.withOpacity(0.3),
+          color: statusInfo.color.withValues(alpha: 0.3),
           width: 1,
         ),
         boxShadow: [
           BoxShadow(
-            color: AppColors.grey300.withOpacity(0.5),
+            color: AppColors.grey300.withValues(alpha: 0.5),
             blurRadius: 4,
             offset: const Offset(0, 2),
           ),

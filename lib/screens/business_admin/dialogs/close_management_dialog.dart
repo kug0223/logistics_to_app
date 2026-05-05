@@ -290,9 +290,9 @@ class _CloseManagementDialogState extends State<CloseManagementDialog> {
           horizontal: ResponsiveHelper.spacing(context, 16),
           vertical: ResponsiveHelper.spacing(context, 24),
         ),
-        child: Container(
+        child: SizedBox(
           width: double.infinity,
-          height: MediaQuery.of(context).size.height * 0.7,  // ✅ 고정 비율 높이
+          height: MediaQuery.of(context).size.height * 0.7,
           child: Column(
             children: [
               // 헤더
@@ -329,7 +329,7 @@ class _CloseManagementDialogState extends State<CloseManagementDialog> {
           end: Alignment.bottomRight,
           colors: [
             AppColors.success,
-            AppColors.success.withOpacity(0.85),
+            AppColors.success.withValues(alpha: 0.85),
           ],
         ),
         borderRadius: BorderRadius.only(
@@ -346,7 +346,7 @@ class _CloseManagementDialogState extends State<CloseManagementDialog> {
               Container(
                 padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 10)),
                 decoration: BoxDecoration(
-                  color: Colors.white.withOpacity(0.2),
+                  color: Colors.white.withValues(alpha: 0.2),
                   borderRadius: BorderRadius.circular(12),
                 ),
                 child: Icon(
@@ -369,7 +369,7 @@ class _CloseManagementDialogState extends State<CloseManagementDialog> {
                   Text(
                     '당일명단 마감 현황',
                     style: ResponsiveHelper.smallStyle(context).copyWith(
-                      color: Colors.white.withOpacity(0.8),
+                      color: Colors.white.withValues(alpha: 0.8),
                     ),
                   ),
                 ],
@@ -549,7 +549,7 @@ class _CloseManagementDialogState extends State<CloseManagementDialog> {
         border: Border.all(color: AppColors.border),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.04),
+            color: Colors.black.withValues(alpha: 0.04),
             blurRadius: 8,
             offset: const Offset(0, 2),
           ),
@@ -565,7 +565,7 @@ class _CloseManagementDialogState extends State<CloseManagementDialog> {
               vertical: ResponsiveHelper.spacing(context, 12),
             ),
             decoration: BoxDecoration(
-              color: theme.primaryColor.withOpacity(0.05),
+              color: theme.primaryColor.withValues(alpha: 0.05),
               borderRadius: BorderRadius.only(
                 topLeft: Radius.circular(16),
                 topRight: Radius.circular(16),
@@ -624,7 +624,7 @@ class _CloseManagementDialogState extends State<CloseManagementDialog> {
         vertical: ResponsiveHelper.spacing(context, 4),
       ),
       decoration: BoxDecoration(
-        color: isAllClosed ? AppColors.success.withOpacity(0.1) : AppColors.warning.withOpacity(0.1),
+        color: isAllClosed ? AppColors.success.withValues(alpha: 0.1) : AppColors.warning.withValues(alpha: 0.1),
         borderRadius: BorderRadius.circular(8),
       ),
       child: Text(
@@ -685,8 +685,8 @@ class _CloseManagementDialogState extends State<CloseManagementDialog> {
     final unclosedCount = status.totalConfirmed - status.closedCount;
     
     final bgColor = isClosed 
-        ? AppColors.success.withOpacity(0.1) 
-        : AppColors.error.withOpacity(0.1);
+        ? AppColors.success.withValues(alpha: 0.1) 
+        : AppColors.error.withValues(alpha: 0.1);
     final textColor = isClosed ? AppColors.success : AppColors.error;
     final icon = isClosed ? Icons.lock : Icons.lock_open;
     final text = isClosed ? '마감완료' : '미마감 $unclosedCount명';

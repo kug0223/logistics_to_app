@@ -420,7 +420,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
                   decoration: BoxDecoration(
                     color: AppColors.warningBg,
                     borderRadius: BorderRadius.circular(12),
-                    border: Border.all(color: AppColors.warningLight!),
+                    border: Border.all(color: AppColors.warningLight),
                   ),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
@@ -500,9 +500,9 @@ class _RegisterScreenState extends State<RegisterScreen> {
               Container(
                 padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 12)),
                 decoration: BoxDecoration(
-                  color: theme.primaryColor.withOpacity(0.1),
+                  color: theme.primaryColor.withValues(alpha: 0.1),
                   borderRadius: BorderRadius.circular(12),
-                  border: Border.all(color: theme.primaryColor.withOpacity(0.3)),
+                  border: Border.all(color: theme.primaryColor.withValues(alpha: 0.3)),
                 ),
                 child: Text(
                   '지금 등록하시면 TO를 바로 생성하고 지원자를 관리할 수 있습니다.',
@@ -777,8 +777,8 @@ class _RegisterScreenState extends State<RegisterScreen> {
                   begin: Alignment.topLeft,
                   end: Alignment.bottomRight,
                   colors: [
-                    theme.primaryColor.withOpacity(0.05),
-                    theme.primaryColor.withOpacity(0.1),
+                    theme.primaryColor.withValues(alpha: 0.05),
+                    theme.primaryColor.withValues(alpha: 0.1),
                   ],
                 ),
               ),
@@ -874,7 +874,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
       child: Row(
         children: [
           Material(
-            color: Colors.white.withOpacity(0.3),
+            color: Colors.white.withValues(alpha: 0.3),
             borderRadius: BorderRadius.circular(10),
             child: InkWell(
               onTap: _onStepCancel,
@@ -992,7 +992,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
         borderRadius: BorderRadius.circular(20),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.08),
+            color: Colors.black.withValues(alpha: 0.08),
             blurRadius: 16,
             offset: const Offset(0, 4),
           ),
@@ -1535,7 +1535,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
           icon: Icons.person,
           title: '지원자로 이용',
           description: '공고에 지원하고 일정을 관리합니다',
-          color: AppColors.successMedium!,
+          color: AppColors.successMedium,
           features: ['공고 검색 및 지원', '나의 근무일정 관리', '지원 내역 확인'],
         ),
         SizedBox(height: ResponsiveHelper.spacing(context, 12)),
@@ -1544,7 +1544,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
           icon: Icons.business_center,
           title: '사업장 관리자로 이용',
           description: '공고를 생성하고 지원자를 관리합니다',
-          color: AppColors.infoMedium!,
+          color: AppColors.infoMedium,
           features: ['공고 생성 및 관리', '지원자 승인/거절', '인력 현황 파악'],
         ),
       ],
@@ -1562,10 +1562,10 @@ class _RegisterScreenState extends State<RegisterScreen> {
           padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 12)),
           decoration: BoxDecoration(
             gradient: LinearGradient(
-              colors: [AppColors.infoBg!, AppColors.infoExtraLight!],
+              colors: [AppColors.infoBg, AppColors.infoExtraLight],
             ),
             borderRadius: BorderRadius.circular(14),
-            border: Border.all(color: AppColors.infoLight!, width: 1.5),
+            border: Border.all(color: AppColors.infoLight, width: 1.5),
           ),
           child: Column(
             children: [
@@ -1617,9 +1617,9 @@ class _RegisterScreenState extends State<RegisterScreen> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    _buildNoticeItem('✓ 신분증과 통장의 이름이 일치해야 합니다', AppColors.infoDeep!),
+                    _buildNoticeItem('✓ 신분증과 통장의 이름이 일치해야 합니다', AppColors.infoDeep),
                     SizedBox(height: ResponsiveHelper.spacing(context, 4)),
-                    _buildNoticeItem('✓ 선명한 사진을 촬영해주세요', AppColors.infoDeep!),
+                    _buildNoticeItem('✓ 선명한 사진을 촬영해주세요', AppColors.infoDeep),
                   ],
                 ),
               ),
@@ -1694,10 +1694,10 @@ class _RegisterScreenState extends State<RegisterScreen> {
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: AppColors.grey300!),
+        border: Border.all(color: AppColors.grey300),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.05),
+            color: Colors.black.withValues(alpha: 0.05),
             blurRadius: 8,
             offset: Offset(0, 2),
           ),
@@ -1740,8 +1740,8 @@ class _RegisterScreenState extends State<RegisterScreen> {
                 borderRadius: BorderRadius.circular(10),
                 border: Border.all(
                   color: _idCardImagePath != null 
-                      ? AppColors.successSoft! 
-                      : AppColors.grey300!,
+                      ? AppColors.successSoft 
+                      : AppColors.grey300,
                   width: 2,
                 ),
               ),
@@ -1787,10 +1787,10 @@ class _RegisterScreenState extends State<RegisterScreen> {
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: AppColors.grey300!),
+        border: Border.all(color: AppColors.grey300),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.05),
+            color: Colors.black.withValues(alpha: 0.05),
             blurRadius: 8,
             offset: Offset(0, 2),
           ),
@@ -1870,9 +1870,9 @@ class _RegisterScreenState extends State<RegisterScreen> {
           Container(
             padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 10)),
             decoration: BoxDecoration(
-              color: Colors.green.withOpacity(0.1),
+              color: Colors.green.withValues(alpha: 0.1),
               borderRadius: BorderRadius.circular(10),
-              border: Border.all(color: Colors.green.withOpacity(0.3)),
+              border: Border.all(color: Colors.green.withValues(alpha: 0.3)),
             ),
             child: Row(
               children: [
@@ -1907,8 +1907,8 @@ class _RegisterScreenState extends State<RegisterScreen> {
                 borderRadius: BorderRadius.circular(10),
                 border: Border.all(
                   color: _bankbookImagePath != null 
-                      ? AppColors.successSoft! 
-                      : AppColors.grey300!,
+                      ? AppColors.successSoft 
+                      : AppColors.grey300,
                   width: 2,
                 ),
               ),
@@ -1959,10 +1959,10 @@ class _RegisterScreenState extends State<RegisterScreen> {
         Container(
           padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 12)),
           decoration: BoxDecoration(
-            color: theme.primaryColor.withOpacity(0.1),
+            color: theme.primaryColor.withValues(alpha: 0.1),
             borderRadius: BorderRadius.circular(14),
             border: Border.all(
-              color: theme.primaryColor.withOpacity(0.3),
+              color: theme.primaryColor.withValues(alpha: 0.3),
             ),
           ),
           child: Column(
@@ -2008,7 +2008,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
             borderRadius: BorderRadius.circular(20),
             boxShadow: [
               BoxShadow(
-                color: Colors.black.withOpacity(0.08),
+                color: Colors.black.withValues(alpha: 0.08),
                 blurRadius: 16,
                 offset: const Offset(0, 4),
               ),
@@ -2121,7 +2121,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
             ),
             border: OutlineInputBorder(
               borderRadius: BorderRadius.circular(10),
-              borderSide: BorderSide(color: AppColors.grey300!),
+              borderSide: BorderSide(color: AppColors.grey300),
             ),
             filled: true,
             fillColor: AppColors.grey50,
@@ -2184,7 +2184,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
                   ),
                   border: OutlineInputBorder(
                     borderRadius: BorderRadius.circular(10),
-                    borderSide: BorderSide(color: AppColors.grey300!),
+                    borderSide: BorderSide(color: AppColors.grey300),
                   ),
                   filled: true,
                   fillColor: AppColors.grey50,
@@ -2252,15 +2252,15 @@ class _RegisterScreenState extends State<RegisterScreen> {
       child: Container(
         padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 12)),
         decoration: BoxDecoration(
-          color: isUploaded ? color.withOpacity(0.1) : Colors.white,
+          color: isUploaded ? color.withValues(alpha: 0.1) : Colors.white,
           borderRadius: BorderRadius.circular(14),
           border: Border.all(
-            color: isUploaded ? color : AppColors.grey300!,
+            color: isUploaded ? color : AppColors.grey300,
             width: isUploaded ? 2 : 1,
           ),
           boxShadow: [
             BoxShadow(
-              color: Colors.black.withOpacity(0.05),
+              color: Colors.black.withValues(alpha: 0.05),
               blurRadius: 6,
               offset: const Offset(0, 2),
             ),
@@ -2271,7 +2271,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
             Container(
               padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 10)),
               decoration: BoxDecoration(
-                color: isUploaded ? color : color.withOpacity(0.2),
+                color: isUploaded ? color : color.withValues(alpha: 0.2),
                 shape: BoxShape.circle,
               ),
               child: Icon(
@@ -2361,11 +2361,11 @@ class _RegisterScreenState extends State<RegisterScreen> {
         suffixIcon: suffixIcon,
         border: OutlineInputBorder(
           borderRadius: BorderRadius.circular(10),
-          borderSide: BorderSide(color: AppColors.grey300!),
+          borderSide: BorderSide(color: AppColors.grey300),
         ),
         enabledBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(10),
-          borderSide: BorderSide(color: AppColors.grey300!),
+          borderSide: BorderSide(color: AppColors.grey300),
         ),
         focusedBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(10),
@@ -2373,7 +2373,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
         ),
         disabledBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(10),
-          borderSide: BorderSide(color: AppColors.grey200!),
+          borderSide: BorderSide(color: AppColors.grey200),
         ),
         filled: true,
         fillColor: enabled ? AppColors.grey50 : AppColors.grey100,
@@ -2405,16 +2405,16 @@ class _RegisterScreenState extends State<RegisterScreen> {
       child: Container(
         padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 12)),
         decoration: BoxDecoration(
-          color: isSelected ? color.withOpacity(0.1) : Colors.white,
+          color: isSelected ? color.withValues(alpha: 0.1) : Colors.white,
           borderRadius: BorderRadius.circular(16),
           border: Border.all(
-            color: isSelected ? color : AppColors.grey300!,
+            color: isSelected ? color : AppColors.grey300,
             width: isSelected ? 2 : 1,
           ),
           boxShadow: isSelected
               ? [
                   BoxShadow(
-                    color: color.withOpacity(0.2),
+                    color: color.withValues(alpha: 0.2),
                     blurRadius: 10,
                     offset: const Offset(0, 4),
                   ),

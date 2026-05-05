@@ -224,7 +224,7 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
               Container(
                 padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 10)),
                 decoration: BoxDecoration(
-                  color: Colors.white.withOpacity(0.2),
+                  color: Colors.white.withValues(alpha: 0.2),
                   borderRadius: BorderRadius.circular(12),
                 ),
                 child: Icon(
@@ -359,9 +359,9 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
         vertical: ResponsiveHelper.spacing(context, 6),
       ),
       decoration: BoxDecoration(
-        color: color.withOpacity(0.1),
+        color: color.withValues(alpha: 0.1),
         borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: color.withOpacity(0.3)),
+        border: Border.all(color: color.withValues(alpha: 0.3)),
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
@@ -440,13 +440,12 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
     // 상태 판단
     final hasResignRequest = app.resignStatus == 'PENDING';
     final hasTerminationRequest = app.terminationStatus == 'PENDING';
-    final isRejectedResign = app.resignStatus == 'REJECTED';
 
     return Material(
       color: Colors.white,
       borderRadius: BorderRadius.circular(16),
       elevation: 2,
-      shadowColor: Colors.black.withOpacity(0.08),
+      shadowColor: Colors.black.withValues(alpha: 0.08),
       child: InkWell(
         onTap: () => _showWorkerActions(item),
         borderRadius: BorderRadius.circular(16),
@@ -812,7 +811,7 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
               Container(
                 padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 10)),
                 decoration: BoxDecoration(
-                  color: color.withOpacity(0.1),
+                  color: color.withValues(alpha: 0.1),
                   borderRadius: BorderRadius.circular(10),
                 ),
                 child: Icon(icon, color: color, size: ResponsiveHelper.iconSize(context, 22)),

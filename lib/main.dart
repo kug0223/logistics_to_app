@@ -241,10 +241,6 @@ class _AuthWrapperState extends State<AuthWrapper> {
             case UserRole.USER:
               debugPrint('🎯 USER → UserHomeScreen으로 이동');
               return const UserHomeScreen();
-            
-            default:
-              debugPrint('⚠️ 알 수 없는 role: ${user.role} → LoginScreen');
-              return const LoginScreen();
           }
         } catch (e, stackTrace) {
           debugPrint('❌ 화면 전환 중 에러 발생!');

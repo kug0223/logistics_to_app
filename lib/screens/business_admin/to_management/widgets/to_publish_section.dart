@@ -110,13 +110,13 @@ class TOPublishSection extends StatelessWidget {
         padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 12)),
         decoration: BoxDecoration(
           color: isSelected 
-              ? theme.primaryColor.withOpacity(0.1) 
+              ? theme.primaryColor.withValues(alpha: 0.1) 
               : AppColors.grey50,
           borderRadius: BorderRadius.circular(12),
           border: Border.all(
             color: isSelected 
                 ? theme.primaryColor 
-                : AppColors.grey300!,
+                : AppColors.grey300,
             width: isSelected ? 2 : 1,
           ),
         ),
@@ -129,7 +129,7 @@ class TOPublishSection extends StatelessWidget {
               decoration: BoxDecoration(
                 shape: BoxShape.circle,
                 border: Border.all(
-                  color: isSelected ? theme.primaryColor : AppColors.grey400!,
+                  color: isSelected ? theme.primaryColor : AppColors.grey400,
                   width: 2,
                 ),
               ),
@@ -192,7 +192,7 @@ class TOPublishSection extends StatelessWidget {
       decoration: BoxDecoration(
         color: AppColors.warningBg,
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: AppColors.warningLight!),
+        border: Border.all(color: AppColors.warningLight),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -214,7 +214,7 @@ class TOPublishSection extends StatelessWidget {
                 decoration: BoxDecoration(
                   color: Colors.white,
                   borderRadius: BorderRadius.circular(8),
-                  border: Border.all(color: AppColors.warningSoft!),
+                  border: Border.all(color: AppColors.warningSoft),
                 ),
                 child: DropdownButtonHideUnderline(
                   child: DropdownButton<int>(
@@ -263,7 +263,7 @@ class TOPublishSection extends StatelessWidget {
                 decoration: BoxDecoration(
                   color: Colors.white,
                   borderRadius: BorderRadius.circular(8),
-                  border: Border.all(color: AppColors.warningSoft!),
+                  border: Border.all(color: AppColors.warningSoft),
                 ),
                 child: DropdownButtonHideUnderline(
                   child: DropdownButton<String>(

@@ -134,7 +134,7 @@ class _MyScheduleScreenState extends State<MyScheduleScreen> {
             end: Alignment.bottomRight,
             colors: [
               theme.primaryColor,
-              theme.primaryColor.withOpacity(0.85),
+              theme.primaryColor.withValues(alpha: 0.85),
             ],
           ),
         ),
@@ -207,7 +207,7 @@ class _MyScheduleScreenState extends State<MyScheduleScreen> {
                     children: [
                       Container(
                         decoration: BoxDecoration(
-                          color: Colors.white.withOpacity(0.2),
+                          color: Colors.white.withValues(alpha: 0.2),
                           shape: BoxShape.circle,
                         ),
                         child: IconButton(
@@ -249,7 +249,7 @@ class _MyScheduleScreenState extends State<MyScheduleScreen> {
               // 고정근무 관리
               Container(
                 decoration: BoxDecoration(
-                  color: Colors.white.withOpacity(0.2),
+                  color: Colors.white.withValues(alpha: 0.2),
                   shape: BoxShape.circle,
                 ),
                 child: IconButton(
@@ -262,7 +262,7 @@ class _MyScheduleScreenState extends State<MyScheduleScreen> {
               // 필터 버튼
               Container(
                 decoration: BoxDecoration(
-                  color: Colors.white.withOpacity(0.2),
+                  color: Colors.white.withValues(alpha: 0.2),
                   shape: BoxShape.circle,
                 ),
                 child: PopupMenuButton<String>(
@@ -319,7 +319,7 @@ class _MyScheduleScreenState extends State<MyScheduleScreen> {
               // 새로고침
               Container(
                 decoration: BoxDecoration(
-                  color: Colors.white.withOpacity(0.2),
+                  color: Colors.white.withValues(alpha: 0.2),
                   shape: BoxShape.circle,
                 ),
                 child: IconButton(
@@ -338,7 +338,7 @@ class _MyScheduleScreenState extends State<MyScheduleScreen> {
             DateFormat('yyyy년 M월', 'ko_KR').format(_focusedDay),
             style: ResponsiveHelper.bodyStyle(
               context,
-              color: Colors.white.withOpacity(0.9),
+              color: Colors.white.withValues(alpha: 0.9),
             ),
           ),
         ],
@@ -365,7 +365,7 @@ class _MyScheduleScreenState extends State<MyScheduleScreen> {
               borderRadius: BorderRadius.circular(20),
               boxShadow: [
                 BoxShadow(
-                  color: Colors.black.withOpacity(0.05),
+                  color: Colors.black.withValues(alpha: 0.05),
                   blurRadius: 10,
                   offset: const Offset(0, 4),
                 ),
@@ -412,13 +412,13 @@ class _MyScheduleScreenState extends State<MyScheduleScreen> {
             child: Row(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                _buildCompactLegendItem(AppColors.successMedium!, '확정', false),
+                _buildCompactLegendItem(AppColors.successMedium, '확정', false),
                 SizedBox(width: ResponsiveHelper.spacing(context, 12)),
-                _buildCompactLegendItem(AppColors.successFaded!, '고정', true),
+                _buildCompactLegendItem(AppColors.successFaded, '고정', true),
                 SizedBox(width: ResponsiveHelper.spacing(context, 12)),
-                _buildCompactLegendItem(AppColors.warningMedium!, '대기', false),
+                _buildCompactLegendItem(AppColors.warningMedium, '대기', false),
                 SizedBox(width: ResponsiveHelper.spacing(context, 12)),
-                _buildCompactLegendItem(AppColors.grey400!, '휴무', true),
+                _buildCompactLegendItem(AppColors.grey400, '휴무', true),
               ],
             ),
           ),
@@ -437,7 +437,7 @@ class _MyScheduleScreenState extends State<MyScheduleScreen> {
               borderRadius: BorderRadius.circular(12),
               boxShadow: [
                 BoxShadow(
-                  color: Colors.black.withOpacity(0.03),
+                  color: Colors.black.withValues(alpha: 0.03),
                   blurRadius: 6,
                   offset: const Offset(0, 2),
                 ),
@@ -515,8 +515,8 @@ class _MyScheduleScreenState extends State<MyScheduleScreen> {
               decoration: BoxDecoration(
                 gradient: LinearGradient(
                   colors: [
-                    Theme.of(context).primaryColor.withOpacity(0.1),
-                    Theme.of(context).primaryColor.withOpacity(0.05),
+                    Theme.of(context).primaryColor.withValues(alpha: 0.1),
+                    Theme.of(context).primaryColor.withValues(alpha: 0.05),
                   ],
                 ),
                 borderRadius: BorderRadius.circular(12),
@@ -685,7 +685,7 @@ class _MyScheduleScreenState extends State<MyScheduleScreen> {
                   isFutureOrToday ? Icons.work_outline : Icons.event_busy,
                   size: ResponsiveHelper.iconSize(context, 64),
                   color: isFutureOrToday 
-                      ? Theme.of(context).primaryColor.withOpacity(0.5)
+                      ? Theme.of(context).primaryColor.withValues(alpha: 0.5)
                       : AppColors.grey400,
                 ),
                 SizedBox(height: ResponsiveHelper.spacing(context, 16)),

@@ -115,7 +115,7 @@ class StyledDialog extends StatelessWidget {
         gradient: LinearGradient(
           colors: [
             color,
-            color.withOpacity(0.8),
+            color.withValues(alpha: 0.8),
           ],
         ),
         borderRadius: const BorderRadius.only(
@@ -129,7 +129,7 @@ class StyledDialog extends StatelessWidget {
           Container(
             padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 10)),
             decoration: BoxDecoration(
-              color: AppColors.surface.withOpacity(0.2),
+              color: AppColors.surface.withValues(alpha: 0.2),
               borderRadius: BorderRadius.circular(12),
             ),
             child: Icon(
@@ -158,7 +158,7 @@ class StyledDialog extends StatelessWidget {
                   Text(
                     subtitle!,
                     style: ResponsiveHelper.smallStyle(context).copyWith(
-                      color: AppColors.surface.withOpacity(0.9),
+                      color: AppColors.surface.withValues(alpha: 0.9),
                     ),
                   ),
                 ],
@@ -481,10 +481,10 @@ class StyledDialogInfoCard extends StatelessWidget {
     return Container(
       padding: ResponsiveHelper.cardPadding(context),
       decoration: BoxDecoration(
-        color: color.withOpacity(0.1),
+        color: color.withValues(alpha: 0.1),
         borderRadius: BorderRadius.circular(12),
         border: Border.all(
-          color: color.withOpacity(0.3),
+          color: color.withValues(alpha: 0.3),
         ),
       ),
       child: Row(

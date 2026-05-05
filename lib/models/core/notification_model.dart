@@ -734,7 +734,7 @@ class NotificationModel {
       userId: userId,
       type: NotificationType.applicationConfirmed,  // 기존 타입 재사용
       title: '파트 변경',
-      body: '$businessName에서 귀하의 파트가 변경되었습니다.\n$originalWorkType → $newWorkType (${formattedWage}원)\n근무일: ${workDate.month}/${workDate.day}',
+      body: '$businessName에서 귀하의 파트가 변경되었습니다.\n$originalWorkType → $newWorkType ($formattedWage원)\n근무일: ${workDate.month}/${workDate.day}',
       data: {
         'applicationId': applicationId,
         'action': 'applicationDetail',
@@ -761,7 +761,7 @@ class NotificationModel {
       userId: userId,
       type: NotificationType.wageConfirmed,
       title: '급여 정산 완료',
-      body: '$businessName ${workDate.month}/${workDate.day} 근무 급여가 정산되었습니다.\n정산 금액: ${formattedWage}원',
+      body: '$businessName ${workDate.month}/${workDate.day} 근무 급여가 정산되었습니다.\n정산 금액: $formattedWage원',
       data: {
         'attendanceId': attendanceId,
         'action': 'wageDetail',

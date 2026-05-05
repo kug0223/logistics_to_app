@@ -223,10 +223,10 @@ class TrustScoreInfoDialog extends StatelessWidget {
         Container(
           padding: ResponsiveHelper.cardPadding(context),
           decoration: BoxDecoration(
-            color: theme.primaryColor.withOpacity(0.05),
+            color: theme.primaryColor.withValues(alpha: 0.05),
             borderRadius: BorderRadius.circular(12),
             border: Border.all(
-              color: theme.primaryColor.withOpacity(0.2),
+              color: theme.primaryColor.withValues(alpha: 0.2),
             ),
           ),
           child: Column(
@@ -317,7 +317,7 @@ class TrustScoreInfoDialog extends StatelessWidget {
               vertical: ResponsiveHelper.spacing(context, 4),
             ),
             decoration: BoxDecoration(
-              color: pointColor.withOpacity(0.1),
+              color: pointColor.withValues(alpha: 0.1),
               borderRadius: BorderRadius.circular(8),
             ),
             child: Text(

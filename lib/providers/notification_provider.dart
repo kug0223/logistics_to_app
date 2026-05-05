@@ -9,7 +9,7 @@ class NotificationProvider with ChangeNotifier {
   
   List<NotificationModel> _notifications = [];
   int _unreadCount = 0;
-  bool _isLoading = false;
+  final bool _isLoading = false;
   String? _userId;
   
   StreamSubscription? _notificationSubscription;

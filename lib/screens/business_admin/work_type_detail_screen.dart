@@ -167,10 +167,6 @@ class _WorkTypeDetailScreenState extends State<WorkTypeDetailScreen> {
 
   /// 헤더 카드 (아이콘 + 이름 + 한 줄 소개)
   Widget _buildHeaderCard(BuildContext context) {
-    final iconColor = _currentWorkType.color != null
-        ? Color(int.parse(_currentWorkType.color!.replaceFirst('#', '0xFF')))
-        : Theme.of(context).primaryColor;
-
     return Container(
       padding: ResponsiveHelper.cardPadding(context),
       decoration: CommonWidgets.cardDecoration(),
@@ -186,13 +182,13 @@ class _WorkTypeDetailScreenState extends State<WorkTypeDetailScreen> {
                   gradient: LinearGradient(
                     colors: [
                       FormatHelper.parseColor(_currentWorkType.backgroundColor ?? '#2196F3'),
-                      FormatHelper.parseColor(_currentWorkType.backgroundColor ?? '#2196F3').withOpacity(0.8),
+                      FormatHelper.parseColor(_currentWorkType.backgroundColor ?? '#2196F3').withValues(alpha: 0.8),
                     ],
                   ),
                   borderRadius: BorderRadius.circular(16),
                   boxShadow: [
                     BoxShadow(
-                      color: FormatHelper.parseColor(_currentWorkType.backgroundColor ?? '#2196F3').withOpacity(0.3),
+                      color: FormatHelper.parseColor(_currentWorkType.backgroundColor ?? '#2196F3').withValues(alpha: 0.3),
                       blurRadius: 8,
                       offset: const Offset(0, 4),
                     ),
@@ -242,7 +238,7 @@ class _WorkTypeDetailScreenState extends State<WorkTypeDetailScreen> {
             Container(
               padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 12)),
               decoration: BoxDecoration(
-                color: Theme.of(context).primaryColor.withOpacity(0.1),
+                color: Theme.of(context).primaryColor.withValues(alpha: 0.1),
                 borderRadius: BorderRadius.circular(8),
               ),
               child: Row(
@@ -333,7 +329,7 @@ class _WorkTypeDetailScreenState extends State<WorkTypeDetailScreen> {
               decoration: BoxDecoration(
                 color: AppColors.grey100,
                 borderRadius: BorderRadius.circular(12),
-                border: Border.all(color: AppColors.grey300!),
+                border: Border.all(color: AppColors.grey300),
               ),
               child: Center(
                 child: Column(
@@ -552,7 +548,7 @@ class _WorkTypeDetailScreenState extends State<WorkTypeDetailScreen> {
                             fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
                           ),
                           side: BorderSide(
-                            color: isSelected ? theme.primaryColor : AppColors.grey300!,
+                            color: isSelected ? theme.primaryColor : AppColors.grey300,
                           ),
                         );
                       }).toList(),
@@ -584,7 +580,7 @@ class _WorkTypeDetailScreenState extends State<WorkTypeDetailScreen> {
         Container(
           padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 8)),
           decoration: BoxDecoration(
-            color: theme.primaryColor.withOpacity(0.1),
+            color: theme.primaryColor.withValues(alpha: 0.1),
             borderRadius: BorderRadius.circular(8),
           ),
           child: Icon(

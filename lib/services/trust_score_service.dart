@@ -246,7 +246,7 @@ class TrustScoreService {
           final daysRemaining = cooldownEnd.difference(DateTime.now()).inDays;
           return (
             canRestart: false, 
-            reason: '쿨타임 중입니다. ${daysRemaining}일 후 신청 가능합니다.',
+            reason: '쿨타임 중입니다. $daysRemaining일 후 신청 가능합니다.',
             daysRemaining: daysRemaining,
           );
         }

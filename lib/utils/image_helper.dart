@@ -143,7 +143,7 @@ class ImageHelper {
                 leading: Container(
                   padding: const EdgeInsets.all(8),
                   decoration: BoxDecoration(
-                    color: Colors.blue.withOpacity(0.1),
+                    color: Colors.blue.withValues(alpha: 0.1),
                     borderRadius: BorderRadius.circular(8),
                   ),
                   child: const Icon(Icons.camera_alt, color: Colors.blue),
@@ -155,7 +155,7 @@ class ImageHelper {
                 leading: Container(
                   padding: const EdgeInsets.all(8),
                   decoration: BoxDecoration(
-                    color: Colors.green.withOpacity(0.1),
+                    color: Colors.green.withValues(alpha: 0.1),
                     borderRadius: BorderRadius.circular(8),
                   ),
                   child: const Icon(Icons.photo_library, color: Colors.green),
@@ -182,7 +182,7 @@ class ImageHelper {
       leading: Container(
         padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 8)),
         decoration: BoxDecoration(
-          color: color.withOpacity(0.1),
+          color: color.withValues(alpha: 0.1),
           borderRadius: BorderRadius.circular(12),
         ),
         child: Icon(
@@ -560,8 +560,8 @@ class ImageHelper {
       height: height,
       fadeInDuration: fadeInDuration,
       placeholder: (context, url) => Shimmer.fromColors(
-        baseColor: AppColors.grey300!,
-        highlightColor: AppColors.grey100!,
+        baseColor: AppColors.grey300,
+        highlightColor: AppColors.grey100,
         child: Container(
           width: width ?? double.infinity,
           height: height,
@@ -650,7 +650,7 @@ class ImageHelper {
       decoration: BoxDecoration(
         color: AppColors.grey100,
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: AppColors.grey300!),
+        border: Border.all(color: AppColors.grey300),
       ),
       child: Center(
         child: Column(
@@ -744,7 +744,7 @@ class ImageHelper {
           color: AppColors.grey100,
           borderRadius: BorderRadius.circular(8),
           border: Border.all(
-            color: AppColors.grey300!,
+            color: AppColors.grey300,
             style: BorderStyle.solid,
           ),
         ),

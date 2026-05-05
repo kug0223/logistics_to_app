@@ -280,7 +280,7 @@ class IdCardHelper {
                   decoration: BoxDecoration(
                     color: AppColors.infoBg,
                     borderRadius: BorderRadius.circular(12),
-                    border: Border.all(color: AppColors.info.withOpacity(0.3)),
+                    border: Border.all(color: AppColors.info.withValues(alpha: 0.3)),
                   ),
                   child: Row(
                     children: [
@@ -355,7 +355,7 @@ class IdCardHelper {
         vertical: ResponsiveHelper.spacing(context, 2),
       ),
       decoration: BoxDecoration(
-        color: info.color.withOpacity(0.15),
+        color: info.color.withValues(alpha: 0.15),
         borderRadius: BorderRadius.circular(8),
       ),
       child: Row(
@@ -385,7 +385,7 @@ class IdCardHelper {
     return Container(
       padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 4)),
       decoration: BoxDecoration(
-        color: info.color.withOpacity(0.15),
+        color: info.color.withValues(alpha: 0.15),
         shape: BoxShape.circle,
       ),
       child: Icon(

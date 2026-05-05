@@ -45,7 +45,7 @@ class _AdminReviewListScreenState extends State<AdminReviewListScreen>
   List<MonthlyReviewModel> _receivedReviews = []; // 사업장이 받은 리뷰
   
   // 필터
-  int _selectedYear = DateTime.now().year;
+  final int _selectedYear = DateTime.now().year;
   int _selectedMonth = 0; // 0 = 전체
 
   @override
@@ -124,7 +124,7 @@ class _AdminReviewListScreenState extends State<AdminReviewListScreen>
           indicatorColor: Colors.white,
           indicatorWeight: 3,
           labelColor: Colors.white,
-          unselectedLabelColor: Colors.white.withOpacity(0.6),
+          unselectedLabelColor: Colors.white.withValues(alpha: 0.6),
           tabs: [
             Tab(
               child: Row(
@@ -226,7 +226,7 @@ class _AdminReviewListScreenState extends State<AdminReviewListScreen>
         borderRadius: BorderRadius.circular(16),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.04),
+            color: Colors.black.withValues(alpha: 0.04),
             blurRadius: 8,
             offset: Offset(0, 2),
           ),
@@ -240,8 +240,8 @@ class _AdminReviewListScreenState extends State<AdminReviewListScreen>
             padding: ResponsiveHelper.cardPadding(context),
             decoration: BoxDecoration(
               color: review.isPublished 
-                  ? theme.primaryColor.withOpacity(0.05)
-                  : AppColors.warning.withOpacity(0.1),
+                  ? theme.primaryColor.withValues(alpha: 0.05)
+                  : AppColors.warning.withValues(alpha: 0.1),
               borderRadius: BorderRadius.only(
                 topLeft: Radius.circular(16),
                 topRight: Radius.circular(16),
@@ -265,7 +265,7 @@ class _AdminReviewListScreenState extends State<AdminReviewListScreen>
                           Text(
                             isWritten 
                                 ? (review.targetUserName ?? '지원자')
-                                : (review.reviewerName ?? '익명'),
+                                : review.reviewerName,
                             style: ResponsiveHelper.bodyStyle(context).copyWith(
                               fontWeight: FontWeight.bold,
                             ),
@@ -289,8 +289,8 @@ class _AdminReviewListScreenState extends State<AdminReviewListScreen>
                   ),
                   decoration: BoxDecoration(
                     color: review.isPublished 
-                        ? AppColors.success.withOpacity(0.15)
-                        : AppColors.warning.withOpacity(0.15),
+                        ? AppColors.success.withValues(alpha: 0.15)
+                        : AppColors.warning.withValues(alpha: 0.15),
                     borderRadius: BorderRadius.circular(12),
                   ),
                   child: Text(
@@ -424,8 +424,8 @@ class _AdminReviewListScreenState extends State<AdminReviewListScreen>
       ),
       decoration: BoxDecoration(
         color: isPositive 
-            ? AppColors.success.withOpacity(0.1)
-            : AppColors.warning.withOpacity(0.1),
+            ? AppColors.success.withValues(alpha: 0.1)
+            : AppColors.warning.withValues(alpha: 0.1),
         borderRadius: BorderRadius.circular(6),
       ),
       child: Text(

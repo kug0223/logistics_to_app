@@ -437,7 +437,7 @@ class AttendanceListPdf {
         }
 
         // 2. 이름 가나다순
-        return (userA.name ?? '').compareTo(userB.name ?? '');
+        return userA.name.compareTo(userB.name);
       });
     }
 
@@ -640,7 +640,7 @@ class _PreviewBottomSheetState extends State<_PreviewBottomSheet> {
                           color: Colors.white,
                           boxShadow: [
                             BoxShadow(
-                              color: Colors.black.withOpacity(0.1),
+                              color: Colors.black.withValues(alpha: 0.1),
                               blurRadius: 10,
                               offset: const Offset(0, 2),
                             ),
@@ -738,7 +738,7 @@ class _PreviewBottomSheetWithBytes extends StatelessWidget {
                 color: Colors.white,
                 boxShadow: [
                   BoxShadow(
-                    color: Colors.black.withOpacity(0.1),
+                    color: Colors.black.withValues(alpha: 0.1),
                     blurRadius: 10,
                     offset: const Offset(0, 2),
                   ),

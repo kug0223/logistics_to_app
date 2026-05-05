@@ -23,10 +23,10 @@ class TOListTabs extends StatelessWidget {
       ),
       padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 4)),
       decoration: BoxDecoration(
-        color: theme.primaryColor.withOpacity(0.08),
+        color: theme.primaryColor.withValues(alpha: 0.08),
         borderRadius: BorderRadius.circular(16),
         border: Border.all(
-          color: theme.primaryColor.withOpacity(0.15),
+          color: theme.primaryColor.withValues(alpha: 0.15),
           width: 1,
         ),
       ),
@@ -82,7 +82,7 @@ class TOListTabs extends StatelessWidget {
               ? LinearGradient(
                   colors: [
                     theme.primaryColor,
-                    theme.primaryColor.withOpacity(0.85),
+                    theme.primaryColor.withValues(alpha: 0.85),
                   ],
                 )
               : null,
@@ -91,7 +91,7 @@ class TOListTabs extends StatelessWidget {
           boxShadow: isSelected
               ? [
                   BoxShadow(
-                    color: theme.primaryColor.withOpacity(0.35),
+                    color: theme.primaryColor.withValues(alpha: 0.35),
                     blurRadius: 10,
                     offset: const Offset(0, 4),
                   ),
@@ -114,7 +114,7 @@ class TOListTabs extends StatelessWidget {
               textAlign: TextAlign.center,
               style: ResponsiveHelper.subtitleStyle(context).copyWith(
                 fontWeight: FontWeight.w600,
-                color: isSelected ? Colors.white : theme.primaryColor.withOpacity(0.6),
+                color: isSelected ? Colors.white : theme.primaryColor.withValues(alpha: 0.6),
               ),
             ),
           ],

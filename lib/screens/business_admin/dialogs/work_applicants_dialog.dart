@@ -255,7 +255,7 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog> {
           borderRadius: BorderRadius.circular(ResponsiveHelper.spacing(context, 20)),
           boxShadow: [
             BoxShadow(
-              color: Colors.black.withOpacity(0.15),
+              color: Colors.black.withValues(alpha: 0.15),
               blurRadius: 20,
               offset: const Offset(0, 10),
             ),
@@ -299,7 +299,7 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog> {
       padding: ResponsiveHelper.cardPadding(context),
       decoration: BoxDecoration(
         gradient: LinearGradient(
-          colors: [theme.primaryColor, theme.primaryColor.withOpacity(0.8)],
+          colors: [theme.primaryColor, theme.primaryColor.withValues(alpha: 0.8)],
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
         ),
@@ -312,7 +312,7 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog> {
         children: [
           // 업무 아이콘
           WorkTypeIcon.buildWithBackground(
-            iconString: widget.work.workTypeIcon ?? 'work',
+            iconString: widget.work.workTypeIcon,
             backgroundColor: widget.work.workTypeBackgroundColor,
             size: ResponsiveHelper.iconSize(context, 24),
             containerSize: ResponsiveHelper.spacing(context, 44),
@@ -442,7 +442,7 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog> {
                 vertical: ResponsiveHelper.spacing(context, 4),
               ),
               decoration: BoxDecoration(
-                color: Theme.of(context).primaryColor.withOpacity(0.1),
+                color: Theme.of(context).primaryColor.withValues(alpha: 0.1),
                 borderRadius: BorderRadius.circular(12),
               ),
               child: Text(
@@ -765,7 +765,7 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog> {
     return Container(
       margin: EdgeInsets.only(bottom: ResponsiveHelper.spacing(context, 8)),
       decoration: BoxDecoration(
-        color: isSelected ? Theme.of(context).primaryColor.withOpacity(0.05) : Colors.white,
+        color: isSelected ? Theme.of(context).primaryColor.withValues(alpha: 0.05) : Colors.white,
         borderRadius: BorderRadius.circular(12),
         border: Border.all(
           color: isSelected ? Theme.of(context).primaryColor : AppColors.border,
@@ -824,8 +824,8 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog> {
                 CircleAvatar(
                   radius: ResponsiveHelper.spacing(context, 16),
                   backgroundColor: isPending 
-                      ? AppColors.warning.withOpacity(0.15)
-                      : AppColors.success.withOpacity(0.15),
+                      ? AppColors.warning.withValues(alpha: 0.15)
+                      : AppColors.success.withValues(alpha: 0.15),
                   child: Text(
                     '$index',
                     style: ResponsiveHelper.bodyStyle(context).copyWith(
@@ -993,8 +993,8 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog> {
     int score = 60;
     score += ((user.averageRating) * 4).round();
     score += (user.totalWorkDays / 10).clamp(0, 15).round();
-    score -= (user.noShowCount ?? 0) * 5;
-    score -= (user.lateCount ?? 0) * 2;
+    score -= user.noShowCount * 5;
+    score -= user.lateCount * 2;
     
     return score.clamp(0, 100);
   }
@@ -1064,7 +1064,6 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog> {
   /// 더보기 메뉴 버튼
   Widget _buildMoreMenuButton(BuildContext context, Map<String, dynamic> item, bool isPending) {
     final app = item['application'] as ApplicationModel;
-    final user = item['user'] as UserModel?;
     final isConfirmed = app.status == 'CONFIRMED';
     // ✅ TO 자체가 장기인지 확인 (Application 기준 X)
     final isLongTerm = widget.toItem.to.isLongTerm;

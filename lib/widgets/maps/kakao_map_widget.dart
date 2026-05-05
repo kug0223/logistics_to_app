@@ -142,7 +142,7 @@ class _KakaoMapWidgetState extends State<KakaoMapWidget> {
         ),
         boxShadow: [
           BoxShadow(
-            color: Colors.grey.withOpacity(0.1),
+            color: Colors.grey.withValues(alpha: 0.1),
             blurRadius: 8,
             offset: const Offset(0, 2),
           ),
@@ -179,7 +179,7 @@ class _KakaoMapWidgetState extends State<KakaoMapWidget> {
                       Text(
                         '시뮬레이터에서는 시간이 걸릴 수 있습니다',
                         style: ResponsiveHelper.smallStyle(context).copyWith(
-                          color: theme.textTheme.bodySmall?.color?.withOpacity(0.7),
+                          color: theme.textTheme.bodySmall?.color?.withValues(alpha: 0.7),
                         ),
                         textAlign: TextAlign.center,
                       ),
@@ -198,11 +198,11 @@ class _KakaoMapWidgetState extends State<KakaoMapWidget> {
                   vertical: ResponsiveHelper.spacing(context, 4),
                 ),
                 decoration: BoxDecoration(
-                  color: Colors.white.withOpacity(0.9),
+                  color: Colors.white.withValues(alpha: 0.9),
                   borderRadius: BorderRadius.circular(8),
                   boxShadow: [
                     BoxShadow(
-                      color: Colors.black.withOpacity(0.1),
+                      color: Colors.black.withValues(alpha: 0.1),
                       blurRadius: 4,
                     ),
                   ],

@@ -115,12 +115,12 @@ class _TODateSelectorState extends State<TODateSelector> {
                 padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 12)),
                 decoration: BoxDecoration(
                   gradient: LinearGradient(
-                    colors: [theme.primaryColor, theme.primaryColor.withOpacity(0.8)],
+                    colors: [theme.primaryColor, theme.primaryColor.withValues(alpha: 0.8)],
                   ),
                   borderRadius: BorderRadius.circular(12),
                   boxShadow: [
                     BoxShadow(
-                      color: theme.primaryColor.withOpacity(0.3),
+                      color: theme.primaryColor.withValues(alpha: 0.3),
                       blurRadius: 8,
                       offset: const Offset(0, 4),
                     ),
@@ -333,7 +333,7 @@ class _TODateSelectorState extends State<TODateSelector> {
     
     return Expanded(
       child: Material(
-        color: isActive ? theme.primaryColor : theme.primaryColor.withOpacity(0.1),
+        color: isActive ? theme.primaryColor : theme.primaryColor.withValues(alpha: 0.1),
         borderRadius: BorderRadius.circular(12),
         child: InkWell(
           onTap: () => _handleQuickSelect(id),
@@ -414,7 +414,7 @@ class _TODateSelectorState extends State<TODateSelector> {
         border: Border.all(color: AppColors.grey200),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.05),
+            color: Colors.black.withValues(alpha: 0.05),
             blurRadius: 10,
             offset: const Offset(0, 2),
           ),
@@ -456,7 +456,7 @@ class _TODateSelectorState extends State<TODateSelector> {
             icon: Container(
               padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 8)),
               decoration: BoxDecoration(
-                color: theme.primaryColor.withOpacity(0.1),
+                color: theme.primaryColor.withValues(alpha: 0.1),
                 shape: BoxShape.circle,
               ),
               child: Icon(Icons.chevron_left, color: theme.primaryColor),
@@ -478,7 +478,7 @@ class _TODateSelectorState extends State<TODateSelector> {
             icon: Container(
               padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 8)),
               decoration: BoxDecoration(
-                color: theme.primaryColor.withOpacity(0.1),
+                color: theme.primaryColor.withValues(alpha: 0.1),
                 shape: BoxShape.circle,
               ),
               child: Icon(Icons.chevron_right, color: theme.primaryColor),
@@ -734,7 +734,7 @@ class _TODateSelectorState extends State<TODateSelector> {
             vertical: ResponsiveHelper.spacing(context, 10),
           ),
           decoration: BoxDecoration(
-            color: date != null ? theme.primaryColor.withOpacity(0.05) : AppColors.grey50,
+            color: date != null ? theme.primaryColor.withValues(alpha: 0.05) : AppColors.grey50,
             border: Border.all(
               color: date != null ? theme.primaryColor : AppColors.border,
               width: date != null ? 2 : 1,
@@ -802,12 +802,12 @@ class _TODateSelectorState extends State<TODateSelector> {
                 height: buttonWidth,
                 decoration: BoxDecoration(
                   gradient: isSelected
-                      ? LinearGradient(colors: [theme.primaryColor, theme.primaryColor.withOpacity(0.8)])
+                      ? LinearGradient(colors: [theme.primaryColor, theme.primaryColor.withValues(alpha: 0.8)])
                       : null,
                   color: isSelected ? null : (isWeekend ? AppColors.errorBg : AppColors.grey100),
                   borderRadius: BorderRadius.circular(12),
                   boxShadow: isSelected
-                      ? [BoxShadow(color: theme.primaryColor.withOpacity(0.3), blurRadius: 8, offset: const Offset(0, 4))]
+                      ? [BoxShadow(color: theme.primaryColor.withValues(alpha: 0.3), blurRadius: 8, offset: const Offset(0, 4))]
                       : null,
                 ),
                 child: Center(
@@ -831,7 +831,7 @@ class _TODateSelectorState extends State<TODateSelector> {
     return Container(
       padding: ResponsiveHelper.cardPadding(context),
       decoration: BoxDecoration(
-        gradient: LinearGradient(colors: [AppColors.successBg, AppColors.successLight.withOpacity(0.3)]),
+        gradient: LinearGradient(colors: [AppColors.successBg, AppColors.successLight.withValues(alpha: 0.3)]),
         borderRadius: BorderRadius.circular(12),
         border: Border.all(color: AppColors.successLight),
       ),

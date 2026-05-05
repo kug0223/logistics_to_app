@@ -45,13 +45,13 @@ class ScheduleCard extends StatelessWidget {
         borderRadius: BorderRadius.circular(16),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.04),
+            color: Colors.black.withValues(alpha: 0.04),
             blurRadius: 8,
             offset: const Offset(0, 2),
           ),
         ],
         border: application.status == 'CONFIRMED'
-            ? Border.all(color: AppColors.success.withOpacity(0.5), width: 1.5)
+            ? Border.all(color: AppColors.success.withValues(alpha: 0.5), width: 1.5)
             : null,
       ),
       child: Material(
@@ -127,7 +127,7 @@ class ScheduleCard extends StatelessWidget {
                       Container(
                         padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 3)),
                         decoration: BoxDecoration(
-                          color: AppColors.purple.withOpacity(0.15),
+                          color: AppColors.purple.withValues(alpha: 0.15),
                           borderRadius: BorderRadius.circular(4),
                         ),
                         child: Icon(
@@ -165,7 +165,7 @@ class ScheduleCard extends StatelessWidget {
                       vertical: ResponsiveHelper.spacing(context, 6),
                     ),
                     decoration: BoxDecoration(
-                      color: AppColors.purple.withOpacity(0.1),
+                      color: AppColors.purple.withValues(alpha: 0.1),
                       borderRadius: BorderRadius.circular(8),
                     ),
                     child: Row(
@@ -208,7 +208,7 @@ class ScheduleCard extends StatelessWidget {
         vertical: ResponsiveHelper.spacing(context, 4),
       ),
       decoration: BoxDecoration(
-        color: info.color.withOpacity(0.15),
+        color: info.color.withValues(alpha: 0.15),
         borderRadius: BorderRadius.circular(12),
       ),
       child: Row(
@@ -331,11 +331,11 @@ class ScheduleCard extends StatelessWidget {
             enabled: false,
             child: Row(
               children: [
-                Icon(Icons.cancel, color: AppColors.error.withOpacity(0.5), size: iconSize),
+                Icon(Icons.cancel, color: AppColors.error.withValues(alpha: 0.5), size: iconSize),
                 SizedBox(width: spacing),
                 Text(
                   '노쇼 처리됨', 
-                  style: ResponsiveHelper.bodyStyle(context, color: AppColors.error.withOpacity(0.5)),
+                  style: ResponsiveHelper.bodyStyle(context, color: AppColors.error.withValues(alpha: 0.5)),
                 ),
               ],
             ),
@@ -606,9 +606,9 @@ class ScheduleCard extends StatelessWidget {
             Container(
               padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 12)),
               decoration: BoxDecoration(
-                color: AppColors.error.withOpacity(0.1),
+                color: AppColors.error.withValues(alpha: 0.1),
                 borderRadius: BorderRadius.circular(12),
-                border: Border.all(color: AppColors.error.withOpacity(0.3)),
+                border: Border.all(color: AppColors.error.withValues(alpha: 0.3)),
               ),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -876,9 +876,9 @@ class ScheduleCard extends StatelessWidget {
             Container(
               padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 12)),
               decoration: BoxDecoration(
-                color: AppColors.info.withOpacity(0.1),
+                color: AppColors.info.withValues(alpha: 0.1),
                 borderRadius: BorderRadius.circular(12),
-                border: Border.all(color: AppColors.info.withOpacity(0.3)),
+                border: Border.all(color: AppColors.info.withValues(alpha: 0.3)),
               ),
               child: Row(
                 children: [
@@ -1014,9 +1014,9 @@ class ScheduleCard extends StatelessWidget {
             Container(
               padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 12)),
               decoration: BoxDecoration(
-                color: AppColors.info.withOpacity(0.1),
+                color: AppColors.info.withValues(alpha: 0.1),
                 borderRadius: BorderRadius.circular(12),
-                border: Border.all(color: AppColors.info.withOpacity(0.3)),
+                border: Border.all(color: AppColors.info.withValues(alpha: 0.3)),
               ),
               child: Row(
                 children: [

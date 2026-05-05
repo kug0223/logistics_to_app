@@ -26,7 +26,7 @@ class OcrVerificationDialog {
             Container(
               padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 8)),
               decoration: BoxDecoration(
-                color: Colors.green.withOpacity(0.1),
+                color: Colors.green.withValues(alpha: 0.1),
                 shape: BoxShape.circle,
               ),
               child: Icon(
@@ -53,9 +53,9 @@ class OcrVerificationDialog {
             Container(
               padding: ResponsiveHelper.cardPadding(context),
               decoration: BoxDecoration(
-                color: Colors.green.withOpacity(0.1),
+                color: Colors.green.withValues(alpha: 0.1),
                 borderRadius: BorderRadius.circular(12),
-                border: Border.all(color: Colors.green.withOpacity(0.3)),
+                border: Border.all(color: Colors.green.withValues(alpha: 0.3)),
               ),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -147,7 +147,7 @@ class OcrVerificationDialog {
             Container(
               padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 8)),
               decoration: BoxDecoration(
-                color: Colors.orange.withOpacity(0.1),
+                color: Colors.orange.withValues(alpha: 0.1),
                 shape: BoxShape.circle,
               ),
               child: Icon(
@@ -175,9 +175,9 @@ class OcrVerificationDialog {
               Container(
                 padding: ResponsiveHelper.cardPadding(context),
                 decoration: BoxDecoration(
-                  color: Colors.orange.withOpacity(0.1),
+                  color: Colors.orange.withValues(alpha: 0.1),
                   borderRadius: BorderRadius.circular(12),
-                  border: Border.all(color: Colors.orange.withOpacity(0.3)),
+                  border: Border.all(color: Colors.orange.withValues(alpha: 0.3)),
                 ),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -193,14 +193,14 @@ class OcrVerificationDialog {
                       context,
                       '입력 정보',
                       expectedInfo,
-                      AppColors.infoDark!,
+                      AppColors.infoDark,
                     ),
                     SizedBox(height: ResponsiveHelper.spacing(context, 8)),
                     _buildInfoRow(
                       context,
                       '인식 정보',
                       extractedInfo ?? '인식 실패',
-                      AppColors.warningDark!,
+                      AppColors.warningDark,
                     ),
                     if (reason != null) ...[
                       SizedBox(height: ResponsiveHelper.spacing(context, 12)),
@@ -283,7 +283,7 @@ class OcrVerificationDialog {
             Container(
               padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 8)),
               decoration: BoxDecoration(
-                color: Colors.red.withOpacity(0.1),
+                color: Colors.red.withValues(alpha: 0.1),
                 shape: BoxShape.circle,
               ),
               child: Icon(
