@@ -1,25 +1,21 @@
 ﻿import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:flutter/services.dart';
-import '';
 
 // Models
 import '../../models/core/business_model.dart';
 import '../../models/core/to_model.dart';
 import '../../models/core/work_detail_model.dart';
 import '../../models/core/business_work_type_model.dart';
-import '';
 
 // Services
 import '../../services/firestore_service.dart';
-import '';
 
 // Utils
 import '../../utils/responsive_helper.dart';
 import '../../utils/format_helper.dart';
 import '../../utils/toast_helper.dart';
 import '../../utils/image_helper.dart';
-import '';
 
 
 // Widgets
@@ -28,7 +24,6 @@ import '../../widgets/common/loading_widget.dart';
 import '../../widgets/work_type_icon.dart';
 import '../../widgets/maps/kakao_map_widget.dart';
 import '../../widgets/maps/full_map_dialog.dart';
-import '';
 import '../../theme/app_colors.dart';
 
 /// 📋 TO 공고 상세보기 화면
@@ -656,7 +651,7 @@ class _JobPostingScreenState extends State<JobPostingScreen> {
                         Icon(
                           Icons.payments_outlined,
                           size: ResponsiveHelper.iconSize(context, 18),
-                          color: Colors.green[600],
+                          color: AppColors.successMedium,
                         ),
                         SizedBox(width: ResponsiveHelper.spacing(context, 8)),
                         Text(
@@ -699,13 +694,13 @@ class _JobPostingScreenState extends State<JobPostingScreen> {
                       Icon(
                         Icons.schedule,
                         size: ResponsiveHelper.iconSize(context, 16),
-                        color: work.isTimeExpired ? Colors.red[400] : Colors.orange[600],
+                        color: work.isTimeExpired ? AppColors.errorFaded : AppColors.warningMedium,
                       ),
                       SizedBox(width: ResponsiveHelper.spacing(context, 6)),
                       Text(
                         '마감: ${FormatHelper.formatDateTime(work.applicationDeadline!)}',
                         style: ResponsiveHelper.smallStyle(context).copyWith(
-                          color: work.isTimeExpired ? Colors.red[400] : AppColors.warningDark,
+                          color: work.isTimeExpired ? AppColors.errorFaded : AppColors.warningDark,
                         ),
                       ),
                     ],
@@ -1466,7 +1461,7 @@ class _JobPostingScreenState extends State<JobPostingScreen> {
           child: Icon(
             icon,
             size: ResponsiveHelper.iconSize(context, 20),
-            color: isAvailable ? Colors.green[600] : AppColors.grey400,
+            color: isAvailable ? AppColors.successMedium : AppColors.grey400,
           ),
         ),
         SizedBox(width: ResponsiveHelper.spacing(context, 12)),

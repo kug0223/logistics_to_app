@@ -11,7 +11,7 @@ import '../../theme/app_colors.dart';
 /// ```dart
 /// StyledBadge(
 ///   label: '단기',
-///   backgroundColor: Colors.blue[100]!,
+///   backgroundColor: AppColors.infoExtraLight!,
 ///   textColor: AppColors.infoDark!,
 /// )
 /// ```
@@ -79,7 +79,7 @@ class StyledBadge extends StatelessWidget {
 /// ```dart
 /// StyledOutlineBadge(
 ///   label: '진행중',
-///   color: Colors.blue[600]!,
+///   color: AppColors.infoMedium!,
 /// )
 /// ```
 class StyledOutlineBadge extends StatelessWidget {
@@ -280,7 +280,7 @@ class StyledInfoCard extends StatelessWidget {
 /// ```dart
 /// StyledIconContainer(
 ///   icon: Icons.work,
-///   backgroundColor: Colors.blue[100]!,
+///   backgroundColor: AppColors.infoExtraLight!,
 ///   iconColor: AppColors.infoDark!,
 /// )
 /// ```

@@ -262,6 +262,38 @@ class AppColors {
   static const Color dividerLight = grey200;
   
   // ═══════════════════════════════════════════════════════════
+  // 🎨 중간 단계 색상
+  // ═══════════════════════════════════════════════════════════
+
+  // --- 초록 중간 단계 ---
+  static const Color successSoft    = Color(0xFF81C784);  // green[300]
+  static const Color successFaded   = Color(0xFF66BB6A);  // green[400]
+  static const Color successMedium  = Color(0xFF43A047);  // green[600]
+  static const Color successDeep    = Color(0xFF1B5E20);  // green[900]
+
+  // --- 파랑 중간 단계 ---
+  static const Color infoExtraLight = Color(0xFFBBDEFB);  // blue[100]
+  static const Color infoMedium     = Color(0xFF1E88E5);  // blue[600]
+  static const Color infoDeep       = Color(0xFF0D47A1);  // blue[900]
+
+  // --- 주황 중간 단계 ---
+  static const Color warningExtraLight = Color(0xFFFFE0B2); // orange[100]
+  static const Color warningSoft    = Color(0xFFFFB74D);  // orange[300]
+  static const Color warningFaded   = Color(0xFFFFA726);  // orange[400]
+  static const Color warningMedium  = Color(0xFFFB8C00);  // orange[600]
+  static const Color warningDeep    = Color(0xFFEF6C00);  // orange[800]
+  static const Color warningDarkest = Color(0xFFE65100);  // orange[900]
+
+  // --- 빨강 중간 단계 ---
+  static const Color errorFaded     = Color(0xFFEF5350);  // red[400]
+  static const Color errorMedium    = Color(0xFFE53935);  // red[600]
+  static const Color errorDeep      = Color(0xFFB71C1C);  // red[900]
+
+  // --- 황금/노랑 ---
+  static const Color amberDark      = Color(0xFFFFA000);  // amber[700]
+  static const Color yellowDark     = Color(0xFFFBC02D);  // yellow[700]
+
+  // ═══════════════════════════════════════════════════════════
   // 🛠️ 헬퍼 메서드
   // ═══════════════════════════════════════════════════════════
   

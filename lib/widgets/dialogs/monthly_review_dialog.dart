@@ -1,9 +1,8 @@
-// lib/widgets/dialogs/monthly_review_dialog.dart
+﻿// lib/widgets/dialogs/monthly_review_dialog.dart
 
 import 'package:flutter/material.dart';
 import '../../utils/responsive_helper.dart';
 import '../../theme/app_colors.dart';
-import '../../models/core/monthly_review_model.dart';
 import '../../models/settings/trust_settings_model.dart';
 import '../../services/monthly_review_service.dart';
 import '../../services/tooltip_service.dart';

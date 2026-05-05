@@ -3,33 +3,26 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
-import '';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:intl/intl.dart';
-import '';
 
 // Providers
 import '../../providers/user_provider.dart';
-import '';
 
 // Models
 import '../../models/core/user_model.dart';
-import '';
 
 // Services
 import '../../services/firestore_service.dart';
 import '../../services/auth_service.dart';
-import '';
 
 // Utils
 import '../../utils/responsive_helper.dart';
 import '../../utils/toast_helper.dart';
-import '';
 
 // Widgets
 import '../../widgets/common/common_widgets.dart';
 import '../../widgets/inputs/daum_address_search.dart';
-import '';
 import '../../widgets/dialogs/styled_dialog.dart';  // ⭐ 추가
 import '../../theme/app_colors.dart';
 
@@ -327,7 +320,7 @@ class _ProfileEditScreenState extends State<ProfileEditScreen> {
                         title: '비밀번호 변경 완료',
                         subtitle: null,
                         icon: Icons.check_circle,
-                        headerColor: Colors.green[600],
+                        headerColor: AppColors.successMedium,
                         content: Text(
                           '비밀번호가 성공적으로 변경되었습니다.',
                           style: ResponsiveHelper.bodyStyle(context),
@@ -662,7 +655,7 @@ class _ProfileEditScreenState extends State<ProfileEditScreen> {
                 ? (_isEmailVerified
                     ? Icon(
                         Icons.check_circle,
-                        color: Colors.green[600],
+                        color: AppColors.successMedium,
                         size: ResponsiveHelper.iconSize(context, 24),
                       )
                     : TextButton(

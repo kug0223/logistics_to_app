@@ -4,7 +4,6 @@ import '../../../../models/core/work_detail_model.dart';
 import '../../../../utils/responsive_helper.dart';
 import '../../../../utils/format_helper.dart';
 import '../../../../widgets/work_type_icon.dart';
-import '';
 import '../../../../theme/app_colors.dart';
 
 /// ✨ TO 업무 상세 카드
@@ -307,14 +306,14 @@ class TOWorkDetailCard extends StatelessWidget {
                               vertical: ResponsiveHelper.spacing(context, 2),
                             ),
                             decoration: BoxDecoration(
-                              color: Colors.orange[100],
+                              color: AppColors.warningExtraLight,
                               borderRadius: BorderRadius.circular(8),
                             ),
                             child: Text(
                               '$currentCount명 확정',
                               style: ResponsiveHelper.tinyStyle(
                                 context,
-                                color: Colors.orange[900],
+                                color: AppColors.warningDarkest,
                               ).copyWith(fontWeight: FontWeight.bold),
                             ),
                           ),

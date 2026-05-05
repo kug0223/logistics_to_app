@@ -9,14 +9,12 @@ import '../../utils/calendar_helper.dart';
 import '../../utils/responsive_helper.dart';
 import '../../widgets/common/loading_widget.dart';
 import '../../widgets/calendar/schedule_calendar.dart';
-import '../../widgets/user/cards/monthly_stats_card.dart';
 import '../../widgets/calendar/schedule_card.dart';
 import '../../widgets/dialogs/long_term_work_management_dialog.dart';
 import 'dialogs/my_requests_dialog.dart';
 import '../../models/core/id_card_access_request_model.dart';
 import '../../models/core/attendance_model.dart';
 import 'all_to_list_screen.dart';
-import '';
 import '../../theme/app_colors.dart';
 
 /// ✨ 내 근무 스케줄 화면 (홈 화면 디자인 통일)
@@ -414,11 +412,11 @@ class _MyScheduleScreenState extends State<MyScheduleScreen> {
             child: Row(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                _buildCompactLegendItem(Colors.green[600]!, '확정', false),
+                _buildCompactLegendItem(AppColors.successMedium!, '확정', false),
                 SizedBox(width: ResponsiveHelper.spacing(context, 12)),
-                _buildCompactLegendItem(Colors.green[400]!, '고정', true),
+                _buildCompactLegendItem(AppColors.successFaded!, '고정', true),
                 SizedBox(width: ResponsiveHelper.spacing(context, 12)),
-                _buildCompactLegendItem(Colors.orange[600]!, '대기', false),
+                _buildCompactLegendItem(AppColors.warningMedium!, '대기', false),
                 SizedBox(width: ResponsiveHelper.spacing(context, 12)),
                 _buildCompactLegendItem(AppColors.grey400!, '휴무', true),
               ],

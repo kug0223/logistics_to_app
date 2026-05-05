@@ -8,7 +8,6 @@ import '../../../providers/user_provider.dart';
 import '../../../utils/toast_helper.dart';
 import '../../../utils/format_helper.dart';
 import '../../../widgets/work_type_icon.dart';
-import '';
 import '../../../theme/app_colors.dart';
 
 /// 지원하기 확인 다이얼로그

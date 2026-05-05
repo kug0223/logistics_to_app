@@ -1,5 +1,6 @@
-import 'package:flutter/material.dart';
+﻿import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import '../../../theme/app_colors.dart';
 import 'package:intl/intl.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import '../../../providers/user_provider.dart';
@@ -421,7 +422,7 @@ class _IntegratedWorkforceScreenState extends State<IntegratedWorkforceScreen> {
             ListTile(
               leading: Icon(
                 Icons.star_border, 
-                color: Colors.amber[700],
+                color: AppColors.amberDark,
                 size: ResponsiveHelper.iconSize(context, 24),
               ),
               title: Text(

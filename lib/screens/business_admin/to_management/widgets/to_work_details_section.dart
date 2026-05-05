@@ -4,7 +4,6 @@ import '../../../../models/core/work_detail_model.dart';
 import '../../../../utils/responsive_helper.dart';
 import 'to_section_container.dart';
 import 'to_work_detail_card.dart';
-import '';
 import '../../../../theme/app_colors.dart';
 
 /// ✨ TO 업무 상세 섹션
@@ -162,7 +161,7 @@ class TOWorkDetailsSection extends StatelessWidget {
             child: Text(
               '업무 유형을 먼저 등록해주세요',
               style: ResponsiveHelper.bodyStyle(context).copyWith(
-                color: Colors.orange[900],
+                color: AppColors.warningDarkest,
               ),
             ),
           ),

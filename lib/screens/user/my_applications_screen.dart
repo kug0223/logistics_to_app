@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+﻿import 'package:flutter/material.dart';
 import 'package:flutter/gestures.dart';
 import 'package:provider/provider.dart';
 import 'package:intl/intl.dart';
@@ -8,12 +8,10 @@ import '../../models/core/to_model.dart';
 import '../../services/firestore_service.dart';
 import '../../providers/user_provider.dart';
 import '../../widgets/common/loading_widget.dart';
-import '../../widgets/common/common_widgets.dart';
 import '../../widgets/work_type_icon.dart';
 import '../../utils/toast_helper.dart';
 import '../../utils/dialog_helper.dart';
 import '../../utils/responsive_helper.dart';
-import '../../utils/format_helper.dart';
 import '../../theme/app_colors.dart';
 
 /// 내 지원 내역 화면 (리팩토링 버전)

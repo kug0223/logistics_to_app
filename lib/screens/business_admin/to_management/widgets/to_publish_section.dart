@@ -2,7 +2,6 @@
 import 'package:intl/intl.dart';
 import '../../../../utils/responsive_helper.dart';
 import 'to_section_container.dart';
-import '';
 import '../../../../theme/app_colors.dart';
 
 /// ✨ TO 공개 설정 섹션
@@ -215,7 +214,7 @@ class TOPublishSection extends StatelessWidget {
                 decoration: BoxDecoration(
                   color: Colors.white,
                   borderRadius: BorderRadius.circular(8),
-                  border: Border.all(color: Colors.orange[300]!),
+                  border: Border.all(color: AppColors.warningSoft!),
                 ),
                 child: DropdownButtonHideUnderline(
                   child: DropdownButton<int>(
@@ -264,7 +263,7 @@ class TOPublishSection extends StatelessWidget {
                 decoration: BoxDecoration(
                   color: Colors.white,
                   borderRadius: BorderRadius.circular(8),
-                  border: Border.all(color: Colors.orange[300]!),
+                  border: Border.all(color: AppColors.warningSoft!),
                 ),
                 child: DropdownButtonHideUnderline(
                   child: DropdownButton<String>(

@@ -3,11 +3,9 @@ import 'package:provider/provider.dart';
 import '../../providers/notification_provider.dart';
 import '../../models/core/notification_model.dart';
 import '../../widgets/common/notification_card.dart';
-import '../../widgets/common/common_widgets.dart';
 import '../../utils/responsive_helper.dart';
 import '../../utils/toast_helper.dart';
 import '../../providers/user_provider.dart';
-import '';
 // 네비게이션 대상 화면들
 import '../user/my_applications_screen.dart';
 import '../user/my_schedule_screen.dart';
@@ -17,9 +15,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import '../../models/core/to_model.dart';
 import '../../models/core/work_detail_model.dart';
 import '../../models/ui/admin_to_list_ui_models.dart';
-import '../../services/firestore_service.dart';
 import '../business_admin/dialogs/work_applicants_dialog.dart';
-import '';
 import '../../theme/app_colors.dart';
 
 /// 알림 목록 화면

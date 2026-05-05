@@ -11,7 +11,6 @@ import '../../utils/format_helper.dart';
 import 'package:intl/intl.dart';
 import '../../services/storage_service.dart';
 import '../../utils/navigation_helper.dart';
-import '';
 import '../../theme/app_colors.dart';
 
 /// 📄 내 서류 관리 화면 (역할별 분기)
@@ -339,7 +338,7 @@ class _DocumentManagementScreenState extends State<DocumentManagementScreen> {
                         '사업자등록증 등록 완료',
                         style: ResponsiveHelper.subtitleStyle(context).copyWith(
                           fontWeight: FontWeight.bold,
-                          color: Colors.green[900],
+                          color: AppColors.successDeep,
                         ),
                       ),
                       SizedBox(height: ResponsiveHelper.spacing(context, 4)),
@@ -859,7 +858,7 @@ class _DocumentManagementScreenState extends State<DocumentManagementScreen> {
                         '신분증 등록 완료',
                         style: ResponsiveHelper.subtitleStyle(context).copyWith(
                           fontWeight: FontWeight.bold,
-                          color: Colors.green[900],
+                          color: AppColors.successDeep,
                         ),
                       ),
                       SizedBox(height: ResponsiveHelper.spacing(context, 4)),
@@ -1007,7 +1006,7 @@ class _DocumentManagementScreenState extends State<DocumentManagementScreen> {
                     Text(
                       '통장사본 등록 완료',
                       style: ResponsiveHelper.smallStyle(context).copyWith(
-                        color: Colors.green[900],
+                        color: AppColors.successDeep,
                       ),
                     ),
                   ],
@@ -1033,7 +1032,7 @@ class _DocumentManagementScreenState extends State<DocumentManagementScreen> {
                       child: Text(
                         '통장사본 미등록',
                         style: ResponsiveHelper.smallStyle(context).copyWith(
-                          color: Colors.orange[900],
+                          color: AppColors.warningDarkest,
                         ),
                       ),
                     ),

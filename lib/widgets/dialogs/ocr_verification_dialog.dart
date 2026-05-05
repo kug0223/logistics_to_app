@@ -2,7 +2,6 @@
 
 import 'package:flutter/material.dart';
 import '../../utils/responsive_helper.dart';
-import '';
 import '../../theme/app_colors.dart';
 
 /// 📄 OCR 검증 결과 다이얼로그
@@ -80,7 +79,7 @@ class OcrVerificationDialog {
                         child: Text(
                           extractedInfo,
                           style: ResponsiveHelper.bodyStyle(context).copyWith(
-                            color: Colors.green[900],
+                            color: AppColors.successDeep,
                           ),
                         ),
                       ),
@@ -110,7 +109,7 @@ class OcrVerificationDialog {
           ElevatedButton(
             onPressed: () => Navigator.pop(context, true),
             style: ElevatedButton.styleFrom(
-              backgroundColor: Colors.green[600],
+              backgroundColor: AppColors.successMedium,
               shape: RoundedRectangleBorder(
                 borderRadius: BorderRadius.circular(12),
               ),
@@ -248,7 +247,7 @@ class OcrVerificationDialog {
           ElevatedButton(
             onPressed: () => Navigator.pop(context, true),
             style: ElevatedButton.styleFrom(
-              backgroundColor: Colors.orange[600],
+              backgroundColor: AppColors.warningMedium,
               shape: RoundedRectangleBorder(
                 borderRadius: BorderRadius.circular(12),
               ),

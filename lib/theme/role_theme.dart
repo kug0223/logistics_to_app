@@ -12,7 +12,8 @@ class RoleTheme {
   static ThemeData get superAdminTheme {
     return ThemeData(
       useMaterial3: true,
-      
+      scaffoldBackgroundColor: const Color(0xFFF5F5F5),
+
       // 기본 색상
       colorScheme: ColorScheme.fromSeed(
         seedColor: const Color(0xFF6A1B9A), // 딥 퍼플
@@ -20,12 +21,10 @@ class RoleTheme {
         secondary: const Color(0xFF9C27B0),
         tertiary: const Color(0xFFBA68C8),
         surface: Colors.white,
-        background: const Color(0xFFF5F5F5),
         error: const Color(0xFFD32F2F),
         onPrimary: Colors.white,
         onSecondary: Colors.white,
         onSurface: const Color(0xFF212121),
-        onBackground: const Color(0xFF212121),
         brightness: Brightness.light,
       ),
       
@@ -124,7 +123,8 @@ class RoleTheme {
   static ThemeData get businessAdminTheme {
     return ThemeData(
       useMaterial3: true,
-      
+      scaffoldBackgroundColor: const Color(0xFFF5F5F5),
+
       // 기본 색상
       colorScheme: ColorScheme.fromSeed(
         seedColor: const Color(0xFF1976D2), // 블루
@@ -132,12 +132,10 @@ class RoleTheme {
         secondary: const Color(0xFF2196F3),
         tertiary: const Color(0xFF64B5F6),
         surface: Colors.white,
-        background: const Color(0xFFF5F5F5),
         error: const Color(0xFFD32F2F),
         onPrimary: Colors.white,
         onSecondary: Colors.white,
         onSurface: const Color(0xFF212121),
-        onBackground: const Color(0xFF212121),
         brightness: Brightness.light,
       ),
       
@@ -235,7 +233,8 @@ class RoleTheme {
   static ThemeData get workerTheme {
     return ThemeData(
       useMaterial3: true,
-      
+      scaffoldBackgroundColor: const Color(0xFFF5F5F5),
+
       // 기본 색상
       colorScheme: ColorScheme.fromSeed(
         seedColor: const Color(0xFF388E3C), // 그린
@@ -243,12 +242,10 @@ class RoleTheme {
         secondary: const Color(0xFF4CAF50),
         tertiary: const Color(0xFF81C784),
         surface: Colors.white,
-        background: const Color(0xFFF5F5F5),
         error: const Color(0xFFD32F2F),
         onPrimary: Colors.white,
         onSecondary: Colors.white,
         onSurface: const Color(0xFF212121),
-        onBackground: const Color(0xFF212121),
         brightness: Brightness.light,
       ),
       

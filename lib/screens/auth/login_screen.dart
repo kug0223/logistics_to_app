@@ -1,29 +1,23 @@
 ﻿import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-import '';
 
 // Providers
 import '../../providers/user_provider.dart';
-import '';
 
 // Utils
 import '../../utils/responsive_helper.dart';
 import '../../utils/toast_helper.dart';
-import '';
 
 // Widgets
 import '../../widgets/common/loading_widget.dart';
 import '../../widgets/alfit_splash_logo_widget.dart';
 import '../../widgets/dialogs/styled_dialog.dart';
-import '';
 
 // Services
 import '../../services/auth_service.dart';
-import '';
 
 // Screens
 import 'register_screen.dart';
-import '';
 import '../../theme/app_colors.dart';
 
 /// ALfit 로그인 화면 - 포커스 이동 + 아이디/비밀번호 찾기
@@ -135,7 +129,7 @@ class _LoginScreenState extends State<LoginScreen> {
                       title: '아이디 찾기 완료',
                       subtitle: null,
                       icon: Icons.check_circle,
-                      headerColor: Colors.green[600],
+                      headerColor: AppColors.successMedium,
                       content: Column(
                         mainAxisSize: MainAxisSize.min,
                         children: [
@@ -220,7 +214,7 @@ class _LoginScreenState extends State<LoginScreen> {
                     title: '아이디 찾기 완료',
                     subtitle: null,
                     icon: Icons.check_circle,
-                    headerColor: Colors.green[600],
+                    headerColor: AppColors.successMedium,
                     content: Column(
                       mainAxisSize: MainAxisSize.min,
                       children: [
@@ -391,7 +385,7 @@ class _LoginScreenState extends State<LoginScreen> {
                         title: '이메일 인증 완료',
                         subtitle: null,
                         icon: Icons.mark_email_read,
-                        headerColor: Colors.green[600],
+                        headerColor: AppColors.successMedium,
                         content: Column(
                           mainAxisSize: MainAxisSize.min,
                           children: [
@@ -415,7 +409,7 @@ class _LoginScreenState extends State<LoginScreen> {
                                     child: Text(
                                       '링크는 24시간 동안 유효합니다.',
                                       style: ResponsiveHelper.smallStyle(context).copyWith(
-                                        color: Colors.blue[900],
+                                        color: AppColors.infoDeep,
                                       ),
                                     ),
                                   ),
@@ -461,7 +455,7 @@ class _LoginScreenState extends State<LoginScreen> {
                       title: '이메일 인증 완료',
                       subtitle: null,
                       icon: Icons.mark_email_read,
-                      headerColor: Colors.green[600],
+                      headerColor: AppColors.successMedium,
                       content: Column(
                         mainAxisSize: MainAxisSize.min,
                         children: [
@@ -485,7 +479,7 @@ class _LoginScreenState extends State<LoginScreen> {
                                   child: Text(
                                     '링크는 24시간 동안 유효합니다.',
                                     style: ResponsiveHelper.smallStyle(context).copyWith(
-                                      color: Colors.blue[900],
+                                      color: AppColors.infoDeep,
                                     ),
                                   ),
                                 ),

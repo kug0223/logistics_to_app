@@ -12,7 +12,6 @@ import '../../utils/format_helper.dart';
 import '../../utils/responsive_helper.dart';
 import 'work_type_detail_screen.dart';
 import '../../widgets/dialogs/styled_dialog.dart';
-import '';
 import '../../theme/app_colors.dart';
 
 /// ✨ 세련된 업무 유형 관리 화면

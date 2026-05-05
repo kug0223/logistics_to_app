@@ -1,6 +1,7 @@
-// lib/utils/document_upload_helper.dart
+﻿// lib/utils/document_upload_helper.dart
 import 'dart:io';
 import 'package:flutter/material.dart';
+import '../theme/app_colors.dart';
 import '../widgets/dialogs/ocr_verification_dialog.dart';
 import 'ocr_verification_helper.dart';
 import 'responsive_helper.dart';
@@ -147,7 +148,7 @@ class DocumentUploadHelper {
                 Text('이미지를 선택할 수 없습니다'),
               ],
             ),
-            backgroundColor: Colors.red[600],
+            backgroundColor: AppColors.errorMedium,
             behavior: SnackBarBehavior.floating,
             shape: RoundedRectangleBorder(
               borderRadius: BorderRadius.circular(10),
@@ -275,7 +276,7 @@ class DocumentUploadHelper {
                 Text('이미지를 선택할 수 없습니다'),
               ],
             ),
-            backgroundColor: Colors.red[600],
+            backgroundColor: AppColors.errorMedium,
             behavior: SnackBarBehavior.floating,
             shape: RoundedRectangleBorder(
               borderRadius: BorderRadius.circular(10),
@@ -310,7 +311,7 @@ class DocumentUploadHelper {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
               content: Text('사업자등록증이 선택되었습니다'),
-              backgroundColor: Colors.green[600],
+              backgroundColor: AppColors.successMedium,
             ),
           );
         }
@@ -408,7 +409,7 @@ class DocumentUploadHelper {
                 Text('이미지를 선택할 수 없습니다'),
               ],
             ),
-            backgroundColor: Colors.red[600],
+            backgroundColor: AppColors.errorMedium,
             behavior: SnackBarBehavior.floating,
             shape: RoundedRectangleBorder(
               borderRadius: BorderRadius.circular(10),

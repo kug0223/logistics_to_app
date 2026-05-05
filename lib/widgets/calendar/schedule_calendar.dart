@@ -2,7 +2,6 @@
 import 'package:table_calendar/table_calendar.dart';
 import '../../models/core/application_model.dart';
 import '../../utils/calendar_helper.dart';
-import '';
 import '../../theme/app_colors.dart';
 
 /// 근무 스케줄 캘린더 위젯 (workforce_calendar_view 스타일 통일)
@@ -104,7 +103,7 @@ class ScheduleCalendar extends StatelessWidget {
                 ));
               } else {
                 markers.add(_buildMarker(
-                  Colors.amber[700]!,  // ← workforce_calendar_view와 동일
+                  AppColors.amberDark!,  // ← workforce_calendar_view와 동일
                   isLongTerm: true,
                 ));
               }
@@ -117,16 +116,16 @@ class ScheduleCalendar extends StatelessWidget {
             final hasLongPending = longTermApps.any((app) => app.status == 'PENDING');
             
             if (hasShortPending) {
-              markers.add(_buildMarker(Colors.orange[600]!, isLongTerm: false));
+              markers.add(_buildMarker(AppColors.warningMedium!, isLongTerm: false));
             }
             if (hasLongPending) {
-              markers.add(_buildMarker(Colors.orange[400]!, isLongTerm: true));
+              markers.add(_buildMarker(AppColors.warningFaded!, isLongTerm: true));
             }
           }
           
           // ✨ 거절 마커 (최대 3개까지만)
           if (hasRejected && markers.length < 3) {
-            markers.add(_buildMarker(Colors.red[600]!, isLongTerm: false));
+            markers.add(_buildMarker(AppColors.errorMedium!, isLongTerm: false));
           }
           
           // 최대 3개까지만 표시

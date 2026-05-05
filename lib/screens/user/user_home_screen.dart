@@ -11,9 +11,7 @@ import 'my_applications_screen.dart';
 import '../common/settings_screen.dart';
 import '../common/notification_screen.dart';
 import '../../widgets/common/notification_badge.dart';
-import '../../providers/notification_provider.dart';
 import '../../models/core/user_model.dart';
-import '';
 import '../../theme/app_colors.dart';
 
 /// 일반 사용자 홈 화면 - 세련된 디자인

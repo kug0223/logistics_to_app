@@ -6,14 +6,11 @@ import '../../providers/user_provider.dart';
 import '../../widgets/common/loading_widget.dart';
 import '../../utils/responsive_helper.dart';
 import '../../services/auth_service.dart';
-import '';
 import '../../services/storage_service.dart';  // ✅ 추가
 import '../../widgets/inputs/daum_address_search.dart';
 import '../../utils/document_upload_helper.dart';
-import '';
 import '../../utils/toast_helper.dart';  // ✅ 추가
 import '../business_admin/business_form_screen.dart';
-import '';
 
 import 'package:flutter/foundation.dart' show kIsWeb;
 import '../../theme/app_colors.dart';
@@ -291,7 +288,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text('주소가 입력되었습니다'),
-          backgroundColor: Colors.green[600],
+          backgroundColor: AppColors.successMedium,
           duration: Duration(seconds: 2),
         ),
       );
@@ -432,7 +429,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
                         '⚠️ 사업자등록증이 등록되지 않았습니다.',
                         style: ResponsiveHelper.bodyStyle(context).copyWith(
                           fontWeight: FontWeight.bold,
-                          color: Colors.orange[900],
+                          color: AppColors.warningDarkest,
                         ),
                       ),
                       SizedBox(height: ResponsiveHelper.spacing(context, 8)),
@@ -440,7 +437,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
                         '• 사업자등록증 미등록 시 사업장 등록이 불가합니다.\n'
                         '• 설정 > 내 서류 관리에서 등록할 수 있습니다.',
                         style: ResponsiveHelper.smallStyle(context).copyWith(
-                          color: Colors.orange[800],
+                          color: AppColors.warningDeep,
                         ),
                       ),
                     ],
@@ -627,7 +624,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: const Text('회원가입이 완료되었습니다! 로그인해주세요.'),
-            backgroundColor: Colors.green[600],
+            backgroundColor: AppColors.successMedium,
           ),
         );
         Navigator.pop(context);
@@ -1237,8 +1234,8 @@ class _RegisterScreenState extends State<RegisterScreen> {
                           style: ResponsiveHelper.smallStyle(
                             context,
                             color: _parsedBirthDate != null && _parsedGender != null
-                                ? Colors.green[900]
-                                : Colors.red[900],
+                                ? AppColors.successDeep
+                                : AppColors.errorDeep,
                           ),
                         ),
                       ),
@@ -1273,7 +1270,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
                         )
                       : Icon(
                           Icons.check_circle,
-                          color: Colors.green[600],
+                          color: AppColors.successMedium,
                           size: ResponsiveHelper.iconSize(context, 22),
                         ),
               validator: (value) {
@@ -1458,7 +1455,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
                           : _passwordStrength == 1
                               ? Colors.orange
                               : _passwordStrength == 2
-                                  ? Colors.yellow[700]
+                                  ? AppColors.yellowDark
                                   : Colors.green,
                     ),
                   ),
@@ -1525,7 +1522,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
                   '어떻게 이용하시나요?',
                   style: ResponsiveHelper.bodyStyle(
                     context,
-                    color: Colors.blue[900],
+                    color: AppColors.infoDeep,
                   ),
                 ),
               ),
@@ -1538,7 +1535,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
           icon: Icons.person,
           title: '지원자로 이용',
           description: '공고에 지원하고 일정을 관리합니다',
-          color: Colors.green[600]!,
+          color: AppColors.successMedium!,
           features: ['공고 검색 및 지원', '나의 근무일정 관리', '지원 내역 확인'],
         ),
         SizedBox(height: ResponsiveHelper.spacing(context, 12)),
@@ -1547,7 +1544,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
           icon: Icons.business_center,
           title: '사업장 관리자로 이용',
           description: '공고를 생성하고 지원자를 관리합니다',
-          color: Colors.blue[600]!,
+          color: AppColors.infoMedium!,
           features: ['공고 생성 및 관리', '지원자 승인/거절', '인력 현황 파악'],
         ),
       ],
@@ -1565,7 +1562,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
           padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 12)),
           decoration: BoxDecoration(
             gradient: LinearGradient(
-              colors: [AppColors.infoBg!, Colors.blue[100]!],
+              colors: [AppColors.infoBg!, AppColors.infoExtraLight!],
             ),
             borderRadius: BorderRadius.circular(14),
             border: Border.all(color: AppColors.infoLight!, width: 1.5),
@@ -1577,7 +1574,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
                   Container(
                     padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 10)),
                     decoration: BoxDecoration(
-                      color: Colors.blue[600],
+                      color: AppColors.infoMedium,
                       shape: BoxShape.circle,
                     ),
                     child: Icon(
@@ -1595,7 +1592,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
                           '서류 제출 안내',
                           style: ResponsiveHelper.subtitleStyle(context).copyWith(
                             fontWeight: FontWeight.bold,
-                            color: Colors.blue[900],
+                            color: AppColors.infoDeep,
                           ),
                         ),
                         Text(
@@ -1620,9 +1617,9 @@ class _RegisterScreenState extends State<RegisterScreen> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    _buildNoticeItem('✓ 신분증과 통장의 이름이 일치해야 합니다', Colors.blue[900]!),
+                    _buildNoticeItem('✓ 신분증과 통장의 이름이 일치해야 합니다', AppColors.infoDeep!),
                     SizedBox(height: ResponsiveHelper.spacing(context, 4)),
-                    _buildNoticeItem('✓ 선명한 사진을 촬영해주세요', Colors.blue[900]!),
+                    _buildNoticeItem('✓ 선명한 사진을 촬영해주세요', AppColors.infoDeep!),
                   ],
                 ),
               ),
@@ -1727,7 +1724,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
               if (_idCardImagePath != null)
                 Icon(
                   Icons.check_circle,
-                  color: Colors.green[600],
+                  color: AppColors.successMedium,
                   size: ResponsiveHelper.iconSize(context, 22),
                 ),
             ],
@@ -1743,7 +1740,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
                 borderRadius: BorderRadius.circular(10),
                 border: Border.all(
                   color: _idCardImagePath != null 
-                      ? Colors.green[300]! 
+                      ? AppColors.successSoft! 
                       : AppColors.grey300!,
                   width: 2,
                 ),
@@ -1758,7 +1755,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
                           : Icons.add_photo_alternate,
                       size: ResponsiveHelper.iconSize(context, 40),
                       color: _idCardImagePath != null 
-                          ? Colors.green[600] 
+                          ? AppColors.successMedium 
                           : AppColors.grey400,
                     ),
                     SizedBox(height: ResponsiveHelper.spacing(context, 6)),
@@ -1890,7 +1887,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
                     '예금주: ${_nameController.text.isEmpty ? "(이름 입력 필요)" : _nameController.text}',
                     style: ResponsiveHelper.smallStyle(
                       context,
-                      color: Colors.green[900],
+                      color: AppColors.successDeep,
                     ),
                   ),
                 ),
@@ -1910,7 +1907,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
                 borderRadius: BorderRadius.circular(10),
                 border: Border.all(
                   color: _bankbookImagePath != null 
-                      ? Colors.green[300]! 
+                      ? AppColors.successSoft! 
                       : AppColors.grey300!,
                   width: 2,
                 ),
@@ -1925,7 +1922,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
                           : Icons.add_photo_alternate,
                       size: ResponsiveHelper.iconSize(context, 40),
                       color: _bankbookImagePath != null 
-                          ? Colors.green[600] 
+                          ? AppColors.successMedium 
                           : AppColors.grey400,
                     ),
                     SizedBox(height: ResponsiveHelper.spacing(context, 6)),

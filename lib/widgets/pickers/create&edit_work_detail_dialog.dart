@@ -8,7 +8,6 @@ import '../../models/work_detail_input.dart';
 import '../work_type_icon.dart';
 import '../../utils/format_helper.dart';
 import '../../models/core/work_detail_model.dart';
-import '';
 import '../../theme/app_colors.dart';
 
 // ============================================================
@@ -376,7 +375,7 @@ class WorkDetailDialog {
                   '업무유형 변경 불가',
                   style: ResponsiveHelper.bodyStyle(context).copyWith(
                     fontWeight: FontWeight.bold,
-                    color: Colors.orange[800],
+                    color: AppColors.warningDeep,
                   ),
                 ),
                 SizedBox(height: ResponsiveHelper.spacing(context, 4)),
@@ -415,7 +414,7 @@ class WorkDetailDialog {
               child: Icon(
                 Icons.people,
                 size: ResponsiveHelper.iconSize(context, 18),
-                color: Colors.purple[700],
+                color: AppColors.purpleDark,
               ),
             ),
             SizedBox(width: ResponsiveHelper.spacing(context, 12)),
@@ -447,7 +446,7 @@ class WorkDetailDialog {
             suffixText: '명',
             suffixStyle: ResponsiveHelper.bodyStyle(context).copyWith(
               fontWeight: FontWeight.bold,
-              color: Colors.purple[700],
+              color: AppColors.purpleDark,
             ),
             helperText: currentCount > 0
                 ? '현재 $currentCount명 확정됨 (최소 $currentCount명 이상)'
@@ -1049,7 +1048,7 @@ class WorkDetailDialog {
               child: Icon(
                 Icons.currency_exchange,
                 size: ResponsiveHelper.iconSize(context, 18),
-                color: Colors.amber[700],
+                color: AppColors.amberDark,
               ),
             ),
             SizedBox(width: ResponsiveHelper.spacing(context, 12)),
@@ -1112,7 +1111,7 @@ class WorkDetailDialog {
               gradient: LinearGradient(
                 colors: [
                   AppColors.infoBg!,
-                  Colors.blue[100]!,
+                  AppColors.infoExtraLight!,
                 ],
               ),
               borderRadius: BorderRadius.circular(8),
@@ -1130,7 +1129,7 @@ class WorkDetailDialog {
                     '2025년 최저시급: ${LaborStandards.formatCurrencyWithUnit(LaborStandards.currentMinimumWage)}',
                     style: ResponsiveHelper.smallStyle(
                       context,
-                      color: Colors.blue[900],
+                      color: AppColors.infoDeep,
                     ),
                   ),
                 ),
@@ -1162,7 +1161,7 @@ class WorkDetailDialog {
               child: Icon(
                 Icons.people,
                 size: ResponsiveHelper.iconSize(context, 18),
-                color: Colors.purple[700],
+                color: AppColors.purpleDark,
               ),
             ),
             SizedBox(width: ResponsiveHelper.spacing(context, 12)),
@@ -1194,7 +1193,7 @@ class WorkDetailDialog {
             suffixText: '명',
             suffixStyle: ResponsiveHelper.bodyStyle(context).copyWith(
               fontWeight: FontWeight.bold,
-              color: Colors.purple[700],
+              color: AppColors.purpleDark,
             ),
             prefixIcon: Icon(
               Icons.group_add,

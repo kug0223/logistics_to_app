@@ -5,41 +5,33 @@ import 'package:firebase_storage/firebase_storage.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:provider/provider.dart';
 import 'dart:io';
-import '';
 
 // Models
 import '../../models/core/business_model.dart';
-import '';
 
 // Providers
 import '../../providers/user_provider.dart';
-import '';
 
 // Helper
 import '../../utils/image_helper.dart';
-import '';
 // Services
 import '../../services/firestore_service.dart';
 import '../../services/storage_service.dart';
-import '';
 
 // Utils
 import '../../utils/responsive_helper.dart';
 import '../../utils/toast_helper.dart';
 import '../../utils/constants.dart';
 import '../../utils/dialog_helper.dart';
-import '';
 
 // Widgets
 import '../../widgets/common/common_widgets.dart';
 import '../../widgets/inputs/daum_address_search.dart';
-import '';
 
 // Screen
 import '../auth/login_screen.dart';
 import '../../utils/navigation_helper.dart';
 import '../../utils/format_helper.dart';
-import '';
 import '../../theme/app_colors.dart';
 
 /// 🏢 사업장 등록/수정 화면 (Stepper 방식)
@@ -197,9 +189,10 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
 
-    return WillPopScope(
-      onWillPop: () async {
-        if (widget.isFromSignUp) {
+    return PopScope(
+      canPop: !widget.isFromSignUp,
+      onPopInvokedWithResult: (didPop, result) async {
+        if (!didPop && widget.isFromSignUp) {
           final confirmed = await showDialog<bool>(
             context: context,
             builder: (context) => AlertDialog(
@@ -217,7 +210,6 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
               ],
             ),
           );
-
           if (confirmed == true && mounted) {
             Navigator.pushAndRemoveUntil(
               context,
@@ -225,9 +217,7 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
               (route) => false,
             );
           }
-          return false;
         }
-        return true;
       },
       child: Scaffold(
         appBar: AppBar(
