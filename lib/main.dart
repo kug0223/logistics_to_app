@@ -1,33 +1,42 @@
 import 'package:flutter/material.dart';
 import 'package:firebase_core/firebase_core.dart';
+import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:provider/provider.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:intl/date_symbol_data_local.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'firebase_options.dart';
 import 'providers/user_provider.dart';
 import 'providers/theme_provider.dart';
 import 'providers/notification_provider.dart';
 import 'models/core/user_model.dart';
-
-// ⭐ 화면 import - 반드시 정확한 경로 확인!
 import 'screens/auth/login_screen.dart';
 import 'screens/user/user_home_screen.dart';
 import 'screens/super_admin/super_admin_home_screen.dart';
 import 'screens/business_admin/business_admin_home_screen.dart';
 import 'screens/common/splash_screen.dart';
 import 'screens/common/onboarding_screen.dart';
-import 'package:shared_preferences/shared_preferences.dart';
-// PDF 폰트 프리로드
 import 'utils/attendance_list_pdf.dart';
 import 'services/fcm_service.dart';
+
+/// 앱이 완전히 종료된 상태에서 FCM 메시지 수신 시 호출되는 최상위 핸들러
+/// (반드시 main() 바깥 최상위 함수여야 함 — Flutter 요구사항)
+@pragma('vm:entry-point')
+Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
+  await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
+  debugPrint('🔔 [백그라운드] FCM 수신: ${message.notification?.title}');
+}
 
 /// 🔔 전역 Navigator Key (FCM 알림 클릭 시 화면 이동용)
 final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  // 🔥 타임존 디버깅 (확인 후 삭제)
+
+  // 앱 종료 상태 FCM 백그라운드 핸들러 등록 (Firebase 초기화 전에 먼저 등록)
+  FirebaseMessaging.onBackgroundMessage(_firebaseMessagingBackgroundHandler);
+
   await initializeDateFormatting('ko_KR', null);
   try {
     await Firebase.initializeApp(

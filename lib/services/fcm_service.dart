@@ -54,6 +54,13 @@ class FCMService {
     // 6. 백그라운드 메시지 클릭 리스너
     FirebaseMessaging.onMessageOpenedApp.listen(_handleMessageOpenedApp);
 
+    // 7. 앱이 완전히 종료된 상태에서 알림 탭으로 시작된 경우 처리
+    final initialMessage = await _messaging.getInitialMessage();
+    if (initialMessage != null) {
+      debugPrint('🔔 종료 상태에서 알림 탭으로 앱 시작: ${initialMessage.notification?.title}');
+      Future.delayed(const Duration(milliseconds: 500), _navigateToNotificationScreen);
+    }
+
     _isInitialized = true;
     print('✅ FCM 초기화 완료: $userId');
   }
