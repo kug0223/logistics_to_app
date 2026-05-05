@@ -77,7 +77,7 @@ class AttendanceListPdf {
     _isLoading = true;
     
     try {
-      print('📝 [PDF] 한글 폰트 로딩 시작 (Assets)...');
+      debugPrint('📝 [PDF] 한글 폰트 로딩 시작 (Assets)...');
       final stopwatch = Stopwatch()..start();
       
       // ✅ Assets에서 로드 (네트워크 다운로드 없음 - 즉시!)
@@ -88,9 +88,9 @@ class AttendanceListPdf {
       _koreanBoldFont = pw.Font.ttf(boldData);
       
       stopwatch.stop();
-      print('✅ [PDF] 한글 폰트 로드 완료: ${stopwatch.elapsedMilliseconds}ms');
+      debugPrint('✅ [PDF] 한글 폰트 로드 완료: ${stopwatch.elapsedMilliseconds}ms');
     } catch (e) {
-      print('⚠️ [PDF] 폰트 로드 실패: $e');
+      debugPrint('⚠️ [PDF] 폰트 로드 실패: $e');
       // 폴백: 기본 폰트 사용 (한글 깨질 수 있음)
     } finally {
       _isLoading = false;

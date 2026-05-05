@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+﻿import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:intl/intl.dart';
 import '../../models/core/application_model.dart';
@@ -110,9 +110,9 @@ class _AttendanceCheckScreenState extends State<AttendanceCheckScreen> {
         });
       }
 
-      print('✅ 오늘 근무: ${todayWorks.length}개');
+      debugPrint('✅ 오늘 근무: ${todayWorks.length}개');
     } catch (e) {
-      print('❌ 오늘 근무 조회 실패: $e');
+      debugPrint('❌ 오늘 근무 조회 실패: $e');
       if (mounted) {
         setState(() => _isLoading = false);
         ToastHelper.showError('근무 정보를 불러오는데 실패했습니다.');
@@ -210,7 +210,7 @@ class _AttendanceCheckScreenState extends State<AttendanceCheckScreen> {
         await _loadTodayWorks();
       }
     } catch (e) {
-      print('❌ 출근 체크 실패: $e');
+      debugPrint('❌ 출근 체크 실패: $e');
       if (mounted) {
         await DialogHelper.showError(
           context,
@@ -264,7 +264,7 @@ class _AttendanceCheckScreenState extends State<AttendanceCheckScreen> {
         await _loadTodayWorks();
       }
     } catch (e) {
-      print('❌ 퇴근 체크 실패: $e');
+      debugPrint('❌ 퇴근 체크 실패: $e');
       if (mounted) {
         await DialogHelper.showError(
           context,

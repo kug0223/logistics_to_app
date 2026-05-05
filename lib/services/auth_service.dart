@@ -1,3 +1,4 @@
+﻿import 'package:flutter/foundation.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import '../models/core/user_model.dart';
@@ -259,7 +260,7 @@ class AuthService {
       }
       return null;
     } catch (e) {
-      print('사용자 정보 가져오기 실패: $e');
+      debugPrint('사용자 정보 가져오기 실패: $e');
       return null;
     }
   }
@@ -375,7 +376,7 @@ class AuthService {
       ToastHelper.showError(message);
       return false;
     } catch (e) {
-      print('❌ 비밀번호 변경 실패: $e');
+      debugPrint('❌ 비밀번호 변경 실패: $e');
       ToastHelper.showError('비밀번호 변경 중 오류가 발생했습니다');
       return false;
     }
@@ -405,7 +406,7 @@ class AuthService {
       }
       return false;
     } catch (e) {
-      print('이메일 인증 상태 확인 실패: $e');
+      debugPrint('이메일 인증 상태 확인 실패: $e');
       return false;
     }
   }
@@ -420,7 +421,7 @@ class AuthService {
       
       return snapshot.docs.isNotEmpty;
     } catch (e) {
-      print('❌ 아이디 중복 체크 실패: $e');
+      debugPrint('❌ 아이디 중복 체크 실패: $e');
       return true; // 에러 시 중복으로 간주
     }
   }
@@ -445,7 +446,7 @@ class AuthService {
       final userData = snapshot.docs.first.data();
       return userData['username'] as String?;
     } catch (e) {
-      print('❌ 아이디 찾기 실패: $e');
+      debugPrint('❌ 아이디 찾기 실패: $e');
       ToastHelper.showError('아이디 찾기 중 오류가 발생했습니다.');
       return null;
     }

@@ -142,7 +142,7 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
         ToastHelper.showInfo('등록된 사업장이 없습니다');
       }
     } catch (e) {
-      print('❌ 사업장 로드 실패: $e');
+      debugPrint('❌ 사업장 로드 실패: $e');
       setState(() => _isLoading = false);
       ToastHelper.showError('사업장 정보를 불러올 수 없습니다');
     }
@@ -158,7 +158,7 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
         _businessWorkTypes = workTypes;
       });
     } catch (e) {
-      print('❌ 업무 유형 로드 실패: $e');
+      debugPrint('❌ 업무 유형 로드 실패: $e');
       ToastHelper.showError('업무 유형을 불러올 수 없습니다');
     }
   }
@@ -180,7 +180,7 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
       allTOs.sort((a, b) => b.createdAt.compareTo(a.createdAt));
       _recentTOsForLoad = allTOs.take(30).toList();
     } catch (e) {
-      print('❌ TO 목록 로드 실패: $e');
+      debugPrint('❌ TO 목록 로드 실패: $e');
       if (mounted) Navigator.pop(context);
       ToastHelper.showError('공고 목록을 불러올 수 없습니다');
       return;
@@ -230,7 +230,7 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
 
       ToastHelper.showSuccess('공고 정보를 불러왔습니다');
     } catch (e) {
-      print('❌ 데이터 불러오기 실패: $e');
+      debugPrint('❌ 데이터 불러오기 실패: $e');
       if (mounted && Navigator.canPop(context)) Navigator.pop(context);
       ToastHelper.showError('데이터를 불러오는데 실패했습니다');
     }
@@ -496,7 +496,7 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
         _isLoadingRecentTOs = false;
       });
     } catch (e) {
-      print('❌ 최근 TO 로드 실패: $e');
+      debugPrint('❌ 최근 TO 로드 실패: $e');
       setState(() => _isLoadingRecentTOs = false);
     }
   }
@@ -765,7 +765,7 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
         NavigationHelper.popWithChange(context);
       }
     } catch (e) {
-      print('❌ TO 생성 실패: $e');
+      debugPrint('❌ TO 생성 실패: $e');
       ToastHelper.showError('TO 생성에 실패했습니다');
     } finally {
       setState(() => _isCreating = false);
@@ -825,7 +825,7 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
 
       return toId != null;
     } catch (e) {
-      print('❌ 단일 TO 생성 실패: $e');
+      debugPrint('❌ 단일 TO 생성 실패: $e');
       return false;
     }
   }
@@ -921,7 +921,7 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
         return false;
       }
       
-      print('✅ groups 컬렉션 문서 생성 완료: $groupId');
+      debugPrint('✅ groups 컬렉션 문서 생성 완료: $groupId');
 
       // ═══════════════════════════════════════════════════════════
       // Step 4: 각 날짜별 TO 생성
@@ -966,7 +966,7 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
 
         if (toId == null) {
           allSuccess = false;
-          print('❌ TO 생성 실패: ${DateFormat('yyyy-MM-dd').format(date)}');
+          debugPrint('❌ TO 생성 실패: ${DateFormat('yyyy-MM-dd').format(date)}');
         }
       }
 
@@ -977,7 +977,7 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
 
       return allSuccess;
     } catch (e) {
-      print('❌ 그룹 TO 생성 실패: $e');
+      debugPrint('❌ 그룹 TO 생성 실패: $e');
       return false;
     }
   }

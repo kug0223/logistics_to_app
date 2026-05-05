@@ -1,4 +1,4 @@
-// lib/screens/super_admin/trust_rules_settings_screen.dart
+﻿// lib/screens/super_admin/trust_rules_settings_screen.dart
 
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -69,7 +69,7 @@ class _TrustRulesSettingsScreenState extends State<TrustRulesSettingsScreen> {
       
       _populateControllers();
     } catch (e) {
-      print('❌ 설정 로드 실패: $e');
+      debugPrint('❌ 설정 로드 실패: $e');
       ToastHelper.showError('설정을 불러오는데 실패했습니다');
     } finally {
       if (mounted) {
@@ -158,7 +158,7 @@ class _TrustRulesSettingsScreenState extends State<TrustRulesSettingsScreen> {
       _settings = updatedSettings;
       ToastHelper.showSuccess('설정이 저장되었습니다');
     } catch (e) {
-      print('❌ 설정 저장 실패: $e');
+      debugPrint('❌ 설정 저장 실패: $e');
       ToastHelper.showError('설정 저장에 실패했습니다');
     } finally {
       if (mounted) {

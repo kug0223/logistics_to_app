@@ -1,5 +1,6 @@
-// lib/services/schedule_conflict_service.dart
+﻿// lib/services/schedule_conflict_service.dart
 
+import 'package:flutter/foundation.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import '../models/core/application_model.dart';
 import '../models/core/work_detail_model.dart';
@@ -103,7 +104,7 @@ class ScheduleConflictService {
 
       return ConflictInfo.ok;
     } catch (e) {
-      print('❌ 충돌 체크 실패: $e');
+      debugPrint('❌ 충돌 체크 실패: $e');
       return ConflictInfo.ok; // 에러 시 허용
     }
   }
@@ -192,10 +193,10 @@ class ScheduleConflictService {
         return _isWorkingOnDate(app, workDate);
       }).toList();
 
-      print('📅 [충돌체크] ${workDate.month}/${workDate.day} 확정 근무: ${workingOnDate.length}건');
+      debugPrint('📅 [충돌체크] ${workDate.month}/${workDate.day} 확정 근무: ${workingOnDate.length}건');
       return workingOnDate;
     } catch (e) {
-      print('❌ 확정 스케줄 조회 실패: $e');
+      debugPrint('❌ 확정 스케줄 조회 실패: $e');
       return [];
     }
   }
@@ -349,7 +350,7 @@ class ScheduleConflictService {
       // 여기서는 체크만
       return null;
     } catch (e) {
-      print('❌ 사용자 제한 체크 실패: $e');
+      debugPrint('❌ 사용자 제한 체크 실패: $e');
       return null;
     }
   }

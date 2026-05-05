@@ -1,4 +1,4 @@
-import 'dart:ui';
+﻿import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_crashlytics/firebase_crashlytics.dart';
@@ -61,9 +61,9 @@ void main() async {
       return true;
     };
 
-    print('✅ Firebase 초기화 완료');
+    debugPrint('✅ Firebase 초기화 완료');
   } catch (e) {
-    print('❌ Firebase 초기화 에러: $e');
+    debugPrint('❌ Firebase 초기화 에러: $e');
   }
   // ✅ PDF 한글 폰트 백그라운드 프리로드 (await 없이 - 병렬 실행)
   AttendanceListPdf.preloadFonts();
@@ -86,7 +86,7 @@ class MyApp extends StatelessWidget {
         ),
         ChangeNotifierProxyProvider<NotificationProvider, UserProvider>(
           create: (_) {
-            print('📦 UserProvider 생성 중...');
+            debugPrint('📦 UserProvider 생성 중...');
             final provider = UserProvider();
             provider.initialize();
             return provider;
@@ -156,13 +156,13 @@ class _AuthWrapperState extends State<AuthWrapper> {
   Widget build(BuildContext context) {
     return Consumer<UserProvider>(
       builder: (context, userProvider, _) {
-        print('\n====== AuthWrapper 빌드 시작 ======');
-        print('isLoading: ${userProvider.isLoading}');
-        print('isLoggedIn: ${userProvider.isLoggedIn}');
+        debugPrint('\n====== AuthWrapper 빌드 시작 ======');
+        debugPrint('isLoading: ${userProvider.isLoading}');
+        debugPrint('isLoggedIn: ${userProvider.isLoggedIn}');
         
         // 🔄 로딩 중
         if (userProvider.isLoading) {
-          print('⏳ 로딩 중...');
+          debugPrint('⏳ 로딩 중...');
           return const Scaffold(
             body: Center(
               child: Column(
@@ -179,7 +179,7 @@ class _AuthWrapperState extends State<AuthWrapper> {
 
         // 🚫 로그인 안됨
         if (!userProvider.isLoggedIn) {
-          print('🚫 로그인되지 않음 → LoginScreen');
+          debugPrint('🚫 로그인되지 않음 → LoginScreen');
           return const LoginScreen();
         }
 
@@ -187,7 +187,7 @@ class _AuthWrapperState extends State<AuthWrapper> {
         final user = userProvider.currentUser;
         
         if (user == null) {
-          print('⚠️ currentUser가 null → LoginScreen');
+          debugPrint('⚠️ currentUser가 null → LoginScreen');
           return const LoginScreen();
         }
         
@@ -199,17 +199,17 @@ class _AuthWrapperState extends State<AuthWrapper> {
         });
 
         // 🎭 사용자 정보 출력
-        print('\n===== 사용자 권한 정보 =====');
-        print('📧 이메일: ${user.email}');
-        print('👤 이름: ${user.name}');
-        print('🎭 역할: ${user.role}');
-        print('🏢 사업장 ID: ${user.businessId}');
-        print('\n📊 권한 체크:');
-        print('  - isSuperAdmin: ${user.isSuperAdmin}');
-        print('  - isBusinessAdmin: ${user.isBusinessAdmin}');
-        print('  - isUser: ${user.isUser}');
-        print('  - isAdmin: ${user.isAdmin}');
-        print('============================\n');
+        debugPrint('\n===== 사용자 권한 정보 =====');
+        debugPrint('📧 이메일: ${user.email}');
+        debugPrint('👤 이름: ${user.name}');
+        debugPrint('🎭 역할: ${user.role}');
+        debugPrint('🏢 사업장 ID: ${user.businessId}');
+        debugPrint('\n📊 권한 체크:');
+        debugPrint('  - isSuperAdmin: ${user.isSuperAdmin}');
+        debugPrint('  - isBusinessAdmin: ${user.isBusinessAdmin}');
+        debugPrint('  - isUser: ${user.isUser}');
+        debugPrint('  - isAdmin: ${user.isAdmin}');
+        debugPrint('============================\n');
 
         // 🆕 온보딩 체크
         if (_isOnboardingCompleted == null) {
@@ -220,7 +220,7 @@ class _AuthWrapperState extends State<AuthWrapper> {
         }
 
         if (_isOnboardingCompleted == false) {
-          print('📚 온보딩 미완료 → OnboardingScreen');
+          debugPrint('📚 온보딩 미완료 → OnboardingScreen');
           return OnboardingScreen(
             role: user.roleString,
             onComplete: _completeOnboarding,
@@ -231,25 +231,25 @@ class _AuthWrapperState extends State<AuthWrapper> {
         try {
           switch (user.role) {
             case UserRole.SUPER_ADMIN:
-              print('🎯 SUPER_ADMIN → AdminHomeScreen으로 이동');
+              debugPrint('🎯 SUPER_ADMIN → AdminHomeScreen으로 이동');
               return const AdminHomeScreen();
             
             case UserRole.BUSINESS_ADMIN:
-              print('🎯 BUSINESS_ADMIN → BusinessAdminHomeScreen으로 이동');
+              debugPrint('🎯 BUSINESS_ADMIN → BusinessAdminHomeScreen으로 이동');
               return const BusinessAdminHomeScreen();
             
             case UserRole.USER:
-              print('🎯 USER → UserHomeScreen으로 이동');
+              debugPrint('🎯 USER → UserHomeScreen으로 이동');
               return const UserHomeScreen();
             
             default:
-              print('⚠️ 알 수 없는 role: ${user.role} → LoginScreen');
+              debugPrint('⚠️ 알 수 없는 role: ${user.role} → LoginScreen');
               return const LoginScreen();
           }
         } catch (e, stackTrace) {
-          print('❌ 화면 전환 중 에러 발생!');
-          print('에러: $e');
-          print('스택: $stackTrace');
+          debugPrint('❌ 화면 전환 중 에러 발생!');
+          debugPrint('에러: $e');
+          debugPrint('스택: $stackTrace');
           
           // 에러 화면 표시
           return Scaffold(

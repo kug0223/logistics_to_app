@@ -207,7 +207,7 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
         _businessNameMap = nameMap;
       });
     } catch (e) {
-      print('❌ 사업장명 조회 실패: $e');
+      debugPrint('❌ 사업장명 조회 실패: $e');
     }
   }
 
@@ -252,9 +252,9 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
         _isLoading = false;
       });
       
-      print('✅ 당일명단 로드 완료: ${confirmedWorkers.length}명');
+      debugPrint('✅ 당일명단 로드 완료: ${confirmedWorkers.length}명');
     } catch (e) {
-      print('❌ 당일명단 데이터 로드 실패: $e');
+      debugPrint('❌ 당일명단 데이터 로드 실패: $e');
       setState(() => _isLoading = false);
       ToastHelper.showError('데이터 로드 실패');
     }
@@ -284,7 +284,7 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
       }
     }
     
-    print('📋 [당일명단] 단기 확정자: ${result.length}명');
+    debugPrint('📋 [당일명단] 단기 확정자: ${result.length}명');
 
     // ✅ 2. 장기 공고: 전체 조회 후 클라이언트 필터링 (workDays 필터는 Firestore에서 지원 안함)
     final longTermSnapshot = await FirebaseFirestore.instance
@@ -344,8 +344,8 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
       }
     }
     
-    print('📋 [당일명단] 장기 확정자: ${longTermCount}명');
-    print('📋 [당일명단] 총 확정자: ${result.length}명');
+    debugPrint('📋 [당일명단] 장기 확정자: ${longTermCount}명');
+    debugPrint('📋 [당일명단] 총 확정자: ${result.length}명');
 
     return result;
   }
@@ -419,7 +419,7 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
         workTypeMap[workType.name] = workType;
       }
     } catch (e) {
-      print('업무유형 조회 실패: $e');
+      debugPrint('업무유형 조회 실패: $e');
     }
 
     return workTypeMap;
@@ -1943,7 +1943,7 @@ SizedBox(width: ResponsiveHelper.spacing(context, 12)),
       
       ToastHelper.showSuccess('$successCount명 최종확정 완료');
     } catch (e) {
-      print('❌ 마감 처리 실패: $e');
+      debugPrint('❌ 마감 처리 실패: $e');
       ToastHelper.showError('마감 처리 중 오류가 발생했습니다');
     } finally {
       if (mounted) {
@@ -2061,8 +2061,7 @@ SizedBox(width: ResponsiveHelper.spacing(context, 12)),
       // 로딩 닫기
       if (mounted) Navigator.pop(context);
       
-      print('❌ 명단 출력 실패: $e');
-      print(stack);
+      debugPrint('❌ 명단 출력 실패: $e\n$stack');
       ToastHelper.showError('명단 출력 실패');
     }
   }
@@ -2109,7 +2108,7 @@ SizedBox(width: ResponsiveHelper.spacing(context, 12)),
         }
       }
     } catch (e) {
-      print('❌ WorkDetail 시간 조회 실패: $e');
+      debugPrint('❌ WorkDetail 시간 조회 실패: $e');
     }
 
     return timeInfoMap;
@@ -2563,7 +2562,7 @@ SizedBox(width: ResponsiveHelper.spacing(context, 12)),
 
       await _loadData();
     } catch (e) {
-      print('❌ 일괄 출근 처리 실패: $e');
+      debugPrint('❌ 일괄 출근 처리 실패: $e');
       ToastHelper.showError('일괄 출근 처리 실패');
     } finally {
       if (mounted) setState(() => _isProcessing = false);
@@ -2609,7 +2608,7 @@ SizedBox(width: ResponsiveHelper.spacing(context, 12)),
 
       await _loadData();
     } catch (e) {
-      print('❌ 일괄 퇴근 처리 실패: $e');
+      debugPrint('❌ 일괄 퇴근 처리 실패: $e');
       ToastHelper.showError('일괄 퇴근 처리 실패');
     } finally {
       if (mounted) setState(() => _isProcessing = false);
@@ -2635,7 +2634,7 @@ SizedBox(width: ResponsiveHelper.spacing(context, 12)),
       
       await _loadData();
     } catch (e) {
-      print('❌ 출근 처리 실패: $e');
+      debugPrint('❌ 출근 처리 실패: $e');
       ToastHelper.showError('출근 처리 실패');
     } finally {
       if (mounted) setState(() => _isProcessing = false);
@@ -2666,7 +2665,7 @@ SizedBox(width: ResponsiveHelper.spacing(context, 12)),
       ToastHelper.showSuccess('퇴근 처리 완료');
       await _loadData();
     } catch (e) {
-      print('❌ 퇴근 처리 실패: $e');
+      debugPrint('❌ 퇴근 처리 실패: $e');
       ToastHelper.showError('퇴근 처리 실패');
     } finally {
       if (mounted) setState(() => _isProcessing = false);
@@ -2720,7 +2719,7 @@ SizedBox(width: ResponsiveHelper.spacing(context, 12)),
       ToastHelper.showSuccess('시간이 수정되었습니다');
       await _loadData();
     } catch (e) {
-      print('❌ 시간 수정 실패: $e');
+      debugPrint('❌ 시간 수정 실패: $e');
       ToastHelper.showError('시간 수정 실패');
     } finally {
       if (mounted) setState(() => _isProcessing = false);
@@ -2821,7 +2820,7 @@ SizedBox(width: ResponsiveHelper.spacing(context, 12)),
       ToastHelper.showSuccess('노쇼 처리 완료');
       await _loadData();
     } catch (e) {
-      print('❌ 노쇼 처리 실패: $e');
+      debugPrint('❌ 노쇼 처리 실패: $e');
       ToastHelper.showError('노쇼 처리 실패');
     } finally {
       if (mounted) setState(() => _isProcessing = false);
@@ -2866,7 +2865,7 @@ SizedBox(width: ResponsiveHelper.spacing(context, 12)),
       ToastHelper.showSuccess('노쇼 해제 완료');
       await _loadData();
     } catch (e) {
-      print('❌ 노쇼 해제 실패: $e');
+      debugPrint('❌ 노쇼 해제 실패: $e');
       ToastHelper.showError('노쇼 해제 실패');
     } finally {
       if (mounted) setState(() => _isProcessing = false);

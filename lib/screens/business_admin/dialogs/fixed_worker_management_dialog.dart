@@ -1,4 +1,4 @@
-// lib/screens/business_admin/dialogs/fixed_worker_management_dialog.dart
+﻿// lib/screens/business_admin/dialogs/fixed_worker_management_dialog.dart
 // 고정근무자 관리 다이얼로그 - 리뉴얼 버전
 // 
 // 기능:
@@ -101,7 +101,7 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
         });
       }
     } catch (e) {
-      print('❌ 사업장명 조회 실패: $e');
+      debugPrint('❌ 사업장명 조회 실패: $e');
     }
   }
 
@@ -163,7 +163,7 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
         _isLoading = false;
       });
     } catch (e) {
-      print('❌ 고정근무자 로드 실패: $e');
+      debugPrint('❌ 고정근무자 로드 실패: $e');
       setState(() => _isLoading = false);
       ToastHelper.showError('고정근무자 목록을 불러올 수 없습니다');
     }
@@ -1501,7 +1501,7 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
         ToastHelper.showError('계약해지 요청에 실패했습니다');
       }
     } catch (e) {
-      print('❌ 계약해지 요청 실패: $e');
+      debugPrint('❌ 계약해지 요청 실패: $e');
       if (mounted) {
         ToastHelper.showError('계약해지 요청 중 오류가 발생했습니다');
       }
@@ -1532,7 +1532,7 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
         ToastHelper.showError('해지 요청 취소에 실패했습니다');
       }
     } catch (e) {
-      print('❌ 해지 요청 취소 실패: $e');
+      debugPrint('❌ 해지 요청 취소 실패: $e');
       if (mounted) {
         ToastHelper.showError('해지 요청 취소 중 오류가 발생했습니다');
       }

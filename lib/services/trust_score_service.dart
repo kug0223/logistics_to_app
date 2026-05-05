@@ -1,5 +1,6 @@
-// lib/services/trust_score_service.dart
+﻿// lib/services/trust_score_service.dart
 
+import 'package:flutter/foundation.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import '../models/settings/trust_settings_model.dart';
 
@@ -44,7 +45,7 @@ class TrustScoreService {
       // 없으면 계산
       return _computeScore(userData, settings);
     } catch (e) {
-      print('❌ 신뢰도 계산 실패: $e');
+      debugPrint('❌ 신뢰도 계산 실패: $e');
       return 50; // 기본값
     }
   }
@@ -201,9 +202,9 @@ class TrustScoreService {
         });
       });
       
-      print('✅ 신뢰도 변경: $userId, $change점 ($reason)');
+      debugPrint('✅ 신뢰도 변경: $userId, $change점 ($reason)');
     } catch (e) {
-      print('❌ 신뢰도 변경 실패: $e');
+      debugPrint('❌ 신뢰도 변경 실패: $e');
     }
   }
 
@@ -253,7 +254,7 @@ class TrustScoreService {
       
       return (canRestart: true, reason: null, daysRemaining: null);
     } catch (e) {
-      print('❌ 재시작 가능 여부 확인 실패: $e');
+      debugPrint('❌ 재시작 가능 여부 확인 실패: $e');
       return (canRestart: false, reason: '확인 중 오류가 발생했습니다.', daysRemaining: null);
     }
   }
@@ -263,7 +264,7 @@ class TrustScoreService {
     try {
       final canRestart = await canApplyRestart(userId);
       if (!canRestart.canRestart) {
-        print('⚠️ 재시작 불가: ${canRestart.reason}');
+        debugPrint('⚠️ 재시작 불가: ${canRestart.reason}');
         return false;
       }
       
@@ -291,10 +292,10 @@ class TrustScoreService {
         'createdAt': FieldValue.serverTimestamp(),
       });
       
-      print('✅ 재시작 프로그램 적용 완료: $userId');
+      debugPrint('✅ 재시작 프로그램 적용 완료: $userId');
       return true;
     } catch (e) {
-      print('❌ 재시작 프로그램 적용 실패: $e');
+      debugPrint('❌ 재시작 프로그램 적용 실패: $e');
       return false;
     }
   }
@@ -334,7 +335,7 @@ class TrustScoreService {
         };
       }).toList();
     } catch (e) {
-      print('❌ 점수 변동 내역 조회 실패: $e');
+      debugPrint('❌ 점수 변동 내역 조회 실패: $e');
       return [];
     }
   }
@@ -365,7 +366,7 @@ class TrustScoreService {
       _settingsCacheTime = DateTime.now();
       return _cachedSettings!;
     } catch (e) {
-      print('❌ 신뢰도 설정 조회 실패: $e');
+      debugPrint('❌ 신뢰도 설정 조회 실패: $e');
       return TrustSettingsModel.defaults();
     }
   }

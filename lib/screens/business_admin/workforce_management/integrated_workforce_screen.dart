@@ -58,9 +58,9 @@ class _IntegratedWorkforceScreenState extends State<IntegratedWorkforceScreen> {
         _selectedBusinessId = _allBusinessIds.first;
       });
 
-      print('✅ 관리 사업장: ${_allBusinessIds.length}개');
+      debugPrint('✅ 관리 사업장: ${_allBusinessIds.length}개');
     } catch (e) {
-      print('❌ 사업장 조회 실패: $e');
+      debugPrint('❌ 사업장 조회 실패: $e');
       ToastHelper.showError('사업장 정보를 불러올 수 없습니다.');
     }
   }
@@ -486,7 +486,7 @@ class _IntegratedWorkforceScreenState extends State<IntegratedWorkforceScreen> {
       if (targetBusinessId == null) return;
     }
     
-    print('🔍 [DummyData] 선택된 사업장: $targetBusinessId');
+    debugPrint('🔍 [DummyData] 선택된 사업장: $targetBusinessId');
     
     List<TOModel> allSelectableTOs = [];
     
@@ -494,12 +494,12 @@ class _IntegratedWorkforceScreenState extends State<IntegratedWorkforceScreen> {
     final activeGroups = await _firestoreService.getActiveGroups(
       businessId: targetBusinessId,
     );
-    print('   active 그룹: ${activeGroups.length}개');
+    debugPrint('   active 그룹: ${activeGroups.length}개');
     
     // 각 그룹의 하위 TO들 가져오기
     for (var group in activeGroups) {
       final groupTOs = await _firestoreService.getTOsByGroup(group.id);
-      print('   📋 그룹 "${group.groupName}": ${groupTOs.length}개 TO');
+      debugPrint('   📋 그룹 "${group.groupName}": ${groupTOs.length}개 TO');
       allSelectableTOs.addAll(groupTOs);
     }
     
@@ -509,17 +509,17 @@ class _IntegratedWorkforceScreenState extends State<IntegratedWorkforceScreen> {
         to.groupId == null && 
         to.businessId == targetBusinessId
     ).toList();
-    print('   단일 TO: ${singleTOs.length}개');
+    debugPrint('   단일 TO: ${singleTOs.length}개');
     allSelectableTOs.addAll(singleTOs);
     
-    print('   🎯 총 선택 가능한 TO: ${allSelectableTOs.length}개');
+    debugPrint('   🎯 총 선택 가능한 TO: ${allSelectableTOs.length}개');
     
     if (allSelectableTOs.isEmpty) {
       ToastHelper.showWarning('선택 가능한 TO가 없습니다.');
       return;
     }
 
-    print('   🎯 선택 가능한 TO: ${allSelectableTOs.length}개');
+    debugPrint('   🎯 선택 가능한 TO: ${allSelectableTOs.length}개');
     if (allSelectableTOs.isEmpty) {
       ToastHelper.showWarning('선택 가능한 TO가 없습니다.');
       return;
@@ -717,7 +717,7 @@ class _IntegratedWorkforceScreenState extends State<IntegratedWorkforceScreen> {
         setState(() {});
       }
     } catch (e) {
-      print('❌ 지원자 생성 실패: $e');
+      debugPrint('❌ 지원자 생성 실패: $e');
       ToastHelper.showError('지원자 생성 실패: $e');
     }
   }
@@ -741,7 +741,7 @@ class _IntegratedWorkforceScreenState extends State<IntegratedWorkforceScreen> {
         setState(() {});
       }
     } catch (e) {
-      print('❌ 출근 데이터 생성 실패: $e');
+      debugPrint('❌ 출근 데이터 생성 실패: $e');
       ToastHelper.showError('출근 데이터 생성 실패: $e');
     }
   }
@@ -784,7 +784,7 @@ class _IntegratedWorkforceScreenState extends State<IntegratedWorkforceScreen> {
         setState(() {});
       }
     } catch (e) {
-      print('❌ 출근 데이터 삭제 실패: $e');
+      debugPrint('❌ 출근 데이터 삭제 실패: $e');
       ToastHelper.showError('출근 데이터 삭제 실패: $e');
     }
   }
@@ -827,7 +827,7 @@ class _IntegratedWorkforceScreenState extends State<IntegratedWorkforceScreen> {
         setState(() {});
       }
     } catch (e) {
-      print('❌ 더미 리뷰 삭제 실패: $e');
+      debugPrint('❌ 더미 리뷰 삭제 실패: $e');
       ToastHelper.showError('더미 리뷰 삭제 실패: $e');
     }
   }
@@ -858,7 +858,7 @@ class _IntegratedWorkforceScreenState extends State<IntegratedWorkforceScreen> {
           businessName = businessDoc.data()?['name'] ?? '사업장';
         }
       } catch (e) {
-        print('⚠️ 사업장명 조회 실패: $e');
+        debugPrint('⚠️ 사업장명 조회 실패: $e');
       }
 
       ToastHelper.showInfo('리뷰 생성 중...');
@@ -876,7 +876,7 @@ class _IntegratedWorkforceScreenState extends State<IntegratedWorkforceScreen> {
         setState(() {});
       }
     } catch (e) {
-      print('❌ 리뷰 생성 실패: $e');
+      debugPrint('❌ 리뷰 생성 실패: $e');
       ToastHelper.showError('리뷰 생성 실패: $e');
     }
   }
@@ -925,7 +925,7 @@ class _IntegratedWorkforceScreenState extends State<IntegratedWorkforceScreen> {
         setState(() {});
       }
     } catch (e) {
-      print('❌ 더미 데이터 삭제 실패: $e');
+      debugPrint('❌ 더미 데이터 삭제 실패: $e');
       ToastHelper.showError('더미 데이터 삭제 실패: $e');
     }
   }
@@ -945,7 +945,7 @@ class _IntegratedWorkforceScreenState extends State<IntegratedWorkforceScreen> {
         businessNames[doc.id] = data['name'] ?? 'Unknown';
       }
     } catch (e) {
-      print('❌ 사업장명 조회 실패: $e');
+      debugPrint('❌ 사업장명 조회 실패: $e');
     }
 
     return await showDialog<String>(
@@ -1029,7 +1029,7 @@ class _IntegratedWorkforceScreenState extends State<IntegratedWorkforceScreen> {
       for (var doc in snapshot.docs) {
         await _firestoreService.recalculateTOStats(doc.id);
         count++;
-        print('📊 [$count/${snapshot.docs.length}] ${doc.id} 재계산 완료');
+        debugPrint('📊 [$count/${snapshot.docs.length}] ${doc.id} 재계산 완료');
       }
       
       // 2. 그룹 마스터 통계 동기화
@@ -1047,7 +1047,7 @@ class _IntegratedWorkforceScreenState extends State<IntegratedWorkforceScreen> {
       
     } catch (e) {
       if (mounted) Navigator.pop(context);
-      print('❌ 통계 재계산 실패: $e');
+      debugPrint('❌ 통계 재계산 실패: $e');
       ToastHelper.showError('통계 재계산 실패: $e');
     }
   }

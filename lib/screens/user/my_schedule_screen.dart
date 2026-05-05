@@ -89,10 +89,10 @@ class _MyScheduleScreenState extends State<MyScheduleScreen> {
         _isLoading = false;
       });
       
-      print('✅ 지원 내역 로드 완료: ${applications.length}개');
-      print('🔔 신분증 요청: ${idCardRequests.length}건, 계약해지: ${terminations.length}건');
+      debugPrint('✅ 지원 내역 로드 완료: ${applications.length}개');
+      debugPrint('🔔 신분증 요청: ${idCardRequests.length}건, 계약해지: ${terminations.length}건');
     } catch (e) {
-      print('❌ 지원 내역 로드 실패: $e');
+      debugPrint('❌ 지원 내역 로드 실패: $e');
       setState(() => _isLoading = false);
       ToastHelper.showError('데이터를 불러오는데 실패했습니다.');
     }
@@ -117,7 +117,7 @@ class _MyScheduleScreenState extends State<MyScheduleScreen> {
         });
       }
     } catch (e) {
-      print('❌ 월별 출근 기록 로드 실패: $e');
+      debugPrint('❌ 월별 출근 기록 로드 실패: $e');
     }
   }
   
@@ -879,7 +879,7 @@ class _MyScheduleScreenState extends State<MyScheduleScreen> {
       
       return total;
     } catch (e) {
-      print('❌ 대기중인 요청 개수 조회 실패: $e');
+      debugPrint('❌ 대기중인 요청 개수 조회 실패: $e');
       return _pendingIdCardRequests.length + _pendingTerminations.length;
     }
   }

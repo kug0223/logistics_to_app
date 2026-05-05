@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+﻿import 'package:flutter/material.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 import '../../utils/responsive_helper.dart';
 
@@ -43,14 +43,14 @@ class _KakaoMapWidgetState extends State<KakaoMapWidget> {
       ..setNavigationDelegate(
         NavigationDelegate(
           onPageStarted: (String url) {
-            print('🗺️ 지도 로딩 시작: $url');
+            debugPrint('🗺️ 지도 로딩 시작: $url');
           },
           onPageFinished: (String url) {
-            print('✅ 지도 로딩 완료: $url');
+            debugPrint('✅ 지도 로딩 완료: $url');
             setState(() => _isLoading = false);
           },
           onWebResourceError: (WebResourceError error) {
-            print('❌ 지도 로딩 에러: ${error.description}');
+            debugPrint('❌ 지도 로딩 에러: ${error.description}');
             setState(() => _isLoading = false);
           },
         ),

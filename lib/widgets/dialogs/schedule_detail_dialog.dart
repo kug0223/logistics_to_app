@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+﻿import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../../models/core/application_model.dart';
 import '../../models/core/business_model.dart';
@@ -45,7 +45,7 @@ class _ScheduleDetailDialogState extends State<ScheduleDetailDialog> {
         _isLoading = false;
       });
     } catch (e) {
-      print('상세 정보 로드 실패: $e');
+      debugPrint('상세 정보 로드 실패: $e');
       setState(() => _isLoading = false);
     }
   }

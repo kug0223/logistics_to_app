@@ -1,4 +1,4 @@
-part of '../firestore_service.dart';
+﻿part of '../firestore_service.dart';
 
   // ═══════════════════════════════════════════════════════════
   // 리뷰 관리 (Notification & Review Management)
@@ -30,7 +30,7 @@ part of '../firestore_service.dart';
     bool wouldRehire = true,
   }) async {
     try {
-      print('📝 [createReview] 리뷰 작성 시작');
+      debugPrint('📝 [createReview] 리뷰 작성 시작');
       
       // 1. 리뷰 생성
       final docRef = await _firestore.collection('reviews').add({
@@ -67,10 +67,10 @@ part of '../firestore_service.dart';
         ),
       );
       
-      print('✅ [createReview] 리뷰 작성 완료: ${docRef.id}');
+      debugPrint('✅ [createReview] 리뷰 작성 완료: ${docRef.id}');
       return docRef.id;
     } catch (e) {
-      print('❌ [createReview] 실패: $e');
+      debugPrint('❌ [createReview] 실패: $e');
       return null;
     }
   }
@@ -97,9 +97,9 @@ part of '../firestore_service.dart';
         'reviewCount': reviews.docs.length,
       });
       
-      print('✅ 사용자 리뷰 통계 업데이트: avg=$avgRating, count=${reviews.docs.length}');
+      debugPrint('✅ 사용자 리뷰 통계 업데이트: avg=$avgRating, count=${reviews.docs.length}');
     } catch (e) {
-      print('⚠️ 사용자 리뷰 통계 업데이트 실패: $e');
+      debugPrint('⚠️ 사용자 리뷰 통계 업데이트 실패: $e');
     }
   }
 
@@ -117,7 +117,7 @@ part of '../firestore_service.dart';
           .map((doc) => ReviewModel.fromFirestore(doc))
           .toList();
     } catch (e) {
-      print('❌ 사용자 리뷰 조회 실패: $e');
+      debugPrint('❌ 사용자 리뷰 조회 실패: $e');
       return [];
     }
   }
@@ -134,7 +134,7 @@ part of '../firestore_service.dart';
       if (snapshot.docs.isEmpty) return null;
       return ReviewModel.fromFirestore(snapshot.docs.first);
     } catch (e) {
-      print('❌ 리뷰 조회 실패: $e');
+      debugPrint('❌ 리뷰 조회 실패: $e');
       return null;
     }
   }

@@ -136,7 +136,7 @@ class DocumentUploadHelper {
       }
       
     } catch (e) {
-      print('❌ 신분증 업로드 실패: $e');
+      debugPrint('❌ 신분증 업로드 실패: $e');
       
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -264,7 +264,7 @@ class DocumentUploadHelper {
       }
       
     } catch (e) {
-      print('❌ 통장사본 업로드 실패: $e');
+      debugPrint('❌ 통장사본 업로드 실패: $e');
       
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -397,7 +397,7 @@ class DocumentUploadHelper {
       }
       
     } catch (e) {
-      print('❌ 사업자등록증 업로드 실패: $e');
+      debugPrint('❌ 사업자등록증 업로드 실패: $e');
       
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(

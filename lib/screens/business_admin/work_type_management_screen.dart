@@ -67,7 +67,7 @@ class _WorkTypeManagementScreenState extends State<WorkTypeManagementScreen> {
         ToastHelper.showInfo('등록된 사업장이 없습니다');
       }
     } catch (e) {
-      print('❌ 사업장 목록 로드 실패: $e');
+      debugPrint('❌ 사업장 목록 로드 실패: $e');
       setState(() {
         _isLoadingBusinesses = false;
         _isLoading = false;
@@ -91,7 +91,7 @@ class _WorkTypeManagementScreenState extends State<WorkTypeManagementScreen> {
         _isLoading = false;
       });
     } catch (e) {
-      print('❌ 업무 유형 로드 실패: $e');
+      debugPrint('❌ 업무 유형 로드 실패: $e');
       setState(() => _isLoading = false);
       ToastHelper.showError('업무 유형을 불러올 수 없습니다');
     }

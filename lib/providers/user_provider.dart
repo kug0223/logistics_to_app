@@ -1,4 +1,4 @@
-import 'package:flutter/foundation.dart';
+﻿import 'package:flutter/foundation.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import '../models/core/user_model.dart';
 import '../services/auth_service.dart';
@@ -41,10 +41,10 @@ class UserProvider with ChangeNotifier {
         notifyListeners();
       }
     }, onError: (error) {
-      print('❌ Auth 상태 변경 에러: $error');
+      debugPrint('❌ Auth 상태 변경 에러: $error');
       if (error.toString().contains('invalid-user-token') || 
           error.toString().contains('user-token-expired')) {
-        print('🔄 토큰 만료 - 자동 로그아웃');
+        debugPrint('🔄 토큰 만료 - 자동 로그아웃');
         signOut();
       }
     });
@@ -65,13 +65,13 @@ class UserProvider with ChangeNotifier {
       
       notifyListeners();
     } catch (e) {
-      print('❌ 사용자 데이터 로드 실패: $e');
+      debugPrint('❌ 사용자 데이터 로드 실패: $e');
       _error = e.toString();
       
       if (e.toString().contains('invalid-user-token') || 
           e.toString().contains('user-token-expired') ||
           e.toString().contains('user-not-found')) {
-        print('🔄 유효하지 않은 토큰 - 자동 로그아웃');
+        debugPrint('🔄 유효하지 않은 토큰 - 자동 로그아웃');
         await signOut();
       }
       
@@ -149,7 +149,7 @@ class UserProvider with ChangeNotifier {
       return false;
     } catch (e) {
       _error = e.toString();
-      print('❌ 회원가입 실패: $e');
+      debugPrint('❌ 회원가입 실패: $e');
       return false;
     } finally {
       _isLoading = false;
@@ -167,7 +167,7 @@ class UserProvider with ChangeNotifier {
       final user = await _authService.signIn(username, password);
       if (user != null) {
         _currentUser = user;
-        print('✅ 로그인 성공: ${user.email}');
+        debugPrint('✅ 로그인 성공: ${user.email}');
         return true;
       }
       
@@ -175,7 +175,7 @@ class UserProvider with ChangeNotifier {
       return false;
     } catch (e) {
       _error = e.toString();
-      print('❌ 로그인 실패: $e');
+      debugPrint('❌ 로그인 실패: $e');
       
       // 사용자 친화적인 에러 메시지
       if (e.toString().contains('user-not-found')) {
@@ -207,10 +207,10 @@ class UserProvider with ChangeNotifier {
       await _authService.signOut();
       _currentUser = null;
       _error = null;
-      print('✅ 로그아웃 성공');
+      debugPrint('✅ 로그아웃 성공');
       notifyListeners();
     } catch (e) {
-      print('❌ 로그아웃 실패: $e');
+      debugPrint('❌ 로그아웃 실패: $e');
       // 로그아웃 실패해도 로컬 상태는 초기화
       _currentUser = null;
       _error = null;
@@ -240,7 +240,7 @@ class UserProvider with ChangeNotifier {
           notifyListeners();
         }
       } catch (e) {
-        print('❌ 사용자 정보 새로고침 실패: $e');
+        debugPrint('❌ 사용자 정보 새로고침 실패: $e');
       }
     }
   }

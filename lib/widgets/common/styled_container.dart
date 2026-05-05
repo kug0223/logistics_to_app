@@ -151,7 +151,7 @@ class StyledOutlineBadge extends StatelessWidget {
 ///   label: '11/01',
 ///   backgroundColor: AppColors.infoDark!,
 ///   textColor: Colors.white,
-///   onDelete: () => print('삭제'),
+///   onDelete: () => debugPrint('삭제'),
 /// )
 /// ```
 class StyledChip extends StatelessWidget {

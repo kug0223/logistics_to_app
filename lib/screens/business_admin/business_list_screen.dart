@@ -79,7 +79,7 @@ class _BusinessListScreenState extends State<BusinessListScreen> {
         _isLoading = false;
       });
     } catch (e) {
-      print('❌ 사업장 로드 실패: $e');
+      debugPrint('❌ 사업장 로드 실패: $e');
       ToastHelper.showError('사업장 목록을 불러오는데 실패했습니다');
       setState(() => _isLoading = false);
     }
@@ -103,9 +103,9 @@ class _BusinessListScreenState extends State<BusinessListScreen> {
       if (business.mainImageUrl != null) {
         try {
           await storage.refFromURL(business.mainImageUrl!).delete();
-          print('✅ 대표 이미지 삭제');
+          debugPrint('✅ 대표 이미지 삭제');
         } catch (e) {
-          print('⚠️ 대표 이미지 삭제 실패: $e');
+          debugPrint('⚠️ 대표 이미지 삭제 실패: $e');
         }
       }
       
@@ -114,9 +114,9 @@ class _BusinessListScreenState extends State<BusinessListScreen> {
         for (var url in business.imageUrls!) {
           try {
             await storage.refFromURL(url).delete();
-            print('✅ 추가 이미지 삭제');
+            debugPrint('✅ 추가 이미지 삭제');
           } catch (e) {
-            print('⚠️ 추가 이미지 삭제 실패: $e');
+            debugPrint('⚠️ 추가 이미지 삭제 실패: $e');
           }
         }
       }
@@ -134,7 +134,7 @@ class _BusinessListScreenState extends State<BusinessListScreen> {
           try {
             await storage.refFromURL(data['thumbnailUrl']).delete();
           } catch (e) {
-            print('⚠️ 업무유형 썸네일 삭제 실패: $e');
+            debugPrint('⚠️ 업무유형 썸네일 삭제 실패: $e');
           }
         }
         if (data['images'] != null) {
@@ -142,7 +142,7 @@ class _BusinessListScreenState extends State<BusinessListScreen> {
             try {
               await storage.refFromURL(url).delete();
             } catch (e) {
-              print('⚠️ 업무유형 이미지 삭제 실패: $e');
+              debugPrint('⚠️ 업무유형 이미지 삭제 실패: $e');
             }
           }
         }
@@ -157,7 +157,7 @@ class _BusinessListScreenState extends State<BusinessListScreen> {
       ToastHelper.showSuccess('사업장이 삭제되었습니다');
       _loadBusinesses();
     } catch (e) {
-      print('❌ 사업장 삭제 실패: $e');
+      debugPrint('❌ 사업장 삭제 실패: $e');
       ToastHelper.showError('사업장 삭제에 실패했습니다');
     }
   }

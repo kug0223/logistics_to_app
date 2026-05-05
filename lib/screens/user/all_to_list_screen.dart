@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+﻿import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../models/core/to_model.dart';
 import '../../models/core/application_model.dart';
@@ -45,7 +45,7 @@ class _AllTOListScreenState extends State<AllTOListScreen> {
 
   /// 전체 TO 목록 로드
   Future<void> _loadAllTOs() async {
-    print('🔄 _loadAllTOs 호출됨!');
+    debugPrint('🔄 _loadAllTOs 호출됨!');
     setState(() => _isLoading = true);
 
     try {
@@ -63,16 +63,16 @@ class _AllTOListScreenState extends State<AllTOListScreen> {
       final toList = results[0] as List<TOModel>;
       final myApps = results[1] as List<ApplicationModel>;
 
-      print('✅ 조회된 전체 TO 개수: ${toList.length}');
-      print('✅ 내 지원 내역 개수: ${myApps.length}');
+      debugPrint('✅ 조회된 전체 TO 개수: ${toList.length}');
+      debugPrint('✅ 내 지원 내역 개수: ${myApps.length}');
 
       // ⭐ 각 TO의 정보 출력
       for (var i = 0; i < toList.length; i++) {
-        print('   [$i] ${toList[i].title}');
-        print('       jobType: ${toList[i].jobType}');
-        print('       isShortTerm: ${toList[i].isShortTerm}');
-        print('       isLongTerm: ${toList[i].isLongTerm}');
-        print('       date: ${toList[i].formattedDate}');
+        debugPrint('   [$i] ${toList[i].title}');
+        debugPrint('       jobType: ${toList[i].jobType}');
+        debugPrint('       isShortTerm: ${toList[i].isShortTerm}');
+        debugPrint('       isLongTerm: ${toList[i].isLongTerm}');
+        debugPrint('       date: ${toList[i].formattedDate}');
       }
 
       // 사업장 목록 추출
@@ -105,7 +105,7 @@ class _AllTOListScreenState extends State<AllTOListScreen> {
 
       _applyFilters();
     } catch (e) {
-      print('❌ TO 목록 로드 실패: $e');
+      debugPrint('❌ TO 목록 로드 실패: $e');
       setState(() => _isLoading = false);
       ToastHelper.showError('TO 목록을 불러오는데 실패했습니다.');
     }
@@ -113,9 +113,9 @@ class _AllTOListScreenState extends State<AllTOListScreen> {
 
   /// 필터 적용
   void _applyFilters() {
-    print('🔍 [_applyFilters] 시작');
-    print('   _allTOList: ${_allTOList.length}개');
-    print('   _jobTypeFilter: $_jobTypeFilter');
+    debugPrint('🔍 [_applyFilters] 시작');
+    debugPrint('   _allTOList: ${_allTOList.length}개');
+    debugPrint('   _jobTypeFilter: $_jobTypeFilter');
     List<TOModel> filtered = _allTOList;
 
     // 1. 날짜 필터 - ✅ 당일 포함, 이전 날짜는 제외
@@ -188,9 +188,9 @@ class _AllTOListScreenState extends State<AllTOListScreen> {
     // 5. 날짜순 정렬
     filtered.sort((a, b) => a.date.compareTo(b.date));
 
-    print('📊 필터 적용 결과: ${filtered.length}개 TO');
+    debugPrint('📊 필터 적용 결과: ${filtered.length}개 TO');
     for (var i = 0; i < filtered.length; i++) {
-      print('   [$i] ${filtered[i].title} (${filtered[i].jobType})');
+      debugPrint('   [$i] ${filtered[i].title} (${filtered[i].jobType})');
     }
     
     setState(() {
@@ -220,10 +220,10 @@ class _AllTOListScreenState extends State<AllTOListScreen> {
           });
         }
         
-        print('✅ 내 지원 내역만 새로고침: ${myApps.length}개');
+        debugPrint('✅ 내 지원 내역만 새로고침: ${myApps.length}개');
       }
     } catch (e) {
-      print('❌ 지원 내역 새로고침 실패: $e');
+      debugPrint('❌ 지원 내역 새로고침 실패: $e');
     }
   }
 

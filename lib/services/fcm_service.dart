@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+﻿import 'package:flutter/material.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -28,7 +28,7 @@ class FCMService {
   /// FCM 초기화 (로그인 후 호출)
   Future<void> initialize(String userId) async {
     if (_isInitialized && _currentUserId == userId) {
-      print('ℹ️ FCM 이미 초기화됨: $userId');
+      debugPrint('ℹ️ FCM 이미 초기화됨: $userId');
       return;
     }
 
@@ -62,7 +62,7 @@ class FCMService {
     }
 
     _isInitialized = true;
-    print('✅ FCM 초기화 완료: $userId');
+    debugPrint('✅ FCM 초기화 완료: $userId');
   }
 
   /// 알림 권한 요청
@@ -74,7 +74,7 @@ class FCMService {
       provisional: false,
     );
 
-    print('📱 알림 권한 상태: ${settings.authorizationStatus}');
+    debugPrint('📱 알림 권한 상태: ${settings.authorizationStatus}');
   }
 
   /// 로컬 알림 초기화
@@ -133,15 +133,15 @@ class FCMService {
         'fcmToken': token,
         'fcmTokenUpdatedAt': FieldValue.serverTimestamp(),
       });
-      print('✅ FCM 토큰 저장 완료');
+      debugPrint('✅ FCM 토큰 저장 완료');
     } catch (e) {
-      print('❌ FCM 토큰 저장 실패: $e');
+      debugPrint('❌ FCM 토큰 저장 실패: $e');
     }
   }
 
   /// 포그라운드 메시지 처리
   void _handleForegroundMessage(RemoteMessage message) {
-    print('📩 포그라운드 메시지 수신: ${message.notification?.title}');
+    debugPrint('📩 포그라운드 메시지 수신: ${message.notification?.title}');
 
     final notification = message.notification;
     if (notification != null) {
@@ -190,20 +190,20 @@ class FCMService {
 
   /// 알림 탭 처리
   void _onNotificationTap(NotificationResponse response) {
-    print('🔔 알림 탭: ${response.payload}');
+    debugPrint('🔔 알림 탭: ${response.payload}');
     _navigateToNotificationScreen();
   }
 
   /// 백그라운드 메시지 클릭 처리
   void _handleMessageOpenedApp(RemoteMessage message) {
-    print('📩 백그라운드 메시지 클릭: ${message.data}');
+    debugPrint('📩 백그라운드 메시지 클릭: ${message.data}');
     _navigateToNotificationScreen();
   }
   
   /// 알림 화면으로 이동
   void _navigateToNotificationScreen() {
     if (_navigatorKey?.currentState == null) {
-      print('⚠️ Navigator가 아직 준비되지 않음');
+      debugPrint('⚠️ Navigator가 아직 준비되지 않음');
       return;
     }
     
@@ -223,9 +223,9 @@ class FCMService {
           .update({
         'fcmToken': FieldValue.delete(),
       });
-      print('✅ FCM 토큰 삭제 완료');
+      debugPrint('✅ FCM 토큰 삭제 완료');
     } catch (e) {
-      print('❌ FCM 토큰 삭제 실패: $e');
+      debugPrint('❌ FCM 토큰 삭제 실패: $e');
     }
 
     _currentUserId = null;

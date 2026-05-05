@@ -89,7 +89,7 @@ class WorkTypeIcon {
         final codePoint = int.parse(iconName.substring(9));
         return IconData(codePoint, fontFamily: 'MaterialIcons');
       } catch (e) {
-        print('❌ Material 아이콘 파싱 실패: $iconName');
+        debugPrint('❌ Material 아이콘 파싱 실패: $iconName');
         return Icons.work;
       }
     }

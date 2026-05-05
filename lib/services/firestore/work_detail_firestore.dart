@@ -1,4 +1,4 @@
-part of '../firestore_service.dart';
+﻿part of '../firestore_service.dart';
 
 // ═══════════════════════════════════════════════════════════
 // 업무 상세 정보 관리 (Work Details Management)
@@ -37,7 +37,7 @@ extension WorkDetailFirestore on FirestoreService {
 
       return workDetails;
     } catch (e) {
-      print('❌ WorkDetails 조회 실패: $e');
+      debugPrint('❌ WorkDetails 조회 실패: $e');
       return [];
     }
   }
@@ -70,10 +70,10 @@ extension WorkDetailFirestore on FirestoreService {
       }
 
       await batch.commit();
-      print('✅ WorkDetails 생성 완료: ${workDetailsData.length}개');
+      debugPrint('✅ WorkDetails 생성 완료: ${workDetailsData.length}개');
       return true;
     } catch (e) {
-      print('❌ WorkDetails 생성 실패: $e');
+      debugPrint('❌ WorkDetails 생성 실패: $e');
       ToastHelper.showError('업무 상세 정보 저장에 실패했습니다.');
       return false;
     }
@@ -105,7 +105,7 @@ extension WorkDetailFirestore on FirestoreService {
         'createdAt': FieldValue.serverTimestamp(),
       });
 
-      print('✅ [FirestoreService] WorkDetail 추가 완료: ${docRef.id}');
+      debugPrint('✅ [FirestoreService] WorkDetail 추가 완료: ${docRef.id}');
       
       // ✅ TO의 totalRequired 업데이트
       await _recalculateTotalRequired(toId);
@@ -115,7 +115,7 @@ extension WorkDetailFirestore on FirestoreService {
       
       return docRef.id;
     } catch (e) {
-      print('❌ [FirestoreService] WorkDetail 추가 실패: $e');
+      debugPrint('❌ [FirestoreService] WorkDetail 추가 실패: $e');
       rethrow;
     }
   }
@@ -134,7 +134,7 @@ extension WorkDetailFirestore on FirestoreService {
           .doc(workDetailId)
           .update(updates);
 
-      print('✅ [FirestoreService] WorkDetail 수정 완료');
+      debugPrint('✅ [FirestoreService] WorkDetail 수정 완료');
       
       // ✅ 인원 또는 급여 변경 시 TO 정보 업데이트
       if (updates.containsKey('requiredCount') || 
@@ -146,7 +146,7 @@ extension WorkDetailFirestore on FirestoreService {
         await syncGroupMasterStats(toId);
       }
     } catch (e) {
-      print('❌ [FirestoreService] WorkDetail 수정 실패: $e');
+      debugPrint('❌ [FirestoreService] WorkDetail 수정 실패: $e');
       rethrow;
     }
   }
@@ -170,9 +170,9 @@ extension WorkDetailFirestore on FirestoreService {
       // ✅ 그룹 TO면 마스터 통계도 동기화
       await syncGroupMasterStats(toId);
       
-      print('✅ [FirestoreService] WorkDetail 삭제 완료');
+      debugPrint('✅ [FirestoreService] WorkDetail 삭제 완료');
     } catch (e) {
-      print('❌ [FirestoreService] WorkDetail 삭제 실패: $e');
+      debugPrint('❌ [FirestoreService] WorkDetail 삭제 실패: $e');
       rethrow;
     }
   }
@@ -195,14 +195,14 @@ extension WorkDetailFirestore on FirestoreService {
       });
       
       clearCache(toId: toId);
-      print('✅ WorkDetail 마감 완료: $workDetailId');
+      debugPrint('✅ WorkDetail 마감 완료: $workDetailId');
       
       // ✅ 모든 WorkDetail이 마감됐는지 체크 → TO status 업데이트
       await _checkAndUpdateTOStatusAfterWorkDetailClose(toId, adminUID);
       
       return true;
     } catch (e) {
-      print('❌ WorkDetail 마감 실패: $e');
+      debugPrint('❌ WorkDetail 마감 실패: $e');
       return false;
     }
   }
@@ -266,14 +266,14 @@ extension WorkDetailFirestore on FirestoreService {
           .update(updates);
       
       clearCache(toId: toId);
-      print('✅ WorkDetail 재오픈 완료: $workDetailId');
+      debugPrint('✅ WorkDetail 재오픈 완료: $workDetailId');
       
       // ✅ WorkDetail 재오픈 시 TO status도 ACTIVE로 업데이트
       await _checkAndUpdateTOStatusAfterWorkDetailReopen(toId, adminUID);
       
       return true;
     } catch (e) {
-      print('❌ WorkDetail 재오픈 실패: $e');
+      debugPrint('❌ WorkDetail 재오픈 실패: $e');
       return false;
     }
   }
@@ -296,7 +296,7 @@ extension WorkDetailFirestore on FirestoreService {
         return data['closedAt'] != null;
       });
       
-      print('🔍 WorkDetail 마감 체크: 전체 ${workDetailsSnapshot.docs.length}개, 모두 마감: $allClosed');
+      debugPrint('🔍 WorkDetail 마감 체크: 전체 ${workDetailsSnapshot.docs.length}개, 모두 마감: $allClosed');
       
       // 3. 모두 마감이면 TO status 업데이트
       if (allClosed) {
@@ -304,7 +304,7 @@ extension WorkDetailFirestore on FirestoreService {
           'status': 'CLOSED',
           'statusUpdatedAt': FieldValue.serverTimestamp(),
         });
-        print('   ✅ TO status → CLOSED');
+        debugPrint('   ✅ TO status → CLOSED');
         
         // 4. 그룹 TO면 마스터 status도 재계산
         final toDoc = await _firestore.collection('tos').doc(toId).get();
@@ -316,7 +316,7 @@ extension WorkDetailFirestore on FirestoreService {
         invalidateListCache();
       }
     } catch (e) {
-      print('⚠️ TO status 업데이트 실패: $e');
+      debugPrint('⚠️ TO status 업데이트 실패: $e');
     }
   }
   
@@ -329,7 +329,7 @@ extension WorkDetailFirestore on FirestoreService {
         'status': 'ACTIVE',
         'statusUpdatedAt': FieldValue.serverTimestamp(),
       });
-      print('   ✅ TO status → ACTIVE');
+      debugPrint('   ✅ TO status → ACTIVE');
       
       // 그룹 TO면 마스터 status도 재계산
       final toDoc = await _firestore.collection('tos').doc(toId).get();
@@ -340,7 +340,7 @@ extension WorkDetailFirestore on FirestoreService {
       
       invalidateListCache();
     } catch (e) {
-      print('⚠️ TO status 업데이트 실패: $e');
+      debugPrint('⚠️ TO status 업데이트 실패: $e');
     }
   }
   /// WorkDetail 긴급 모집 시작
@@ -362,10 +362,10 @@ extension WorkDetailFirestore on FirestoreService {
       });
       
       clearCache(toId: toId);
-      print('✅ 긴급 모집 시작: $workDetailId');
+      debugPrint('✅ 긴급 모집 시작: $workDetailId');
       return true;
     } catch (e) {
-      print('❌ 긴급 모집 시작 실패: $e');
+      debugPrint('❌ 긴급 모집 시작 실패: $e');
       return false;
     }
   }
@@ -389,10 +389,10 @@ extension WorkDetailFirestore on FirestoreService {
       });
       
       clearCache(toId: toId);
-      print('✅ 긴급 모집 종료: $workDetailId');
+      debugPrint('✅ 긴급 모집 종료: $workDetailId');
       return true;
     } catch (e) {
-      print('❌ 긴급 모집 종료 실패: $e');
+      debugPrint('❌ 긴급 모집 종료 실패: $e');
       return false;
     }
   }
@@ -410,13 +410,13 @@ extension WorkDetailFirestore on FirestoreService {
           .get();
 
       if (snapshot.docs.isEmpty) {
-        print('⚠️ WorkDetail을 찾을 수 없음: $workType');
+        debugPrint('⚠️ WorkDetail을 찾을 수 없음: $workType');
         return null;
       }
 
       return snapshot.docs.first.id;
     } catch (e) {
-      print('❌ WorkDetail 검색 실패: $e');
+      debugPrint('❌ WorkDetail 검색 실패: $e');
       return null;
     }
   }
@@ -433,10 +433,10 @@ extension WorkDetailFirestore on FirestoreService {
         'currentCount': FieldValue.increment(1),
       });
 
-      print('✅ WorkDetail currentCount 증가');
+      debugPrint('✅ WorkDetail currentCount 증가');
       return true;
     } catch (e) {
-      print('❌ WorkDetail currentCount 증가 실패: $e');
+      debugPrint('❌ WorkDetail currentCount 증가 실패: $e');
       return false;
     }
   }
@@ -453,10 +453,10 @@ extension WorkDetailFirestore on FirestoreService {
         'currentCount': FieldValue.increment(-1),
       });
 
-      print('✅ WorkDetail currentCount 감소');
+      debugPrint('✅ WorkDetail currentCount 감소');
       return true;
     } catch (e) {
-      print('❌ WorkDetail currentCount 감소 실패: $e');
+      debugPrint('❌ WorkDetail currentCount 감소 실패: $e');
       return false;
     }
   }
@@ -479,7 +479,7 @@ extension WorkDetailFirestore on FirestoreService {
       final map = Map.fromEntries(results);
       return map;
     } catch (e) {
-      print('❌ 배치 WorkDetails 조회 실패: $e');
+      debugPrint('❌ 배치 WorkDetails 조회 실패: $e');
       return {};
     }
   }
@@ -491,7 +491,7 @@ extension WorkDetailFirestore on FirestoreService {
     bool resetClosedStatus = false,
   }) async {
     try {
-      print('🔄 WorkDetail 마감시간 재계산 시작: $toId');
+      debugPrint('🔄 WorkDetail 마감시간 재계산 시작: $toId');
       
       // 1. 모든 WorkDetails 조회
       final workDetailsSnapshot = await _firestore
@@ -501,7 +501,7 @@ extension WorkDetailFirestore on FirestoreService {
           .get();
       
       if (workDetailsSnapshot.docs.isEmpty) {
-        print('⚠️ WorkDetails가 없습니다');
+        debugPrint('⚠️ WorkDetails가 없습니다');
         return true;
       }
       
@@ -547,27 +547,27 @@ extension WorkDetailFirestore on FirestoreService {
           });
         }
         
-        print('   ✅ ${workData['workType']}: 마감시간 = ${DateFormat('MM/dd HH:mm').format(workDeadline)}');
+        debugPrint('   ✅ ${workData['workType']}: 마감시간 = ${DateFormat('MM/dd HH:mm').format(workDeadline)}');
       }
       
       await batch.commit();
       
       clearCache(toId: toId);
-      print('✅ WorkDetail 마감시간 재계산 완료: ${workDetailsSnapshot.docs.length}개');
+      debugPrint('✅ WorkDetail 마감시간 재계산 완료: ${workDetailsSnapshot.docs.length}개');
       
       // 🔥 TO status도 재계산
       await updateTOStatus(toId);
       
       return true;
     } catch (e) {
-      print('❌ WorkDetail 마감시간 재계산 실패: $e');
+      debugPrint('❌ WorkDetail 마감시간 재계산 실패: $e');
       return false;
     }
   }
   /// 🔥 장기공고용: WorkDetails 마감 상태만 초기화 (마감시간 변경 없음)
   Future<bool> resetWorkDetailsClosedStatus(String toId) async {
     try {
-      print('🔄 WorkDetails 마감 상태 초기화 시작: $toId');
+      debugPrint('🔄 WorkDetails 마감 상태 초기화 시작: $toId');
       
       final workDetailsSnapshot = await _firestore
           .collection('tos')
@@ -576,7 +576,7 @@ extension WorkDetailFirestore on FirestoreService {
           .get();
       
       if (workDetailsSnapshot.docs.isEmpty) {
-        print('⚠️ WorkDetails가 없습니다');
+        debugPrint('⚠️ WorkDetails가 없습니다');
         return true;
       }
       
@@ -594,14 +594,14 @@ extension WorkDetailFirestore on FirestoreService {
       await batch.commit();
       
       clearCache(toId: toId);
-      print('✅ WorkDetails 마감 상태 초기화 완료: ${workDetailsSnapshot.docs.length}개');
+      debugPrint('✅ WorkDetails 마감 상태 초기화 완료: ${workDetailsSnapshot.docs.length}개');
       
       // 🔥 TO status도 재계산 (열린 WorkDetail 있으면 ACTIVE로)
       await updateTOStatus(toId);
       
       return true;
     } catch (e) {
-      print('❌ WorkDetails 마감 상태 초기화 실패: $e');
+      debugPrint('❌ WorkDetails 마감 상태 초기화 실패: $e');
       return false;
     }
   }
@@ -609,7 +609,7 @@ extension WorkDetailFirestore on FirestoreService {
   /// 🔥 일회성: 기존 WorkDetails에 마감시간 추가
   Future<void> migrateWorkDetailDeadlines() async {
     try {
-      print('🔄 WorkDetail 마감시간 마이그레이션 시작...');
+      debugPrint('🔄 WorkDetail 마감시간 마이그레이션 시작...');
       
       // 1. 모든 TO 조회
       final tosSnapshot = await _firestore.collection('tos').get();
@@ -672,9 +672,9 @@ extension WorkDetailFirestore on FirestoreService {
         await batch.commit();
             }
       
-      print('✅ 마이그레이션 완료: $totalUpdated개 WorkDetail 업데이트');
+      debugPrint('✅ 마이그레이션 완료: $totalUpdated개 WorkDetail 업데이트');
     } catch (e) {
-      print('❌ 마이그레이션 실패: $e');
+      debugPrint('❌ 마이그레이션 실패: $e');
     }
   }
   /// ✅ TO의 totalRequired + 급여 정보 재계산
@@ -690,7 +690,7 @@ extension WorkDetailFirestore on FirestoreService {
           'wageType': null,
           'workDetailCount': 0,
         });
-        print('📊 TO 정보 초기화 (업무 없음)');
+        debugPrint('📊 TO 정보 초기화 (업무 없음)');
         return;
       }
       
@@ -715,9 +715,9 @@ extension WorkDetailFirestore on FirestoreService {
         'workDetailCount': workDetailCount,
       });
       
-      print('📊 TO 정보 업데이트: 인원=$totalRequired, 급여=$minWage~$maxWage ($wageType), 업무=$workDetailCount개');
+      debugPrint('📊 TO 정보 업데이트: 인원=$totalRequired, 급여=$minWage~$maxWage ($wageType), 업무=$workDetailCount개');
     } catch (e) {
-      print('❌ TO 정보 업데이트 실패: $e');
+      debugPrint('❌ TO 정보 업데이트 실패: $e');
     }
   }
   

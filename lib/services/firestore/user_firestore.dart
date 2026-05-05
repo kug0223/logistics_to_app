@@ -1,4 +1,4 @@
-part of '../firestore_service.dart';
+﻿part of '../firestore_service.dart';
 
 // ═══════════════════════════════════════════════════════════
 // 사용자 관리 (User Management)
@@ -14,22 +14,22 @@ extension UserFirestore on FirestoreService {
   /// 사용자 정보 조회 (캐싱 적용!)
   Future<UserModel?> getUser(String uid, {bool forceRefresh = false}) async {
     try {
-      print('🔍 getUser 호출: $uid, forceRefresh=$forceRefresh');
+      debugPrint('🔍 getUser 호출: $uid, forceRefresh=$forceRefresh');
       
       // 🔥 강제 새로고침이 아닐 때만 캐시 확인
       if (!forceRefresh && _userCache.containsKey(uid)) {
         final cacheTime = _userCacheTimestamps[uid];
         if (cacheTime != null && DateTime.now().difference(cacheTime) < _userCacheValidDuration) {
-          print('📦 User 캐시 사용: $uid');
+          debugPrint('📦 User 캐시 사용: $uid');
           return _userCache[uid];
         }
       }
       
-      print('🔄 User Firestore 조회: $uid');
+      debugPrint('🔄 User Firestore 조회: $uid');
       final doc = await _firestore.collection('users').doc(uid).get();
       
       if (!doc.exists) {
-        print('❌ 사용자를 찾을 수 없습니다: $uid');
+        debugPrint('❌ 사용자를 찾을 수 없습니다: $uid');
         return null;
       }
       
@@ -39,10 +39,10 @@ extension UserFirestore on FirestoreService {
       _userCache[uid] = user;
       _userCacheTimestamps[uid] = DateTime.now();
       
-      print('✅ User 조회 완료: ${user.name}');
+      debugPrint('✅ User 조회 완료: ${user.name}');
       return user;
     } catch (e) {
-      print('❌ 사용자 조회 실패: $e');
+      debugPrint('❌ 사용자 조회 실패: $e');
       return null;
     }
   }
@@ -62,9 +62,9 @@ extension UserFirestore on FirestoreService {
       _userCache.remove(uid);
       _userCacheTimestamps.remove(uid);
       
-      print('✅ 사용자 정보 업데이트 완료: $uid');
+      debugPrint('✅ 사용자 정보 업데이트 완료: $uid');
     } catch (e) {
-      print('❌ 사용자 정보 업데이트 실패: $e');
+      debugPrint('❌ 사용자 정보 업데이트 실패: $e');
       rethrow;
     }
   }

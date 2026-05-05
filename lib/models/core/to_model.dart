@@ -1,3 +1,4 @@
+﻿import 'package:flutter/foundation.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import '../../../utils/format_helper.dart';
 import 'group_model.dart';
@@ -677,7 +678,7 @@ class TOModel {
       
       return false;
     } catch (e) {
-      print('⚠️ isTimeExpired 계산 오류: $e');
+      debugPrint('⚠️ isTimeExpired 계산 오류: $e');
       return false;
     }
   }

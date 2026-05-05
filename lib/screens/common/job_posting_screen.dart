@@ -98,7 +98,7 @@ class _JobPostingScreenState extends State<JobPostingScreen> {
 
       setState(() => _isLoading = false);
     } catch (e) {
-      print('❌ 데이터 로드 실패: $e');
+      debugPrint('❌ 데이터 로드 실패: $e');
       ToastHelper.showError('데이터를 불러오는데 실패했습니다');
       setState(() => _isLoading = false);
     }
@@ -110,7 +110,7 @@ class _JobPostingScreenState extends State<JobPostingScreen> {
       final workTypes = await _firestoreService.getBusinessWorkTypes(_business!.id);
       _workTypeMap = {for (var wt in workTypes) wt.name: wt};
     } catch (e) {
-      print('⚠️ 업무유형 로드 실패: $e');
+      debugPrint('⚠️ 업무유형 로드 실패: $e');
     }
   }
 

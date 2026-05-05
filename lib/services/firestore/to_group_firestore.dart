@@ -1,4 +1,4 @@
-part of '../firestore_service.dart';
+﻿part of '../firestore_service.dart';
 
 // ═══════════════════════════════════════════════════════════
 // TO 그룹 관리 (TO Group Management)
@@ -17,8 +17,8 @@ extension TOGroupFirestore on FirestoreService {
   /// 그룹별 TO 조회
   Future<List<TOModel>> getTOsByGroup(String groupId) async {
     try {
-      print('🔍 [FirestoreService] 그룹 TO 조회 시작...');
-      print('   그룹 ID: $groupId');
+      debugPrint('🔍 [FirestoreService] 그룹 TO 조회 시작...');
+      debugPrint('   그룹 ID: $groupId');
 
       final snapshot = await _firestore
           .collection('tos')
@@ -30,10 +30,10 @@ extension TOGroupFirestore on FirestoreService {
           .map((doc) => TOModel.fromMap(doc.data(), doc.id))
           .toList();
 
-      print('✅ [FirestoreService] 그룹 TO 조회 완료: ${toList.length}개');
+      debugPrint('✅ [FirestoreService] 그룹 TO 조회 완료: ${toList.length}개');
       return toList;
     } catch (e) {
-      print('❌ [FirestoreService] 그룹 TO 조회 실패: $e');
+      debugPrint('❌ [FirestoreService] 그룹 TO 조회 실패: $e');
       return [];
     }
   }
@@ -53,8 +53,8 @@ extension TOGroupFirestore on FirestoreService {
     required String creatorUID,
   }) async {
     try {
-      print('🔨 [FirestoreService] 그룹 TO 생성 시작...');
-      print('   기간: ${startDate.toString().split(' ')[0]} ~ ${endDate.toString().split(' ')[0]}');
+      debugPrint('🔨 [FirestoreService] 그룹 TO 생성 시작...');
+      debugPrint('   기간: ${startDate.toString().split(' ')[0]} ~ ${endDate.toString().split(' ')[0]}');
       
       // 시작일~종료일 사이의 모든 날짜 계산
       List<DateTime> dates = [];
@@ -65,7 +65,7 @@ extension TOGroupFirestore on FirestoreService {
         currentDate = currentDate.add(Duration(days: 1));
       }
       
-      print('   생성할 TO 개수: ${dates.length}개');
+      debugPrint('   생성할 TO 개수: ${dates.length}개');
       
       // 총 필요 인원 계산
       int totalRequired = 0;
@@ -85,7 +85,7 @@ extension TOGroupFirestore on FirestoreService {
           businessDistrict = business.district;
         }
       } catch (e) {
-        print('⚠️ 사업장 주소 조회 실패: $e');
+        debugPrint('⚠️ 사업장 주소 조회 실패: $e');
       }
       
       // ✅ 급여 정보 계산
@@ -118,11 +118,11 @@ extension TOGroupFirestore on FirestoreService {
       );
       
       if (groupId == null) {
-        print('❌ 그룹 생성 실패');
+        debugPrint('❌ 그룹 생성 실패');
         return false;
       }
       
-      print('   ✅ groups 컬렉션 그룹 생성 완료: $groupId');
+      debugPrint('   ✅ groups 컬렉션 그룹 생성 완료: $groupId');
 
       // ═══════════════════════════════════════════════════════════
       // 🆕 Step 2: 각 날짜별 TO 생성 (isGroupMaster 제거)
@@ -162,7 +162,7 @@ extension TOGroupFirestore on FirestoreService {
         
         // TO 문서 생성
         final toDoc = await _firestore.collection('tos').add(toData);
-        print('   ✅ ${dates[i].toString().split(' ')[0]} TO 생성 완료 (ID: ${toDoc.id})');
+        debugPrint('   ✅ ${dates[i].toString().split(' ')[0]} TO 생성 완료 (ID: ${toDoc.id})');
         
         // WorkDetails 하위 컬렉션 생성
         for (int j = 0; j < workDetails.length; j++) {
@@ -192,12 +192,12 @@ extension TOGroupFirestore on FirestoreService {
       await syncGroupStats(groupId);
       await syncGroupStatus(groupId);
       
-      print('✅ [FirestoreService] 그룹 TO 생성 완료: ${dates.length}개');
+      debugPrint('✅ [FirestoreService] 그룹 TO 생성 완료: ${dates.length}개');
       //ToastHelper.showSuccess('${dates.length}개의 TO가 생성되었습니다!');
       return true;
       
     } catch (e) {
-      print('❌ [FirestoreService] 그룹 TO 생성 실패: $e');
+      debugPrint('❌ [FirestoreService] 그룹 TO 생성 실패: $e');
       ToastHelper.showError('TO 생성 중 오류가 발생했습니다.');
       return false;
     }
@@ -239,11 +239,11 @@ extension TOGroupFirestore on FirestoreService {
       // ✅ groups 컬렉션 통계 동기화
       await syncGroupStats(targetGroupId);
       
-      print('✅ TO 그룹 재연결 완료: $toId → $targetGroupId');
+      debugPrint('✅ TO 그룹 재연결 완료: $toId → $targetGroupId');
       ToastHelper.showSuccess('그룹에 연결되었습니다.');
       return true;
     } catch (e) {
-      print('❌ TO 그룹 재연결 실패: $e');
+      debugPrint('❌ TO 그룹 재연결 실패: $e');
       ToastHelper.showError('그룹 연결에 실패했습니다.');
       return false;
     }
@@ -302,15 +302,15 @@ extension TOGroupFirestore on FirestoreService {
       
       invalidateListCache();
       
-      print('✅ 새 그룹 생성 완료');
-      print('   그룹 ID: $groupId');
-      print('   그룹명: $groupName');
-      print('   대표 TO: $toId');
+      debugPrint('✅ 새 그룹 생성 완료');
+      debugPrint('   그룹 ID: $groupId');
+      debugPrint('   그룹명: $groupName');
+      debugPrint('   대표 TO: $toId');
       
       ToastHelper.showSuccess('새 그룹이 생성되었습니다.');
       return true;
     } catch (e) {
-      print('❌ 새 그룹 생성 실패: $e');
+      debugPrint('❌ 새 그룹 생성 실패: $e');
       ToastHelper.showError('그룹 생성에 실패했습니다.');
       return false;
     }
@@ -331,10 +331,10 @@ extension TOGroupFirestore on FirestoreService {
     required String creatorUID,
   }) async {
     try {
-      print('🔧 [FirestoreService] 기존 그룹에 TO 추가 시작...');
-      print('   그룹 ID: $groupId');
-      print('   그룹명: $groupName');
-      print('   기간: ${startDate.month}/${startDate.day} ~ ${endDate.month}/${endDate.day}');
+      debugPrint('🔧 [FirestoreService] 기존 그룹에 TO 추가 시작...');
+      debugPrint('   그룹 ID: $groupId');
+      debugPrint('   그룹명: $groupName');
+      debugPrint('   기간: ${startDate.month}/${startDate.day} ~ ${endDate.month}/${endDate.day}');
 
       final batch = _firestore.batch();
       
@@ -347,7 +347,7 @@ extension TOGroupFirestore on FirestoreService {
         currentDate = currentDate.add(const Duration(days: 1));
       }
 
-      print('   생성할 TO 개수: ${dates.length}일');
+      debugPrint('   생성할 TO 개수: ${dates.length}일');
 
       // 전체 필요 인원 계산
       int totalRequired = 0;
@@ -416,7 +416,7 @@ extension TOGroupFirestore on FirestoreService {
           });
         }
 
-        print('  ✅ ${date.month}/${date.day} TO 준비 완료');
+        debugPrint('  ✅ ${date.month}/${date.day} TO 준비 완료');
       }
       // 대표 TO의 날짜 범위 업데이트
       final masterTOSnapshot = await _firestore
@@ -441,14 +441,14 @@ extension TOGroupFirestore on FirestoreService {
           'endDate': Timestamp.fromDate(newEndDate),
         });
         
-        print('✅ 대표 TO 날짜 범위 업데이트: ${newStartDate.month}/${newStartDate.day} ~ ${newEndDate.month}/${newEndDate.day}');
+        debugPrint('✅ 대표 TO 날짜 범위 업데이트: ${newStartDate.month}/${newStartDate.day} ~ ${newEndDate.month}/${newEndDate.day}');
       }
 
       await batch.commit();
       
-      print('✅ [FirestoreService] 기존 그룹에 TO 추가 완료!');
-      print('   추가된 TO: ${dates.length}개');
-      print('   그룹 ID: $groupId');
+      debugPrint('✅ [FirestoreService] 기존 그룹에 TO 추가 완료!');
+      debugPrint('   추가된 TO: ${dates.length}개');
+      debugPrint('   그룹 ID: $groupId');
       
       // ✅ 그룹 마스터 통계 동기화
       await _updateGroupMasterStats(groupId);
@@ -460,7 +460,7 @@ extension TOGroupFirestore on FirestoreService {
       return true;
       
     } catch (e) {
-      print('❌ [FirestoreService] 기존 그룹 TO 추가 실패: $e');
+      debugPrint('❌ [FirestoreService] 기존 그룹 TO 추가 실패: $e');
       ToastHelper.showError('TO 추가 중 오류가 발생했습니다.');
       return false;
     }
@@ -478,14 +478,14 @@ extension TOGroupFirestore on FirestoreService {
         'groupName': groupName,
       });
       
-      print('✅ [FirestoreService] TO 그룹 정보 업데이트 완료');
-      print('   TO ID: $toId');
-      print('   Group ID: $groupId');
-      print('   Group Name: $groupName');
+      debugPrint('✅ [FirestoreService] TO 그룹 정보 업데이트 완료');
+      debugPrint('   TO ID: $toId');
+      debugPrint('   Group ID: $groupId');
+      debugPrint('   Group Name: $groupName');
       
       return true;
     } catch (e) {
-      print('❌ [FirestoreService] TO 그룹 정보 업데이트 실패: $e');
+      debugPrint('❌ [FirestoreService] TO 그룹 정보 업데이트 실패: $e');
       return false;
     }
   }
@@ -498,7 +498,7 @@ extension TOGroupFirestore on FirestoreService {
       if (groupTOs.isEmpty) {
         // TO는 없지만 groups 문서는 있을 수 있으므로 삭제 시도
         await _firestore.collection('groups').doc(groupId).delete();
-        print('⚠️ TO 없음, groups 문서만 삭제: $groupId');
+        debugPrint('⚠️ TO 없음, groups 문서만 삭제: $groupId');
         ToastHelper.showSuccess('그룹이 삭제되었습니다.');
         return true;
       }
@@ -512,11 +512,11 @@ extension TOGroupFirestore on FirestoreService {
       await _firestore.collection('groups').doc(groupId).delete();
       
       invalidateListCache();
-      print('✅ 그룹 전체 삭제 완료: $groupId (TO ${groupTOs.length}개 + groups 문서)');
+      debugPrint('✅ 그룹 전체 삭제 완료: $groupId (TO ${groupTOs.length}개 + groups 문서)');
       ToastHelper.showSuccess('그룹이 삭제되었습니다.');
       return true;
     } catch (e) {
-      print('❌ 그룹 삭제 실패: $e');
+      debugPrint('❌ 그룹 삭제 실패: $e');
       ToastHelper.showError('그룹 삭제에 실패했습니다.');
       return false;
     }
@@ -525,8 +525,8 @@ extension TOGroupFirestore on FirestoreService {
   /// 특정 날짜 TO만 삭제 (그룹 내 단일 삭제)
   Future<bool> deleteSingleTOFromGroup(String toId, String? groupId) async {
     try {
-      print('🗑️ [FirestoreService] 단일 TO 삭제 시작...');
-      print('   TO ID: $toId');
+      debugPrint('🗑️ [FirestoreService] 단일 TO 삭제 시작...');
+      debugPrint('   TO ID: $toId');
 
       // 1. 삭제할 TO 조회
       final toDoc = await _firestore.collection('tos').doc(toId).get();
@@ -572,7 +572,7 @@ extension TOGroupFirestore on FirestoreService {
           await _firestore.collection('tos').doc(groupTOs[0].id).update({
             'isGroupMaster': true,
           });
-          print('   ✅ 새 대표 TO 지정: ${groupTOs[0].id}');
+          debugPrint('   ✅ 새 대표 TO 지정: ${groupTOs[0].id}');
         }
       }
       
@@ -582,7 +582,7 @@ extension TOGroupFirestore on FirestoreService {
         if (remainingTOs.isEmpty) {
           // ✅ 그룹에 TO가 없으면 groups 문서도 삭제
           await _firestore.collection('groups').doc(groupId).delete();
-          print('   ✅ 그룹 문서 삭제 (TO 없음): $groupId');
+          debugPrint('   ✅ 그룹 문서 삭제 (TO 없음): $groupId');
         } else if (remainingTOs.length == 1) {
           // ✅ 1개만 남으면 독립 TO로 전환 + groups 삭제
           final lastTO = remainingTOs.first;
@@ -601,7 +601,7 @@ extension TOGroupFirestore on FirestoreService {
           });
           await _firestore.collection('groups').doc(groupId).delete();
           clearCache(toId: lastTO.id);
-          print('   ✅ 마지막 TO 독립화 + 그룹 문서 삭제: $groupId');
+          debugPrint('   ✅ 마지막 TO 독립화 + 그룹 문서 삭제: $groupId');
         } else {
           // ✅ 2개 이상 남음 - 통계 동기화
           await _updateGroupMasterStats(groupId);
@@ -610,12 +610,12 @@ extension TOGroupFirestore on FirestoreService {
       }
       
       invalidateListCache();
-      print('✅ [FirestoreService] TO 삭제 완료');
+      debugPrint('✅ [FirestoreService] TO 삭제 완료');
       ToastHelper.showSuccess('TO가 삭제되었습니다.');
       return true;
       
     } catch (e) {
-      print('❌ [FirestoreService] TO 삭제 실패: $e');
+      debugPrint('❌ [FirestoreService] TO 삭제 실패: $e');
       ToastHelper.showError('삭제 중 오류가 발생했습니다.');
       return false;
     }
@@ -660,7 +660,7 @@ extension TOGroupFirestore on FirestoreService {
       if (remainingTOs.isEmpty) {
         // ✅ 그룹에 TO가 없으면 groups 문서도 삭제
         await _firestore.collection('groups').doc(groupId).delete();
-        print('✅ 그룹 문서 삭제 (TO 없음): $groupId');
+        debugPrint('✅ 그룹 문서 삭제 (TO 없음): $groupId');
       } else if (remainingTOs.length == 1) {
         // 마지막 TO도 독립 TO로 변경 (그룹 관련 필드 모두 삭제)
         final lastTO = remainingTOs.first;
@@ -677,12 +677,12 @@ extension TOGroupFirestore on FirestoreService {
           'groupTotalRequired': FieldValue.delete(),
           'groupStatsUpdatedAt': FieldValue.delete(),
         });
-        print('✅ 마지막 TO도 독립 TO로 변경: ${lastTO.id}');
+        debugPrint('✅ 마지막 TO도 독립 TO로 변경: ${lastTO.id}');
         clearCache(toId: lastTO.id);
         
         // ✅ groups 문서 삭제 (그룹 해체)
         await _firestore.collection('groups').doc(groupId).delete();
-        print('✅ 그룹 문서 삭제 (1개 남음): $groupId');
+        debugPrint('✅ 그룹 문서 삭제 (1개 남음): $groupId');
       } else {
         // 2개 이상 남음 - 그룹 유지
         // 해제된 TO가 대표였다면 다음 TO를 대표로 지정
@@ -691,7 +691,7 @@ extension TOGroupFirestore on FirestoreService {
           await _firestore.collection('tos').doc(newMasterTO.id).update({
             'isGroupMaster': true,
           });
-          print('✅ 새 대표 TO 지정: ${newMasterTO.id}');
+          debugPrint('✅ 새 대표 TO 지정: ${newMasterTO.id}');
         }
         
         // 그룹 날짜 범위 재계산
@@ -707,11 +707,11 @@ extension TOGroupFirestore on FirestoreService {
       clearCache(toId: toId);
       invalidateListCache();
       
-      print('✅ TO 그룹 해제 완료: $toId');
+      debugPrint('✅ TO 그룹 해제 완료: $toId');
       ToastHelper.showSuccess('그룹에서 해제되었습니다.');
       return true;
     } catch (e) {
-      print('❌ TO 그룹 해제 실패: $e');
+      debugPrint('❌ TO 그룹 해제 실패: $e');
       ToastHelper.showError('그룹 해제에 실패했습니다.');
       return false;
     }
@@ -720,8 +720,8 @@ extension TOGroupFirestore on FirestoreService {
   /// 그룹 TO의 전체 시간 범위 계산 (최적화 - 병렬 처리)
   Future<Map<String, String>> calculateGroupTimeRange(String groupId, {bool forceRefresh = false}) async {
     try {
-      print('🕐 [FirestoreService] 그룹 시간 범위 계산 시작...');
-      print('   그룹 ID: $groupId');
+      debugPrint('🕐 [FirestoreService] 그룹 시간 범위 계산 시작...');
+      debugPrint('   그룹 ID: $groupId');
 
       // 1. 그룹의 모든 TO 조회
       final snapshot = await _firestore
@@ -757,15 +757,15 @@ extension TOGroupFirestore on FirestoreService {
         }
       }
 
-      print('✅ [FirestoreService] 시간 범위 계산 완료');
-      print('   최소 시작: $minStart, 최대 종료: $maxEnd');
+      debugPrint('✅ [FirestoreService] 시간 범위 계산 완료');
+      debugPrint('   최소 시작: $minStart, 최대 종료: $maxEnd');
 
       return {
         'minStart': minStart ?? '~',
         'maxEnd': maxEnd ?? '~',
       };
     } catch (e) {
-      print('❌ [FirestoreService] 시간 범위 계산 실패: $e');
+      debugPrint('❌ [FirestoreService] 시간 범위 계산 실패: $e');
       return {'minStart': '~', 'maxEnd': '~'};
     }
   }
@@ -778,12 +778,12 @@ extension TOGroupFirestore on FirestoreService {
   /// - 지원 확정/거절/취소, TO 생성/삭제 시 호출
   Future<bool> _updateGroupMasterStats(String groupId) async {
     try {
-      print('📊 [Sync] 그룹 마스터 통계 업데이트: $groupId');
+      debugPrint('📊 [Sync] 그룹 마스터 통계 업데이트: $groupId');
       
       // 1. 그룹의 모든 TO 조회
       final groupTOs = await getTOsByGroup(groupId);
       if (groupTOs.isEmpty) {
-        print('   ⚠️ 그룹 TO가 없습니다');
+        debugPrint('   ⚠️ 그룹 TO가 없습니다');
         return false;
       }
       
@@ -833,10 +833,10 @@ extension TOGroupFirestore on FirestoreService {
         'groupStatsUpdatedAt': FieldValue.serverTimestamp(),
       });
       
-      print('   ✅ 마스터 통계 업데이트 완료: 필요 $groupTotalRequired, 확정 $groupTotalConfirmed, 대기 $groupTotalPending');
+      debugPrint('   ✅ 마스터 통계 업데이트 완료: 필요 $groupTotalRequired, 확정 $groupTotalConfirmed, 대기 $groupTotalPending');
       return true;
     } catch (e) {
-      print('❌ [Sync] 그룹 마스터 통계 업데이트 실패: $e');
+      debugPrint('❌ [Sync] 그룹 마스터 통계 업데이트 실패: $e');
       return false;
     }
   }
@@ -857,13 +857,13 @@ extension TOGroupFirestore on FirestoreService {
       
       // 그룹 TO가 아니면 스킵
       if (to.groupId == null) {
-        print('   ℹ️ 단일 TO - 그룹 동기화 스킵');
+        debugPrint('   ℹ️ 단일 TO - 그룹 동기화 스킵');
         return true;
       }
       
       return await _updateGroupMasterStats(to.groupId!);
     } catch (e) {
-      print('❌ syncGroupMasterStats 실패: $e');
+      debugPrint('❌ syncGroupMasterStats 실패: $e');
       return false;
     }
   }
@@ -871,7 +871,7 @@ extension TOGroupFirestore on FirestoreService {
   /// 그룹 마스터 통계 전체 재계산 (마이그레이션/수동 보정용)
   Future<int> migrateAllGroupMasterStats() async {
     try {
-      print('🔄 [Migration] 전체 그룹 마스터 통계 마이그레이션 시작...');
+      debugPrint('🔄 [Migration] 전체 그룹 마스터 통계 마이그레이션 시작...');
       
       // 모든 그룹 마스터 TO 조회
       final snapshot = await _firestore
@@ -891,10 +891,10 @@ extension TOGroupFirestore on FirestoreService {
         }
       }
       
-      print('✅ [Migration] 완료: $successCount/${groupIds.length}개 그룹');
+      debugPrint('✅ [Migration] 완료: $successCount/${groupIds.length}개 그룹');
       return successCount;
     } catch (e) {
-      print('❌ [Migration] 실패: $e');
+      debugPrint('❌ [Migration] 실패: $e');
       return 0;
     }
   }

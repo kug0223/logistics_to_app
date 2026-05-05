@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+﻿import 'package:flutter/material.dart';
 import '../../../theme/app_colors.dart';
 import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
@@ -275,7 +275,7 @@ class TOListDialogs {
       }
     } catch (e) {
       Navigator.pop(context);
-      print('❌ TO 마감 실패: $e');
+      debugPrint('❌ TO 마감 실패: $e');
       ToastHelper.showError('TO 마감 중 오류가 발생했습니다.');
     }
   }
@@ -407,7 +407,7 @@ class TOListDialogs {
       }
     } catch (e) {
       Navigator.pop(context);
-      print('❌ TO 재오픈 실패: $e');
+      debugPrint('❌ TO 재오픈 실패: $e');
       ToastHelper.showError('TO 재오픈 중 오류가 발생했습니다.');
     }
   }
@@ -493,7 +493,7 @@ class TOListDialogs {
       }
     } catch (e) {
       Navigator.pop(context);
-      print('❌ 그룹 마감 실패: $e');
+      debugPrint('❌ 그룹 마감 실패: $e');
       ToastHelper.showError('그룹 마감 중 오류가 발생했습니다.');
     }
   }
@@ -609,7 +609,7 @@ class TOListDialogs {
       }
     } catch (e) {
       Navigator.pop(context);
-      print('❌ 그룹 재오픈 실패: $e');
+      debugPrint('❌ 그룹 재오픈 실패: $e');
       ToastHelper.showError('그룹 재오픈 중 오류가 발생했습니다.');
     }
   }

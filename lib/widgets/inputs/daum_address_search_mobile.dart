@@ -124,7 +124,7 @@ class _DaumPostcodeWebViewState extends State<_DaumPostcodeWebView> {
 
       widget.onAddressSelected(result);
     } catch (e) {
-      print('❌ 주소 데이터 파싱 실패: $e');
+      debugPrint('❌ 주소 데이터 파싱 실패: $e');
     }
   }
 

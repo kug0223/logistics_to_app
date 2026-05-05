@@ -97,7 +97,7 @@ class _AdminReviewListScreenState extends State<AdminReviewListScreen>
         ).toList();
       }
     } catch (e) {
-      print('❌ 리뷰 로드 실패: $e');
+      debugPrint('❌ 리뷰 로드 실패: $e');
     }
     
     setState(() => _isLoading = false);

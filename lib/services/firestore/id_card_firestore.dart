@@ -1,4 +1,4 @@
-part of '../firestore_service.dart';
+﻿part of '../firestore_service.dart';
 
 // ═══════════════════════════════════════════════════════════
 // 신분증 열람 요청 (ID Card Access Request)
@@ -23,7 +23,7 @@ extension IdCardFirestore on FirestoreService {
     String? applicationId,
   }) async {
     try {
-      print('📄 [createIdCardAccessRequest] 요청 생성');
+      debugPrint('📄 [createIdCardAccessRequest] 요청 생성');
       
       // 1. 이미 대기 중인 요청이 있는지 확인
       final existingPending = await _firestore
@@ -35,7 +35,7 @@ extension IdCardFirestore on FirestoreService {
           .get();
       
       if (existingPending.docs.isNotEmpty) {
-        print('⚠️ 이미 대기 중인 요청이 있습니다');
+        debugPrint('⚠️ 이미 대기 중인 요청이 있습니다');
         ToastHelper.showWarning('이미 요청 중입니다. 응답을 기다려주세요.');
         return null;
       }
@@ -51,7 +51,7 @@ extension IdCardFirestore on FirestoreService {
       for (var doc in existingApproved.docs) {
         final expiresAt = (doc.data()['expiresAt'] as Timestamp?)?.toDate();
         if (expiresAt != null && DateTime.now().isBefore(expiresAt)) {
-          print('⚠️ 이미 유효한 열람 권한이 있습니다');
+          debugPrint('⚠️ 이미 유효한 열람 권한이 있습니다');
           ToastHelper.showInfo('이미 열람 권한이 있습니다.');
           return doc.id;
         }
@@ -86,11 +86,11 @@ extension IdCardFirestore on FirestoreService {
         ),
       );
       
-      print('✅ [createIdCardAccessRequest] 요청 생성 완료: ${docRef.id}');
+      debugPrint('✅ [createIdCardAccessRequest] 요청 생성 완료: ${docRef.id}');
       ToastHelper.showSuccess('신분증 열람 요청을 보냈습니다');
       return docRef.id;
     } catch (e) {
-      print('❌ [createIdCardAccessRequest] 실패: $e');
+      debugPrint('❌ [createIdCardAccessRequest] 실패: $e');
       ToastHelper.showError('요청 실패');
       return null;
     }
@@ -99,13 +99,13 @@ extension IdCardFirestore on FirestoreService {
   /// 신분증 열람 요청 승인
   Future<bool> approveIdCardAccessRequest(String requestId) async {
     try {
-      print('✅ [approveIdCardAccessRequest] 승인: $requestId');
+      debugPrint('✅ [approveIdCardAccessRequest] 승인: $requestId');
       
       final docRef = _firestore.collection('idCardAccessRequests').doc(requestId);
       final doc = await docRef.get();
       
       if (!doc.exists) {
-        print('❌ 요청을 찾을 수 없습니다');
+        debugPrint('❌ 요청을 찾을 수 없습니다');
         return false;
       }
       
@@ -128,10 +128,10 @@ extension IdCardFirestore on FirestoreService {
         ),
       );
       
-      print('✅ [approveIdCardAccessRequest] 승인 완료');
+      debugPrint('✅ [approveIdCardAccessRequest] 승인 완료');
       return true;
     } catch (e) {
-      print('❌ [approveIdCardAccessRequest] 실패: $e');
+      debugPrint('❌ [approveIdCardAccessRequest] 실패: $e');
       return false;
     }
   }
@@ -139,13 +139,13 @@ extension IdCardFirestore on FirestoreService {
   /// 신분증 열람 요청 거절
   Future<bool> rejectIdCardAccessRequest(String requestId, {String? reason}) async {
     try {
-      print('❌ [rejectIdCardAccessRequest] 거절: $requestId');
+      debugPrint('❌ [rejectIdCardAccessRequest] 거절: $requestId');
       
       final docRef = _firestore.collection('idCardAccessRequests').doc(requestId);
       final doc = await docRef.get();
       
       if (!doc.exists) {
-        print('❌ 요청을 찾을 수 없습니다');
+        debugPrint('❌ 요청을 찾을 수 없습니다');
         return false;
       }
       
@@ -168,10 +168,10 @@ extension IdCardFirestore on FirestoreService {
         ),
       );
       
-      print('✅ [rejectIdCardAccessRequest] 거절 완료');
+      debugPrint('✅ [rejectIdCardAccessRequest] 거절 완료');
       return true;
     } catch (e) {
-      print('❌ [rejectIdCardAccessRequest] 실패: $e');
+      debugPrint('❌ [rejectIdCardAccessRequest] 실패: $e');
       return false;
     }
   }
@@ -210,7 +210,7 @@ extension IdCardFirestore on FirestoreService {
       
       return request;
     } catch (e) {
-      print('❌ 열람 권한 확인 실패: $e');
+      debugPrint('❌ 열람 권한 확인 실패: $e');
       return null;
     }
   }
@@ -228,7 +228,7 @@ extension IdCardFirestore on FirestoreService {
           .map((doc) => IdCardAccessRequestModel.fromFirestore(doc))
           .toList();
     } catch (e) {
-      print('❌ 신분증 요청 조회 실패: $e');
+      debugPrint('❌ 신분증 요청 조회 실패: $e');
       return [];
     }
   }
@@ -247,7 +247,7 @@ extension IdCardFirestore on FirestoreService {
           .map((doc) => ApplicationModel.fromFirestore(doc))
           .toList();
     } catch (e) {
-      print('❌ 계약해지 요청 조회 실패: $e');
+      debugPrint('❌ 계약해지 요청 조회 실패: $e');
       return [];
     }
   }
@@ -266,7 +266,7 @@ extension IdCardFirestore on FirestoreService {
           .map((doc) => IdCardAccessRequestModel.fromFirestore(doc))
           .toList();
     } catch (e) {
-      print('❌ 대기 요청 조회 실패: $e');
+      debugPrint('❌ 대기 요청 조회 실패: $e');
       return [];
     }
   }
@@ -285,7 +285,7 @@ extension IdCardFirestore on FirestoreService {
           .map((doc) => IdCardAccessRequestModel.fromFirestore(doc))
           .toList();
     } catch (e) {
-      print('❌ 내 요청 조회 실패: $e');
+      debugPrint('❌ 내 요청 조회 실패: $e');
       return [];
     }
   }

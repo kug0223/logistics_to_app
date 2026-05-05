@@ -1,4 +1,4 @@
-// lib/screens/super_admin/badge_settings_screen.dart
+﻿// lib/screens/super_admin/badge_settings_screen.dart
 
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -48,7 +48,7 @@ class _BadgeSettingsScreenState extends State<BadgeSettingsScreen> {
             .toList();
       }
     } catch (e) {
-      print('❌ 배지 로드 실패: $e');
+      debugPrint('❌ 배지 로드 실패: $e');
       _badges = BadgeModel.defaultBadges();
     } finally {
       if (mounted) {

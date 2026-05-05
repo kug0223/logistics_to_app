@@ -162,15 +162,15 @@ class ApplyDialog {
         final docData = snapshot.docs.first.data();
         final status = docData['status'];
         
-        print('🔍 apply_dialog 중복 체크: status = $status');
+        debugPrint('🔍 apply_dialog 중복 체크: status = $status');
         
         if (status == 'CANCELED' || 
             status == 'AUTO_CANCELED' || 
             status == 'REJECTED') {
-          print('✅ 취소된 지원 → 재지원 허용');
+          debugPrint('✅ 취소된 지원 → 재지원 허용');
           // 계속 진행
         } else {
-          print('❌ 유효한 지원 존재 (status: $status) → 차단');
+          debugPrint('❌ 유효한 지원 존재 (status: $status) → 차단');
           ToastHelper.showWarning('이미 지원한 업무입니다.');
           return false;
         }
@@ -201,16 +201,16 @@ class ApplyDialog {
 
       if (success) {
         ToastHelper.showSuccess('지원이 완료되었습니다!');
-        print('🎉 지원 성공! onSuccess() 호출');
+        debugPrint('🎉 지원 성공! onSuccess() 호출');
         onSuccess();
-        print('✅ onSuccess() 호출 완료');
+        debugPrint('✅ onSuccess() 호출 완료');
         return true;
       } else {
         ToastHelper.showError('지원에 실패했습니다.');
         return false;
       }
     } catch (e) {
-      print('❌ 지원 실패: $e');
+      debugPrint('❌ 지원 실패: $e');
       ToastHelper.showError('지원 중 오류가 발생했습니다.');
       return false;
     }

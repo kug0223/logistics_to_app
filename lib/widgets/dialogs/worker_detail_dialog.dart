@@ -1,4 +1,4 @@
-// lib/widgets/dialogs/worker_detail_dialog.dart
+﻿// lib/widgets/dialogs/worker_detail_dialog.dart
 // 공통 근무자/지원자 상세 다이얼로그
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
@@ -145,7 +145,7 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
           widget.isConfirmed && 
           (app.isLongTermApplication || widget.toItem?.to.isLongTerm == true)) {
         _hasAttendance = await _firestoreService.hasAttendanceRecord(app.id);
-        print('📋 출퇴근 기록 여부: $_hasAttendance (appId: ${app.id})');
+        debugPrint('📋 출퇴근 기록 여부: $_hasAttendance (appId: ${app.id})');
       }
       
       // 🔥 근무 시간 조회 (장기 지원자용 - toItem 없을 때)
@@ -170,7 +170,7 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
         setState(() => _isLoading = false);
       }
     } catch (e) {
-      print('❌ 추가 데이터 로드 실패: $e');
+      debugPrint('❌ 추가 데이터 로드 실패: $e');
       if (mounted) {
         setState(() => _isLoading = false);
       }
@@ -1180,7 +1180,7 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
         widget.onStatusChanged?.call();
       }
     } catch (e) {
-      print('❌ 상태 업데이트 실패: $e');
+      debugPrint('❌ 상태 업데이트 실패: $e');
       if (mounted) {
         ToastHelper.showError('$actionText 처리 중 오류가 발생했습니다');
       }
@@ -1265,7 +1265,7 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
         widget.onStatusChanged?.call();
       }
     } catch (e) {
-      print('❌ 확정 취소 실패: $e');
+      debugPrint('❌ 확정 취소 실패: $e');
       if (mounted) {
         ToastHelper.showError('확정 취소 중 오류가 발생했습니다');
       }

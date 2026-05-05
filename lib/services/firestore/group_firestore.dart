@@ -1,4 +1,4 @@
-part of '../firestore_service.dart';
+﻿part of '../firestore_service.dart';
 
 // ═══════════════════════════════════════════════════════════
 // Groups 컬렉션 관리 (Group Collection Management)
@@ -41,7 +41,7 @@ extension GroupFirestore on FirestoreService {
   }) async {
     try {
       final groupId = generateGroupId();
-      print('🔨 [Groups] 그룹 생성: $groupId');
+      debugPrint('🔨 [Groups] 그룹 생성: $groupId');
       
       final groupData = {
         'groupName': groupName,
@@ -76,10 +76,10 @@ extension GroupFirestore on FirestoreService {
       
       await _firestore.collection('groups').doc(groupId).set(groupData);
       
-      print('✅ [Groups] 그룹 생성 완료: $groupId');
+      debugPrint('✅ [Groups] 그룹 생성 완료: $groupId');
       return groupId;
     } catch (e) {
-      print('❌ [Groups] 그룹 생성 실패: $e');
+      debugPrint('❌ [Groups] 그룹 생성 실패: $e');
       return null;
     }
   }
@@ -91,7 +91,7 @@ extension GroupFirestore on FirestoreService {
       if (!doc.exists) return null;
       return GroupModel.fromMap(doc.data()!, doc.id);
     } catch (e) {
-      print('❌ [Groups] 그룹 조회 실패: $e');
+      debugPrint('❌ [Groups] 그룹 조회 실패: $e');
       return null;
     }
   }
@@ -115,7 +115,7 @@ extension GroupFirestore on FirestoreService {
           .map((doc) => GroupModel.fromMap(doc.data() as Map<String, dynamic>, doc.id))
           .toList();
     } catch (e) {
-      print('❌ [Groups] 활성 그룹 조회 실패: $e');
+      debugPrint('❌ [Groups] 활성 그룹 조회 실패: $e');
       return [];
     }
   }
@@ -140,7 +140,7 @@ extension GroupFirestore on FirestoreService {
           .map((doc) => GroupModel.fromMap(doc.data() as Map<String, dynamic>, doc.id))
           .toList();
     } catch (e) {
-      print('❌ [Groups] 마감 그룹 조회 실패: $e');
+      debugPrint('❌ [Groups] 마감 그룹 조회 실패: $e');
       return [];
     }
   }
@@ -158,7 +158,7 @@ extension GroupFirestore on FirestoreService {
           .map((doc) => TOModel.fromMap(doc.data(), doc.id))
           .toList();
     } catch (e) {
-      print('❌ [Groups] 그룹 TO 조회 실패: $e');
+      debugPrint('❌ [Groups] 그룹 TO 조회 실패: $e');
       return [];
     }
   }
@@ -170,12 +170,12 @@ extension GroupFirestore on FirestoreService {
   /// 그룹 통계 업데이트 (TO 통계 합산)
   Future<bool> syncGroupStats(String groupId) async {
     try {
-      print('📊 [Groups] 통계 동기화: $groupId');
+      debugPrint('📊 [Groups] 통계 동기화: $groupId');
       
       // 1. 그룹 내 모든 TO 조회
       final tos = await getGroupTOs(groupId);
       if (tos.isEmpty) {
-        print('   ⚠️ 그룹에 TO가 없습니다');
+        debugPrint('   ⚠️ 그룹에 TO가 없습니다');
         return false;
       }
       
@@ -214,10 +214,10 @@ extension GroupFirestore on FirestoreService {
         'statsUpdatedAt': FieldValue.serverTimestamp(),
       });
       
-      print('   ✅ 통계 업데이트: $totalConfirmed/$totalRequired (+$totalPending)');
+      debugPrint('   ✅ 통계 업데이트: $totalConfirmed/$totalRequired (+$totalPending)');
       return true;
     } catch (e) {
-      print('❌ [Groups] 통계 동기화 실패: $e');
+      debugPrint('❌ [Groups] 통계 동기화 실패: $e');
       return false;
     }
   }
@@ -225,7 +225,7 @@ extension GroupFirestore on FirestoreService {
   /// 그룹 상태 동기화 (하위 TO 상태 기반)
   Future<bool> syncGroupStatus(String groupId) async {
     try {
-      print('📊 [Groups] 상태 동기화: $groupId');
+      debugPrint('📊 [Groups] 상태 동기화: $groupId');
       
       // 1. 그룹 문서 조회
       final groupDoc = await _firestore.collection('groups').doc(groupId).get();
@@ -235,7 +235,7 @@ extension GroupFirestore on FirestoreService {
       
       // 수동 마감된 그룹은 상태 변경 안 함
       if (groupData['isManualClosed'] == true) {
-        print('   ℹ️ 수동 마감된 그룹 - 스킵');
+        debugPrint('   ℹ️ 수동 마감된 그룹 - 스킵');
         return true;
       }
       
@@ -287,14 +287,14 @@ extension GroupFirestore on FirestoreService {
         }
         
         await _firestore.collection('groups').doc(groupId).update(updates);
-        print('   ✅ 상태 변경: $currentStatus → $newStatus');
+        debugPrint('   ✅ 상태 변경: $currentStatus → $newStatus');
       } else {
-        print('   ℹ️ 상태 유지: $currentStatus');
+        debugPrint('   ℹ️ 상태 유지: $currentStatus');
       }
       
       return true;
     } catch (e) {
-      print('❌ [Groups] 상태 동기화 실패: $e');
+      debugPrint('❌ [Groups] 상태 동기화 실패: $e');
       return false;
     }
   }
@@ -306,7 +306,7 @@ extension GroupFirestore on FirestoreService {
   /// 그룹 수동 마감
   Future<bool> closeGroup(String groupId, String adminUID) async {
     try {
-      print('🔒 [Groups] 그룹 마감: $groupId');
+      debugPrint('🔒 [Groups] 그룹 마감: $groupId');
       
       // 1. 그룹 문서 업데이트
       await _firestore.collection('groups').doc(groupId).update({
@@ -336,10 +336,10 @@ extension GroupFirestore on FirestoreService {
       await batch.commit();
       
       invalidateListCache();
-      print('✅ [Groups] 그룹 마감 완료: ${tosSnapshot.docs.length}개 TO 포함');
+      debugPrint('✅ [Groups] 그룹 마감 완료: ${tosSnapshot.docs.length}개 TO 포함');
       return true;
     } catch (e) {
-      print('❌ [Groups] 그룹 마감 실패: $e');
+      debugPrint('❌ [Groups] 그룹 마감 실패: $e');
       return false;
     }
   }
@@ -347,7 +347,7 @@ extension GroupFirestore on FirestoreService {
   /// 그룹 재오픈
   Future<bool> reopenGroup(String groupId, String adminUID) async {
     try {
-      print('🔓 [Groups] 그룹 재오픈: $groupId');
+      debugPrint('🔓 [Groups] 그룹 재오픈: $groupId');
       
       // 1. 그룹 문서 업데이트
       await _firestore.collection('groups').doc(groupId).update({
@@ -396,10 +396,10 @@ extension GroupFirestore on FirestoreService {
       await _updateGroupDateRange(groupId);
       
       invalidateListCache();
-      print('✅ [Groups] 그룹 재오픈 완료: $reopenedCount개 TO 재오픈');
+      debugPrint('✅ [Groups] 그룹 재오픈 완료: $reopenedCount개 TO 재오픈');
       return true;
     } catch (e) {
-      print('❌ [Groups] 그룹 재오픈 실패: $e');
+      debugPrint('❌ [Groups] 그룹 재오픈 실패: $e');
       return false;
     }
   }
@@ -427,10 +427,10 @@ extension GroupFirestore on FirestoreService {
       }
       await batch.commit();
       
-      print('✅ [Groups] 그룹명 수정: $newName');
+      debugPrint('✅ [Groups] 그룹명 수정: $newName');
       return true;
     } catch (e) {
-      print('❌ [Groups] 그룹명 수정 실패: $e');
+      debugPrint('❌ [Groups] 그룹명 수정 실패: $e');
       return false;
     }
   }
@@ -461,14 +461,14 @@ extension GroupFirestore on FirestoreService {
         });
       }
     } catch (e) {
-      print('⚠️ [Groups] 날짜 범위 업데이트 실패: $e');
+      debugPrint('⚠️ [Groups] 날짜 범위 업데이트 실패: $e');
     }
   }
 
   /// 그룹 삭제 (하위 TO 포함)
   Future<bool> deleteGroup(String groupId) async {
     try {
-      print('🗑️ [Groups] 그룹 삭제: $groupId');
+      debugPrint('🗑️ [Groups] 그룹 삭제: $groupId');
       
       // 1. 하위 TO들의 WorkDetails 삭제
       final tosSnapshot = await _firestore
@@ -492,10 +492,10 @@ extension GroupFirestore on FirestoreService {
       await _firestore.collection('groups').doc(groupId).delete();
       
       invalidateListCache();
-      print('✅ [Groups] 그룹 삭제 완료: ${tosSnapshot.docs.length}개 TO 포함');
+      debugPrint('✅ [Groups] 그룹 삭제 완료: ${tosSnapshot.docs.length}개 TO 포함');
       return true;
     } catch (e) {
-      print('❌ [Groups] 그룹 삭제 실패: $e');
+      debugPrint('❌ [Groups] 그룹 삭제 실패: $e');
       return false;
     }
   }

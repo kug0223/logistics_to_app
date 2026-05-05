@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+﻿import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import '../../../models/core/application_model.dart';
 import '../../../services/firestore_service.dart';
@@ -75,9 +75,9 @@ class _ResignRequestManagementDialogState
         _isLoading = false;
       });
 
-      print('✅ 퇴사 요청 ${results.length}건 로드 완료');
+      debugPrint('✅ 퇴사 요청 ${results.length}건 로드 완료');
     } catch (e) {
-      print('❌ 퇴사 요청 로드 실패: $e');
+      debugPrint('❌ 퇴사 요청 로드 실패: $e');
       setState(() => _isLoading = false);
     }
   }

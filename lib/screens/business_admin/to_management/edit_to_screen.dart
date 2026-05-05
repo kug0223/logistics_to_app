@@ -103,9 +103,9 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
         _isLoading = false;
       });
       
-      print('✅ _loadData 완료: ${_workDetails.length}개 업무');
+      debugPrint('✅ _loadData 완료: ${_workDetails.length}개 업무');
     } catch (e) {
-      print('❌ 데이터 로드 실패: $e');
+      debugPrint('❌ 데이터 로드 실패: $e');
       ToastHelper.showError('데이터를 불러오는데 실패했습니다');
       setState(() => _isLoading = false);
     }
@@ -116,14 +116,14 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
   // ============================================================
 
   Future<void> _saveChanges() async {
-    print('🔵 [1단계] 저장 시작');
+    debugPrint('🔵 [1단계] 저장 시작');
     
     if (_titleController.text.trim().isEmpty) {
       ToastHelper.showError('제목을 입력해주세요');
       return;
     }
     
-    print('🔵 [2단계] 유효성 검증 통과');
+    debugPrint('🔵 [2단계] 유효성 검증 통과');
     
     setState(() => _isSaving = true);
     
@@ -175,12 +175,12 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
       final userProvider = Provider.of<UserProvider>(context, listen: false);
       updates['reopenedBy'] = userProvider.currentUser?.uid;
       
-      print('🔵 [3단계] Firestore 업데이트 시작');
+      debugPrint('🔵 [3단계] Firestore 업데이트 시작');
       
       await FirestoreService().updateTO(widget.to.id, updates);
-      print('🔵 [4단계] TO 문서 업데이트 완료');
+      debugPrint('🔵 [4단계] TO 문서 업데이트 완료');
       
-      print('🔥 [5단계] 모든 업무 상세 업데이트 시작');
+      debugPrint('🔥 [5단계] 모든 업무 상세 업데이트 시작');
       for (var work in _workDetails) {
         await _firestoreService.updateWorkDetail(
           toId: widget.to.id,
@@ -193,17 +193,17 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
             'endTime': work.endTime,
           },
         );
-        print('   ✅ ${work.workType} 업데이트 완료');
+        debugPrint('   ✅ ${work.workType} 업데이트 완료');
       }
       
       // 🔥 [6단계] 업무별 마감시간 재계산 또는 상태 초기화
       if (widget.to.isLongTerm) {
         // 장기공고: WorkDetails 마감 상태만 초기화 (마감시간은 TO 레벨)
-        print('🔥 [6단계] 장기공고 WorkDetails 마감 상태 초기화');
+        debugPrint('🔥 [6단계] 장기공고 WorkDetails 마감 상태 초기화');
         await _firestoreService.resetWorkDetailsClosedStatus(widget.to.id);
       } else {
         // 단기공고: 업무별 마감시간 재계산
-        print('🔥 [6단계] 단기공고 업무별 마감시간 재계산');
+        debugPrint('🔥 [6단계] 단기공고 업무별 마감시간 재계산');
         await _firestoreService.recalculateWorkDetailDeadlines(
           toId: widget.to.id,
           workDate: widget.to.date,
@@ -211,20 +211,20 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
           resetClosedStatus: true,
         );
       }
-      print('✅ [7단계] 완료');
+      debugPrint('✅ [7단계] 완료');
       
       _firestoreService.clearCache(toId: widget.to.id);
       _firestoreService.clearCache();
-      print('🔵 [8단계] 캐시 클리어 완료');
+      debugPrint('🔵 [8단계] 캐시 클리어 완료');
       
       ToastHelper.showSuccess('TO가 수정되었습니다');
       
       if (mounted) {
-        print('🔵🔵🔵 [9단계] true 반환하며 화면 닫기');
+        debugPrint('🔵🔵🔵 [9단계] true 반환하며 화면 닫기');
         NavigationHelper.popWithChange(context);
       }
     } catch (e) {
-      print('❌ TO 수정 실패: $e');
+      debugPrint('❌ TO 수정 실패: $e');
       ToastHelper.showError('수정에 실패했습니다');
     } finally {
       if (mounted) {
@@ -270,7 +270,7 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
           _workDetails.add(newWork.copyWith(id: addedWorkId));
         });
       } catch (e) {
-        print('❌ 업무 추가 실패: $e');
+        debugPrint('❌ 업무 추가 실패: $e');
         ToastHelper.showError('업무 추가에 실패했습니다');
       }
     }
@@ -298,7 +298,7 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
       });
       
       ToastHelper.showInfo('업무가 수정되었습니다 (저장 버튼을 눌러주세요)');
-      print('✅ 업무 로컬 수정 완료: ${work.workType}');
+      debugPrint('✅ 업무 로컬 수정 완료: ${work.workType}');
     }
   }
 
@@ -322,7 +322,7 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
           _workDetails.removeWhere((w) => w.id == work.id);
         });
       } catch (e) {
-        print('❌ 업무 삭제 실패: $e');
+        debugPrint('❌ 업무 삭제 실패: $e');
         ToastHelper.showError('업무 삭제에 실패했습니다');
       }
     }

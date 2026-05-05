@@ -1,4 +1,4 @@
-part of '../firestore_service.dart';
+﻿part of '../firestore_service.dart';
 
 // ═══════════════════════════════════════════════════════════
 // 알림/리뷰/신분증 관리 (Notification & Review Management)
@@ -15,10 +15,10 @@ extension NotificationFirestore on FirestoreService {
       final docRef = await _firestore.collection('notifications').add(
         notification.toMap(),
       );
-      print('✅ 알림 생성: ${docRef.id}');
+      debugPrint('✅ 알림 생성: ${docRef.id}');
       return docRef.id;
     } catch (e) {
-      print('❌ 알림 생성 실패: $e');
+      debugPrint('❌ 알림 생성 실패: $e');
       return null;
     }
   }
@@ -46,7 +46,7 @@ extension NotificationFirestore on FirestoreService {
           .map((doc) => NotificationModel.fromFirestore(doc))
           .toList();
     } catch (e) {
-      print('❌ 알림 조회 실패: $e');
+      debugPrint('❌ 알림 조회 실패: $e');
       return [];
     }
   }
@@ -63,7 +63,7 @@ extension NotificationFirestore on FirestoreService {
       
       return snapshot.count ?? 0;
     } catch (e) {
-      print('❌ 읽지 않은 알림 개수 조회 실패: $e');
+      debugPrint('❌ 읽지 않은 알림 개수 조회 실패: $e');
       return 0;
     }
   }
@@ -77,7 +77,7 @@ extension NotificationFirestore on FirestoreService {
       });
       return true;
     } catch (e) {
-      print('❌ 알림 읽음 처리 실패: $e');
+      debugPrint('❌ 알림 읽음 처리 실패: $e');
       return false;
     }
   }
@@ -86,10 +86,10 @@ extension NotificationFirestore on FirestoreService {
   Future<bool> deleteNotification(String notificationId) async {
     try {
       await _firestore.collection('notifications').doc(notificationId).delete();
-      print('✅ 알림 삭제: $notificationId');
+      debugPrint('✅ 알림 삭제: $notificationId');
       return true;
     } catch (e) {
-      print('❌ 알림 삭제 실패: $e');
+      debugPrint('❌ 알림 삭제 실패: $e');
       return false;
     }
   }
@@ -115,10 +115,10 @@ extension NotificationFirestore on FirestoreService {
       }
       
       await batch.commit();
-      print('✅ ${snapshot.docs.length}개 알림 읽음 처리');
+      debugPrint('✅ ${snapshot.docs.length}개 알림 읽음 처리');
       return true;
     } catch (e) {
-      print('❌ 전체 읽음 처리 실패: $e');
+      debugPrint('❌ 전체 읽음 처리 실패: $e');
       return false;
     }
   }
@@ -140,10 +140,10 @@ extension NotificationFirestore on FirestoreService {
       }
       
       await batch.commit();
-      print('✅ ${snapshot.docs.length}개 오래된 알림 삭제');
+      debugPrint('✅ ${snapshot.docs.length}개 오래된 알림 삭제');
       return snapshot.docs.length;
     } catch (e) {
-      print('❌ 오래된 알림 삭제 실패: $e');
+      debugPrint('❌ 오래된 알림 삭제 실패: $e');
       return 0;
     }
   }

@@ -1,5 +1,6 @@
-// lib/utils/test_data_helper.dart (UserModel 개선 버전)
+﻿// lib/utils/test_data_helper.dart (UserModel 개선 버전)
 
+import 'package:flutter/foundation.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'dart:math';
 import '../services/firestore_service.dart';
@@ -98,11 +99,11 @@ class TestDataHelper {
 
   /// ⭐ 개선된 더미 지원자 생성 - 새로운 UserModel 필드 포함
   static Future<List<String>> createDummyApplicants(int count) async {
-    print('');
-    print('👥 ═══════════════════════════════════════');
-    print('👥 더미 지원자 $count명 생성 시작...');
-    print('👥 ═══════════════════════════════════════');
-    print('');
+    debugPrint('');
+    debugPrint('👥 ═══════════════════════════════════════');
+    debugPrint('👥 더미 지원자 $count명 생성 시작...');
+    debugPrint('👥 ═══════════════════════════════════════');
+    debugPrint('');
     
     final List<String> uids = [];
 
@@ -222,21 +223,21 @@ class TestDataHelper {
         totalWorkDays, averageRating, noShowCount, lateCount
       );
       
-      print('  ✅ $name ($gender, $calculatedAge세)');
-      print('     🆔 $residentNumber');
-      print('     📞 $phone');
-      print('     🏠 $address $detailAddress');
-      print('     💳 $bankName $accountNumber ($accountHolder)');
-      print('     ⭐ 평점: ${averageRating.toStringAsFixed(1)} ($reviewCount개) | 신뢰도: $trustScore점');
-      print('     💼 선호: ${preferredWorkTypes.join(", ")}');
-      print('     📊 근무: $totalWorkDays일 ($totalWorkHours시간)');
-      print('');
+      debugPrint('  ✅ $name ($gender, $calculatedAge세)');
+      debugPrint('     🆔 $residentNumber');
+      debugPrint('     📞 $phone');
+      debugPrint('     🏠 $address $detailAddress');
+      debugPrint('     💳 $bankName $accountNumber ($accountHolder)');
+      debugPrint('     ⭐ 평점: ${averageRating.toStringAsFixed(1)} ($reviewCount개) | 신뢰도: $trustScore점');
+      debugPrint('     💼 선호: ${preferredWorkTypes.join(", ")}');
+      debugPrint('     📊 근무: $totalWorkDays일 ($totalWorkHours시간)');
+      debugPrint('');
     }
 
-    print('🎉 ═══════════════════════════════════════');
-    print('🎉 더미 지원자 $count명 생성 완료!');
-    print('🎉 ═══════════════════════════════════════');
-    print('');
+    debugPrint('🎉 ═══════════════════════════════════════');
+    debugPrint('🎉 더미 지원자 $count명 생성 완료!');
+    debugPrint('🎉 ═══════════════════════════════════════');
+    debugPrint('');
     
     return uids;
   }
@@ -270,13 +271,13 @@ class TestDataHelper {
     required int pendingCount,
     required int confirmedCount,
   }) async {
-    print('');
-    print('📝 ═══════════════════════════════════════');
-    print('📝 TO $toId에 지원서 생성 중...');
-    print('📝 ═══════════════════════════════════════');
-    print('   대기: $pendingCount명');
-    print('   확정: $confirmedCount명');
-    print('');
+    debugPrint('');
+    debugPrint('📝 ═══════════════════════════════════════');
+    debugPrint('📝 TO $toId에 지원서 생성 중...');
+    debugPrint('📝 ═══════════════════════════════════════');
+    debugPrint('   대기: $pendingCount명');
+    debugPrint('   확정: $confirmedCount명');
+    debugPrint('');
 
     // 1. 더미 지원자 생성
     final totalCount = pendingCount + confirmedCount;
@@ -285,7 +286,7 @@ class TestDataHelper {
     // 2. TO 정보 조회
     final toDoc = await _firestore.collection('tos').doc(toId).get();
     if (!toDoc.exists) {
-      print('❌ TO를 찾을 수 없습니다: $toId');
+      debugPrint('❌ TO를 찾을 수 없습니다: $toId');
       return;
     }
 
@@ -304,13 +305,13 @@ class TestDataHelper {
     final workDays = toData['workDays'] as List?;
 
     if (isLongTerm) {
-      print('📌 장기 TO 감지!');
+      debugPrint('📌 장기 TO 감지!');
       if (workEndDate != null) {
         final endDate = workEndDate.toDate();
-        print('   근무 기간: ${date.year}-${date.month}-${date.day} ~ ${endDate.year}-${endDate.month}-${endDate.day}');
+        debugPrint('   근무 기간: ${date.year}-${date.month}-${date.day} ~ ${endDate.year}-${endDate.month}-${endDate.day}');
       }
       if (workDays != null && workDays.isNotEmpty) {
-        print('   근무 요일: ${workDays.join(", ")}');
+        debugPrint('   근무 요일: ${workDays.join(", ")}');
       }
     }
 
@@ -322,7 +323,7 @@ class TestDataHelper {
         .get();
 
     if (workDetailsSnapshot.docs.isEmpty) {
-      print('❌ WorkDetails가 없습니다');
+      debugPrint('❌ WorkDetails가 없습니다');
       return;
     }
 
@@ -377,42 +378,42 @@ class TestDataHelper {
         final desiredStartDate = DateTime(desiredStart.year, desiredStart.month, desiredStart.day);
         applicationData['desiredStartDate'] = Timestamp.fromDate(desiredStartDate);
         
-        print('     📅 희망시작일: ${desiredStartDate.month}/${desiredStartDate.day}');
+        debugPrint('     📅 희망시작일: ${desiredStartDate.month}/${desiredStartDate.day}');
       }
       
       final appDoc = await _firestore.collection('applications').add(applicationData);
       createdAppIds.add(appDoc.id);
       
-      print('  ${isConfirmed ? "✅" : "⏳"} $uid → ${workData['workType']} (${workData['wage']}원)');
+      debugPrint('  ${isConfirmed ? "✅" : "⏳"} $uid → ${workData['workType']} (${workData['wage']}원)');
     }
 
-    print('');
-    print('🎉 지원서 ${createdAppIds.length}개 생성 완료!');
+    debugPrint('');
+    debugPrint('🎉 지원서 ${createdAppIds.length}개 생성 완료!');
     
     // 5. TO 통계 재계산
-    print('📊 TO 통계 재계산 중...');
+    debugPrint('📊 TO 통계 재계산 중...');
     final success = await _firestoreService.recalculateTOStats(toId);
     if (success) {
-      print('✅ TO 통계 재계산 완료');
+      debugPrint('✅ TO 통계 재계산 완료');
     } else {
-      print('⚠️  TO 통계 재계산 실패');
+      debugPrint('⚠️  TO 통계 재계산 실패');
     }
     
    // ✅ 그룹 마스터 통계 동기화 (tos 컬렉션)
     await _firestoreService.syncGroupMasterStats(toId);
-    print('✅ 그룹 마스터 통계 동기화 완료');
+    debugPrint('✅ 그룹 마스터 통계 동기화 완료');
     
     // ✅ groups 컬렉션 통계도 동기화
     final toDoc2 = await _firestore.collection('tos').doc(toId).get();
     final groupId = toDoc2.data()?['groupId'] as String?;
     if (groupId != null) {
       await _firestoreService.syncGroupStats(groupId);
-      print('✅ groups 컬렉션 통계 동기화 완료: $groupId');
+      debugPrint('✅ groups 컬렉션 통계 동기화 완료: $groupId');
     }
     
     // ✅ 캐시 클리어
     _firestoreService.clearCache();
-    print('');
+    debugPrint('');
   }
 
   /// 더미 출근 데이터 생성
@@ -420,13 +421,13 @@ class TestDataHelper {
     required String businessId,
     required DateTime date,
   }) async {
-    print('');
-    print('🕐 ═══════════════════════════════════════');
-    print('🕐 더미 출근 데이터 생성 시작...');
-    print('🕐 ═══════════════════════════════════════');
-    print('   날짜: ${date.year}-${date.month}-${date.day}');
-    print('   사업장: $businessId');
-    print('');
+    debugPrint('');
+    debugPrint('🕐 ═══════════════════════════════════════');
+    debugPrint('🕐 더미 출근 데이터 생성 시작...');
+    debugPrint('🕐 ═══════════════════════════════════════');
+    debugPrint('   날짜: ${date.year}-${date.month}-${date.day}');
+    debugPrint('   사업장: $businessId');
+    debugPrint('');
 
     try {
       final dateStart = DateTime(date.year, date.month, date.day);
@@ -438,7 +439,7 @@ class TestDataHelper {
           .where('status', isEqualTo: 'CONFIRMED')
           .get();
 
-      print('📋 확정 지원서: ${confirmedSnapshot.docs.length}개');
+      debugPrint('📋 확정 지원서: ${confirmedSnapshot.docs.length}개');
 
       // 오늘 근무 대상 필터링
       final todayWorkers = confirmedSnapshot.docs.where((doc) {
@@ -471,11 +472,11 @@ class TestDataHelper {
         return workDays.contains(dayOfWeek);
       }).toList();
 
-      print('📅 오늘 근무 대상: ${todayWorkers.length}명');
-      print('');
+      debugPrint('📅 오늘 근무 대상: ${todayWorkers.length}명');
+      debugPrint('');
 
       if (todayWorkers.isEmpty) {
-        print('⚠️  해당 날짜에 근무하는 확정 인원이 없습니다.');
+        debugPrint('⚠️  해당 날짜에 근무하는 확정 인원이 없습니다.');
         return;
       }
 
@@ -563,46 +564,46 @@ class TestDataHelper {
         checkedInCount++;
       }
 
-      print('');
-      print('🎉 ═══════════════════════════════════════');
-      print('🎉 더미 출근 데이터 생성 완료!');
-      print('🎉 ═══════════════════════════════════════');
-      print('   출근 완료: $checkedInCount명');
-      print('   퇴근 완료: $checkedOutCount명');
-      print('   미출근: ${todayWorkers.length - checkedInCount}명');
-      print('');
+      debugPrint('');
+      debugPrint('🎉 ═══════════════════════════════════════');
+      debugPrint('🎉 더미 출근 데이터 생성 완료!');
+      debugPrint('🎉 ═══════════════════════════════════════');
+      debugPrint('   출근 완료: $checkedInCount명');
+      debugPrint('   퇴근 완료: $checkedOutCount명');
+      debugPrint('   미출근: ${todayWorkers.length - checkedInCount}명');
+      debugPrint('');
       // ✅ 캐시 클리어
       _firestoreService.clearCache();
-      print('🗑️ 캐시 클리어 완료');
+      debugPrint('🗑️ 캐시 클리어 완료');
     } catch (e, stackTrace) {
-      print('');
-      print('❌ ═══════════════════════════════════════');
-      print('❌ 더미 출근 데이터 생성 실패!');
-      print('❌ ═══════════════════════════════════════');
-      print('에러: $e');
-      print('스택 트레이스: $stackTrace');
-      print('');
+      debugPrint('');
+      debugPrint('❌ ═══════════════════════════════════════');
+      debugPrint('❌ 더미 출근 데이터 생성 실패!');
+      debugPrint('❌ ═══════════════════════════════════════');
+      debugPrint('에러: $e');
+      debugPrint('스택 트레이스: $stackTrace');
+      debugPrint('');
       rethrow;
     }
   }
 
   /// 모든 더미 데이터 삭제
   static Future<void> clearAllDummyData() async {
-    print('');
-    print('🗑️ ═══════════════════════════════════════');
-    print('🗑️ 더미 데이터 삭제 시작...');
-    print('🗑️ ═══════════════════════════════════════');
-    print('');
+    debugPrint('');
+    debugPrint('🗑️ ═══════════════════════════════════════');
+    debugPrint('🗑️ 더미 데이터 삭제 시작...');
+    debugPrint('🗑️ ═══════════════════════════════════════');
+    debugPrint('');
 
     try {
       int totalDeleted = 0;
       Set<String> affectedTOIds = {};
 
       // 1. 더미 지원자 삭제
-      print('📋 1단계: 더미 지원자(users) 삭제 중...');
+      debugPrint('📋 1단계: 더미 지원자(users) 삭제 중...');
       
       final allUsersSnapshot = await _firestore.collection('users').get();
-      print('   전체 users: ${allUsersSnapshot.docs.length}개');
+      debugPrint('   전체 users: ${allUsersSnapshot.docs.length}개');
       
       final dummyUsers = allUsersSnapshot.docs.where((doc) {
         final uid = doc.id;
@@ -610,7 +611,7 @@ class TestDataHelper {
         return uid.startsWith('dummy_user_') || (data['isDummy'] == true);
       }).toList();
       
-      print('   더미 users: ${dummyUsers.length}개');
+      debugPrint('   더미 users: ${dummyUsers.length}개');
 
       if (dummyUsers.isNotEmpty) {
         for (int i = 0; i < dummyUsers.length; i += 500) {
@@ -623,19 +624,19 @@ class TestDataHelper {
           
           await batch.commit();
         }
-        print('✅ 더미 지원자 ${dummyUsers.length}명 삭제 완료');
+        debugPrint('✅ 더미 지원자 ${dummyUsers.length}명 삭제 완료');
         totalDeleted += dummyUsers.length;
       } else {
-        print('   ℹ️  삭제할 더미 users 없음');
+        debugPrint('   ℹ️  삭제할 더미 users 없음');
       }
 
-      print('');
+      debugPrint('');
 
       // 2. 더미 지원서 삭제
-      print('📋 2단계: 더미 지원서(applications) 삭제 중...');
+      debugPrint('📋 2단계: 더미 지원서(applications) 삭제 중...');
       
       final allAppsSnapshot = await _firestore.collection('applications').get();
-      print('   전체 applications: ${allAppsSnapshot.docs.length}개');
+      debugPrint('   전체 applications: ${allAppsSnapshot.docs.length}개');
       
       final dummyApps = allAppsSnapshot.docs.where((doc) {
         final data = doc.data();
@@ -644,7 +645,7 @@ class TestDataHelper {
                (data['isDummy'] == true);
       }).toList();
       
-      print('   더미 applications: ${dummyApps.length}개');
+      debugPrint('   더미 applications: ${dummyApps.length}개');
 
       if (dummyApps.isNotEmpty) {
         for (int i = 0; i < dummyApps.length; i += 500) {
@@ -664,13 +665,13 @@ class TestDataHelper {
           
           await batch.commit();
         }
-        print('✅ 더미 지원서 ${dummyApps.length}개 삭제 완료');
+        debugPrint('✅ 더미 지원서 ${dummyApps.length}개 삭제 완료');
         totalDeleted += dummyApps.length;
       } else {
-        print('   ℹ️  삭제할 더미 applications 없음');
+        debugPrint('   ℹ️  삭제할 더미 applications 없음');
       }
 
-      print('');
+      debugPrint('');
 
       // 3. 더미 출근 데이터 삭제
       await clearDummyAttendance();
@@ -680,8 +681,8 @@ class TestDataHelper {
       await clearDummyReviews();
 
       // 5. ✅ 모든 TO 통계 재계산
-      print('');
-      print('📊 5단계: TO 통계 재계산 중...');
+      debugPrint('');
+      debugPrint('📊 5단계: TO 통계 재계산 중...');
       
       final allTOsSnapshot = await _firestore.collection('tos').get();
       int recalculatedCount = 0;
@@ -704,53 +705,53 @@ class TestDataHelper {
         recalculatedCount++;
       }
       
-      print('✅ $recalculatedCount개 TO 통계 재계산 완료');
+      debugPrint('✅ $recalculatedCount개 TO 통계 재계산 완료');
       
       // ✅ groups 컬렉션 통계도 재계산
-      print('📊 6단계: groups 컬렉션 통계 재계산 중...');
+      debugPrint('📊 6단계: groups 컬렉션 통계 재계산 중...');
       for (var groupId in affectedGroupIds) {
         await _firestoreService.syncGroupStats(groupId);
       }
-      print('✅ ${affectedGroupIds.length}개 그룹 통계 재계산 완료');
+      debugPrint('✅ ${affectedGroupIds.length}개 그룹 통계 재계산 완료');
 
-      print('');
-      print('🎉 ═══════════════════════════════════════');
-      print('🎉 모든 더미 데이터 삭제 완료!');
-      print('🎉 ═══════════════════════════════════════');
-      print('   📊 총 $totalDeleted개 항목 삭제됨');
-      print('   📊 $recalculatedCount개 TO 통계 재계산됨');
-      print('   📊 ${affectedGroupIds.length}개 그룹 통계 재계산됨');
-      print('');
+      debugPrint('');
+      debugPrint('🎉 ═══════════════════════════════════════');
+      debugPrint('🎉 모든 더미 데이터 삭제 완료!');
+      debugPrint('🎉 ═══════════════════════════════════════');
+      debugPrint('   📊 총 $totalDeleted개 항목 삭제됨');
+      debugPrint('   📊 $recalculatedCount개 TO 통계 재계산됨');
+      debugPrint('   📊 ${affectedGroupIds.length}개 그룹 통계 재계산됨');
+      debugPrint('');
       // ✅ 캐시 클리어
       _firestoreService.clearCache();
-      print('🗑️ 캐시 클리어 완료');
+      debugPrint('🗑️ 캐시 클리어 완료');
       
     } catch (e, stackTrace) {
-      print('');
-      print('❌ ═══════════════════════════════════════');
-      print('❌ 더미 데이터 삭제 실패!');
-      print('❌ ═══════════════════════════════════════');
-      print('에러: $e');
-      print('스택 트레이스: $stackTrace');
-      print('');
+      debugPrint('');
+      debugPrint('❌ ═══════════════════════════════════════');
+      debugPrint('❌ 더미 데이터 삭제 실패!');
+      debugPrint('❌ ═══════════════════════════════════════');
+      debugPrint('에러: $e');
+      debugPrint('스택 트레이스: $stackTrace');
+      debugPrint('');
       rethrow;
     }
   }
 
   /// 더미 출근 데이터 삭제
   static Future<void> clearDummyAttendance() async {
-    print('📋 3단계: 더미 출근 데이터(attendance) 삭제 중...');
+    debugPrint('📋 3단계: 더미 출근 데이터(attendance) 삭제 중...');
 
     try {
       final allAttendanceSnapshot = await _firestore.collection('attendance').get();
-      print('   전체 attendance: ${allAttendanceSnapshot.docs.length}개');
+      debugPrint('   전체 attendance: ${allAttendanceSnapshot.docs.length}개');
 
       final dummyAttendance = allAttendanceSnapshot.docs.where((doc) {
         final data = doc.data();
         return data['isDummy'] == true;
       }).toList();
 
-      print('   더미 attendance: ${dummyAttendance.length}개');
+      debugPrint('   더미 attendance: ${dummyAttendance.length}개');
 
       if (dummyAttendance.isNotEmpty) {
         for (int i = 0; i < dummyAttendance.length; i += 500) {
@@ -763,14 +764,14 @@ class TestDataHelper {
 
           await batch.commit();
         }
-        print('✅ 더미 출근 데이터 ${dummyAttendance.length}개 삭제 완료');
+        debugPrint('✅ 더미 출근 데이터 ${dummyAttendance.length}개 삭제 완료');
       } else {
-        print('   ℹ️  삭제할 더미 attendance 없음');
+        debugPrint('   ℹ️  삭제할 더미 attendance 없음');
       }
       // ✅ 캐시 클리어
       _firestoreService.clearCache();
     } catch (e) {
-      print('❌ 더미 출근 데이터 삭제 실패: $e');
+      debugPrint('❌ 더미 출근 데이터 삭제 실패: $e');
       rethrow;
     }
   }
@@ -798,11 +799,11 @@ class TestDataHelper {
     required String reviewerId,
     required String reviewerName,
   }) async {
-    print('');
-    print('⭐ ═══════════════════════════════════════');
-    print('⭐ 더미 리뷰 생성 시작 (모든 더미 사용자 대상)...');
-    print('⭐ ═══════════════════════════════════════');
-    print('');
+    debugPrint('');
+    debugPrint('⭐ ═══════════════════════════════════════');
+    debugPrint('⭐ 더미 리뷰 생성 시작 (모든 더미 사용자 대상)...');
+    debugPrint('⭐ ═══════════════════════════════════════');
+    debugPrint('');
 
     try {
       // 1. 더미 사용자 조회 (dummy_user_로 시작하는 모든 사용자)
@@ -816,11 +817,11 @@ class TestDataHelper {
       }).toList();  // ✅ .take(count) 제거 - 모든 더미 사용자 대상
 
       if (dummyUsers.isEmpty) {
-        print('⚠️ 더미 사용자가 없습니다. 먼저 더미 지원자를 생성해주세요.');
+        debugPrint('⚠️ 더미 사용자가 없습니다. 먼저 더미 지원자를 생성해주세요.');
         return;
       }
 
-      print('📋 더미 사용자 ${dummyUsers.length}명 발견 (전체 대상)');
+      debugPrint('📋 더미 사용자 ${dummyUsers.length}명 발견 (전체 대상)');
 
       int createdCount = 0;
       final now = DateTime.now();
@@ -838,7 +839,7 @@ class TestDataHelper {
             .get();
         
         if (existingReview.docs.isNotEmpty) {
-          print('  ⏭️ $uid - 이미 리뷰 존재, 스킵');
+          debugPrint('  ⏭️ $uid - 이미 리뷰 존재, 스킵');
           continue;
         }
 
@@ -891,19 +892,19 @@ class TestDataHelper {
 
         createdCount++;
         final userName = userData['name'] ?? uid;
-        print('  ⭐ $userName → $rating점 ${comment != null ? '(코멘트 있음)' : ''}');
+        debugPrint('  ⭐ $userName → $rating점 ${comment != null ? '(코멘트 있음)' : ''}');
       }
 
-      print('');
-      print('🎉 ═══════════════════════════════════════');
-      print('🎉 더미 리뷰 $createdCount개 생성 완료!');
-      print('🎉 ═══════════════════════════════════════');
-      print('');
+      debugPrint('');
+      debugPrint('🎉 ═══════════════════════════════════════');
+      debugPrint('🎉 더미 리뷰 $createdCount개 생성 완료!');
+      debugPrint('🎉 ═══════════════════════════════════════');
+      debugPrint('');
       // ✅ 캐시 클리어
       _firestoreService.clearCache();
-      print('🗑️ 캐시 클리어 완료');
+      debugPrint('🗑️ 캐시 클리어 완료');
     } catch (e) {
-      print('❌ 더미 리뷰 생성 실패: $e');
+      debugPrint('❌ 더미 리뷰 생성 실패: $e');
     }
   }
 
@@ -929,12 +930,12 @@ class TestDataHelper {
         'reviewCount': reviews.docs.length,
       });
     } catch (e) {
-      print('⚠️ 사용자 리뷰 통계 업데이트 실패: $e');
+      debugPrint('⚠️ 사용자 리뷰 통계 업데이트 실패: $e');
     }
   }
   /// 더미 리뷰 삭제
   static Future<void> clearDummyReviews() async {
-    print('📋 더미 리뷰(reviews) 삭제 중...');
+    debugPrint('📋 더미 리뷰(reviews) 삭제 중...');
     
     try {
       final reviewsSnapshot = await _firestore.collection('reviews').get();
@@ -952,9 +953,9 @@ class TestDataHelper {
         }
       }
       
-      print('✅ 더미 리뷰 $deletedCount개 삭제 완료');
+      debugPrint('✅ 더미 리뷰 $deletedCount개 삭제 완료');
     } catch (e) {
-      print('⚠️ 더미 리뷰 삭제 실패: $e');
+      debugPrint('⚠️ 더미 리뷰 삭제 실패: $e');
     }
   }
 }

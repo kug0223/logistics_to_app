@@ -348,7 +348,7 @@ class NotificationScreen extends StatelessWidget {
       }
     } catch (e) {
       Navigator.pop(context); // 로딩 닫기
-      print('❌ 알림 네비게이션 실패: $e');
+      debugPrint('❌ 알림 네비게이션 실패: $e');
       ToastHelper.showError('데이터를 불러오는데 실패했습니다');
       Navigator.push(
         context,

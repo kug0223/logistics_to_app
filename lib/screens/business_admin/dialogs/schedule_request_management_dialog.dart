@@ -1,4 +1,4 @@
-// lib/screens/business_admin/dialogs/schedule_request_management_dialog.dart
+﻿// lib/screens/business_admin/dialogs/schedule_request_management_dialog.dart
 
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
@@ -85,7 +85,7 @@ class _ScheduleRequestManagementDialogState
         _isLoading = false;
       });
     } catch (e) {
-      print('❌ 요청 목록 로드 실패: $e');
+      debugPrint('❌ 요청 목록 로드 실패: $e');
       setState(() => _isLoading = false);
       if (mounted) {
         ToastHelper.showError('요청 목록을 불러올 수 없습니다');
@@ -703,7 +703,7 @@ class _ScheduleRequestManagementDialogState
         ToastHelper.showError('승인 처리 중 오류가 발생했습니다');
       }
     } catch (e) {
-      print('❌ 승인 실패: $e');
+      debugPrint('❌ 승인 실패: $e');
       if (mounted) {
         ToastHelper.showError('승인 처리 중 오류가 발생했습니다');
       }
@@ -812,7 +812,7 @@ class _ScheduleRequestManagementDialogState
         ToastHelper.showError('거절 처리 중 오류가 발생했습니다');
       }
     } catch (e) {
-      print('❌ 거절 실패: $e');
+      debugPrint('❌ 거절 실패: $e');
       if (mounted) {
         ToastHelper.showError('거절 처리 중 오류가 발생했습니다');
       }

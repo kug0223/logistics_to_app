@@ -100,7 +100,7 @@ class _MonthlyReviewDialogState extends State<MonthlyReviewDialog> {
     try {
       _tags = await _reviewService.getReviewTags();
     } catch (e) {
-      print('❌ 태그 로드 실패: $e');
+      debugPrint('❌ 태그 로드 실패: $e');
     }
     setState(() => _isLoading = false);
   }

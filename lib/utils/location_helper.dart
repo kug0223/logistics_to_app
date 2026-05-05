@@ -1,3 +1,4 @@
+﻿import 'package:flutter/foundation.dart';
 import 'package:geolocator/geolocator.dart';
 import 'dart:math' show cos, sqrt, asin;
 
@@ -9,7 +10,7 @@ class LocationHelper {
       // 1. 위치 서비스 활성화 확인
       bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
       if (!serviceEnabled) {
-        print('⚠️ 위치 서비스가 비활성화되어 있습니다.');
+        debugPrint('⚠️ 위치 서비스가 비활성화되어 있습니다.');
         return false;
       }
 
@@ -20,21 +21,21 @@ class LocationHelper {
       if (permission == LocationPermission.denied) {
         permission = await Geolocator.requestPermission();
         if (permission == LocationPermission.denied) {
-          print('❌ 위치 권한이 거부되었습니다.');
+          debugPrint('❌ 위치 권한이 거부되었습니다.');
           return false;
         }
       }
 
       // 4. 영구 거부된 경우
       if (permission == LocationPermission.deniedForever) {
-        print('❌ 위치 권한이 영구적으로 거부되었습니다.');
+        debugPrint('❌ 위치 권한이 영구적으로 거부되었습니다.');
         return false;
       }
 
-      print('✅ 위치 권한 확인 완료');
+      debugPrint('✅ 위치 권한 확인 완료');
       return true;
     } catch (e) {
-      print('❌ 위치 권한 확인 실패: $e');
+      debugPrint('❌ 위치 권한 확인 실패: $e');
       return false;
     }
   }
@@ -54,10 +55,10 @@ class LocationHelper {
         timeLimit: const Duration(seconds: 10),
       );
 
-      print('✅ 현재 위치: ${position.latitude}, ${position.longitude}');
+      debugPrint('✅ 현재 위치: ${position.latitude}, ${position.longitude}');
       return position;
     } catch (e) {
-      print('❌ 위치 가져오기 실패: $e');
+      debugPrint('❌ 위치 가져오기 실패: $e');
       return null;
     }
   }
@@ -93,7 +94,7 @@ class LocationHelper {
       lon2: businessLon,
     );
 
-    print('📍 사업장과의 거리: ${distance.toStringAsFixed(1)}m (기준: ${radiusInMeters}m)');
+    debugPrint('📍 사업장과의 거리: ${distance.toStringAsFixed(1)}m (기준: ${radiusInMeters}m)');
     return distance <= radiusInMeters;
   }
 
@@ -125,11 +126,11 @@ class LocationHelper {
 
       // 정확도가 50m 이하면 양호
       final isGood = position.accuracy <= 50;
-      print('📍 위치 정확도: ${position.accuracy.toStringAsFixed(1)}m ${isGood ? "✅" : "⚠️"}');
+      debugPrint('📍 위치 정확도: ${position.accuracy.toStringAsFixed(1)}m ${isGood ? "✅" : "⚠️"}');
       
       return isGood;
     } catch (e) {
-      print('❌ 정확도 체크 실패: $e');
+      debugPrint('❌ 정확도 체크 실패: $e');
       return false;
     }
   }

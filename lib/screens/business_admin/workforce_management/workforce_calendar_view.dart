@@ -92,7 +92,7 @@ class _WorkforceCalendarViewState extends State<WorkforceCalendarView> {
         // ⭐ 아직 로딩 끝내지 않음
       });
 
-      print('✅ [Lazy] 캘린더 초기 로드 완료: ${groupItems.length}개 카드');
+      debugPrint('✅ [Lazy] 캘린더 초기 로드 완료: ${groupItems.length}개 카드');
       
       // ⭐ 선택된 날짜의 그룹 상세 로드 (로딩 상태 유지)
       if (_selectedDay != null) {
@@ -105,7 +105,7 @@ class _WorkforceCalendarViewState extends State<WorkforceCalendarView> {
         _isLoading = false;
       });
     } catch (e) {
-      print('❌ 데이터 로드 실패: $e');
+      debugPrint('❌ 데이터 로드 실패: $e');
       if (mounted) setState(() => _isLoading = false);
       ToastHelper.showError('데이터를 불러오는데 실패했습니다.');
     }
@@ -556,7 +556,7 @@ class _WorkforceCalendarViewState extends State<WorkforceCalendarView> {
         ),
       );
     } catch (e) {
-      print('❌ 사업장 조회 실패: $e');
+      debugPrint('❌ 사업장 조회 실패: $e');
       ToastHelper.showError('사업장 정보를 불러올 수 없습니다');
     }
   }
@@ -710,7 +710,7 @@ class _WorkforceCalendarViewState extends State<WorkforceCalendarView> {
         );
         groupItem.setGroupTOs(toItems);
       } catch (e) {
-        print('❌ 그룹 상세 로드 실패: $e');
+        debugPrint('❌ 그룹 상세 로드 실패: $e');
         ToastHelper.showError('데이터를 불러오는데 실패했습니다.');
       }
       
@@ -730,7 +730,7 @@ class _WorkforceCalendarViewState extends State<WorkforceCalendarView> {
             result['workStats'] as Map<String, Map<String, int>>,
           );
         } catch (e) {
-          print('❌ TO 상세 로드 실패: $e');
+          debugPrint('❌ TO 상세 로드 실패: $e');
           ToastHelper.showError('데이터를 불러오는데 실패했습니다.');
         }
         
@@ -766,7 +766,7 @@ class _WorkforceCalendarViewState extends State<WorkforceCalendarView> {
           result['workStats'] as Map<String, Map<String, int>>,
         );
       } catch (e) {
-        print('❌ TO 상세 로드 실패: $e');
+        debugPrint('❌ TO 상세 로드 실패: $e');
         ToastHelper.showError('데이터를 불러오는데 실패했습니다.');
       }
       
@@ -780,7 +780,7 @@ class _WorkforceCalendarViewState extends State<WorkforceCalendarView> {
   Future<void> _refreshAffectedTOs(Set<String> affectedTOIds) async {
     if (affectedTOIds.isEmpty) return;
     
-    print('🔄 영향받은 TO ${affectedTOIds.length}개 새로고침: $affectedTOIds');
+    debugPrint('🔄 영향받은 TO ${affectedTOIds.length}개 새로고침: $affectedTOIds');
     
     // ✅ 갱신된 그룹 마스터 ID 추적 (중복 갱신 방지)
     final Set<String> updatedGroupIds = {};
@@ -810,7 +810,7 @@ class _WorkforceCalendarViewState extends State<WorkforceCalendarView> {
                 pending: toDoc.totalPending,
                 required: toDoc.totalRequired,
               );
-              print('✅ TO $toId 겉 통계 갱신: 확정=${toDoc.totalConfirmed}, 대기=${toDoc.totalPending}');
+              debugPrint('✅ TO $toId 겉 통계 갱신: 확정=${toDoc.totalConfirmed}, 대기=${toDoc.totalPending}');
             }
             
             // 펼쳐진 상태면 WorkDetails도 새로고침
@@ -820,10 +820,10 @@ class _WorkforceCalendarViewState extends State<WorkforceCalendarView> {
                 result['workDetails'] as List<WorkDetailModel>,
                 result['workStats'] as Map<String, Map<String, int>>,
               );
-              print('✅ TO $toId WorkDetails도 갱신');
+              debugPrint('✅ TO $toId WorkDetails도 갱신');
             }
           } catch (e) {
-            print('❌ TO $toId 새로고침 실패: $e');
+            debugPrint('❌ TO $toId 새로고침 실패: $e');
           }
           break;  // 찾았으면 다음 toId로
         }
@@ -852,14 +852,14 @@ class _WorkforceCalendarViewState extends State<WorkforceCalendarView> {
                     required: groupDoc.totalRequired,
                   );
                   updatedGroupIds.add(groupId);
-                  print('✅ 그룹 $groupId 통계 갱신 (groups 컬렉션): 확정=${groupDoc.totalConfirmed}, 대기=${groupDoc.totalPending}');
+                  debugPrint('✅ 그룹 $groupId 통계 갱신 (groups 컬렉션): 확정=${groupDoc.totalConfirmed}, 대기=${groupDoc.totalPending}');
                 }
                 break;
               }
             }
           }
         } catch (e) {
-          print('❌ 그룹 마스터 갱신 실패: $e');
+          debugPrint('❌ 그룹 마스터 갱신 실패: $e');
         }
       }
     }
@@ -927,7 +927,7 @@ class _WorkforceCalendarViewState extends State<WorkforceCalendarView> {
           );
           groupItem.setGroupTOs(toItems);
         } catch (e) {
-          print('❌ 그룹 상세 로드 실패: $e');
+          debugPrint('❌ 그룹 상세 로드 실패: $e');
         }
         
         if (mounted) {
@@ -946,7 +946,7 @@ class _WorkforceCalendarViewState extends State<WorkforceCalendarView> {
       final uid = userProvider.currentUser?.uid;
 
       if (uid == null) {
-        print('   ❌ UID가 null');
+        debugPrint('   ❌ UID가 null');
         setState(() {
           _hasConfirmedWorkers = false;
           _isCheckingWorkers = false;
@@ -956,10 +956,10 @@ class _WorkforceCalendarViewState extends State<WorkforceCalendarView> {
 
       // ⭐ 관리자의 모든 사업장 조회
       final businesses = await _firestoreService.getMyBusiness(uid);
-      print('   📋 관리 사업장: ${businesses.length}개');
+      debugPrint('   📋 관리 사업장: ${businesses.length}개');
       
       if (businesses.isEmpty) {
-        print('   ❌ 사업장 없음');
+        debugPrint('   ❌ 사업장 없음');
         setState(() {
           _hasConfirmedWorkers = false;
           _isCheckingWorkers = false;
@@ -970,32 +970,32 @@ class _WorkforceCalendarViewState extends State<WorkforceCalendarView> {
       // ⭐ 모든 사업장에서 확정자 체크
       bool hasConfirmed = false;
       for (final business in businesses) {
-        print('');
-        print('   🏢 사업장: ${business.name} (${business.id})');
+        debugPrint('');
+        debugPrint('   🏢 사업장: ${business.name} (${business.id})');
         final confirmedWorkers = await _getConfirmedWorkersForDate(date, business.id);
-        print('   ✅ 최종 확정 근무자: ${confirmedWorkers.length}명');
+        debugPrint('   ✅ 최종 확정 근무자: ${confirmedWorkers.length}명');
         
         if (confirmedWorkers.isNotEmpty) {
           hasConfirmed = true;
           for (final worker in confirmedWorkers) {
-            print('      - ${worker.uid}: ${worker.selectedWorkType} (${worker.isLongTermApplication ? "장기" : "단기"})');
+            debugPrint('      - ${worker.uid}: ${worker.selectedWorkType} (${worker.isLongTermApplication ? "장기" : "단기"})');
           }
           break;
         }
       }
 
-      print('');
-      print('═══════════════════════════════════════════════════════');
-      print('🎯 [당일명단] 결과: hasConfirmedWorkers = $hasConfirmed');
-      print('═══════════════════════════════════════════════════════');
-      print('');
+      debugPrint('');
+      debugPrint('═══════════════════════════════════════════════════════');
+      debugPrint('🎯 [당일명단] 결과: hasConfirmedWorkers = $hasConfirmed');
+      debugPrint('═══════════════════════════════════════════════════════');
+      debugPrint('');
 
       setState(() {
         _hasConfirmedWorkers = hasConfirmed;
         _isCheckingWorkers = false;
       });
     } catch (e) {
-      print('❌ 확정 인원 체크 실패: $e');
+      debugPrint('❌ 확정 인원 체크 실패: $e');
       setState(() {
         _hasConfirmedWorkers = false;
         _isCheckingWorkers = false;
@@ -1081,7 +1081,7 @@ class _WorkforceCalendarViewState extends State<WorkforceCalendarView> {
 
       return result;
     } catch (e) {
-      print('❌ 확정 근무자 조회 실패: $e');
+      debugPrint('❌ 확정 근무자 조회 실패: $e');
       return [];
     }
   }
@@ -1124,7 +1124,7 @@ class _WorkforceCalendarViewState extends State<WorkforceCalendarView> {
         await _loadData();
       }
     } catch (e) {
-      print('❌ 사업장 조회 실패: $e');
+      debugPrint('❌ 사업장 조회 실패: $e');
       ToastHelper.showError('사업장 정보를 불러올 수 없습니다');
     }
   }

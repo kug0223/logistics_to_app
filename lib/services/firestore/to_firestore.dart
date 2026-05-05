@@ -1,4 +1,4 @@
-part of '../firestore_service.dart';
+﻿part of '../firestore_service.dart';
 
 // ═══════════════════════════════════════════════════════════
 // TO 관리 - 기본 CRUD 및 조회 (TO Basic Operations)
@@ -19,7 +19,7 @@ extension TOFirestore on FirestoreService {
       }
       return null;
     } catch (e) {
-      print('❌ [FirestoreService] TO 조회 실패: $e');
+      debugPrint('❌ [FirestoreService] TO 조회 실패: $e');
       return null;
     }
   }
@@ -29,9 +29,9 @@ extension TOFirestore on FirestoreService {
     try {
       await _firestore.collection('tos').doc(toId).update(updates);
       clearCache(toId: toId);  // ✅ 캐시 초기화
-      print('✅ [FirestoreService] TO 수정 완료');
+      debugPrint('✅ [FirestoreService] TO 수정 완료');
     } catch (e) {
-      print('❌ [FirestoreService] TO 수정 실패: $e');
+      debugPrint('❌ [FirestoreService] TO 수정 실패: $e');
       rethrow;
     }
   }
@@ -49,7 +49,7 @@ extension TOFirestore on FirestoreService {
         'totalCount': totalCount,
       };
     } catch (e) {
-      print('❌ TO 삭제 전 체크 실패: $e');
+      debugPrint('❌ TO 삭제 전 체크 실패: $e');
       return {'hasApplicants': false, 'confirmedCount': 0, 'totalCount': 0};
     }
   }
@@ -123,11 +123,11 @@ extension TOFirestore on FirestoreService {
 
       clearCache(toId: toId);  // ✅ 캐시 초기화
 
-      print('✅ TO 삭제 완료: $toId');
+      debugPrint('✅ TO 삭제 완료: $toId');
       ToastHelper.showSuccess('TO가 삭제되었습니다.');
       return true;
     } catch (e) {
-      print('❌ TO 삭제 실패: $e');
+      debugPrint('❌ TO 삭제 실패: $e');
       ToastHelper.showError('TO 삭제에 실패했습니다.');
       return false;
     }
@@ -153,10 +153,10 @@ extension TOFirestore on FirestoreService {
           .map((doc) => TOModel.fromMap(doc.data(), doc.id))
           .toList();
 
-      print('✅ [FirestoreService] 전체 TO 조회 완료: ${toList.length}개');
+      debugPrint('✅ [FirestoreService] 전체 TO 조회 완료: ${toList.length}개');
       return toList;
     } catch (e) {
-      print('❌ [FirestoreService] 전체 TO 조회 실패: $e');
+      debugPrint('❌ [FirestoreService] 전체 TO 조회 실패: $e');
       return [];
     }
   }
@@ -164,8 +164,8 @@ extension TOFirestore on FirestoreService {
   /// 특정 사업장의 TO 조회 (사업장 관리자용)
   Future<List<TOModel>> getTOsByBusiness(String businessId) async {
     try {
-      print('🔍 [FirestoreService] 사업장 TO 조회 시작...');
-      print('   businessId: $businessId');
+      debugPrint('🔍 [FirestoreService] 사업장 TO 조회 시작...');
+      debugPrint('   businessId: $businessId');
 
       final snapshot = await _firestore
           .collection('tos')
@@ -177,10 +177,10 @@ extension TOFirestore on FirestoreService {
           .map((doc) => TOModel.fromMap(doc.data(), doc.id))
           .toList();
 
-      print('✅ [FirestoreService] 조회 완료: ${toList.length}개');
+      debugPrint('✅ [FirestoreService] 조회 완료: ${toList.length}개');
       return toList;
     } catch (e) {
-      print('❌ [FirestoreService] 사업장 TO 조회 실패: $e');
+      debugPrint('❌ [FirestoreService] 사업장 TO 조회 실패: $e');
       return [];
     }
   }
@@ -207,10 +207,10 @@ extension TOFirestore on FirestoreService {
         return to.isGroupMaster || to.groupId == null;
       }).toList();
 
-      print('✅ [FirestoreService] 대표 TO 조회 완료: ${result.length}개');
+      debugPrint('✅ [FirestoreService] 대표 TO 조회 완료: ${result.length}개');
       return result;
     } catch (e) {
-      print('❌ [FirestoreService] 대표 TO 조회 실패: $e');
+      debugPrint('❌ [FirestoreService] 대표 TO 조회 실패: $e');
       return [];
     }
   }
@@ -220,9 +220,9 @@ extension TOFirestore on FirestoreService {
     try {
       final cutoffDate = DateTime.now().subtract(Duration(days: days));
       
-      print('🔍 [FirestoreService] 최근 TO 조회 시작...');
-      print('   사용자 UID: $uid');
-      print('   조회 기간: 최근 $days일');
+      debugPrint('🔍 [FirestoreService] 최근 TO 조회 시작...');
+      debugPrint('   사용자 UID: $uid');
+      debugPrint('   조회 기간: 최근 $days일');
 
       final snapshot = await _firestore
           .collection('tos')
@@ -237,10 +237,10 @@ extension TOFirestore on FirestoreService {
           .map((doc) => TOModel.fromMap(doc.data(), doc.id))
           .toList();
 
-      print('✅ [FirestoreService] 최근 TO 조회 완료: ${toList.length}개');
+      debugPrint('✅ [FirestoreService] 최근 TO 조회 완료: ${toList.length}개');
       return toList;
     } catch (e) {
-      print('❌ [FirestoreService] 최근 TO 조회 실패: $e');
+      debugPrint('❌ [FirestoreService] 최근 TO 조회 실패: $e');
       return [];
     }
   }
@@ -278,7 +278,7 @@ extension TOFirestore on FirestoreService {
     String? publishTime,
   }) async {
     try {
-      print('🔧 [FirestoreService] TO 생성 시작...');
+      debugPrint('🔧 [FirestoreService] TO 생성 시작...');
 
       // 1. 전체 필요 인원 계산
       int totalRequired = 0;
@@ -297,7 +297,7 @@ extension TOFirestore on FirestoreService {
           businessDistrict = business.district;
         }
       } catch (e) {
-        print('⚠️ 사업장 주소 조회 실패: $e');
+        debugPrint('⚠️ 사업장 주소 조회 실패: $e');
       }
 
       // ✅ 급여 정보 계산
@@ -325,7 +325,7 @@ extension TOFirestore on FirestoreService {
         // ✅ 과거 날짜면 즉시 공개로 전환
         if (publishAt.isBefore(DateTime.now())) {
           shouldPublishImmediately = true;
-          print('⚠️ 공개 예정 시간이 과거입니다. 즉시 공개로 전환합니다.');
+          debugPrint('⚠️ 공개 예정 시간이 과거입니다. 즉시 공개로 전환합니다.');
         }
       }
       final toData = {
@@ -371,7 +371,7 @@ extension TOFirestore on FirestoreService {
 
       // 3. TO 문서 생성
       final toDoc = await _firestore.collection('tos').add(toData);
-      print('✅ TO 문서 생성 완료: ${toDoc.id}');
+      debugPrint('✅ TO 문서 생성 완료: ${toDoc.id}');
 
       // 4. WorkDetails 하위 컬렉션에 업무 추가
       final batch = _firestore.batch();
@@ -423,11 +423,11 @@ extension TOFirestore on FirestoreService {
           if (workDeadline != null) 'applicationDeadline': Timestamp.fromDate(workDeadline),
         });
         
-        print('  - 업무 추가: ${data['workType']} (${data['startTime']} ~ ${data['endTime']})');
+        debugPrint('  - 업무 추가: ${data['workType']} (${data['startTime']} ~ ${data['endTime']})');
       }
       
       await batch.commit();
-      print('✅ WorkDetails 생성 완료: ${workDetailsData.length}개');
+      debugPrint('✅ WorkDetails 생성 완료: ${workDetailsData.length}개');
 
       // ✅ 그룹 TO면 마스터 통계 동기화
       if (groupId != null) {
@@ -437,7 +437,7 @@ extension TOFirestore on FirestoreService {
       //ToastHelper.showSuccess('TO가 생성되었습니다!');
       return toDoc.id;
     } catch (e) {
-      print('❌ [FirestoreService] TO 생성 실패: $e');
+      debugPrint('❌ [FirestoreService] TO 생성 실패: $e');
       return null;
     }
   }
@@ -452,7 +452,7 @@ extension TOFirestore on FirestoreService {
     bool closedOnly = false,
   }) async {
     try {
-      print('🔍 [Lazy] 겉 카드용 TO 목록 로드 시작...');
+      debugPrint('🔍 [Lazy] 겉 카드용 TO 목록 로드 시작...');
       
       List<TOGroupItem> groupItems = [];
       
@@ -471,7 +471,7 @@ extension TOFirestore on FirestoreService {
         groups = [...active, ...closed];
       }
       
-      print('   📦 groups 컬렉션: ${groups.length}개 조회');
+      debugPrint('   📦 groups 컬렉션: ${groups.length}개 조회');
       
       // 그룹 → TOGroupItem 변환
       for (var group in groups) {
@@ -501,7 +501,7 @@ extension TOFirestore on FirestoreService {
         singleTOs = all.where((to) => to.groupId == null).toList();
       }
       
-      print('   📦 단일 TO: ${singleTOs.length}개 조회');
+      debugPrint('   📦 단일 TO: ${singleTOs.length}개 조회');
       
       // 단일 TO → TOGroupItem 변환
       for (var to in singleTOs) {
@@ -527,10 +527,10 @@ extension TOFirestore on FirestoreService {
       // ═══════════════════════════════════════════════════════════
       groupItems.sort((a, b) => a.startDate.compareTo(b.startDate));
       
-      print('✅ [Lazy] 겉 카드 로드 완료: ${groupItems.length}개 (그룹: ${groups.length}, 단일: ${singleTOs.length})');
+      debugPrint('✅ [Lazy] 겉 카드 로드 완료: ${groupItems.length}개 (그룹: ${groups.length}, 단일: ${singleTOs.length})');
       return groupItems;
     } catch (e) {
-      print('❌ [Lazy] 겉 카드 로드 실패: $e');
+      debugPrint('❌ [Lazy] 겉 카드 로드 실패: $e');
       return [];
     }
   }
@@ -538,7 +538,7 @@ extension TOFirestore on FirestoreService {
   /// 2단계: 그룹 펼칠 때 - 그룹 내 TO 목록만 로드 (WorkDetails는 개별 펼침 시)
   Future<List<TOItem>> loadGroupTOsLight(String groupId) async {
     try {
-      print('🔍 [Lazy] 그룹 내 TO 목록 로드: $groupId');
+      debugPrint('🔍 [Lazy] 그룹 내 TO 목록 로드: $groupId');
       
       // ✅ TO 목록만 조회 (WorkDetails, Applications 조회 제거!)
       final groupTOs = await getTOsByGroup(groupId);
@@ -556,10 +556,10 @@ extension TOFirestore on FirestoreService {
         ));
       }
       
-      print('✅ [Lazy] 그룹 TO 로드 완료: ${toItems.length}개 (경량)');
+      debugPrint('✅ [Lazy] 그룹 TO 로드 완료: ${toItems.length}개 (경량)');
       return toItems;
     } catch (e) {
-      print('❌ [Lazy] 그룹 TO 로드 실패: $e');
+      debugPrint('❌ [Lazy] 그룹 TO 로드 실패: $e');
       return [];
     }
   }
@@ -567,9 +567,9 @@ extension TOFirestore on FirestoreService {
   /// 3단계: TO 펼칠 때 - WorkDetails + 지원자 통계 로드
   Future<Map<String, dynamic>> loadTOWorkDetails(TOModel to) async {
     try {
-      print('🔍 [Lazy] TO 상세 로드: ${to.id}');
-      print('   📋 TO 정보: businessId=${to.businessId}, title=${to.title}, date=${to.date}');
-      print('   📋 장기여부: ${to.isLongTerm}');
+      debugPrint('🔍 [Lazy] TO 상세 로드: ${to.id}');
+      debugPrint('   📋 TO 정보: businessId=${to.businessId}, title=${to.title}, date=${to.date}');
+      debugPrint('   📋 장기여부: ${to.isLongTerm}');
       
       // 병렬로 WorkDetails와 지원자 조회
       final results = await Future.wait([
@@ -580,10 +580,10 @@ extension TOFirestore on FirestoreService {
       final workDetails = results[0] as List<WorkDetailModel>;
       final apps = results[1] as List<ApplicationModel>;
       
-      print('   📋 WorkDetails: ${workDetails.length}개');
-      print('   📋 Applications: ${apps.length}개');
+      debugPrint('   📋 WorkDetails: ${workDetails.length}개');
+      debugPrint('   📋 Applications: ${apps.length}개');
       for (var app in apps) {
-        print('      - ${app.selectedWorkType}: ${app.status} (workDate: ${app.workDate})');
+        debugPrint('      - ${app.selectedWorkType}: ${app.status} (workDate: ${app.workDate})');
       }
       
       // 업무별 통계 계산 (workDetailId로 구분!)
@@ -605,7 +605,7 @@ extension TOFirestore on FirestoreService {
           'confirmed': workApps.where((a) => a.status == 'CONFIRMED').length,
           'pending': workApps.where((a) => a.status == 'PENDING').length,
         };
-        print('   📊 ${work.workType} (${work.id}): 확정=${workStats[work.id]!['confirmed']}, 대기=${workStats[work.id]!['pending']}');
+        debugPrint('   📊 ${work.workType} (${work.id}): 확정=${workStats[work.id]!['confirmed']}, 대기=${workStats[work.id]!['pending']}');
       }
       
       // 시간 범위 설정
@@ -627,14 +627,14 @@ extension TOFirestore on FirestoreService {
         }
       }
       
-      print('✅ [Lazy] TO 상세 로드 완료: WorkDetails ${workDetails.length}개');
+      debugPrint('✅ [Lazy] TO 상세 로드 완료: WorkDetails ${workDetails.length}개');
       
       return {
         'workDetails': workDetails,
         'workStats': workStats,
       };
     } catch (e) {
-      print('❌ [Lazy] TO 상세 로드 실패: $e');
+      debugPrint('❌ [Lazy] TO 상세 로드 실패: $e');
       return {
         'workDetails': <WorkDetailModel>[],
         'workStats': <String, Map<String, int>>{},
@@ -660,9 +660,9 @@ extension TOFirestore on FirestoreService {
         ),
       );
       
-      print('🔔 TO 취소 알림 전송 완료 → 지원자: $applicantUid (상태: $status)');
+      debugPrint('🔔 TO 취소 알림 전송 완료 → 지원자: $applicantUid (상태: $status)');
     } catch (e) {
-      print('⚠️ TO 취소 알림 전송 실패: $e');
+      debugPrint('⚠️ TO 취소 알림 전송 실패: $e');
     }
   }
 }

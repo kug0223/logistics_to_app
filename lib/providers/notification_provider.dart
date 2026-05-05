@@ -1,4 +1,4 @@
-import 'dart:async';
+﻿import 'dart:async';
 import 'package:flutter/foundation.dart';
 import '../models/core/notification_model.dart';
 import '../services/firestore_service.dart';
@@ -33,14 +33,14 @@ class NotificationProvider with ChangeNotifier {
   void setUser(String userId) {
     if (_userId == userId) return;
     
-    print('🔔 [NotificationProvider] 사용자 설정: $userId');
+    debugPrint('🔔 [NotificationProvider] 사용자 설정: $userId');
     _userId = userId;
     _startListening();
   }
   
   /// 로그아웃 시 정리
   void clearUser() {
-    print('🔔 [NotificationProvider] 사용자 정리');
+    debugPrint('🔔 [NotificationProvider] 사용자 정리');
     _stopListening();
     _userId = null;
     _notifications = [];
@@ -55,7 +55,7 @@ class NotificationProvider with ChangeNotifier {
     // 기존 구독 취소
     _stopListening();
     
-    print('🔔 [NotificationProvider] 실시간 리스닝 시작');
+    debugPrint('🔔 [NotificationProvider] 실시간 리스닝 시작');
     
     // 알림 목록 리스닝
     _notificationSubscription = _firestoreService
@@ -66,7 +66,7 @@ class NotificationProvider with ChangeNotifier {
             notifyListeners();
           },
           onError: (e) {
-            print('❌ 알림 스트림 에러: $e');
+            debugPrint('❌ 알림 스트림 에러: $e');
           },
         );
     
@@ -79,7 +79,7 @@ class NotificationProvider with ChangeNotifier {
             notifyListeners();
           },
           onError: (e) {
-            print('❌ 읽지않은 알림 개수 스트림 에러: $e');
+            debugPrint('❌ 읽지않은 알림 개수 스트림 에러: $e');
           },
         );
   }

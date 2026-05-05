@@ -75,7 +75,7 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
         });
       }
     } catch (e) {
-      print('❌ 지원 내역 로드 실패: $e');
+      debugPrint('❌ 지원 내역 로드 실패: $e');
       if (mounted) {
         ToastHelper.showError('지원 내역을 불러오는데 실패했습니다.');
         setState(() => _isLoading = false);

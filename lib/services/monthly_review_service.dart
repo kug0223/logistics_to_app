@@ -1,5 +1,6 @@
-// lib/services/monthly_review_service.dart
+﻿// lib/services/monthly_review_service.dart
 
+import 'package:flutter/foundation.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import '../models/core/monthly_review_model.dart';
 import '../models/settings/trust_settings_model.dart';
@@ -57,7 +58,7 @@ class MonthlyReviewService {
           .get();
 
       if (existing.docs.isNotEmpty) {
-        print('⚠️ 이미 작성된 리뷰가 있습니다: $reviewKey');
+        debugPrint('⚠️ 이미 작성된 리뷰가 있습니다: $reviewKey');
         return (reviewId: null, error: '이번 달 리뷰는 이미 작성되었습니다.');
       }
 
@@ -92,7 +93,7 @@ class MonthlyReviewService {
       );
 
       final docRef = await _firestore.collection('monthly_reviews').add(review.toMap());
-      print('✅ 리뷰 작성 완료: ${docRef.id}');
+      debugPrint('✅ 리뷰 작성 완료: ${docRef.id}');
 
       // 4. 사용자 통계 업데이트
       await _updateUserReviewStats(targetUserId);
@@ -108,7 +109,7 @@ class MonthlyReviewService {
 
       return (reviewId: docRef.id, error: null);
     } catch (e) {
-      print('❌ 리뷰 작성 실패: $e');
+      debugPrint('❌ 리뷰 작성 실패: $e');
       return (reviewId: null, error: '리뷰 작성에 실패했습니다.');
     }
   }
@@ -178,11 +179,11 @@ class MonthlyReviewService {
       );
 
       final docRef = await _firestore.collection('monthly_reviews').add(review.toMap());
-      print('✅ 사업장 리뷰 작성 완료: ${docRef.id}');
+      debugPrint('✅ 사업장 리뷰 작성 완료: ${docRef.id}');
 
       return (reviewId: docRef.id, error: null);
     } catch (e) {
-      print('❌ 사업장 리뷰 작성 실패: $e');
+      debugPrint('❌ 사업장 리뷰 작성 실패: $e');
       return (reviewId: null, error: '리뷰 작성에 실패했습니다.');
     }
   }
@@ -209,7 +210,7 @@ class MonthlyReviewService {
           .map((doc) => MonthlyReviewModel.fromFirestore(doc))
           .toList();
     } catch (e) {
-      print('❌ 사업장 작성 리뷰 조회 실패: $e');
+      debugPrint('❌ 사업장 작성 리뷰 조회 실패: $e');
       return [];
     }
   }
@@ -232,7 +233,7 @@ class MonthlyReviewService {
           .map((doc) => MonthlyReviewModel.fromFirestore(doc))
           .toList();
     } catch (e) {
-      print('❌ 사용자 리뷰 조회 실패: $e');
+      debugPrint('❌ 사용자 리뷰 조회 실패: $e');
       return [];
     }
   }
@@ -256,7 +257,7 @@ class MonthlyReviewService {
           .map((doc) => MonthlyReviewModel.fromFirestore(doc))
           .toList();
     } catch (e) {
-      print('❌ 공개 리뷰 조회 실패: $e');
+      debugPrint('❌ 공개 리뷰 조회 실패: $e');
       return [];
     }
   }
@@ -280,7 +281,7 @@ class MonthlyReviewService {
           .map((doc) => MonthlyReviewModel.fromFirestore(doc))
           .toList();
     } catch (e) {
-      print('❌ 사업장 리뷰 조회 실패: $e');
+      debugPrint('❌ 사업장 리뷰 조회 실패: $e');
       return [];
     }
   }
@@ -305,7 +306,7 @@ class MonthlyReviewService {
           .map((doc) => MonthlyReviewModel.fromFirestore(doc))
           .toList();
     } catch (e) {
-      print('❌ 사업장별 사용자 리뷰 조회 실패: $e');
+      debugPrint('❌ 사업장별 사용자 리뷰 조회 실패: $e');
       return [];
     }
   }
@@ -381,12 +382,12 @@ class MonthlyReviewService {
 
       if (publishedCount > 0) {
         await batch.commit();
-        print('✅ $publishedCount개 리뷰 공개 처리 완료');
+        debugPrint('✅ $publishedCount개 리뷰 공개 처리 완료');
       }
 
       return publishedCount;
     } catch (e) {
-      print('❌ 리뷰 공개 처리 실패: $e');
+      debugPrint('❌ 리뷰 공개 처리 실패: $e');
       return 0;
     }
   }
@@ -424,9 +425,9 @@ class MonthlyReviewService {
         'rehireRate': rehireRate,
       });
 
-      print('✅ 사용자 리뷰 통계 업데이트: avg=$avgRating, count=${snapshot.docs.length}, rehireRate=$rehireRate');
+      debugPrint('✅ 사용자 리뷰 통계 업데이트: avg=$avgRating, count=${snapshot.docs.length}, rehireRate=$rehireRate');
     } catch (e) {
-      print('⚠️ 사용자 리뷰 통계 업데이트 실패: $e');
+      debugPrint('⚠️ 사용자 리뷰 통계 업데이트 실패: $e');
     }
   }
 
@@ -454,9 +455,9 @@ class MonthlyReviewService {
         'reviewCount': snapshot.docs.length,
       });
 
-      print('✅ 사업장 리뷰 통계 업데이트: avg=$avgRating, count=${snapshot.docs.length}');
+      debugPrint('✅ 사업장 리뷰 통계 업데이트: avg=$avgRating, count=${snapshot.docs.length}');
     } catch (e) {
-      print('⚠️ 사업장 리뷰 통계 업데이트 실패: $e');
+      debugPrint('⚠️ 사업장 리뷰 통계 업데이트 실패: $e');
     }
   }
 
@@ -485,7 +486,7 @@ class MonthlyReviewService {
         'createdAt': FieldValue.serverTimestamp(),
       });
     } catch (e) {
-      print('⚠️ 리뷰 알림 생성 실패: $e');
+      debugPrint('⚠️ 리뷰 알림 생성 실패: $e');
     }
   }
 
@@ -507,7 +508,7 @@ class MonthlyReviewService {
 
       return ReviewTagsModel.fromFirestore(doc);
     } catch (e) {
-      print('❌ 리뷰 태그 조회 실패: $e');
+      debugPrint('❌ 리뷰 태그 조회 실패: $e');
       return ReviewTagsModel.defaults();
     }
   }
@@ -526,7 +527,7 @@ class MonthlyReviewService {
 
       return TrustSettingsModel.fromFirestore(doc);
     } catch (e) {
-      print('❌ 신뢰도 규칙 조회 실패: $e');
+      debugPrint('❌ 신뢰도 규칙 조회 실패: $e');
       return TrustSettingsModel.defaults();
     }
   }
@@ -595,7 +596,7 @@ class MonthlyReviewService {
 
       return result;
     } catch (e) {
-      print('❌ 리뷰 대상자 조회 실패: $e');
+      debugPrint('❌ 리뷰 대상자 조회 실패: $e');
       return [];
     }
   }

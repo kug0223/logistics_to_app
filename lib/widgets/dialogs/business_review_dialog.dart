@@ -1,4 +1,4 @@
-// lib/widgets/dialogs/business_review_dialog.dart
+﻿// lib/widgets/dialogs/business_review_dialog.dart
 
 import 'package:flutter/material.dart';
 import '../../utils/responsive_helper.dart';
@@ -84,7 +84,7 @@ class _BusinessReviewDialogState extends State<BusinessReviewDialog> {
     try {
       _tags = await _reviewService.getReviewTags();
     } catch (e) {
-      print('❌ 태그 로드 실패: $e');
+      debugPrint('❌ 태그 로드 실패: $e');
     }
     setState(() => _isLoading = false);
   }

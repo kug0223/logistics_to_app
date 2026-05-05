@@ -233,7 +233,7 @@ class ImageHelper {
       if (image == null) return null;
       return File(image.path);
     } catch (e) {
-      print('❌ 이미지 선택 실패: $e');
+      debugPrint('❌ 이미지 선택 실패: $e');
       ToastHelper.showError('이미지를 선택할 수 없습니다');
       return null;
     }
@@ -257,7 +257,7 @@ class ImageHelper {
       if (image == null) return null;
       return File(image.path);
     } catch (e) {
-      print('❌ 이미지 선택 실패: $e');
+      debugPrint('❌ 이미지 선택 실패: $e');
       return null;
     }
   }
@@ -305,7 +305,7 @@ class ImageHelper {
 
       return selectedImages.map((e) => File(e.path)).toList();
     } catch (e) {
-      print('❌ 다중 이미지 선택 실패: $e');
+      debugPrint('❌ 다중 이미지 선택 실패: $e');
       ToastHelper.showError('이미지를 선택할 수 없습니다');
       return [];
     }
@@ -327,7 +327,7 @@ class ImageHelper {
   }) async {
     try {
       if (kIsWeb) {
-        print('⚠️ 웹에서는 이미지 압축 미지원');
+        debugPrint('⚠️ 웹에서는 이미지 압축 미지원');
         return file;
       }
 
@@ -335,11 +335,11 @@ class ImageHelper {
       
       // 파일 크기 확인 (KB)
       final fileSize = await file.length() ~/ 1024;
-      print('📷 원본 이미지 크기: ${fileSize}KB');
+      debugPrint('📷 원본 이미지 크기: ${fileSize}KB');
       
       // minSize 이하면 압축 안함
       if (fileSize <= config.minSize) {
-        print('✅ 압축 불필요 (${config.minSize}KB 이하)');
+        debugPrint('✅ 압축 불필요 (${config.minSize}KB 이하)');
         return file;
       }
 
@@ -354,7 +354,7 @@ class ImageHelper {
       );
 
       if (compressedBytes == null) {
-        print('❌ 압축 실패, 원본 반환');
+        debugPrint('❌ 압축 실패, 원본 반환');
         return file;
       }
 
@@ -366,11 +366,11 @@ class ImageHelper {
 
       final compressedSize = compressedBytes.length ~/ 1024;
       final reduction = ((fileSize - compressedSize) / fileSize * 100).toStringAsFixed(1);
-      print('✅ 압축 완료: ${fileSize}KB → ${compressedSize}KB ($reduction% 감소)');
+      debugPrint('✅ 압축 완료: ${fileSize}KB → ${compressedSize}KB ($reduction% 감소)');
 
       return compressedFile;
     } catch (e) {
-      print('❌ 이미지 압축 오류: $e');
+      debugPrint('❌ 이미지 압축 오류: $e');
       return file; // 실패 시 원본 반환
     }
   }

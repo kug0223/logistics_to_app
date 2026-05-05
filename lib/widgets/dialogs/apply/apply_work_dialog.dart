@@ -1,4 +1,4 @@
-// lib/widgets/dialogs/apply/apply_work_dialog.dart
+﻿// lib/widgets/dialogs/apply/apply_work_dialog.dart
 
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
@@ -248,7 +248,7 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
         }
       }
     } catch (e) {
-      print('❌ 초기 데이터 로드 실패: $e');
+      debugPrint('❌ 초기 데이터 로드 실패: $e');
      } finally {
       if (mounted) {
         setState(() => _isLoading = false);
@@ -322,11 +322,11 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
       };
       
       // 🔍 디버그: 저장된 workKey 확인
-      print('🔍 [_loadDateApplications] dateKey: $dateKey');
-      print('   activeApplications: ${activeApplications.length}개');
+      debugPrint('🔍 [_loadDateApplications] dateKey: $dateKey');
+      debugPrint('   activeApplications: ${activeApplications.length}개');
       for (final app in activeApplications) {
         final wk = _makeWorkKey(app.selectedWorkType, app.startTime, app.endTime);
-        print('   workKey: "$wk" → status: ${app.status}');
+        debugPrint('   workKey: "$wk" → status: ${app.status}');
       }
       
       // ✅ 장기공고: 확정된 application의 출퇴근 기록 확인
@@ -351,7 +351,7 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
         }
       }
     } catch (e) {
-      print('❌ 지원 상태 로드 실패: $e');
+      debugPrint('❌ 지원 상태 로드 실패: $e');
     }
   }
 
@@ -373,7 +373,7 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
         });
       }
     } catch (e) {
-      print('❌ 확정 스케줄 로드 실패: $e');
+      debugPrint('❌ 확정 스케줄 로드 실패: $e');
     }
   }
   /// ✅ 장기공고용: 전체 기간 내 확정된 근무가 있는 날짜 조회 (성능 최적화)
@@ -382,7 +382,7 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
     
     // 🔥 성능 최적화: 이미 지원한 상태면 충돌 체크 스킵
     if (_hasActiveApplication) {
-      print('🔍 [장기충돌] 이미 지원 완료 - 충돌 체크 스킵');
+      debugPrint('🔍 [장기충돌] 이미 지원 완료 - 충돌 체크 스킵');
       return;
     }
     
@@ -404,7 +404,7 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
           .map((doc) => ApplicationModel.fromFirestore(doc))
           .toList();
       
-      print('📅 [장기충돌] 전체 CONFIRMED: ${allConfirmed.length}개');
+      debugPrint('📅 [장기충돌] 전체 CONFIRMED: ${allConfirmed.length}개');
       
       final confirmedDates = <DateTime>{};
       final conflictInfoByDate = <DateTime, ApplicationModel>{};
@@ -476,9 +476,9 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
         });
       }
       
-      print('✅ [장기충돌] 충돌 날짜: ${confirmedDates.length}개, 첫 선택 가능: ${firstSelectable?.toString() ?? "없음"}');
+      debugPrint('✅ [장기충돌] 충돌 날짜: ${confirmedDates.length}개, 첫 선택 가능: ${firstSelectable?.toString() ?? "없음"}');
     } catch (e) {
-      print('❌ 확정 날짜 로드 실패: $e');
+      debugPrint('❌ 확정 날짜 로드 실패: $e');
     }
   }
   
@@ -573,7 +573,7 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
 
       _conflictCache[_dateKey(date)] = conflicts;
     } catch (e) {
-      print('❌ 충돌 정보 로드 실패: $e');
+      debugPrint('❌ 충돌 정보 로드 실패: $e');
     }
   }
 
@@ -2302,7 +2302,7 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
         TooltipContents.showFirstApplication(context);
       }
     } catch (e) {
-      print('❌ 지원 실패: $e');
+      debugPrint('❌ 지원 실패: $e');
       ToastHelper.showError('지원에 실패했습니다');
     } finally {
       if (mounted) {
@@ -2345,7 +2345,7 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
       _hasChanges = true;
       ToastHelper.showSuccess('지원이 취소되었습니다');
     } catch (e) {
-      print('❌ 지원 취소 실패: $e');
+      debugPrint('❌ 지원 취소 실패: $e');
       ToastHelper.showError('지원 취소에 실패했습니다');
     } finally {
       if (mounted) {
@@ -2411,7 +2411,7 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
         ToastHelper.showSuccess('확정이 취소되었습니다');
       }
     } catch (e) {
-      print('❌ 확정 취소 실패: $e');
+      debugPrint('❌ 확정 취소 실패: $e');
       ToastHelper.showError('확정 취소에 실패했습니다');
     } finally {
       if (mounted) {
@@ -2455,7 +2455,7 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
         });
       }
     } catch (e) {
-      print('❌ 상태 새로고침 실패: $e');
+      debugPrint('❌ 상태 새로고침 실패: $e');
     }
   }
   /// 상세보기 화면 이동
@@ -2525,7 +2525,7 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
     final dateKey = DateTime(widget.mainTO.date.year, widget.mainTO.date.month, widget.mainTO.date.day);
     final apps = _applicationsByDate[dateKey];
     if (apps != null && apps.values.any((app) => app.status == 'PENDING' || app.status == 'CONFIRMED')) {
-      print('🔍 [장기공고] 이미 지원 중 - 충돌 알림 스킵');
+      debugPrint('🔍 [장기공고] 이미 지원 중 - 충돌 알림 스킵');
       return;  // 이미 지원했으면 알림 표시 안 함
     }
     

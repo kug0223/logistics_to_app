@@ -1,4 +1,4 @@
-part of '../firestore_service.dart';
+﻿part of '../firestore_service.dart';
 
 // ═══════════════════════════════════════════════════════════
 // 출근/스케줄/퇴사 관리 (Attendance & Schedule Management)
@@ -22,9 +22,9 @@ extension AttendanceFirestore on FirestoreService {
     String method = 'gps',
   }) async {
     try {
-      print('🕐 [checkIn] 출근 체크 시작...');
-      print('   applicationId: $applicationId');
-      print('   workDate: $workDate');
+      debugPrint('🕐 [checkIn] 출근 체크 시작...');
+      debugPrint('   applicationId: $applicationId');
+      debugPrint('   workDate: $workDate');
       
       // 🔥 0. 지원서 상태 확인 (CONFIRMED만 출근 가능)
       final appDoc = await _firestore
@@ -57,7 +57,7 @@ extension AttendanceFirestore on FirestoreService {
       if (existing.docs.isNotEmpty) {
         final existingData = existing.docs.first.data();
         if (existingData['checkIn'] != null) {
-          print('⚠️ 이미 출근 완료');
+          debugPrint('⚠️ 이미 출근 완료');
           throw Exception('오늘 이미 출근하셨습니다.');
         }
       }
@@ -88,10 +88,10 @@ extension AttendanceFirestore on FirestoreService {
       
       final docRef = await _firestore.collection('attendance').add(attendanceData);
       
-      print('✅ 출근 체크 완료: ${docRef.id}');
+      debugPrint('✅ 출근 체크 완료: ${docRef.id}');
       return docRef.id;
     } catch (e) {
-      print('❌ 출근 체크 실패: $e');
+      debugPrint('❌ 출근 체크 실패: $e');
       rethrow;
     }
   }
@@ -104,8 +104,8 @@ extension AttendanceFirestore on FirestoreService {
     String method = 'gps',
   }) async {
     try {
-      print('🕐 [checkOut] 퇴근 체크 시작...');
-      print('   attendanceId: $attendanceId');
+      debugPrint('🕐 [checkOut] 퇴근 체크 시작...');
+      debugPrint('   attendanceId: $attendanceId');
       
       // 1. 출근 기록 조회
       final doc = await _firestore
@@ -141,10 +141,10 @@ extension AttendanceFirestore on FirestoreService {
         'updatedAt': FieldValue.serverTimestamp(),
       });
       
-      print('✅ 퇴근 체크 완료');
+      debugPrint('✅ 퇴근 체크 완료');
       return true;
     } catch (e) {
-      print('❌ 퇴근 체크 실패: $e');
+      debugPrint('❌ 퇴근 체크 실패: $e');
       rethrow;
     }
   }
@@ -161,7 +161,7 @@ extension AttendanceFirestore on FirestoreService {
       final diffMinutes = outMinutes - inMinutes;
       return diffMinutes / 60.0;
     } catch (e) {
-      print('❌ 근무 시간 계산 실패: $e');
+      debugPrint('❌ 근무 시간 계산 실패: $e');
       return 0.0;
     }
   }
@@ -191,7 +191,7 @@ extension AttendanceFirestore on FirestoreService {
       
       return AttendanceModel.fromFirestore(snapshot.docs.first);
     } catch (e) {
-      print('❌ 오늘 출근 기록 조회 실패: $e');
+      debugPrint('❌ 오늘 출근 기록 조회 실패: $e');
       return null;
     }
   }
@@ -205,9 +205,9 @@ extension AttendanceFirestore on FirestoreService {
       final todayStart = DateTime(today.year, today.month, today.day);
       final todayEnd = todayStart.add(const Duration(days: 1));
       
-      print('🔍 [getTodayAttendanceByBusiness] 조회 시작...');
-      print('   businessId: $businessId');
-      print('   todayStart: $todayStart');
+      debugPrint('🔍 [getTodayAttendanceByBusiness] 조회 시작...');
+      debugPrint('   businessId: $businessId');
+      debugPrint('   todayStart: $todayStart');
       
       final snapshot = await _firestore
           .collection('attendance')
@@ -222,10 +222,10 @@ extension AttendanceFirestore on FirestoreService {
           .map((doc) => AttendanceModel.fromFirestore(doc))
           .toList();
       
-      print('✅ 오늘 출근 현황: ${attendances.length}명');
+      debugPrint('✅ 오늘 출근 현황: ${attendances.length}명');
       return attendances;
     } catch (e) {
-      print('❌ 출근 현황 조회 실패: $e');
+      debugPrint('❌ 출근 현황 조회 실패: $e');
       return [];
     }
   }
@@ -238,7 +238,7 @@ extension AttendanceFirestore on FirestoreService {
       final today = DateTime.now();
       final todayStart = DateTime(today.year, today.month, today.day);
       
-      print('🔍 [getTodayConfirmedWorkers] 조회 시작...');
+      debugPrint('🔍 [getTodayConfirmedWorkers] 조회 시작...');
       
       // 1. 오늘 확정된 단기 근무
       final shortTermSnapshot = await _firestore
@@ -252,7 +252,7 @@ extension AttendanceFirestore on FirestoreService {
           .map((doc) => ApplicationModel.fromFirestore(doc))
           .toList();
       
-      print('   단기 근무자: ${shortTerm.length}명');
+      debugPrint('   단기 근무자: ${shortTerm.length}명');
       
       // 2. 오늘 근무하는 장기 근무자
       final longTermSnapshot = await _firestore
@@ -285,14 +285,14 @@ extension AttendanceFirestore on FirestoreService {
           })
           .toList();
       
-      print('   장기 근무자: ${longTerm.length}명');
+      debugPrint('   장기 근무자: ${longTerm.length}명');
       
       final allWorkers = [...shortTerm, ...longTerm];
-      print('✅ 총 출근 대상: ${allWorkers.length}명');
+      debugPrint('✅ 총 출근 대상: ${allWorkers.length}명');
       
       return allWorkers;
     } catch (e) {
-      print('❌ 출근 대상자 조회 실패: $e');
+      debugPrint('❌ 출근 대상자 조회 실패: $e');
       return [];
     }
   }
@@ -317,7 +317,7 @@ extension AttendanceFirestore on FirestoreService {
           .map((doc) => AttendanceModel.fromFirestore(doc))
           .toList();
     } catch (e) {
-      print('❌ 출근 기록 조회 실패: $e');
+      debugPrint('❌ 출근 기록 조회 실패: $e');
       return [];
     }
   }
@@ -331,23 +331,23 @@ extension AttendanceFirestore on FirestoreService {
       final monthStart = DateTime(year, month, 1);
       final monthEnd = DateTime(year, month + 1, 1);
       
-      print('🔍 [getMyMonthlyAttendances] $year년 $month월 출근 기록 조회');
-      print('   userId: $userId');
-      print('   monthStart: $monthStart');
-      print('   monthEnd: $monthEnd');
+      debugPrint('🔍 [getMyMonthlyAttendances] $year년 $month월 출근 기록 조회');
+      debugPrint('   userId: $userId');
+      debugPrint('   monthStart: $monthStart');
+      debugPrint('   monthEnd: $monthEnd');
       
       // 🔍 디버그: userId만으로 전체 조회
       final debugSnapshot = await _firestore
           .collection('attendance')
           .where('userId', isEqualTo: userId)
           .get();
-      print('🔍 [DEBUG] userId로만 조회: ${debugSnapshot.docs.length}건');
+      debugPrint('🔍 [DEBUG] userId로만 조회: ${debugSnapshot.docs.length}건');
       for (var doc in debugSnapshot.docs) {
         final data = doc.data();
-        print('   📋 docId: ${doc.id}');
-        print('      workDate: ${data['workDate']}');
-        print('      wageStatus: ${data['wageStatus']}');
-        print('      finalWage: ${data['finalWage']}');
+        debugPrint('   📋 docId: ${doc.id}');
+        debugPrint('      workDate: ${data['workDate']}');
+        debugPrint('      wageStatus: ${data['wageStatus']}');
+        debugPrint('      finalWage: ${data['finalWage']}');
       }
       
       final snapshot = await _firestore
@@ -362,22 +362,22 @@ extension AttendanceFirestore on FirestoreService {
           .map((doc) => AttendanceModel.fromFirestore(doc))
           .toList();
       
-      print('✅ 월별 출근 기록: ${attendances.length}건');
+      debugPrint('✅ 월별 출근 기록: ${attendances.length}건');
       
       // 🔍 디버그: 각 attendance의 wageStatus, finalWage 출력
       for (var att in attendances) {
-        print('   📋 ${att.workDate.toString().substring(0, 10)}: checkIn=${att.checkIn}, wageStatus=${att.wageStatus}, finalWage=${att.finalWage}');
+        debugPrint('   📋 ${att.workDate.toString().substring(0, 10)}: checkIn=${att.checkIn}, wageStatus=${att.wageStatus}, finalWage=${att.finalWage}');
       }
       
       return attendances;
     } catch (e, stackTrace) {
-      print('❌ 월별 출근 기록 조회 실패: $e');
-      print('📋 스택트레이스: $stackTrace');
+      debugPrint('❌ 월별 출근 기록 조회 실패: $e');
+      debugPrint('📋 스택트레이스: $stackTrace');
       
       // 🔗 인덱스 생성 링크가 에러에 포함되어 있으면 출력
       if (e.toString().contains('index')) {
-        print('⚠️ Firestore 복합 인덱스가 필요합니다!');
-        print('   위 에러 메시지의 링크를 클릭하여 인덱스를 생성하세요.');
+        debugPrint('⚠️ Firestore 복합 인덱스가 필요합니다!');
+        debugPrint('   위 에러 메시지의 링크를 클릭하여 인덱스를 생성하세요.');
       }
       return [];
     }
@@ -390,7 +390,7 @@ extension AttendanceFirestore on FirestoreService {
   Future<String?> createScheduleChangeRequest(ScheduleChangeRequestModel request) async {
     try {
       final docRef = await _firestore.collection('schedule_change_requests').add(request.toMap());
-      print('✅ 스케줄 변경 요청 생성 완료: ${docRef.id}');
+      debugPrint('✅ 스케줄 변경 요청 생성 완료: ${docRef.id}');
       
       // 🔔 알림 생성 (관리자에게) - 지원자가 요청한 경우
       if (request.requestedBy == RequesterType.APPLICANT) {
@@ -406,7 +406,7 @@ extension AttendanceFirestore on FirestoreService {
       
       return docRef.id;
     } catch (e) {
-      print('❌ 스케줄 변경 요청 생성 실패: $e');
+      debugPrint('❌ 스케줄 변경 요청 생성 실패: $e');
       return null;
     }
   }
@@ -425,7 +425,7 @@ extension AttendanceFirestore on FirestoreService {
           .map((doc) => ScheduleChangeRequestModel.fromMap(doc.data(), doc.id))
           .toList();
     } catch (e) {
-      print('❌ 대기중인 스케줄 변경 요청 조회 실패: $e');
+      debugPrint('❌ 대기중인 스케줄 변경 요청 조회 실패: $e');
       return [];
     }
   }
@@ -443,7 +443,7 @@ extension AttendanceFirestore on FirestoreService {
           .map((doc) => ScheduleChangeRequestModel.fromMap(doc.data(), doc.id))
           .toList();
     } catch (e) {
-      print('❌ 스케줄 변경 요청 조회 실패: $e');
+      debugPrint('❌ 스케줄 변경 요청 조회 실패: $e');
       return [];
     }
   }
@@ -461,7 +461,7 @@ extension AttendanceFirestore on FirestoreService {
           .map((doc) => ScheduleChangeRequestModel.fromMap(doc.data(), doc.id))
           .toList();
     } catch (e) {
-      print('❌ 내 스케줄 변경 요청 조회 실패: $e');
+      debugPrint('❌ 내 스케줄 변경 요청 조회 실패: $e');
       return [];
     }
   }
@@ -479,7 +479,7 @@ extension AttendanceFirestore on FirestoreService {
           .get();
 
       if (!requestDoc.exists) {
-        print('❌ 요청을 찾을 수 없음');
+        debugPrint('❌ 요청을 찾을 수 없음');
         return false;
       }
 
@@ -542,7 +542,7 @@ extension AttendanceFirestore on FirestoreService {
         }
       }
 
-      print('✅ 스케줄 변경 요청 승인 완료: $requestId');
+      debugPrint('✅ 스케줄 변경 요청 승인 완료: $requestId');
       
       // 🔔 알림 생성 (요청자에게)
       _sendScheduleChangeApprovedNotification(
@@ -555,7 +555,7 @@ extension AttendanceFirestore on FirestoreService {
       
       return true;
     } catch (e) {
-      print('❌ 스케줄 변경 요청 승인 실패: $e');
+      debugPrint('❌ 스케줄 변경 요청 승인 실패: $e');
       return false;
     }
   }
@@ -581,7 +581,7 @@ extension AttendanceFirestore on FirestoreService {
         'rejectReason': rejectReason,
       });
 
-      print('✅ 스케줄 변경 요청 거절 완료: $requestId');
+      debugPrint('✅ 스케줄 변경 요청 거절 완료: $requestId');
       
       // 🔔 알림 생성 (요청자에게)
       if (requestDoc.exists) {
@@ -598,7 +598,7 @@ extension AttendanceFirestore on FirestoreService {
       
       return true;
     } catch (e) {
-      print('❌ 스케줄 변경 요청 거절 실패: $e');
+      debugPrint('❌ 스케줄 변경 요청 거절 실패: $e');
       return false;
     }
   }
@@ -631,9 +631,9 @@ extension AttendanceFirestore on FirestoreService {
         ),
       );
       
-      print('🔔 스케줄 변경 요청 알림 전송 완료 → 관리자: $adminUid');
+      debugPrint('🔔 스케줄 변경 요청 알림 전송 완료 → 관리자: $adminUid');
     } catch (e) {
-      print('⚠️ 스케줄 변경 요청 알림 전송 실패: $e');
+      debugPrint('⚠️ 스케줄 변경 요청 알림 전송 실패: $e');
     }
   }
 
@@ -660,9 +660,9 @@ extension AttendanceFirestore on FirestoreService {
         ),
       );
       
-      print('🔔 스케줄 변경 승인 알림 전송 완료 → 지원자: $applicantUid');
+      debugPrint('🔔 스케줄 변경 승인 알림 전송 완료 → 지원자: $applicantUid');
     } catch (e) {
-      print('⚠️ 스케줄 변경 승인 알림 전송 실패: $e');
+      debugPrint('⚠️ 스케줄 변경 승인 알림 전송 실패: $e');
     }
   }
 
@@ -691,9 +691,9 @@ extension AttendanceFirestore on FirestoreService {
         ),
       );
       
-      print('🔔 스케줄 변경 거절 알림 전송 완료 → 지원자: $applicantUid');
+      debugPrint('🔔 스케줄 변경 거절 알림 전송 완료 → 지원자: $applicantUid');
     } catch (e) {
-      print('⚠️ 스케줄 변경 거절 알림 전송 실패: $e');
+      debugPrint('⚠️ 스케줄 변경 거절 알림 전송 실패: $e');
     }
   }
 
@@ -711,7 +711,7 @@ extension AttendanceFirestore on FirestoreService {
           .get();
 
       if (!requestDoc.exists) {
-        print('❌ 요청을 찾을 수 없음');
+        debugPrint('❌ 요청을 찾을 수 없음');
         return false;
       }
 
@@ -772,10 +772,10 @@ extension AttendanceFirestore on FirestoreService {
         'respondedAt': FieldValue.serverTimestamp(),
       });
 
-      print('✅ 스케줄 변경 요청 취소 완료: $requestId');
+      debugPrint('✅ 스케줄 변경 요청 취소 완료: $requestId');
       return true;
     } catch (e) {
-      print('❌ 스케줄 변경 요청 취소 실패: $e');
+      debugPrint('❌ 스케줄 변경 요청 취소 실패: $e');
       return false;
     }
   }
@@ -791,7 +791,7 @@ extension AttendanceFirestore on FirestoreService {
 
       return snapshot.docs.length;
     } catch (e) {
-      print('❌ 대기중인 요청 개수 조회 실패: $e');
+      debugPrint('❌ 대기중인 요청 개수 조회 실패: $e');
       return 0;
     }
   }

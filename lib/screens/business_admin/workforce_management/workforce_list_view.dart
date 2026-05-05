@@ -105,9 +105,9 @@ class _WorkforceListViewState extends State<WorkforceListView> {
       
       _applyFilters();
       
-      print('✅ [Lazy] 초기 로드 완료: ${groupItems.length}개 카드');
+      debugPrint('✅ [Lazy] 초기 로드 완료: ${groupItems.length}개 카드');
     } catch (e) {
-      print('❌ TO 목록 로드 실패: $e');
+      debugPrint('❌ TO 목록 로드 실패: $e');
       setState(() => _isLoading = false);
       ToastHelper.showError('TO 목록을 불러오는데 실패했습니다.');
     }
@@ -619,7 +619,7 @@ class _WorkforceListViewState extends State<WorkforceListView> {
         );
         groupItem.setGroupTOs(toItems);
       } catch (e) {
-        print('❌ 그룹 상세 로드 실패: $e');
+        debugPrint('❌ 그룹 상세 로드 실패: $e');
         ToastHelper.showError('데이터를 불러오는데 실패했습니다.');
       }
       
@@ -639,7 +639,7 @@ class _WorkforceListViewState extends State<WorkforceListView> {
             result['workStats'] as Map<String, Map<String, int>>,
           );
         } catch (e) {
-          print('❌ TO 상세 로드 실패: $e');
+          debugPrint('❌ TO 상세 로드 실패: $e');
           ToastHelper.showError('데이터를 불러오는데 실패했습니다.');
         }
         
@@ -654,7 +654,7 @@ class _WorkforceListViewState extends State<WorkforceListView> {
   Future<void> _refreshAffectedTOs(Set<String> affectedTOIds) async {
     if (affectedTOIds.isEmpty) return;
     
-    print('🔄 영향받은 TO ${affectedTOIds.length}개 새로고침: $affectedTOIds');
+    debugPrint('🔄 영향받은 TO ${affectedTOIds.length}개 새로고침: $affectedTOIds');
     
     // ✅ 갱신된 그룹 마스터 ID 추적 (중복 갱신 방지)
     final Set<String> updatedGroupIds = {};
@@ -684,7 +684,7 @@ class _WorkforceListViewState extends State<WorkforceListView> {
                 pending: toDoc.totalPending,
                 required: toDoc.totalRequired,
               );
-              print('✅ TO $toId 겉 통계 갱신: 확정=${toDoc.totalConfirmed}, 대기=${toDoc.totalPending}');
+              debugPrint('✅ TO $toId 겉 통계 갱신: 확정=${toDoc.totalConfirmed}, 대기=${toDoc.totalPending}');
             }
             
             // 펼쳐진 상태면 WorkDetails도 새로고침
@@ -694,10 +694,10 @@ class _WorkforceListViewState extends State<WorkforceListView> {
                 result['workDetails'] as List<WorkDetailModel>,
                 result['workStats'] as Map<String, Map<String, int>>,
               );
-              print('✅ TO $toId WorkDetails도 갱신');
+              debugPrint('✅ TO $toId WorkDetails도 갱신');
             }
           } catch (e) {
-            print('❌ TO $toId 새로고침 실패: $e');
+            debugPrint('❌ TO $toId 새로고침 실패: $e');
           }
           break;  // 찾았으면 다음 toId로
         }
@@ -726,14 +726,14 @@ class _WorkforceListViewState extends State<WorkforceListView> {
                     required: groupDoc.totalRequired,
                   );
                   updatedGroupIds.add(groupId);
-                  print('✅ 그룹 $groupId 통계 갱신 (groups 컬렉션): 확정=${groupDoc.totalConfirmed}, 대기=${groupDoc.totalPending}');
+                  debugPrint('✅ 그룹 $groupId 통계 갱신 (groups 컬렉션): 확정=${groupDoc.totalConfirmed}, 대기=${groupDoc.totalPending}');
                 }
                 break;
               }
             }
           }
         } catch (e) {
-          print('❌ 그룹 마스터 갱신 실패: $e');
+          debugPrint('❌ 그룹 마스터 갱신 실패: $e');
         }
       }
     }
@@ -766,7 +766,7 @@ class _WorkforceListViewState extends State<WorkforceListView> {
           result['workStats'] as Map<String, Map<String, int>>,
         );
       } catch (e) {
-        print('❌ TO 상세 로드 실패: $e');
+        debugPrint('❌ TO 상세 로드 실패: $e');
         ToastHelper.showError('데이터를 불러오는데 실패했습니다.');
       }
       

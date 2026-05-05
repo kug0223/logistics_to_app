@@ -99,7 +99,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
       
       setState(() => _isPushEnabled = value);
     } catch (e) {
-      print('❌ 알림 설정 변경 실패: $e');
+      debugPrint('❌ 알림 설정 변경 실패: $e');
       ToastHelper.showError('알림 설정 변경에 실패했습니다');
     } finally {
       setState(() => _isLoading = false);

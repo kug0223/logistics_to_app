@@ -49,7 +49,7 @@ class _BusinessDetailScreenState extends State<BusinessDetailScreen> {
   // ✅ Firestore에서 최신 데이터 다시 가져오기
   Future<void> _reloadBusiness() async {
     try {
-      print('🔄 사업장 데이터 재조회 시작: ${_currentBusiness.id}');
+      debugPrint('🔄 사업장 데이터 재조회 시작: ${_currentBusiness.id}');
       
       final doc = await FirebaseFirestore.instance
           .collection('businesses')
@@ -61,11 +61,11 @@ class _BusinessDetailScreenState extends State<BusinessDetailScreen> {
           _currentBusiness = BusinessModel.fromMap(doc.data()!, doc.id);
           _hasChanges = true;  // 변경 발생 표시
         });
-        print('✅ 사업장 데이터 업데이트 완료!');
+        debugPrint('✅ 사업장 데이터 업데이트 완료!');
         ToastHelper.showSuccess('사업장 정보가 업데이트되었습니다');
       }
     } catch (e) {
-      print('❌ 사업장 재조회 실패: $e');
+      debugPrint('❌ 사업장 재조회 실패: $e');
       ToastHelper.showError('업데이트된 정보를 불러오는데 실패했습니다');
     }
   }

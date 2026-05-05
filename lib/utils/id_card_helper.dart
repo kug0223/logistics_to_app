@@ -1,4 +1,4 @@
-// lib/utils/id_card_helper.dart
+﻿// lib/utils/id_card_helper.dart
 // 신분증 관련 공통 헬퍼
 
 import 'package:flutter/material.dart';
@@ -44,7 +44,7 @@ class IdCardHelper {
         }
       }
     } catch (e) {
-      print('⚠️ 신분증 상태 조회 실패: $e');
+      debugPrint('⚠️ 신분증 상태 조회 실패: $e');
     }
     
     return statusMap;

@@ -1,4 +1,4 @@
-// lib/screens/business_admin/dialogs/work_applicants_dialog.dart
+﻿// lib/screens/business_admin/dialogs/work_applicants_dialog.dart
 // 업무별 지원자 관리 다이얼로그 - 개선된 버전
 
 import 'package:flutter/material.dart';
@@ -1368,7 +1368,7 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog> {
       // 🔥 충돌로 취소된 TO ID 수집
       if (affectedTOIds.isNotEmpty) {
         _affectedOtherTOIds.addAll(affectedTOIds);
-        print('⚠️ 충돌로 ${affectedTOIds.length}개 TO 영향: $affectedTOIds');
+        debugPrint('⚠️ 충돌로 ${affectedTOIds.length}개 TO 영향: $affectedTOIds');
       }
 
       ToastHelper.showSuccess('${user?.name ?? '지원자'}님이 승인되었습니다');
@@ -1595,7 +1595,7 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog> {
       }
       
       if (_affectedOtherTOIds.isNotEmpty) {
-        print('⚠️ 일괄 승인 중 충돌로 ${_affectedOtherTOIds.length}개 TO 영향');
+        debugPrint('⚠️ 일괄 승인 중 충돌로 ${_affectedOtherTOIds.length}개 TO 영향');
       }
 
       ToastHelper.showSuccess('${_selectedIds.length}명이 승인되었습니다');

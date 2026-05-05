@@ -1,3 +1,4 @@
+﻿import 'package:flutter/foundation.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import '../models/core/wage_detail_model.dart';
 
@@ -39,10 +40,10 @@ class WageCalculator {
         _cachedMinimumWages = data.map(
           (key, value) => MapEntry(int.parse(key), value as int),
         );
-        print('✅ 최저시급 로드 완료: $_cachedMinimumWages');
+        debugPrint('✅ 최저시급 로드 완료: $_cachedMinimumWages');
       }
     } catch (e) {
-      print('⚠️ 최저시급 로드 실패, 로컬 백업 사용: $e');
+      debugPrint('⚠️ 최저시급 로드 실패, 로컬 백업 사용: $e');
     }
   }
   

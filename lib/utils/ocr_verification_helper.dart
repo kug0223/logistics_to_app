@@ -1,5 +1,6 @@
-// lib/utils/ocr_verification_helper.dart
+﻿// lib/utils/ocr_verification_helper.dart
 
+import 'package:flutter/foundation.dart';
 import 'package:google_mlkit_text_recognition/google_mlkit_text_recognition.dart';
 
 /// 📄 OCR 기반 서류 검증 헬퍼 클래스
@@ -19,13 +20,13 @@ class OcrVerificationHelper {
       final RecognizedText recognizedText = await textRecognizer.processImage(inputImage);
       
       final rawText = recognizedText.text;
-      print('📄 [신분증 OCR] 원본: $rawText');
+      debugPrint('📄 [신분증 OCR] 원본: $rawText');
       
       final cleanedOcr = _cleanText(rawText);
       final cleanedExpected = _cleanText(expectedName);
       
-      print('📄 [신분증 OCR] 정제됨: $cleanedOcr');
-      print('📄 [신분증 OCR] 예상 이름: $cleanedExpected');
+      debugPrint('📄 [신분증 OCR] 정제됨: $cleanedOcr');
+      debugPrint('📄 [신분증 OCR] 예상 이름: $cleanedExpected');
       
       final isNameValid = cleanedOcr.contains(cleanedExpected);
       
@@ -42,17 +43,17 @@ class OcrVerificationHelper {
           final back = match.group(2);
           extractedResidentNumber = '$front-$back';
           
-          print('📄 [신분증 OCR] 추출된 주민번호: $extractedResidentNumber');
+          debugPrint('📄 [신분증 OCR] 추출된 주민번호: $extractedResidentNumber');
           
           final cleanedExtracted = extractedResidentNumber.replaceAll(RegExp(r'\D'), '');
           final cleanedExpectedRN = expectedResidentNumber.replaceAll(RegExp(r'\D'), '');
           
           isResidentNumberValid = cleanedExtracted == cleanedExpectedRN;
           
-          print('📄 [신분증 OCR] 주민번호 검증: ${isResidentNumberValid ? "✅" : "❌"}');
+          debugPrint('📄 [신분증 OCR] 주민번호 검증: ${isResidentNumberValid ? "✅" : "❌"}');
         } else {
           isResidentNumberValid = false;
-          print('📄 [신분증 OCR] 주민번호 인식 실패');
+          debugPrint('📄 [신분증 OCR] 주민번호 인식 실패');
         }
       }
       
@@ -78,7 +79,7 @@ class OcrVerificationHelper {
       };
       
     } catch (e) {
-      print('❌ [신분증 OCR] 실패: $e');
+      debugPrint('❌ [신분증 OCR] 실패: $e');
       return {
         'isValid': false,
         'isNameValid': false,
@@ -114,7 +115,7 @@ class OcrVerificationHelper {
       final RecognizedText recognizedText = await textRecognizer.processImage(inputImage);
       
       final rawText = recognizedText.text;
-      print('📄 [통장사본 OCR] 원본: $rawText');
+      debugPrint('📄 [통장사본 OCR] 원본: $rawText');
       
       // ✅ 예금주명 추출
       String? extractedName = _extractAccountHolder(rawText, recognizedText);
@@ -125,10 +126,10 @@ class OcrVerificationHelper {
       // ✅ 은행명 추출
       String? extractedBankName = _extractBankName(rawText);
       
-      print('📄 [통장사본 OCR] 추출된 예금주: $extractedName');
-      print('📄 [통장사본 OCR] 추출된 계좌번호: $extractedAccountNumber');
-      print('📄 [통장사본 OCR] 추출된 은행명: $extractedBankName');
-      print('📄 [통장사본 OCR] 예상 예금주: $expectedName');
+      debugPrint('📄 [통장사본 OCR] 추출된 예금주: $extractedName');
+      debugPrint('📄 [통장사본 OCR] 추출된 계좌번호: $extractedAccountNumber');
+      debugPrint('📄 [통장사본 OCR] 추출된 은행명: $extractedBankName');
+      debugPrint('📄 [통장사본 OCR] 예상 예금주: $expectedName');
       
       // ✅ 검증
       final cleanedOcr = _cleanText(rawText);
@@ -136,7 +137,7 @@ class OcrVerificationHelper {
       
       // 1. 예금주명 검증 (전체 텍스트에서 이름 포함 여부)
       final isNameValid = cleanedOcr.contains(cleanedExpectedName);
-      print('📄 [통장사본 OCR] 예금주 검증: ${isNameValid ? "✅" : "❌"}');
+      debugPrint('📄 [통장사본 OCR] 예금주 검증: ${isNameValid ? "✅" : "❌"}');
       
       // 2. 계좌번호 검증 (선택)
       bool isAccountValid = true;
@@ -144,7 +145,7 @@ class OcrVerificationHelper {
         final cleanedExpectedAccount = expectedAccountNumber.replaceAll(RegExp(r'\D'), '');
         final cleanedExtractedAccount = (extractedAccountNumber ?? '').replaceAll(RegExp(r'\D'), '');
         isAccountValid = cleanedExtractedAccount == cleanedExpectedAccount;
-        print('📄 [통장사본 OCR] 계좌번호 검증: $cleanedExtractedAccount == $cleanedExpectedAccount → ${isAccountValid ? "✅" : "❌"}');
+        debugPrint('📄 [통장사본 OCR] 계좌번호 검증: $cleanedExtractedAccount == $cleanedExpectedAccount → ${isAccountValid ? "✅" : "❌"}');
       }
       
       // 3. 은행명 검증 (선택)
@@ -155,7 +156,7 @@ class OcrVerificationHelper {
         // 은행명이 포함되어 있으면 OK (예: "하나은행" in "하나멤버스")
         isBankValid = cleanedOcr.contains(cleanedExpectedBank) ||
                       cleanedExtractedBank.contains(cleanedExpectedBank);
-        print('📄 [통장사본 OCR] 은행명 검증: ${isBankValid ? "✅" : "❌"}');
+        debugPrint('📄 [통장사본 OCR] 은행명 검증: ${isBankValid ? "✅" : "❌"}');
       }
       
       // 종합 검증
@@ -193,7 +194,7 @@ class OcrVerificationHelper {
       };
       
     } catch (e) {
-      print('❌ [통장사본 OCR] 실패: $e');
+      debugPrint('❌ [통장사본 OCR] 실패: $e');
       return {
         'isValid': false,
         'isNameValid': false,
@@ -376,13 +377,13 @@ class OcrVerificationHelper {
       final RecognizedText recognizedText = await textRecognizer.processImage(inputImage);
       
       final rawText = recognizedText.text;
-      print('📄 [사업자등록증 OCR] 원본: $rawText');
+      debugPrint('📄 [사업자등록증 OCR] 원본: $rawText');
       
       String? extractedNumber = _extractBusinessNumber(rawText);
       String? extractedName = _extractCeoName(rawText);
       
-      print('📄 [사업자등록증 OCR] 추출된 번호: $extractedNumber');
-      print('📄 [사업자등록증 OCR] 추출된 대표자: $extractedName');
+      debugPrint('📄 [사업자등록증 OCR] 추출된 번호: $extractedNumber');
+      debugPrint('📄 [사업자등록증 OCR] 추출된 대표자: $extractedName');
       
       bool isValidNumber = false;
       bool isValidName = false;
@@ -391,7 +392,7 @@ class OcrVerificationHelper {
         final cleanedExtracted = extractedNumber.replaceAll(RegExp(r'\D'), '');
         final cleanedExpected = expectedBusinessNumber.replaceAll(RegExp(r'\D'), '');
         isValidNumber = cleanedExtracted == cleanedExpected;
-        print('📄 [사업자등록증 OCR] 번호 비교: $cleanedExtracted == $cleanedExpected → $isValidNumber');
+        debugPrint('📄 [사업자등록증 OCR] 번호 비교: $cleanedExtracted == $cleanedExpected → $isValidNumber');
       }
       
       if (expectedCeoName != null && extractedName != null) {
@@ -399,7 +400,7 @@ class OcrVerificationHelper {
         final cleanedExpected = _cleanText(expectedCeoName);
         isValidName = cleanedExtracted.contains(cleanedExpected) || 
                       cleanedExpected.contains(cleanedExtracted);
-        print('📄 [사업자등록증 OCR] 이름 비교: $cleanedExtracted vs $cleanedExpected → $isValidName');
+        debugPrint('📄 [사업자등록증 OCR] 이름 비교: $cleanedExtracted vs $cleanedExpected → $isValidName');
       }
       
       double confidence = 0.0;
@@ -417,7 +418,7 @@ class OcrVerificationHelper {
       };
       
     } catch (e) {
-      print('❌ [사업자등록증 OCR] 실패: $e');
+      debugPrint('❌ [사업자등록증 OCR] 실패: $e');
       return {
         'isValidNumber': false,
         'isValidName': false,

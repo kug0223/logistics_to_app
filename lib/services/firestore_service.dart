@@ -1,3 +1,4 @@
+﻿import 'package:flutter/foundation.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 import 'package:intl/intl.dart';
@@ -84,13 +85,13 @@ class FirestoreService {
     _closedTOsCache = null;
     _activeTOsCacheTime = null;
     _closedTOsCacheTime = null;
-    print('🗑️ TO 목록 캐시 무효화');
+    debugPrint('🗑️ TO 목록 캐시 무효화');
   }
   
   /// 캐시 초기화 (TO 수정/삭제 시 호출)
   void clearCache({String? toId}) {
     if (toId != null) {
-      print('🗑️ 캐시 삭제: $toId');
+      debugPrint('🗑️ 캐시 삭제: $toId');
       _applicationCache.remove(toId);
       _workDetailCache.remove(toId);
       _timeRangeCache.remove(toId);
@@ -99,9 +100,9 @@ class FirestoreService {
       _cacheTimestamps.remove('workDetail_$toId');
       _cacheTimestamps.remove('timeRange_$toId');
       
-      print('🗑️ 타임스탬프도 삭제 완료');
+      debugPrint('🗑️ 타임스탬프도 삭제 완료');
     } else {
-      print('🗑️ 전체 캐시 삭제');
+      debugPrint('🗑️ 전체 캐시 삭제');
       _applicationCache.clear();
       _workDetailCache.clear();
       _timeRangeCache.clear();
@@ -115,7 +116,7 @@ class FirestoreService {
       _userCache.clear();
       _userCacheTimestamps.clear();
       
-      print('🗑️ 전체 캐시 삭제 완료 (사용자 포함)');
+      debugPrint('🗑️ 전체 캐시 삭제 완료 (사용자 포함)');
     }
   }
 
@@ -237,7 +238,7 @@ class FirestoreService {
       if (!forceRefresh && _activeTOsCache != null && _activeTOsCacheTime != null) {
         final cacheAge = DateTime.now().difference(_activeTOsCacheTime!);
         if (cacheAge < _listCacheValidDuration) {
-          print('📦 [캐시] 진행중 TO 캐시 사용 (${cacheAge.inSeconds}초 경과)');
+          debugPrint('📦 [캐시] 진행중 TO 캐시 사용 (${cacheAge.inSeconds}초 경과)');
           
           if (publishedOnly) {
             // ✅ isPendingPublish로 실시간 체크 (시간 지나면 자동 공개)
@@ -257,21 +258,21 @@ class FirestoreService {
           .map((doc) => TOModel.fromMap(doc.data(), doc.id))
           .toList();
       
-      print('✅ [서버필터] ACTIVE TO: ${allTOs.length}개 조회됨');
+      debugPrint('✅ [서버필터] ACTIVE TO: ${allTOs.length}개 조회됨');
 
       // ✅ Step 1: 단일 TO (groupId == null)
       final singleTOs = allTOs.where((to) => to.groupId == null).toList();
-      print('   📦 단일 TO: ${singleTOs.length}개');
+      debugPrint('   📦 단일 TO: ${singleTOs.length}개');
       
       // ✅ Step 2: groups 컬렉션에서 active 그룹 조회
       final activeGroups = await getActiveGroups();
-      print('   📦 활성 그룹: ${activeGroups.length}개');
+      debugPrint('   📦 활성 그룹: ${activeGroups.length}개');
       
       // ✅ Step 3: 각 그룹을 대표 TOModel로 변환
       final List<TOModel> groupRepresentativeTOs = activeGroups
           .map((group) => TOModel.fromGroupModel(group))
           .toList();
-      print('   📦 그룹 대표 TO: ${groupRepresentativeTOs.length}개');
+      debugPrint('   📦 그룹 대표 TO: ${groupRepresentativeTOs.length}개');
       
       List<TOModel> activeTOs = [...singleTOs, ...groupRepresentativeTOs];
       
@@ -284,14 +285,14 @@ class FirestoreService {
       if (publishedOnly) {
         // ✅ isPendingPublish로 실시간 체크 (시간 지나면 자동 공개)
         final publishedTOs = activeTOs.where((to) => !to.isPendingPublish).toList();
-        print('✅ [최적화] 공개된 진행중 TO: ${publishedTOs.length}개 (서버 조회)');
+        debugPrint('✅ [최적화] 공개된 진행중 TO: ${publishedTOs.length}개 (서버 조회)');
         return publishedTOs;
       }
       
-      print('✅ [최적화] 진행중 TO 조회: ${activeTOs.length}개 (서버 조회)');
+      debugPrint('✅ [최적화] 진행중 TO 조회: ${activeTOs.length}개 (서버 조회)');
       return activeTOs;
     } catch (e) {
-      print('❌ 진행중 TO 조회 실패: $e');
+      debugPrint('❌ 진행중 TO 조회 실패: $e');
       return [];
     }
   }
@@ -302,7 +303,7 @@ class FirestoreService {
       if (!forceRefresh && _closedTOsCache != null && _closedTOsCacheTime != null) {
         final cacheAge = DateTime.now().difference(_closedTOsCacheTime!);
         if (cacheAge < _listCacheValidDuration) {
-          print('📦 [캐시] 마감 TO 캐시 사용 (${cacheAge.inSeconds}초 경과)');
+          debugPrint('📦 [캐시] 마감 TO 캐시 사용 (${cacheAge.inSeconds}초 경과)');
           return _closedTOsCache!;
         }
       }
@@ -320,17 +321,17 @@ class FirestoreService {
           .map((doc) => TOModel.fromMap(doc.data(), doc.id))
           .toList();
       
-      print('   📦 단일 마감 TO: ${singleClosedTOs.length}개');
+      debugPrint('   📦 단일 마감 TO: ${singleClosedTOs.length}개');
       
       // ✅ Step 2: groups 컬렉션에서 마감 그룹 조회
       final closedGroups = await getClosedGroups();
-      print('   📦 마감 그룹: ${closedGroups.length}개');
+      debugPrint('   📦 마감 그룹: ${closedGroups.length}개');
       
       // ✅ Step 3: 각 그룹을 대표 TOModel로 변환
       final List<TOModel> groupRepresentativeTOs = closedGroups
           .map((group) => TOModel.fromGroupModel(group))
           .toList();
-      print('   📦 그룹 대표 TO: ${groupRepresentativeTOs.length}개');
+      debugPrint('   📦 그룹 대표 TO: ${groupRepresentativeTOs.length}개');
       
       List<TOModel> closedTOs = [...singleClosedTOs, ...groupRepresentativeTOs];
       
@@ -343,10 +344,10 @@ class FirestoreService {
       _closedTOsCache = recentClosedTOs;
       _closedTOsCacheTime = DateTime.now();
       
-      print('✅ [최적화] 마감된 TO: ${recentClosedTOs.length}개 (서버 조회)');
+      debugPrint('✅ [최적화] 마감된 TO: ${recentClosedTOs.length}개 (서버 조회)');
       return recentClosedTOs;
     } catch (e) {
-      print('❌ 마감된 TO 조회 실패: $e');
+      debugPrint('❌ 마감된 TO 조회 실패: $e');
       return [];
     }
   }
@@ -377,10 +378,10 @@ class FirestoreService {
         await _updateGroupMasterStatus(groupId);
       }
 
-      print('✅ TO 수동 마감 완료: $toId');
+      debugPrint('✅ TO 수동 마감 완료: $toId');
       return true;
     } catch (e) {
-      print('❌ TO 수동 마감 실패: $e');
+      debugPrint('❌ TO 수동 마감 실패: $e');
       return false;
     }
   }
@@ -433,7 +434,7 @@ class FirestoreService {
         }
         
         await workBatch.commit();
-        print('   ✅ WorkDetails 재오픈 + 마감시간 재계산: ${workDetailsSnapshot.docs.length}개');
+        debugPrint('   ✅ WorkDetails 재오픈 + 마감시간 재계산: ${workDetailsSnapshot.docs.length}개');
       }
       
       // 🔥 TO 문서 업데이트 (단기공고는 마감시간도 재계산)
@@ -468,10 +469,10 @@ class FirestoreService {
         await _updateGroupMasterStatus(groupId);
       }
 
-      print('✅ TO 재오픈 완료: $toId');
+      debugPrint('✅ TO 재오픈 완료: $toId');
       return true;
     } catch (e) {
-      print('❌ TO 재오픈 실패: $e');
+      debugPrint('❌ TO 재오픈 실패: $e');
       return false;
     }
   }
@@ -479,7 +480,7 @@ class FirestoreService {
   /// 그룹 TO 전체 마감 (WorkDetails 포함)
   Future<bool> closeGroupTOs(String groupId, String adminUID) async {
     try {
-      print('🔒 [closeGroupTOs] 시작: $groupId');
+      debugPrint('🔒 [closeGroupTOs] 시작: $groupId');
       
       final snapshot = await _firestore
           .collection('tos')
@@ -487,7 +488,7 @@ class FirestoreService {
           .get();
 
       if (snapshot.docs.isEmpty) {
-        print('❌ 그룹 TO를 찾을 수 없음');
+        debugPrint('❌ 그룹 TO를 찾을 수 없음');
         return false;
       }
 
@@ -502,11 +503,11 @@ class FirestoreService {
           'statusUpdatedAt': FieldValue.serverTimestamp(),
         });
         
-        print('   📝 TO 마감: ${doc.id}');
+        debugPrint('   📝 TO 마감: ${doc.id}');
       }
 
       await batch.commit();
-      print('✅ TO 마감 완료: ${snapshot.docs.length}개');
+      debugPrint('✅ TO 마감 완료: ${snapshot.docs.length}개');
 
       // ✅ groups 컬렉션 문서도 마감 처리
       await _firestore.collection('groups').doc(groupId).update({
@@ -516,7 +517,7 @@ class FirestoreService {
         'closedBy': adminUID,
         'statusUpdatedAt': FieldValue.serverTimestamp(),
       });
-      print('✅ groups 문서 마감 완료: $groupId');
+      debugPrint('✅ groups 문서 마감 완료: $groupId');
 
       for (var doc in snapshot.docs) {
         final workDetailsSnapshot = await _firestore
@@ -537,17 +538,17 @@ class FirestoreService {
           }
           
           await workBatch.commit();
-          print('   ✅ WorkDetails 마감: ${workDetailsSnapshot.docs.length}개');
+          debugPrint('   ✅ WorkDetails 마감: ${workDetailsSnapshot.docs.length}개');
         }
         
         clearCache(toId: doc.id);
       }
 
       invalidateListCache();
-      print('✅ 그룹 전체 마감 완료: $groupId');
+      debugPrint('✅ 그룹 전체 마감 완료: $groupId');
       return true;
     } catch (e) {
-      print('❌ 그룹 마감 실패: $e');
+      debugPrint('❌ 그룹 마감 실패: $e');
       return false;
     }
   }
@@ -555,7 +556,7 @@ class FirestoreService {
   /// 그룹 TO 전체 재오픈 (WorkDetails 포함)
   Future<bool> reopenGroupTOs(String groupId, String adminUID) async {
     try {
-      print('🔓 [reopenGroupTOs] 시작: $groupId');
+      debugPrint('🔓 [reopenGroupTOs] 시작: $groupId');
       
       final snapshot = await _firestore
           .collection('tos')
@@ -563,7 +564,7 @@ class FirestoreService {
           .get();
 
       if (snapshot.docs.isEmpty) {
-        print('❌ 그룹 TO를 찾을 수 없음');
+        debugPrint('❌ 그룹 TO를 찾을 수 없음');
         return false;
       }
 
@@ -578,7 +579,7 @@ class FirestoreService {
       }
 
       await batch.commit();
-      print('✅ TO 재오픈 완료: ${snapshot.docs.length}개');
+      debugPrint('✅ TO 재오픈 완료: ${snapshot.docs.length}개');
 
       for (var doc in snapshot.docs) {
         final toData = doc.data();
@@ -623,7 +624,7 @@ class FirestoreService {
           }
           
           await workBatch.commit();
-          print('   ✅ WorkDetails 재오픈 + 마감시간 재계산: ${workDetailsSnapshot.docs.length}개');
+          debugPrint('   ✅ WorkDetails 재오픈 + 마감시간 재계산: ${workDetailsSnapshot.docs.length}개');
         }
         
         // 🔥 TO 문서의 applicationDeadline도 재계산 (단기공고만)
@@ -663,13 +664,13 @@ class FirestoreService {
         'reopenedBy': adminUID,
         'statusUpdatedAt': FieldValue.serverTimestamp(),
       });
-      print('✅ groups 문서 재오픈 완료: $groupId');
+      debugPrint('✅ groups 문서 재오픈 완료: $groupId');
 
       invalidateListCache();
-      print('✅ 그룹 전체 재오픈 완료: $groupId');
+      debugPrint('✅ 그룹 전체 재오픈 완료: $groupId');
       return true;
     } catch (e) {
-      print('❌ 그룹 재오픈 실패: $e');
+      debugPrint('❌ 그룹 재오픈 실패: $e');
       return false;
     }
   }
@@ -751,12 +752,12 @@ class FirestoreService {
           'status': newStatus,
           'statusUpdatedAt': FieldValue.serverTimestamp(),
         });
-        print('✅ TO 상태 업데이트: $toId → $newStatus');
+        debugPrint('✅ TO 상태 업데이트: $toId → $newStatus');
       }
       
       return true;
     } catch (e) {
-      print('❌ TO 상태 업데이트 실패: $e');
+      debugPrint('❌ TO 상태 업데이트 실패: $e');
       return false;
     }
   }
@@ -834,7 +835,7 @@ class FirestoreService {
   /// 기존 TO 데이터 마이그레이션 (status 필드 추가)
   Future<int> migrateToStatusField() async {
     try {
-      print('🔄 TO status 필드 마이그레이션 시작...');
+      debugPrint('🔄 TO status 필드 마이그레이션 시작...');
       
       final snapshot = await _firestore.collection('tos').get();
       
@@ -863,7 +864,7 @@ class FirestoreService {
         
         if (batchCount >= 500) {
           await batch.commit();
-          print('   진행: $migrated개 마이그레이션됨');
+          debugPrint('   진행: $migrated개 마이그레이션됨');
           batch = _firestore.batch();
           batchCount = 0;
         }
@@ -873,10 +874,10 @@ class FirestoreService {
         await batch.commit();
       }
       
-      print('✅ 마이그레이션 완료: $migrated개 업데이트, $skipped개 스킵');
+      debugPrint('✅ 마이그레이션 완료: $migrated개 업데이트, $skipped개 스킵');
       return migrated;
     } catch (e) {
-      print('❌ 마이그레이션 실패: $e');
+      debugPrint('❌ 마이그레이션 실패: $e');
       return -1;
     }
   }
@@ -884,7 +885,7 @@ class FirestoreService {
   /// 기존 지원서에 누락된 workDetailId, toId, groupId를 채워넣음
   Future<Map<String, int>> migrateApplicationWorkDetailIds() async {
     try {
-      print('🔄 [Migration] Application workDetailId 마이그레이션 시작...');
+      debugPrint('🔄 [Migration] Application workDetailId 마이그레이션 시작...');
       
       int migrated = 0;
       int skipped = 0;
@@ -895,7 +896,7 @@ class FirestoreService {
           .collection('applications')
           .get();
       
-      print('   📊 전체 지원서: ${snapshot.docs.length}개');
+      debugPrint('   📊 전체 지원서: ${snapshot.docs.length}개');
       
       // TO 캐시 (중복 조회 방지)
       final Map<String, DocumentSnapshot> toCache = {};
@@ -924,7 +925,7 @@ class FirestoreService {
           final workDate = appData['workDate'] as Timestamp?;
           
           if (businessId == null || toTitle == null || workDate == null) {
-            print('   ⚠️ 필수 필드 누락: ${appDoc.id}');
+            debugPrint('   ⚠️ 필수 필드 누락: ${appDoc.id}');
             failed++;
             continue;
           }
@@ -968,7 +969,7 @@ class FirestoreService {
           }
           
           if (toDoc == null) {
-            print('   ⚠️ TO를 찾을 수 없음: ${appDoc.id}');
+            debugPrint('   ⚠️ TO를 찾을 수 없음: ${appDoc.id}');
             failed++;
             continue;
           }
@@ -1017,7 +1018,7 @@ class FirestoreService {
                   final wdData = wd.data() as Map<String, dynamic>;
                   if (wdData['workType'] == selectedWorkType) {
                     foundWorkDetailId = wd.id;
-                    print('   ⚠️ 시간 불일치, workType만 매칭: ${appDoc.id}');
+                    debugPrint('   ⚠️ 시간 불일치, workType만 매칭: ${appDoc.id}');
                     break;
                   }
                 }
@@ -1054,13 +1055,13 @@ class FirestoreService {
           // 500개마다 커밋
           if (batchCount >= 500) {
             await batch.commit();
-            print('   📦 진행: $migrated개 마이그레이션됨');
+            debugPrint('   📦 진행: $migrated개 마이그레이션됨');
             batch = _firestore.batch();
             batchCount = 0;
           }
           
         } catch (e) {
-          print('   ❌ 처리 실패 (${appDoc.id}): $e');
+          debugPrint('   ❌ 처리 실패 (${appDoc.id}): $e');
           failed++;
         }
       }
@@ -1070,10 +1071,10 @@ class FirestoreService {
         await batch.commit();
       }
       
-      print('✅ [Migration] 완료!');
-      print('   ✅ 마이그레이션: $migrated개');
-      print('   ⏭️ 스킵 (이미 있음): $skipped개');
-      print('   ❌ 실패: $failed개');
+      debugPrint('✅ [Migration] 완료!');
+      debugPrint('   ✅ 마이그레이션: $migrated개');
+      debugPrint('   ⏭️ 스킵 (이미 있음): $skipped개');
+      debugPrint('   ❌ 실패: $failed개');
       
       return {
         'migrated': migrated,
@@ -1081,7 +1082,7 @@ class FirestoreService {
         'failed': failed,
       };
     } catch (e) {
-      print('❌ [Migration] 마이그레이션 실패: $e');
+      debugPrint('❌ [Migration] 마이그레이션 실패: $e');
       return {
         'migrated': 0,
         'skipped': 0,
@@ -1097,11 +1098,11 @@ class FirestoreService {
   /// WorkDetail 통계 재계산 (TO별)
   Future<bool> recalculateWorkDetailStats(String toId) async {
     try {
-      print('📊 WorkDetail 통계 재계산 시작: $toId');
+      debugPrint('📊 WorkDetail 통계 재계산 시작: $toId');
       
       final toDoc = await _firestore.collection('tos').doc(toId).get();
       if (!toDoc.exists) {
-        print('❌ TO를 찾을 수 없습니다: $toId');
+        debugPrint('❌ TO를 찾을 수 없습니다: $toId');
         return false;
       }
       
@@ -1117,7 +1118,7 @@ class FirestoreService {
           .where('workDate', isEqualTo: workDate)
           .get();
       
-      print('   전체 지원서: ${appsSnapshot.docs.length}개');
+      debugPrint('   전체 지원서: ${appsSnapshot.docs.length}개');
       
       final workDetailsSnapshot = await _firestore
           .collection('tos')
@@ -1126,7 +1127,7 @@ class FirestoreService {
           .get();
       
       if (workDetailsSnapshot.docs.isEmpty) {
-        print('   ⚠️ WorkDetails가 없습니다');
+        debugPrint('   ⚠️ WorkDetails가 없습니다');
         return true;
       }
       
@@ -1178,17 +1179,17 @@ class FirestoreService {
           },
         );
         
-        print('   ✅ $workType: 확정 $confirmedCount, 대기 $pendingCount');
+        debugPrint('   ✅ $workType: 확정 $confirmedCount, 대기 $pendingCount');
         updatedCount++;
       }
       
       await batch.commit();
       clearCache(toId: toId);
       
-      print('✅ WorkDetail 통계 재계산 완료: $updatedCount개 업무');
+      debugPrint('✅ WorkDetail 통계 재계산 완료: $updatedCount개 업무');
       return true;
     } catch (e) {
-      print('❌ WorkDetail 통계 재계산 실패: $e');
+      debugPrint('❌ WorkDetail 통계 재계산 실패: $e');
       return false;
     }
   }
@@ -1196,11 +1197,11 @@ class FirestoreService {
   /// TO 전체 통계 재계산 (TO + WorkDetails)
   Future<bool> recalculateTOStats(String toId) async {
     try {
-      print('📊 TO 전체 통계 재계산 시작: $toId');
+      debugPrint('📊 TO 전체 통계 재계산 시작: $toId');
       
       final toDoc = await _firestore.collection('tos').doc(toId).get();
       if (!toDoc.exists) {
-        print('❌ TO를 찾을 수 없습니다: $toId');
+        debugPrint('❌ TO를 찾을 수 없습니다: $toId');
         return false;
       }
       
@@ -1233,15 +1234,15 @@ class FirestoreService {
         'updatedAt': Timestamp.now(),
       });
       
-      print('   ✅ TO 통계: 대기 $totalPending, 확정 $totalConfirmed');
+      debugPrint('   ✅ TO 통계: 대기 $totalPending, 확정 $totalConfirmed');
       
       await recalculateWorkDetailStats(toId);
       await updateTOStatus(toId);
       
-      print('✅ TO 전체 통계 재계산 완료');
+      debugPrint('✅ TO 전체 통계 재계산 완료');
       return true;
     } catch (e) {
-      print('❌ TO 전체 통계 재계산 실패: $e');
+      debugPrint('❌ TO 전체 통계 재계산 실패: $e');
       return false;
     }
   }
@@ -1249,26 +1250,26 @@ class FirestoreService {
   /// 그룹 전체 통계 재계산
   Future<bool> recalculateGroupStats(String groupId) async {
     try {
-      print('📊 그룹 전체 통계 재계산 시작: $groupId');
+      debugPrint('📊 그룹 전체 통계 재계산 시작: $groupId');
       
       final groupTOs = await getTOsByGroup(groupId);
       
       if (groupTOs.isEmpty) {
-        print('❌ 그룹 TO를 찾을 수 없습니다: $groupId');
+        debugPrint('❌ 그룹 TO를 찾을 수 없습니다: $groupId');
         return false;
       }
       
-      print('   그룹 TO: ${groupTOs.length}개');
+      debugPrint('   그룹 TO: ${groupTOs.length}개');
       
       final results = await Future.wait(
         groupTOs.map((to) => recalculateTOStats(to.id))
       );
       final successCount = results.where((r) => r).length;
       
-      print('✅ 그룹 통계 재계산 완료: $successCount/${groupTOs.length}개 성공');
+      debugPrint('✅ 그룹 통계 재계산 완료: $successCount/${groupTOs.length}개 성공');
       return successCount == groupTOs.length;
     } catch (e) {
-      print('❌ 그룹 통계 재계산 실패: $e');
+      debugPrint('❌ 그룹 통계 재계산 실패: $e');
       return false;
     }
   }
@@ -1283,7 +1284,7 @@ class FirestoreService {
     required String businessId,
   }) async {
     try {
-      print('🔍 [getBusinessWorkHistory] 조회: userId=$userId, businessId=$businessId');
+      debugPrint('🔍 [getBusinessWorkHistory] 조회: userId=$userId, businessId=$businessId');
       
       final snapshot = await _firestore
           .collection('applications')
@@ -1330,7 +1331,7 @@ class FirestoreService {
       
       final lastApp = applications.first;
       
-      print('✅ [getBusinessWorkHistory] 조회 완료: ${applications.length}회 근무');
+      debugPrint('✅ [getBusinessWorkHistory] 조회 완료: ${applications.length}회 근무');
       
       return {
         'workCount': applications.length,
@@ -1341,7 +1342,7 @@ class FirestoreService {
         'applications': applications,
       };
     } catch (e) {
-      print('❌ [getBusinessWorkHistory] 실패: $e');
+      debugPrint('❌ [getBusinessWorkHistory] 실패: $e');
       return {
         'workCount': 0,
         'lastWorkDate': null,

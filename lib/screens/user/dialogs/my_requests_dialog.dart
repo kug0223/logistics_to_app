@@ -1,4 +1,4 @@
-// lib/screens/user/dialogs/my_requests_dialog.dart
+﻿// lib/screens/user/dialogs/my_requests_dialog.dart
 
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
@@ -118,9 +118,9 @@ class _MyRequestsDialogState extends State<MyRequestsDialog> {
         _isLoading = false;
       });
 
-      print('✅ 알림 로드 완료: ${notifications.length}건');
+      debugPrint('✅ 알림 로드 완료: ${notifications.length}건');
     } catch (e) {
-      print('❌ 알림 로드 실패: $e');
+      debugPrint('❌ 알림 로드 실패: $e');
       setState(() => _isLoading = false);
     }
   }

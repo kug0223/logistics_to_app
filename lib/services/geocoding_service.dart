@@ -1,5 +1,6 @@
-// lib/services/geocoding_service.dart
+﻿// lib/services/geocoding_service.dart
 
+import 'package:flutter/foundation.dart';
 import 'dart:convert';
 import 'package:http/http.dart' as http;
 
@@ -11,8 +12,8 @@ class GeocodingService {
   /// 주소로 GPS 좌표 조회 (Kakao Local API)
   static Future<Map<String, double>?> getCoordinatesFromAddress(String address) async {
     try {
-      print('🗺️ [Geocoding] 주소 → GPS 변환 시작...');
-      print('   주소: $address');
+      debugPrint('🗺️ [Geocoding] 주소 → GPS 변환 시작...');
+      debugPrint('   주소: $address');
       
       final encodedAddress = Uri.encodeComponent(address);
       final url = Uri.parse(
@@ -39,9 +40,9 @@ class GeocodingService {
             final latitude = double.parse(addressData['y']);
             final longitude = double.parse(addressData['x']);
             
-            print('✅ [Geocoding] 좌표 변환 성공!');
-            print('   위도: $latitude');
-            print('   경도: $longitude');
+            debugPrint('✅ [Geocoding] 좌표 변환 성공!');
+            debugPrint('   위도: $latitude');
+            debugPrint('   경도: $longitude');
             
             return {
               'latitude': latitude,
@@ -50,18 +51,18 @@ class GeocodingService {
           }
         }
         
-        print('❌ [Geocoding] 주소에 대한 좌표를 찾을 수 없습니다.');
+        debugPrint('❌ [Geocoding] 주소에 대한 좌표를 찾을 수 없습니다.');
         return null;
       } else if (response.statusCode == 401) {
-        print('❌ [Geocoding] API 키 인증 실패 (401)');
-        print('   Kakao REST API 키를 확인하세요!');
+        debugPrint('❌ [Geocoding] API 키 인증 실패 (401)');
+        debugPrint('   Kakao REST API 키를 확인하세요!');
         return null;
       } else {
-        print('❌ [Geocoding] API 호출 실패: ${response.statusCode}');
+        debugPrint('❌ [Geocoding] API 호출 실패: ${response.statusCode}');
         return null;
       }
     } catch (e) {
-      print('❌ [Geocoding] 에러 발생: $e');
+      debugPrint('❌ [Geocoding] 에러 발생: $e');
       return null;
     }
   }

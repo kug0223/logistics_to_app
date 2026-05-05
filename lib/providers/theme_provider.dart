@@ -1,4 +1,4 @@
-// lib/providers/theme_provider.dart
+﻿// lib/providers/theme_provider.dart
 
 import 'package:flutter/material.dart';
 import '../theme/role_theme.dart';
@@ -23,7 +23,7 @@ class ThemeProvider extends ChangeNotifier {
     _currentRole = role;
     _currentTheme = RoleTheme.getThemeByRole(role);
     
-    print('🎨 [ThemeProvider] 테마 변경: $role');
+    debugPrint('🎨 [ThemeProvider] 테마 변경: $role');
     notifyListeners();
   }
   

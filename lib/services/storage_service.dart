@@ -1,6 +1,6 @@
-import 'dart:io';
+﻿import 'dart:io';
 import 'package:firebase_storage/firebase_storage.dart';
-import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:flutter/foundation.dart';
 
 /// Firebase Storage 서비스
 class StorageService {
@@ -13,13 +13,13 @@ class StorageService {
   Future<String?> uploadImage(String filePath, String storagePath) async {
     try {
       if (kIsWeb) {
-        print('⚠️ 웹 환경에서는 Storage 업로드 미지원');
+        debugPrint('⚠️ 웹 환경에서는 Storage 업로드 미지원');
         return null;
       }
 
       final file = File(filePath);
       if (!await file.exists()) {
-        print('❌ 파일이 존재하지 않음: $filePath');
+        debugPrint('❌ 파일이 존재하지 않음: $filePath');
         return null;
       }
 
@@ -27,10 +27,10 @@ class StorageService {
       final uploadTask = await ref.putFile(file);
       final downloadUrl = await uploadTask.ref.getDownloadURL();
 
-      print('✅ Storage 업로드 성공: $downloadUrl');
+      debugPrint('✅ Storage 업로드 성공: $downloadUrl');
       return downloadUrl;
     } catch (e) {
-      print('❌ Storage 업로드 실패: $e');
+      debugPrint('❌ Storage 업로드 실패: $e');
       return null;
     }
   }
@@ -40,7 +40,7 @@ class StorageService {
     try {
       // 빈 경로 체크
       if (storagePath.isEmpty) {
-        print('⚠️ 빈 경로 (무시)');
+        debugPrint('⚠️ 빈 경로 (무시)');
         return true;
       }
 
@@ -51,17 +51,17 @@ class StorageService {
         await ref.getMetadata();
       } on FirebaseException catch (e) {
         if (e.code == 'object-not-found') {
-          print('⚠️ 파일이 이미 없음 (무시): $storagePath');
+          debugPrint('⚠️ 파일이 이미 없음 (무시): $storagePath');
           return true;
         }
         rethrow;
       }
 
       await ref.delete();
-      print('✅ Storage 삭제 성공: $storagePath');
+      debugPrint('✅ Storage 삭제 성공: $storagePath');
       return true;
     } catch (e) {
-      print('❌ Storage 삭제 실패: $e');
+      debugPrint('❌ Storage 삭제 실패: $e');
       return false;
     }
   }
@@ -71,7 +71,7 @@ class StorageService {
     try {
       // 1. Firebase Storage URL인지 확인
       if (!_isFirebaseStorageUrl(downloadUrl)) {
-        print('⚠️ Firebase Storage URL이 아님 (무시): $downloadUrl');
+        debugPrint('⚠️ Firebase Storage URL이 아님 (무시): $downloadUrl');
         return true;
       }
 
@@ -83,7 +83,7 @@ class StorageService {
         await ref.getMetadata();
       } on FirebaseException catch (e) {
         if (e.code == 'object-not-found') {
-          print('⚠️ 파일이 이미 없음 (무시): ${ref.fullPath}');
+          debugPrint('⚠️ 파일이 이미 없음 (무시): ${ref.fullPath}');
           return true;
         }
         rethrow;
@@ -91,10 +91,10 @@ class StorageService {
 
       // 4. 파일 삭제
       await ref.delete();
-      print('✅ Storage 삭제 성공 (URL): ${ref.fullPath}');
+      debugPrint('✅ Storage 삭제 성공 (URL): ${ref.fullPath}');
       return true;
     } catch (e) {
-      print('❌ Storage 삭제 실패 (URL): $e');
+      debugPrint('❌ Storage 삭제 실패 (URL): $e');
       return false;
     }
   }

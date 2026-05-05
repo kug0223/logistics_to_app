@@ -1,4 +1,4 @@
-part of '../firestore_service.dart';
+﻿part of '../firestore_service.dart';
 
 // ═══════════════════════════════════════════════════════════
 // 지원서 관리 (Application Management)
@@ -15,7 +15,7 @@ extension ApplicationFirestore on FirestoreService {
       // 1. TO 정보 조회
       final toDoc = await _firestore.collection('tos').doc(toId).get();
       if (!toDoc.exists) {
-        print('❌ TO를 찾을 수 없습니다: $toId');
+        debugPrint('❌ TO를 찾을 수 없습니다: $toId');
         return [];
       }
 
@@ -36,7 +36,7 @@ extension ApplicationFirestore on FirestoreService {
           .map((doc) => ApplicationModel.fromFirestore(doc))
           .toList();
     } catch (e) {
-      print('❌ 지원자 목록 조회 실패: $e');
+      debugPrint('❌ 지원자 목록 조회 실패: $e');
       return [];
     }
   }
@@ -46,7 +46,7 @@ extension ApplicationFirestore on FirestoreService {
     try {
       if (toIds.isEmpty) return {};
       
-      print('🔍 배치 지원자 조회 시작: ${toIds.length}개 TO (병렬 처리)');
+      debugPrint('🔍 배치 지원자 조회 시작: ${toIds.length}개 TO (병렬 처리)');
       
       // ✅ 병렬로 각 TO의 지원서 조회
       final futures = toIds.map((toId) async {
@@ -80,17 +80,17 @@ extension ApplicationFirestore on FirestoreService {
       final results = await Future.wait(futures);
       final result = Map.fromEntries(results);
       
-      print('✅ 배치 지원자 조회 완료 (병렬): ${toIds.length}개 TO, ${result.values.fold(0, (sum, list) => sum + list.length)}명');
+      debugPrint('✅ 배치 지원자 조회 완료 (병렬): ${toIds.length}개 TO, ${result.values.fold(0, (sum, list) => sum + list.length)}명');
       return result;
     } catch (e) {
-      print('❌ 배치 지원자 조회 실패: $e');
+      debugPrint('❌ 배치 지원자 조회 실패: $e');
       return {};
     }
   }
   /// 사업장별 지원자 목록 조회
   Future<List<ApplicationModel>> getApplicationsByBusinessId(String businessId) async {
     try {
-      print('📋 사업장별 지원서 조회 시작: $businessId');
+      debugPrint('📋 사업장별 지원서 조회 시작: $businessId');
       
       final snapshot = await _firestore
           .collection('applications')
@@ -101,10 +101,10 @@ extension ApplicationFirestore on FirestoreService {
           .map((doc) => ApplicationModel.fromMap(doc.data(), doc.id))
           .toList();
 
-      print('✅ 사업장별 지원서 조회 완료: ${applications.length}개');
+      debugPrint('✅ 사업장별 지원서 조회 완료: ${applications.length}개');
       return applications;
     } catch (e) {
-      print('❌ 사업장별 지원서 조회 실패: $e');
+      debugPrint('❌ 사업장별 지원서 조회 실패: $e');
       return [];
     }
   }
@@ -113,7 +113,7 @@ extension ApplicationFirestore on FirestoreService {
     try {
       if (tos.isEmpty) return {};
       
-      print('🔍 배치 지원자 조회 시작: ${tos.length}개 TO (TO 정보 재사용)');
+      debugPrint('🔍 배치 지원자 조회 시작: ${tos.length}개 TO (TO 정보 재사용)');
       
       final futures = tos.map((to) async {
         // ✅ TO 정보는 이미 있음 - 재조회 안 함!
@@ -134,10 +134,10 @@ extension ApplicationFirestore on FirestoreService {
       final results = await Future.wait(futures);
       final result = Map.fromEntries(results);
       
-      print('✅ 배치 지원자 조회 완료: ${tos.length}개 TO, ${result.values.fold(0, (sum, list) => sum + list.length)}명');
+      debugPrint('✅ 배치 지원자 조회 완료: ${tos.length}개 TO, ${result.values.fold(0, (sum, list) => sum + list.length)}명');
       return result;
     } catch (e) {
-      print('❌ 배치 지원자 조회 실패: $e');
+      debugPrint('❌ 배치 지원자 조회 실패: $e');
       return {};
     }
   }
@@ -150,7 +150,7 @@ extension ApplicationFirestore on FirestoreService {
       // ✅ TO 정보 먼저 조회
       final toDoc = await _firestore.collection('tos').doc(toId).get();
       if (!toDoc.exists) {
-        print('❌ TO를 찾을 수 없습니다: $toId');
+        debugPrint('❌ TO를 찾을 수 없습니다: $toId');
         return [];
       }
 
@@ -172,7 +172,7 @@ extension ApplicationFirestore on FirestoreService {
           .map((doc) => ApplicationModel.fromFirestore(doc))
           .toList();
     } catch (e) {
-      print('❌ 업무별 지원서 조회 실패: $e');
+      debugPrint('❌ 업무별 지원서 조회 실패: $e');
       return [];
     }
   }
@@ -195,7 +195,7 @@ extension ApplicationFirestore on FirestoreService {
             .where('toTitle', isEqualTo: title)
             .get();
         
-        print('✅ 장기 TO 지원서 조회: ${snapshot.docs.length}개 (businessId=$businessId, title=$title)');
+        debugPrint('✅ 장기 TO 지원서 조회: ${snapshot.docs.length}개 (businessId=$businessId, title=$title)');
       } else {
         // ✅ 단기 TO: 날짜 범위로 조회
         final dateStart = DateTime(date.year, date.month, date.day);
@@ -209,7 +209,7 @@ extension ApplicationFirestore on FirestoreService {
             .where('workDate', isLessThan: Timestamp.fromDate(dateEnd))
             .get();
         
-        print('✅ 단기 TO 지원서 조회: ${snapshot.docs.length}개 (businessId=$businessId, title=$title, date=$dateStart~$dateEnd)');
+        debugPrint('✅ 단기 TO 지원서 조회: ${snapshot.docs.length}개 (businessId=$businessId, title=$title, date=$dateStart~$dateEnd)');
       }
 
       final apps = snapshot.docs
@@ -218,7 +218,7 @@ extension ApplicationFirestore on FirestoreService {
 
       return apps;
     } catch (e) {
-      print('❌ TO 지원서 조회 실패: $e');
+      debugPrint('❌ TO 지원서 조회 실패: $e');
       return [];
     }
   }
@@ -237,7 +237,7 @@ extension ApplicationFirestore on FirestoreService {
           .map((doc) => ApplicationModel.fromFirestore(doc))
           .toList();
     } catch (e) {
-      print('내 지원 내역 조회 실패: $e');
+      debugPrint('내 지원 내역 조회 실패: $e');
       return [];
     }
   }
@@ -248,7 +248,7 @@ extension ApplicationFirestore on FirestoreService {
       // ✅ TO 정보 먼저 조회
       final toDoc = await _firestore.collection('tos').doc(toId).get();
       if (!toDoc.exists) {
-        print('❌ TO를 찾을 수 없습니다: $toId');
+        debugPrint('❌ TO를 찾을 수 없습니다: $toId');
         return [];
       }
 
@@ -257,7 +257,7 @@ extension ApplicationFirestore on FirestoreService {
       final toTitle = toData['title'];
       final workDate = toData['date'] as Timestamp;
 
-      print('🔍 지원자 조회: businessId=$businessId, toTitle=$toTitle');
+      debugPrint('🔍 지원자 조회: businessId=$businessId, toTitle=$toTitle');
 
       // ✅ businessId, toTitle, workDate로 조회
       QuerySnapshot appSnapshot = await _firestore
@@ -267,7 +267,7 @@ extension ApplicationFirestore on FirestoreService {
           .where('workDate', isEqualTo: workDate)
           .get();
 
-      print('✅ 조회된 지원서: ${appSnapshot.docs.length}개');
+      debugPrint('✅ 조회된 지원서: ${appSnapshot.docs.length}개');
 
       // 메모리에서 정렬
       final sortedDocs = appSnapshot.docs.toList()
@@ -302,10 +302,10 @@ extension ApplicationFirestore on FirestoreService {
         }
       }
 
-      print('✅ 사용자 정보 포함 지원자: ${result.length}명');
+      debugPrint('✅ 사용자 정보 포함 지원자: ${result.length}명');
       return result;
     } catch (e) {
-      print('❌ 지원자 조회 실패: $e');
+      debugPrint('❌ 지원자 조회 실패: $e');
       return [];
     }
   }
@@ -373,7 +373,7 @@ extension ApplicationFirestore on FirestoreService {
           .where('date', isEqualTo: Timestamp.fromDate(workDate))
           .limit(1)
           .get();
-      print('🔍 [지원] 단기공고 TO 검색: ${toSnapshot.docs.length}건');
+      debugPrint('🔍 [지원] 단기공고 TO 검색: ${toSnapshot.docs.length}건');
       
       // 없으면 장기공고로 재검색
       if (toSnapshot.docs.isEmpty) {
@@ -384,7 +384,7 @@ extension ApplicationFirestore on FirestoreService {
             .where('isLongTerm', isEqualTo: true)
             .limit(1)
             .get();
-        print('🔍 [지원] 장기공고 TO 재검색: ${toSnapshot.docs.length}건');
+        debugPrint('🔍 [지원] 장기공고 TO 재검색: ${toSnapshot.docs.length}건');
       }
 
       if (toSnapshot.docs.isEmpty) {
@@ -426,7 +426,7 @@ extension ApplicationFirestore on FirestoreService {
         
         // 퇴사/해지 완료된 지원서는 이력으로 보존 (무시하고 새로 생성)
         if (isResignCompleted || isTerminationCompleted) {
-          print('🔍 퇴사/해지 완료된 이력 발견: ${doc.id} (이력 보존, 새 지원서 생성)');
+          debugPrint('🔍 퇴사/해지 완료된 이력 발견: ${doc.id} (이력 보존, 새 지원서 생성)');
           continue;
         }
         
@@ -444,7 +444,7 @@ extension ApplicationFirestore on FirestoreService {
       
       // ✅ 케이스 A: 활성 지원서가 있으면 차단
       if (activeApp != null) {
-        print('🔍 활성 지원서 발견: 이미 지원한 업무');
+        debugPrint('🔍 활성 지원서 발견: 이미 지원한 업무');
         ToastHelper.showWarning('이미 지원한 업무입니다.');
         return false;
       }
@@ -465,7 +465,7 @@ extension ApplicationFirestore on FirestoreService {
           .map((doc) => ApplicationModel.fromFirestore(doc))
           .toList();
       
-      print('🔍 [충돌체크] 전체 CONFIRMED: ${allConfirmed.length}개');
+      debugPrint('🔍 [충돌체크] 전체 CONFIRMED: ${allConfirmed.length}개');
 
       if (isReallyLongTerm && workEndDate != null) {
         // 장기공고: 희망시작일부터 종료일까지 메모리에서 체크
@@ -514,7 +514,7 @@ extension ApplicationFirestore on FirestoreService {
       
       // ✅ 케이스 B: 재활성화 가능한 지원서가 있으면 재활성화
       if (reactivatableApp != null) {
-        print('✅ 기존 지원서 재활성화: ${reactivatableApp.id}');
+        debugPrint('✅ 기존 지원서 재활성화: ${reactivatableApp.id}');
         
         batch.update(reactivatableApp.reference, {
           'status': 'PENDING',
@@ -571,7 +571,7 @@ extension ApplicationFirestore on FirestoreService {
         await batch.commit();
         clearCache(toId: toId);
         
-        print('✅ 재지원 완료 (기존 문서 재활성화)');
+        debugPrint('✅ 재지원 완료 (기존 문서 재활성화)');
         
         // 🔔 알림 생성 (관리자에게) - 재지원도 신규 지원과 동일하게 알림
         _sendNewApplicationNotification(
@@ -588,7 +588,7 @@ extension ApplicationFirestore on FirestoreService {
       }
       
       // ✅ 케이스 C: 새 지원서 생성 (기존 지원서 없거나 퇴사/해지 완료된 이력만 있는 경우)
-      print('✅ 새 지원서 생성');
+      debugPrint('✅ 새 지원서 생성');
       
       final appRef = _firestore.collection('applications').doc();
       
@@ -650,7 +650,7 @@ extension ApplicationFirestore on FirestoreService {
       await batch.commit();
       clearCache(toId: toId);
 
-      print('✅ 지원 완료: $toTitle / $selectedWorkType');
+      debugPrint('✅ 지원 완료: $toTitle / $selectedWorkType');
       
       // 🔔 알림 생성 (관리자에게) - 비동기로 처리 (메인 로직 지연 방지)
       _sendNewApplicationNotification(
@@ -665,7 +665,7 @@ extension ApplicationFirestore on FirestoreService {
       
       return true;
     } catch (e) {
-      print('❌ 지원 실패: $e');
+      debugPrint('❌ 지원 실패: $e');
       ToastHelper.showError('지원 중 오류가 발생했습니다.');
       return false;
     }
@@ -706,10 +706,10 @@ extension ApplicationFirestore on FirestoreService {
         ),
       );
       
-      print('🔔 신규 지원 알림 전송 완료 → 관리자: $adminUid');
+      debugPrint('🔔 신규 지원 알림 전송 완료 → 관리자: $adminUid');
     } catch (e) {
       // 알림 실패해도 메인 로직은 이미 성공
-      print('⚠️ 신규 지원 알림 전송 실패: $e');
+      debugPrint('⚠️ 신규 지원 알림 전송 실패: $e');
     }
   }
   /// 🔔 지원 취소 알림 전송 (비동기 - fire and forget)
@@ -748,9 +748,9 @@ extension ApplicationFirestore on FirestoreService {
         ),
       );
       
-      print('🔔 지원 취소 알림 전송 완료 → 관리자: $adminUid');
+      debugPrint('🔔 지원 취소 알림 전송 완료 → 관리자: $adminUid');
     } catch (e) {
-      print('⚠️ 지원 취소 알림 전송 실패: $e');
+      debugPrint('⚠️ 지원 취소 알림 전송 실패: $e');
     }
   }
   
@@ -772,9 +772,9 @@ extension ApplicationFirestore on FirestoreService {
         ),
       );
       
-      print('🔔 계약해지 요청 알림 전송 완료 → 근무자: $applicantUid');
+      debugPrint('🔔 계약해지 요청 알림 전송 완료 → 근무자: $applicantUid');
     } catch (e) {
-      print('⚠️ 계약해지 요청 알림 전송 실패: $e');
+      debugPrint('⚠️ 계약해지 요청 알림 전송 실패: $e');
     }
   }
 
@@ -807,9 +807,9 @@ extension ApplicationFirestore on FirestoreService {
         ),
       );
       
-      print('🔔 계약해지 승인 알림 전송 완료 → 관리자: $adminUid');
+      debugPrint('🔔 계약해지 승인 알림 전송 완료 → 관리자: $adminUid');
     } catch (e) {
-      print('⚠️ 계약해지 승인 알림 전송 실패: $e');
+      debugPrint('⚠️ 계약해지 승인 알림 전송 실패: $e');
     }
   }
   /// 🔔 지원 자동 취소 알림 전송 (충돌로 인한 자동취소 - 지원자에게)
@@ -835,9 +835,9 @@ extension ApplicationFirestore on FirestoreService {
         ),
       );
       
-      print('🔔 자동 취소 알림 전송 완료 → 지원자: $applicantUid');
+      debugPrint('🔔 자동 취소 알림 전송 완료 → 지원자: $applicantUid');
     } catch (e) {
-      print('⚠️ 자동 취소 알림 전송 실패: $e');
+      debugPrint('⚠️ 자동 취소 알림 전송 실패: $e');
     }
   }
 
@@ -900,7 +900,7 @@ extension ApplicationFirestore on FirestoreService {
         desiredStartDate: desiredStartDate,
       );
     } catch (e) {
-      print('❌ TO 지원 실패: $e');
+      debugPrint('❌ TO 지원 실패: $e');
       ToastHelper.showError('지원에 실패했습니다');
       return false;
     }
@@ -939,7 +939,7 @@ extension ApplicationFirestore on FirestoreService {
       ToastHelper.showSuccess('지원자가 확정되었습니다.');
       return true;
     } catch (e) {
-      print('지원자 승인 실패: $e');
+      debugPrint('지원자 승인 실패: $e');
       ToastHelper.showError('승인 중 오류가 발생했습니다.');
       return false;
     }
@@ -1057,18 +1057,18 @@ extension ApplicationFirestore on FirestoreService {
       await batch.commit();
 
       // ✅ 통계 재계산 (통합 함수 사용)
-      print('📊 지원자 확정 후 통계 재계산...');
+      debugPrint('📊 지원자 확정 후 통계 재계산...');
       await recalculateTOStats(toId);
       clearCache(toId: toId);
       
       // ✅ 그룹 마스터 통계 동기화
       await syncGroupMasterStats(toId);
 
-      print('✅ 지원자 확정 완료');
+      debugPrint('✅ 지원자 확정 완료');
       ToastHelper.showSuccess('지원자가 확정되었습니다.');
       return true;
     } catch (e) {
-      print('❌ 지원자 확정 실패: $e');
+      debugPrint('❌ 지원자 확정 실패: $e');
       ToastHelper.showError('확정 중 오류가 발생했습니다.');
       return false;
     }
@@ -1135,7 +1135,7 @@ extension ApplicationFirestore on FirestoreService {
         if (toDoc.exists) {
           toId = toDoc.id;
           groupId = (toDoc.data() as Map<String, dynamic>)['groupId'] as String?;
-          print('✅ [거절] toId로 TO 찾음: $toId');
+          debugPrint('✅ [거절] toId로 TO 찾음: $toId');
         }
       }
       
@@ -1149,7 +1149,7 @@ extension ApplicationFirestore on FirestoreService {
             .where('date', isEqualTo: workDate)
             .limit(1)
             .get();
-        print('🔍 [거절] 단기공고 TO 검색: ${toSnapshot.docs.length}건');
+        debugPrint('🔍 [거절] 단기공고 TO 검색: ${toSnapshot.docs.length}건');
         
         // 장기공고로 재검색
         if (toSnapshot.docs.isEmpty) {
@@ -1160,7 +1160,7 @@ extension ApplicationFirestore on FirestoreService {
               .where('isLongTerm', isEqualTo: true)
               .limit(1)
               .get();
-          print('🔍 [거절] 장기공고 TO 재검색: ${toSnapshot.docs.length}건');
+          debugPrint('🔍 [거절] 장기공고 TO 재검색: ${toSnapshot.docs.length}건');
         }
         
         if (toSnapshot.docs.isNotEmpty) {
@@ -1172,7 +1172,7 @@ extension ApplicationFirestore on FirestoreService {
 
       if (toDoc == null || !toDoc.exists) {
         await _firestore.collection('applications').doc(applicationId).update(updateData);
-        print('✅ 지원자 거절 완료 (TO 없음)');
+        debugPrint('✅ 지원자 거절 완료 (TO 없음)');
         return true;
       }
 
@@ -1213,11 +1213,11 @@ extension ApplicationFirestore on FirestoreService {
       await batch.commit();
       clearCache(toId: toId);
 
-      print('✅ 지원자 거절 완료');
+      debugPrint('✅ 지원자 거절 완료');
       ToastHelper.showSuccess('지원자가 거절되었습니다.');
       return true;
     } catch (e) {
-      print('❌ 지원자 거절 실패: $e');
+      debugPrint('❌ 지원자 거절 실패: $e');
       ToastHelper.showError('거절 중 오류가 발생했습니다.');
       return false;
     }
@@ -1268,7 +1268,7 @@ extension ApplicationFirestore on FirestoreService {
         if (toDocSnapshot.exists) {
           toId = toDocSnapshot.id;
           groupId = (toDocSnapshot.data() as Map<String, dynamic>)['groupId'] as String?;
-          print('✅ [지원취소] toId로 TO 찾음: $toId');
+          debugPrint('✅ [지원취소] toId로 TO 찾음: $toId');
         }
       }
       
@@ -1282,7 +1282,7 @@ extension ApplicationFirestore on FirestoreService {
             .where('date', isEqualTo: workDate)
             .limit(1)
             .get();
-        print('🔍 [지원취소] 단기공고 TO 검색: ${toSnapshot.docs.length}건');
+        debugPrint('🔍 [지원취소] 단기공고 TO 검색: ${toSnapshot.docs.length}건');
         
         // 장기공고로 재검색
         if (toSnapshot.docs.isEmpty) {
@@ -1293,7 +1293,7 @@ extension ApplicationFirestore on FirestoreService {
               .where('isLongTerm', isEqualTo: true)
               .limit(1)
               .get();
-          print('🔍 [지원취소] 장기공고 TO 재검색: ${toSnapshot.docs.length}건');
+          debugPrint('🔍 [지원취소] 장기공고 TO 재검색: ${toSnapshot.docs.length}건');
         }
         
         if (toSnapshot.docs.isNotEmpty) {
@@ -1315,7 +1315,7 @@ extension ApplicationFirestore on FirestoreService {
           }]),
         });
         ToastHelper.showSuccess('지원이 취소되었습니다.');
-        print('⚠️ [지원취소] TO 없음 - 지원서만 취소');
+        debugPrint('⚠️ [지원취소] TO 없음 - 지원서만 취소');
         return true;
       }
 
@@ -1384,7 +1384,7 @@ extension ApplicationFirestore on FirestoreService {
       ToastHelper.showSuccess('지원이 취소되었습니다.');
       return true;
     } catch (e) {
-      print('❌ 지원 취소 실패: $e');
+      debugPrint('❌ 지원 취소 실패: $e');
       ToastHelper.showError('지원 취소에 실패했습니다.');
       return false;
     }
@@ -1469,13 +1469,13 @@ extension ApplicationFirestore on FirestoreService {
       final workDetailId = appData['workDetailId'] as String?;
       final groupId = appData['groupId'] as String?;
       
-      print('🔍 [확정취소] toId: $toId, workDetailId: $workDetailId, groupId: $groupId');
+      debugPrint('🔍 [확정취소] toId: $toId, workDetailId: $workDetailId, groupId: $groupId');
 
       if (toId != null && toId.isNotEmpty) {
         final toDoc = await _firestore.collection('tos').doc(toId).get();
         
         if (toDoc.exists) {
-          print('✅ [확정취소] TO 찾음: $toId');
+          debugPrint('✅ [확정취소] TO 찾음: $toId');
 
           // TO 통계 Increment (CONFIRMED → CANCELED)
           batch.update(toDoc.reference, {
@@ -1494,9 +1494,9 @@ extension ApplicationFirestore on FirestoreService {
                 'currentCount': FieldValue.increment(-1),
               },
             );
-            print('✅ [확정취소] WorkDetail 통계 감소: $workDetailId');
+            debugPrint('✅ [확정취소] WorkDetail 통계 감소: $workDetailId');
           } else {
-            print('⚠️ [확정취소] workDetailId 없음 - WorkDetail 통계 미업데이트');
+            debugPrint('⚠️ [확정취소] workDetailId 없음 - WorkDetail 통계 미업데이트');
           }
 
           // ✅ groups 컬렉션 통계 Increment
@@ -1504,17 +1504,17 @@ extension ApplicationFirestore on FirestoreService {
             batch.update(_firestore.collection('groups').doc(groupId), {
               'totalConfirmed': FieldValue.increment(-1),
             });
-            print('✅ [확정취소] groups 통계 감소: $groupId');
+            debugPrint('✅ [확정취소] groups 통계 감소: $groupId');
           }
 
           await batch.commit();
           clearCache(toId: toId);
         } else {
-          print('⚠️ [확정취소] TO 문서 없음: $toId');
+          debugPrint('⚠️ [확정취소] TO 문서 없음: $toId');
           await batch.commit();
         }
       } else {
-        print('⚠️ [확정취소] toId 없음 - 지원서만 취소');
+        debugPrint('⚠️ [확정취소] toId 없음 - 지원서만 취소');
         await batch.commit();
       }
       
@@ -1523,10 +1523,10 @@ extension ApplicationFirestore on FirestoreService {
         applicationId: applicationId,
         uid: uid,
       );
-      print('✅ 확정 취소 완료 (패널티: $applyNoShowPenalty)');
+      debugPrint('✅ 확정 취소 완료 (패널티: $applyNoShowPenalty)');
       return true;
     } catch (e) {
-      print('❌ 확정 취소 실패: $e');
+      debugPrint('❌ 확정 취소 실패: $e');
       ToastHelper.showError('확정 취소에 실패했습니다');
       return false;
     }
@@ -1575,7 +1575,7 @@ extension ApplicationFirestore on FirestoreService {
       
       await _firestore.collection('applications').doc(applicationId).update(updateData);
 
-      print('✅ 업무유형 변경 완료: $currentWorkType → $newWorkType');
+      debugPrint('✅ 업무유형 변경 완료: $currentWorkType → $newWorkType');
       
       // 🔔 알림 생성 (지원자에게)
       _sendWorkTypeChangedNotification(
@@ -1591,7 +1591,7 @@ extension ApplicationFirestore on FirestoreService {
       ToastHelper.showSuccess('업무유형이 변경되었습니다.');
       return true;
     } catch (e) {
-      print('❌ 업무유형 변경 실패: $e');
+      debugPrint('❌ 업무유형 변경 실패: $e');
       ToastHelper.showError('업무유형 변경에 실패했습니다.');
       return false;
     }
@@ -1620,9 +1620,9 @@ extension ApplicationFirestore on FirestoreService {
         ),
       );
       
-      print('🔔 파트 변경 알림 전송 완료 → 지원자: $applicantUid');
+      debugPrint('🔔 파트 변경 알림 전송 완료 → 지원자: $applicantUid');
     } catch (e) {
-      print('⚠️ 파트 변경 알림 전송 실패: $e');
+      debugPrint('⚠️ 파트 변경 알림 전송 실패: $e');
     }
   }
   /// 지원서 상태 업데이트 (승인/거절) - Phase 2: 자동 취소 추가
@@ -1644,7 +1644,7 @@ extension ApplicationFirestore on FirestoreService {
       if (currentAppDoc.exists) {
         previousStatus = currentAppDoc.data()?['status'] as String?;
       }
-      print('🔍 [updateApplicationStatus] 이전상태: $previousStatus → 새상태: $status');
+      debugPrint('🔍 [updateApplicationStatus] 이전상태: $previousStatus → 새상태: $status');
       
       // ⭐ Phase 2: 확정 시 충돌 처리
       if (status == 'CONFIRMED') {
@@ -1676,7 +1676,7 @@ extension ApplicationFirestore on FirestoreService {
           .doc(applicationId)
           .update(updates);
 
-      print('✅ 지원서 상태 업데이트: $status');
+      debugPrint('✅ 지원서 상태 업데이트: $status');
       
       // 🔔 거절/취소 시 알림 생성 (지원자에게)
       if ((status == 'REJECTED' || status == 'CANCELED') && currentAppDoc.exists) {
@@ -1713,7 +1713,7 @@ extension ApplicationFirestore on FirestoreService {
       
       // ✅ REJECTED/CANCELED: Increment 방식으로 처리
       if (status == 'REJECTED' || status == 'CANCELED') {
-        print('🔍 [updateApplicationStatus] REJECTED/CANCELED 처리 시작, previousStatus=$previousStatus');
+        debugPrint('🔍 [updateApplicationStatus] REJECTED/CANCELED 처리 시작, previousStatus=$previousStatus');
         if (currentAppDoc.exists) {
           final appData = currentAppDoc.data()!;
           // ✅ previousStatus는 위에서 이미 저장됨 - 중복 선언 제거
@@ -1730,7 +1730,7 @@ extension ApplicationFirestore on FirestoreService {
               .where('date', isEqualTo: appData['workDate'])
               .limit(1)
               .get();
-          print('🔍 [확정취소] 단기공고 TO 검색: ${toSnapshot.docs.length}건');
+          debugPrint('🔍 [확정취소] 단기공고 TO 검색: ${toSnapshot.docs.length}건');
           
           // 2차: 단기 검색 실패 시 장기공고로 재시도
           if (toSnapshot.docs.isEmpty) {
@@ -1741,7 +1741,7 @@ extension ApplicationFirestore on FirestoreService {
                 .where('isLongTerm', isEqualTo: true)
                 .limit(1)
                 .get();
-            print('🔍 [확정취소] 장기공고 TO 재검색: ${toSnapshot.docs.length}건');
+            debugPrint('🔍 [확정취소] 장기공고 TO 재검색: ${toSnapshot.docs.length}건');
           }
           
           if (toSnapshot.docs.isNotEmpty) {
@@ -1809,7 +1809,7 @@ extension ApplicationFirestore on FirestoreService {
             
             await batch.commit();
             clearCache(toId: toId);
-            print('📊 TO 통계 Increment 완료: $toId (이전상태: $previousStatus)');
+            debugPrint('📊 TO 통계 Increment 완료: $toId (이전상태: $previousStatus)');
           }
         }
       }
@@ -1817,7 +1817,7 @@ extension ApplicationFirestore on FirestoreService {
       return [];
       
     } catch (e) {
-      print('❌ 지원서 상태 업데이트 실패: $e');
+      debugPrint('❌ 지원서 상태 업데이트 실패: $e');
       rethrow;
     }
   }
@@ -1863,7 +1863,7 @@ extension ApplicationFirestore on FirestoreService {
           .where('date', isEqualTo: Timestamp.fromDate(app.workDate))
           .limit(1)
           .get();
-      print('🔍 [확정] 단기공고 TO 검색: ${toSnapshot.docs.length}건');
+      debugPrint('🔍 [확정] 단기공고 TO 검색: ${toSnapshot.docs.length}건');
       
       // 2차: 단기 검색 실패 시 장기공고로 재검색
       if (toSnapshot.docs.isEmpty) {
@@ -1874,7 +1874,7 @@ extension ApplicationFirestore on FirestoreService {
             .where('isLongTerm', isEqualTo: true)
             .limit(1)
             .get();
-        print('🔍 [확정] 장기공고 TO 재검색: ${toSnapshot.docs.length}건');
+        debugPrint('🔍 [확정] 장기공고 TO 재검색: ${toSnapshot.docs.length}건');
       }
       
       if (toSnapshot.docs.isEmpty) {
@@ -1915,7 +1915,7 @@ extension ApplicationFirestore on FirestoreService {
         );
       }
       
-      print('✅ 충돌하는 지원서 ${conflictingApps.length}개 발견');
+      debugPrint('✅ 충돌하는 지원서 ${conflictingApps.length}개 발견');
       
       // 4. Batch 처리 (모든 업데이트를 한 번에!)
       final batch = _firestore.batch();
@@ -2012,7 +2012,7 @@ extension ApplicationFirestore on FirestoreService {
               .where('date', isEqualTo: Timestamp.fromDate(conflictApp.workDate))
               .limit(1)
               .get();
-          print('🔍 [충돌취소] 단기공고 TO 검색: ${conflictTOSnapshot.docs.length}건');
+          debugPrint('🔍 [충돌취소] 단기공고 TO 검색: ${conflictTOSnapshot.docs.length}건');
           
           // 2차: 단기 검색 실패 시 장기공고로 재시도
           if (conflictTOSnapshot.docs.isEmpty) {
@@ -2023,7 +2023,7 @@ extension ApplicationFirestore on FirestoreService {
                 .where('isLongTerm', isEqualTo: true)
                 .limit(1)
                 .get();
-            print('🔍 [충돌취소] 장기공고 TO 재검색: ${conflictTOSnapshot.docs.length}건');
+            debugPrint('🔍 [충돌취소] 장기공고 TO 재검색: ${conflictTOSnapshot.docs.length}건');
           } else {
             conflictTOSnapshot = await _firestore
                 .collection('tos')
@@ -2032,7 +2032,7 @@ extension ApplicationFirestore on FirestoreService {
                 .where('date', isEqualTo: Timestamp.fromDate(conflictApp.workDate))
                 .limit(1)
                 .get();
-            print('🔍 [충돌취소] 단기공고 TO 검색: ${conflictTOSnapshot.docs.length}건');
+            debugPrint('🔍 [충돌취소] 단기공고 TO 검색: ${conflictTOSnapshot.docs.length}건');
           }
           
           if (conflictTOSnapshot.docs.isNotEmpty) {
@@ -2078,13 +2078,13 @@ extension ApplicationFirestore on FirestoreService {
         }
         
         await statsBatch.commit();
-        print('✅ AUTO_CANCELED ${conflictingApps.length}건의 TO 통계 업데이트 완료');
+        debugPrint('✅ AUTO_CANCELED ${conflictingApps.length}건의 TO 통계 업데이트 완료');
       }
       
       // 6. 캐시만 클리어 (재계산 없음!)
       clearCache(toId: toId);
       
-      print('✅ 확정 완료 + ${conflictingApps.length}개 자동 취소 (Increment 방식)');
+      debugPrint('✅ 확정 완료 + ${conflictingApps.length}개 자동 취소 (Increment 방식)');
       
       // 🔔 알림 생성 (지원자에게)
       await createNotification(
@@ -2114,7 +2114,7 @@ extension ApplicationFirestore on FirestoreService {
       return affectedTOIds.toList();
       
     } catch (e) {
-      print('❌ 확정 처리 실패: $e');
+      debugPrint('❌ 확정 처리 실패: $e');
       rethrow;
     }
   }
@@ -2152,10 +2152,10 @@ extension ApplicationFirestore on FirestoreService {
         }
       }
       
-      print('✅ 충돌하는 지원서 ${conflicts.length}개 발견');
+      debugPrint('✅ 충돌하는 지원서 ${conflicts.length}개 발견');
       return conflicts;
     } catch (e) {
-      print('❌ 충돌 지원서 조회 실패: $e');
+      debugPrint('❌ 충돌 지원서 조회 실패: $e');
       return [];
     }
   }
@@ -2170,9 +2170,9 @@ extension ApplicationFirestore on FirestoreService {
     required String excludeId,
   }) async {
     try {
-      print('📅 [LongTerm] 장기공고 충돌 체크 시작');
-      print('   기간: ${startDate.month}/${startDate.day} ~ ${endDate.month}/${endDate.day}');
-      print('   요일: $workDays');
+      debugPrint('📅 [LongTerm] 장기공고 충돌 체크 시작');
+      debugPrint('   기간: ${startDate.month}/${startDate.day} ~ ${endDate.month}/${endDate.day}');
+      debugPrint('   요일: $workDays');
       
       // 1. 해당 사용자의 모든 PENDING 지원서 조회
       final snapshot = await _firestore
@@ -2195,7 +2195,7 @@ extension ApplicationFirestore on FirestoreService {
         currentDate = currentDate.add(const Duration(days: 1));
       }
       
-      print('   근무일 수: ${workingDates.length}일');
+      debugPrint('   근무일 수: ${workingDates.length}일');
       
       // 3. 각 근무일에 대해 충돌 체크
       for (var doc in snapshot.docs) {
@@ -2216,10 +2216,10 @@ extension ApplicationFirestore on FirestoreService {
         }
       }
       
-      print('✅ [LongTerm] 충돌 지원서 ${conflicts.length}개 발견');
+      debugPrint('✅ [LongTerm] 충돌 지원서 ${conflicts.length}개 발견');
       return conflicts.toList();
     } catch (e) {
-      print('❌ [LongTerm] 충돌 조회 실패: $e');
+      debugPrint('❌ [LongTerm] 충돌 조회 실패: $e');
       return [];
     }
   }
@@ -2249,10 +2249,10 @@ extension ApplicationFirestore on FirestoreService {
         }
       }
       
-      print('✅ ${workDate.month}/${workDate.day}에 확정된 근무: ${relevantSchedules.length}개');
+      debugPrint('✅ ${workDate.month}/${workDate.day}에 확정된 근무: ${relevantSchedules.length}개');
       return relevantSchedules;
     } catch (e) {
-      print('❌ 확정 일정 조회 실패: $e');
+      debugPrint('❌ 확정 일정 조회 실패: $e');
       return [];
     }
   }
@@ -2269,7 +2269,7 @@ extension ApplicationFirestore on FirestoreService {
     required String uid,
     WriteBatch? batch,
   }) async {
-    print('🧹 [Cleanup] 연관 데이터 정리 시작: $applicationId');
+    debugPrint('🧹 [Cleanup] 연관 데이터 정리 시작: $applicationId');
     
     final useBatch = batch != null;
     final localBatch = batch ?? _firestore.batch();
@@ -2289,7 +2289,7 @@ extension ApplicationFirestore on FirestoreService {
           'cancelReason': 'APPLICATION_CANCELED',
         });
       }
-      print('   📋 신분증 요청 ${idCardRequests.docs.length}건 무효화');
+      debugPrint('   📋 신분증 요청 ${idCardRequests.docs.length}건 무효화');
       
       // 2. 출근 데이터는 유지 (근무 이력 보존)
       // 확정 취소되어도 이미 출근한 기록은 남겨둠
@@ -2308,16 +2308,16 @@ extension ApplicationFirestore on FirestoreService {
           'cancelReason': 'APPLICATION_CANCELED',
         });
       }
-      print('   📋 스케줄 요청 ${scheduleRequests.docs.length}건 취소');
+      debugPrint('   📋 스케줄 요청 ${scheduleRequests.docs.length}건 취소');
       
       // batch가 외부에서 제공되지 않은 경우에만 commit
       if (!useBatch) {
         await localBatch.commit();
       }
       
-      print('✅ [Cleanup] 연관 데이터 정리 완료');
+      debugPrint('✅ [Cleanup] 연관 데이터 정리 완료');
     } catch (e) {
-      print('❌ [Cleanup] 연관 데이터 정리 실패: $e');
+      debugPrint('❌ [Cleanup] 연관 데이터 정리 실패: $e');
       // 실패해도 메인 로직은 계속 진행
     }
   }
@@ -2335,7 +2335,7 @@ extension ApplicationFirestore on FirestoreService {
     }
     
     try {
-      print('📦 [Batch] 일괄 확정 시작: ${applicationIds.length}건');
+      debugPrint('📦 [Batch] 일괄 확정 시작: ${applicationIds.length}건');
       
       // 1. 모든 지원서 조회 (병렬)
       final appFutures = applicationIds.map((id) => 
@@ -2362,7 +2362,7 @@ extension ApplicationFirestore on FirestoreService {
               toRef = toDoc.reference;
               toId = toDoc.id;
               groupId = (toDoc.data() as Map<String, dynamic>)['groupId'] as String?;
-              print('✅ [Batch확정] toId로 TO 찾음: $toId');
+              debugPrint('✅ [Batch확정] toId로 TO 찾음: $toId');
             }
           }
           
@@ -2376,7 +2376,7 @@ extension ApplicationFirestore on FirestoreService {
                 .where('date', isEqualTo: appData['workDate'])
                 .limit(1)
                 .get();
-            print('🔍 [Batch확정] 단기공고 TO 검색: ${toSnapshot.docs.length}건');
+            debugPrint('🔍 [Batch확정] 단기공고 TO 검색: ${toSnapshot.docs.length}건');
             
             // 장기공고로 재검색
             if (toSnapshot.docs.isEmpty) {
@@ -2387,7 +2387,7 @@ extension ApplicationFirestore on FirestoreService {
                   .where('isLongTerm', isEqualTo: true)
                   .limit(1)
                   .get();
-              print('🔍 [Batch확정] 장기공고 TO 재검색: ${toSnapshot.docs.length}건');
+              debugPrint('🔍 [Batch확정] 장기공고 TO 재검색: ${toSnapshot.docs.length}건');
             }
             
             if (toSnapshot.docs.isNotEmpty) {
@@ -2472,10 +2472,10 @@ extension ApplicationFirestore on FirestoreService {
       
       if (toId != null) clearCache(toId: toId);
       
-      print('✅ [Batch] 확정 완료: $successCount건 성공, $failedCount건 실패');
+      debugPrint('✅ [Batch] 확정 완료: $successCount건 성공, $failedCount건 실패');
       return BatchResult(success: successCount, failed: failedCount);
     } catch (e) {
-      print('❌ [Batch] 일괄 확정 실패: $e');
+      debugPrint('❌ [Batch] 일괄 확정 실패: $e');
       rethrow;
     }
   }
@@ -2491,7 +2491,7 @@ extension ApplicationFirestore on FirestoreService {
     }
     
     try {
-      print('📦 [Batch] 일괄 거절 시작: ${applicationIds.length}건');
+      debugPrint('📦 [Batch] 일괄 거절 시작: ${applicationIds.length}건');
       
       final appFutures = applicationIds.map((id) => 
         _firestore.collection('applications').doc(id).get()
@@ -2516,7 +2516,7 @@ extension ApplicationFirestore on FirestoreService {
               toRef = toDoc.reference;
               toId = toDoc.id;
               groupId = (toDoc.data() as Map<String, dynamic>)['groupId'] as String?;
-              print('✅ [Batch거절] toId로 TO 찾음: $toId');
+              debugPrint('✅ [Batch거절] toId로 TO 찾음: $toId');
             }
           }
           
@@ -2530,7 +2530,7 @@ extension ApplicationFirestore on FirestoreService {
                 .where('date', isEqualTo: appData['workDate'])
                 .limit(1)
                 .get();
-            print('🔍 [Batch거절] 단기공고 TO 검색: ${toSnapshot.docs.length}건');
+            debugPrint('🔍 [Batch거절] 단기공고 TO 검색: ${toSnapshot.docs.length}건');
             
             // 장기공고로 재검색
             if (toSnapshot.docs.isEmpty) {
@@ -2541,7 +2541,7 @@ extension ApplicationFirestore on FirestoreService {
                   .where('isLongTerm', isEqualTo: true)
                   .limit(1)
                   .get();
-              print('🔍 [Batch거절] 장기공고 TO 재검색: ${toSnapshot.docs.length}건');
+              debugPrint('🔍 [Batch거절] 장기공고 TO 재검색: ${toSnapshot.docs.length}건');
             }
             
             if (toSnapshot.docs.isNotEmpty) {
@@ -2663,10 +2663,10 @@ extension ApplicationFirestore on FirestoreService {
       
       if (toId != null) clearCache(toId: toId);
       
-      print('✅ [Batch] 거절 완료: $successCount건');
+      debugPrint('✅ [Batch] 거절 완료: $successCount건');
       return BatchResult(success: successCount, failed: failedCount);
     } catch (e) {
-      print('❌ [Batch] 일괄 거절 실패: $e');
+      debugPrint('❌ [Batch] 일괄 거절 실패: $e');
       rethrow;
     }
   }
@@ -2680,7 +2680,7 @@ extension ApplicationFirestore on FirestoreService {
           .get();
       return snapshot.docs.isNotEmpty;
     } catch (e) {
-      print('❌ 출퇴근 기록 확인 실패: $e');
+      debugPrint('❌ 출퇴근 기록 확인 실패: $e');
       return false;
     }
   }
@@ -2721,7 +2721,7 @@ extension ApplicationFirestore on FirestoreService {
             .where('toTitle', isEqualTo: toTitle)
             .get();
         
-        print('🔍 [getApplicationsForTO] 장기공고 지원서 조회: ${snapshot.docs.length}개');
+        debugPrint('🔍 [getApplicationsForTO] 장기공고 지원서 조회: ${snapshot.docs.length}개');
       } else {
         // ✅ 단기공고: workDate 포함
         final workDate = toData['date'] as Timestamp;
@@ -2733,14 +2733,14 @@ extension ApplicationFirestore on FirestoreService {
             .where('workDate', isEqualTo: workDate)
             .get();
         
-        print('🔍 [getApplicationsForTO] 단기공고 지원서 조회: ${snapshot.docs.length}개');
+        debugPrint('🔍 [getApplicationsForTO] 단기공고 지원서 조회: ${snapshot.docs.length}개');
       }
 
       return snapshot.docs
           .map((doc) => ApplicationModel.fromFirestore(doc))
           .toList();
     } catch (e) {
-      print('❌ TO 지원 목록 조회 실패: $e');
+      debugPrint('❌ TO 지원 목록 조회 실패: $e');
       return [];
     }
   }
@@ -2748,10 +2748,10 @@ extension ApplicationFirestore on FirestoreService {
   Future<bool> updateApplication(String applicationId, Map<String, dynamic> data) async {
     try {
       await _firestore.collection('applications').doc(applicationId).update(data);
-      print('✅ 지원서 업데이트 완료: $applicationId');
+      debugPrint('✅ 지원서 업데이트 완료: $applicationId');
       return true;
     } catch (e) {
-      print('❌ 지원서 업데이트 실패: $e');
+      debugPrint('❌ 지원서 업데이트 실패: $e');
       return false;
     }
   }
@@ -2769,14 +2769,14 @@ extension ApplicationFirestore on FirestoreService {
           .get();
       
       if (snapshot.docs.isEmpty) {
-        print('⚠️ TO를 찾을 수 없음: ${app.businessId} / ${app.toTitle} / ${app.workDate}');
+        debugPrint('⚠️ TO를 찾을 수 없음: ${app.businessId} / ${app.toTitle} / ${app.workDate}');
         return null;
       }
       
       final doc = snapshot.docs.first;
       return TOModel.fromMap(doc.data(), doc.id);
     } catch (e) {
-      print('❌ TO 조회 실패: $e');
+      debugPrint('❌ TO 조회 실패: $e');
       return null;
     }
   }
@@ -2796,10 +2796,10 @@ extension ApplicationFirestore on FirestoreService {
         'resignStatus': 'PENDING',
       });
 
-      print('✅ 퇴사 요청 완료: $applicationId');
+      debugPrint('✅ 퇴사 요청 완료: $applicationId');
       return true;
     } catch (e) {
-      print('❌ 퇴사 요청 실패: $e');
+      debugPrint('❌ 퇴사 요청 실패: $e');
       return false;
     }
   }
@@ -2813,10 +2813,10 @@ extension ApplicationFirestore on FirestoreService {
         'resignStatus': FieldValue.delete(),
       });
 
-      print('✅ 퇴사 요청 취소 완료: $applicationId');
+      debugPrint('✅ 퇴사 요청 취소 완료: $applicationId');
       return true;
     } catch (e) {
-      print('❌ 퇴사 요청 취소 실패: $e');
+      debugPrint('❌ 퇴사 요청 취소 실패: $e');
       return false;
     }
   }
@@ -2848,10 +2848,10 @@ extension ApplicationFirestore on FirestoreService {
         'workEndDate': Timestamp.fromDate(resignDate), // 실제 종료일 업데이트
       });
 
-      print('✅ 퇴사 승인 완료: $applicationId');
+      debugPrint('✅ 퇴사 승인 완료: $applicationId');
       return true;
     } catch (e) {
-      print('❌ 퇴사 승인 실패: $e');
+      debugPrint('❌ 퇴사 승인 실패: $e');
       return false;
     }
   }
@@ -2870,10 +2870,10 @@ extension ApplicationFirestore on FirestoreService {
         'resignRejectReason': rejectReason,
       });
 
-      print('✅ 퇴사 거절 완료: $applicationId');
+      debugPrint('✅ 퇴사 거절 완료: $applicationId');
       return true;
     } catch (e) {
-      print('❌ 퇴사 거절 실패: $e');
+      debugPrint('❌ 퇴사 거절 실패: $e');
       return false;
     }
   }
@@ -2899,7 +2899,7 @@ extension ApplicationFirestore on FirestoreService {
         'terminationStatus': 'PENDING',
       });
 
-      print('✅ 계약해지 요청 완료: $applicationId');
+      debugPrint('✅ 계약해지 요청 완료: $applicationId');
       
       // 🔔 근무자에게 알림 발송
       if (appDoc.exists) {
@@ -2914,7 +2914,7 @@ extension ApplicationFirestore on FirestoreService {
       
       return true;
     } catch (e) {
-      print('❌ 계약해지 요청 실패: $e');
+      debugPrint('❌ 계약해지 요청 실패: $e');
       return false;
     }
   }
@@ -2931,10 +2931,10 @@ extension ApplicationFirestore on FirestoreService {
         'terminationRejectReason': FieldValue.delete(),
       });
 
-      print('✅ 계약해지 요청 취소 완료: $applicationId');
+      debugPrint('✅ 계약해지 요청 취소 완료: $applicationId');
       return true;
     } catch (e) {
-      print('❌ 계약해지 요청 취소 실패: $e');
+      debugPrint('❌ 계약해지 요청 취소 실패: $e');
       return false;
     }
   }
@@ -2953,7 +2953,7 @@ extension ApplicationFirestore on FirestoreService {
         'actualResignDate': Timestamp.fromDate(DateTime.now()),
       });
 
-      print('✅ 계약해지 승인 완료: $applicationId');
+      debugPrint('✅ 계약해지 승인 완료: $applicationId');
       
       // 🔔 관리자에게 알림 발송
       if (appDoc.exists) {
@@ -2968,7 +2968,7 @@ extension ApplicationFirestore on FirestoreService {
       
       return true;
     } catch (e) {
-      print('❌ 계약해지 승인 실패: $e');
+      debugPrint('❌ 계약해지 승인 실패: $e');
       return false;
     }
   }
@@ -2985,10 +2985,10 @@ extension ApplicationFirestore on FirestoreService {
         'terminationRejectReason': rejectReason,
       });
 
-      print('✅ 계약해지 거절 완료: $applicationId');
+      debugPrint('✅ 계약해지 거절 완료: $applicationId');
       return true;
     } catch (e) {
-      print('❌ 계약해지 거절 실패: $e');
+      debugPrint('❌ 계약해지 거절 실패: $e');
       return false;
     }
   }
@@ -3003,10 +3003,10 @@ extension ApplicationFirestore on FirestoreService {
         'actualResignDate': Timestamp.fromDate(DateTime.now()),
       });
 
-      print('✅ 계약해지 자동 승인 완료: $applicationId');
+      debugPrint('✅ 계약해지 자동 승인 완료: $applicationId');
       return true;
     } catch (e) {
-      print('❌ 계약해지 자동 승인 실패: $e');
+      debugPrint('❌ 계약해지 자동 승인 실패: $e');
       return false;
     }
   }
@@ -3023,7 +3023,7 @@ extension ApplicationFirestore on FirestoreService {
           .map((doc) => ApplicationModel.fromMap(doc.data(), doc.id))
           .toList();
     } catch (e) {
-      print('❌ 계약해지 대기 목록 조회 실패: $e');
+      debugPrint('❌ 계약해지 대기 목록 조회 실패: $e');
       return [];
     }
   }
@@ -3053,10 +3053,10 @@ extension ApplicationFirestore on FirestoreService {
         'workEndDate': Timestamp.fromDate(resignDate),
       });
 
-      print('✅ 퇴사 자동 승인 완료: $applicationId');
+      debugPrint('✅ 퇴사 자동 승인 완료: $applicationId');
       return true;
     } catch (e) {
-      print('❌ 퇴사 자동 승인 실패: $e');
+      debugPrint('❌ 퇴사 자동 승인 실패: $e');
       return false;
     }
   }
@@ -3075,10 +3075,10 @@ extension ApplicationFirestore on FirestoreService {
           .where((app) => app.isLongTermApplication) // 장기 근무만
           .toList();
 
-      print('✅ 퇴사 요청 ${applications.length}건 조회');
+      debugPrint('✅ 퇴사 요청 ${applications.length}건 조회');
       return applications;
     } catch (e) {
-      print('❌ 퇴사 요청 조회 실패: $e');
+      debugPrint('❌ 퇴사 요청 조회 실패: $e');
       return [];
     }
   }
@@ -3098,10 +3098,10 @@ extension ApplicationFirestore on FirestoreService {
           .where((app) => app.isLongTermApplication)
           .toList();
 
-      print('✅ 장기 근무 지원자 조회: ${applications.length}명');
+      debugPrint('✅ 장기 근무 지원자 조회: ${applications.length}명');
       return applications;
     } catch (e) {
-      print('❌ 장기 근무 지원자 조회 실패: $e');
+      debugPrint('❌ 장기 근무 지원자 조회 실패: $e');
       return [];
     }
   }
@@ -3129,7 +3129,7 @@ extension ApplicationFirestore on FirestoreService {
       final now = DateTime.now();
       final todayStart = DateTime(now.year, now.month, now.day);
 
-      print('🔄 [autoExpire] PENDING 만료 체크 시작 (uid: $uid)');
+      debugPrint('🔄 [autoExpire] PENDING 만료 체크 시작 (uid: $uid)');
 
       // 1. 해당 사용자의 PENDING 지원서 전체 조회
       final snapshot = await _firestore
@@ -3139,7 +3139,7 @@ extension ApplicationFirestore on FirestoreService {
           .get();
 
       if (snapshot.docs.isEmpty) {
-        print('✅ [autoExpire] 만료 대상 없음');
+        debugPrint('✅ [autoExpire] 만료 대상 없음');
         return 0;
       }
 
@@ -3173,11 +3173,11 @@ extension ApplicationFirestore on FirestoreService {
       }).toList();
 
       if (expiredDocs.isEmpty) {
-        print('✅ [autoExpire] 만료된 PENDING 없음');
+        debugPrint('✅ [autoExpire] 만료된 PENDING 없음');
         return 0;
       }
 
-      print('⚠️ [autoExpire] 만료 대상: ${expiredDocs.length}개');
+      debugPrint('⚠️ [autoExpire] 만료 대상: ${expiredDocs.length}개');
 
       // 3. Batch로 일괄 처리 (Firestore 500개 제한 대응)
       const batchLimit = 400;
@@ -3242,10 +3242,10 @@ extension ApplicationFirestore on FirestoreService {
 
         await batch.commit();
         totalProcessed += chunk.length;
-        print('✅ [autoExpire] Batch ${i ~/ batchLimit + 1} 완료: ${chunk.length}개');
+        debugPrint('✅ [autoExpire] Batch ${i ~/ batchLimit + 1} 완료: ${chunk.length}개');
       }
 
-      print('✅ [autoExpire] 총 $totalProcessed개 AUTO_CANCELED 처리 완료');
+      debugPrint('✅ [autoExpire] 총 $totalProcessed개 AUTO_CANCELED 처리 완료');
 
       // 4. 알림 전송 (fire-and-forget - 메인 로직 지연 방지)
       _sendExpiredNotifications(expiredDocs);
@@ -3253,7 +3253,7 @@ extension ApplicationFirestore on FirestoreService {
       return totalProcessed;
     } catch (e) {
       // 만료 처리 실패해도 메인 로직은 계속 진행
-      print('❌ [autoExpire] 실패 (무시하고 계속): $e');
+      debugPrint('❌ [autoExpire] 실패 (무시하고 계속): $e');
       return 0;
     }
   }
@@ -3285,7 +3285,7 @@ extension ApplicationFirestore on FirestoreService {
             ),
           );
         } catch (e) {
-          print('⚠️ [autoExpire] 알림 전송 실패 (무시): $e');
+          debugPrint('⚠️ [autoExpire] 알림 전송 실패 (무시): $e');
         }
       }
     });

@@ -1,4 +1,4 @@
-part of '../firestore_service.dart';
+﻿part of '../firestore_service.dart';
 
 // ═══════════════════════════════════════════════════════════
 // 사업장 및 업무 유형 관리 (Business & Work Type Management)
@@ -15,13 +15,13 @@ extension BusinessFirestore on FirestoreService {
       final doc = await _firestore.collection('businesses').doc(businessId).get();
       
       if (!doc.exists) {
-        print('⚠️ 사업장을 찾을 수 없습니다: $businessId');
+        debugPrint('⚠️ 사업장을 찾을 수 없습니다: $businessId');
         return null;
       }
       
       return BusinessModel.fromFirestore(doc);
     } catch (e) {
-      print('❌ 사업장 조회 실패: $e');
+      debugPrint('❌ 사업장 조회 실패: $e');
       return null;
     }
   }
@@ -29,8 +29,8 @@ extension BusinessFirestore on FirestoreService {
   /// 내 사업장 목록 조회
   Future<List<BusinessModel>> getMyBusiness(String ownerId) async {
     try {
-      print('🔍 [FirestoreService] 내 사업장 조회 시작...');
-      print('   ownerId: $ownerId');
+      debugPrint('🔍 [FirestoreService] 내 사업장 조회 시작...');
+      debugPrint('   ownerId: $ownerId');
 
       final snapshot = await _firestore
       .collection('businesses')
@@ -42,10 +42,10 @@ extension BusinessFirestore on FirestoreService {
           .map((doc) => BusinessModel.fromMap(doc.data(), doc.id))
           .toList();
 
-      print('✅ [FirestoreService] 조회 완료: ${businesses.length}개');
+      debugPrint('✅ [FirestoreService] 조회 완료: ${businesses.length}개');
       return businesses;
     } catch (e) {
-      print('❌ [FirestoreService] 내 사업장 조회 실패: $e');
+      debugPrint('❌ [FirestoreService] 내 사업장 조회 실패: $e');
       return [];
     }
   }
@@ -58,7 +58,7 @@ extension BusinessFirestore on FirestoreService {
           .add(business.toMap());
       return docRef.id;
     } catch (e) {
-      print('사업장 생성 실패: $e');
+      debugPrint('사업장 생성 실패: $e');
       return null;
     }
   }
@@ -84,7 +84,7 @@ extension BusinessFirestore on FirestoreService {
           .map((doc) => WorkTypeModel.fromFirestore(doc))
           .toList();
     } catch (e) {
-      print('❌ 업무 유형 목록 조회 실패: $e');
+      debugPrint('❌ 업무 유형 목록 조회 실패: $e');
       return [];
     }
   }
@@ -102,7 +102,7 @@ extension BusinessFirestore on FirestoreService {
       }
       return null;
     } catch (e) {
-      print('❌ 업무 유형 조회 실패: $e');
+      debugPrint('❌ 업무 유형 조회 실패: $e');
       return null;
     }
   }
@@ -115,7 +115,7 @@ extension BusinessFirestore on FirestoreService {
       ToastHelper.showSuccess('업무 유형이 등록되었습니다.');
       return docRef.id;
     } catch (e) {
-      print('❌ 업무 유형 생성 실패: $e');
+      debugPrint('❌ 업무 유형 생성 실패: $e');
       ToastHelper.showError('업무 등록에 실패했습니다.');
       return null;
     }
@@ -131,7 +131,7 @@ extension BusinessFirestore on FirestoreService {
       ToastHelper.showSuccess('업무 정보가 수정되었습니다.');
       return true;
     } catch (e) {
-      print('❌ 업무 유형 수정 실패: $e');
+      debugPrint('❌ 업무 유형 수정 실패: $e');
       ToastHelper.showError('업무 수정에 실패했습니다.');
       return false;
     }
@@ -148,7 +148,7 @@ extension BusinessFirestore on FirestoreService {
       ToastHelper.showSuccess('업무 유형이 비활성화되었습니다.');
       return true;
     } catch (e) {
-      print('❌ 업무 유형 삭제 실패: $e');
+      debugPrint('❌ 업무 유형 삭제 실패: $e');
       ToastHelper.showError('업무 삭제에 실패했습니다.');
       return false;
     }
@@ -173,10 +173,10 @@ extension BusinessFirestore on FirestoreService {
           .map((doc) => BusinessWorkTypeModel.fromMap(doc.data(), doc.id))
           .toList();
 
-      print('🔍 Firestore 조회: ${workTypes.length}개');
+      debugPrint('🔍 Firestore 조회: ${workTypes.length}개');
       return workTypes;
     } catch (e) {
-      print('❌ getBusinessWorkTypes 오류: $e');
+      debugPrint('❌ getBusinessWorkTypes 오류: $e');
       return [];
     }
   }
@@ -192,7 +192,7 @@ extension BusinessFirestore on FirestoreService {
     int? displayOrder,
   }) async {
     try {
-      print('🔍 [FirestoreService] 업무 유형 추가...');
+      debugPrint('🔍 [FirestoreService] 업무 유형 추가...');
 
       // displayOrder 자동 설정 (기존 개수 + 1)
       final existingTypes = await getBusinessWorkTypes(businessId);
@@ -216,11 +216,11 @@ extension BusinessFirestore on FirestoreService {
           .collection('workTypes')
           .add(workType.toMap());
 
-      print('✅ [FirestoreService] 업무 유형 추가 완료: ${docRef.id}');
+      debugPrint('✅ [FirestoreService] 업무 유형 추가 완료: ${docRef.id}');
       ToastHelper.showSuccess('업무 유형이 추가되었습니다');
       return docRef.id;
     } catch (e) {
-      print('❌ [FirestoreService] 업무 유형 추가 실패: $e');
+      debugPrint('❌ [FirestoreService] 업무 유형 추가 실패: $e');
       ToastHelper.showError('업무 유형 추가에 실패했습니다');
       return null;
     }
@@ -239,7 +239,7 @@ extension BusinessFirestore on FirestoreService {
     bool showToast = true,
   }) async {
     try {
-      print('🔍 [FirestoreService] 업무 유형 수정...');
+      debugPrint('🔍 [FirestoreService] 업무 유형 수정...');
 
       final updates = <String, dynamic>{};
       if (name != null) updates['name'] = name;
@@ -250,7 +250,7 @@ extension BusinessFirestore on FirestoreService {
       if (wageType != null) updates['wageType'] = wageType;
 
       if (updates.isEmpty) {
-        print('⚠️ 수정할 내용이 없습니다');
+        debugPrint('⚠️ 수정할 내용이 없습니다');
         return false;
       }
 
@@ -261,7 +261,7 @@ extension BusinessFirestore on FirestoreService {
           .doc(workTypeId)
           .update(updates);
 
-      print('✅ [FirestoreService] 업무 유형 수정 완료');
+      debugPrint('✅ [FirestoreService] 업무 유형 수정 완료');
       
       if (showToast) {
         ToastHelper.showSuccess('업무 유형이 수정되었습니다');
@@ -269,7 +269,7 @@ extension BusinessFirestore on FirestoreService {
       
       return true;
     } catch (e) {
-      print('❌ [FirestoreService] 업무 유형 수정 실패: $e');
+      debugPrint('❌ [FirestoreService] 업무 유형 수정 실패: $e');
       
       if (showToast) {
         ToastHelper.showError('업무 유형 수정에 실패했습니다');
@@ -285,7 +285,7 @@ extension BusinessFirestore on FirestoreService {
     required String workTypeId,
   }) async {
     try {
-      print('🔍 [FirestoreService] 업무 유형 삭제...');
+      debugPrint('🔍 [FirestoreService] 업무 유형 삭제...');
 
       // ✅ 1. 업무유형 문서 조회 (이미지 URL 확인)
       final doc = await _firestore
@@ -303,9 +303,9 @@ extension BusinessFirestore on FirestoreService {
         if (data['thumbnailUrl'] != null) {
           try {
             await storage.refFromURL(data['thumbnailUrl']).delete();
-            print('✅ 썸네일 삭제: ${data['thumbnailUrl']}');
+            debugPrint('✅ 썸네일 삭제: ${data['thumbnailUrl']}');
           } catch (e) {
-            print('⚠️ 썸네일 삭제 실패: $e');
+            debugPrint('⚠️ 썸네일 삭제 실패: $e');
           }
         }
         
@@ -314,9 +314,9 @@ extension BusinessFirestore on FirestoreService {
           for (var url in List<String>.from(data['images'])) {
             try {
               await storage.refFromURL(url).delete();
-              print('✅ 이미지 삭제: $url');
+              debugPrint('✅ 이미지 삭제: $url');
             } catch (e) {
-              print('⚠️ 이미지 삭제 실패: $e');
+              debugPrint('⚠️ 이미지 삭제 실패: $e');
             }
           }
         }
@@ -330,11 +330,11 @@ extension BusinessFirestore on FirestoreService {
           .doc(workTypeId)
           .update({'isActive': false});
 
-      print('✅ [FirestoreService] 업무 유형 삭제 완료');
+      debugPrint('✅ [FirestoreService] 업무 유형 삭제 완료');
       ToastHelper.showSuccess('업무 유형이 삭제되었습니다');
       return true;
     } catch (e) {
-      print('❌ [FirestoreService] 업무 유형 삭제 실패: $e');
+      debugPrint('❌ [FirestoreService] 업무 유형 삭제 실패: $e');
       ToastHelper.showError('업무 유형 삭제에 실패했습니다');
       return false;
     }
@@ -346,7 +346,7 @@ extension BusinessFirestore on FirestoreService {
     required List<String> workTypeIds,
   }) async {
     try {
-      print('🔍 [FirestoreService] 업무 유형 순서 변경...');
+      debugPrint('🔍 [FirestoreService] 업무 유형 순서 변경...');
 
       final batch = _firestore.batch();
 
@@ -362,11 +362,11 @@ extension BusinessFirestore on FirestoreService {
 
       await batch.commit();
 
-      print('✅ [FirestoreService] 순서 변경 완료');
+      debugPrint('✅ [FirestoreService] 순서 변경 완료');
       ToastHelper.showSuccess('순서가 변경되었습니다');
       return true;
     } catch (e) {
-      print('❌ [FirestoreService] 순서 변경 실패: $e');
+      debugPrint('❌ [FirestoreService] 순서 변경 실패: $e');
       ToastHelper.showError('순서 변경에 실패했습니다');
       return false;
     }
@@ -378,7 +378,7 @@ extension BusinessFirestore on FirestoreService {
       if (_activeTOsCache != null && _activeTOsCacheTime != null) {
         final cacheAge = DateTime.now().difference(_activeTOsCacheTime!);
         if (cacheAge < _cacheValidDuration) {
-          print('✅ 활성 TO 캐시 사용');
+          debugPrint('✅ 활성 TO 캐시 사용');
           return _activeTOsCache!
               .where((to) => to.businessId == businessId)
               .toList();
@@ -398,10 +398,10 @@ extension BusinessFirestore on FirestoreService {
       _activeTOsCache = toList;
       _activeTOsCacheTime = DateTime.now();
 
-      print('✅ 활성 TO 조회: ${toList.length}개');
+      debugPrint('✅ 활성 TO 조회: ${toList.length}개');
       return toList;
     } catch (e) {
-      print('❌ 활성 TO 조회 실패: $e');
+      debugPrint('❌ 활성 TO 조회 실패: $e');
       return [];
     }
   }
@@ -413,7 +413,7 @@ extension BusinessFirestore on FirestoreService {
       if (_closedTOsCache != null && _closedTOsCacheTime != null) {
         final cacheAge = DateTime.now().difference(_closedTOsCacheTime!);
         if (cacheAge < _cacheValidDuration) {
-          print('✅ 마감 TO 캐시 사용');
+          debugPrint('✅ 마감 TO 캐시 사용');
           return _closedTOsCache!
               .where((to) => to.businessId == businessId)
               .toList();
@@ -434,10 +434,10 @@ extension BusinessFirestore on FirestoreService {
       _closedTOsCache = toList;
       _closedTOsCacheTime = DateTime.now();
 
-      print('✅ 마감 TO 조회: ${toList.length}개');
+      debugPrint('✅ 마감 TO 조회: ${toList.length}개');
       return toList;
     } catch (e) {
-      print('❌ 마감 TO 조회 실패: $e');
+      debugPrint('❌ 마감 TO 조회 실패: $e');
       return [];
     }
   }

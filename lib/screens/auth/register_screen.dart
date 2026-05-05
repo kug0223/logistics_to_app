@@ -204,9 +204,9 @@ class _RegisterScreenState extends State<RegisterScreen> {
           _residentNumberError = null;
         });
         
-        print('✅ 주민번호 파싱 성공: $_parsedBirthDate, $_parsedGender');
+        debugPrint('✅ 주민번호 파싱 성공: $_parsedBirthDate, $_parsedGender');
       } catch (e) {
-        print('❌ 주민번호 파싱 실패: $e');
+        debugPrint('❌ 주민번호 파싱 실패: $e');
         setState(() {
           _parsedBirthDate = null;
           _parsedGender = null;
@@ -565,7 +565,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
         final storagePath = 'users/temp_$tempId/idCard_$tempId.jpg';
         idCardImageUrl = await _storageService.uploadImage(_idCardImagePath!, storagePath);
         if (idCardImageUrl == null) {
-          print('⚠️ 신분증 업로드 실패 - 계속 진행');
+          debugPrint('⚠️ 신분증 업로드 실패 - 계속 진행');
         }
       }
       
@@ -575,7 +575,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
         final storagePath = 'users/temp_$tempId/bankbook_$tempId.jpg';
         bankbookImageUrl = await _storageService.uploadImage(_bankbookImagePath!, storagePath);
         if (bankbookImageUrl == null) {
-          print('⚠️ 통장사본 업로드 실패 - 계속 진행');
+          debugPrint('⚠️ 통장사본 업로드 실패 - 계속 진행');
         }
       }
       
@@ -585,7 +585,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
         final storagePath = 'users/temp_$tempId/businessLicense_$tempId.jpg';
         businessLicenseImageUrl = await _storageService.uploadImage(_businessLicenseImagePath!, storagePath);
         if (businessLicenseImageUrl == null) {
-          print('⚠️ 사업자등록증 업로드 실패 - 계속 진행');
+          debugPrint('⚠️ 사업자등록증 업로드 실패 - 계속 진행');
         }
       }
       
@@ -630,7 +630,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
         Navigator.pop(context);
       }
     } catch (e) {
-      print('❌ 회원가입 실패: $e');
+      debugPrint('❌ 회원가입 실패: $e');
       ToastHelper.showError('회원가입에 실패했습니다');
     } finally {
       if (mounted) {
@@ -724,7 +724,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
         );
       }
     } catch (e) {
-      print('❌ 회원가입 실패: $e');
+      debugPrint('❌ 회원가입 실패: $e');
       ToastHelper.showError('회원가입에 실패했습니다');
     } finally {
       if (mounted) {

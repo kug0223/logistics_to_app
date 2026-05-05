@@ -938,7 +938,7 @@ class _WorkTypeDetailScreenState extends State<WorkTypeDetailScreen> {
 
       ToastHelper.showSuccess('업무유형이 수정되었습니다');
     } catch (e) {
-      print('❌ 저장 실패: $e');
+      debugPrint('❌ 저장 실패: $e');
       ToastHelper.showError('저장에 실패했습니다');
     } finally {
       setState(() => _isLoading = false);
@@ -954,7 +954,7 @@ class _WorkTypeDetailScreenState extends State<WorkTypeDetailScreen> {
       
       return await _storageService.uploadImage(imageFile.path, storagePath);
     } catch (e) {
-      print('❌ 이미지 업로드 실패: $e');
+      debugPrint('❌ 이미지 업로드 실패: $e');
       return null;
     }
   }

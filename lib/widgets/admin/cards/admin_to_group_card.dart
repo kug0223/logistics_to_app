@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+﻿import 'package:flutter/material.dart';
 
 // Models
 import '../../../models/ui/admin_to_list_ui_models.dart';
@@ -118,7 +118,7 @@ class _TOGroupCardState extends State<TOGroupCard> with SingleTickerProviderStat
     }
     }  // ✅ else 블록 닫기
     
-    print('🔍 [TOGroupCard] 최종 통계: $totalConfirmed/$totalRequired (+$totalPending)');
+    debugPrint('🔍 [TOGroupCard] 최종 통계: $totalConfirmed/$totalRequired (+$totalPending)');
     
     // 인원 충족 여부 (groupTOs 로드 안됐으면 groupItem에서 직접 체크)
     final isFull = widget.groupItem.groupTOs.isEmpty 

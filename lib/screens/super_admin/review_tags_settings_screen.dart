@@ -1,4 +1,4 @@
-// lib/screens/super_admin/review_tags_settings_screen.dart
+﻿// lib/screens/super_admin/review_tags_settings_screen.dart
 
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -59,7 +59,7 @@ class _ReviewTagsSettingsScreenState extends State<ReviewTagsSettingsScreen>
         await _saveTags();
       }
     } catch (e) {
-      print('❌ 태그 로드 실패: $e');
+      debugPrint('❌ 태그 로드 실패: $e');
       _setDefaultTags();
     } finally {
       if (mounted) {
@@ -89,7 +89,7 @@ class _ReviewTagsSettingsScreenState extends State<ReviewTagsSettingsScreen>
       
       ToastHelper.showSuccess('태그가 저장되었습니다');
     } catch (e) {
-      print('❌ 태그 저장 실패: $e');
+      debugPrint('❌ 태그 저장 실패: $e');
       ToastHelper.showError('저장에 실패했습니다');
     } finally {
       if (mounted) {

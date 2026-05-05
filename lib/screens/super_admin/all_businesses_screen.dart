@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+﻿import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import '../../models/core/business_model.dart';
 import '../../widgets/common/loading_widget.dart';
@@ -33,7 +33,7 @@ class _AllBusinessesScreenState extends State<AllBusinessesScreen> {
     });
 
     try {
-      print('🔍 [SUPER_ADMIN] 모든 사업장 조회 시작...');
+      debugPrint('🔍 [SUPER_ADMIN] 모든 사업장 조회 시작...');
       
       // 1. 모든 사업장 조회
       final businessSnapshot = await FirebaseFirestore.instance
@@ -41,7 +41,7 @@ class _AllBusinessesScreenState extends State<AllBusinessesScreen> {
           .orderBy('createdAt', descending: true)
           .get();
 
-      print('✅ [SUPER_ADMIN] 조회된 사업장: ${businessSnapshot.docs.length}개');
+      debugPrint('✅ [SUPER_ADMIN] 조회된 사업장: ${businessSnapshot.docs.length}개');
 
       // 2. 각 사업장의 소유자 정보 조회
       final List<_BusinessWithOwner> businessesWithOwner = [];
@@ -65,7 +65,7 @@ class _AllBusinessesScreenState extends State<AllBusinessesScreen> {
             ownerEmail = ownerData['email'] ?? '';
           }
         } catch (e) {
-          print('⚠️ 소유자 정보 조회 실패: $e');
+          debugPrint('⚠️ 소유자 정보 조회 실패: $e');
         }
 
         businessesWithOwner.add(_BusinessWithOwner(
@@ -80,9 +80,9 @@ class _AllBusinessesScreenState extends State<AllBusinessesScreen> {
         _isLoading = false;
       });
 
-      print('✅ [SUPER_ADMIN] 사업장 로드 완료: ${_businesses.length}개');
+      debugPrint('✅ [SUPER_ADMIN] 사업장 로드 완료: ${_businesses.length}개');
     } catch (e) {
-      print('❌ [SUPER_ADMIN] 사업장 로드 실패: $e');
+      debugPrint('❌ [SUPER_ADMIN] 사업장 로드 실패: $e');
       ToastHelper.showError('사업장 목록을 불러오는데 실패했습니다: $e');
       setState(() {
         _isLoading = false;

@@ -1,4 +1,4 @@
-// ============================================
+﻿// ============================================
 // daum_address_search.dart (메인 진입점)
 // ✨ 다음 주소 검색 API 연동 (모바일 전용)
 // ============================================
@@ -30,8 +30,8 @@ class AddressResult {
 /// ```dart
 /// final result = await DaumAddressService.searchAddress(context);
 /// if (result != null) {
-///   print('주소: ${result.fullAddress}');
-///   print('위도: ${result.latitude}, 경도: ${result.longitude}');
+///   debugPrint('주소: ${result.fullAddress}');
+///   debugPrint('위도: ${result.latitude}, 경도: ${result.longitude}');
 /// }
 /// ```
 class DaumAddressService {
