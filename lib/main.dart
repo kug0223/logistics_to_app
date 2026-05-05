@@ -1,5 +1,7 @@
+import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:firebase_core/firebase_core.dart';
+import 'package:firebase_crashlytics/firebase_crashlytics.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:provider/provider.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
@@ -10,6 +12,7 @@ import 'firebase_options.dart';
 import 'providers/user_provider.dart';
 import 'providers/theme_provider.dart';
 import 'providers/notification_provider.dart';
+import 'providers/network_provider.dart';
 import 'models/core/user_model.dart';
 import 'screens/auth/login_screen.dart';
 import 'screens/user/user_home_screen.dart';
@@ -19,6 +22,7 @@ import 'screens/common/splash_screen.dart';
 import 'screens/common/onboarding_screen.dart';
 import 'utils/attendance_list_pdf.dart';
 import 'services/fcm_service.dart';
+import 'widgets/common/network_banner.dart';
 
 /// 앱이 완전히 종료된 상태에서 FCM 메시지 수신 시 호출되는 최상위 핸들러
 /// (반드시 main() 바깥 최상위 함수여야 함 — Flutter 요구사항)
@@ -42,13 +46,21 @@ void main() async {
     await Firebase.initializeApp(
       options: DefaultFirebaseOptions.currentPlatform,
     );
-    
-    // ✅ Firestore 캐시 설정 (서버 우선!)
+
+    // Firestore 캐시 설정 (서버 우선)
     FirebaseFirestore.instance.settings = const Settings(
-      persistenceEnabled: true,  // 캐시는 유지
+      persistenceEnabled: true,
       cacheSizeBytes: Settings.CACHE_SIZE_UNLIMITED,
     );
-    
+
+    // Crashlytics: Flutter 프레임워크 에러 자동 수집
+    FlutterError.onError = FirebaseCrashlytics.instance.recordFlutterFatalError;
+    // Crashlytics: Dart 비동기 에러 자동 수집
+    PlatformDispatcher.instance.onError = (error, stack) {
+      FirebaseCrashlytics.instance.recordError(error, stack, fatal: true);
+      return true;
+    };
+
     print('✅ Firebase 초기화 완료');
   } catch (e) {
     print('❌ Firebase 초기화 에러: $e');
@@ -84,11 +96,10 @@ class MyApp extends StatelessWidget {
             return userProvider!;
           },
         ),
-        ChangeNotifierProvider(
-          create: (_) => ThemeProvider(),
-        ),
+        ChangeNotifierProvider(create: (_) => ThemeProvider()),
+        ChangeNotifierProvider(create: (_) => NetworkProvider()),
       ],
-      child: Consumer<ThemeProvider>(  // 🔥 추가!
+      child: Consumer<ThemeProvider>(
         builder: (context, themeProvider, child) {
           return MaterialApp(
             navigatorKey: navigatorKey,
@@ -103,8 +114,8 @@ class MyApp extends StatelessWidget {
               Locale('ko', 'KR'),
               Locale('en', 'US'),
             ],
-            theme: themeProvider.theme,  // 🔥 변경!
-            home: const SplashScreen(),
+            theme: themeProvider.theme,
+            home: const NetworkBanner(child: SplashScreen()),
           );
         },
       ),
