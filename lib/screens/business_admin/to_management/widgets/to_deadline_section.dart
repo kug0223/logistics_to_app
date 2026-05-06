@@ -534,6 +534,10 @@ class TODeadlineSection extends StatelessWidget {
           pickedTime.hour,
           pickedTime.minute,
         );
+        if (dateTime.isBefore(DateTime.now())) {
+          ToastHelper.showError('마감 시간은 현재 시각 이후여야 합니다');
+          return;
+        }
         onFixedDeadlineChanged!(dateTime);
       }
     }

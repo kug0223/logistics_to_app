@@ -192,19 +192,25 @@ extension TOFirestore on FirestoreService {
       final toDoc = await _firestore.collection('tos').add(toData);
       debugPrint('✅ [TO] 공고 생성: ${toDoc.id}');
 
-      // flex: slots 생성
+      // flex: slots 생성 — 실패 시 TO 문서도 롤백 삭제
       if (type == 'flex' && dates != null && dates.isNotEmpty) {
-        await _createSlots(
-          toId: toDoc.id,
-          dates: dates,
-          workDetails: workDetails,
-          deadlineType: deadlineType,
-          hoursBeforeStart: hoursBeforeStart,
-          fixedDeadline: fixedDeadline,
-          publishMode: publishMode,
-          publishDaysBefore: publishDaysBefore,
-          publishTime: publishTime,
-        );
+        try {
+          await _createSlots(
+            toId: toDoc.id,
+            dates: dates,
+            workDetails: workDetails,
+            deadlineType: deadlineType,
+            hoursBeforeStart: hoursBeforeStart,
+            fixedDeadline: fixedDeadline,
+            publishMode: publishMode,
+            publishDaysBefore: publishDaysBefore,
+            publishTime: publishTime,
+          );
+        } catch (e) {
+          debugPrint('⚠️ [TO] 슬롯 생성 실패 — TO 문서 롤백: ${toDoc.id}');
+          await toDoc.delete();
+          rethrow;
+        }
       }
 
       return toDoc.id;
