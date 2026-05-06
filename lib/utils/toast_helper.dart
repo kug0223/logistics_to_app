@@ -1,49 +1,67 @@
-import 'package:fluttertoast/fluttertoast.dart';
+import 'package:flutter/material.dart';
+import '../main.dart';
 import '../theme/app_colors.dart';
 
 class ToastHelper {
-  static void showSuccess(String message) {
-    Fluttertoast.showToast(
-      msg: message,
-      toastLength: Toast.LENGTH_SHORT,
-      gravity: ToastGravity.BOTTOM,
-      backgroundColor: AppColors.success,
-      textColor: AppColors.textOnDark,
-      fontSize: 16.0,
-    );
-  }
+  static void showSuccess(String message) => _show(
+        message: message,
+        backgroundColor: AppColors.success,
+        icon: Icons.check_circle_outline,
+      );
 
-  static void showError(String message) {
-    Fluttertoast.showToast(
-      msg: message,
-      toastLength: Toast.LENGTH_LONG,
-      gravity: ToastGravity.BOTTOM,
-      backgroundColor: AppColors.error,
-      textColor: AppColors.textOnDark,
-      fontSize: 16.0,
-    );
-  }
+  static void showError(String message) => _show(
+        message: message,
+        backgroundColor: AppColors.error,
+        icon: Icons.error_outline,
+        duration: const Duration(seconds: 4),
+      );
 
-  static void showInfo(String message) {
-    Fluttertoast.showToast(
-      msg: message,
-      toastLength: Toast.LENGTH_SHORT,
-      gravity: ToastGravity.BOTTOM,
-      backgroundColor: AppColors.info,
-      textColor: AppColors.textOnDark,
-      fontSize: 16.0,
-    );
-  }
+  static void showInfo(String message) => _show(
+        message: message,
+        backgroundColor: AppColors.info,
+        icon: Icons.info_outline,
+      );
 
-  // ✅ NEW! showWarning 메서드 추가
-  static void showWarning(String message) {
-    Fluttertoast.showToast(
-      msg: message,
-      toastLength: Toast.LENGTH_SHORT,
-      gravity: ToastGravity.BOTTOM,
-      backgroundColor: AppColors.warning,
-      textColor: AppColors.textOnDark,
-      fontSize: 16.0,
-    );
+  static void showWarning(String message) => _show(
+        message: message,
+        backgroundColor: AppColors.warning,
+        icon: Icons.warning_amber_outlined,
+      );
+
+  static void _show({
+    required String message,
+    required Color backgroundColor,
+    required IconData icon,
+    Duration duration = const Duration(seconds: 2),
+  }) {
+    scaffoldMessengerKey.currentState
+      ?..hideCurrentSnackBar()
+      ..showSnackBar(
+        SnackBar(
+          content: Row(
+            children: [
+              Icon(icon, color: AppColors.textOnDark, size: 20),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Text(
+                  message,
+                  style: const TextStyle(
+                    color: AppColors.textOnDark,
+                    fontSize: 14,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          backgroundColor: backgroundColor,
+          duration: duration,
+          behavior: SnackBarBehavior.floating,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(12),
+          ),
+          margin: const EdgeInsets.fromLTRB(16, 0, 16, 24),
+        ),
+      );
   }
 }

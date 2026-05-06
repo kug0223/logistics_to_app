@@ -5,6 +5,7 @@ import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:intl/intl.dart';
+import 'package:cloud_functions/cloud_functions.dart';
 
 // Providers
 import '../../providers/user_provider.dart';
@@ -55,7 +56,8 @@ class _ProfileEditScreenState extends State<ProfileEditScreen> {
   bool _isEmailChanged = false;
   bool _isEmailSent = false;
   bool _isEmailVerified = false;
-  String? _verificationCode;
+  bool _isEmailSending = false;
+  bool _isEmailVerifying = false;
 
   @override
   void initState() {
@@ -114,27 +116,55 @@ class _ProfileEditScreenState extends State<ProfileEditScreen> {
   /// 이메일 인증 코드 발송
   Future<void> _sendEmailVerification() async {
     final email = _emailController.text.trim();
-
     if (email.isEmpty || !email.contains('@')) {
       ToastHelper.showWarning('올바른 이메일을 입력해주세요');
       return;
     }
-
-    setState(() => _isEmailSent = true);
-
-    // TODO: 실제 이메일 발송 구현
-    _verificationCode = '123456';
-
-    ToastHelper.showSuccess('인증번호가 $email로 발송되었습니다\n(개발용: 123456)');
+    setState(() => _isEmailSending = true);
+    try {
+      final fn = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+          .httpsCallable('sendEmailVerificationCode');
+      await fn.call({'email': email});
+      if (mounted) setState(() => _isEmailSent = true);
+      ToastHelper.showSuccess('인증번호가 $email로 발송되었습니다 (5분 유효)');
+    } catch (e) {
+      ToastHelper.showError('인증번호 발송에 실패했습니다');
+    } finally {
+      if (mounted) setState(() => _isEmailSending = false);
+    }
   }
 
   /// 이메일 인증 코드 확인
-  void _verifyEmailCode() {
-    if (_emailCodeController.text == _verificationCode) {
-      setState(() => _isEmailVerified = true);
-      ToastHelper.showSuccess('이메일 인증이 완료되었습니다');
-    } else {
-      ToastHelper.showError('인증번호가 일치하지 않습니다');
+  Future<void> _verifyEmailCode() async {
+    final code = _emailCodeController.text.trim();
+    if (code.length != 6) return;
+    setState(() => _isEmailVerifying = true);
+    try {
+      final fn = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+          .httpsCallable('verifyEmailCode');
+      final result = await fn.call({
+        'email': _emailController.text.trim(),
+        'code': code,
+      });
+      final reason = result.data['reason'] as String?;
+      if (mounted) {
+        if (reason == null) {
+          setState(() => _isEmailVerified = true);
+          ToastHelper.showSuccess('이메일 인증이 완료되었습니다');
+        } else if (reason == 'expired') {
+          ToastHelper.showWarning('인증번호가 만료되었습니다. 다시 발송해주세요');
+          setState(() => _isEmailSent = false);
+        } else if (reason == 'too_many_attempts') {
+          ToastHelper.showError('시도 횟수를 초과했습니다. 다시 발송해주세요');
+          setState(() => _isEmailSent = false);
+        } else {
+          ToastHelper.showError('인증번호가 일치하지 않습니다');
+        }
+      }
+    } catch (e) {
+      ToastHelper.showError('인증 확인에 실패했습니다');
+    } finally {
+      if (mounted) setState(() => _isEmailVerifying = false);
     }
   }
 
@@ -655,16 +685,25 @@ class _ProfileEditScreenState extends State<ProfileEditScreen> {
                         color: AppColors.successMedium,
                         size: ResponsiveHelper.iconSize(context, 24),
                       )
-                    : TextButton(
-                        onPressed: _sendEmailVerification,
-                        child: Text(
-                          _isEmailSent ? '재발송' : '인증',
-                          style: ResponsiveHelper.smallStyle(context).copyWith(
-                            color: theme.primaryColor,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                      ))
+                    : _isEmailSending
+                        ? const SizedBox(
+                            width: 20,
+                            height: 20,
+                            child: Padding(
+                              padding: EdgeInsets.all(12),
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            ),
+                          )
+                        : TextButton(
+                            onPressed: _sendEmailVerification,
+                            child: Text(
+                              _isEmailSent ? '재발송' : '인증',
+                              style: ResponsiveHelper.smallStyle(context).copyWith(
+                                color: theme.primaryColor,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                          ))
                 : null,
             validator: (value) {
               if (value == null || value.isEmpty) return '이메일을 입력해주세요';
@@ -686,6 +725,11 @@ class _ProfileEditScreenState extends State<ProfileEditScreen> {
                       FilteringTextInputFormatter.digitsOnly,
                       LengthLimitingTextInputFormatter(6),
                     ],
+                    onChanged: (v) {
+                      if (v.length == 6 && !_isEmailVerifying) {
+                        _verifyEmailCode();
+                      }
+                    },
                     decoration: InputDecoration(
                       labelText: '인증번호 6자리',
                       hintText: '123456',
@@ -698,7 +742,7 @@ class _ProfileEditScreenState extends State<ProfileEditScreen> {
                 ),
                 SizedBox(width: ResponsiveHelper.spacing(context, 12)),
                 ElevatedButton(
-                  onPressed: _verifyEmailCode,
+                  onPressed: _isEmailVerifying ? null : _verifyEmailCode,
                   style: ElevatedButton.styleFrom(
                     backgroundColor: theme.primaryColor,
                     padding: EdgeInsets.symmetric(
@@ -709,7 +753,16 @@ class _ProfileEditScreenState extends State<ProfileEditScreen> {
                       borderRadius: BorderRadius.circular(12),
                     ),
                   ),
-                  child: const Text('확인', style: TextStyle(color: Colors.white)),
+                  child: _isEmailVerifying
+                      ? const SizedBox(
+                          width: 16,
+                          height: 16,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            color: Colors.white,
+                          ),
+                        )
+                      : const Text('확인', style: TextStyle(color: Colors.white)),
                 ),
               ],
             ),

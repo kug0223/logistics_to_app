@@ -35,6 +35,10 @@ Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
 /// 🔔 전역 Navigator Key (FCM 알림 클릭 시 화면 이동용)
 final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
 
+/// 전역 ScaffoldMessenger Key (어디서든 SnackBar 표시용)
+final GlobalKey<ScaffoldMessengerState> scaffoldMessengerKey =
+    GlobalKey<ScaffoldMessengerState>();
+
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
@@ -103,6 +107,7 @@ class MyApp extends StatelessWidget {
         builder: (context, themeProvider, child) {
           return MaterialApp(
             navigatorKey: navigatorKey,
+            scaffoldMessengerKey: scaffoldMessengerKey,
             title: 'ALfit(알핏)',
             debugShowCheckedModeBanner: false,
             localizationsDelegates: const [
@@ -132,12 +137,14 @@ class AuthWrapper extends StatefulWidget {
 }
 
 class _AuthWrapperState extends State<AuthWrapper> {
-  bool? _isOnboardingCompleted;
+  // TODO: 테스트 완료 후 아래 줄을 "bool? _isOnboardingCompleted;" 로 되돌리고
+  //       initState에서 _checkOnboarding(); 호출 복구
+  bool? _isOnboardingCompleted = false;
 
   @override
   void initState() {
     super.initState();
-    _checkOnboarding();
+    // _checkOnboarding(); // TODO: 테스트 완료 후 주석 해제
   }
 
   Future<void> _checkOnboarding() async {
@@ -180,6 +187,12 @@ class _AuthWrapperState extends State<AuthWrapper> {
         // 🚫 로그인 안됨
         if (!userProvider.isLoggedIn) {
           debugPrint('🚫 로그인되지 않음 → LoginScreen');
+          // 로그아웃 시 온보딩 상태 리셋 (다음 로그인 때 다시 보이도록)
+          if (_isOnboardingCompleted != false) {
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              if (mounted) setState(() => _isOnboardingCompleted = false);
+            });
+          }
           return const LoginScreen();
         }
 
@@ -212,6 +225,7 @@ class _AuthWrapperState extends State<AuthWrapper> {
         debugPrint('============================\n');
 
         // 🆕 온보딩 체크
+        debugPrint('📚 _isOnboardingCompleted = $_isOnboardingCompleted');
         if (_isOnboardingCompleted == null) {
           // 온보딩 상태 로딩 중
           return const Scaffold(

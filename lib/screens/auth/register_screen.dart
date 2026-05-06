@@ -1,15 +1,17 @@
-﻿import 'package:flutter/material.dart';
+﻿import 'dart:async';
+import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:flutter/services.dart';
+import 'package:cloud_functions/cloud_functions.dart';
 import '../../models/core/user_model.dart';
 import '../../providers/user_provider.dart';
 import '../../widgets/common/loading_widget.dart';
 import '../../utils/responsive_helper.dart';
 import '../../services/auth_service.dart';
-import '../../services/storage_service.dart';  // ✅ 추가
+import '../../services/storage_service.dart';
 import '../../widgets/inputs/daum_address_search.dart';
 import '../../utils/document_upload_helper.dart';
-import '../../utils/toast_helper.dart';  // ✅ 추가
+import '../../utils/toast_helper.dart';
 import '../business_admin/business_form_screen.dart';
 
 import 'package:flutter/foundation.dart' show kIsWeb;
@@ -31,7 +33,6 @@ class _RegisterScreenState extends State<RegisterScreen> {
   String? _selectedBank;
 
   int _currentStep = 0;
-  int _passwordStrength = 0;
   AutovalidateMode _autovalidateMode = AutovalidateMode.disabled;
   
   // ✅ 중복 제출 방지 플래그 추가
@@ -47,6 +48,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
   String? _usernameError;
   String _currentUsername = '';
   String _currentEmail = '';
+  Timer? _usernameDebounce;
   final _formKey = GlobalKey<FormState>();
   final _nameController = TextEditingController();
   final _residentNumber1Controller = TextEditingController();
@@ -62,7 +64,19 @@ class _RegisterScreenState extends State<RegisterScreen> {
   // 이메일 인증 상태
   bool _isEmailSent = false;
   bool _isEmailVerified = false;
-  String? _verificationCode;
+  bool _isEmailSending = false;
+  bool _isEmailVerifying = false;
+
+  // 이메일 분리 입력
+  final _emailLocalController = TextEditingController();
+  final _emailDomainController = TextEditingController();
+  String? _selectedEmailDomain = 'naver.com';
+
+  // 법적 동의
+  bool _agreedToAll = false;
+  bool _agreedToTerms = false;
+  bool _agreedToPrivacy = false;
+  bool _agreedToMarketing = false;
 
   // 주소 정보
   final _addressController = TextEditingController();
@@ -99,6 +113,19 @@ class _RegisterScreenState extends State<RegisterScreen> {
   final _passwordFocus = FocusNode();
   final _confirmPasswordFocus = FocusNode();
 
+  // Step 3: 사업장 관리자 포커스
+  final _businessNameFocus = FocusNode();
+  final _ceoNameFocus = FocusNode();
+  final _accountNumberFocus = FocusNode();
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _nameFocus.requestFocus();
+    });
+  }
+
   @override
   void dispose() {
     _scrollController.dispose();
@@ -107,6 +134,8 @@ class _RegisterScreenState extends State<RegisterScreen> {
     _residentNumber1Controller.dispose();
     _residentNumber2Controller.dispose();
     _emailController.dispose();
+    _emailLocalController.dispose();
+    _emailDomainController.dispose();
     _emailCodeController.dispose();
     _passwordController.dispose();
     _confirmPasswordController.dispose();
@@ -115,6 +144,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
     _detailAddressController.dispose();
     _accountNumberController.dispose();
     
+    _usernameDebounce?.cancel();
     _nameFocus.dispose();
     _usernameFocus.dispose();
     _residentNumber1Focus.dispose();
@@ -126,6 +156,9 @@ class _RegisterScreenState extends State<RegisterScreen> {
     _detailAddressFocus.dispose();
     _passwordFocus.dispose();
     _confirmPasswordFocus.dispose();
+    _businessNameFocus.dispose();
+    _ceoNameFocus.dispose();
+    _accountNumberFocus.dispose();
     super.dispose();
   }
   // ============================================================
@@ -222,57 +255,74 @@ class _RegisterScreenState extends State<RegisterScreen> {
     }
   }
 
-  /// ✅ 이메일 인증 코드 발송 (포커스 추가)
+  /// 이메일 인증 코드 발송 (Cloud Function)
   Future<void> _sendEmailVerification() async {
-    if (_emailController.text.isEmpty || !_emailController.text.contains('@')) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('올바른 이메일을 입력해주세요')),
-      );
+    final email = _emailController.text.trim();
+    if (email.isEmpty || !email.contains('@')) {
+      ToastHelper.showWarning('올바른 이메일을 입력해주세요');
       return;
     }
-    
-    setState(() => _isEmailSent = true);
-    _verificationCode = '123456';
-    
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text('인증번호가 ${_emailController.text}로 발송되었습니다\n(개발용: 123456)'),
-        duration: const Duration(seconds: 5),
-      ),
-    );
-    
-    // ✅ 인증번호 입력칸으로 포커스 이동
-    Future.delayed(const Duration(milliseconds: 300), () {
-      if (mounted) {
-        _emailCodeFocus.requestFocus();
-      }
-    });
+
+    setState(() => _isEmailSending = true);
+
+    try {
+      final callable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+          .httpsCallable('sendEmailVerificationCode');
+      await callable.call({'email': email});
+
+      setState(() => _isEmailSent = true);
+      ToastHelper.showSuccess('인증번호가 $email로 발송되었습니다 (5분 유효)');
+
+      Future.delayed(const Duration(milliseconds: 300), () {
+        if (mounted) _emailCodeFocus.requestFocus();
+      });
+    } on FirebaseFunctionsException catch (e) {
+      ToastHelper.showError(e.message ?? '발송에 실패했습니다. 다시 시도해주세요');
+    } catch (e) {
+      ToastHelper.showError('발송에 실패했습니다. 다시 시도해주세요');
+    } finally {
+      if (mounted) setState(() => _isEmailSending = false);
+    }
   }
 
-  /// ✅ 이메일 인증 코드 확인 (포커스 추가)
-  void _verifyEmailCode() {
-    if (_emailCodeController.text == _verificationCode) {
-      setState(() => _isEmailVerified = true);
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('이메일 인증이 완료되었습니다'),
-          backgroundColor: Colors.green,
-        ),
-      );
-      
-      // ✅ 전화번호 필드로 포커스 이동
-      Future.delayed(const Duration(milliseconds: 300), () {
-        if (mounted) {
-          _phoneFocus.requestFocus();
-        }
-      });
-    } else {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('인증번호가 일치하지 않습니다'),
-          backgroundColor: Colors.red,
-        ),
-      );
+  /// 이메일 인증 코드 검증 (Cloud Function)
+  Future<void> _verifyEmailCode() async {
+    final email = _emailController.text.trim();
+    final code = _emailCodeController.text.trim();
+
+    if (code.length != 6) {
+      ToastHelper.showWarning('6자리 인증번호를 입력해주세요');
+      return;
+    }
+
+    setState(() => _isEmailVerifying = true);
+
+    try {
+      final callable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+          .httpsCallable('verifyEmailCode');
+      final result = await callable.call({'email': email, 'code': code});
+
+      final data = result.data as Map<String, dynamic>;
+      if (data['valid'] == true) {
+        setState(() => _isEmailVerified = true);
+        ToastHelper.showSuccess('이메일 인증이 완료되었습니다');
+        Future.delayed(const Duration(milliseconds: 300), () {
+          if (mounted) _phoneFocus.requestFocus();
+        });
+      } else {
+        final reason = data['reason'] as String? ?? '';
+        final msg = switch (reason) {
+          'expired' => '인증번호가 만료되었습니다. 재발송해주세요',
+          'wrong_code' => '인증번호가 일치하지 않습니다',
+          'too_many_attempts' => '시도 횟수를 초과했습니다. 재발송해주세요',
+          _ => '인증에 실패했습니다',
+        };
+        ToastHelper.showError(msg);
+      }
+    } catch (e) {
+      ToastHelper.showError('인증 확인에 실패했습니다. 다시 시도해주세요');
+    } finally {
+      if (mounted) setState(() => _isEmailVerifying = false);
     }
   }
 
@@ -305,22 +355,23 @@ class _RegisterScreenState extends State<RegisterScreen> {
   // Step 검증
   bool _validateStep1() {
     if (!(_formKey.currentState?.validate() ?? false)) return false;
-    
+
     _parseResidentNumber();
     if (_parsedBirthDate == null || _parsedGender == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('올바른 주민번호를 입력해주세요')),
-      );
+      ToastHelper.showWarning('올바른 주민번호를 입력해주세요');
       return false;
     }
-    
+
     if (!_isEmailVerified) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('이메일 인증을 완료해주세요')),
-      );
+      ToastHelper.showWarning('이메일 인증을 완료해주세요');
       return false;
     }
-    
+
+    if (!_agreedToTerms || !_agreedToPrivacy) {
+      ToastHelper.showWarning('필수 약관에 동의해주세요');
+      return false;
+    }
+
     return true;
   }
 
@@ -621,13 +672,18 @@ class _RegisterScreenState extends State<RegisterScreen> {
       );
 
       if (success && mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: const Text('회원가입이 완료되었습니다! 로그인해주세요.'),
-            backgroundColor: AppColors.successMedium,
-          ),
+        final loginSuccess = await userProvider.signIn(
+          _usernameController.text.trim(),
+          _passwordController.text,
         );
-        Navigator.pop(context);
+        if (!mounted) return;
+        if (loginSuccess) {
+          ToastHelper.showSuccess('가입을 환영합니다!');
+          Navigator.of(context).popUntil((route) => route.isFirst);
+        } else {
+          ToastHelper.showSuccess('회원가입이 완료되었습니다. 로그인해주세요.');
+          Navigator.pop(context);
+        }
       }
     } catch (e) {
       debugPrint('❌ 회원가입 실패: $e');
@@ -639,22 +695,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
     }
   }
   
-  // 비밀번호 강도 체크 함수
-  void _checkPasswordStrength(String password) {
-    if (password.isEmpty) {
-      setState(() => _passwordStrength = 0);
-      return;
-    }
-    int strength = 0;
-    
-    if (password.length >= 8) strength++;
-    if (RegExp(r'[a-zA-Z]').hasMatch(password) && RegExp(r'[0-9]').hasMatch(password)) strength++;
-    if (RegExp(r'[!@#$%^&*(),.?":{}|<>]').hasMatch(password)) strength++;
-    
-    setState(() => _passwordStrength = strength);
-  }
-
-  // 비밀번호 검증강화
+// 비밀번호 검증강화
   String? _validatePassword(String? value) {
     if (value == null || value.isEmpty) {
       return '비밀번호를 입력해주세요';
@@ -755,6 +796,20 @@ class _RegisterScreenState extends State<RegisterScreen> {
       _usernameError = exists ? '이미 사용중인 아이디입니다' : null;
     });
   }
+  void _syncEmail() {
+    final local = _emailLocalController.text.trim();
+    final domain = _selectedEmailDomain == null
+        ? _emailDomainController.text.trim()
+        : _selectedEmailDomain!;
+    final full = (local.isEmpty || domain.isEmpty) ? '' : '$local@$domain';
+    _emailController.text = full;
+    setState(() {
+      _currentEmail = full;
+      _isEmailSent = false;
+      _isEmailVerified = false;
+    });
+  }
+
   // ============================================================
   // 🎨 Build 메서드 + 이미지 업로드
   // ============================================================
@@ -1032,10 +1087,13 @@ class _RegisterScreenState extends State<RegisterScreen> {
               suffixIcon: _currentUsername.isEmpty
                   ? null
                   : _isCheckingUsername
-                      ? SizedBox(
+                      ? const SizedBox(
                           width: 20,
                           height: 20,
-                          child: CircularProgressIndicator(strokeWidth: 2),
+                          child: Padding(
+                            padding: EdgeInsets.all(12),
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          ),
                         )
                       : _isUsernameAvailable
                           ? Icon(
@@ -1043,28 +1101,13 @@ class _RegisterScreenState extends State<RegisterScreen> {
                               color: Colors.green,
                               size: ResponsiveHelper.iconSize(context, 22),
                             )
-                          : TextButton(
-                              onPressed: () {
-                                final username = _usernameController.text.trim();
-                                if (username.length >= 4 && RegExp(r'^[a-z0-9_]+$').hasMatch(username)) {
-                                  _checkUsername();
-                                } else {
-                                  ScaffoldMessenger.of(context).showSnackBar(
-                                    const SnackBar(
-                                      content: Text('아이디를 올바르게 입력해주세요\n(영문 소문자, 숫자, _ / 4자 이상)'),
-                                      duration: Duration(seconds: 2),
-                                    ),
-                                  );
-                                }
-                              },
-                              child: Text(
-                                '중복확인',
-                                style: ResponsiveHelper.smallStyle(
-                                  context,
-                                  color: Theme.of(context).primaryColor,
-                                ),
-                              ),
-                            ),
+                          : _usernameError != null
+                              ? Icon(
+                                  Icons.cancel,
+                                  color: AppColors.error,
+                                  size: ResponsiveHelper.iconSize(context, 22),
+                                )
+                              : null,
               validator: (value) {
                 if (value == null || value.isEmpty) return '아이디를 입력해주세요';
                 if (value.length < 4) return '4자 이상 입력해주세요';
@@ -1080,6 +1123,14 @@ class _RegisterScreenState extends State<RegisterScreen> {
                   _isUsernameAvailable = false;
                   _usernameError = null;
                 });
+                _usernameDebounce?.cancel();
+                if (value.trim().length >= 4 &&
+                    RegExp(r'^[a-z0-9_]+$').hasMatch(value.trim())) {
+                  _usernameDebounce = Timer(
+                    const Duration(milliseconds: 600),
+                    _checkUsername,
+                  );
+                }
               },
             ),
             
@@ -1245,49 +1296,171 @@ class _RegisterScreenState extends State<RegisterScreen> {
               ),
             
             SizedBox(height: ResponsiveHelper.spacing(context, 12)),
-            // 이메일
-            _buildTextField(
-              controller: _emailController,
-              label: '이메일',
-              hint: 'your@email.com',
-              icon: Icons.email_outlined,
-              keyboardType: TextInputType.emailAddress,
-              focusNode: _emailFocus,
-              textInputAction: TextInputAction.next,
-              onFieldSubmitted: (_) => _phoneFocus.requestFocus(),
-              suffixIcon: _currentEmail.isEmpty
-                  ? null
-                  : !_isEmailVerified
-                      ? TextButton(
-                          onPressed: _sendEmailVerification,
-                          child: Text(
-                            _isEmailSent ? '재발송' : '인증',
-                            style: ResponsiveHelper.smallStyle(
-                              context,
-                              color: Theme.of(context).primaryColor,
+
+            // 이메일: [아이디] @ [도메인▼]
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // 로컬 파트
+                Expanded(
+                  flex: 5,
+                  child: TextFormField(
+                    controller: _emailLocalController,
+                    focusNode: _emailFocus,
+                    keyboardType: TextInputType.emailAddress,
+                    textInputAction: TextInputAction.next,
+                    style: ResponsiveHelper.bodyStyle(context),
+                    decoration: InputDecoration(
+                      labelText: '이메일 아이디',
+                      hintText: 'example',
+                      hintStyle: TextStyle(color: AppColors.grey400),
+                      prefixIcon: Icon(
+                        Icons.email_outlined,
+                        color: Theme.of(context).primaryColor,
+                        size: ResponsiveHelper.iconSize(context, 22),
+                      ),
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                    ),
+                    onChanged: (_) => _syncEmail(),
+                    validator: (v) =>
+                        (v == null || v.trim().isEmpty) ? '이메일 아이디를 입력해주세요' : null,
+                  ),
+                ),
+
+                // @ 구분자
+                Padding(
+                  padding: EdgeInsets.only(
+                    top: ResponsiveHelper.spacing(context, 16),
+                    left: ResponsiveHelper.spacing(context, 6),
+                    right: ResponsiveHelper.spacing(context, 6),
+                  ),
+                  child: Text(
+                    '@',
+                    style: ResponsiveHelper.bodyStyle(context).copyWith(
+                      fontWeight: FontWeight.w600,
+                      color: AppColors.grey700,
+                    ),
+                  ),
+                ),
+
+                // 도메인 파트
+                Expanded(
+                  flex: 5,
+                  child: _selectedEmailDomain == null
+                      // 직접 입력 모드
+                      ? TextFormField(
+                          controller: _emailDomainController,
+                          keyboardType: TextInputType.url,
+                          textInputAction: TextInputAction.next,
+                          style: ResponsiveHelper.bodyStyle(context),
+                          decoration: InputDecoration(
+                            labelText: '직접 입력',
+                            hintText: 'example.com',
+                            hintStyle: TextStyle(color: AppColors.grey400),
+                            border: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(10),
+                            ),
+                            suffixIcon: TextButton(
+                              onPressed: () => setState(
+                                  () => _selectedEmailDomain = 'naver.com'),
+                              child: const Text('목록',
+                                  style: TextStyle(fontSize: 11)),
                             ),
                           ),
+                          onChanged: (_) => _syncEmail(),
+                          validator: (v) => (v == null || v.trim().isEmpty)
+                              ? '도메인을 입력해주세요'
+                              : null,
                         )
-                      : Icon(
-                          Icons.check_circle,
-                          color: AppColors.successMedium,
-                          size: ResponsiveHelper.iconSize(context, 22),
+                      // 드롭다운 모드
+                      : DropdownButtonFormField<String>(
+                          initialValue: _selectedEmailDomain,
+                          isExpanded: true,
+                          decoration: InputDecoration(
+                            border: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(10),
+                            ),
+                            contentPadding: const EdgeInsets.symmetric(
+                                horizontal: 12, vertical: 14),
+                          ),
+                          items: [
+                            for (final d in [
+                              'naver.com',
+                              'gmail.com',
+                              'kakao.com',
+                              'daum.net',
+                              'hanmail.net',
+                            ])
+                              DropdownMenuItem(
+                                value: d,
+                                child: Text(d,
+                                    style: const TextStyle(fontSize: 14)),
+                              ),
+                            const DropdownMenuItem(
+                              value: '__direct__',
+                              child: Text('직접 입력',
+                                  style: TextStyle(fontSize: 14)),
+                            ),
+                          ],
+                          onChanged: (v) {
+                            if (v == '__direct__') {
+                              setState(() {
+                                _selectedEmailDomain = null;
+                                _emailDomainController.clear();
+                              });
+                              _syncEmail();
+                            } else {
+                              setState(() => _selectedEmailDomain = v);
+                              _syncEmail();
+                            }
+                          },
                         ),
-              validator: (value) {
-                if (value == null || value.isEmpty) return '이메일을 입력해주세요';
-                if (!value.contains('@')) return '올바른 이메일 형식이 아닙니다';
-                if (!_isEmailVerified) return '이메일 인증을 완료해주세요';
-                return null;
-              },
-              onChanged: (value) {
-                setState(() {
-                  _currentEmail = value;
-                  _isEmailSent = false;
-                  _isEmailVerified = false;
-                });
-              },
+                ),
+              ],
             ),
-            
+
+            // 이메일 인증 버튼
+            if (_currentEmail.isNotEmpty) ...[
+              SizedBox(height: ResponsiveHelper.spacing(context, 6)),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.end,
+                children: [
+                  if (_isEmailVerified)
+                    Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(Icons.check_circle,
+                            color: AppColors.successMedium,
+                            size: ResponsiveHelper.iconSize(context, 18)),
+                        const SizedBox(width: 4),
+                        Text('인증 완료',
+                            style: ResponsiveHelper.smallStyle(context,
+                                color: AppColors.successDark)),
+                      ],
+                    )
+                  else if (_isEmailSending)
+                    const SizedBox(
+                        width: 18,
+                        height: 18,
+                        child: CircularProgressIndicator(strokeWidth: 2))
+                  else
+                    TextButton.icon(
+                      onPressed: _sendEmailVerification,
+                      icon: Icon(Icons.send,
+                          size: 14,
+                          color: Theme.of(context).primaryColor),
+                      label: Text(
+                        _isEmailSent ? '재발송' : '인증번호 받기',
+                        style: ResponsiveHelper.smallStyle(context,
+                            color: Theme.of(context).primaryColor),
+                      ),
+                    ),
+                ],
+              ),
+            ],
+
             // 이메일 인증 코드 입력
             if (_isEmailSent && !_isEmailVerified) ...[
               SizedBox(height: ResponsiveHelper.spacing(context, 12)),
@@ -1300,20 +1473,31 @@ class _RegisterScreenState extends State<RegisterScreen> {
                 focusNode: _emailCodeFocus,
                 textInputAction: TextInputAction.done,
                 onFieldSubmitted: (_) => _verifyEmailCode(),
+                onChanged: (value) {
+                  if (value.length == 6 && !_isEmailVerifying) {
+                    _verifyEmailCode();
+                  }
+                },
                 inputFormatters: [
                   FilteringTextInputFormatter.digitsOnly,
                   LengthLimitingTextInputFormatter(6),
                 ],
-                suffixIcon: TextButton(
-                  onPressed: _verifyEmailCode,
-                  child: Text(
-                    '확인',
-                    style: ResponsiveHelper.smallStyle(
-                      context,
-                      color: Theme.of(context).primaryColor,
-                    ),
-                  ),
-                ),
+                suffixIcon: _isEmailVerifying
+                    ? const SizedBox(
+                        width: 20,
+                        height: 20,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : TextButton(
+                        onPressed: _verifyEmailCode,
+                        child: Text(
+                          '확인',
+                          style: ResponsiveHelper.smallStyle(
+                            context,
+                            color: Theme.of(context).primaryColor,
+                          ),
+                        ),
+                      ),
               ),
             ],
             
@@ -1329,6 +1513,17 @@ class _RegisterScreenState extends State<RegisterScreen> {
               focusNode: _phoneFocus,
               textInputAction: TextInputAction.next,
               onFieldSubmitted: (_) => kIsWeb ? _addressFocus.requestFocus() : _detailAddressFocus.requestFocus(),
+              onChanged: (value) {
+                if (value.length == 11) {
+                  Future.delayed(const Duration(milliseconds: 100), () {
+                    if (mounted) {
+                      kIsWeb
+                          ? _addressFocus.requestFocus()
+                          : _detailAddressFocus.requestFocus();
+                    }
+                  });
+                }
+              },
               inputFormatters: [
                 FilteringTextInputFormatter.digitsOnly,
                 LengthLimitingTextInputFormatter(11),
@@ -1415,52 +1610,13 @@ class _RegisterScreenState extends State<RegisterScreen> {
                 onPressed: () => setState(() => _obscurePassword = !_obscurePassword),
               ),
               validator: _validatePassword,
-              onChanged: (value) {
-                _checkPasswordStrength(value);
-              },
+              onChanged: (_) => setState(() {}),
             ),
 
-            // 비밀번호 강도 표시
-            if (_passwordStrength > 0) ...[
-              SizedBox(height: ResponsiveHelper.spacing(context, 6)),
-              Row(
-                children: [
-                  Expanded(
-                    child: LinearProgressIndicator(
-                      value: _passwordStrength / 3,
-                      backgroundColor: AppColors.grey300,
-                      color: _passwordStrength == 0
-                          ? Colors.red
-                          : _passwordStrength == 1
-                              ? Colors.orange
-                              : _passwordStrength == 2
-                                  ? Colors.yellow
-                                  : Colors.green,
-                      minHeight: 4,
-                    ),
-                  ),
-                  SizedBox(width: ResponsiveHelper.spacing(context, 8)),
-                  Text(
-                    _passwordStrength == 0
-                        ? '약함'
-                        : _passwordStrength == 1
-                            ? '보통'
-                            : _passwordStrength == 2
-                                ? '강함'
-                                : '매우 강함',
-                    style: ResponsiveHelper.smallStyle(
-                      context,
-                      color: _passwordStrength == 0
-                          ? Colors.red
-                          : _passwordStrength == 1
-                              ? Colors.orange
-                              : _passwordStrength == 2
-                                  ? AppColors.yellowDark
-                                  : Colors.green,
-                    ),
-                  ),
-                ],
-              ),
+            // 비밀번호 조건 체크리스트
+            if (_passwordController.text.isNotEmpty) ...[
+              SizedBox(height: ResponsiveHelper.spacing(context, 8)),
+              _buildPasswordChecklist(),
             ],
 
             SizedBox(height: ResponsiveHelper.spacing(context, 12)),
@@ -1475,27 +1631,428 @@ class _RegisterScreenState extends State<RegisterScreen> {
               focusNode: _confirmPasswordFocus,
               textInputAction: TextInputAction.done,
               onFieldSubmitted: (_) => FocusScope.of(context).unfocus(),
-              suffixIcon: IconButton(
-                icon: Icon(
-                  _obscureConfirmPassword ? Icons.visibility_off : Icons.visibility,
-                  color: AppColors.grey600,
-                  size: ResponsiveHelper.iconSize(context, 20),
-                ),
-                onPressed: () => setState(() => _obscureConfirmPassword = !_obscureConfirmPassword),
+              suffixIcon: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  if (_confirmPasswordController.text.isNotEmpty)
+                    Icon(
+                      _confirmPasswordController.text == _passwordController.text
+                          ? Icons.check_circle
+                          : Icons.cancel,
+                      color: _confirmPasswordController.text == _passwordController.text
+                          ? AppColors.success
+                          : AppColors.error,
+                      size: ResponsiveHelper.iconSize(context, 20),
+                    ),
+                  IconButton(
+                    icon: Icon(
+                      _obscureConfirmPassword ? Icons.visibility_off : Icons.visibility,
+                      color: AppColors.grey600,
+                      size: ResponsiveHelper.iconSize(context, 20),
+                    ),
+                    onPressed: () => setState(() => _obscureConfirmPassword = !_obscureConfirmPassword),
+                  ),
+                ],
               ),
               validator: (value) {
                 if (value == null || value.isEmpty) return '비밀번호를 다시 입력해주세요';
                 if (value != _passwordController.text) return '비밀번호가 일치하지 않습니다';
                 return null;
               },
+              onChanged: (_) => setState(() {}),
             ),
             
+            SizedBox(height: ResponsiveHelper.spacing(context, 16)),
+
+            // 법적 동의
+            _buildConsentSection(),
+
             SizedBox(height: ResponsiveHelper.spacing(context, 8)),
           ],
         ),
       ),
     );
   }
+
+  Widget _buildPasswordChecklist() {
+    final pw = _passwordController.text;
+    final checks = [
+      (RegExp(r'.{8,}').hasMatch(pw), '8자 이상'),
+      (RegExp(r'[a-zA-Z]').hasMatch(pw), '영문 포함'),
+      (RegExp(r'[0-9]').hasMatch(pw), '숫자 포함'),
+      (RegExp(r'[!@#\$%^&*(),.?":{}|<>]').hasMatch(pw), '특수문자 포함'),
+    ];
+    final passed = checks.where((c) => c.$1).length;
+
+    // 강도 색상
+    final strengthColor = passed <= 1
+        ? AppColors.error
+        : passed == 2
+            ? AppColors.warning
+            : passed == 3
+                ? AppColors.yellowDark
+                : AppColors.success;
+    final strengthLabel = passed <= 1
+        ? '약함'
+        : passed == 2
+            ? '보통'
+            : passed == 3
+                ? '강함'
+                : '매우 강함';
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        // 강도 바
+        Row(
+          children: [
+            Expanded(
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(4),
+                child: LinearProgressIndicator(
+                  value: passed / 4,
+                  backgroundColor: AppColors.grey200,
+                  valueColor: AlwaysStoppedAnimation(strengthColor),
+                  minHeight: 5,
+                ),
+              ),
+            ),
+            const SizedBox(width: 8),
+            Text(
+              strengthLabel,
+              style: TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.w600,
+                color: strengthColor,
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 8),
+        // 조건 2열 고정 그리드
+        Row(
+          children: [
+            _buildCheckItem(checks[0]),
+            const SizedBox(width: 12),
+            _buildCheckItem(checks[1]),
+          ],
+        ),
+        const SizedBox(height: 4),
+        Row(
+          children: [
+            _buildCheckItem(checks[2]),
+            const SizedBox(width: 12),
+            _buildCheckItem(checks[3]),
+          ],
+        ),
+      ],
+    );
+  }
+
+  Widget _buildCheckItem((bool, String) check) {
+    final (passed, label) = check;
+    return Expanded(
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(
+            passed ? Icons.check_circle : Icons.radio_button_unchecked,
+            size: 13,
+            color: passed ? AppColors.success : AppColors.grey400,
+          ),
+          const SizedBox(width: 4),
+          Text(
+            label,
+            style: TextStyle(
+              fontSize: 12,
+              color: passed ? AppColors.successDark : AppColors.grey500,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ============================================================
+  // ✅ 법적 동의 섹션
+  // ============================================================
+
+  Widget _buildConsentSection() {
+    final theme = Theme.of(context);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Divider(),
+        SizedBox(height: ResponsiveHelper.spacing(context, 4)),
+
+        // 전체 동의
+        InkWell(
+          onTap: () {
+            setState(() {
+              _agreedToAll = !_agreedToAll;
+              _agreedToTerms = _agreedToAll;
+              _agreedToPrivacy = _agreedToAll;
+              _agreedToMarketing = _agreedToAll;
+            });
+          },
+          borderRadius: BorderRadius.circular(8),
+          child: Container(
+            padding: EdgeInsets.symmetric(
+              horizontal: ResponsiveHelper.spacing(context, 4),
+              vertical: ResponsiveHelper.spacing(context, 8),
+            ),
+            child: Row(
+              children: [
+                Icon(
+                  _agreedToAll
+                      ? Icons.check_circle
+                      : Icons.check_circle_outline,
+                  color: _agreedToAll ? theme.primaryColor : AppColors.grey400,
+                  size: ResponsiveHelper.iconSize(context, 22),
+                ),
+                SizedBox(width: ResponsiveHelper.spacing(context, 10)),
+                Text(
+                  '전체 동의',
+                  style: ResponsiveHelper.bodyStyle(context).copyWith(
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+
+        const Divider(height: 1),
+        SizedBox(height: ResponsiveHelper.spacing(context, 4)),
+
+        // [필수] 이용약관
+        _buildConsentRow(
+          label: '[필수] 서비스 이용약관',
+          agreed: _agreedToTerms,
+          onChanged: (v) {
+            setState(() {
+              _agreedToTerms = v;
+              _agreedToAll =
+                  _agreedToTerms && _agreedToPrivacy && _agreedToMarketing;
+            });
+          },
+          onViewTap: () => _showTermsDialog(),
+        ),
+
+        // [필수] 개인정보처리방침
+        _buildConsentRow(
+          label: '[필수] 개인정보 처리방침',
+          agreed: _agreedToPrivacy,
+          onChanged: (v) {
+            setState(() {
+              _agreedToPrivacy = v;
+              _agreedToAll =
+                  _agreedToTerms && _agreedToPrivacy && _agreedToMarketing;
+            });
+          },
+          onViewTap: () => _showPrivacyDialog(),
+        ),
+
+        // [선택] 마케팅
+        _buildConsentRow(
+          label: '[선택] 마케팅 정보 수신 동의',
+          agreed: _agreedToMarketing,
+          onChanged: (v) {
+            setState(() {
+              _agreedToMarketing = v;
+              _agreedToAll =
+                  _agreedToTerms && _agreedToPrivacy && _agreedToMarketing;
+            });
+          },
+        ),
+      ],
+    );
+  }
+
+  Widget _buildConsentRow({
+    required String label,
+    required bool agreed,
+    required void Function(bool) onChanged,
+    VoidCallback? onViewTap,
+  }) {
+    final theme = Theme.of(context);
+    return Padding(
+      padding: EdgeInsets.symmetric(
+        vertical: ResponsiveHelper.spacing(context, 2),
+      ),
+      child: Row(
+        children: [
+          InkWell(
+            onTap: () => onChanged(!agreed),
+            borderRadius: BorderRadius.circular(4),
+            child: Icon(
+              agreed ? Icons.check_circle : Icons.check_circle_outline,
+              color: agreed ? theme.primaryColor : AppColors.grey400,
+              size: ResponsiveHelper.iconSize(context, 20),
+            ),
+          ),
+          SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+          Expanded(
+            child: InkWell(
+              onTap: () => onChanged(!agreed),
+              child: Text(
+                label,
+                style: ResponsiveHelper.smallStyle(
+                  context,
+                  color: AppColors.grey700,
+                ),
+              ),
+            ),
+          ),
+          if (onViewTap != null)
+            TextButton(
+              onPressed: onViewTap,
+              style: TextButton.styleFrom(
+                padding: EdgeInsets.symmetric(
+                  horizontal: ResponsiveHelper.spacing(context, 4),
+                ),
+                minimumSize: Size.zero,
+                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+              ),
+              child: Text(
+                '보기',
+                style: ResponsiveHelper.tinyStyle(
+                  context,
+                  color: AppColors.grey500,
+                ).copyWith(decoration: TextDecoration.underline),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  void _showTermsDialog() {
+    showDialog(
+      context: context,
+      builder: (context) => _buildLegalDialog(
+        title: '서비스 이용약관',
+        content: '''제1조 (목적)
+본 약관은 AlFit(이하 "회사")이 제공하는 인력 매칭 플랫폼 서비스(이하 "서비스")의 이용에 관한 기본적인 사항을 규정합니다.
+
+제2조 (정의)
+① "회원"이란 본 약관에 동의하고 서비스에 가입한 자를 말합니다.
+② "지원자"란 사업장에 근무를 지원하는 회원을 말합니다.
+③ "사업장 관리자"란 근무 공고를 등록하고 지원자를 관리하는 회원을 말합니다.
+
+제3조 (서비스 내용)
+회사는 사업장과 구직자를 연결하는 인력 매칭 중개 플랫폼을 운영합니다. 실제 근로계약은 사업장과 지원자 간에 체결되며, 회사는 중개자로서의 역할을 합니다.
+
+제4조 (이용계약)
+① 회원이 되려는 자는 본 약관에 동의하고 가입 신청을 완료하여야 합니다.
+② 만 14세 미만은 서비스에 가입할 수 없습니다.
+
+제5조 (회원의 의무)
+① 회원은 정확한 정보를 제공해야 하며, 변경 시 즉시 수정해야 합니다.
+② 타인의 정보를 도용하거나 허위 정보를 입력해서는 안 됩니다.
+③ 서비스를 통해 알게 된 타 회원의 개인정보를 무단 수집·이용해서는 안 됩니다.
+④ 서비스의 안정적인 운영을 방해하는 행위를 해서는 안 됩니다.
+
+제6조 (서비스 이용)
+① 서비스는 원칙적으로 연중무휴 24시간 제공합니다.
+② 시스템 점검 등의 사유로 일시 중단될 수 있으며, 사전에 공지합니다.
+
+제7조 (책임 제한)
+① 회사는 중개 플랫폼으로서 사업장과 지원자 간 근로관계에서 발생하는 분쟁에 대해 직접적인 책임을 지지 않습니다.
+② 천재지변, 불가항력으로 인한 서비스 중단에 대해 책임지지 않습니다.
+
+제8조 (준거법 및 분쟁해결)
+본 약관은 대한민국 법률에 따라 해석되며, 분쟁 발생 시 관할 법원은 회사 소재지 관할 법원으로 합니다.''',
+      ),
+    );
+  }
+
+  void _showPrivacyDialog() {
+    showDialog(
+      context: context,
+      builder: (context) => _buildLegalDialog(
+        title: '개인정보 처리방침',
+        content: '''AlFit은 개인정보보호법 제30조에 따라 이용자의 개인정보를 보호하고 관련 고충을 신속하게 처리하기 위해 다음과 같이 개인정보 처리방침을 수립·공개합니다.
+
+1. 수집하는 개인정보 항목
+• 필수: 이름, 생년월일, 성별, 이메일, 비밀번호, 전화번호, 주소
+• 선택: 신분증 사진, 통장사본, 계좌번호
+• 사업장 관리자 추가: 사업자등록번호, 사업장명, 대표자명, 사업자등록증
+
+2. 개인정보 수집 및 이용 목적
+• 회원 식별 및 서비스 제공
+• 급여 지급을 위한 계좌 정보 처리
+• 근로계약 체결 및 인력 매칭
+• 서비스 이용 현황 파악 및 부정 이용 방지
+• 고객 상담 및 민원 처리
+
+3. 개인정보 보유 및 이용 기간
+• 회원 탈퇴 시 즉시 삭제
+• 단, 관련 법령에 따라 아래 기간 동안 보존
+  - 계약 또는 청약철회 기록: 5년 (전자상거래법)
+  - 소비자 불만·분쟁처리 기록: 3년 (전자상거래법)
+
+4. 개인정보 제3자 제공
+지원자의 이름, 연락처, 지원 이력을 해당 사업장 관리자에게 제공합니다.
+(공고 지원 시 이에 동의한 것으로 간주합니다)
+
+5. 개인정보 처리 위탁
+현재 개인정보 처리를 외부에 위탁하는 업체는 없습니다.
+
+6. 정보 주체의 권리
+회원은 언제든지 개인정보 열람, 정정, 삭제, 처리 정지를 요구할 수 있습니다.
+앱 내 고객센터 또는 이메일로 요청하시면 지체 없이 조치합니다.
+
+7. 개인정보 보호책임자
+개인정보 관련 문의는 서비스 내 문의하기를 통해 접수해주세요.''',
+      ),
+    );
+  }
+
+  Widget _buildLegalDialog({
+    required String title,
+    required String content,
+  }) {
+    return AlertDialog(
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      title: Text(
+        title,
+        style: ResponsiveHelper.subtitleStyle(context).copyWith(
+          fontWeight: FontWeight.bold,
+        ),
+      ),
+      content: SizedBox(
+        width: double.maxFinite,
+        height: 400,
+        child: SingleChildScrollView(
+          child: Text(
+            content,
+            style: ResponsiveHelper.smallStyle(
+              context,
+              color: AppColors.grey700,
+            ).copyWith(height: 1.6),
+          ),
+        ),
+      ),
+      actions: [
+        ElevatedButton(
+          onPressed: () => Navigator.pop(context),
+          style: ElevatedButton.styleFrom(
+            backgroundColor: Theme.of(context).primaryColor,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(8),
+            ),
+          ),
+          child: Text(
+            '확인',
+            style: ResponsiveHelper.bodyStyle(context)
+                .copyWith(color: Colors.white),
+          ),
+        ),
+      ],
+    );
+  }
+
   // ============================================================
   // 📝 Step 2: 역할 선택
   // ============================================================
@@ -1841,6 +2398,9 @@ class _RegisterScreenState extends State<RegisterScreen> {
             )).toList(),
             onChanged: (value) {
               setState(() => _selectedBank = value);
+              Future.delayed(const Duration(milliseconds: 200), () {
+                if (mounted) _accountNumberFocus.requestFocus();
+              });
             },
           ),
           SizedBox(height: ResponsiveHelper.spacing(context, 12)),
@@ -1848,7 +2408,10 @@ class _RegisterScreenState extends State<RegisterScreen> {
           // 계좌번호 입력
           TextFormField(
             controller: _accountNumberController,
+            focusNode: _accountNumberFocus,
             keyboardType: TextInputType.number,
+            textInputAction: TextInputAction.done,
+            onFieldSubmitted: (_) => FocusScope.of(context).unfocus(),
             style: ResponsiveHelper.bodyStyle(context),
             decoration: InputDecoration(
               labelText: '계좌번호',
@@ -2024,6 +2587,9 @@ class _RegisterScreenState extends State<RegisterScreen> {
                 label: '상호명',
                 hint: '예: 홍길동 물류센터',
                 icon: Icons.store_outlined,
+                focusNode: _businessNameFocus,
+                textInputAction: TextInputAction.next,
+                onFieldSubmitted: (_) => _ceoNameFocus.requestFocus(),
                 validator: (value) {
                   if (value != null && value.isNotEmpty && value.length < 2) {
                     return '2자 이상 입력해주세요';
@@ -2102,6 +2668,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
         TextFormField(
           controller: _businessNumberController,
           keyboardType: TextInputType.number,
+          textInputAction: TextInputAction.next,
           inputFormatters: [
             FilteringTextInputFormatter.digitsOnly,
             LengthLimitingTextInputFormatter(10),
@@ -2131,6 +2698,13 @@ class _RegisterScreenState extends State<RegisterScreen> {
               vertical: ResponsiveHelper.spacing(context, 12),
             ),
           ),
+          onChanged: (value) {
+            setState(() {});
+            if (value.length == 10) {
+              _businessNameFocus.requestFocus();
+            }
+          },
+          onFieldSubmitted: (_) => _businessNameFocus.requestFocus(),
           validator: (value) {
             if (value != null && value.isNotEmpty && value.length != 10) {
               return '10자리를 입력해주세요';
@@ -2169,6 +2743,9 @@ class _RegisterScreenState extends State<RegisterScreen> {
             Expanded(
               child: TextFormField(
                 controller: _ceoNameController,
+                focusNode: _ceoNameFocus,
+                textInputAction: TextInputAction.done,
+                onFieldSubmitted: (_) => FocusScope.of(context).unfocus(),
                 style: ResponsiveHelper.bodyStyle(context),
                 decoration: InputDecoration(
                   labelText: '대표자명',

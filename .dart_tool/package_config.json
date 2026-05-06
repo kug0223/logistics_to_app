@@ -110,6 +110,24 @@
       "languageVersion": "3.4"
     },
     {
+      "name": "cloud_functions",
+      "rootUri": "file:///C:/Users/kug02/AppData/Local/Pub/Cache/hosted/pub.dev/cloud_functions-5.6.2",
+      "packageUri": "lib/",
+      "languageVersion": "3.2"
+    },
+    {
+      "name": "cloud_functions_platform_interface",
+      "rootUri": "file:///C:/Users/kug02/AppData/Local/Pub/Cache/hosted/pub.dev/cloud_functions_platform_interface-5.8.2",
+      "packageUri": "lib/",
+      "languageVersion": "3.2"
+    },
+    {
+      "name": "cloud_functions_web",
+      "rootUri": "file:///C:/Users/kug02/AppData/Local/Pub/Cache/hosted/pub.dev/cloud_functions_web-4.11.5",
+      "packageUri": "lib/",
+      "languageVersion": "3.4"
+    },
+    {
       "name": "collection",
       "rootUri": "file:///C:/Users/kug02/AppData/Local/Pub/Cache/hosted/pub.dev/collection-1.19.1",
       "packageUri": "lib/",
@@ -404,12 +422,6 @@
       "languageVersion": "3.8"
     },
     {
-      "name": "fluttertoast",
-      "rootUri": "file:///C:/Users/kug02/AppData/Local/Pub/Cache/hosted/pub.dev/fluttertoast-8.2.14",
-      "packageUri": "lib/",
-      "languageVersion": "2.12"
-    },
-    {
       "name": "geolocator",
       "rootUri": "file:///C:/Users/kug02/AppData/Local/Pub/Cache/hosted/pub.dev/geolocator-13.0.4",
       "packageUri": "lib/",
@@ -612,6 +624,18 @@
       "rootUri": "file:///C:/Users/kug02/AppData/Local/Pub/Cache/hosted/pub.dev/octo_image-2.1.0",
       "packageUri": "lib/",
       "languageVersion": "3.0"
+    },
+    {
+      "name": "package_info_plus",
+      "rootUri": "file:///C:/Users/kug02/AppData/Local/Pub/Cache/hosted/pub.dev/package_info_plus-8.3.1",
+      "packageUri": "lib/",
+      "languageVersion": "3.3"
+    },
+    {
+      "name": "package_info_plus_platform_interface",
+      "rootUri": "file:///C:/Users/kug02/AppData/Local/Pub/Cache/hosted/pub.dev/package_info_plus_platform_interface-3.2.1",
+      "packageUri": "lib/",
+      "languageVersion": "2.18"
     },
     {
       "name": "path",
@@ -1032,6 +1056,12 @@
       "rootUri": "file:///C:/Users/kug02/AppData/Local/Pub/Cache/hosted/pub.dev/webview_flutter_wkwebview-3.23.1",
       "packageUri": "lib/",
       "languageVersion": "3.9"
+    },
+    {
+      "name": "win32",
+      "rootUri": "file:///C:/Users/kug02/AppData/Local/Pub/Cache/hosted/pub.dev/win32-5.15.0",
+      "packageUri": "lib/",
+      "languageVersion": "3.8"
     },
     {
       "name": "xdg_directories",

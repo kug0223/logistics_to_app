@@ -341,7 +341,8 @@ class RoleTheme {
   // ═══════════════════════════════════════════════════════════
   
   /// 역할에 따른 테마 반환
-  static ThemeData getThemeByRole(String? role) {
+  static ThemeData getThemeByRole(String? role, {bool dark = false}) {
+    if (dark) return getDarkThemeByRole(role);
     switch (role?.toUpperCase()) {
       case 'SUPER_ADMIN':
         return superAdminTheme;
@@ -350,8 +351,43 @@ class RoleTheme {
       case 'USER':
         return workerTheme;
       default:
-        return businessAdminTheme; // 기본값
+        return businessAdminTheme;
     }
+  }
+
+  static ThemeData getDarkThemeByRole(String? role) {
+    final primary = getPrimaryColor(role);
+    final scheme = ColorScheme.fromSeed(
+      seedColor: primary,
+      brightness: Brightness.dark,
+    );
+    return ThemeData(
+      useMaterial3: true,
+      colorScheme: scheme,
+      scaffoldBackgroundColor: const Color(0xFF121212),
+      appBarTheme: AppBarTheme(
+        backgroundColor: scheme.surface,
+        foregroundColor: scheme.onSurface,
+        elevation: 0,
+        centerTitle: false,
+        titleTextStyle: TextStyle(
+          color: scheme.onSurface,
+          fontSize: 20,
+          fontWeight: FontWeight.bold,
+        ),
+      ),
+      cardTheme: CardThemeData(
+        elevation: 2,
+        color: const Color(0xFF1E1E1E),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      ),
+      inputDecorationTheme: InputDecorationTheme(
+        filled: true,
+        fillColor: const Color(0xFF2C2C2C),
+        border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
+      ),
+      dividerColor: const Color(0xFF2C2C2C),
+    );
   }
   
   /// 역할별 Primary 색상

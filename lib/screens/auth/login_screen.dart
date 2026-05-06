@@ -5,13 +5,12 @@ import 'package:provider/provider.dart';
 import '../../providers/user_provider.dart';
 
 // Utils
+import 'package:cloud_functions/cloud_functions.dart';
 import '../../utils/responsive_helper.dart';
 import '../../utils/toast_helper.dart';
 
 // Widgets
 import '../../widgets/common/loading_widget.dart';
-import '../../widgets/alfit_splash_logo_widget.dart';
-import '../../widgets/dialogs/styled_dialog.dart';
 
 // Services
 import '../../services/auth_service.dart';
@@ -61,212 +60,183 @@ class _LoginScreenState extends State<LoginScreen> {
     }
   }
 
-  /// 🔍 아이디 찾기 다이얼로그
   Future<void> _showFindUsernameDialog() async {
     final nameController = TextEditingController();
     final phoneController = TextEditingController();
-    
-    // ⭐ FocusNode 선언
     final nameFocus = FocusNode();
     final phoneFocus = FocusNode();
 
-    await showDialog(
+    String? foundUsername;
+    bool isSearching = false;
+
+    await showModalBottomSheet(
       context: context,
-      builder: (context) => StyledDialog(
-        title: '아이디 찾기',
-        subtitle: '가입 시 입력한 정보를 입력해주세요',
-        icon: Icons.person_search,
-        headerColor: Theme.of(context).primaryColor,
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            // 이름 입력
-            StyledDialogTextField(
-              controller: nameController,
-              focusNode: nameFocus,  // ⭐ 추가
-              labelText: '이름',
-              hintText: '홍길동',
-              prefixIcon: Icons.person,
-              onFieldSubmitted: (_) => phoneFocus.requestFocus(),  // ⭐ 엔터 시 다음 필드로
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (sheetContext) => StatefulBuilder(
+        builder: (_, setSheetState) {
+          Future<void> search() async {
+            if (nameController.text.isEmpty) {
+              ToastHelper.showWarning('이름을 입력해주세요');
+              nameFocus.requestFocus();
+              return;
+            }
+            if (phoneController.text.isEmpty) {
+              ToastHelper.showWarning('전화번호를 입력해주세요');
+              phoneFocus.requestFocus();
+              return;
+            }
+            setSheetState(() => isSearching = true);
+            final result = await AuthService().findUsername(
+              name: nameController.text,
+              phone: phoneController.text,
+            );
+            setSheetState(() {
+              isSearching = false;
+              foundUsername = result ?? '';
+            });
+          }
+
+          return Padding(
+            padding: EdgeInsets.only(
+              bottom: MediaQuery.of(sheetContext).viewInsets.bottom,
             ),
-
-            SizedBox(height: ResponsiveHelper.spacing(context, 16)),
-
-            // 전화번호 입력
-            StyledDialogTextField(
-              controller: phoneController,
-              focusNode: phoneFocus,  // ⭐ 추가
-              labelText: '전화번호',
-              hintText: '01012345678',
-              prefixIcon: Icons.phone,
-              keyboardType: TextInputType.phone,
-              maxLength: 11,
-              onFieldSubmitted: (_) async {  // ⭐ 엔터 시 찾기 버튼 로직 실행
-                if (nameController.text.isEmpty) {
-                  ToastHelper.showWarning('이름을 입력해주세요');
-                  nameFocus.requestFocus();
-                  return;
-                }
-                if (phoneController.text.isEmpty) {
-                  ToastHelper.showWarning('전화번호를 입력해주세요');
-                  return;
-                }
-
-                final authService = AuthService();
-                final username = await authService.findUsername(
-                  name: nameController.text,
-                  phone: phoneController.text,
-                );
-
-                if (username != null && context.mounted) {
-                  final maskedUsername = username.length > 4
-                      ? '${username.substring(0, 4)}${'*' * (username.length - 4)}'
-                      : username;
-                  
-                  await showDialog(
-                    context: context,
-                    builder: (resultContext) => StyledDialog(
-                      title: '아이디 찾기 완료',
-                      subtitle: null,
-                      icon: Icons.check_circle,
-                      headerColor: AppColors.successMedium,
-                      content: Column(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Container(
-                            padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 20)),
-                            decoration: BoxDecoration(
-                              color: AppColors.grey100,
-                              borderRadius: BorderRadius.circular(12),
-                            ),
-                            child: Column(
-                              children: [
-                                Text(
-                                  '회원님의 아이디는',
-                                  style: ResponsiveHelper.bodyStyle(context),
-                                ),
-                                SizedBox(height: ResponsiveHelper.spacing(context, 8)),
-                                Text(
-                                  maskedUsername,
-                                  style: ResponsiveHelper.titleStyle(context).copyWith(
-                                    fontWeight: FontWeight.bold,
-                                    color: Theme.of(context).primaryColor,
-                                  ),
-                                ),
-                                SizedBox(height: ResponsiveHelper.spacing(context, 4)),
-                                Text(
-                                  '입니다',
-                                  style: ResponsiveHelper.bodyStyle(context),
-                                ),
-                              ],
-                            ),
-                          ),
-                        ],
+            child: Container(
+              decoration: const BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
+              ),
+              padding: const EdgeInsets.fromLTRB(24, 0, 24, 40),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Center(
+                    child: Container(
+                      margin: const EdgeInsets.only(top: 12, bottom: 24),
+                      width: 40, height: 4,
+                      decoration: BoxDecoration(
+                        color: AppColors.grey300,
+                        borderRadius: BorderRadius.circular(2),
                       ),
-                      actions: [
-                        StyledDialogButton.primary(
-                          text: '확인',
-                          onPressed: () {
-                            Navigator.pop(resultContext);
-                            Navigator.pop(context);
-                          },
-                        ),
-                      ],
                     ),
-                  );
-                }
-              },
-            ),
-          ],
-        ),
-        actions: [
-          StyledDialogButton.cancel(
-            onPressed: () => Navigator.pop(context),
-          ),
-          StyledDialogButton.primary(
-            text: '찾기',
-            onPressed: () async {
-              if (nameController.text.isEmpty) {
-                ToastHelper.showWarning('이름을 입력해주세요');
-                nameFocus.requestFocus();
-                return;
-              }
-              if (phoneController.text.isEmpty) {
-                ToastHelper.showWarning('전화번호를 입력해주세요');
-                phoneFocus.requestFocus();
-                return;
-              }
-
-              final authService = AuthService();
-              final username = await authService.findUsername(
-                name: nameController.text,
-                phone: phoneController.text,
-              );
-
-              if (username != null && context.mounted) {
-                final maskedUsername = username.length > 4
-                    ? '${username.substring(0, 4)}${'*' * (username.length - 4)}'
-                    : username;
-                
-                await showDialog(
-                  context: context,
-                  builder: (resultContext) => StyledDialog(
-                    title: '아이디 찾기 완료',
-                    subtitle: null,
-                    icon: Icons.check_circle,
-                    headerColor: AppColors.successMedium,
-                    content: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Container(
-                          padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 20)),
-                          decoration: BoxDecoration(
-                            color: AppColors.grey100,
-                            borderRadius: BorderRadius.circular(12),
-                          ),
-                          child: Column(
-                            children: [
-                              Text(
-                                '회원님의 아이디는',
-                                style: ResponsiveHelper.bodyStyle(context),
-                              ),
-                              SizedBox(height: ResponsiveHelper.spacing(context, 8)),
-                              Text(
-                                maskedUsername,
-                                style: ResponsiveHelper.titleStyle(context).copyWith(
-                                  fontWeight: FontWeight.bold,
-                                  color: Theme.of(context).primaryColor,
-                                ),
-                              ),
-                              SizedBox(height: ResponsiveHelper.spacing(context, 4)),
-                              Text(
-                                '입니다',
-                                style: ResponsiveHelper.bodyStyle(context),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ],
-                    ),
-                    actions: [
-                      StyledDialogButton.primary(
-                        text: '확인',
-                        onPressed: () {
-                          Navigator.pop(resultContext);
-                          Navigator.pop(context);
-                        },
-                      ),
-                    ],
                   ),
-                );
-              }
-            },
-          ),
-        ],
+
+                  if (foundUsername == null) ...[
+                    const Text('아이디 찾기',
+                        style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700, color: Color(0xFF1A1A1A))),
+                    const SizedBox(height: 6),
+                    Text('가입 시 입력한 이름과 전화번호를 입력해주세요',
+                        style: TextStyle(fontSize: 14, color: AppColors.grey500)),
+                    const SizedBox(height: 24),
+                    _buildSheetTextField(
+                      controller: nameController,
+                      focusNode: nameFocus,
+                      label: '이름',
+                      hint: '홍길동',
+                      icon: Icons.person_outline,
+                      onSubmitted: (_) => phoneFocus.requestFocus(),
+                    ),
+                    const SizedBox(height: 12),
+                    _buildSheetTextField(
+                      controller: phoneController,
+                      focusNode: phoneFocus,
+                      label: '전화번호',
+                      hint: '01012345678',
+                      icon: Icons.phone_outlined,
+                      keyboardType: TextInputType.phone,
+                      maxLength: 11,
+                      onSubmitted: (_) => search(),
+                    ),
+                    const SizedBox(height: 24),
+                    ElevatedButton(
+                      onPressed: isSearching ? null : search,
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: const Color(0xFF1565C0),
+                        foregroundColor: Colors.white,
+                        padding: const EdgeInsets.symmetric(vertical: 16),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                        elevation: 0,
+                      ),
+                      child: isSearching
+                          ? const SizedBox(width: 20, height: 20,
+                              child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2))
+                          : const Text('찾기', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
+                    ),
+
+                  ] else if (foundUsername!.isEmpty) ...[
+                    const SizedBox(height: 8),
+                    const Icon(Icons.search_off_rounded, size: 60, color: Color(0xFFCCCCCC)),
+                    const SizedBox(height: 16),
+                    const Text('일치하는 계정을 찾을 수 없어요',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700, color: Color(0xFF1A1A1A))),
+                    const SizedBox(height: 8),
+                    Text('입력하신 정보를 다시 확인해주세요',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(fontSize: 14, color: AppColors.grey500)),
+                    const SizedBox(height: 28),
+                    OutlinedButton(
+                      onPressed: () => setSheetState(() => foundUsername = null),
+                      style: OutlinedButton.styleFrom(
+                        padding: const EdgeInsets.symmetric(vertical: 16),
+                        side: const BorderSide(color: Color(0xFF1565C0)),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                      ),
+                      child: const Text('다시 찾기',
+                          style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600, color: Color(0xFF1565C0))),
+                    ),
+                    const SizedBox(height: 8),
+
+                  ] else ...[
+                    const SizedBox(height: 8),
+                    const Icon(Icons.check_circle_rounded, size: 60, color: Color(0xFF1565C0)),
+                    const SizedBox(height: 16),
+                    const Text('아이디를 찾았어요',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700, color: Color(0xFF1A1A1A))),
+                    const SizedBox(height: 20),
+                    Container(
+                      padding: const EdgeInsets.symmetric(vertical: 20, horizontal: 24),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFE3F2FD),
+                        borderRadius: BorderRadius.circular(14),
+                      ),
+                      child: Text(
+                        foundUsername!.length > 4
+                            ? '${foundUsername!.substring(0, 4)}${'*' * (foundUsername!.length - 4)}'
+                            : foundUsername!,
+                        textAlign: TextAlign.center,
+                        style: const TextStyle(
+                          fontSize: 22,
+                          fontWeight: FontWeight.w800,
+                          color: Color(0xFF1565C0),
+                          letterSpacing: 2,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 24),
+                    ElevatedButton(
+                      onPressed: () => Navigator.pop(sheetContext),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: const Color(0xFF1565C0),
+                        foregroundColor: Colors.white,
+                        padding: const EdgeInsets.symmetric(vertical: 16),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                        elevation: 0,
+                      ),
+                      child: const Text('확인', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
+                    ),
+                    const SizedBox(height: 8),
+                  ],
+                ],
+              ),
+            ),
+          );
+        },
       ),
     );
 
-    // ⭐ dispose
     nameController.dispose();
     phoneController.dispose();
     nameFocus.dispose();
@@ -277,548 +247,488 @@ class _LoginScreenState extends State<LoginScreen> {
     final usernameController = TextEditingController();
     final emailController = TextEditingController();
     final codeController = TextEditingController();
-    
-    // ⭐ FocusNode 추가
+    final newPasswordController = TextEditingController();
+    final confirmPasswordController = TextEditingController();
     final usernameFocus = FocusNode();
     final emailFocus = FocusNode();
     final codeFocus = FocusNode();
-    
-    bool isEmailSent = false;
-    String? verificationCode;
+    final newPasswordFocus = FocusNode();
+    final confirmPasswordFocus = FocusNode();
 
-    await showDialog(
+    // 0: 아이디+이메일 입력, 1: 인증코드+새비밀번호 입력, 2: 완료
+    int step = 0;
+    bool isSending = false;
+    bool isChanging = false;
+    bool obscureNew = true;
+    bool obscureConfirm = true;
+
+    final fn = FirebaseFunctions.instanceFor(region: 'asia-northeast3');
+
+    await showModalBottomSheet(
       context: context,
-      builder: (context) => StatefulBuilder(  // ⭐ 전체를 StatefulBuilder로
-        builder: (context, setState) => StyledDialog(
-          title: '비밀번호 찾기',
-          subtitle: '이메일 인증 후 비밀번호를 재설정할 수 있습니다',
-          icon: Icons.lock_reset,
-          headerColor: Theme.of(context).primaryColor,
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              // 아이디 입력
-              StyledDialogTextField(
-                controller: usernameController,
-                focusNode: usernameFocus,
-                labelText: '아이디',
-                hintText: 'your_username',
-                prefixIcon: Icons.account_circle,
-                onFieldSubmitted: (_) {
-                  // ⭐ 엔터 시 이메일 필드로 이동
-                  emailFocus.requestFocus();
-                },
-              ),
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (sheetContext) => StatefulBuilder(
+        builder: (_, setSheetState) {
+          Future<void> sendCode() async {
+            if (usernameController.text.isEmpty) {
+              ToastHelper.showWarning('아이디를 입력해주세요');
+              usernameFocus.requestFocus();
+              return;
+            }
+            if (emailController.text.isEmpty || !emailController.text.contains('@')) {
+              ToastHelper.showWarning('올바른 이메일을 입력해주세요');
+              emailFocus.requestFocus();
+              return;
+            }
+            setSheetState(() => isSending = true);
+            try {
+              await fn.httpsCallable('sendPasswordResetCode').call({
+                'username': usernameController.text.trim(),
+                'email': emailController.text.trim(),
+              });
+              setSheetState(() { isSending = false; step = 1; });
+              ToastHelper.showSuccess('인증번호가 이메일로 발송되었습니다 (5분 유효)');
+              Future.delayed(const Duration(milliseconds: 300), () => codeFocus.requestFocus());
+            } on FirebaseFunctionsException catch (e) {
+              setSheetState(() => isSending = false);
+              ToastHelper.showError(e.message ?? '인증번호 발송에 실패했습니다');
+            } catch (_) {
+              setSheetState(() => isSending = false);
+              ToastHelper.showError('오류가 발생했습니다. 다시 시도해주세요');
+            }
+          }
 
-              SizedBox(height: ResponsiveHelper.spacing(context, 16)),
+          Future<void> resetPassword() async {
+            if (codeController.text.length != 6) {
+              ToastHelper.showWarning('6자리 인증번호를 입력해주세요');
+              codeFocus.requestFocus();
+              return;
+            }
+            if (newPasswordController.text.length < 6) {
+              ToastHelper.showWarning('비밀번호는 6자 이상이어야 합니다');
+              newPasswordFocus.requestFocus();
+              return;
+            }
+            if (newPasswordController.text != confirmPasswordController.text) {
+              ToastHelper.showWarning('비밀번호가 일치하지 않습니다');
+              confirmPasswordFocus.requestFocus();
+              return;
+            }
+            setSheetState(() => isChanging = true);
+            try {
+              await fn.httpsCallable('resetPasswordWithCode').call({
+                'username': usernameController.text.trim(),
+                'code': codeController.text.trim(),
+                'newPassword': newPasswordController.text,
+              });
+              setSheetState(() { isChanging = false; step = 2; });
+            } on FirebaseFunctionsException catch (e) {
+              setSheetState(() => isChanging = false);
+              ToastHelper.showError(e.message ?? '비밀번호 변경에 실패했습니다');
+            } catch (_) {
+              setSheetState(() => isChanging = false);
+              ToastHelper.showError('오류가 발생했습니다. 다시 시도해주세요');
+            }
+          }
 
-              // 이메일 입력
-              StyledDialogTextField(
-                controller: emailController,
-                focusNode: emailFocus,
-                labelText: '이메일',
-                hintText: 'your@email.com',
-                prefixIcon: Icons.email,
-                keyboardType: TextInputType.emailAddress,
-                enabled: !isEmailSent,  // ⭐ 인증번호 발송 후 비활성화
-                suffixIcon: isEmailSent
-                    ? Icon(Icons.check_circle, color: Colors.green)
-                    : TextButton(
-                        onPressed: () {
-                          if (usernameController.text.isEmpty) {
-                            ToastHelper.showWarning('아이디를 입력해주세요');
-                            usernameFocus.requestFocus();
-                            return;
-                          }
-                          if (emailController.text.isEmpty ||
-                              !emailController.text.contains('@')) {
-                            ToastHelper.showWarning('올바른 이메일을 입력해주세요');
-                            emailFocus.requestFocus();
-                            return;
-                          }
-
-                          // TODO: 실제 이메일 발송 구현
-                          setState(() {
-                            isEmailSent = true;
-                            verificationCode = '123456'; // 개발용
-                          });
-
-                          ToastHelper.showSuccess(
-                              '인증번호가 발송되었습니다\n(개발용: 123456)');
-                          
-                          // ⭐ 인증번호 입력창으로 포커스 이동
-                          Future.delayed(const Duration(milliseconds: 300), () {
-                            codeFocus.requestFocus();
-                          });
-                        },
-                        child: Text(
-                          '인증',
-                          style: ResponsiveHelper.smallStyle(context).copyWith(
-                            color: Theme.of(context).primaryColor,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                      ),
-              ),
-
-              // 인증번호 입력
-              if (isEmailSent) ...[
-                SizedBox(height: ResponsiveHelper.spacing(context, 16)),
-                StyledDialogTextField(
-                  controller: codeController,
-                  focusNode: codeFocus,
-                  labelText: '인증번호',
-                  hintText: '6자리 숫자',
-                  prefixIcon: Icons.password,
-                  keyboardType: TextInputType.number,
-                  maxLength: 6,
-                  onFieldSubmitted: (_) async {  // ⭐ 엔터 시 확인 버튼 로직 실행
-                    if (codeController.text != verificationCode) {
-                      ToastHelper.showError('인증번호가 일치하지 않습니다');
-                      return;
-                    }
-
-                    // 결과 다이얼로그 표시
-                    await showDialog(
-                      context: context,
-                      builder: (resultContext) => StyledDialog(
-                        title: '이메일 인증 완료',
-                        subtitle: null,
-                        icon: Icons.mark_email_read,
-                        headerColor: AppColors.successMedium,
-                        content: Column(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Text(
-                              '이메일로 비밀번호 재설정 링크가 발송되었습니다.\n이메일을 확인해주세요.',
-                              style: ResponsiveHelper.bodyStyle(context),
-                              textAlign: TextAlign.center,
-                            ),
-                            SizedBox(height: ResponsiveHelper.spacing(context, 16)),
-                            Container(
-                              padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 16)),
-                              decoration: BoxDecoration(
-                                color: AppColors.infoBg,
-                                borderRadius: BorderRadius.circular(12),
-                              ),
-                              child: Row(
-                                children: [
-                                  Icon(Icons.info_outline, color: AppColors.infoDark),
-                                  SizedBox(width: ResponsiveHelper.spacing(context, 12)),
-                                  Expanded(
-                                    child: Text(
-                                      '링크는 24시간 동안 유효합니다.',
-                                      style: ResponsiveHelper.smallStyle(context).copyWith(
-                                        color: AppColors.infoDeep,
-                                      ),
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ),
-                          ],
-                        ),
-                        actions: [
-                          StyledDialogButton.primary(
-                            text: '확인',
-                            onPressed: () {
-                              Navigator.pop(resultContext);
-                              Navigator.pop(context);
-                            },
-                          ),
-                        ],
-                      ),
-                    );
-                  },
-                ),
-              ],
-            ],
-          ),
-          actions: [
-            StyledDialogButton.cancel(
-              onPressed: () => Navigator.pop(context),  // ⭐ dispose 제거
+          return Padding(
+            padding: EdgeInsets.only(
+              bottom: MediaQuery.of(sheetContext).viewInsets.bottom,
             ),
-            if (isEmailSent)
-              StyledDialogButton.primary(
-                text: '확인',
-                onPressed: () async {
-                  if (codeController.text != verificationCode) {
-                    ToastHelper.showError('인증번호가 일치하지 않습니다');
-                    codeFocus.requestFocus();
-                    return;
-                  }
-
-                  // ⭐ 다이얼로그 위에 결과 표시
-                  await showDialog(
-                    context: context,
-                    builder: (resultContext) => StyledDialog(
-                      title: '이메일 인증 완료',
-                      subtitle: null,
-                      icon: Icons.mark_email_read,
-                      headerColor: AppColors.successMedium,
-                      content: Column(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Text(
-                            '이메일로 비밀번호 재설정 링크가 발송되었습니다.\n이메일을 확인해주세요.',
-                            style: ResponsiveHelper.bodyStyle(context),
-                            textAlign: TextAlign.center,
-                          ),
-                          SizedBox(height: ResponsiveHelper.spacing(context, 16)),
-                          Container(
-                            padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 16)),
-                            decoration: BoxDecoration(
-                              color: AppColors.infoBg,
-                              borderRadius: BorderRadius.circular(12),
-                            ),
-                            child: Row(
-                              children: [
-                                Icon(Icons.info_outline, color: AppColors.infoDark),
-                                SizedBox(width: ResponsiveHelper.spacing(context, 12)),
-                                Expanded(
-                                  child: Text(
-                                    '링크는 24시간 동안 유효합니다.',
-                                    style: ResponsiveHelper.smallStyle(context).copyWith(
-                                      color: AppColors.infoDeep,
-                                    ),
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                        ],
-                      ),
-                      actions: [
-                        StyledDialogButton.primary(
-                          text: '확인',
-                          onPressed: () {
-                            Navigator.pop(resultContext);
-                            Navigator.pop(context);
-                          },
-                        ),
-                      ],
-                    ),
-                  );
-                },
+            child: Container(
+              decoration: const BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
               ),
-          ],
-        ),
+              padding: const EdgeInsets.fromLTRB(24, 0, 24, 40),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Center(
+                    child: Container(
+                      margin: const EdgeInsets.only(top: 12, bottom: 24),
+                      width: 40, height: 4,
+                      decoration: BoxDecoration(
+                        color: AppColors.grey300,
+                        borderRadius: BorderRadius.circular(2),
+                      ),
+                    ),
+                  ),
+
+                  // ── 완료 화면 ──
+                  if (step == 2) ...[
+                    const SizedBox(height: 8),
+                    const Icon(Icons.check_circle_rounded, size: 60, color: Color(0xFF1565C0)),
+                    const SizedBox(height: 16),
+                    const Text('비밀번호가 변경되었어요',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700, color: Color(0xFF1A1A1A))),
+                    const SizedBox(height: 8),
+                    Text('새 비밀번호로 로그인해주세요',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(fontSize: 14, color: AppColors.grey500)),
+                    const SizedBox(height: 28),
+                    ElevatedButton(
+                      onPressed: () => Navigator.pop(sheetContext),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: const Color(0xFF1565C0),
+                        foregroundColor: Colors.white,
+                        padding: const EdgeInsets.symmetric(vertical: 16),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                        elevation: 0,
+                      ),
+                      child: const Text('로그인하러 가기', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
+                    ),
+                    const SizedBox(height: 8),
+
+                  // ── 인증코드 + 새 비밀번호 입력 ──
+                  ] else if (step == 1) ...[
+                    const Text('비밀번호 재설정',
+                        style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700, color: Color(0xFF1A1A1A))),
+                    const SizedBox(height: 6),
+                    Text('이메일로 발송된 인증번호와 새 비밀번호를 입력해주세요',
+                        style: TextStyle(fontSize: 14, color: AppColors.grey500)),
+                    const SizedBox(height: 24),
+                    _buildSheetTextField(
+                      controller: codeController,
+                      focusNode: codeFocus,
+                      label: '인증번호',
+                      hint: '6자리 숫자',
+                      icon: Icons.mail_outline,
+                      keyboardType: TextInputType.number,
+                      maxLength: 6,
+                      onSubmitted: (_) => newPasswordFocus.requestFocus(),
+                    ),
+                    const SizedBox(height: 12),
+                    _buildSheetTextField(
+                      controller: newPasswordController,
+                      focusNode: newPasswordFocus,
+                      label: '새 비밀번호',
+                      hint: '6자 이상',
+                      icon: Icons.lock_outline,
+                      obscureText: obscureNew,
+                      suffixWidget: GestureDetector(
+                        onTap: () => setSheetState(() => obscureNew = !obscureNew),
+                        child: Icon(obscureNew ? Icons.visibility_off : Icons.visibility,
+                            color: AppColors.grey400, size: 20),
+                      ),
+                      onSubmitted: (_) => confirmPasswordFocus.requestFocus(),
+                    ),
+                    const SizedBox(height: 12),
+                    _buildSheetTextField(
+                      controller: confirmPasswordController,
+                      focusNode: confirmPasswordFocus,
+                      label: '비밀번호 확인',
+                      hint: '비밀번호를 다시 입력해주세요',
+                      icon: Icons.lock_outline,
+                      obscureText: obscureConfirm,
+                      suffixWidget: GestureDetector(
+                        onTap: () => setSheetState(() => obscureConfirm = !obscureConfirm),
+                        child: Icon(obscureConfirm ? Icons.visibility_off : Icons.visibility,
+                            color: AppColors.grey400, size: 20),
+                      ),
+                      onSubmitted: (_) => resetPassword(),
+                    ),
+                    const SizedBox(height: 24),
+                    ElevatedButton(
+                      onPressed: isChanging ? null : resetPassword,
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: const Color(0xFF1565C0),
+                        foregroundColor: Colors.white,
+                        padding: const EdgeInsets.symmetric(vertical: 16),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                        elevation: 0,
+                      ),
+                      child: isChanging
+                          ? const SizedBox(width: 20, height: 20,
+                              child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2))
+                          : const Text('비밀번호 변경', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
+                    ),
+
+                  // ── 아이디 + 이메일 입력 ──
+                  ] else ...[
+                    const Text('비밀번호 찾기',
+                        style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700, color: Color(0xFF1A1A1A))),
+                    const SizedBox(height: 6),
+                    Text('가입 시 등록한 아이디와 이메일을 입력해주세요',
+                        style: TextStyle(fontSize: 14, color: AppColors.grey500)),
+                    const SizedBox(height: 24),
+                    _buildSheetTextField(
+                      controller: usernameController,
+                      focusNode: usernameFocus,
+                      label: '아이디',
+                      hint: 'your_username',
+                      icon: Icons.account_circle_outlined,
+                      onSubmitted: (_) => emailFocus.requestFocus(),
+                    ),
+                    const SizedBox(height: 12),
+                    _buildSheetTextField(
+                      controller: emailController,
+                      focusNode: emailFocus,
+                      label: '이메일',
+                      hint: 'your@email.com',
+                      icon: Icons.email_outlined,
+                      keyboardType: TextInputType.emailAddress,
+                      onSubmitted: (_) => sendCode(),
+                    ),
+                    const SizedBox(height: 24),
+                    ElevatedButton(
+                      onPressed: isSending ? null : sendCode,
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: const Color(0xFF1565C0),
+                        foregroundColor: Colors.white,
+                        padding: const EdgeInsets.symmetric(vertical: 16),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                        elevation: 0,
+                      ),
+                      child: isSending
+                          ? const SizedBox(width: 20, height: 20,
+                              child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2))
+                          : const Text('인증번호 발송', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+          );
+        },
       ),
     );
 
-    // ⭐ dispose를 다이얼로그 끝난 후로 이동
     usernameController.dispose();
     emailController.dispose();
     codeController.dispose();
+    newPasswordController.dispose();
+    confirmPasswordController.dispose();
     usernameFocus.dispose();
     emailFocus.dispose();
     codeFocus.dispose();
+    newPasswordFocus.dispose();
+    confirmPasswordFocus.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-
     return Scaffold(
-      body: SafeArea(
-        child: Consumer<UserProvider>(
-          builder: (context, userProvider, _) {
-            return LoadingOverlay(
-              isLoading: userProvider.isLoading,
-              message: '로그인 중...',
-              child: Container(
-                decoration: BoxDecoration(
-                  gradient: LinearGradient(
-                    begin: Alignment.topLeft,
-                    end: Alignment.bottomRight,
-                    colors: [
-                      theme.primaryColor.withValues(alpha: 0.05),
-                      theme.primaryColor.withValues(alpha: 0.1),
-                    ],
-                  ),
-                ),
-                child: LayoutBuilder(
-                  builder: (context, constraints) {
-                    final availableHeight = constraints.maxHeight;
-                    final content = _buildContent(context, theme, userProvider);
-                    
-                    const minContentHeight = 580.0;
-                    
-                    if (availableHeight >= minContentHeight) {
-                      return Center(
-                        child: SingleChildScrollView(
-                          physics: const NeverScrollableScrollPhysics(),
-                          child: content,
-                        ),
-                      );
-                    }
-                    
-                    return SingleChildScrollView(
-                      physics: const ClampingScrollPhysics(),
-                      child: content,
-                    );
-                  },
+      resizeToAvoidBottomInset: true,
+      body: Consumer<UserProvider>(
+        builder: (context, userProvider, _) {
+          return LoadingOverlay(
+            isLoading: userProvider.isLoading,
+            message: '로그인 중...',
+            child: Container(
+              decoration: const BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.topCenter,
+                  end: Alignment.bottomCenter,
+                  colors: [Color(0xFF1565C0), Color(0xFF1E88E5)],
                 ),
               ),
-            );
-          },
-        ),
+              child: SafeArea(
+                bottom: false,
+                child: Column(
+                  children: [
+                    // 상단 로고 영역
+                    SizedBox(
+                      height: MediaQuery.of(context).size.height * 0.27,
+                      child: Center(
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            const Text(
+                              'ALfit',
+                              style: TextStyle(
+                                fontSize: 44,
+                                fontWeight: FontWeight.w800,
+                                color: Colors.white,
+                                letterSpacing: 1.5,
+                                height: 1,
+                              ),
+                            ),
+                            const SizedBox(height: 8),
+                            Text(
+                              '나에게 딱 맞는 알바 매칭',
+                              style: TextStyle(
+                                fontSize: 14,
+                                fontWeight: FontWeight.w400,
+                                color: Colors.white.withValues(alpha: 0.75),
+                                letterSpacing: 0.5,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+
+                    // 하단 흰색 폼 영역
+                    Expanded(
+                      child: Container(
+                        decoration: const BoxDecoration(
+                          color: Colors.white,
+                          borderRadius: BorderRadius.vertical(
+                            top: Radius.circular(32),
+                          ),
+                        ),
+                        child: SingleChildScrollView(
+                          padding: const EdgeInsets.fromLTRB(28, 32, 28, 40),
+                          child: _buildForm(context, userProvider),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          );
+        },
       ),
     );
   }
 
-  Widget _buildContent(BuildContext context, ThemeData theme, UserProvider userProvider) {
-    return Padding(
-      padding: EdgeInsets.symmetric(
-        horizontal: ResponsiveHelper.spacing(context, 24),
-        vertical: ResponsiveHelper.spacing(context, 20),
-      ),
+  Widget _buildForm(BuildContext context, UserProvider userProvider) {
+    final theme = Theme.of(context);
+
+    return Form(
+      key: _formKey,
       child: Column(
-        mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          // 로고 (이미 "나에게 딱 맞는 알바, 알핏!" 포함)
-          ALfitSplashLogo(
-            isDark: false,
-            width: MediaQuery.of(context).size.width * 0.5,
-          ),
-          
-          SizedBox(height: ResponsiveHelper.spacing(context, 8)),
-          
-          // 서브타이틀
-          Text(
-            '반갑습니다!',
-            textAlign: TextAlign.center,
-            style: ResponsiveHelper.bodyStyle(
-              context,
-              color: AppColors.grey600,
-            ).copyWith(
-              fontWeight: FontWeight.w500,
+          const Text(
+            '로그인',
+            style: TextStyle(
+              fontSize: 24,
+              fontWeight: FontWeight.w700,
+              color: Color(0xFF1A1A1A),
+              height: 1,
             ),
           ),
-          
-          SizedBox(height: ResponsiveHelper.spacing(context, 24)),
 
-          // 로그인 카드
-          Container(
-            padding: ResponsiveHelper.cardPadding(context),
-            decoration: BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.circular(24),
-              boxShadow: [
-                BoxShadow(
-                  color: Colors.black.withValues(alpha: 0.08),
-                  blurRadius: 20,
-                  offset: const Offset(0, 4),
-                ),
-              ],
-            ),
-            child: Form(
-              key: _formKey,
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  // ✨ 아이디 입력 (포커스 이동)
-                  _buildTextField(
-                    context: context,
-                    theme: theme,
-                    controller: _usernameController,
-                    focusNode: _usernameFocus,
-                    label: '아이디',
-                    hint: 'your_username',
-                    icon: Icons.account_circle_outlined,
-                    textInputAction: TextInputAction.next,
-                    onFieldSubmitted: (_) => _passwordFocus.requestFocus(),
-                    validator: (value) {
-                      if (value == null || value.isEmpty) {
-                        return '아이디를 입력해주세요';
-                      }
-                      return null;
-                    },
-                  ),
-                  
-                  SizedBox(height: ResponsiveHelper.spacing(context, 12)),
+          const SizedBox(height: 28),
 
-                  // ✨ 비밀번호 입력 (포커스 이동)
-                  _buildTextField(
-                    context: context,
-                    theme: theme,
-                    controller: _passwordController,
-                    focusNode: _passwordFocus,
-                    label: '비밀번호',
-                    hint: '6자 이상 입력',
-                    icon: Icons.lock_outline,
-                    obscureText: _obscurePassword,
-                    textInputAction: TextInputAction.done,
-                    onFieldSubmitted: (_) => _handleLogin(),
-                    suffixIcon: IconButton(
-                      icon: Icon(
-                        _obscurePassword ? Icons.visibility_off : Icons.visibility,
-                        color: AppColors.grey600,
-                        size: ResponsiveHelper.iconSize(context, 20),
-                      ),
-                      onPressed: () {
-                        setState(() {
-                          _obscurePassword = !_obscurePassword;
-                        });
-                      },
-                    ),
-                    validator: (value) {
-                      if (value == null || value.isEmpty) {
-                        return '비밀번호를 입력해주세요';
-                      }
-                      if (value.length < 6) {
-                        return '비밀번호는 6자 이상이어야 합니다';
-                      }
-                      return null;
-                    },
-                  ),
-                  
-                  SizedBox(height: ResponsiveHelper.spacing(context, 20)),
+          _buildTextField(
+            context: context,
+            theme: theme,
+            controller: _usernameController,
+            focusNode: _usernameFocus,
+            label: '아이디',
+            hint: 'your_username',
+            icon: Icons.account_circle_outlined,
+            textInputAction: TextInputAction.next,
+            onFieldSubmitted: (_) => _passwordFocus.requestFocus(),
+            validator: (value) {
+              if (value == null || value.isEmpty) return '아이디를 입력해주세요';
+              return null;
+            },
+          ),
 
-                  // 로그인 버튼
-                  ElevatedButton(
-                    onPressed: userProvider.isLoading ? null : _handleLogin,
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: theme.primaryColor,
-                      foregroundColor: Colors.white,
-                      padding: EdgeInsets.symmetric(
-                        vertical: ResponsiveHelper.spacing(context, 14),
-                      ),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                      elevation: 2,
-                    ),
-                    child: Text(
-                      '로그인',
-                      style: ResponsiveHelper.bodyStyle(context).copyWith(
-                        color: Colors.white,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                  ),
-                ],
+          const SizedBox(height: 14),
+
+          _buildTextField(
+            context: context,
+            theme: theme,
+            controller: _passwordController,
+            focusNode: _passwordFocus,
+            label: '비밀번호',
+            hint: '6자 이상 입력',
+            icon: Icons.lock_outline,
+            obscureText: _obscurePassword,
+            textInputAction: TextInputAction.done,
+            onFieldSubmitted: (_) => _handleLogin(),
+            suffixIcon: IconButton(
+              icon: Icon(
+                _obscurePassword ? Icons.visibility_off : Icons.visibility,
+                color: AppColors.grey400,
+                size: 20,
               ),
+              onPressed: () => setState(() => _obscurePassword = !_obscurePassword),
             ),
+            validator: (value) {
+              if (value == null || value.isEmpty) return '비밀번호를 입력해주세요';
+              if (value.length < 6) return '비밀번호는 6자 이상이어야 합니다';
+              return null;
+            },
           ),
-          
-          SizedBox(height: ResponsiveHelper.spacing(context, 12)),
 
-          // ✨ 아이디/비밀번호 찾기
+          const SizedBox(height: 10),
+
+          // 아이디/비밀번호 찾기
           Row(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
               TextButton(
                 onPressed: _showFindUsernameDialog,
                 style: TextButton.styleFrom(
-                  foregroundColor: AppColors.grey700,
-                  padding: EdgeInsets.symmetric(
-                    horizontal: ResponsiveHelper.spacing(context, 8),
-                    vertical: ResponsiveHelper.spacing(context, 4),
-                  ),
+                  foregroundColor: AppColors.grey500,
                   minimumSize: Size.zero,
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                   tapTargetSize: MaterialTapTargetSize.shrinkWrap,
                 ),
-                child: Text(
-                  '아이디 찾기',
-                  style: ResponsiveHelper.smallStyle(context, color: AppColors.grey700),
-                ),
+                child: const Text('아이디 찾기', style: TextStyle(fontSize: 13)),
               ),
-              
-              Container(
-                height: ResponsiveHelper.spacing(context, 12),
-                width: 1,
-                color: AppColors.grey400,
-                margin: EdgeInsets.symmetric(
-                  horizontal: ResponsiveHelper.spacing(context, 8),
-                ),
-              ),
-              
+              Container(width: 1, height: 12, color: AppColors.grey300,
+                  margin: const EdgeInsets.symmetric(horizontal: 4)),
               TextButton(
                 onPressed: _showFindPasswordDialog,
                 style: TextButton.styleFrom(
-                  foregroundColor: AppColors.grey700,
-                  padding: EdgeInsets.symmetric(
-                    horizontal: ResponsiveHelper.spacing(context, 8),
-                    vertical: ResponsiveHelper.spacing(context, 4),
-                  ),
+                  foregroundColor: AppColors.grey500,
                   minimumSize: Size.zero,
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                   tapTargetSize: MaterialTapTargetSize.shrinkWrap,
                 ),
-                child: Text(
-                  '비밀번호 찾기',
-                  style: ResponsiveHelper.smallStyle(context, color: AppColors.grey700),
-                ),
+                child: const Text('비밀번호 찾기', style: TextStyle(fontSize: 13)),
               ),
             ],
           ),
-          
-          SizedBox(height: ResponsiveHelper.spacing(context, 16)),
 
-          // 회원가입 버튼
-          OutlinedButton(
-            onPressed: () {
-              Navigator.push(
-                context,
-                MaterialPageRoute(
-                  builder: (context) => const RegisterScreen(),
-                ),
-              );
-            },
-            style: OutlinedButton.styleFrom(
-              foregroundColor: theme.primaryColor,
-              side: BorderSide(
-                color: theme.primaryColor,
-                width: 1.5,
-              ),
-              padding: EdgeInsets.symmetric(
-                vertical: ResponsiveHelper.spacing(context, 12),
-              ),
+          const SizedBox(height: 24),
+
+          // 로그인 버튼
+          ElevatedButton(
+            onPressed: userProvider.isLoading ? null : _handleLogin,
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFF1565C0),
+              foregroundColor: Colors.white,
+              padding: const EdgeInsets.symmetric(vertical: 16),
               shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(12),
+                borderRadius: BorderRadius.circular(14),
               ),
-              backgroundColor: Colors.white,
+              elevation: 0,
             ),
-            child: Text(
-              '회원가입',
-              style: ResponsiveHelper.bodyStyle(context).copyWith(
-                fontWeight: FontWeight.w600,
-              ),
+            child: const Text(
+              '로그인',
+              style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
             ),
           ),
-          
-          SizedBox(height: ResponsiveHelper.spacing(context, 16)),
-          
-          // 안내 문구
-          Container(
-            padding: EdgeInsets.symmetric(
-              horizontal: ResponsiveHelper.spacing(context, 12),
-              vertical: ResponsiveHelper.spacing(context, 10),
-            ),
-            decoration: BoxDecoration(
-              color: theme.primaryColor.withValues(alpha: 0.08),
-              borderRadius: BorderRadius.circular(10),
-            ),
-            child: Row(
-              children: [
-                Icon(
-                  Icons.info_outline,
-                  color: theme.primaryColor,
-                  size: ResponsiveHelper.iconSize(context, 16),
+
+          const SizedBox(height: 40),
+
+          // 회원가입 링크
+          Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Text(
+                '계정이 없으신가요?',
+                style: TextStyle(fontSize: 14, color: AppColors.grey500),
+              ),
+              TextButton(
+                onPressed: () => Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (_) => const RegisterScreen()),
                 ),
-                SizedBox(width: ResponsiveHelper.spacing(context, 8)),
-                Expanded(
-                  child: Text(
-                    '처음 이용하시나요? 회원가입을 진행해주세요.',
-                    style: ResponsiveHelper.smallStyle(
-                      context,
-                      color: AppColors.grey700,
-                    ),
-                  ),
+                style: TextButton.styleFrom(
+                  foregroundColor: const Color(0xFF1565C0),
+                  minimumSize: Size.zero,
+                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
                 ),
-              ],
-            ),
+                child: const Text(
+                  '회원가입',
+                  style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
+                ),
+              ),
+            ],
           ),
         ],
       ),
@@ -881,6 +791,65 @@ class _LoginScreenState extends State<LoginScreen> {
         isDense: true,
       ),
       validator: validator,
+    );
+  }
+
+  Widget _buildSheetTextField({
+    required TextEditingController controller,
+    required FocusNode focusNode,
+    required String label,
+    required String hint,
+    required IconData icon,
+    TextInputType? keyboardType,
+    int? maxLength,
+    bool enabled = true,
+    bool obscureText = false,
+    Widget? suffixWidget,
+    Function(String)? onSubmitted,
+  }) {
+    return TextField(
+      controller: controller,
+      focusNode: focusNode,
+      keyboardType: keyboardType,
+      maxLength: maxLength,
+      enabled: enabled,
+      obscureText: obscureText,
+      onSubmitted: onSubmitted,
+      style: const TextStyle(fontSize: 15),
+      decoration: InputDecoration(
+        labelText: label,
+        hintText: hint,
+        hintStyle: TextStyle(color: AppColors.grey400, fontSize: 14),
+        prefixIcon: Icon(icon, color: const Color(0xFF1565C0), size: 20),
+        suffixIcon: suffixWidget != null
+            ? Padding(
+                padding: const EdgeInsets.only(right: 12),
+                child: suffixWidget,
+              )
+            : null,
+        suffixIconConstraints: const BoxConstraints(minWidth: 0, minHeight: 0),
+        counterText: '',
+        border: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(12),
+          borderSide: BorderSide(color: AppColors.grey300),
+        ),
+        enabledBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(12),
+          borderSide: BorderSide(color: AppColors.grey300),
+        ),
+        disabledBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(12),
+          borderSide: BorderSide(color: AppColors.grey200),
+        ),
+        focusedBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(12),
+          borderSide: const BorderSide(color: Color(0xFF1565C0), width: 2),
+        ),
+        filled: true,
+        fillColor: enabled ? AppColors.grey50 : AppColors.grey100,
+        contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
+        isDense: true,
+      ),
     );
   }
 }

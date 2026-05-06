@@ -1,11 +1,287 @@
 import {onSchedule} from "firebase-functions/v2/scheduler";
 import {onDocumentCreated} from "firebase-functions/v2/firestore";
+import {onCall, HttpsError} from "firebase-functions/v2/https";
 import {initializeApp} from "firebase-admin/app";
 import {getFirestore, Timestamp, Firestore} from "firebase-admin/firestore";
 import * as admin from "firebase-admin";
+import * as nodemailer from "nodemailer";
 
 initializeApp();
 const db = getFirestore();
+
+// ═══════════════════════════════════════════════════════════
+// 📧 이메일 인증 코드 발송
+// ═══════════════════════════════════════════════════════════
+
+export const sendEmailVerificationCode = onCall(
+  {
+    region: "asia-northeast3",
+  },
+  async (request) => {
+    const email = request.data.email as string | undefined;
+
+    if (!email || !email.includes("@")) {
+      throw new HttpsError("invalid-argument", "올바른 이메일을 입력해주세요.");
+    }
+
+    const gmailUser = process.env.GMAIL_USER;
+    const gmailPassword = process.env.GMAIL_APP_PASSWORD;
+
+    if (!gmailUser || !gmailPassword) {
+      throw new HttpsError("internal", "이메일 서비스 설정이 누락되었습니다.");
+    }
+
+    // 6자리 인증 코드 생성
+    const code = Math.floor(100000 + Math.random() * 900000).toString();
+    const expiresAt = new Date(Date.now() + 5 * 60 * 1000); // 5분 후 만료
+
+    // Firestore에 코드 저장
+    await db.collection("emailVerificationCodes").doc(email).set({
+      code,
+      expiresAt: Timestamp.fromDate(expiresAt),
+      createdAt: Timestamp.now(),
+      attempts: 0,
+    });
+
+    // 이메일 발송
+    const transporter = nodemailer.createTransport({
+      service: "gmail",
+      auth: {
+        user: gmailUser,
+        pass: gmailPassword,
+      },
+    });
+
+    await transporter.sendMail({
+      from: `"AlFit" <${gmailUser}>`,
+      to: email,
+      subject: "[AlFit] 이메일 인증 코드",
+      html: `
+        <div style="font-family: sans-serif; max-width: 480px; margin: 0 auto;">
+          <h2 style="color: #1976D2;">AlFit 이메일 인증</h2>
+          <p>아래 인증 코드를 입력해주세요.</p>
+          <div style="background: #f5f5f5; padding: 24px; text-align: center;
+                      border-radius: 8px; margin: 24px 0;">
+            <span style="font-size:36px;font-weight:bold;
+                         letter-spacing:8px;color:#1976D2;">${code}</span>
+          </div>
+          <p style="color: #888; font-size: 13px;">
+            인증 코드는 발송 후 5분 동안 유효합니다.<br>
+            본인이 요청하지 않은 경우 이 메일을 무시하세요.
+          </p>
+        </div>
+      `,
+    });
+
+    console.log(`✅ [이메일 인증] 코드 발송 완료: ${email}`);
+    return {success: true};
+  }
+);
+
+// ═══════════════════════════════════════════════════════════
+// 📧 이메일 인증 코드 검증
+// ═══════════════════════════════════════════════════════════
+
+export const verifyEmailCode = onCall(
+  {
+    region: "asia-northeast3",
+  },
+  async (request) => {
+    const email = request.data.email as string | undefined;
+    const code = request.data.code as string | undefined;
+
+    if (!email || !code) {
+      throw new HttpsError("invalid-argument", "이메일과 코드를 입력해주세요.");
+    }
+
+    const docRef = db.collection("emailVerificationCodes").doc(email);
+    const doc = await docRef.get();
+
+    if (!doc.exists) {
+      return {valid: false, reason: "not_found"};
+    }
+
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+    const data = doc.data()!;
+    const expiresAt = (data.expiresAt as Timestamp).toDate();
+    const attempts = (data.attempts as number) ?? 0;
+
+    // 5회 초과 시도 차단
+    if (attempts >= 5) {
+      return {valid: false, reason: "too_many_attempts"};
+    }
+
+    if (new Date() > expiresAt) {
+      await docRef.delete();
+      return {valid: false, reason: "expired"};
+    }
+
+    if (data.code !== code) {
+      await docRef.update({attempts: attempts + 1});
+      return {valid: false, reason: "wrong_code"};
+    }
+
+    // 검증 성공 → 코드 삭제
+    await docRef.delete();
+    console.log(`✅ [이메일 인증] 검증 성공: ${email}`);
+    return {valid: true};
+  }
+);
+
+// ═══════════════════════════════════════════════════════════
+// 🔑 비밀번호 재설정 코드 발송
+// ═══════════════════════════════════════════════════════════
+
+export const sendPasswordResetCode = onCall(
+  {region: "asia-northeast3"},
+  async (request) => {
+    const username = request.data.username as string | undefined;
+    const email = request.data.email as string | undefined;
+
+    if (!username || !email) {
+      throw new HttpsError("invalid-argument", "아이디와 이메일을 입력해주세요.");
+    }
+
+    // Firestore에서 username으로 사용자 조회
+    const snapshot = await db
+      .collection("users")
+      .where("username", "==", username)
+      .limit(1)
+      .get();
+
+    if (snapshot.empty) {
+      throw new HttpsError("not-found", "존재하지 않는 아이디입니다.");
+    }
+
+    const userData = snapshot.docs[0].data();
+    const storedEmail = userData.userEmail as string | undefined;
+
+    if (!storedEmail || storedEmail.toLowerCase() !== email.toLowerCase()) {
+      throw new HttpsError("invalid-argument", "아이디와 이메일이 일치하지 않습니다.");
+    }
+
+    const gmailUser = process.env.GMAIL_USER;
+    const gmailPassword = process.env.GMAIL_APP_PASSWORD;
+
+    if (!gmailUser || !gmailPassword) {
+      throw new HttpsError("internal", "이메일 서비스 설정이 누락되었습니다.");
+    }
+
+    const code = Math.floor(100000 + Math.random() * 900000).toString();
+    const expiresAt = new Date(Date.now() + 5 * 60 * 1000);
+
+    await db.collection("passwordResetCodes").doc(username).set({
+      code,
+      expiresAt: Timestamp.fromDate(expiresAt),
+      createdAt: Timestamp.now(),
+      attempts: 0,
+    });
+
+    const transporter = nodemailer.createTransport({
+      service: "gmail",
+      auth: {user: gmailUser, pass: gmailPassword},
+    });
+
+    await transporter.sendMail({
+      from: `"ALfit" <${gmailUser}>`,
+      to: storedEmail,
+      subject: "[ALfit] 비밀번호 재설정 인증 코드",
+      html: `
+        <div style="font-family: sans-serif; max-width: 480px; margin: 0 auto;">
+          <h2 style="color: #1565C0;">ALfit 비밀번호 재설정</h2>
+          <p>아래 인증 코드를 입력해주세요.</p>
+          <div style="background: #E3F2FD; padding: 24px; text-align: center;
+                      border-radius: 12px; margin: 24px 0;">
+            <span style="font-size:36px;font-weight:bold;
+                         letter-spacing:8px;color:#1565C0;">${code}</span>
+          </div>
+          <p style="color: #888; font-size: 13px;">
+            인증 코드는 발송 후 5분 동안 유효합니다.<br>
+            본인이 요청하지 않은 경우 이 메일을 무시하세요.
+          </p>
+        </div>
+      `,
+    });
+
+    console.log(`✅ [비밀번호 재설정] 코드 발송 완료: ${username}`);
+    return {success: true};
+  }
+);
+
+// ═══════════════════════════════════════════════════════════
+// 🔑 비밀번호 재설정 코드 검증 및 변경
+// ═══════════════════════════════════════════════════════════
+
+export const resetPasswordWithCode = onCall(
+  {region: "asia-northeast3"},
+  async (request) => {
+    const username = request.data.username as string | undefined;
+    const code = request.data.code as string | undefined;
+    const newPassword = request.data.newPassword as string | undefined;
+
+    if (!username || !code || !newPassword) {
+      throw new HttpsError("invalid-argument", "필수 항목이 누락되었습니다.");
+    }
+
+    if (newPassword.length < 6) {
+      throw new HttpsError("invalid-argument", "비밀번호는 6자 이상이어야 합니다.");
+    }
+
+    const docRef = db.collection("passwordResetCodes").doc(username);
+    const doc = await docRef.get();
+
+    if (!doc.exists) {
+      throw new HttpsError("not-found", "인증 코드를 먼저 요청해주세요.");
+    }
+
+    const data = doc.data();
+    if (!data) {
+      throw new HttpsError("not-found", "인증 코드를 찾을 수 없습니다.");
+    }
+    const expiresAt = (data.expiresAt as Timestamp).toDate();
+    const attempts = (data.attempts as number) ?? 0;
+
+    if (attempts >= 5) {
+      await docRef.delete();
+      throw new HttpsError(
+        "resource-exhausted",
+        "인증 시도 횟수를 초과했습니다. 다시 시도해주세요."
+      );
+    }
+
+    if (new Date() > expiresAt) {
+      await docRef.delete();
+      throw new HttpsError("deadline-exceeded", "인증 코드가 만료되었습니다. 다시 요청해주세요.");
+    }
+
+    if (data.code !== code) {
+      await docRef.update({attempts: attempts + 1});
+      throw new HttpsError("invalid-argument", "인증번호가 일치하지 않습니다.");
+    }
+
+    // 코드 검증 성공 → 사용자 UID 조회
+    const userSnapshot = await db
+      .collection("users")
+      .where("username", "==", username)
+      .limit(1)
+      .get();
+
+    if (userSnapshot.empty) {
+      throw new HttpsError("not-found", "사용자를 찾을 수 없습니다.");
+    }
+
+    const uid = userSnapshot.docs[0].id;
+
+    // Firebase Admin SDK로 비밀번호 변경
+    await admin.auth().updateUser(uid, {password: newPassword});
+
+    // 코드 삭제
+    await docRef.delete();
+
+    console.log(`✅ [비밀번호 재설정] 완료: ${username}`);
+    return {success: true};
+  }
+);
 
 // ═══════════════════════════════════════════════════════════
 // 🔔 알림 생성 시 FCM 푸시 자동 발송 (onCreate 트리거)
@@ -880,20 +1156,32 @@ async function syncGroupMasterStatus(
       newStatus = "CLOSED";
     }
 
+    const now = Timestamp.now();
+    const updateData: Record<string, unknown> = {
+      status: newStatus,
+      statusUpdatedAt: now,
+    };
+
+    if (newStatus === "CLOSED") {
+      updateData.closedAt = now;
+      updateData.closedReason = "ALL_CHILDREN_CLOSED";
+    }
+
+    // tos 컬렉션 마스터 TO 업데이트
     if (currentStatus !== newStatus) {
-      const updateData: Record<string, unknown> = {
-        status: newStatus,
-        statusUpdatedAt: Timestamp.now(),
-      };
-
-      if (newStatus === "CLOSED") {
-        updateData.closedAt = Timestamp.now();
-        updateData.closedReason = "ALL_CHILDREN_CLOSED";
-      }
-
       await masterDoc.ref.update(updateData);
       console.log(
         `    ✓ 그룹 마스터 ${masterDoc.id}: ${currentStatus} → ${newStatus}`
+      );
+    }
+
+    // groups 컬렉션은 독립적으로 비교해서 업데이트 (tos와 groups가 불일치한 기존 데이터 보정)
+    const groupDocRef = firestore.collection("groups").doc(groupId);
+    const groupDoc = await groupDocRef.get();
+    if (groupDoc.exists && groupDoc.data()?.status !== newStatus) {
+      await groupDocRef.update(updateData);
+      console.log(
+        `    ✓ groups 컬렉션 ${groupId}: ${groupDoc.data()?.status} → ${newStatus}`
       );
     }
   } catch (error) {

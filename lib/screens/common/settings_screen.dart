@@ -1,12 +1,14 @@
 ﻿import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:package_info_plus/package_info_plus.dart';
 
 // Models
 import '../../models/core/user_model.dart';
 
-// Providers  
+// Providers
 import '../../providers/user_provider.dart';
+import '../../providers/theme_provider.dart';
 
 // Utils
 import '../../utils/responsive_helper.dart';
@@ -45,30 +47,42 @@ class SettingsScreen extends StatefulWidget {
 class _SettingsScreenState extends State<SettingsScreen> {
   bool _isPushEnabled = true;
   bool _isLoading = true;
+  String _appVersion = '';
 
   @override
   void initState() {
     super.initState();
     _loadNotificationStatus();
+    _loadAppVersion();
+  }
+
+  Future<void> _loadAppVersion() async {
+    final info = await PackageInfo.fromPlatform();
+    if (mounted) setState(() => _appVersion = info.version);
   }
 
   /// 알림 상태 로드
   Future<void> _loadNotificationStatus() async {
     final userProvider = context.read<UserProvider>();
     final userId = userProvider.currentUser?.uid;
-    
+
     if (userId != null) {
-      // Firestore에서 fcmToken 존재 여부로 판단
-      final doc = await FirebaseFirestore.instance
-          .collection('users')
-          .doc(userId)
-          .get();
-      
-      final hasFcmToken = doc.data()?['fcmToken'] != null;
-      
+      // 시스템 권한 + Firestore fcmToken 둘 다 확인
+      final permissionStatus = await Permission.notification.status;
+      final systemGranted = permissionStatus.isGranted;
+
+      bool hasFcmToken = false;
+      if (systemGranted) {
+        final doc = await FirebaseFirestore.instance
+            .collection('users')
+            .doc(userId)
+            .get();
+        hasFcmToken = doc.data()?['fcmToken'] != null;
+      }
+
       if (mounted) {
         setState(() {
-          _isPushEnabled = hasFcmToken;
+          _isPushEnabled = systemGranted && hasFcmToken;
           _isLoading = false;
         });
       }
@@ -88,7 +102,21 @@ class _SettingsScreenState extends State<SettingsScreen> {
       if (userId == null) return;
       
       if (value) {
-        // 알림 켜기 → FCM 초기화
+        // 알림 켜기 → 시스템 권한 먼저 확인
+        final permissionStatus = await Permission.notification.status;
+        if (permissionStatus.isDenied) {
+          await Permission.notification.request();
+        }
+        final granted = await Permission.notification.isGranted;
+        if (!granted) {
+          // 시스템에서 거부된 경우 시스템 설정으로 안내
+          if (mounted) {
+            ToastHelper.showWarning('기기 설정에서 알림 권한을 허용해주세요');
+            await openAppSettings();
+          }
+          setState(() => _isLoading = false);
+          return;
+        }
         await FCMService().initialize(userId);
         ToastHelper.showSuccess('푸시 알림이 활성화되었습니다');
       } else {
@@ -275,6 +303,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
           ],
 
 
+          // ✨ 화면 테마 섹션
+          _buildSectionHeader(context, '화면', Icons.palette_outlined),
+          SizedBox(height: ResponsiveHelper.spacing(context, 12)),
+          _buildDarkModeToggleCard(context),
+          SizedBox(height: ResponsiveHelper.spacing(context, 24)),
+
           // ✨ 알림 섹션 (공통)
           _buildSectionHeader(context, '알림', Icons.notifications_outlined),
           SizedBox(height: ResponsiveHelper.spacing(context, 12)),
@@ -305,7 +339,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
           _buildInfoCard(
             context,
             items: [
-              {'icon': Icons.phone_android, 'title': '앱 버전', 'value': '1.0.0'},
+              {'icon': Icons.phone_android, 'title': '앱 버전', 'value': _appVersion.isEmpty ? '...' : _appVersion},
               {'icon': Icons.update, 'title': '최신 업데이트', 'value': '2024.11.21'},
               {'icon': Icons.policy, 'title': '개인정보 처리방침', 'value': '보기'},
               {'icon': Icons.description, 'title': '이용약관', 'value': '보기'},
@@ -840,6 +874,81 @@ class _SettingsScreenState extends State<SettingsScreen> {
     );
   }
   /// ✨ 알림 토글 카드
+  Widget _buildDarkModeToggleCard(BuildContext context) {
+    final themeProvider = context.watch<ThemeProvider>();
+    const iconColor = Color(0xFF5C6BC0);
+
+    return Container(
+      decoration: BoxDecoration(
+        color: Theme.of(context).cardTheme.color ?? Colors.white,
+        borderRadius: BorderRadius.circular(20),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.grey.withValues(alpha: 0.1),
+            blurRadius: 10,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
+      child: Padding(
+        padding: ResponsiveHelper.cardPadding(context),
+        child: Row(
+          children: [
+            Container(
+              padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 16)),
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  colors: [iconColor, iconColor.withValues(alpha: 0.8)],
+                ),
+                borderRadius: BorderRadius.circular(16),
+                boxShadow: [
+                  BoxShadow(
+                    color: iconColor.withValues(alpha: 0.3),
+                    blurRadius: 8,
+                    offset: const Offset(0, 4),
+                  ),
+                ],
+              ),
+              child: Icon(
+                themeProvider.isDarkMode
+                    ? Icons.dark_mode
+                    : Icons.light_mode,
+                color: Colors.white,
+                size: ResponsiveHelper.iconSize(context, 28),
+              ),
+            ),
+            SizedBox(width: ResponsiveHelper.spacing(context, 16)),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    '다크 모드',
+                    style: ResponsiveHelper.subtitleStyle(context).copyWith(
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                  Text(
+                    themeProvider.isDarkMode ? '어두운 화면' : '밝은 화면',
+                    style: ResponsiveHelper.smallStyle(
+                      context,
+                      color: AppColors.grey500,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            Switch(
+              value: themeProvider.isDarkMode,
+              onChanged: (_) => themeProvider.toggleDarkMode(),
+              activeThumbColor: Theme.of(context).primaryColor,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   Widget _buildNotificationToggleCard(BuildContext context) {
     final theme = Theme.of(context);
     const iconColor = Colors.amber;
@@ -954,6 +1063,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
         color: Colors.transparent,
         child: InkWell(
           onTap: () async {
+            final themeProvider = context.read<ThemeProvider>();
             final confirmed = await showDialog<bool>(
               context: context,
               builder: (context) => AlertDialog(
@@ -976,6 +1086,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
             );
 
             if (confirmed == true) {
+              themeProvider.reset();
               await userProvider.signOut();
             }
           },

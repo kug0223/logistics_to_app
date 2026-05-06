@@ -78,6 +78,20 @@ class _BusinessListScreenState extends State<BusinessListScreen> {
         _businesses = businesses;
         _isLoading = false;
       });
+
+      // 사업장이 1개이면 목록 건너뛰고 바로 상세 화면으로 이동
+      if (businesses.length == 1 && mounted && !forceServer) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted) {
+            Navigator.pushReplacement(
+              context,
+              MaterialPageRoute(
+                builder: (_) => BusinessDetailScreen(business: businesses.first),
+              ),
+            );
+          }
+        });
+      }
     } catch (e) {
       debugPrint('❌ 사업장 로드 실패: $e');
       ToastHelper.showError('사업장 목록을 불러오는데 실패했습니다');
