@@ -1,294 +1,169 @@
 import '../core/to_model.dart';
-import '../core/work_detail_model.dart';
-import '../core/group_model.dart';
+import '../core/slot_model.dart';
+import '../core/work_detail_data.dart';
 
-/// 리스트 아이템 (그룹 또는 단일 TO)
-/// 
-/// 🔄 리팩토링: 그룹 정보가 groups 컬렉션으로 분리됨
-/// - 그룹인 경우: group 필드 사용
-/// - 단일 TO인 경우: singleTO 필드 사용
+/// 공고 리스트 아이템 (관리자용)
+///
+/// 단일 TOModel을 래핑. flex 타입은 slots를 lazy-load.
+/// [Phase 3 리팩토링] groups 구조 제거, slots 구조로 전환.
 class TOGroupItem {
-  // ✅ 새 구조: 그룹 정보 (groups 컬렉션)
-  final GroupModel? group;
-  
-  // ✅ 단일 TO (비그룹)
+  /// 공고 모델 (항상 non-null)
   final TOModel? singleTO;
-  
-  // ✨ Lazy Loading 지원
-  List<TOItem>? _groupTOs;  // 그룹 내 TO 목록
-  bool isGroupDetailLoaded;  // 그룹 상세(개별 TO 목록) 로드 여부
-  
-  // 🔥 캐시된 통계 (UI 갱신용 - mutable)
+
+  // flex 타입 슬롯 목록 (lazy-load)
+  List<TOItem>? _groupTOs;
+  bool isGroupDetailLoaded;
+
+  // 캐시된 통계 (UI 갱신용)
   int? _cachedTotalConfirmed;
   int? _cachedTotalPending;
   int? _cachedTotalRequired;
 
   TOGroupItem({
-    this.group,
     this.singleTO,
     List<TOItem>? groupTOs,
     this.isGroupDetailLoaded = false,
   }) : _groupTOs = groupTOs {
-    // 둘 중 하나는 반드시 있어야 함
-    assert(group != null || singleTO != null, 'group 또는 singleTO 중 하나는 필수');
+    assert(singleTO != null, 'singleTO is required');
   }
-  
-  // ═══════════════════════════════════════════════════════════
-  // Getter - 공통 정보
-  // ═══════════════════════════════════════════════════════════
-  
-  /// 그룹 여부
-  bool get isGrouped => group != null;
-  
-  /// 고유 ID (그룹 ID 또는 TO ID)
-  String get id => group?.id ?? singleTO!.id;
-  
-  /// 표시 제목
-  String get title => group?.title ?? singleTO!.title;
-  
-  /// 사업장명
-  String get businessName => group?.businessName ?? singleTO!.businessName;
-  
-  /// 사업장 ID
-  String get businessId => group?.businessId ?? singleTO!.businessId;
-  
-  /// 상태 (ACTIVE, CLOSED, EXPIRED, SCHEDULED)
-  String get status => group?.status ?? singleTO!.status;
-  
-  /// 마감 여부
-  bool get isClosed => group?.isClosed ?? singleTO!.isClosed;
-  
-  /// 수동 마감 여부
-  bool get isManualClosed => group?.isManualClosed ?? singleTO!.isManualClosed;
-  
-  /// 예약 공개 대기 여부
-  bool get isPendingPublish => group?.isPendingPublish ?? singleTO!.isPendingPublish;
-  
-  /// 공개 예정 시간
-  DateTime? get publishAt => group?.publishAt ?? singleTO!.publishAt;
-  
-  /// 장기 공고 여부
-  bool get isLongTerm => singleTO?.isLongTerm ?? false;
-  
-  // ═══════════════════════════════════════════════════════════
-  // Getter - 통계 (🔥 캐시 우선 사용)
-  // ═══════════════════════════════════════════════════════════
-  
-  /// 총 필요 인원
-  int get totalRequired => _cachedTotalRequired ?? group?.totalRequired ?? singleTO!.totalRequired;
-  
-  /// 총 확정 인원
-  int get totalConfirmed => _cachedTotalConfirmed ?? group?.totalConfirmed ?? singleTO!.totalConfirmed;
-  
-  /// 총 대기 인원
-  int get totalPending => _cachedTotalPending ?? group?.totalPending ?? singleTO!.totalPending;
-  
-  /// 인원 충족 여부
-  bool get isFull => group?.isFull ?? singleTO!.isFull;
-  
-  // ═══════════════════════════════════════════════════════════
-  // Getter - 날짜/시간
-  // ═══════════════════════════════════════════════════════════
-  
-  /// 시작일
-  DateTime get startDate => group?.startDate ?? singleTO!.date;
-  
-  /// 종료일
-  DateTime get endDate => group?.endDate ?? singleTO!.endDate ?? singleTO!.date;
-  
+
+  // ── 기본 정보 ──────────────────────────────────────────
+
+  bool get isGrouped => false;
+  String get id => singleTO!.id;
+  String get title => singleTO!.title;
+  String get businessName => singleTO!.businessName;
+  String get businessId => singleTO!.businessId;
+  String get status => singleTO!.status;
+  bool get isClosed => singleTO!.isClosed;
+  bool get isManualClosed => singleTO!.isManualClosed;
+  bool get isPendingPublish => singleTO!.isPendingPublish;
+  DateTime? get publishAt => singleTO!.publishAt;
+
+  /// contract 타입 여부 (구 isLongTerm)
+  bool get isLongTerm => singleTO!.isContractType;
+
+  // ── 통계 ─────────────────────────────────────────────
+
+  int get totalRequired =>
+      _cachedTotalRequired ?? singleTO!.totalRequired;
+  int get totalConfirmed =>
+      _cachedTotalConfirmed ?? singleTO!.totalConfirmed;
+  int get totalPending =>
+      _cachedTotalPending ?? singleTO!.totalPending;
+  bool get isFull => singleTO!.isFull;
+
+  // ── 날짜 ─────────────────────────────────────────────
+
+  /// 시작일. flex: 첫 슬롯 날짜 또는 createdAt; contract: rangeStart
+  DateTime get startDate =>
+      singleTO!.rangeStart ?? singleTO!.createdAt;
+
+  /// 종료일. flex: 마지막 슬롯 날짜 또는 createdAt; contract: rangeEnd
+  DateTime get endDate =>
+      singleTO!.rangeEnd ?? singleTO!.createdAt;
+
   /// 날짜 범위 문자열
   String get dateRangeString {
-    if (group != null) {
-      return group!.dateRangeString;
+    if (singleTO!.isFlexType) {
+      final count = singleTO!.totalSlots;
+      return count > 0 ? '$count일' : '';
     }
-    return singleTO!.formattedDate;
+    return singleTO!.contractPeriodDisplay;
   }
-  
-  // ═══════════════════════════════════════════════════════════
-  // Getter - 급여
-  // ═══════════════════════════════════════════════════════════
-  
-  int? get minWage => group?.minWage ?? singleTO!.minWage;
-  int? get maxWage => group?.maxWage ?? singleTO!.maxWage;
-  String? get wageType => group?.wageType ?? singleTO!.wageType;
-  
-  // ═══════════════════════════════════════════════════════════
-  // Getter - 추가 정보
-  // ═══════════════════════════════════════════════════════════
-  
-  /// 그룹명 (그룹이면 groupName, 단일이면 title)
-  String get groupName => group?.groupName ?? singleTO!.groupName ?? singleTO!.title;
-  
-  /// 생성일시
-  DateTime get createdAt => group?.createdAt ?? singleTO!.createdAt;
-  
-  /// 설명
-  String? get description => group?.description ?? singleTO!.description;
-  
-  /// 생성자 UID
-  String get creatorUID => group?.creatorUID ?? singleTO!.creatorUID;
-  
-  /// 실제 TO 개수 (그룹이면 actualDaysCount, 단일이면 1)
-  int get actualDaysCount => group?.actualDaysCount ?? 1;
-  
-  /// 업무 개수
-  int get workDetailCount => group?.workDetailCount ?? singleTO!.workDetailCount;
-  
-  // ═══════════════════════════════════════════════════════════
-  // Getter - 그룹 TO 목록
-  // ═══════════════════════════════════════════════════════════
-  
+
+  // ── 급여 ─────────────────────────────────────────────
+
+  int? get minWage => singleTO!.minWage;
+  int? get maxWage => singleTO!.maxWage;
+  String? get wageType => singleTO!.wageType;
+
+  // ── 기타 ─────────────────────────────────────────────
+
+  /// 표시명 (구 groupName)
+  String get groupName => singleTO!.title;
+  DateTime get createdAt => singleTO!.createdAt;
+  String? get description => singleTO!.description;
+  String get creatorUID => singleTO!.creatorUID;
+
+  /// flex: 슬롯 수; contract: 1
+  int get actualDaysCount =>
+      singleTO!.isFlexType ? singleTO!.totalSlots : 1;
+
+  int get workDetailCount => singleTO!.workDetailCount;
+
+  // ── TOItem 목록 (flex 전용 날짜별 아이템) ─────────────
+
   List<TOItem> get groupTOs => _groupTOs ?? [];
-  
-  /// 그룹 상세 설정 (로드 후 호출)
+
   void setGroupTOs(List<TOItem> items) {
     _groupTOs = items;
     isGroupDetailLoaded = true;
   }
-  
-  /// 로드 필요 여부
-  bool get needsGroupDetailLoad => isGrouped && !isGroupDetailLoaded;
-  
-  // ═══════════════════════════════════════════════════════════
-  // 🔄 하위 호환성 - masterTO (deprecated, 점진적 제거 예정)
-  // ═══════════════════════════════════════════════════════════
-  
-  /// @deprecated - group 또는 singleTO 사용 권장
-  /// 기존 코드 호환용: 그룹이면 가상 TOModel 생성, 아니면 singleTO
-  TOModel get masterTO {
-    // 단일 TO인 경우
-    if (singleTO != null) return singleTO!;
-    
-    // 그룹 TO 상세가 로드된 경우
-    if (_groupTOs != null && _groupTOs!.isNotEmpty) {
-      return _groupTOs!.first.to;
-    }
-    
-    // 그룹인데 상세 로드 안 된 경우: GroupModel에서 가상 TOModel 생성
-    if (group != null) {
-      return TOModel(
-        id: group!.id,
-        businessId: group!.businessId,
-        businessName: group!.businessName,
-        businessAddress: group!.businessAddress,
-        businessCity: group!.businessCity,
-        businessDistrict: group!.businessDistrict,
-        groupId: group!.id,
-        groupName: group!.groupName,
-        startDate: group!.startDate,
-        endDate: group!.endDate,
-        isGroupMaster: true,
-        title: group!.title,
-        date: group!.startDate,  // 그룹 시작일
-        startTime: '',
-        endTime: '',
-        applicationDeadline: group!.publishAt ?? group!.startDate,
-        totalRequired: group!.totalRequired,
-        totalConfirmed: group!.totalConfirmed,
-        totalPending: group!.totalPending,
-        minWage: group!.minWage,
-        maxWage: group!.maxWage,
-        wageType: group!.wageType,
-        workDetailCount: group!.workDetailCount,
-        groupTotalRequired: group!.totalRequired,
-        groupTotalConfirmed: group!.totalConfirmed,
-        groupTotalPending: group!.totalPending,
-        groupActualDaysCount: group!.actualDaysCount,
-        description: group!.description,
-        creatorUID: group!.creatorUID,
-        createdAt: group!.createdAt,
-        status: group!.status,
-        statusUpdatedAt: group!.statusUpdatedAt,
-        isManualClosed: group!.isManualClosed,
-        closedAt: group!.closedAt,
-        closedBy: group!.closedBy,
-        reopenedAt: group!.reopenedAt,
-        reopenedBy: group!.reopenedBy,
-        publishMode: group!.publishMode,
-        publishAt: group!.publishAt,
-        isPublished: group!.isPublished,
-        publishDaysBefore: group!.publishDaysBefore,
-        publishTime: group!.publishTime,
-      );
-    }
-    
-    // Fallback: 여기 도달하면 안 됨
-    throw StateError('TOGroupItem에 유효한 데이터가 없습니다');
-  }
-  
-  // ═══════════════════════════════════════════════════════════
-  // 통계 업데이트
-  // ═══════════════════════════════════════════════════════════
-  
-  /// 그룹 통계 업데이트 (DB에서 새로 조회 후)
+
+  bool get needsGroupDetailLoad => false;
+
+  /// 공고 모델 직접 접근
+  TOModel get masterTO => singleTO!;
+
+  // ── 통계 업데이트 ─────────────────────────────────────
+
   void updateGroupStats({
     required int confirmed,
     required int pending,
     int? required,
   }) {
-    // 🔥 캐시 업데이트 (getter에서 우선 사용됨)
     _cachedTotalConfirmed = confirmed;
     _cachedTotalPending = pending;
     if (required != null) _cachedTotalRequired = required;
-    
-    // groupTOs가 있으면 첫 번째 아이템도 업데이트
-    if (_groupTOs != null && _groupTOs!.isNotEmpty) {
-      _groupTOs!.first.updateOuterStats(
-        confirmed: confirmed,
-        pending: pending,
-        required: required,
-      );
-    }
   }
 }
 
-/// TO 아이템 (TO + WorkDetails + 통계)
+/// 슬롯 단위 아이템 (flex 타입 날짜별 행)
 class TOItem {
   final TOModel to;
-  
-  // ✨ Lazy Loading 지원
-  List<WorkDetailModel>? _workDetails;  // nullable - 필요할 때 로드
-  bool isWorkDetailLoaded;  // 업무 상세 로드 여부
-  
-  // 통계 (겉 카드용 - TO 문서에서 가져옴) - ✅ mutable
+  final SlotModel? slot;
+
+  // 업무 상세 (TO 문서 내 workDetails 배열)
+  List<WorkDetailData>? _workDetails;
+  bool isWorkDetailLoaded;
+
   int confirmedCount;
   int pendingCount;
   int totalRequired;
-  
-  // 업무별 통계 (펼쳤을 때 로드)
+
   Map<String, Map<String, int>>? workDetailStats;
 
   TOItem({
     required this.to,
-    List<WorkDetailModel>? workDetails,
+    this.slot,
+    List<WorkDetailData>? workDetails,
     required this.confirmedCount,
     required this.pendingCount,
     required this.totalRequired,
     this.workDetailStats,
     this.isWorkDetailLoaded = false,
   }) : _workDetails = workDetails;
-  
-  // Getter
-  List<WorkDetailModel> get workDetails => _workDetails ?? [];
-  
-  /// 업무 상세 설정 (로드 후 호출)
-  void setWorkDetails(List<WorkDetailModel> details, Map<String, Map<String, int>> stats) {
+
+  List<WorkDetailData> get workDetails => _workDetails ?? [];
+
+  void setWorkDetails(
+    List<WorkDetailData> details,
+    Map<String, Map<String, int>> stats,
+  ) {
     _workDetails = details;
     workDetailStats = stats;
     isWorkDetailLoaded = true;
-    
-    // ✅ workStats에서 겉 카드 통계도 동기화
     int totalConfirmed = 0;
     int totalPending = 0;
-    for (var stat in stats.values) {
+    for (final stat in stats.values) {
       totalConfirmed += stat['confirmed'] ?? 0;
       totalPending += stat['pending'] ?? 0;
     }
     confirmedCount = totalConfirmed;
     pendingCount = totalPending;
   }
-  
-  /// 겉 카드 통계만 업데이트 (TO 문서 기준)
+
   void updateOuterStats({
     required int confirmed,
     required int pending,
@@ -298,7 +173,9 @@ class TOItem {
     pendingCount = pending;
     if (required != null) totalRequired = required;
   }
-  
-  /// 로드 필요 여부
+
   bool get needsWorkDetailLoad => !isWorkDetailLoaded;
+
+  /// 슬롯 날짜 (flex only)
+  DateTime? get slotDate => slot?.date;
 }

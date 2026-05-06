@@ -21,8 +21,8 @@ class TODeadlineSection extends StatelessWidget {
   final DateTime? fixedDeadline;
   final void Function(DateTime dateTime)? onFixedDeadlineChanged;
   
-  /// 범위 종료일 (장기 TO 생성 시 마감일 유효성 검사용)
-  final DateTime? rangeEndDate;
+  /// 근무 시작일 (장기 TO 생성 시 마감일 유효성 검사용 — 마감일은 시작일 이전이어야 함)
+  final DateTime? rangeStartDate;
 
   const TODeadlineSection({
     super.key,
@@ -31,7 +31,7 @@ class TODeadlineSection extends StatelessWidget {
     this.onHoursChanged,
     this.fixedDeadline,
     this.onFixedDeadlineChanged,
-    this.rangeEndDate,
+    this.rangeStartDate,
   });
 
   @override
@@ -496,19 +496,22 @@ class TODeadlineSection extends StatelessWidget {
 
   /// 날짜/시간 선택 (새 피커 사용)
   Future<void> _selectDateTime(BuildContext context) async {
-    if (rangeEndDate == null && onFixedDeadlineChanged != null) {
-      ToastHelper.showError('먼저 근무 종료일을 선택해주세요');
+    if (rangeStartDate == null && onFixedDeadlineChanged != null) {
+      ToastHelper.showError('먼저 근무 시작일을 선택해주세요');
       return;
     }
+
+    // 마감일은 오늘 이후 ~ 시작일 이전까지 선택 가능
+    final maxDate = rangeStartDate ?? DateTime.now().add(const Duration(days: 365));
 
     // 1단계: 날짜 선택 (커스텀 바텀시트)
     final pickedDate = await DatePickerBottomSheet.show(
       context: context,
       initialDate: fixedDeadline ?? DateTime.now(),
       title: '마감 날짜 선택',
-      subtitle: '지원 마감일을 선택하세요',
+      subtitle: '지원 마감일을 선택하세요 (시작일 이전)',
       minDate: DateTime.now(),
-      maxDate: rangeEndDate ?? DateTime.now().add(const Duration(days: 365)),
+      maxDate: maxDate,
     );
 
     if (pickedDate != null && context.mounted) {

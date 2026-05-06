@@ -2,7 +2,6 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:flutter/services.dart';
-import 'package:cloud_functions/cloud_functions.dart';
 import '../../models/core/user_model.dart';
 import '../../providers/user_provider.dart';
 import '../../widgets/common/loading_widget.dart';
@@ -47,26 +46,18 @@ class _RegisterScreenState extends State<RegisterScreen> {
   bool _isUsernameAvailable = false;
   String? _usernameError;
   String _currentUsername = '';
-  String _currentEmail = '';
   Timer? _usernameDebounce;
   final _formKey = GlobalKey<FormState>();
   final _nameController = TextEditingController();
   final _residentNumber1Controller = TextEditingController();
   final _residentNumber2Controller = TextEditingController();
   final _emailController = TextEditingController();
-  final _emailCodeController = TextEditingController();
   final _phoneController = TextEditingController();
   final _passwordController = TextEditingController();
   final _confirmPasswordController = TextEditingController();
   bool _obscurePassword = true;
   bool _obscureConfirmPassword = true;
   
-  // 이메일 인증 상태
-  bool _isEmailSent = false;
-  bool _isEmailVerified = false;
-  bool _isEmailSending = false;
-  bool _isEmailVerifying = false;
-
   // 이메일 분리 입력
   final _emailLocalController = TextEditingController();
   final _emailDomainController = TextEditingController();
@@ -106,7 +97,6 @@ class _RegisterScreenState extends State<RegisterScreen> {
   final _residentNumber1Focus = FocusNode();
   final _residentNumber2Focus = FocusNode();
   final _emailFocus = FocusNode();
-  final _emailCodeFocus = FocusNode();
   final _phoneFocus = FocusNode();
   final _addressFocus = FocusNode();
   final _detailAddressFocus = FocusNode();
@@ -136,7 +126,6 @@ class _RegisterScreenState extends State<RegisterScreen> {
     _emailController.dispose();
     _emailLocalController.dispose();
     _emailDomainController.dispose();
-    _emailCodeController.dispose();
     _passwordController.dispose();
     _confirmPasswordController.dispose();
     _phoneController.dispose();
@@ -150,7 +139,6 @@ class _RegisterScreenState extends State<RegisterScreen> {
     _residentNumber1Focus.dispose();
     _residentNumber2Focus.dispose();
     _emailFocus.dispose();
-    _emailCodeFocus.dispose();
     _phoneFocus.dispose();
     _addressFocus.dispose();
     _detailAddressFocus.dispose();
@@ -255,77 +243,6 @@ class _RegisterScreenState extends State<RegisterScreen> {
     }
   }
 
-  /// 이메일 인증 코드 발송 (Cloud Function)
-  Future<void> _sendEmailVerification() async {
-    final email = _emailController.text.trim();
-    if (email.isEmpty || !email.contains('@')) {
-      ToastHelper.showWarning('올바른 이메일을 입력해주세요');
-      return;
-    }
-
-    setState(() => _isEmailSending = true);
-
-    try {
-      final callable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
-          .httpsCallable('sendEmailVerificationCode');
-      await callable.call({'email': email});
-
-      setState(() => _isEmailSent = true);
-      ToastHelper.showSuccess('인증번호가 $email로 발송되었습니다 (5분 유효)');
-
-      Future.delayed(const Duration(milliseconds: 300), () {
-        if (mounted) _emailCodeFocus.requestFocus();
-      });
-    } on FirebaseFunctionsException catch (e) {
-      ToastHelper.showError(e.message ?? '발송에 실패했습니다. 다시 시도해주세요');
-    } catch (e) {
-      ToastHelper.showError('발송에 실패했습니다. 다시 시도해주세요');
-    } finally {
-      if (mounted) setState(() => _isEmailSending = false);
-    }
-  }
-
-  /// 이메일 인증 코드 검증 (Cloud Function)
-  Future<void> _verifyEmailCode() async {
-    final email = _emailController.text.trim();
-    final code = _emailCodeController.text.trim();
-
-    if (code.length != 6) {
-      ToastHelper.showWarning('6자리 인증번호를 입력해주세요');
-      return;
-    }
-
-    setState(() => _isEmailVerifying = true);
-
-    try {
-      final callable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
-          .httpsCallable('verifyEmailCode');
-      final result = await callable.call({'email': email, 'code': code});
-
-      final data = result.data as Map<String, dynamic>;
-      if (data['valid'] == true) {
-        setState(() => _isEmailVerified = true);
-        ToastHelper.showSuccess('이메일 인증이 완료되었습니다');
-        Future.delayed(const Duration(milliseconds: 300), () {
-          if (mounted) _phoneFocus.requestFocus();
-        });
-      } else {
-        final reason = data['reason'] as String? ?? '';
-        final msg = switch (reason) {
-          'expired' => '인증번호가 만료되었습니다. 재발송해주세요',
-          'wrong_code' => '인증번호가 일치하지 않습니다',
-          'too_many_attempts' => '시도 횟수를 초과했습니다. 재발송해주세요',
-          _ => '인증에 실패했습니다',
-        };
-        ToastHelper.showError(msg);
-      }
-    } catch (e) {
-      ToastHelper.showError('인증 확인에 실패했습니다. 다시 시도해주세요');
-    } finally {
-      if (mounted) setState(() => _isEmailVerifying = false);
-    }
-  }
-
   /// ✅ 주소 검색 (포커스 추가)
   Future<void> _searchAddress() async {
     final result = await DaumAddressService.searchAddress(context);
@@ -359,11 +276,6 @@ class _RegisterScreenState extends State<RegisterScreen> {
     _parseResidentNumber();
     if (_parsedBirthDate == null || _parsedGender == null) {
       ToastHelper.showWarning('올바른 주민번호를 입력해주세요');
-      return false;
-    }
-
-    if (!_isEmailVerified) {
-      ToastHelper.showWarning('이메일 인증을 완료해주세요');
       return false;
     }
 
@@ -431,6 +343,27 @@ class _RegisterScreenState extends State<RegisterScreen> {
 
   // 역할 선택 후 처리
   Future<void> _handleRoleSelection() async {
+    if (_selectedRole == null) return;
+
+    // 동일 전화번호 + 역할 중복 가입 체크
+    final phone = _phoneController.text.trim();
+    final isDuplicate = await AuthService().checkDuplicateRegistration(
+      phone: phone,
+      role: _selectedRole!,
+    );
+
+    if (!mounted) return;
+
+    if (isDuplicate) {
+      final roleLabel =
+          _selectedRole == UserRole.USER ? '지원자' : '사업장 관리자';
+      ToastHelper.showError(
+        '이미 $roleLabel 계정이 존재합니다.\n'
+        '다른 역할로 가입하거나 기존 계정으로 로그인해주세요.',
+      );
+      return;
+    }
+
     if (_selectedRole == UserRole.USER) {
       await _registerUser();
     } else if (_selectedRole == UserRole.BUSINESS_ADMIN) {
@@ -803,11 +736,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
         : _selectedEmailDomain!;
     final full = (local.isEmpty || domain.isEmpty) ? '' : '$local@$domain';
     _emailController.text = full;
-    setState(() {
-      _currentEmail = full;
-      _isEmailSent = false;
-      _isEmailVerified = false;
-    });
+    setState(() {});
   }
 
   // ============================================================
@@ -816,44 +745,57 @@ class _RegisterScreenState extends State<RegisterScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    
     return Scaffold(
       resizeToAvoidBottomInset: true,
       body: Consumer<UserProvider>(
         builder: (context, userProvider, _) {
           return LoadingOverlay(
-            // ✅ 중복 제출 상태도 로딩에 포함
             isLoading: userProvider.isLoading || _isSubmitting,
             message: _isSubmitting ? '서류 업로드 중...' : '회원가입 중...',
             child: Container(
-              decoration: BoxDecoration(
+              width: double.infinity,
+              height: double.infinity,
+              decoration: const BoxDecoration(
                 gradient: LinearGradient(
-                  begin: Alignment.topLeft,
-                  end: Alignment.bottomRight,
-                  colors: [
-                    theme.primaryColor.withValues(alpha: 0.05),
-                    theme.primaryColor.withValues(alpha: 0.1),
-                  ],
+                  begin: Alignment.topCenter,
+                  end: Alignment.bottomCenter,
+                  colors: [Color(0xFF1565C0), Color(0xFF1E88E5)],
                 ),
               ),
               child: SafeArea(
+                bottom: false,
                 child: Column(
                   children: [
                     _buildHeader(),
-                    _buildProgressBar(),
-                    SizedBox(height: ResponsiveHelper.spacing(context, 16)),
                     Expanded(
-                      child: SingleChildScrollView(
-                        controller: _scrollController,
-                        keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
-                        padding: EdgeInsets.symmetric(
-                          horizontal: ResponsiveHelper.spacing(context, 20),
+                      child: Container(
+                        decoration: const BoxDecoration(
+                          color: Colors.white,
+                          borderRadius: BorderRadius.vertical(
+                            top: Radius.circular(32),
+                          ),
                         ),
-                        child: _buildCurrentStep(),
+                        child: Column(
+                          children: [
+                            Expanded(
+                              child: SingleChildScrollView(
+                                controller: _scrollController,
+                                keyboardDismissBehavior:
+                                    ScrollViewKeyboardDismissBehavior.onDrag,
+                                padding: EdgeInsets.fromLTRB(
+                                  ResponsiveHelper.spacing(context, 20),
+                                  ResponsiveHelper.spacing(context, 24),
+                                  ResponsiveHelper.spacing(context, 20),
+                                  0,
+                                ),
+                                child: _buildCurrentStep(),
+                              ),
+                            ),
+                            _buildBottomButton(),
+                          ],
+                        ),
                       ),
                     ),
-                    _buildBottomButton(),
                   ],
                 ),
               ),
@@ -920,52 +862,66 @@ class _RegisterScreenState extends State<RegisterScreen> {
   // 🔧 헤더, 진행바, 단계 컨텐츠
   // ============================================================
 
-  /// 헤더
+  /// 헤더 (블루 배경 + 진행바 통합)
   Widget _buildHeader() {
-    final theme = Theme.of(context);
-    
     return Padding(
-      padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 12)),
-      child: Row(
+      padding: EdgeInsets.fromLTRB(
+        ResponsiveHelper.spacing(context, 20),
+        ResponsiveHelper.spacing(context, 12),
+        ResponsiveHelper.spacing(context, 20),
+        ResponsiveHelper.spacing(context, 20),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Material(
-            color: Colors.white.withValues(alpha: 0.3),
-            borderRadius: BorderRadius.circular(10),
-            child: InkWell(
-              onTap: _onStepCancel,
-              borderRadius: BorderRadius.circular(10),
-              child: Padding(
-                padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 8)),
-                child: Icon(
-                  Icons.arrow_back,
-                  color: theme.primaryColor,
-                  size: ResponsiveHelper.iconSize(context, 22),
-                ),
+          // 뒤로가기 버튼
+          GestureDetector(
+            onTap: _onStepCancel,
+            child: Container(
+              padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 8)),
+              decoration: BoxDecoration(
+                color: Colors.white.withValues(alpha: 0.2),
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: Icon(
+                Icons.arrow_back,
+                color: Colors.white,
+                size: ResponsiveHelper.iconSize(context, 22),
               ),
             ),
           ),
-          SizedBox(width: ResponsiveHelper.spacing(context, 12)),
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
+          SizedBox(height: ResponsiveHelper.spacing(context, 16)),
+          // 타이틀
+          Text(
+            '회원가입',
+            style: TextStyle(
+              fontSize: ResponsiveHelper.spacing(context, 26),
+              fontWeight: FontWeight.w800,
+              color: Colors.white,
+              letterSpacing: 0.5,
+            ),
+          ),
+          SizedBox(height: ResponsiveHelper.spacing(context, 4)),
+          Text(
+            _currentStep == 0
+                ? '기본 정보 입력'
+                : _currentStep == 1
+                    ? '이용 방법 선택'
+                    : '추가 정보 (선택)',
+            style: TextStyle(
+              fontSize: ResponsiveHelper.spacing(context, 14),
+              color: Colors.white.withValues(alpha: 0.75),
+            ),
+          ),
+          SizedBox(height: ResponsiveHelper.spacing(context, 16)),
+          // 진행 표시기
+          Row(
             children: [
-              Text(
-                '회원가입',
-                style: ResponsiveHelper.titleStyle(context).copyWith(
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
-              SizedBox(height: ResponsiveHelper.spacing(context, 2)),
-              Text(
-                _currentStep == 0
-                    ? '기본 정보 입력'
-                    : _currentStep == 1
-                        ? '이용 방법 선택'
-                        : '추가 정보 (선택)',
-                style: ResponsiveHelper.smallStyle(
-                  context,
-                  color: AppColors.grey600,
-                ),
-              ),
+              _buildProgressSegment(true),
+              SizedBox(width: ResponsiveHelper.spacing(context, 6)),
+              _buildProgressSegment(_currentStep >= 1),
+              SizedBox(width: ResponsiveHelper.spacing(context, 6)),
+              _buildProgressSegment(_currentStep >= 2),
             ],
           ),
         ],
@@ -973,46 +929,16 @@ class _RegisterScreenState extends State<RegisterScreen> {
     );
   }
 
-  /// 진행 표시기
-  Widget _buildProgressBar() {
-    final theme = Theme.of(context);
-    
-    return Padding(
-      padding: EdgeInsets.symmetric(
-        horizontal: ResponsiveHelper.spacing(context, 32),
-      ),
-      child: Row(
-        children: [
-          Expanded(
-            child: Container(
-              height: ResponsiveHelper.spacing(context, 4),
-              decoration: BoxDecoration(
-                color: theme.primaryColor,
-                borderRadius: BorderRadius.circular(2),
-              ),
-            ),
-          ),
-          SizedBox(width: ResponsiveHelper.spacing(context, 6)),
-          Expanded(
-            child: Container(
-              height: ResponsiveHelper.spacing(context, 4),
-              decoration: BoxDecoration(
-                color: _currentStep >= 1 ? theme.primaryColor : AppColors.grey300,
-                borderRadius: BorderRadius.circular(2),
-              ),
-            ),
-          ),
-          SizedBox(width: ResponsiveHelper.spacing(context, 6)),
-          Expanded(
-            child: Container(
-              height: ResponsiveHelper.spacing(context, 4),
-              decoration: BoxDecoration(
-                color: _currentStep >= 2 ? theme.primaryColor : AppColors.grey300,
-                borderRadius: BorderRadius.circular(2),
-              ),
-            ),
-          ),
-        ],
+  Widget _buildProgressSegment(bool active) {
+    return Expanded(
+      child: Container(
+        height: 4,
+        decoration: BoxDecoration(
+          color: active
+              ? Colors.white
+              : Colors.white.withValues(alpha: 0.3),
+          borderRadius: BorderRadius.circular(2),
+        ),
       ),
     );
   }
@@ -1040,23 +966,10 @@ class _RegisterScreenState extends State<RegisterScreen> {
   // ============================================================
 
   Widget _buildStep1BasicInfo() {
-    return Container(
-      padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 12)),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(20),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(alpha: 0.08),
-            blurRadius: 16,
-            offset: const Offset(0, 4),
-          ),
-        ],
-      ),
-      child: Form(
-        key: _formKey,
-        autovalidateMode: _autovalidateMode,
-        child: Column(
+    return Form(
+      key: _formKey,
+      autovalidateMode: _autovalidateMode,
+      child: Column(
           children: [
             // 이름
             _buildTextField(
@@ -1203,7 +1116,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
                     focusNode: _residentNumber2Focus,
                     keyboardType: TextInputType.number,
                     textInputAction: TextInputAction.next,
-                    onFieldSubmitted: (_) => _emailFocus.requestFocus(),
+                    onFieldSubmitted: (_) => _phoneFocus.requestFocus(),
                     inputFormatters: [
                       FilteringTextInputFormatter.digitsOnly,
                       LengthLimitingTextInputFormatter(1),
@@ -1233,7 +1146,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
                         });
                       } else {
                         _parseResidentNumber();
-                        _emailFocus.requestFocus();
+                        _phoneFocus.requestFocus();
                       }
                     },
                   ),
@@ -1421,88 +1334,8 @@ class _RegisterScreenState extends State<RegisterScreen> {
               ],
             ),
 
-            // 이메일 인증 버튼
-            if (_currentEmail.isNotEmpty) ...[
-              SizedBox(height: ResponsiveHelper.spacing(context, 6)),
-              Row(
-                mainAxisAlignment: MainAxisAlignment.end,
-                children: [
-                  if (_isEmailVerified)
-                    Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Icon(Icons.check_circle,
-                            color: AppColors.successMedium,
-                            size: ResponsiveHelper.iconSize(context, 18)),
-                        const SizedBox(width: 4),
-                        Text('인증 완료',
-                            style: ResponsiveHelper.smallStyle(context,
-                                color: AppColors.successDark)),
-                      ],
-                    )
-                  else if (_isEmailSending)
-                    const SizedBox(
-                        width: 18,
-                        height: 18,
-                        child: CircularProgressIndicator(strokeWidth: 2))
-                  else
-                    TextButton.icon(
-                      onPressed: _sendEmailVerification,
-                      icon: Icon(Icons.send,
-                          size: 14,
-                          color: Theme.of(context).primaryColor),
-                      label: Text(
-                        _isEmailSent ? '재발송' : '인증번호 받기',
-                        style: ResponsiveHelper.smallStyle(context,
-                            color: Theme.of(context).primaryColor),
-                      ),
-                    ),
-                ],
-              ),
-            ],
-
-            // 이메일 인증 코드 입력
-            if (_isEmailSent && !_isEmailVerified) ...[
-              SizedBox(height: ResponsiveHelper.spacing(context, 12)),
-              _buildTextField(
-                controller: _emailCodeController,
-                label: '인증번호',
-                hint: '6자리 숫자',
-                icon: Icons.password,
-                keyboardType: TextInputType.number,
-                focusNode: _emailCodeFocus,
-                textInputAction: TextInputAction.done,
-                onFieldSubmitted: (_) => _verifyEmailCode(),
-                onChanged: (value) {
-                  if (value.length == 6 && !_isEmailVerifying) {
-                    _verifyEmailCode();
-                  }
-                },
-                inputFormatters: [
-                  FilteringTextInputFormatter.digitsOnly,
-                  LengthLimitingTextInputFormatter(6),
-                ],
-                suffixIcon: _isEmailVerifying
-                    ? const SizedBox(
-                        width: 20,
-                        height: 20,
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      )
-                    : TextButton(
-                        onPressed: _verifyEmailCode,
-                        child: Text(
-                          '확인',
-                          style: ResponsiveHelper.smallStyle(
-                            context,
-                            color: Theme.of(context).primaryColor,
-                          ),
-                        ),
-                      ),
-              ),
-            ],
-            
             SizedBox(height: ResponsiveHelper.spacing(context, 12)),
-            
+
             // 전화번호
             _buildTextField(
               controller: _phoneController,
@@ -1670,7 +1503,6 @@ class _RegisterScreenState extends State<RegisterScreen> {
             SizedBox(height: ResponsiveHelper.spacing(context, 8)),
           ],
         ),
-      ),
     );
   }
 

@@ -25,8 +25,8 @@ class TOActionButton extends StatelessWidget {
     bool isLoading = false,
   }) {
     return TOActionButton(
-      text: 'TO 생성',
-      icon: Icons.check_circle_outline,
+      text: '공고 등록',
+      icon: Icons.post_add,
       onPressed: onPressed,
       isLoading: isLoading,
     );

@@ -1,6 +1,8 @@
 ﻿import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:cloud_functions/cloud_functions.dart';
+import 'package:flutter/services.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 
 // Models
@@ -27,6 +29,7 @@ import 'profile_edit_screen.dart';
 import '../business_admin/business_list_screen.dart';
 
 // Services
+import '../../services/auth_service.dart';
 import '../../services/firestore_service.dart';
 import 'package:permission_handler/permission_handler.dart';
 import '../../services/fcm_service.dart';
@@ -170,7 +173,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
               );
             },
           ),
-          
+
+          // 이메일 인증 카드
+          SizedBox(height: ResponsiveHelper.spacing(context, 12)),
+          _buildEmailVerificationCard(context, user),
+
           // ✨ 지원자 전용 메뉴
           if (user?.role == UserRole.USER) ...[
             SizedBox(height: ResponsiveHelper.spacing(context, 12)),
@@ -350,7 +357,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
           // ✨ 로그아웃 버튼 (공통)
           _buildLogoutButton(context, userProvider),
-          
+
+          SizedBox(height: ResponsiveHelper.spacing(context, 12)),
+
+          // 회원탈퇴
+          _buildDeleteAccountButton(context, userProvider),
+
           SizedBox(height: ResponsiveHelper.spacing(context, 24)),
         ],
       ),
@@ -685,6 +697,342 @@ class _SettingsScreenState extends State<SettingsScreen> {
         ),
       ],
     );
+  }
+
+  // ━━━ 이메일 인증 ━━━
+
+  Widget _buildEmailVerificationCard(BuildContext context, UserModel? user) {
+    final isVerified = user?.isEmailVerified ?? false;
+    return GestureDetector(
+      onTap: isVerified ? null : () => _showEmailVerificationSheet(context),
+      child: Container(
+        padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 16)),
+        decoration: BoxDecoration(
+          color: Theme.of(context).cardColor,
+          borderRadius: BorderRadius.circular(16),
+          border: isVerified
+              ? null
+              : Border.all(color: AppColors.warningLight, width: 1.5),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withValues(alpha: 0.05),
+              blurRadius: 8,
+              offset: const Offset(0, 2),
+            ),
+          ],
+        ),
+        child: Row(
+          children: [
+            Container(
+              padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 10)),
+              decoration: BoxDecoration(
+                color: isVerified
+                    ? AppColors.successBg
+                    : AppColors.warningBg,
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Icon(
+                isVerified ? Icons.mark_email_read : Icons.mail_outline,
+                color: isVerified ? AppColors.successDark : AppColors.warningDark,
+                size: ResponsiveHelper.iconSize(context, 22),
+              ),
+            ),
+            SizedBox(width: ResponsiveHelper.spacing(context, 12)),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Text(
+                        '이메일 인증',
+                        style: ResponsiveHelper.bodyStyle(context).copyWith(
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                      if (!isVerified) ...[
+                        const SizedBox(width: 8),
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 8, vertical: 2),
+                          decoration: BoxDecoration(
+                            color: AppColors.warningDark,
+                            borderRadius: BorderRadius.circular(20),
+                          ),
+                          child: const Text(
+                            '미인증',
+                            style: TextStyle(
+                              color: Colors.white,
+                              fontSize: 11,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
+                  SizedBox(height: ResponsiveHelper.spacing(context, 2)),
+                  Text(
+                    isVerified
+                        ? '${user?.userEmail ?? ''} 인증 완료'
+                        : '이메일 인증을 완료해주세요',
+                    style: ResponsiveHelper.smallStyle(context,
+                        color: AppColors.grey500),
+                  ),
+                ],
+              ),
+            ),
+            if (!isVerified)
+              Icon(Icons.chevron_right,
+                  color: AppColors.grey400,
+                  size: ResponsiveHelper.iconSize(context, 20)),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _showEmailVerificationSheet(BuildContext context) async {
+    final userProvider = context.read<UserProvider>();
+    final user = userProvider.currentUser;
+    if (user == null) return;
+
+    int step = 0; // 0=코드발송, 1=코드입력, 2=완료
+    bool isSending = false;
+    bool isVerifying = false;
+    final codeCtrl = TextEditingController();
+
+    await showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setModalState) {
+          Future<void> sendCode() async {
+            if (user.userEmail == null || user.userEmail!.isEmpty) {
+              ToastHelper.showError('등록된 이메일이 없습니다');
+              return;
+            }
+            setModalState(() => isSending = true);
+            try {
+              final fn = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+                  .httpsCallable('sendEmailVerificationCode');
+              await fn.call({'email': user.userEmail});
+              setModalState(() {
+                isSending = false;
+                step = 1;
+              });
+              ToastHelper.showSuccess(
+                  '인증번호를 ${user.userEmail}로 발송했습니다');
+            } on FirebaseFunctionsException catch (e) {
+              setModalState(() => isSending = false);
+              ToastHelper.showError(e.message ?? '발송 실패. 다시 시도해주세요');
+            } catch (_) {
+              setModalState(() => isSending = false);
+              ToastHelper.showError('발송 실패. 다시 시도해주세요');
+            }
+          }
+
+          Future<void> verifyCode() async {
+            final code = codeCtrl.text.trim();
+            if (code.length != 6) {
+              ToastHelper.showWarning('6자리 인증번호를 입력해주세요');
+              return;
+            }
+            setModalState(() => isVerifying = true);
+            try {
+              final fn = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+                  .httpsCallable('verifyEmailCode');
+              final result = await fn.call(
+                  {'email': user.userEmail, 'code': code});
+              final data = result.data as Map<String, dynamic>;
+
+              if (data['valid'] == true) {
+                // Firestore 업데이트
+                await FirebaseFirestore.instance
+                    .collection('users')
+                    .doc(user.uid)
+                    .update({'isEmailVerified': true});
+                // Provider 갱신
+                await userProvider.refreshUserData();
+                setModalState(() {
+                  isVerifying = false;
+                  step = 2;
+                });
+              } else {
+                setModalState(() => isVerifying = false);
+                final reason = data['reason'] as String? ?? '';
+                final msg = switch (reason) {
+                  'expired' => '인증번호가 만료되었습니다. 재발송해주세요',
+                  'wrong_code' => '인증번호가 일치하지 않습니다',
+                  'too_many_attempts' => '시도 횟수 초과. 재발송해주세요',
+                  _ => '인증에 실패했습니다',
+                };
+                ToastHelper.showError(msg);
+              }
+            } catch (_) {
+              setModalState(() => isVerifying = false);
+              ToastHelper.showError('인증 확인 실패. 다시 시도해주세요');
+            }
+          }
+
+          return Container(
+            decoration: const BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+            ),
+            padding: EdgeInsets.fromLTRB(
+              24,
+              20,
+              24,
+              MediaQuery.of(ctx).viewInsets.bottom + 32,
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Center(
+                  child: Container(
+                    width: 40,
+                    height: 4,
+                    decoration: BoxDecoration(
+                      color: AppColors.grey300,
+                      borderRadius: BorderRadius.circular(2),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 20),
+                if (step == 2) ...[
+                  const Center(
+                    child: Icon(Icons.check_circle,
+                        color: AppColors.successMedium, size: 56),
+                  ),
+                  const SizedBox(height: 16),
+                  Center(
+                    child: Text(
+                      '이메일 인증 완료!',
+                      style: TextStyle(
+                        fontSize: 20,
+                        fontWeight: FontWeight.w700,
+                        color: AppColors.successDark,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  Center(
+                    child: Text(
+                      '이제 이메일 알림을 받으실 수 있습니다.',
+                      style: TextStyle(color: AppColors.grey500, fontSize: 14),
+                    ),
+                  ),
+                  const SizedBox(height: 24),
+                  SizedBox(
+                    width: double.infinity,
+                    child: ElevatedButton(
+                      onPressed: () => Navigator.pop(ctx),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: AppColors.successMedium,
+                        padding: const EdgeInsets.symmetric(vertical: 14),
+                        shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12)),
+                      ),
+                      child: const Text('확인',
+                          style: TextStyle(
+                              color: Colors.white,
+                              fontWeight: FontWeight.w600)),
+                    ),
+                  ),
+                ] else ...[
+                  Text(
+                    step == 0 ? '이메일 인증' : '인증번호 입력',
+                    style: const TextStyle(
+                        fontSize: 20, fontWeight: FontWeight.w700),
+                  ),
+                  const SizedBox(height: 6),
+                  Text(
+                    step == 0
+                        ? '${user.userEmail ?? ''}로 인증번호를 발송합니다'
+                        : '이메일로 받은 6자리 인증번호를 입력해주세요',
+                    style:
+                        TextStyle(color: AppColors.grey500, fontSize: 14),
+                  ),
+                  const SizedBox(height: 24),
+                  if (step == 1) ...[
+                    TextField(
+                      controller: codeCtrl,
+                      keyboardType: TextInputType.number,
+                      maxLength: 6,
+                      autofocus: true,
+                      inputFormatters: [
+                        FilteringTextInputFormatter.digitsOnly,
+                      ],
+                      decoration: InputDecoration(
+                        labelText: '인증번호 6자리',
+                        border: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(12)),
+                        counterText: '',
+                        suffixIcon: isVerifying
+                            ? const Padding(
+                                padding: EdgeInsets.all(12),
+                                child: SizedBox(
+                                    width: 20,
+                                    height: 20,
+                                    child: CircularProgressIndicator(
+                                        strokeWidth: 2)),
+                              )
+                            : null,
+                      ),
+                      onChanged: (v) {
+                        if (v.length == 6 && !isVerifying) verifyCode();
+                      },
+                    ),
+                    const SizedBox(height: 8),
+                    TextButton(
+                      onPressed: isSending ? null : sendCode,
+                      child: Text(
+                        '인증번호 재발송',
+                        style: TextStyle(
+                            color: Theme.of(context).primaryColor,
+                            fontSize: 13),
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                  ],
+                  SizedBox(
+                    width: double.infinity,
+                    child: ElevatedButton(
+                      onPressed: (isSending || isVerifying)
+                          ? null
+                          : (step == 0 ? sendCode : verifyCode),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Theme.of(context).primaryColor,
+                        padding: const EdgeInsets.symmetric(vertical: 14),
+                        shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12)),
+                      ),
+                      child: (isSending || isVerifying)
+                          ? const SizedBox(
+                              width: 20,
+                              height: 20,
+                              child: CircularProgressIndicator(
+                                  strokeWidth: 2, color: Colors.white),
+                            )
+                          : Text(
+                              step == 0 ? '인증번호 받기' : '확인',
+                              style: const TextStyle(
+                                  color: Colors.white,
+                                  fontWeight: FontWeight.w600),
+                            ),
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          );
+        },
+      ),
+    );
+    codeCtrl.dispose();
   }
 
   /// ✨ 세련된 메뉴 카드
@@ -1116,7 +1464,228 @@ class _SettingsScreenState extends State<SettingsScreen> {
       ),
     );
   }
-// ... _buildMenuCard 메서드 끝나는 부분
+  // ━━━ 회원탈퇴 ━━━
+
+  Widget _buildDeleteAccountButton(
+      BuildContext context, UserProvider userProvider) {
+    return TextButton(
+      onPressed: () => _showDeleteAccountSheet(context, userProvider),
+      child: Text(
+        '회원탈퇴',
+        style: TextStyle(
+          color: AppColors.grey400,
+          fontSize: 13,
+          decoration: TextDecoration.underline,
+          decorationColor: AppColors.grey400,
+        ),
+      ),
+    );
+  }
+
+  Future<void> _showDeleteAccountSheet(
+      BuildContext context, UserProvider userProvider) async {
+    final passwordCtrl = TextEditingController();
+    bool obscure = true;
+    bool isLoading = false;
+    String? errorMsg;
+
+    await showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setModal) {
+          Future<void> doDelete() async {
+            final pw = passwordCtrl.text.trim();
+            if (pw.isEmpty) {
+              setModal(() => errorMsg = '비밀번호를 입력해주세요');
+              return;
+            }
+            setModal(() {
+              isLoading = true;
+              errorMsg = null;
+            });
+
+            final authService = AuthService();
+            final err = await authService.deleteAccountWithPassword(pw);
+
+            if (!ctx.mounted) return;
+
+            if (err != null) {
+              setModal(() {
+                isLoading = false;
+                errorMsg = err;
+              });
+            } else {
+              Navigator.pop(ctx);
+              context.read<ThemeProvider>().reset();
+              await userProvider.signOut();
+            }
+          }
+
+          return Container(
+            decoration: const BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+            ),
+            padding: EdgeInsets.fromLTRB(
+              24, 16, 24,
+              MediaQuery.of(ctx).viewInsets.bottom + 24,
+            ),
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  // 핸들 바
+                  Center(
+                    child: Container(
+                      width: 40, height: 4,
+                      decoration: BoxDecoration(
+                        color: AppColors.grey300,
+                        borderRadius: BorderRadius.circular(2),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 20),
+
+                  // 제목
+                  const Text(
+                    '회원탈퇴',
+                    style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700),
+                  ),
+                  const SizedBox(height: 4),
+                  const Text(
+                    '탈퇴 후 계정 복구는 불가능합니다',
+                    style: TextStyle(fontSize: 13, color: AppColors.grey500),
+                  ),
+                  const SizedBox(height: 16),
+
+                  // 통합 안내 박스
+                  Container(
+                    padding: const EdgeInsets.all(14),
+                    decoration: BoxDecoration(
+                      color: AppColors.errorBg,
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(color: AppColors.errorLight),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Text(
+                          '탈퇴 시 아래 사항을 확인해주세요',
+                          style: TextStyle(
+                            fontWeight: FontWeight.w600,
+                            color: AppColors.errorDeep,
+                            fontSize: 13,
+                          ),
+                        ),
+                        const SizedBox(height: 10),
+                        for (final text in <String>[
+                          '프로필 및 개인정보 즉시 삭제',
+                          '업로드한 서류 삭제 (신분증, 통장사본 등)',
+                          '진행 중인 지원·공고 자동 취소',
+                          '탈퇴 후 30일간 재가입 제한',
+                        ])
+                          Padding(
+                            padding: const EdgeInsets.only(bottom: 4),
+                            child: Row(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                const Text('• ',
+                                    style: TextStyle(
+                                        color: AppColors.errorDeep,
+                                        fontSize: 12)),
+                                Expanded(
+                                  child: Text(text,
+                                      style: const TextStyle(
+                                          color: AppColors.errorDeep,
+                                          fontSize: 12,
+                                          height: 1.4)),
+                                ),
+                              ],
+                            ),
+                          ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 20),
+
+                  // 비밀번호 입력
+                  const Text(
+                    '비밀번호 확인',
+                    style: TextStyle(fontWeight: FontWeight.w600, fontSize: 14),
+                  ),
+                  const SizedBox(height: 8),
+                  TextField(
+                    controller: passwordCtrl,
+                    obscureText: obscure,
+                    decoration: InputDecoration(
+                      hintText: '현재 비밀번호 입력',
+                      border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(12)),
+                      errorText: errorMsg,
+                      suffixIcon: IconButton(
+                        icon: Icon(
+                          obscure ? Icons.visibility_off : Icons.visibility,
+                          size: 20,
+                        ),
+                        onPressed: () => setModal(() => obscure = !obscure),
+                      ),
+                    ),
+                    onSubmitted: (_) => doDelete(),
+                  ),
+                  const SizedBox(height: 20),
+
+                  // 버튼
+                  Row(
+                    children: [
+                      Expanded(
+                        child: OutlinedButton(
+                          onPressed: isLoading ? null : () => Navigator.pop(ctx),
+                          style: OutlinedButton.styleFrom(
+                            padding: const EdgeInsets.symmetric(vertical: 14),
+                            shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(12)),
+                          ),
+                          child: const Text('취소'),
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: ElevatedButton(
+                          onPressed: isLoading ? null : doDelete,
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: AppColors.error,
+                            padding: const EdgeInsets.symmetric(vertical: 14),
+                            shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(12)),
+                          ),
+                          child: isLoading
+                              ? const SizedBox(
+                                  width: 18, height: 18,
+                                  child: CircularProgressIndicator(
+                                      strokeWidth: 2, color: Colors.white),
+                                )
+                              : const Text(
+                                  '탈퇴하기',
+                                  style: TextStyle(
+                                      color: Colors.white,
+                                      fontWeight: FontWeight.w600),
+                                ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          );
+        },
+      ),
+    );
+    passwordCtrl.dispose();
+  }
 
   /// 🔄 Application 마이그레이션 실행
   void _runApplicationMigration(BuildContext context) async {

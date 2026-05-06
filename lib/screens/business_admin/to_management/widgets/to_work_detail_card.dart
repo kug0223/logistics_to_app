@@ -90,6 +90,28 @@ class TOWorkDetailCard extends StatelessWidget {
     );
   }
 
+  /// WorkDetailData에서 생성 (새 아키텍처용)
+  factory TOWorkDetailCard.fromData({
+    required WorkDetailData work,
+    VoidCallback? onEdit,
+    VoidCallback? onDelete,
+  }) {
+    return TOWorkDetailCard(
+      workType: work.workType,
+      workTypeIcon: work.workTypeIcon,
+      workTypeColor: work.workTypeColor,
+      workTypeBackgroundColor: work.workTypeBackgroundColor,
+      wage: work.wage,
+      requiredCount: work.requiredCount,
+      startTime: work.startTime,
+      endTime: work.endTime,
+      wageType: work.wageType,
+      canDelete: true,
+      onEdit: onEdit,
+      onDelete: onDelete,
+    );
+  }
+
   String get _wageTypeLabel {
     switch (wageType) {
       case 'hourly':

@@ -691,43 +691,37 @@ async function processWorkDetailExpiry(now: Timestamp): Promise<void> {
     const toData = toDoc.data();
     const toId = toDoc.id;
 
-    const workDetailsSnapshot = await db
-      .collection("tos")
-      .doc(toId)
-      .collection("workDetails")
-      .where("closedAt", "==", null)
-      .get();
+    // workDetails는 TO 문서에 embedded array로 저장 (서브컬렉션 제거됨)
+    const workDetails: any[] = toData.workDetails ?? [];
+    if (workDetails.length === 0) continue;
 
-    if (workDetailsSnapshot.empty) continue;
+    const expiredItems = workDetails.filter((wd: any) => {
+      if (wd.isEmergencyOpen === true) return false;
+      if (wd.closedAt != null) return false;
+      const deadline = wd.applicationDeadline as Timestamp | null | undefined;
+      return deadline != null && typeof deadline.toMillis === "function" &&
+        deadline.toMillis() <= now.toMillis();
+    });
+
+    if (expiredItems.length === 0) continue;
+
+    const expiredTypes = new Set(expiredItems.map((wd: any) => wd.workType));
+    const updatedWorkDetails = workDetails.map((wd: any) =>
+      expiredTypes.has(wd.workType)
+        ? { ...wd, closedAt: now, closedReason: "TIME_EXPIRED" }
+        : wd
+    );
 
     const batch = db.batch();
-    let closedInThisTO = 0;
+    batch.update(toDoc.ref, { workDetails: updatedWorkDetails });
+    await batch.commit();
 
-    for (const wdDoc of workDetailsSnapshot.docs) {
-      const wdData = wdDoc.data();
-
-      if (wdData.isEmergencyOpen === true) continue;
-
-      const deadline = wdData.applicationDeadline as Timestamp | null;
-      if (deadline && deadline.toMillis() <= now.toMillis()) {
-        batch.update(wdDoc.ref, {
-          closedAt: now,
-          closedReason: "TIME_EXPIRED",
-        });
-        closedInThisTO++;
-        console.log(`    → ${toId}/${wdDoc.id} WorkDetail 마감`);
-      }
-    }
-
-    if (closedInThisTO > 0) {
-      await batch.commit();
-      totalClosed += closedInThisTO;
-      affectedTOIds.add(toId);
-
-      if (toData.groupId) {
-        affectedGroupIds.add(toData.groupId);
-      }
-    }
+    totalClosed += expiredItems.length;
+    affectedTOIds.add(toId);
+    expiredItems.forEach((wd: any) =>
+      console.log(`    → ${toId}/${wd.workType} WorkDetail 마감`)
+    );
+    if (toData.groupId) affectedGroupIds.add(toData.groupId);
   }
 
   console.log(`  ✅ [WorkDetail 마감] ${totalClosed}개 마감 완료`);
@@ -796,21 +790,19 @@ async function processTOExpiry(now: Timestamp): Promise<void> {
       affectedGroupIds.add(data.groupId);
     }
 
-    // 해당 TO의 모든 WorkDetails도 마감
-    const wdSnapshot = await db
-      .collection("tos")
-      .doc(doc.id)
-      .collection("workDetails")
-      .where("closedAt", "==", null)
-      .get();
-
-    for (const wdDoc of wdSnapshot.docs) {
-      const wdData = wdDoc.data();
-      if (wdData.isEmergencyOpen !== true) {
-        batch.update(wdDoc.ref, {
-          closedAt: now,
-          closedReason: "PARENT_TO_CLOSED",
-        });
+    // workDetails embedded array — 부모 TO 마감 시 open 항목 일괄 닫기
+    const workDetails: any[] = data.workDetails ?? [];
+    if (workDetails.length > 0) {
+      const hasOpenItems = workDetails.some(
+        (wd: any) => wd.isEmergencyOpen !== true && wd.closedAt == null
+      );
+      if (hasOpenItems) {
+        const updated = workDetails.map((wd: any) =>
+          wd.isEmergencyOpen === true || wd.closedAt != null
+            ? wd
+            : { ...wd, closedAt: now, closedReason: "PARENT_TO_CLOSED" }
+        );
+        batch.update(doc.ref, { workDetails: updated });
       }
     }
   }
@@ -1060,20 +1052,7 @@ async function syncTOStatusFromWorkDetails(
   toId: string
 ): Promise<void> {
   try {
-    const wdSnapshot = await firestore
-      .collection("tos")
-      .doc(toId)
-      .collection("workDetails")
-      .get();
-
-    if (wdSnapshot.empty) return;
-
-    const hasOpenWorkDetail = wdSnapshot.docs.some((doc) => {
-      const data = doc.data();
-      if (data.isEmergencyOpen === true) return true;
-      return data.closedAt == null;
-    });
-
+    // workDetails는 TO 문서에 embedded array로 저장 (서브컬렉션 제거됨)
     const toDoc = await firestore.collection("tos").doc(toId).get();
     if (!toDoc.exists) return;
 
@@ -1081,6 +1060,14 @@ async function syncTOStatusFromWorkDetails(
     if (!toData) return;
 
     if (toData.isManualClosed === true) return;
+
+    const workDetails: any[] = toData.workDetails ?? [];
+    if (workDetails.length === 0) return;
+
+    const hasOpenWorkDetail = workDetails.some((wd: any) => {
+      if (wd.isEmergencyOpen === true) return true;
+      return wd.closedAt == null;
+    });
 
     const currentStatus = toData.status;
     const newStatus = hasOpenWorkDetail ? "ACTIVE" : "CLOSED";

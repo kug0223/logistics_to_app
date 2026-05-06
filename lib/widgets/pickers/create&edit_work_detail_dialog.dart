@@ -4,10 +4,10 @@ import '../../models/core/business_work_type_model.dart';
 import '../../utils/toast_helper.dart';
 import '../../utils/labor_standards.dart';
 import '../../utils/responsive_helper.dart';
-import '../../models/work_detail_input.dart'; 
+import '../../models/work_detail_input.dart';
 import '../work_type_icon.dart';
 import '../../utils/format_helper.dart';
-import '../../models/core/work_detail_model.dart';
+import '../../models/core/work_detail_data.dart';
 import '../../theme/app_colors.dart';
 
 // ============================================================
@@ -139,8 +139,9 @@ class WorkDetailDialog {
   /// [businessWorkTypes] 전달 시 업무 유형 변경 가능 (TO 생성 시)
   static Future<Map<String, dynamic>?> showEditDialog({
     required BuildContext context,
-    required WorkDetailModel work,
+    required WorkDetailData work,
     List<BusinessWorkTypeModel>? businessWorkTypes,
+    int currentCount = 0,
   }) async {
     final theme = Theme.of(context);
     
@@ -247,7 +248,7 @@ class WorkDetailDialog {
                             context,
                             theme,
                             countController,
-                            work.currentCount,
+                            currentCount,
                           ),
                         ],
                       ),
@@ -258,7 +259,7 @@ class WorkDetailDialog {
                   _buildEditActionButtons(
                     context,
                     theme,
-                    work,
+                    currentCount,
                     startTime,
                     endTime,
                     wageController,
@@ -481,7 +482,7 @@ class WorkDetailDialog {
   static Widget _buildEditActionButtons(
     BuildContext context,
     ThemeData theme,
-    WorkDetailModel work,
+    int currentCount,
     String startTime,
     String endTime,
     TextEditingController wageController,
@@ -557,9 +558,9 @@ class WorkDetailDialog {
                       return;
                     }
 
-                    if (count < work.currentCount) {
+                    if (count < currentCount) {
                       ToastHelper.showError(
-                        '필요 인원은 확정 인원(${work.currentCount}명)보다 작을 수 없습니다'
+                        '필요 인원은 확정 인원($currentCount명)보다 작을 수 없습니다'
                       );
                       return;
                     }
@@ -1126,7 +1127,7 @@ class WorkDetailDialog {
                 SizedBox(width: ResponsiveHelper.spacing(context, 8)),
                 Expanded(
                   child: Text(
-                    '2025년 최저시급: ${LaborStandards.formatCurrencyWithUnit(LaborStandards.currentMinimumWage)}',
+                    '${DateTime.now().year}년 최저시급: ${LaborStandards.formatCurrencyWithUnit(LaborStandards.currentMinimumWage)}',
                     style: ResponsiveHelper.smallStyle(
                       context,
                       color: AppColors.infoDeep,

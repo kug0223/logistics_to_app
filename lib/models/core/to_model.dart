@@ -1,81 +1,70 @@
-﻿import 'package:flutter/foundation.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import '../../../utils/format_helper.dart';
-import 'group_model.dart';
+import 'work_detail_data.dart';
 
-/// TO(근무 오더) 모델 - 하위 컬렉션 방식 + 그룹 기능
-/// workDetails 하위 컬렉션에 업무 상세 정보 저장
+/// 공고(TO) 모델 — slots 구조 기반
+///
+/// type: 'flex'     단기 일용직. 날짜별 SlotModel 서브컬렉션으로 관리.
+/// type: 'contract' 장기 계약직. 날짜 슬롯 없이 공고 단위로 지원자 관리.
+///
+/// workDetails: 배열 필드로 TO 문서에 직접 저장 (별도 서브컬렉션 없음).
 class TOModel {
-  final String id; // 문서 ID
-  
-  // ✅ 사업장 연결
-  final String businessId; // 사업장 ID
-  final String businessName; // 사업장명
-  final String? businessAddress;   // 사업장 주소
-  final String? businessCity;      // 시/구 (예: 오산시, 강남구)
-  final String? businessDistrict;  // 동 (예: 세교동, 역삼동)
-  final String jobType; // "short" (단기, ~30일) 또는 "long_term" (1개월+)
-  final List<String>? workDays; // 장기 근무 요일 (예: ['월', '수', '금'])  // ⭐ 이 줄 추가
-  
-  // ✅ NEW: TO 그룹 관리 (날짜 범위 지원)
-  final String? groupId; // 같은 그룹의 TO들을 묶는 ID (nullable)
-  final String? groupName; // 그룹 표시명 (nullable, 예: "피킹 모집")
-  final DateTime? startDate; // 그룹 시작일 (nullable)
-  final DateTime? endDate; // 그룹 종료일 (nullable)
-  final bool isGroupMaster; // 대표 TO 여부 (목록 표시용, 기본값 false)
-  
-  
-  // ✅ 제목
-  final String title; // TO 제목 (예: "물류센터 파트타임알바")
-  
-  final DateTime date; // 근무 날짜
-  final String startTime; // 시작 시간 (예: "09:00")
-  final String endTime; // 종료 시간 (예: "18:00")
-  
-  final DateTime applicationDeadline; // 지원 마감 일시
-  // ✅ NEW: 지원 마감 규칙
-  final String deadlineType;  // 'HOURS_BEFORE' or 'FIXED_TIME'
-  final int? hoursBeforeStart;  // N시간 전 (예: 2)
-  
-  // ✅ 전체 필요 인원 (모든 업무유형 합계)
-  final int totalRequired; // 전체 필요 인원
-  final int totalConfirmed; // 전체 확정 인원
-  final int totalPending;        // ✅ 추가
-  final int totalApplications;   // ✅ 추가
+  final String id;
 
-  // ✅ 급여 정보 (겉 카드 표시용)
-  final int? minWage;            // 최소 급여
-  final int? maxWage;            // 최대 급여
-  final String? wageType;        // 급여 타입 (hourly, daily, monthly)
-  final int workDetailCount;     // 업무 개수
+  // ── 사업장 ────────────────────────────────────────
+  final String businessId;
+  final String businessName;
+  final String? businessAddress;
+  final String? businessCity;
+  final String? businessDistrict;
 
-  // ✅ 그룹 마스터 전용 통계 (마스터 TO에만 저장)
-  final int? groupTotalRequired;   // 그룹 전체 필요 인원
-  final int? groupTotalConfirmed;  // 그룹 전체 확정 인원
-  final int? groupTotalPending;    // 그룹 전체 대기 인원
-  final int? groupActualDaysCount;  // ✅ 실제 TO 개수
-  
-  
-  final String? description; // 전체 설명
-  final String creatorUID; // 생성한 관리자 UID
-  final DateTime createdAt; // 생성 시각
-  // ✅ Phase 4: TO 마감 관리
-  final bool isManualClosed;        // 수동 마감 여부
-  final DateTime? closedAt;         // 마감 시각
-  final String? closedBy;           // 마감 처리자 UID
-  final DateTime? reopenedAt;       // 재오픈 시각
-  final String? reopenedBy;         // 재오픈 처리자 UID
+  // ── 공고 유형 ─────────────────────────────────────
+  /// 'flex' (단기) | 'contract' (장기)
+  final String type;
 
-  // ✅ Phase 4 최적화: 상태 필드 (서버 필터링용)
-  final String status;              // ACTIVE | CLOSED | FULL | EXPIRED
-  final DateTime? statusUpdatedAt;  // 상태 변경 시각
+  // ── 기본 정보 ─────────────────────────────────────
+  final String title;
+  final String? description;
 
-  // ✅ 예약 공개 관리
-  final String publishMode;         // 'immediate' (즉시) | 'scheduled' (예약)
-  final DateTime? publishAt;        // 예약 공개 시간
-  final bool isPublished;           // 실제 공개 여부
-  final int? publishDaysBefore;     // D-N (1, 2, 3 등)
-  final String? publishTime;        // 공개 시간 ('14:00' 등)
+  // ── 업무 상세 (배열, 문서 내 저장) ────────────────
+  final List<WorkDetailData> workDetails;
+
+  // ── flex 전용 집계 ────────────────────────────────
+  /// 등록된 슬롯(날짜) 수
+  final int totalSlots;
+
+  // ── contract 전용 ─────────────────────────────────
+  final DateTime? rangeStart;
+  final DateTime? rangeEnd;
+  final List<String> workDays; // ['월', '화', ...]
+  final String deadlineType;   // 'HOURS_BEFORE' | 'FIXED_TIME'
+  final int? hoursBeforeStart;
+  final DateTime? applicationDeadline; // contract: 공고 마감일
+
+  // ── 인원 집계 ─────────────────────────────────────
+  final int totalRequired;
+  final int totalConfirmed;
+  final int totalPending;
+
+  // ── 상태 ─────────────────────────────────────────
+  final String status; // 'ACTIVE' | 'CLOSED' | 'FULL' | 'EXPIRED' | 'SCHEDULED'
+  final DateTime? statusUpdatedAt;
+  final bool isManualClosed;
+  final DateTime? closedAt;
+  final String? closedBy;
+  final DateTime? reopenedAt;
+  final String? reopenedBy;
+
+  // ── 예약 공개 ─────────────────────────────────────
+  final String publishMode; // 'immediate' | 'scheduled'
+  final DateTime? publishAt;
+  final bool isPublished;
+  final int? publishDaysBefore;
+  final String? publishTime;
+
+  // ── 메타 ─────────────────────────────────────────
+  final String creatorUID;
+  final DateTime createdAt;
 
   TOModel({
     required this.id,
@@ -84,184 +73,80 @@ class TOModel {
     this.businessAddress,
     this.businessCity,
     this.businessDistrict,
-    this.jobType = 'short',
-    this.workDays,
-    this.groupId,
-    this.groupName,
-    this.startDate,
-    this.endDate,
-    this.isGroupMaster = false, // 기본값 false
+    this.type = 'flex',
     required this.title,
-    required this.date,
-    required this.startTime,
-    required this.endTime,
-    required this.applicationDeadline,
-    this.deadlineType = 'HOURS_BEFORE',  // 기본값
-    this.hoursBeforeStart = 2,  // 기본값: 2시간 전
-    required this.totalRequired,
-    this.totalConfirmed = 0,
-    this.totalPending = 0,        // ✅ 추가
-    this.totalApplications = 0,   // ✅ 추가
-    // ✅ 급여 정보
-    this.minWage,
-    this.maxWage,
-    this.wageType,
-    this.workDetailCount = 1,
-    // ✅ 그룹 마스터 통계
-    this.groupTotalRequired,
-    this.groupTotalConfirmed,
-    this.groupTotalPending,
-    this.groupActualDaysCount,
-
     this.description,
-    required this.creatorUID,
-    required this.createdAt,
-    // ✅ Phase 4: TO 마감 관리
-    this.isManualClosed = false,      // 기본값: 열림
+    this.workDetails = const [],
+    this.totalSlots = 0,
+    this.rangeStart,
+    this.rangeEnd,
+    this.workDays = const [],
+    this.deadlineType = 'HOURS_BEFORE',
+    this.hoursBeforeStart = 2,
+    this.applicationDeadline,
+    this.totalRequired = 0,
+    this.totalConfirmed = 0,
+    this.totalPending = 0,
+    this.status = 'ACTIVE',
+    this.statusUpdatedAt,
+    this.isManualClosed = false,
     this.closedAt,
     this.closedBy,
     this.reopenedAt,
     this.reopenedBy,
-    // ✅ Phase 4 최적화: 상태 필드
-    this.status = 'ACTIVE',         // 기본값: 진행중
-    this.statusUpdatedAt,
-    // ✅ 예약 공개 관리
-    this.publishMode = 'immediate',   // 기본값: 즉시 공개
+    this.publishMode = 'immediate',
     this.publishAt,
-    this.isPublished = true,          // 기본값: 공개됨 (하위 호환성)
+    this.isPublished = true,
     this.publishDaysBefore,
     this.publishTime,
+    required this.creatorUID,
+    required this.createdAt,
   });
 
-  /// Firestore 문서를 TOModel로 변환
+  // ── 직렬화 ────────────────────────────────────────
+
   factory TOModel.fromMap(Map<String, dynamic> data, String documentId) {
     return TOModel(
       id: documentId,
-      businessId: data['businessId'] ?? '',
-      businessName: data['businessName'] ?? '',
-      businessAddress: data['businessAddress'],
-      businessCity: data['businessCity'],
-      businessDistrict: data['businessDistrict'],
-      jobType: data['jobType'] ?? 'short',
-      workDays: data['workDays'] != null  // ⭐ 이 3줄 추가
-        ? List<String>.from(data['workDays'])
-        : null,
-      groupId: data['groupId'],
-      groupName: data['groupName'],
-      startDate: data['startDate'] != null 
-          ? (data['startDate'] as Timestamp).toDate()
-          : null,
-      endDate: data['endDate'] != null 
-          ? (data['endDate'] as Timestamp).toDate()
-          : null,
-      isGroupMaster: data['isGroupMaster'] ?? false,
-      title: data['title'] ?? '제목 없음',
-      date: (data['date'] as Timestamp).toDate(),
-      startTime: data['startTime'] ?? '',
-      endTime: data['endTime'] ?? '',
-      applicationDeadline: data['applicationDeadline'] != null
-          ? (data['applicationDeadline'] as Timestamp).toDate().toLocal()  // 🔥 .toLocal() 추가
-          : DateTime(
-              (data['date'] as Timestamp).toDate().year,
-              (data['date'] as Timestamp).toDate().month,
-              (data['date'] as Timestamp).toDate().day - 1,
-              18,
-              0,
-            ),
-      // ✅ NEW: 지원 마감 규칙
-      deadlineType: data['deadlineType'] ?? 'HOURS_BEFORE',
-      hoursBeforeStart: data['hoursBeforeStart'] ?? 2,
-      
-
-      totalRequired: data['totalRequired'] ?? 0,
-      totalConfirmed: data['totalConfirmed'] ?? 0,
-      totalPending: data['totalPending'] ?? 0,           // ✅ 추가
-      totalApplications: data['totalApplications'] ?? 0, // ✅ 추가
-      // ✅ 급여 정보
-      minWage: data['minWage'],
-      maxWage: data['maxWage'],
-      wageType: data['wageType'],
-      workDetailCount: data['workDetailCount'] ?? 1,
-      // ✅ 그룹 마스터 통계
-      groupTotalRequired: data['groupTotalRequired'],
-      groupTotalConfirmed: data['groupTotalConfirmed'],
-      groupTotalPending: data['groupTotalPending'],
-      groupActualDaysCount: data['groupActualDaysCount'],
-
-      description: data['description'],
-      creatorUID: data['creatorUID'] ?? '',
-      createdAt: data['createdAt'] != null 
-          ? (data['createdAt'] as Timestamp).toDate()
-          : DateTime.now(),
-      // ✅ Phase 4: TO 마감 관리
-      isManualClosed: data['isManualClosed'] ?? false,
-      closedAt: data['closedAt'] != null
-          ? (data['closedAt'] as Timestamp).toDate()
-          : null,
-      closedBy: data['closedBy'],
-      reopenedAt: data['reopenedAt'] != null
-          ? (data['reopenedAt'] as Timestamp).toDate()
-          : null,
-      reopenedBy: data['reopenedBy'],
-      // ✅ Phase 4 최적화: 상태 필드
-      status: data['status'] ?? 'ACTIVE',  // 기존 데이터 호환
-      statusUpdatedAt: data['statusUpdatedAt'] != null
-          ? (data['statusUpdatedAt'] as Timestamp).toDate()
-          : null,
-      // ✅ 예약 공개 관리
-      publishMode: data['publishMode'] ?? 'immediate',
-      publishAt: data['publishAt'] != null
-          ? (data['publishAt'] as Timestamp).toDate().toLocal()  // 🔥 .toLocal() 추가
-          : null,
-      isPublished: data['isPublished'] ?? true,  // 기존 데이터는 공개 상태
-      publishDaysBefore: data['publishDaysBefore'],
-      publishTime: data['publishTime'],
+      businessId: data['businessId'] as String? ?? '',
+      businessName: data['businessName'] as String? ?? '',
+      businessAddress: data['businessAddress'] as String?,
+      businessCity: data['businessCity'] as String?,
+      businessDistrict: data['businessDistrict'] as String?,
+      type: data['type'] as String? ?? 'flex',
+      title: data['title'] as String? ?? '제목 없음',
+      description: data['description'] as String?,
+      workDetails: WorkDetailData.listFromFirestore(data['workDetails']),
+      totalSlots: data['totalSlots'] as int? ?? 0,
+      rangeStart: (data['rangeStart'] as Timestamp?)?.toDate(),
+      rangeEnd: (data['rangeEnd'] as Timestamp?)?.toDate(),
+      workDays: data['workDays'] != null
+          ? List<String>.from(data['workDays'] as List)
+          : const [],
+      deadlineType: data['deadlineType'] as String? ?? 'HOURS_BEFORE',
+      hoursBeforeStart: data['hoursBeforeStart'] as int? ?? 2,
+      applicationDeadline:
+          (data['applicationDeadline'] as Timestamp?)?.toDate().toLocal(),
+      totalRequired: data['totalRequired'] as int? ?? 0,
+      totalConfirmed: data['totalConfirmed'] as int? ?? 0,
+      totalPending: data['totalPending'] as int? ?? 0,
+      status: data['status'] as String? ?? 'ACTIVE',
+      statusUpdatedAt: (data['statusUpdatedAt'] as Timestamp?)?.toDate(),
+      isManualClosed: data['isManualClosed'] as bool? ?? false,
+      closedAt: (data['closedAt'] as Timestamp?)?.toDate(),
+      closedBy: data['closedBy'] as String?,
+      reopenedAt: (data['reopenedAt'] as Timestamp?)?.toDate(),
+      reopenedBy: data['reopenedBy'] as String?,
+      publishMode: data['publishMode'] as String? ?? 'immediate',
+      publishAt: (data['publishAt'] as Timestamp?)?.toDate().toLocal(),
+      isPublished: data['isPublished'] as bool? ?? true,
+      publishDaysBefore: data['publishDaysBefore'] as int?,
+      publishTime: data['publishTime'] as String?,
+      creatorUID: data['creatorUID'] as String? ?? '',
+      createdAt: (data['createdAt'] as Timestamp?)?.toDate() ?? DateTime.now(),
     );
   }
 
-  /// GroupModel에서 대표 TOModel 생성 (지원자 목록용)
-  factory TOModel.fromGroupModel(GroupModel group) {
-    return TOModel(
-      id: group.id,
-      businessId: group.businessId,
-      businessName: group.businessName,
-      businessAddress: group.businessAddress,
-      businessCity: group.businessCity,
-      businessDistrict: group.businessDistrict,
-      jobType: 'short',  // 그룹은 단기
-      groupId: group.id,
-      groupName: group.groupName,
-      startDate: group.startDate,
-      endDate: group.endDate,
-      isGroupMaster: true,  // 가상 대표
-      title: group.title,
-      date: group.startDate,
-      startTime: '',
-      endTime: '',
-      applicationDeadline: group.endDate,
-      totalRequired: group.totalRequired,
-      totalConfirmed: group.totalConfirmed,
-      totalPending: group.totalPending,
-      minWage: group.minWage,
-      maxWage: group.maxWage,
-      wageType: group.wageType,
-      workDetailCount: group.workDetailCount,
-      description: group.description,
-      creatorUID: group.creatorUID,
-      createdAt: group.createdAt,
-      status: group.status,
-      publishMode: group.publishMode,
-      publishAt: group.publishAt,
-      isPublished: group.isPublished,
-      publishDaysBefore: group.publishDaysBefore,
-      publishTime: group.publishTime,
-      isManualClosed: group.isManualClosed,
-      closedAt: group.closedAt,
-      closedBy: group.closedBy,
-    );
-  }
-
-  /// TOModel을 Firestore 문서로 변환
   Map<String, dynamic> toMap() {
     return {
       'businessId': businessId,
@@ -269,53 +154,39 @@ class TOModel {
       'businessAddress': businessAddress,
       'businessCity': businessCity,
       'businessDistrict': businessDistrict,
-      'jobType': jobType,
-      'workDays': workDays,
-      'groupId': groupId,
-      'groupName': groupName,
-      'startDate': startDate != null ? Timestamp.fromDate(startDate!) : null,
-      'endDate': endDate != null ? Timestamp.fromDate(endDate!) : null,
-      'isGroupMaster': isGroupMaster,
+      'type': type,
       'title': title,
-      'date': Timestamp.fromDate(date),
-      'startTime': startTime,
-      'endTime': endTime,
-      'applicationDeadline': Timestamp.fromDate(applicationDeadline),
-       // ✅ NEW: 지원 마감 규칙
+      'description': description,
+      'workDetails': WorkDetailData.listToFirestore(workDetails),
+      'totalSlots': totalSlots,
+      if (rangeStart != null) 'rangeStart': Timestamp.fromDate(rangeStart!),
+      if (rangeEnd != null) 'rangeEnd': Timestamp.fromDate(rangeEnd!),
+      'workDays': workDays,
       'deadlineType': deadlineType,
       'hoursBeforeStart': hoursBeforeStart,
+      if (applicationDeadline != null)
+        'applicationDeadline': Timestamp.fromDate(applicationDeadline!),
       'totalRequired': totalRequired,
-      // ✅ 급여 정보
-      'minWage': minWage,
-      'maxWage': maxWage,
-      'wageType': wageType,
-      'workDetailCount': workDetailCount,
-      // ✅ 그룹 마스터 통계 (null이면 저장 안함)
-      if (groupTotalRequired != null) 'groupTotalRequired': groupTotalRequired,
-      if (groupTotalConfirmed != null) 'groupTotalConfirmed': groupTotalConfirmed,
-      if (groupTotalPending != null) 'groupTotalPending': groupTotalPending,
-      'description': description,
-      'creatorUID': creatorUID,
-      'createdAt': Timestamp.fromDate(createdAt),
-      // ✅ Phase 4: TO 마감 관리
-      'isManualClosed': isManualClosed,
-      'closedAt': closedAt != null ? Timestamp.fromDate(closedAt!) : null,
-      'closedBy': closedBy,
-      'reopenedAt': reopenedAt != null ? Timestamp.fromDate(reopenedAt!) : null,
-      'reopenedBy': reopenedBy,
-      // ✅ Phase 4 최적화: 상태 필드
+      'totalConfirmed': totalConfirmed,
+      'totalPending': totalPending,
       'status': status,
-      'statusUpdatedAt': statusUpdatedAt != null ? Timestamp.fromDate(statusUpdatedAt!) : null,
-      // ✅ 예약 공개 관리
+      if (statusUpdatedAt != null)
+        'statusUpdatedAt': Timestamp.fromDate(statusUpdatedAt!),
+      'isManualClosed': isManualClosed,
+      if (closedAt != null) 'closedAt': Timestamp.fromDate(closedAt!),
+      'closedBy': closedBy,
+      if (reopenedAt != null) 'reopenedAt': Timestamp.fromDate(reopenedAt!),
+      'reopenedBy': reopenedBy,
       'publishMode': publishMode,
-      'publishAt': publishAt != null ? Timestamp.fromDate(publishAt!) : null,
+      if (publishAt != null) 'publishAt': Timestamp.fromDate(publishAt!),
       'isPublished': isPublished,
       'publishDaysBefore': publishDaysBefore,
       'publishTime': publishTime,
+      'creatorUID': creatorUID,
+      'createdAt': Timestamp.fromDate(createdAt),
     };
   }
 
-  /// 복사본 생성
   TOModel copyWith({
     String? id,
     String? businessId,
@@ -323,50 +194,34 @@ class TOModel {
     String? businessAddress,
     String? businessCity,
     String? businessDistrict,
-    String? jobType,
-    List<String>? workDays,
-    String? groupId,
-    String? groupName,
-    DateTime? startDate,
-    DateTime? endDate,
-    bool? isGroupMaster,
+    String? type,
     String? title,
-    DateTime? date,
-    String? startTime,
-    String? endTime,
-    DateTime? applicationDeadline,
-    // ✅ NEW
+    String? description,
+    List<WorkDetailData>? workDetails,
+    int? totalSlots,
+    DateTime? rangeStart,
+    DateTime? rangeEnd,
+    List<String>? workDays,
     String? deadlineType,
     int? hoursBeforeStart,
+    DateTime? applicationDeadline,
     int? totalRequired,
     int? totalConfirmed,
-    // ✅ 급여 정보
-    int? minWage,
-    int? maxWage,
-    String? wageType,
-    int? workDetailCount,
-    // ✅ 그룹 마스터 통계
-    int? groupTotalRequired,
-    int? groupTotalConfirmed,
-    int? groupTotalPending,
-    String? description,
-    String? creatorUID,
-    DateTime? createdAt,
-    // ✅ Phase 4
+    int? totalPending,
+    String? status,
+    DateTime? statusUpdatedAt,
     bool? isManualClosed,
     DateTime? closedAt,
     String? closedBy,
     DateTime? reopenedAt,
     String? reopenedBy,
-    // ✅ Phase 4 최적화
-    String? status,
-    DateTime? statusUpdatedAt,
-    // ✅ 예약 공개 관리
     String? publishMode,
     DateTime? publishAt,
     bool? isPublished,
     int? publishDaysBefore,
     String? publishTime,
+    String? creatorUID,
+    DateTime? createdAt,
   }) {
     return TOModel(
       id: id ?? this.id,
@@ -375,385 +230,220 @@ class TOModel {
       businessAddress: businessAddress ?? this.businessAddress,
       businessCity: businessCity ?? this.businessCity,
       businessDistrict: businessDistrict ?? this.businessDistrict,
-      jobType: jobType ?? this.jobType,
-      groupId: groupId ?? this.groupId,
-      groupName: groupName ?? this.groupName,
-      startDate: startDate ?? this.startDate,
-      endDate: endDate ?? this.endDate,
-      isGroupMaster: isGroupMaster ?? this.isGroupMaster,
+      type: type ?? this.type,
       title: title ?? this.title,
-      date: date ?? this.date,
-      startTime: startTime ?? this.startTime,
-      endTime: endTime ?? this.endTime,
-      applicationDeadline: applicationDeadline ?? this.applicationDeadline,
-      // ✅ NEW
+      description: description ?? this.description,
+      workDetails: workDetails ?? this.workDetails,
+      totalSlots: totalSlots ?? this.totalSlots,
+      rangeStart: rangeStart ?? this.rangeStart,
+      rangeEnd: rangeEnd ?? this.rangeEnd,
+      workDays: workDays ?? this.workDays,
       deadlineType: deadlineType ?? this.deadlineType,
       hoursBeforeStart: hoursBeforeStart ?? this.hoursBeforeStart,
+      applicationDeadline: applicationDeadline ?? this.applicationDeadline,
       totalRequired: totalRequired ?? this.totalRequired,
       totalConfirmed: totalConfirmed ?? this.totalConfirmed,
-      // ✅ 급여 정보
-      minWage: minWage ?? this.minWage,
-      maxWage: maxWage ?? this.maxWage,
-      wageType: wageType ?? this.wageType,
-      workDetailCount: workDetailCount ?? this.workDetailCount,
-      // ✅ 그룹 마스터 통계
-      groupTotalRequired: groupTotalRequired ?? this.groupTotalRequired,
-      groupTotalConfirmed: groupTotalConfirmed ?? this.groupTotalConfirmed,
-      groupTotalPending: groupTotalPending ?? this.groupTotalPending,
-      groupActualDaysCount: groupActualDaysCount ?? groupActualDaysCount,
-      description: description ?? this.description,
-      creatorUID: creatorUID ?? this.creatorUID,
-      createdAt: createdAt ?? this.createdAt,
-      // ✅ Phase 4
+      totalPending: totalPending ?? this.totalPending,
+      status: status ?? this.status,
+      statusUpdatedAt: statusUpdatedAt ?? this.statusUpdatedAt,
       isManualClosed: isManualClosed ?? this.isManualClosed,
       closedAt: closedAt ?? this.closedAt,
       closedBy: closedBy ?? this.closedBy,
       reopenedAt: reopenedAt ?? this.reopenedAt,
       reopenedBy: reopenedBy ?? this.reopenedBy,
-      // ✅ Phase 4 최적화
-      status: status ?? this.status,
-      statusUpdatedAt: statusUpdatedAt ?? this.statusUpdatedAt,
-      // ✅ 예약 공개 관리
       publishMode: publishMode ?? this.publishMode,
       publishAt: publishAt ?? this.publishAt,
       isPublished: isPublished ?? this.isPublished,
       publishDaysBefore: publishDaysBefore ?? this.publishDaysBefore,
       publishTime: publishTime ?? this.publishTime,
-      
+      creatorUID: creatorUID ?? this.creatorUID,
+      createdAt: createdAt ?? this.createdAt,
     );
   }
-  // ============================================
-  // ✅ NEW: 그룹 TO 시간 범위 계산
-  // ============================================
 
-  /// WorkDetails에서 계산된 최소 시작 시간 (캐시용)
-  String? _cachedMinStartTime;
+  // ── 타입 헬퍼 ─────────────────────────────────────
 
-  /// WorkDetails에서 계산된 최대 종료 시간 (캐시용)
-  String? _cachedMaxEndTime;
+  bool get isFlexType => type == 'flex';
+  bool get isContractType => type == 'contract';
 
-  /// 계산된 시간 범위 설정
-  void setTimeRange(String minStart, String maxEnd) {
-    _cachedMinStartTime = minStart;
-    _cachedMaxEndTime = maxEnd;
-  }
-  /// 장기 근무 기간 표시 (예: "11/28 (목) ~ 12/7 (토)")
-  String get longTermPeriodWithDays {
-    if (!isLongTerm || startDate == null || endDate == null) return '';
-    
-    return '${FormatHelper.formatDate(startDate!)} ~ ${FormatHelper.formatDate(endDate!)}';
-  }
-  /// 근무 요일 레이블 (새로 추가)
-  String get workDaysLabel {
-    if (!isLongTerm || workDays == null || workDays!.isEmpty) return '';
-    
-    final workCount = workDays!.length;
-    
-    // 주 7일
-    if (workCount == 7) {
-      return '매일 근무';
-    }
-    
-    // 주 6일 (1일 휴무)
-    if (workCount == 6) {
-      final allDays = ['월', '화', '수', '목', '금', '토', '일'];
-      final offDay = allDays.firstWhere((day) => !workDays!.contains(day));
-      return '주 6일 ($offDay 휴무)';
-    }
-    
-    // 주 5일 (2일 휴무)
-    if (workCount == 5) {
-      final allDays = ['월', '화', '수', '목', '금', '토', '일'];
-      final offDays = allDays.where((day) => !workDays!.contains(day)).join(', ');
-      return '주 5일 ($offDays 휴무)';
-    }
-    
-    // 주 4일 이하
-    if (workCount <= 4) {
-      return '주 $workCount일 (${workDays!.join(', ')})';
-    }
-    
-    return '주 $workCount일';
+  String get typeLabel => isFlexType ? '단기 근무' : '고정 근무';
+
+  // ── workDetails 집계 (computed) ───────────────────
+
+  int get workDetailCount => workDetails.length;
+
+  int? get minWage => workDetails.isEmpty
+      ? null
+      : workDetails.map((d) => d.wage).reduce((a, b) => a < b ? a : b);
+
+  int? get maxWage => workDetails.isEmpty
+      ? null
+      : workDetails.map((d) => d.wage).reduce((a, b) => a > b ? a : b);
+
+  String? get wageType => workDetails.isEmpty ? null : workDetails.first.wageType;
+
+  String get timeRange {
+    if (workDetails.isEmpty) return '--:-- ~ --:--';
+    final starts = workDetails.map((d) => d.startTime).toList()..sort();
+    final ends = workDetails.map((d) => d.endTime).toList()..sort();
+    return '${starts.first} ~ ${ends.last}';
   }
 
-  /// 표시용 시작 시간
-  String get displayStartTime {
-    // 1순위: 캐시된 값
-    if (_cachedMinStartTime != null && _cachedMinStartTime!.isNotEmpty) {
-      return _cachedMinStartTime!;
-    }
-    
-    // 2순위: startTime 필드
-    if (startTime.isNotEmpty) {
-      return startTime;
-    }
-    
-    // 3순위: 기본값
-    return '--:--';
-  }
+  // ── 상태 헬퍼 ─────────────────────────────────────
 
-  /// 표시용 종료 시간  
-  String get displayEndTime {
-    // 1순위: 캐시된 값
-    if (_cachedMaxEndTime != null && _cachedMaxEndTime!.isNotEmpty) {
-      return _cachedMaxEndTime!;
-    }
-    
-    // 2순위: endTime 필드
-    if (endTime.isNotEmpty) {
-      return endTime;
-    }
-    
-    // 3순위: 기본값
-    return '--:--';
-  }
-
-  /// 표시용 시간 범위 (예: "08:00 ~ 18:00")
-  String get displayTimeRange {
-    return '$displayStartTime ~ $displayEndTime';
-  }
-
-  /// 마감 여부 체크
-  bool get isDeadlinePassed {
-    return DateTime.now().isAfter(applicationDeadline);
-  }
-
-  /// 그룹 TO 여부
-  bool get isGroupTO {
-    return groupId != null;
-  }
-
-  /// 그룹 기간 문자열 (예: "10/24~10/30")
-  String? get groupPeriodString {
-    if (startDate == null || endDate == null) return null;
-    
-    final start = '${startDate!.month}/${startDate!.day}';
-    final end = '${endDate!.month}/${endDate!.day}';
-    return '$start~$end';
-  }
-
-  /// 그룹 일수
-  int? get groupDaysCount {
-    if (startDate == null || endDate == null) return null;
-    return endDate!.difference(startDate!).inDays + 1;
-  }
-
-  /// 날짜 포맷 (예: "10/24 (금)")
-  String get formattedDate {
-    final weekdays = ['월', '화', '수', '목', '금', '토', '일'];
-    final weekday = weekdays[date.weekday - 1];
-    return '${date.month}/${date.day} ($weekday)';
-  }
-
-  /// 요일 (예: "금")
-  String get weekday {
-    final weekdays = ['월', '화', '수', '목', '금', '토', '일'];
-    return weekdays[date.weekday - 1];
-  }
-
-  /// 마감 상태 텍스트
-  String get deadlineStatus {
-    final now = DateTime.now();
-    final diff = applicationDeadline.difference(now);
-    
-    if (diff.isNegative) {
-      return '마감';
-    } else if (diff.inHours < 1) {
-      return 'D-${diff.inMinutes}분';
-    } else if (diff.inHours < 24) {
-      return 'D-${diff.inHours}시간';
-    } else {
-      return 'D-${diff.inDays}일';
-    }
-  }
-
-  /// 마감 임박 여부 (24시간 이내)
-  bool get isDeadlineSoon {
-    final now = DateTime.now();
-    final diff = applicationDeadline.difference(now);
-    return diff.inHours < 24 && diff.inHours >= 0;
-  }
-
-  /// 그룹화된 TO인지 확인
-  bool get isGrouped {
-    return groupId != null;
-  }
-  /// 남은 자리 수
-  int get availableSlots {
-    return totalRequired - totalConfirmed;
-  }
-  /// 시간 범위 (예: "08:00 ~ 18:00")
-  /// 그룹 TO의 경우 계산된 시간 범위 사용
-  String get timeRange => displayTimeRange;
-  /// 마감 시간 포맷 (예: "10/23 18:00")
-  String get formattedDeadline {
-    return '${applicationDeadline.month}/${applicationDeadline.day} '
-           '${applicationDeadline.hour.toString().padLeft(2, '0')}:'
-           '${applicationDeadline.minute.toString().padLeft(2, '0')}';
-  }
-  /// Phase A: 채용 유형 확인
-  bool get isShortTerm => jobType == 'short';
-  bool get isLongTerm => jobType == 'long_term';
-
-  /// 채용 유형 표시명
-  String get jobTypeLabel {
-    return isShortTerm ? '단기 근무' : '고정 근무';
-  }
-  // ✅ NEW: 실제 지원 마감 시간 계산 (getter)
-  DateTime get effectiveDeadline {
-    if (deadlineType == 'HOURS_BEFORE' && hoursBeforeStart != null) {
-      try {
-        // 🔥 UTC → 로컬 변환 후 날짜 추출
-        final localDate = date.toLocal();
-        final timeParts = startTime.split(':');
-        final startDateTime = DateTime(
-          localDate.year,
-          localDate.month,
-          localDate.day,
-          int.parse(timeParts[0]),
-          int.parse(timeParts[1]),
-        );
-        return startDateTime.subtract(Duration(hours: hoursBeforeStart!));
-      } catch (e) {
-        return applicationDeadline;
-      }
-    }
-    return applicationDeadline;
-  }
-  // ============================================
-  // ✅ Phase 4: TO 마감 상태 계산
-  // ============================================
-
-  /// 근무 시작 시간이 지났는지 확인
-  bool get isTimeExpired {
-    try {
-      final now = DateTime.now();
-      final today = DateTime(now.year, now.month, now.day);
-      
-      // ✅ 장기 공고: applicationDeadline 기준
-      if (isLongTerm) {
-        return now.isAfter(applicationDeadline);
-      }
-      
-      // 🔥 UTC → 로컬 변환
-      final localDate = date.toLocal();
-      
-      // 🔥 그룹 TO: 개별 TO의 date 기준으로 마감 체크
-      if (isGrouped) {
-        // ✅ 그룹 마스터만 endDate 기준, 개별 TO는 자신의 date 기준
-        if (isGroupMaster && endDate != null) {
-          final localEndDate = endDate!.toLocal();
-          final groupEndDate = DateTime(localEndDate.year, localEndDate.month, localEndDate.day);
-          return groupEndDate.isBefore(today);
-        }
-        // ✅ 개별 TO는 자신의 date가 과거면 마감
-        final workDate = DateTime(localDate.year, localDate.month, localDate.day);
-        if (workDate.isBefore(today)) {
-          return true;
-        }
-      }
-      
-      // 단기 TO만 시간 체크
-      final workDate = DateTime(localDate.year, localDate.month, localDate.day);
-      
-      if (workDate.isBefore(today)) {
-        return true;
-      }
-      
-      if (workDate.isAtSameMomentAs(today)) {
-        if (startTime.isNotEmpty && startTime.contains(':')) {
-          final timeParts = startTime.split(':');
-          if (timeParts.length >= 2) {
-            final workStart = DateTime(
-              localDate.year,
-              localDate.month,
-              localDate.day,
-              int.parse(timeParts[0]),
-              int.parse(timeParts[1]),
-            );
-            return now.isAfter(workStart);
-          }
-        }
-      }
-      
-      return false;
-    } catch (e) {
-      debugPrint('⚠️ isTimeExpired 계산 오류: $e');
-      return false;
-    }
-  }
-
-  /// 인원이 모두 충족되었는지 확인
-  bool get isFull => totalConfirmed >= totalRequired;
-
-  /// TO가 마감되었는지 확인 (수동 마감 or 시간 초과 or 인원 충족 or status가 CLOSED)
-  bool get isClosed {
-    return isManualClosed || isTimeExpired || isFull || status == 'CLOSED';
-  }
-  /// ✅ Phase 4: status 필드 기반 활성 여부
+  bool get isFull => totalRequired > 0 && totalConfirmed >= totalRequired;
   bool get isActive => status == 'ACTIVE';
-  
-  /// ✅ Phase 4: 현재 상태 계산 (status 필드 업데이트용)
+  bool get isScheduledPublish => publishMode == 'scheduled';
+
+  bool get isPendingPublish {
+    if (!isScheduledPublish || isPublished || publishAt == null) return false;
+    return DateTime.now().isBefore(publishAt!);
+  }
+
+  bool get isClosed => isManualClosed || isFull || status == 'CLOSED';
+
   String get calculatedStatus {
     if (isManualClosed) return 'CLOSED';
     if (isFull) return 'FULL';
-    if (isTimeExpired) return 'EXPIRED';
     return 'ACTIVE';
   }
 
-  /// 마감 사유 문자열
+  // ── contract 전용 ─────────────────────────────────
+
+  String get contractPeriodDisplay {
+    if (!isContractType || rangeStart == null || rangeEnd == null) return '';
+    return '${FormatHelper.formatDate(rangeStart!)} ~ ${FormatHelper.formatDate(rangeEnd!)}';
+  }
+
+  String get workDaysLabel {
+    if (!isContractType || workDays.isEmpty) return '';
+    final count = workDays.length;
+    if (count == 7) return '매일 근무';
+    if (count == 6) {
+      final all = ['월', '화', '수', '목', '금', '토', '일'];
+      final off = all.firstWhere((d) => !workDays.contains(d));
+      return '주 6일 ($off 휴무)';
+    }
+    if (count == 5) {
+      final all = ['월', '화', '수', '목', '금', '토', '일'];
+      final off = all.where((d) => !workDays.contains(d)).join(', ');
+      return '주 5일 ($off 휴무)';
+    }
+    return '주 $count일 (${workDays.join(', ')})';
+  }
+
+  // ── 예약 공개 ─────────────────────────────────────
+
+  String? get publishAtDisplay {
+    if (publishAt == null) return null;
+    return '${publishAt!.month}/${publishAt!.day} '
+        '${publishAt!.hour.toString().padLeft(2, '0')}:'
+        '${publishAt!.minute.toString().padLeft(2, '0')}';
+  }
+
+  // ── 인원 ─────────────────────────────────────────
+
+  int get availableSlots => totalRequired - totalConfirmed;
+
+  // ── 마감 상태 (contract용) ────────────────────────
+
+  bool get isDeadlinePassed {
+    if (applicationDeadline == null) return false;
+    return DateTime.now().isAfter(applicationDeadline!);
+  }
+
   String get closedReason {
     if (isManualClosed) return '수동 마감';
-    if (isTimeExpired) return '시간 초과';
     if (isFull) return '인원 충족';
     return '';
   }
 
-  /// 마감 사유 색상 (UI용)
-  int get closedReasonColor {
-    if (isManualClosed) return 0xFFFF9800; // 주황색
-    if (isTimeExpired) return 0xFFF44336; // 빨간색
-    if (isFull) return 0xFF4CAF50; // 초록색
-    return 0xFF9E9E9E; // 회색
-  }
-  /// 그룹 날짜 범위 표시 (예: "11/15 ~ 11/17 (3일)")
-  String? get groupDateRangeDisplay {
-    if (!isGroupMaster || startDate == null || endDate == null) return null;
-    
-    final start = '${startDate!.month}/${startDate!.day}';
-    final end = '${endDate!.month}/${endDate!.day}';
-    final days = endDate!.difference(startDate!).inDays + 1;
-    
-    return '$start ~ $end ($days일)';
-  }
-  // ============================================
-  // ✅ 예약 공개 관련 헬퍼
-  // ============================================
+  @override
+  String toString() =>
+      'TOModel(id: $id, type: $type, title: $title, status: $status, '
+      'slots: $totalSlots, workDetails: ${workDetails.length})';
 
-  /// 예약 공개 모드인지 확인
-  bool get isScheduledPublish => publishMode == 'scheduled';
+  // ── 하위 호환성 getters ───────────────────────────────────────
+  // 구 아키텍처(groups/date 기반)에서 마이그레이션 중인 화면에서 사용.
+  // Phase 5-6 리팩터링 완료 후 제거 예정.
 
-  /// 공개 대기 중인지 확인 (예약 모드 + 미공개 + 시간 안 지남)
-  bool get isPendingPublish {
-    if (!isScheduledPublish) return false;
-    if (isPublished) return false;
-    
-    // 🔥 publishAt이 없으면 공개된 것으로 처리 (방어 코드)
-    if (publishAt == null) return false;
-    
-    // ✅ publishAt이 현재 시간 지났으면 공개됨
-    if (DateTime.now().isAfter(publishAt!)) {
-      return false;
-    }
-    
-    return true;
+  /// 구 date 필드. flex: createdAt, contract: rangeStart
+  DateTime get date => rangeStart ?? createdAt;
+
+  /// isContractType 별칭
+  bool get isLongTerm => isContractType;
+
+  /// isFlexType 별칭
+  bool get isShortTerm => isFlexType;
+
+  /// rangeEnd 별칭
+  DateTime? get endDate => rangeEnd;
+
+  /// rangeStart 별칭
+  DateTime? get startDate => rangeStart;
+
+  /// 그룹 ID — 구 아키텍처 제거됨, 항상 null
+  String? get groupId => null;
+
+  /// 그룹명 — title로 대체
+  String? get groupName => title;
+
+  /// 그룹 포함 여부 — 항상 false
+  bool get isGrouped => false;
+
+  /// 그룹 마스터 여부 — 항상 false
+  bool get isGroupMaster => false;
+
+  /// type 별칭 (구 jobType)
+  String get jobType => type;
+
+  /// typeLabel 별칭 (구 jobTypeLabel)
+  String get jobTypeLabel => typeLabel;
+
+  /// MM/dd 형식 날짜
+  String get formattedDate {
+    final d = date;
+    return '${d.month.toString().padLeft(2, '0')}/${d.day.toString().padLeft(2, '0')}';
   }
 
-  /// 공개 예정 시간 표시 (예: "11/27 14:00")
-  String? get publishAtDisplay {
-    if (publishAt == null) return null;
-    return '${publishAt!.month}/${publishAt!.day} '
-           '${publishAt!.hour.toString().padLeft(2, '0')}:'
-           '${publishAt!.minute.toString().padLeft(2, '0')}';
+  /// 마감일 표시
+  String get formattedDeadline {
+    final dl = applicationDeadline;
+    if (dl == null) return '-';
+    return '${dl.month}/${dl.day} '
+        '${dl.hour.toString().padLeft(2, '0')}:'
+        '${dl.minute.toString().padLeft(2, '0')}';
   }
+
+  /// 마감 30분 이내 여부
+  bool get isDeadlineSoon {
+    final dl = applicationDeadline;
+    if (dl == null) return false;
+    final diff = dl.difference(DateTime.now()).inMinutes;
+    return diff >= 0 && diff <= 30;
+  }
+
+  /// 날짜 범위 표시 (구 groupDateRangeDisplay)
+  String get groupDateRangeDisplay => contractPeriodDisplay;
+
+  /// 마감시간 초과 여부 (구 isTimeExpired)
+  bool get isTimeExpired => isDeadlinePassed;
+
+  /// 첫 번째 업무의 시작 시간 (구 startTime)
+  String get startTime {
+    if (workDetails.isEmpty) return '--:--';
+    final starts = workDetails.map((d) => d.startTime).toList()..sort();
+    return starts.first;
+  }
+
+  /// 마지막 업무의 종료 시간 (구 endTime)
+  String get endTime {
+    if (workDetails.isEmpty) return '--:--';
+    final ends = workDetails.map((d) => d.endTime).toList()..sort();
+    return ends.last;
+  }
+
+  /// 구 그룹 시간 범위 설정 — no-op (TO는 불변 객체, 이 필드 제거됨)
+  // ignore: use_setters_to_change_properties
+  void setTimeRange(String? minStart, String? maxEnd) {}
 }

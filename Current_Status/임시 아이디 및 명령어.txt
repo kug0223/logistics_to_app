@@ -18,12 +18,12 @@ ALfit
 
 냉동분류
 
-git add . ; git commit -m "리뷰시스템구축 251226-11" ; git push
+git add . ; git commit -m "20260506_2" ; git push
 
 flutter clean
 flutter pub get
 flutter run -d web-server
-
+flutter run -d chrome
 
 # 릴리즈 APK (배포용)
 flutter build apk --release
@@ -91,4 +91,4 @@ lib의 모든 하위 폴더와 파일구조
 ✅ 색상 하드코딩 금지
 ✅ 일관된 둥근 모서리 (8~24px)
 
-
+Leakgallery.com

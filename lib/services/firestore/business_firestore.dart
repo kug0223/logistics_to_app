@@ -371,71 +371,34 @@ extension BusinessFirestore on FirestoreService {
       return false;
     }
   }
-  /// 활성 TO 조회 (사업장별) - 캐싱 적용
+  /// 활성 TO 조회 (사업장별)
   Future<List<TOModel>> getActiveTOsByBusinessId(String businessId) async {
     try {
-      // 캐시 확인
-      if (_activeTOsCache != null && _activeTOsCacheTime != null) {
-        final cacheAge = DateTime.now().difference(_activeTOsCacheTime!);
-        if (cacheAge < _cacheValidDuration) {
-          debugPrint('✅ 활성 TO 캐시 사용');
-          return _activeTOsCache!
-              .where((to) => to.businessId == businessId)
-              .toList();
-        }
-      }
-
       final snapshot = await _firestore
           .collection('tos')
           .where('businessId', isEqualTo: businessId)
+          .where('status', whereIn: ['ACTIVE', 'FULL', 'SCHEDULED'])
           .get();
-
-      final toList = snapshot.docs
+      return snapshot.docs
           .map((doc) => TOModel.fromMap(doc.data(), doc.id))
           .toList();
-
-      // 캐시 저장
-      _activeTOsCache = toList;
-      _activeTOsCacheTime = DateTime.now();
-
-      debugPrint('✅ 활성 TO 조회: ${toList.length}개');
-      return toList;
     } catch (e) {
       debugPrint('❌ 활성 TO 조회 실패: $e');
       return [];
     }
   }
 
-  /// 마감된 TO 조회 (사업장별) - 이미 있음, 사업장 필터 추가
+  /// 마감된 TO 조회 (사업장별)
   Future<List<TOModel>> getClosedTOsByBusinessId(String businessId) async {
     try {
-      // 캐시 확인
-      if (_closedTOsCache != null && _closedTOsCacheTime != null) {
-        final cacheAge = DateTime.now().difference(_closedTOsCacheTime!);
-        if (cacheAge < _cacheValidDuration) {
-          debugPrint('✅ 마감 TO 캐시 사용');
-          return _closedTOsCache!
-              .where((to) => to.businessId == businessId)
-              .toList();
-        }
-      }
-
       final snapshot = await _firestore
           .collection('tos')
           .where('businessId', isEqualTo: businessId)
-          .where('isManualClosed', isEqualTo: true)
+          .where('status', whereIn: ['CLOSED', 'EXPIRED'])
           .get();
-
-      final toList = snapshot.docs
+      return snapshot.docs
           .map((doc) => TOModel.fromMap(doc.data(), doc.id))
           .toList();
-
-      // 캐시 저장
-      _closedTOsCache = toList;
-      _closedTOsCacheTime = DateTime.now();
-
-      debugPrint('✅ 마감 TO 조회: ${toList.length}개');
-      return toList;
     } catch (e) {
       debugPrint('❌ 마감 TO 조회 실패: $e');
       return [];

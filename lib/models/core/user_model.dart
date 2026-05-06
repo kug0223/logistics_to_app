@@ -34,6 +34,7 @@ class UserModel {
   final String? idCardImageUrl;         // 신분증 앞면 이미지 URL
   final DateTime? idCardVerifiedAt;     // 신분증 인증 시각
   final bool isIdVerified;              // 신분증 인증 여부
+  final bool isEmailVerified;           // 이메일 인증 여부
   
   // ━━━ 급여 통장 정보 ━━━
   final String? bankName;               // 은행명
@@ -90,6 +91,7 @@ class UserModel {
     this.idCardImageUrl,
     this.idCardVerifiedAt,
     this.isIdVerified = false,
+    this.isEmailVerified = false,
     this.bankName,
     this.accountNumber,
     this.accountHolder,
@@ -219,6 +221,7 @@ class UserModel {
       idCardImageUrl: map['idCardImageUrl'],
       idCardVerifiedAt: _parseDateTime(map['idCardVerifiedAt']),
       isIdVerified: map['isIdVerified'] ?? false,
+      isEmailVerified: map['isEmailVerified'] ?? false,
       bankName: map['bankName'],
       accountNumber: EncryptionHelper.decrypt(map['accountNumber']),
       accountHolder: map['accountHolder'],
@@ -275,6 +278,7 @@ class UserModel {
           ? Timestamp.fromDate(idCardVerifiedAt!) 
           : null,
       'isIdVerified': isIdVerified,
+      'isEmailVerified': isEmailVerified,
       'bankName': bankName,
       'accountNumber': EncryptionHelper.encrypt(accountNumber),
       'accountHolder': accountHolder,
@@ -358,6 +362,7 @@ class UserModel {
     String? idCardImageUrl,
     DateTime? idCardVerifiedAt,
     bool? isIdVerified,
+    bool? isEmailVerified,
     String? bankName,
     String? accountNumber,
     String? accountHolder,
@@ -406,6 +411,7 @@ class UserModel {
       idCardImageUrl: idCardImageUrl ?? this.idCardImageUrl,
       idCardVerifiedAt: idCardVerifiedAt ?? this.idCardVerifiedAt,
       isIdVerified: isIdVerified ?? this.isIdVerified,
+      isEmailVerified: isEmailVerified ?? this.isEmailVerified,
       bankName: bankName ?? this.bankName,
       accountNumber: accountNumber ?? this.accountNumber,
       accountHolder: accountHolder ?? this.accountHolder,

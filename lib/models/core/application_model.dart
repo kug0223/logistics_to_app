@@ -23,7 +23,8 @@ class ApplicationModel {
   final String selectedWorkType; // 현재 지원한 업무 유형 (예: "피킹")
   final String? workDetailId;  // ✅ 추가: WorkDetail 고유 ID
   final String? toId;          // ✅ TO 고유 ID
-  final String? groupId;       // ✅ 그룹 ID
+  final String? slotId;        // ✅ 슬롯 ID (flex 타입 공고의 특정 날짜 슬롯)
+  final String? groupId;       // Deprecated — 하위 호환용, 신규 공고는 미사용
   final int wage; // 지원 시점의 금액 (업무유형 변경 시 함께 업데이트)
   // 🔥 업무 상세 정보 (UI 표시용)
   final String? wageType;              // 급여 타입 (hourly, daily)
@@ -89,9 +90,10 @@ class ApplicationModel {
     required this.endTime,
     required this.uid,
     required this.selectedWorkType,
-    this.workDetailId,  // ✅ 추가
-    this.toId,          // ✅ TO 고유 ID
-    this.groupId,       // ✅ 그룹 ID
+    this.workDetailId,
+    this.toId,
+    this.slotId,
+    this.groupId,
     required this.wage,
     // 🔥 업무 상세 정보
     this.wageType,
@@ -161,9 +163,10 @@ class ApplicationModel {
       endTime: data['endTime'] ?? '',
       uid: data['uid'] ?? '',
       selectedWorkType: data['selectedWorkType'] ?? '',
-      workDetailId: data['workDetailId'],  // ✅ 추가
-      toId: data['toId'],                  // ✅ TO 고유 ID
-      groupId: data['groupId'],            // ✅ 그룹 ID
+      workDetailId: data['workDetailId'],
+      toId: data['toId'],
+      slotId: data['slotId'],
+      groupId: data['groupId'],
       wage: data['wage'] ?? 0,
       // 🔥 업무 상세 정보
       wageType: data['wageType'],
@@ -267,9 +270,10 @@ class ApplicationModel {
       'endTime': endTime,
       'uid': uid,
       'selectedWorkType': selectedWorkType,
-      'workDetailId': workDetailId,  // ✅ 추가
-      'toId': toId,                  // ✅ TO 고유 ID
-      'groupId': groupId,            // ✅ 그룹 ID
+      'workDetailId': workDetailId,
+      'toId': toId,
+      'slotId': slotId,
+      'groupId': groupId,
       'wage': wage,
       // 🔥 업무 상세 정보
       'wageType': wageType,
@@ -381,8 +385,9 @@ class ApplicationModel {
     String? endTime,
     String? uid,
     String? selectedWorkType,
-    String? toId,      // ✅ 추가
-    String? groupId,   // ✅ 추가
+    String? toId,
+    String? slotId,
+    String? groupId,
     int? wage,
     // 🔥 업무 상세 정보
     String? wageType,
@@ -443,7 +448,8 @@ class ApplicationModel {
       uid: uid ?? this.uid,
       selectedWorkType: selectedWorkType ?? this.selectedWorkType,
       toId: toId ?? this.toId,          // ✅ 추가
-      groupId: groupId ?? this.groupId,  // ✅ 추가
+      slotId: slotId ?? this.slotId,
+      groupId: groupId ?? this.groupId,
       wage: wage ?? this.wage,
       // 🔥 업무 상세 정보
       wageType: wageType ?? this.wageType,

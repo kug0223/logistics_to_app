@@ -1,7 +1,8 @@
 {
   "permissions": {
     "allow": [
-      "PowerShell(firebase --version)"
+      "PowerShell(firebase --version)",
+      "PowerShell(cd \"c:\\\\Users\\\\kug02\\\\Projects\\\\AlFit\"; $errors = dart analyze lib/ 2>&1; $count = \\($errors | Select-String \"^  error\"\\).Count; Write-Output \"Total errors: $count\")"
     ]
   }
 }

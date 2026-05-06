@@ -1,7 +1,10 @@
-﻿import 'package:flutter/foundation.dart';
+﻿import 'dart:convert';
+import 'package:crypto/crypto.dart';
+import 'package:flutter/foundation.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import '../models/core/user_model.dart';
+import '../utils/encryption_helper.dart';
 import '../utils/toast_helper.dart';
 
 class AuthService {
@@ -312,28 +315,66 @@ class AuthService {
   }
 
   // ⭐ NEW: 계정 삭제
-  Future<void> deleteAccount() async {
+  /// 비밀번호 재인증 후 계정 삭제
+  /// returns null on success, error message string on failure
+  Future<String?> deleteAccountWithPassword(String password) async {
     try {
       final user = _auth.currentUser;
-      if (user != null) {
-        // Firestore 데이터 삭제
-        await _firestore.collection('users').doc(user.uid).delete();
-        
-        // Firebase Auth 계정 삭제
-        await user.delete();
-        
-        ToastHelper.showSuccess('계정이 삭제되었습니다.');
+      if (user == null || user.email == null) return '로그인이 필요합니다';
+
+      // 1. 재인증
+      final credential = EmailAuthProvider.credential(
+        email: user.email!,
+        password: password,
+      );
+      await user.reauthenticateWithCredential(credential);
+
+      // 2. 탈퇴 기록 보존 (재가입 제한용) — Phase 1 최소 구현
+      final userDoc = await _firestore.collection('users').doc(user.uid).get();
+      if (userDoc.exists) {
+        final data = userDoc.data()!;
+        final residentNumber = EncryptionHelper.decrypt(data['residentNumber']);
+        if (residentNumber != null && residentNumber.isNotEmpty) {
+          // 주민번호 해시 생성 (원본 저장 안 함)
+          final bytes = utf8.encode(residentNumber);
+          final hash = sha256.convert(bytes).toString();
+
+          final isBlacklisted = data['isBlacklisted'] == true;
+          await _firestore.collection('deleted_accounts').add({
+            'residentNumberHash': hash,
+            'deletedAt': FieldValue.serverTimestamp(),
+            // 블랙리스트면 슈퍼관리자가 직접 해제 전까지 차단
+            'canReregisterAt': isBlacklisted
+                ? null
+                : Timestamp.fromDate(
+                    DateTime.now().add(const Duration(days: 30))),
+            'isBlacklisted': isBlacklisted,
+            'noShowCount': data['noShowCount'] ?? 0,
+            'role': data['role'] ?? 'USER',
+          });
+        }
       }
+
+      // 3. Firestore 사용자 문서 삭제
+      await _firestore.collection('users').doc(user.uid).delete();
+
+      // 4. Firebase Auth 계정 삭제
+      await user.delete();
+
+      return null; // 성공
     } on FirebaseAuthException catch (e) {
-      if (e.code == 'requires-recent-login') {
-        ToastHelper.showError('보안을 위해 다시 로그인이 필요합니다.');
-      } else {
-        ToastHelper.showError('계정 삭제에 실패했습니다.');
+      switch (e.code) {
+        case 'wrong-password':
+        case 'invalid-credential':
+          return '비밀번호가 일치하지 않습니다';
+        case 'too-many-requests':
+          return '시도 횟수를 초과했습니다. 잠시 후 다시 시도해주세요';
+        default:
+          return '계정 삭제에 실패했습니다 (${e.code})';
       }
-      throw Exception('계정 삭제 실패: $e');
     } catch (e) {
-      ToastHelper.showError('계정 삭제 중 오류가 발생했습니다.');
-      throw Exception('계정 삭제 실패: $e');
+      debugPrint('❌ 계정 삭제 실패: $e');
+      return '계정 삭제 중 오류가 발생했습니다';
     }
   }
   /// ⭐ 비밀번호 변경
@@ -410,6 +451,37 @@ class AuthService {
       return false;
     }
   }
+  // 동일 전화번호 + 역할 중복 가입 체크
+  // 같은 사람이 같은 역할로 이미 가입했는지 확인
+  Future<bool> checkDuplicateRegistration({
+    required String phone,
+    required UserRole role,
+  }) async {
+    try {
+      final snapshot = await _firestore
+          .collection('users')
+          .where('phone', isEqualTo: phone)
+          .where('role', isEqualTo: _roleToString(role))
+          .limit(1)
+          .get();
+      return snapshot.docs.isNotEmpty;
+    } catch (e) {
+      debugPrint('❌ 중복 가입 체크 실패: $e');
+      return false; // 에러 시 통과 허용 (서버 에러로 막지 않음)
+    }
+  }
+
+  static String _roleToString(UserRole role) {
+    switch (role) {
+      case UserRole.SUPER_ADMIN:
+        return 'SUPER_ADMIN';
+      case UserRole.BUSINESS_ADMIN:
+        return 'BUSINESS_ADMIN';
+      case UserRole.USER:
+        return 'USER';
+    }
+  }
+
   // 아이디 중복 체크
   Future<bool> checkUsernameExists(String username) async {
     try {

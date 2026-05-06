@@ -407,6 +407,7 @@ class _ProfileEditScreenState extends State<ProfileEditScreen> {
       // 변경된 필드만 업데이트
       if (_emailController.text.trim() != (user.userEmail ?? '')) {
         updates['userEmail'] = _emailController.text.trim();
+        updates['isEmailVerified'] = true;
       }
       if (_phoneController.text.trim() != (user.phone ?? '')) {
         updates['phone'] = _phoneController.text.trim();

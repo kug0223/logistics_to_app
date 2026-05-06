@@ -1,7 +1,8 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 
-/// 그룹 모델 - 여러 TO를 묶는 그룹 정보
-/// groups 컬렉션에 저장
+/// @deprecated Phase 2 리팩토링에서 삭제 예정.
+/// groups 컬렉션은 slots 서브컬렉션 구조로 대체됨.
+/// firestore_service.dart, admin_to_list_ui_models.dart 참조 제거 후 삭제.
 class GroupModel {
   final String id;                  // 문서 ID (group_xxx)
   final String groupName;           // 그룹 표시명 (예: "12월 셋째주")

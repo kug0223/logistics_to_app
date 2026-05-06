@@ -20,6 +20,7 @@ import 'screens/super_admin/super_admin_home_screen.dart';
 import 'screens/business_admin/business_admin_home_screen.dart';
 import 'screens/common/splash_screen.dart';
 import 'screens/common/onboarding_screen.dart';
+import 'screens/common/settings_screen.dart';
 import 'utils/attendance_list_pdf.dart';
 import 'services/fcm_service.dart';
 import 'widgets/common/network_banner.dart';
@@ -140,6 +141,7 @@ class _AuthWrapperState extends State<AuthWrapper> {
   // TODO: 테스트 완료 후 아래 줄을 "bool? _isOnboardingCompleted;" 로 되돌리고
   //       initState에서 _checkOnboarding(); 호출 복구
   bool? _isOnboardingCompleted = false;
+  bool _emailBannerShown = false;
 
   @override
   void initState() {
@@ -239,6 +241,57 @@ class _AuthWrapperState extends State<AuthWrapper> {
             role: user.roleString,
             onComplete: _completeOnboarding,
           );
+        }
+
+        // 이메일 미인증 배너 (로그인 후 최초 1회)
+        if (!user.isEmailVerified && !_emailBannerShown) {
+          _emailBannerShown = true;
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            scaffoldMessengerKey.currentState?.showMaterialBanner(
+              MaterialBanner(
+                padding: const EdgeInsets.symmetric(
+                    horizontal: 16, vertical: 8),
+                leading: const Icon(Icons.mail_outline,
+                    color: Colors.orange),
+                backgroundColor: const Color(0xFFFFF8E1),
+                content: const Text(
+                  '이메일 인증을 완료하면 더 많은 기능을 이용할 수 있어요',
+                  style: TextStyle(fontSize: 13),
+                ),
+                actions: [
+                  TextButton(
+                    onPressed: () {
+                      scaffoldMessengerKey.currentState
+                          ?.hideCurrentMaterialBanner();
+                    },
+                    child: const Text('나중에',
+                        style: TextStyle(color: Colors.grey)),
+                  ),
+                  TextButton(
+                    onPressed: () {
+                      scaffoldMessengerKey.currentState
+                          ?.hideCurrentMaterialBanner();
+                      navigatorKey.currentState?.push(
+                        MaterialPageRoute(
+                          builder: (_) => const SettingsScreen(),
+                        ),
+                      );
+                    },
+                    child: const Text('인증하기',
+                        style: TextStyle(
+                            color: Colors.orange,
+                            fontWeight: FontWeight.w600)),
+                  ),
+                ],
+              ),
+            );
+          });
+        }
+        if (user.isEmailVerified && _emailBannerShown) {
+          _emailBannerShown = false;
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            scaffoldMessengerKey.currentState?.hideCurrentMaterialBanner();
+          });
         }
 
         // ✅ 권한별 화면 분기 (에러 핸들링 추가)

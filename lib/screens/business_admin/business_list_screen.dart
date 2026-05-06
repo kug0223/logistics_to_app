@@ -27,6 +27,8 @@ import '../../utils/cache_manager.dart';
 import 'business_detail_screen.dart';
 import 'business_form_screen.dart';
 import 'to_management/create_to_screen.dart';
+import '../common/settings_screen.dart';
+import '../../widgets/dialogs/styled_dialog.dart';
 import '../../theme/app_colors.dart';
 
 /// 📋 내 사업장 관리 화면 (관리자 전용)
@@ -496,10 +498,54 @@ class _BusinessListScreenState extends State<BusinessListScreen> {
       onSelected: (value) async {
         switch (value) {
           case 'create_to':
-            // 승인 체크
             if (!business.isApproved) {
               ToastHelper.showWarning('승인된 사업장만 TO를 등록할 수 있습니다');
               return;
+            }
+            // 이메일 미인증 / 사업자등록증 미등록 사전 체크
+            final user = Provider.of<UserProvider>(context, listen: false).currentUser;
+            if (user != null) {
+              final missing = <String>[];
+              if (!user.isEmailVerified) missing.add('이메일 인증');
+              if (user.businessLicenseImageUrl == null) missing.add('사업자등록증 등록');
+
+              if (missing.isNotEmpty) {
+                final goToSettings = await showDialog<bool>(
+                  context: context,
+                  builder: (ctx) => StyledDialog(
+                    title: '공고 등록 불가',
+                    subtitle: '다음 항목을 먼저 완료해주세요',
+                    icon: Icons.block_outlined,
+                    headerColor: AppColors.error,
+                    content: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        ...missing.map(
+                          (item) => Padding(
+                            padding: const EdgeInsets.only(bottom: 8),
+                            child: StyledDialogInfoCard.error(item),
+                          ),
+                        ),
+                        const SizedBox(height: 4),
+                        StyledDialogInfoCard.info('설정 화면에서 완료 후 다시 시도해주세요.'),
+                      ],
+                    ),
+                    actions: [
+                      StyledDialogButton.cancel(
+                        onPressed: () => Navigator.pop(ctx, false),
+                      ),
+                      StyledDialogButton.primary(
+                        text: '설정으로 이동',
+                        onPressed: () => Navigator.pop(ctx, true),
+                      ),
+                    ],
+                  ),
+                );
+                if (goToSettings == true && context.mounted) {
+                  Navigator.push(context, MaterialPageRoute(builder: (_) => const SettingsScreen()));
+                }
+                return;
+              }
             }
             await NavigationHelper.push<bool>(
               context,
@@ -701,13 +747,15 @@ class _BusinessListScreenState extends State<BusinessListScreen> {
     
     // 최신 사용자 정보 가져오기
     await userProvider.refreshCurrentUser();
+    if (!mounted) return;
+
     final user = userProvider.currentUser;
-    
+
     if (user == null) {
       ToastHelper.showError('로그인이 필요합니다.');
       return;
     }
-    
+
     // 사업자등록증 미등록 시 다이얼로그
     if (user.businessLicenseImageUrl == null) {
       final shouldNavigate = await DialogHelper.showDocumentRequired(
@@ -715,9 +763,9 @@ class _BusinessListScreenState extends State<BusinessListScreen> {
         title: '사업자등록증 등록 필요',
         missingDocuments: ['사업자등록증'],
       );
-      
-      if (shouldNavigate && mounted) {
-        // 서류 관리 화면으로 이동
+      if (!mounted) return;
+
+      if (shouldNavigate) {
         NavigationHelper.push<bool>(
           context,
           destination: const DocumentManagementScreen(),
@@ -725,7 +773,7 @@ class _BusinessListScreenState extends State<BusinessListScreen> {
       }
       return;
     }
-    
+
     // 사업자등록증 있음 → 사업장 등록 화면으로
     await NavigationHelper.push<bool>(
       context,

@@ -11,6 +11,7 @@
         "cloud_firestore",
         "cloud_functions",
         "connectivity_plus",
+        "crypto",
         "cupertino_icons",
         "encrypt",
         "firebase_auth",
@@ -123,6 +124,13 @@
       "dependencies": [
         "flutter",
         "google_mlkit_commons"
+      ]
+    },
+    {
+      "name": "crypto",
+      "version": "3.0.6",
+      "dependencies": [
+        "typed_data"
       ]
     },
     {
@@ -651,13 +659,6 @@
       ]
     },
     {
-      "name": "crypto",
-      "version": "3.0.6",
-      "dependencies": [
-        "typed_data"
-      ]
-    },
-    {
       "name": "bidi",
       "version": "2.0.13",
       "dependencies": []
@@ -684,6 +685,13 @@
       "version": "0.11.0",
       "dependencies": [
         "flutter"
+      ]
+    },
+    {
+      "name": "typed_data",
+      "version": "1.4.0",
+      "dependencies": [
+        "collection"
       ]
     },
     {
@@ -1484,13 +1492,6 @@
       "dependencies": [
         "collection",
         "meta"
-      ]
-    },
-    {
-      "name": "typed_data",
-      "version": "1.4.0",
-      "dependencies": [
-        "collection"
       ]
     },
     {

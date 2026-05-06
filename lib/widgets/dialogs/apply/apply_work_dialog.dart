@@ -2279,13 +2279,28 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
     setState(() => _loadingWorkIds.add(loadingKey));
 
     try {
-      await _firestoreService.applyForTO(
-        toId: to.id,
-        workDetailId: work.id,
-        workType: work.workType,
+      final success = await _firestoreService.applyToTOWithWorkType(
         uid: _currentUserId!,
+        businessId: to.businessId,
+        businessName: to.businessName,
+        toTitle: to.title,
+        workDate: date ?? to.date,
+        selectedWorkType: work.workType,
+        workDetailId: work.id,
+        wage: work.wage,
+        wageType: work.wageType,
+        workTypeIcon: work.workTypeIcon,
+        workTypeColor: work.workTypeColor,
+        workTypeBackgroundColor: work.workTypeBackgroundColor,
+        startTime: work.startTime,
+        endTime: work.endTime,
+        workEndDate: to.endDate,
+        workDays: to.workDays,
+        type: to.type,
+        toId: to.id,
         desiredStartDate: _isLongTerm ? _desiredStartDate : null,
       );
+      if (!success) throw Exception('지원 처리에 실패했습니다');
 
       // 상태 새로고침
       await _refreshApplicationStatus(date ?? to.date, work.workType);

@@ -11,25 +11,34 @@ import '../../../../theme/app_colors.dart';
 class TOWorkDetailsSection extends StatelessWidget {
   /// WorkDetailInput 리스트 (create용)
   final List<WorkDetailInput>? workDetailInputs;
-  
-  /// WorkDetailModel 리스트 (edit용)
+
+  /// WorkDetailModel 리스트 (레거시 edit용)
   final List<WorkDetailModel>? workDetailModels;
-  
+
+  /// WorkDetailData 리스트 (새 아키텍처 edit용)
+  final List<WorkDetailData>? workDetailData;
+
   /// 업무 추가 콜백
   final VoidCallback onAddWork;
-  
+
   /// 업무 삭제 콜백 (index 기반 - create용)
   final void Function(int index)? onRemoveWorkByIndex;
-  
+
   /// 업무 수정 콜백 (index 기반 - create용)
   final void Function(int index)? onEditWorkByIndex;
-  
-  /// 업무 수정 콜백 (WorkDetailModel - edit용)
+
+  /// 업무 수정 콜백 (WorkDetailModel - 레거시 edit용)
   final void Function(WorkDetailModel work)? onEditWork;
-  
-  /// 업무 삭제 콜백 (WorkDetailModel - edit용)
+
+  /// 업무 삭제 콜백 (WorkDetailModel - 레거시 edit용)
   final void Function(WorkDetailModel work)? onDeleteWork;
-  
+
+  /// 업무 수정 콜백 (WorkDetailData - 새 아키텍처 edit용)
+  final void Function(WorkDetailData work)? onEditWorkData;
+
+  /// 업무 삭제 콜백 (WorkDetailData - 새 아키텍처 edit용)
+  final void Function(WorkDetailData work)? onDeleteWorkData;
+
   /// 업무 유형 없음 경고 표시
   final bool showNoWorkTypeWarning;
 
@@ -37,26 +46,31 @@ class TOWorkDetailsSection extends StatelessWidget {
     super.key,
     this.workDetailInputs,
     this.workDetailModels,
+    this.workDetailData,
     required this.onAddWork,
     this.onRemoveWorkByIndex,
     this.onEditWorkByIndex,
     this.onEditWork,
     this.onDeleteWork,
+    this.onEditWorkData,
+    this.onDeleteWorkData,
     this.showNoWorkTypeWarning = false,
   }) : assert(
-         workDetailInputs != null || workDetailModels != null,
-         'Either workDetailInputs or workDetailModels must be provided',
+         workDetailInputs != null || workDetailModels != null || workDetailData != null,
+         'One of workDetailInputs, workDetailModels, or workDetailData must be provided',
        );
 
   int get _workCount {
     if (workDetailInputs != null) return workDetailInputs!.length;
     if (workDetailModels != null) return workDetailModels!.length;
+    if (workDetailData != null) return workDetailData!.length;
     return 0;
   }
 
   bool get _isEmpty {
     if (workDetailInputs != null) return workDetailInputs!.isEmpty;
     if (workDetailModels != null) return workDetailModels!.isEmpty;
+    if (workDetailData != null) return workDetailData!.isEmpty;
     return true;
   }
 
@@ -212,7 +226,7 @@ class TOWorkDetailsSection extends StatelessWidget {
       );
     }
     
-    // WorkDetailModel 리스트 (edit 모드)
+    // WorkDetailModel 리스트 (레거시 edit 모드)
     if (workDetailModels != null) {
       return Column(
         children: workDetailModels!.map((work) {
@@ -224,7 +238,20 @@ class TOWorkDetailsSection extends StatelessWidget {
         }).toList(),
       );
     }
-    
+
+    // WorkDetailData 리스트 (새 아키텍처 edit 모드)
+    if (workDetailData != null) {
+      return Column(
+        children: workDetailData!.map((work) {
+          return TOWorkDetailCard.fromData(
+            work: work,
+            onEdit: onEditWorkData != null ? () => onEditWorkData!(work) : null,
+            onDelete: onDeleteWorkData != null ? () => onDeleteWorkData!(work) : null,
+          );
+        }).toList(),
+      );
+    }
+
     return const SizedBox.shrink();
   }
 }

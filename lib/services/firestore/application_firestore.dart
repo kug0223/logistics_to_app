@@ -1,39 +1,24 @@
-﻿part of '../firestore_service.dart';
+part of '../firestore_service.dart';
 
 // ═══════════════════════════════════════════════════════════
-// 지원서 관리 (Application Management)
+// 지원서 관리 (Application Management) — slots 구조 기반
 // ═══════════════════════════════════════════════════════════
 
 extension ApplicationFirestore on FirestoreService {
-  // ═══════════════════════════════════════════════════════════
-  // 지원서 관리 (Application Management)
-  // ═══════════════════════════════════════════════════════════
 
-  /// TO별 지원자 목록 조회
+  // ───────────────────────────────────────────────────────
+  // 조회
+  // ───────────────────────────────────────────────────────
+
+  /// TO별 전체 지원서 조회
   Future<List<ApplicationModel>> getApplicationsByTOId(String toId) async {
     try {
-      // 1. TO 정보 조회
-      final toDoc = await _firestore.collection('tos').doc(toId).get();
-      if (!toDoc.exists) {
-        debugPrint('❌ TO를 찾을 수 없습니다: $toId');
-        return [];
-      }
-
-      final toData = toDoc.data()!;
-      final businessId = toData['businessId'];
-      final toTitle = toData['title'];
-      final workDate = toData['date'] as Timestamp;
-
-      // 2. businessId, toTitle, workDate로 지원서 조회
-      final snapshot = await _firestore
+      final snap = await _firestore
           .collection('applications')
-          .where('businessId', isEqualTo: businessId)
-          .where('toTitle', isEqualTo: toTitle)
-          .where('workDate', isEqualTo: workDate)
+          .where('toId', isEqualTo: toId)
           .get();
-
-      return snapshot.docs
-          .map((doc) => ApplicationModel.fromFirestore(doc))
+      return snap.docs
+          .map((d) => ApplicationModel.fromFirestore(d))
           .toList();
     } catch (e) {
       debugPrint('❌ 지원자 목록 조회 실패: $e');
@@ -41,200 +26,73 @@ extension ApplicationFirestore on FirestoreService {
     }
   }
 
-  /// 여러 TO의 지원자를 한 번에 조회 (병렬 최적화!)
-  Future<Map<String, List<ApplicationModel>>> getApplicationsByTOIds(List<String> toIds) async {
+  /// 슬롯별 지원서 조회 (flex 타입)
+  Future<List<ApplicationModel>> getApplicationsBySlotId(
+    String toId,
+    String slotId,
+  ) async {
     try {
-      if (toIds.isEmpty) return {};
-      
-      debugPrint('🔍 배치 지원자 조회 시작: ${toIds.length}개 TO (병렬 처리)');
-      
-      // ✅ 병렬로 각 TO의 지원서 조회
-      final futures = toIds.map((toId) async {
-        // TO 정보 조회
-        final toDoc = await _firestore.collection('tos').doc(toId).get();
-        if (!toDoc.exists) {
-          return MapEntry(toId, <ApplicationModel>[]);
-        }
+      final snap = await _firestore
+          .collection('applications')
+          .where('toId', isEqualTo: toId)
+          .where('slotId', isEqualTo: slotId)
+          .get();
+      return snap.docs
+          .map((d) => ApplicationModel.fromFirestore(d))
+          .toList();
+    } catch (e) {
+      debugPrint('❌ 슬롯 지원자 목록 조회 실패: $e');
+      return [];
+    }
+  }
 
-        final toData = toDoc.data()!;
-        final businessId = toData['businessId'];
-        final toTitle = toData['title'];
-        final workDate = toData['date'] as Timestamp;
-
-        // 지원서 조회
-        final snapshot = await _firestore
-            .collection('applications')
-            .where('businessId', isEqualTo: businessId)
-            .where('toTitle', isEqualTo: toTitle)
-            .where('workDate', isEqualTo: workDate)
-            .get();
-
-        final apps = snapshot.docs
-            .map((doc) => ApplicationModel.fromFirestore(doc))
-            .toList();
-        
-        return MapEntry(toId, apps);
-      }).toList();
-      
-      // ✅ 병렬 실행 완료 대기
-      final results = await Future.wait(futures);
-      final result = Map.fromEntries(results);
-      
-      debugPrint('✅ 배치 지원자 조회 완료 (병렬): ${toIds.length}개 TO, ${result.values.fold(0, (acc, apps) => acc + apps.length)}명');
-      return result;
+  /// 여러 TO의 지원서 병렬 조회
+  Future<Map<String, List<ApplicationModel>>> getApplicationsByTOIds(
+    List<String> toIds,
+  ) async {
+    if (toIds.isEmpty) return {};
+    try {
+      final results = await Future.wait(
+        toIds.map((id) async {
+          final apps = await getApplicationsByTOId(id);
+          return MapEntry(id, apps);
+        }),
+      );
+      return Map.fromEntries(results);
     } catch (e) {
       debugPrint('❌ 배치 지원자 조회 실패: $e');
       return {};
     }
   }
-  /// 사업장별 지원자 목록 조회
-  Future<List<ApplicationModel>> getApplicationsByBusinessId(String businessId) async {
+
+  /// 사업장별 전체 지원서 조회 (관리자용)
+  Future<List<ApplicationModel>> getApplicationsByBusinessId(
+    String businessId,
+  ) async {
     try {
-      debugPrint('📋 사업장별 지원서 조회 시작: $businessId');
-      
-      final snapshot = await _firestore
+      final snap = await _firestore
           .collection('applications')
           .where('businessId', isEqualTo: businessId)
           .get();
-
-      final applications = snapshot.docs
-          .map((doc) => ApplicationModel.fromMap(doc.data(), doc.id))
+      return snap.docs
+          .map((d) => ApplicationModel.fromMap(d.data(), d.id))
           .toList();
-
-      debugPrint('✅ 사업장별 지원서 조회 완료: ${applications.length}개');
-      return applications;
     } catch (e) {
       debugPrint('❌ 사업장별 지원서 조회 실패: $e');
       return [];
     }
   }
-  /// 여러 TO의 지원자를 한 번에 조회 (TO 정보 전달 - 중복 조회 제거)
-  Future<Map<String, List<ApplicationModel>>> getApplicationsByTOs(List<TOModel> tos) async {
-    try {
-      if (tos.isEmpty) return {};
-      
-      debugPrint('🔍 배치 지원자 조회 시작: ${tos.length}개 TO (TO 정보 재사용)');
-      
-      final futures = tos.map((to) async {
-        // ✅ TO 정보는 이미 있음 - 재조회 안 함!
-        final snapshot = await _firestore
-            .collection('applications')
-            .where('businessId', isEqualTo: to.businessId)
-            .where('toTitle', isEqualTo: to.title)
-            .where('workDate', isEqualTo: Timestamp.fromDate(to.date))
-            .get();
 
-        final apps = snapshot.docs
-            .map((doc) => ApplicationModel.fromFirestore(doc))
-            .toList();
-        
-        return MapEntry(to.id, apps);
-      }).toList();
-      
-      final results = await Future.wait(futures);
-      final result = Map.fromEntries(results);
-      
-      debugPrint('✅ 배치 지원자 조회 완료: ${tos.length}개 TO, ${result.values.fold(0, (acc, apps) => acc + apps.length)}명');
-      return result;
-    } catch (e) {
-      debugPrint('❌ 배치 지원자 조회 실패: $e');
-      return {};
-    }
-  }
-  /// 특정 TO의 특정 업무 유형에 대한 지원서 조회
-  Future<List<ApplicationModel>> getApplicationsByWorkDetail(
-    String toId,
-    String workType,
-  ) async {
-    try {
-      // ✅ TO 정보 먼저 조회
-      final toDoc = await _firestore.collection('tos').doc(toId).get();
-      if (!toDoc.exists) {
-        debugPrint('❌ TO를 찾을 수 없습니다: $toId');
-        return [];
-      }
-
-      final toData = toDoc.data()!;
-      final businessId = toData['businessId'];
-      final toTitle = toData['title'];
-      final workDate = toData['date'] as Timestamp;
-
-      // ✅ businessId, toTitle, workDate, workType으로 조회
-      final snapshot = await _firestore
-          .collection('applications')
-          .where('businessId', isEqualTo: businessId)
-          .where('toTitle', isEqualTo: toTitle)
-          .where('workDate', isEqualTo: workDate)
-          .where('selectedWorkType', isEqualTo: workType)
-          .get();
-
-      return snapshot.docs
-          .map((doc) => ApplicationModel.fromFirestore(doc))
-          .toList();
-    } catch (e) {
-      debugPrint('❌ 업무별 지원서 조회 실패: $e');
-      return [];
-    }
-  }
-  /// TO의 모든 지원서 조회 (businessId, title, date 기준)
-  /// [isLongTerm] - 장기 TO인 경우 날짜 필터 제외
-  Future<List<ApplicationModel>> getApplicationsByTO(
-    String businessId,
-    String title,
-    DateTime date, {
-    bool isLongTerm = false,
-  }) async {
-    try {
-      QuerySnapshot snapshot;
-      
-      if (isLongTerm) {
-        // ✅ 장기 TO: businessId + toTitle로만 조회 (날짜 필터 제외)
-        snapshot = await _firestore
-            .collection('applications')
-            .where('businessId', isEqualTo: businessId)
-            .where('toTitle', isEqualTo: title)
-            .get();
-        
-        debugPrint('✅ 장기 TO 지원서 조회: ${snapshot.docs.length}개 (businessId=$businessId, title=$title)');
-      } else {
-        // ✅ 단기 TO: 날짜 범위로 조회
-        final dateStart = DateTime(date.year, date.month, date.day);
-        final dateEnd = dateStart.add(const Duration(days: 1));
-        
-        snapshot = await _firestore
-            .collection('applications')
-            .where('businessId', isEqualTo: businessId)
-            .where('toTitle', isEqualTo: title)
-            .where('workDate', isGreaterThanOrEqualTo: Timestamp.fromDate(dateStart))
-            .where('workDate', isLessThan: Timestamp.fromDate(dateEnd))
-            .get();
-        
-        debugPrint('✅ 단기 TO 지원서 조회: ${snapshot.docs.length}개 (businessId=$businessId, title=$title, date=$dateStart~$dateEnd)');
-      }
-
-      final apps = snapshot.docs
-          .map((doc) => ApplicationModel.fromFirestore(doc))
-          .toList();
-
-      return apps;
-    } catch (e) {
-      debugPrint('❌ TO 지원서 조회 실패: $e');
-      return [];
-    }
-  }
-  
-
-  /// 내 지원 내역 조회
+  /// 내 지원 내역 조회 (사용자용)
   Future<List<ApplicationModel>> getMyApplications(String uid) async {
     try {
-      final snapshot = await _firestore
+      final snap = await _firestore
           .collection('applications')
           .where('uid', isEqualTo: uid)
           .orderBy('appliedAt', descending: true)
           .get();
-
-      return snapshot.docs
-          .map((doc) => ApplicationModel.fromFirestore(doc))
+      return snap.docs
+          .map((d) => ApplicationModel.fromFirestore(d))
           .toList();
     } catch (e) {
       debugPrint('내 지원 내역 조회 실패: $e');
@@ -242,338 +100,228 @@ extension ApplicationFirestore on FirestoreService {
     }
   }
 
-  /// TO별 지원자 목록 + 사용자 정보 조회 (관리자용)
-  Future<List<Map<String, dynamic>>> getApplicantsWithUserInfo(String toId) async {
-    try {
-      // ✅ TO 정보 먼저 조회
-      final toDoc = await _firestore.collection('tos').doc(toId).get();
-      if (!toDoc.exists) {
-        debugPrint('❌ TO를 찾을 수 없습니다: $toId');
-        return [];
-      }
+  // ───────────────────────────────────────────────────────
+  // 지원하기
+  // ───────────────────────────────────────────────────────
 
-      final toData = toDoc.data()!;
-      final businessId = toData['businessId'];
-      final toTitle = toData['title'];
-      final workDate = toData['date'] as Timestamp;
-
-      debugPrint('🔍 지원자 조회: businessId=$businessId, toTitle=$toTitle');
-
-      // ✅ businessId, toTitle, workDate로 조회
-      QuerySnapshot appSnapshot = await _firestore
-          .collection('applications')
-          .where('businessId', isEqualTo: businessId)
-          .where('toTitle', isEqualTo: toTitle)
-          .where('workDate', isEqualTo: workDate)
-          .get();
-
-      debugPrint('✅ 조회된 지원서: ${appSnapshot.docs.length}개');
-
-      // 메모리에서 정렬
-      final sortedDocs = appSnapshot.docs.toList()
-        ..sort((a, b) {
-          final aData = a.data() as Map<String, dynamic>;
-          final bData = b.data() as Map<String, dynamic>;
-          final aTime = aData['appliedAt'] as Timestamp?;
-          final bTime = bData['appliedAt'] as Timestamp?;
-          
-          if (aTime == null || bTime == null) return 0;
-          return aTime.compareTo(bTime);
-        });
-
-      List<Map<String, dynamic>> result = [];
-
-      for (var appDoc in sortedDocs) {
-        final appData = appDoc.data() as Map<String, dynamic>;
-        final uid = appData['uid'];
-
-        final userDoc = await _firestore.collection('users').doc(uid).get();
-        
-        if (userDoc.exists) {
-          final userData = userDoc.data() as Map<String, dynamic>;
-          
-          result.add({
-            'applicationId': appDoc.id,
-            'application': ApplicationModel.fromMap(appData, appDoc.id),
-            'userName': userData['name'] ?? '(알 수 없음)',
-            'userEmail': userData['email'] ?? '',
-            'userPhone': userData['phone'] ?? '',
-          });
-        }
-      }
-
-      debugPrint('✅ 사용자 정보 포함 지원자: ${result.length}명');
-      return result;
-    } catch (e) {
-      debugPrint('❌ 지원자 조회 실패: $e');
-      return [];
-    }
-  }
-
-  /// 지원하기 (업무유형 선택)
-  Future<bool> applyToTOWithWorkType({
+  /// 공고 지원 (flex: slotId 필수, contract: slotId null)
+  Future<bool> applyToTO({
+    required String toId,
+    String? slotId,
     required String businessId,
     required String businessName,
     required String toTitle,
     required DateTime workDate,
     required String uid,
     required String selectedWorkType,
-    required String workDetailId,
+    required String startTime,
+    required String endTime,
     required int wage,
-    // 🔥 업무 상세 정보 추가
-    String? wageType,
+    String wageType = 'hourly',
     String? workTypeIcon,
     String? workTypeColor,
     String? workTypeBackgroundColor,
-    required String startTime,
-    required String endTime,
+    // contract 전용
     DateTime? workEndDate,
     List<String>? workDays,
-    String type = 'short',
     DateTime? desiredStartDate,
   }) async {
     try {
-      // ═══════════════════════════════════════════════════════════
-      // 1. 사용자 서류 체크
-      // ═══════════════════════════════════════════════════════════
+      // ── 1. 사용자 서류 체크 ──
       final userDoc = await _firestore.collection('users').doc(uid).get();
-      
       if (!userDoc.exists) {
         ToastHelper.showError('사용자 정보를 찾을 수 없습니다.');
         return false;
       }
-      
       final userData = userDoc.data()!;
-      
       if (userData['idCardImageUrl'] == null) {
         ToastHelper.showError('신분증 등록이 필요합니다.');
         return false;
       }
-      
       if (userData['bankName'] == null || userData['accountNumber'] == null) {
         ToastHelper.showError('통장 정보 등록이 필요합니다.');
         return false;
       }
-      
       if (userData['bankbookImageUrl'] == null) {
         ToastHelper.showError('통장사본 등록이 필요합니다.');
         return false;
       }
 
-      // ═══════════════════════════════════════════════════════════
-      // 2. TO 찾기
-      // ═══════════════════════════════════════════════════════════
-      QuerySnapshot toSnapshot;
-      
-      // 단기공고로 먼저 검색
-      toSnapshot = await _firestore
-          .collection('tos')
-          .where('businessId', isEqualTo: businessId)
-          .where('title', isEqualTo: toTitle)
-          .where('date', isEqualTo: Timestamp.fromDate(workDate))
-          .limit(1)
-          .get();
-      debugPrint('🔍 [지원] 단기공고 TO 검색: ${toSnapshot.docs.length}건');
-      
-      // 없으면 장기공고로 재검색
-      if (toSnapshot.docs.isEmpty) {
-        toSnapshot = await _firestore
-            .collection('tos')
-            .where('businessId', isEqualTo: businessId)
-            .where('title', isEqualTo: toTitle)
-            .where('isLongTerm', isEqualTo: true)
-            .limit(1)
-            .get();
-        debugPrint('🔍 [지원] 장기공고 TO 재검색: ${toSnapshot.docs.length}건');
+      // ── 1.5. TO / 슬롯 상태 · 마감 · 정원 체크 ──
+      final toDoc = await _firestore.collection('tos').doc(toId).get();
+      if (!toDoc.exists) {
+        ToastHelper.showError('공고를 찾을 수 없습니다.');
+        return false;
       }
-
-      if (toSnapshot.docs.isEmpty) {
-        ToastHelper.showError('TO를 찾을 수 없습니다.');
+      final toData = toDoc.data()!;
+      if (toData['isManualClosed'] == true || toData['status'] == 'CLOSED') {
+        ToastHelper.showError('마감된 공고입니다.');
         return false;
       }
 
-      final toId = toSnapshot.docs.first.id;
-      final toDocData = toSnapshot.docs.first.data() as Map<String, dynamic>;
-      final groupId = toDocData['groupId'] as String?;
+      if (slotId != null) {
+        final slotDoc = await _firestore
+            .collection('tos')
+            .doc(toId)
+            .collection('slots')
+            .doc(slotId)
+            .get();
+        if (!slotDoc.exists) {
+          ToastHelper.showError('해당 날짜 정보를 찾을 수 없습니다.');
+          return false;
+        }
+        final slotData = slotDoc.data()!;
+        if (slotData['isManualClosed'] == true || slotData['status'] == 'closed') {
+          ToastHelper.showError('해당 날짜는 마감되었습니다.');
+          return false;
+        }
+        // 업무유형별 정원·마감 체크 — 슬롯의 workDetails 기준
+        final rawWorkDetails = slotData['workDetails'] as List<dynamic>? ?? [];
+        final workDetailMap = rawWorkDetails
+            .cast<Map<String, dynamic>>()
+            .firstWhere(
+              (d) => d['workType'] == selectedWorkType,
+              orElse: () => {},
+            );
 
-      // ═══════════════════════════════════════════════════════════
-      // 3. 기존 지원서 확인 및 분기 처리
-      // ═══════════════════════════════════════════════════════════
-      // ✅ 그룹 TO는 날짜별로 구분해서 중복 체크
-      final existingAppQuery = await _firestore
+        // 해당 업무의 마감 시각 체크
+        final workDeadlineTs = workDetailMap['applicationDeadline'] as Timestamp?;
+        if (workDeadlineTs != null && workDeadlineTs.toDate().isBefore(DateTime.now())) {
+          ToastHelper.showError('해당 업무의 지원 마감 시간이 지났습니다.');
+          return false;
+        }
+
+        final requiredCount = workDetailMap['requiredCount'] as int? ?? 0;
+
+        final rawCounts = slotData['workTypeCounts'] as Map<String, dynamic>?;
+        final workTypeCount = rawCounts?[selectedWorkType] as Map<String, dynamic>?;
+        final confirmedCount = workTypeCount?['confirmedCount'] as int? ?? 0;
+
+        if (requiredCount > 0 && confirmedCount >= requiredCount) {
+          ToastHelper.showError('해당 업무의 모집 인원이 마감되었습니다.');
+          return false;
+        }
+      } else {
+        final toDeadline = toData['applicationDeadline'] as Timestamp?;
+        if (toDeadline != null && toDeadline.toDate().isBefore(DateTime.now())) {
+          ToastHelper.showError('지원 마감 시간이 지났습니다.');
+          return false;
+        }
+        final confirmedCount = toData['totalConfirmed'] as int? ?? 0;
+        final totalRequired = toData['totalRequired'] as int? ?? 0;
+        if (totalRequired > 0 && confirmedCount >= totalRequired) {
+          ToastHelper.showError('모집 인원이 마감되었습니다.');
+          return false;
+        }
+      }
+
+      // ── 2. 중복 지원 체크 ──
+      final dupQuery = await _firestore
           .collection('applications')
-          .where('businessId', isEqualTo: businessId)
-          .where('toTitle', isEqualTo: toTitle)
+          .where('toId', isEqualTo: toId)
           .where('uid', isEqualTo: uid)
-          .where('workDate', isEqualTo: Timestamp.fromDate(workDate))  // ✅ 날짜 조건 추가!
           .where('selectedWorkType', isEqualTo: selectedWorkType)
-          .where('startTime', isEqualTo: startTime)
-          .where('endTime', isEqualTo: endTime)
           .get();
-      
-      // 🔥 활성 지원서 찾기 (PENDING 또는 CONFIRMED이면서 퇴사/해지 완료 아닌 것)
+
       DocumentSnapshot? activeApp;
-      DocumentSnapshot? reactivatableApp;  // 재활성화 가능한 지원서 (취소/거절)
-      
-      for (var doc in existingAppQuery.docs) {
+      DocumentSnapshot? reactivatableApp;
+
+      for (final doc in dupQuery.docs) {
+        if (slotId != null && doc.data()['slotId'] != slotId) continue;
         final data = doc.data();
         final status = data['status'] as String?;
-        final resignStatus = data['resignStatus'] as String?;
-        final terminationStatus = data['terminationStatus'] as String?;
-        
-        final isResignCompleted = resignStatus == 'APPROVED' || resignStatus == 'AUTO_APPROVED';
-        final isTerminationCompleted = terminationStatus == 'APPROVED' || terminationStatus == 'AUTO_APPROVED';
-        
-        // 퇴사/해지 완료된 지원서는 이력으로 보존 (무시하고 새로 생성)
-        if (isResignCompleted || isTerminationCompleted) {
-          debugPrint('🔍 퇴사/해지 완료된 이력 발견: ${doc.id} (이력 보존, 새 지원서 생성)');
-          continue;
-        }
-        
-        // 활성 상태 (PENDING/CONFIRMED) → 차단 대상
+        final isResignDone = ['APPROVED', 'AUTO_APPROVED']
+            .contains(data['resignStatus']);
+        final isTermDone = ['APPROVED', 'AUTO_APPROVED']
+            .contains(data['terminationStatus']);
+        if (isResignDone || isTermDone) continue;
         if (status == 'PENDING' || status == 'CONFIRMED') {
           activeApp = doc;
           break;
         }
-        
-        // 취소/거절 상태 → 재활성화 대상
-        if (status == 'CANCELED' || status == 'REJECTED' || status == 'AUTO_CANCELED') {
+        if (status == 'CANCELED' || status == 'REJECTED' ||
+            status == 'AUTO_CANCELED') {
           reactivatableApp = doc;
         }
       }
-      
-      // ✅ 케이스 A: 활성 지원서가 있으면 차단
+
       if (activeApp != null) {
-        debugPrint('🔍 활성 지원서 발견: 이미 지원한 업무');
         ToastHelper.showWarning('이미 지원한 업무입니다.');
         return false;
       }
 
-      // ═══════════════════════════════════════════════════════════
-      // 4. 시간 충돌 체크 (최적화: 1회 조회 → 메모리에서 비교)
-      // ═══════════════════════════════════════════════════════════
-      final isReallyLongTerm = type == 'long_term' && workDays != null && workDays.isNotEmpty;
-
-      // ✅ 모든 CONFIRMED 지원서 한 번에 조회
-      final confirmedSnapshot = await _firestore
+      // ── 3. 시간 충돌 체크 ──
+      final isContract = workDays != null && workDays.isNotEmpty;
+      final confirmedSnap = await _firestore
           .collection('applications')
           .where('uid', isEqualTo: uid)
           .where('status', isEqualTo: 'CONFIRMED')
           .get();
-      
-      final allConfirmed = confirmedSnapshot.docs
-          .map((doc) => ApplicationModel.fromFirestore(doc))
+      final allConfirmed = confirmedSnap.docs
+          .map((d) => ApplicationModel.fromFirestore(d))
           .toList();
-      
-      debugPrint('🔍 [충돌체크] 전체 CONFIRMED: ${allConfirmed.length}개');
 
-      if (isReallyLongTerm && workEndDate != null) {
-        // 장기공고: 희망시작일부터 종료일까지 메모리에서 체크
-        final checkStartDate = desiredStartDate ?? workDate;
-        var currentDate = checkStartDate;
-        
-        while (!currentDate.isAfter(workEndDate)) {
-          final dayOfWeek = _getKoreanDayOfWeek(currentDate);
-          
-          if (workDays.contains(dayOfWeek)) {
-            // ✅ 메모리에서 해당 날짜에 근무하는 스케줄 찾기
-            for (var schedule in allConfirmed) {
-              if (_isWorkingOnDate(schedule, currentDate)) {
-                if (_hasTimeOverlap(startTime, endTime, schedule.startTime, schedule.endTime)) {
-                  ToastHelper.showError(
-                    '${currentDate.month}/${currentDate.day}에\n'
-                    '${schedule.startTime}~${schedule.endTime} (${schedule.businessName})\n'
-                    '확정된 근무가 있어 지원할 수 없습니다.'
-                  );
-                  return false;
-                }
+      if (isContract && workEndDate != null) {
+        var current = desiredStartDate ?? workDate;
+        while (!current.isAfter(workEndDate)) {
+          final day = _getKoreanDayOfWeek(current);
+          if (workDays.contains(day)) {
+            for (final s in allConfirmed) {
+              if (_isWorkingOnDate(s, current) &&
+                  _hasTimeOverlap(startTime, endTime, s.startTime, s.endTime)) {
+                ToastHelper.showError(
+                  '${current.month}/${current.day}에\n'
+                  '${s.startTime}~${s.endTime} (${s.businessName})\n'
+                  '확정된 근무가 있어 지원할 수 없습니다.',
+                );
+                return false;
               }
             }
           }
-          currentDate = currentDate.add(const Duration(days: 1));
+          current = current.add(const Duration(days: 1));
         }
       } else {
-        // 단기공고: 해당 날짜만 체크 (메모리에서)
-        for (var schedule in allConfirmed) {
-          if (_isWorkingOnDate(schedule, workDate)) {
-            if (_hasTimeOverlap(startTime, endTime, schedule.startTime, schedule.endTime)) {
-              ToastHelper.showError(
-                '이미 ${schedule.startTime}~${schedule.endTime}에\n'
-                '${schedule.businessName}에서 확정된 근무가 있습니다.'
-              );
-              return false;
-            }
+        for (final s in allConfirmed) {
+          if (_isWorkingOnDate(s, workDate) &&
+              _hasTimeOverlap(startTime, endTime, s.startTime, s.endTime)) {
+            ToastHelper.showError(
+              '이미 ${s.startTime}~${s.endTime}에\n'
+              '${s.businessName}에서 확정된 근무가 있습니다.',
+            );
+            return false;
           }
         }
       }
 
-      // ═══════════════════════════════════════════════════════════
-      // 5. 지원서 처리 (재활성화 또는 새로 생성)
-      // ═══════════════════════════════════════════════════════════
+      // ── 4. 지원서 생성 / 재활성화 ──
       final batch = _firestore.batch();
-      
-      // ✅ 케이스 B: 재활성화 가능한 지원서가 있으면 재활성화
+
       if (reactivatableApp != null) {
-        debugPrint('✅ 기존 지원서 재활성화: ${reactivatableApp.id}');
-        
         batch.update(reactivatableApp.reference, {
           'status': 'PENDING',
           'appliedAt': FieldValue.serverTimestamp(),
-          // 🔥 이력 추가
           'statusHistory': FieldValue.arrayUnion([{
             'status': 'PENDING',
             'at': Timestamp.now(),
             'by': null,
             'action': 'REAPPLY',
           }]),
-          // 취소 관련 필드 초기화
           'canceledAt': null,
           'cancelReason': null,
-          'conflictingAppId': null,
-          'conflictingBusiness': null,
-          'conflictingTime': null,
-          // 거절 관련 필드 초기화
           'rejectedAt': null,
           'rejectedBy': null,
           'rejectMessage': null,
-          // 확정 관련 필드 초기화
           'confirmedAt': null,
           'confirmedBy': null,
-          'confirmMessage': null,
-          // 장기공고 필드 업데이트
-          if (desiredStartDate != null) 
+          if (desiredStartDate != null)
             'desiredStartDate': Timestamp.fromDate(desiredStartDate),
           if (workEndDate != null)
             'workEndDate': Timestamp.fromDate(workEndDate),
-          if (workDays != null && workDays.isNotEmpty)
-            'workDays': workDays,
-          'type': isReallyLongTerm ? 'long_term' : 'short',
+          if (workDays != null) 'workDays': workDays,
         });
-        
-        // TO 통계
-        batch.update(_firestore.collection('tos').doc(toId), {
-          'totalPending': FieldValue.increment(1),
-        });
-        
-        // WorkDetail 통계
-        batch.update(
-          _firestore.collection('tos').doc(toId).collection('workDetails').doc(workDetailId),
-          {'pendingCount': FieldValue.increment(1)},
-        );
-        
-        // ✅ groups 컬렉션 통계 업데이트
-      if (groupId != null) {
-        batch.update(_firestore.collection('groups').doc(groupId), {
-          'totalPending': FieldValue.increment(1),
-        });
-      }
-        
+        _incrementTOPending(batch, toId, slotId, delta: 1, workType: selectedWorkType);
         await batch.commit();
         clearCache(toId: toId);
-        
-        debugPrint('✅ 재지원 완료 (기존 문서 재활성화)');
-        
-        // 🔔 알림 생성 (관리자에게) - 재지원도 신규 지원과 동일하게 알림
         _sendNewApplicationNotification(
           businessId: businessId,
           applicantUid: uid,
@@ -581,28 +329,21 @@ extension ApplicationFirestore on FirestoreService {
           workDate: workDate,
           applicationId: reactivatableApp.id,
           toId: toId,
-          workDetailId: workDetailId,
         );
-        
+        debugPrint('✅ 재지원 완료: $toId');
         return true;
       }
-      
-      // ✅ 케이스 C: 새 지원서 생성 (기존 지원서 없거나 퇴사/해지 완료된 이력만 있는 경우)
-      debugPrint('✅ 새 지원서 생성');
-      
+
       final appRef = _firestore.collection('applications').doc();
-      
       batch.set(appRef, {
         'uid': uid,
         'businessId': businessId,
         'businessName': businessName,
         'toId': toId,
-        'groupId': groupId,
+        if (slotId != null) 'slotId': slotId,
         'toTitle': toTitle,
         'selectedWorkType': selectedWorkType,
-        'workDetailId': workDetailId,
         'wage': wage,
-        // 🔥 업무 상세 정보 추가
         'wageType': wageType,
         'workTypeIcon': workTypeIcon,
         'workTypeColor': workTypeColor,
@@ -612,47 +353,25 @@ extension ApplicationFirestore on FirestoreService {
         'endTime': endTime,
         'status': 'PENDING',
         'appliedAt': FieldValue.serverTimestamp(),
-        // 🔥 이력 초기화
         'statusHistory': [{
           'status': 'PENDING',
           'at': Timestamp.now(),
           'by': null,
           'action': 'APPLY',
         }],
-        'type': isReallyLongTerm ? 'long_term' : 'short',
-        'isLongTermApplication': isReallyLongTerm,
-        'workEndDate': isReallyLongTerm && workEndDate != null 
-            ? Timestamp.fromDate(workEndDate) : null,
-        'workDays': isReallyLongTerm ? workDays : null,
-        'desiredStartDate': isReallyLongTerm && desiredStartDate != null 
-            ? Timestamp.fromDate(desiredStartDate) : null,
+        if (isContract) ...{
+          'workEndDate': workEndDate != null
+              ? Timestamp.fromDate(workEndDate)
+              : null,
+          'workDays': workDays,
+          'desiredStartDate': desiredStartDate != null
+              ? Timestamp.fromDate(desiredStartDate)
+              : null,
+        },
       });
-
-      // TO 통계
-      batch.update(_firestore.collection('tos').doc(toId), {
-        'totalApplications': FieldValue.increment(1),
-        'totalPending': FieldValue.increment(1),
-      });
-
-      // WorkDetail 통계
-      batch.update(
-        _firestore.collection('tos').doc(toId).collection('workDetails').doc(workDetailId),
-        {'pendingCount': FieldValue.increment(1)},
-      );
-
-      // ✅ groups 컬렉션 통계 업데이트
-      if (groupId != null) {
-        batch.update(_firestore.collection('groups').doc(groupId), {
-          'totalPending': FieldValue.increment(1),
-        });
-      }
-
+      _incrementTOPending(batch, toId, slotId, delta: 1, workType: selectedWorkType);
       await batch.commit();
       clearCache(toId: toId);
-
-      debugPrint('✅ 지원 완료: $toTitle / $selectedWorkType');
-      
-      // 🔔 알림 생성 (관리자에게) - 비동기로 처리 (메인 로직 지연 방지)
       _sendNewApplicationNotification(
         businessId: businessId,
         applicantUid: uid,
@@ -660,9 +379,8 @@ extension ApplicationFirestore on FirestoreService {
         workDate: workDate,
         applicationId: appRef.id,
         toId: toId,
-        workDetailId: workDetailId,
       );
-      
+      debugPrint('✅ 지원 완료: $toTitle / $selectedWorkType');
       return true;
     } catch (e) {
       debugPrint('❌ 지원 실패: $e');
@@ -670,663 +388,125 @@ extension ApplicationFirestore on FirestoreService {
       return false;
     }
   }
-  /// 🔔 신규 지원 알림 전송 (비동기 - fire and forget)
-  Future<void> _sendNewApplicationNotification({
-    required String businessId,
-    required String applicantUid,
-    required String workType,
-    required DateTime workDate,
-    required String applicationId,
-    required String toId,
-    required String workDetailId,
-  }) async {
-    try {
-      // 1. 사업장 관리자 UID 조회
-      final businessDoc = await _firestore.collection('businesses').doc(businessId).get();
-      if (!businessDoc.exists) return;
-      
-      final adminUid = businessDoc.data()?['ownerId'] as String?;
-      if (adminUid == null || adminUid.isEmpty) return;
-      
-      // 2. 지원자 이름 조회
-      final userDoc = await _firestore.collection('users').doc(applicantUid).get();
-      final applicantName = userDoc.data()?['name'] as String? ?? '지원자';
-      
-      // 3. 알림 생성
-      await createNotification(
-        NotificationModel.createNewApplication(
-          userId: adminUid,
-          applicantName: applicantName,
-          workType: workType,
-          workDate: workDate,
-          applicationId: applicationId,
-          toId: toId,
-          businessId: businessId,
-          workDetailId: workDetailId,
-        ),
-      );
-      
-      debugPrint('🔔 신규 지원 알림 전송 완료 → 관리자: $adminUid');
-    } catch (e) {
-      // 알림 실패해도 메인 로직은 이미 성공
-      debugPrint('⚠️ 신규 지원 알림 전송 실패: $e');
-    }
-  }
-  /// 🔔 지원 취소 알림 전송 (비동기 - fire and forget)
-  Future<void> _sendApplicationCanceledNotification({
-    required String businessId,
-    required String applicantUid,
-    required String workType,
-    required DateTime workDate,
-    required String applicationId,
-    required String toId,
-    required String workDetailId,
-  }) async {
-    try {
-      // 1. 사업장 관리자 UID 조회
-      final businessDoc = await _firestore.collection('businesses').doc(businessId).get();
-      if (!businessDoc.exists) return;
-      
-      final adminUid = businessDoc.data()?['ownerId'] as String?;
-      if (adminUid == null || adminUid.isEmpty) return;
-      
-      // 2. 지원자 이름 조회
-      final userDoc = await _firestore.collection('users').doc(applicantUid).get();
-      final applicantName = userDoc.data()?['name'] as String? ?? '지원자';
-      
-      // 3. 알림 생성
-      await createNotification(
-        NotificationModel.createApplicationCanceled(
-          userId: adminUid,
-          applicantName: applicantName,
-          workType: workType,
-          workDate: workDate,
-          applicationId: applicationId,
-          businessId: businessId,
-          toId: toId,
-          workDetailId: workDetailId,
-        ),
-      );
-      
-      debugPrint('🔔 지원 취소 알림 전송 완료 → 관리자: $adminUid');
-    } catch (e) {
-      debugPrint('⚠️ 지원 취소 알림 전송 실패: $e');
-    }
-  }
-  
-  /// 🔔 계약해지 요청 알림 전송 (근무자에게)
-  Future<void> _sendTerminationRequestedNotification({
-    required String applicantUid,
-    required String businessName,
-    required String applicationId,
-    required String reason,
-  }) async {
-    try {
-      await createNotification(
-        NotificationModel.createTerminationRequested(
-          userId: applicantUid,
-          businessName: businessName,
-          terminationDate: DateTime.now(),  // 요청일
-          applicationId: applicationId,
-          reason: reason,
-        ),
-      );
-      
-      debugPrint('🔔 계약해지 요청 알림 전송 완료 → 근무자: $applicantUid');
-    } catch (e) {
-      debugPrint('⚠️ 계약해지 요청 알림 전송 실패: $e');
-    }
-  }
 
-  /// 🔔 계약해지 승인 알림 전송 (관리자에게)
-  Future<void> _sendTerminationApprovedNotification({
-    required String businessId,
-    required String applicantUid,
-    required String businessName,
-    required String applicationId,
-  }) async {
-    try {
-      // 1. 사업장 관리자 UID 조회
-      final businessDoc = await _firestore.collection('businesses').doc(businessId).get();
-      if (!businessDoc.exists) return;
-      
-      final adminUid = businessDoc.data()?['ownerId'] as String?;
-      if (adminUid == null || adminUid.isEmpty) return;
-      
-      // 2. 근무자 이름 조회
-      final userDoc = await _firestore.collection('users').doc(applicantUid).get();
-      final applicantName = userDoc.data()?['name'] as String? ?? '근무자';
-      
-      // 3. 알림 생성 (관리자에게 - 누가 승인했는지 알려줌)
-      await createNotification(
-        NotificationModel.createTerminationApproved(
-          userId: adminUid,
-          businessName: '$applicantName님',  // "OOO님과의 계약이 해지되었습니다"
-          applicationId: applicationId,
-          actualResignDate: DateTime.now(),
-        ),
-      );
-      
-      debugPrint('🔔 계약해지 승인 알림 전송 완료 → 관리자: $adminUid');
-    } catch (e) {
-      debugPrint('⚠️ 계약해지 승인 알림 전송 실패: $e');
-    }
-  }
-  /// 🔔 지원 자동 취소 알림 전송 (충돌로 인한 자동취소 - 지원자에게)
-  Future<void> _sendApplicationAutoCanceledNotification({
-    required String applicantUid,
-    required String businessName,
-    required String workType,
-    required DateTime workDate,
-    required String applicationId,
-    required String conflictingBusinessName,
-    required String conflictingTime,
-  }) async {
-    try {
-      await createNotification(
-        NotificationModel.createApplicationAutoCanceled(
-          userId: applicantUid,
-          businessName: businessName,
-          workType: workType,
-          workDate: workDate,
-          applicationId: applicationId,
-          conflictingBusinessName: conflictingBusinessName,
-          conflictingTime: conflictingTime,
-        ),
-      );
-      
-      debugPrint('🔔 자동 취소 알림 전송 완료 → 지원자: $applicantUid');
-    } catch (e) {
-      debugPrint('⚠️ 자동 취소 알림 전송 실패: $e');
-    }
-  }
+  // ───────────────────────────────────────────────────────
+  // 상태 변경
+  // ───────────────────────────────────────────────────────
 
-  /// TO에 지원하기 (간편 버전)
-  /// 
-  /// apply_work_dialog에서 사용
-  Future<bool> applyForTO({
-    required String toId,
-    required String workDetailId,
-    required String workType,
-    required String uid,
-    DateTime? desiredStartDate,  // ✅ 장기공고 희망 시작일
+  /// 지원자 확정 (충돌 지원서 자동 취소 포함)
+  /// 반환: 충돌로 취소된 TO ID 목록
+  Future<List<String>> updateApplicationStatus({
+    required String applicationId,
+    required String status,
+    String? confirmedBy,
+    String? rejectedBy,
+    String? message,
   }) async {
     try {
-      // 1. TO 정보 조회
-      final toDoc = await _firestore.collection('tos').doc(toId).get();
-      if (!toDoc.exists) {
-        ToastHelper.showError('TO를 찾을 수 없습니다');
-        return false;
+      if (status == 'CONFIRMED') {
+        return await _confirmWithConflictCheck(
+          applicationId: applicationId,
+          confirmedBy: confirmedBy,
+          message: message,
+        );
       }
 
-      final toData = toDoc.data()!;
-      final to = TOModel.fromMap(toData, toId);
-
-      // 2. WorkDetail 정보 조회
-      final workDetailDoc = await _firestore
-          .collection('tos')
-          .doc(toId)
-          .collection('workDetails')
-          .doc(workDetailId)
-          .get();
-
-      if (!workDetailDoc.exists) {
-        ToastHelper.showError('업무 정보를 찾을 수 없습니다');
-        return false;
-      }
-
-      final workDetail = WorkDetailModel.fromMap(workDetailDoc.data()!, workDetailId);
-
-      // 3. 기존 applyToTOWithWorkType 호출
-      return await applyToTOWithWorkType(
-        uid: uid,
-        businessId: to.businessId,
-        businessName: to.businessName,
-        toTitle: to.title,
-        workDate: to.date,
-        selectedWorkType: workType,
-        workDetailId: workDetailId,
-        wage: workDetail.wage,
-        // 🔥 업무 상세 정보 추가
-        wageType: workDetail.wageType,
-        workTypeIcon: workDetail.workTypeIcon,
-        workTypeColor: workDetail.workTypeColor,
-        workTypeBackgroundColor: workDetail.workTypeBackgroundColor,
-        startTime: workDetail.startTime,
-        endTime: workDetail.endTime,
-        workEndDate: to.endDate,
-        workDays: to.workDays,
-        type: to.isLongTerm ? 'long_term' : 'short',
-        desiredStartDate: desiredStartDate,
-      );
-    } catch (e) {
-      debugPrint('❌ TO 지원 실패: $e');
-      ToastHelper.showError('지원에 실패했습니다');
-      return false;
-    }
-  }
-  /// 지원자 승인 (관리자용)
-  Future<bool> confirmApplicant(String applicationId, String adminUID) async {
-    try {
-      DocumentSnapshot appDoc = await _firestore
-          .collection('applications')
-          .doc(applicationId)
-          .get();
-
-      if (!appDoc.exists) {
-        ToastHelper.showError('지원서를 찾을 수 없습니다.');
-        return false;
-      }
-
-      final appData = appDoc.data() as Map<String, dynamic>;
-
-      if (appData['status'] == 'CONFIRMED') {
-        ToastHelper.showError('이미 확정된 지원자입니다.');
-        return false;
-      }
-
-      if (appData['status'] == 'CANCELED') {
-        ToastHelper.showError('취소된 지원자는 확정할 수 없습니다.');
-        return false;
-      }
-
-      await _firestore.collection('applications').doc(applicationId).update({
-        'status': 'CONFIRMED',
-        'confirmedAt': FieldValue.serverTimestamp(),
-        'confirmedBy': adminUID,
-      });
-
-      ToastHelper.showSuccess('지원자가 확정되었습니다.');
-      return true;
-    } catch (e) {
-      debugPrint('지원자 승인 실패: $e');
-      ToastHelper.showError('승인 중 오류가 발생했습니다.');
-      return false;
-    }
-  }
-
-  /// 지원자 확정 (WorkDetail count + TO 통계 업데이트 포함)
-  Future<bool> confirmApplicantWithWorkDetail({
-    required String applicationId,
-    required String adminUID,
-  }) async {
-    try {
-      // 1. 지원서 조회
       final appDoc = await _firestore
           .collection('applications')
           .doc(applicationId)
           .get();
-
-      if (!appDoc.exists) {
-        ToastHelper.showError('지원서를 찾을 수 없습니다.');
-        return false;
-      }
+      if (!appDoc.exists) return [];
 
       final appData = appDoc.data()!;
-      
-      // 이미 확정된 경우
-      if (appData['status'] == 'CONFIRMED') {
-        ToastHelper.showError('이미 확정된 지원자입니다.');
-        return false;
-      }
+      final prevStatus = appData['status'] as String?;
+      final toId = appData['toId'] as String?;
+      final slotId = appData['slotId'] as String?;
+      final selectedWorkType = appData['selectedWorkType'] as String?;
 
-      // 취소된 경우
-      if (appData['status'] == 'CANCELED') {
-        ToastHelper.showError('취소된 지원자는 확정할 수 없습니다.');
-        return false;
-      }
-
-      // ✅ TO 식별 정보 추출
-      final businessId = appData['businessId'];
-      final toTitle = appData['toTitle'];
-      final workDate = appData['workDate'] as Timestamp;
-      final selectedWorkType = appData['selectedWorkType'];
-      final uid = appData['uid'];
-
-      // 2. TO 문서 찾기
-      final toSnapshot = await _firestore
-          .collection('tos')
-          .where('businessId', isEqualTo: businessId)
-          .where('title', isEqualTo: toTitle)
-          .where('date', isEqualTo: workDate)
-          .limit(1)
-          .get();
-
-      if (toSnapshot.docs.isEmpty) {
-        ToastHelper.showError('TO를 찾을 수 없습니다.');
-        return false;
-      }
-
-      final toId = toSnapshot.docs.first.id;
-
-      // 3. WorkDetail ID 찾기
-      final workDetailId = await findWorkDetailIdByType(toId, selectedWorkType);
-      if (workDetailId == null) {
-        ToastHelper.showError('업무유형 정보를 찾을 수 없습니다.');
-        return false;
-      }
-
-      // 4. 정원 체크
-      final workDetailDoc = await _firestore
-          .collection('tos')
-          .doc(toId)
-          .collection('workDetails')
-          .doc(workDetailId)
-          .get();
-      
-      if (!workDetailDoc.exists) {
-        ToastHelper.showError('업무 정보를 찾을 수 없습니다.');
-        return false;
-      }
-      
-      final workDetailData = workDetailDoc.data()!;
-      final currentCount = workDetailData['currentCount'] ?? 0;
-      final requiredCount = workDetailData['requiredCount'] ?? 0;
-      
-      // 정원 초과 체크
-      if (currentCount >= requiredCount) {
-        ToastHelper.showError('이미 정원이 충족되었습니다. ($currentCount/$requiredCount명)');
-        return false;
-      }
-
-      // 5. Batch 업데이트
-      final batch = _firestore.batch();
-      final now = Timestamp.now();
-
-      // 5-1. 지원서 확정
-      batch.update(_firestore.collection('applications').doc(applicationId), {
-        'status': 'CONFIRMED',
-        'confirmedAt': now,
-        'confirmedBy': adminUID,
-      });
-
-      // 5-2. confirmed_applications 서브컬렉션에 추가
-      final confirmedRef = _firestore
-          .collection('tos')
-          .doc(toId)
-          .collection('confirmed_applications')
-          .doc(applicationId);
-      
-      batch.set(confirmedRef, {
-        'uid': uid,
-        'workDetailId': workDetailId,
-        'confirmedAt': now,
-        'confirmedBy': adminUID,
-      });
-
-      await batch.commit();
-
-      // ✅ 통계 재계산 (통합 함수 사용)
-      debugPrint('📊 지원자 확정 후 통계 재계산...');
-      await recalculateTOStats(toId);
-      clearCache(toId: toId);
-      
-      // ✅ 그룹 마스터 통계 동기화
-      await syncGroupMasterStats(toId);
-
-      debugPrint('✅ 지원자 확정 완료');
-      ToastHelper.showSuccess('지원자가 확정되었습니다.');
-      return true;
-    } catch (e) {
-      debugPrint('❌ 지원자 확정 실패: $e');
-      ToastHelper.showError('확정 중 오류가 발생했습니다.');
-      return false;
-    }
-  }
-
-  /// 지원자 거절 (관리자용)
-  Future<bool> rejectApplicant(
-    String applicationId, 
-    String adminUID, {
-    String? rejectMessage,
-  }) async {
-    try {
-      DocumentSnapshot appDoc = await _firestore
-          .collection('applications')
-          .doc(applicationId)
-          .get();
-
-      if (!appDoc.exists) {
-        ToastHelper.showError('지원서를 찾을 수 없습니다.');
-        return false;
-      }
-
-      final appData = appDoc.data() as Map<String, dynamic>;
-
-      if (appData['status'] == 'CANCELED') {
-        ToastHelper.showError('이미 취소된 지원자입니다.');
-        return false;
-      }
-
-      // ✅ TO 식별 정보 추출
-      final businessId = appData['businessId'];
-      final toTitle = appData['toTitle'];
-      final workDate = appData['workDate'] as Timestamp;
-
-      // 지원서 거절 처리
-      final updateData = <String, dynamic>{
-        'status': 'REJECTED',
-        'rejectedAt': FieldValue.serverTimestamp(),
-        'rejectedBy': adminUID,
-        // 🔥 이력 추가
-        'statusHistory': FieldValue.arrayUnion([{
+      final updates = <String, dynamic>{'status': status};
+      if (status == 'REJECTED') {
+        updates['rejectedAt'] = FieldValue.serverTimestamp();
+        if (rejectedBy != null) updates['rejectedBy'] = rejectedBy;
+        if (message != null) updates['rejectMessage'] = message;
+        updates['statusHistory'] = FieldValue.arrayUnion([{
           'status': 'REJECTED',
           'at': Timestamp.now(),
-          'by': adminUID,
+          'by': rejectedBy,
           'action': 'REJECT',
-          if (rejectMessage != null && rejectMessage.isNotEmpty) 'reason': rejectMessage,
-        }]),
-      };
-      
-      if (rejectMessage != null && rejectMessage.isNotEmpty) {
-        updateData['rejectMessage'] = rejectMessage;
-      }
-      
-      // 🔥 TO 찾기 (toId 우선, fallback 쿼리)
-      final workDetailId = appData['workDetailId'] as String?;
-      String? toId;
-      String? groupId;
-      DocumentSnapshot? toDoc;
-      
-      // 1차: toId로 직접 찾기
-      final appToId = appData['toId'] as String?;
-      if (appToId != null && appToId.isNotEmpty) {
-        toDoc = await _firestore.collection('tos').doc(appToId).get();
-        if (toDoc.exists) {
-          toId = toDoc.id;
-          groupId = (toDoc.data() as Map<String, dynamic>)['groupId'] as String?;
-          debugPrint('✅ [거절] toId로 TO 찾음: $toId');
-        }
-      }
-      
-      // 2차: toId가 없거나 못 찾으면 fallback 쿼리
-      if (toDoc == null || !toDoc.exists) {
-        // 단기공고로 검색
-        var toSnapshot = await _firestore
-            .collection('tos')
-            .where('businessId', isEqualTo: businessId)
-            .where('title', isEqualTo: toTitle)
-            .where('date', isEqualTo: workDate)
-            .limit(1)
-            .get();
-        debugPrint('🔍 [거절] 단기공고 TO 검색: ${toSnapshot.docs.length}건');
-        
-        // 장기공고로 재검색
-        if (toSnapshot.docs.isEmpty) {
-          toSnapshot = await _firestore
-              .collection('tos')
-              .where('businessId', isEqualTo: businessId)
-              .where('title', isEqualTo: toTitle)
-              .where('isLongTerm', isEqualTo: true)
-              .limit(1)
-              .get();
-          debugPrint('🔍 [거절] 장기공고 TO 재검색: ${toSnapshot.docs.length}건');
-        }
-        
-        if (toSnapshot.docs.isNotEmpty) {
-          toDoc = toSnapshot.docs.first;
-          toId = toDoc.id;
-          groupId = (toDoc.data() as Map<String, dynamic>)['groupId'] as String?;
-        }
+          if (message != null) 'reason': message,
+        }]);
       }
 
-      if (toDoc == null || !toDoc.exists) {
-        await _firestore.collection('applications').doc(applicationId).update(updateData);
-        debugPrint('✅ 지원자 거절 완료 (TO 없음)');
-        return true;
-      }
-
-      // ✅ Batch로 한 번에 처리
       final batch = _firestore.batch();
+      batch.update(appDoc.reference, updates);
 
-      // 1. 지원서 거절
-      batch.update(_firestore.collection('applications').doc(applicationId), updateData);
-
-      // 2. TO 통계 Increment (PENDING인 경우만)
-      if (appData['status'] == 'PENDING') {
-        batch.update(toDoc.reference, {
-          'totalPending': FieldValue.increment(-1),
-        });
-
-        // 3. WorkDetail 통계 Increment
-        if (workDetailId != null && workDetailId.isNotEmpty) {
-          batch.update(
-            _firestore
-                .collection('tos')
-                .doc(toId)
-                .collection('workDetails')
-                .doc(workDetailId),
-            {
-              'pendingCount': FieldValue.increment(-1),
-            },
-          );
-        }
-
-        // ✅ 4. groups 컬렉션 통계 Increment
-        if (groupId != null) {
-          batch.update(_firestore.collection('groups').doc(groupId), {
-            'totalPending': FieldValue.increment(-1),
-          });
+      if (toId != null) {
+        if (prevStatus == 'CONFIRMED') {
+          _decrementTOConfirmed(batch, toId, slotId, workType: selectedWorkType);
+        } else if (prevStatus == 'PENDING') {
+          _incrementTOPending(batch, toId, slotId, delta: -1, workType: selectedWorkType);
         }
       }
 
       await batch.commit();
-      clearCache(toId: toId);
+      if (toId != null) clearCache(toId: toId);
 
-      debugPrint('✅ 지원자 거절 완료');
-      ToastHelper.showSuccess('지원자가 거절되었습니다.');
-      return true;
+      // 알림
+      final applicantUid = appData['uid'] as String;
+      if (prevStatus == 'CONFIRMED') {
+        await createNotification(NotificationModel.createConfirmationCanceled(
+          userId: applicantUid,
+          businessName: appData['businessName'] as String,
+          workType: appData['selectedWorkType'] as String,
+          workDate: (appData['workDate'] as Timestamp).toDate(),
+          applicationId: applicationId,
+          cancelReason: message,
+        ));
+      } else if (prevStatus == 'PENDING' && status == 'REJECTED') {
+        await createNotification(NotificationModel.createApplicationRejected(
+          userId: applicantUid,
+          businessName: appData['businessName'] as String,
+          workType: appData['selectedWorkType'] as String,
+          workDate: (appData['workDate'] as Timestamp).toDate(),
+          applicationId: applicationId,
+          rejectReason: message,
+        ));
+      }
+      return [];
     } catch (e) {
-      debugPrint('❌ 지원자 거절 실패: $e');
-      ToastHelper.showError('거절 중 오류가 발생했습니다.');
-      return false;
+      debugPrint('❌ 지원서 상태 업데이트 실패: $e');
+      rethrow;
     }
   }
 
-  
-
-  /// 지원 취소 (사용자용)
+  /// 지원 취소 (사용자용 — PENDING 상태만)
   Future<bool> cancelApplication(String applicationId, String uid) async {
     try {
-      DocumentSnapshot appDoc = await _firestore
+      final appDoc = await _firestore
           .collection('applications')
           .doc(applicationId)
           .get();
-
       if (!appDoc.exists) {
         ToastHelper.showError('지원서를 찾을 수 없습니다.');
         return false;
       }
-
-      final appData = appDoc.data() as Map<String, dynamic>;
-
+      final appData = appDoc.data()!;
       if (appData['uid'] != uid) {
         ToastHelper.showError('본인의 지원서만 취소할 수 있습니다.');
         return false;
       }
-
       if (appData['status'] == 'CONFIRMED') {
         ToastHelper.showError('확정된 TO는 취소할 수 없습니다.\n관리자에게 문의해주세요.');
         return false;
       }
 
-      // ✅ TO 식별 정보 추출
-      final businessId = appData['businessId'];
-      final toTitle = appData['toTitle'];
-      final workDate = appData['workDate'] as Timestamp;
-      final workDetailId = appData['workDetailId'] as String?;
-
-      // 🔥 TO 찾기 (toId 우선, fallback 쿼리)
-      String? toId;
-      String? groupId;
-      DocumentSnapshot? toDocSnapshot;
-      
-      // 1차: toId로 직접 찾기
-      final appToId = appData['toId'] as String?;
-      if (appToId != null && appToId.isNotEmpty) {
-        toDocSnapshot = await _firestore.collection('tos').doc(appToId).get();
-        if (toDocSnapshot.exists) {
-          toId = toDocSnapshot.id;
-          groupId = (toDocSnapshot.data() as Map<String, dynamic>)['groupId'] as String?;
-          debugPrint('✅ [지원취소] toId로 TO 찾음: $toId');
-        }
-      }
-      
-      // 2차: toId가 없거나 못 찾으면 fallback 쿼리
-      if (toDocSnapshot == null || !toDocSnapshot.exists) {
-        // 단기공고로 검색
-        var toSnapshot = await _firestore
-            .collection('tos')
-            .where('businessId', isEqualTo: businessId)
-            .where('title', isEqualTo: toTitle)
-            .where('date', isEqualTo: workDate)
-            .limit(1)
-            .get();
-        debugPrint('🔍 [지원취소] 단기공고 TO 검색: ${toSnapshot.docs.length}건');
-        
-        // 장기공고로 재검색
-        if (toSnapshot.docs.isEmpty) {
-          toSnapshot = await _firestore
-              .collection('tos')
-              .where('businessId', isEqualTo: businessId)
-              .where('title', isEqualTo: toTitle)
-              .where('isLongTerm', isEqualTo: true)
-              .limit(1)
-              .get();
-          debugPrint('🔍 [지원취소] 장기공고 TO 재검색: ${toSnapshot.docs.length}건');
-        }
-        
-        if (toSnapshot.docs.isNotEmpty) {
-          toDocSnapshot = toSnapshot.docs.first;
-          toId = toDocSnapshot.id;
-          groupId = (toDocSnapshot.data() as Map<String, dynamic>)['groupId'] as String?;
-        }
-      }
-
-      if (toDocSnapshot == null || !toDocSnapshot.exists) {
-        await _firestore.collection('applications').doc(applicationId).update({
-          'status': 'CANCELED',
-          'canceledAt': FieldValue.serverTimestamp(),
-          'statusHistory': FieldValue.arrayUnion([{
-            'status': 'CANCELED',
-            'at': Timestamp.now(),
-            'by': uid,
-            'action': 'CANCEL',
-          }]),
-        });
-        ToastHelper.showSuccess('지원이 취소되었습니다.');
-        debugPrint('⚠️ [지원취소] TO 없음 - 지원서만 취소');
-        return true;
-      }
-
-      // ✅ Batch로 한 번에 처리
+      final toId = appData['toId'] as String?;
+      final slotId = appData['slotId'] as String?;
+      final selectedWorkType = appData['selectedWorkType'] as String?;
       final batch = _firestore.batch();
-
-      // 1. 지원서 취소
-      batch.update(_firestore.collection('applications').doc(applicationId), {
+      batch.update(appDoc.reference, {
         'status': 'CANCELED',
         'canceledAt': FieldValue.serverTimestamp(),
-        // 🔥 이력 추가
         'statusHistory': FieldValue.arrayUnion([{
           'status': 'CANCELED',
           'at': Timestamp.now(),
@@ -1334,53 +514,26 @@ extension ApplicationFirestore on FirestoreService {
           'action': 'CANCEL',
         }]),
       });
-
-      // 2. TO 통계 Increment
-      batch.update(toDocSnapshot.reference, {
-        'totalPending': FieldValue.increment(-1),
-      });
-
-      // 3. WorkDetail 통계 Increment
-      if (workDetailId != null && workDetailId.isNotEmpty) {
-        batch.update(
-          _firestore
-              .collection('tos')
-              .doc(toId)
-              .collection('workDetails')
-              .doc(workDetailId),
-          {
-            'pendingCount': FieldValue.increment(-1),
-          },
-        );
+      if (toId != null) {
+        _incrementTOPending(batch, toId, slotId, delta: -1, workType: selectedWorkType);
       }
-
-      // ✅ 4. groups 컬렉션 통계 Increment
-        if (groupId != null) {
-          batch.update(_firestore.collection('groups').doc(groupId), {
-            'totalPending': FieldValue.increment(-1),
-          });
-        }
-
       await batch.commit();
-      clearCache(toId: toId);
-      
-      // ✅ 연관 데이터 정리 (신분증 요청 등)
+      if (toId != null) clearCache(toId: toId);
+
       await _cleanupApplicationRelatedData(
         applicationId: applicationId,
         uid: uid,
       );
-      
-      // 🔔 알림 생성 (관리자에게) - 비동기로 처리
-      _sendApplicationCanceledNotification(
-        businessId: appData['businessId'] as String,
-        applicantUid: uid,
-        workType: appData['selectedWorkType'] as String? ?? '',
-        workDate: (appData['workDate'] as Timestamp).toDate(),
-        applicationId: applicationId,
-        toId: toId ?? '',
-        workDetailId: workDetailId ?? '',
-      );
-
+      if (toId != null) {
+        _sendApplicationCanceledNotification(
+          businessId: appData['businessId'] as String,
+          applicantUid: uid,
+          workType: appData['selectedWorkType'] as String? ?? '',
+          workDate: (appData['workDate'] as Timestamp).toDate(),
+          applicationId: applicationId,
+          toId: toId,
+        );
+      }
       ToastHelper.showSuccess('지원이 취소되었습니다.');
       return true;
     } catch (e) {
@@ -1389,136 +542,64 @@ extension ApplicationFirestore on FirestoreService {
       return false;
     }
   }
-  /// 확정된 지원 취소 (노쇼 패널티 포함)
-  /// 
-  /// [applicationId] - 지원서 ID
-  /// [applyNoShowPenalty] - true면 노쇼 카운트 증가
+
+  /// 확정된 지원 취소 (노쇼 패널티 포함, 관리자용)
   Future<bool> cancelConfirmedApplication(
     String applicationId, {
     bool applyNoShowPenalty = false,
   }) async {
     try {
-      // 1. 지원서 조회
       final appDoc = await _firestore
           .collection('applications')
           .doc(applicationId)
           .get();
-
       if (!appDoc.exists) {
         ToastHelper.showError('지원서를 찾을 수 없습니다');
         return false;
       }
-
       final appData = appDoc.data()!;
       final uid = appData['uid'] as String;
-
-      // 2. 상태 확인
       if (appData['status'] != 'CONFIRMED') {
         ToastHelper.showError('확정된 지원만 취소할 수 있습니다');
         return false;
       }
 
-      // 3. Batch로 처리
+      final toId = appData['toId'] as String?;
+      final slotId = appData['slotId'] as String?;
       final batch = _firestore.batch();
 
-      // 3-1. 지원서 상태 변경
-      batch.update(
-        _firestore.collection('applications').doc(applicationId),
-        {
+      batch.update(appDoc.reference, {
+        'status': 'CANCELED',
+        'canceledAt': FieldValue.serverTimestamp(),
+        'cancelReason': applyNoShowPenalty ? 'SAME_DAY_CANCEL' : 'USER_CANCELED',
+        'statusHistory': FieldValue.arrayUnion([{
           'status': 'CANCELED',
-          'canceledAt': FieldValue.serverTimestamp(),
-          'cancelReason': applyNoShowPenalty ? 'SAME_DAY_CANCEL' : 'USER_CANCELED',
-          // 🔥 이력 추가
-          'statusHistory': FieldValue.arrayUnion([{
-            'status': 'CANCELED',
-            'at': Timestamp.now(),
-            'by': uid,
-            'action': 'CONFIRM_CANCEL',
-            'reason': applyNoShowPenalty ? 'SAME_DAY_CANCEL' : 'USER_CANCELED',
-          }]),
-        },
-      );
+          'at': Timestamp.now(),
+          'by': uid,
+          'action': 'CONFIRM_CANCEL',
+          'reason': applyNoShowPenalty ? 'SAME_DAY_CANCEL' : 'USER_CANCELED',
+        }]),
+      });
 
-      // 3-2. 노쇼 패널티 적용
       if (applyNoShowPenalty) {
-        batch.update(
-          _firestore.collection('users').doc(uid),
-          {
-            'noShowCount': FieldValue.increment(1),
-          },
-        );
-
-        // 노쇼 3회 체크 → 3일 이용 제한
+        batch.update(_firestore.collection('users').doc(uid), {
+          'noShowCount': FieldValue.increment(1),
+        });
         final userDoc = await _firestore.collection('users').doc(uid).get();
         final currentNoShow = (userDoc.data()?['noShowCount'] ?? 0) as int;
-        
-        if (currentNoShow >= 2) { // 이번 취소 포함해서 3회
+        if (currentNoShow >= 2) {
           final restrictedUntil = DateTime.now().add(const Duration(days: 3));
-          batch.update(
-            _firestore.collection('users').doc(uid),
-            {
-              'restrictedUntil': Timestamp.fromDate(restrictedUntil),
-              'noShowCount': 0, // 리셋
-            },
-          );
-        }
-      }
-
-      // 4. 🔥 toId로 직접 TO 찾기 (단순하고 확실함!)
-      final toId = appData['toId'] as String?;
-      final workDetailId = appData['workDetailId'] as String?;
-      final groupId = appData['groupId'] as String?;
-      
-      debugPrint('🔍 [확정취소] toId: $toId, workDetailId: $workDetailId, groupId: $groupId');
-
-      if (toId != null && toId.isNotEmpty) {
-        final toDoc = await _firestore.collection('tos').doc(toId).get();
-        
-        if (toDoc.exists) {
-          debugPrint('✅ [확정취소] TO 찾음: $toId');
-
-          // TO 통계 Increment (CONFIRMED → CANCELED)
-          batch.update(toDoc.reference, {
-            'totalConfirmed': FieldValue.increment(-1),
+          batch.update(_firestore.collection('users').doc(uid), {
+            'restrictedUntil': Timestamp.fromDate(restrictedUntil),
+            'noShowCount': 0,
           });
-
-          // WorkDetail 통계 Increment
-          if (workDetailId != null && workDetailId.isNotEmpty) {
-            batch.update(
-              _firestore
-                  .collection('tos')
-                  .doc(toId)
-                  .collection('workDetails')
-                  .doc(workDetailId),
-              {
-                'currentCount': FieldValue.increment(-1),
-              },
-            );
-            debugPrint('✅ [확정취소] WorkDetail 통계 감소: $workDetailId');
-          } else {
-            debugPrint('⚠️ [확정취소] workDetailId 없음 - WorkDetail 통계 미업데이트');
-          }
-
-          // ✅ groups 컬렉션 통계 Increment
-          if (groupId != null && groupId.isNotEmpty) {
-            batch.update(_firestore.collection('groups').doc(groupId), {
-              'totalConfirmed': FieldValue.increment(-1),
-            });
-            debugPrint('✅ [확정취소] groups 통계 감소: $groupId');
-          }
-
-          await batch.commit();
-          clearCache(toId: toId);
-        } else {
-          debugPrint('⚠️ [확정취소] TO 문서 없음: $toId');
-          await batch.commit();
         }
-      } else {
-        debugPrint('⚠️ [확정취소] toId 없음 - 지원서만 취소');
-        await batch.commit();
       }
-      
-      // ✅ 연관 데이터 정리 (신분증 요청, 출근 기록, 스케줄 요청)
+
+      if (toId != null) _decrementTOConfirmed(batch, toId, slotId);
+      await batch.commit();
+      if (toId != null) clearCache(toId: toId);
+
       await _cleanupApplicationRelatedData(
         applicationId: applicationId,
         uid: uid,
@@ -1531,26 +612,24 @@ extension ApplicationFirestore on FirestoreService {
       return false;
     }
   }
+
   /// 지원자 업무유형 변경 (관리자용)
   Future<bool> changeApplicationWorkType({
     required String applicationId,
     required String newWorkType,
     required int newWage,
     required String adminUID,
-    String? newWorkDetailId,  // 🔥 추가: 새 WorkDetail ID
+    String? newWorkDetailId,
   }) async {
     try {
-      // 1. 기존 지원서 조회
       final appDoc = await _firestore
           .collection('applications')
           .doc(applicationId)
           .get();
-
       if (!appDoc.exists) {
         ToastHelper.showError('지원서를 찾을 수 없습니다.');
         return false;
       }
-
       final appData = appDoc.data()!;
       final currentWorkType = appData['selectedWorkType'] as String;
       final currentWage = appData['wage'] as int;
@@ -1558,26 +637,14 @@ extension ApplicationFirestore on FirestoreService {
       final businessName = appData['businessName'] as String? ?? '';
       final workDate = (appData['workDate'] as Timestamp).toDate();
 
-      // 2. 업무유형 변경
-      final updateData = <String, dynamic>{
+      await _firestore.collection('applications').doc(applicationId).update({
         'selectedWorkType': newWorkType,
         'wage': newWage,
         'originalWorkType': appData['originalWorkType'] ?? currentWorkType,
         'originalWage': appData['originalWage'] ?? currentWage,
         'changedAt': FieldValue.serverTimestamp(),
         'changedBy': adminUID,
-      };
-      
-      // 🔥 workDetailId도 함께 업데이트 (제공된 경우)
-      if (newWorkDetailId != null && newWorkDetailId.isNotEmpty) {
-        updateData['workDetailId'] = newWorkDetailId;
-      }
-      
-      await _firestore.collection('applications').doc(applicationId).update(updateData);
-
-      debugPrint('✅ 업무유형 변경 완료: $currentWorkType → $newWorkType');
-      
-      // 🔔 알림 생성 (지원자에게)
+      });
       _sendWorkTypeChangedNotification(
         applicantUid: uid,
         businessName: businessName,
@@ -1587,7 +654,6 @@ extension ApplicationFirestore on FirestoreService {
         newWage: newWage,
         applicationId: applicationId,
       );
-      
       ToastHelper.showSuccess('업무유형이 변경되었습니다.');
       return true;
     } catch (e) {
@@ -1596,529 +662,38 @@ extension ApplicationFirestore on FirestoreService {
       return false;
     }
   }
-  
-  /// 🔔 파트 변경 알림 전송 (지원자에게)
-  Future<void> _sendWorkTypeChangedNotification({
-    required String applicantUid,
-    required String businessName,
-    required DateTime workDate,
-    required String originalWorkType,
-    required String newWorkType,
-    required int newWage,
-    required String applicationId,
-  }) async {
-    try {
-      await createNotification(
-        NotificationModel.createWorkTypeChanged(
-          userId: applicantUid,
-          businessName: businessName,
-          workDate: workDate,
-          originalWorkType: originalWorkType,
-          newWorkType: newWorkType,
-          newWage: newWage,
-          applicationId: applicationId,
-        ),
-      );
-      
-      debugPrint('🔔 파트 변경 알림 전송 완료 → 지원자: $applicantUid');
-    } catch (e) {
-      debugPrint('⚠️ 파트 변경 알림 전송 실패: $e');
-    }
-  }
-  /// 지원서 상태 업데이트 (승인/거절) - Phase 2: 자동 취소 추가
-  /// 반환: 충돌로 취소된 TO ID 목록 (확정 시에만, 그 외는 빈 목록)
-  Future<List<String>> updateApplicationStatus({
-    required String applicationId,
-    required String status,
-    String? confirmedBy,
-    String? rejectedBy,
-    String? message,  // ⭐ Phase 2: 메시지 추가
-  }) async {
-    try {
-      // ✅ 먼저 현재 상태 조회 (통계 처리용)
-      final currentAppDoc = await _firestore
-          .collection('applications')
-          .doc(applicationId)
-          .get();
-      String? previousStatus;
-      if (currentAppDoc.exists) {
-        previousStatus = currentAppDoc.data()?['status'] as String?;
-      }
-      debugPrint('🔍 [updateApplicationStatus] 이전상태: $previousStatus → 새상태: $status');
-      
-      // ⭐ Phase 2: 확정 시 충돌 처리
-      if (status == 'CONFIRMED') {
-        final affectedTOIds = await _confirmWithConflictCheck(
-          applicationId: applicationId,
-          confirmedBy: confirmedBy,
-          message: message,
-        );
-        return affectedTOIds;
-      }
-      
-      // 기존 로직 (거절 등)
-      final updates = <String, dynamic>{
-        'status': status,
-      };
 
-      if (status == 'REJECTED') {
-        updates['rejectedAt'] = FieldValue.serverTimestamp();
-        if (rejectedBy != null) {
-          updates['rejectedBy'] = rejectedBy;
-        }
-        if (message != null) {
-          updates['rejectMessage'] = message;  // ⭐ Phase 2
-        }
-      }
+  // ───────────────────────────────────────────────────────
+  // 일괄 처리
+  // ───────────────────────────────────────────────────────
 
-      await _firestore
-          .collection('applications')
-          .doc(applicationId)
-          .update(updates);
-
-      debugPrint('✅ 지원서 상태 업데이트: $status');
-      
-      // 🔔 거절/취소 시 알림 생성 (지원자에게)
-      if ((status == 'REJECTED' || status == 'CANCELED') && currentAppDoc.exists) {
-        final appData = currentAppDoc.data()!;
-        final applicantUid = appData['uid'] as String;
-        
-        // ⭐ 이전 상태에 따라 다른 알림 생성
-        if (previousStatus == 'CONFIRMED') {
-          // 확정 취소 알림
-          await createNotification(
-            NotificationModel.createConfirmationCanceled(
-              userId: applicantUid,
-              businessName: appData['businessName'] as String,
-              workType: appData['selectedWorkType'] as String,
-              workDate: (appData['workDate'] as Timestamp).toDate(),
-              applicationId: applicationId,
-              cancelReason: message,
-            ),
-          );
-        } else if (previousStatus == 'PENDING') {
-          // 지원 거절 알림
-          await createNotification(
-            NotificationModel.createApplicationRejected(
-              userId: applicantUid,
-              businessName: appData['businessName'] as String,
-              workType: appData['selectedWorkType'] as String,
-              workDate: (appData['workDate'] as Timestamp).toDate(),
-              applicationId: applicationId,
-              rejectReason: message,
-            ),
-          );
-        }
-      }
-      
-      // ✅ REJECTED/CANCELED: Increment 방식으로 처리
-      if (status == 'REJECTED' || status == 'CANCELED') {
-        debugPrint('🔍 [updateApplicationStatus] REJECTED/CANCELED 처리 시작, previousStatus=$previousStatus');
-        if (currentAppDoc.exists) {
-          final appData = currentAppDoc.data()!;
-          // ✅ previousStatus는 위에서 이미 저장됨 - 중복 선언 제거
-          final workDetailId = appData['workDetailId'] as String?;
-          
-          // ✅ TO 찾기 (단기 우선, 실패 시 장기 시도)
-          QuerySnapshot toSnapshot;
-          
-          // 1차: 단기공고로 검색 (날짜 포함)
-          toSnapshot = await _firestore
-              .collection('tos')
-              .where('businessId', isEqualTo: appData['businessId'])
-              .where('title', isEqualTo: appData['toTitle'])
-              .where('date', isEqualTo: appData['workDate'])
-              .limit(1)
-              .get();
-          debugPrint('🔍 [확정취소] 단기공고 TO 검색: ${toSnapshot.docs.length}건');
-          
-          // 2차: 단기 검색 실패 시 장기공고로 재시도
-          if (toSnapshot.docs.isEmpty) {
-            toSnapshot = await _firestore
-                .collection('tos')
-                .where('businessId', isEqualTo: appData['businessId'])
-                .where('title', isEqualTo: appData['toTitle'])
-                .where('isLongTerm', isEqualTo: true)
-                .limit(1)
-                .get();
-            debugPrint('🔍 [확정취소] 장기공고 TO 재검색: ${toSnapshot.docs.length}건');
-          }
-          
-          if (toSnapshot.docs.isNotEmpty) {
-            final toDoc = toSnapshot.docs.first;
-            final toId = toDoc.id;
-            final toData = toDoc.data() as Map<String, dynamic>;
-            final groupId = toData['groupId'] as String?;
-            
-            final batch = _firestore.batch();
-            
-            // ✅ 이전 상태에 따라 다른 통계 감소
-            if (previousStatus == 'CONFIRMED') {
-              // CONFIRMED → REJECTED/CANCELED: totalConfirmed 감소
-              batch.update(toDoc.reference, {
-                'totalConfirmed': FieldValue.increment(-1),
-              });
-              
-              // WorkDetail currentCount 감소
-              if (workDetailId != null && workDetailId.isNotEmpty) {
-                batch.update(
-                  _firestore
-                      .collection('tos')
-                      .doc(toId)
-                      .collection('workDetails')
-                      .doc(workDetailId),
-                  {
-                    'currentCount': FieldValue.increment(-1),
-                  },
-                );
-              }
-              
-              // ✅ groups 컬렉션 통계 감소
-              if (groupId != null) {
-                batch.update(_firestore.collection('groups').doc(groupId), {
-                  'totalConfirmed': FieldValue.increment(-1),
-                });
-              }
-            } else if (previousStatus == 'PENDING') {
-              // PENDING → REJECTED/CANCELED: totalPending 감소
-              batch.update(toDoc.reference, {
-                'totalPending': FieldValue.increment(-1),
-              });
-            
-            // WorkDetail pendingCount 감소
-              if (workDetailId != null && workDetailId.isNotEmpty) {
-                batch.update(
-                  _firestore
-                      .collection('tos')
-                      .doc(toId)
-                      .collection('workDetails')
-                      .doc(workDetailId),
-                  {
-                    'pendingCount': FieldValue.increment(-1),
-                  },
-                );
-              }
-              
-              // ✅ groups 컬렉션 통계 감소
-              if (groupId != null) {
-                batch.update(_firestore.collection('groups').doc(groupId), {
-                  'totalPending': FieldValue.increment(-1),
-                });
-              }
-            }
-            
-            await batch.commit();
-            clearCache(toId: toId);
-            debugPrint('📊 TO 통계 Increment 완료: $toId (이전상태: $previousStatus)');
-          }
-        }
-      }
-    // 🔥 확정이 아닌 경우 빈 목록 반환
-      return [];
-      
-    } catch (e) {
-      debugPrint('❌ 지원서 상태 업데이트 실패: $e');
-      rethrow;
-    }
-  }
-  
-  /// 확정 처리 (Increment 방식 - 재계산 없음!)
-  /// 반환: 충돌로 취소된 TO ID 목록
-  Future<List<String>> _confirmWithConflictCheck({
-    required String applicationId,
-    String? confirmedBy,
-    String? message,
+  /// 지원서 일괄 확정
+  Future<BatchResult> batchConfirmApplications({
+    required List<String> applicationIds,
+    required String adminUID,
   }) async {
-    try {
-      // 1. 지원서 조회
-      final appDoc = await _firestore
-          .collection('applications')
-          .doc(applicationId)
-          .get();
-      
-      if (!appDoc.exists) {
-        throw Exception('지원서를 찾을 수 없습니다');
-      }
-      
-      final appData = appDoc.data()!;
-      final currentStatus = appData['status'];
-      
-      // 이미 확정/취소된 경우
-      if (currentStatus == 'CONFIRMED') return [];
-      if (currentStatus == 'CANCELED') {
-        throw Exception('취소된 지원서는 확정할 수 없습니다');
-      }
-      
-      final app = ApplicationModel.fromMap(appData, appDoc.id);
-      final workDetailId = appData['workDetailId'] as String?;
-      
-      // 2. TO 찾기 (단기 우선, 실패 시 장기 재검색)
-      QuerySnapshot toSnapshot;
-      
-      // 1차: 단기공고로 검색
-      toSnapshot = await _firestore
-          .collection('tos')
-          .where('businessId', isEqualTo: app.businessId)
-          .where('title', isEqualTo: app.toTitle)
-          .where('date', isEqualTo: Timestamp.fromDate(app.workDate))
-          .limit(1)
-          .get();
-      debugPrint('🔍 [확정] 단기공고 TO 검색: ${toSnapshot.docs.length}건');
-      
-      // 2차: 단기 검색 실패 시 장기공고로 재검색
-      if (toSnapshot.docs.isEmpty) {
-        toSnapshot = await _firestore
-            .collection('tos')
-            .where('businessId', isEqualTo: app.businessId)
-            .where('title', isEqualTo: app.toTitle)
-            .where('isLongTerm', isEqualTo: true)
-            .limit(1)
-            .get();
-        debugPrint('🔍 [확정] 장기공고 TO 재검색: ${toSnapshot.docs.length}건');
-      }
-      
-      if (toSnapshot.docs.isEmpty) {
-        throw Exception('TO를 찾을 수 없습니다');
-      }
-      
-      final toDoc = toSnapshot.docs.first;
-      final toId = toDoc.id;
-      final toData = toDoc.data() as Map<String, dynamic>;
-      final groupId = toData['groupId'] as String?;
-      
-      // 3. 충돌하는 대기중 지원서 찾기
-      // ✅ 장기공고인 경우 모든 근무일에 대해 충돌 체크
-      final isConfirmingLongTerm = app.workDays != null && app.workDays!.isNotEmpty;
-      
-      List<ApplicationModel> conflictingApps;
-      
-      if (isConfirmingLongTerm && app.workEndDate != null) {
-        // 장기공고: 모든 근무일에 대해 충돌 체크
-        conflictingApps = await _findConflictingForLongTerm(
-          uid: app.uid,
-          startDate: app.workDate,
-          endDate: app.workEndDate!,
-          workDays: app.workDays!,
-          startTime: app.startTime,
-          endTime: app.endTime,
-          excludeId: applicationId,
+    if (applicationIds.isEmpty) return BatchResult(success: 0, failed: 0);
+    int success = 0;
+    int failed = 0;
+    for (final id in applicationIds) {
+      try {
+        await updateApplicationStatus(
+          applicationId: id,
+          status: 'CONFIRMED',
+          confirmedBy: adminUID,
         );
-      } else {
-        // 단기공고: 해당 날짜만 체크
-        conflictingApps = await findConflictingApplications(
-          uid: app.uid,
-          workDate: app.workDate,
-          startTime: app.startTime,
-          endTime: app.endTime,
-          excludeId: applicationId,
-          status: 'PENDING',
-        );
+        success++;
+      } catch (_) {
+        failed++;
       }
-      
-      debugPrint('✅ 충돌하는 지원서 ${conflictingApps.length}개 발견');
-      
-      // 4. Batch 처리 (모든 업데이트를 한 번에!)
-      final batch = _firestore.batch();
-      final now = FieldValue.serverTimestamp();
-      
-      // 4-1. 지원서 확정
-      final confirmUpdates = <String, dynamic>{
-        'status': 'CONFIRMED',
-        'confirmedAt': now,
-        // 🔥 이력 추가
-        'statusHistory': FieldValue.arrayUnion([{
-          'status': 'CONFIRMED',
-          'at': Timestamp.now(),
-          'by': confirmedBy,
-          'action': 'CONFIRM',
-        }]),
-      };
-      if (confirmedBy != null) confirmUpdates['confirmedBy'] = confirmedBy;
-      if (message != null) confirmUpdates['confirmMessage'] = message;
-      
-      batch.update(appDoc.reference, confirmUpdates);
-      
-      // 4-2. TO 통계 Increment (PENDING → CONFIRMED)
-      batch.update(toDoc.reference, {
-        'totalConfirmed': FieldValue.increment(1),
-        'totalPending': FieldValue.increment(-1),
-      });
-      
-      // 4-3. WorkDetail 통계 Increment
-      if (workDetailId != null && workDetailId.isNotEmpty) {
-        batch.update(
-          _firestore
-              .collection('tos')
-              .doc(toId)
-              .collection('workDetails')
-              .doc(workDetailId),
-          {
-            'currentCount': FieldValue.increment(1),
-            'pendingCount': FieldValue.increment(-1),
-          },
-        );
-      }
-      
-      // ✅ 4-4. groups 컬렉션 통계 Increment
-      if (groupId != null) {
-        batch.update(_firestore.collection('groups').doc(groupId), {
-          'totalConfirmed': FieldValue.increment(1),
-          'totalPending': FieldValue.increment(-1),
-        });
-      }
-      
-      // 4-5. 충돌 지원 자동 취소 + TO 통계 감소
-      for (var conflictApp in conflictingApps) {
-        batch.update(
-          _firestore.collection('applications').doc(conflictApp.id),
-          {
-            'status': 'AUTO_CANCELED',
-            'canceledAt': now,
-            'cancelReason': 'SCHEDULE_CONFLICT',
-            'conflictingAppId': applicationId,
-            'conflictingBusiness': app.businessName,
-            'conflictingTime': '${app.startTime}~${app.endTime}',
-            // 🔥 statusHistory 추가
-            'statusHistory': FieldValue.arrayUnion([{
-              'status': 'AUTO_CANCELED',
-              'at': Timestamp.now(),
-              'by': 'SYSTEM',
-              'action': 'AUTO_CANCEL',
-              'reason': 'SCHEDULE_CONFLICT',
-              'conflictingAppId': applicationId,
-            }]),
-          },
-        );
-      }
-      
-      // 5. 한 번에 커밋!
-      await batch.commit();
-      
-      // 5-1. ✅ AUTO_CANCELED 된 지원서들의 TO 통계 업데이트 (별도 batch)
-      final Set<String> affectedTOIds = {};  // 🔥 충돌 취소된 TO ID 수집
-      
-      if (conflictingApps.isNotEmpty) {
-        final statsBatch = _firestore.batch();
-        
-        for (var conflictApp in conflictingApps) {
-          // 🔥 충돌 지원서의 TO 찾기 (단기 우선, 실패 시 장기 시도)
-          QuerySnapshot conflictTOSnapshot;
-          
-          // 1차: 단기공고로 검색 (날짜 포함)
-          conflictTOSnapshot = await _firestore
-              .collection('tos')
-              .where('businessId', isEqualTo: conflictApp.businessId)
-              .where('title', isEqualTo: conflictApp.toTitle)
-              .where('date', isEqualTo: Timestamp.fromDate(conflictApp.workDate))
-              .limit(1)
-              .get();
-          debugPrint('🔍 [충돌취소] 단기공고 TO 검색: ${conflictTOSnapshot.docs.length}건');
-          
-          // 2차: 단기 검색 실패 시 장기공고로 재시도
-          if (conflictTOSnapshot.docs.isEmpty) {
-            conflictTOSnapshot = await _firestore
-                .collection('tos')
-                .where('businessId', isEqualTo: conflictApp.businessId)
-                .where('title', isEqualTo: conflictApp.toTitle)
-                .where('isLongTerm', isEqualTo: true)
-                .limit(1)
-                .get();
-            debugPrint('🔍 [충돌취소] 장기공고 TO 재검색: ${conflictTOSnapshot.docs.length}건');
-          } else {
-            conflictTOSnapshot = await _firestore
-                .collection('tos')
-                .where('businessId', isEqualTo: conflictApp.businessId)
-                .where('title', isEqualTo: conflictApp.toTitle)
-                .where('date', isEqualTo: Timestamp.fromDate(conflictApp.workDate))
-                .limit(1)
-                .get();
-            debugPrint('🔍 [충돌취소] 단기공고 TO 검색: ${conflictTOSnapshot.docs.length}건');
-          }
-          
-          if (conflictTOSnapshot.docs.isNotEmpty) {
-            final conflictTODoc = conflictTOSnapshot.docs.first;
-            final conflictTOData = conflictTODoc.data() as Map<String, dynamic>;  // 🔥 캐스팅 추가
-            final conflictGroupId = conflictTOData['groupId'] as String?;
-            
-            // 🔥 영향받은 TO ID 저장
-            affectedTOIds.add(conflictTODoc.id);
-            
-            // TO pendingCount 감소
-            
-            // TO pendingCount 감소
-            statsBatch.update(conflictTODoc.reference, {
-              'totalPending': FieldValue.increment(-1),
-            });
-            
-            // WorkDetail pendingCount 감소
-            final conflictWorkDetailId = conflictApp.workDetailId;
-            if (conflictWorkDetailId != null && conflictWorkDetailId.isNotEmpty) {
-              statsBatch.update(
-                _firestore
-                    .collection('tos')
-                    .doc(conflictTODoc.id)
-                    .collection('workDetails')
-                    .doc(conflictWorkDetailId),
-                {
-                  'pendingCount': FieldValue.increment(-1),
-                },
-              );
-            }
-            
-            // ✅ groups 컬렉션 통계 감소 (PENDING → AUTO_CANCELED)
-            if (conflictGroupId != null) {
-              statsBatch.update(_firestore.collection('groups').doc(conflictGroupId), {
-                'totalPending': FieldValue.increment(-1),
-              });
-            }
-            
-            // 캐시 클리어
-            clearCache(toId: conflictTODoc.id);
-          }
-        }
-        
-        await statsBatch.commit();
-        debugPrint('✅ AUTO_CANCELED ${conflictingApps.length}건의 TO 통계 업데이트 완료');
-      }
-      
-      // 6. 캐시만 클리어 (재계산 없음!)
-      clearCache(toId: toId);
-      
-      debugPrint('✅ 확정 완료 + ${conflictingApps.length}개 자동 취소 (Increment 방식)');
-      
-      // 🔔 알림 생성 (지원자에게)
-      await createNotification(
-        NotificationModel.createApplicationConfirmed(
-          userId: app.uid,
-          businessName: app.businessName,
-          workType: app.selectedWorkType,
-          workDate: app.workDate,
-          applicationId: applicationId,
-        ),
-      );
-      
-      // 🔔 자동 취소된 지원서에 대한 알림 (각 지원자에게)
-      for (var conflictApp in conflictingApps) {
-        _sendApplicationAutoCanceledNotification(
-          applicantUid: conflictApp.uid,
-          businessName: conflictApp.businessName,
-          workType: conflictApp.selectedWorkType,
-          workDate: conflictApp.workDate,
-          applicationId: conflictApp.id,
-          conflictingBusinessName: app.businessName,
-          conflictingTime: '${app.startTime}~${app.endTime}',
-        );
-      }
-      
-      // 🔥 충돌 취소된 TO ID 목록 반환
-      return affectedTOIds.toList();
-      
-    } catch (e) {
-      debugPrint('❌ 확정 처리 실패: $e');
-      rethrow;
     }
+    return BatchResult(success: success, failed: failed);
   }
-  /// 충돌하는 지원서 찾기 (장기 공고 날짜 확장 포함)
+
+  // ───────────────────────────────────────────────────────
+  // 충돌 체크
+  // ───────────────────────────────────────────────────────
+
   Future<List<ApplicationModel>> findConflictingApplications({
     required String uid,
     required DateTime workDate,
@@ -2128,38 +703,183 @@ extension ApplicationFirestore on FirestoreService {
     String status = 'PENDING',
   }) async {
     try {
-      // 1. 해당 상태의 모든 지원서 조회
-      final snapshot = await _firestore
+      final snap = await _firestore
           .collection('applications')
           .where('uid', isEqualTo: uid)
           .where('status', isEqualTo: status)
           .get();
-      
-      // 2. 날짜와 시간대 겹침 필터링
-      final conflicts = <ApplicationModel>[];
-      
-      for (var doc in snapshot.docs) {
-        if (doc.id == excludeId) continue;
-        
-        final app = ApplicationModel.fromFirestore(doc);
-        
-        // 해당 날짜에 근무하는지 확인
-        if (!_isWorkingOnDate(app, workDate)) continue;
-        
-        // 시간대 겹침 확인
-        if (_hasTimeOverlap(startTime, endTime, app.startTime, app.endTime)) {
-          conflicts.add(app);
-        }
-      }
-      
-      debugPrint('✅ 충돌하는 지원서 ${conflicts.length}개 발견');
-      return conflicts;
+
+      return snap.docs
+          .where((d) => d.id != excludeId)
+          .map((d) => ApplicationModel.fromFirestore(d))
+          .where((a) => _isWorkingOnDate(a, workDate))
+          .where((a) => _hasTimeOverlap(startTime, endTime, a.startTime, a.endTime))
+          .toList();
     } catch (e) {
       debugPrint('❌ 충돌 지원서 조회 실패: $e');
       return [];
     }
   }
-  /// 장기공고 확정 시 모든 근무일에 대해 충돌하는 지원서 찾기
+
+  Future<List<ApplicationModel>> getConfirmedSchedules({
+    required String uid,
+    required DateTime workDate,
+  }) async {
+    try {
+      final snap = await _firestore
+          .collection('applications')
+          .where('uid', isEqualTo: uid)
+          .where('status', isEqualTo: 'CONFIRMED')
+          .get();
+      return snap.docs
+          .map((d) => ApplicationModel.fromFirestore(d))
+          .where((a) => _isWorkingOnDate(a, workDate))
+          .toList();
+    } catch (e) {
+      debugPrint('❌ 확정 일정 조회 실패: $e');
+      return [];
+    }
+  }
+
+  // ───────────────────────────────────────────────────────
+  // 내부 헬퍼
+  // ───────────────────────────────────────────────────────
+
+  /// 확정 처리 (충돌 자동 취소 포함)
+  Future<List<String>> _confirmWithConflictCheck({
+    required String applicationId,
+    String? confirmedBy,
+    String? message,
+  }) async {
+    final appDoc = await _firestore
+        .collection('applications')
+        .doc(applicationId)
+        .get();
+    if (!appDoc.exists) throw Exception('지원서를 찾을 수 없습니다');
+
+    final appData = appDoc.data()!;
+    if (appData['status'] == 'CONFIRMED') return [];
+    if (appData['status'] == 'CANCELED') {
+      throw Exception('취소된 지원서는 확정할 수 없습니다');
+    }
+
+    final app = ApplicationModel.fromMap(appData, appDoc.id);
+    final toId = appData['toId'] as String?;
+    final slotId = appData['slotId'] as String?;
+
+    if (toId == null) throw Exception('toId가 없는 지원서입니다');
+
+    // 충돌 지원서 탐색
+    List<ApplicationModel> conflictingApps;
+    final isContract = app.workDays != null && app.workDays!.isNotEmpty;
+    if (isContract && app.workEndDate != null) {
+      conflictingApps = await _findConflictingForLongTerm(
+        uid: app.uid,
+        startDate: app.workDate,
+        endDate: app.workEndDate!,
+        workDays: app.workDays!,
+        startTime: app.startTime,
+        endTime: app.endTime,
+        excludeId: applicationId,
+      );
+    } else {
+      conflictingApps = await findConflictingApplications(
+        uid: app.uid,
+        workDate: app.workDate,
+        startTime: app.startTime,
+        endTime: app.endTime,
+        excludeId: applicationId,
+        status: 'PENDING',
+      );
+    }
+
+    final batch = _firestore.batch();
+    final now = FieldValue.serverTimestamp();
+
+    // 확정 처리
+    batch.update(appDoc.reference, {
+      'status': 'CONFIRMED',
+      'confirmedAt': now,
+      if (confirmedBy != null) 'confirmedBy': confirmedBy,
+      if (message != null) 'confirmMessage': message,
+      'statusHistory': FieldValue.arrayUnion([{
+        'status': 'CONFIRMED',
+        'at': Timestamp.now(),
+        'by': confirmedBy,
+        'action': 'CONFIRM',
+      }]),
+    });
+
+    // TO + Slot 통계 (PENDING→CONFIRMED)
+    _incrementTOPending(batch, toId, slotId, delta: -1, workType: app.selectedWorkType);
+    _incrementTOConfirmed(batch, toId, slotId, delta: 1, workType: app.selectedWorkType);
+
+    // 충돌 지원서 자동 취소
+    for (final conflict in conflictingApps) {
+      batch.update(
+        _firestore.collection('applications').doc(conflict.id),
+        {
+          'status': 'AUTO_CANCELED',
+          'canceledAt': now,
+          'cancelReason': 'SCHEDULE_CONFLICT',
+          'conflictingAppId': applicationId,
+          'conflictingBusiness': app.businessName,
+          'conflictingTime': '${app.startTime}~${app.endTime}',
+          'statusHistory': FieldValue.arrayUnion([{
+            'status': 'AUTO_CANCELED',
+            'at': Timestamp.now(),
+            'by': 'SYSTEM',
+            'action': 'AUTO_CANCEL',
+            'reason': 'SCHEDULE_CONFLICT',
+          }]),
+        },
+      );
+    }
+
+    await batch.commit();
+    clearCache(toId: toId);
+
+    // 충돌 지원서의 TO 통계 감소
+    final Set<String> affectedTOIds = {};
+    if (conflictingApps.isNotEmpty) {
+      final statsBatch = _firestore.batch();
+      for (final conflict in conflictingApps) {
+        final cToId = conflict.toId;
+        final cSlotId = conflict.slotId;
+        if (cToId != null && cToId.isNotEmpty) {
+          _incrementTOPending(statsBatch, cToId, cSlotId, delta: -1,
+              workType: conflict.selectedWorkType);
+          affectedTOIds.add(cToId);
+          clearCache(toId: cToId);
+        }
+      }
+      await statsBatch.commit();
+    }
+
+    // 알림
+    await createNotification(NotificationModel.createApplicationConfirmed(
+      userId: app.uid,
+      businessName: app.businessName,
+      workType: app.selectedWorkType,
+      workDate: app.workDate,
+      applicationId: applicationId,
+    ));
+    for (final conflict in conflictingApps) {
+      _sendApplicationAutoCanceledNotification(
+        applicantUid: conflict.uid,
+        businessName: conflict.businessName,
+        workType: conflict.selectedWorkType,
+        workDate: conflict.workDate,
+        applicationId: conflict.id,
+        conflictingBusinessName: app.businessName,
+        conflictingTime: '${app.startTime}~${app.endTime}',
+      );
+    }
+
+    debugPrint('✅ 확정 완료 + ${conflictingApps.length}개 자동 취소');
+    return affectedTOIds.toList();
+  }
+
   Future<List<ApplicationModel>> _findConflictingForLongTerm({
     required String uid,
     required DateTime startDate,
@@ -2170,1124 +890,254 @@ extension ApplicationFirestore on FirestoreService {
     required String excludeId,
   }) async {
     try {
-      debugPrint('📅 [LongTerm] 장기공고 충돌 체크 시작');
-      debugPrint('   기간: ${startDate.month}/${startDate.day} ~ ${endDate.month}/${endDate.day}');
-      debugPrint('   요일: $workDays');
-      
-      // 1. 해당 사용자의 모든 PENDING 지원서 조회
-      final snapshot = await _firestore
+      final snap = await _firestore
           .collection('applications')
           .where('uid', isEqualTo: uid)
           .where('status', isEqualTo: 'PENDING')
           .get();
-      
-      final conflicts = <ApplicationModel>{};  // Set으로 중복 방지
-      
-      // 2. 장기공고의 모든 근무일 생성
-      final workingDates = <DateTime>[];
-      var currentDate = startDate;
-      
-      while (!currentDate.isAfter(endDate)) {
-        final dayOfWeek = _getKoreanDayOfWeek(currentDate);
-        if (workDays.contains(dayOfWeek)) {
-          workingDates.add(currentDate);
-        }
-        currentDate = currentDate.add(const Duration(days: 1));
-      }
-      
-      debugPrint('   근무일 수: ${workingDates.length}일');
-      
-      // 3. 각 근무일에 대해 충돌 체크
-      for (var doc in snapshot.docs) {
-        if (doc.id == excludeId) continue;
-        
-        final app = ApplicationModel.fromFirestore(doc);
-        
-        // 각 근무일과 비교
-        for (var workDate in workingDates) {
-          // 해당 날짜에 근무하는 지원서인지 확인
-          if (!_isWorkingOnDate(app, workDate)) continue;
-          
-          // 시간대 겹침 확인
-          if (_hasTimeOverlap(startTime, endTime, app.startTime, app.endTime)) {
-            conflicts.add(app);
-            break;  // 이미 충돌 확인됐으면 다음 지원서로
+
+      final conflicts = <ApplicationModel>{};
+      var current = startDate;
+      while (!current.isAfter(endDate)) {
+        final day = _getKoreanDayOfWeek(current);
+        if (workDays.contains(day)) {
+          for (final doc in snap.docs) {
+            if (doc.id == excludeId) continue;
+            final a = ApplicationModel.fromFirestore(doc);
+            if (_isWorkingOnDate(a, current) &&
+                _hasTimeOverlap(startTime, endTime, a.startTime, a.endTime)) {
+              conflicts.add(a);
+            }
           }
         }
+        current = current.add(const Duration(days: 1));
       }
-      
-      debugPrint('✅ [LongTerm] 충돌 지원서 ${conflicts.length}개 발견');
       return conflicts.toList();
     } catch (e) {
-      debugPrint('❌ [LongTerm] 충돌 조회 실패: $e');
+      debugPrint('❌ 장기공고 충돌 조회 실패: $e');
       return [];
     }
   }
-  /// 확정된 근무 일정 조회 (장기 공고 날짜 확장 포함)
-  Future<List<ApplicationModel>> getConfirmedSchedules({
-    required String uid,
-    required DateTime workDate,
-  }) async {
-    try {
-      // 1. 모든 확정된 지원서 조회
-      final snapshot = await _firestore
-          .collection('applications')
-          .where('uid', isEqualTo: uid)
-          .where('status', isEqualTo: 'CONFIRMED')
-          .get();
-      
-      final allConfirmed = snapshot.docs
-          .map((doc) => ApplicationModel.fromFirestore(doc))
-          .toList();
-      
-      // 2. 해당 날짜와 겹치는 근무만 필터링
-      final relevantSchedules = <ApplicationModel>[];
-      
-      for (var app in allConfirmed) {
-        if (_isWorkingOnDate(app, workDate)) {
-          relevantSchedules.add(app);
-        }
-      }
-      
-      debugPrint('✅ ${workDate.month}/${workDate.day}에 확정된 근무: ${relevantSchedules.length}개');
-      return relevantSchedules;
-    } catch (e) {
-      debugPrint('❌ 확정 일정 조회 실패: $e');
-      return [];
-    }
-  }
-  // ============================================================
-  // 🧹 지원서 연관 데이터 정리 (공통)
-  // ============================================================
 
-  /// 지원서 취소/거절 시 연관 데이터 정리
-  /// - 신분증 요청 무효화
-  /// - 출근 데이터 삭제
-  /// - 스케줄 변경 요청 취소
+  /// TO.totalPending 및 Slot.pendingCount 변경
+  void _incrementTOPending(
+    WriteBatch batch,
+    String toId,
+    String? slotId, {
+    required int delta,
+    String? workType,
+  }) {
+    batch.update(_firestore.collection('tos').doc(toId), {
+      'totalPending': FieldValue.increment(delta),
+    });
+    if (slotId != null) {
+      final slotRef = _firestore
+          .collection('tos')
+          .doc(toId)
+          .collection('slots')
+          .doc(slotId);
+      final slotUpdate = <String, dynamic>{
+        'pendingCount': FieldValue.increment(delta),
+      };
+      if (workType != null) {
+        slotUpdate['workTypeCounts.$workType.pendingCount'] =
+            FieldValue.increment(delta);
+      }
+      batch.update(slotRef, slotUpdate);
+    }
+  }
+
+  /// TO.totalConfirmed 및 Slot.confirmedCount 변경
+  void _incrementTOConfirmed(
+    WriteBatch batch,
+    String toId,
+    String? slotId, {
+    required int delta,
+    String? workType,
+  }) {
+    batch.update(_firestore.collection('tos').doc(toId), {
+      'totalConfirmed': FieldValue.increment(delta),
+    });
+    if (slotId != null) {
+      final slotRef = _firestore
+          .collection('tos')
+          .doc(toId)
+          .collection('slots')
+          .doc(slotId);
+      final slotUpdate = <String, dynamic>{
+        'confirmedCount': FieldValue.increment(delta),
+      };
+      if (workType != null) {
+        slotUpdate['workTypeCounts.$workType.confirmedCount'] =
+            FieldValue.increment(delta);
+      }
+      batch.update(slotRef, slotUpdate);
+    }
+  }
+
+  void _decrementTOConfirmed(
+    WriteBatch batch,
+    String toId,
+    String? slotId, {
+    String? workType,
+  }) =>
+      _incrementTOConfirmed(batch, toId, slotId, delta: -1, workType: workType);
+
+  // ───────────────────────────────────────────────────────
+  // 연관 데이터 정리
+  // ───────────────────────────────────────────────────────
+
   Future<void> _cleanupApplicationRelatedData({
     required String applicationId,
     required String uid,
     WriteBatch? batch,
   }) async {
-    debugPrint('🧹 [Cleanup] 연관 데이터 정리 시작: $applicationId');
-    
     final useBatch = batch != null;
     final localBatch = batch ?? _firestore.batch();
-    
     try {
-      // 1. 신분증 요청 무효화 (pending → canceled)
       final idCardRequests = await _firestore
           .collection('idCardAccessRequests')
           .where('applicationId', isEqualTo: applicationId)
           .where('status', isEqualTo: 'pending')
           .get();
-      
-      for (var doc in idCardRequests.docs) {
+      for (final doc in idCardRequests.docs) {
         localBatch.update(doc.reference, {
           'status': 'canceled',
           'canceledAt': FieldValue.serverTimestamp(),
           'cancelReason': 'APPLICATION_CANCELED',
         });
       }
-      debugPrint('   📋 신분증 요청 ${idCardRequests.docs.length}건 무효화');
-      
-      // 2. 출근 데이터는 유지 (근무 이력 보존)
-      // 확정 취소되어도 이미 출근한 기록은 남겨둠
-      
-      // 3. 스케줄 변경 요청 취소 (PENDING → CANCELED)
       final scheduleRequests = await _firestore
           .collection('scheduleChangeRequests')
           .where('applicationId', isEqualTo: applicationId)
           .where('status', isEqualTo: 'PENDING')
           .get();
-      
-      for (var doc in scheduleRequests.docs) {
+      for (final doc in scheduleRequests.docs) {
         localBatch.update(doc.reference, {
           'status': 'CANCELED',
           'canceledAt': FieldValue.serverTimestamp(),
           'cancelReason': 'APPLICATION_CANCELED',
         });
       }
-      debugPrint('   📋 스케줄 요청 ${scheduleRequests.docs.length}건 취소');
-      
-      // batch가 외부에서 제공되지 않은 경우에만 commit
-      if (!useBatch) {
-        await localBatch.commit();
-      }
-      
-      debugPrint('✅ [Cleanup] 연관 데이터 정리 완료');
+      if (!useBatch) await localBatch.commit();
     } catch (e) {
-      debugPrint('❌ [Cleanup] 연관 데이터 정리 실패: $e');
-      // 실패해도 메인 로직은 계속 진행
-    }
-  }
-  // ═══════════════════════════════════════════════════════════
-  // 일괄 처리 메서드 (Batch Operations)
-  // ═══════════════════════════════════════════════════════════
-
-  /// 지원서 일괄 확정 (Increment 방식)
-  Future<BatchResult> batchConfirmApplications({
-    required List<String> applicationIds,
-    required String adminUID,
-  }) async {
-    if (applicationIds.isEmpty) {
-      return BatchResult(success: 0, failed: 0);
-    }
-    
-    try {
-      debugPrint('📦 [Batch] 일괄 확정 시작: ${applicationIds.length}건');
-      
-      // 1. 모든 지원서 조회 (병렬)
-      final appFutures = applicationIds.map((id) => 
-        _firestore.collection('applications').doc(id).get()
-      );
-      final appDocs = await Future.wait(appFutures);
-      
-      // 2. 🔥 TO 정보 조회 (toId 우선, fallback 쿼리)
-      String? toId;
-      String? groupId;
-      DocumentReference? toRef;
-      
-      for (var appDoc in appDocs) {
-        if (!appDoc.exists) continue;
-        final appData = appDoc.data()!;
-        
-        if (toId == null) {
-          // 🔥 1차: toId로 직접 찾기 (단순하고 확실함!)
-          final appToId = appData['toId'] as String?;
-          
-          if (appToId != null && appToId.isNotEmpty) {
-            final toDoc = await _firestore.collection('tos').doc(appToId).get();
-            if (toDoc.exists) {
-              toRef = toDoc.reference;
-              toId = toDoc.id;
-              groupId = (toDoc.data() as Map<String, dynamic>)['groupId'] as String?;
-              debugPrint('✅ [Batch확정] toId로 TO 찾음: $toId');
-            }
-          }
-          
-          // 🔥 2차: toId가 없거나 못 찾으면 fallback 쿼리
-          if (toRef == null) {
-            // 단기공고로 검색
-            var toSnapshot = await _firestore
-                .collection('tos')
-                .where('businessId', isEqualTo: appData['businessId'])
-                .where('title', isEqualTo: appData['toTitle'])
-                .where('date', isEqualTo: appData['workDate'])
-                .limit(1)
-                .get();
-            debugPrint('🔍 [Batch확정] 단기공고 TO 검색: ${toSnapshot.docs.length}건');
-            
-            // 장기공고로 재검색
-            if (toSnapshot.docs.isEmpty) {
-              toSnapshot = await _firestore
-                  .collection('tos')
-                  .where('businessId', isEqualTo: appData['businessId'])
-                  .where('title', isEqualTo: appData['toTitle'])
-                  .where('isLongTerm', isEqualTo: true)
-                  .limit(1)
-                  .get();
-              debugPrint('🔍 [Batch확정] 장기공고 TO 재검색: ${toSnapshot.docs.length}건');
-            }
-            
-            if (toSnapshot.docs.isNotEmpty) {
-              toRef = toSnapshot.docs.first.reference;
-              toId = toSnapshot.docs.first.id;
-              groupId = toSnapshot.docs.first.data()['groupId'] as String?;
-            }
-          }
-        }
-        break;
-      }
-      
-      // 3. Batch 처리
-      final batch = _firestore.batch();
-      final now = Timestamp.now();
-      int successCount = 0;
-      int failedCount = 0;
-      
-      Map<String, int> workDetailCounts = {};  // PENDING용
-      
-      for (var appDoc in appDocs) {
-        if (!appDoc.exists) {
-          failedCount++;
-          continue;
-        }
-        
-        final appData = appDoc.data()!;
-        
-        if (appData['status'] == 'CONFIRMED' || appData['status'] == 'CANCELED') {
-          failedCount++;
-          continue;
-        }
-        
-        // 지원서 확정
-        batch.update(appDoc.reference, {
-          'status': 'CONFIRMED',
-          'confirmedAt': now,
-          'confirmedBy': adminUID,
-        });
-        
-        // WorkDetail 카운트 집계
-        final workDetailId = appData['workDetailId'] as String?;
-        if (workDetailId != null && workDetailId.isNotEmpty) {
-          workDetailCounts[workDetailId] = (workDetailCounts[workDetailId] ?? 0) + 1;
-        }
-        
-        successCount++;
-      }
-      
-      // TO 통계 한 번에 업데이트
-      if (toRef != null && successCount > 0) {
-        batch.update(toRef, {
-          'totalConfirmed': FieldValue.increment(successCount),
-          'totalPending': FieldValue.increment(-successCount),
-        });
-      }
-      
-      // WorkDetail 통계 한 번에 업데이트
-      for (var entry in workDetailCounts.entries) {
-        batch.update(
-          _firestore
-              .collection('tos')
-              .doc(toId)
-              .collection('workDetails')
-              .doc(entry.key),
-          {
-            'currentCount': FieldValue.increment(entry.value),
-            'pendingCount': FieldValue.increment(-entry.value),
-          },
-        );
-      }
-      
-      // ✅ groups 컬렉션 통계 한 번에 업데이트
-      if (groupId != null && successCount > 0) {
-        batch.update(_firestore.collection('groups').doc(groupId), {
-          'totalConfirmed': FieldValue.increment(successCount),
-          'totalPending': FieldValue.increment(-successCount),
-        });
-      }
-      
-      await batch.commit();
-      
-      if (toId != null) clearCache(toId: toId);
-      
-      debugPrint('✅ [Batch] 확정 완료: $successCount건 성공, $failedCount건 실패');
-      return BatchResult(success: successCount, failed: failedCount);
-    } catch (e) {
-      debugPrint('❌ [Batch] 일괄 확정 실패: $e');
-      rethrow;
+      debugPrint('❌ 연관 데이터 정리 실패: $e');
     }
   }
 
-  /// 지원서 일괄 거절 (Increment 방식)
-  Future<BatchResult> batchRejectApplications({
-    required List<String> applicationIds,
-    required String adminUID,
-    String? message,
-  }) async {
-    if (applicationIds.isEmpty) {
-      return BatchResult(success: 0, failed: 0);
-    }
-    
-    try {
-      debugPrint('📦 [Batch] 일괄 거절 시작: ${applicationIds.length}건');
-      
-      final appFutures = applicationIds.map((id) => 
-        _firestore.collection('applications').doc(id).get()
-      );
-      final appDocs = await Future.wait(appFutures);
-      
-      String? toId;
-      String? groupId;
-      DocumentReference? toRef;
-    
-      for (var appDoc in appDocs) {
-        if (!appDoc.exists) continue;
-        final appData = appDoc.data()!;
-        
-        if (toId == null) {
-          // 🔥 1차: toId로 직접 찾기 (단순하고 확실함!)
-          final appToId = appData['toId'] as String?;
-          
-          if (appToId != null && appToId.isNotEmpty) {
-            final toDoc = await _firestore.collection('tos').doc(appToId).get();
-            if (toDoc.exists) {
-              toRef = toDoc.reference;
-              toId = toDoc.id;
-              groupId = (toDoc.data() as Map<String, dynamic>)['groupId'] as String?;
-              debugPrint('✅ [Batch거절] toId로 TO 찾음: $toId');
-            }
-          }
-          
-          // 🔥 2차: toId가 없거나 못 찾으면 fallback 쿼리
-          if (toRef == null) {
-            // 단기공고로 검색
-            var toSnapshot = await _firestore
-                .collection('tos')
-                .where('businessId', isEqualTo: appData['businessId'])
-                .where('title', isEqualTo: appData['toTitle'])
-                .where('date', isEqualTo: appData['workDate'])
-                .limit(1)
-                .get();
-            debugPrint('🔍 [Batch거절] 단기공고 TO 검색: ${toSnapshot.docs.length}건');
-            
-            // 장기공고로 재검색
-            if (toSnapshot.docs.isEmpty) {
-              toSnapshot = await _firestore
-                  .collection('tos')
-                  .where('businessId', isEqualTo: appData['businessId'])
-                  .where('title', isEqualTo: appData['toTitle'])
-                  .where('isLongTerm', isEqualTo: true)
-                  .limit(1)
-                  .get();
-              debugPrint('🔍 [Batch거절] 장기공고 TO 재검색: ${toSnapshot.docs.length}건');
-            }
-            
-            if (toSnapshot.docs.isNotEmpty) {
-              toRef = toSnapshot.docs.first.reference;
-              toId = toSnapshot.docs.first.id;
-              groupId = toSnapshot.docs.first.data()['groupId'] as String?;
-            }
-          }
-        }
-        break;
-      }
-      
-      final batch = _firestore.batch();
-      final now = Timestamp.now();
-      int successCount = 0;
-      int failedCount = 0;
-      
-      Map<String, int> workDetailCounts = {};
-      Map<String, int> confirmedWorkDetailCounts = {};  // 🔥 CONFIRMED용
-      int confirmedRejectCount = 0;  // 🔥 CONFIRMED 거절 수
-      
-      for (var appDoc in appDocs) {
-        if (!appDoc.exists) {
-          failedCount++;
-          continue;
-        }
-        
-        final appData = appDoc.data()!;
-        
-        if (appData['status'] == 'CANCELED') {
-          failedCount++;
-          continue;
-        }
-        
-        final updates = <String, dynamic>{
-          'status': 'REJECTED',
-          'rejectedAt': now,
-          'rejectedBy': adminUID,
-        };
-        if (message != null) updates['rejectMessage'] = message;
-        
-        batch.update(appDoc.reference, updates);
-        
-        // 🔥 상태별 카운트 분리
-        if (appData['status'] == 'PENDING') {
-          final workDetailId = appData['workDetailId'] as String?;
-          if (workDetailId != null && workDetailId.isNotEmpty) {
-            workDetailCounts[workDetailId] = (workDetailCounts[workDetailId] ?? 0) + 1;
-          }
-        } else if (appData['status'] == 'CONFIRMED') {
-          // 🔥 CONFIRMED 거절 카운트
-          final workDetailId = appData['workDetailId'] as String?;
-          if (workDetailId != null && workDetailId.isNotEmpty) {
-            confirmedWorkDetailCounts[workDetailId] = (confirmedWorkDetailCounts[workDetailId] ?? 0) + 1;
-          }
-          confirmedRejectCount++;
-        }
-        
-        successCount++;
-      }
-      
-      // PENDING 거절 수만큼 통계 감소
-      final pendingRejectCount = workDetailCounts.values.fold(0, (acc, v) => acc + v);
-      
-      if (toRef != null && pendingRejectCount > 0) {
-        batch.update(toRef, {
-          'totalPending': FieldValue.increment(-pendingRejectCount),
-        });
-      }
-      
-      for (var entry in workDetailCounts.entries) {
-        batch.update(
-          _firestore
-              .collection('tos')
-              .doc(toId)
-              .collection('workDetails')
-              .doc(entry.key),
-          {
-            'pendingCount': FieldValue.increment(-entry.value),
-          },
-        );
-      }
-      
-      // ✅ groups 컬렉션 통계 (PENDING 거절)
-      if (groupId != null && pendingRejectCount > 0) {
-        batch.update(_firestore.collection('groups').doc(groupId), {
-          'totalPending': FieldValue.increment(-pendingRejectCount),
-        });
-      }
-      
-      // 🔥 CONFIRMED 거절 수만큼 통계 감소
-      if (toRef != null && confirmedRejectCount > 0) {
-        batch.update(toRef, {
-          'totalConfirmed': FieldValue.increment(-confirmedRejectCount),
-        });
-      }
-      
-      for (var entry in confirmedWorkDetailCounts.entries) {
-        batch.update(
-          _firestore
-              .collection('tos')
-              .doc(toId)
-              .collection('workDetails')
-              .doc(entry.key),
-          {
-            'currentCount': FieldValue.increment(-entry.value),
-          },
-        );
-      }
-      
-      // ✅ groups 컬렉션 통계 (CONFIRMED 거절)
-      if (groupId != null && confirmedRejectCount > 0) {
-        batch.update(_firestore.collection('groups').doc(groupId), {
-          'totalConfirmed': FieldValue.increment(-confirmedRejectCount),
-        });
-      }
-      
-      await batch.commit();
-      
-      if (toId != null) clearCache(toId: toId);
-      
-      debugPrint('✅ [Batch] 거절 완료: $successCount건');
-      return BatchResult(success: successCount, failed: failedCount);
-    } catch (e) {
-      debugPrint('❌ [Batch] 일괄 거절 실패: $e');
-      rethrow;
-    }
-  }
-  /// 해당 application에 출퇴근 기록이 있는지 확인
-  Future<bool> hasAttendanceRecord(String applicationId) async {
-    try {
-      final snapshot = await _firestore
-          .collection('attendance')
-          .where('applicationId', isEqualTo: applicationId)
-          .limit(1)
-          .get();
-      return snapshot.docs.isNotEmpty;
-    } catch (e) {
-      debugPrint('❌ 출퇴근 기록 확인 실패: $e');
-      return false;
-    }
-  }
-  // ═══════════════════════════════════════════════════════════
-  // 지원 다이얼로그용 메서드
-  // ═══════════════════════════════════════════════════════════
+  // ───────────────────────────────────────────────────────
+  // 알림 헬퍼
+  // ───────────────────────────────────────────────────────
 
-  /// 특정 TO에 대한 사용자의 지원 목록 조회
-  /// 
-  /// [toId] - TO 문서 ID
-  /// [uid] - 사용자 UID
-  /// 
-  /// 반환: 해당 사용자가 이 TO에 지원한 모든 지원서
-  Future<List<ApplicationModel>> getApplicationsForTO({
+  Future<void> _sendNewApplicationNotification({
+    required String businessId,
+    required String applicantUid,
+    required String workType,
+    required DateTime workDate,
+    required String applicationId,
     required String toId,
-    required String uid,
   }) async {
     try {
-      // TO 정보 먼저 조회
-      final toDoc = await _firestore.collection('tos').doc(toId).get();
-      if (!toDoc.exists) return [];
-
-      final toData = toDoc.data()!;
-      final businessId = toData['businessId'];
-      final toTitle = toData['title'];
-      // 🔥 FIX: isLongTerm 필드와 jobType 모두 체크
-      final isLongTerm = toData['isLongTerm'] == true || 
-                         toData['jobType'] == 'long_term';
-
-      QuerySnapshot snapshot;
-      
-      if (isLongTerm) {
-        // ✅ 장기공고: workDate 필터 제외 (희망시작일이 TO시작일과 다름)
-        snapshot = await _firestore
-            .collection('applications')
-            .where('uid', isEqualTo: uid)
-            .where('businessId', isEqualTo: businessId)
-            .where('toTitle', isEqualTo: toTitle)
-            .get();
-        
-        debugPrint('🔍 [getApplicationsForTO] 장기공고 지원서 조회: ${snapshot.docs.length}개');
-      } else {
-        // ✅ 단기공고: workDate 포함
-        final workDate = toData['date'] as Timestamp;
-        snapshot = await _firestore
-            .collection('applications')
-            .where('uid', isEqualTo: uid)
-            .where('businessId', isEqualTo: businessId)
-            .where('toTitle', isEqualTo: toTitle)
-            .where('workDate', isEqualTo: workDate)
-            .get();
-        
-        debugPrint('🔍 [getApplicationsForTO] 단기공고 지원서 조회: ${snapshot.docs.length}개');
-      }
-
-      return snapshot.docs
-          .map((doc) => ApplicationModel.fromFirestore(doc))
-          .toList();
+      final businessDoc =
+          await _firestore.collection('businesses').doc(businessId).get();
+      if (!businessDoc.exists) return;
+      final adminUid = businessDoc.data()?['ownerId'] as String?;
+      if (adminUid == null || adminUid.isEmpty) return;
+      final userDoc =
+          await _firestore.collection('users').doc(applicantUid).get();
+      final applicantName = userDoc.data()?['name'] as String? ?? '지원자';
+      await createNotification(NotificationModel.createNewApplication(
+        userId: adminUid,
+        applicantName: applicantName,
+        workType: workType,
+        workDate: workDate,
+        applicationId: applicationId,
+        toId: toId,
+        businessId: businessId,
+        workDetailId: '',
+      ));
     } catch (e) {
-      debugPrint('❌ TO 지원 목록 조회 실패: $e');
-      return [];
+      debugPrint('⚠️ 신규 지원 알림 전송 실패: $e');
     }
   }
-  /// 지원서 업데이트
-  Future<bool> updateApplication(String applicationId, Map<String, dynamic> data) async {
-    try {
-      await _firestore.collection('applications').doc(applicationId).update(data);
-      debugPrint('✅ 지원서 업데이트 완료: $applicationId');
-      return true;
-    } catch (e) {
-      debugPrint('❌ 지원서 업데이트 실패: $e');
-      return false;
-    }
-  }
-  /// ApplicationModel에서 TO 찾기
-  Future<TOModel?> getTOByApplication(ApplicationModel app) async {
-    try {
-      final snapshot = await _firestore
-          .collection('tos')
-          .where('businessId', isEqualTo: app.businessId)
-          .where('title', isEqualTo: app.toTitle)
-          .where('date', isEqualTo: Timestamp.fromDate(
-            DateTime(app.workDate.year, app.workDate.month, app.workDate.day)
-          ))
-          .limit(1)
-          .get();
-      
-      if (snapshot.docs.isEmpty) {
-        debugPrint('⚠️ TO를 찾을 수 없음: ${app.businessId} / ${app.toTitle} / ${app.workDate}');
-        return null;
-      }
-      
-      final doc = snapshot.docs.first;
-      return TOModel.fromMap(doc.data(), doc.id);
-    } catch (e) {
-      debugPrint('❌ TO 조회 실패: $e');
-      return null;
-    }
-  }
-  // ═══════════════════════════════════════════════════════════
-  // 🔥 Phase A: 퇴사 관리 시스템
-  // ═══════════════════════════════════════════════════════════
 
-  /// 퇴사 요청 (지원자용)
-  Future<bool> requestResignation({
+  Future<void> _sendApplicationCanceledNotification({
+    required String businessId,
+    required String applicantUid,
+    required String workType,
+    required DateTime workDate,
     required String applicationId,
-    required DateTime resignDate,
+    required String toId,
   }) async {
     try {
-      await _firestore.collection('applications').doc(applicationId).update({
-        'resignRequestedAt': Timestamp.fromDate(DateTime.now()),
-        'resignRequestDate': Timestamp.fromDate(resignDate),
-        'resignStatus': 'PENDING',
-      });
-
-      debugPrint('✅ 퇴사 요청 완료: $applicationId');
-      return true;
+      final businessDoc =
+          await _firestore.collection('businesses').doc(businessId).get();
+      if (!businessDoc.exists) return;
+      final adminUid = businessDoc.data()?['ownerId'] as String?;
+      if (adminUid == null || adminUid.isEmpty) return;
+      final userDoc =
+          await _firestore.collection('users').doc(applicantUid).get();
+      final applicantName = userDoc.data()?['name'] as String? ?? '지원자';
+      await createNotification(NotificationModel.createApplicationCanceled(
+        userId: adminUid,
+        applicantName: applicantName,
+        workType: workType,
+        workDate: workDate,
+        applicationId: applicationId,
+        businessId: businessId,
+        toId: toId,
+        workDetailId: '',
+      ));
     } catch (e) {
-      debugPrint('❌ 퇴사 요청 실패: $e');
-      return false;
+      debugPrint('⚠️ 지원 취소 알림 전송 실패: $e');
     }
   }
 
-  /// 퇴사 요청 취소 (지원자용)
-  Future<bool> cancelResignRequest(String applicationId) async {
-    try {
-      await _firestore.collection('applications').doc(applicationId).update({
-        'resignRequestedAt': FieldValue.delete(),
-        'resignRequestDate': FieldValue.delete(),
-        'resignStatus': FieldValue.delete(),
-      });
-
-      debugPrint('✅ 퇴사 요청 취소 완료: $applicationId');
-      return true;
-    } catch (e) {
-      debugPrint('❌ 퇴사 요청 취소 실패: $e');
-      return false;
-    }
-  }
-
-  /// 퇴사 승인 (관리자용)
-  Future<bool> approveResignation({
+  Future<void> _sendApplicationAutoCanceledNotification({
+    required String applicantUid,
+    required String businessName,
+    required String workType,
+    required DateTime workDate,
     required String applicationId,
-    required String adminUID,
+    required String conflictingBusinessName,
+    required String conflictingTime,
   }) async {
     try {
-      final appDoc = await _firestore
-          .collection('applications')
-          .doc(applicationId)
-          .get();
-
-      if (!appDoc.exists) {
-        ToastHelper.showError('지원서를 찾을 수 없습니다.');
-        return false;
-      }
-
-      final appData = appDoc.data() as Map<String, dynamic>;
-      final resignDate = (appData['resignRequestDate'] as Timestamp).toDate();
-
-      await _firestore.collection('applications').doc(applicationId).update({
-        'resignStatus': 'APPROVED',
-        'resignApprovedAt': Timestamp.fromDate(DateTime.now()),
-        'resignApprovedBy': adminUID,
-        'actualResignDate': Timestamp.fromDate(resignDate),
-        'workEndDate': Timestamp.fromDate(resignDate), // 실제 종료일 업데이트
-      });
-
-      debugPrint('✅ 퇴사 승인 완료: $applicationId');
-      return true;
+      await createNotification(NotificationModel.createApplicationAutoCanceled(
+        userId: applicantUid,
+        businessName: businessName,
+        workType: workType,
+        workDate: workDate,
+        applicationId: applicationId,
+        conflictingBusinessName: conflictingBusinessName,
+        conflictingTime: conflictingTime,
+      ));
     } catch (e) {
-      debugPrint('❌ 퇴사 승인 실패: $e');
-      return false;
+      debugPrint('⚠️ 자동 취소 알림 전송 실패: $e');
     }
   }
 
-  /// 퇴사 거절 (관리자용)
-  Future<bool> rejectResignation({
+  Future<void> _sendWorkTypeChangedNotification({
+    required String applicantUid,
+    required String businessName,
+    required DateTime workDate,
+    required String originalWorkType,
+    required String newWorkType,
+    required int newWage,
     required String applicationId,
-    required String adminUID,
-    required String rejectReason,
   }) async {
     try {
-      await _firestore.collection('applications').doc(applicationId).update({
-        'resignStatus': 'REJECTED',
-        'resignApprovedAt': Timestamp.fromDate(DateTime.now()),
-        'resignApprovedBy': adminUID,
-        'resignRejectReason': rejectReason,
-      });
-
-      debugPrint('✅ 퇴사 거절 완료: $applicationId');
-      return true;
+      await createNotification(NotificationModel.createWorkTypeChanged(
+        userId: applicantUid,
+        businessName: businessName,
+        workDate: workDate,
+        originalWorkType: originalWorkType,
+        newWorkType: newWorkType,
+        newWage: newWage,
+        applicationId: applicationId,
+      ));
     } catch (e) {
-      debugPrint('❌ 퇴사 거절 실패: $e');
-      return false;
+      debugPrint('⚠️ 파트 변경 알림 전송 실패: $e');
     }
-  }
-  // ============================================================
-  // 🔥 계약해지 관리 (관리자 → 근무자)
-  // ============================================================
-
-  /// 계약해지 요청 (관리자용)
-  Future<bool> requestTermination({
-    required String applicationId,
-    required String reason,
-    required String requestedByUid,
-  }) async {
-    try {
-      // 1. 지원서 정보 먼저 조회 (알림용)
-      final appDoc = await _firestore.collection('applications').doc(applicationId).get();
-      
-      // 2. 상태 업데이트
-      await _firestore.collection('applications').doc(applicationId).update({
-        'terminationRequestedAt': Timestamp.fromDate(DateTime.now()),
-        'terminationReason': reason,
-        'terminationRequestedByUid': requestedByUid,
-        'terminationStatus': 'PENDING',
-      });
-
-      debugPrint('✅ 계약해지 요청 완료: $applicationId');
-      
-      // 🔔 근무자에게 알림 발송
-      if (appDoc.exists) {
-        final appData = appDoc.data()!;
-        _sendTerminationRequestedNotification(
-          applicantUid: appData['uid'] as String,
-          businessName: appData['businessName'] as String,
-          applicationId: applicationId,
-          reason: reason,
-        );
-      }
-      
-      return true;
-    } catch (e) {
-      debugPrint('❌ 계약해지 요청 실패: $e');
-      return false;
-    }
-  }
-
-  /// 계약해지 요청 취소 (관리자용)
-  Future<bool> cancelTerminationRequest(String applicationId) async {
-    try {
-      await _firestore.collection('applications').doc(applicationId).update({
-        'terminationRequestedAt': FieldValue.delete(),
-        'terminationReason': FieldValue.delete(),
-        'terminationRequestedByUid': FieldValue.delete(),
-        'terminationStatus': FieldValue.delete(),
-        'terminationRespondedAt': FieldValue.delete(),
-        'terminationRejectReason': FieldValue.delete(),
-      });
-
-      debugPrint('✅ 계약해지 요청 취소 완료: $applicationId');
-      return true;
-    } catch (e) {
-      debugPrint('❌ 계약해지 요청 취소 실패: $e');
-      return false;
-    }
-  }
-
-  /// 계약해지 승인 (근무자용)
-  Future<bool> approveTermination(String applicationId) async {
-    try {
-      // 1. 지원서 정보 먼저 조회 (알림용)
-      final appDoc = await _firestore.collection('applications').doc(applicationId).get();
-      
-      // 2. 상태 업데이트
-      await _firestore.collection('applications').doc(applicationId).update({
-        'terminationStatus': 'APPROVED',
-        'terminationRespondedAt': Timestamp.fromDate(DateTime.now()),
-        'resignStatus': 'APPROVED',  // 퇴사 상태도 함께 업데이트
-        'actualResignDate': Timestamp.fromDate(DateTime.now()),
-      });
-
-      debugPrint('✅ 계약해지 승인 완료: $applicationId');
-      
-      // 🔔 관리자에게 알림 발송
-      if (appDoc.exists) {
-        final appData = appDoc.data()!;
-        _sendTerminationApprovedNotification(
-          businessId: appData['businessId'] as String,
-          applicantUid: appData['uid'] as String,
-          businessName: appData['businessName'] as String,
-          applicationId: applicationId,
-        );
-      }
-      
-      return true;
-    } catch (e) {
-      debugPrint('❌ 계약해지 승인 실패: $e');
-      return false;
-    }
-  }
-
-  /// 계약해지 거절 (근무자용)
-  Future<bool> rejectTermination({
-    required String applicationId,
-    String? rejectReason,
-  }) async {
-    try {
-      await _firestore.collection('applications').doc(applicationId).update({
-        'terminationStatus': 'REJECTED',
-        'terminationRespondedAt': Timestamp.fromDate(DateTime.now()),
-        'terminationRejectReason': rejectReason,
-      });
-
-      debugPrint('✅ 계약해지 거절 완료: $applicationId');
-      return true;
-    } catch (e) {
-      debugPrint('❌ 계약해지 거절 실패: $e');
-      return false;
-    }
-  }
-
-  /// 계약해지 자동 승인 처리 (3일 경과 시)
-  Future<bool> autoApproveTermination(String applicationId) async {
-    try {
-      await _firestore.collection('applications').doc(applicationId).update({
-        'terminationStatus': 'AUTO_APPROVED',
-        'terminationRespondedAt': Timestamp.fromDate(DateTime.now()),
-        'resignStatus': 'AUTO_APPROVED',
-        'actualResignDate': Timestamp.fromDate(DateTime.now()),
-      });
-
-      debugPrint('✅ 계약해지 자동 승인 완료: $applicationId');
-      return true;
-    } catch (e) {
-      debugPrint('❌ 계약해지 자동 승인 실패: $e');
-      return false;
-    }
-  }
-
-  /// 계약해지 대기 중인 지원서 조회 (3일 경과 체크용)
-  Future<List<ApplicationModel>> getPendingTerminations() async {
-    try {
-      final snapshot = await _firestore
-          .collection('applications')
-          .where('terminationStatus', isEqualTo: 'PENDING')
-          .get();
-
-      return snapshot.docs
-          .map((doc) => ApplicationModel.fromMap(doc.data(), doc.id))
-          .toList();
-    } catch (e) {
-      debugPrint('❌ 계약해지 대기 목록 조회 실패: $e');
-      return [];
-    }
-  }
-
-  /// 퇴사 자동 승인 처리 (Cloud Function에서 호출)
-  Future<bool> autoApproveResignation(String applicationId) async {
-    try {
-      final appDoc = await _firestore
-          .collection('applications')
-          .doc(applicationId)
-          .get();
-
-      if (!appDoc.exists) return false;
-
-      final appData = appDoc.data() as Map<String, dynamic>;
-      
-      // 이미 처리된 경우 스킵
-      if (appData['resignStatus'] != 'PENDING') return false;
-
-      final resignDate = (appData['resignRequestDate'] as Timestamp).toDate();
-
-      await _firestore.collection('applications').doc(applicationId).update({
-        'resignStatus': 'AUTO_APPROVED',
-        'resignApprovedAt': Timestamp.fromDate(DateTime.now()),
-        'resignApprovedBy': 'SYSTEM',
-        'actualResignDate': Timestamp.fromDate(resignDate),
-        'workEndDate': Timestamp.fromDate(resignDate),
-      });
-
-      debugPrint('✅ 퇴사 자동 승인 완료: $applicationId');
-      return true;
-    } catch (e) {
-      debugPrint('❌ 퇴사 자동 승인 실패: $e');
-      return false;
-    }
-  }
-  /// 퇴사 요청 목록 조회 (관리자용)
-  Future<List<ApplicationModel>> getResignRequests(String businessId) async {
-    try {
-      final snapshot = await _firestore
-          .collection('applications')
-          .where('businessId', isEqualTo: businessId)
-          .where('status', isEqualTo: 'CONFIRMED')
-          .where('resignStatus', isEqualTo: 'PENDING')
-          .get();
-
-      final applications = snapshot.docs
-          .map((doc) => ApplicationModel.fromFirestore(doc))
-          .where((app) => app.isLongTermApplication) // 장기 근무만
-          .toList();
-
-      debugPrint('✅ 퇴사 요청 ${applications.length}건 조회');
-      return applications;
-    } catch (e) {
-      debugPrint('❌ 퇴사 요청 조회 실패: $e');
-      return [];
-    }
-  }
-  /// 장기 근무 지원자 조회 (사업장별)
-  Future<List<ApplicationModel>> getLongTermApplicationsByBusiness(
-    String businessId,
-  ) async {
-    try {
-      final snapshot = await _firestore
-          .collection('applications')
-          .where('businessId', isEqualTo: businessId)
-          .where('status', isEqualTo: 'CONFIRMED')
-          .get();
-
-      final applications = snapshot.docs
-          .map((doc) => ApplicationModel.fromFirestore(doc))
-          .where((app) => app.isLongTermApplication)
-          .toList();
-
-      debugPrint('✅ 장기 근무 지원자 조회: ${applications.length}명');
-      return applications;
-    } catch (e) {
-      debugPrint('❌ 장기 근무 지원자 조회 실패: $e');
-      return [];
-    }
-  }
-  /// 요일을 한글로 변환
-  String _getKoreanDayOfWeek(DateTime date) {
-    const days = ['월', '화', '수', '목', '금', '토', '일'];
-    return days[date.weekday - 1];
-  }
-  // ═══════════════════════════════════════════════════════════
-  // 📍 추가 위치: lib/services/firestore/application_firestore.dart
-  // extension ApplicationFirestore on FirestoreService { ... } 안에 추가
-  // ═══════════════════════════════════════════════════════════
-
-  /// 만료된 PENDING 지원서 자동 취소
-  ///
-  /// 호출 시점: getMyApplications() 또는 my_applications_screen 로드 시
-  ///
-  /// 처리 대상:
-  /// - 단기: workDate가 오늘 이전인 PENDING
-  /// - 장기: workEndDate가 오늘 이전인 PENDING
-  ///
-  /// 반환: 처리된 지원서 수
-  Future<int> autoExpirePendingApplications(String uid) async {
-    try {
-      final now = DateTime.now();
-      final todayStart = DateTime(now.year, now.month, now.day);
-
-      debugPrint('🔄 [autoExpire] PENDING 만료 체크 시작 (uid: $uid)');
-
-      // 1. 해당 사용자의 PENDING 지원서 전체 조회
-      final snapshot = await _firestore
-          .collection('applications')
-          .where('uid', isEqualTo: uid)
-          .where('status', isEqualTo: 'PENDING')
-          .get();
-
-      if (snapshot.docs.isEmpty) {
-        debugPrint('✅ [autoExpire] 만료 대상 없음');
-        return 0;
-      }
-
-      // 2. 만료 대상 필터링 (메모리에서)
-      final expiredDocs = snapshot.docs.where((doc) {
-        final data = doc.data();
-
-        // 장기 근무: workEndDate 기준
-        final isLongTerm = data['isLongTermApplication'] == true ||
-            (data['workDays'] != null &&
-                (data['workDays'] as List).isNotEmpty);
-
-        if (isLongTerm) {
-          final workEndDate = data['workEndDate'] != null
-              ? (data['workEndDate'] as Timestamp).toDate()
-              : null;
-          if (workEndDate == null) return false;
-          final endDateOnly = DateTime(
-              workEndDate.year, workEndDate.month, workEndDate.day);
-          return endDateOnly.isBefore(todayStart);
-        }
-
-        // 단기 근무: workDate 기준
-        final workDate = data['workDate'] != null
-            ? (data['workDate'] as Timestamp).toDate()
-            : null;
-        if (workDate == null) return false;
-        final workDateOnly =
-            DateTime(workDate.year, workDate.month, workDate.day);
-        return workDateOnly.isBefore(todayStart);
-      }).toList();
-
-      if (expiredDocs.isEmpty) {
-        debugPrint('✅ [autoExpire] 만료된 PENDING 없음');
-        return 0;
-      }
-
-      debugPrint('⚠️ [autoExpire] 만료 대상: ${expiredDocs.length}개');
-
-      // 3. Batch로 일괄 처리 (Firestore 500개 제한 대응)
-      const batchLimit = 400;
-      int totalProcessed = 0;
-
-      for (int i = 0; i < expiredDocs.length; i += batchLimit) {
-        final chunk =
-            expiredDocs.skip(i).take(batchLimit).toList();
-        final batch = _firestore.batch();
-
-        for (final doc in chunk) {
-          final data = doc.data();
-          final toId = data['toId'] as String?;
-          final workDetailId = data['workDetailId'] as String?;
-          final groupId = data['groupId'] as String?;
-
-          // 3-1. 지원서 상태 변경
-          batch.update(doc.reference, {
-            'status': 'AUTO_CANCELED',
-            'canceledAt': FieldValue.serverTimestamp(),
-            'cancelReason': 'EXPIRED',
-            'statusHistory': FieldValue.arrayUnion([
-              {
-                'status': 'AUTO_CANCELED',
-                'at': Timestamp.now(),
-                'by': null,
-                'action': 'AUTO_EXPIRE',
-              }
-            ]),
-          });
-
-          // 3-2. TO 통계 감소 (toId 있을 때만)
-          if (toId != null && toId.isNotEmpty) {
-            batch.update(
-              _firestore.collection('tos').doc(toId),
-              {'totalPending': FieldValue.increment(-1)},
-            );
-
-            // 3-3. WorkDetail 통계 감소
-            if (workDetailId != null && workDetailId.isNotEmpty) {
-              batch.update(
-                _firestore
-                    .collection('tos')
-                    .doc(toId)
-                    .collection('workDetails')
-                    .doc(workDetailId),
-                {'pendingCount': FieldValue.increment(-1)},
-              );
-            }
-
-            clearCache(toId: toId);
-          }
-
-          // 3-4. groups 통계 감소
-          if (groupId != null && groupId.isNotEmpty) {
-            batch.update(
-              _firestore.collection('groups').doc(groupId),
-              {'totalPending': FieldValue.increment(-1)},
-            );
-          }
-        }
-
-        await batch.commit();
-        totalProcessed += chunk.length;
-        debugPrint('✅ [autoExpire] Batch ${i ~/ batchLimit + 1} 완료: ${chunk.length}개');
-      }
-
-      debugPrint('✅ [autoExpire] 총 $totalProcessed개 AUTO_CANCELED 처리 완료');
-
-      // 4. 알림 전송 (fire-and-forget - 메인 로직 지연 방지)
-      _sendExpiredNotifications(expiredDocs);
-
-      return totalProcessed;
-    } catch (e) {
-      // 만료 처리 실패해도 메인 로직은 계속 진행
-      debugPrint('❌ [autoExpire] 실패 (무시하고 계속): $e');
-      return 0;
-    }
-  }
-
-  /// 만료 알림 전송 (fire-and-forget)
-  void _sendExpiredNotifications(
-      List<QueryDocumentSnapshot<Map<String, dynamic>>> docs) {
-    // 비동기로 처리 - 실패해도 무관
-    Future(() async {
-      for (final doc in docs) {
-        try {
-          final data = doc.data();
-          final userId = data['uid'] as String?;
-          final businessName = data['businessName'] as String? ?? '';
-          final workType = data['selectedWorkType'] as String? ?? '';
-          final workDate = data['workDate'] != null
-              ? (data['workDate'] as Timestamp).toDate()
-              : DateTime.now();
-
-          if (userId == null) continue;
-
-          await createNotification(
-            NotificationModel.createApplicationRejected(
-              userId: userId,
-              businessName: businessName,
-              workType: workType,
-              workDate: workDate,
-              applicationId: doc.id,
-            ),
-          );
-        } catch (e) {
-          debugPrint('⚠️ [autoExpire] 알림 전송 실패 (무시): $e');
-        }
-      }
-    });
   }
 }

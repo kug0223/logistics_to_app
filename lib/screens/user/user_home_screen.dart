@@ -21,18 +21,14 @@ class UserHomeScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final userProvider = context.watch<UserProvider>();
-    final theme = Theme.of(context);
 
     return Scaffold(
       body: Container(
-        decoration: BoxDecoration(
+        decoration: const BoxDecoration(
           gradient: LinearGradient(
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
-            colors: [
-              theme.primaryColor,
-              theme.primaryColor.withValues(alpha: 0.85),
-            ],
+            begin: Alignment.topCenter,
+            end: Alignment.bottomCenter,
+            colors: [Color(0xFF1565C0), Color(0xFF1E88E5)],
           ),
         ),
         child: SafeArea(
@@ -142,7 +138,7 @@ class UserHomeScreen extends StatelessWidget {
                     
                     // 인사말
                     Text(
-                      '안녕하세요! 👋',
+                      '안녕하세요,',
                       style: ResponsiveHelper.bodyStyle(
                         context,
                         color: Colors.white.withValues(alpha: 0.95),
@@ -189,8 +185,6 @@ class UserHomeScreen extends StatelessWidget {
                 ),
               ),
               
-              SizedBox(height: ResponsiveHelper.spacing(context, 24)),
-
               // 메뉴 카드 영역
               Expanded(
                 child: Container(
@@ -211,10 +205,10 @@ class UserHomeScreen extends StatelessWidget {
                         // 1. 근무 지원하기
                         _buildMenuCard(
                           context,
-                          icon: Icons.warehouse_rounded,
-                          title: '근무 지원하기',
-                          subtitle: '사업장 선택',
-                          color: theme.primaryColor,
+                          icon: Icons.search,
+                          title: '공고 찾기',
+                          subtitle: '알바 공고 검색',
+                          color: const Color(0xFF1565C0),
                           onTap: () {
                             Navigator.push(
                               context,
@@ -231,7 +225,7 @@ class UserHomeScreen extends StatelessWidget {
                           icon: Icons.calendar_month,
                           title: '근무 스케줄',
                           subtitle: '일정 한눈에 보기',
-                          color: theme.primaryColor.withValues(alpha: 0.8),
+                          color: const Color(0xFF1565C0),
                           onTap: () {
                             Navigator.push(
                               context,
@@ -248,7 +242,7 @@ class UserHomeScreen extends StatelessWidget {
                           icon: Icons.access_time_outlined,
                           title: '출퇴근 체크',
                           subtitle: '근무 시간 기록',
-                          color: theme.primaryColor.withValues(alpha: 0.7),
+                          color: const Color(0xFF1565C0),
                           onTap: () {
                             Navigator.push(
                               context,
@@ -265,7 +259,7 @@ class UserHomeScreen extends StatelessWidget {
                           icon: Icons.assignment,
                           title: '내 지원 내역',
                           subtitle: '지원 현황 확인',
-                          color: theme.primaryColor.withValues(alpha: 0.6),
+                          color: const Color(0xFF1565C0),
                           onTap: () {
                             Navigator.push(
                               context,
