@@ -133,8 +133,9 @@ class _JobPostingScreenState extends State<JobPostingScreen> {
                     SliverToBoxAdapter(
                       child: Column(
                         children: [
-                          // 사업장 정보 카드
-                          _buildBusinessInfoCard(context, theme),
+                          // 사업장 정보 카드 (사업장 로드 실패 시 생략)
+                          if (_business != null)
+                            _buildBusinessInfoCard(context, theme),
 
                           // TO 정보 카드
                           _buildTOInfoCard(context, theme),

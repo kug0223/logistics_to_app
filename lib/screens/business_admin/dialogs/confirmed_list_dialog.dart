@@ -90,9 +90,12 @@ class _ConfirmedListDialogWidgetState
       _error = null;
     });
 
+    final userProvider = context.read<UserProvider>();
+
     try {
       final applications = await widget.firestoreService.getApplicationsByTOId(
         widget.toItem.to.id,
+        businessId: widget.toItem.to.businessId,
       );
 
       final confirmed =
@@ -152,7 +155,6 @@ class _ConfirmedListDialogWidgetState
       }
 
       // 신분증 상태 일괄 조회
-      final userProvider = context.read<UserProvider>();
       final currentUserId = userProvider.currentUser?.uid ?? '';
       
       final confirmedUserIds = results
@@ -204,6 +206,7 @@ class _ConfirmedListDialogWidgetState
         icon: Icons.check_circle,
         headerColor: AppColors.success,
         maxHeightRatio: 0.85,
+        fillHeight: true,
         content: _buildContent(),
         actions: [
           StyledDialogButton.cancel(
@@ -223,55 +226,46 @@ class _ConfirmedListDialogWidgetState
 
   Widget _buildContent() {
     if (_isLoading) {
-      return SizedBox(
-        height: ResponsiveHelper.spacing(context, 200),
-        child: Center(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              CircularProgressIndicator(
-                strokeWidth: 2,
-                valueColor: AlwaysStoppedAnimation<Color>(AppColors.success),
-              ),
-              SizedBox(height: ResponsiveHelper.spacing(context, 16)),
-              Text(
-                '확정 명단 불러오는 중...',
-                style: ResponsiveHelper.bodyStyle(context, color: AppColors.grey600),
-              ),
-            ],
-          ),
+      return Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            CircularProgressIndicator(
+              strokeWidth: 2,
+              valueColor: AlwaysStoppedAnimation<Color>(AppColors.success),
+            ),
+            SizedBox(height: ResponsiveHelper.spacing(context, 16)),
+            Text(
+              '확정 명단 불러오는 중...',
+              style: ResponsiveHelper.bodyStyle(context, color: AppColors.grey600),
+            ),
+          ],
         ),
       );
     }
 
     if (_error != null) {
-      return SizedBox(
-        height: ResponsiveHelper.spacing(context, 200),
-        child: Center(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(Icons.error_outline, size: ResponsiveHelper.iconSize(context, 48), color: AppColors.error),
-              SizedBox(height: ResponsiveHelper.spacing(context, 12)),
-              Text('데이터를 불러올 수 없습니다', style: ResponsiveHelper.bodyStyle(context)),
-            ],
-          ),
+      return Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.error_outline, size: ResponsiveHelper.iconSize(context, 48), color: AppColors.error),
+            SizedBox(height: ResponsiveHelper.spacing(context, 12)),
+            Text('데이터를 불러올 수 없습니다', style: ResponsiveHelper.bodyStyle(context)),
+          ],
         ),
       );
     }
 
     if (_confirmedByWork.isEmpty) {
-      return SizedBox(
-        height: ResponsiveHelper.spacing(context, 200),
-        child: Center(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(Icons.people_outline, size: ResponsiveHelper.iconSize(context, 48), color: AppColors.grey400),
-              SizedBox(height: ResponsiveHelper.spacing(context, 12)),
-              Text('확정된 근무자가 없습니다', style: ResponsiveHelper.bodyStyle(context, color: AppColors.grey600)),
-            ],
-          ),
+      return Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.people_outline, size: ResponsiveHelper.iconSize(context, 48), color: AppColors.grey400),
+            SizedBox(height: ResponsiveHelper.spacing(context, 12)),
+            Text('확정된 근무자가 없습니다', style: ResponsiveHelper.bodyStyle(context, color: AppColors.grey600)),
+          ],
         ),
       );
     }
@@ -281,10 +275,12 @@ class _ConfirmedListDialogWidgetState
         .where((e) => e.value == 'none')
         .length;
 
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        _buildTotalStats(),
+    return SingleChildScrollView(
+      padding: ResponsiveHelper.cardPadding(context),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          _buildTotalStats(),
         // 신분증 일괄 요청 영역
         if (totalRequestableCount > 0)
           _buildIdCardRequestSection(totalRequestableCount),
@@ -304,6 +300,7 @@ class _ConfirmedListDialogWidgetState
           return _buildWorkSection(workDetail.workType, workers, workDetail);
         }),
       ],
+    ),
     );
   }
 
@@ -666,6 +663,7 @@ class _ConfirmedListDialogWidgetState
 
 /// ⭐ 수정: 로컬 통계 업데이트 패턴 적용
   Future<void> _showWorkerDetailDialog(BuildContext context, UserModel user, ApplicationModel application, WorkDetailModel workDetail) async {
+    final userProvider = context.read<UserProvider>();
     final changed = await WorkerDetailDialog.show(
       context: context,
       user: user,
@@ -715,9 +713,8 @@ class _ConfirmedListDialogWidgetState
           stats['confirmed'] = ((stats['confirmed'] ?? 1)) - 1;
         }
       });
-    } else {
+    } else if (mounted) {
       // 신분증 상태만 변경된 경우 (확정 취소 아님)
-      final userProvider = context.read<UserProvider>();
       final currentUserId = userProvider.currentUser?.uid ?? '';
       
       final newStatus = await IdCardHelper.loadStatusBatch(
@@ -790,6 +787,7 @@ class _ConfirmedListDialogWidgetState
     final businessId = widget.toItem.to.businessId;
     final business = await widget.firestoreService.getBusinessById(businessId);
 
+    if (!mounted) return;
     final successCount = await IdCardHelper.showBatchRequestDialog(
       context: context,
       firestoreService: widget.firestoreService,

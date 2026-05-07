@@ -119,6 +119,14 @@ service cloud.firestore {
                           get(/databases/$(database)/documents/tos/$(toId)).data.businessId
                         ) || isSuperAdmin());
       }
+
+      match /slots/{slotId} {
+        allow read: if isLoggedIn();
+        allow write: if isLoggedIn() &&
+                        (isBusinessOwner(
+                          get(/databases/$(database)/documents/tos/$(toId)).data.businessId
+                        ) || isSuperAdmin());
+      }
     }
 
     // ═══════════════════════════════════════════════════════════
@@ -147,9 +155,9 @@ service cloud.firestore {
     }
 
     // ═══════════════════════════════════════════════════════════
-    // attendances 컬렉션
+    // attendance 컬렉션
     // ═══════════════════════════════════════════════════════════
-    match /attendances/{attendanceId} {
+    match /attendance/{attendanceId} {
 
       allow read: if isLoggedIn() && (
                     isOwner(resource.data.userId) ||
@@ -236,9 +244,12 @@ service cloud.firestore {
                     isSuperAdmin()
                   );
 
-      // 생성: 반드시 본인 uid로만 생성 가능 (기존 누락된 검증 추가)
-      allow create: if isLoggedIn() &&
-                       request.resource.data.applicantUid == request.auth.uid;
+      // 생성: 지원자 본인 또는 해당 사업장 관리자(추가근무/미출근 요청)
+      allow create: if isLoggedIn() && (
+                       request.resource.data.applicantUid == request.auth.uid ||
+                       isBusinessOwner(request.resource.data.businessId) ||
+                       isSuperAdmin()
+                     );
 
       allow update: if isLoggedIn() && (
                       isOwner(resource.data.applicantUid) ||

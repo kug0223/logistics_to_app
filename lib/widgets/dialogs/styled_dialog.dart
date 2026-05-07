@@ -57,6 +57,11 @@ class StyledDialog extends StatelessWidget {
   /// 최대 높이 비율 (0.0 ~ 1.0)
   final double maxHeightRatio;
 
+  /// true 이면 minHeight = maxHeight = 화면의 maxHeightRatio
+  /// → 데이터 없을 때도 다이얼로그가 항상 같은 크기 유지
+  /// 콘텐츠는 직접 SingleChildScrollView 를 감싸야 함
+  final bool fillHeight;
+
   const StyledDialog({
     super.key,
     required this.title,
@@ -68,12 +73,15 @@ class StyledDialog extends StatelessWidget {
     this.showCloseButton = false,
     this.maxWidth = 500,
     this.maxHeightRatio = 0.8,
+    this.fillHeight = false,
   });
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final color = headerColor ?? theme.primaryColor;
+
+    final screenH = MediaQuery.of(context).size.height;
 
     return Dialog(
       shape: RoundedRectangleBorder(
@@ -82,23 +90,21 @@ class StyledDialog extends StatelessWidget {
       child: Container(
         constraints: BoxConstraints(
           maxWidth: maxWidth ?? 500,
-          maxHeight: MediaQuery.of(context).size.height * maxHeightRatio,
+          minHeight: fillHeight ? screenH * maxHeightRatio : 0,
+          maxHeight: screenH * maxHeightRatio,
         ),
         child: Column(
-          mainAxisSize: MainAxisSize.min,
+          mainAxisSize: fillHeight ? MainAxisSize.max : MainAxisSize.min,
           children: [
-            // ✨ 그라데이션 헤더
             _buildHeader(context, color),
-
-            // 📄 컨텐츠
             Flexible(
-              child: SingleChildScrollView(
-                padding: ResponsiveHelper.cardPadding(context),
-                child: content,
-              ),
+              child: fillHeight
+                  ? content
+                  : SingleChildScrollView(
+                      padding: ResponsiveHelper.cardPadding(context),
+                      child: content,
+                    ),
             ),
-
-            // 🔘 버튼
             if (actions != null && actions!.isNotEmpty)
               _buildActions(context),
           ],

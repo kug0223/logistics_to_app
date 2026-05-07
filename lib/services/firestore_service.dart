@@ -248,7 +248,7 @@ class FirestoreService {
       for (final w in workDetails) w.id: {'confirmed': 0, 'pending': 0},
     };
     try {
-      final apps = await getApplicationsByTOId(to.id);
+      final apps = await getApplicationsByTOId(to.id, businessId: to.businessId);
       for (final app in apps) {
         if (app.status != 'CONFIRMED' && app.status != 'PENDING') continue;
         final key = app.selectedWorkType;

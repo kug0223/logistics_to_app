@@ -465,22 +465,33 @@ class _TOGroupCardState extends State<TOGroupCard> with SingleTickerProviderStat
                                       ),
                                     )
                                   // ✨ 로드 완료 - TO 목록 표시
-                                  : Column(
-                                      children: _getFilteredGroupTOs().map((toItem) {
-                                        return TOItemCard(
-                                          toItem: toItem,
-                                          groupItem: widget.groupItem,
-                                          firestoreService: widget.firestoreService,
-                                          dialogs: widget.dialogs,
-                                          onChanged: widget.onChanged,
-                                          isExpanded: widget.expandedTOs.contains(toItem.to.id),
-                                          onToggleExpand: () => widget.onToggleTOExpand(toItem.to.id),
-                                          isLoading: widget.loadingTOs.contains(toItem.to.id),
-                                          onLocalStatsChanged: () => setState(() {}),
-                                          onAffectedTOsChanged: widget.onAffectedTOsChanged,  // 🔥 추가
-                                        );
-                                      }).toList(),
-                                    ),
+                                  : Builder(builder: (context) {
+                                      final filteredTOs = _getFilteredGroupTOs();
+                                      final anyExpanded = filteredTOs.any((ti) =>
+                                          widget.expandedTOs.contains(ti.slot?.id ?? ti.to.id));
+                                      return Column(
+                                        children: filteredTOs.map((toItem) {
+                                          final itemKey = toItem.slot?.id ?? toItem.to.id;
+                                          final isThisExpanded = widget.expandedTOs.contains(itemKey);
+                                          return AnimatedOpacity(
+                                            opacity: anyExpanded && !isThisExpanded ? 0.45 : 1.0,
+                                            duration: const Duration(milliseconds: 200),
+                                            child: TOItemCard(
+                                              toItem: toItem,
+                                              groupItem: widget.groupItem,
+                                              firestoreService: widget.firestoreService,
+                                              dialogs: widget.dialogs,
+                                              onChanged: widget.onChanged,
+                                              isExpanded: isThisExpanded,
+                                              onToggleExpand: () => widget.onToggleTOExpand(itemKey),
+                                              isLoading: widget.loadingTOs.contains(itemKey),
+                                              onLocalStatsChanged: () => setState(() {}),
+                                              onAffectedTOsChanged: widget.onAffectedTOsChanged,
+                                            ),
+                                          );
+                                        }).toList(),
+                                      );
+                                    }),
                             ),
                           ),
                         ],
@@ -507,7 +518,7 @@ class _TOGroupCardState extends State<TOGroupCard> with SingleTickerProviderStat
                                 bottomRight: Radius.circular(16),
                               ),
                             ),
-                            child: (widget.groupItem.groupTOs.isEmpty || widget.loadingTOs.contains(widget.groupItem.groupTOs.first.to.id))
+                            child: _isSingleTOLoading()
                                 // ✨ 로딩 중 스피너
                                 ? Center(
                                     child: Padding(
@@ -557,11 +568,10 @@ class _TOGroupCardState extends State<TOGroupCard> with SingleTickerProviderStat
                                         ],
                                       ),
                                       SizedBox(height: ResponsiveHelper.spacing(context, 12)),
-                                      
-                                      // 업무 목록
-                                      ...widget.groupItem.groupTOs.first.workDetails.map((work) {
-                                        final stats = widget.groupItem.groupTOs.first
-                                            .workDetailStats?[work.id];
+
+                                      // 업무 목록 (단건 TO: singleTO.workDetails 사용)
+                                      ..._getSingleTOWorkDetails().map((work) {
+                                        final stats = _getSingleTOStats(work.id);
                                         final confirmed = stats?['confirmed'] ?? 0;
                                         final pending = stats?['pending'] ?? 0;
 
@@ -569,7 +579,7 @@ class _TOGroupCardState extends State<TOGroupCard> with SingleTickerProviderStat
                                           work: work,
                                           confirmedCount: confirmed,
                                           pendingCount: pending,
-                                          toItem: widget.groupItem.groupTOs.first,
+                                          toItem: _getSingleTOItem(),
                                           firestoreService: widget.firestoreService,
                                           onChanged: widget.onChanged,
                                           onLocalStatsChanged: () => setState(() {}),
@@ -927,7 +937,7 @@ class _TOGroupCardState extends State<TOGroupCard> with SingleTickerProviderStat
                 color: AppColors.success,
               ),
               SizedBox(width: ResponsiveHelper.spacing(context, 12)),
-              const Text('확정명단'),
+              const Text('전체 확정명단'),
             ],
           ),
         ),
@@ -1160,7 +1170,7 @@ class _TOGroupCardState extends State<TOGroupCard> with SingleTickerProviderStat
                         size: ResponsiveHelper.iconSize(context, 20),
                       ),
                       title: Text(
-                        FormatHelper.formatDate(toItem.to.date),
+                        FormatHelper.formatDate(toItem.slot?.date ?? toItem.to.date),
                         style: ResponsiveHelper.bodyStyle(context).copyWith(fontWeight: FontWeight.w600),
                       ),
                       trailing: Row(
@@ -1189,6 +1199,63 @@ class _TOGroupCardState extends State<TOGroupCard> with SingleTickerProviderStat
           ),
         );
       },
+    );
+  }
+
+  /// 단건 TO 로딩 중 여부
+  bool _isSingleTOLoading() {
+    if (widget.groupItem.groupTOs.isNotEmpty) {
+      return widget.loadingTOs.contains(widget.groupItem.groupTOs.first.to.id);
+    }
+    return widget.loadingTOs.contains(widget.groupItem.id);
+  }
+
+  /// 단건 TO의 workDetails — 마감시간을 TO 설정으로 계산해 채워 반환
+  List<WorkDetailData> _getSingleTOWorkDetails() {
+    if (widget.groupItem.groupTOs.isNotEmpty) {
+      return widget.groupItem.groupTOs.first.workDetails;
+    }
+    final to = widget.groupItem.masterTO;
+    final details = to.workDetails;
+    if (!to.isFlexType) return details;
+
+    // flex TO: applicationDeadline이 없으면 hoursBeforeStart로 계산
+    final refDate = to.rangeStart ?? DateTime.now();
+    return details.map((d) {
+      if (d.applicationDeadline != null) return d;
+      if (to.deadlineType == 'HOURS_BEFORE' && (to.hoursBeforeStart ?? 0) > 0) {
+        final parts = d.startTime.split(':');
+        if (parts.length != 2) return d;
+        final deadline = DateTime(
+          refDate.year, refDate.month, refDate.day,
+          int.parse(parts[0]), int.parse(parts[1]),
+        ).subtract(Duration(hours: to.hoursBeforeStart!));
+        return d.copyWith(applicationDeadline: deadline);
+      }
+      return d;
+    }).toList();
+  }
+
+  /// 단건 TO의 work별 통계
+  Map<String, int>? _getSingleTOStats(String workId) {
+    if (widget.groupItem.groupTOs.isNotEmpty) {
+      return widget.groupItem.groupTOs.first.workDetailStats?[workId];
+    }
+    return widget.groupItem.workDetailStats?[workId];
+  }
+
+  /// WorkDetailRow에 전달할 TOItem 반환 (단건 TO는 합성 TOItem 생성)
+  TOItem _getSingleTOItem() {
+    if (widget.groupItem.groupTOs.isNotEmpty) {
+      return widget.groupItem.groupTOs.first;
+    }
+    return TOItem(
+      to: widget.groupItem.masterTO,
+      confirmedCount: widget.groupItem.totalConfirmed,
+      pendingCount: widget.groupItem.totalPending,
+      totalRequired: widget.groupItem.totalRequired,
+      workDetailStats: widget.groupItem.workDetailStats,
+      isWorkDetailLoaded: widget.groupItem.isWorkDetailLoaded,
     );
   }
 

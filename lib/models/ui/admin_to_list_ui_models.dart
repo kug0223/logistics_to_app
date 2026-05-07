@@ -14,6 +14,10 @@ class TOGroupItem {
   List<TOItem>? _groupTOs;
   bool isGroupDetailLoaded;
 
+  // 단건 TO 업무 상세 통계 (lazy-load)
+  Map<String, Map<String, int>>? workDetailStats;
+  bool isWorkDetailLoaded = false;
+
   // 캐시된 통계 (UI 갱신용)
   int? _cachedTotalConfirmed;
   int? _cachedTotalPending;
@@ -25,6 +29,11 @@ class TOGroupItem {
     this.isGroupDetailLoaded = false,
   }) : _groupTOs = groupTOs {
     assert(singleTO != null, 'singleTO is required');
+  }
+
+  void setWorkDetailStats(Map<String, Map<String, int>> stats) {
+    workDetailStats = stats;
+    isWorkDetailLoaded = true;
   }
 
   // ── 기본 정보 ──────────────────────────────────────────

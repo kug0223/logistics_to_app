@@ -64,7 +64,10 @@ class WorkDetailManagementDialog {
             icon: Icons.task_alt,
             headerColor: AppColors.purple,
             maxHeightRatio: 0.85,
-            content: Column(
+            fillHeight: true,
+            content: SingleChildScrollView(
+              padding: ResponsiveHelper.cardPadding(context),
+              child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
                 // 전체 선택 체크박스
@@ -100,6 +103,7 @@ class WorkDetailManagementDialog {
                   );
                 }),
               ],
+            ),
             ),
             actions: [
               StyledDialogButton.cancel(

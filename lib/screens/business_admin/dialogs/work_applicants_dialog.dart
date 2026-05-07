@@ -88,9 +88,19 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog> {
       final userProvider = context.read<UserProvider>();
       final currentUserId = userProvider.currentUser?.uid ?? '';
 
-      final apps = await _firestoreService.getApplicationsByTOId(
-        widget.toItem.to.id,
-      );
+      // 슬롯 기반 TO는 해당 슬롯 지원자만, 아니면 전체 TO 지원자 조회
+      final List<ApplicationModel> apps;
+      if (widget.toItem.slot != null) {
+        apps = await _firestoreService.getApplicationsBySlotId(
+          widget.toItem.to.id,
+          widget.toItem.slot!.id,
+        );
+      } else {
+        apps = await _firestoreService.getApplicationsByTOId(
+          widget.toItem.to.id,
+          businessId: widget.toItem.to.businessId,
+        );
+      }
 
       final filtered = apps.where((app) {
         // ✅ workDetailId로 매칭 (없으면 workType + 시간으로 폴백)
@@ -241,50 +251,34 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog> {
           }
         },
         child: Dialog(
-          backgroundColor: Colors.transparent,
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(ResponsiveHelper.spacing(context, 24)),
           ),
           child: Container(
         constraints: BoxConstraints(
           maxWidth: 500,
+          minHeight: MediaQuery.of(context).size.height * 0.85,
           maxHeight: MediaQuery.of(context).size.height * 0.85,
         ),
-        decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(ResponsiveHelper.spacing(context, 20)),
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withValues(alpha: 0.15),
-              blurRadius: 20,
-              offset: const Offset(0, 10),
-            ),
-          ],
-        ),
         child: Column(
-          mainAxisSize: MainAxisSize.min,
+          mainAxisSize: MainAxisSize.max,
           children: [
-            // 헤더
             _buildHeader(context, theme),
-            
-            // 통계 바
             _buildStatsBar(context, pending.length, confirmed.length),
-            
-            // 전체 선택 (대기중인 경우만)
             if (pending.isNotEmpty)
               _buildSelectAllRow(context, pending.length),
-            
-            // 지원자 목록
             Flexible(
               child: _isLoading
-                  ? Center(child: CircularProgressIndicator())
-                  // ✅ pending과 confirmed 둘 다 비어있으면 빈 상태 표시
+                  ? Center(
+                      child: CircularProgressIndicator(
+                        color: theme.primaryColor,
+                        strokeWidth: 2,
+                      ),
+                    )
                   : (pending.isEmpty && confirmed.isEmpty)
                       ? _buildEmptyState(context)
                       : _buildApplicantList(context, pending, confirmed),
             ),
-            
-            // 하단 액션 바
             _buildBottomBar(context),
           ],
         ),
@@ -304,8 +298,8 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog> {
           end: Alignment.bottomRight,
         ),
         borderRadius: BorderRadius.only(
-          topLeft: Radius.circular(ResponsiveHelper.spacing(context, 20)),
-          topRight: Radius.circular(ResponsiveHelper.spacing(context, 20)),
+          topLeft: Radius.circular(ResponsiveHelper.spacing(context, 24)),
+          topRight: Radius.circular(ResponsiveHelper.spacing(context, 24)),
         ),
       ),
       child: Row(
@@ -333,7 +327,7 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog> {
                 ),
                 SizedBox(height: ResponsiveHelper.spacing(context, 2)),
                 Text(
-                  '${FormatHelper.formatDate(widget.toItem.to.date)} · ${widget.work.startTime}~${widget.work.endTime} | ${widget.work.formattedWage}',
+                  '${FormatHelper.formatDate(widget.toItem.slot?.date ?? widget.toItem.to.date)} · ${widget.work.startTime}~${widget.work.endTime} | ${widget.work.formattedWage}',
                   style: ResponsiveHelper.smallStyle(context, color: Colors.white70),
                 ),
               ],
@@ -385,8 +379,8 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog> {
     return Row(
       children: [
         Container(
-          width: 8,
-          height: 8,
+          width: ResponsiveHelper.spacing(context, 8),
+          height: ResponsiveHelper.spacing(context, 8),
           decoration: BoxDecoration(
             color: color,
             shape: BoxShape.circle,
@@ -421,8 +415,8 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog> {
       child: Row(
         children: [
           SizedBox(
-            width: 24,
-            height: 24,
+            width: ResponsiveHelper.spacing(context, 24),
+            height: ResponsiveHelper.spacing(context, 24),
             child: Checkbox(
               value: _selectAll,
               onChanged: _toggleSelectAll,
@@ -443,7 +437,7 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog> {
               ),
               decoration: BoxDecoration(
                 color: Theme.of(context).primaryColor.withValues(alpha: 0.1),
-                borderRadius: BorderRadius.circular(12),
+                borderRadius: BorderRadius.circular(ResponsiveHelper.spacing(context, 12)),
               ),
               child: Text(
                 '${_selectedIds.length}명 선택',
@@ -457,22 +451,17 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog> {
 
   /// 빈 상태
   Widget _buildEmptyState(BuildContext context) {
-    return Container(
-      constraints: BoxConstraints(
-        minHeight: ResponsiveHelper.spacing(context, 200),
-      ),
-      child: Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(Icons.people_outline, size: 64, color: AppColors.grey300),
-            SizedBox(height: ResponsiveHelper.spacing(context, 16)),
-            Text(
-              '지원자가 없습니다',
-              style: ResponsiveHelper.bodyStyle(context, color: AppColors.grey500),
-            ),
+    return Center(
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Icon(Icons.people_outline, size: ResponsiveHelper.iconSize(context, 64), color: AppColors.grey300),
+          SizedBox(height: ResponsiveHelper.spacing(context, 16)),
+          Text(
+            '지원자가 없습니다',
+            style: ResponsiveHelper.bodyStyle(context, color: AppColors.grey500),
+          ),
         ],
-      ),
       ),
     );
   }
@@ -530,7 +519,7 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog> {
       ),
       decoration: BoxDecoration(
         color: _isIdCardSelectMode ? AppColors.infoBg : Colors.white,
-        borderRadius: BorderRadius.circular(12),
+        borderRadius: BorderRadius.circular(ResponsiveHelper.spacing(context, 12)),
         border: Border.all(color: _isIdCardSelectMode ? AppColors.info : AppColors.border),
       ),
       child: Row(
@@ -550,7 +539,7 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog> {
               color: Colors.transparent,
               child: InkWell(
                 onTap: () => _batchRequestIdCard(),
-                borderRadius: BorderRadius.circular(8),
+                borderRadius: BorderRadius.circular(ResponsiveHelper.spacing(context, 8)),
                 child: Container(
                   padding: EdgeInsets.symmetric(
                     horizontal: ResponsiveHelper.spacing(context, 12),
@@ -558,7 +547,7 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog> {
                   ),
                   decoration: BoxDecoration(
                     color: AppColors.success,
-                    borderRadius: BorderRadius.circular(8),
+                    borderRadius: BorderRadius.circular(ResponsiveHelper.spacing(context, 8)),
                   ),
                   child: Text(
                     '요청하기',
@@ -583,7 +572,7 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog> {
                   }
                 });
               },
-              borderRadius: BorderRadius.circular(8),
+              borderRadius: BorderRadius.circular(ResponsiveHelper.spacing(context, 8)),
               child: Container(
                 padding: EdgeInsets.symmetric(
                   horizontal: ResponsiveHelper.spacing(context, 12),
@@ -591,7 +580,7 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog> {
                 ),
                 decoration: BoxDecoration(
                   color: _isIdCardSelectMode ? AppColors.grey100 : AppColors.info,
-                  borderRadius: BorderRadius.circular(8),
+                  borderRadius: BorderRadius.circular(ResponsiveHelper.spacing(context, 8)),
                 ),
                 child: Text(
                   _isIdCardSelectMode ? '취소' : '신분증 요청',
@@ -662,6 +651,7 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog> {
     final businessId = widget.toItem.to.businessId;
     final business = await _firestoreService.getBusinessById(businessId);
 
+    if (!mounted) return;
     final successCount = await IdCardHelper.showBatchRequestDialog(
       context: context,
       firestoreService: _firestoreService,
@@ -695,11 +685,11 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog> {
     return Row(
       children: [
         Container(
-          width: 4,
-          height: 20,
+          width: ResponsiveHelper.spacing(context, 4),
+          height: ResponsiveHelper.spacing(context, 20),
           decoration: BoxDecoration(
             color: color,
-            borderRadius: BorderRadius.circular(2),
+            borderRadius: BorderRadius.circular(ResponsiveHelper.spacing(context, 2)),
           ),
         ),
         SizedBox(width: ResponsiveHelper.spacing(context, 8)),
@@ -727,7 +717,7 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog> {
       margin: EdgeInsets.only(bottom: ResponsiveHelper.spacing(context, 8)),
       decoration: BoxDecoration(
         color: isSelected ? Theme.of(context).primaryColor.withValues(alpha: 0.05) : Colors.white,
-        borderRadius: BorderRadius.circular(12),
+        borderRadius: BorderRadius.circular(ResponsiveHelper.spacing(context, 12)),
         border: Border.all(
           color: isSelected ? Theme.of(context).primaryColor : AppColors.border,
           width: isSelected ? 2 : 1,
@@ -737,7 +727,7 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog> {
         color: Colors.transparent,
         child: InkWell(
           onTap: isPending ? () => _toggleSelection(app.id) : null,
-          borderRadius: BorderRadius.circular(12),
+          borderRadius: BorderRadius.circular(ResponsiveHelper.spacing(context, 12)),
           child: Padding(
             padding: ResponsiveHelper.cardPadding(context),
             child: Row(
@@ -747,8 +737,8 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog> {
                 if (isPending) ...[
                   // 대기중: 항상 체크박스 표시
                   SizedBox(
-                    width: 24,
-                    height: 24,
+                    width: ResponsiveHelper.spacing(context, 24),
+                    height: ResponsiveHelper.spacing(context, 24),
                     child: Checkbox(
                       value: isSelected,
                       onChanged: (_) => _toggleSelection(app.id),
@@ -766,8 +756,8 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog> {
                     child: _isIdCardSelectMode
                         ? (idCardStatus == 'none'
                             ? SizedBox(
-                                width: 24,
-                                height: 24,
+                                width: ResponsiveHelper.spacing(context, 24),
+                                height: ResponsiveHelper.spacing(context, 24),
                                 child: Checkbox(
                                   value: _selectedIdCardUserIds.contains(user?.uid ?? ''),
                                   onChanged: (_) => _toggleIdCardSelection(user?.uid ?? ''),
@@ -894,7 +884,7 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog> {
                           ),
                           decoration: BoxDecoration(
                             color: AppColors.grey50,
-                            borderRadius: BorderRadius.circular(6),
+                            borderRadius: BorderRadius.circular(ResponsiveHelper.spacing(context, 6)),
                           ),
                           child: Text(
                             app.applicationMessage!,
@@ -975,7 +965,7 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog> {
       ),
       decoration: BoxDecoration(
         color: bgColor,
-        borderRadius: BorderRadius.circular(8),
+        borderRadius: BorderRadius.circular(ResponsiveHelper.spacing(context, 8)),
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
@@ -1023,10 +1013,10 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog> {
           height: ResponsiveHelper.spacing(context, 32),
           child: Material(
             color: AppColors.errorBg,
-            borderRadius: BorderRadius.circular(8),
+            borderRadius: BorderRadius.circular(ResponsiveHelper.spacing(context, 8)),
             child: InkWell(
               onTap: () => _rejectApplication(item),
-              borderRadius: BorderRadius.circular(8),
+              borderRadius: BorderRadius.circular(ResponsiveHelper.spacing(context, 8)),
               child: Icon(
                 Icons.close,
                 size: ResponsiveHelper.iconSize(context, 16),
@@ -1042,10 +1032,10 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog> {
           height: ResponsiveHelper.spacing(context, 32),
           child: Material(
             color: AppColors.successBg,
-            borderRadius: BorderRadius.circular(8),
+            borderRadius: BorderRadius.circular(ResponsiveHelper.spacing(context, 8)),
             child: InkWell(
               onTap: () => _approveApplication(item),
-              borderRadius: BorderRadius.circular(8),
+              borderRadius: BorderRadius.circular(ResponsiveHelper.spacing(context, 8)),
               child: Icon(
                 Icons.check,
                 size: ResponsiveHelper.iconSize(context, 16),
@@ -1079,7 +1069,7 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog> {
         ),
         padding: EdgeInsets.zero,
         constraints: const BoxConstraints(),
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(ResponsiveHelper.spacing(context, 12))),
       onSelected: (value) => _handleMenuAction(value, item),
       itemBuilder: (context) => [
         // 상세보기 (공통)
@@ -1214,7 +1204,7 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog> {
               ),
               decoration: BoxDecoration(
                 color: AppColors.grey100,
-                borderRadius: BorderRadius.circular(8),
+                borderRadius: BorderRadius.circular(ResponsiveHelper.spacing(context, 8)),
               ),
               child: Row(
                 children: [
@@ -1238,12 +1228,12 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog> {
                 color: Colors.transparent,
                 child: InkWell(
                   onTap: () => Navigator.pop(context, work.workType),
-                  borderRadius: BorderRadius.circular(12),
+                  borderRadius: BorderRadius.circular(ResponsiveHelper.spacing(context, 12)),
                   child: Container(
                     padding: ResponsiveHelper.cardPadding(context),
                     decoration: BoxDecoration(
                       border: Border.all(color: AppColors.border),
-                      borderRadius: BorderRadius.circular(12),
+                      borderRadius: BorderRadius.circular(ResponsiveHelper.spacing(context, 12)),
                     ),
                     child: Row(
                       children: [
@@ -1286,7 +1276,7 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog> {
       ),
     );
 
-    if (selectedWorkType == null) return;
+    if (selectedWorkType == null || !mounted) return;
 
     // 파트 변경 처리
     try {
@@ -1313,6 +1303,7 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog> {
   Future<void> _approveApplication(Map<String, dynamic> item) async {
     final app = item['application'] as ApplicationModel;
     final user = item['user'] as UserModel?;
+    final userProvider = context.read<UserProvider>();
 
     final confirm = await DialogHelper.showConfirm(
       context,
@@ -1321,10 +1312,9 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog> {
       confirmText: '승인',
     );
 
-    if (confirm != true) return;
+    if (confirm != true || !mounted) return;
 
     try {
-      final userProvider = context.read<UserProvider>();
       final adminUID = userProvider.currentUser?.uid;
 
       final affectedTOIds = await _firestoreService.updateApplicationStatus(
@@ -1351,6 +1341,7 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog> {
   Future<void> _rejectApplication(Map<String, dynamic> item) async {
     final app = item['application'] as ApplicationModel;
     final user = item['user'] as UserModel?;
+    final userProvider = context.read<UserProvider>();
 
     final reason = await DialogHelper.showRejectReasonPicker(
       context,
@@ -1358,10 +1349,9 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog> {
       message: '${user?.name ?? '지원자'}님을 거절합니다.\n거절 사유를 선택해주세요.',
     );
 
-    if (reason == null) return;
+    if (reason == null || !mounted) return;
 
     try {
-      final userProvider = context.read<UserProvider>();
       final adminUID = userProvider.currentUser?.uid;
 
       await _firestoreService.updateApplicationStatus(
@@ -1383,6 +1373,7 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog> {
   Future<void> _cancelConfirmation(Map<String, dynamic> item) async {
     final app = item['application'] as ApplicationModel;
     final user = item['user'] as UserModel?;
+    final userProvider = context.read<UserProvider>();
 
     final reason = await DialogHelper.showRejectReasonPicker(
       context,
@@ -1390,10 +1381,9 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog> {
       message: '${user?.name ?? '근무자'}님의 확정을 취소합니다.\n취소 사유를 선택해주세요.',
     );
 
-    if (reason == null) return;
+    if (reason == null || !mounted) return;
 
     try {
-      final userProvider = context.read<UserProvider>();
       final adminUID = userProvider.currentUser?.uid;
 
       await _firestoreService.cancelConfirmedApplication(
@@ -1456,7 +1446,7 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog> {
 
     
     // 신분증 상태만 업데이트 (전체 새로고침 X)
-    if (changed != false) {
+    if (changed != false && mounted) {
       final userProvider = context.read<UserProvider>();
       final currentUserId = userProvider.currentUser?.uid ?? '';
       
@@ -1481,11 +1471,11 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog> {
     return Container(
       padding: ResponsiveHelper.cardPadding(context),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: AppColors.grey50,
         border: Border(top: BorderSide(color: AppColors.border)),
-        borderRadius: const BorderRadius.only(
-          bottomLeft: Radius.circular(20),
-          bottomRight: Radius.circular(20),
+        borderRadius: BorderRadius.only(
+          bottomLeft: Radius.circular(ResponsiveHelper.spacing(context, 24)),
+          bottomRight: Radius.circular(ResponsiveHelper.spacing(context, 24)),
         ),
       ),
       child: Row(
@@ -1534,6 +1524,7 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog> {
       return;
     }
 
+    final userProvider = context.read<UserProvider>();
     final confirm = await DialogHelper.showConfirm(
       context,
       title: '일괄 승인',
@@ -1541,12 +1532,11 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog> {
       confirmText: '승인',
     );
 
-    if (confirm != true) return;
+    if (confirm != true || !mounted) return;
 
     setState(() => _isProcessing = true);
 
     try {
-      final userProvider = context.read<UserProvider>();
       final adminUID = userProvider.currentUser?.uid;
       
       for (final appId in _selectedIds) {
@@ -1585,18 +1575,18 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog> {
   Future<void> _batchReject() async {
     if (_selectedIds.isEmpty || _isProcessing) return;
 
+    final userProvider = context.read<UserProvider>();
     final reason = await DialogHelper.showRejectReasonPicker(
       context,
       title: '일괄 거절',
       message: '선택한 ${_selectedIds.length}명을 거절합니다.\n거절 사유를 선택해주세요.',
     );
 
-    if (reason == null) return;
+    if (reason == null || !mounted) return;
 
     setState(() => _isProcessing = true);
 
     try {
-      final userProvider = context.read<UserProvider>();
       final adminUID = userProvider.currentUser?.uid;
       
       for (final appId in _selectedIds) {
@@ -1627,6 +1617,7 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog> {
       // ✅ 전체 업무의 지원서를 서버에서 다시 가져오기
       final allApplications = await _firestoreService.getApplicationsByTOId(
         widget.toItem.to.id,
+        businessId: widget.toItem.to.businessId,
       );
       
       // 업무별 통계 계산

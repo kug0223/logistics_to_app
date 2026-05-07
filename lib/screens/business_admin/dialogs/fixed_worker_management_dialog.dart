@@ -1017,7 +1017,49 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
     );
 
     if (confirmed != true || !mounted) return;
+
+    final reason = reasonController.text.trim();
     reasonController.dispose();
+
+    await _submitExtraWorkRequest(app, selectedDate, reason);
+  }
+
+  /// 추가 근무 요청 제출
+  Future<void> _submitExtraWorkRequest(ApplicationModel app, DateTime date, String reason) async {
+    final userProvider = context.read<UserProvider>();
+    final adminUid = userProvider.currentUser?.uid;
+
+    if (adminUid == null) {
+      ToastHelper.showError('관리자 정보를 찾을 수 없습니다');
+      return;
+    }
+
+    final worker = await _firestoreService.getUser(app.uid);
+    final workerName = worker?.name ?? '이름 없음';
+
+    final request = ScheduleChangeRequestModel(
+      id: '',
+      businessId: _selectedBusinessId!,
+      applicationId: app.id,
+      applicantUid: app.uid,
+      applicantName: workerName,
+      targetDate: DateTime(date.year, date.month, date.day),
+      requestType: RequestType.EXTRA_WORK,
+      requestedBy: RequesterType.ADMIN,
+      requestedByUid: adminUid,
+      requestedAt: DateTime.now(),
+      reason: reason.isEmpty ? null : reason,
+      wageAmount: app.wage,
+    );
+
+    final requestId = await _firestoreService.createScheduleChangeRequest(request);
+
+    if (requestId != null) {
+      ToastHelper.showSuccess('추가 근무 요청이 전송되었습니다');
+      widget.onChanged();
+    } else {
+      ToastHelper.showError('추가 근무 요청 실패');
+    }
   }
 
   /// 미출근 요청 다이얼로그

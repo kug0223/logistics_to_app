@@ -11,12 +11,16 @@ extension ApplicationFirestore on FirestoreService {
   // ───────────────────────────────────────────────────────
 
   /// TO별 전체 지원서 조회
-  Future<List<ApplicationModel>> getApplicationsByTOId(String toId) async {
+  Future<List<ApplicationModel>> getApplicationsByTOId(String toId, {String? businessId}) async {
     try {
-      final snap = await _firestore
+      Query query = _firestore
           .collection('applications')
-          .where('toId', isEqualTo: toId)
-          .get();
+          .where('toId', isEqualTo: toId);
+      // businessId를 함께 필터링하면 Firestore 보안규칙 query-time 검증 가능
+      if (businessId != null && businessId.isNotEmpty) {
+        query = query.where('businessId', isEqualTo: businessId);
+      }
+      final snap = await query.get();
       return snap.docs
           .map((d) => ApplicationModel.fromFirestore(d))
           .toList();

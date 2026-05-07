@@ -376,6 +376,8 @@ extension TOFirestore on FirestoreService {
           return d.copyWith(
             startTime: newDef.startTime,
             endTime: newDef.endTime,
+            wage: newDef.wage,
+            requiredCount: newDef.requiredCount,
             applicationDeadline: deadline,
           );
         }).toList();

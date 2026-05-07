@@ -170,7 +170,7 @@ class _TOItemCardState extends State<TOItemCard> {
                                   borderRadius: BorderRadius.circular(6),
                                 ),
                                 child: Text(
-                                  FormatHelper.formatDate(to.date),
+                                  FormatHelper.formatDate(widget.toItem.slot?.date ?? to.date),
                                   style: ResponsiveHelper.smallStyle(
                                     context,
                                     color: theme.primaryColor,

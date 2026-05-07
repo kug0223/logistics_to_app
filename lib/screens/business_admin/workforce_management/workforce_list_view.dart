@@ -524,10 +524,10 @@ class _WorkforceListViewState extends State<WorkforceListView>
               expandedTOs: _expandedTOs,
               onToggleExpand: () => _handleGroupExpand(groupItem),
               onToggleTOExpand: (toId) async {
-                // toId로 해당 TOItem 찾기
+                // toId로 해당 TOItem 찾기 (슬롯 기반이면 slot.id, 아니면 to.id)
                 if (groupItem.groupTOs.isEmpty) return;
                 final toItem = groupItem.groupTOs.firstWhere(
-                  (item) => item.to.id == toId,
+                  (item) => (item.slot?.id ?? item.to.id) == toId,
                   orElse: () => groupItem.groupTOs.first,
                 );
                 await _handleTOExpand(toItem);
@@ -640,12 +640,12 @@ class _WorkforceListViewState extends State<WorkforceListView>
       setState(() => _loadingGroups.remove(key));
     }
     
-    // ✨ WorkDetails 로드 필요
+    // ✨ WorkDetails 로드 필요 (그룹 내 첫 번째 TO)
     if (groupItem.groupTOs.isNotEmpty) {
       final toItem = groupItem.groupTOs.first;
       if (toItem.needsWorkDetailLoad) {
         setState(() => _loadingTOs.add(toItem.to.id));
-        
+
         try {
           final result = await _firestoreService.loadTOWorkDetails(toItem.to);
           toItem.setWorkDetails(
@@ -656,11 +656,56 @@ class _WorkforceListViewState extends State<WorkforceListView>
           debugPrint('❌ TO 상세 로드 실패: $e');
           ToastHelper.showError('데이터를 불러오는데 실패했습니다.');
         }
-        
+
         setState(() => _loadingTOs.remove(toItem.to.id));
       }
+    } else if (!groupItem.masterTO.isLongTerm &&
+               groupItem.masterTO.totalSlots > 1 &&
+               !groupItem.isGroupDetailLoaded) {
+      // ✨ 다중 날짜 flex TO: 슬롯 로드 → 날짜별 행 표시
+      setState(() => _loadingTOs.add(key));
+      try {
+        final slots = await _firestoreService.getSlots(groupItem.masterTO.id);
+        final toItems = slots.map((slot) {
+          final stats = <String, Map<String, int>>{};
+          for (final entry in slot.workTypeCounts.entries) {
+            stats[entry.key] = {
+              'confirmed': entry.value.confirmedCount,
+              'pending': entry.value.pendingCount,
+            };
+          }
+          return TOItem(
+            to: groupItem.masterTO,
+            slot: slot,
+            workDetails: slot.workDetails,
+            confirmedCount: slot.confirmedCount,
+            pendingCount: slot.pendingCount,
+            totalRequired: slot.totalRequired,
+            workDetailStats: stats,
+            isWorkDetailLoaded: true,
+          );
+        }).toList();
+        groupItem.setGroupTOs(toItems);
+      } catch (e) {
+        debugPrint('❌ 슬롯 목록 로드 실패: $e');
+        ToastHelper.showError('데이터를 불러오는데 실패했습니다.');
+      }
+      setState(() => _loadingTOs.remove(key));
+    } else if (!groupItem.isWorkDetailLoaded) {
+      // ✨ 단건 TO: singleTO.workDetails는 이미 포함, 통계만 조회
+      setState(() => _loadingTOs.add(key));
+      try {
+        final result = await _firestoreService.loadTOWorkDetails(groupItem.masterTO);
+        groupItem.setWorkDetailStats(
+          result['workStats'] as Map<String, Map<String, int>>,
+        );
+      } catch (e) {
+        debugPrint('❌ TO 상세 로드 실패: $e');
+        groupItem.setWorkDetailStats({});
+      }
+      setState(() => _loadingTOs.remove(key));
     }
-    
+
     // 펼치기
     setState(() => _expandedGroups.add(key));
   }
@@ -743,7 +788,7 @@ class _WorkforceListViewState extends State<WorkforceListView>
 
   /// ✨ TO 카드 펼침 핸들러 (Lazy Loading)
   Future<void> _handleTOExpand(TOItem toItem) async {
-    final key = toItem.to.id;
+    final key = toItem.slot?.id ?? toItem.to.id;
     
     // 이미 펼쳐져 있으면 접기만
     if (_expandedTOs.contains(key)) {
