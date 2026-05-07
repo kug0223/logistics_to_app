@@ -1038,7 +1038,7 @@ extension ApplicationFirestore on FirestoreService {
         });
       }
       final scheduleRequests = await _firestore
-          .collection('scheduleChangeRequests')
+          .collection('schedule_change_requests')
           .where('applicationId', isEqualTo: applicationId)
           .where('status', isEqualTo: 'PENDING')
           .get();

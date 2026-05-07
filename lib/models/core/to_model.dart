@@ -24,6 +24,7 @@ class TOModel {
 
   // ── 기본 정보 ─────────────────────────────────────
   final String title;
+  final String? groupTitle; // 관리자용 카드 제목 (null이면 title 사용)
   final String? description;
 
   // ── 업무 상세 (배열, 문서 내 저장) ────────────────
@@ -75,6 +76,7 @@ class TOModel {
     this.businessDistrict,
     this.type = 'flex',
     required this.title,
+    this.groupTitle,
     this.description,
     this.workDetails = const [],
     this.totalSlots = 0,
@@ -115,6 +117,7 @@ class TOModel {
       businessDistrict: data['businessDistrict'] as String?,
       type: data['type'] as String? ?? 'flex',
       title: data['title'] as String? ?? '제목 없음',
+      groupTitle: data['groupTitle'] as String?,
       description: data['description'] as String?,
       workDetails: WorkDetailData.listFromFirestore(data['workDetails']),
       totalSlots: data['totalSlots'] as int? ?? 0,
@@ -156,6 +159,7 @@ class TOModel {
       'businessDistrict': businessDistrict,
       'type': type,
       'title': title,
+      if (groupTitle != null && groupTitle!.isNotEmpty) 'groupTitle': groupTitle,
       'description': description,
       'workDetails': WorkDetailData.listToFirestore(workDetails),
       'totalSlots': totalSlots,
@@ -196,6 +200,8 @@ class TOModel {
     String? businessDistrict,
     String? type,
     String? title,
+    String? groupTitle,
+    bool clearGroupTitle = false,
     String? description,
     List<WorkDetailData>? workDetails,
     int? totalSlots,
@@ -232,6 +238,7 @@ class TOModel {
       businessDistrict: businessDistrict ?? this.businessDistrict,
       type: type ?? this.type,
       title: title ?? this.title,
+      groupTitle: clearGroupTitle ? null : (groupTitle ?? this.groupTitle),
       description: description ?? this.description,
       workDetails: workDetails ?? this.workDetails,
       totalSlots: totalSlots ?? this.totalSlots,
@@ -265,6 +272,10 @@ class TOModel {
 
   bool get isFlexType => type == 'flex';
   bool get isContractType => type == 'contract';
+
+  /// 관리자 카드에 표시할 제목 (groupTitle 없으면 title 사용)
+  String get displayGroupTitle =>
+      (groupTitle?.isNotEmpty == true) ? groupTitle! : title;
 
   String get typeLabel => isFlexType ? '단기 근무' : '고정 근무';
 

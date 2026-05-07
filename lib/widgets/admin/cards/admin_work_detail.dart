@@ -21,7 +21,6 @@ import '../../work_type_icon.dart';
 
 // Dialogs
 import '../../../screens/business_admin/dialogs/work_applicants_dialog.dart';
-import '../../../screens/business_admin/dialogs/confirmed_list_dialog.dart';
 
 /// ✨ 업무 상세 행 위젯 (간소화된 디자인)
 /// 
@@ -72,7 +71,8 @@ class _WorkDetailRowState extends State<WorkDetailRow> {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final isFull = _confirmedCount >= widget.work.requiredCount;
-    final isClosed = widget.work.isClosed || widget.work.isTimeExpired || widget.work.isFull;
+    final isClosed = widget.toItem.slot?.isManualClosed == true ||
+        widget.work.isClosed || widget.work.isTimeExpired || widget.work.isFull;
     final isEmergency = widget.work.isEmergencyOpen;
     
     // 상태별 색상 (장기/단기 구분)
@@ -216,15 +216,8 @@ class _WorkDetailRowState extends State<WorkDetailRow> {
 
                             SizedBox(height: ResponsiveHelper.spacing(context, 6)),
 
-                            // 확정명단 + 지원자 버튼
-                            Row(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                _buildConfirmedListButton(context),
-                                SizedBox(width: ResponsiveHelper.spacing(context, 4)),
-                                _buildApplicantButton(context, theme),
-                              ],
-                            ),
+                            // 지원자 버튼
+                            _buildApplicantButton(context, theme),
                           ],
                         ),
                       ],
@@ -302,44 +295,6 @@ class _WorkDetailRowState extends State<WorkDetailRow> {
         ],
       ],
     );
-  }
-
-  /// 확정명단 바로가기 버튼
-  Widget _buildConfirmedListButton(BuildContext context) {
-    return Material(
-      color: Colors.transparent,
-      child: InkWell(
-        onTap: () => _showConfirmedListDialog(context),
-        borderRadius: BorderRadius.circular(8),
-        child: Container(
-          padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 8)),
-          decoration: BoxDecoration(
-            color: AppColors.successBg,
-            borderRadius: BorderRadius.circular(8),
-          ),
-          child: Icon(
-            Icons.check_circle_outline,
-            size: ResponsiveHelper.iconSize(context, 18),
-            color: AppColors.successDark,
-          ),
-        ),
-      ),
-    );
-  }
-
-  /// 확정명단 다이얼로그 표시
-  void _showConfirmedListDialog(BuildContext context) {
-    ConfirmedListDialog(
-      context: context,
-      toItem: widget.toItem,
-      firestoreService: widget.firestoreService,
-      onLocalStatsChanged: () {
-        if (mounted) {
-          setState(() {});
-          widget.onLocalStatsChanged?.call();
-        }
-      },
-    ).show();
   }
 
   /// 지원자 보기 버튼

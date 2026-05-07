@@ -310,12 +310,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
           ],
 
 
-          // ✨ 화면 테마 섹션
-          _buildSectionHeader(context, '화면', Icons.palette_outlined),
-          SizedBox(height: ResponsiveHelper.spacing(context, 12)),
-          _buildDarkModeToggleCard(context),
-          SizedBox(height: ResponsiveHelper.spacing(context, 24)),
-
           // ✨ 알림 섹션 (공통)
           _buildSectionHeader(context, '알림', Icons.notifications_outlined),
           SizedBox(height: ResponsiveHelper.spacing(context, 12)),
@@ -347,9 +341,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
             context,
             items: [
               {'icon': Icons.phone_android, 'title': '앱 버전', 'value': _appVersion.isEmpty ? '...' : _appVersion},
-              {'icon': Icons.update, 'title': '최신 업데이트', 'value': '2024.11.21'},
-              {'icon': Icons.policy, 'title': '개인정보 처리방침', 'value': '보기'},
-              {'icon': Icons.description, 'title': '이용약관', 'value': '보기'},
             ],
           ),
 
@@ -1046,7 +1037,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }) {
     return Container(
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: Theme.of(context).colorScheme.surface,
         borderRadius: BorderRadius.circular(20),
         boxShadow: [
           BoxShadow(
@@ -1145,7 +1136,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     
     return Container(
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: Theme.of(context).colorScheme.surface,
         borderRadius: BorderRadius.circular(20),
         boxShadow: [
           BoxShadow(
@@ -1222,88 +1213,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
     );
   }
   /// ✨ 알림 토글 카드
-  Widget _buildDarkModeToggleCard(BuildContext context) {
-    final themeProvider = context.watch<ThemeProvider>();
-    const iconColor = Color(0xFF5C6BC0);
-
-    return Container(
-      decoration: BoxDecoration(
-        color: Theme.of(context).cardTheme.color ?? Colors.white,
-        borderRadius: BorderRadius.circular(20),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.grey.withValues(alpha: 0.1),
-            blurRadius: 10,
-            offset: const Offset(0, 4),
-          ),
-        ],
-      ),
-      child: Padding(
-        padding: ResponsiveHelper.cardPadding(context),
-        child: Row(
-          children: [
-            Container(
-              padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 16)),
-              decoration: BoxDecoration(
-                gradient: LinearGradient(
-                  colors: [iconColor, iconColor.withValues(alpha: 0.8)],
-                ),
-                borderRadius: BorderRadius.circular(16),
-                boxShadow: [
-                  BoxShadow(
-                    color: iconColor.withValues(alpha: 0.3),
-                    blurRadius: 8,
-                    offset: const Offset(0, 4),
-                  ),
-                ],
-              ),
-              child: Icon(
-                themeProvider.isDarkMode
-                    ? Icons.dark_mode
-                    : Icons.light_mode,
-                color: Colors.white,
-                size: ResponsiveHelper.iconSize(context, 28),
-              ),
-            ),
-            SizedBox(width: ResponsiveHelper.spacing(context, 16)),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    '다크 모드',
-                    style: ResponsiveHelper.subtitleStyle(context).copyWith(
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-                  Text(
-                    themeProvider.isDarkMode ? '어두운 화면' : '밝은 화면',
-                    style: ResponsiveHelper.smallStyle(
-                      context,
-                      color: AppColors.grey500,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            Switch(
-              value: themeProvider.isDarkMode,
-              onChanged: (_) => themeProvider.toggleDarkMode(),
-              activeThumbColor: Theme.of(context).primaryColor,
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
   Widget _buildNotificationToggleCard(BuildContext context) {
     final theme = Theme.of(context);
     const iconColor = Colors.amber;
     
     return Container(
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: Theme.of(context).colorScheme.surface,
         borderRadius: BorderRadius.circular(20),
         boxShadow: [
           BoxShadow(
@@ -1383,7 +1299,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   : Switch(
                       value: _isPushEnabled,
                       onChanged: _togglePushNotification,
-                      activeColor: theme.primaryColor,
+                      activeThumbColor: theme.primaryColor,
                     ),
             ],
           ),
@@ -1397,7 +1313,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     return Container(
       width: double.infinity,
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: Theme.of(context).colorScheme.surface,
         borderRadius: BorderRadius.circular(20),
         boxShadow: [
           BoxShadow(
@@ -1412,28 +1328,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
         child: InkWell(
           onTap: () async {
             final themeProvider = context.read<ThemeProvider>();
-            final confirmed = await showDialog<bool>(
-              context: context,
-              builder: (context) => AlertDialog(
-                title: Text('로그아웃'),
-                content: Text('정말 로그아웃하시겠습니까?'),
-                actions: [
-                  TextButton(
-                    onPressed: () => Navigator.pop(context, false),
-                    child: Text('취소'),
-                  ),
-                  ElevatedButton(
-                    onPressed: () => Navigator.pop(context, true),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: Colors.red,
-                    ),
-                    child: Text('로그아웃'),
-                  ),
-                ],
-              ),
-            );
+            final confirmed = await DialogHelper.showLogoutConfirm(context);
 
-            if (confirmed == true) {
+            if (confirmed) {
               themeProvider.reset();
               await userProvider.signOut();
             }
@@ -1702,30 +1599,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
       iconColor: Colors.orange,
     );
 
-    if (!confirmed) return;
+    if (!confirmed || !context.mounted) return;
 
-    // 로딩 다이얼로그 표시
-    showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder: (ctx) => PopScope(
-        canPop: false,
-        child: AlertDialog(
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              const CircularProgressIndicator(),
-              SizedBox(height: ResponsiveHelper.spacing(context, 16)),
-              Text(
-                '마이그레이션 진행 중...\n잠시만 기다려주세요.',
-                textAlign: TextAlign.center,
-                style: ResponsiveHelper.bodyStyle(context),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
+    DialogHelper.showLoading(context, message: '마이그레이션 진행 중...\n잠시만 기다려주세요.');
 
     try {
       // 마이그레이션 실행

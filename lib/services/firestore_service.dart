@@ -200,9 +200,13 @@ class FirestoreService {
   /// TO 통계 재계산 (applications에서 직접 집계)
   Future<bool> recalculateTOStats(String toId) async {
     try {
+      final to = await getTO(toId);
+      if (to == null) return false;
+
       final appsSnap = await _firestore
           .collection('applications')
           .where('toId', isEqualTo: toId)
+          .where('businessId', isEqualTo: to.businessId)
           .get();
 
       int totalPending = 0;
@@ -266,12 +270,22 @@ class FirestoreService {
   }
 
   /// 구 getTOGroupItemsLight — TO 목록을 TOGroupItem으로 래핑
+  /// [businessIds] null이면 슈퍼관리자 전체 조회, 비어있으면 빈 결과 반환
   Future<List<TOGroupItem>> getTOGroupItemsLight({
     bool activeOnly = false,
     bool closedOnly = false,
+    List<String>? businessIds,
   }) async {
     try {
+      // 사업장 목록이 빈 리스트면 조회 대상 없음
+      if (businessIds != null && businessIds.isEmpty) return [];
+
       Query query = _firestore.collection('tos').orderBy('createdAt', descending: true);
+      if (businessIds != null && businessIds.length == 1) {
+        query = query.where('businessId', isEqualTo: businessIds.first);
+      } else if (businessIds != null && businessIds.length > 1) {
+        query = query.where('businessId', whereIn: businessIds.take(10).toList());
+      }
       if (activeOnly) {
         query = query.where('status', whereIn: ['ACTIVE', 'FULL', 'SCHEDULED']);
       } else if (closedOnly) {

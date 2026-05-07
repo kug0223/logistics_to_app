@@ -4,6 +4,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 
 // Models
 import '../../../models/core/to_model.dart';
+import '../../../models/core/slot_model.dart';
 import '../../../models/core/work_detail_data.dart';
 import '../../../models/core/business_work_type_model.dart';
 
@@ -26,8 +27,21 @@ import '../../../theme/app_colors.dart';
 
 class AdminEditTOScreen extends StatefulWidget {
   final TOModel to;
+  final SlotModel? slot;             // 단일 슬롯 수정
+  final List<SlotModel>? batchSlots; // 배치 슬롯 수정 (일괄수정)
+  final DateTime? newSlotDate;       // 새 날짜 슬롯 추가
 
-  const AdminEditTOScreen({super.key, required this.to});
+  const AdminEditTOScreen({
+    super.key,
+    required this.to,
+    this.slot,
+    this.batchSlots,
+    this.newSlotDate,
+  });
+
+  bool get isBatchMode => batchSlots != null && batchSlots!.isNotEmpty;
+  bool get isNewSlot => newSlotDate != null;
+  bool get isSlotMode => slot != null || isBatchMode || isNewSlot;
 
   @override
   State<AdminEditTOScreen> createState() => _AdminEditTOScreenState();
@@ -39,6 +53,7 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
 
   late TextEditingController _titleController;
   late TextEditingController _descriptionController;
+  late TextEditingController _slotTitleController; // 슬롯 개별 공고 제목
 
   bool _isLoading = true;
   bool _isSaving = false;
@@ -59,6 +74,7 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
     _titleController = TextEditingController(text: widget.to.title);
     _descriptionController =
         TextEditingController(text: widget.to.description ?? '');
+    _slotTitleController = TextEditingController();
     _hoursBeforeStart = widget.to.hoursBeforeStart ?? 2;
     _fixedDeadline =
         widget.to.isContractType ? widget.to.applicationDeadline : null;
@@ -72,6 +88,7 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
   void dispose() {
     _titleController.dispose();
     _descriptionController.dispose();
+    _slotTitleController.dispose();
     super.dispose();
   }
 
@@ -84,6 +101,38 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
     try {
       final workTypes = await _firestoreService
           .getBusinessWorkTypes(widget.to.businessId);
+
+      if (widget.isBatchMode) {
+        setState(() {
+          _workDetails = List<WorkDetailData>.from(widget.batchSlots!.first.workDetails);
+          _businessWorkTypes = workTypes;
+          _isLoading = false;
+        });
+        return;
+      }
+
+      if (widget.slot != null) {
+        _slotTitleController.text = widget.slot!.title ?? widget.to.title;
+        setState(() {
+          _workDetails = List<WorkDetailData>.from(widget.slot!.workDetails);
+          _businessWorkTypes = workTypes;
+          _isLoading = false;
+        });
+        return;
+      }
+
+      if (widget.isNewSlot) {
+        final slots = await _firestoreService.getSlots(widget.to.id);
+        final template = slots.isNotEmpty ? slots.first : null;
+        _slotTitleController.text = template?.title ?? widget.to.title;
+        setState(() {
+          _workDetails = List<WorkDetailData>.from(
+              template?.workDetails ?? widget.to.workDetails);
+          _businessWorkTypes = workTypes;
+          _isLoading = false;
+        });
+        return;
+      }
 
       DateTime? firstSlotDate;
       if (!widget.to.isContractType) {
@@ -117,6 +166,20 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
     setState(() => _isSaving = true);
 
     try {
+      // ── 슬롯 수정 모드 ──────────────────────────────────────
+      if (widget.isNewSlot) {
+        await _saveNewSlotChanges();
+        return;
+      }
+      if (widget.isBatchMode) {
+        await _saveBatchSlotChanges();
+        return;
+      }
+      if (widget.slot != null) {
+        await _saveSlotChanges();
+        return;
+      }
+
       // ── 공개 시각 계산 ──────────────────────────────────────
       // 이미 공개된 TO는 수정해도 비공개로 되돌리지 않음
       DateTime? publishAt;
@@ -222,17 +285,8 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
             _hoursBeforeStart != (widget.to.hoursBeforeStart ?? 2) ||
             oldEarliestStart != newEarliestStart;
 
-        // 금액 or 모집인원 변경 감지 — 슬롯도 동기화 필요
-        final wageOrCountChanged = _workDetails.any((newD) {
-          final oldD = widget.to.workDetails.firstWhere(
-            (d) => d.workType == newD.workType,
-            orElse: () => newD,
-          );
-          return oldD.wage != newD.wage || oldD.requiredCount != newD.requiredCount;
-        });
-
-        // 업무 구성 / 마감 설정 / 금액·인원 변경 시 슬롯 workDetails 일괄 동기화
-        if (workTypesChanged || deadlineSettingsChanged || wageOrCountChanged) {
+        // 업무 구성 or 마감 설정 변경 시 슬롯 workDetails 일괄 동기화
+        if (workTypesChanged || deadlineSettingsChanged) {
           await _firestoreService.updateSlotsDeadlines(
             toId: widget.to.id,
             deadlineType: 'HOURS_BEFORE',
@@ -248,6 +302,104 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
       if (mounted) NavigationHelper.popWithChange(context);
     } catch (e) {
       debugPrint('❌ TO 수정 실패: $e');
+      ToastHelper.showError('수정에 실패했습니다');
+    } finally {
+      if (mounted) setState(() => _isSaving = false);
+    }
+  }
+
+  // ============================================================
+  // 슬롯 수정 저장
+  // ============================================================
+
+  Future<void> _saveSlotChanges() async {
+    try {
+      final slot = widget.slot!;
+
+      // 가장 이른 startTime 기준으로 applicationDeadline 계산
+      DateTime? slotDeadline;
+      if (_workDetails.isNotEmpty) {
+        final earliestStart =
+            (_workDetails.map((d) => d.startTime).toList()..sort()).first;
+        final parts = earliestStart.split(':');
+        final startDt = DateTime(
+          slot.date.year, slot.date.month, slot.date.day,
+          int.parse(parts[0]), int.parse(parts[1]),
+        );
+        slotDeadline = startDt.subtract(Duration(hours: _hoursBeforeStart));
+      }
+
+      await _firestoreService.updateSlotFull(
+        toId: widget.to.id,
+        slotId: slot.id,
+        workDetails: _workDetails,
+        applicationDeadline: slotDeadline,
+        title: _slotTitleController.text.trim(),
+        oldTotalRequired: slot.totalRequired,
+      );
+
+      _firestoreService.clearCache(toId: widget.to.id);
+      ToastHelper.showSuccess('수정되었습니다');
+      if (mounted) NavigationHelper.popWithChange(context);
+    } catch (e) {
+      debugPrint('❌ 슬롯 수정 실패: $e');
+      ToastHelper.showError('수정에 실패했습니다');
+    } finally {
+      if (mounted) setState(() => _isSaving = false);
+    }
+  }
+
+  Future<void> _saveNewSlotChanges() async {
+    try {
+      await _firestoreService.addSlot(
+        to: widget.to,
+        date: widget.newSlotDate!,
+        workDetails: _workDetails,
+        hoursBeforeStart: _hoursBeforeStart,
+        title: _slotTitleController.text.trim(),
+      );
+      _firestoreService.clearCache(toId: widget.to.id);
+      ToastHelper.showSuccess(
+          '${widget.newSlotDate!.month}/${widget.newSlotDate!.day} 날짜가 추가되었습니다');
+      if (mounted) NavigationHelper.popWithChange(context);
+    } catch (e) {
+      debugPrint('❌ 날짜 추가 실패: $e');
+      ToastHelper.showError('날짜 추가에 실패했습니다');
+    } finally {
+      if (mounted) setState(() => _isSaving = false);
+    }
+  }
+
+  Future<void> _saveBatchSlotChanges() async {
+    try {
+      final slots = widget.batchSlots!;
+
+      await Future.wait(slots.map((slot) async {
+        DateTime? slotDeadline;
+        if (_workDetails.isNotEmpty) {
+          final earliestStart =
+              (_workDetails.map((d) => d.startTime).toList()..sort()).first;
+          final parts = earliestStart.split(':');
+          final startDt = DateTime(
+            slot.date.year, slot.date.month, slot.date.day,
+            int.parse(parts[0]), int.parse(parts[1]),
+          );
+          slotDeadline = startDt.subtract(Duration(hours: _hoursBeforeStart));
+        }
+        await _firestoreService.updateSlotFull(
+          toId: widget.to.id,
+          slotId: slot.id,
+          workDetails: _workDetails,
+          applicationDeadline: slotDeadline,
+          oldTotalRequired: slot.totalRequired,
+        );
+      }));
+
+      _firestoreService.clearCache(toId: widget.to.id);
+      ToastHelper.showSuccess('${slots.length}개 날짜가 수정되었습니다');
+      if (mounted) NavigationHelper.popWithChange(context);
+    } catch (e) {
+      debugPrint('❌ 일괄 슬롯 수정 실패: $e');
       ToastHelper.showError('수정에 실패했습니다');
     } finally {
       if (mounted) setState(() => _isSaving = false);
@@ -323,15 +475,24 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final d = widget.newSlotDate;
+    final appBarTitle = widget.isNewSlot
+        ? '${d!.month}/${d.day} 날짜 추가'
+        : widget.isBatchMode
+            ? '${widget.batchSlots!.length}개 날짜 일괄수정'
+            : widget.slot != null
+                ? '${widget.slot!.formattedDate} 수정'
+                : 'TO 수정';
+
     if (_isLoading) {
       return Scaffold(
-        appBar: AppBar(title: const Text('TO 수정')),
+        appBar: AppBar(title: Text(appBarTitle)),
         body: const Center(child: CircularProgressIndicator()),
       );
     }
 
     return Scaffold(
-      appBar: AppBar(title: const Text('TO 수정')),
+      appBar: AppBar(title: Text(appBarTitle)),
       body: Container(
         color: AppColors.grey50,
         child: Form(
@@ -339,17 +500,30 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
           child: ListView(
             padding: ResponsiveHelper.cardPadding(context),
             children: [
-              TODateSelector(
-                isLongTerm: widget.to.isContractType,
-                isReadOnly: true,
-                rangeStart: widget.to.rangeStart,
-                rangeEnd: widget.to.rangeEnd,
-                displayWorkDays: widget.to.workDays,
-              ),
-              SizedBox(height: ResponsiveHelper.spacing(context, 16)),
-
-              TOTitleSection(titleController: _titleController),
-              SizedBox(height: ResponsiveHelper.spacing(context, 16)),
+              if (widget.isNewSlot) ...[
+                _buildNewSlotBanner(context),
+                SizedBox(height: ResponsiveHelper.spacing(context, 16)),
+              ] else if (widget.isBatchMode) ...[
+                _buildBatchInfoBanner(context),
+                SizedBox(height: ResponsiveHelper.spacing(context, 16)),
+              ],
+              // 슬롯 개별 공고 제목 (단일 슬롯 수정 or 새 날짜 추가)
+              if (widget.slot != null || widget.isNewSlot) ...[
+                _buildSlotTitleField(context),
+                SizedBox(height: ResponsiveHelper.spacing(context, 16)),
+              ],
+              if (!widget.isSlotMode) ...[
+                TODateSelector(
+                  isLongTerm: widget.to.isContractType,
+                  isReadOnly: true,
+                  rangeStart: widget.to.rangeStart,
+                  rangeEnd: widget.to.rangeEnd,
+                  displayWorkDays: widget.to.workDays,
+                ),
+                SizedBox(height: ResponsiveHelper.spacing(context, 16)),
+                TOTitleSection(titleController: _titleController),
+                SizedBox(height: ResponsiveHelper.spacing(context, 16)),
+              ],
 
               TOWorkDetailsSection(
                 workDetailData: _workDetails,
@@ -360,33 +534,35 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
               SizedBox(height: ResponsiveHelper.spacing(context, 16)),
 
               TODeadlineSection(
-                isLongTerm: widget.to.isContractType,
+                isLongTerm: widget.isSlotMode ? false : widget.to.isContractType,
                 hoursBeforeStart: _hoursBeforeStart,
                 onHoursChanged: (h) => setState(() => _hoursBeforeStart = h),
-                fixedDeadline: _fixedDeadline,
-                onFixedDeadlineChanged: (dt) =>
-                    setState(() => _fixedDeadline = dt),
-                rangeStartDate: widget.to.rangeStart,
+                fixedDeadline: widget.isSlotMode ? null : _fixedDeadline,
+                onFixedDeadlineChanged: widget.isSlotMode
+                    ? null
+                    : (dt) => setState(() => _fixedDeadline = dt),
+                rangeStartDate: widget.isSlotMode ? null : widget.to.rangeStart,
               ),
               SizedBox(height: ResponsiveHelper.spacing(context, 16)),
 
-              TOPublishSection(
-                publishMode: _publishMode,
-                onPublishModeChanged: (m) => setState(() => _publishMode = m),
-                publishDaysBefore: _publishDaysBefore,
-                onDaysBeforeChanged: (d) =>
-                    setState(() => _publishDaysBefore = d),
-                publishTime: _publishTime,
-                onTimeChanged: (t) => setState(() => _publishTime = t),
-                previewDates: widget.to.isContractType
-                    ? (widget.to.rangeStart != null ? [widget.to.rangeStart!] : [])
-                    : (_firstSlotDate != null ? [_firstSlotDate!] : []),
-                isLongTerm: widget.to.isContractType,
-              ),
-              SizedBox(height: ResponsiveHelper.spacing(context, 16)),
-
-              TODescriptionSection(controller: _descriptionController),
-              SizedBox(height: ResponsiveHelper.spacing(context, 24)),
+              if (!widget.isSlotMode) ...[
+                TOPublishSection(
+                  publishMode: _publishMode,
+                  onPublishModeChanged: (m) => setState(() => _publishMode = m),
+                  publishDaysBefore: _publishDaysBefore,
+                  onDaysBeforeChanged: (d) =>
+                      setState(() => _publishDaysBefore = d),
+                  publishTime: _publishTime,
+                  onTimeChanged: (t) => setState(() => _publishTime = t),
+                  previewDates: widget.to.isContractType
+                      ? (widget.to.rangeStart != null ? [widget.to.rangeStart!] : [])
+                      : (_firstSlotDate != null ? [_firstSlotDate!] : []),
+                  isLongTerm: widget.to.isContractType,
+                ),
+                SizedBox(height: ResponsiveHelper.spacing(context, 16)),
+                TODescriptionSection(controller: _descriptionController),
+                SizedBox(height: ResponsiveHelper.spacing(context, 24)),
+              ],
 
               TOActionButton.save(
                 onPressed: _saveChanges,
@@ -396,6 +572,118 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
             ],
           ),
         ),
+      ),
+    );
+  }
+
+  Widget _buildSlotTitleField(BuildContext context) {
+    final theme = Theme.of(context);
+    return Container(
+      padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 16)),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: AppColors.grey200),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            '공고 제목',
+            style: ResponsiveHelper.subtitleStyle(context)
+                .copyWith(fontWeight: FontWeight.bold),
+          ),
+          SizedBox(height: ResponsiveHelper.spacing(context, 12)),
+          TextFormField(
+            controller: _slotTitleController,
+            style: ResponsiveHelper.bodyStyle(context),
+            decoration: InputDecoration(
+              hintText: '이 날짜의 공고 제목을 입력하세요',
+              hintStyle: ResponsiveHelper.smallStyle(
+                  context, color: AppColors.grey400),
+              prefixIcon: Icon(Icons.title,
+                  color: theme.primaryColor,
+                  size: ResponsiveHelper.iconSize(context, 22)),
+              border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(12),
+                  borderSide: BorderSide(color: AppColors.grey300)),
+              enabledBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(12),
+                  borderSide: BorderSide(color: AppColors.grey300)),
+              focusedBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(12),
+                  borderSide:
+                      BorderSide(color: theme.primaryColor, width: 2)),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildNewSlotBanner(BuildContext context) {
+    final d = widget.newSlotDate!;
+    const weekdays = ['월', '화', '수', '목', '금', '토', '일'];
+    final label = '${d.month}/${d.day} (${weekdays[d.weekday - 1]})';
+    return Container(
+      padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 12)),
+      decoration: BoxDecoration(
+        color: AppColors.infoBg,
+        borderRadius: BorderRadius.circular(ResponsiveHelper.spacing(context, 10)),
+        border: Border.all(color: AppColors.infoLight),
+      ),
+      child: Row(
+        children: [
+          Icon(Icons.event_available,
+              size: ResponsiveHelper.iconSize(context, 16),
+              color: AppColors.infoDark),
+          SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+          Expanded(
+            child: Text(
+              '$label 날짜 추가 — 업무 내용을 확인 후 저장하세요',
+              style: ResponsiveHelper.smallStyle(context, color: AppColors.infoDark)
+                  .copyWith(fontWeight: FontWeight.w600),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildBatchInfoBanner(BuildContext context) {
+    final slots = widget.batchSlots!;
+    final dateLabels = slots.map((s) => s.formattedDate).join(', ');
+    return Container(
+      padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 12)),
+      decoration: BoxDecoration(
+        color: AppColors.warningBg,
+        borderRadius: BorderRadius.circular(ResponsiveHelper.spacing(context, 10)),
+        border: Border.all(color: AppColors.warningLight),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(Icons.info_outline,
+                  size: ResponsiveHelper.iconSize(context, 16),
+                  color: AppColors.warningDark),
+              SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+              Text(
+                '${slots.length}개 날짜 일괄 수정',
+                style: ResponsiveHelper.smallStyle(context,
+                        color: AppColors.warningDark)
+                    .copyWith(fontWeight: FontWeight.bold),
+              ),
+            ],
+          ),
+          SizedBox(height: ResponsiveHelper.spacing(context, 6)),
+          Text(
+            '선택한 모든 날짜에 동일하게 적용됩니다.\n$dateLabels',
+            style: ResponsiveHelper.smallStyle(context,
+                color: AppColors.warningDark),
+          ),
+        ],
       ),
     );
   }

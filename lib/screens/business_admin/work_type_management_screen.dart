@@ -107,11 +107,11 @@ class _WorkTypeManagementScreenState extends State<WorkTypeManagementScreen> {
     // 1. 아이콘 선택
     final iconResult = await IconPickerDialog.show(context: context);
     
-    if (iconResult == null) return;
+    if (iconResult == null || !mounted) return;
 
     // 2. 이름 입력
     final nameController = TextEditingController();
-    
+
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => StyledDialog(
@@ -226,11 +226,11 @@ class _WorkTypeManagementScreenState extends State<WorkTypeManagementScreen> {
       initialBackgroundColor: workType.backgroundColor,
     );
     
-    if (iconResult == null) return;
+    if (iconResult == null || !mounted) return;
 
     // 2. 이름 입력
     final nameController = TextEditingController(text: workType.name);
-    
+
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => StyledDialog(

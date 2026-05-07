@@ -1,7 +1,6 @@
 ﻿import 'package:ALfit/screens/common/document_management_screen.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:firebase_storage/firebase_storage.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:provider/provider.dart';
 import 'dart:io';
@@ -15,7 +14,6 @@ import '../../providers/user_provider.dart';
 // Helper
 import '../../utils/image_helper.dart';
 // Services
-import '../../services/firestore_service.dart';
 import '../../services/storage_service.dart';
 
 // Utils
@@ -53,7 +51,6 @@ class BusinessFormScreen extends StatefulWidget {
 
 class _BusinessFormScreenState extends State<BusinessFormScreen> {
   final _formKey = GlobalKey<FormState>();
-  final FirestoreService _firestoreService = FirestoreService();
 
   bool _isLoading = false;
   bool _isEditMode = false;
@@ -213,7 +210,7 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
               ],
             ),
           );
-          if (confirmed == true && mounted) {
+          if (confirmed == true && context.mounted) {
             Navigator.pushAndRemoveUntil(
               context,
               MaterialPageRoute(builder: (context) => const LoginScreen()),
@@ -1200,7 +1197,7 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
     final result = await showDialog<bool>(
       context: context,
       builder: (context) => StyledDialog(
-        title: '주소 입력 (테스트용)',
+        title: '주소 직접 입력',
         icon: Icons.location_on,
         content: Column(
           mainAxisSize: MainAxisSize.min,
@@ -1261,13 +1258,16 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
     
     // 최신 사용자 정보 가져오기 (캐시 무시)
     await userProvider.refreshCurrentUser();
+
+    if (!mounted) return;
+
     final user = userProvider.currentUser;
-    
+
     if (user == null) {
       ToastHelper.showError('로그인이 필요합니다.');
       return;
     }
-    
+
     // 사업자등록증 미등록 시 다이얼로그
     if (user.businessLicenseImageUrl == null) {
       final shouldNavigate = await DialogHelper.showDocumentRequired(
@@ -1356,6 +1356,7 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
         businessData['createdAt'] = FieldValue.serverTimestamp();
         businessData['attendanceType'] = 'gps';
         businessData['gpsRadius'] = 100;
+        businessData['adminIds'] = [ownerId];
         await FirebaseFirestore.instance.collection('businesses').add(businessData);
         ToastHelper.showSuccess('사업장이 등록되었습니다\n바로 사용하실 수 있습니다');  // ✅ 메시지 변경!
       }
@@ -1383,16 +1384,8 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
   }
 
   Future<String?> _uploadImage(File imageFile, String type) async {
-    try {
-      final timestamp = DateTime.now().millisecondsSinceEpoch;
-      final fileName = '${type}_$timestamp.jpg';
-      final ref = FirebaseStorage.instance.ref().child('businesses').child(fileName);
-
-      await ref.putFile(imageFile);
-      return await ref.getDownloadURL();
-    } catch (e) {
-      debugPrint('❌ 이미지 업로드 실패: $e');
-      return null;
-    }
+    final timestamp = DateTime.now().millisecondsSinceEpoch;
+    final fileName = '${type}_$timestamp.jpg';
+    return await _storageService.uploadImage(imageFile.path, 'businesses/$fileName');
   }
 }

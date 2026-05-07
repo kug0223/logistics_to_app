@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 
 // Models
 import '../../../models/ui/admin_to_list_ui_models.dart';
-import '../../../models/core/work_detail_model.dart';
+import '../../../models/core/work_detail_data.dart';
 
 // Helper
 import '../../../utils/toast_helper.dart';
@@ -95,15 +95,15 @@ class _TOItemCardState extends State<TOItemCard> {
     
     final isFull = confirmed >= required && required > 0;
     
-    // ✅ 전체 마감 여부 (WorkDetail 실제 상태 우선)
+    // ✅ 전체 마감 여부 — 슬롯 수동마감 > WorkDetail 상태 > DB status 순으로 판단
     bool allClosed;
-    
-    // ✅ WorkDetails 로드된 경우: 실제 상태 우선!
-    if (widget.toItem.isWorkDetailLoaded && widget.toItem.workDetails.isNotEmpty) {
+
+    if (widget.toItem.slot?.isManualClosed == true) {
+      allClosed = true;
+    } else if (widget.toItem.isWorkDetailLoaded && widget.toItem.workDetails.isNotEmpty) {
       allClosed = widget.toItem.workDetails.every((work) =>
           work.isClosed || work.isTimeExpired || work.isFull);
     } else {
-      // ✅ WorkDetails 미로드: DB status 기반 판단
       if (to.status == 'CLOSED' || to.status == 'EXPIRED' || to.status == 'FULL') {
         allClosed = true;
       } else if (to.isManualClosed) {
@@ -178,10 +178,10 @@ class _TOItemCardState extends State<TOItemCard> {
                                 ),
                               ),
                               SizedBox(width: ResponsiveHelper.spacing(context, 10)),
-                              // 제목 (전체 표시)
+                              // 제목 (슬롯 개별 제목 우선, 없으면 마스터 TO 제목)
                               Expanded(
                                 child: Text(
-                                  to.title,
+                                  widget.toItem.slot?.title ?? to.title,
                                   style: ResponsiveHelper.bodyStyle(context).copyWith(
                                     fontWeight: FontWeight.w600,
                                     color: AppColors.textPrimary,
@@ -633,7 +633,7 @@ class _TOItemCardState extends State<TOItemCard> {
           try {
             final result = await widget.firestoreService.loadTOWorkDetails(widget.toItem.to);
             widget.toItem.setWorkDetails(
-              result['workDetails'] as List<WorkDetailModel>,
+              result['workDetails'] as List<WorkDetailData>,
               result['workStats'] as Map<String, Map<String, int>>,
             );
           } catch (e) {
@@ -660,10 +660,13 @@ class _TOItemCardState extends State<TOItemCard> {
       case 'edit':
         await NavigationHelper.push<bool>(
           context,
-          destination: AdminEditTOScreen(to: widget.toItem.to),
+          destination: AdminEditTOScreen(
+            to: widget.toItem.to,
+            slot: widget.toItem.slot,
+          ),
           onReturn: (result) {
             if (result == true) {
-              widget.firestoreService.clearCache();
+              widget.firestoreService.clearCache(toId: widget.toItem.to.id);
               widget.onChanged();
             }
           },
@@ -686,7 +689,7 @@ case 'confirmedList':
           try {
             final result = await widget.firestoreService.loadTOWorkDetails(widget.toItem.to);
             widget.toItem.setWorkDetails(
-              result['workDetails'] as List<WorkDetailModel>,
+              result['workDetails'] as List<WorkDetailData>,
               result['workStats'] as Map<String, Map<String, int>>,
             );
           } catch (e) {
@@ -702,9 +705,10 @@ case 'confirmedList':
           context: context,
           toItem: widget.toItem,
           firestoreService: widget.firestoreService,
+          slotId: widget.toItem.slot?.id,
           onLocalStatsChanged: () {
             if (mounted) setState(() {});
-            widget.onLocalStatsChanged?.call();  // ✅ 상위로 전파
+            widget.onLocalStatsChanged?.call();
           },
         ).show();
         break;
@@ -722,7 +726,7 @@ case 'confirmedList':
           try {
             final result = await widget.firestoreService.loadTOWorkDetails(widget.toItem.to);
             widget.toItem.setWorkDetails(
-              result['workDetails'] as List<WorkDetailModel>,
+              result['workDetails'] as List<WorkDetailData>,
               result['workStats'] as Map<String, Map<String, int>>,
             );
           } catch (e) {

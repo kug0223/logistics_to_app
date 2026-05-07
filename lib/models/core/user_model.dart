@@ -17,7 +17,8 @@ class UserModel {
   final String email;              // ⚠️ 이건 systemEmail로 사용됨
   final String? userEmail;         // ⭐ 실제 이메일 추가
   final UserRole role;
-  final String? businessId;  // 사업장 관리자의 경우 사업장 ID
+  final String? businessId;             // 대표 사업장 ID (하위 호환용)
+  final List<String> managedBusinessIds; // 관리하는 모든 사업장 ID 목록
   final DateTime? createdAt;
   final DateTime? lastLoginAt;
   
@@ -80,6 +81,7 @@ class UserModel {
     this.phone,
     required this.role,
     this.businessId,
+    List<String>? managedBusinessIds,
     this.createdAt,
     this.lastLoginAt,
     // 신규 필드
@@ -120,7 +122,8 @@ class UserModel {
     this.rehireRate = 0.0,
     this.badges = const [],
     this.lastRestartAt,
-  });
+  }) : managedBusinessIds = managedBusinessIds ??
+           (businessId != null ? [businessId] : const []);
 
   // ━━━ 편의 메서드 ━━━
   
@@ -210,6 +213,9 @@ class UserModel {
       phone: map['phone'],
       role: role,
       businessId: map['businessId'],
+      managedBusinessIds: map['managedBusinessIds'] != null
+          ? List<String>.from(map['managedBusinessIds'])
+          : null,
       createdAt: map['createdAt']?.toDate(),
       lastLoginAt: map['lastLoginAt']?.toDate(),
       // 신규 필드
@@ -265,6 +271,7 @@ class UserModel {
       'phone': phone,
       'role': _roleToString(role),
       'businessId': businessId,
+      'managedBusinessIds': managedBusinessIds,
       'createdAt': createdAt,
       'lastLoginAt': lastLoginAt,
       // 신규 필드
@@ -352,6 +359,7 @@ class UserModel {
     String? phone,
     UserRole? role,
     String? businessId,
+    List<String>? managedBusinessIds,
     DateTime? createdAt,
     DateTime? lastLoginAt,
     String? gender,
@@ -401,6 +409,7 @@ class UserModel {
       phone: phone ?? this.phone,
       role: role ?? this.role,
       businessId: businessId ?? this.businessId,
+      managedBusinessIds: managedBusinessIds ?? this.managedBusinessIds,
       createdAt: createdAt ?? this.createdAt,
       lastLoginAt: lastLoginAt ?? this.lastLoginAt,
       gender: gender ?? this.gender,

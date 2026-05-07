@@ -146,19 +146,23 @@ class _ProfileEditScreenState extends State<ProfileEditScreen> {
         'email': _emailController.text.trim(),
         'code': code,
       });
-      final reason = result.data['reason'] as String?;
+      final data = result.data as Map<String, dynamic>;
       if (mounted) {
-        if (reason == null) {
+        if (data['valid'] == true) {
           setState(() => _isEmailVerified = true);
           ToastHelper.showSuccess('이메일 인증이 완료되었습니다');
-        } else if (reason == 'expired') {
-          ToastHelper.showWarning('인증번호가 만료되었습니다. 다시 발송해주세요');
-          setState(() => _isEmailSent = false);
-        } else if (reason == 'too_many_attempts') {
-          ToastHelper.showError('시도 횟수를 초과했습니다. 다시 발송해주세요');
-          setState(() => _isEmailSent = false);
         } else {
-          ToastHelper.showError('인증번호가 일치하지 않습니다');
+          final reason = data['reason'] as String? ?? '';
+          switch (reason) {
+            case 'expired':
+              ToastHelper.showWarning('인증번호가 만료되었습니다. 다시 발송해주세요');
+              setState(() => _isEmailSent = false);
+            case 'too_many_attempts':
+              ToastHelper.showError('시도 횟수를 초과했습니다. 다시 발송해주세요');
+              setState(() => _isEmailSent = false);
+            default:
+              ToastHelper.showError('인증번호가 일치하지 않습니다');
+          }
         }
       }
     } catch (e) {
@@ -421,6 +425,7 @@ class _ProfileEditScreenState extends State<ProfileEditScreen> {
 
       if (updates.isNotEmpty) {
         await _firestoreService.updateUserDocument(user.uid, updates);
+        if (!mounted) return;
         await context.read<UserProvider>().refreshCurrentUser();
 
         // 원본 이메일 업데이트

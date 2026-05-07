@@ -26,17 +26,17 @@ extension BusinessFirestore on FirestoreService {
     }
   }
 
-  /// 내 사업장 목록 조회
-  Future<List<BusinessModel>> getMyBusiness(String ownerId) async {
+  /// 내 사업장 목록 조회 (adminIds에 포함된 모든 사업장)
+  Future<List<BusinessModel>> getMyBusiness(String uid) async {
     try {
       debugPrint('🔍 [FirestoreService] 내 사업장 조회 시작...');
-      debugPrint('   ownerId: $ownerId');
+      debugPrint('   uid: $uid');
 
       final snapshot = await _firestore
-      .collection('businesses')
-      .where('ownerId', isEqualTo: ownerId)
-      .orderBy('createdAt', descending: true)
-      .get(const GetOptions(source: Source.server));
+          .collection('businesses')
+          .where('adminIds', arrayContains: uid)
+          .orderBy('createdAt', descending: true)
+          .get(const GetOptions(source: Source.server));
 
       final businesses = snapshot.docs
           .map((doc) => BusinessModel.fromMap(doc.data(), doc.id))

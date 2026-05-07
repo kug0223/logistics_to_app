@@ -2,7 +2,7 @@
 
 // Models
 import '../../../models/ui/admin_to_list_ui_models.dart';
-import '../../../models/core/work_detail_model.dart';
+import '../../../models/core/work_detail_data.dart';
 
 // Helper
 import '../../../utils/toast_helper.dart';
@@ -20,12 +20,16 @@ import '../../../theme/app_colors.dart';
 
 // Screens
 import '../../../screens/business_admin/to_management/edit_to_screen.dart';
-import '../../../screens/common/job_posting_screen.dart';
 
 // Dialogs
 import '../../../screens/business_admin/dialogs/confirmed_list_dialog.dart';
-import '../../../screens/business_admin/dialogs/work_detail_management_dialog.dart';
 import '../../../screens/business_admin/dialogs/to_list_dialogs.dart';
+import '../../../screens/business_admin/dialogs/slot_batch_select_dialog.dart';
+
+// Providers
+import 'package:provider/provider.dart';
+import '../../../providers/user_provider.dart';
+import '../../../widgets/dialogs/styled_dialog.dart';
 
 // Local Widgets
 import 'admin_to_item_card.dart';
@@ -97,24 +101,13 @@ class _TOGroupCardState extends State<TOGroupCard> with SingleTickerProviderStat
       totalPending = widget.groupItem.totalPending;
       totalRequired = widget.groupItem.totalRequired;
     } else {
+      // 헤더 배지는 항상 슬롯 레벨 집계 사용 (펼치기 전후 숫자 일관성 유지)
       for (var toItem in targetTOs) {
-      // ✅ workDetails 로드됐으면 각 업무별로 workDetailStats에서 합산
-      if (toItem.isWorkDetailLoaded && toItem.workDetails.isNotEmpty) {
-        for (var work in toItem.workDetails) {
-          // ✅ workDetailId로 조회
-          final stats = toItem.workDetailStats?[work.id];
-          totalConfirmed += (stats?['confirmed'] ?? 0);
-          totalPending += (stats?['pending'] ?? 0);
-        }
-        totalRequired += toItem.totalRequired;
-      } else {
-        // 아직 로드 안 됐으면 초기값 사용
         totalConfirmed += toItem.confirmedCount;
         totalPending += toItem.pendingCount;
         totalRequired += toItem.totalRequired;
       }
     }
-    }  // ✅ else 블록 닫기
     
     debugPrint('🔍 [TOGroupCard] 최종 통계: $totalConfirmed/$totalRequired (+$totalPending)');
     
@@ -702,26 +695,6 @@ class _TOGroupCardState extends State<TOGroupCard> with SingleTickerProviderStat
     );
   }
 
-  /// ✨ 예약 공개 정보 (간소화)
-  Widget _buildScheduledInfo(BuildContext context, dynamic masterTO) {
-    return Row(
-      children: [
-        Icon(
-          Icons.visibility_off,
-          size: ResponsiveHelper.iconSize(context, 12),
-          color: AppColors.warningDark,
-        ),
-        SizedBox(width: ResponsiveHelper.spacing(context, 4)),
-        Text(
-          '예약 공개: ${masterTO.publishAtDisplay ?? ''}',
-          style: ResponsiveHelper.smallStyle(
-            context,
-            color: AppColors.warningDark,
-          ),
-        ),
-      ],
-    );
-  }
   /// ✨ 상태 배지 (마감/예약/모집중) - targetTOs 기준
   Widget _buildStatusBadge(BuildContext context, {
     required bool allClosed,
@@ -871,50 +844,93 @@ class _TOGroupCardState extends State<TOGroupCard> with SingleTickerProviderStat
       ),
       onSelected: (value) => _handleSingleTOMenuAction(context, value),
       itemBuilder: (context) => [
-        PopupMenuItem(
-          value: 'preview',
-          child: Row(
-            children: [
-              Icon(
-                Icons.visibility,
-                size: ResponsiveHelper.iconSize(context, 18),
-                color: AppColors.info,  
-              ),
-              SizedBox(width: ResponsiveHelper.spacing(context, 12)),
-              const Text('공고 미리보기'),
-            ],
+        if (!widget.groupItem.masterTO.isContractType)
+          PopupMenuItem(
+            value: 'addSlot',
+            child: Row(
+              children: [
+                Icon(
+                  Icons.event_available,
+                  size: ResponsiveHelper.iconSize(context, 18),
+                  color: AppColors.info,
+                ),
+                SizedBox(width: ResponsiveHelper.spacing(context, 12)),
+                const Text('날짜 추가'),
+              ],
+            ),
           ),
-        ),
         PopupMenuItem(
-          value: 'edit',
+          value: widget.groupItem.masterTO.isContractType ? 'edit' : 'batchEdit',
           child: Row(
             children: [
               Icon(
-                Icons.edit,
+                widget.groupItem.masterTO.isContractType
+                    ? Icons.edit
+                    : Icons.edit_calendar,
                 size: ResponsiveHelper.iconSize(context, 18),
                 color: AppColors.warning,
               ),
               SizedBox(width: ResponsiveHelper.spacing(context, 12)),
-              const Text('수정'),
+              Text(widget.groupItem.masterTO.isContractType ? '수정' : '일괄수정'),
             ],
           ),
         ),
-        PopupMenuItem(
-          value: widget.groupItem.isClosed ? 'reopen' : 'close',
-          child: Row(
-            children: [
-              Icon(
-                widget.groupItem.isClosed ? Icons.lock_open : Icons.lock_outline,
-                size: ResponsiveHelper.iconSize(context, 18),
-                color: widget.groupItem.isClosed ? AppColors.success : AppColors.warning,
+        if (widget.groupItem.isClosed)
+          PopupMenuItem(
+            value: 'reopen',
+            child: Row(
+              children: [
+                Icon(Icons.lock_open,
+                    size: ResponsiveHelper.iconSize(context, 18),
+                    color: AppColors.success),
+                SizedBox(width: ResponsiveHelper.spacing(context, 12)),
+                const Text('재오픈'),
+              ],
+            ),
+          )
+        else ...[
+          if (widget.groupItem.masterTO.isContractType)
+            PopupMenuItem(
+              value: 'close',
+              child: Row(
+                children: [
+                  Icon(Icons.lock_outline,
+                      size: ResponsiveHelper.iconSize(context, 18),
+                      color: AppColors.warning),
+                  SizedBox(width: ResponsiveHelper.spacing(context, 12)),
+                  const Text('마감'),
+                ],
               ),
-              SizedBox(width: ResponsiveHelper.spacing(context, 12)),
-              Text(widget.groupItem.isClosed ? '재오픈' : '마감'),
-            ],
-          ),
-        ),
+            )
+          else
+            PopupMenuItem(
+              value: 'batchClose',
+              child: Row(
+                children: [
+                  Icon(Icons.lock_outline,
+                      size: ResponsiveHelper.iconSize(context, 18),
+                      color: AppColors.warning),
+                  SizedBox(width: ResponsiveHelper.spacing(context, 12)),
+                  const Text('일괄마감'),
+                ],
+              ),
+            ),
+          if (!widget.groupItem.masterTO.isContractType)
+            PopupMenuItem(
+              value: 'batchReopen',
+              child: Row(
+                children: [
+                  Icon(Icons.lock_open,
+                      size: ResponsiveHelper.iconSize(context, 18),
+                      color: AppColors.success),
+                  SizedBox(width: ResponsiveHelper.spacing(context, 12)),
+                  const Text('일괄재오픈'),
+                ],
+              ),
+            ),
+        ],
         PopupMenuItem(
-          value: 'delete',
+          value: widget.groupItem.masterTO.isContractType ? 'delete' : 'batchDelete',
           child: Row(
             children: [
               Icon(
@@ -923,7 +939,7 @@ class _TOGroupCardState extends State<TOGroupCard> with SingleTickerProviderStat
                 color: AppColors.error,
               ),
               SizedBox(width: ResponsiveHelper.spacing(context, 12)),
-              const Text('삭제'),
+              Text(widget.groupItem.masterTO.isContractType ? '삭제' : '일괄삭제'),
             ],
           ),
         ),
@@ -942,16 +958,16 @@ class _TOGroupCardState extends State<TOGroupCard> with SingleTickerProviderStat
           ),
         ),
         PopupMenuItem(
-          value: 'manageWorkDetails',
+          value: 'renameCard',
           child: Row(
             children: [
               Icon(
-                Icons.assignment_turned_in,
+                Icons.drive_file_rename_outline,
                 size: ResponsiveHelper.iconSize(context, 18),
                 color: AppColors.purple,
               ),
               SizedBox(width: ResponsiveHelper.spacing(context, 12)),
-              const Text('업무별 마감'),
+              const Text('카드 제목 변경'),
             ],
           ),
         ),
@@ -965,50 +981,77 @@ class _TOGroupCardState extends State<TOGroupCard> with SingleTickerProviderStat
     final masterTO = widget.groupItem.masterTO;
 
     switch (value) {
-      case 'preview':
-        // ✅ WorkDetails 로드 확인 후 미리보기 열기
-        final toItemForPreview = widget.groupItem.groupTOs.isNotEmpty 
-            ? widget.groupItem.groupTOs.first 
-            : null;
-        
-        if (toItemForPreview == null) {
-          ToastHelper.showError('TO 정보를 불러올 수 없습니다.');
+      case 'addSlot':
+        final existingSlots = await widget.firestoreService.getSlots(masterTO.id);
+        if (!mounted) return;
+        final takenDates = existingSlots
+            .map((s) => DateTime(s.date.year, s.date.month, s.date.day))
+            .toSet();
+        final now = DateTime.now();
+        final today = DateTime(now.year, now.month, now.day);
+        // initialDate는 takenDates에 없는 첫 번째 날짜로 설정
+        DateTime initialDate = today;
+        final lastDate = today.add(const Duration(days: 365));
+        while (takenDates.contains(initialDate) && initialDate.isBefore(lastDate)) {
+          initialDate = initialDate.add(const Duration(days: 1));
+        }
+        if (takenDates.contains(initialDate)) {
+          ToastHelper.showError('추가 가능한 날짜가 없습니다');
           return;
         }
-        
-        if (!toItemForPreview.isWorkDetailLoaded || toItemForPreview.workDetails.isEmpty) {
-          showDialog(
-            context: context,
-            barrierDismissible: false,
-            builder: (_) => const Center(child: CircularProgressIndicator()),
-          );
-          
-          try {
-            final result = await widget.firestoreService.loadTOWorkDetails(toItemForPreview.to);
-            toItemForPreview.setWorkDetails(
-              result['workDetails'] as List<WorkDetailModel>,
-              result['workStats'] as Map<String, Map<String, int>>,
+        final picked = await showDatePicker(
+          context: this.context,
+          initialDate: initialDate,
+          firstDate: today,
+          lastDate: today.add(const Duration(days: 365)),
+          helpText: '근무 날짜 선택',
+          cancelText: '취소',
+          confirmText: '선택',
+          selectableDayPredicate: (date) {
+            final d = DateTime(date.year, date.month, date.day);
+            return !takenDates.contains(d);
+          },
+          builder: (context, child) {
+            final primary = Theme.of(context).primaryColor;
+            return Theme(
+              data: Theme.of(context).copyWith(
+                colorScheme: ColorScheme.light(
+                  primary: primary,
+                  onPrimary: Colors.white,
+                  surface: Colors.white,
+                  onSurface: AppColors.textPrimary,
+                  surfaceContainerHighest: primary.withValues(alpha: 0.08),
+                ),
+                textButtonTheme: TextButtonThemeData(
+                  style: TextButton.styleFrom(
+                    foregroundColor: primary,
+                    textStyle: const TextStyle(fontWeight: FontWeight.bold),
+                  ),
+                ),
+                dialogTheme: DialogThemeData(
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(24),
+                  ),
+                  elevation: 8,
+                ),
+              ),
+              child: child!,
             );
-          } catch (e) {
-            Navigator.pop(context);
-            ToastHelper.showError('데이터를 불러오는데 실패했습니다.');
-            return;
-          }
-          
-          Navigator.pop(context);
-        }
-        
-        Navigator.push(
-          context,
-          MaterialPageRoute(
-            builder: (_) => JobPostingScreen(
-              to: widget.groupItem.masterTO,
-              workDetails: toItemForPreview.workDetails,
-              mode: TODetailMode.adminPreview,
-            ),
-          ),
+          },
+        );
+        if (picked == null || !mounted) return;
+        await NavigationHelper.push<bool>(
+          this.context,
+          destination: AdminEditTOScreen(to: masterTO, newSlotDate: picked),
+          onReturn: (result) {
+            if (result == true) {
+              widget.firestoreService.clearCache(toId: masterTO.id);
+              widget.onChanged();
+            }
+          },
         );
         break;
+
       case 'edit':
         await NavigationHelper.push<bool>(
           context,
@@ -1022,6 +1065,161 @@ class _TOGroupCardState extends State<TOGroupCard> with SingleTickerProviderStat
         );
         break;
 
+      case 'batchEdit':
+        final editSlots = await SlotBatchSelectDialog.show(
+          context: context,
+          to: masterTO,
+          firestoreService: widget.firestoreService,
+          title: '일괄수정 날짜 선택',
+          confirmLabel: '수정',
+        );
+        if (editSlots == null || editSlots.isEmpty || !mounted) return;
+        await NavigationHelper.push<bool>(
+          this.context,
+          destination: AdminEditTOScreen(to: masterTO, batchSlots: editSlots),
+          onReturn: (result) {
+            if (result == true) {
+              widget.firestoreService.clearCache(toId: masterTO.id);
+              widget.onChanged();
+            }
+          },
+        );
+        break;
+
+      case 'batchClose':
+        final closeSlots = await SlotBatchSelectDialog.show(
+          context: context,
+          to: masterTO,
+          firestoreService: widget.firestoreService,
+          title: '일괄마감 날짜 선택',
+          confirmLabel: '마감',
+          openOnly: true,
+        );
+        if (closeSlots == null || closeSlots.isEmpty || !mounted) return;
+        final confirmed = await showDialog<bool>(
+          context: this.context,
+          builder: (dialogCtx) => StyledDialog(
+            title: '일괄 마감',
+            subtitle: '선택한 ${closeSlots.length}개 날짜를 마감하시겠습니까?',
+            icon: Icons.lock_outline,
+            headerColor: AppColors.warning,
+            content: const SizedBox.shrink(),
+            actions: [
+              StyledDialogButton.cancel(
+                  onPressed: () => Navigator.pop(dialogCtx, false)),
+              StyledDialogButton.danger(
+                text: '마감',
+                onPressed: () => Navigator.pop(dialogCtx, true),
+              ),
+            ],
+          ),
+        );
+        if (confirmed != true || !mounted) return;
+        try {
+          final uid = Provider.of<UserProvider>(this.context, listen: false)
+              .currentUser?.uid ?? '';
+          await widget.firestoreService.batchCloseSlots(
+            toId: masterTO.id,
+            slotIds: closeSlots.map((s) => s.id).toList(),
+            closedBy: uid,
+          );
+          widget.firestoreService.clearCache(toId: masterTO.id);
+          widget.onChanged();
+          ToastHelper.showSuccess('${closeSlots.length}개 날짜가 마감되었습니다');
+        } catch (e) {
+          ToastHelper.showError('마감 처리에 실패했습니다');
+        }
+        break;
+
+      case 'batchReopen':
+        final reopenSlots = await SlotBatchSelectDialog.show(
+          context: context,
+          to: masterTO,
+          firestoreService: widget.firestoreService,
+          title: '일괄재오픈 날짜 선택',
+          confirmLabel: '재오픈',
+          closedAndReopenable: true,
+        );
+        if (reopenSlots == null || reopenSlots.isEmpty || !mounted) return;
+        final reopenConfirmed = await showDialog<bool>(
+          context: this.context,
+          builder: (dialogCtx) => StyledDialog(
+            title: '일괄 재오픈',
+            subtitle: '선택한 ${reopenSlots.length}개 날짜를 재오픈하시겠습니까?',
+            icon: Icons.lock_open,
+            headerColor: AppColors.success,
+            content: const SizedBox.shrink(),
+            actions: [
+              StyledDialogButton.cancel(
+                  onPressed: () => Navigator.pop(dialogCtx, false)),
+              StyledDialogButton.primary(
+                text: '재오픈',
+                onPressed: () => Navigator.pop(dialogCtx, true),
+              ),
+            ],
+          ),
+        );
+        if (reopenConfirmed != true || !mounted) return;
+        try {
+          final uid = Provider.of<UserProvider>(this.context, listen: false)
+              .currentUser?.uid ?? '';
+          await widget.firestoreService.batchReopenSlots(
+            toId: masterTO.id,
+            slotIds: reopenSlots.map((s) => s.id).toList(),
+            reopenedBy: uid,
+          );
+          widget.firestoreService.clearCache(toId: masterTO.id);
+          widget.onChanged();
+          ToastHelper.showSuccess('${reopenSlots.length}개 날짜가 재오픈되었습니다');
+        } catch (e) {
+          ToastHelper.showError('재오픈 처리에 실패했습니다');
+        }
+        break;
+
+      case 'batchDelete':
+        final deleteSlots = await SlotBatchSelectDialog.show(
+          context: context,
+          to: masterTO,
+          firestoreService: widget.firestoreService,
+          title: '일괄삭제 날짜 선택',
+          confirmLabel: '삭제',
+        );
+        if (deleteSlots == null || deleteSlots.isEmpty || !mounted) return;
+        final deleteConfirmed = await showDialog<bool>(
+          context: this.context,
+          builder: (dialogCtx) => StyledDialog(
+            title: '일괄 삭제',
+            subtitle: '선택한 ${deleteSlots.length}개 날짜를 삭제하시겠습니까?\n이 작업은 되돌릴 수 없습니다.',
+            icon: Icons.delete_forever,
+            headerColor: AppColors.error,
+            content: const SizedBox.shrink(),
+            actions: [
+              StyledDialogButton.cancel(
+                  onPressed: () => Navigator.pop(dialogCtx, false)),
+              StyledDialogButton.danger(
+                text: '삭제',
+                onPressed: () => Navigator.pop(dialogCtx, true),
+              ),
+            ],
+          ),
+        );
+        if (deleteConfirmed != true || !mounted) return;
+        try {
+          await widget.firestoreService.batchDeleteSlots(
+            toId: masterTO.id,
+            slotIds: deleteSlots.map((s) => s.id).toList(),
+            removedRequired: deleteSlots.fold<int>(0, (s, slot) => s + slot.totalRequired),
+            removedConfirmed: deleteSlots.fold<int>(0, (s, slot) => s + slot.confirmedCount),
+            removedPending: deleteSlots.fold<int>(0, (s, slot) => s + slot.pendingCount),
+          );
+          widget.firestoreService.clearCache(toId: masterTO.id);
+          widget.onChanged();
+          ToastHelper.showSuccess('${deleteSlots.length}개 날짜가 삭제되었습니다');
+        } catch (e) {
+          ToastHelper.showError('삭제 처리에 실패했습니다');
+        }
+        break;
+
       case 'close':
         widget.dialogs.showCloseTODialog(masterTO);
         break;
@@ -1031,49 +1229,57 @@ class _TOGroupCardState extends State<TOGroupCard> with SingleTickerProviderStat
         break;
 
       case 'delete':
-        if (widget.groupItem.groupTOs.isEmpty) {
-          ToastHelper.showError('TO 정보를 불러올 수 없습니다.');
-          return;
-        }
-        widget.dialogs.showDeleteTODialog(widget.groupItem.groupTOs.first);
+        // Contract TO는 groupTOs가 비어있으므로 masterTO로 합성 TOItem 사용
+        final deleteTarget = widget.groupItem.groupTOs.isNotEmpty
+            ? widget.groupItem.groupTOs.first
+            : TOItem(
+                to: widget.groupItem.masterTO,
+                confirmedCount: widget.groupItem.totalConfirmed,
+                pendingCount: widget.groupItem.totalPending,
+                totalRequired: widget.groupItem.totalRequired,
+              );
+        widget.dialogs.showDeleteTODialog(deleteTarget);
         break;
 
       case 'confirmedList':
-        // ✅ WorkDetails 로드 확인 후 다이얼로그 열기
+        // Contract TO는 groupTOs가 비어있으므로 masterTO로 합성 TOItem 사용
+        final TOItem toItemForConfirmed;
         if (widget.groupItem.groupTOs.isEmpty) {
-          ToastHelper.showError('TO 정보를 불러올 수 없습니다.');
-          return;
+          toItemForConfirmed = TOItem(
+            to: widget.groupItem.masterTO,
+            confirmedCount: widget.groupItem.totalConfirmed,
+            pendingCount: widget.groupItem.totalPending,
+            totalRequired: widget.groupItem.totalRequired,
+          );
+        } else {
+          final selected = await _selectTOItem(this.context);
+          if (selected == null || !mounted) return;
+          toItemForConfirmed = selected;
         }
-
-        // 다중 슬롯이면 날짜 선택
-        final toItemForConfirmed = await _selectTOItem(context);
-        if (toItemForConfirmed == null || !mounted) return;
 
         if (!toItemForConfirmed.isWorkDetailLoaded || toItemForConfirmed.workDetails.isEmpty) {
           showDialog(
-            context: context,
+            context: this.context,
             barrierDismissible: false,
             builder: (_) => const Center(child: CircularProgressIndicator()),
           );
-
           try {
             final result = await widget.firestoreService.loadTOWorkDetails(toItemForConfirmed.to);
             toItemForConfirmed.setWorkDetails(
-              result['workDetails'] as List<WorkDetailModel>,
+              result['workDetails'] as List<WorkDetailData>,
               result['workStats'] as Map<String, Map<String, int>>,
             );
           } catch (e) {
-            if (mounted) Navigator.pop(context);
+            if (mounted) Navigator.pop(this.context);
             ToastHelper.showError('데이터를 불러오는데 실패했습니다.');
             return;
           }
-
-          if (mounted) Navigator.pop(context);
+          if (mounted) Navigator.pop(this.context);
         }
 
         if (!mounted) return;
         ConfirmedListDialog(
-          context: context,
+          context: this.context,
           toItem: toItemForConfirmed,
           firestoreService: widget.firestoreService,
           onLocalStatsChanged: () {
@@ -1081,49 +1287,46 @@ class _TOGroupCardState extends State<TOGroupCard> with SingleTickerProviderStat
           },
         ).show();
 
-      case 'manageWorkDetails':
-        // ✅ WorkDetails 로드 확인 후 다이얼로그 열기
-        if (widget.groupItem.groupTOs.isEmpty) {
-          ToastHelper.showError('TO 정보를 불러올 수 없습니다.');
-          return;
+      case 'renameCard':
+        final currentTitle = masterTO.groupTitle ?? masterTO.title;
+        final controller = TextEditingController(text: currentTitle);
+        final newTitle = await showDialog<String>(
+          context: this.context,
+          builder: (ctx) => StyledDialog(
+            title: '카드 제목 변경',
+            subtitle: '공고 카드에 표시될 제목을 설정합니다',
+            icon: Icons.drive_file_rename_outline,
+            headerColor: AppColors.purple,
+            content: StyledDialogTextField(
+              controller: controller,
+              labelText: '카드 제목',
+              hintText: masterTO.title,
+              prefixIcon: Icons.title,
+              autofocus: true,
+              onFieldSubmitted: (_) => Navigator.pop(ctx, controller.text.trim()),
+            ),
+            actions: [
+              StyledDialogButton.cancel(
+                onPressed: () => Navigator.pop(ctx),
+              ),
+              StyledDialogButton.primary(
+                text: '저장',
+                backgroundColor: AppColors.purple,
+                onPressed: () => Navigator.pop(ctx, controller.text.trim()),
+              ),
+            ],
+          ),
+        );
+        if (newTitle == null || !mounted) return;
+        try {
+          await widget.firestoreService.updateTO(masterTO.id, {
+            'groupTitle': newTitle.isNotEmpty ? newTitle : null,
+          });
+          widget.onChanged();
+          ToastHelper.showSuccess('카드 제목이 변경되었습니다');
+        } catch (e) {
+          ToastHelper.showError('제목 변경에 실패했습니다');
         }
-
-        // 다중 슬롯이면 날짜 선택
-        final toItemForManage = await _selectTOItem(context);
-        if (toItemForManage == null || !mounted) return;
-
-        if (!toItemForManage.isWorkDetailLoaded || toItemForManage.workDetails.isEmpty) {
-          showDialog(
-            context: context,
-            barrierDismissible: false,
-            builder: (_) => const Center(child: CircularProgressIndicator()),
-          );
-
-          try {
-            final result = await widget.firestoreService.loadTOWorkDetails(toItemForManage.to);
-            toItemForManage.setWorkDetails(
-              result['workDetails'] as List<WorkDetailModel>,
-              result['workStats'] as Map<String, Map<String, int>>,
-            );
-          } catch (e) {
-            if (mounted) Navigator.pop(context);
-            ToastHelper.showError('데이터를 불러오는데 실패했습니다.');
-            return;
-          }
-
-          if (mounted) Navigator.pop(context);
-        }
-
-        if (!mounted) return;
-        WorkDetailManagementDialog(
-          context: context,
-          toItem: toItemForManage,
-          firestoreService: widget.firestoreService,
-          onComplete: widget.onChanged,
-          onLocalStatsChanged: () {
-            if (mounted) setState(() {});
-          },
-        ).show();
         break;
     }
   }

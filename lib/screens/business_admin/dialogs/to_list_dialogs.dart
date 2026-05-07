@@ -27,7 +27,7 @@ class TOListDialogs {
   Future<void> showDeleteTODialog(TOItem toItem) async {
     final to = toItem.to;
 
-    final checkResult = await firestoreService.checkTOBeforeDelete(to.id);
+    final checkResult = await firestoreService.checkTOBeforeDelete(to.id, businessId: to.businessId);
     final hasApplicants = checkResult['hasApplicants'] as bool;
     final confirmedCount = checkResult['confirmedCount'] as int;
     final totalCount = checkResult['totalCount'] as int;

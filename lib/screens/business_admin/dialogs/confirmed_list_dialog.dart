@@ -23,15 +23,17 @@ class ConfirmedListDialog {
   final BuildContext context;
   final TOItem toItem;
   final FirestoreService firestoreService;
+  final String? slotId;
   final VoidCallback? onChanged;
-  final VoidCallback? onLocalStatsChanged;  // ⭐ 추가
+  final VoidCallback? onLocalStatsChanged;
 
   ConfirmedListDialog({
     required this.context,
     required this.toItem,
     required this.firestoreService,
+    this.slotId,
     this.onChanged,
-    this.onLocalStatsChanged,  // ⭐ 추가
+    this.onLocalStatsChanged,
   });
 
   void show() {
@@ -40,8 +42,9 @@ class ConfirmedListDialog {
       builder: (context) => _ConfirmedListDialogWidget(
         toItem: toItem,
         firestoreService: firestoreService,
+        slotId: slotId,
         onChanged: onChanged,
-        onLocalStatsChanged: onLocalStatsChanged,  // ⭐ 추가
+        onLocalStatsChanged: onLocalStatsChanged,
       ),
     );
   }
@@ -50,14 +53,16 @@ class ConfirmedListDialog {
 class _ConfirmedListDialogWidget extends StatefulWidget {
   final TOItem toItem;
   final FirestoreService firestoreService;
+  final String? slotId;
   final VoidCallback? onChanged;
-  final VoidCallback? onLocalStatsChanged;  // ⭐ 추가
+  final VoidCallback? onLocalStatsChanged;
 
   const _ConfirmedListDialogWidget({
     required this.toItem,
     required this.firestoreService,
+    this.slotId,
     this.onChanged,
-    this.onLocalStatsChanged,  // ⭐ 추가
+    this.onLocalStatsChanged,
   });
 
   @override
@@ -93,10 +98,15 @@ class _ConfirmedListDialogWidgetState
     final userProvider = context.read<UserProvider>();
 
     try {
-      final applications = await widget.firestoreService.getApplicationsByTOId(
-        widget.toItem.to.id,
-        businessId: widget.toItem.to.businessId,
-      );
+      final applications = widget.slotId != null
+          ? await widget.firestoreService.getApplicationsBySlotId(
+              widget.toItem.to.id,
+              widget.slotId!,
+            )
+          : await widget.firestoreService.getApplicationsByTOId(
+              widget.toItem.to.id,
+              businessId: widget.toItem.to.businessId,
+            );
 
       final confirmed =
           applications.where((app) => app.status == 'CONFIRMED').toList();
@@ -439,6 +449,12 @@ class _ConfirmedListDialogWidgetState
   }
 
   Widget _buildWorkSection(String workType, List<Map<String, dynamic>> workers, WorkDetailModel workDetail) {
+    final confirmedCount = workers.length;
+    final requiredCount = workDetail.requiredCount;
+    final pendingCount = widget.toItem.workDetailStats?[workDetail.id]?['pending'] ?? 0;
+    final progress = requiredCount > 0 ? (confirmedCount / requiredCount).clamp(0.0, 1.0) : 0.0;
+    final isFull = confirmedCount >= requiredCount;
+
     return Container(
       margin: EdgeInsets.only(bottom: ResponsiveHelper.spacing(context, 16)),
       decoration: BoxDecoration(
@@ -456,23 +472,61 @@ class _ConfirmedListDialogWidgetState
               color: AppColors.grey50,
               borderRadius: const BorderRadius.only(topLeft: Radius.circular(16), topRight: Radius.circular(16)),
             ),
-            child: Row(
+            child: Column(
               children: [
-                WorkTypeIcon.buildWithBackground(iconString: workDetail.workTypeIcon, backgroundColor: workDetail.workTypeBackgroundColor, size: ResponsiveHelper.iconSize(context, 32)),
-                SizedBox(width: ResponsiveHelper.spacing(context, 12)),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(workType, style: ResponsiveHelper.subtitleStyle(context).copyWith(fontWeight: FontWeight.bold)),
-                      Text('${workDetail.startTime} ~ ${workDetail.endTime}', style: ResponsiveHelper.smallStyle(context, color: AppColors.grey600)),
-                    ],
-                  ),
+                Row(
+                  children: [
+                    WorkTypeIcon.buildWithBackground(iconString: workDetail.workTypeIcon, backgroundColor: workDetail.workTypeBackgroundColor, size: ResponsiveHelper.iconSize(context, 32)),
+                    SizedBox(width: ResponsiveHelper.spacing(context, 12)),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(workType, style: ResponsiveHelper.subtitleStyle(context).copyWith(fontWeight: FontWeight.bold)),
+                          Text('${workDetail.startTime} ~ ${workDetail.endTime}', style: ResponsiveHelper.smallStyle(context, color: AppColors.grey600)),
+                        ],
+                      ),
+                    ),
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.end,
+                      children: [
+                        Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(isFull ? Icons.check_circle : Icons.people_outline,
+                                size: ResponsiveHelper.iconSize(context, 14),
+                                color: isFull ? AppColors.success : AppColors.infoDark),
+                            SizedBox(width: ResponsiveHelper.spacing(context, 4)),
+                            Text(
+                              '확정 $confirmedCount/$requiredCount명',
+                              style: ResponsiveHelper.smallStyle(context,
+                                  color: isFull ? AppColors.success : AppColors.infoDark)
+                                  .copyWith(fontWeight: FontWeight.bold),
+                            ),
+                          ],
+                        ),
+                        if (pendingCount > 0) ...[
+                          SizedBox(height: ResponsiveHelper.spacing(context, 2)),
+                          Text(
+                            '+$pendingCount 대기',
+                            style: ResponsiveHelper.tinyStyle(context, color: AppColors.warningDark),
+                          ),
+                        ],
+                      ],
+                    ),
+                  ],
                 ),
-                Container(
-                  padding: EdgeInsets.symmetric(horizontal: ResponsiveHelper.spacing(context, 10), vertical: ResponsiveHelper.spacing(context, 4)),
-                  decoration: BoxDecoration(color: AppColors.success.withValues(alpha: 0.15), borderRadius: BorderRadius.circular(12)),
-                  child: Text('${workers.length}명', style: ResponsiveHelper.bodyStyle(context, color: AppColors.success).copyWith(fontWeight: FontWeight.bold)),
+                SizedBox(height: ResponsiveHelper.spacing(context, 10)),
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(4),
+                  child: LinearProgressIndicator(
+                    value: progress,
+                    minHeight: 6,
+                    backgroundColor: AppColors.grey200,
+                    valueColor: AlwaysStoppedAnimation(
+                      isFull ? AppColors.success : AppColors.info,
+                    ),
+                  ),
                 ),
               ],
             ),

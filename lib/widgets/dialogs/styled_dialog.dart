@@ -350,6 +350,7 @@ class StyledDialogTextField extends StatelessWidget {
   final FocusNode? focusNode;
   final void Function(String)? onFieldSubmitted;
   final bool enabled;
+  final bool autofocus;
 
   const StyledDialogTextField({
     super.key,
@@ -365,6 +366,7 @@ class StyledDialogTextField extends StatelessWidget {
     this.focusNode,
     this.onFieldSubmitted,
     this.enabled = true,
+    this.autofocus = false,
   });
 
   @override
@@ -385,6 +387,7 @@ class StyledDialogTextField extends StatelessWidget {
           controller: controller,
           focusNode: focusNode,
           enabled: enabled,
+          autofocus: autofocus,
           onSubmitted: onFieldSubmitted,
           obscureText: obscureText,
           keyboardType: keyboardType,

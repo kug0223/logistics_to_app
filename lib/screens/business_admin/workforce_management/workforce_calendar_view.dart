@@ -718,7 +718,7 @@ class _WorkforceCalendarViewState extends State<WorkforceCalendarView> {
         try {
           final result = await _firestoreService.loadTOWorkDetails(toItem.to);
           toItem.setWorkDetails(
-            result['workDetails'] as List<WorkDetailModel>,
+            result['workDetails'] as List<WorkDetailData>,
             result['workStats'] as Map<String, Map<String, int>>,
           );
         } catch (e) {
@@ -754,7 +754,7 @@ class _WorkforceCalendarViewState extends State<WorkforceCalendarView> {
       try {
         final result = await _firestoreService.loadTOWorkDetails(toItem.to);
         toItem.setWorkDetails(
-          result['workDetails'] as List<WorkDetailModel>,
+          result['workDetails'] as List<WorkDetailData>,
           result['workStats'] as Map<String, Map<String, int>>,
         );
       } catch (e) {
@@ -800,7 +800,7 @@ class _WorkforceCalendarViewState extends State<WorkforceCalendarView> {
             if (_expandedTOs.contains(toId)) {
               final result = await _firestoreService.loadTOWorkDetails(toItem.to);
               toItem.setWorkDetails(
-                result['workDetails'] as List<WorkDetailModel>,
+                result['workDetails'] as List<WorkDetailData>,
                 result['workStats'] as Map<String, Map<String, int>>,
               );
               debugPrint('✅ TO $toId WorkDetails도 갱신');

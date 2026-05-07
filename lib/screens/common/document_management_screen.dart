@@ -7,7 +7,9 @@ import '../../widgets/common/common_widgets.dart';
 import '../../utils/document_upload_helper.dart';
 import '../../services/firestore_service.dart';
 import '../../utils/toast_helper.dart';
+import '../../utils/dialog_helper.dart';
 import '../../utils/format_helper.dart';
+import '../../widgets/dialogs/styled_dialog.dart';
 import 'package:intl/intl.dart';
 import '../../services/storage_service.dart';
 import '../../utils/navigation_helper.dart';
@@ -513,27 +515,15 @@ class _DocumentManagementScreenState extends State<DocumentManagementScreen> {
 
   /// 사업자등록증 삭제
   Future<void> _deleteBusinessLicense() async {
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: Text('사업자등록증 삭제'),
-        content: Text('등록된 사업자등록증을 삭제하시겠습니까?'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: Text('취소'),
-          ),
-          ElevatedButton(
-            onPressed: () => Navigator.pop(context, true),
-            style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
-            child: Text('삭제'),
-          ),
-        ],
-      ),
+    final confirmed = await DialogHelper.showDangerConfirm(
+      context,
+      title: '사업자등록증 삭제',
+      message: '등록된 사업자등록증을 삭제하시겠습니까?',
+      confirmText: '삭제',
     );
-    
-    if (confirmed != true) return;
-    
+
+    if (!confirmed || !mounted) return;
+
     final userProvider = context.read<UserProvider>();
     final user = userProvider.currentUser;
     
@@ -705,27 +695,15 @@ class _DocumentManagementScreenState extends State<DocumentManagementScreen> {
 
   /// 신분증 삭제
   Future<void> _deleteIdCard() async {
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: Text('신분증 삭제'),
-        content: Text('등록된 신분증을 삭제하시겠습니까?'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: Text('취소'),
-          ),
-          ElevatedButton(
-            onPressed: () => Navigator.pop(context, true),
-            style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
-            child: Text('삭제'),
-          ),
-        ],
-      ),
+    final confirmed = await DialogHelper.showDangerConfirm(
+      context,
+      title: '신분증 삭제',
+      message: '등록된 신분증을 삭제하시겠습니까?',
+      confirmText: '삭제',
     );
-    
-    if (confirmed != true) return;
-    
+
+    if (!confirmed || !mounted) return;
+
     final userProvider = context.read<UserProvider>();
     final user = userProvider.currentUser;
     
@@ -754,6 +732,7 @@ class _DocumentManagementScreenState extends State<DocumentManagementScreen> {
       _hasChanges = true;  // ✅ 추가
     } catch (e) {
       debugPrint('❌ 신분증 삭제 실패: $e');
+      ToastHelper.showError('신분증 삭제에 실패했습니다');
     } finally {
       setState(() => _isLoading = false);
     }
@@ -761,27 +740,15 @@ class _DocumentManagementScreenState extends State<DocumentManagementScreen> {
 
   /// 통장 정보 삭제
   Future<void> _deleteBankInfo() async {
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: Text('통장 정보 삭제'),
-        content: Text('등록된 통장 정보를 삭제하시겠습니까?'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: Text('취소'),
-          ),
-          ElevatedButton(
-            onPressed: () => Navigator.pop(context, true),
-            style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
-            child: Text('삭제'),
-          ),
-        ],
-      ),
+    final confirmed = await DialogHelper.showDangerConfirm(
+      context,
+      title: '통장 정보 삭제',
+      message: '등록된 통장 정보를 삭제하시겠습니까?',
+      confirmText: '삭제',
     );
-    
-    if (confirmed != true) return;
-    
+
+    if (!confirmed || !mounted) return;
+
     final userProvider = context.read<UserProvider>();
     final user = userProvider.currentUser;
     
@@ -1176,23 +1143,23 @@ class _DocumentManagementScreenState extends State<DocumentManagementScreen> {
 
   /// 통장 정보 수정 다이얼로그
   Future<void> _showBankEditDialog() async {
+    String? localBank = _selectedBank;
+
     await showDialog(
       context: context,
-      builder: (context) => AlertDialog(
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(20),
-        ),
-        title: Text('통장 정보 입력'),
-        content: SingleChildScrollView(
-          child: Column(
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setDialogState) => StyledDialog(
+          title: '통장 정보 입력',
+          subtitle: '급여 수령에 사용할 계좌 정보를 입력하세요',
+          icon: Icons.account_balance_wallet,
+          content: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              // 은행 선택
               DropdownButtonFormField<String>(
-                initialValue: _selectedBank,
+                initialValue: localBank,
                 decoration: InputDecoration(
                   labelText: '은행',
-                  prefixIcon: Icon(Icons.account_balance),
+                  prefixIcon: const Icon(Icons.account_balance),
                   border: OutlineInputBorder(
                     borderRadius: BorderRadius.circular(12),
                   ),
@@ -1203,20 +1170,12 @@ class _DocumentManagementScreenState extends State<DocumentManagementScreen> {
                   'KEB하나은행', '경남은행', '광주은행', '대구은행', '부산은행',
                   '전북은행', '제주은행', '케이뱅크', '새마을금고', '신협',
                   '저축은행', '우체국',
-                ].map((bank) => DropdownMenuItem(
-                  value: bank,
-                  child: Text(bank),
-                )).toList(),
-                onChanged: (value) {
-                  setState(() => _selectedBank = value);
-                },
+                ].map((bank) => DropdownMenuItem(value: bank, child: Text(bank))).toList(),
+                onChanged: (value) => setDialogState(() => localBank = value),
               ),
-              
-              SizedBox(height: ResponsiveHelper.spacing(context, 16)),
-              
-              // 계좌번호
+              SizedBox(height: ResponsiveHelper.spacing(ctx, 16)),
               CommonWidgets.textField(
-                context: context,
+                context: ctx,
                 controller: _accountNumberController,
                 label: '계좌번호',
                 hint: '- 없이 숫자만 입력',
@@ -1225,20 +1184,18 @@ class _DocumentManagementScreenState extends State<DocumentManagementScreen> {
               ),
             ],
           ),
+          actions: [
+            StyledDialogButton.cancel(onPressed: () => Navigator.pop(ctx)),
+            StyledDialogButton.primary(
+              text: '저장',
+              onPressed: () {
+                setState(() => _selectedBank = localBank);
+                Navigator.pop(ctx);
+                _saveBankInfo();
+              },
+            ),
+          ],
         ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: Text('취소'),
-          ),
-          ElevatedButton(
-            onPressed: () {
-              Navigator.pop(context);
-              _saveBankInfo();
-            },
-            child: Text('저장'),
-          ),
-        ],
       ),
     );
   }

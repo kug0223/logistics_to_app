@@ -1,12 +1,16 @@
 ﻿import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
 
 // Models
 import '../../../models/core/to_model.dart';
-import '../../../models/core/work_detail_model.dart';
+import '../../../models/core/work_detail_data.dart';
 import '../../../models/ui/admin_to_list_ui_models.dart';
 
 // Services
 import '../../../services/firestore_service.dart';
+
+// Providers
+import '../../../providers/user_provider.dart';
 
 // Utils
 import '../../../utils/toast_helper.dart';
@@ -99,10 +103,17 @@ class _WorkforceListViewState extends State<WorkforceListView>
     });
 
     try {
+      // 현재 관리자의 사업장 목록 (슈퍼어드민은 null → 전체 조회)
+      final user = Provider.of<UserProvider>(context, listen: false).currentUser;
+      final List<String>? filterBusinessIds = user?.isSuperAdmin == true
+          ? null
+          : user?.managedBusinessIds;
+
       // ✨ 겉 카드만 로드 (상세 정보 없이)
       final List<TOGroupItem> groupItems = await _firestoreService.getTOGroupItemsLight(
         activeOnly: _selectedTab == 'ACTIVE',
         closedOnly: _selectedTab == 'CLOSED',
+        businessIds: filterBusinessIds,
       );
 
       // 사업장 목록 추출
@@ -649,7 +660,7 @@ class _WorkforceListViewState extends State<WorkforceListView>
         try {
           final result = await _firestoreService.loadTOWorkDetails(toItem.to);
           toItem.setWorkDetails(
-            result['workDetails'] as List<WorkDetailModel>,
+            result['workDetails'] as List<WorkDetailData>,
             result['workStats'] as Map<String, Map<String, int>>,
           );
         } catch (e) {
@@ -686,6 +697,11 @@ class _WorkforceListViewState extends State<WorkforceListView>
           );
         }).toList();
         groupItem.setGroupTOs(toItems);
+        groupItem.updateGroupStats(
+          confirmed: toItems.fold<int>(0, (s, t) => s + t.confirmedCount),
+          pending: toItems.fold<int>(0, (s, t) => s + t.pendingCount),
+          required: toItems.fold<int>(0, (s, t) => s + t.totalRequired),
+        );
       } catch (e) {
         debugPrint('❌ 슬롯 목록 로드 실패: $e');
         ToastHelper.showError('데이터를 불러오는데 실패했습니다.');
@@ -747,7 +763,7 @@ class _WorkforceListViewState extends State<WorkforceListView>
             if (_expandedTOs.contains(toId)) {
               final result = await _firestoreService.loadTOWorkDetails(toItem.to);
               toItem.setWorkDetails(
-                result['workDetails'] as List<WorkDetailModel>,
+                result['workDetails'] as List<WorkDetailData>,
                 result['workStats'] as Map<String, Map<String, int>>,
               );
               debugPrint('✅ TO $toId WorkDetails도 갱신');
@@ -806,7 +822,7 @@ class _WorkforceListViewState extends State<WorkforceListView>
       try {
         final result = await _firestoreService.loadTOWorkDetails(toItem.to);
         toItem.setWorkDetails(
-          result['workDetails'] as List<WorkDetailModel>,
+          result['workDetails'] as List<WorkDetailData>,
           result['workStats'] as Map<String, Map<String, int>>,
         );
       } catch (e) {

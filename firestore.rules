@@ -34,9 +34,14 @@ service cloud.firestore {
       return isLoggedIn() && (myRole() == 'SUPER_ADMIN' || myRole() == 'BUSINESS_ADMIN');
     }
 
-    function isBusinessOwner(businessId) {
-      return isLoggedIn() &&
-        get(/databases/$(database)/documents/businesses/$(businessId)).data.ownerId == request.auth.uid;
+    // 특정 사업장의 adminIds에 포함된 관리자인지 확인 (슈퍼관리자 포함 아님 — 별도 || isSuperAdmin() 사용)
+    // adminIds 필드가 없는 기존 문서는 ownerId로 폴백
+    function isAdminOf(businessId) {
+      let biz = get(/databases/$(database)/documents/businesses/$(businessId)).data;
+      return isLoggedIn() && (
+        ('adminIds' in biz && request.auth.uid in biz.adminIds) ||
+        (!('adminIds' in biz) && biz.ownerId == request.auth.uid)
+      );
     }
 
     // ═══════════════════════════════════════════════════════════
@@ -85,14 +90,15 @@ service cloud.firestore {
 
       allow create: if isLoggedIn() &&
                        (isBusinessAdmin() || isSuperAdmin()) &&
-                       request.resource.data.ownerId == request.auth.uid;
+                       request.resource.data.ownerId == request.auth.uid &&
+                       request.auth.uid in request.resource.data.adminIds;
 
-      allow update: if isBusinessOwner(businessId) || isSuperAdmin();
-      allow delete: if isBusinessOwner(businessId) || isSuperAdmin();
+      allow update: if isAdminOf(businessId) || isSuperAdmin();
+      allow delete: if isAdminOf(businessId) || isSuperAdmin();
 
       match /workTypes/{workTypeId} {
         allow read: if isLoggedIn();
-        allow write: if isBusinessOwner(businessId) || isSuperAdmin();
+        allow write: if isAdminOf(businessId) || isSuperAdmin();
       }
     }
 
@@ -104,18 +110,18 @@ service cloud.firestore {
       allow read: if isLoggedIn();
 
       allow create: if isLoggedIn() &&
-                       (isBusinessOwner(request.resource.data.businessId) || isSuperAdmin());
+                       (isAdminOf(request.resource.data.businessId) || isSuperAdmin());
 
       allow update: if isLoggedIn() &&
-                       (isBusinessOwner(resource.data.businessId) || isSuperAdmin());
+                       (isAdminOf(resource.data.businessId) || isSuperAdmin());
 
       allow delete: if isLoggedIn() &&
-                       (isBusinessOwner(resource.data.businessId) || isSuperAdmin());
+                       (isAdminOf(resource.data.businessId) || isSuperAdmin());
 
       match /workDetails/{workDetailId} {
         allow read: if isLoggedIn();
         allow write: if isLoggedIn() &&
-                        (isBusinessOwner(
+                        (isAdminOf(
                           get(/databases/$(database)/documents/tos/$(toId)).data.businessId
                         ) || isSuperAdmin());
       }
@@ -123,7 +129,7 @@ service cloud.firestore {
       match /slots/{slotId} {
         allow read: if isLoggedIn();
         allow write: if isLoggedIn() &&
-                        (isBusinessOwner(
+                        (isAdminOf(
                           get(/databases/$(database)/documents/tos/$(toId)).data.businessId
                         ) || isSuperAdmin());
       }
@@ -134,9 +140,20 @@ service cloud.firestore {
     // ═══════════════════════════════════════════════════════════
     match /applications/{applicationId} {
 
-      allow read: if isLoggedIn() && (
+      // 단일 문서 읽기 (get): 본인 · 사업장 오너 · 슈퍼어드민
+      allow get: if isLoggedIn() && (
+                   isOwner(resource.data.uid) ||
+                   isAdminOf(resource.data.businessId) ||
+                   isSuperAdmin()
+                 );
+
+      // 목록 쿼리 (list):
+      // - 일반 유저: uid 필터 쿼리로만 본인 지원서 조회 가능
+      // - 관리자: businessId 필터 쿼리로 사업장 지원서 조회 가능
+      // 쿼리에 uid/businessId 필터가 포함되면 Firestore가 per-doc 규칙을 정상 평가함
+      allow list: if isLoggedIn() && (
                     isOwner(resource.data.uid) ||
-                    isBusinessOwner(resource.data.businessId) ||
+                    isAdminOf(resource.data.businessId) ||
                     isSuperAdmin()
                   );
 
@@ -147,11 +164,13 @@ service cloud.firestore {
       allow update: if isLoggedIn() && (
                       (isOwner(resource.data.uid) &&
                        request.resource.data.status == 'CANCELED') ||
-                      isBusinessOwner(resource.data.businessId) ||
+                      isAdminOf(resource.data.businessId) ||
                       isSuperAdmin()
                     );
 
-      allow delete: if isSuperAdmin();
+      // 삭제: 슈퍼어드민 또는 해당 사업장 오너 (공고 삭제 시 연관 지원서 정리)
+      allow delete: if isSuperAdmin() ||
+                       isAdminOf(resource.data.businessId);
     }
 
     // ═══════════════════════════════════════════════════════════
@@ -161,7 +180,7 @@ service cloud.firestore {
 
       allow read: if isLoggedIn() && (
                     isOwner(resource.data.userId) ||
-                    isBusinessOwner(resource.data.businessId) ||
+                    isAdminOf(resource.data.businessId) ||
                     isSuperAdmin()
                   );
 
@@ -171,7 +190,7 @@ service cloud.firestore {
 
       allow update: if isLoggedIn() && (
                       isOwner(resource.data.userId) ||
-                      isBusinessOwner(resource.data.businessId) ||
+                      isAdminOf(resource.data.businessId) ||
                       isSuperAdmin()
                     );
 
@@ -208,7 +227,7 @@ service cloud.firestore {
       allow create: if isLoggedIn() &&
                        isBusinessAdmin() &&
                        request.resource.data.reviewerId == request.auth.uid &&
-                       isBusinessOwner(request.resource.data.businessId);
+                       isAdminOf(request.resource.data.businessId);
 
       allow update, delete: if isSuperAdmin();
     }
@@ -222,13 +241,13 @@ service cloud.firestore {
 
       // 생성: 해당 사업장 관리자만 (request.resource로 businessId 검증)
       allow create: if isLoggedIn() && (
-                      (isBusinessAdmin() && isBusinessOwner(request.resource.data.businessId)) ||
+                      (isBusinessAdmin() && isAdminOf(request.resource.data.businessId)) ||
                       isSuperAdmin()
                     );
 
       // 수정·삭제: 해당 사업장 관리자만 (resource로 businessId 검증)
       allow update, delete: if isLoggedIn() && (
-                              (isBusinessAdmin() && isBusinessOwner(resource.data.businessId)) ||
+                              (isBusinessAdmin() && isAdminOf(resource.data.businessId)) ||
                               isSuperAdmin()
                             );
     }
@@ -240,20 +259,20 @@ service cloud.firestore {
 
       allow read: if isLoggedIn() && (
                     isOwner(resource.data.applicantUid) ||
-                    isBusinessOwner(resource.data.businessId) ||
+                    isAdminOf(resource.data.businessId) ||
                     isSuperAdmin()
                   );
 
       // 생성: 지원자 본인 또는 해당 사업장 관리자(추가근무/미출근 요청)
       allow create: if isLoggedIn() && (
                        request.resource.data.applicantUid == request.auth.uid ||
-                       isBusinessOwner(request.resource.data.businessId) ||
+                       isAdminOf(request.resource.data.businessId) ||
                        isSuperAdmin()
                      );
 
       allow update: if isLoggedIn() && (
                       isOwner(resource.data.applicantUid) ||
-                      isBusinessOwner(resource.data.businessId) ||
+                      isAdminOf(resource.data.businessId) ||
                       isSuperAdmin()
                     );
 

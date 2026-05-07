@@ -39,6 +39,7 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
   final _formKey = GlobalKey<FormState>();
   final _firestoreService = FirestoreService();
   final TextEditingController _titleController = TextEditingController();
+  final TextEditingController _groupTitleController = TextEditingController();
   final TextEditingController _descriptionController = TextEditingController();
 
   // 로딩 상태
@@ -89,6 +90,7 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
   @override
   void dispose() {
     _titleController.dispose();
+    _groupTitleController.dispose();
     _descriptionController.dispose();
     super.dispose();
   }
@@ -599,6 +601,9 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
         businessId: _selectedBusiness!.id,
         businessName: _selectedBusiness!.name,
         title: _titleController.text.trim(),
+        groupTitle: _groupTitleController.text.trim().isNotEmpty
+            ? _groupTitleController.text.trim()
+            : null,
         description: _descriptionController.text.trim(),
         type: _selectedJobType,
         workDetails: workDetailList,
@@ -679,6 +684,9 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
               SizedBox(height: ResponsiveHelper.spacing(context, 16)),
 
               TOTitleSection(titleController: _titleController),
+              SizedBox(height: ResponsiveHelper.spacing(context, 16)),
+
+              _buildGroupTitleField(context),
               SizedBox(height: ResponsiveHelper.spacing(context, 16)),
 
               _buildDateSelector(),
@@ -867,6 +875,54 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
                 )),
           ],
         ),
+      ),
+    );
+  }
+
+  Widget _buildGroupTitleField(BuildContext context) {
+    final theme = Theme.of(context);
+    return TOSectionContainer(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            '공고 카드 제목 (선택)',
+            style: ResponsiveHelper.subtitleStyle(context).copyWith(
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+          SizedBox(height: ResponsiveHelper.spacing(context, 4)),
+          Text(
+            '관리자 화면에서 표시할 카드 제목입니다. 비워두면 공고 제목이 사용됩니다.',
+            style: ResponsiveHelper.smallStyle(context, color: AppColors.grey500),
+          ),
+          SizedBox(height: ResponsiveHelper.spacing(context, 12)),
+          TextFormField(
+            controller: _groupTitleController,
+            style: ResponsiveHelper.bodyStyle(context),
+            decoration: InputDecoration(
+              hintText: '예: 5월 분류작업 묶음',
+              hintStyle: ResponsiveHelper.smallStyle(context, color: AppColors.grey400),
+              prefixIcon: Icon(
+                Icons.label_outline,
+                color: theme.primaryColor,
+                size: ResponsiveHelper.iconSize(context, 24),
+              ),
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(12),
+                borderSide: BorderSide(color: AppColors.grey300),
+              ),
+              enabledBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(12),
+                borderSide: BorderSide(color: AppColors.grey300),
+              ),
+              focusedBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(12),
+                borderSide: BorderSide(color: theme.primaryColor, width: 2),
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }

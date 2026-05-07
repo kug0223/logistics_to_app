@@ -63,6 +63,7 @@ class SlotModel {
   /// null 이면 즉시 공개 (publishMode == 'immediate')
   final DateTime? visibleFrom;
 
+  final String? title; // 날짜별 공고 제목 (null이면 마스터 TO title 사용)
   final bool isManualClosed;
   final DateTime? closedAt;
   final String? closedBy;
@@ -82,6 +83,7 @@ class SlotModel {
     this.pendingCount = 0,
     this.applicationDeadline,
     this.visibleFrom,
+    this.title,
     this.isManualClosed = false,
     this.closedAt,
     this.closedBy,
@@ -111,6 +113,7 @@ class SlotModel {
       applicationDeadline:
           (data['applicationDeadline'] as Timestamp?)?.toDate().toLocal(),
       visibleFrom: (data['visibleFrom'] as Timestamp?)?.toDate().toLocal(),
+      title: data['title'] as String?,
       isManualClosed: data['isManualClosed'] as bool? ?? false,
       closedAt: (data['closedAt'] as Timestamp?)?.toDate(),
       closedBy: data['closedBy'] as String?,
@@ -133,6 +136,7 @@ class SlotModel {
         'applicationDeadline': Timestamp.fromDate(applicationDeadline!),
       if (visibleFrom != null)
         'visibleFrom': Timestamp.fromDate(visibleFrom!.toUtc()),
+      if (title != null && title!.isNotEmpty) 'title': title,
       'isManualClosed': isManualClosed,
       if (closedAt != null) 'closedAt': Timestamp.fromDate(closedAt!),
       'closedBy': closedBy,
@@ -154,6 +158,8 @@ class SlotModel {
     DateTime? applicationDeadline,
     DateTime? visibleFrom,
     bool clearVisibleFrom = false,
+    String? title,
+    bool clearTitle = false,
     bool? isManualClosed,
     DateTime? closedAt,
     String? closedBy,
@@ -172,6 +178,7 @@ class SlotModel {
       pendingCount: pendingCount ?? this.pendingCount,
       applicationDeadline: applicationDeadline ?? this.applicationDeadline,
       visibleFrom: clearVisibleFrom ? null : (visibleFrom ?? this.visibleFrom),
+      title: clearTitle ? null : (title ?? this.title),
       isManualClosed: isManualClosed ?? this.isManualClosed,
       closedAt: closedAt ?? this.closedAt,
       closedBy: closedBy ?? this.closedBy,

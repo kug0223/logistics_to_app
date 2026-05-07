@@ -21,7 +21,6 @@ import '../../utils/dialog_helper.dart';
 import '../../widgets/common/common_widgets.dart';
 import '../common/document_management_screen.dart';
 import '../../utils/navigation_helper.dart';
-import '../../utils/cache_manager.dart';
 
 // Screen
 import 'business_detail_screen.dart';
@@ -62,19 +61,7 @@ class _BusinessListScreenState extends State<BusinessListScreen> {
 
       List<BusinessModel> businesses;
       
-      if (forceServer) {
-        // 서버에서 직접 조회 (캐시 무시)
-        final snapshot = await CacheManager.getCollectionWhere(
-          'businesses',
-          field: 'ownerId',
-          isEqualTo: ownerId,
-        );
-        businesses = snapshot.docs
-            .map((doc) => BusinessModel.fromMap(doc.data(), doc.id))
-            .toList();
-      } else {
-        businesses = await _firestoreService.getMyBusiness(ownerId);
-      }
+      businesses = await _firestoreService.getMyBusiness(ownerId);
 
       setState(() {
         _businesses = businesses;
@@ -572,6 +559,9 @@ class _BusinessListScreenState extends State<BusinessListScreen> {
                 if (result == true) _loadBusinesses(forceServer: true);
               },
             );
+            break;
+          case 'delete':
+            await _deleteBusiness(business);
             break;
         }
       },

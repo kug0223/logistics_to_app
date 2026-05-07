@@ -1,9 +1,11 @@
 ﻿import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
+import 'package:provider/provider.dart';
 import '../../../models/core/application_model.dart';
+import '../../../providers/user_provider.dart';
 import '../../../services/firestore_service.dart';
 import '../../../utils/toast_helper.dart';
-import '../../../utils/responsive_helper.dart';  // ⭐ 추가
+import '../../../utils/responsive_helper.dart';
 import '../../../utils/dialog_helper.dart';
 import '../../../widgets/common/loading_button.dart';
 
@@ -85,18 +87,19 @@ class _ResignRequestManagementDialogState
   @override
   Widget build(BuildContext context) {
     return Dialog(
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
       child: Container(
         constraints: const BoxConstraints(maxWidth: 600, maxHeight: 700),
         child: Column(
           children: [
             // 헤더
             Container(
-              padding: ResponsiveHelper.cardPadding(context),  // ⭐ 변경
+              padding: ResponsiveHelper.cardPadding(context),
               decoration: BoxDecoration(
                 color: Theme.of(context).primaryColor,
                 borderRadius: const BorderRadius.only(
-                  topLeft: Radius.circular(4),
-                  topRight: Radius.circular(4),
+                  topLeft: Radius.circular(24),
+                  topRight: Radius.circular(24),
                 ),
               ),
               child: Row(
@@ -427,7 +430,7 @@ class _ResignRequestManagementDialogState
     if (!confirmed || !mounted) return;
 
     try {
-      final adminUID = 'ADMIN_UID'; // TODO: 실제 관리자 UID 가져오기
+      final adminUID = context.read<UserProvider>().currentUser?.uid ?? '';
 
       final success = await _firestoreService.approveResignation(
         applicationId: item.application.id,
@@ -473,7 +476,7 @@ class _ResignRequestManagementDialogState
     if (reason == null || reason.isEmpty || !mounted) return;
 
     try {
-      final adminUID = 'ADMIN_UID'; // TODO: 실제 관리자 UID 가져오기
+      final adminUID = context.read<UserProvider>().currentUser?.uid ?? '';
 
       final success = await _firestoreService.rejectResignation(
         applicationId: item.application.id,

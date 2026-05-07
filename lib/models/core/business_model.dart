@@ -13,7 +13,8 @@ class BusinessModel {
   final String? detailAddress;   // 세부주소
   final double? latitude;
   final double? longitude;
-  final String ownerId;          // 사업장 관리자 UID
+  final String ownerId;          // 사업장 최초 생성자 UID (알림 대상 등 기본값)
+  final List<String> adminIds;   // 이 사업장을 관리할 수 있는 모든 관리자 UID 목록
   final String? phone;           // 연락처
   final String? description;     // 사업장 설명
   final bool isApproved;         // 슈퍼관리자 승인 여부
@@ -71,13 +72,14 @@ class BusinessModel {
     this.latitude,
     this.longitude,
     required this.ownerId,
+    List<String>? adminIds,
     this.phone,
     this.description,
     this.isApproved = false,
     required this.createdAt,
     this.updatedAt,
     this.attendanceType = 'gps',
-    this.gpsRadius = 100,  // ⭐ 기본값 100m
+    this.gpsRadius = 100,
     // 이미지
     this.mainImageUrl,
     this.imageUrls,
@@ -98,7 +100,9 @@ class BusinessModel {
     this.rating,
     this.reviewCount,
     this.companyName,
-  });
+  }) : adminIds = (adminIds != null && adminIds.isNotEmpty)
+           ? adminIds
+           : [ownerId];
 
   // Firestore에서 데이터 가져올 때
   factory BusinessModel.fromMap(Map<String, dynamic> map, String id) {
@@ -115,6 +119,9 @@ class BusinessModel {
       latitude: map['latitude'] != null ? (map['latitude'] as num).toDouble() : null,
       longitude: map['longitude'] != null ? (map['longitude'] as num).toDouble() : null,
       ownerId: map['ownerId'] ?? '',
+      adminIds: map['adminIds'] != null
+          ? List<String>.from(map['adminIds'])
+          : null, // null이면 생성자에서 [ownerId]로 초기화됨
       phone: map['phone'],
       description: map['description'],
       isApproved: map['isApproved'] ?? false,
@@ -172,6 +179,7 @@ class BusinessModel {
       'latitude': latitude,
       'longitude': longitude,
       'ownerId': ownerId,
+      'adminIds': adminIds,
       'phone': phone,
       'description': description,
       'isApproved': isApproved,
@@ -222,6 +230,7 @@ class BusinessModel {
     double? latitude,
     double? longitude,
     String? ownerId,
+    List<String>? adminIds,
     String? phone,
     String? description,
     bool? isApproved,
@@ -258,6 +267,7 @@ class BusinessModel {
       latitude: latitude ?? this.latitude,
       longitude: longitude ?? this.longitude,
       ownerId: ownerId ?? this.ownerId,
+      adminIds: adminIds ?? this.adminIds,
       phone: phone ?? this.phone,
       description: description ?? this.description,
       isApproved: isApproved ?? this.isApproved,

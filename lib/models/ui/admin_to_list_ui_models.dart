@@ -89,8 +89,8 @@ class TOGroupItem {
 
   // ── 기타 ─────────────────────────────────────────────
 
-  /// 표시명 (구 groupName)
-  String get groupName => singleTO!.title;
+  /// 표시명 — groupTitle 설정 시 그것을, 없으면 title 사용
+  String get groupName => singleTO!.displayGroupTitle;
   DateTime get createdAt => singleTO!.createdAt;
   String? get description => singleTO!.description;
   String get creatorUID => singleTO!.creatorUID;
@@ -163,14 +163,7 @@ class TOItem {
     _workDetails = details;
     workDetailStats = stats;
     isWorkDetailLoaded = true;
-    int totalConfirmed = 0;
-    int totalPending = 0;
-    for (final stat in stats.values) {
-      totalConfirmed += stat['confirmed'] ?? 0;
-      totalPending += stat['pending'] ?? 0;
-    }
-    confirmedCount = totalConfirmed;
-    pendingCount = totalPending;
+    // confirmedCount/pendingCount는 슬롯 문서의 값을 유지 (헤더 수치 일관성)
   }
 
   void updateOuterStats({
