@@ -543,10 +543,12 @@ extension ApplicationFirestore on FirestoreService {
     }
   }
 
-  /// 확정된 지원 취소 (노쇼 패널티 포함, 관리자용)
+  /// 확정된 지원 취소 (노쇼 패널티 포함, 관리자/사용자 공용)
   Future<bool> cancelConfirmedApplication(
     String applicationId, {
     bool applyNoShowPenalty = false,
+    String? canceledBy,   // 관리자 UID (관리자가 취소할 때)
+    String? cancelReason, // 관리자 취소 사유
   }) async {
     try {
       final appDoc = await _firestore
@@ -566,18 +568,30 @@ extension ApplicationFirestore on FirestoreService {
 
       final toId = appData['toId'] as String?;
       final slotId = appData['slotId'] as String?;
+      final selectedWorkType = appData['selectedWorkType'] as String?;
+      final isAdminCancel = canceledBy != null;
       final batch = _firestore.batch();
+
+      // 관리자 취소: ADMIN_CANCEL / 사용자 취소: USER_CANCELED / 노쇼: SAME_DAY_CANCEL
+      final String reason = isAdminCancel
+          ? 'ADMIN_CANCELED'
+          : (applyNoShowPenalty ? 'SAME_DAY_CANCEL' : 'USER_CANCELED');
+      final String action = isAdminCancel
+          ? 'ADMIN_CANCEL_CONFIRMED'
+          : 'CONFIRM_CANCEL';
 
       batch.update(appDoc.reference, {
         'status': 'CANCELED',
         'canceledAt': FieldValue.serverTimestamp(),
-        'cancelReason': applyNoShowPenalty ? 'SAME_DAY_CANCEL' : 'USER_CANCELED',
+        'cancelReason': reason,
+        if (isAdminCancel && cancelReason != null) 'cancelMessage': cancelReason,
+        if (canceledBy != null) 'canceledBy': canceledBy,
         'statusHistory': FieldValue.arrayUnion([{
           'status': 'CANCELED',
           'at': Timestamp.now(),
-          'by': uid,
-          'action': 'CONFIRM_CANCEL',
-          'reason': applyNoShowPenalty ? 'SAME_DAY_CANCEL' : 'USER_CANCELED',
+          'by': canceledBy ?? uid,
+          'action': action,
+          'reason': cancelReason ?? reason,
         }]),
       });
 
@@ -596,15 +610,27 @@ extension ApplicationFirestore on FirestoreService {
         }
       }
 
-      if (toId != null) _decrementTOConfirmed(batch, toId, slotId);
+      if (toId != null) {
+        _decrementTOConfirmed(batch, toId, slotId, workType: selectedWorkType);
+      }
       await batch.commit();
       if (toId != null) clearCache(toId: toId);
 
-      await _cleanupApplicationRelatedData(
-        applicationId: applicationId,
-        uid: uid,
-      );
-      debugPrint('✅ 확정 취소 완료 (패널티: $applyNoShowPenalty)');
+      await _cleanupApplicationRelatedData(applicationId: applicationId, uid: uid);
+
+      // 알림: 관리자 취소 시 확정취소 알림, 아닐 때는 별도 처리하지 않음
+      if (isAdminCancel) {
+        await createNotification(NotificationModel.createConfirmationCanceled(
+          userId: uid,
+          businessName: appData['businessName'] as String,
+          workType: appData['selectedWorkType'] as String,
+          workDate: (appData['workDate'] as Timestamp).toDate(),
+          applicationId: applicationId,
+          cancelReason: cancelReason,
+        ));
+      }
+
+      debugPrint('✅ 확정 취소 완료 (관리자: $isAdminCancel, 패널티: $applyNoShowPenalty)');
       return true;
     } catch (e) {
       debugPrint('❌ 확정 취소 실패: $e');

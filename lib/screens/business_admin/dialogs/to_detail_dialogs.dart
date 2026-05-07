@@ -5,6 +5,7 @@ import '../../../services/firestore_service.dart';
 import '../../../utils/toast_helper.dart';
 import '../../../utils/responsive_helper.dart';  // ⭐ 추가
 import '../../../models/ui/admin_to_detail_ui_models.dart';
+import '../../../widgets/dialogs/styled_dialog.dart';
 
 /// TO 상세 화면의 다이얼로그 모음
 class TODetailDialogs {
@@ -43,19 +44,9 @@ class TODetailDialogs {
 
     await showDialog(
       context: context,
-      builder: (context) => AlertDialog(
-        title: Row(
-          children: [
-            Icon(Icons.list_alt, color: Theme.of(context).primaryColor),
-            SizedBox(width: ResponsiveHelper.spacing(context, 12)),  // ⭐ 변경
-            Expanded(
-              child: Text(
-                '${dateFormat.format(date)} 확정 명단 (${confirmedList.length}명)',
-                style: ResponsiveHelper.titleStyle(context),  // ⭐ 변경
-              ),
-            ),
-          ],
-        ),
+      builder: (context) => StyledDialog(
+        title: '${dateFormat.format(date)} 확정 명단 (${confirmedList.length}명)',
+        icon: Icons.list_alt,
         content: SizedBox(
           width: double.maxFinite,
           child: confirmedList.isEmpty
@@ -116,9 +107,8 @@ class TODetailDialogs {
               icon: const Icon(Icons.content_copy),
               label: const Text('연락처 복사'),
             ),
-          TextButton(
+          StyledDialogButton.cancel(
             onPressed: () => Navigator.pop(context),
-            child: const Text('닫기'),
           ),
         ],
       ),
@@ -133,19 +123,9 @@ class TODetailDialogs {
   ) async {
     await showDialog(
       context: context,
-      builder: (context) => AlertDialog(
-        title: Row(
-          children: [
-            Icon(Icons.people, color: Theme.of(context).primaryColor),
-            SizedBox(width: ResponsiveHelper.spacing(context, 12)),  // ⭐ 변경
-            Expanded(
-              child: Text(
-                '${work.workDetail.workType} 지원자 (${work.totalApplicants}명)',
-                style: ResponsiveHelper.titleStyle(context),  // ⭐ 변경
-              ),
-            ),
-          ],
-        ),
+      builder: (context) => StyledDialog(
+        title: '${work.workDetail.workType} 지원자 (${work.totalApplicants}명)',
+        icon: Icons.people,
         content: SizedBox(
           width: double.maxFinite,
           child: SingleChildScrollView(
@@ -227,9 +207,8 @@ class TODetailDialogs {
           ),
         ),
         actions: [
-          TextButton(
+          StyledDialogButton.cancel(
             onPressed: () => Navigator.pop(context),
-            child: const Text('닫기'),
           ),
         ],
       ),

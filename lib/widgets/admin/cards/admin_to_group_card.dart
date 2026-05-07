@@ -42,7 +42,6 @@ class TOGroupCard extends StatefulWidget {
   final TOGroupItem groupItem;
   final FirestoreService firestoreService;
   final TOListDialogs dialogs;
-  final List<TOGroupItem> allGroupItems;
   final VoidCallback onChanged;
   final bool isExpanded;
   final Set<String> expandedTOs;
@@ -60,7 +59,6 @@ class TOGroupCard extends StatefulWidget {
     required this.groupItem,
     required this.firestoreService,
     required this.dialogs,
-    required this.allGroupItems,
     required this.onChanged,
     required this.isExpanded,
     required this.expandedTOs,
@@ -82,19 +80,19 @@ class _TOGroupCardState extends State<TOGroupCard> with SingleTickerProviderStat
     final masterTO = widget.groupItem.masterTO;
     final theme = Theme.of(context);
     
-    // ✅ targetTOs를 먼저 선언 (블록 밖에서도 사용 가능하도록)
-    final targetTOs = (widget.selectedDate != null && widget.groupItem.isGrouped)
-        ? widget.groupItem.groupTOs.where((toItem) => 
+    // flex TO이고 날짜 필터가 있으면 해당 날짜 슬롯만, 아니면 전체
+    final targetTOs = (widget.selectedDate != null && !widget.groupItem.isLongTerm)
+        ? widget.groupItem.groupTOs.where((toItem) =>
             DateUtils.isSameDay(toItem.to.date, widget.selectedDate!)).toList()
         : widget.groupItem.groupTOs;
-    
+
     // 전체 통계 계산
     int totalConfirmed = 0;
     int totalPending = 0;
     int totalRequired = 0;
-    
-    // ✅ 그룹인데 groupTOs가 아직 로드 안 됐으면 groupItem에서 통계 사용
-    if (widget.groupItem.isGrouped && targetTOs.isEmpty) {
+
+    // groupTOs가 아직 로드 안 됐으면 groupItem에서 통계 사용
+    if (targetTOs.isEmpty) {
       totalConfirmed = widget.groupItem.totalConfirmed;
       totalPending = widget.groupItem.totalPending;
       totalRequired = widget.groupItem.totalRequired;
@@ -243,8 +241,31 @@ class _TOGroupCardState extends State<TOGroupCard> with SingleTickerProviderStat
                             ),
                           ),
                           
+                          // 플렉스 TO: 날짜 슬롯 수 뱃지
+                          if (!widget.groupItem.isLongTerm && masterTO.totalSlots > 1) ...[
+                            SizedBox(width: ResponsiveHelper.spacing(context, 4)),
+                            Container(
+                              padding: EdgeInsets.symmetric(
+                                horizontal: ResponsiveHelper.spacing(context, 6),
+                                vertical: ResponsiveHelper.spacing(context, 3),
+                              ),
+                              decoration: BoxDecoration(
+                                color: AppColors.infoBg,
+                                borderRadius: BorderRadius.circular(6),
+                                border: Border.all(color: AppColors.infoLight),
+                              ),
+                              child: Text(
+                                '${masterTO.totalSlots}일',
+                                style: ResponsiveHelper.smallStyle(
+                                  context,
+                                  color: AppColors.infoDark,
+                                ).copyWith(fontWeight: FontWeight.bold),
+                              ),
+                            ),
+                          ],
+
                           SizedBox(width: ResponsiveHelper.spacing(context, 8)),
-                          
+
                           // 사업장명
                           Expanded(
                             child: Text(
@@ -268,22 +289,8 @@ class _TOGroupCardState extends State<TOGroupCard> with SingleTickerProviderStat
                           
                           SizedBox(width: ResponsiveHelper.spacing(context, 8)),
                           
-                          // 그룹/단일 표시 (아이콘만)
-                          if (widget.groupItem.isGrouped)
-                            _buildMiniIconBadge(
-                              context,
-                              icon: Icons.folder,
-                              color: AppColors.successDark,
-                              bgColor: AppColors.successBg,
-                            ),
-                          
-                          if (widget.groupItem.isGrouped)
-                            SizedBox(width: ResponsiveHelper.spacing(context, 4)),
-                          
                           // 메뉴 버튼
-                          widget.groupItem.isGrouped
-                              ? _buildGroupTOMenu(context)
-                              : _buildSingleTOMenu(context),
+                          _buildSingleTOMenu(context),
                         ],
                       ),
                       
@@ -409,13 +416,13 @@ class _TOGroupCardState extends State<TOGroupCard> with SingleTickerProviderStat
                 ),
               ),
               
-              // ✨ 펼쳐진 경우: 그룹 TO 목록 (애니메이션 적용)
+              // 펼쳐진 경우: flex 다중 슬롯 목록
               AnimatedSize(
                 duration: const Duration(milliseconds: 250),
                 curve: Curves.easeOutCubic,
                 alignment: Alignment.topCenter,
                 clipBehavior: Clip.hardEdge,
-                child: widget.isExpanded && widget.groupItem.isGrouped
+                child: widget.isExpanded && !widget.groupItem.isLongTerm && widget.groupItem.groupTOs.length > 1
                     ? Column(
                         children: [
                           Divider(height: 1, color: AppColors.grey200),
@@ -481,13 +488,13 @@ class _TOGroupCardState extends State<TOGroupCard> with SingleTickerProviderStat
                     : const SizedBox.shrink(),
               ),
               
-              // ✨ 펼쳐진 경우: 단일 TO 업무 상세 (애니메이션 적용)
+              // 펼쳐진 경우: 단건 슬롯 or 장기 TO 업무 상세
               AnimatedSize(
                 duration: const Duration(milliseconds: 250),
                 curve: Curves.easeOutCubic,
                 alignment: Alignment.topCenter,
                 clipBehavior: Clip.hardEdge,
-                child: widget.isExpanded && !widget.groupItem.isGrouped
+                child: widget.isExpanded && (widget.groupItem.isLongTerm || widget.groupItem.groupTOs.length <= 1)
                     ? Column(
                         children: [
                           Divider(height: 1, color: AppColors.grey200),
@@ -624,45 +631,17 @@ class _TOGroupCardState extends State<TOGroupCard> with SingleTickerProviderStat
   String _getDateText(dynamic masterTO) {
     if (masterTO.isLongTerm) {
       return masterTO.longTermPeriodWithDays;
-    } else if (widget.groupItem.isGrouped) {
-      // ✅ 로드됐으면 실제 개수, 아니면 마스터에 저장된 개수 사용
-      final int count;
-      if (widget.groupItem.isGroupDetailLoaded && widget.groupItem.groupTOs.length > 1) {
-        count = widget.groupItem.groupTOs.length;
-      } else {
-        count = masterTO.groupActualDaysCount ?? masterTO.groupDaysCount ?? 1;
-      }
-      
-      if (count <= 1) {
-        return FormatHelper.formatDate(masterTO.date);
-      }
-      return '${FormatHelper.formatDate(masterTO.date)} 외 ${count - 1}일';
-    } else {
-      return FormatHelper.formatDate(masterTO.date);
     }
+    // flex TO: 로드된 슬롯 수 우선, 없으면 totalSlots 사용
+    final int count = widget.groupItem.isGroupDetailLoaded && widget.groupItem.groupTOs.isNotEmpty
+        ? widget.groupItem.groupTOs.length
+        : masterTO.totalSlots;
+    if (count <= 1) {
+      return FormatHelper.formatDate(masterTO.rangeStart ?? masterTO.createdAt);
+    }
+    return '${FormatHelper.formatDate(masterTO.rangeStart ?? masterTO.createdAt)} 외 ${count - 1}일';
   }
-  /// ✨ 미니 아이콘 배지 (타입, 그룹 표시용)
-  Widget _buildMiniIconBadge(
-    BuildContext context, {
-    required IconData icon,
-    required Color color,
-    required Color bgColor,
-  }) {
-    return Container(
-      padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 5)),
-      decoration: BoxDecoration(
-        color: bgColor,
-        borderRadius: BorderRadius.circular(6),
-      ),
-      child: Icon(
-        icon,
-        size: ResponsiveHelper.iconSize(context, 12),
-        color: color,
-      ),
-    );
-  }
-
-  /// ✨ 인원 현황 배지 (핵심 정보)
+/// ✨ 인원 현황 배지 (핵심 정보)
   Widget _buildPersonnelBadge(
     BuildContext context, {
     required int confirmed,
@@ -911,6 +890,20 @@ class _TOGroupCardState extends State<TOGroupCard> with SingleTickerProviderStat
           ),
         ),
         PopupMenuItem(
+          value: widget.groupItem.isClosed ? 'reopen' : 'close',
+          child: Row(
+            children: [
+              Icon(
+                widget.groupItem.isClosed ? Icons.lock_open : Icons.lock_outline,
+                size: ResponsiveHelper.iconSize(context, 18),
+                color: widget.groupItem.isClosed ? AppColors.success : AppColors.warning,
+              ),
+              SizedBox(width: ResponsiveHelper.spacing(context, 12)),
+              Text(widget.groupItem.isClosed ? '재오픈' : '마감'),
+            ],
+          ),
+        ),
+        PopupMenuItem(
           value: 'delete',
           child: Row(
             children: [
@@ -924,21 +917,6 @@ class _TOGroupCardState extends State<TOGroupCard> with SingleTickerProviderStat
             ],
           ),
         ),
-        if (!widget.groupItem.isLongTerm)
-          PopupMenuItem(
-            value: 'link',
-            child: Row(
-              children: [
-                Icon(
-                  Icons.link,
-                  size: ResponsiveHelper.iconSize(context, 18),
-                  color: AppColors.info,  
-                ),
-                SizedBox(width: ResponsiveHelper.spacing(context, 12)),
-                const Text('그룹 연결'),
-              ],
-            ),
-          ),
         PopupMenuItem(
           value: 'confirmedList',
           child: Row(
@@ -964,67 +942,6 @@ class _TOGroupCardState extends State<TOGroupCard> with SingleTickerProviderStat
               ),
               SizedBox(width: ResponsiveHelper.spacing(context, 12)),
               const Text('업무별 마감'),
-            ],
-          ),
-        ),
-      ],
-    );
-  }
-
-  /// 그룹 TO 메뉴
-  Widget _buildGroupTOMenu(BuildContext context) {
-    return PopupMenuButton<String>(
-      icon: Icon(
-        Icons.more_vert,
-        size: ResponsiveHelper.iconSize(context, 20),
-        color: AppColors.grey600,
-      ),
-      padding: EdgeInsets.zero,
-      tooltip: '메뉴',
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(12),
-      ),
-      onSelected: (value) => _handleGroupTOMenuAction(context, value),
-      itemBuilder: (context) => [
-        PopupMenuItem(
-          value: 'editGroupName',
-          child: Row(
-            children: [
-              Icon(
-                Icons.edit,
-                size: ResponsiveHelper.iconSize(context, 18),
-                color: AppColors.info,
-              ),
-              SizedBox(width: ResponsiveHelper.spacing(context, 12)),
-              const Text('그룹명 수정'),
-            ],
-          ),
-        ),
-        PopupMenuItem(
-          value: widget.groupItem.isClosed ? 'reopenGroup' : 'closeGroup',
-          child: Row(
-            children: [
-              Icon(
-                widget.groupItem.isClosed ? Icons.lock_open : Icons.lock,
-                size: ResponsiveHelper.iconSize(context, 18),
-                color: widget.groupItem.isClosed ? AppColors.success : AppColors.warning, 
-              ),
-              SizedBox(width: ResponsiveHelper.spacing(context, 12)),
-              Text(widget.groupItem.isClosed ? '그룹 재오픈' : '그룹 마감'),
-            ],
-          ),
-        ),
-        PopupMenuItem(
-          value: 'deleteGroup',
-          child: Row(
-            children: [
-              Icon(
-                Icons.delete_forever,
-                size: ResponsiveHelper.iconSize(context, 18),
-                color: AppColors.error,
-              ),
-              SizedBox(width: ResponsiveHelper.spacing(context, 12)),
-              const Text('그룹 전체 삭제'),
             ],
           ),
         ),
@@ -1095,6 +1012,14 @@ class _TOGroupCardState extends State<TOGroupCard> with SingleTickerProviderStat
         );
         break;
 
+      case 'close':
+        widget.dialogs.showCloseTODialog(masterTO);
+        break;
+
+      case 'reopen':
+        widget.dialogs.showReopenTODialog(masterTO);
+        break;
+
       case 'delete':
         if (widget.groupItem.groupTOs.isEmpty) {
           ToastHelper.showError('TO 정보를 불러올 수 없습니다.');
@@ -1103,32 +1028,24 @@ class _TOGroupCardState extends State<TOGroupCard> with SingleTickerProviderStat
         widget.dialogs.showDeleteTODialog(widget.groupItem.groupTOs.first);
         break;
 
-      case 'link':
-        if (widget.groupItem.groupTOs.isEmpty) {
-          ToastHelper.showError('TO 정보를 불러올 수 없습니다.');
-          return;
-        }
-        widget.dialogs.showReconnectToGroupDialog(
-          widget.groupItem.groupTOs.first,
-          widget.allGroupItems,
-        );
-        break;
-
       case 'confirmedList':
         // ✅ WorkDetails 로드 확인 후 다이얼로그 열기
         if (widget.groupItem.groupTOs.isEmpty) {
           ToastHelper.showError('TO 정보를 불러올 수 없습니다.');
           return;
         }
-        final toItemForConfirmed = widget.groupItem.groupTOs.first;
-        
+
+        // 다중 슬롯이면 날짜 선택
+        final toItemForConfirmed = await _selectTOItem(context);
+        if (toItemForConfirmed == null || !mounted) return;
+
         if (!toItemForConfirmed.isWorkDetailLoaded || toItemForConfirmed.workDetails.isEmpty) {
           showDialog(
             context: context,
             barrierDismissible: false,
             builder: (_) => const Center(child: CircularProgressIndicator()),
           );
-          
+
           try {
             final result = await widget.firestoreService.loadTOWorkDetails(toItemForConfirmed.to);
             toItemForConfirmed.setWorkDetails(
@@ -1136,14 +1053,15 @@ class _TOGroupCardState extends State<TOGroupCard> with SingleTickerProviderStat
               result['workStats'] as Map<String, Map<String, int>>,
             );
           } catch (e) {
-            Navigator.pop(context);
+            if (mounted) Navigator.pop(context);
             ToastHelper.showError('데이터를 불러오는데 실패했습니다.');
             return;
           }
-          
-          Navigator.pop(context);
+
+          if (mounted) Navigator.pop(context);
         }
-        
+
+        if (!mounted) return;
         ConfirmedListDialog(
           context: context,
           toItem: toItemForConfirmed,
@@ -1159,34 +1077,37 @@ class _TOGroupCardState extends State<TOGroupCard> with SingleTickerProviderStat
           ToastHelper.showError('TO 정보를 불러올 수 없습니다.');
           return;
         }
-        final toItem = widget.groupItem.groupTOs.first;
-        
-        if (!toItem.isWorkDetailLoaded || toItem.workDetails.isEmpty) {
-          // 로딩 표시
+
+        // 다중 슬롯이면 날짜 선택
+        final toItemForManage = await _selectTOItem(context);
+        if (toItemForManage == null || !mounted) return;
+
+        if (!toItemForManage.isWorkDetailLoaded || toItemForManage.workDetails.isEmpty) {
           showDialog(
             context: context,
             barrierDismissible: false,
             builder: (_) => const Center(child: CircularProgressIndicator()),
           );
-          
+
           try {
-            final result = await widget.firestoreService.loadTOWorkDetails(toItem.to);
-            toItem.setWorkDetails(
+            final result = await widget.firestoreService.loadTOWorkDetails(toItemForManage.to);
+            toItemForManage.setWorkDetails(
               result['workDetails'] as List<WorkDetailModel>,
               result['workStats'] as Map<String, Map<String, int>>,
             );
           } catch (e) {
-            Navigator.pop(context); // 로딩 닫기
+            if (mounted) Navigator.pop(context);
             ToastHelper.showError('데이터를 불러오는데 실패했습니다.');
             return;
           }
-          
-          Navigator.pop(context); // 로딩 닫기
+
+          if (mounted) Navigator.pop(context);
         }
-        
+
+        if (!mounted) return;
         WorkDetailManagementDialog(
           context: context,
-          toItem: toItem,
+          toItem: toItemForManage,
           firestoreService: widget.firestoreService,
           onComplete: widget.onChanged,
           onLocalStatsChanged: () {
@@ -1197,29 +1118,80 @@ class _TOGroupCardState extends State<TOGroupCard> with SingleTickerProviderStat
     }
   }
 
-  /// 그룹 TO 메뉴 액션
-  Future<void> _handleGroupTOMenuAction(
-      BuildContext context, String value) async {
-    final masterTO = widget.groupItem.masterTO;
+  /// 다중 슬롯 플렉스 TO에서 날짜 선택 다이얼로그
+  /// 슬롯이 1개면 바로 반환, 여러 개면 날짜 선택 시트 표시
+  Future<TOItem?> _selectTOItem(BuildContext context) async {
+    final slots = widget.groupItem.groupTOs;
+    if (slots.isEmpty) return null;
+    if (slots.length == 1) return slots.first;
 
-    switch (value) {
-      case 'editGroupName':
-        widget.dialogs.showEditGroupNameDialog(masterTO);
-        break;
-
-      case 'closeGroup':
-        widget.dialogs.showCloseGroupDialog(widget.groupItem);
-        break;
-
-      case 'reopenGroup':
-        widget.dialogs.showReopenGroupDialog(widget.groupItem);
-        break;
-
-      case 'deleteGroup':
-        widget.dialogs.showDeleteGroupDialog(widget.groupItem);
-        break;
-    }
+    return await showModalBottomSheet<TOItem>(
+      context: context,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (ctx) {
+        return SafeArea(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Padding(
+                padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 16)),
+                child: Text(
+                  '날짜를 선택하세요',
+                  style: ResponsiveHelper.subtitleStyle(context).copyWith(fontWeight: FontWeight.bold),
+                ),
+              ),
+              const Divider(height: 1),
+              Flexible(
+                child: ListView.separated(
+                  shrinkWrap: true,
+                  itemCount: slots.length,
+                  separatorBuilder: (_, __) => const Divider(height: 1),
+                  itemBuilder: (_, i) {
+                    final toItem = slots[i];
+                    final confirmed = toItem.confirmedCount;
+                    final required = toItem.totalRequired;
+                    final pending = toItem.pendingCount;
+                    return ListTile(
+                      leading: Icon(
+                        Icons.event,
+                        color: Theme.of(context).primaryColor,
+                        size: ResponsiveHelper.iconSize(context, 20),
+                      ),
+                      title: Text(
+                        FormatHelper.formatDate(toItem.to.date),
+                        style: ResponsiveHelper.bodyStyle(context).copyWith(fontWeight: FontWeight.w600),
+                      ),
+                      trailing: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Text(
+                            '$confirmed/$required',
+                            style: ResponsiveHelper.bodyStyle(context, color: AppColors.infoDark)
+                                .copyWith(fontWeight: FontWeight.bold),
+                          ),
+                          if (pending > 0)
+                            Text(
+                              ' +$pending',
+                              style: ResponsiveHelper.smallStyle(context, color: AppColors.warningDark),
+                            ),
+                          SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+                          Icon(Icons.chevron_right, size: ResponsiveHelper.iconSize(context, 18), color: AppColors.grey400),
+                        ],
+                      ),
+                      onTap: () => Navigator.pop(ctx, toItem),
+                    );
+                  },
+                ),
+              ),
+            ],
+          ),
+        );
+      },
+    );
   }
+
   /// 선택된 날짜에 해당하는 TO만 필터링
   List<TOItem> _getFilteredGroupTOs() {
     // selectedDate가 null이면 전체 표시 (리스트 뷰)

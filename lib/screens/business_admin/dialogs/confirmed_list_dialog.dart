@@ -3,7 +3,6 @@
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
-import 'package:url_launcher/url_launcher.dart';
 
 import '../../../models/core/work_detail_model.dart';
 import '../../../models/core/application_model.dart';
@@ -18,6 +17,7 @@ import '../../../widgets/dialogs/worker_detail_dialog.dart';
 import '../../../models/ui/admin_to_list_ui_models.dart';
 import '../../../theme/app_colors.dart';
 import '../../../utils/id_card_helper.dart';
+import '../../../utils/trust_score_helper.dart';
 
 class ConfirmedListDialog {
   final BuildContext context;
@@ -91,10 +91,8 @@ class _ConfirmedListDialogWidgetState
     });
 
     try {
-      final applications = await widget.firestoreService.getApplicationsByTO(
-        widget.toItem.to.businessId,
-        widget.toItem.to.title,
-        widget.toItem.to.date,
+      final applications = await widget.firestoreService.getApplicationsByTOId(
+        widget.toItem.to.id,
       );
 
       final confirmed =
@@ -113,19 +111,23 @@ class _ConfirmedListDialogWidgetState
       
       // ✅ 3. 결과 매핑 (추가 조회 없음)
       final results = confirmed.map((app) {
+        // workDetailId 우선, 없으면 workType으로 폴백 (구 데이터 호환)
+        final groupKey = (app.workDetailId?.isNotEmpty == true)
+            ? app.workDetailId!
+            : app.selectedWorkType;
         return {
           'application': app,
           'user': userMap[app.uid],
-          'workType': app.selectedWorkType,
+          'groupKey': groupKey,
         };
       }).toList();
       final Map<String, List<Map<String, dynamic>>> groupedByWork = {};
 
       for (var result in results) {
         if (result['user'] != null) {
-          final workType = result['workType'] as String;
-          groupedByWork.putIfAbsent(workType, () => []);
-          groupedByWork[workType]!.add(result);
+          final groupKey = result['groupKey'] as String;
+          groupedByWork.putIfAbsent(groupKey, () => []);
+          groupedByWork[groupKey]!.add(result);
         }
       }
 
@@ -615,7 +617,7 @@ class _ConfirmedListDialogWidgetState
   }
 
   Widget _buildTrustBadge(UserModel user) {
-    final trustScore = _calculateTrustScore(user);
+    final trustScore = TrustScoreHelper.calculate(user);
     
     // 70+: 파랑, 40~69: 회색, 40 미만: 빨강
     final Color color;
@@ -662,25 +664,7 @@ class _ConfirmedListDialogWidgetState
     );
   }
 
-  int _calculateTrustScore(UserModel user) {
-    int score = 60;
-    score += (user.averageRating * 4).toInt();
-    score += (user.totalWorkDays / 10).clamp(0, 15).toInt();
-    score -= user.noShowCount * 5;
-    score -= user.lateCount * 2;
-    return score.clamp(0, 100);
-  }
-
-  Future<void> _makePhoneCall(String phoneNumber) async {
-    final uri = Uri.parse('tel:$phoneNumber');
-    if (await canLaunchUrl(uri)) {
-      await launchUrl(uri);
-    } else {
-      ToastHelper.showError('전화를 걸 수 없습니다');
-    }
-  }
-
-  /// ⭐ 수정: 로컬 통계 업데이트 패턴 적용
+/// ⭐ 수정: 로컬 통계 업데이트 패턴 적용
   Future<void> _showWorkerDetailDialog(BuildContext context, UserModel user, ApplicationModel application, WorkDetailModel workDetail) async {
     final changed = await WorkerDetailDialog.show(
       context: context,
@@ -697,18 +681,20 @@ class _ConfirmedListDialogWidgetState
     
     if (changed == true && mounted) {
       _hasChanges = true;
-      
-      final workType = application.selectedWorkType;
-      
+
+      final groupKey = (application.workDetailId?.isNotEmpty == true)
+          ? application.workDetailId!
+          : application.selectedWorkType;
+
       setState(() {
         // 1. 목록에서 해당 워커 제거
-        _confirmedByWork[workType]?.removeWhere(
+        _confirmedByWork[groupKey]?.removeWhere(
           (item) => (item['user'] as UserModel).uid == user.uid
         );
-        
+
         // 2. 해당 업무에 워커가 없으면 업무 자체 제거
-        if (_confirmedByWork[workType]?.isEmpty ?? false) {
-          _confirmedByWork.remove(workType);
+        if (_confirmedByWork[groupKey]?.isEmpty ?? false) {
+          _confirmedByWork.remove(groupKey);
         }
         
         // 3. 총 인원 감소
@@ -720,13 +706,13 @@ class _ConfirmedListDialogWidgetState
         
         // 5. 부모 toItem.workDetailStats 업데이트
         widget.toItem.workDetailStats ??= {};
-        // ✅ workDetailId로 조회 (application에서 가져옴)
-        final workDetailId = application.workDetailId;
-        if (workDetailId != null) {
-          final stats = widget.toItem.workDetailStats![workDetailId];
-          if (stats != null) {
-            stats['confirmed'] = ((stats['confirmed'] ?? 1)) - 1;
-          }
+        // workDetailId 우선, 없으면 selectedWorkType으로 폴백 (구 데이터 호환)
+        final statsKey = (application.workDetailId?.isNotEmpty == true)
+            ? application.workDetailId!
+            : application.selectedWorkType;
+        final stats = widget.toItem.workDetailStats![statsKey];
+        if (stats != null) {
+          stats['confirmed'] = ((stats['confirmed'] ?? 1)) - 1;
         }
       });
     } else {

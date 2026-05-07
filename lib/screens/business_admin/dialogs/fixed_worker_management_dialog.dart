@@ -24,6 +24,7 @@ import '../../../widgets/common/loading_widget.dart';
 import '../../../widgets/dialogs/worker_detail_dialog.dart';
 import '../../../theme/app_colors.dart';
 import '../../../widgets/work_type_icon.dart';
+import '../../../widgets/dialogs/styled_dialog.dart';
 
 /// 고정근무자 관리 다이얼로그
 class FixedWorkerManagementDialog extends StatefulWidget {
@@ -976,37 +977,16 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
 
     final confirmed = await showDialog<bool>(
       context: context,
-      builder: (context) => AlertDialog(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        title: Row(
-          children: [
-            Icon(Icons.add_circle, color: AppColors.success, size: ResponsiveHelper.iconSize(context, 24)),
-            SizedBox(width: ResponsiveHelper.spacing(context, 8)),
-            const Text('추가 근무 요청'),
-          ],
-        ),
+      builder: (context) => StyledDialog(
+        title: '추가 근무 요청',
+        icon: Icons.add_circle_outline,
+        headerColor: AppColors.success,
         content: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Container(
-              padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 12)),
-              decoration: BoxDecoration(
-                color: AppColors.successBg,
-                borderRadius: BorderRadius.circular(8),
-              ),
-              child: Row(
-                children: [
-                  Icon(Icons.calendar_today, size: ResponsiveHelper.iconSize(context, 16), color: AppColors.successDark),
-                  SizedBox(width: ResponsiveHelper.spacing(context, 8)),
-                  Text(
-                    DateFormat('yyyy년 M월 d일 (E)', 'ko_KR').format(selectedDate),
-                    style: ResponsiveHelper.bodyStyle(context, color: AppColors.successDark).copyWith(
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                ],
-              ),
+            StyledDialogInfoCard.success(
+              DateFormat('yyyy년 M월 d일 (E)', 'ko_KR').format(selectedDate),
             ),
             SizedBox(height: ResponsiveHelper.spacing(context, 16)),
             Text(
@@ -1025,14 +1005,12 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
           ],
         ),
         actions: [
-          TextButton(
+          StyledDialogButton.cancel(
             onPressed: () => Navigator.pop(context, false),
-            child: Text('취소', style: TextStyle(color: AppColors.grey600)),
           ),
-          ElevatedButton(
+          StyledDialogButton.primary(
+            text: '요청',
             onPressed: () => Navigator.pop(context, true),
-            style: ElevatedButton.styleFrom(backgroundColor: AppColors.success),
-            child: const Text('요청'),
           ),
         ],
       ),
@@ -1141,37 +1119,16 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
 
     final confirmed = await showDialog<bool>(
       context: context,
-      builder: (context) => AlertDialog(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        title: Row(
-          children: [
-            Icon(Icons.remove_circle, color: AppColors.warning, size: ResponsiveHelper.iconSize(context, 24)),
-            SizedBox(width: ResponsiveHelper.spacing(context, 8)),
-            const Text('미출근 요청'),
-          ],
-        ),
+      builder: (context) => StyledDialog(
+        title: '미출근 요청',
+        icon: Icons.remove_circle_outline,
+        headerColor: AppColors.warning,
         content: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Container(
-              padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 12)),
-              decoration: BoxDecoration(
-                color: AppColors.warningBg,
-                borderRadius: BorderRadius.circular(8),
-              ),
-              child: Row(
-                children: [
-                  Icon(Icons.calendar_today, size: ResponsiveHelper.iconSize(context, 16), color: AppColors.warningDark),
-                  SizedBox(width: ResponsiveHelper.spacing(context, 8)),
-                  Text(
-                    DateFormat('yyyy년 M월 d일 (E)', 'ko_KR').format(selectedDate),
-                    style: ResponsiveHelper.bodyStyle(context, color: AppColors.warningDark).copyWith(
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                ],
-              ),
+            StyledDialogInfoCard.warning(
+              DateFormat('yyyy년 M월 d일 (E)', 'ko_KR').format(selectedDate),
             ),
             SizedBox(height: ResponsiveHelper.spacing(context, 16)),
             Text(
@@ -1190,14 +1147,12 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
           ],
         ),
         actions: [
-          TextButton(
+          StyledDialogButton.cancel(
             onPressed: () => Navigator.pop(context, false),
-            child: Text('취소', style: TextStyle(color: AppColors.grey600)),
           ),
-          ElevatedButton(
+          StyledDialogButton.primary(
+            text: '요청',
             onPressed: () => Navigator.pop(context, true),
-            style: ElevatedButton.styleFrom(backgroundColor: AppColors.warning),
-            child: const Text('요청'),
           ),
         ],
       ),

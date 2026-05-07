@@ -156,24 +156,29 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
         debugPrint('✅ WorkDetail 캐시 사용: wageType=$wageType, breakMinutes=$breakMinutes');
       }
     }
-    // 2순위: Firestore에서 직접 조회
-    else if (app.toId != null && app.toId!.isNotEmpty && 
-        app.workDetailId != null && app.workDetailId!.isNotEmpty) {
+    // 2순위: Firestore TO 문서의 embedded workDetails 배열에서 직접 조회
+    else if (app.toId != null && app.toId!.isNotEmpty) {
       try {
-        final workDetailDoc = await FirebaseFirestore.instance
+        final toDoc = await FirebaseFirestore.instance
             .collection('tos')
             .doc(app.toId)
-            .collection('workDetails')
-            .doc(app.workDetailId)
             .get();
-        
-        if (workDetailDoc.exists) {
-          final data = workDetailDoc.data()!;
-          wageType = data['wageType'] ?? 'hourly';
-          breakMinutes = data['breakMinutes'] ?? 0;
-          debugPrint('✅ WorkDetail Firestore 조회: wageType=$wageType');
+
+        if (toDoc.exists) {
+          final rawWorkDetails = toDoc.data()!['workDetails'] as List<dynamic>? ?? [];
+          // workDetailId == workType이므로 workType으로 매칭
+          final targetType = app.workDetailId ?? app.selectedWorkType;
+          for (var wd in rawWorkDetails) {
+            final wdMap = Map<String, dynamic>.from(wd as Map);
+            if (wdMap['workType'] == targetType) {
+              wageType = wdMap['wageType'] ?? 'hourly';
+              breakMinutes = wdMap['breakMinutes'] ?? 0;
+              debugPrint('✅ WorkDetail 배열 조회: wageType=$wageType');
+              break;
+            }
+          }
         } else {
-          debugPrint('⚠️ WorkDetail 문서 없음: toId=${app.toId}, workDetailId=${app.workDetailId}');
+          debugPrint('⚠️ TO 문서 없음: toId=${app.toId}');
         }
       } catch (e) {
         debugPrint('⚠️ WorkDetail 조회 실패: $e');

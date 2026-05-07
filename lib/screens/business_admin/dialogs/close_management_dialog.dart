@@ -116,30 +116,72 @@ class _CloseManagementDialogState extends State<CloseManagementDialog> {
   /// 마감 현황 로드
   Future<void> _loadCloseStatus() async {
     final Map<String, List<DateCloseStatus>> statusByBusiness = {};
-    
+
     // 해당 월의 시작/끝 날짜
     final monthStart = DateTime(_currentMonth.year, _currentMonth.month, 1);
     final monthEnd = DateTime(_currentMonth.year, _currentMonth.month + 1, 0, 23, 59, 59);
-    
+    final daysInMonth = monthEnd.day;
+    final weekdays = ['월', '화', '수', '목', '금', '토', '일'];
+
     for (final businessId in widget.businessIds) {
       final List<DateCloseStatus> dateStatuses = [];
-      
-      // 1. 해당 월의 확정된 Application 조회 (날짜별로 그룹화)
-      final appsSnapshot = await FirebaseFirestore.instance
+
+      // 1. 단기 확정자: 해당 월의 workDate 범위로 조회
+      final shortTermSnapshot = await FirebaseFirestore.instance
           .collection('applications')
           .where('businessId', isEqualTo: businessId)
           .where('status', isEqualTo: 'CONFIRMED')
           .where('workDate', isGreaterThanOrEqualTo: Timestamp.fromDate(monthStart))
           .where('workDate', isLessThanOrEqualTo: Timestamp.fromDate(monthEnd))
           .get();
-      
-      // 날짜별로 그룹화
+
       final Map<String, List<ApplicationModel>> appsByDate = {};
-      for (final doc in appsSnapshot.docs) {
+      for (final doc in shortTermSnapshot.docs) {
         final app = ApplicationModel.fromFirestore(doc);
-        final dateKey = DateFormat('yyyy-MM-dd').format(app.workDate);
-        appsByDate.putIfAbsent(dateKey, () => []);
-        appsByDate[dateKey]!.add(app);
+        if (app.workDays == null || app.workDays!.isEmpty) {
+          final dateKey = DateFormat('yyyy-MM-dd').format(app.workDate);
+          appsByDate.putIfAbsent(dateKey, () => []);
+          appsByDate[dateKey]!.add(app);
+        }
+      }
+
+      // 2. 장기 확정자: 전체 조회 후 해당 월의 활성 날짜로 확장
+      final longTermSnapshot = await FirebaseFirestore.instance
+          .collection('applications')
+          .where('businessId', isEqualTo: businessId)
+          .where('status', isEqualTo: 'CONFIRMED')
+          .get();
+
+      for (final doc in longTermSnapshot.docs) {
+        final app = ApplicationModel.fromFirestore(doc);
+        if (app.workDays == null || app.workDays!.isEmpty) continue;
+
+        final endDate = app.actualResignDate ?? app.workEndDate;
+        final effectiveStartDate = app.desiredStartDate ?? app.workDate;
+        final startDateOnly = DateTime(effectiveStartDate.year, effectiveStartDate.month, effectiveStartDate.day);
+
+        for (int d = 1; d <= daysInMonth; d++) {
+          final date = DateTime(_currentMonth.year, _currentMonth.month, d);
+          if (date.isBefore(startDateOnly)) continue;
+          if (endDate != null) {
+            final endDateOnly = DateTime(endDate.year, endDate.month, endDate.day);
+            if (date.isAfter(endDateOnly)) continue;
+          }
+          // 휴무일 체크
+          if (app.leaveDates != null && app.leaveDates!.any((ld) =>
+              ld.year == date.year && ld.month == date.month && ld.day == date.day)) {
+            continue;
+          }
+          // 요일 체크
+          final dayWeekday = weekdays[date.weekday - 1];
+          if (!app.workDays!.contains(dayWeekday)) continue;
+
+          final dateKey = DateFormat('yyyy-MM-dd').format(date);
+          appsByDate.putIfAbsent(dateKey, () => []);
+          if (!appsByDate[dateKey]!.any((a) => a.id == app.id)) {
+            appsByDate[dateKey]!.add(app);
+          }
+        }
       }
       
       // 2. 각 날짜별 마감 상태 확인

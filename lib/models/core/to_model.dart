@@ -382,18 +382,6 @@ class TOModel {
   /// rangeStart 별칭
   DateTime? get startDate => rangeStart;
 
-  /// 그룹 ID — 구 아키텍처 제거됨, 항상 null
-  String? get groupId => null;
-
-  /// 그룹명 — title로 대체
-  String? get groupName => title;
-
-  /// 그룹 포함 여부 — 항상 false
-  bool get isGrouped => false;
-
-  /// 그룹 마스터 여부 — 항상 false
-  bool get isGroupMaster => false;
-
   /// type 별칭 (구 jobType)
   String get jobType => type;
 

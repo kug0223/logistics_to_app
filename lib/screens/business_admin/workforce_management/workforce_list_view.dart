@@ -31,19 +31,34 @@ class WorkforceListView extends StatefulWidget {
   State<WorkforceListView> createState() => _WorkforceListViewState();
 }
 
-class _WorkforceListViewState extends State<WorkforceListView> {
+class _WorkforceListViewState extends State<WorkforceListView>
+    with WidgetsBindingObserver {
   final FirestoreService _firestoreService = FirestoreService();
   late TOListDialogs _dialogs;
-  
+
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _dialogs = TOListDialogs(
       context: context,
       firestoreService: _firestoreService,
       onChanged: _loadTOsWithStats,
     );
     _loadTOsWithStats();
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed && !_isLoading) {
+      _loadTOsWithStats();
+    }
   }
 
   
@@ -136,15 +151,15 @@ class _WorkforceListViewState extends State<WorkforceListView> {
             23, 59, 59,
           );
           
-          // 그룹 TO인 경우
-          if (groupItem.isGrouped) {
+          // 다중 슬롯 flex TO
+          if (groupItem.masterTO.totalSlots > 1 && groupItem.groupTOs.isNotEmpty) {
             final hasMatchingDate = groupItem.groupTOs.any((toItem) {
               return _isDateInRange(toItem.to, filterStart, filterEnd);
             });
-            
+
             if (!hasMatchingDate) return false;
-          } 
-          // 단일 TO인 경우
+          }
+          // 단일/장기 TO
           else {
             if (!_isDateInRange(groupItem.masterTO, filterStart, filterEnd)) {
               return false;
@@ -504,7 +519,6 @@ class _WorkforceListViewState extends State<WorkforceListView> {
               groupItem: groupItem,
               firestoreService: _firestoreService,
               dialogs: _dialogs,
-              allGroupItems: _allGroupItems,
               onChanged: _loadTOsWithStats,
               isExpanded: _expandedGroups.contains(groupItem.id),
               expandedTOs: _expandedTOs,
@@ -626,8 +640,8 @@ class _WorkforceListViewState extends State<WorkforceListView> {
       setState(() => _loadingGroups.remove(key));
     }
     
-    // ✨ 단일 TO인 경우: WorkDetails 로드 필요
-    if (!groupItem.isGrouped && groupItem.groupTOs.isNotEmpty) {
+    // ✨ WorkDetails 로드 필요
+    if (groupItem.groupTOs.isNotEmpty) {
       final toItem = groupItem.groupTOs.first;
       if (toItem.needsWorkDetailLoad) {
         setState(() => _loadingTOs.add(toItem.to.id));
@@ -655,9 +669,6 @@ class _WorkforceListViewState extends State<WorkforceListView> {
     if (affectedTOIds.isEmpty) return;
     
     debugPrint('🔄 영향받은 TO ${affectedTOIds.length}개 새로고침: $affectedTOIds');
-    
-    // ✅ 갱신된 그룹 마스터 ID 추적 (중복 갱신 방지)
-    final Set<String> updatedGroupIds = {};
     
     for (var toId in affectedTOIds) {
       bool found = false;
@@ -703,37 +714,25 @@ class _WorkforceListViewState extends State<WorkforceListView> {
         }
       }
       
-      // 2. ✅ 찾지 못했으면 그룹 마스터 갱신 (그룹이 접혀있는 경우)
+      // 2. 찾지 못했으면 toId가 groupItem 자체인 경우 (슬롯 미로드)
       if (!found) {
         try {
           final toDoc = await _firestoreService.getTO(toId);
-          if (toDoc != null && toDoc.groupId != null) {
-            final groupId = toDoc.groupId!;
-            
-            // 이미 갱신한 그룹이면 스킵
-            if (updatedGroupIds.contains(groupId)) continue;
-            
-            // 그룹 마스터 찾기
+          if (toDoc != null) {
             for (var groupItem in _allGroupItems) {
-              if (groupItem.id == groupId) {
-                // ✅ groups 컬렉션에서 최신 통계 조회
-                final groupDoc = await _firestoreService.getGroup(groupId);
-                if (groupDoc != null) {
-                  // 🔥 TOGroupItem 캐시 업데이트 (groupTOs 비어있어도 동작!)
-                  groupItem.updateGroupStats(
-                    confirmed: groupDoc.totalConfirmed,
-                    pending: groupDoc.totalPending,
-                    required: groupDoc.totalRequired,
-                  );
-                  updatedGroupIds.add(groupId);
-                  debugPrint('✅ 그룹 $groupId 통계 갱신 (groups 컬렉션): 확정=${groupDoc.totalConfirmed}, 대기=${groupDoc.totalPending}');
-                }
+              if (groupItem.id == toId) {
+                groupItem.updateGroupStats(
+                  confirmed: toDoc.totalConfirmed,
+                  pending: toDoc.totalPending,
+                  required: toDoc.totalRequired,
+                );
+                debugPrint('✅ GroupItem $toId 통계 갱신: 확정=${toDoc.totalConfirmed}, 대기=${toDoc.totalPending}');
                 break;
               }
             }
           }
         } catch (e) {
-          debugPrint('❌ 그룹 마스터 갱신 실패: $e');
+          debugPrint('❌ GroupItem 갱신 실패: $e');
         }
       }
     }

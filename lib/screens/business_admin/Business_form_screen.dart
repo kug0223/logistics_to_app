@@ -33,6 +33,7 @@ import '../auth/login_screen.dart';
 import '../../utils/navigation_helper.dart';
 import '../../utils/format_helper.dart';
 import '../../theme/app_colors.dart';
+import '../../widgets/dialogs/styled_dialog.dart';
 
 /// 🏢 사업장 등록/수정 화면 (Stepper 방식)
 class BusinessFormScreen extends StatefulWidget {
@@ -195,17 +196,19 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
         if (!didPop && widget.isFromSignUp) {
           final confirmed = await showDialog<bool>(
             context: context,
-            builder: (context) => AlertDialog(
-              title: const Text('등록 취소'),
+            builder: (context) => StyledDialog(
+              title: '등록 취소',
+              icon: Icons.exit_to_app,
+              headerColor: AppColors.warning,
               content: const Text('사업장 등록을 취소하시겠습니까?\n로그인 화면으로 이동합니다.'),
               actions: [
-                TextButton(
+                StyledDialogButton.cancel(
+                  text: '아니오',
                   onPressed: () => Navigator.pop(context, false),
-                  child: const Text('아니오'),
                 ),
-                TextButton(
+                StyledDialogButton.danger(
+                  text: '예',
                   onPressed: () => Navigator.pop(context, true),
-                  child: const Text('예'),
                 ),
               ],
             ),
@@ -1196,8 +1199,9 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
 
     final result = await showDialog<bool>(
       context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('주소 입력 (테스트용)'),
+      builder: (context) => StyledDialog(
+        title: '주소 입력 (테스트용)',
+        icon: Icons.location_on,
         content: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
@@ -1231,13 +1235,12 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
           ],
         ),
         actions: [
-          TextButton(
+          StyledDialogButton.cancel(
             onPressed: () => Navigator.pop(context, false),
-            child: const Text('취소'),
           ),
-          ElevatedButton(
+          StyledDialogButton.primary(
+            text: '확인',
             onPressed: () => Navigator.pop(context, true),
-            child: const Text('확인'),
           ),
         ],
       ),

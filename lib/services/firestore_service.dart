@@ -17,7 +17,6 @@ import '../models/core/schedule_change_request_model.dart';
 import '../models/core/review_model.dart';
 import '../models/core/id_card_access_request_model.dart';
 import '../models/core/notification_model.dart';
-import '../models/core/group_model.dart';
 
 // ═══════════════════════════════════════════════════════════
 // Part 파일 선언
@@ -291,12 +290,6 @@ class FirestoreService {
   /// 구 loadGroupTOsLight — 그룹 구조 제거됨, 빈 리스트 반환
   Future<List<TOItem>> loadGroupTOsLight(String groupId) async => [];
 
-  /// 구 getActiveGroups — 그룹 구조 제거됨, 빈 리스트 반환
-  Future<List<GroupModel>> getActiveGroups({String? businessId}) async => [];
-
-  /// 구 getTOsByGroup — 대신 getTOsByBusiness 사용
-  Future<List<TOModel>> getTOsByGroup(String groupId) async => [];
-
   /// 구 getActiveTOs — getPublishedTOs 위임
   Future<List<TOModel>> getActiveTOs({String? businessId, bool publishedOnly = false}) async {
     if (businessId != null) {
@@ -342,17 +335,6 @@ class FirestoreService {
   /// 구 syncGroupStats / syncGroupMasterStats — TO 통계 재계산으로 위임
   Future<bool> syncGroupStats(String toId) async => recalculateTOStats(toId);
   Future<bool> syncGroupMasterStats(String toId) async => recalculateTOStats(toId);
-
-  /// 구 그룹 수정 메서드 — 그룹 구조 제거됨, no-op
-  Future<bool> updateGroupName(String groupId, String name) async => false;
-  Future<bool> deleteGroupTOs(String groupId) async => false;
-  Future<bool> removeFromGroup(String toId) async => false;
-  Future<bool> reconnectToGroup({required String toId, required String targetGroupId}) async => false;
-  Future<bool> createNewGroupFromTO({required String toId, required String groupName}) async => false;
-  Future<bool> closeGroupTOs(String groupId, String adminUID) async => false;
-  Future<bool> reopenGroupTOs(String groupId, String adminUID) async => false;
-  Future<Map<String, dynamic>> calculateGroupTimeRange(String groupId) async => {};
-  Future<GroupModel?> getGroup(String groupId) async => null;
 
   /// 구 applyToTOWithWorkType — applyToTO 위임 (toId 필수)
   Future<bool> applyToTOWithWorkType({

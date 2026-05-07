@@ -10,6 +10,8 @@ import '../../../utils/toast_helper.dart';
 import '../../../utils/responsive_helper.dart';
 import '../../../widgets/common/loading_widget.dart';
 import '../../../widgets/common/loading_button.dart';
+import '../../../widgets/dialogs/styled_dialog.dart';
+import '../../../theme/app_colors.dart';
 
 
 /// 스케줄 변경 요청 관리 다이얼로그 (관리자용)
@@ -605,18 +607,10 @@ class _ScheduleRequestManagementDialogState
   Future<void> _handleApprove(_RequestWithUser item) async {
     final confirmed = await showDialog<bool>(
       context: context,
-      builder: (context) => AlertDialog(
-        title: Row(
-          children: [
-            Icon(
-              Icons.check_circle,
-              color: Colors.green,
-              size: ResponsiveHelper.iconSize(context, 24),
-            ),
-            SizedBox(width: ResponsiveHelper.spacing(context, 8)),
-            const Text('요청 승인'),
-          ],
-        ),
+      builder: (context) => StyledDialog(
+        title: '요청 승인',
+        icon: Icons.check_circle_outline,
+        headerColor: AppColors.success,
         content: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -626,54 +620,16 @@ class _ScheduleRequestManagementDialogState
               style: ResponsiveHelper.bodyStyle(context),
             ),
             SizedBox(height: ResponsiveHelper.spacing(context, 12)),
-            Container(
-              padding: ResponsiveHelper.cardPadding(context),
-              decoration: BoxDecoration(
-                color: Colors.green.withValues(alpha: 0.1),
-                borderRadius: BorderRadius.circular(8),
-                border: Border.all(color: Colors.green.withValues(alpha: 0.3)),
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    children: [
-                      Icon(
-                        Icons.info_outline,
-                        size: ResponsiveHelper.iconSize(context, 18),
-                        color: Colors.green,
-                      ),
-                      SizedBox(width: ResponsiveHelper.spacing(context, 8)),
-                      Text(
-                        '승인 시 변경 사항',
-                        style: ResponsiveHelper.bodyStyle(context).copyWith(
-                          fontWeight: FontWeight.bold,
-                          color: Colors.green,
-                        ),
-                      ),
-                    ],
-                  ),
-                  SizedBox(height: ResponsiveHelper.spacing(context, 8)),
-                  Text(
-                    _getApprovalMessage(item.request.requestType),
-                    style: ResponsiveHelper.smallStyle(context),
-                  ),
-                ],
-              ),
-            ),
+            StyledDialogInfoCard.success(_getApprovalMessage(item.request.requestType)),
           ],
         ),
         actions: [
-          TextButton(
+          StyledDialogButton.cancel(
             onPressed: () => Navigator.pop(context, false),
-            child: const Text('취소'),
           ),
-          ElevatedButton(
+          StyledDialogButton.primary(
+            text: '승인',
             onPressed: () => Navigator.pop(context, true),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: Colors.green,
-            ),
-            child: const Text('승인'),
           ),
         ],
       ),
@@ -731,18 +687,10 @@ class _ScheduleRequestManagementDialogState
 
     final confirmed = await showDialog<bool>(
       context: context,
-      builder: (context) => AlertDialog(
-        title: Row(
-          children: [
-            Icon(
-              Icons.cancel,
-              color: Colors.red,
-              size: ResponsiveHelper.iconSize(context, 24),
-            ),
-            SizedBox(width: ResponsiveHelper.spacing(context, 8)),
-            const Text('요청 거절'),
-          ],
-        ),
+      builder: (context) => StyledDialog(
+        title: '요청 거절',
+        icon: Icons.cancel_outlined,
+        headerColor: AppColors.error,
         content: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -770,16 +718,12 @@ class _ScheduleRequestManagementDialogState
           ],
         ),
         actions: [
-          TextButton(
+          StyledDialogButton.cancel(
             onPressed: () => Navigator.pop(context, false),
-            child: const Text('취소'),
           ),
-          ElevatedButton(
+          StyledDialogButton.danger(
+            text: '거절',
             onPressed: () => Navigator.pop(context, true),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: Colors.red,
-            ),
-            child: const Text('거절'),
           ),
         ],
       ),

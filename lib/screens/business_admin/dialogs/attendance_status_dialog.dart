@@ -42,6 +42,7 @@ import '../../../utils/attendance_list_pdf.dart';
 // Dialogs
 import 'wage_confirm_dialog.dart';
 import '../../../providers/user_provider.dart';
+import '../../../widgets/dialogs/styled_dialog.dart';
 
 /// 당일명단 다이얼로그 - 출퇴근 관리 기능 포함
 class AttendanceStatusDialog extends StatefulWidget {
@@ -302,7 +303,6 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
       
       // 🔥 퇴사일이 있으면 그 날짜까지만
       final endDate = app.actualResignDate ?? app.workEndDate;
-      if (endDate == null) continue;
 
       // 🔥 시작일 계산: desiredStartDate 우선 → confirmedAt → workDate
       DateTime effectiveStartDate = app.desiredStartDate ?? app.workDate;
@@ -319,10 +319,17 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
 
       // 기간 체크 (시간 제거하고 날짜만 비교)
       final startDateOnly = DateTime(effectiveStartDate.year, effectiveStartDate.month, effectiveStartDate.day);
-      final endDateOnly = DateTime(endDate.year, endDate.month, endDate.day);
-      
-      if (dateStart.isBefore(startDateOnly) || dateStart.isAfter(endDateOnly)) {
-        continue;
+
+      if (endDate != null) {
+        final endDateOnly = DateTime(endDate.year, endDate.month, endDate.day);
+        if (dateStart.isBefore(startDateOnly) || dateStart.isAfter(endDateOnly)) {
+          continue;
+        }
+      } else {
+        // 퇴사일 없음 = 오픈 엔드 계약, 시작일 이후는 모두 포함
+        if (dateStart.isBefore(startDateOnly)) {
+          continue;
+        }
       }
 
       // 🔥 휴무일 체크 - 휴무일이면 제외
@@ -1820,17 +1827,10 @@ SizedBox(width: ResponsiveHelper.spacing(context, 12)),
     
     final confirmed = await showDialog<bool>(
       context: context,
-      builder: (dialogContext) => AlertDialog(
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(16),
-        ),
-        title: Row(
-          children: [
-            Icon(Icons.lock_outline, color: AppColors.success),
-            SizedBox(width: ResponsiveHelper.spacing(context, 8)),
-            const Text('당일명단 마감'),
-          ],
-        ),
+      builder: (dialogContext) => StyledDialog(
+        title: '당일명단 마감',
+        icon: Icons.lock_outline,
+        headerColor: AppColors.success,
         content: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -1876,17 +1876,12 @@ SizedBox(width: ResponsiveHelper.spacing(context, 12)),
           ],
         ),
         actions: [
-          TextButton(
+          StyledDialogButton.cancel(
             onPressed: () => Navigator.pop(dialogContext, false),
-            child: Text('취소', style: TextStyle(color: AppColors.grey600)),
           ),
-          ElevatedButton(
+          StyledDialogButton.primary(
+            text: '마감하기',
             onPressed: () => Navigator.pop(dialogContext, true),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: AppColors.success,
-              foregroundColor: Colors.white,
-            ),
-            child: const Text('마감하기'),
           ),
         ],
       ),
@@ -1900,17 +1895,19 @@ SizedBox(width: ResponsiveHelper.spacing(context, 12)),
   /// 마감 처리 실행
   Future<void> _processFinalClose() async {
     setState(() => _isProcessing = true);
-    
+
+    final adminUid = Provider.of<UserProvider>(context, listen: false).currentUser?.uid;
+
     try {
       int successCount = 0;
-      
+
       for (var app in _confirmedWorkers) {
         final attendance = _attendanceMap[app.id];
         if (attendance == null) continue;
-        
+
         // 노쇼는 건너뜀
         if (attendance.status == 'NO_SHOW') continue;
-        
+
         // 급여확정 상태만 최종확정으로 변경
         if (attendance.wageStatus == 'calculated') {
           await FirebaseFirestore.instance
@@ -1919,6 +1916,7 @@ SizedBox(width: ResponsiveHelper.spacing(context, 12)),
               .update({
             'wageStatus': 'confirmed',
             'finalConfirmedAt': FieldValue.serverTimestamp(),
+            if (adminUid != null) 'confirmedBy': adminUid,
           });
           
           // 🆕 근무 완료 신뢰도 반영 + totalWorkDays 증가
@@ -2082,18 +2080,13 @@ SizedBox(width: ResponsiveHelper.spacing(context, 12)),
 
       if (toSnapshot.docs.isEmpty) return timeInfoMap;
 
-      final toId = toSnapshot.docs.first.id;
+      // workDetails는 TO 문서 내 embedded array — 서브컬렉션이 아님
+      final toData = toSnapshot.docs.first.data();
+      final rawWorkDetails = toData['workDetails'] as List<dynamic>? ?? [];
 
-      // WorkDetail 조회
-      final workDetailSnapshot = await FirebaseFirestore.instance
-          .collection('tos')
-          .doc(toId)
-          .collection('workDetails')
-          .get();
-
-      for (var doc in workDetailSnapshot.docs) {
-        final data = doc.data();
-        final workType = data['workType'] ?? '';
+      for (var wd in rawWorkDetails) {
+        final data = Map<String, dynamic>.from(wd as Map);
+        final workType = data['workType'] as String? ?? '';
         if (workType.isNotEmpty) {
           timeInfoMap[workType] = {
             'startTime': data['startTime'] ?? '',
@@ -2544,6 +2537,14 @@ SizedBox(width: ResponsiveHelper.spacing(context, 12)),
             app: app,
             checkIn: time,
           );
+
+          // 지각 여부 체크 및 신뢰도 반영
+          final expectedStartTime = app.startTime.isNotEmpty ? app.startTime : '09:00';
+          if (_isLate(time, expectedStartTime)) {
+            final trustService = TrustScoreService();
+            await trustService.onLate(app.uid);
+          }
+
           successCount++;
         } catch (e) {
           failCount++;
@@ -2749,7 +2750,7 @@ SizedBox(width: ResponsiveHelper.spacing(context, 12)),
         'applicationId': app.id,
         'userId': app.uid,
         'businessId': app.businessId,
-        'businessName': app.toTitle,
+        'businessName': app.businessName,
         'workDate': Timestamp.fromDate(widget.date),
         'workType': app.selectedWorkType,
         'checkIn': checkIn,                           // ✅ 추가 (출근 시간)
@@ -2798,7 +2799,7 @@ SizedBox(width: ResponsiveHelper.spacing(context, 12)),
           'applicationId': app.id,
           'userId': app.uid,
           'businessId': app.businessId,
-          'businessName': app.toTitle,
+          'businessName': app.businessName,
           'workDate': Timestamp.fromDate(widget.date),
           'workType': app.selectedWorkType,
           'status': 'NO_SHOW',                // ✅ 노쇼 상태

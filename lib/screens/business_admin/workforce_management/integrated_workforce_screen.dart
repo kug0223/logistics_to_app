@@ -1,4 +1,5 @@
-﻿import 'package:flutter/material.dart';
+﻿import 'package:flutter/foundation.dart' show kDebugMode;
+import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../../theme/app_colors.dart';
 import 'package:intl/intl.dart';
@@ -13,6 +14,7 @@ import '../../../utils/test_data_helper.dart';
 import '../../../models/core/to_model.dart';
 import '../dialogs/schedule_request_management_dialog.dart';
 import '../../../utils/dialog_helper.dart';
+import '../../../widgets/dialogs/styled_dialog.dart';
 
 /// ✨ 세련된 통합 인력 관리 화면 (business_home_screen 테마 적용)
 class IntegratedWorkforceScreen extends StatefulWidget {
@@ -23,16 +25,40 @@ class IntegratedWorkforceScreen extends StatefulWidget {
       _IntegratedWorkforceScreenState();
 }
 
-class _IntegratedWorkforceScreenState extends State<IntegratedWorkforceScreen> {
+class _IntegratedWorkforceScreenState extends State<IntegratedWorkforceScreen>
+    with WidgetsBindingObserver {
   final FirestoreService _firestoreService = FirestoreService();
   List<String> _allBusinessIds = [];
   String? _selectedBusinessId;
   bool _isCalendarView = false;
+  Future<int>? _scheduleRequestCountFuture;
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _loadBusinessIds();
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      _refreshScheduleCount();
+    }
+  }
+
+  void _refreshScheduleCount() {
+    if (_selectedBusinessId == null) return;
+    setState(() {
+      _scheduleRequestCountFuture = _firestoreService
+          .getPendingScheduleChangeRequestCount(_selectedBusinessId!);
+    });
   }
 
   /// 관리자의 모든 사업장 ID 로드
@@ -56,6 +82,8 @@ class _IntegratedWorkforceScreenState extends State<IntegratedWorkforceScreen> {
       setState(() {
         _allBusinessIds = businesses.map((b) => b.id).toList();
         _selectedBusinessId = _allBusinessIds.first;
+        _scheduleRequestCountFuture = _firestoreService
+            .getPendingScheduleChangeRequestCount(_allBusinessIds.first);
       });
 
       debugPrint('✅ 관리 사업장: ${_allBusinessIds.length}개');
@@ -103,31 +131,25 @@ class _IntegratedWorkforceScreenState extends State<IntegratedWorkforceScreen> {
     return Scaffold(
       // ✨ 깔끔한 AppBar (홈 화면 스타일)
       appBar: AppBar(
-        title: Text(_isCalendarView ? '공고-캘린더' : '공고-리스트'),
-            actions: [
-              
-              // ✅ 통계 재계산 버튼 (임시 디버그용)
-              IconButton(
-                icon: Icon(
-                  Icons.sync,
-                  size: ResponsiveHelper.iconSize(context, 24),
+        title: const Text('공고 관리'),
+        actions: [
+              // 디버그 전용 버튼 (릴리즈 빌드에서 자동 제거)
+              if (kDebugMode) ...[
+                IconButton(
+                  icon: Icon(Icons.sync, size: ResponsiveHelper.iconSize(context, 24)),
+                  onPressed: _recalculateAllStats,
+                  tooltip: '통계 재계산',
                 ),
-                onPressed: _recalculateAllStats,
-                tooltip: '통계 재계산',
-              ),
-              // 더미 데이터 버튼
-              IconButton(
-                icon: Icon(
-                  Icons.science,
-                  size: ResponsiveHelper.iconSize(context, 24),
+                IconButton(
+                  icon: Icon(Icons.science, size: ResponsiveHelper.iconSize(context, 24)),
+                  onPressed: _showDummyDataDialog,
+                  tooltip: '테스트 데이터',
                 ),
-                onPressed: _showDummyDataDialog,
-                tooltip: '테스트 데이터',
-              ),
-              
+              ],
+
               // 스케줄 변경 요청 관리 버튼
               FutureBuilder<int>(
-                future: _firestoreService.getPendingScheduleChangeRequestCount(_selectedBusinessId ?? ''),
+                future: _scheduleRequestCountFuture,
                 builder: (context, snapshot) {
                   final count = snapshot.data ?? 0;
                   
@@ -275,9 +297,7 @@ class _IntegratedWorkforceScreenState extends State<IntegratedWorkforceScreen> {
       context: context,
       builder: (context) => ScheduleRequestManagementDialog(
         businessId: _selectedBusinessId!,
-        onChanged: () {
-          setState(() {});
-        },
+        onChanged: _refreshScheduleCount,
       ),
     );
   }
@@ -291,21 +311,10 @@ class _IntegratedWorkforceScreenState extends State<IntegratedWorkforceScreen> {
 
     showDialog(
       context: context,
-      builder: (context) => AlertDialog(
-        title: Row(
-          children: [
-            Icon(
-              Icons.science, 
-              color: Colors.orange,
-              size: ResponsiveHelper.iconSize(context, 24),
-            ),
-            SizedBox(width: ResponsiveHelper.spacing(context, 8)),
-            Text(
-              '테스트 데이터 관리',
-              style: ResponsiveHelper.titleStyle(context),
-            ),
-          ],
-        ),
+      builder: (context) => StyledDialog(
+        title: '테스트 데이터 관리',
+        icon: Icons.science,
+        headerColor: AppColors.warning,
         content: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -318,11 +327,11 @@ class _IntegratedWorkforceScreenState extends State<IntegratedWorkforceScreen> {
               ),
             ),
             SizedBox(height: ResponsiveHelper.spacing(context, 16)),
-            
+
             // ⭐ TO 선택하여 지원자 생성
             ListTile(
               leading: Icon(
-                Icons.group_add, 
+                Icons.group_add,
                 color: Theme.of(context).primaryColor,
                 size: ResponsiveHelper.iconSize(context, 24),
               ),
@@ -341,12 +350,12 @@ class _IntegratedWorkforceScreenState extends State<IntegratedWorkforceScreen> {
                 await _showCreateApplicantsDialog();
               },
             ),
-            
+
             const Divider(),
             // ⭐ 리뷰 생성
             ListTile(
               leading: Icon(
-                Icons.star, 
+                Icons.star,
                 color: Colors.amber,
                 size: ResponsiveHelper.iconSize(context, 24),
               ),
@@ -365,13 +374,13 @@ class _IntegratedWorkforceScreenState extends State<IntegratedWorkforceScreen> {
                 await _createDummyReviews();
               },
             ),
-            
+
             const Divider(),
-            
+
             // ⭐ 출근 데이터 생성
             ListTile(
               leading: Icon(
-                Icons.add_circle, 
+                Icons.add_circle,
                 color: Colors.green,
                 size: ResponsiveHelper.iconSize(context, 24),
               ),
@@ -390,13 +399,13 @@ class _IntegratedWorkforceScreenState extends State<IntegratedWorkforceScreen> {
                 await _createTodayAttendance();
               },
             ),
-            
+
             const Divider(),
-            
+
             // ⭐ 출근 데이터 삭제
             ListTile(
               leading: Icon(
-                Icons.delete_sweep, 
+                Icons.delete_sweep,
                 color: Colors.orange,
                 size: ResponsiveHelper.iconSize(context, 24),
               ),
@@ -417,11 +426,11 @@ class _IntegratedWorkforceScreenState extends State<IntegratedWorkforceScreen> {
             ),
 
             const Divider(),
-            
+
             // ⭐ 더미 리뷰 삭제
             ListTile(
               leading: Icon(
-                Icons.star_border, 
+                Icons.star_border,
                 color: AppColors.amberDark,
                 size: ResponsiveHelper.iconSize(context, 24),
               ),
@@ -440,13 +449,13 @@ class _IntegratedWorkforceScreenState extends State<IntegratedWorkforceScreen> {
                 await _clearDummyReviews();
               },
             ),
-            
+
             const Divider(),
-            
+
             // ⭐ 지원자 데이터 삭제
             ListTile(
               leading: Icon(
-                Icons.delete_forever, 
+                Icons.delete_forever,
                 color: Theme.of(context).colorScheme.error,
                 size: ResponsiveHelper.iconSize(context, 24),
               ),
@@ -468,9 +477,8 @@ class _IntegratedWorkforceScreenState extends State<IntegratedWorkforceScreen> {
           ],
         ),
         actions: [
-          TextButton(
+          StyledDialogButton.cancel(
             onPressed: () => Navigator.pop(context),
-            child: const Text('닫기'),
           ),
         ],
       ),
@@ -488,38 +496,13 @@ class _IntegratedWorkforceScreenState extends State<IntegratedWorkforceScreen> {
     
     debugPrint('🔍 [DummyData] 선택된 사업장: $targetBusinessId');
     
-    List<TOModel> allSelectableTOs = [];
-    
-    // ✅ Step 1: groups 컬렉션에서 active 그룹 조회
-    final activeGroups = await _firestoreService.getActiveGroups(
-      businessId: targetBusinessId,
-    );
-    debugPrint('   active 그룹: ${activeGroups.length}개');
-    
-    // 각 그룹의 하위 TO들 가져오기
-    for (var group in activeGroups) {
-      final groupTOs = await _firestoreService.getTOsByGroup(group.id);
-      debugPrint('   📋 그룹 "${group.groupName}": ${groupTOs.length}개 TO');
-      allSelectableTOs.addAll(groupTOs);
-    }
-    
-    // ✅ Step 2: 단일 TO 조회 (groupId가 null인 것들)
     final activeTOs = await _firestoreService.getActiveTOs();
-    final singleTOs = activeTOs.where((to) => 
-        to.groupId == null && 
-        to.businessId == targetBusinessId
-    ).toList();
-    debugPrint('   단일 TO: ${singleTOs.length}개');
-    allSelectableTOs.addAll(singleTOs);
-    
-    debugPrint('   🎯 총 선택 가능한 TO: ${allSelectableTOs.length}개');
-    
-    if (allSelectableTOs.isEmpty) {
-      ToastHelper.showWarning('선택 가능한 TO가 없습니다.');
-      return;
-    }
+    final allSelectableTOs = activeTOs
+        .where((to) => to.businessId == targetBusinessId)
+        .toList();
 
     debugPrint('   🎯 선택 가능한 TO: ${allSelectableTOs.length}개');
+
     if (allSelectableTOs.isEmpty) {
       ToastHelper.showWarning('선택 가능한 TO가 없습니다.');
       return;
@@ -535,11 +518,9 @@ class _IntegratedWorkforceScreenState extends State<IntegratedWorkforceScreen> {
     final result = await showDialog<bool>(
       context: context,
       builder: (context) => StatefulBuilder(
-        builder: (context, setState) => AlertDialog(
-          title: Text(
-            '지원자 생성',
-            style: ResponsiveHelper.titleStyle(context),
-          ),
+        builder: (context, setState) => StyledDialog(
+          title: '지원자 생성',
+          icon: Icons.group_add,
           content: SizedBox(
             width: MediaQuery.of(context).size.width * 0.8,
             child: Column(
@@ -569,11 +550,10 @@ class _IntegratedWorkforceScreenState extends State<IntegratedWorkforceScreen> {
                       style: ResponsiveHelper.bodyStyle(context),
                       items: allSelectableTOs.map((to) {
                         final dateStr = DateFormat('M/d (E)', 'ko_KR').format(to.date);
-                        final timeStr = to.isGrouped ? '(그룹)' : '';
                         return DropdownMenuItem(
                           value: to,
                           child: Text(
-                            '$dateStr - ${to.title} $timeStr',
+                            '$dateStr - ${to.title}',
                             overflow: TextOverflow.ellipsis,
                           ),
                         );
@@ -670,14 +650,22 @@ class _IntegratedWorkforceScreenState extends State<IntegratedWorkforceScreen> {
             ),
           ),
           actions: [
-            TextButton(
+            StyledDialogButton.cancel(
               onPressed: () => Navigator.pop(context, false),
-              child: const Text('취소'),
             ),
             ElevatedButton(
               onPressed: selectedTO == null
                   ? null
                   : () => Navigator.pop(context, true),
+              style: ElevatedButton.styleFrom(
+                padding: EdgeInsets.symmetric(
+                  vertical: ResponsiveHelper.spacing(context, 16),
+                ),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                elevation: 0,
+              ),
               child: const Text('생성하기'),
             ),
           ],
@@ -750,20 +738,18 @@ class _IntegratedWorkforceScreenState extends State<IntegratedWorkforceScreen> {
   Future<void> _clearAttendanceData() async {
     final confirmed = await showDialog<bool>(
       context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('출근 데이터 삭제'),
+      builder: (context) => StyledDialog(
+        title: '출근 데이터 삭제',
+        icon: Icons.delete_sweep,
+        headerColor: AppColors.warning,
         content: const Text('모든 더미 출근 기록을 삭제하시겠습니까?'),
         actions: [
-          TextButton(
+          StyledDialogButton.cancel(
             onPressed: () => Navigator.pop(context, false),
-            child: const Text('취소'),
           ),
-          TextButton(
+          StyledDialogButton.danger(
+            text: '삭제',
             onPressed: () => Navigator.pop(context, true),
-            style: TextButton.styleFrom(
-              foregroundColor: Theme.of(context).colorScheme.error,
-            ),
-            child: const Text('삭제'),
           ),
         ],
       ),
@@ -793,20 +779,18 @@ class _IntegratedWorkforceScreenState extends State<IntegratedWorkforceScreen> {
   Future<void> _clearDummyReviews() async {
     final confirmed = await showDialog<bool>(
       context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('더미 리뷰 삭제'),
+      builder: (context) => StyledDialog(
+        title: '더미 리뷰 삭제',
+        icon: Icons.star_border,
+        headerColor: AppColors.warning,
         content: const Text('모든 더미 리뷰를 삭제하시겠습니까?'),
         actions: [
-          TextButton(
+          StyledDialogButton.cancel(
             onPressed: () => Navigator.pop(context, false),
-            child: const Text('취소'),
           ),
-          TextButton(
+          StyledDialogButton.danger(
+            text: '삭제',
             onPressed: () => Navigator.pop(context, true),
-            style: TextButton.styleFrom(
-              foregroundColor: Theme.of(context).colorScheme.error,
-            ),
-            child: const Text('삭제'),
           ),
         ],
       ),
@@ -886,23 +870,21 @@ class _IntegratedWorkforceScreenState extends State<IntegratedWorkforceScreen> {
   Future<void> _clearAllDummyData() async {
     final confirmed = await showDialog<bool>(
       context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('⚠️ 모든 더미 데이터 삭제'),
+      builder: (context) => StyledDialog(
+        title: '모든 더미 데이터 삭제',
+        icon: Icons.delete_forever,
+        headerColor: AppColors.error,
         content: const Text(
           '지원자, 지원서, 출근 기록을 모두 삭제합니다.\n'
           '이 작업은 되돌릴 수 없습니다.',
         ),
         actions: [
-          TextButton(
+          StyledDialogButton.cancel(
             onPressed: () => Navigator.pop(context, false),
-            child: const Text('취소'),
           ),
-          TextButton(
+          StyledDialogButton.danger(
+            text: '삭제',
             onPressed: () => Navigator.pop(context, true),
-            style: TextButton.styleFrom(
-              foregroundColor: Theme.of(context).colorScheme.error,
-            ),
-            child: const Text('삭제'),
           ),
         ],
       ),
@@ -950,11 +932,9 @@ class _IntegratedWorkforceScreenState extends State<IntegratedWorkforceScreen> {
 
     return await showDialog<String>(
       context: context,
-      builder: (context) => AlertDialog(
-        title: Text(
-          '사업장 선택',
-          style: ResponsiveHelper.titleStyle(context),
-        ),
+      builder: (context) => StyledDialog(
+        title: '사업장 선택',
+        icon: Icons.business,
         content: Column(
           mainAxisSize: MainAxisSize.min,
           children: _allBusinessIds.map((id) {
@@ -973,9 +953,8 @@ class _IntegratedWorkforceScreenState extends State<IntegratedWorkforceScreen> {
           }).toList(),
         ),
         actions: [
-          TextButton(
+          StyledDialogButton.cancel(
             onPressed: () => Navigator.pop(context),
-            child: const Text('취소'),
           ),
         ],
       ),

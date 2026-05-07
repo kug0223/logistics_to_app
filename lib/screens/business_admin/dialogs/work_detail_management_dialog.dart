@@ -80,7 +80,7 @@ class WorkDetailManagementDialog {
 
                 // 업무 목록
                 ...toItem.workDetails.map((work) {
-                  final stats = toItem.workDetailStats?[work.workType];
+                  final stats = toItem.workDetailStats?[work.id];
                   final confirmed = stats?['confirmed'] ?? 0;
                   final pending = stats?['pending'] ?? 0;
                   final workStatus = _getWorkStatus(work, confirmed);

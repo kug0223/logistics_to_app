@@ -127,19 +127,17 @@ class _WorkforceCalendarViewState extends State<WorkforceCalendarView> {
           return masterTO.workDays!.contains(dayOfWeek);
         }
         return true;
-      } else if (groupItem.isGrouped) {
-        // ⭐ 그룹 상세 로드 전: groupItem의 기간으로 범위 확인
-        if (!groupItem.isGroupDetailLoaded) {
+      } else if (groupItem.masterTO.totalSlots > 1) {
+        // flex 다중 슬롯: 슬롯 미로드 시 기간으로, 로드 후엔 슬롯 날짜로 확인
+        if (!groupItem.isGroupDetailLoaded || groupItem.groupTOs.isEmpty) {
           return !day.isBefore(groupItem.startDate) && !day.isAfter(groupItem.endDate);
         }
-        
-        // 그룹 상세 로드 후: 그룹 내 TO 중 하나라도 해당 날짜면 표시
-        return groupItem.groupTOs.any((toItem) => 
+        return groupItem.groupTOs.any((toItem) =>
           DateUtils.isSameDay(toItem.to.date, day)
         );
       } else {
-        // 단일 TO: 날짜 일치
-        return DateUtils.isSameDay(groupItem.singleTO?.date ?? groupItem.masterTO.date, day);
+        // 단일 슬롯 TO: 날짜 일치
+        return DateUtils.isSameDay(groupItem.startDate, day);
       }
     }).toList();
   }
@@ -649,7 +647,6 @@ class _WorkforceCalendarViewState extends State<WorkforceCalendarView> {
                 groupItem: groupItem,
                 firestoreService: _firestoreService,
                 dialogs: _dialogs,
-                allGroupItems: _allGroupItems,
                 onChanged: _loadData,
                 isExpanded: _expandedGroups.contains(groupItem.id),
                 expandedTOs: _expandedTOs,
@@ -712,8 +709,8 @@ class _WorkforceCalendarViewState extends State<WorkforceCalendarView> {
       setState(() => _loadingGroups.remove(key));
     }
     
-    // ✨ 단일 TO인 경우: WorkDetails 로드 필요
-    if (!groupItem.isGrouped && groupItem.groupTOs.isNotEmpty) {
+    // ✨ WorkDetails 로드 필요
+    if (groupItem.groupTOs.isNotEmpty) {
       final toItem = groupItem.groupTOs.first;
       if (toItem.needsWorkDetailLoad) {
         setState(() => _loadingTOs.add(toItem.to.id));
@@ -777,29 +774,22 @@ class _WorkforceCalendarViewState extends State<WorkforceCalendarView> {
     
     debugPrint('🔄 영향받은 TO ${affectedTOIds.length}개 새로고침: $affectedTOIds');
     
-    // ✅ 갱신된 그룹 마스터 ID 추적 (중복 갱신 방지)
-    final Set<String> updatedGroupIds = {};
-    
     for (var toId in affectedTOIds) {
       bool found = false;
-      
+
       // 1. 모든 그룹에서 해당 TO 찾기
       for (var groupItem in _allGroupItems) {
         final toItem = groupItem.groupTOs.cast<TOItem?>().firstWhere(
           (item) => item?.to.id == toId,
           orElse: () => null,
         );
-        
+
         if (toItem != null) {
           found = true;
           try {
-            // ✅ 캐시 무효화
             _firestoreService.clearCache(toId: toId);
-            
-            // ✅ TO 문서 직접 조회 (Increment된 정확한 값)
             final toDoc = await _firestoreService.getTO(toId);
             if (toDoc != null) {
-              // 겉 카드 통계 즉시 업데이트
               toItem.updateOuterStats(
                 confirmed: toDoc.totalConfirmed,
                 pending: toDoc.totalPending,
@@ -807,8 +797,6 @@ class _WorkforceCalendarViewState extends State<WorkforceCalendarView> {
               );
               debugPrint('✅ TO $toId 겉 통계 갱신: 확정=${toDoc.totalConfirmed}, 대기=${toDoc.totalPending}');
             }
-            
-            // 펼쳐진 상태면 WorkDetails도 새로고침
             if (_expandedTOs.contains(toId)) {
               final result = await _firestoreService.loadTOWorkDetails(toItem.to);
               toItem.setWorkDetails(
@@ -820,41 +808,29 @@ class _WorkforceCalendarViewState extends State<WorkforceCalendarView> {
           } catch (e) {
             debugPrint('❌ TO $toId 새로고침 실패: $e');
           }
-          break;  // 찾았으면 다음 toId로
+          break;
         }
       }
-      
-      // 2. ✅ 찾지 못했으면 그룹 마스터 갱신 (그룹이 접혀있는 경우)
+
+      // 2. 찾지 못했으면 toId가 groupItem 자체인 경우 (슬롯 미로드)
       if (!found) {
         try {
           final toDoc = await _firestoreService.getTO(toId);
-          if (toDoc != null && toDoc.groupId != null) {
-            final groupId = toDoc.groupId!;
-            
-            // 이미 갱신한 그룹이면 스킵
-            if (updatedGroupIds.contains(groupId)) continue;
-            
-            // 그룹 마스터 찾기
+          if (toDoc != null) {
             for (var groupItem in _allGroupItems) {
-              if (groupItem.id == groupId) {
-                // ✅ groups 컬렉션에서 최신 통계 조회
-                final groupDoc = await _firestoreService.getGroup(groupId);
-                if (groupDoc != null) {
-                  // 🔥 TOGroupItem 캐시 업데이트 (groupTOs 비어있어도 동작!)
-                  groupItem.updateGroupStats(
-                    confirmed: groupDoc.totalConfirmed,
-                    pending: groupDoc.totalPending,
-                    required: groupDoc.totalRequired,
-                  );
-                  updatedGroupIds.add(groupId);
-                  debugPrint('✅ 그룹 $groupId 통계 갱신 (groups 컬렉션): 확정=${groupDoc.totalConfirmed}, 대기=${groupDoc.totalPending}');
-                }
+              if (groupItem.id == toId) {
+                groupItem.updateGroupStats(
+                  confirmed: toDoc.totalConfirmed,
+                  pending: toDoc.totalPending,
+                  required: toDoc.totalRequired,
+                );
+                debugPrint('✅ GroupItem $toId 통계 갱신: 확정=${toDoc.totalConfirmed}, 대기=${toDoc.totalPending}');
                 break;
               }
             }
           }
         } catch (e) {
-          debugPrint('❌ 그룹 마스터 갱신 실패: $e');
+          debugPrint('❌ GroupItem 갱신 실패: $e');
         }
       }
     }
@@ -910,8 +886,8 @@ class _WorkforceCalendarViewState extends State<WorkforceCalendarView> {
     final dayGroupItems = _getGroupItemsForDay(day);
     
     for (var groupItem in dayGroupItems) {
-      // 그룹 TO이고 상세 로드 안 됐으면 로드
-      if (groupItem.isGrouped && !groupItem.isGroupDetailLoaded) {
+      // 다중 슬롯 flex TO 상세 미로드 시 로드
+      if (groupItem.masterTO.totalSlots > 1 && !groupItem.isGroupDetailLoaded) {
         final key = groupItem.id;
         
         setState(() => _loadingGroups.add(key));

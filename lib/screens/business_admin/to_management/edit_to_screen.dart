@@ -18,6 +18,7 @@ import '../../../utils/responsive_helper.dart';
 
 // Widgets
 import '../../../widgets/pickers/create&edit_work_detail_dialog.dart';
+import '../../../widgets/dialogs/styled_dialog.dart';
 
 // 공통 위젯
 import 'widgets/to_widgets.dart';
@@ -111,10 +112,7 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
   // ============================================================
 
   Future<void> _saveChanges() async {
-    if (_titleController.text.trim().isEmpty) {
-      ToastHelper.showError('제목을 입력해주세요');
-      return;
-    }
+    if (!_formKey.currentState!.validate()) return;
 
     setState(() => _isSaving = true);
 
@@ -205,6 +203,13 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
           );
         }
 
+        // 업무 구성 변경 감지 (추가/삭제)
+        final oldWorkTypes =
+            widget.to.workDetails.map((d) => d.workType).toSet();
+        final newWorkTypes = _workDetails.map((d) => d.workType).toSet();
+        final workTypesChanged = oldWorkTypes.length != newWorkTypes.length ||
+            !oldWorkTypes.containsAll(newWorkTypes);
+
         // 근무시간 or 마감 기준 변경 → 슬롯별 applicationDeadline 재계산
         final oldEarliestStart = widget.to.workDetails.isNotEmpty
             ? (widget.to.workDetails.map((d) => d.startTime).toList()..sort()).first
@@ -217,7 +222,8 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
             _hoursBeforeStart != (widget.to.hoursBeforeStart ?? 2) ||
             oldEarliestStart != newEarliestStart;
 
-        if (deadlineSettingsChanged) {
+        // 업무 구성 or 마감 설정 변경 시 슬롯 workDetails 일괄 동기화
+        if (workTypesChanged || deadlineSettingsChanged) {
           await _firestoreService.updateSlotsDeadlines(
             toId: widget.to.id,
             deadlineType: 'HOURS_BEFORE',
@@ -315,24 +321,6 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
       );
     }
 
-    if (_isSaving) {
-      return Scaffold(
-        appBar: AppBar(title: const Text('TO 수정')),
-        body: Center(
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              const CircularProgressIndicator(),
-              SizedBox(height: ResponsiveHelper.spacing(context, 24)),
-              Text('저장 중...',
-                  style: ResponsiveHelper.titleStyle(context)
-                      .copyWith(fontWeight: FontWeight.bold)),
-            ],
-          ),
-        ),
-      );
-    }
-
     return Scaffold(
       appBar: AppBar(title: const Text('TO 수정')),
       body: Container(
@@ -381,9 +369,9 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
                     setState(() => _publishDaysBefore = d),
                 publishTime: _publishTime,
                 onTimeChanged: (t) => setState(() => _publishTime = t),
-                previewDates: widget.to.rangeStart != null
-                    ? [widget.to.rangeStart!]
-                    : [],
+                previewDates: widget.to.isContractType
+                    ? (widget.to.rangeStart != null ? [widget.to.rangeStart!] : [])
+                    : (_firstSlotDate != null ? [_firstSlotDate!] : []),
                 isLongTerm: widget.to.isContractType,
               ),
               SizedBox(height: ResponsiveHelper.spacing(context, 16)),
@@ -406,19 +394,19 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
   Future<bool?> _showDeleteConfirmDialog(WorkDetailData work) {
     return showDialog<bool>(
       context: context,
-      builder: (context) => AlertDialog(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        title: const Text('업무 삭제'),
-        content: Text('${work.workType} 업무를 삭제하시겠습니까?'),
+      builder: (context) => StyledDialog(
+        title: '업무 삭제',
+        subtitle: '${work.workType} 업무를 삭제하시겠습니까?',
+        icon: Icons.delete_outline,
+        headerColor: AppColors.error,
+        content: const SizedBox.shrink(),
         actions: [
-          TextButton(
+          StyledDialogButton.cancel(
             onPressed: () => Navigator.pop(context, false),
-            child: const Text('취소'),
           ),
-          TextButton(
+          StyledDialogButton.danger(
+            text: '삭제',
             onPressed: () => Navigator.pop(context, true),
-            style: TextButton.styleFrom(foregroundColor: Colors.red),
-            child: const Text('삭제'),
           ),
         ],
       ),

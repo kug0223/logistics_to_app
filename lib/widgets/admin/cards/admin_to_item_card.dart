@@ -304,7 +304,7 @@ class _TOItemCardState extends State<TOItemCard> {
                                           
                                           // 업무 목록
                                           ...widget.toItem.workDetails.map((work) {
-                                            final stats = widget.toItem.workDetailStats?[work.workType];
+                                            final stats = widget.toItem.workDetailStats?[work.id];
                                             final workConfirmed = stats?['confirmed'] ?? 0;
                                             final workPending = stats?['pending'] ?? 0;
 
@@ -587,20 +587,6 @@ class _TOItemCardState extends State<TOItemCard> {
           ),
         ),
         PopupMenuItem(
-          value: 'unlink',
-          child: Row(
-            children: [
-              Icon(
-                Icons.link_off,
-                size: ResponsiveHelper.iconSize(context, 18),
-                color: AppColors.info,
-              ),
-              SizedBox(width: ResponsiveHelper.spacing(context, 12)),
-              const Text('그룹 해제'),
-            ],
-          ),
-        ),
-        PopupMenuItem(
           value: 'confirmedList',
           child: Row(
             children: [
@@ -688,11 +674,7 @@ class _TOItemCardState extends State<TOItemCard> {
         widget.dialogs.showDeleteTODialog(widget.toItem);
         break;
         
-      case 'unlink':
-        widget.dialogs.showRemoveFromGroupDialog(widget.toItem);
-        break;
-        
-      case 'confirmedList':
+case 'confirmedList':
         // ✅ WorkDetails 로드 확인 후 다이얼로그 열기
         if (!widget.toItem.isWorkDetailLoaded || widget.toItem.workDetails.isEmpty) {
           showDialog(
