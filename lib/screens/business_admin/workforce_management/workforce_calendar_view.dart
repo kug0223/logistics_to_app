@@ -67,6 +67,9 @@ class _WorkforceCalendarViewState extends State<WorkforceCalendarView> {
   bool _hasConfirmedWorkers = false;
   bool _isCheckingWorkers = false;
 
+  // 컨트롤러 로딩 완료 후 그룹 상세 로드 트리거 여부
+  bool _groupDetailsTriggered = false;
+
   @override
   void initState() {
     super.initState();
@@ -77,12 +80,6 @@ class _WorkforceCalendarViewState extends State<WorkforceCalendarView> {
       firestoreService: _firestoreService,
       onChanged: _reload,
     );
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted && _selectedDay != null) {
-        _loadGroupDetailsForDay(_selectedDay!);
-        _checkConfirmedWorkers(_selectedDay!);
-      }
-    });
   }
 
   void _reload() {
@@ -132,7 +129,20 @@ class _WorkforceCalendarViewState extends State<WorkforceCalendarView> {
     final controller = context.watch<WorkforceController>();
 
     if (controller.isLoading) {
+      _groupDetailsTriggered = false; // 다음 로딩 완료 시 재트리거
       return const LoadingWidget(message: '공고 목록을 불러오는 중...');
+    }
+
+    // 컨트롤러 로딩 완료 직후 한 번만 그룹 상세 로드
+    // (initState postFrameCallback 시점에 아직 로딩 중이었던 경우 대비)
+    if (!_groupDetailsTriggered && _selectedDay != null) {
+      _groupDetailsTriggered = true;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted && _selectedDay != null) {
+          _loadGroupDetailsForDay(_selectedDay!);
+          _checkConfirmedWorkers(_selectedDay!);
+        }
+      });
     }
 
     return CustomScrollView(

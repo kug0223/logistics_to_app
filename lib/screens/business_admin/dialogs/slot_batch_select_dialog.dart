@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../../../models/core/slot_model.dart';
 import '../../../models/core/to_model.dart';
+import '../../../models/core/work_detail_data.dart';
 import '../../../services/firestore_service.dart';
 import '../../../utils/responsive_helper.dart';
 import '../../../widgets/dialogs/styled_dialog.dart';
@@ -71,7 +72,18 @@ class _SlotBatchSelectDialogState extends State<SlotBatchSelectDialog> {
     final today = DateTime(now.year, now.month, now.day);
 
     final filtered = widget.closedAndReopenable
-        ? slots.where((s) => s.isManualClosed && !s.date.isBefore(today)).toList()
+        ? slots.where((s) {
+            if (!s.isManualClosed || s.date.isBefore(today)) return false;
+            // 모든 업무상세의 지원마감이 이미 지난 슬롯은 재오픈해도 의미 없음
+            if (s.workDetails.isNotEmpty &&
+                s.workDetails.every((d) {
+                  final deadline = d.applicationDeadline ?? _computeDeadline(d, s);
+                  return deadline != null && now.isAfter(deadline);
+                })) {
+              return false;
+            }
+            return true;
+          }).toList()
         : widget.openOnly
             ? slots.where((s) => !s.isClosed).toList()
             : slots;
@@ -80,6 +92,16 @@ class _SlotBatchSelectDialogState extends State<SlotBatchSelectDialog> {
       _slots = filtered;
       _isLoading = false;
     });
+  }
+
+  DateTime? _computeDeadline(WorkDetailData d, SlotModel s) {
+    final to = widget.to;
+    if (to.deadlineType != 'HOURS_BEFORE' || (to.hoursBeforeStart ?? 0) <= 0) return null;
+    final parts = d.startTime.split(':');
+    if (parts.length != 2) return null;
+    return DateTime(s.date.year, s.date.month, s.date.day,
+            int.parse(parts[0]), int.parse(parts[1]))
+        .subtract(Duration(hours: to.hoursBeforeStart!));
   }
 
   bool get _allSelected => _slots.isNotEmpty && _selectedIds.length == _slots.length;

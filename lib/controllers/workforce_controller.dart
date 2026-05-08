@@ -97,8 +97,29 @@ class WorkforceController extends ChangeNotifier {
         slotId: slot.slot?.id,
         slotWorkDetails: slot.slot?.workDetails,
       );
+      var workDetails = result['workDetails'] as List<WorkDetailData>;
+
+      // Firestore에 applicationDeadline이 없는 기존 데이터 대응:
+      // TO의 deadlineType 설정으로 런타임에 계산해서 채운다.
+      final slotDate = slot.slot?.date;
+      final to = slot.to;
+      if (slotDate != null &&
+          to.deadlineType == 'HOURS_BEFORE' &&
+          (to.hoursBeforeStart ?? 0) > 0) {
+        workDetails = workDetails.map((d) {
+          if (d.applicationDeadline != null) return d;
+          final parts = d.startTime.split(':');
+          if (parts.length != 2) return d;
+          final deadline = DateTime(
+            slotDate.year, slotDate.month, slotDate.day,
+            int.parse(parts[0]), int.parse(parts[1]),
+          ).subtract(Duration(hours: to.hoursBeforeStart!));
+          return d.copyWith(applicationDeadline: deadline);
+        }).toList();
+      }
+
       slot.setWorkDetails(
-        result['workDetails'] as List<WorkDetailData>,
+        workDetails,
         result['workStats'] as Map<String, Map<String, int>>,
       );
       notifyListeners();

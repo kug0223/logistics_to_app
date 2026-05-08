@@ -60,6 +60,11 @@ class WorkDetailData {
       order: map['order'] as int? ?? 0,
       applicationDeadline:
           (map['applicationDeadline'] as Timestamp?)?.toDate().toLocal(),
+      isManualClosed: map['isManualClosed'] as bool? ?? false,
+      isEmergencyOpen: map['isEmergencyOpen'] as bool? ?? false,
+      closedAt: (map['closedAt'] as Timestamp?)?.toDate().toLocal(),
+      closedBy: map['closedBy'] as String?,
+      emergencyOpenedAt: (map['emergencyOpenedAt'] as Timestamp?)?.toDate().toLocal(),
     );
   }
 
@@ -76,6 +81,12 @@ class WorkDetailData {
     'order': order,
     if (applicationDeadline != null)
       'applicationDeadline': Timestamp.fromDate(applicationDeadline!.toUtc()),
+    if (isManualClosed) 'isManualClosed': true,
+    if (closedAt != null) 'closedAt': Timestamp.fromDate(closedAt!.toUtc()),
+    if (closedBy != null) 'closedBy': closedBy,
+    if (isEmergencyOpen) 'isEmergencyOpen': true,
+    if (emergencyOpenedAt != null)
+      'emergencyOpenedAt': Timestamp.fromDate(emergencyOpenedAt!.toUtc()),
   };
 
   WorkDetailData copyWith({
@@ -130,8 +141,9 @@ class WorkDetailData {
   /// 마감 여부
   bool get isClosed => isManualClosed || closedAt != null;
 
-  /// 시간 초과 여부 — 런타임에 설정되지 않으면 false
-  bool get isTimeExpired => false;
+  /// 마감시간(applicationDeadline) 초과 여부
+  bool get isTimeExpired =>
+      applicationDeadline != null && DateTime.now().isAfter(applicationDeadline!);
 
   /// 인원 충족 여부 — 런타임에 설정되지 않으면 false
   bool get isFull => false;

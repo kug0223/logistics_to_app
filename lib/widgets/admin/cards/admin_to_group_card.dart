@@ -126,29 +126,54 @@ class _TOGroupCardState extends State<TOGroupCard> with SingleTickerProviderStat
             });
           });
 
-    // ✅ 전체 마감 여부 (WorkDetail 실제 상태 우선)
+    // ✅ 전체 마감 여부 (WorkDetail 실제 상태 + isTimeExpired 포함)
+    final singleTODetails = widget.groupItem.groupTOs.isEmpty
+        ? _getSingleTOWorkDetails()
+        : <WorkDetailData>[];
     final allClosed = widget.groupItem.groupTOs.isEmpty
-        ? widget.groupItem.isClosed
+        ? (widget.groupItem.isClosed ||
+           (singleTODetails.isNotEmpty &&
+            singleTODetails.every((d) => d.isClosed || d.isTimeExpired)))
         : widget.groupItem.groupTOs.every((toItem) {
             final to = toItem.to;
-            
-            // ✅ WorkDetails 로드된 경우: 실제 상태 우선!
+
+            // WorkDetails 로드된 경우: 실제 상태 우선
             if (toItem.isWorkDetailLoaded && toItem.workDetails.isNotEmpty) {
-              return toItem.workDetails.every((work) =>
-                  work.isClosed || work.isTimeExpired || work.isFull);
+              return toItem.workDetails.every((work) {
+                if (work.isClosed || work.isTimeExpired) return true;
+                final stats = toItem.workDetailStats?[work.id];
+                final confirmed = stats?['confirmed'] ?? 0;
+                return confirmed >= work.requiredCount;
+              });
             }
-            
-            // ✅ WorkDetails 미로드: DB status 기반 판단
-            if (to.status == 'CLOSED' || to.status == 'EXPIRED' || to.status == 'FULL') {
-              return true;
+
+            // 슬롯/TO 수동 마감
+            if (toItem.slot?.isManualClosed == true || to.isManualClosed) return true;
+
+            // DB status 기반 판단
+            if (to.status == 'CLOSED' || to.status == 'EXPIRED' || to.status == 'FULL') return true;
+
+            // 슬롯 날짜 + masterTO 설정으로 시간초과 여부 계산 (workDetails 미로드 시)
+            final slotDate = toItem.slot?.date;
+            final masterTO = widget.groupItem.masterTO;
+            if (slotDate != null &&
+                masterTO.deadlineType == 'HOURS_BEFORE' &&
+                (masterTO.hoursBeforeStart ?? 0) > 0) {
+              final masterDetails = masterTO.workDetails;
+              if (masterDetails.isNotEmpty &&
+                  masterDetails.every((d) {
+                    final parts = d.startTime.split(':');
+                    if (parts.length != 2) return false;
+                    final deadline = DateTime(
+                      slotDate.year, slotDate.month, slotDate.day,
+                      int.parse(parts[0]), int.parse(parts[1]),
+                    ).subtract(Duration(hours: masterTO.hoursBeforeStart!));
+                    return DateTime.now().isAfter(deadline);
+                  })) {
+                return true;
+              }
             }
-            
-            // ✅ 수동 마감 체크
-            if (to.isManualClosed) {
-              return true;
-            }
-            
-            // ✅ DB status가 ACTIVE면 모집중
+
             return false;
           });
 
@@ -343,7 +368,7 @@ class _TOGroupCardState extends State<TOGroupCard> with SingleTickerProviderStat
                         ],
                       ),
                       
-                      // ✨ 장기공고 마감일시 표시 (장기공고인 경우)
+                      // 장기공고 마감일시
                       if (masterTO.isLongTerm && !allClosed) ...[
                         SizedBox(height: ResponsiveHelper.spacing(context, 8)),
                         Row(
@@ -351,8 +376,8 @@ class _TOGroupCardState extends State<TOGroupCard> with SingleTickerProviderStat
                             Icon(
                               Icons.timer_outlined,
                               size: ResponsiveHelper.iconSize(context, 14),
-                              color: masterTO.isDeadlinePassed 
-                                  ? AppColors.grey500 
+                              color: masterTO.isDeadlinePassed
+                                  ? AppColors.grey500
                                   : AppColors.warningDark,
                             ),
                             SizedBox(width: ResponsiveHelper.spacing(context, 6)),
@@ -360,33 +385,54 @@ class _TOGroupCardState extends State<TOGroupCard> with SingleTickerProviderStat
                               '지원마감 ${masterTO.formattedDeadline}',
                               style: ResponsiveHelper.smallStyle(
                                 context,
-                                color: masterTO.isDeadlinePassed 
-                                    ? AppColors.grey500 
+                                color: masterTO.isDeadlinePassed
+                                    ? AppColors.grey500
                                     : AppColors.warningDark,
                               ),
                             ),
                             if (masterTO.isDeadlineSoon && !masterTO.isDeadlinePassed) ...[
                               SizedBox(width: ResponsiveHelper.spacing(context, 8)),
-                              Container(
-                                padding: EdgeInsets.symmetric(
-                                  horizontal: ResponsiveHelper.spacing(context, 6),
-                                  vertical: ResponsiveHelper.spacing(context, 2),
-                                ),
-                                decoration: BoxDecoration(
-                                  color: AppColors.warningBg,
-                                  borderRadius: BorderRadius.circular(4),
-                                ),
-                                child: Text(
-                                  '마감임박',
-                                  style: ResponsiveHelper.tinyStyle(
-                                    context,
-                                    color: AppColors.warningDark,
-                                  ).copyWith(fontWeight: FontWeight.bold),
-                                ),
-                              ),
+                              _buildUrgentBadge(context),
                             ],
                           ],
                         ),
+                      ],
+
+                      // 단기 단일슬롯 공고: 지원 마감시간
+                      if (!masterTO.isLongTerm && !allClosed) ...[
+                        Builder(builder: (context) {
+                          final deadline = _getEarliestDeadline();
+                          if (deadline == null) return const SizedBox.shrink();
+                          final now = DateTime.now();
+                          final isPast = deadline.isBefore(now);
+                          final isSoon = !isPast && deadline.difference(now).inHours < 2;
+                          return Padding(
+                            padding: EdgeInsets.only(
+                              top: ResponsiveHelper.spacing(context, 8),
+                            ),
+                            child: Row(
+                              children: [
+                                Icon(
+                                  Icons.timer_off_outlined,
+                                  size: ResponsiveHelper.iconSize(context, 14),
+                                  color: isPast ? AppColors.grey500 : AppColors.warningDark,
+                                ),
+                                SizedBox(width: ResponsiveHelper.spacing(context, 6)),
+                                Text(
+                                  '지원마감 ${FormatHelper.formatTime(deadline)}',
+                                  style: ResponsiveHelper.smallStyle(
+                                    context,
+                                    color: isPast ? AppColors.grey500 : AppColors.warningDark,
+                                  ),
+                                ),
+                                if (isSoon) ...[
+                                  SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+                                  _buildUrgentBadge(context),
+                                ],
+                              ],
+                            ),
+                          );
+                        }),
                       ],
                       
                       // ✨ 상태 표시 (마감/예약/모집중) - targetTOs 기준
@@ -821,6 +867,26 @@ class _TOGroupCardState extends State<TOGroupCard> with SingleTickerProviderStat
             ),
           ),
         ],
+      ),
+    );
+  }
+
+  Widget _buildUrgentBadge(BuildContext context) {
+    return Container(
+      padding: EdgeInsets.symmetric(
+        horizontal: ResponsiveHelper.spacing(context, 6),
+        vertical: ResponsiveHelper.spacing(context, 2),
+      ),
+      decoration: BoxDecoration(
+        color: AppColors.warningBg,
+        borderRadius: BorderRadius.circular(4),
+      ),
+      child: Text(
+        '마감임박',
+        style: ResponsiveHelper.tinyStyle(
+          context,
+          color: AppColors.warningDark,
+        ).copyWith(fontWeight: FontWeight.bold),
       ),
     );
   }
@@ -1415,28 +1481,51 @@ class _TOGroupCardState extends State<TOGroupCard> with SingleTickerProviderStat
 
   /// 단건 TO의 workDetails — 마감시간을 TO 설정으로 계산해 채워 반환
   List<WorkDetailData> _getSingleTOWorkDetails() {
-    if (widget.groupItem.groupTOs.isNotEmpty) {
-      return widget.groupItem.groupTOs.first.workDetails;
-    }
     final to = widget.groupItem.masterTO;
-    final details = to.workDetails;
-    if (!to.isFlexType) return details;
+    List<WorkDetailData> details;
+    DateTime refDate;
 
-    // flex TO: applicationDeadline이 없으면 hoursBeforeStart로 계산
-    final refDate = to.rangeStart ?? DateTime.now();
+    if (widget.groupItem.groupTOs.isNotEmpty) {
+      final firstSlot = widget.groupItem.groupTOs.first;
+      details = firstSlot.workDetails;
+      // 슬롯의 실제 날짜 사용, 없으면 마스터 TO 기준
+      refDate = firstSlot.slot?.date ?? to.rangeStart ?? DateTime.now();
+    } else {
+      details = to.workDetails;
+      if (!to.isFlexType) return details;
+      refDate = to.rangeStart ?? DateTime.now();
+    }
+
+    // applicationDeadline이 없으면 TO 설정으로 계산 (기존 데이터 호환)
+    if (to.deadlineType != 'HOURS_BEFORE' || (to.hoursBeforeStart ?? 0) <= 0) {
+      return details;
+    }
     return details.map((d) {
       if (d.applicationDeadline != null) return d;
-      if (to.deadlineType == 'HOURS_BEFORE' && (to.hoursBeforeStart ?? 0) > 0) {
-        final parts = d.startTime.split(':');
-        if (parts.length != 2) return d;
-        final deadline = DateTime(
-          refDate.year, refDate.month, refDate.day,
-          int.parse(parts[0]), int.parse(parts[1]),
-        ).subtract(Duration(hours: to.hoursBeforeStart!));
-        return d.copyWith(applicationDeadline: deadline);
-      }
-      return d;
+      final parts = d.startTime.split(':');
+      if (parts.length != 2) return d;
+      final deadline = DateTime(
+        refDate.year, refDate.month, refDate.day,
+        int.parse(parts[0]), int.parse(parts[1]),
+      ).subtract(Duration(hours: to.hoursBeforeStart!));
+      return d.copyWith(applicationDeadline: deadline);
     }).toList();
+  }
+
+  /// 단기 단일슬롯 공고의 가장 이른 지원 마감시간 반환
+  /// totalSlots > 1이면 null (슬롯별로 달라서 헤더에 표시 의미 없음)
+  DateTime? _getEarliestDeadline() {
+    final to = widget.groupItem.masterTO;
+    if (to.isLongTerm || to.totalSlots > 1) return null;
+    final workDetails = _getSingleTOWorkDetails();
+    DateTime? earliest;
+    for (final d in workDetails) {
+      if (d.applicationDeadline == null) continue;
+      if (earliest == null || d.applicationDeadline!.isBefore(earliest)) {
+        earliest = d.applicationDeadline;
+      }
+    }
+    return earliest;
   }
 
   /// 단건 TO의 work별 통계

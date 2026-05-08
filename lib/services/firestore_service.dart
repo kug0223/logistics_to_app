@@ -465,22 +465,81 @@ class FirestoreService {
     );
   }
 
-  /// 구 WorkDetail 관련 메서드 — 내장 배열로 전환, no-op
+  /// workDetails 배열에서 특정 업무를 수정하는 공통 헬퍼
+  Future<bool> _updateWorkDetailInArray({
+    required String toId,
+    String? slotId,
+    required String workDetailId,
+    required WorkDetailData Function(WorkDetailData d) updater,
+  }) async {
+    try {
+      final docRef = slotId != null
+          ? _firestore.collection('tos').doc(toId).collection('slots').doc(slotId)
+          : _firestore.collection('tos').doc(toId);
+
+      final snap = await docRef.get();
+      if (!snap.exists) return false;
+
+      final raw = (snap.data() as Map<String, dynamic>)['workDetails'] as List? ?? [];
+      final details = raw
+          .map((e) => WorkDetailData.fromMap(Map<String, dynamic>.from(e as Map)))
+          .toList();
+
+      final idx = details.indexWhere((d) => d.workType == workDetailId);
+      if (idx == -1) return false;
+
+      details[idx] = updater(details[idx]);
+      await docRef.update({'workDetails': WorkDetailData.listToFirestore(details)});
+      clearCache(toId: toId);
+      return true;
+    } catch (e) {
+      debugPrint('❌ [WorkDetail] 배열 수정 실패: $e');
+      return false;
+    }
+  }
+
   Future<bool> closeWorkDetail({
     required String toId,
     required String workDetailId,
     required String adminUID,
-  }) async => false;
+    String? slotId,
+  }) =>
+      _updateWorkDetailInArray(
+        toId: toId,
+        slotId: slotId,
+        workDetailId: workDetailId,
+        updater: (d) => d.copyWith(
+          isManualClosed: true,
+          closedAt: DateTime.now(),
+          closedBy: adminUID,
+        ),
+      );
+
   Future<bool> reopenWorkDetail({
     required String toId,
     required String workDetailId,
     required String adminUID,
-  }) async => false;
+    String? slotId,
+  }) =>
+      _updateWorkDetailInArray(
+        toId: toId,
+        slotId: slotId,
+        workDetailId: workDetailId,
+        updater: (d) => d.copyWith(clearClosedAt: true),
+      );
+
   Future<bool> stopEmergencyRecruitment({
     required String toId,
     required String workDetailId,
     String? adminUID,
-  }) async => false;
+    String? slotId,
+  }) =>
+      _updateWorkDetailInArray(
+        toId: toId,
+        slotId: slotId,
+        workDetailId: workDetailId,
+        updater: (d) => d.copyWith(clearEmergency: true),
+      );
 
   /// 출근 기록 확인 — attendance_firestore에서 처리, 여기서는 false 반환
   Future<bool> hasAttendanceRecord(String applicationId) async => false;

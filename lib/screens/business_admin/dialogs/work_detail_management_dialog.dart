@@ -472,6 +472,7 @@ class WorkDetailManagementDialog {
           toId: toItem.to.id,
           workDetailId: work.id,
           adminUID: adminUID,
+          slotId: toItem.slot?.id,
         );
         
         // ⭐ 로컬 데이터 업데이트
@@ -509,6 +510,7 @@ class WorkDetailManagementDialog {
           toId: toItem.to.id,
           workDetailId: work.id,
           adminUID: adminUID,
+          slotId: toItem.slot?.id,
         );
         
         // ⭐ 로컬 데이터 업데이트 (clearClosedAt 사용)
@@ -542,6 +544,7 @@ class WorkDetailManagementDialog {
           toId: toItem.to.id,
           workDetailId: work.id,
           adminUID: adminUID,
+          slotId: toItem.slot?.id,
         );
         
         // ⭐ 로컬 데이터 업데이트 (clearEmergency 사용)

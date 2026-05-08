@@ -546,11 +546,13 @@ class _WorkforceListViewState extends State<WorkforceListView> {
 
     final controller = context.read<WorkforceController>();
 
-    if (groupItem.masterTO.isFlexType && !groupItem.isGroupDetailLoaded) {
-      // Flex TO: 슬롯 목록 lazy load
-      setState(() => _loadingGroups.add(key));
-      await controller.loadGroupDetails(context, groupItem);
-      setState(() => _loadingGroups.remove(key));
+    if (groupItem.masterTO.isFlexType) {
+      // Flex TO: 슬롯 미로드 시에만 로드, 이미 로드됐으면 바로 펼치기
+      if (!groupItem.isGroupDetailLoaded) {
+        setState(() => _loadingGroups.add(key));
+        await controller.loadGroupDetails(context, groupItem);
+        setState(() => _loadingGroups.remove(key));
+      }
     } else if (!groupItem.isWorkDetailLoaded) {
       // 단건 TO: 업무별 통계 lazy load
       setState(() => _loadingTOs.add(key));
