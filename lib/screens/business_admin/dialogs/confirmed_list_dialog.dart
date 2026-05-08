@@ -584,6 +584,7 @@ class _ConfirmedListDialogWidgetState
                           '${index + 1}',
                           style: ResponsiveHelper.bodyStyle(context).copyWith(
                             fontWeight: FontWeight.bold,
+                            
                             color: AppColors.successDark,
                           ),
                         ),

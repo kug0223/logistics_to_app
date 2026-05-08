@@ -16,11 +16,10 @@ extension ApplicationFirestore on FirestoreService {
       Query query = _firestore
           .collection('applications')
           .where('toId', isEqualTo: toId);
-      // businessId를 함께 필터링하면 Firestore 보안규칙 query-time 검증 가능
       if (businessId != null && businessId.isNotEmpty) {
         query = query.where('businessId', isEqualTo: businessId);
       }
-      final snap = await query.get();
+      final snap = await query.limit(500).get();
       return snap.docs
           .map((d) => ApplicationModel.fromFirestore(d))
           .toList();
@@ -40,6 +39,7 @@ extension ApplicationFirestore on FirestoreService {
           .collection('applications')
           .where('toId', isEqualTo: toId)
           .where('slotId', isEqualTo: slotId)
+          .limit(500)
           .get();
       return snap.docs
           .map((d) => ApplicationModel.fromFirestore(d))
@@ -77,6 +77,8 @@ extension ApplicationFirestore on FirestoreService {
       final snap = await _firestore
           .collection('applications')
           .where('businessId', isEqualTo: businessId)
+          .orderBy('appliedAt', descending: true)
+          .limit(1000)
           .get();
       return snap.docs
           .map((d) => ApplicationModel.fromMap(d.data(), d.id))
@@ -94,6 +96,7 @@ extension ApplicationFirestore on FirestoreService {
           .collection('applications')
           .where('uid', isEqualTo: uid)
           .orderBy('appliedAt', descending: true)
+          .limit(200)
           .get();
       return snap.docs
           .map((d) => ApplicationModel.fromFirestore(d))

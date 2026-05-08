@@ -103,13 +103,14 @@ class BusinessAdminHomeScreen extends StatelessWidget {
   Widget build(BuildContext context) {
     return Consumer<UserProvider>(
       builder: (context, userProvider, _) {
+        final theme = Theme.of(context);
         return Scaffold(
           body: Container(
-            decoration: const BoxDecoration(
+            decoration: BoxDecoration(
               gradient: LinearGradient(
                 begin: Alignment.topCenter,
                 end: Alignment.bottomCenter,
-                colors: [Color(0xFF1565C0), Color(0xFF1E88E5)],
+                colors: [theme.primaryColor, theme.colorScheme.secondary],
               ),
             ),
             child: SafeArea(
@@ -316,7 +317,7 @@ class BusinessAdminHomeScreen extends StatelessWidget {
                               icon: Icons.post_add,
                               title: '공고 등록',
                               subtitle: '새 공고 작성',
-                              color: const Color(0xFF1565C0),
+                              color: theme.primaryColor,
                               onTap: () async {
                                 final user = userProvider.currentUser;
                                 if (user == null) return;
@@ -355,7 +356,7 @@ class BusinessAdminHomeScreen extends StatelessWidget {
                               icon: Icons.work_outline,
                               title: '공고 관리',
                               subtitle: '지원자 · 공고 현황',
-                              color: const Color(0xFF1565C0),
+                              color: theme.primaryColor,
                               onTap: () {
                                 Navigator.push(
                                   context,
@@ -372,7 +373,7 @@ class BusinessAdminHomeScreen extends StatelessWidget {
                               icon: Icons.bar_chart_outlined,
                               title: '통계',
                               subtitle: '공고 현황',
-                              color: const Color(0xFF1565C0),
+                              color: theme.primaryColor,
                               onTap: () {
                                 ScaffoldMessenger.of(context).showSnackBar(
                                   const SnackBar(content: Text('통계 화면 준비 중입니다')),
@@ -385,7 +386,7 @@ class BusinessAdminHomeScreen extends StatelessWidget {
                               icon: Icons.rate_review_outlined,
                               title: '리뷰 관리',
                               subtitle: '평가 작성/조회',
-                              color: const Color(0xFF1565C0),
+                              color: theme.primaryColor,
                               onTap: () {
                                 Navigator.push(
                                   context,

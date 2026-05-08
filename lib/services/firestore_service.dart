@@ -246,13 +246,26 @@ class FirestoreService {
   }
 
   /// 구 loadTOWorkDetails — TO 내장 workDetails + 실제 지원 통계 반환
-  Future<Map<String, dynamic>> loadTOWorkDetails(TOModel to) async {
-    final workDetails = to.workDetails;
+  /// [slotId] 전달 시 해당 슬롯(날짜) 지원서만 집계 (flex 타입 날짜별 정확한 수치)
+  /// [slotWorkDetails] 전달 시 마스터 TO workDetails 대신 슬롯 문서의 workDetails 사용
+  Future<Map<String, dynamic>> loadTOWorkDetails(
+    TOModel to, {
+    String? slotId,
+    List<WorkDetailData>? slotWorkDetails,
+  }) async {
+    // 슬롯 자체 workDetails 우선 (Firestore 컬렉션 쿼리 캐시 stale 방지)
+    final workDetails = (slotWorkDetails != null && slotWorkDetails.isNotEmpty)
+        ? slotWorkDetails
+        : to.workDetails;
     final Map<String, Map<String, int>> workStats = {
       for (final w in workDetails) w.id: {'confirmed': 0, 'pending': 0},
     };
     try {
-      final apps = await getApplicationsByTOId(to.id, businessId: to.businessId);
+      // slotId 쿼리는 보안 규칙 제한 — toId 전체를 가져와 클라이언트에서 필터
+      final allApps = await getApplicationsByTOId(to.id, businessId: to.businessId);
+      final apps = slotId != null
+          ? allApps.where((a) => a.slotId == slotId).toList()
+          : allApps;
       for (final app in apps) {
         if (app.status != 'CONFIRMED' && app.status != 'PENDING') continue;
         final key = app.selectedWorkType;
@@ -301,8 +314,61 @@ class FirestoreService {
     }
   }
 
-  /// 구 loadGroupTOsLight — 그룹 구조 제거됨, 빈 리스트 반환
-  Future<List<TOItem>> loadGroupTOsLight(String groupId) async => [];
+  /// flex TO의 슬롯을 날짜순으로 로드하여 TOItem 목록 반환
+  /// [masterTO] 전달 시 TO 문서 재조회 생략
+  Future<List<TOItem>> loadGroupTOsLight(String toId, {TOModel? masterTO}) async {
+    try {
+      final snap = await _firestore
+          .collection('tos')
+          .doc(toId)
+          .collection('slots')
+          .orderBy('date')
+          .get();
+      if (snap.docs.isEmpty) return [];
+
+      final model = masterTO ?? await getTO(toId);
+      if (model == null) return [];
+
+      return snap.docs.map((d) {
+        final slot = SlotModel.fromMap(d.data(), d.id, toId);
+        return TOItem(
+          to: model,
+          slot: slot,
+          confirmedCount: slot.confirmedCount,
+          pendingCount: slot.pendingCount,
+          totalRequired: slot.totalRequired,
+        );
+      }).toList();
+    } catch (e) {
+      debugPrint('❌ loadGroupTOsLight 실패: $e');
+      return [];
+    }
+  }
+
+  /// flex TO 목록의 슬롯 날짜를 일괄 조회 (캘린더 필터용)
+  /// Returns: { toId: [slotDate, ...] }
+  Future<Map<String, List<DateTime>>> getFlexTOSlotDates(List<String> toIds) async {
+    if (toIds.isEmpty) return {};
+    try {
+      final futures = toIds.map((toId) async {
+        final snap = await _firestore
+            .collection('tos')
+            .doc(toId)
+            .collection('slots')
+            .get();
+        final dates = snap.docs
+            .map((d) => (d.data()['date'] as Timestamp?)?.toDate())
+            .whereType<DateTime>()
+            .toList();
+        return MapEntry(toId, dates);
+      });
+      final entries = await Future.wait(futures);
+      return Map.fromEntries(entries.where((e) => e.value.isNotEmpty));
+    } catch (e) {
+      debugPrint('❌ getFlexTOSlotDates 실패: $e');
+      return {};
+    }
+  }
 
   /// 구 getActiveTOs — getPublishedTOs 위임
   Future<List<TOModel>> getActiveTOs({String? businessId, bool publishedOnly = false}) async {

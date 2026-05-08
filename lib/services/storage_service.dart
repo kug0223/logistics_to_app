@@ -1,36 +1,51 @@
 ﻿import 'dart:io';
 import 'package:firebase_storage/firebase_storage.dart';
 import 'package:flutter/foundation.dart';
+import 'package:image_picker/image_picker.dart' show XFile;
 
 /// Firebase Storage 서비스
 class StorageService {
   final FirebaseStorage _storage = FirebaseStorage.instance;
 
   /// 이미지 업로드 후 다운로드 URL 반환
-  /// 
-  /// [filePath]: 로컬 파일 경로
-  /// [storagePath]: Storage 저장 경로 (예: 'users/uid/idCard.jpg')
+  ///
+  /// 웹: XFile로 bytes를 읽어 putData 사용
+  /// 모바일: putFile 사용
   Future<String?> uploadImage(String filePath, String storagePath) async {
     try {
-      if (kIsWeb) {
-        debugPrint('⚠️ 웹 환경에서는 Storage 업로드 미지원');
-        return null;
-      }
-
-      final file = File(filePath);
-      if (!await file.exists()) {
-        debugPrint('❌ 파일이 존재하지 않음: $filePath');
-        return null;
-      }
-
       final ref = _storage.ref().child(storagePath);
-      final uploadTask = await ref.putFile(file);
-      final downloadUrl = await uploadTask.ref.getDownloadURL();
 
+      if (kIsWeb) {
+        final bytes = await XFile(filePath).readAsBytes();
+        await ref.putData(bytes);
+      } else {
+        final file = File(filePath);
+        if (!await file.exists()) {
+          debugPrint('❌ 파일이 존재하지 않음: $filePath');
+          return null;
+        }
+        await ref.putFile(file);
+      }
+
+      final downloadUrl = await ref.getDownloadURL();
       debugPrint('✅ Storage 업로드 성공: $downloadUrl');
       return downloadUrl;
     } catch (e) {
       debugPrint('❌ Storage 업로드 실패: $e');
+      return null;
+    }
+  }
+
+  /// bytes 직접 업로드 (웹에서 XFile.readAsBytes() 결과 전달 시 사용)
+  Future<String?> uploadImageBytes(Uint8List bytes, String storagePath) async {
+    try {
+      final ref = _storage.ref().child(storagePath);
+      await ref.putData(bytes);
+      final downloadUrl = await ref.getDownloadURL();
+      debugPrint('✅ Storage 바이트 업로드 성공: $downloadUrl');
+      return downloadUrl;
+    } catch (e) {
+      debugPrint('❌ Storage 바이트 업로드 실패: $e');
       return null;
     }
   }

@@ -80,7 +80,8 @@ class _MyScheduleScreenState extends State<MyScheduleScreen> {
       final idCardRequests = results[1] as List<IdCardAccessRequestModel>;
       final terminations = results[2] as List<ApplicationModel>;
       final attendances = results[3] as List<AttendanceModel>;
-      
+
+      if (!mounted) return;
       setState(() {
         _applications = applications;
         _pendingIdCardRequests = idCardRequests;

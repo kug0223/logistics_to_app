@@ -776,11 +776,8 @@ class WorkDetailDialog {
                         ],
                       ),
                       child: Center(
-                        child: WorkTypeIcon.buildFromString(
-                          workType.icon,
-                          color: workType.color != null 
-                              ? FormatHelper.parseColor(workType.color!)
-                              : Colors.white,
+                        child: WorkTypeIcon.build(
+                          workType,
                           size: ResponsiveHelper.iconSize(context, 16),
                         ),
                       ),

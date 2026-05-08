@@ -10,6 +10,7 @@ import '../../models/core/business_model.dart';
 import '../../utils/responsive_helper.dart';
 import '../../utils/toast_helper.dart';
 import '../../utils/format_helper.dart';
+import '../../utils/image_helper.dart';
 
 // Widgets
 import '../../widgets/common/common_widgets.dart';
@@ -210,19 +211,10 @@ class _BusinessDetailScreenState extends State<BusinessDetailScreen> {
               setState(() => _currentImageIndex = index);
             },
             itemBuilder: (context, index) {
-              return Image.network(
+              return ImageHelper.buildCachedImage(
                 images[index],
                 fit: BoxFit.cover,
-                errorBuilder: (context, error, stackTrace) {
-                  return Container(
-                    color: AppColors.grey200,
-                    child: Icon(
-                      Icons.broken_image,
-                      size: ResponsiveHelper.iconSize(context, 48),
-                      color: AppColors.grey400,
-                    ),
-                  );
-                },
+                height: 250,
               );
             },
           ),
@@ -285,7 +277,7 @@ class _BusinessDetailScreenState extends State<BusinessDetailScreen> {
                       ? Icons.star
                       : Icons.star_border,
                   size: ResponsiveHelper.iconSize(context, 20),
-                  color: Colors.amber,
+                  color: AppColors.amberDark,
                 ),
               ),
               SizedBox(width: ResponsiveHelper.spacing(context, 8)),
@@ -484,12 +476,14 @@ class _BusinessDetailScreenState extends State<BusinessDetailScreen> {
                 margin: EdgeInsets.only(
                   right: ResponsiveHelper.spacing(context, 12),
                 ),
-                decoration: BoxDecoration(
+                child: ImageHelper.buildCachedImage(
+                  _currentBusiness.imageUrls![index],
+                  width: 120,
+                  height: 120,
+                  fit: BoxFit.cover,
                   borderRadius: BorderRadius.circular(12),
-                  image: DecorationImage(
-                    image: NetworkImage(_currentBusiness.imageUrls![index]),
-                    fit: BoxFit.cover,
-                  ),
+                  memCacheWidth: 240,
+                  fadeInDuration: const Duration(milliseconds: 150),
                 ),
               );
             },
@@ -791,7 +785,7 @@ class _BusinessDetailScreenState extends State<BusinessDetailScreen> {
         ),
         Icon(
           isAvailable ? Icons.check_circle : Icons.cancel,
-          color: isAvailable ? Colors.green : Colors.grey,
+          color: isAvailable ? AppColors.successDark : AppColors.grey400,
           size: ResponsiveHelper.iconSize(context, 20),
         ),
       ],

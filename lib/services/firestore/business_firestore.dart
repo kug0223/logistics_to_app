@@ -76,8 +76,8 @@ extension BusinessFirestore on FirestoreService {
         query = query.where('isActive', isEqualTo: true);
       }
       
-      query = query.orderBy('displayOrder', descending: false);
-      
+      query = query.orderBy('displayOrder', descending: false).limit(200);
+
       QuerySnapshot snapshot = await query.get();
       
       return snapshot.docs
@@ -167,6 +167,7 @@ extension BusinessFirestore on FirestoreService {
           .collection('workTypes')
           .where('isActive', isEqualTo: true)
           .orderBy('displayOrder')
+          .limit(100)
           .get();
 
       final workTypes = snapshot.docs
@@ -378,6 +379,7 @@ extension BusinessFirestore on FirestoreService {
           .collection('tos')
           .where('businessId', isEqualTo: businessId)
           .where('status', whereIn: ['ACTIVE', 'FULL', 'SCHEDULED'])
+          .limit(100)
           .get();
       return snapshot.docs
           .map((doc) => TOModel.fromMap(doc.data(), doc.id))
@@ -395,6 +397,7 @@ extension BusinessFirestore on FirestoreService {
           .collection('tos')
           .where('businessId', isEqualTo: businessId)
           .where('status', whereIn: ['CLOSED', 'EXPIRED'])
+          .limit(100)
           .get();
       return snapshot.docs
           .map((doc) => TOModel.fromMap(doc.data(), doc.id))

@@ -26,17 +26,30 @@ import '../../../theme/app_colors.dart';
 import '../../../widgets/work_type_icon.dart';
 import '../../../widgets/dialogs/styled_dialog.dart';
 
+/// 근무자의 특정 날짜 근무 상태
+enum _WorkerDayStatus {
+  normalWork,        // 정상 출근 예정 (정규 요일, 예외 없음)
+  leaveApproved,     // 휴무 승인됨
+  leavePending,      // 휴무/미출근 대기중
+  extraWorkApproved, // 추가근무 승인됨 (비정규 요일)
+  extraWorkPending,  // 추가근무 대기중
+  notWorkingDay,     // 해당일 근무 없음 (정규 아님 + 예외도 없음)
+  notInPeriod,       // 계약 기간 외
+}
+
 /// 고정근무자 관리 다이얼로그
 class FixedWorkerManagementDialog extends StatefulWidget {
   final List<String>? businessIds;  // 여러 사업장 (캘린더에서 호출 시)
   final String? initialBusinessId;  // 초기 선택 사업장
   final VoidCallback onChanged;
+  final DateTime? focusDate;        // 날짜 모드 (캘린더에서 날짜 선택 후 열 때)
 
   const FixedWorkerManagementDialog({
     super.key,
     this.businessIds,
     this.initialBusinessId,
     required this.onChanged,
+    this.focusDate,
   });
 
   @override
@@ -55,6 +68,10 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
   Map<String, String> _businessNameMap = {};
   List<String> _businessIds = [];
   bool _showBusinessSelector = false;
+
+  // 날짜 모드 (focusDate != null 일 때)
+  List<ScheduleChangeRequestModel> _pendingRequestsForDate = [];
+  bool get _isDateMode => widget.focusDate != null;
 
   @override
   void initState() {
@@ -159,6 +176,15 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
       // 최신 확정순 정렬
       results.sort((a, b) => b.application.confirmedAt!.compareTo(a.application.confirmedAt!));
 
+      // 날짜 모드: 해당 날짜의 대기 요청 로드
+      if (_isDateMode && _selectedBusinessId != null) {
+        _pendingRequestsForDate =
+            await _firestoreService.getScheduleChangeRequestsForDate(
+          date: widget.focusDate!,
+          businessIds: [_selectedBusinessId!],
+        );
+      }
+
       setState(() {
         _fixedWorkers = results;
         _isLoading = false;
@@ -184,6 +210,9 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
           children: [
             // 헤더
             _buildHeader(context, theme),
+
+            // 날짜 모드 서브헤더
+            if (_isDateMode) _buildDateModeSubHeader(context),
 
             // 통계 바
             _buildStatsBar(context),
@@ -320,8 +349,276 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
     );
   }
 
+  // ============================================================
+  // 📅 날짜 모드 전용 위젯 & 헬퍼
+  // ============================================================
+
+  /// 날짜 모드 서브헤더 (선택된 날짜 표시)
+  Widget _buildDateModeSubHeader(BuildContext context) {
+    final date = widget.focusDate!;
+    const weekdays = ['월', '화', '수', '목', '금', '토', '일'];
+    final weekday = weekdays[date.weekday - 1];
+    final isWeekend = date.weekday == DateTime.saturday || date.weekday == DateTime.sunday;
+
+    return Container(
+      padding: EdgeInsets.symmetric(
+        horizontal: ResponsiveHelper.spacing(context, 16),
+        vertical: ResponsiveHelper.spacing(context, 10),
+      ),
+      decoration: BoxDecoration(
+        color: AppColors.tealBg,
+        border: Border(bottom: BorderSide(color: AppColors.teal.withValues(alpha: 0.2))),
+      ),
+      child: Row(
+        children: [
+          Icon(Icons.event, size: ResponsiveHelper.iconSize(context, 16), color: AppColors.tealDark),
+          SizedBox(width: ResponsiveHelper.spacing(context, 6)),
+          Text(
+            '${date.month}월 ${date.day}일($weekday) 근무 현황',
+            style: ResponsiveHelper.smallStyle(context).copyWith(
+              fontWeight: FontWeight.bold,
+              color: isWeekend ? AppColors.errorDark : AppColors.tealDark,
+            ),
+          ),
+          const Spacer(),
+          if (_pendingRequestsForDate.isNotEmpty)
+            Container(
+              padding: EdgeInsets.symmetric(
+                horizontal: ResponsiveHelper.spacing(context, 8),
+                vertical: ResponsiveHelper.spacing(context, 3),
+              ),
+              decoration: BoxDecoration(
+                color: AppColors.warning,
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Text(
+                '대기 ${_pendingRequestsForDate.length}건',
+                style: ResponsiveHelper.tinyStyle(context, color: Colors.white)
+                    .copyWith(fontWeight: FontWeight.bold),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  /// 특정 근무자의 해당 날짜 상태 계산
+  _WorkerDayStatus _getWorkerDayStatus(ApplicationModel app) {
+    final date = widget.focusDate!;
+    final today = DateTime(date.year, date.month, date.day);
+
+    // 계약 기간 확인
+    final startDate = app.desiredStartDate ?? app.workDate;
+    final endDate = app.actualResignDate ?? app.workEndDate;
+    final start = DateTime(startDate.year, startDate.month, startDate.day);
+    if (today.isBefore(start)) return _WorkerDayStatus.notInPeriod;
+    if (endDate != null) {
+      final end = DateTime(endDate.year, endDate.month, endDate.day);
+      if (today.isAfter(end)) return _WorkerDayStatus.notInPeriod;
+    }
+
+    // 정규 요일 확인
+    const weekdays = ['월', '화', '수', '목', '금', '토', '일'];
+    final dayOfWeek = weekdays[date.weekday - 1];
+    final isRegularDay = app.workDays?.contains(dayOfWeek) ?? false;
+
+    // 승인된 휴무 확인
+    final isOnLeave = app.isLeaveDateOn(date);
+    // 승인된 추가근무 확인
+    final hasExtraWork = app.isExtraWorkDateOn(date);
+
+    // 해당 날짜 대기 요청
+    final pending = _pendingRequestsForDate
+        .where((r) => r.applicationId == app.id)
+        .firstOrNull;
+
+    if (isRegularDay) {
+      if (isOnLeave) return _WorkerDayStatus.leaveApproved;
+      if (pending != null && (pending.isLeaveRequest || pending.isNoWorkRequest)) {
+        return _WorkerDayStatus.leavePending;
+      }
+      return _WorkerDayStatus.normalWork;
+    } else {
+      if (hasExtraWork) return _WorkerDayStatus.extraWorkApproved;
+      if (pending != null && pending.isExtraWorkRequest) {
+        return _WorkerDayStatus.extraWorkPending;
+      }
+      return _WorkerDayStatus.notWorkingDay;
+    }
+  }
+
+  /// 날짜 모드 상태 배지
+  Widget _buildDayStatusBadge(BuildContext context, _WorkerDayStatus status) {
+    late Color bg;
+    late Color fg;
+    late IconData icon;
+    late String label;
+
+    switch (status) {
+      case _WorkerDayStatus.normalWork:
+        bg = AppColors.successBg; fg = AppColors.successDark;
+        icon = Icons.check_circle_outline; label = '출근 예정';
+      case _WorkerDayStatus.leaveApproved:
+        bg = AppColors.warningBg; fg = AppColors.warningDark;
+        icon = Icons.beach_access_outlined; label = '휴무 승인';
+      case _WorkerDayStatus.leavePending:
+        bg = AppColors.warningBg; fg = AppColors.warningDark;
+        icon = Icons.hourglass_top_outlined; label = '휴무 대기';
+      case _WorkerDayStatus.extraWorkApproved:
+        bg = AppColors.tealBg; fg = AppColors.tealDark;
+        icon = Icons.add_circle_outline; label = '추가근무';
+      case _WorkerDayStatus.extraWorkPending:
+        bg = AppColors.tealBg; fg = AppColors.tealDark;
+        icon = Icons.hourglass_top_outlined; label = '추가 대기';
+      case _WorkerDayStatus.notWorkingDay:
+        bg = AppColors.grey100; fg = AppColors.grey500;
+        icon = Icons.remove_circle_outline; label = '비근무일';
+      case _WorkerDayStatus.notInPeriod:
+        bg = AppColors.grey100; fg = AppColors.grey400;
+        icon = Icons.event_busy_outlined; label = '기간 외';
+    }
+
+    return Container(
+      padding: EdgeInsets.symmetric(
+        horizontal: ResponsiveHelper.spacing(context, 8),
+        vertical: ResponsiveHelper.spacing(context, 4),
+      ),
+      decoration: BoxDecoration(
+        color: bg,
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: fg.withValues(alpha: 0.3)),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 12, color: fg),
+          SizedBox(width: ResponsiveHelper.spacing(context, 4)),
+          Text(label,
+              style: ResponsiveHelper.tinyStyle(context, color: fg)
+                  .copyWith(fontWeight: FontWeight.bold)),
+        ],
+      ),
+    );
+  }
+
+  /// 대기 요청 인라인 승인/거절 버튼
+  Widget _buildPendingActions(BuildContext context, ApplicationModel app) {
+    final userProvider = Provider.of<UserProvider>(context, listen: false);
+    final approverUid = userProvider.currentUser?.uid ?? '';
+
+    final pending = _pendingRequestsForDate
+        .where((r) => r.applicationId == app.id)
+        .firstOrNull;
+    if (pending == null) return const SizedBox.shrink();
+
+    return Padding(
+      padding: EdgeInsets.only(top: ResponsiveHelper.spacing(context, 8)),
+      child: Row(
+        children: [
+          if (pending.reason != null && pending.reason!.isNotEmpty) ...[
+            Icon(Icons.chat_bubble_outline,
+                size: 12, color: AppColors.grey500),
+            SizedBox(width: ResponsiveHelper.spacing(context, 4)),
+            Expanded(
+              child: Text(
+                pending.reason!,
+                style: ResponsiveHelper.tinyStyle(context, color: AppColors.grey600),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+          ] else
+            const Spacer(),
+          SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+          _buildMiniButton(
+            context,
+            label: '거절',
+            color: AppColors.error,
+            onTap: () => _rejectPendingRequest(pending, approverUid),
+          ),
+          SizedBox(width: ResponsiveHelper.spacing(context, 6)),
+          _buildMiniButton(
+            context,
+            label: '승인',
+            color: AppColors.teal,
+            filled: true,
+            onTap: () => _approvePendingRequest(pending, approverUid),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildMiniButton(
+    BuildContext context, {
+    required String label,
+    required Color color,
+    bool filled = false,
+    required VoidCallback onTap,
+  }) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        padding: EdgeInsets.symmetric(
+          horizontal: ResponsiveHelper.spacing(context, 12),
+          vertical: ResponsiveHelper.spacing(context, 5),
+        ),
+        decoration: BoxDecoration(
+          color: filled ? color : Colors.transparent,
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(color: color),
+        ),
+        child: Text(
+          label,
+          style: ResponsiveHelper.tinyStyle(
+            context,
+            color: filled ? Colors.white : color,
+          ).copyWith(fontWeight: FontWeight.bold),
+        ),
+      ),
+    );
+  }
+
+  /// 대기 요청 승인 처리
+  Future<void> _approvePendingRequest(
+      ScheduleChangeRequestModel request, String approverUid) async {
+    final ok = await _firestoreService.approveScheduleChangeRequest(
+      requestId: request.id,
+      approverUid: approverUid,
+    );
+    if (ok && mounted) {
+      ToastHelper.showSuccess('요청을 승인했습니다');
+      widget.onChanged();
+      _loadFixedWorkers();
+    } else if (mounted) {
+      ToastHelper.showError('승인 처리에 실패했습니다');
+    }
+  }
+
+  /// 대기 요청 거절 처리
+  Future<void> _rejectPendingRequest(
+      ScheduleChangeRequestModel request, String approverUid) async {
+    final ok = await _firestoreService.rejectScheduleChangeRequest(
+      requestId: request.id,
+      rejectorUid: approverUid,
+    );
+    if (ok && mounted) {
+      ToastHelper.showSuccess('요청을 거절했습니다');
+      widget.onChanged();
+      _loadFixedWorkers();
+    } else if (mounted) {
+      ToastHelper.showError('거절 처리에 실패했습니다');
+    }
+  }
+
+  // ============================================================
+  // 📊 통계 바
+  // ============================================================
+
   /// 통계 바
   Widget _buildStatsBar(BuildContext context) {
+    if (_isDateMode) return _buildDateModeStatsBar(context);
+
     final activeCount = _fixedWorkers.where((w) => w.application.resignStatus == null).length;
     final pendingResignCount = _fixedWorkers.where((w) => w.application.resignStatus == 'PENDING').length;
     final terminationPendingCount = _fixedWorkers.where((w) => w.application.terminationStatus == 'PENDING').length;
@@ -348,6 +645,42 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
             SizedBox(width: ResponsiveHelper.spacing(context, 8)),
             _buildStatChip(context, '해지대기', terminationPendingCount, AppColors.error),
           ],
+        ],
+      ),
+    );
+  }
+
+  /// 날짜 모드 통계 바
+  Widget _buildDateModeStatsBar(BuildContext context) {
+    int normalCount = 0, leaveCount = 0, extraCount = 0, pendingCount = 0;
+    for (final w in _fixedWorkers) {
+      switch (_getWorkerDayStatus(w.application)) {
+        case _WorkerDayStatus.normalWork:      normalCount++;
+        case _WorkerDayStatus.leaveApproved:   leaveCount++;
+        case _WorkerDayStatus.leavePending:    pendingCount++;
+        case _WorkerDayStatus.extraWorkApproved: extraCount++;
+        case _WorkerDayStatus.extraWorkPending:  pendingCount++;
+        case _WorkerDayStatus.notWorkingDay:
+        case _WorkerDayStatus.notInPeriod:     break;
+      }
+    }
+    return Container(
+      padding: EdgeInsets.symmetric(
+        horizontal: ResponsiveHelper.spacing(context, 16),
+        vertical: ResponsiveHelper.spacing(context, 10),
+      ),
+      decoration: BoxDecoration(
+        color: AppColors.grey50,
+        border: Border(bottom: BorderSide(color: AppColors.border)),
+      ),
+      child: Wrap(
+        spacing: ResponsiveHelper.spacing(context, 8),
+        runSpacing: 4,
+        children: [
+          _buildStatChip(context, '출근예정', normalCount, AppColors.success),
+          if (leaveCount > 0) _buildStatChip(context, '휴무', leaveCount, AppColors.warning),
+          if (extraCount > 0) _buildStatChip(context, '추가근무', extraCount, AppColors.teal),
+          if (pendingCount > 0) _buildStatChip(context, '대기', pendingCount, AppColors.grey500),
         ],
       ),
     );
@@ -422,13 +755,59 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
 
   /// 근무자 목록
   Widget _buildWorkerList(BuildContext context) {
-    return ListView.separated(
+    if (!_isDateMode) {
+      return ListView.separated(
+        padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 16)),
+        itemCount: _fixedWorkers.length,
+        separatorBuilder: (_, __) => SizedBox(height: ResponsiveHelper.spacing(context, 12)),
+        itemBuilder: (context, index) => _buildWorkerCard(_fixedWorkers[index]),
+      );
+    }
+
+    // 날짜 모드: 해당날 관련자 / 비관련자 분리
+    final active = _fixedWorkers.where((w) {
+      final s = _getWorkerDayStatus(w.application);
+      return s != _WorkerDayStatus.notWorkingDay && s != _WorkerDayStatus.notInPeriod;
+    }).toList();
+    final inactive = _fixedWorkers.where((w) {
+      final s = _getWorkerDayStatus(w.application);
+      return s == _WorkerDayStatus.notWorkingDay || s == _WorkerDayStatus.notInPeriod;
+    }).toList();
+
+    return ListView(
       padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 16)),
-      itemCount: _fixedWorkers.length,
-      separatorBuilder: (_, __) => SizedBox(height: ResponsiveHelper.spacing(context, 12)),
-      itemBuilder: (context, index) {
-        return _buildWorkerCard(_fixedWorkers[index]);
-      },
+      children: [
+        if (active.isEmpty)
+          Padding(
+            padding: EdgeInsets.symmetric(vertical: ResponsiveHelper.spacing(context, 24)),
+            child: Center(
+              child: Text('이 날 근무 예정인 계약직이 없습니다',
+                  style: ResponsiveHelper.bodyStyle(context, color: AppColors.grey500)),
+            ),
+          ),
+        ...active.map((w) => Padding(
+              padding: EdgeInsets.only(bottom: ResponsiveHelper.spacing(context, 12)),
+              child: _buildWorkerCard(w),
+            )),
+        if (inactive.isNotEmpty) ...[
+          Padding(
+            padding: EdgeInsets.symmetric(vertical: ResponsiveHelper.spacing(context, 8)),
+            child: Row(children: [
+              const Expanded(child: Divider()),
+              Padding(
+                padding: EdgeInsets.symmetric(horizontal: ResponsiveHelper.spacing(context, 8)),
+                child: Text('오늘 비근무 (${inactive.length}명)',
+                    style: ResponsiveHelper.tinyStyle(context, color: AppColors.grey400)),
+              ),
+              const Expanded(child: Divider()),
+            ]),
+          ),
+          ...inactive.map((w) => Padding(
+                padding: EdgeInsets.only(bottom: ResponsiveHelper.spacing(context, 10)),
+                child: Opacity(opacity: 0.5, child: _buildWorkerCard(w)),
+              )),
+        ],
+      ],
     );
   }
 
@@ -438,9 +817,13 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
     final user = item.user;
     final name = user?.name ?? '이름 없음';
 
-    // 상태 판단
     final hasResignRequest = app.resignStatus == 'PENDING';
     final hasTerminationRequest = app.terminationStatus == 'PENDING';
+
+    // 날짜 모드 상태
+    final dayStatus = _isDateMode ? _getWorkerDayStatus(app) : null;
+    final hasPendingRequest = dayStatus == _WorkerDayStatus.leavePending ||
+        dayStatus == _WorkerDayStatus.extraWorkPending;
 
     return Material(
       color: Colors.white,
@@ -455,7 +838,7 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
           child: Column(
             children: [
               // 상태 배너 (퇴사/해지 요청 중일 때)
-              if (hasResignRequest || hasTerminationRequest)
+              if (!_isDateMode && (hasResignRequest || hasTerminationRequest))
                 _buildStatusBanner(app, hasResignRequest, hasTerminationRequest),
 
               // 기본 정보
@@ -556,14 +939,20 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
                     ),
                   ),
 
-                  // 더보기 아이콘
-                  Icon(
-                    Icons.chevron_right,
-                    color: AppColors.grey400,
-                    size: ResponsiveHelper.iconSize(context, 24),
-                  ),
+                  // 날짜 모드: 상태 배지 / 일반 모드: 더보기 아이콘
+                  if (dayStatus != null)
+                    _buildDayStatusBadge(context, dayStatus)
+                  else
+                    Icon(
+                      Icons.chevron_right,
+                      color: AppColors.grey400,
+                      size: ResponsiveHelper.iconSize(context, 24),
+                    ),
                 ],
               ),
+
+              // 날짜 모드: 대기 요청 인라인 승인/거절
+              if (hasPendingRequest) _buildPendingActions(context, app),
             ],
           ),
         ),

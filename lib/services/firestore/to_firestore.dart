@@ -60,12 +60,42 @@ extension TOFirestore on FirestoreService {
           .where('isPublished', isEqualTo: true)
           .where('status', whereIn: ['ACTIVE', 'FULL'])
           .orderBy('createdAt', descending: true)
+          .limit(50)
           .get();
 
       return snap.docs.map((d) => TOModel.fromMap(d.data(), d.id)).toList();
     } catch (e) {
       debugPrint('❌ [TO] 공개 공고 목록 조회 실패: $e');
       return [];
+    }
+  }
+
+  /// 공개 공고 페이지네이션 조회 (지원자용)
+  Future<Map<String, dynamic>> getPublishedTOsPaged({
+    DocumentSnapshot? startAfter,
+    int pageSize = 30,
+  }) async {
+    try {
+      Query query = _firestore
+          .collection('tos')
+          .where('isPublished', isEqualTo: true)
+          .where('status', whereIn: ['ACTIVE', 'FULL'])
+          .orderBy('createdAt', descending: true)
+          .limit(pageSize);
+
+      if (startAfter != null) {
+        query = query.startAfterDocument(startAfter);
+      }
+
+      final snap = await query.get();
+      return {
+        'items': snap.docs.map((d) => TOModel.fromMap(d.data() as Map<String, dynamic>, d.id)).toList(),
+        'lastDoc': snap.docs.isNotEmpty ? snap.docs.last : null,
+        'hasMore': snap.docs.length >= pageSize,
+      };
+    } catch (e) {
+      debugPrint('❌ [TO] 공개 공고 페이지 조회 실패: $e');
+      return {'items': <TOModel>[], 'lastDoc': null, 'hasMore': false};
     }
   }
 
@@ -386,6 +416,9 @@ extension TOFirestore on FirestoreService {
             startTime: newDef.startTime,
             endTime: newDef.endTime,
             applicationDeadline: deadline,
+            wage: newDef.wage,
+            wageType: newDef.wageType,
+            requiredCount: newDef.requiredCount,
           );
         }).toList();
 

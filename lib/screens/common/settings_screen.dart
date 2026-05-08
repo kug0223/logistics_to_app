@@ -141,6 +141,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   Widget build(BuildContext context) {
     final userProvider = context.watch<UserProvider>();
     final user = userProvider.currentUser;
+    final theme = Theme.of(context);
 
     return Scaffold(
       appBar: AppBar(
@@ -161,7 +162,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
           _buildMenuCard(
             context,
             icon: Icons.edit,
-            iconColor: Colors.blue,
+            iconColor: theme.primaryColor,
             title: '프로필 수정',
             subtitle: '이름, 연락처 등 기본 정보 수정',
             onTap: () {
@@ -184,7 +185,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
             _buildMenuCard(
               context,
               icon: Icons.folder_special,
-              iconColor: Colors.green,
+              iconColor: AppColors.successDark,
               title: '내 서류 관리',
               subtitle: '신분증, 통장사본 등록 및 수정',
               onTap: () {
@@ -206,7 +207,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
             _buildMenuCard(
               context,
               icon: Icons.description,
-              iconColor: Colors.teal,
+              iconColor: AppColors.successDark,
               title: '내 서류 관리',
               subtitle: '사업자등록증 관리',
               onTap: () {
@@ -222,7 +223,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
             _buildMenuCard(
               context,
               icon: Icons.business,
-              iconColor: Colors.purple,
+              iconColor: AppColors.purpleDark,
               title: '사업장 정보',
               subtitle: '내 사업장 관리',
               onTap: () {
@@ -240,7 +241,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
             _buildMenuCard(
               context,
               icon: Icons.work_outline,
-              iconColor: Colors.orange,
+              iconColor: AppColors.warningDark,
               title: '업무 유형 관리',
               subtitle: '사업장의 업무 유형을 설정합니다',
               onTap: () {
@@ -264,7 +265,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
             _buildMenuCard(
               context,
               icon: Icons.people,
-              iconColor: Colors.red,
+              iconColor: AppColors.errorDark,
               title: '전체 사용자 관리',
               subtitle: '모든 사용자 정보 확인 및 관리',
               onTap: () {
@@ -280,7 +281,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
             _buildMenuCard(
               context,
               icon: Icons.business_center,
-              iconColor: Colors.deepPurple,
+              iconColor: AppColors.purpleDark,
               title: '전체 사업장 관리',
               subtitle: '모든 사업장 정보 확인 및 관리',
               onTap: () {
@@ -300,7 +301,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
             _buildMenuCard(
               context,
               icon: Icons.sync,
-              iconColor: Colors.orange,
+              iconColor: AppColors.warningDark,
               title: 'Application 마이그레이션',
               subtitle: 'workDetailId/toId/groupId 채우기',
               onTap: () => _runApplicationMigration(context),
@@ -1317,7 +1318,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
         borderRadius: BorderRadius.circular(20),
         boxShadow: [
           BoxShadow(
-            color: Colors.red.withValues(alpha: 0.1),
+            color: AppColors.error.withValues(alpha: 0.1),
             blurRadius: 10,
             offset: const Offset(0, 4),
           ),
@@ -1343,14 +1344,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
               children: [
                 Icon(
                   Icons.logout,
-                  color: Colors.red,
+                  color: AppColors.error,
                   size: ResponsiveHelper.iconSize(context, 24),
                 ),
                 SizedBox(width: ResponsiveHelper.spacing(context, 12)),
                 Text(
                   '로그아웃',
                   style: ResponsiveHelper.subtitleStyle(context).copyWith(
-                    color: Colors.red,
+                    color: AppColors.error,
                     fontWeight: FontWeight.bold,
                   ),
                 ),
@@ -1596,7 +1597,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
       confirmText: '실행',
       cancelText: '취소',
       icon: Icons.sync,
-      iconColor: Colors.orange,
+      iconColor: AppColors.warningDark,
     );
 
     if (!confirmed || !context.mounted) return;

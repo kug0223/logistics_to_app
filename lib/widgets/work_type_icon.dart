@@ -11,17 +11,23 @@ class WorkTypeIcon {
     Color? color,
     double size = 20,
   }) {
-    // ✅ workType에 저장된 color 사용 (없으면 기본 흰색)
-    final iconColor = color ?? 
-                    (workType.color != null 
-                        ? FormatHelper.parseColor(workType.color!) 
-                        : Colors.white);
-    
-    return buildFromString(
-      workType.icon,
-      color: iconColor,
-      size: size,
-    );
+    final iconColor = color ??
+        (workType.color != null
+            ? FormatHelper.parseColor(workType.color!)
+            : Colors.white);
+
+    if (workType.icon.isEmpty) {
+      return Text(
+        workType.name.isNotEmpty ? workType.name.characters.first : '?',
+        style: TextStyle(
+          color: iconColor,
+          fontSize: size,
+          fontWeight: FontWeight.bold,
+        ),
+      );
+    }
+
+    return buildFromString(workType.icon, color: iconColor, size: size);
   }
 
   /// 아이콘 또는 이모지를 렌더링 (작은 사이즈 - 드롭다운용)
@@ -30,16 +36,23 @@ class WorkTypeIcon {
     Color? color,
     double size = 16,
   }) {
-    final iconColor = color ?? 
-        (workType.color != null 
-            ? FormatHelper.parseColor(workType.color!) 
+    final iconColor = color ??
+        (workType.color != null
+            ? FormatHelper.parseColor(workType.color!)
             : Colors.white);
-    
-    return buildFromString(
-      workType.icon,
-      color: iconColor,
-      size: size,
-    );
+
+    if (workType.icon.isEmpty) {
+      return Text(
+        workType.name.isNotEmpty ? workType.name.characters.first : '?',
+        style: TextStyle(
+          color: iconColor,
+          fontSize: size,
+          fontWeight: FontWeight.bold,
+        ),
+      );
+    }
+
+    return buildFromString(workType.icon, color: iconColor, size: size);
   }
 
   /// 문자열로부터 아이콘 렌더링 (공통)

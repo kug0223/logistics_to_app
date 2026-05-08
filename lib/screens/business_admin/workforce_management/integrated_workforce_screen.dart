@@ -8,6 +8,7 @@ import '../../../providers/user_provider.dart';
 import '../../../utils/toast_helper.dart';
 import '../../../utils/responsive_helper.dart';
 import '../../../services/firestore_service.dart';
+import '../../../controllers/workforce_controller.dart';
 import 'workforce_list_view.dart';
 import 'workforce_calendar_view.dart';
 import '../../../utils/test_data_helper.dart';
@@ -28,6 +29,7 @@ class IntegratedWorkforceScreen extends StatefulWidget {
 class _IntegratedWorkforceScreenState extends State<IntegratedWorkforceScreen>
     with WidgetsBindingObserver {
   final FirestoreService _firestoreService = FirestoreService();
+  final WorkforceController _controller = WorkforceController();
   List<String> _allBusinessIds = [];
   String? _selectedBusinessId;
   bool _isCalendarView = false;
@@ -38,11 +40,15 @@ class _IntegratedWorkforceScreenState extends State<IntegratedWorkforceScreen>
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     _loadBusinessIds();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _controller.load(context);
+    });
   }
 
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    _controller.dispose();
     super.dispose();
   }
 
@@ -229,10 +235,12 @@ class _IntegratedWorkforceScreenState extends State<IntegratedWorkforceScreen>
               ),
             ],
           ),
-      // ✨ 깔끔한 흰색 배경 (홈 화면과 일치)
-      body: _isCalendarView
-          ? const WorkforceCalendarView()
-          : const WorkforceListView(),
+      body: ChangeNotifierProvider.value(
+        value: _controller,
+        child: _isCalendarView
+            ? const WorkforceCalendarView()
+            : const WorkforceListView(),
+      ),
     );
   }
 

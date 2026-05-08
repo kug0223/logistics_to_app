@@ -1,4 +1,5 @@
 ﻿import 'package:ALfit/screens/common/document_management_screen.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -579,7 +580,9 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
               border: Border.all(color: AppColors.grey300),
               image: _mainImage != null
                   ? DecorationImage(
-                      image: FileImage(_mainImage!),
+                      image: kIsWeb
+                          ? NetworkImage(_mainImage!.path) as ImageProvider
+                          : FileImage(_mainImage!),
                       fit: BoxFit.cover,
                     )
                   : _mainImageUrl != null
@@ -999,7 +1002,7 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
               borderRadius: BorderRadius.circular(12),
               image: DecorationImage(
                 image: file != null
-                    ? FileImage(file) as ImageProvider
+                    ? (kIsWeb ? NetworkImage(file.path) as ImageProvider : FileImage(file))
                     : NetworkImage(networkUrl!),
                 fit: BoxFit.cover,
               ),
@@ -1027,7 +1030,7 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
 
   Widget _buildAddImageButton(BuildContext context) {
     return GestureDetector(
-      onTap: () => _pickAdditionalImage(),
+      onTap: () => _pickAdditionalImages(),
       child: Container(
         width: 100,
         decoration: BoxDecoration(
@@ -1045,9 +1048,16 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
             ),
             SizedBox(height: ResponsiveHelper.spacing(context, 4)),
             Text(
-              '추가',
-              style: ResponsiveHelper.smallStyle(context).copyWith(
+              '사진 추가',
+              style: ResponsiveHelper.tinyStyle(context).copyWith(
                 color: AppColors.grey600,
+              ),
+            ),
+            Text(
+              '(복수선택)',
+              style: ResponsiveHelper.tinyStyle(context).copyWith(
+                color: AppColors.grey500,
+                fontSize: 9,
               ),
             ),
           ],
@@ -1154,7 +1164,7 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
     }
   }
 
-  Future<void> _pickAdditionalImage() async {
+  Future<void> _pickAdditionalImages() async {
     final totalImages = _additionalImages.length + _additionalImageUrls.length;
 
     if (totalImages >= 5) {
@@ -1162,13 +1172,15 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
       return;
     }
 
-    final image = await ImageHelper.pickAndCompressImage(
+    final images = await ImageHelper.pickAndCompressMultipleImages(
       context,
-      type: ImageType.general,  // 1920x1080, 80% 압축
+      maxImages: 5,
+      currentCount: totalImages,
+      type: ImageType.general,
     );
 
-    if (image != null) {
-      setState(() => _additionalImages.add(image));
+    if (images.isNotEmpty) {
+      setState(() => _additionalImages.addAll(images));
     }
   }
 
@@ -1305,11 +1317,14 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
       // 이미지 업로드
       String? mainImageUrl = _mainImageUrl;
       if (_mainImage != null) {
-        // ✅ 수정 모드에서 새 이미지 업로드 시 기존 이미지 삭제
         if (_isEditMode && widget.business?.mainImageUrl != null && !_imagesToDelete.contains(widget.business!.mainImageUrl)) {
           await _storageService.deleteImageByUrl(widget.business!.mainImageUrl!);
         }
         mainImageUrl = await _uploadImage(_mainImage!, 'main');
+        if (mainImageUrl == null) {
+          debugPrint('⚠️ 대표 이미지 업로드 실패 — 이미지 없이 저장');
+          ToastHelper.showWarning('이미지 업로드에 실패했습니다. 이미지 없이 저장됩니다.');
+        }
       }
 
       List<String> additionalUrls = List.from(_additionalImageUrls);
@@ -1351,14 +1366,35 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
             .collection('businesses')
             .doc(widget.business!.id)
             .update(businessData);
+
+        // managedBusinessIds 누락 시 보정
+        await FirebaseFirestore.instance
+            .collection('users')
+            .doc(ownerId)
+            .update({
+          'managedBusinessIds': FieldValue.arrayUnion([widget.business!.id]),
+        });
+        await userProvider.refreshCurrentUser();
+
         ToastHelper.showSuccess('사업장이 수정되었습니다');
       } else {
         businessData['createdAt'] = FieldValue.serverTimestamp();
         businessData['attendanceType'] = 'gps';
         businessData['gpsRadius'] = 100;
         businessData['adminIds'] = [ownerId];
-        await FirebaseFirestore.instance.collection('businesses').add(businessData);
-        ToastHelper.showSuccess('사업장이 등록되었습니다\n바로 사용하실 수 있습니다');  // ✅ 메시지 변경!
+        final docRef = await FirebaseFirestore.instance.collection('businesses').add(businessData);
+
+        // 유저 문서의 managedBusinessIds에 새 사업장 ID 추가
+        await FirebaseFirestore.instance
+            .collection('users')
+            .doc(ownerId)
+            .update({
+          'managedBusinessIds': FieldValue.arrayUnion([docRef.id]),
+          'businessId': docRef.id,
+        });
+        await userProvider.refreshCurrentUser();
+
+        ToastHelper.showSuccess('사업장이 등록되었습니다\n바로 사용하실 수 있습니다');
       }
 
       if (mounted) {
@@ -1375,7 +1411,7 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
       }
     } catch (e) {
       debugPrint('❌ 사업장 저장 실패: $e');
-      ToastHelper.showError('저장에 실패했습니다');
+      ToastHelper.showError('저장에 실패했습니다: $e');
     } finally {
       if (mounted) {
         setState(() => _isLoading = false);

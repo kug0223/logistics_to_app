@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import '../../utils/format_helper.dart';
 import '../../utils/responsive_helper.dart';
 import '../../theme/app_colors.dart';
 
@@ -18,26 +17,159 @@ class IconItem {
   });
 }
 
-/// ✨ 세련된 아이콘 선택 다이얼로그
+/// ✨ 아이콘 선택 다이얼로그 (순수 아이콘 피커 — 색상은 호출부에서 처리)
 class IconPickerDialog {
-  /// 아이콘 선택 다이얼로그 표시
-  static Future<Map<String, dynamic>?> show({
+  /// 아이콘 선택 다이얼로그 표시. 선택된 [IconItem]을 반환, 취소 시 null.
+  static Future<IconItem?> show({
     required BuildContext context,
     String? initialIcon,
-    String? initialIconColor,
-    String? initialBackgroundColor,
+    String? initialSearchText,
   }) async {
     final theme = Theme.of(context);
-    
-    return await showDialog<Map<String, dynamic>>(
+    return await showDialog<IconItem>(
       context: context,
       builder: (context) => _IconPickerWidget(
         theme: theme,
         initialIcon: initialIcon,
-        initialIconColor: initialIconColor,
-        initialBackgroundColor: initialBackgroundColor,
+        initialSearchText: initialSearchText,
       ),
     );
+  }
+
+  /// 이름 기반으로 관련 아이콘을 스코어링해 [count]개 반환.
+  /// 이름이 비어있으면 기본 추천 아이콘 반환.
+  static List<IconItem> getSuggestedIcons(String name, {int count = 6}) {
+    final all = getAllIcons();
+
+    if (name.trim().isEmpty) {
+      // 업종별 기본 대표 아이콘
+      const defaults = [
+        0xe1b8, // inventory_2 (피킹/재고)
+        0xe86c, // category (분류)
+        0xe87d, // checklist (검수)
+        0xe558, // restaurant (서빙)
+        0xf044, // cleaning_services (청소)
+        0xef63, // payments (계산)
+        0xe86b, // construction (작업)
+        0xe7ef, // people (인력)
+      ];
+      final result = <IconItem>[];
+      for (final cp in defaults) {
+        final found = all.where((i) => i.icon.codePoint == cp).toList();
+        if (found.isNotEmpty) result.add(found.first);
+        if (result.length >= count) break;
+      }
+      return result;
+    }
+
+    final query = name.toLowerCase().trim();
+
+    // 한국어 업무 키워드 → 아이콘 codePoint 우선순위 매핑
+    const koreanMap = <String, List<int>>{
+      '피킹': [0xe1b8, 0xe8fe, 0xe8f5], // inventory_2, checklist, qr_code_scanner
+      '패킹': [0xefce, 0xe1b9, 0xe1b2], // shopping_bag, inventory_2_outlined, all_inbox
+      '포장': [0xefce, 0xe1b2, 0xe1b8], // shopping_bag, all_inbox, inventory_2
+      '분류': [0xe86c, 0xe8fe, 0xef40], // category, checklist, list_alt
+      '소팅': [0xe86c, 0xe8fe, 0xef40],
+      '선별': [0xe86c, 0xe1f7, 0xe8fe], // category, fact_check, checklist
+      '검수': [0xe1f7, 0xe8fe, 0xe862], // fact_check, checklist, assignment_turned_in
+      '검사': [0xe1f7, 0xe862, 0xe86f], // fact_check, assignment_turned_in, checklist
+      '입고': [0xe5c5, 0xe835, 0xe1b5], // arrow_downward, move_to_inbox, inbox
+      '출고': [0xe5c4, 0xe1bd, 0xe1b1], // arrow_upward, outbox, unarchive
+      '적재': [0xe53a, 0xf19d, 0xe558], // local_shipping, forklift, warehouse
+      '하역': [0xf19d, 0xe53a, 0xe6ca], // forklift, local_shipping, trolley
+      '운반': [0xe53a, 0xe6ca, 0xf19d], // local_shipping, trolley, forklift
+      '서빙': [0xe558, 0xe7ef, 0xef7a], // restaurant, people, lunch_dining
+      '홀서빙': [0xe558, 0xe7ef, 0xef7a],
+      '홀': [0xe558, 0xe7ef, 0xeb81],   // restaurant, people, groups
+      '주방': [0xe51a, 0xe558, 0xef6d], // kitchen, restaurant, outdoor_grill
+      '주방보조': [0xe51a, 0xe558, 0xef6d],
+      '바리스타': [0xe1bc, 0xe53e, 0xf049], // coffee, local_cafe, coffee_maker
+      '카페': [0xe53e, 0xe1bc, 0xf049],
+      '음료': [0xe53e, 0xe1bc, 0xef08],  // local_cafe, coffee, emoji_food_beverage
+      '청소': [0xf044, 0xeba1, 0xef3a],  // cleaning_services, delete_sweep, soap
+      '청소부': [0xf044, 0xeba1, 0xef3a],
+      '위생': [0xef3a, 0xeb85, 0xf044],  // soap, clean_hands, cleaning_services
+      '소독': [0xef3a, 0xeb7f, 0xf044],  // soap, sanitizer, cleaning_services
+      '계산': [0xef63, 0xe936, 0xe6d4],  // payments, point_of_sale, calculate
+      '캐셔': [0xef63, 0xe936, 0xe870],  // payments, point_of_sale, credit_card
+      '계산대': [0xe936, 0xef63, 0xe870],
+      '진열': [0xef6f, 0xe8d1, 0xef6e],  // storefront, store, shopping_basket
+      '정리': [0xf044, 0xe86c, 0xe8fe],  // cleaning_services, category, checklist
+      '재고': [0xe1b4, 0xe63f, 0xe1b8],  // inventory, warehouse, inventory_2
+      '창고': [0xe63f, 0xe1b4, 0xe1b8],  // warehouse, inventory, inventory_2
+      '배달': [0xe558, 0xe53a, 0xe1b8],  // delivery_dining, local_shipping
+      '배송': [0xe53a, 0xe558, 0xf22c],  // local_shipping, delivery_dining, fire_truck
+      '조립': [0xe6d2, 0xe8d4, 0xe869],  // precision_manufacturing, settings_input_component, build
+      '제조': [0xe6d2, 0xf014, 0xe869],  // precision_manufacturing, factory, build
+      '생산': [0xe6d2, 0xf014, 0xf134],  // precision_manufacturing, factory, work
+      '농': [0xea06, 0xe3a8, 0xea20],    // agriculture, grass, yard
+      '수확': [0xea06, 0xe3a8, 0xe8d5],  // agriculture, grass, eco
+      '농작업': [0xea06, 0xea20, 0xe3a8],
+      '이동': [0xe839, 0xe6ca, 0xf19d],  // directions_car, trolley, forklift
+      '안전': [0xe1f3, 0xe8d5, 0xe32a],  // health_and_safety, eco(?), shield
+      '관리': [0xe8d3, 0xf083, 0xe8b8],  // manage_accounts, admin_panel_settings, settings
+      '사무': [0xe873, 0xe873, 0xe164],  // assignment, description
+      '데이터': [0xe19c, 0xef49, 0xe0ca], // analytics, insights, dashboard
+      // 농업/자연
+      '농업': [0xea06, 0xf80d, 0xe3a8],   // agriculture, grain, grass
+      '농장': [0xea06, 0xe60b, 0xe3a8],   // agriculture, energy_savings_leaf, grass
+      '식물': [0xea20, 0xe7a0, 0xe3a8],   // yard, local_florist, grass
+      '꽃': [0xe7a0, 0xeb4f, 0xe60b],     // local_florist, spa, energy_savings_leaf
+      '온도': [0xf00f, 0xe30a, 0xef54],   // thermostat, ac_unit, water
+      '반려동물': [0xe532, 0xeb18, 0xe32a], // pets, cruelty_free, shield
+      // 서비스/뷰티
+      '미용': [0xe150, 0xf29e, 0xf24c],   // content_cut, face_retouching_natural, dry
+      '헤어': [0xe150, 0xf24c, 0xf2be],   // content_cut, dry, auto_fix_high
+      '네일': [0xf29e, 0xf2be, 0xe150],   // face_retouching_natural, auto_fix_high
+      '에스테틱': [0xf29e, 0xeb4f, 0xf2be],
+      '돌봄': [0xea0c, 0xf6d4, 0xe3a9],  // child_care, elderly, accessibility_new
+      '상담': [0xf22b, 0xe61e, 0xe31d],  // support_agent, psychology, headset_mic
+      '세탁': [0xe7fb, 0xe354, 0xe3c1],  // local_laundry_service, wash, dry_cleaning
+      // 스포츠/이벤트
+      '스포츠': [0xea15, 0xe3b0, 0xef55], // sports, fitness_center, pool
+      '헬스': [0xe3b0, 0xea15, 0xef55],  // fitness_center, sports, pool
+      '파티': [0xe651, 0xe6e0, 0xefda],  // celebration, emoji_events, festival
+      '행사': [0xe651, 0xefda, 0xe7fd],  // celebration, festival, local_activity
+      '이벤트': [0xe651, 0xefda, 0xe7fd],
+      '공연': [0xf1e9, 0xe663, 0xf048],  // theater_comedy, movie, music_note
+      '축제': [0xefda, 0xe651, 0xf09e],  // festival, celebration, attractions
+    };
+
+    // 우선순위 codePoint 수집
+    final priorityCPs = <int>{};
+    for (final entry in koreanMap.entries) {
+      if (query.contains(entry.key)) {
+        priorityCPs.addAll(entry.value);
+      }
+    }
+
+    // 스코어 계산
+    final scored = all.map((icon) {
+      int score = 0;
+      if (priorityCPs.contains(icon.icon.codePoint)) score += 30;
+      if (icon.label.toLowerCase().contains(query)) score += 10;
+      for (final kw in icon.keywords) {
+        if (kw.toLowerCase().contains(query)) score += 5;
+        if (query.contains(kw.toLowerCase()) && kw.length > 1) score += 3;
+      }
+      return (icon: icon, score: score);
+    }).where((e) => e.score > 0).toList()
+      ..sort((a, b) => b.score.compareTo(a.score));
+
+    final result = scored.take(count).map((e) => e.icon).toList();
+
+    // 부족하면 기본 아이콘으로 채우기
+    if (result.length < count) {
+      final defaults = getSuggestedIcons('', count: count);
+      for (final d in defaults) {
+        if (result.length >= count) break;
+        if (!result.any((r) => r.icon.codePoint == d.icon.codePoint)) {
+          result.add(d);
+        }
+      }
+    }
+    return result;
   }
 
   /// 🎯 세련된 Material Icons 컬렉션 (300개)
@@ -390,6 +522,78 @@ class IconPickerDialog {
       IconItem(icon: Icons.monetization_on, label: '수익', keywords: ['monetization', '수익'], category: '금융/결제'),
       IconItem(icon: Icons.paid, label: '결제완료', keywords: ['paid', '완료'], category: '금융/결제'),
       IconItem(icon: Icons.request_page, label: '청구서', keywords: ['request', '청구서'], category: '금융/결제'),
+
+      // ========== 🌱 농업/자연 카테고리 (22개) ==========
+      IconItem(icon: Icons.agriculture, label: '농업', keywords: ['agriculture', '농업', '트랙터'], category: '농업/자연'),
+      IconItem(icon: Icons.grain, label: '곡물', keywords: ['grain', '곡물', '쌀', '밀'], category: '농업/자연'),
+      IconItem(icon: Icons.energy_savings_leaf, label: '친환경', keywords: ['leaf', '친환경', '녹색'], category: '농업/자연'),
+      IconItem(icon: Icons.grass, label: '잔디밭', keywords: ['grass', '잔디', '풀'], category: '농업/자연'),
+      IconItem(icon: Icons.yard, label: '마당', keywords: ['yard', '마당', '정원'], category: '농업/자연'),
+      IconItem(icon: Icons.park, label: '공원', keywords: ['park', '공원'], category: '농업/자연'),
+      IconItem(icon: Icons.forest, label: '숲', keywords: ['forest', '숲', '나무'], category: '농업/자연'),
+      IconItem(icon: Icons.nature, label: '자연', keywords: ['nature', '자연'], category: '농업/자연'),
+      IconItem(icon: Icons.local_florist, label: '꽃/화원', keywords: ['florist', '꽃', '화원', '식물'], category: '농업/자연'),
+      IconItem(icon: Icons.spa, label: '스파/꽃', keywords: ['spa', '꽃잎', '식물'], category: '농업/자연'),
+      IconItem(icon: Icons.landscape, label: '경관', keywords: ['landscape', '경관', '산'], category: '농업/자연'),
+      IconItem(icon: Icons.terrain, label: '지형', keywords: ['terrain', '지형', '산지'], category: '농업/자연'),
+      IconItem(icon: Icons.water, label: '물', keywords: ['water', '물', '수자원'], category: '농업/자연'),
+      IconItem(icon: Icons.water_drop, label: '물방울', keywords: ['drop', '물방울', '이슬'], category: '농업/자연'),
+      IconItem(icon: Icons.wb_sunny, label: '햇빛', keywords: ['sunny', '햇빛', '태양'], category: '농업/자연'),
+      IconItem(icon: Icons.wb_cloudy, label: '구름', keywords: ['cloudy', '구름', '날씨'], category: '농업/자연'),
+      IconItem(icon: Icons.thermostat, label: '온도', keywords: ['thermostat', '온도', '온도계'], category: '농업/자연'),
+      IconItem(icon: Icons.ac_unit, label: '냉각/설비', keywords: ['ac', '냉각', '설비'], category: '농업/자연'),
+      IconItem(icon: Icons.pets, label: '반려동물', keywords: ['pets', '동물', '반려'], category: '농업/자연'),
+      IconItem(icon: Icons.cruelty_free, label: '동물보호', keywords: ['cruelty', '동물보호'], category: '농업/자연'),
+      IconItem(icon: Icons.compost, label: '퇴비/유기', keywords: ['compost', '퇴비', '유기농'], category: '농업/자연'),
+      IconItem(icon: Icons.beach_access, label: '야외작업', keywords: ['beach', '야외', '파라솔'], category: '농업/자연'),
+
+      // ========== 💆 서비스/뷰티 카테고리 (22개) ==========
+      IconItem(icon: Icons.content_cut, label: '미용/이발', keywords: ['cut', '미용', '이발', '헤어'], category: '서비스/뷰티'),
+      IconItem(icon: Icons.face_retouching_natural, label: '피부관리', keywords: ['face', '피부', '관리', '에스테틱'], category: '서비스/뷰티'),
+      IconItem(icon: Icons.auto_fix_high, label: '스타일링', keywords: ['styling', '스타일링', '마법봉'], category: '서비스/뷰티'),
+      IconItem(icon: Icons.dry, label: '드라이', keywords: ['dry', '드라이', '헤어드라이어'], category: '서비스/뷰티'),
+      IconItem(icon: Icons.style, label: '패션/스타일', keywords: ['style', '패션', '스타일'], category: '서비스/뷰티'),
+      IconItem(icon: Icons.checkroom, label: '의류/옷', keywords: ['checkroom', '옷', '의류', '행거'], category: '서비스/뷰티'),
+      IconItem(icon: Icons.self_improvement, label: '명상/요가', keywords: ['self', '명상', '요가', '힐링'], category: '서비스/뷰티'),
+      IconItem(icon: Icons.healing, label: '치유/케어', keywords: ['healing', '치유', '케어'], category: '서비스/뷰티'),
+      IconItem(icon: Icons.psychology, label: '상담/심리', keywords: ['psychology', '상담', '심리'], category: '서비스/뷰티'),
+      IconItem(icon: Icons.support_agent, label: '고객상담', keywords: ['support', '상담', '고객'], category: '서비스/뷰티'),
+      IconItem(icon: Icons.headset_mic, label: '헤드셋', keywords: ['headset', '헤드셋', '콜센터'], category: '서비스/뷰티'),
+      IconItem(icon: Icons.camera_alt, label: '사진촬영', keywords: ['camera', '사진', '촬영'], category: '서비스/뷰티'),
+      IconItem(icon: Icons.child_care, label: '아이돌봄', keywords: ['child', '아이', '돌봄', '베이비시터'], category: '서비스/뷰티'),
+      IconItem(icon: Icons.child_friendly, label: '아동친화', keywords: ['friendly', '아동', '유아'], category: '서비스/뷰티'),
+      IconItem(icon: Icons.elderly, label: '어르신케어', keywords: ['elderly', '어르신', '노인', '돌봄'], category: '서비스/뷰티'),
+      IconItem(icon: Icons.accessibility_new, label: '복지/케어', keywords: ['accessibility', '복지', '장애'], category: '서비스/뷰티'),
+      IconItem(icon: Icons.local_laundry_service, label: '세탁서비스', keywords: ['laundry', '세탁', '서비스'], category: '서비스/뷰티'),
+      IconItem(icon: Icons.iron, label: '다림질', keywords: ['iron', '다림질', '다리미'], category: '서비스/뷰티'),
+      IconItem(icon: Icons.home_repair_service, label: '가정수리', keywords: ['repair', '수리', '가정'], category: '서비스/뷰티'),
+      IconItem(icon: Icons.room_service, label: '룸서비스', keywords: ['room', '룸서비스', '호텔'], category: '서비스/뷰티'),
+      IconItem(icon: Icons.hotel, label: '호텔/숙박', keywords: ['hotel', '호텔', '숙박'], category: '서비스/뷰티'),
+      IconItem(icon: Icons.spa, label: '웰니스', keywords: ['wellness', '웰니스', '릴랙스'], category: '서비스/뷰티'),
+
+      // ========== 🏆 스포츠/이벤트 카테고리 (22개) ==========
+      IconItem(icon: Icons.sports, label: '스포츠', keywords: ['sports', '스포츠', '경기'], category: '스포츠/이벤트'),
+      IconItem(icon: Icons.fitness_center, label: '헬스장', keywords: ['fitness', '헬스', '운동'], category: '스포츠/이벤트'),
+      IconItem(icon: Icons.sports_soccer, label: '축구', keywords: ['soccer', '축구', '풋볼'], category: '스포츠/이벤트'),
+      IconItem(icon: Icons.sports_basketball, label: '농구', keywords: ['basketball', '농구'], category: '스포츠/이벤트'),
+      IconItem(icon: Icons.sports_baseball, label: '야구', keywords: ['baseball', '야구'], category: '스포츠/이벤트'),
+      IconItem(icon: Icons.sports_tennis, label: '테니스', keywords: ['tennis', '테니스'], category: '스포츠/이벤트'),
+      IconItem(icon: Icons.pool, label: '수영', keywords: ['pool', '수영', '수영장'], category: '스포츠/이벤트'),
+      IconItem(icon: Icons.hiking, label: '하이킹', keywords: ['hiking', '하이킹', '등산'], category: '스포츠/이벤트'),
+      IconItem(icon: Icons.celebration, label: '파티/행사', keywords: ['celebration', '파티', '행사', '이벤트'], category: '스포츠/이벤트'),
+      IconItem(icon: Icons.emoji_events, label: '트로피', keywords: ['trophy', '트로피', '상', '수상'], category: '스포츠/이벤트'),
+      IconItem(icon: Icons.local_activity, label: '티켓/입장', keywords: ['activity', '티켓', '입장'], category: '스포츠/이벤트'),
+      IconItem(icon: Icons.theater_comedy, label: '공연/연극', keywords: ['theater', '공연', '연극'], category: '스포츠/이벤트'),
+      IconItem(icon: Icons.movie, label: '영화', keywords: ['movie', '영화', '촬영'], category: '스포츠/이벤트'),
+      IconItem(icon: Icons.music_note, label: '음악', keywords: ['music', '음악', '노래'], category: '스포츠/이벤트'),
+      IconItem(icon: Icons.mic, label: '마이크', keywords: ['mic', '마이크', '방송'], category: '스포츠/이벤트'),
+      IconItem(icon: Icons.festival, label: '축제', keywords: ['festival', '축제', '행사'], category: '스포츠/이벤트'),
+      IconItem(icon: Icons.attractions, label: '놀이공원', keywords: ['attractions', '놀이공원', '어트랙션'], category: '스포츠/이벤트'),
+      IconItem(icon: Icons.casino, label: '카지노/오락', keywords: ['casino', '오락', '게임'], category: '스포츠/이벤트'),
+      IconItem(icon: Icons.outdoor_grill, label: '야외바베큐', keywords: ['grill', '바베큐', '야외'], category: '스포츠/이벤트'),
+      IconItem(icon: Icons.sports_handball, label: '핸드볼', keywords: ['handball', '핸드볼', '구기'], category: '스포츠/이벤트'),
+      IconItem(icon: Icons.sports_martial_arts, label: '격투/무술', keywords: ['martial', '무술', '격투'], category: '스포츠/이벤트'),
+      IconItem(icon: Icons.sports_gymnastics, label: '체조', keywords: ['gymnastics', '체조', '운동'], category: '스포츠/이벤트'),
     ];
   }
 }
@@ -398,14 +602,12 @@ class IconPickerDialog {
 class _IconPickerWidget extends StatefulWidget {
   final ThemeData theme;
   final String? initialIcon;
-  final String? initialIconColor;
-  final String? initialBackgroundColor;
+  final String? initialSearchText;
 
   const _IconPickerWidget({
     required this.theme,
     this.initialIcon,
-    this.initialIconColor,
-    this.initialBackgroundColor,
+    this.initialSearchText,
   });
 
   @override
@@ -416,8 +618,6 @@ class _IconPickerWidgetState extends State<_IconPickerWidget> {
   late List<IconItem> _allIcons;
   List<IconItem> _filteredIcons = [];
   IconData? _selectedIcon;
-  Color _selectedIconColor = AppColors.surface;
-  String _selectedBackgroundColor = '#2196F3';
   String _selectedCategory = '전체';
   final TextEditingController _searchController = TextEditingController();
   final ScrollController _categoryScrollController = ScrollController();
@@ -435,42 +635,27 @@ class _IconPickerWidgetState extends State<_IconPickerWidget> {
     '건물/장소',
     '교통/이동',
     '금융/결제',
-  ];
-
-  final List<String> _predefinedColors = [
-    '#FFFFFF', // 흰색
-    '#000000', // 검정
-    '#F44336', // 빨강
-    '#E91E63', // 핑크
-    '#9C27B0', // 보라
-    '#3F51B5', // 인디고
-    '#2196F3', // 파랑
-    '#00BCD4', // 시안
-    '#4CAF50', // 초록
-    '#8BC34A', // 라이트그린
-    '#FFEB3B', // 노랑
-    '#FF9800', // 주황
-    '#795548', // 브라운
-    '#607D8B', // 블루그레이
+    '농업/자연',
+    '서비스/뷰티',
+    '스포츠/이벤트',
   ];
 
   @override
   void initState() {
     super.initState();
     _allIcons = IconPickerDialog.getAllIcons();
-    _selectedBackgroundColor = widget.initialBackgroundColor ?? '#2196F3';
-    
-    if (widget.initialIconColor != null) {
-      _selectedIconColor = FormatHelper.parseColor(widget.initialIconColor!);
-    }
-    
+
     if (widget.initialIcon != null && widget.initialIcon!.startsWith('material:')) {
       final codePoint = int.tryParse(widget.initialIcon!.substring(9));
       if (codePoint != null) {
         _selectedIcon = IconData(codePoint, fontFamily: 'MaterialIcons');
       }
     }
-    
+
+    if (widget.initialSearchText != null && widget.initialSearchText!.isNotEmpty) {
+      _searchController.text = widget.initialSearchText!;
+    }
+
     _filterIcons();
   }
 
@@ -527,10 +712,7 @@ class _IconPickerWidgetState extends State<_IconPickerWidget> {
                   children: [
                     // ✨ 검색바
                     _buildSearchBar(),
-                    
-                    // ✨ 색상 설정 (선택시에만 표시)
-                    if (_selectedIcon != null) _buildColorSettings(),
-                    
+
                     // ✨ 카테고리 탭
                     _buildCategoryTabs(),
                     
@@ -626,8 +808,9 @@ class _IconPickerWidgetState extends State<_IconPickerWidget> {
 
   /// ✨ 검색바
   Widget _buildSearchBar() {
+    final h = ResponsiveHelper.spacing(context, 16);
     return Padding(
-      padding: ResponsiveHelper.cardPadding(context),
+      padding: EdgeInsets.fromLTRB(h, h, h, h * 0.5),
       child: TextField(
         controller: _searchController,
         decoration: InputDecoration(
@@ -655,83 +838,64 @@ class _IconPickerWidgetState extends State<_IconPickerWidget> {
 
   /// ✨ 카테고리 탭
   Widget _buildCategoryTabs() {
-    return Container(
-      height: 56,
-      padding: EdgeInsets.symmetric(
-        vertical: ResponsiveHelper.spacing(context, 8),
-      ),
-      child: Row(
-        children: [
-          // 왼쪽 화살표
-          IconButton(
-            icon: Icon(Icons.chevron_left, color: widget.theme.primaryColor),
-            onPressed: () {
-              _categoryScrollController.animateTo(
-                _categoryScrollController.offset - 150,
-                duration: const Duration(milliseconds: 300),
-                curve: Curves.easeInOut,
-              );
-            },
-          ),
-          // 카테고리 목록
-          Expanded(
-            child: ListView.builder(
-              controller: _categoryScrollController,
-              scrollDirection: Axis.horizontal,
-              itemCount: _categories.length,
-              itemBuilder: (context, index) {
-                final category = _categories[index];
-                final isSelected = _selectedCategory == category;
-                
-                return Padding(
-                  padding: EdgeInsets.only(
-                    right: ResponsiveHelper.spacing(context, 8),
-                  ),
-                  child: Material(
-                    color: isSelected
-                        ? widget.theme.primaryColor
-                        : AppColors.grey200,
-                    borderRadius: BorderRadius.circular(20),
-                    child: InkWell(
-                      onTap: () {
-                        setState(() {
-                          _selectedCategory = category;
-                          _filterIcons();
-                        });
-                      },
+    final h = ResponsiveHelper.spacing(context, 16);
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        SizedBox(
+          height: 40,
+          child: ListView.builder(
+            controller: _categoryScrollController,
+            scrollDirection: Axis.horizontal,
+            padding: EdgeInsets.symmetric(horizontal: h),
+            itemCount: _categories.length,
+            itemBuilder: (context, index) {
+              final category = _categories[index];
+              final isSelected = _selectedCategory == category;
+
+              return Padding(
+                padding: EdgeInsets.only(right: ResponsiveHelper.spacing(context, 8)),
+                child: GestureDetector(
+                  onTap: () => setState(() {
+                    _selectedCategory = category;
+                    _filterIcons();
+                  }),
+                  child: AnimatedContainer(
+                    duration: const Duration(milliseconds: 150),
+                    padding: EdgeInsets.symmetric(
+                      horizontal: ResponsiveHelper.spacing(context, 14),
+                      vertical: ResponsiveHelper.spacing(context, 7),
+                    ),
+                    decoration: BoxDecoration(
+                      color: isSelected
+                          ? widget.theme.primaryColor
+                          : Colors.transparent,
                       borderRadius: BorderRadius.circular(20),
-                      child: Padding(
-                        padding: EdgeInsets.symmetric(
-                          horizontal: ResponsiveHelper.spacing(context, 16),
-                          vertical: ResponsiveHelper.spacing(context, 8),
-                        ),
-                        child: Text(
-                          category,
-                          style: ResponsiveHelper.bodyStyle(context).copyWith(
-                            color: isSelected ? AppColors.surface : AppColors.grey700,
-                            fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
-                          ),
-                        ),
+                      border: Border.all(
+                        color: isSelected
+                            ? widget.theme.primaryColor
+                            : AppColors.grey300,
+                        width: 1.5,
+                      ),
+                    ),
+                    child: Text(
+                      category,
+                      style: TextStyle(
+                        fontSize: 12.5,
+                        color: isSelected ? Colors.white : AppColors.grey600,
+                        fontWeight:
+                            isSelected ? FontWeight.bold : FontWeight.w500,
                       ),
                     ),
                   ),
-                );
-              },
-            ),
-          ),
-          // 오른쪽 화살표
-          IconButton(
-            icon: Icon(Icons.chevron_right, color: widget.theme.primaryColor),
-            onPressed: () {
-              _categoryScrollController.animateTo(
-                _categoryScrollController.offset + 150,
-                duration: const Duration(milliseconds: 300),
-                curve: Curves.easeInOut,
+                ),
               );
             },
           ),
-        ],
-      ),
+        ),
+        SizedBox(height: ResponsiveHelper.spacing(context, 8)),
+        Divider(height: 1, color: AppColors.grey200),
+      ],
     );
   }
 
@@ -804,20 +968,10 @@ class _IconPickerWidgetState extends State<_IconPickerWidget> {
                   width: ResponsiveHelper.iconSize(context, 56),
                   height: ResponsiveHelper.iconSize(context, 56),
                   decoration: BoxDecoration(
-                    gradient: isSelected
-                        ? LinearGradient(
-                            colors: [
-                              FormatHelper.parseColor(_selectedBackgroundColor),
-                              FormatHelper.parseColor(_selectedBackgroundColor).withValues(alpha: 0.8),
-                            ],
-                          )
-                        : null,
-                    color: isSelected ? null : AppColors.grey100,
+                    color: isSelected ? widget.theme.primaryColor : AppColors.grey100,
                     borderRadius: BorderRadius.circular(12),
                     border: Border.all(
-                      color: isSelected
-                          ? widget.theme.primaryColor
-                          : AppColors.grey300,
+                      color: isSelected ? widget.theme.primaryColor : AppColors.grey300,
                       width: isSelected ? 2 : 1,
                     ),
                     boxShadow: isSelected
@@ -832,7 +986,7 @@ class _IconPickerWidgetState extends State<_IconPickerWidget> {
                   ),
                   child: Icon(
                     iconItem.icon,
-                    color: isSelected ? _selectedIconColor : AppColors.grey700,
+                    color: isSelected ? Colors.white : AppColors.grey700,
                     size: ResponsiveHelper.iconSize(context, 28),
                   ),
                 ),
@@ -862,248 +1016,117 @@ class _IconPickerWidgetState extends State<_IconPickerWidget> {
     );
   }
 
-  /// ✨ 색상 설정
-  Widget _buildColorSettings() {
-    return Container(
-      margin: EdgeInsets.symmetric(
-        horizontal: ResponsiveHelper.spacing(context, 16),
-        vertical: ResponsiveHelper.spacing(context, 8),
-      ),
-      decoration: BoxDecoration(
-        color: AppColors.surface,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: AppColors.border),
-        boxShadow: [
-          BoxShadow(
-            color: AppColors.grey500.withValues(alpha: 0.1),
-            blurRadius: 4,
-            offset: const Offset(0, 2),
-          ),
-        ],
-      ),
-      child: ExpansionTile(
-        initiallyExpanded: false,
-        title: Row(
-          children: [
-            Icon(
-              Icons.palette,
-              color: widget.theme.primaryColor,
-              size: ResponsiveHelper.iconSize(context, 20),
-            ),
-            SizedBox(width: ResponsiveHelper.spacing(context, 8)),
-            Text(
-              '색상 설정',
-              style: ResponsiveHelper.bodyStyle(context).copyWith(
-                fontWeight: FontWeight.bold,
-              ),
-            ),
-          ],
-        ),
-        children: [
-          Padding(
-            padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 16)),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                // 아이콘 색상
-                Text(
-                  '아이콘 색상',
-                  style: ResponsiveHelper.smallStyle(context).copyWith(
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-                SizedBox(height: ResponsiveHelper.spacing(context, 8)),
-                Wrap(
-                  spacing: ResponsiveHelper.spacing(context, 8),
-                  runSpacing: ResponsiveHelper.spacing(context, 8),
-                  children: _predefinedColors.map((colorHex) {
-                    final color = FormatHelper.parseColor(colorHex);
-                    final isSelected = _selectedIconColor.value == color.value;
-                    
-                    return GestureDetector(
-                      onTap: () {
-                        setState(() {
-                          _selectedIconColor = color;
-                        });
-                      },
-                      child: Container(
-                        width: ResponsiveHelper.iconSize(context, 32),
-                        height: ResponsiveHelper.iconSize(context, 32),
-                        decoration: BoxDecoration(
-                          color: color,
-                          shape: BoxShape.circle,
-                          border: Border.all(
-                            color: isSelected ? widget.theme.primaryColor : AppColors.grey400,
-                            width: isSelected ? 3 : 1,
-                          ),
-                          boxShadow: isSelected
-                              ? [
-                                  BoxShadow(
-                                    color: widget.theme.primaryColor.withValues(alpha: 0.3),
-                                    blurRadius: 8,
-                                  ),
-                                ]
-                              : null,
-                        ),
-                        child: isSelected
-                            ? Icon(
-                                Icons.check,
-                                color: colorHex == '#FFFFFF' ? Colors.black : AppColors.surface,
-                                size: ResponsiveHelper.iconSize(context, 16),
-                              )
-                            : null,
-                      ),
-                    );
-                  }).toList(),
-                ),
-                SizedBox(height: ResponsiveHelper.spacing(context, 16)),
-                
-                // 배경색
-                Text(
-                  '배경색',
-                  style: ResponsiveHelper.smallStyle(context).copyWith(
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-                SizedBox(height: ResponsiveHelper.spacing(context, 8)),
-                Wrap(
-                  spacing: ResponsiveHelper.spacing(context, 8),
-                  runSpacing: ResponsiveHelper.spacing(context, 8),
-                  children: _predefinedColors.map((colorHex) {
-                    final color = FormatHelper.parseColor(colorHex);
-                    final isSelected = _selectedBackgroundColor == colorHex;
-                    
-                    return GestureDetector(
-                      onTap: () {
-                        setState(() {
-                          _selectedBackgroundColor = colorHex;
-                        });
-                      },
-                      child: Container(
-                        width: ResponsiveHelper.iconSize(context, 32),
-                        height: ResponsiveHelper.iconSize(context, 32),
-                        decoration: BoxDecoration(
-                          color: color,
-                          shape: BoxShape.circle,
-                          border: Border.all(
-                            color: isSelected ? widget.theme.primaryColor : AppColors.grey400,
-                            width: isSelected ? 3 : 1,
-                          ),
-                          boxShadow: isSelected
-                              ? [
-                                  BoxShadow(
-                                    color: widget.theme.primaryColor.withValues(alpha: 0.3),
-                                    blurRadius: 8,
-                                  ),
-                                ]
-                              : null,
-                        ),
-                        child: isSelected
-                            ? Icon(
-                                Icons.check,
-                                color: colorHex == '#FFFFFF' ? Colors.black : AppColors.surface,
-                                size: ResponsiveHelper.iconSize(context, 16),
-                              )
-                            : null,
-                      ),
-                    );
-                  }).toList(),
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
   /// ✨ 액션 버튼
   Widget _buildActionButtons() {
+    // 선택된 아이콘의 label 찾기
+    final selectedItem = _selectedIcon == null
+        ? null
+        : _allIcons.firstWhere(
+            (i) => i.icon.codePoint == _selectedIcon!.codePoint,
+            orElse: () => IconItem(icon: _selectedIcon!, label: '', keywords: [], category: ''),
+          );
+
     return Container(
       padding: ResponsiveHelper.cardPadding(context),
-      child: Row(
+      decoration: BoxDecoration(
+        color: Colors.white,
+        border: Border(top: BorderSide(color: AppColors.grey200)),
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
         children: [
-          Expanded(
-            child: OutlinedButton(
-              onPressed: () => Navigator.pop(context),
-              style: OutlinedButton.styleFrom(
-                padding: EdgeInsets.symmetric(
-                  vertical: ResponsiveHelper.spacing(context, 16),
-                ),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(12),
-                ),
+          // 선택된 아이콘 미리보기
+          if (_selectedIcon != null) ...[
+            Container(
+              padding: EdgeInsets.symmetric(
+                horizontal: ResponsiveHelper.spacing(context, 12),
+                vertical: ResponsiveHelper.spacing(context, 8),
               ),
-              child: Text(
-                '취소',
-                style: ResponsiveHelper.bodyStyle(context).copyWith(
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
-            ),
-          ),
-          SizedBox(width: ResponsiveHelper.spacing(context, 12)),
-          Expanded(
-            flex: 2,
-            child: Container(
               decoration: BoxDecoration(
-                gradient: LinearGradient(
-                  colors: [
-                    widget.theme.primaryColor,
-                    widget.theme.primaryColor.withValues(alpha: 0.8),
-                  ],
-                ),
-                borderRadius: BorderRadius.circular(12),
-                boxShadow: [
-                  BoxShadow(
-                    color: widget.theme.primaryColor.withValues(alpha: 0.4),
-                    blurRadius: 8,
-                    offset: const Offset(0, 4),
+                color: widget.theme.primaryColor.withValues(alpha: 0.08),
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: Row(
+                children: [
+                  Container(
+                    width: 32,
+                    height: 32,
+                    decoration: BoxDecoration(
+                      color: widget.theme.primaryColor,
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: Icon(_selectedIcon, color: Colors.white, size: 18),
+                  ),
+                  SizedBox(width: ResponsiveHelper.spacing(context, 10)),
+                  Expanded(
+                    child: Text(
+                      selectedItem?.label.isNotEmpty == true
+                          ? '${selectedItem!.label} 선택됨'
+                          : '아이콘 선택됨',
+                      style: ResponsiveHelper.smallStyle(context).copyWith(
+                        color: widget.theme.primaryColor,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ),
+                  TextButton(
+                    onPressed: () => setState(() => _selectedIcon = null),
+                    style: TextButton.styleFrom(
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                      minimumSize: Size.zero,
+                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                    ),
+                    child: Text(
+                      '선택 해제',
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: AppColors.grey500,
+                      ),
+                    ),
                   ),
                 ],
               ),
-              child: Material(
-                color: Colors.transparent,
-                child: InkWell(
-                  onTap: _selectedIcon == null
+            ),
+            SizedBox(height: ResponsiveHelper.spacing(context, 10)),
+          ],
+          // 버튼 행
+          Row(
+            children: [
+              Expanded(
+                child: OutlinedButton(
+                  onPressed: () => Navigator.pop(context),
+                  style: OutlinedButton.styleFrom(
+                    padding: EdgeInsets.symmetric(vertical: ResponsiveHelper.spacing(context, 14)),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                  ),
+                  child: Text('취소', style: ResponsiveHelper.bodyStyle(context).copyWith(fontWeight: FontWeight.bold)),
+                ),
+              ),
+              SizedBox(width: ResponsiveHelper.spacing(context, 12)),
+              Expanded(
+                flex: 2,
+                child: ElevatedButton.icon(
+                  onPressed: _selectedIcon == null
                       ? null
-                      : () {
-                          final iconString = 'material:${_selectedIcon!.codePoint}';
-                          final colorHex = '#${_selectedIconColor.value.toRadixString(16).padLeft(8, '0').substring(2)}';
-                          
-                          Navigator.pop(context, {
-                            'icon': iconString,
-                            'iconColor': colorHex,
-                            'backgroundColor': _selectedBackgroundColor,
-                          });
-                        },
-                  borderRadius: BorderRadius.circular(12),
-                  child: Padding(
-                    padding: EdgeInsets.symmetric(
-                      vertical: ResponsiveHelper.spacing(context, 16),
-                    ),
-                    child: Row(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        Icon(
-                          Icons.check_circle,
-                          color: AppColors.surface,
-                          size: ResponsiveHelper.iconSize(context, 20),
-                        ),
-                        SizedBox(width: ResponsiveHelper.spacing(context, 8)),
-                        Text(
-                          '선택 완료',
-                          style: ResponsiveHelper.bodyStyle(context).copyWith(
-                            color: AppColors.surface,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                      ],
+                      : () => Navigator.pop(context, selectedItem),
+                  style: ElevatedButton.styleFrom(
+                    padding: EdgeInsets.symmetric(vertical: ResponsiveHelper.spacing(context, 14)),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                    backgroundColor: widget.theme.primaryColor,
+                    foregroundColor: Colors.white,
+                    disabledBackgroundColor: AppColors.grey200,
+                  ),
+                  icon: const Icon(Icons.check_circle, size: 18),
+                  label: Text(
+                    '선택 완료',
+                    style: ResponsiveHelper.bodyStyle(context).copyWith(
+                      color: _selectedIcon == null ? AppColors.grey400 : Colors.white,
+                      fontWeight: FontWeight.bold,
                     ),
                   ),
                 ),
               ),
-            ),
+            ],
           ),
         ],
       ),

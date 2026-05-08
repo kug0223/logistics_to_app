@@ -229,17 +229,10 @@ class _JobPostingScreenState extends State<JobPostingScreen> {
             ? Stack(
                 fit: StackFit.expand,
                 children: [
-                  Image.network(
+                  ImageHelper.buildCachedImage(
                     _business!.mainImageUrl!,
                     fit: BoxFit.cover,
-                    errorBuilder: (_, __, ___) => Container(
-                      color: theme.primaryColor.withValues(alpha: 0.8),
-                      child: Icon(
-                        Icons.business,
-                        size: ResponsiveHelper.iconSize(context, 64),
-                        color: Colors.white.withValues(alpha: 0.5),
-                      ),
-                    ),
+                    fadeInDuration: const Duration(milliseconds: 150),
                   ),
                   // 그라데이션 오버레이
                   Container(

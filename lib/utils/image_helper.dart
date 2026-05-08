@@ -485,12 +485,10 @@ class ImageHelper {
     Widget imageWidget;
 
     if (image is File) {
-      imageWidget = Image.file(
-        image,
-        fit: fit,
-        width: width ?? double.infinity,
-        height: height,
-      );
+      // 웹에서는 path가 blob URL이므로 Image.network로 처리
+      imageWidget = kIsWeb
+          ? Image.network(image.path, fit: fit, width: width ?? double.infinity, height: height)
+          : Image.file(image, fit: fit, width: width ?? double.infinity, height: height);
     } else if (image is String && image.isNotEmpty) {
       imageWidget = Image.network(
         image,
@@ -551,7 +549,9 @@ class ImageHelper {
     double? width,
     double? height,
     BorderRadius? borderRadius,
-    Duration fadeInDuration = const Duration(milliseconds: 300),
+    Duration fadeInDuration = const Duration(milliseconds: 200),
+    int? memCacheWidth,
+    int? memCacheHeight,
   }) {
     Widget imageWidget = CachedNetworkImage(
       imageUrl: imageUrl,
@@ -559,6 +559,8 @@ class ImageHelper {
       width: width ?? double.infinity,
       height: height,
       fadeInDuration: fadeInDuration,
+      memCacheWidth: memCacheWidth,
+      memCacheHeight: memCacheHeight,
       placeholder: (context, url) => Shimmer.fromColors(
         baseColor: AppColors.grey300,
         highlightColor: AppColors.grey100,
@@ -601,18 +603,12 @@ class ImageHelper {
     BorderRadius? borderRadius,
   }) {
     if (image is File) {
-      Widget imageWidget = Image.file(
-        image,
-        fit: fit,
-        width: width ?? double.infinity,
-        height: height,
-      );
-      
+      Widget imageWidget = kIsWeb
+          ? Image.network(image.path, fit: fit, width: width ?? double.infinity, height: height)
+          : Image.file(image, fit: fit, width: width ?? double.infinity, height: height);
+
       if (borderRadius != null) {
-        return ClipRRect(
-          borderRadius: borderRadius,
-          child: imageWidget,
-        );
+        return ClipRRect(borderRadius: borderRadius, child: imageWidget);
       }
       return imageWidget;
     } else if (image is String && image.isNotEmpty) {

@@ -21,14 +21,15 @@ class UserHomeScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final userProvider = context.watch<UserProvider>();
+    final theme = Theme.of(context);
 
     return Scaffold(
       body: Container(
-        decoration: const BoxDecoration(
+        decoration: BoxDecoration(
           gradient: LinearGradient(
             begin: Alignment.topCenter,
             end: Alignment.bottomCenter,
-            colors: [Color(0xFF1565C0), Color(0xFF1E88E5)],
+            colors: [theme.primaryColor, theme.colorScheme.secondary],
           ),
         ),
         child: SafeArea(
@@ -208,7 +209,7 @@ class UserHomeScreen extends StatelessWidget {
                           icon: Icons.search,
                           title: '공고 찾기',
                           subtitle: '알바 공고 검색',
-                          color: const Color(0xFF1565C0),
+                          color: theme.primaryColor,
                           onTap: () {
                             Navigator.push(
                               context,
@@ -225,7 +226,7 @@ class UserHomeScreen extends StatelessWidget {
                           icon: Icons.calendar_month,
                           title: '근무 스케줄',
                           subtitle: '일정 한눈에 보기',
-                          color: const Color(0xFF1565C0),
+                          color: theme.primaryColor,
                           onTap: () {
                             Navigator.push(
                               context,
@@ -242,7 +243,7 @@ class UserHomeScreen extends StatelessWidget {
                           icon: Icons.access_time_outlined,
                           title: '출퇴근 체크',
                           subtitle: '근무 시간 기록',
-                          color: const Color(0xFF1565C0),
+                          color: theme.primaryColor,
                           onTap: () {
                             Navigator.push(
                               context,
@@ -259,7 +260,7 @@ class UserHomeScreen extends StatelessWidget {
                           icon: Icons.assignment,
                           title: '내 지원 내역',
                           subtitle: '지원 현황 확인',
-                          color: const Color(0xFF1565C0),
+                          color: theme.primaryColor,
                           onTap: () {
                             Navigator.push(
                               context,

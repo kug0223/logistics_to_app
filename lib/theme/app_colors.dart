@@ -67,7 +67,7 @@ class AppColors {
   static const Color errorDark = Color(0xFFD32F2F);      // red[700]
   
   // ═══════════════════════════════════════════════════════════
-  // 🔵 정보 (일반 정보, 단기 근무)
+  // 🔵 정보·단기 근무 (파랑)
   // ═══════════════════════════════════════════════════════════
   
   /// 정보 배경색 (연한 파랑)
@@ -83,20 +83,36 @@ class AppColors {
   static const Color infoDark = Color(0xFF1976D2);       // blue[700]
   
   // ═══════════════════════════════════════════════════════════
-  // 🟣 보라 (장기 근무, 특수)
+  // 🟣 보라 (퇴근 완료 상태 등 특수 용도)
   // ═══════════════════════════════════════════════════════════
-  
+
   /// 보라 배경색 (연한 보라)
   static const Color purpleBg = Color(0xFFF3E5F5);       // purple[50]
-  
+
   /// 보라 연한색 (보조 배경)
   static const Color purpleLight = Color(0xFFCE93D8);    // purple[200]
-  
+
   /// 보라 기본색
   static const Color purple = Color(0xFF9C27B0);         // purple
-  
+
   /// 보라 진한색 (텍스트, 아이콘)
   static const Color purpleDark = Color(0xFF7B1FA2);     // purple[700]
+
+  // ═══════════════════════════════════════════════════════════
+  // 🩵 틸 (장기·계약 근무 전용)
+  // ═══════════════════════════════════════════════════════════
+
+  /// 틸 배경색 (연한 틸)
+  static const Color tealBg = Color(0xFFE0F2F1);         // teal[50]
+
+  /// 틸 연한색 (보조 배경)
+  static const Color tealLight = Color(0xFF80CBC4);      // teal[200]
+
+  /// 틸 기본색
+  static const Color teal = Color(0xFF009688);           // teal
+
+  /// 틸 진한색 (텍스트, 아이콘)
+  static const Color tealDark = Color(0xFF00796B);       // teal[700]
   
   // ═══════════════════════════════════════════════════════════
   // ⚫ 중립 (회색 계열)
@@ -144,11 +160,11 @@ class AppColors {
   static const Color shortTermLight = infoLight;
   static const Color shortTermDark = infoDark;
   
-  /// 장기 근무 색상
-  static const Color longTerm = purple;
-  static const Color longTermBg = purpleBg;
-  static const Color longTermLight = purpleLight;
-  static const Color longTermDark = purpleDark;
+  /// 장기·계약 근무 색상 (틸)
+  static const Color longTerm = teal;
+  static const Color longTermBg = tealBg;
+  static const Color longTermLight = tealLight;
+  static const Color longTermDark = tealDark;
   
   // --- 지원 상태 ---
   
@@ -392,5 +408,10 @@ class AppColors {
   /// 보라 그라데이션
   static LinearGradient get purpleGradient => LinearGradient(
     colors: [purpleBg, purpleLight.withValues(alpha: 0.3)],
+  );
+
+  /// 틸 그라데이션 (장기·계약 근무)
+  static LinearGradient get tealGradient => LinearGradient(
+    colors: [tealBg, tealLight.withValues(alpha: 0.3)],
   );
 }

@@ -32,7 +32,7 @@ class _OnboardingScreenState extends State<OnboardingScreen>
   static const _userPages = [
     _OnboardingPage(
       icon: Icons.rocket_launch_rounded,
-      color: Color(0xFF1976D2),
+      color: Color(0xFF1565C0),
       bgColor: Color(0xFFE3F2FD),
       tag: '알핏 소개',
       title: '물류센터 일자리,\n쉽고 빠르게',
@@ -74,7 +74,7 @@ class _OnboardingScreenState extends State<OnboardingScreen>
   static const _adminPages = [
     _OnboardingPage(
       icon: Icons.admin_panel_settings_rounded,
-      color: Color(0xFF1976D2),
+      color: Color(0xFF1565C0),
       bgColor: Color(0xFFE3F2FD),
       tag: '알핏 관리자',
       title: '인력 모집,\n이제 간편하게',

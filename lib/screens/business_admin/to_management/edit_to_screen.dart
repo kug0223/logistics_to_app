@@ -285,8 +285,17 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
             _hoursBeforeStart != (widget.to.hoursBeforeStart ?? 2) ||
             oldEarliestStart != newEarliestStart;
 
-        // 업무 구성 or 마감 설정 변경 시 슬롯 workDetails 일괄 동기화
-        if (workTypesChanged || deadlineSettingsChanged) {
+        // 임금·인원 변경 감지 (임금만 바뀌어도 슬롯 동기화 필요)
+        final wageOrCountChanged = _workDetails.any((newD) {
+          final oldD = widget.to.workDetails.where((d) => d.workType == newD.workType).firstOrNull;
+          if (oldD == null) return true;
+          return oldD.wage != newD.wage ||
+              oldD.wageType != newD.wageType ||
+              oldD.requiredCount != newD.requiredCount;
+        });
+
+        // 업무 구성·마감·임금·인원 변경 시 슬롯 workDetails 일괄 동기화
+        if (workTypesChanged || deadlineSettingsChanged || wageOrCountChanged) {
           await _firestoreService.updateSlotsDeadlines(
             toId: widget.to.id,
             deadlineType: 'HOURS_BEFORE',

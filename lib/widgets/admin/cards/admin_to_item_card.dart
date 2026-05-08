@@ -631,7 +631,7 @@ class _TOItemCardState extends State<TOItemCard> {
           );
           
           try {
-            final result = await widget.firestoreService.loadTOWorkDetails(widget.toItem.to);
+            final result = await widget.firestoreService.loadTOWorkDetails(widget.toItem.to, slotId: widget.toItem.slot?.id, slotWorkDetails: widget.toItem.slot?.workDetails);
             widget.toItem.setWorkDetails(
               result['workDetails'] as List<WorkDetailData>,
               result['workStats'] as Map<String, Map<String, int>>,
@@ -687,7 +687,7 @@ case 'confirmedList':
           );
           
           try {
-            final result = await widget.firestoreService.loadTOWorkDetails(widget.toItem.to);
+            final result = await widget.firestoreService.loadTOWorkDetails(widget.toItem.to, slotId: widget.toItem.slot?.id, slotWorkDetails: widget.toItem.slot?.workDetails);
             widget.toItem.setWorkDetails(
               result['workDetails'] as List<WorkDetailData>,
               result['workStats'] as Map<String, Map<String, int>>,
@@ -724,7 +724,7 @@ case 'confirmedList':
           );
           
           try {
-            final result = await widget.firestoreService.loadTOWorkDetails(widget.toItem.to);
+            final result = await widget.firestoreService.loadTOWorkDetails(widget.toItem.to, slotId: widget.toItem.slot?.id, slotWorkDetails: widget.toItem.slot?.workDetails);
             widget.toItem.setWorkDetails(
               result['workDetails'] as List<WorkDetailData>,
               result['workStats'] as Map<String, Map<String, int>>,

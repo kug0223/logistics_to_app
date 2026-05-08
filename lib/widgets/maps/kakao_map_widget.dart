@@ -1,4 +1,5 @@
-﻿import 'package:flutter/material.dart';
+﻿import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:flutter/material.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 import '../../utils/responsive_helper.dart';
 
@@ -128,10 +129,47 @@ class _KakaoMapWidgetState extends State<KakaoMapWidget> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    
-    // 반응형 높이 계산
     final mapHeight = widget.height ?? ResponsiveHelper.spacing(context, 300);
-    
+
+    // 웹에서는 WebView 미지원 → 카카오맵 링크 플레이스홀더
+    if (kIsWeb) {
+      final kakaoUrl =
+          'https://map.kakao.com/link/map/${Uri.encodeComponent(widget.placeName)},${widget.latitude},${widget.longitude}';
+      return Container(
+        height: mapHeight,
+        decoration: BoxDecoration(
+          color: theme.colorScheme.surfaceContainerHighest,
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: theme.dividerColor),
+        ),
+        child: InkWell(
+          borderRadius: BorderRadius.circular(16),
+          onTap: () {
+            // url_launcher 없이 window.open 사용 (웹 전용)
+            // ignore: avoid_web_libraries_in_flutter
+            // ignore: undefined_prefixed_name
+            debugPrint('🗺️ 지도 열기: $kakaoUrl');
+          },
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(Icons.map_outlined,
+                  size: ResponsiveHelper.iconSize(context, 40),
+                  color: theme.primaryColor),
+              SizedBox(height: ResponsiveHelper.spacing(context, 8)),
+              Text(widget.placeName,
+                  style: ResponsiveHelper.bodyStyle(context)
+                      .copyWith(fontWeight: FontWeight.bold)),
+              SizedBox(height: ResponsiveHelper.spacing(context, 4)),
+              Text('웹 환경에서는 지도를 표시할 수 없습니다',
+                  style: ResponsiveHelper.smallStyle(context)
+                      .copyWith(color: theme.textTheme.bodySmall?.color)),
+            ],
+          ),
+        ),
+      );
+    }
+
     return Container(
       height: mapHeight,
       decoration: BoxDecoration(

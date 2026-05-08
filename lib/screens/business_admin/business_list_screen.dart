@@ -16,6 +16,7 @@ import '../../services/firestore_service.dart';
 import '../../utils/responsive_helper.dart';
 import '../../utils/toast_helper.dart';
 import '../../utils/dialog_helper.dart';
+import '../../utils/image_helper.dart';
 
 // Widgets
 import '../../widgets/common/common_widgets.dart';
@@ -67,20 +68,6 @@ class _BusinessListScreenState extends State<BusinessListScreen> {
         _businesses = businesses;
         _isLoading = false;
       });
-
-      // 사업장이 1개이면 목록 건너뛰고 바로 상세 화면으로 이동
-      if (businesses.length == 1 && mounted && !forceServer) {
-        WidgetsBinding.instance.addPostFrameCallback((_) {
-          if (mounted) {
-            Navigator.pushReplacement(
-              context,
-              MaterialPageRoute(
-                builder: (_) => BusinessDetailScreen(business: businesses.first),
-              ),
-            );
-          }
-        });
-      }
     } catch (e) {
       debugPrint('❌ 사업장 로드 실패: $e');
       ToastHelper.showError('사업장 목록을 불러오는데 실패했습니다');
@@ -387,26 +374,28 @@ class _BusinessListScreenState extends State<BusinessListScreen> {
 
   /// 사업장 이미지
   Widget _buildBusinessImage(BuildContext context, BusinessModel business) {
-    return Container(
-      width: ResponsiveHelper.iconSize(context, 80),
-      height: ResponsiveHelper.iconSize(context, 80),
-      decoration: BoxDecoration(
-        color: AppColors.grey200,
-        borderRadius: BorderRadius.circular(12),
-        image: business.mainImageUrl != null
-            ? DecorationImage(
-                image: NetworkImage(business.mainImageUrl!),
-                fit: BoxFit.cover,
-              )
-            : null,
-      ),
-      child: business.mainImageUrl == null
-          ? Icon(
-              Icons.business,
-              size: ResponsiveHelper.iconSize(context, 40),
-              color: AppColors.grey400,
-            )
-          : null,
+    final size = ResponsiveHelper.iconSize(context, 80);
+
+    if (business.mainImageUrl == null) {
+      return Container(
+        width: size,
+        height: size,
+        decoration: BoxDecoration(
+          color: AppColors.grey200,
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: Icon(Icons.business, size: ResponsiveHelper.iconSize(context, 40), color: AppColors.grey400),
+      );
+    }
+
+    return ImageHelper.buildCachedImage(
+      business.mainImageUrl!,
+      width: size,
+      height: size,
+      fit: BoxFit.cover,
+      borderRadius: BorderRadius.circular(12),
+      memCacheWidth: (size * 2).toInt(),
+      fadeInDuration: const Duration(milliseconds: 150),
     );
   }
 
@@ -419,7 +408,7 @@ class _BusinessListScreenState extends State<BusinessListScreen> {
           Icon(
             Icons.star,
             size: ResponsiveHelper.iconSize(context, 14),
-            color: Colors.amber,
+            color: AppColors.amberDark,
           ),
           SizedBox(width: ResponsiveHelper.spacing(context, 2)),
           Text(
@@ -617,13 +606,13 @@ class _BusinessListScreenState extends State<BusinessListScreen> {
               Container(
                 padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 8)),
                 decoration: BoxDecoration(
-                  color: Colors.blue.withValues(alpha: 0.1),
+                  color: AppColors.infoBg,
                   borderRadius: BorderRadius.circular(10),
                 ),
                 child: Icon(
                   Icons.info_outline,
                   size: ResponsiveHelper.iconSize(context, 20),
-                  color: Colors.blue,
+                  color: AppColors.infoDark,
                 ),
               ),
               SizedBox(width: ResponsiveHelper.spacing(context, 12)),
@@ -639,13 +628,13 @@ class _BusinessListScreenState extends State<BusinessListScreen> {
               Container(
                 padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 8)),
                 decoration: BoxDecoration(
-                  color: Colors.orange.withValues(alpha: 0.1),
+                  color: AppColors.warningBg,
                   borderRadius: BorderRadius.circular(10),
                 ),
                 child: Icon(
                   Icons.edit,
                   size: ResponsiveHelper.iconSize(context, 20),
-                  color: Colors.orange,
+                  color: AppColors.warningDark,
                 ),
               ),
               SizedBox(width: ResponsiveHelper.spacing(context, 12)),

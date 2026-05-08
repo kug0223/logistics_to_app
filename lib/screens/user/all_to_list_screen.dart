@@ -1,5 +1,6 @@
-﻿import 'package:flutter/material.dart';
+import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import '../../models/core/to_model.dart';
 import '../../models/core/application_model.dart';
 import '../../services/firestore_service.dart';
@@ -7,7 +8,7 @@ import '../../providers/user_provider.dart';
 import '../../widgets/common/loading_widget.dart';
 import '../../widgets/user/cards/user_to_card.dart';
 import '../../utils/toast_helper.dart';
-import '../../utils/responsive_helper.dart';  // ⭐ 추가
+import '../../utils/responsive_helper.dart';
 import '../../widgets/inputs/filter_dialog.dart';
 
 
@@ -21,18 +22,24 @@ class AllTOListScreen extends StatefulWidget {
 
 class _AllTOListScreenState extends State<AllTOListScreen> {
   final FirestoreService _firestoreService = FirestoreService();
-  
+  final ScrollController _scrollController = ScrollController();
+
   // 필터 상태
   DateTimeRange? _selectedDateRange;
   String? _selectedBusiness;
-  final String _jobTypeFilter = 'ALL'; // 'ALL', 'short', 'long_term'
-  
+  final String _jobTypeFilter = 'ALL';
+
   // 데이터
   List<TOModel> _allTOList = [];
   List<TOModel> _filteredTOList = [];
   List<ApplicationModel> _myApplications = [];
   List<String> _businessNames = [];
-  
+
+  // 페이지네이션
+  DocumentSnapshot? _lastDoc;
+  bool _hasMoreData = true;
+  bool _isLoadingMore = false;
+
   // UI 상태
   bool _isLoading = true;
   String? _selectedTOId;
@@ -41,47 +48,52 @@ class _AllTOListScreenState extends State<AllTOListScreen> {
   void initState() {
     super.initState();
     _loadAllTOs();
+    _scrollController.addListener(_onScroll);
   }
 
-  /// 전체 TO 목록 로드
+  @override
+  void dispose() {
+    _scrollController.dispose();
+    super.dispose();
+  }
+
+  void _onScroll() {
+    if (_scrollController.position.pixels >=
+        _scrollController.position.maxScrollExtent - 300) {
+      _loadMoreTOs();
+    }
+  }
+
+  /// 첫 페이지 로드 (새로고침 포함)
   Future<void> _loadAllTOs() async {
-    debugPrint('🔄 _loadAllTOs 호출됨!');
-    setState(() => _isLoading = true);
+    setState(() {
+      _isLoading = true;
+      _lastDoc = null;
+      _hasMoreData = true;
+      _allTOList = [];
+    });
 
     try {
       final userProvider = Provider.of<UserProvider>(context, listen: false);
       final uid = userProvider.currentUser?.uid;
-      
-      // 병렬 로딩
-      final results = await Future.wait([
-        _firestoreService.getActiveTOs(publishedOnly: true), // ✅ 공개된 공고만 (예약 제외)
-        uid != null 
-            ? _firestoreService.getMyApplications(uid)
-            : Future.value(<ApplicationModel>[]),
-      ]);
-      
-      final toList = results[0] as List<TOModel>;
-      final myApps = results[1] as List<ApplicationModel>;
 
-      debugPrint('✅ 조회된 전체 TO 개수: ${toList.length}');
-      debugPrint('✅ 내 지원 내역 개수: ${myApps.length}');
+      // 두 요청을 병렬로 시작
+      final tosFuture = _firestoreService.getPublishedTOsPaged();
+      final appsFuture = uid != null
+          ? _firestoreService.getMyApplications(uid)
+          : Future.value(<ApplicationModel>[]);
 
-      // ⭐ 각 TO의 정보 출력
-      for (var i = 0; i < toList.length; i++) {
-        debugPrint('   [$i] ${toList[i].title}');
-        debugPrint('       jobType: ${toList[i].jobType}');
-        debugPrint('       isShortTerm: ${toList[i].isShortTerm}');
-        debugPrint('       isLongTerm: ${toList[i].isLongTerm}');
-        debugPrint('       date: ${toList[i].formattedDate}');
-      }
+      final tosResult = await tosFuture;
+      final myApps = await appsFuture;
 
-      // 사업장 목록 추출
-      final businessSet = toList.map((to) => to.businessName).toSet();
-      final businessList = businessSet.toList()..sort();
-      
+      final toList = tosResult['items'] as List<TOModel>;
+
+      if (!mounted) return;
       setState(() {
         _allTOList = toList;
-        _businessNames = businessList;
+        _lastDoc = tosResult['lastDoc'] as DocumentSnapshot?;
+        _hasMoreData = tosResult['hasMore'] as bool;
+        _businessNames = toList.map((to) => to.businessName).toSet().toList()..sort();
         _myApplications = myApps;
         _isLoading = false;
       });
@@ -89,39 +101,71 @@ class _AllTOListScreenState extends State<AllTOListScreen> {
       _applyFilters();
     } catch (e) {
       debugPrint('❌ TO 목록 로드 실패: $e');
+      if (!mounted) return;
       setState(() => _isLoading = false);
       ToastHelper.showError('TO 목록을 불러오는데 실패했습니다.');
     }
   }
 
+  /// 다음 페이지 로드
+  Future<void> _loadMoreTOs() async {
+    if (_isLoadingMore || !_hasMoreData) return;
+
+    setState(() => _isLoadingMore = true);
+
+    try {
+      final tosResult = await _firestoreService.getPublishedTOsPaged(
+        startAfter: _lastDoc,
+      );
+      final toList = tosResult['items'] as List<TOModel>;
+
+      if (!mounted) return;
+
+      if (toList.isEmpty) {
+        setState(() {
+          _hasMoreData = false;
+          _isLoadingMore = false;
+        });
+        return;
+      }
+
+      setState(() {
+        _allTOList = [..._allTOList, ...toList];
+        _lastDoc = tosResult['lastDoc'] as DocumentSnapshot?;
+        _hasMoreData = tosResult['hasMore'] as bool;
+        _businessNames = _allTOList.map((to) => to.businessName).toSet().toList()..sort();
+        _isLoadingMore = false;
+      });
+
+      _applyFilters();
+    } catch (e) {
+      debugPrint('❌ TO 추가 로드 실패: $e');
+      if (!mounted) return;
+      setState(() => _isLoadingMore = false);
+    }
+  }
+
   /// 필터 적용
   void _applyFilters() {
-    debugPrint('🔍 [_applyFilters] 시작');
-    debugPrint('   _allTOList: ${_allTOList.length}개');
-    debugPrint('   _jobTypeFilter: $_jobTypeFilter');
     List<TOModel> filtered = _allTOList;
 
-    // 1. 날짜 필터 - ✅ 당일 포함, 이전 날짜는 제외
+    // 1. 날짜 필터 - 당일 포함, 이전 날짜 제외
     final now = DateTime.now();
     final today = DateTime(now.year, now.month, now.day);
-    
+
     filtered = filtered.where((to) {
-      // ✅ 단기: 당일 또는 미래만
       if (!to.isLongTerm) {
         final toDate = DateTime(to.date.year, to.date.month, to.date.day);
         return toDate.isAtSameMomentAs(today) || toDate.isAfter(today);
       }
-      
-      // ✅ 장기: 종료일이 오늘 이후거나 오늘인 것만
       if (to.endDate != null) {
         final endDate = DateTime(to.endDate!.year, to.endDate!.month, to.endDate!.day);
         return endDate.isAtSameMomentAs(today) || endDate.isAfter(today);
       }
-      
-      return true; // 장기인데 endDate가 없으면 일단 표시
+      return true;
     }).toList();
-    
-    // 2. 날짜 범위 필터 (사용자가 캘린더에서 선택한 경우)
+
+    // 2. 날짜 범위 필터
     if (_selectedDateRange != null) {
       final rangeStart = DateTime(
         _selectedDateRange!.start.year,
@@ -133,25 +177,21 @@ class _AllTOListScreenState extends State<AllTOListScreen> {
         _selectedDateRange!.end.month,
         _selectedDateRange!.end.day,
       );
-      
+
       filtered = filtered.where((to) {
         if (to.isLongTerm && to.endDate != null) {
-          // ✅ 장기: TO의 시작일~종료일이 선택 범위와 겹치는지 확인
           final toStart = DateTime(to.date.year, to.date.month, to.date.day);
           final toEnd = DateTime(to.endDate!.year, to.endDate!.month, to.endDate!.day);
-          
-          // 범위가 겹치는 경우: TO 시작 <= 선택 종료 AND TO 종료 >= 선택 시작
           return (toStart.isBefore(rangeEnd) || toStart.isAtSameMomentAs(rangeEnd)) &&
-                (toEnd.isAfter(rangeStart) || toEnd.isAtSameMomentAs(rangeStart));
+              (toEnd.isAfter(rangeStart) || toEnd.isAtSameMomentAs(rangeStart));
         } else {
-          // ✅ 단기: TO 날짜가 선택 범위 안에 있는지 확인
           final toDate = DateTime(to.date.year, to.date.month, to.date.day);
           return (toDate.isAtSameMomentAs(rangeStart) || toDate.isAfter(rangeStart)) &&
-                (toDate.isAtSameMomentAs(rangeEnd) || toDate.isBefore(rangeEnd));
+              (toDate.isAtSameMomentAs(rangeEnd) || toDate.isBefore(rangeEnd));
         }
       }).toList();
     }
-    
+
     // 3. 사업장 필터
     if (_selectedBusiness != null) {
       filtered = filtered.where((to) => to.businessName == _selectedBusiness).toList();
@@ -165,39 +205,31 @@ class _AllTOListScreenState extends State<AllTOListScreen> {
     // 5. 날짜순 정렬
     filtered.sort((a, b) => a.date.compareTo(b.date));
 
-    debugPrint('📊 필터 적용 결과: ${filtered.length}개 TO');
-    for (var i = 0; i < filtered.length; i++) {
-      debugPrint('   [$i] ${filtered[i].title} (${filtered[i].jobType})');
-    }
-    
     setState(() {
       _filteredTOList = filtered;
     });
   }
-  
+
   /// TO 선택/해제
   void _toggleTOSelection(String toId) {
     setState(() {
       _selectedTOId = _selectedTOId == toId ? null : toId;
     });
   }
-  
-  /// ✅ 내 지원 내역만 새로고침 (TO 목록은 유지)
+
+  /// 내 지원 내역만 새로고침
   Future<void> _refreshMyApplications() async {
     try {
       final userProvider = Provider.of<UserProvider>(context, listen: false);
       final uid = userProvider.currentUser?.uid;
-      
+
       if (uid != null) {
         final myApps = await _firestoreService.getMyApplications(uid);
-        
         if (mounted) {
           setState(() {
             _myApplications = myApps;
           });
         }
-        
-        debugPrint('✅ 내 지원 내역만 새로고침: ${myApps.length}개');
       }
     } catch (e) {
       debugPrint('❌ 지원 내역 새로고침 실패: $e');
@@ -225,7 +257,6 @@ class _AllTOListScreenState extends State<AllTOListScreen> {
     );
   }
 
-  /// 활성화된 필터 개수
   int _getActiveFilterCount() {
     int count = 0;
     if (_selectedDateRange != null) count++;
@@ -234,11 +265,10 @@ class _AllTOListScreenState extends State<AllTOListScreen> {
     return count;
   }
 
-  /// 필터가 활성화되어 있는지 확인
   bool get _hasActiveFilters {
-    return _selectedDateRange != null || 
-           _selectedBusiness != null || 
-           _jobTypeFilter != 'ALL';
+    return _selectedDateRange != null ||
+        _selectedBusiness != null ||
+        _jobTypeFilter != 'ALL';
   }
 
   @override
@@ -247,7 +277,6 @@ class _AllTOListScreenState extends State<AllTOListScreen> {
       appBar: AppBar(
         title: const Text('지원하기'),
         actions: [
-          // 필터 버튼
           IconButton(
             icon: Stack(
               children: [
@@ -257,20 +286,18 @@ class _AllTOListScreenState extends State<AllTOListScreen> {
                     right: 0,
                     top: 0,
                     child: Container(
-                      padding: EdgeInsets.all(  // ⭐ const 제거
-                        ResponsiveHelper.spacing(context, 2),  // ⭐ 변경
-                      ),
+                      padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 2)),
                       decoration: const BoxDecoration(
                         color: Colors.red,
                         shape: BoxShape.circle,
                       ),
                       constraints: BoxConstraints(
-                        minWidth: ResponsiveHelper.iconSize(context, 16),  // ⭐ 변경
-                        minHeight: ResponsiveHelper.iconSize(context, 16),  // ⭐ 변경
+                        minWidth: ResponsiveHelper.iconSize(context, 16),
+                        minHeight: ResponsiveHelper.iconSize(context, 16),
                       ),
                       child: Text(
                         '${_getActiveFilterCount()}',
-                        style: ResponsiveHelper.tinyStyle(context).copyWith(  // ⭐ 변경
+                        style: ResponsiveHelper.tinyStyle(context).copyWith(
                           color: Colors.white,
                           fontWeight: FontWeight.bold,
                         ),
@@ -292,12 +319,24 @@ class _AllTOListScreenState extends State<AllTOListScreen> {
               : RefreshIndicator(
                   onRefresh: _loadAllTOs,
                   child: ListView.builder(
-                    padding: ResponsiveHelper.cardPadding(context),  // ⭐ 변경
-                    itemCount: _filteredTOList.length,
+                    controller: _scrollController,
+                    padding: ResponsiveHelper.cardPadding(context),
+                    itemCount: _filteredTOList.length + (_hasMoreData ? 1 : 0),
                     itemBuilder: (context, index) {
+                      if (index == _filteredTOList.length) {
+                        return Padding(
+                          padding: EdgeInsets.symmetric(
+                            vertical: ResponsiveHelper.spacing(context, 16),
+                          ),
+                          child: _isLoadingMore
+                              ? const Center(child: CircularProgressIndicator(strokeWidth: 2))
+                              : const SizedBox.shrink(),
+                        );
+                      }
+
                       final to = _filteredTOList[index];
                       final isSelected = _selectedTOId == to.id;
-                      
+
                       return UserTOCard(
                         to: to,
                         isSelected: isSelected,
@@ -311,33 +350,38 @@ class _AllTOListScreenState extends State<AllTOListScreen> {
     );
   }
 
-  /// 빈 상태
   Widget _buildEmptyState() {
     return Center(
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
           Icon(
-            Icons.search_off, 
-            size: ResponsiveHelper.iconSize(context, 80),  // ⭐ 변경
+            Icons.search_off,
+            size: ResponsiveHelper.iconSize(context, 80),
             color: Theme.of(context).disabledColor,
           ),
-          SizedBox(height: ResponsiveHelper.spacing(context, 16)),  // ⭐ 변경
+          SizedBox(height: ResponsiveHelper.spacing(context, 16)),
           Text(
             '조건에 맞는 TO가 없습니다',
-            style: ResponsiveHelper.titleStyle(  // ⭐ 변경
+            style: ResponsiveHelper.titleStyle(
               context,
               color: Theme.of(context).textTheme.bodySmall?.color,
             ).copyWith(fontWeight: FontWeight.w500),
           ),
-          SizedBox(height: ResponsiveHelper.spacing(context, 8)),  // ⭐ 변경
+          SizedBox(height: ResponsiveHelper.spacing(context, 8)),
           Text(
             '필터를 변경하거나 새로고침해보세요',
-            style: ResponsiveHelper.bodyStyle(  // ⭐ 변경
+            style: ResponsiveHelper.bodyStyle(
               context,
               color: Theme.of(context).disabledColor,
             ),
           ),
+          SizedBox(height: ResponsiveHelper.spacing(context, 16)),
+          if (!_hasMoreData && _allTOList.isEmpty)
+            TextButton(
+              onPressed: _loadAllTOs,
+              child: const Text('새로고침'),
+            ),
         ],
       ),
     );

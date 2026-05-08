@@ -1,16 +1,15 @@
-﻿import 'package:flutter/material.dart';
+import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 // Models
 import '../../../models/core/to_model.dart';
-import '../../../models/core/work_detail_data.dart';
 import '../../../models/ui/admin_to_list_ui_models.dart';
 
 // Services
 import '../../../services/firestore_service.dart';
 
-// Providers
-import '../../../providers/user_provider.dart';
+// Controllers
+import '../../../controllers/workforce_controller.dart';
 
 // Utils
 import '../../../utils/toast_helper.dart';
@@ -27,7 +26,7 @@ import '../dialogs/to_list_dialogs.dart';
 import '../../../widgets/admin/cards/admin_to_group_card.dart';
 import '../../../theme/app_colors.dart';
 
-/// 인력 관리 - 리스트 뷰 (business_admin_home_screen 스타일 통일)
+/// 인력 관리 - 리스트 뷰
 class WorkforceListView extends StatefulWidget {
   const WorkforceListView({super.key});
 
@@ -35,197 +34,109 @@ class WorkforceListView extends StatefulWidget {
   State<WorkforceListView> createState() => _WorkforceListViewState();
 }
 
-class _WorkforceListViewState extends State<WorkforceListView>
-    with WidgetsBindingObserver {
+class _WorkforceListViewState extends State<WorkforceListView> {
   final FirestoreService _firestoreService = FirestoreService();
   late TOListDialogs _dialogs;
+
+  // 필터 상태
+  DateTimeRange? _selectedDateRange;
+  String? _selectedBusiness;
+
+  // 탭 상태
+  String _selectedTab = 'ACTIVE'; // 'ACTIVE' or 'CLOSED'
+
+  // 이중 토글 상태 관리
+  final Set<String> _expandedGroups = {};
+  final Set<String> _expandedTOs = {};
+
+  // Lazy Loading 로컬 스피너 상태
+  final Set<String> _loadingGroups = {};
+  final Set<String> _loadingTOs = {};
 
   @override
   void initState() {
     super.initState();
-    WidgetsBinding.instance.addObserver(this);
     _dialogs = TOListDialogs(
       context: context,
       firestoreService: _firestoreService,
-      onChanged: _loadTOsWithStats,
+      onChanged: _reload,
     );
-    _loadTOsWithStats();
   }
 
-  @override
-  void dispose() {
-    WidgetsBinding.instance.removeObserver(this);
-    super.dispose();
-  }
-
-  @override
-  void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.resumed && !_isLoading) {
-      _loadTOsWithStats();
-    }
-  }
-
-  
-  // 필터 상태
-  DateTimeRange? _selectedDateRange;
-  String? _selectedBusiness;
-  
-  // TO 목록 + 통계
-  List<TOGroupItem> _allGroupItems = [];
-  List<TOGroupItem> _filteredGroupItems = [];
-  bool _isLoading = true;
-  
-  // 탭 상태
-  String _selectedTab = 'ACTIVE'; // 'ACTIVE' or 'CLOSED'
-
-  // 사업장 목록
-  List<String> _businessNames = [];
-  
-  // 이중 토글 상태 관리
-  final Set<String> _expandedGroups = {};
-  final Set<String> _expandedTOs = {};
-  
-  // ✨ Lazy Loading 상태
-  final Set<String> _loadingGroups = {};  // 로딩 중인 그룹
-  final Set<String> _loadingTOs = {};     // 로딩 중인 TO
-  
-  /// ✨ TO 목록 로드 (Lazy Loading - 겉 카드만)
-  Future<void> _loadTOsWithStats() async {
-    
-    // ✅ Phase 3: 새로고침 시 목록 캐시 무효화
-    _firestoreService.invalidateListCache();
-    
+  void _reload() {
     setState(() {
-      _isLoading = true;
-      // ✅ 새로고침 시 펼침 상태 초기화
       _expandedGroups.clear();
       _expandedTOs.clear();
     });
+    context.read<WorkforceController>().reload(context);
+  }
 
-    try {
-      // 현재 관리자의 사업장 목록 (슈퍼어드민은 null → 전체 조회)
-      final user = Provider.of<UserProvider>(context, listen: false).currentUser;
-      final List<String>? filterBusinessIds = user?.isSuperAdmin == true
-          ? null
-          : user?.managedBusinessIds;
+  /// controller.items 에서 탭·사업장·날짜 필터 적용
+  List<TOGroupItem> _getFilteredItems(List<TOGroupItem> allItems) {
+    Iterable<TOGroupItem> source;
 
-      // ✨ 겉 카드만 로드 (상세 정보 없이)
-      final List<TOGroupItem> groupItems = await _firestoreService.getTOGroupItemsLight(
-        activeOnly: _selectedTab == 'ACTIVE',
-        closedOnly: _selectedTab == 'CLOSED',
-        businessIds: filterBusinessIds,
-      );
-
-      // 사업장 목록 추출
-      final businessSet = groupItems
-          .map((TOGroupItem g) => g.businessName)
-          .where((String name) => name.isNotEmpty)
-          .toSet();
-      final businessList = businessSet.toList()..sort();
-
-      setState(() {
-        _allGroupItems = groupItems;
-        _businessNames = businessList;
-        _isLoading = false;
-      });
-      
-      _applyFilters();
-      
-      debugPrint('✅ [Lazy] 초기 로드 완료: ${groupItems.length}개 카드');
-    } catch (e) {
-      debugPrint('❌ TO 목록 로드 실패: $e');
-      setState(() => _isLoading = false);
-      ToastHelper.showError('TO 목록을 불러오는데 실패했습니다.');
+    if (_selectedTab == 'ACTIVE') {
+      source = allItems.where((g) => !g.isClosed);
+    } else {
+      // 마감됨: 최근 5개만
+      source = allItems.where((g) => g.isClosed).take(5);
     }
-  }
 
-  void _applyFilters() {
-    setState(() {
-      _filteredGroupItems = _allGroupItems.where((groupItem) {
-        // 1. 사업장 필터
-        if (_selectedBusiness != null && 
-            groupItem.businessName != _selectedBusiness) {
-          return false;
-        }
-        
-        // 2. 날짜 필터
-        if (_selectedDateRange != null) {
-          final filterStart = DateTime(
-            _selectedDateRange!.start.year,
-            _selectedDateRange!.start.month,
-            _selectedDateRange!.start.day,
-          );
-          final filterEnd = DateTime(
-            _selectedDateRange!.end.year,
-            _selectedDateRange!.end.month,
-            _selectedDateRange!.end.day,
-            23, 59, 59,
-          );
-          
-          // 다중 슬롯 flex TO
-          if (groupItem.masterTO.totalSlots > 1 && groupItem.groupTOs.isNotEmpty) {
-            final hasMatchingDate = groupItem.groupTOs.any((toItem) {
-              return _isDateInRange(toItem.to, filterStart, filterEnd);
-            });
+    return source.where((groupItem) {
+      if (_selectedBusiness != null &&
+          groupItem.businessName != _selectedBusiness) {
+        return false;
+      }
 
-            if (!hasMatchingDate) return false;
-          }
-          // 단일/장기 TO
-          else {
-            if (!_isDateInRange(groupItem.masterTO, filterStart, filterEnd)) {
-              return false;
-            }
+      if (_selectedDateRange != null) {
+        final filterStart = DateTime(
+          _selectedDateRange!.start.year,
+          _selectedDateRange!.start.month,
+          _selectedDateRange!.start.day,
+        );
+        final filterEnd = DateTime(
+          _selectedDateRange!.end.year,
+          _selectedDateRange!.end.month,
+          _selectedDateRange!.end.day,
+          23, 59, 59,
+        );
+
+        if (groupItem.masterTO.totalSlots > 1 && groupItem.groupTOs.isNotEmpty) {
+          final hasMatchingDate = groupItem.groupTOs.any(
+            (toItem) => _isDateInRange(toItem.to, filterStart, filterEnd),
+          );
+          if (!hasMatchingDate) return false;
+        } else {
+          if (!_isDateInRange(groupItem.masterTO, filterStart, filterEnd)) {
+            return false;
           }
         }
-        
-        return true;
-      }).toList();
-    });
+      }
+
+      return true;
+    }).toList();
   }
 
-  /// ⭐ 날짜 범위 체크 (장기/단기 공고 모두 고려)
+  /// 날짜 범위 체크 (장기/단기 공고 모두 고려)
   bool _isDateInRange(TOModel to, DateTime filterStart, DateTime filterEnd) {
-    // 단기 공고
     if (!to.isLongTerm) {
-      final toDate = DateTime(
-        to.date.year,
-        to.date.month,
-        to.date.day,
-      );
-      
+      final toDate = DateTime(to.date.year, to.date.month, to.date.day);
       return toDate.isAfter(filterStart.subtract(const Duration(days: 1))) &&
-            toDate.isBefore(filterEnd.add(const Duration(days: 1)));
+          toDate.isBefore(filterEnd.add(const Duration(days: 1)));
     }
-    
-    // 장기 공고
+
     if (to.endDate == null) {
-      // endDate가 없으면 date만 체크
-      final toDate = DateTime(
-        to.date.year,
-        to.date.month,
-        to.date.day,
-      );
-      
+      final toDate = DateTime(to.date.year, to.date.month, to.date.day);
       return toDate.isAfter(filterStart.subtract(const Duration(days: 1))) &&
-            toDate.isBefore(filterEnd.add(const Duration(days: 1)));
+          toDate.isBefore(filterEnd.add(const Duration(days: 1)));
     }
-    
-    // 장기 공고 기간 체크
-    final toStart = DateTime(
-      to.date.year,
-      to.date.month,
-      to.date.day,
-    );
-    
+
+    final toStart = DateTime(to.date.year, to.date.month, to.date.day);
     final toEnd = DateTime(
       to.endDate!.year,
       to.endDate!.month,
       to.endDate!.day,
     );
-    
-    // 필터 범위와 TO 기간이 겹치는지 확인
-    // 겹치지 않는 경우: filterEnd < toStart OR filterStart > toEnd
-    // 겹치는 경우: 위의 반대
     return !(filterEnd.isBefore(toStart) || filterStart.isAfter(toEnd));
   }
 
@@ -234,18 +145,15 @@ class _WorkforceListViewState extends State<WorkforceListView>
     return Column(
       children: [
         _buildTabBar(),
-        // ⭐ 마감됨 탭 안내 메시지
-        if (_selectedTab == 'CLOSED')
-          _buildClosedTabNotice(),
+        if (_selectedTab == 'CLOSED') _buildClosedTabNotice(),
         Expanded(child: _buildTOList()),
       ],
     );
   }
 
-  /// ✨ 마감됨 탭 안내 메시지 - 테마 기반
   Widget _buildClosedTabNotice() {
     final theme = Theme.of(context);
-    
+
     return Container(
       padding: ResponsiveHelper.cardPadding(context),
       margin: EdgeInsets.symmetric(
@@ -295,10 +203,9 @@ class _WorkforceListViewState extends State<WorkforceListView>
     );
   }
 
-  /// ✨ 탭바 + 필터 (business_admin_home_screen 스타일)
   Widget _buildTabBar() {
     final theme = Theme.of(context);
-    
+
     return Container(
       padding: ResponsiveHelper.cardPadding(context),
       child: Row(
@@ -323,9 +230,13 @@ class _WorkforceListViewState extends State<WorkforceListView>
               ),
               child: Row(
                 children: [
-                  Expanded(child: _buildTab('ACTIVE', '진행중', Icons.play_circle_outline)),
+                  Expanded(
+                    child: _buildTab('ACTIVE', '진행중', Icons.play_circle_outline),
+                  ),
                   SizedBox(width: ResponsiveHelper.spacing(context, 4)),
-                  Expanded(child: _buildTab('CLOSED', '마감됨', Icons.check_circle_outline)),
+                  Expanded(
+                    child: _buildTab('CLOSED', '마감됨', Icons.check_circle_outline),
+                  ),
                 ],
               ),
             ),
@@ -337,11 +248,10 @@ class _WorkforceListViewState extends State<WorkforceListView>
     );
   }
 
-  /// ✨ 탭 버튼 - 그라데이션 스타일
   Widget _buildTab(String tab, String label, IconData icon) {
     final theme = Theme.of(context);
     final isSelected = _selectedTab == tab;
-    
+
     return GestureDetector(
       onTap: () {
         if (_selectedTab != tab) {
@@ -350,7 +260,6 @@ class _WorkforceListViewState extends State<WorkforceListView>
             _expandedGroups.clear();
             _expandedTOs.clear();
           });
-          _loadTOsWithStats();
         }
       },
       child: Container(
@@ -386,14 +295,18 @@ class _WorkforceListViewState extends State<WorkforceListView>
             Icon(
               icon,
               size: ResponsiveHelper.iconSize(context, 18),
-              color: isSelected ? Colors.white : theme.primaryColor.withValues(alpha: 0.7),
+              color: isSelected
+                  ? Colors.white
+                  : theme.primaryColor.withValues(alpha: 0.7),
             ),
             SizedBox(width: ResponsiveHelper.spacing(context, 6)),
             Text(
               label,
               style: ResponsiveHelper.subtitleStyle(context).copyWith(
                 fontWeight: FontWeight.bold,
-                color: isSelected ? Colors.white : theme.primaryColor.withValues(alpha: 0.7),
+                color: isSelected
+                    ? Colors.white
+                    : theme.primaryColor.withValues(alpha: 0.7),
               ),
             ),
           ],
@@ -402,11 +315,10 @@ class _WorkforceListViewState extends State<WorkforceListView>
     );
   }
 
-  /// ✨ 필터 버튼 - 세련된 배지
   Widget _buildFilterButton() {
     final theme = Theme.of(context);
     final hasFilters = _hasActiveFilters();
-    
+
     return Material(
       color: hasFilters
           ? theme.primaryColor.withValues(alpha: 0.1)
@@ -430,7 +342,8 @@ class _WorkforceListViewState extends State<WorkforceListView>
                   right: -6,
                   top: -6,
                   child: Container(
-                    padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 4)),
+                    padding:
+                        EdgeInsets.all(ResponsiveHelper.spacing(context, 4)),
                     decoration: BoxDecoration(
                       gradient: LinearGradient(
                         colors: [
@@ -439,10 +352,7 @@ class _WorkforceListViewState extends State<WorkforceListView>
                         ],
                       ),
                       shape: BoxShape.circle,
-                      border: Border.all(
-                        color: Colors.white,
-                        width: 2,
-                      ),
+                      border: Border.all(color: Colors.white, width: 2),
                       boxShadow: [
                         BoxShadow(
                           color: theme.primaryColor.withValues(alpha: 0.4),
@@ -474,9 +384,8 @@ class _WorkforceListViewState extends State<WorkforceListView>
     );
   }
 
-  bool _hasActiveFilters() {
-    return _selectedBusiness != null || _selectedDateRange != null;
-  }
+  bool _hasActiveFilters() =>
+      _selectedBusiness != null || _selectedDateRange != null;
 
   int _getActiveFilterCount() {
     int count = 0;
@@ -486,42 +395,51 @@ class _WorkforceListViewState extends State<WorkforceListView>
   }
 
   void _showFilterDialog() {
+    final allItems = context.read<WorkforceController>().items;
+    final businessNames = allItems
+        .map((g) => g.businessName)
+        .where((n) => n.isNotEmpty)
+        .toSet()
+        .toList()
+      ..sort();
+
     showDialog(
       context: context,
       builder: (context) => FilterDialog(
         selectedBusiness: _selectedBusiness,
         selectedDateRange: _selectedDateRange,
-        businessNames: _businessNames,
+        businessNames: businessNames,
         isUserMode: true,
         onBusinessChanged: (value) {
           setState(() => _selectedBusiness = value);
-          _applyFilters();
         },
         onDateRangeChanged: (value) {
           setState(() => _selectedDateRange = value);
-          _applyFilters();
         },
       ),
     );
   }
 
-  /// ✨ TO 목록
   Widget _buildTOList() {
-    if (_isLoading) {
+    final controller = context.watch<WorkforceController>();
+
+    if (controller.isLoading) {
       return const LoadingWidget(message: 'TO 목록을 불러오는 중...');
     }
 
-    if (_filteredGroupItems.isEmpty) {
+    final filteredItems = _getFilteredItems(controller.items);
+
+    if (filteredItems.isEmpty) {
       return _buildEmptyState();
     }
 
     return RefreshIndicator(
-      onRefresh: _loadTOsWithStats,
+      onRefresh: () async => _reload(),
       child: ListView.builder(
         padding: ResponsiveHelper.cardPadding(context),
-        itemCount: _filteredGroupItems.length,
+        itemCount: filteredItems.length,
         itemBuilder: (context, index) {
-          final groupItem = _filteredGroupItems[index];
+          final groupItem = filteredItems[index];
           return Padding(
             padding: EdgeInsets.only(
               bottom: ResponsiveHelper.spacing(context, 16),
@@ -530,12 +448,11 @@ class _WorkforceListViewState extends State<WorkforceListView>
               groupItem: groupItem,
               firestoreService: _firestoreService,
               dialogs: _dialogs,
-              onChanged: _loadTOsWithStats,
+              onChanged: _reload,
               isExpanded: _expandedGroups.contains(groupItem.id),
               expandedTOs: _expandedTOs,
               onToggleExpand: () => _handleGroupExpand(groupItem),
               onToggleTOExpand: (toId) async {
-                // toId로 해당 TOItem 찾기 (슬롯 기반이면 slot.id, 아니면 to.id)
                 if (groupItem.groupTOs.isEmpty) return;
                 final toItem = groupItem.groupTOs.firstWhere(
                   (item) => (item.slot?.id ?? item.to.id) == toId,
@@ -543,10 +460,9 @@ class _WorkforceListViewState extends State<WorkforceListView>
                 );
                 await _handleTOExpand(toItem);
               },
-              // ✨ 로딩 상태 전달 (카드에서 스피너 표시용)
               isGroupLoading: _loadingGroups.contains(groupItem.id),
               loadingTOs: _loadingTOs,
-              onAffectedTOsChanged: _refreshAffectedTOs,  // 🔥 추가
+              onAffectedTOsChanged: (_) => _reload(),
             ),
           );
         },
@@ -554,10 +470,9 @@ class _WorkforceListViewState extends State<WorkforceListView>
     );
   }
 
-  /// ✨ 빈 상태 - 세련된 디자인
   Widget _buildEmptyState() {
     final theme = Theme.of(context);
-    
+
     return Center(
       child: Container(
         margin: EdgeInsets.all(ResponsiveHelper.spacing(context, 40)),
@@ -603,10 +518,7 @@ class _WorkforceListViewState extends State<WorkforceListView>
             SizedBox(height: ResponsiveHelper.spacing(context, 12)),
             Text(
               '필터를 변경하거나 새로운 TO를 생성하세요',
-              style: ResponsiveHelper.bodyStyle(
-                context,
-                color: AppColors.grey600,
-              ),
+              style: ResponsiveHelper.bodyStyle(context, color: AppColors.grey600),
               textAlign: TextAlign.center,
             ),
           ],
@@ -615,11 +527,10 @@ class _WorkforceListViewState extends State<WorkforceListView>
     );
   }
 
-  /// ✨ 그룹 카드 펼침 핸들러 (Lazy Loading)
+  /// 그룹 카드 펼침 핸들러
   Future<void> _handleGroupExpand(TOGroupItem groupItem) async {
     final key = groupItem.id;
-    
-    // 이미 펼쳐져 있으면 접기만
+
     if (_expandedGroups.contains(key)) {
       setState(() {
         _expandedGroups.remove(key);
@@ -627,213 +538,55 @@ class _WorkforceListViewState extends State<WorkforceListView>
       });
       return;
     }
-    
-    // ✅ 다른 그룹 접기
+
     setState(() {
       _expandedGroups.clear();
       _expandedTOs.clear();
     });
-    
-    // 그룹 TO이고 아직 상세 로드 안됐으면 로드
-    if (groupItem.needsGroupDetailLoad) {
+
+    final controller = context.read<WorkforceController>();
+
+    if (groupItem.masterTO.isFlexType && !groupItem.isGroupDetailLoaded) {
+      // Flex TO: 슬롯 목록 lazy load
       setState(() => _loadingGroups.add(key));
-      
-      try {
-        final toItems = await _firestoreService.loadGroupTOsLight(
-          groupItem.id
-        );
-        groupItem.setGroupTOs(toItems);
-      } catch (e) {
-        debugPrint('❌ 그룹 상세 로드 실패: $e');
-        ToastHelper.showError('데이터를 불러오는데 실패했습니다.');
-      }
-      
+      await controller.loadGroupDetails(context, groupItem);
       setState(() => _loadingGroups.remove(key));
-    }
-    
-    // ✨ WorkDetails 로드 필요 (그룹 내 첫 번째 TO)
-    if (groupItem.groupTOs.isNotEmpty) {
-      final toItem = groupItem.groupTOs.first;
-      if (toItem.needsWorkDetailLoad) {
-        setState(() => _loadingTOs.add(toItem.to.id));
-
-        try {
-          final result = await _firestoreService.loadTOWorkDetails(toItem.to);
-          toItem.setWorkDetails(
-            result['workDetails'] as List<WorkDetailData>,
-            result['workStats'] as Map<String, Map<String, int>>,
-          );
-        } catch (e) {
-          debugPrint('❌ TO 상세 로드 실패: $e');
-          ToastHelper.showError('데이터를 불러오는데 실패했습니다.');
-        }
-
-        setState(() => _loadingTOs.remove(toItem.to.id));
-      }
-    } else if (!groupItem.masterTO.isLongTerm &&
-               groupItem.masterTO.totalSlots > 1 &&
-               !groupItem.isGroupDetailLoaded) {
-      // ✨ 다중 날짜 flex TO: 슬롯 로드 → 날짜별 행 표시
-      setState(() => _loadingTOs.add(key));
-      try {
-        final slots = await _firestoreService.getSlots(groupItem.masterTO.id);
-        final toItems = slots.map((slot) {
-          final stats = <String, Map<String, int>>{};
-          for (final entry in slot.workTypeCounts.entries) {
-            stats[entry.key] = {
-              'confirmed': entry.value.confirmedCount,
-              'pending': entry.value.pendingCount,
-            };
-          }
-          return TOItem(
-            to: groupItem.masterTO,
-            slot: slot,
-            workDetails: slot.workDetails,
-            confirmedCount: slot.confirmedCount,
-            pendingCount: slot.pendingCount,
-            totalRequired: slot.totalRequired,
-            workDetailStats: stats,
-            isWorkDetailLoaded: true,
-          );
-        }).toList();
-        groupItem.setGroupTOs(toItems);
-        groupItem.updateGroupStats(
-          confirmed: toItems.fold<int>(0, (s, t) => s + t.confirmedCount),
-          pending: toItems.fold<int>(0, (s, t) => s + t.pendingCount),
-          required: toItems.fold<int>(0, (s, t) => s + t.totalRequired),
-        );
-      } catch (e) {
-        debugPrint('❌ 슬롯 목록 로드 실패: $e');
-        ToastHelper.showError('데이터를 불러오는데 실패했습니다.');
-      }
-      setState(() => _loadingTOs.remove(key));
     } else if (!groupItem.isWorkDetailLoaded) {
-      // ✨ 단건 TO: singleTO.workDetails는 이미 포함, 통계만 조회
+      // 단건 TO: 업무별 통계 lazy load
       setState(() => _loadingTOs.add(key));
       try {
-        final result = await _firestoreService.loadTOWorkDetails(groupItem.masterTO);
+        final result =
+            await _firestoreService.loadTOWorkDetails(groupItem.masterTO);
         groupItem.setWorkDetailStats(
           result['workStats'] as Map<String, Map<String, int>>,
         );
       } catch (e) {
-        debugPrint('❌ TO 상세 로드 실패: $e');
-        groupItem.setWorkDetailStats({});
+        debugPrint('❌ 그룹 상세 로드 실패: $e');
+        ToastHelper.showError('데이터를 불러오는데 실패했습니다.');
       }
       setState(() => _loadingTOs.remove(key));
     }
 
-    // 펼치기
     setState(() => _expandedGroups.add(key));
   }
-  /// 🔥 영향받은 TO들만 개별 새로고침 (카드 접힘 상태 유지)
-  Future<void> _refreshAffectedTOs(Set<String> affectedTOIds) async {
-    if (affectedTOIds.isEmpty) return;
-    
-    debugPrint('🔄 영향받은 TO ${affectedTOIds.length}개 새로고침: $affectedTOIds');
-    
-    for (var toId in affectedTOIds) {
-      bool found = false;
-      
-      // 1. 모든 그룹에서 해당 TO 찾기
-      for (var groupItem in _allGroupItems) {
-        final toItem = groupItem.groupTOs.cast<TOItem?>().firstWhere(
-          (item) => item?.to.id == toId,
-          orElse: () => null,
-        );
-        
-        if (toItem != null) {
-          found = true;
-          try {
-            // ✅ 캐시 무효화
-            _firestoreService.clearCache(toId: toId);
-            
-            // ✅ TO 문서 직접 조회 (Increment된 정확한 값)
-            final toDoc = await _firestoreService.getTO(toId);
-            if (toDoc != null) {
-              // 겉 카드 통계 즉시 업데이트
-              toItem.updateOuterStats(
-                confirmed: toDoc.totalConfirmed,
-                pending: toDoc.totalPending,
-                required: toDoc.totalRequired,
-              );
-              debugPrint('✅ TO $toId 겉 통계 갱신: 확정=${toDoc.totalConfirmed}, 대기=${toDoc.totalPending}');
-            }
-            
-            // 펼쳐진 상태면 WorkDetails도 새로고침
-            if (_expandedTOs.contains(toId)) {
-              final result = await _firestoreService.loadTOWorkDetails(toItem.to);
-              toItem.setWorkDetails(
-                result['workDetails'] as List<WorkDetailData>,
-                result['workStats'] as Map<String, Map<String, int>>,
-              );
-              debugPrint('✅ TO $toId WorkDetails도 갱신');
-            }
-          } catch (e) {
-            debugPrint('❌ TO $toId 새로고침 실패: $e');
-          }
-          break;  // 찾았으면 다음 toId로
-        }
-      }
-      
-      // 2. 찾지 못했으면 toId가 groupItem 자체인 경우 (슬롯 미로드)
-      if (!found) {
-        try {
-          final toDoc = await _firestoreService.getTO(toId);
-          if (toDoc != null) {
-            for (var groupItem in _allGroupItems) {
-              if (groupItem.id == toId) {
-                groupItem.updateGroupStats(
-                  confirmed: toDoc.totalConfirmed,
-                  pending: toDoc.totalPending,
-                  required: toDoc.totalRequired,
-                );
-                debugPrint('✅ GroupItem $toId 통계 갱신: 확정=${toDoc.totalConfirmed}, 대기=${toDoc.totalPending}');
-                break;
-              }
-            }
-          }
-        } catch (e) {
-          debugPrint('❌ GroupItem 갱신 실패: $e');
-        }
-      }
-    }
-    
-    // UI 갱신
-    if (mounted) setState(() {});
-  }
 
-  /// ✨ TO 카드 펼침 핸들러 (Lazy Loading)
+  /// TO 카드 펼침 핸들러
   Future<void> _handleTOExpand(TOItem toItem) async {
     final key = toItem.slot?.id ?? toItem.to.id;
-    
-    // 이미 펼쳐져 있으면 접기만
+
     if (_expandedTOs.contains(key)) {
       setState(() => _expandedTOs.remove(key));
       return;
     }
-    
-    // ✅ 다른 TO 접기
+
     setState(() => _expandedTOs.clear());
-    
-    // 아직 WorkDetails 로드 안됐으면 로드
+
     if (toItem.needsWorkDetailLoad) {
       setState(() => _loadingTOs.add(key));
-      
-      try {
-        final result = await _firestoreService.loadTOWorkDetails(toItem.to);
-        toItem.setWorkDetails(
-          result['workDetails'] as List<WorkDetailData>,
-          result['workStats'] as Map<String, Map<String, int>>,
-        );
-      } catch (e) {
-        debugPrint('❌ TO 상세 로드 실패: $e');
-        ToastHelper.showError('데이터를 불러오는데 실패했습니다.');
-      }
-      
+      await context.read<WorkforceController>().loadWorkDetails(toItem);
       setState(() => _loadingTOs.remove(key));
     }
-    
-    // 펼치기
+
     setState(() => _expandedTOs.add(key));
   }
 }

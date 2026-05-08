@@ -466,6 +466,40 @@ extension AttendanceFirestore on FirestoreService {
     }
   }
 
+  /// 특정 날짜의 대기중인 스케줄 변경 요청 조회 (다중 사업장)
+  Future<List<ScheduleChangeRequestModel>> getScheduleChangeRequestsForDate({
+    required DateTime date,
+    required List<String> businessIds,
+  }) async {
+    if (businessIds.isEmpty) return [];
+    try {
+      final results = <ScheduleChangeRequestModel>[];
+      for (int i = 0; i < businessIds.length; i += 10) {
+        final batch = businessIds.sublist(
+          i,
+          i + 10 < businessIds.length ? i + 10 : businessIds.length,
+        );
+        final snap = await _firestore
+            .collection('schedule_change_requests')
+            .where('businessId', whereIn: batch)
+            .where('status', isEqualTo: 'PENDING')
+            .get();
+        results.addAll(
+          snap.docs
+              .map((d) => ScheduleChangeRequestModel.fromMap(d.data(), d.id))
+              .where((r) =>
+                  r.targetDate.year == date.year &&
+                  r.targetDate.month == date.month &&
+                  r.targetDate.day == date.day),
+        );
+      }
+      return results;
+    } catch (e) {
+      debugPrint('❌ 날짜별 스케줄 변경 요청 조회 실패: $e');
+      return [];
+    }
+  }
+
   /// 스케줄 변경 요청 승인
   Future<bool> approveScheduleChangeRequest({
     required String requestId,

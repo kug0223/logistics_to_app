@@ -18,6 +18,9 @@ class TOGroupItem {
   Map<String, Map<String, int>>? workDetailStats;
   bool isWorkDetailLoaded = false;
 
+  // flex TO 슬롯 날짜 캐시 (캘린더 필터용)
+  List<DateTime>? _slotDates;
+
   // 캐시된 통계 (UI 갱신용)
   int? _cachedTotalConfirmed;
   int? _cachedTotalPending;
@@ -111,6 +114,11 @@ class TOGroupItem {
   }
 
   bool get needsGroupDetailLoad => false;
+
+  // flex TO 슬롯 날짜 (캘린더 필터용)
+  List<DateTime> get slotDates => _slotDates ?? [];
+  bool get hasSlotDates => _slotDates != null;
+  void setSlotDates(List<DateTime> dates) => _slotDates = dates;
 
   /// 공고 모델 직접 접근
   TOModel get masterTO => singleTO!;

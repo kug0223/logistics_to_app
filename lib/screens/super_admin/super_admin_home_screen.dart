@@ -18,14 +18,15 @@ class AdminHomeScreen extends StatelessWidget {
     return Consumer<UserProvider>(
       builder: (context, userProvider, _) {
         final user = userProvider.currentUser;
+        final theme = Theme.of(context);
 
         return Scaffold(
           body: Container(
-            decoration: const BoxDecoration(
+            decoration: BoxDecoration(
               gradient: LinearGradient(
                 begin: Alignment.topCenter,
                 end: Alignment.bottomCenter,
-                colors: [Color(0xFF1565C0), Color(0xFF1E88E5)],
+                colors: [theme.primaryColor, theme.colorScheme.secondary],
               ),
             ),
             child: SafeArea(
@@ -200,7 +201,7 @@ class AdminHomeScreen extends StatelessWidget {
                               icon: Icons.business_center,
                               title: '모든 사업장',
                               subtitle: '전체 사업장 관리',
-                              color: const Color(0xFF1565C0),
+                              color: theme.primaryColor,
                               onTap: () {
                                 Navigator.push(
                                   context,
@@ -217,7 +218,7 @@ class AdminHomeScreen extends StatelessWidget {
                               icon: Icons.dashboard_outlined,
                               title: '공고 모니터링',
                               subtitle: '전체 공고 현황',
-                              color: const Color(0xFF1565C0),
+                              color: theme.primaryColor,
                               onTap: () {
                                 ScaffoldMessenger.of(context).showSnackBar(
                                   const SnackBar(content: Text('공고 모니터링 기능은 준비 중입니다')),
@@ -231,7 +232,7 @@ class AdminHomeScreen extends StatelessWidget {
                               icon: Icons.people_outline,
                               title: '사용자 관리',
                               subtitle: '회원 관리',
-                              color: const Color(0xFF1565C0),
+                              color: theme.primaryColor,
                               onTap: () {
                                 ScaffoldMessenger.of(context).showSnackBar(
                                   const SnackBar(content: Text('사용자 관리 기능은 준비 중입니다')),
@@ -245,7 +246,7 @@ class AdminHomeScreen extends StatelessWidget {
                               icon: Icons.analytics_outlined,
                               title: '통계',
                               subtitle: '전체 통계 분석',
-                              color: const Color(0xFF1565C0),
+                              color: theme.primaryColor,
                               onTap: () {
                                 ScaffoldMessenger.of(context).showSnackBar(
                                   const SnackBar(content: Text('통계 기능은 준비 중입니다')),
@@ -259,7 +260,7 @@ class AdminHomeScreen extends StatelessWidget {
                               icon: Icons.admin_panel_settings,
                               title: '시스템 설정',
                               subtitle: '규칙/태그/배지',
-                              color: const Color(0xFF1565C0),
+                              color: theme.primaryColor,
                               onTap: () {
                                 Navigator.push(
                                   context,

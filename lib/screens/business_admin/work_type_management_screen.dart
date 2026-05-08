@@ -5,7 +5,7 @@ import '../../models/core/business_model.dart';
 import '../../services/firestore_service.dart';
 import '../../providers/user_provider.dart';
 import '../../widgets/common/loading_widget.dart';
-import '../../widgets/pickers/icon_picker_dialog.dart';
+import '../../widgets/pickers/add_work_type_sheet.dart';
 import '../../widgets/work_type_icon.dart';
 import '../../utils/toast_helper.dart';
 import '../../utils/format_helper.dart';
@@ -13,6 +13,7 @@ import '../../utils/responsive_helper.dart';
 import 'work_type_detail_screen.dart';
 import '../../widgets/dialogs/styled_dialog.dart';
 import '../../theme/app_colors.dart';
+import '../../utils/image_helper.dart';
 
 /// ✨ 세련된 업무 유형 관리 화면
 class WorkTypeManagementScreen extends StatefulWidget {
@@ -97,192 +98,97 @@ class _WorkTypeManagementScreenState extends State<WorkTypeManagementScreen> {
     }
   }
 
-  /// ✨ 세련된 업무 유형 추가 다이얼로그
+  /// 업무 유형 추가 — 새 바텀시트 사용
   Future<void> _showAddDialog() async {
     if (_selectedBusiness == null) {
       ToastHelper.showWarning('사업장을 먼저 선택해주세요');
       return;
     }
 
-    // 1. 아이콘 선택
-    final iconResult = await IconPickerDialog.show(context: context);
-    
-    if (iconResult == null || !mounted) return;
+    final result = await AddWorkTypeSheet.show(context);
+    if (result == null || !mounted) return;
 
-    // 2. 이름 입력
-    final nameController = TextEditingController();
+    final newId = await _firestoreService.addBusinessWorkType(
+      businessId: _selectedBusiness!.id,
+      name: result['name'] as String,
+      icon: (result['icon'] as String?) ?? '',
+      color: result['iconColor'] as String? ?? '#FFFFFF',
+      backgroundColor: result['backgroundColor'] as String?,
+    );
 
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (context) => StyledDialog(
-        title: '업무 유형 추가',
-        subtitle: '새로운 업무 유형을 등록합니다',
-        icon: Icons.add_circle_outline,
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            StyledDialogTextField(
-              controller: nameController,
-              labelText: '업무 유형 이름',
-              hintText: '예: 피킹, 패킹, 검수',
-              prefixIcon: Icons.label,
+    if (newId != null && mounted) {
+      await _loadWorkTypes();
+
+      // 상세 정보 바로 입력 여부
+      final newWorkType = _workTypes.firstWhere(
+        (wt) => wt.id == newId,
+        orElse: () => BusinessWorkTypeModel(
+          id: newId,
+          businessId: _selectedBusiness!.id,
+          name: result['name'] as String,
+          icon: (result['icon'] as String?) ?? '',
+          color: result['iconColor'] as String? ?? '#FFFFFF',
+          backgroundColor: result['backgroundColor'] as String?,
+          displayOrder: _workTypes.length,
+          createdAt: DateTime.now(),
+        ),
+      );
+
+      if (!mounted) return;
+      final goToDetail = await showDialog<bool>(
+        context: context,
+        builder: (ctx) => StyledDialog(
+          title: '등록 완료!',
+          subtitle: '업무유형이 성공적으로 등록되었습니다',
+          icon: Icons.check_circle,
+          headerColor: AppColors.success,
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              StyledDialogInfoCard.info(
+                '상세 정보(설명, 이미지 등)를 추가하면 지원자에게 더 많은 정보를 제공할 수 있어요!',
+              ),
+            ],
+          ),
+          actions: [
+            StyledDialogButton.cancel(
+              text: '나중에',
+              onPressed: () => Navigator.pop(ctx, false),
+            ),
+            StyledDialogButton.primary(
+              text: '상세 정보 입력',
+              onPressed: () => Navigator.pop(ctx, true),
             ),
           ],
         ),
-        actions: [
-          StyledDialogButton.cancel(
-            onPressed: () => Navigator.pop(context, false),
-          ),
-          StyledDialogButton.primary(
-            text: '추가',
-            onPressed: () {
-              if (nameController.text.trim().isEmpty) {
-                ToastHelper.showWarning('업무 유형 이름을 입력해주세요');
-                return;
-              }
-              Navigator.pop(context, true);
-            },
-          ),
-        ],
-      ),
-    );
-
-    // 3. Firestore에 저장
-    if (confirmed == true && nameController.text.trim().isNotEmpty) {
-      final newId = await _firestoreService.addBusinessWorkType(
-        businessId: _selectedBusiness!.id,
-        name: nameController.text.trim(),
-        icon: iconResult['icon'],
-        color: iconResult['iconColor'] ?? '#FFFFFF',
-        backgroundColor: iconResult['backgroundColor'],
       );
-      
-      if (newId != null) {
-        // 목록 새로고침
-        await _loadWorkTypes();
-        
-        // 새로 생성된 업무유형 찾기
-        final newWorkType = _workTypes.firstWhere(
-          (wt) => wt.id == newId,
-          orElse: () => BusinessWorkTypeModel(
-            id: newId,
-            businessId: _selectedBusiness!.id,
-            name: nameController.text.trim(),
-            icon: iconResult['icon'],
-            color: iconResult['iconColor'] ?? '#FFFFFF',
-            backgroundColor: iconResult['backgroundColor'],
-            displayOrder: _workTypes.length,
-            createdAt: DateTime.now(),
-          ),
-        );
-        
-        // 상세 정보 입력 여부 확인
-        if (mounted) {
-          final goToDetail = await showDialog<bool>(
-            context: context,
-            builder: (context) => StyledDialog(
-              title: '등록 완료!',
-              subtitle: '업무유형이 성공적으로 등록되었습니다',
-              icon: Icons.check_circle,
-              headerColor: Colors.green,
-              content: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  StyledDialogInfoCard.info(
-                    '상세 정보(설명, 이미지 등)를 추가하면 지원자에게 더 많은 정보를 제공할 수 있어요!',
-                  ),
-                ],
-              ),
-              actions: [
-                StyledDialogButton.cancel(
-                  text: '나중에',
-                  onPressed: () => Navigator.pop(context, false),
-                ),
-                StyledDialogButton.primary(
-                  text: '상세 정보 입력',
-                  onPressed: () => Navigator.pop(context, true),
-                ),
-              ],
-            ),
-          );
-          
-          if (goToDetail == true) {
-            _openDetailScreen(newWorkType, initialEditMode: true);  // ⭐ 수정
-          }
-        }
+
+      if (goToDetail == true && mounted) {
+        _openDetailScreen(newWorkType, initialEditMode: true);
       }
     }
   }
 
-
-  /// ✨ 세련된 업무 유형 수정 다이얼로그
+  /// 업무 유형 수정 — 새 바텀시트 사용
   Future<void> _showEditDialog(BusinessWorkTypeModel workType) async {
     if (_selectedBusiness == null) return;
 
-    // 1. 아이콘 선택
-    final iconResult = await IconPickerDialog.show(
-      context: context,
-      initialIcon: workType.icon,
-      initialBackgroundColor: workType.backgroundColor,
+    final result = await AddWorkTypeSheet.show(
+      context,
+      editTarget: workType,
     );
-    
-    if (iconResult == null || !mounted) return;
+    if (result == null || !mounted) return;
 
-    // 2. 이름 입력
-    final nameController = TextEditingController(text: workType.name);
-
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (context) => StyledDialog(
-        title: '업무 유형 수정',
-        subtitle: '업무 유형 정보를 수정합니다',
-        icon: Icons.edit,
-        headerColor: Colors.orange,
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            StyledDialogTextField(
-              controller: nameController,
-              labelText: '업무 유형 이름',
-              hintText: '예: 피킹, 패킹, 검수',
-              prefixIcon: Icons.label,
-            ),
-          ],
-        ),
-        actions: [
-          StyledDialogButton.cancel(
-            onPressed: () => Navigator.pop(context, false),
-          ),
-          StyledDialogButton.primary(
-            text: '수정',
-            backgroundColor: Colors.orange,
-            onPressed: () {
-              if (nameController.text.trim().isEmpty) {
-                ToastHelper.showWarning('업무 유형 이름을 입력해주세요');
-                return;
-              }
-              Navigator.pop(context, true);
-            },
-          ),
-        ],
-      ),
+    final success = await _firestoreService.updateBusinessWorkType(
+      businessId: _selectedBusiness!.id,
+      workTypeId: workType.id,
+      name: result['name'] as String,
+      icon: result['icon'] as String?,
+      color: result['iconColor'] as String? ?? '#FFFFFF',
+      backgroundColor: result['backgroundColor'] as String?,
     );
 
-    // 3. Firestore 업데이트
-    if (confirmed == true && nameController.text.trim().isNotEmpty) {
-      final success = await _firestoreService.updateBusinessWorkType(
-        businessId: _selectedBusiness!.id,
-        workTypeId: workType.id,
-        name: nameController.text.trim(),
-        icon: iconResult['icon'],
-        color: iconResult['iconColor'],
-        backgroundColor: iconResult['backgroundColor'],
-      );
-      
-      if (success) {
-        _loadWorkTypes();
-      }
-    }
+    if (success) _loadWorkTypes();
   }
 
   /// ✨ 세련된 삭제 확인 다이얼로그
@@ -320,26 +226,25 @@ class _WorkTypeManagementScreenState extends State<WorkTypeManagementScreen> {
                   ),
                   child: Row(
                     children: [
-                      Container(
+                      SizedBox(
                         width: ResponsiveHelper.spacing(context, 48),
                         height: ResponsiveHelper.spacing(context, 48),
-                        decoration: BoxDecoration(
-                          color: Theme.of(context).primaryColor.withValues(alpha: 0.1),
-                          borderRadius: BorderRadius.circular(12),
-                          image: _selectedBusiness?.mainImageUrl != null
-                              ? DecorationImage(
-                                  image: NetworkImage(_selectedBusiness!.mainImageUrl!),
-                                  fit: BoxFit.cover,
-                                )
-                              : null,
-                        ),
-                        child: _selectedBusiness?.mainImageUrl == null
-                            ? Icon(
-                                Icons.business,
-                                color: Theme.of(context).primaryColor,
-                                size: ResponsiveHelper.iconSize(context, 24),
+                        child: _selectedBusiness?.mainImageUrl != null
+                            ? ImageHelper.buildCachedImage(
+                                _selectedBusiness!.mainImageUrl!,
+                                width: ResponsiveHelper.spacing(context, 48),
+                                height: ResponsiveHelper.spacing(context, 48),
+                                fit: BoxFit.cover,
+                                borderRadius: BorderRadius.circular(12),
+                                memCacheWidth: 96,
                               )
-                            : null,
+                            : Container(
+                                decoration: BoxDecoration(
+                                  color: Theme.of(context).primaryColor.withValues(alpha: 0.1),
+                                  borderRadius: BorderRadius.circular(12),
+                                ),
+                                child: Icon(Icons.business, color: Theme.of(context).primaryColor, size: ResponsiveHelper.iconSize(context, 24)),
+                              ),
                       ),
                       SizedBox(width: ResponsiveHelper.spacing(context, 16)),
                       Expanded(
@@ -594,44 +499,28 @@ class _WorkTypeManagementScreenState extends State<WorkTypeManagementScreen> {
         ),
         child: Row(
           children: [
-            ClipRRect(
-              borderRadius: BorderRadius.circular(12),
-              child: _selectedBusiness?.mainImageUrl != null
-                  ? Image.network(
-                      _selectedBusiness!.mainImageUrl!,
-                      width: ResponsiveHelper.spacing(context, 48),
-                      height: ResponsiveHelper.spacing(context, 48),
-                      fit: BoxFit.cover,
-                      errorBuilder: (context, error, stackTrace) {
-                        return Container(
-                          width: ResponsiveHelper.spacing(context, 48),
-                          height: ResponsiveHelper.spacing(context, 48),
-                          decoration: BoxDecoration(
-                            color: theme.primaryColor.withValues(alpha: 0.1),
-                            borderRadius: BorderRadius.circular(12),
-                          ),
-                          child: Icon(
-                            Icons.business,
-                            color: theme.primaryColor,
-                            size: ResponsiveHelper.iconSize(context, 24),
-                          ),
-                        );
-                      },
-                    )
-                  : Container(
-                      width: ResponsiveHelper.spacing(context, 48),
-                      height: ResponsiveHelper.spacing(context, 48),
-                      decoration: BoxDecoration(
-                        color: theme.primaryColor.withValues(alpha: 0.1),
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                      child: Icon(
-                        Icons.business,
-                        color: theme.primaryColor,
-                        size: ResponsiveHelper.iconSize(context, 24),
-                      ),
+            _selectedBusiness?.mainImageUrl != null
+                ? ImageHelper.buildCachedImage(
+                    _selectedBusiness!.mainImageUrl!,
+                    width: ResponsiveHelper.spacing(context, 48),
+                    height: ResponsiveHelper.spacing(context, 48),
+                    fit: BoxFit.cover,
+                    borderRadius: BorderRadius.circular(12),
+                    memCacheWidth: 96,
+                  )
+                : Container(
+                    width: ResponsiveHelper.spacing(context, 48),
+                    height: ResponsiveHelper.spacing(context, 48),
+                    decoration: BoxDecoration(
+                      color: theme.primaryColor.withValues(alpha: 0.1),
+                      borderRadius: BorderRadius.circular(12),
                     ),
-            ),
+                    child: Icon(
+                      Icons.business,
+                      color: theme.primaryColor,
+                      size: ResponsiveHelper.iconSize(context, 24),
+                    ),
+                  ),
             SizedBox(width: ResponsiveHelper.spacing(context, 16)),
             Expanded(
               child: Column(
