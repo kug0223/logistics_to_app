@@ -1,4 +1,5 @@
-﻿import 'package:flutter/foundation.dart';
+﻿import 'dart:math';
+import 'package:flutter/foundation.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import '../models/core/wage_detail_model.dart';
 
@@ -15,7 +16,7 @@ class WageCalculator {
   
   /// 로컬 백업 - 연도별 최저시급
   static const Map<int, int> _minimumWageByYear = {
-    2026: 10360,  // 예정 (미리 세팅)
+    2026: 10320,
     2025: 10030,
     2024: 9860,
     2023: 9620,
@@ -87,7 +88,7 @@ class WageCalculator {
   // ============================================================
   
   /// 급여 계산 (WageDetailModel 반환)
-  /// 
+  ///
   /// [wageType]: 'hourly' | 'daily'
   /// [baseWage]: 시급 또는 일급
   /// [workDate]: 근무일 (최저시급 연도 기준)
@@ -95,8 +96,11 @@ class WageCalculator {
   /// [scheduledEnd]: 예정 종료 시간 (HH:mm)
   /// [actualStart]: 실제 출근 시간 (HH:mm)
   /// [actualEnd]: 실제 퇴근 시간 (HH:mm)
-  /// [breakMinutes]: 휴게시간 (분)
+  /// [breakMinutes]: 실제 적용 휴게시간 (기본 + 추가공제)
+  /// [scheduledBreakMinutes]: 예정 휴게시간 (공고 기준, null이면 breakMinutes와 동일)
+  ///   - 일급제 기준근무시간 계산에 사용. 추가공제가 있는 경우 기본값만 전달해야 함.
   /// [nightAllowanceApplied]: 야간수당 별도 적용 여부
+  /// [nightIncluded]: 일급에 야간수당이 포함된 경우 true — 계약 구간 내 야간분 제외, 초과분만 적용
   /// [additionalAmount]: 추가수당
   /// [memo]: 메모
   static WageDetailModel calculate({
@@ -108,33 +112,48 @@ class WageCalculator {
     required String actualStart,
     required String actualEnd,
     int breakMinutes = 0,
-    bool nightAllowanceApplied = false,
+    int? scheduledBreakMinutes,
+    bool nightAllowanceApplied = true,
+    bool nightIncluded = false,
     int additionalAmount = 0,
     String? memo,
+    /// 일급제 수당 기초 시급 (연장·야간·휴일수당 기준). null이면 최저시급 적용
+    int? baseHourlyWage,
   }) {
     // 근무일 기준 최저시급
     final minimumWage = getMinimumWage(workDate.year);
-    
+
+    // scheduledBreakMinutes: 공고 기준 예정 휴게 (null이면 breakMinutes와 동일)
+    // 추가공제가 있으면 기본 휴게만 전달해야 기준근무시간이 변하지 않음
+    final schedBreak = scheduledBreakMinutes ?? breakMinutes;
+
     // 1. 시간 계산
     final scheduledMinutes = _calculateMinutesBetween(scheduledStart, scheduledEnd);
     final actualMinutes = _calculateMinutesBetween(actualStart, actualEnd);
     final workMinutes = (actualMinutes - breakMinutes).clamp(0, 9999);
-    
+
     // 2. 연장근무 계산
     int overtimeMinutes = 0;
     if (wageType == 'hourly') {
       // 시급제: 8시간(480분) 초과분
       overtimeMinutes = (workMinutes - standardWorkMinutes).clamp(0, 9999);
     } else {
-      // 일급제: 예정 시간 초과분
-      final scheduledWorkMinutes = (scheduledMinutes - breakMinutes).clamp(0, 9999);
+      // 일급제: 예정 시간 초과분 (예정 휴게 기준 — 추가공제 제외)
+      final scheduledWorkMinutes = (scheduledMinutes - schedBreak).clamp(0, 9999);
       overtimeMinutes = (workMinutes - scheduledWorkMinutes).clamp(0, 9999);
     }
     
     // 3. 야간근무 계산
     int nightMinutes = 0;
     if (nightAllowanceApplied) {
-      nightMinutes = _calculateNightMinutes(actualStart, actualEnd);
+      if (wageType == 'daily' && nightIncluded) {
+        // 일급에 야간수당 포함 → 계약 구간 내 야간분은 제외, 초과분(scheduledEnd 이후)만 적용
+        if (overtimeMinutes > 0) {
+          nightMinutes = _calculateNightMinutes(scheduledEnd, actualEnd);
+        }
+      } else {
+        nightMinutes = _calculateNightMinutes(actualStart, actualEnd);
+      }
     }
     
     // 4. 금액 계산
@@ -161,11 +180,12 @@ class WageCalculator {
         dailyWage: baseWage,
         scheduledMinutes: scheduledMinutes,
         workMinutes: workMinutes,
-        breakMinutes: breakMinutes,
+        scheduledBreakMinutes: schedBreak,
         overtimeMinutes: overtimeMinutes,
         nightMinutes: nightMinutes,
         nightAllowanceApplied: nightAllowanceApplied,
         minimumWage: minimumWage,
+        baseHourlyWage: baseHourlyWage,
       );
       baseAmount = result['baseAmount']!;
       overtimeAmount = result['overtimeAmount']!;
@@ -199,6 +219,9 @@ class WageCalculator {
   // ============================================================
   
   /// 시급제 급여 계산
+  ///
+  /// - 기본급 + 연장수당 + 야간수당 모두 설정된 시급 기준
+  /// - 시급이 최저시급 미만이어도 입력 허용 (UI에서 경고 표시)
   static Map<String, int> _calculateHourlyWage({
     required int hourlyWage,
     required int workMinutes,
@@ -207,34 +230,20 @@ class WageCalculator {
     required bool nightAllowanceApplied,
     required int minimumWage,
   }) {
-    // 기본급: (근무시간 - 연장시간) × 시급
+    // 기본급: 정규 근무(8시간 이하) × 실제 시급
     final regularMinutes = workMinutes - overtimeMinutes;
     final baseAmount = (regularMinutes * hourlyWage / 60).round();
-    
-    // 연장수당 계산 (8시간 기준)
-    int overtimeAmount = 0;
-    if (overtimeMinutes > 0) {
-    if (workMinutes <= standardWorkMinutes) {
-      // 총 근무 8시간 이하: 연장분 1배
-      overtimeAmount = (overtimeMinutes * minimumWage / 60).round();
-    } else {
-      // 총 근무 8시간 초과: 8시간 초과분만 1.5배
-      final over8Hours = workMinutes - standardWorkMinutes;  // 8시간 초과분
-      final within8Hours = overtimeMinutes - over8Hours;     // 8시간 이내 연장분
-      
-      final amount1x = (within8Hours.clamp(0, 9999) * minimumWage / 60).round();
-      final amount15x = (over8Hours.clamp(0, 9999) * minimumWage * overtimeRate / 60).round();
-      
-      overtimeAmount = amount1x + amount15x;
-   }
- }
-    
-    // 야간수당: 야간시간 × 최저시급 × 0.5
-    int nightAmount = 0;
-    if (nightAllowanceApplied && nightMinutes > 0) {
-      nightAmount = (nightMinutes * minimumWage * nightRate / 60).round();
-    }
-    
+
+    // 연장수당: 8시간 초과분 × 실제 시급 × 1.5
+    final overtimeAmount = overtimeMinutes > 0
+        ? (overtimeMinutes * hourlyWage * overtimeRate / 60).round()
+        : 0;
+
+    // 야간수당: 야간시간 × 실제 시급 × 0.5
+    final nightAmount = (nightAllowanceApplied && nightMinutes > 0)
+        ? (nightMinutes * hourlyWage * nightRate / 60).round()
+        : 0;
+
     return {
       'baseAmount': baseAmount,
       'overtimeAmount': overtimeAmount,
@@ -251,48 +260,56 @@ class WageCalculator {
     required int dailyWage,
     required int scheduledMinutes,
     required int workMinutes,
-    required int breakMinutes,
+    required int scheduledBreakMinutes,
     required int overtimeMinutes,
     required int nightMinutes,
     required bool nightAllowanceApplied,
     required int minimumWage,
+    int? baseHourlyWage,
   }) {
-    final scheduledWorkMinutes = (scheduledMinutes - breakMinutes).clamp(0, 9999);
-    
+    final scheduledWorkMinutes = (scheduledMinutes - scheduledBreakMinutes).clamp(0, 9999);
+
+    // 수당 기초 시급: 관리자 설정값 > max(통상임금, 최저시급) 순 우선
+    final rawOrdinaryHourly = scheduledWorkMinutes > 0
+        ? (dailyWage / scheduledWorkMinutes * 60).round()
+        : 0;
+    final ordinaryHourlyCalc = max(rawOrdinaryHourly, minimumWage);
+    final supplementWage = baseHourlyWage ?? ordinaryHourlyCalc;
+
     int baseAmount = 0;
-    
-    if (workMinutes >= scheduledWorkMinutes) {
+
+    if (scheduledWorkMinutes == 0 || workMinutes >= scheduledWorkMinutes) {
       // 정상 근무 이상: 일급 전액
       baseAmount = dailyWage;
     } else {
       // 미달: 비율 계산
       baseAmount = (dailyWage * workMinutes / scheduledWorkMinutes).round();
     }
-    
+
     // 연장수당: 총 근무 8시간 이하면 1배, 8시간 초과분만 1.5배
     int overtimeAmount = 0;
     if (overtimeMinutes > 0) {
       if (workMinutes <= standardWorkMinutes) {
         // 총 근무 8시간 이하: 연장분 전체 1배
-        overtimeAmount = (overtimeMinutes * minimumWage / 60).round();
+        overtimeAmount = (overtimeMinutes * supplementWage / 60).round();
       } else {
         // 총 근무 8시간 초과: 8시간 초과분만 1.5배
         final over8Hours = workMinutes - standardWorkMinutes;
         final within8Hours = (overtimeMinutes - over8Hours).clamp(0, overtimeMinutes);
-        
-        final amount1x = (within8Hours * minimumWage / 60).round();
-        final amount15x = (over8Hours.clamp(0, overtimeMinutes) * minimumWage * overtimeRate / 60).round();
-        
+
+        final amount1x = (within8Hours * supplementWage / 60).round();
+        final amount15x = (over8Hours.clamp(0, overtimeMinutes) * supplementWage * overtimeRate / 60).round();
+
         overtimeAmount = amount1x + amount15x;
       }
     }
-    
-    // 야간수당: 야간시간 × 최저시급 × 0.5
+
+    // 야간수당: 야간시간 × 기초시급 × 0.5
     int nightAmount = 0;
     if (nightAllowanceApplied && nightMinutes > 0) {
-      nightAmount = (nightMinutes * minimumWage * nightRate / 60).round();
+      nightAmount = (nightMinutes * supplementWage * nightRate / 60).round();
     }
-    
+
     return {
       'baseAmount': baseAmount,
       'overtimeAmount': overtimeAmount,
@@ -344,29 +361,19 @@ class WageCalculator {
   }
   
   /// 야간 근무 시간 계산 (22:00 ~ 06:00)
+  ///
+  /// 야간 구간을 세 개의 절대 구간으로 표현해 O(1) 교집합으로 계산:
+  ///   [0, 360)      — 당일 00:00~06:00
+  ///   [1320, 1440)  — 당일 22:00~24:00
+  ///   [1440, 1800)  — 익일 00:00~06:00 (자정 넘긴 근무 대응)
   static int _calculateNightMinutes(String startTime, String endTime) {
-    final startMinutes = _timeToMinutes(startTime);
-    var endMinutes = _timeToMinutes(endTime);
-    
-    // 자정 넘김 처리
-    if (endMinutes <= startMinutes) {
-      endMinutes += 24 * 60;
-    }
-    
-    int nightMinutes = 0;
-    
-    const nightStart = 22 * 60;  // 1320분
-    const nightEnd = 6 * 60;     // 360분
-    
-    for (int m = startMinutes; m < endMinutes; m++) {
-      final normalizedMinute = m % (24 * 60);
-      
-      if (normalizedMinute >= nightStart || normalizedMinute < nightEnd) {
-        nightMinutes++;
-      }
-    }
-    
-    return nightMinutes;
+    final s = _timeToMinutes(startTime);
+    var e = _timeToMinutes(endTime);
+    if (e <= s) e += 24 * 60;
+
+    int overlap(int a, int b) => max(0, min(e, b) - max(s, a));
+
+    return overlap(0, 360) + overlap(1320, 1440) + overlap(1440, 1800);
   }
 
   // ============================================================
@@ -381,6 +388,21 @@ class WageCalculator {
     )}원';
   }
   
+  /// 일급제 통상 시급 계산 (연장·야간수당 기준 안내용)
+  /// 반환 null = 계산 불가 (입력값 부족)
+  static int? computeOrdinaryHourlyWage({
+    required String scheduledStart,
+    required String scheduledEnd,
+    required int breakMinutes,
+    required int dailyWage,
+  }) {
+    if (dailyWage <= 0) return null;
+    final scheduledMinutes = _calculateMinutesBetween(scheduledStart, scheduledEnd);
+    final scheduledWorkMinutes = (scheduledMinutes - breakMinutes).clamp(0, 9999);
+    if (scheduledWorkMinutes <= 0) return null;
+    return (dailyWage / scheduledWorkMinutes * 60).round();
+  }
+
   /// 급여 타입 라벨
   static String getWageTypeLabel(String wageType) {
     switch (wageType) {
@@ -393,6 +415,25 @@ class WageCalculator {
     }
   }
   
+  // ============================================================
+  // 주휴수당 계산
+  // ============================================================
+
+  /// 주휴수당 계산
+  ///
+  /// [ordinaryHourlyWage]: 통상시급 (WageDetailModel.appliedMinimumWage 기준)
+  /// [weeklyWorkMinutes]: 해당 주 총 근무 분 (조건 확인용)
+  /// - 15시간(900분) 미만이면 0 반환
+  /// - 주 40시간 기준 비례 계산, 최대 8시간 상한
+  static int calculateWeeklyHolidayPay({
+    required int ordinaryHourlyWage,
+    required int weeklyWorkMinutes,
+  }) {
+    if (weeklyWorkMinutes < 15 * 60) return 0;
+    final weeklyHours = (weeklyWorkMinutes / 60.0).clamp(0.0, 40.0);
+    return ((weeklyHours / 40.0) * 8.0 * ordinaryHourlyWage).round();
+  }
+
   /// 급여 요약 문자열
   static String formatWageWithType(int wage, String wageType) {
     return '${getWageTypeLabel(wageType)} ${formatAmount(wage)}';

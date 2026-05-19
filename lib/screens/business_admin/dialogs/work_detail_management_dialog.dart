@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+﻿import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 
 import '../../../models/core/work_detail_model.dart';
@@ -10,6 +10,15 @@ import '../../../widgets/work_type_icon.dart';
 import '../../../widgets/dialogs/styled_dialog.dart';
 import '../../../models/ui/admin_to_list_ui_models.dart';
 import '../../../theme/app_colors.dart';
+import '../../../widgets/common/app_checkbox.dart';
+
+abstract class _WDS {
+  static const String active      = 'ACTIVE';
+  static const String closed      = 'CLOSED';
+  static const String timeExpired = 'TIME_EXPIRED';
+  static const String full        = 'FULL';
+  static const String emergency   = 'EMERGENCY';
+}
 
 class WorkDetailManagementDialog {
   final BuildContext context;
@@ -140,21 +149,15 @@ class WorkDetailManagementDialog {
       ),
       child: Row(
         children: [
-          Checkbox(
+          AppCheckbox(
             value: allSelected,
-            onChanged: (value) {
-              setDialogState(() {
-                if (value == true) {
-                  selectedWorkDetails.addAll(selectableWorks.map((w) => w.id));
-                } else {
-                  selectedWorkDetails.clear();
-                }
-              });
-            },
-            activeColor: theme.primaryColor,
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(4),
-            ),
+            onTap: () => setDialogState(() {
+              if (!allSelected) {
+                selectedWorkDetails.addAll(selectableWorks.map((w) => w.id));
+              } else {
+                selectedWorkDetails.clear();
+              }
+            }),
           ),
           Expanded(
             child: Text(
@@ -233,24 +236,11 @@ class WorkDetailManagementDialog {
             ),
             child: Row(
               children: [
-                // 체크박스
-                Checkbox(
+                // 체크박스 (행 InkWell이 탭 처리)
+                AppCheckbox(
                   value: isSelected,
-                  onChanged: isSelectable
-                      ? (value) {
-                          setDialogState(() {
-                            if (value == true) {
-                              selectedWorkDetails.add(work.id);
-                            } else {
-                              selectedWorkDetails.remove(work.id);
-                            }
-                          });
-                        }
-                      : null,
+                  enabled: isSelectable,
                   activeColor: statusInfo['color'],
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(4),
-                  ),
                 ),
                 
                 // 업무 아이콘
@@ -376,21 +366,21 @@ class WorkDetailManagementDialog {
         .toList();
 
     switch (status) {
-      case 'ACTIVE':
+      case _WDS.active:
         return StyledDialogButton.primary(
           text: '${selectedWorks.length}개 마감',
-          backgroundColor: AppColors.error,
+          backgroundColor: AppColors.warning,
           onPressed: () => _handleBulkClose(selectedWorks),
         );
 
-      case 'CLOSED':
+      case _WDS.closed:
         return StyledDialogButton.primary(
           text: '${selectedWorks.length}개 재오픈',
           backgroundColor: AppColors.success,
           onPressed: () => _handleBulkReopen(selectedWorks),
         );
 
-      case 'TIME_EXPIRED':
+      case _WDS.timeExpired:
         return StyledDialogButton.primary(
           text: '시간 만료',
           backgroundColor: AppColors.grey400,
@@ -403,7 +393,7 @@ class WorkDetailManagementDialog {
           },
         );
 
-      case 'FULL':
+      case _WDS.full:
         return StyledDialogButton.primary(
           text: '${selectedWorks.length}개 인원충족',
           backgroundColor: AppColors.success,
@@ -416,7 +406,7 @@ class WorkDetailManagementDialog {
           },
         );
 
-      case 'EMERGENCY':
+      case _WDS.emergency:
         return StyledDialogButton.primary(
           text: '긴급모집 종료',
           backgroundColor: AppColors.warning,
@@ -431,26 +421,35 @@ class WorkDetailManagementDialog {
   // 상태 정보
   Map<String, dynamic> _getStatusInfo(String status) {
     switch (status) {
-      case 'TIME_EXPIRED':
+      case _WDS.timeExpired:
         return {'label': '시간만료', 'color': AppColors.grey500, 'icon': Icons.schedule};
-      case 'CLOSED':
-        return {'label': '마감됨', 'color': AppColors.grey600, 'icon': Icons.lock};
-      case 'EMERGENCY':
+      case _WDS.closed:
+        return {'label': '마감', 'color': AppColors.grey600, 'icon': Icons.lock};
+      case _WDS.emergency:
         return {'label': '긴급모집', 'color': AppColors.error, 'icon': Icons.warning};
-      case 'FULL':
+      case _WDS.full:
         return {'label': '인원충족', 'color': AppColors.success, 'icon': Icons.check_circle};
-      case 'ACTIVE':
+      case _WDS.active:
       default:
         return {'label': '진행중', 'color': AppColors.info, 'icon': Icons.play_circle};
     }
   }
 
   String _getWorkStatus(WorkDetailModel work, int confirmed) {
-    if (work.isTimeExpired) return 'TIME_EXPIRED';
-    if (work.isClosed) return 'CLOSED';
-    if (work.isEmergencyOpen) return 'EMERGENCY';
-    if (confirmed >= work.requiredCount) return 'FULL';
-    return 'ACTIVE';
+    if (work.isTimeExpired) return _WDS.timeExpired;
+    if (work.isClosed) return _WDS.closed;
+
+    // CF가 슬롯 status='closed'를 기록했어도 in-memory workDetail.closedAt은
+    // 아직 반영 안 된 경우(stale 캐시) → 슬롯 상태로 보정
+    // isEffectivelyClosed = isManualClosed || status=='closed' || isDatePast
+    final slot = toItem.slot;
+    if (slot != null && slot.isEffectivelyClosed && !work.isEmergencyOpen) {
+      return slot.isManualClosed ? _WDS.closed : _WDS.timeExpired;
+    }
+
+    if (work.isEmergencyOpen) return _WDS.emergency;
+    if (confirmed >= work.requiredCount) return _WDS.full;
+    return _WDS.active;
   }
 
   // 일괄 마감
@@ -460,7 +459,7 @@ class WorkDetailManagementDialog {
       title: '업무 마감',
       message: '${works.length}개 업무를 마감하시겠습니까?',
       confirmText: '마감',
-      confirmColor: AppColors.error,
+      confirmColor: AppColors.warning,
     );
 
     if (confirm) {
@@ -486,8 +485,10 @@ class WorkDetailManagementDialog {
         }
       }
 
+      if (!context.mounted) return;
       Navigator.pop(context);
       onLocalStatsChanged?.call();
+      onComplete(); // cascade 마감으로 탭이 바뀔 수 있으므로 full reload
       ToastHelper.showSuccess('${works.length}개 업무가 마감되었습니다');
     }
   }
@@ -520,8 +521,10 @@ class WorkDetailManagementDialog {
         }
       }
 
+      if (!context.mounted) return;
       Navigator.pop(context);
       onLocalStatsChanged?.call();
+      onComplete(); // cascade 재오픈으로 탭이 바뀔 수 있으므로 full reload
       ToastHelper.showSuccess('${works.length}개 업무가 재오픈되었습니다');
     }
   }
@@ -554,6 +557,7 @@ class WorkDetailManagementDialog {
         }
       }
 
+      if (!context.mounted) return;
       Navigator.pop(context);
       onLocalStatsChanged?.call();
       ToastHelper.showSuccess('${works.length}개 업무 긴급모집이 종료되었습니다');

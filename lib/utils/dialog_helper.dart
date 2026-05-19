@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+﻿import 'package:flutter/material.dart';
 import 'responsive_helper.dart';
 import 'toast_helper.dart';
 import '../theme/app_colors.dart';
@@ -15,7 +15,7 @@ class DialogHelper {
   ///   title: '삭제',
   ///   message: '정말 삭제하시겠습니까?',
   ///   confirmText: '삭제',
-  ///   confirmColor: Colors.red,
+  ///   confirmColor: AppColors.error,
   /// );
   /// if (confirmed) { ... }
   /// ```
@@ -31,71 +31,25 @@ class DialogHelper {
   }) async {
     final theme = Theme.of(context);
     
+    final accentColor = confirmColor ?? iconColor ?? theme.primaryColor;
+
     final result = await showDialog<bool>(
       context: context,
-      builder: (dialogContext) => AlertDialog(
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(ResponsiveHelper.spacing(context, 24)),
-        ),
-        title: icon != null
-            ? Row(
-                children: [
-                  Icon(
-                    icon, 
-                    color: iconColor ?? confirmColor ?? theme.primaryColor,
-                    size: ResponsiveHelper.iconSize(context, 24),
-                  ),
-                  SizedBox(width: ResponsiveHelper.spacing(context, 12)),
-                  Expanded(
-                    child: Text(
-                      title,
-                      style: ResponsiveHelper.subtitleStyle(context).copyWith(
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                  ),
-                ],
-              )
-            : Text(
-                title,
-                style: ResponsiveHelper.subtitleStyle(context).copyWith(
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
-        content: Text(
+      builder: (dialogContext) => _buildDialog(
+        context,
+        title: title,
+        icon: icon ?? Icons.help_outline,
+        accentColor: accentColor,
+        body: Text(
           message,
           style: ResponsiveHelper.bodyStyle(
             context,
             color: theme.textTheme.bodyMedium?.color,
           ),
         ),
-        actionsPadding: EdgeInsets.all(ResponsiveHelper.spacing(context, 16)),
         actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(dialogContext, false),
-            child: Text(
-              cancelText,
-              style: ResponsiveHelper.bodyStyle(context),
-            ),
-          ),
-          ElevatedButton(
-            onPressed: () => Navigator.pop(dialogContext, true),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: confirmColor ?? theme.primaryColor,
-              foregroundColor: Colors.white,
-              padding: EdgeInsets.symmetric(
-                horizontal: ResponsiveHelper.spacing(context, 20),
-                vertical: ResponsiveHelper.spacing(context, 12),
-              ),
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(ResponsiveHelper.spacing(context, 8)),
-              ),
-            ),
-            child: Text(
-              confirmText,
-              style: ResponsiveHelper.bodyStyle(context, color: Colors.white),
-            ),
-          ),
+          _cancelBtn(context, () => Navigator.pop(dialogContext, false), cancelText),
+          _confirmBtn(context, () => Navigator.pop(dialogContext, true), confirmText, accentColor),
         ],
       ),
     );
@@ -151,53 +105,24 @@ class DialogHelper {
   }) {
     final theme = Theme.of(context);
     
+    final accentColor = iconColor ?? theme.primaryColor;
+
     return showDialog(
       context: context,
-      builder: (dialogContext) => AlertDialog(
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(ResponsiveHelper.spacing(context, 24)),
-        ),
-        title: icon != null
-            ? Row(
-                children: [
-                  Icon(
-                    icon, 
-                    color: iconColor ?? theme.primaryColor,
-                    size: ResponsiveHelper.iconSize(context, 24),
-                  ),
-                  SizedBox(width: ResponsiveHelper.spacing(context, 12)),
-                  Expanded(
-                    child: Text(
-                      title,
-                      style: ResponsiveHelper.subtitleStyle(context).copyWith(
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                  ),
-                ],
-              )
-            : Text(
-                title,
-                style: ResponsiveHelper.subtitleStyle(context).copyWith(
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
-        content: Text(
+      builder: (dialogContext) => _buildDialog(
+        context,
+        title: title,
+        icon: icon ?? Icons.notifications_outlined,
+        accentColor: accentColor,
+        body: Text(
           message,
           style: ResponsiveHelper.bodyStyle(
             context,
             color: theme.textTheme.bodyMedium?.color,
           ),
         ),
-        actionsPadding: EdgeInsets.all(ResponsiveHelper.spacing(context, 16)),
         actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(dialogContext),
-            child: Text(
-              buttonText,
-              style: ResponsiveHelper.bodyStyle(context),
-            ),
-          ),
+          _confirmBtn(context, () => Navigator.pop(dialogContext), buttonText, accentColor),
         ],
       ),
     );
@@ -311,43 +236,44 @@ class DialogHelper {
     required List<T> options,
     String Function(T)? optionLabel,
   }) {
+    final theme = Theme.of(context);
+
     return showDialog<T>(
       context: context,
-      builder: (dialogContext) => AlertDialog(
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(ResponsiveHelper.spacing(context, 24)),
-        ),
-        title: Text(
-          title,
-          style: ResponsiveHelper.subtitleStyle(context).copyWith(
-            fontWeight: FontWeight.bold,
-          ),
-        ),
-        content: Column(
+      builder: (dialogContext) => _buildDialog(
+        context,
+        title: title,
+        icon: Icons.list_outlined,
+        accentColor: theme.primaryColor,
+        body: Column(
           mainAxisSize: MainAxisSize.min,
           children: options.map((option) {
             final label = optionLabel?.call(option) ?? option.toString();
-            return ListTile(
-              title: Text(
-                label,
-                style: ResponsiveHelper.bodyStyle(context),
-              ),
+            return InkWell(
               onTap: () => Navigator.pop(dialogContext, option),
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(ResponsiveHelper.spacing(context, 8)),
+              borderRadius: BorderRadius.circular(8),
+              child: Padding(
+                padding: EdgeInsets.symmetric(
+                  horizontal: ResponsiveHelper.spacing(context, 4),
+                  vertical: ResponsiveHelper.spacing(context, 12),
+                ),
+                child: Row(
+                  children: [
+                    Icon(Icons.chevron_right,
+                        size: ResponsiveHelper.iconSize(context, 18),
+                        color: theme.primaryColor),
+                    SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+                    Expanded(
+                      child: Text(label, style: ResponsiveHelper.bodyStyle(context)),
+                    ),
+                  ],
+                ),
               ),
             );
           }).toList(),
         ),
-        actionsPadding: EdgeInsets.all(ResponsiveHelper.spacing(context, 16)),
         actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(dialogContext),
-            child: Text(
-              '취소',
-              style: ResponsiveHelper.bodyStyle(context),
-            ),
-          ),
+          _cancelBtn(context, () => Navigator.pop(dialogContext), '취소'),
         ],
       ),
     );
@@ -377,41 +303,26 @@ class DialogHelper {
     return showDialog<T>(
       context: context,
       barrierDismissible: barrierDismissible,
-      builder: (dialogContext) => AlertDialog(
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(ResponsiveHelper.spacing(context, 24)),
-        ),
-        title: title != null
-            ? (icon != null
-                ? Row(
-                    children: [
-                      Icon(
-                        icon,
-                        color: iconColor ?? theme.primaryColor,
-                        size: ResponsiveHelper.iconSize(context, 24),
-                      ),
-                      SizedBox(width: ResponsiveHelper.spacing(context, 12)),
-                      Expanded(
-                        child: Text(
-                          title,
-                          style: ResponsiveHelper.subtitleStyle(context).copyWith(
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                      ),
-                    ],
-                  )
-                : Text(
-                    title,
-                    style: ResponsiveHelper.subtitleStyle(context).copyWith(
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ))
-            : null,
-        content: content,
-        actionsPadding: EdgeInsets.all(ResponsiveHelper.spacing(context, 16)),
-        actions: actions,
-      ),
+      builder: (dialogContext) {
+        if (title != null) {
+          return _buildDialog(
+            context,
+            title: title,
+            icon: icon ?? Icons.info_outline,
+            accentColor: iconColor ?? theme.primaryColor,
+            body: content,
+            actions: actions ?? [],
+          );
+        }
+        return AlertDialog(
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(ResponsiveHelper.spacing(context, 24)),
+          ),
+          content: content,
+          actionsPadding: EdgeInsets.all(ResponsiveHelper.spacing(context, 16)),
+          actions: actions,
+        );
+      },
     );
   }
 
@@ -473,7 +384,7 @@ class DialogHelper {
   ///   message: '거절 사유를 입력해주세요.',
   ///   hintText: '사유 입력',
   ///   confirmText: '거절',
-  ///   confirmColor: Colors.red,
+  ///   confirmColor: AppColors.error,
   /// );
   /// if (reason != null) { ... }
   /// ```
@@ -495,110 +406,65 @@ class DialogHelper {
     final controller = TextEditingController(text: initialValue);
     final theme = Theme.of(context);
     
+    final accentColor = confirmColor ?? iconColor ?? theme.primaryColor;
+
     final result = await showDialog<String>(
       context: context,
-      builder: (dialogContext) => StatefulBuilder(
-        builder: (builderContext, setDialogState) => AlertDialog(
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(ResponsiveHelper.spacing(context, 24)),
-          ),
-          title: icon != null
-              ? Row(
-                  children: [
-                    Icon(
-                      icon, 
-                      color: iconColor ?? confirmColor ?? theme.primaryColor,
-                      size: ResponsiveHelper.iconSize(context, 24),
-                    ),
-                    SizedBox(width: ResponsiveHelper.spacing(context, 12)),
-                    Expanded(
-                      child: Text(
-                        title,
-                        style: ResponsiveHelper.subtitleStyle(context).copyWith(
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                    ),
-                  ],
-                )
-              : Text(
-                  title,
-                  style: ResponsiveHelper.subtitleStyle(context).copyWith(
-                    fontWeight: FontWeight.bold,
-                  ),
+      builder: (dialogContext) => _buildDialog(
+        context,
+        title: title,
+        icon: icon ?? Icons.edit_outlined,
+        accentColor: accentColor,
+        body: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            if (message != null) ...[
+              Text(
+                message,
+                style: ResponsiveHelper.bodyStyle(
+                  context,
+                  color: theme.textTheme.bodyMedium?.color,
                 ),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              if (message != null) ...[
-                Text(
-                  message,
-                  style: ResponsiveHelper.bodyStyle(
-                    context,
-                    color: theme.textTheme.bodyMedium?.color,
-                  ),
-                ),
-                SizedBox(height: ResponsiveHelper.spacing(context, 16)),
-              ],
-              TextField(
-                controller: controller,
-                maxLines: maxLines,
-                maxLength: maxLength,
-                style: ResponsiveHelper.bodyStyle(context),
-                decoration: InputDecoration(
-                  hintText: hintText,
-                  hintStyle: ResponsiveHelper.bodyStyle(
-                    context,
-                    color: theme.hintColor,
-                  ),
-                  border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(ResponsiveHelper.spacing(context, 8)),
-                  ),
-                  contentPadding: EdgeInsets.symmetric(
-                    horizontal: ResponsiveHelper.spacing(context, 12),
-                    vertical: ResponsiveHelper.spacing(context, 12),
-                  ),
-                ),
-                autofocus: true,
               ),
+              SizedBox(height: ResponsiveHelper.spacing(context, 16)),
             ],
-          ),
-          actionsPadding: EdgeInsets.all(ResponsiveHelper.spacing(context, 16)),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(dialogContext),
-              child: Text(
-                cancelText,
-                style: ResponsiveHelper.bodyStyle(context),
-              ),
-            ),
-            ElevatedButton(
-              onPressed: () {
-                final value = controller.text.trim();
-                if (validator != null && !validator(value)) {
-                  return;
-                }
-                Navigator.pop(dialogContext, value);
-              },
-              style: ElevatedButton.styleFrom(
-                backgroundColor: confirmColor ?? theme.primaryColor,
-                foregroundColor: Colors.white,
-                padding: EdgeInsets.symmetric(
-                  horizontal: ResponsiveHelper.spacing(context, 20),
-                  vertical: ResponsiveHelper.spacing(context, 12),
+            TextField(
+              controller: controller,
+              maxLines: maxLines,
+              maxLength: maxLength,
+              style: ResponsiveHelper.bodyStyle(context),
+              decoration: InputDecoration(
+                hintText: hintText,
+                hintStyle: ResponsiveHelper.bodyStyle(
+                  context,
+                  color: theme.hintColor,
                 ),
-                shape: RoundedRectangleBorder(
+                border: OutlineInputBorder(
                   borderRadius: BorderRadius.circular(ResponsiveHelper.spacing(context, 8)),
                 ),
+                contentPadding: EdgeInsets.symmetric(
+                  horizontal: ResponsiveHelper.spacing(context, 12),
+                  vertical: ResponsiveHelper.spacing(context, 12),
+                ),
               ),
-              child: Text(
-                confirmText,
-                style: ResponsiveHelper.bodyStyle(context, color: Colors.white),
-              ),
+              autofocus: true,
             ),
           ],
         ),
+        actions: [
+          _cancelBtn(context, () => Navigator.pop(dialogContext), cancelText),
+          _confirmBtn(
+            context,
+            () {
+              final value = controller.text.trim();
+              if (validator != null && !validator(value)) return;
+              Navigator.pop(dialogContext, value);
+            },
+            confirmText,
+            accentColor,
+          ),
+        ],
       ),
     );
     
@@ -746,29 +612,12 @@ class DialogHelper {
     
     final result = await showDialog<bool>(
       context: context,
-      builder: (dialogContext) => AlertDialog(
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(ResponsiveHelper.spacing(context, 24)),
-        ),
-        title: Row(
-          children: [
-            Icon(
-              Icons.warning_amber_rounded,
-              color: AppColors.warning,
-              size: ResponsiveHelper.iconSize(context, 28),
-            ),
-            SizedBox(width: ResponsiveHelper.spacing(context, 12)),
-            Expanded(
-              child: Text(
-                title,
-                style: ResponsiveHelper.subtitleStyle(context).copyWith(
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
-            ),
-          ],
-        ),
-        content: Column(
+      builder: (dialogContext) => _buildDialog(
+        context,
+        title: title,
+        icon: Icons.warning_amber_rounded,
+        accentColor: AppColors.warning,
+        body: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -841,40 +690,176 @@ class DialogHelper {
             ),
           ],
         ),
-        actionsPadding: EdgeInsets.all(ResponsiveHelper.spacing(context, 16)),
         actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(dialogContext, false),
-            child: Text(
-              '취소',
-              style: ResponsiveHelper.bodyStyle(context),
-            ),
-          ),
-          ElevatedButton.icon(
-            onPressed: () => Navigator.pop(dialogContext, true),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: theme.primaryColor,
-              foregroundColor: Colors.white,
-              padding: EdgeInsets.symmetric(
-                horizontal: ResponsiveHelper.spacing(context, 16),
-                vertical: ResponsiveHelper.spacing(context, 12),
-              ),
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(ResponsiveHelper.spacing(context, 8)),
-              ),
-            ),
-            icon: Icon(
-              Icons.arrow_forward,
-              size: ResponsiveHelper.iconSize(context, 18),
-            ),
-            label: Text(
-              '서류 등록하기',
-              style: ResponsiveHelper.bodyStyle(context, color: Colors.white),
-            ),
-          ),
+          _cancelBtn(context, () => Navigator.pop(dialogContext, false), '취소'),
+          _confirmBtn(
+              context, () => Navigator.pop(dialogContext, true), '서류 등록하기', AppColors.warning),
         ],
       ),
     );
     return result ?? false;
+  }
+
+  // ═══════════════════════════════════════════════════════════
+  // Private helpers
+  // ═══════════════════════════════════════════════════════════
+
+  /// 앱 통일 스타일 다이얼로그 프레임
+  static Widget _buildDialog(
+    BuildContext context, {
+    required String title,
+    required Widget body,
+    required List<Widget> actions,
+    required IconData icon,
+    required Color accentColor,
+  }) {
+    return Dialog(
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+      insetPadding: const EdgeInsets.symmetric(horizontal: 32, vertical: 24),
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 380),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            // 그라데이션 헤더
+            Container(
+              padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 18)),
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  colors: [accentColor, accentColor.withValues(alpha: 0.75)],
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                ),
+                borderRadius: const BorderRadius.only(
+                  topLeft: Radius.circular(24),
+                  topRight: Radius.circular(24),
+                ),
+              ),
+              child: Row(
+                children: [
+                  Container(
+                    padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 10)),
+                    decoration: BoxDecoration(
+                      color: Colors.white.withValues(alpha: 0.2),
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: Icon(
+                      icon,
+                      color: Colors.white,
+                      size: ResponsiveHelper.iconSize(context, 22),
+                    ),
+                  ),
+                  SizedBox(width: ResponsiveHelper.spacing(context, 12)),
+                  Expanded(
+                    child: Text(
+                      title,
+                      style: ResponsiveHelper.subtitleStyle(context).copyWith(
+                        fontWeight: FontWeight.bold,
+                        color: Colors.white,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            // 본문
+            Padding(
+              padding: EdgeInsets.fromLTRB(
+                ResponsiveHelper.spacing(context, 20),
+                ResponsiveHelper.spacing(context, 16),
+                ResponsiveHelper.spacing(context, 20),
+                ResponsiveHelper.spacing(context, 4),
+              ),
+              child: body,
+            ),
+            // 버튼 행
+            Container(
+              padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 16)),
+              decoration: const BoxDecoration(
+                color: AppColors.grey50,
+                borderRadius: BorderRadius.only(
+                  bottomLeft: Radius.circular(24),
+                  bottomRight: Radius.circular(24),
+                ),
+              ),
+              child: Row(
+                children: actions
+                    .asMap()
+                    .entries
+                    .map((e) => Expanded(
+                          child: Padding(
+                            padding: EdgeInsets.only(
+                              left: e.key > 0
+                                  ? ResponsiveHelper.spacing(context, 8)
+                                  : 0,
+                            ),
+                            child: e.value,
+                          ),
+                        ))
+                    .toList(),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// 취소 버튼
+  static Widget _cancelBtn(
+    BuildContext context,
+    VoidCallback onPressed,
+    String text,
+  ) {
+    return Material(
+      color: AppColors.grey100,
+      borderRadius: BorderRadius.circular(10),
+      child: InkWell(
+        onTap: onPressed,
+        borderRadius: BorderRadius.circular(10),
+        child: Padding(
+          padding: EdgeInsets.symmetric(vertical: ResponsiveHelper.spacing(context, 13)),
+          child: Center(
+            child: Text(
+              text,
+              style: ResponsiveHelper.bodyStyle(context).copyWith(
+                color: AppColors.grey700,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// 확인 버튼
+  static Widget _confirmBtn(
+    BuildContext context,
+    VoidCallback onPressed,
+    String text,
+    Color color,
+  ) {
+    return Material(
+      color: color,
+      borderRadius: BorderRadius.circular(10),
+      child: InkWell(
+        onTap: onPressed,
+        borderRadius: BorderRadius.circular(10),
+        child: Padding(
+          padding: EdgeInsets.symmetric(vertical: ResponsiveHelper.spacing(context, 13)),
+          child: Center(
+            child: Text(
+              text,
+              style: ResponsiveHelper.bodyStyle(context).copyWith(
+                color: Colors.white,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
   }
 }

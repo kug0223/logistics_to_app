@@ -1,4 +1,4 @@
-// lib/screens/super_admin/system_settings_screen.dart
+﻿// lib/screens/super_admin/system_settings_screen.dart
 
 import 'package:flutter/material.dart';
 import '../../utils/responsive_helper.dart';
@@ -6,6 +6,7 @@ import '../../theme/app_colors.dart';
 import 'trust_rules_settings_screen.dart';
 import 'review_tags_settings_screen.dart';
 import 'badge_settings_screen.dart';
+import 'minimum_wage_settings_screen.dart';
 
 /// 슈퍼관리자 시스템 설정 화면
 /// 
@@ -114,9 +115,13 @@ class SystemSettingsScreen extends StatelessWidget {
               _SettingItem(
                 icon: Icons.monetization_on_outlined,
                 title: '급여 설정',
-                subtitle: '최저시급, 수당 계산 규칙',
-                onTap: () => _showComingSoon(context),
-                isDisabled: true,
+                subtitle: '연도별 최저시급 관리',
+                onTap: () => Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (context) => const MinimumWageSettingsScreen(),
+                  ),
+                ),
               ),
               _SettingItem(
                 icon: Icons.notifications_outlined,

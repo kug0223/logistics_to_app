@@ -4,6 +4,9 @@ import 'package:flutter/foundation.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'dart:math';
 import '../services/firestore_service.dart';
+import '../models/core/work_detail_data.dart';
+import 'format_helper.dart';
+import 'toast_helper.dart';
 
 class TestDataHelper {
   static final FirebaseFirestore _firestore = FirebaseFirestore.instance;
@@ -106,16 +109,19 @@ class TestDataHelper {
     debugPrint('');
     
     final List<String> uids = [];
+    // 루프 밖에서 기준 타임스탬프 고정 → 내부에서 호출해도 중복 없음
+    final baseTs = DateTime.now().millisecondsSinceEpoch;
 
     for (int i = 0; i < count; i++) {
       // ━━━ 기본 정보 생성 ━━━
       final firstName = _firstNames[_random.nextInt(_firstNames.length)];
       final lastName = _lastNames[_random.nextInt(_lastNames.length)];
       final name = '$firstName$lastName';
-      
-      final uid = 'dummy_user_${DateTime.now().millisecondsSinceEpoch}_$i';
+
+      final uid = 'dummy_user_${baseTs}_$i';
       final phone = '010-${_random.nextInt(9000) + 1000}-${_random.nextInt(9000) + 1000}';
-      final email = 'dummy$i@ALfit.test';
+      // 타임스탬프 포함 → 반복 호출 시 이메일 중복 방지
+      final email = 'dummy_${baseTs}_$i@alfit.test';
       
       // ━━━ 성별 & 생년월일 ━━━
       final gender = _random.nextBool() ? '남성' : '여성';
@@ -267,9 +273,10 @@ class TestDataHelper {
   /// ⭐ 특정 TO에 더미 지원서 생성
   static Future<void> createDummyApplications({
     required String toId,
-    required List<String> workTypes,
     required int pendingCount,
     required int confirmedCount,
+    DateTime? slotDate, // flex TO 슬롯 선택 시 workDate 오버라이드
+    String? slotId,     // flex TO 슬롯 ID (지원자 조회·슬롯 통계에 필수)
   }) async {
     debugPrint('');
     debugPrint('📝 ═══════════════════════════════════════');
@@ -291,126 +298,166 @@ class TestDataHelper {
     }
 
     final toData = toDoc.data()!;
-    final businessId = toData['businessId'];
-    final businessName = toData['businessName'];
-    final toTitle = toData['title'];
-    final date = (toData['date'] as Timestamp).toDate();
-    final startTime = toData['startTime'];
-    final endTime = toData['endTime'];
+    final businessId = toData['businessId'] as String?;
+    if (businessId == null || businessId.isEmpty) {
+      debugPrint('❌ TO에 businessId가 없습니다: $toId');
+      return;
+    }
+    final businessName = toData['businessName'] as String? ?? '';
+    final toTitle = toData['title'] as String? ?? '';
+    final toType = toData['type'] as String? ?? 'flex';         // 'flex' | 'contract'
+    final isContract = toType == 'contract';
 
-    // 장기 TO 정보
-    final jobType = toData['jobType'] ?? 'short';
-    final isLongTerm = jobType == 'long_term';
-    final workEndDate = toData['endDate'] as Timestamp?;
-    final workDays = toData['workDays'] as List?;
+    final rangeStart = toData['rangeStart'] != null
+        ? (toData['rangeStart'] as Timestamp).toDate()
+        : DateTime.now();
+    final rangeEnd = toData['rangeEnd'] != null
+        ? (toData['rangeEnd'] as Timestamp).toDate()
+        : null;
+    final toWorkDays = toData['workDays'] as List? ?? [];
 
-    if (isLongTerm) {
-      debugPrint('📌 장기 TO 감지!');
-      if (workEndDate != null) {
-        final endDate = workEndDate.toDate();
-        debugPrint('   근무 기간: ${date.year}-${date.month}-${date.day} ~ ${endDate.year}-${endDate.month}-${endDate.day}');
+    // flex TO: slotDate 지정 시 그 날짜, 없으면 오늘 → 출근 데이터 생성 즉시 테스트 가능
+    // contract TO: rangeStart(근무 시작일) 사용
+    final today = DateTime.now();
+    final todayStart = DateTime(today.year, today.month, today.day);
+    final workDate = isContract
+        ? rangeStart
+        : (slotDate != null
+            ? DateTime(slotDate.year, slotDate.month, slotDate.day)
+            : todayStart);
+
+    if (isContract) {
+      debugPrint('📌 장기(contract) TO 감지!');
+      if (rangeEnd != null) {
+        debugPrint('   근무 기간: ${rangeStart.year}-${rangeStart.month}-${rangeStart.day} ~ ${rangeEnd.year}-${rangeEnd.month}-${rangeEnd.day}');
       }
-      if (workDays != null && workDays.isNotEmpty) {
-        debugPrint('   근무 요일: ${workDays.join(", ")}');
+      if (toWorkDays.isNotEmpty) {
+        debugPrint('   근무 요일: ${toWorkDays.join(", ")}');
       }
     }
 
-    // 3. WorkDetails 조회
-    final workDetailsSnapshot = await _firestore
-        .collection('tos')
-        .doc(toId)
-        .collection('workDetails')
-        .get();
+    // 3. WorkDetails — slotId 있으면 슬롯 문서 우선, 없으면 TO 문서
+    List<WorkDetailData> workDetailsList = [];
 
-    if (workDetailsSnapshot.docs.isEmpty) {
-      debugPrint('❌ WorkDetails가 없습니다');
+    if (slotId != null) {
+      final slotDoc = await _firestore
+          .collection('tos')
+          .doc(toId)
+          .collection('slots')
+          .doc(slotId)
+          .get();
+      if (slotDoc.exists) {
+        final slotWorkDetailsRaw = slotDoc.data()?['workDetails'] as List?;
+        if (slotWorkDetailsRaw != null && slotWorkDetailsRaw.isNotEmpty) {
+          workDetailsList = slotWorkDetailsRaw
+              .map((e) => WorkDetailData.fromMap(e as Map<String, dynamic>))
+              .toList();
+          debugPrint('   업무 상세: 슬롯 문서에서 읽음 (${workDetailsList.length}개)');
+        }
+      }
+    }
+
+    // 슬롯에 없으면 TO 문서에서 폴백
+    if (workDetailsList.isEmpty) {
+      final workDetailsRaw = toData['workDetails'] as List?;
+      if (workDetailsRaw != null && workDetailsRaw.isNotEmpty) {
+        workDetailsList = workDetailsRaw
+            .map((e) => WorkDetailData.fromMap(e as Map<String, dynamic>))
+            .toList();
+        debugPrint('   업무 상세: TO 문서에서 읽음 (${workDetailsList.length}개)');
+      }
+    }
+
+    if (workDetailsList.isEmpty) {
+      debugPrint('❌ WorkDetails가 없습니다 (슬롯 또는 TO 문서에 workDetails 배열이 필요합니다)');
+      ToastHelper.showError('업무 상세 정보가 없습니다. 먼저 업무 유형을 등록해주세요.');
       return;
     }
 
-    final workDetails = workDetailsSnapshot.docs;
+    debugPrint('   업무 상세: ${workDetailsList.map((w) => w.workType).join(", ")}');
+
     final now = Timestamp.now();
+    final List<String> createdAppIds = [];
 
     // 4. 지원서 생성
-    final List<String> createdAppIds = [];
-    
     for (int i = 0; i < uids.length; i++) {
       final uid = uids[i];
       final isConfirmed = i < confirmedCount;
-      
-      // 랜덤 WorkDetail 선택
-      final workDetail = workDetails[_random.nextInt(workDetails.length)];
-      final workData = workDetail.data();
-      
-      // 지원서 데이터 생성 (WorkDetails에서 시간 가져옴)
+
+      // 업무상세 골고루 분배 (라운드 로빈)
+      final workDetail = workDetailsList[i % workDetailsList.length];
+
       final applicationData = <String, dynamic>{
         'businessId': businessId,
         'businessName': businessName,
-        'toId': toId,  // ✅ 추가!
+        'toId': toId,
         'toTitle': toTitle,
-        'workDate': Timestamp.fromDate(date),
-        'startTime': workData['startTime'] ?? startTime ?? '',
-        'endTime': workData['endTime'] ?? endTime ?? '',
+        if (slotId != null) 'slotId': slotId,
+        'workDate': Timestamp.fromDate(workDate),
+        'startTime': workDetail.startTime,
+        'endTime': workDetail.endTime,
         'uid': uid,
-        'selectedWorkType': workData['workType'],
+        'selectedWorkType': workDetail.workType,
         'workDetailId': workDetail.id,
-        'wage': workData['wage'],
+        'wage': workDetail.wage,
         'status': isConfirmed ? 'CONFIRMED' : 'PENDING',
         'appliedAt': now,
         'confirmedAt': isConfirmed ? now : null,
         'isDummy': true,
-        
-        // 장기 TO 필드
-        'type': jobType,
+        'type': toType,
       };
-      
-      // 장기 TO인 경우 추가 필드
-      if (isLongTerm && workEndDate != null) {
+
+      // contract TO 추가 필드
+      if (isContract && rangeEnd != null) {
         applicationData['isLongTermApplication'] = true;
-        applicationData['workEndDate'] = workEndDate;
-        
-        if (workDays != null && workDays.isNotEmpty) {
-          applicationData['workDays'] = workDays;
+        applicationData['workEndDate'] = Timestamp.fromDate(rangeEnd);
+
+        if (toWorkDays.isNotEmpty) {
+          applicationData['workDays'] = List<String>.from(toWorkDays);
         }
-        
-        // 🔥 희망 시작일 랜덤 생성 (오늘 ~ 7일 후 중 랜덤)
-        final daysToAdd = _random.nextInt(8); // 0~7일
+
+        // 희망 시작일 랜덤 생성 (오늘 ~ 7일 후)
+        final daysToAdd = _random.nextInt(8);
         final desiredStart = DateTime.now().add(Duration(days: daysToAdd));
         final desiredStartDate = DateTime(desiredStart.year, desiredStart.month, desiredStart.day);
         applicationData['desiredStartDate'] = Timestamp.fromDate(desiredStartDate);
-        
+
         debugPrint('     📅 희망시작일: ${desiredStartDate.month}/${desiredStartDate.day}');
       }
-      
+
       final appDoc = await _firestore.collection('applications').add(applicationData);
       createdAppIds.add(appDoc.id);
-      
-      debugPrint('  ${isConfirmed ? "✅" : "⏳"} $uid → ${workData['workType']} (${workData['wage']}원)');
+
+      debugPrint('  ${isConfirmed ? "✅" : "⏳"} $uid → ${workDetail.workType} (${workDetail.wage}원)');
     }
 
     debugPrint('');
     debugPrint('🎉 지원서 ${createdAppIds.length}개 생성 완료!');
-    
-    // 5. TO 통계 재계산
+
+    // 5. 슬롯 통계 직접 업데이트 (flex TO 슬롯 선택 시)
+    if (slotId != null) {
+      debugPrint('📊 슬롯 통계 업데이트 중...');
+      try {
+        await _firestore
+            .collection('tos')
+            .doc(toId)
+            .collection('slots')
+            .doc(slotId)
+            .update({
+          'pendingCount': FieldValue.increment(pendingCount),
+          'confirmedCount': FieldValue.increment(confirmedCount),
+        });
+        debugPrint('✅ 슬롯 통계 업데이트 완료 (대기+$pendingCount, 확정+$confirmedCount)');
+      } catch (e) {
+        debugPrint('⚠️ 슬롯 통계 업데이트 실패: $e');
+      }
+    }
+
+    // 6. TO 통계 재계산 (한 번만)
     debugPrint('📊 TO 통계 재계산 중...');
     final success = await _firestoreService.recalculateTOStats(toId);
-    if (success) {
-      debugPrint('✅ TO 통계 재계산 완료');
-    } else {
-      debugPrint('⚠️  TO 통계 재계산 실패');
-    }
-    
-   // ✅ 그룹 마스터 통계 동기화 (tos 컬렉션)
-    await _firestoreService.syncGroupMasterStats(toId);
-    debugPrint('✅ 그룹 마스터 통계 동기화 완료');
-    
-    // ✅ groups 컬렉션 통계도 동기화
-    final toDoc2 = await _firestore.collection('tos').doc(toId).get();
-    final groupId = toDoc2.data()?['groupId'] as String?;
-    if (groupId != null) {
-      await _firestoreService.syncGroupStats(groupId);
-      debugPrint('✅ groups 컬렉션 통계 동기화 완료: $groupId');
-    }
-    
+    debugPrint(success ? '✅ TO 통계 재계산 완료' : '⚠️  TO 통계 재계산 실패');
+
     // ✅ 캐시 클리어
     _firestoreService.clearCache();
     debugPrint('');
@@ -445,7 +492,7 @@ class TestDataHelper {
       final todayWorkers = confirmedSnapshot.docs.where((doc) {
         final data = doc.data();
         final workDate = (data['workDate'] as Timestamp).toDate();
-        final isLongTerm = data['type'] == 'long_term' || data['isLongTermApplication'] == true;
+        final isLongTerm = data['type'] == 'contract' || data['isLongTermApplication'] == true;
 
         if (!isLongTerm) {
           // 단기: 날짜 일치
@@ -466,10 +513,7 @@ class TestDataHelper {
         final workDays = data['workDays'] as List?;
         if (workDays == null || workDays.isEmpty) return true;
 
-        final weekdays = ['월', '화', '수', '목', '금', '토', '일'];
-        final dayOfWeek = weekdays[date.weekday - 1];
-
-        return workDays.contains(dayOfWeek);
+        return workDays.contains(FormatHelper.weekday(date));
       }).toList();
 
       debugPrint('📅 오늘 근무 대상: ${todayWorkers.length}명');
@@ -486,14 +530,21 @@ class TestDataHelper {
       for (var appDoc in todayWorkers) {
         final appData = appDoc.data();
         final appId = appDoc.id;
-        final uid = appData['uid'];
-        final startTime = appData['startTime'];
-        final endTime = appData['endTime'];
+        final uid = appData['uid'] as String?;
+        final startTime = appData['startTime'] as String?;
+        final endTime = appData['endTime'] as String?;
+
+        // 필수 필드 누락 시 스킵
+        if (uid == null || startTime == null || endTime == null ||
+            !startTime.contains(':') || !endTime.contains(':')) {
+          debugPrint('  ⚠️ $appId - startTime/endTime 누락, 스킵');
+          continue;
+        }
 
         // 70% 확률로 출근
         if (_random.nextDouble() > 0.7) continue;
 
-        // 출근 시간 생성
+        // 출근 시간 생성 (±10분 오프셋, 0~59분 범위 클램프)
         final startParts = startTime.split(':');
         final startHour = int.parse(startParts[0]);
         final startMinute = int.parse(startParts[1]);
@@ -503,7 +554,7 @@ class TestDataHelper {
           date.month,
           date.day,
           startHour,
-          startMinute + _random.nextInt(30) - 15, // ±15분
+          (startMinute + _random.nextInt(21) - 10).clamp(0, 59),
         );
 
         // 50% 확률로 퇴근
@@ -518,7 +569,7 @@ class TestDataHelper {
             date.month,
             date.day,
             endHour,
-            endMinute + _random.nextInt(30) - 15,
+            (endMinute + _random.nextInt(21) - 10).clamp(0, 59),
           );
           checkedOutCount++;
         }
@@ -601,16 +652,13 @@ class TestDataHelper {
 
       // 1. 더미 지원자 삭제
       debugPrint('📋 1단계: 더미 지원자(users) 삭제 중...');
-      
-      final allUsersSnapshot = await _firestore.collection('users').get();
-      debugPrint('   전체 users: ${allUsersSnapshot.docs.length}개');
-      
-      final dummyUsers = allUsersSnapshot.docs.where((doc) {
-        final uid = doc.id;
-        final data = doc.data();
-        return uid.startsWith('dummy_user_') || (data['isDummy'] == true);
-      }).toList();
-      
+
+      final dummyUsersSnapshot = await _firestore
+          .collection('users')
+          .where('isDummy', isEqualTo: true)
+          .get();
+      final dummyUsers = dummyUsersSnapshot.docs;
+
       debugPrint('   더미 users: ${dummyUsers.length}개');
 
       if (dummyUsers.isNotEmpty) {
@@ -634,17 +682,13 @@ class TestDataHelper {
 
       // 2. 더미 지원서 삭제
       debugPrint('📋 2단계: 더미 지원서(applications) 삭제 중...');
-      
-      final allAppsSnapshot = await _firestore.collection('applications').get();
-      debugPrint('   전체 applications: ${allAppsSnapshot.docs.length}개');
-      
-      final dummyApps = allAppsSnapshot.docs.where((doc) {
-        final data = doc.data();
-        final uid = data['uid'];
-        return (uid != null && uid.toString().startsWith('dummy_user_')) || 
-               (data['isDummy'] == true);
-      }).toList();
-      
+
+      final dummyAppsSnapshot = await _firestore
+          .collection('applications')
+          .where('isDummy', isEqualTo: true)
+          .get();
+      final dummyApps = dummyAppsSnapshot.docs;
+
       debugPrint('   더미 applications: ${dummyApps.length}개');
 
       if (dummyApps.isNotEmpty) {
@@ -654,12 +698,8 @@ class TestDataHelper {
           
           for (var doc in chunk) {
             final data = doc.data();
-            final businessId = data['businessId'];
-            if (businessId != null) {
-              // TO ID 추적 (나중에 통계 재계산)
-              affectedTOIds.add(businessId);
-            }
-            
+            final toId = data['toId'] as String?;
+            if (toId != null) affectedTOIds.add(toId);
             batch.delete(doc.reference);
           }
           
@@ -677,7 +717,6 @@ class TestDataHelper {
       await clearDummyAttendance();
       
       // 4. 더미 리뷰 삭제
-      // 4. 더미 리뷰 삭제
       await clearDummyReviews();
 
       // 5. ✅ 모든 TO 통계 재계산
@@ -685,33 +724,29 @@ class TestDataHelper {
       debugPrint('📊 5단계: TO 통계 재계산 중...');
       
       final allTOsSnapshot = await _firestore.collection('tos').get();
-      int recalculatedCount = 0;
-      
-      // ✅ 영향받은 groupId 추적
-      Set<String> affectedGroupIds = {};
-      
-      for (var toDoc in allTOsSnapshot.docs) {
-        final toId = toDoc.id;
-        await _firestoreService.recalculateTOStats(toId);
-        
-        // 그룹 마스터 통계 동기화
-        final toData = toDoc.data();
-        final groupId = toData['groupId'] as String?;
-        if (groupId != null) {
-          await _firestoreService.syncGroupMasterStats(toId);
-          affectedGroupIds.add(groupId);
-        }
-        
-        recalculatedCount++;
-      }
-      
+
+      // 병렬로 TO 통계 재계산 + 영향받은 groupId 수집
+      final groupIdResults = await Future.wait(
+        allTOsSnapshot.docs.map((toDoc) async {
+          final toId = toDoc.id;
+          await _firestoreService.recalculateTOStats(toId);
+          final groupId = toDoc.data()['groupId'] as String?;
+          if (groupId != null) {
+            await _firestoreService.syncGroupMasterStats(toId);
+          }
+          return groupId;
+        }),
+      );
+      final recalculatedCount = allTOsSnapshot.docs.length;
+      final affectedGroupIds = groupIdResults.whereType<String>().toSet();
+
       debugPrint('✅ $recalculatedCount개 TO 통계 재계산 완료');
-      
-      // ✅ groups 컬렉션 통계도 재계산
+
+      // 병렬로 groups 컬렉션 통계 재계산
       debugPrint('📊 6단계: groups 컬렉션 통계 재계산 중...');
-      for (var groupId in affectedGroupIds) {
-        await _firestoreService.syncGroupStats(groupId);
-      }
+      await Future.wait(
+        affectedGroupIds.map((groupId) => _firestoreService.syncGroupStats(groupId)),
+      );
       debugPrint('✅ ${affectedGroupIds.length}개 그룹 통계 재계산 완료');
 
       debugPrint('');
@@ -743,13 +778,11 @@ class TestDataHelper {
     debugPrint('📋 3단계: 더미 출근 데이터(attendance) 삭제 중...');
 
     try {
-      final allAttendanceSnapshot = await _firestore.collection('attendance').get();
-      debugPrint('   전체 attendance: ${allAttendanceSnapshot.docs.length}개');
-
-      final dummyAttendance = allAttendanceSnapshot.docs.where((doc) {
-        final data = doc.data();
-        return data['isDummy'] == true;
-      }).toList();
+      final dummyAttendanceSnapshot = await _firestore
+          .collection('attendance')
+          .where('isDummy', isEqualTo: true)
+          .get();
+      final dummyAttendance = dummyAttendanceSnapshot.docs;
 
       debugPrint('   더미 attendance: ${dummyAttendance.length}개');
 
@@ -826,19 +859,22 @@ class TestDataHelper {
       int createdCount = 0;
       final now = DateTime.now();
 
+      // 이미 리뷰가 있는 더미 사용자 ID를 한 번에 조회 (N+1 쿼리 방지)
+      final existingReviewsSnap = await _firestore
+          .collection('reviews')
+          .where('businessId', isEqualTo: businessId)
+          .where('isDummy', isEqualTo: true)
+          .get();
+      final alreadyReviewedUids = existingReviewsSnap.docs
+          .map((d) => d.data()['targetUserId'] as String?)
+          .whereType<String>()
+          .toSet();
+
       for (var userDoc in dummyUsers) {
         final uid = userDoc.id;
         final userData = userDoc.data();
-        
-        // 이미 해당 사업장에서 리뷰가 있는지 확인
-        final existingReview = await _firestore
-            .collection('reviews')
-            .where('targetUserId', isEqualTo: uid)
-            .where('businessId', isEqualTo: businessId)
-            .limit(1)
-            .get();
-        
-        if (existingReview.docs.isNotEmpty) {
+
+        if (alreadyReviewedUids.contains(uid)) {
           debugPrint('  ⏭️ $uid - 이미 리뷰 존재, 스킵');
           continue;
         }
@@ -920,7 +956,7 @@ class TestDataHelper {
       
       double totalRating = 0;
       for (var doc in reviews.docs) {
-        totalRating += (doc.data()['rating'] ?? 0) as int;
+        totalRating += ((doc.data()['rating'] ?? 0) as num).toDouble();
       }
       
       final avgRating = totalRating / reviews.docs.length;
@@ -936,24 +972,31 @@ class TestDataHelper {
   /// 더미 리뷰 삭제
   static Future<void> clearDummyReviews() async {
     debugPrint('📋 더미 리뷰(reviews) 삭제 중...');
-    
+
     try {
-      final reviewsSnapshot = await _firestore.collection('reviews').get();
-      
-      int deletedCount = 0;
-      for (var doc in reviewsSnapshot.docs) {
+      final reviewsSnapshot = await _firestore
+          .collection('reviews')
+          .where('isDummy', isEqualTo: true)
+          .get();
+
+      final toDelete = reviewsSnapshot.docs.where((doc) {
         final data = doc.data();
         final targetUserId = data['targetUserId'] as String?;
-        final isDummy = data['isDummy'] == true;
-        
-        // isDummy 플래그 또는 dummy_user_ 대상인 리뷰 삭제
-        if (isDummy || (targetUserId != null && targetUserId.startsWith('dummy_user_'))) {
-          await doc.reference.delete();
-          deletedCount++;
+        return data['isDummy'] == true ||
+            (targetUserId != null && targetUserId.startsWith('dummy_user_'));
+      }).toList();
+
+      debugPrint('   더미 reviews: ${toDelete.length}개');
+
+      for (int i = 0; i < toDelete.length; i += 500) {
+        final batch = _firestore.batch();
+        for (var doc in toDelete.skip(i).take(500)) {
+          batch.delete(doc.reference);
         }
+        await batch.commit();
       }
-      
-      debugPrint('✅ 더미 리뷰 $deletedCount개 삭제 완료');
+
+      debugPrint('✅ 더미 리뷰 ${toDelete.length}개 삭제 완료');
     } catch (e) {
       debugPrint('⚠️ 더미 리뷰 삭제 실패: $e');
     }

@@ -1,10 +1,11 @@
-﻿import 'package:flutter/material.dart';
-import 'package:table_calendar/table_calendar.dart';
+import 'package:flutter/material.dart';
 import '../../models/core/application_model.dart';
 import '../../utils/calendar_helper.dart';
 import '../../theme/app_colors.dart';
+import 'app_calendar.dart';
 
-/// 근무 스케줄 캘린더 위젯 (workforce_calendar_view 스타일 통일)
+/// 사용자 근무 스케줄 캘린더
+/// AppCalendar 위에 ApplicationModel 기반 마커를 올린 래퍼.
 class ScheduleCalendar extends StatelessWidget {
   final DateTime focusedDay;
   final DateTime? selectedDay;
@@ -12,7 +13,7 @@ class ScheduleCalendar extends StatelessWidget {
   final String selectedFilter;
   final Function(DateTime selectedDay, DateTime focusedDay) onDaySelected;
   final Function(DateTime focusedDay) onPageChanged;
-  
+
   const ScheduleCalendar({
     super.key,
     required this.focusedDay,
@@ -22,170 +23,87 @@ class ScheduleCalendar extends StatelessWidget {
     required this.onDaySelected,
     required this.onPageChanged,
   });
-  
+
   @override
   Widget build(BuildContext context) {
-    return TableCalendar(
-      locale: 'ko_KR',
-      firstDay: DateTime.utc(2024, 1, 1),
-      lastDay: DateTime.utc(2050, 12, 31),
+    return AppCalendar(
       focusedDay: focusedDay,
-      calendarFormat: CalendarFormat.month,
-      
-      daysOfWeekHeight: 30,
-      rowHeight: 40,
-      
-      selectedDayPredicate: (day) => DateUtils.isSameDay(selectedDay, day),
-      
-      // ✅ 과거 날짜 + 일정 없음 → 비활성화
-      enabledDayPredicate: (day) {
-        final now = DateTime.now();
-        final today = DateTime(now.year, now.month, now.day);
-        final dayOnly = DateTime(day.year, day.month, day.day);
-        
-        // 오늘 이후는 항상 선택 가능
-        if (!dayOnly.isBefore(today)) {
-          return true;
-        }
-        
-        // 과거 날짜: 일정이 있으면 선택 가능, 없으면 비활성화
-        final events = CalendarHelper.getEventsForDay(day, applications, selectedFilter);
-        return events.isNotEmpty;
-      },
-      
+      selectedDay: selectedDay,
       onDaySelected: onDaySelected,
       onPageChanged: onPageChanged,
-      
-      // 이벤트 마커
-      eventLoader: (day) {
-        return CalendarHelper.getEventsForDay(day, applications, selectedFilter);
+      rowHeight: 40,
+      enabledDayPredicate: (day) {
+        final today = DateTime.now();
+        final todayOnly = DateTime(today.year, today.month, today.day);
+        final dayOnly = DateTime(day.year, day.month, day.day);
+        if (!dayOnly.isBefore(todayOnly)) return true;
+        return CalendarHelper.getEventsForDay(day, applications, selectedFilter).isNotEmpty;
       },
-      
-      // ✨ 커스텀 마커 빌더 (workforce_calendar_view 스타일)
-      calendarBuilders: CalendarBuilders(
-        markerBuilder: (context, date, events) {
-          if (events.isEmpty) return null;
-          
-          final apps = events.cast<ApplicationModel>();
-          
-          // 단기/장기 구분
-          final shortTermApps = apps.where((app) => !app.isLongTermApplication).toList();
-          final longTermApps = apps.where((app) => app.isLongTermApplication).toList();
-          
-          // 상태별 구분
-          final hasConfirmed = apps.any((app) => app.status == 'CONFIRMED');
-          final hasPending = apps.any((app) => app.status == 'PENDING');
-          final hasRejected = apps.any((app) => app.status == 'REJECTED');
-          
-          List<Widget> markers = [];
-          
-          // ✨ 확정 마커 - workforce_calendar_view와 동일한 색상
-          if (hasConfirmed) {
-            final hasShortConfirmed = shortTermApps.any((app) => app.status == 'CONFIRMED');
-            final hasLongConfirmed = longTermApps.any((app) => app.status == 'CONFIRMED');
-            
-            // 휴무일 체크
-            final hasLeaveDay = longTermApps.any((app) => 
-              app.status == 'CONFIRMED' && app.isLeaveDateOn(date)
-            );
-            
-            if (hasShortConfirmed) {
-              markers.add(_buildMarker(
-                Theme.of(context).primaryColor,  // ← workforce_calendar_view와 동일
-                isLongTerm: false,
-              ));
-            }
-            if (hasLongConfirmed) {
-              if (hasLeaveDay) {
-                markers.add(_buildMarker(
-                  AppColors.grey400,
-                  isLongTerm: true,
-                ));
-              } else {
-                markers.add(_buildMarker(
-                  AppColors.amberDark,  // ← workforce_calendar_view와 동일
-                  isLongTerm: true,
-                ));
-              }
-            }
+      eventLoader: (day) =>
+          CalendarHelper.getEventsForDay(day, applications, selectedFilter),
+      markerBuilder: (context, date, events) {
+        if (events.isEmpty) return null;
+        final apps = events.cast<ApplicationModel>();
+
+        final shortTermApps = apps.where((a) => !a.isLongTermApplication).toList();
+        final longTermApps = apps.where((a) => a.isLongTermApplication).toList();
+
+        final hasConfirmed = apps.any((a) => a.status == 'CONFIRMED');
+        final hasPending = apps.any((a) => a.status == 'PENDING');
+        final hasRejected = apps.any((a) => a.status == 'REJECTED');
+
+        final markers = <Widget>[];
+
+        if (hasConfirmed) {
+          final hasShortConfirmed = shortTermApps.any((a) => a.status == 'CONFIRMED');
+          final hasLongConfirmed = longTermApps.any((a) => a.status == 'CONFIRMED');
+          final hasLeaveDay = longTermApps.any(
+              (a) => a.status == 'CONFIRMED' && a.isLeaveDateOn(date));
+
+          if (hasShortConfirmed) {
+            markers.add(_dot(Theme.of(context).primaryColor, isLongTerm: false));
           }
-          
-          // ✨ 대기 마커
-          if (hasPending) {
-            final hasShortPending = shortTermApps.any((app) => app.status == 'PENDING');
-            final hasLongPending = longTermApps.any((app) => app.status == 'PENDING');
-            
-            if (hasShortPending) {
-              markers.add(_buildMarker(AppColors.warningMedium, isLongTerm: false));
-            }
-            if (hasLongPending) {
-              markers.add(_buildMarker(AppColors.warningFaded, isLongTerm: true));
-            }
+          if (hasLongConfirmed) {
+            markers.add(_dot(
+              hasLeaveDay ? AppColors.grey400 : AppColors.amberDark,
+              isLongTerm: true,
+            ));
           }
-          
-          // ✨ 거절 마커 (최대 3개까지만)
-          if (hasRejected && markers.length < 3) {
-            markers.add(_buildMarker(AppColors.errorMedium, isLongTerm: false));
+        }
+
+        if (hasPending) {
+          if (shortTermApps.any((a) => a.status == 'PENDING')) {
+            markers.add(_dot(AppColors.warningMedium, isLongTerm: false));
           }
-          
-          // 최대 3개까지만 표시
-          if (markers.length > 3) {
-            markers = markers.sublist(0, 3);
+          if (longTermApps.any((a) => a.status == 'PENDING')) {
+            markers.add(_dot(AppColors.warningFaded, isLongTerm: true));
           }
-          
-          return Positioned(
-            bottom: 3,  // ← workforce_calendar_view와 동일한 위치
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: markers,
-            ),
-          );
-        },
-      ),
-      
-      // ✨ workforce_calendar_view와 동일한 스타일
-      calendarStyle: CalendarStyle(
-        markersMaxCount: 2,
-        todayDecoration: BoxDecoration(
-          color: Theme.of(context).primaryColor.withValues(alpha: 0.5),
-          shape: BoxShape.circle,
-        ),
-        selectedDecoration: BoxDecoration(
-          color: Theme.of(context).primaryColor,
-          shape: BoxShape.circle,
-        ),
-      ),
-      
-      // ✨ workforce_calendar_view와 동일한 헤더
-      headerStyle: HeaderStyle(
-        formatButtonVisible: false,
-        titleCentered: true,
-        titleTextStyle: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
-        headerPadding: EdgeInsets.symmetric(vertical: 8),
-      ),
+        }
+
+        if (hasRejected && markers.length < 3) {
+          markers.add(_dot(AppColors.errorMedium, isLongTerm: false));
+        }
+
+        return Positioned(
+          bottom: 3,
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: markers.take(3).toList(),
+          ),
+        );
+      },
     );
   }
-  
-  /// ✨ 마커 위젯 생성 (workforce_calendar_view와 동일)
-  Widget _buildMarker(Color color, {required bool isLongTerm}) {
+
+  Widget _dot(Color color, {required bool isLongTerm}) {
     if (isLongTerm) {
-      // 장기 근무: 별 모양 (workforce_calendar_view와 동일)
-      return Icon(
-        Icons.star,
-        size: 10,  // ← workforce_calendar_view와 동일한 크기
-        color: color,
-      );
-    } else {
-      // 단기 근무: 원형 (workforce_calendar_view와 동일)
-      return Container(
-        width: 7,  // ← workforce_calendar_view와 동일한 크기
-        height: 7,
-        margin: const EdgeInsets.symmetric(horizontal: 1.5),  // ← workforce_calendar_view와 동일
-        decoration: BoxDecoration(
-          color: color,
-          shape: BoxShape.circle,
-        ),
-      );
+      return Icon(Icons.star, size: 10, color: color);
     }
+    return Container(
+      width: 7,
+      height: 7,
+      margin: const EdgeInsets.symmetric(horizontal: 1.5),
+      decoration: BoxDecoration(color: color, shape: BoxShape.circle),
+    );
   }
 }

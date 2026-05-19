@@ -1,6 +1,7 @@
-import 'package:flutter/material.dart';
+﻿import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import '../../utils/responsive_helper.dart';
+import '../../utils/format_helper.dart';
 import '../../theme/app_colors.dart';
 import '../calendar/carrot_style_calendar.dart';
 
@@ -35,6 +36,12 @@ class DatePickerBottomSheet extends StatefulWidget {
   /// 과거 날짜 선택 허용
   final bool allowPastDates;
 
+  /// 비활성화할 특정 날짜 목록
+  final List<DateTime>? disabledDates;
+
+  /// 선택 가능한 날짜 판단 함수 (false 반환 시 비활성화)
+  final bool Function(DateTime)? enabledDayPredicate;
+
   const DatePickerBottomSheet({
     super.key,
     this.initialDate,
@@ -43,6 +50,8 @@ class DatePickerBottomSheet extends StatefulWidget {
     this.minDate,
     this.maxDate,
     this.allowPastDates = false,
+    this.disabledDates,
+    this.enabledDayPredicate,
   });
 
   /// 바텀시트 표시
@@ -54,6 +63,8 @@ class DatePickerBottomSheet extends StatefulWidget {
     DateTime? minDate,
     DateTime? maxDate,
     bool allowPastDates = false,
+    List<DateTime>? disabledDates,
+    bool Function(DateTime)? enabledDayPredicate,
   }) {
     return showModalBottomSheet<DateTime>(
       context: context,
@@ -66,6 +77,8 @@ class DatePickerBottomSheet extends StatefulWidget {
         minDate: minDate,
         maxDate: maxDate,
         allowPastDates: allowPastDates,
+        disabledDates: disabledDates,
+        enabledDayPredicate: enabledDayPredicate,
       ),
     );
   }
@@ -120,6 +133,8 @@ class _DatePickerBottomSheetState extends State<DatePickerBottomSheet> {
                 minDate: widget.minDate,
                 maxDate: widget.maxDate,
                 allowPastDates: widget.allowPastDates,
+                disabledDates: widget.disabledDates,
+                enabledDayPredicate: widget.enabledDayPredicate,
                 onDateSelected: (date) {
                   setState(() => _selectedDate = date);
                 },
@@ -238,7 +253,7 @@ class _DatePickerBottomSheetState extends State<DatePickerBottomSheet> {
           ),
           SizedBox(width: ResponsiveHelper.spacing(context, 8)),
           Text(
-            DateFormat('yyyy년 M월 d일 (E)', 'ko_KR').format(_selectedDate!),
+            FormatHelper.formatDateLong(_selectedDate!),
             style: ResponsiveHelper.bodyStyle(context).copyWith(
               color: theme.primaryColor,
               fontWeight: FontWeight.bold,
@@ -324,6 +339,8 @@ class DateRangePickerBottomSheet extends StatefulWidget {
   final DateTime? minDate;
   final DateTime? maxDate;
   final bool allowPastDates;
+  final List<DateTime>? disabledDates;
+  final bool Function(DateTime)? enabledDayPredicate;
 
   const DateRangePickerBottomSheet({
     super.key,
@@ -334,6 +351,8 @@ class DateRangePickerBottomSheet extends StatefulWidget {
     this.minDate,
     this.maxDate,
     this.allowPastDates = false,
+    this.disabledDates,
+    this.enabledDayPredicate,
   });
 
   /// 바텀시트 표시
@@ -346,6 +365,8 @@ class DateRangePickerBottomSheet extends StatefulWidget {
     DateTime? minDate,
     DateTime? maxDate,
     bool allowPastDates = false,
+    List<DateTime>? disabledDates,
+    bool Function(DateTime)? enabledDayPredicate,
   }) {
     return showModalBottomSheet<DateTimeRange>(
       context: context,
@@ -359,6 +380,8 @@ class DateRangePickerBottomSheet extends StatefulWidget {
         minDate: minDate,
         maxDate: maxDate,
         allowPastDates: allowPastDates,
+        disabledDates: disabledDates,
+        enabledDayPredicate: enabledDayPredicate,
       ),
     );
   }
@@ -415,6 +438,8 @@ class _DateRangePickerBottomSheetState extends State<DateRangePickerBottomSheet>
                 minDate: widget.minDate,
                 maxDate: widget.maxDate,
                 allowPastDates: widget.allowPastDates,
+                disabledDates: widget.disabledDates,
+                enabledDayPredicate: widget.enabledDayPredicate,
                 onRangeChanged: (start, end) {
                   setState(() {
                     _rangeStart = start;

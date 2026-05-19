@@ -24,30 +24,37 @@ class IdCardHelper {
     required String requesterId,
     required List<String> targetUserIds,
   }) async {
-    final Map<String, String> statusMap = {};
-    
+    if (targetUserIds.isEmpty) return {};
+
     try {
-      for (final userId in targetUserIds) {
-        final access = await firestoreService.checkIdCardAccess(
-          requesterId: requesterId,
-          targetUserId: userId,
-        );
-        
-        if (access == null) {
-          statusMap[userId] = 'none';
-        } else if (access.status == IdCardAccessStatus.pending) {
-          statusMap[userId] = 'pending';
-        } else if (access.isValidAccess) {
-          statusMap[userId] = 'approved';
-        } else {
-          statusMap[userId] = 'none';
-        }
-      }
+      final entries = await Future.wait(
+        targetUserIds.map((userId) async {
+          final access = await firestoreService.checkIdCardAccess(
+            requesterId: requesterId,
+            targetUserId: userId,
+          );
+          final String status;
+          if (access == null) {
+            status = 'none';
+          } else if (access.status == IdCardAccessStatus.pending) {
+            status = 'pending';
+          } else if (access.isValidAccess) {
+            status = 'approved';
+          } else if (access.status == IdCardAccessStatus.expired) {
+            status = 'expired';
+          } else if (access.status == IdCardAccessStatus.rejected) {
+            status = 'rejected';
+          } else {
+            status = 'none';
+          }
+          return MapEntry(userId, status);
+        }),
+      );
+      return Map.fromEntries(entries);
     } catch (e) {
       debugPrint('⚠️ 신분증 상태 조회 실패: $e');
+      return {};
     }
-    
-    return statusMap;
   }
 
   /// 신분증 상태 정보 가져오기
@@ -56,20 +63,32 @@ class IdCardHelper {
       case 'approved':
         return IdCardStatusInfo(
           icon: Icons.verified,
-          label: '신분증',
+          label: '신분증완료',
           color: AppColors.success,
         );
       case 'pending':
         return IdCardStatusInfo(
           icon: Icons.hourglass_top,
-          label: '요청중',
+          label: '신분증요청중',
           color: AppColors.warning,
+        );
+      case 'expired':
+        return IdCardStatusInfo(
+          icon: Icons.timer_off_outlined,
+          label: '신분증만료',
+          color: AppColors.grey500,
+        );
+      case 'rejected':
+        return IdCardStatusInfo(
+          icon: Icons.cancel_outlined,
+          label: '신분증거절',
+          color: AppColors.error,
         );
       case 'none':
       default:
         return IdCardStatusInfo(
           icon: Icons.lock_outline,
-          label: '미요청',
+          label: '신분증미요청',
           color: AppColors.grey400,
         );
     }
@@ -90,7 +109,8 @@ class IdCardHelper {
   }) {
     return userIds.where((uid) {
       final status = statusMap[uid] ?? 'none';
-      return status == 'none';  // 미요청만 선택 가능
+      // 미요청·만료·거절 → 재요청 가능
+      return status == 'none' || status == 'expired' || status == 'rejected';
     }).toList();
   }
 
@@ -313,6 +333,11 @@ class IdCardHelper {
     );
 
     if (confirmed != true || selectedReason == null) {
+      customReasonController.dispose();
+      return 0;
+    }
+
+    if (!context.mounted) {
       customReasonController.dispose();
       return 0;
     }

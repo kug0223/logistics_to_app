@@ -12,7 +12,7 @@ class WageDetailModel {
   final int actualMinutes;         // 실제 근무시간 (출퇴근 기준)
   final int breakMinutes;          // 휴게시간
   final int workMinutes;           // 실 근무시간 (actual - break)
-  final int overtimeMinutes;       // 연장근무 (8시간 초과분)
+  final int overtimeMinutes;       // 연장근무 (시급제: 8시간 초과분 / 일급제: 예정시간 초과분)
   final int nightMinutes;          // 야간근무 (22:00~06:00)
   
   // ========== 금액 계산 ==========
@@ -20,6 +20,8 @@ class WageDetailModel {
   final int overtimeAmount;        // 연장수당
   final int nightAmount;           // 야간수당
   final int additionalAmount;      // 추가수당 (급구 인센티브 등)
+  final int deductionAmount;       // 추가공제 (안전화·식비 등 차감)
+  final int weeklyHolidayAmount;   // 주휴수당 (주 15h 이상 개근 시)
   final int totalAmount;           // 총액 (세전)
   
   // ========== 옵션 ==========
@@ -50,6 +52,8 @@ class WageDetailModel {
     this.overtimeAmount = 0,
     this.nightAmount = 0,
     this.additionalAmount = 0,
+    this.deductionAmount = 0,
+    this.weeklyHolidayAmount = 0,
     this.totalAmount = 0,
     this.nightAllowanceApplied = false,
     this.memo,
@@ -75,6 +79,8 @@ class WageDetailModel {
       overtimeAmount: map['overtimeAmount'] ?? 0,
       nightAmount: map['nightAmount'] ?? 0,
       additionalAmount: map['additionalAmount'] ?? 0,
+      deductionAmount: map['deductionAmount'] ?? 0,
+      weeklyHolidayAmount: map['weeklyHolidayAmount'] ?? 0,
       totalAmount: map['totalAmount'] ?? 0,
       nightAllowanceApplied: map['nightAllowanceApplied'] ?? false,
       memo: map['memo'],
@@ -105,6 +111,8 @@ class WageDetailModel {
       'overtimeAmount': overtimeAmount,
       'nightAmount': nightAmount,
       'additionalAmount': additionalAmount,
+      'deductionAmount': deductionAmount,
+      'weeklyHolidayAmount': weeklyHolidayAmount,
       'totalAmount': totalAmount,
       'nightAllowanceApplied': nightAllowanceApplied,
       'memo': memo,
@@ -134,6 +142,8 @@ class WageDetailModel {
     int? overtimeAmount,
     int? nightAmount,
     int? additionalAmount,
+    int? deductionAmount,
+    int? weeklyHolidayAmount,
     int? totalAmount,
     bool? nightAllowanceApplied,
     String? memo,
@@ -156,6 +166,8 @@ class WageDetailModel {
       overtimeAmount: overtimeAmount ?? this.overtimeAmount,
       nightAmount: nightAmount ?? this.nightAmount,
       additionalAmount: additionalAmount ?? this.additionalAmount,
+      deductionAmount: deductionAmount ?? this.deductionAmount,
+      weeklyHolidayAmount: weeklyHolidayAmount ?? this.weeklyHolidayAmount,
       totalAmount: totalAmount ?? this.totalAmount,
       nightAllowanceApplied: nightAllowanceApplied ?? this.nightAllowanceApplied,
       memo: memo ?? this.memo,

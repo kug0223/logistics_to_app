@@ -14,6 +14,8 @@ import 'work_type_detail_screen.dart';
 import '../../widgets/dialogs/styled_dialog.dart';
 import '../../theme/app_colors.dart';
 import '../../utils/image_helper.dart';
+import '../../widgets/common/app_menu_sheet.dart';
+import '../../widgets/app_select_field.dart';
 
 /// ✨ 세련된 업무 유형 관리 화면
 class WorkTypeManagementScreen extends StatefulWidget {
@@ -215,8 +217,8 @@ class _WorkTypeManagementScreenState extends State<WorkTypeManagementScreen> {
                   decoration: BoxDecoration(
                     gradient: LinearGradient(
                       colors: [
-                        Colors.red,
-                        Colors.red.withValues(alpha: 0.8),
+                        AppColors.error,
+                        AppColors.error.withValues(alpha: 0.8),
                       ],
                     ),
                     borderRadius: const BorderRadius.only(
@@ -267,7 +269,7 @@ class _WorkTypeManagementScreenState extends State<WorkTypeManagementScreen> {
                       Icon(
                         Icons.delete_forever,
                         size: ResponsiveHelper.iconSize(context, 64),
-                        color: Colors.red.withValues(alpha: 0.5),
+                        color: AppColors.error.withValues(alpha: 0.5),
                       ),
                       SizedBox(height: ResponsiveHelper.spacing(context, 16)),
                       Text(
@@ -289,7 +291,7 @@ class _WorkTypeManagementScreenState extends State<WorkTypeManagementScreen> {
                         '삭제된 데이터는 복구할 수 없습니다',
                         style: ResponsiveHelper.smallStyle(
                           context,
-                          color: Colors.red,
+                          color: AppColors.error,
                         ),
                       ),
                     ],
@@ -321,14 +323,14 @@ class _WorkTypeManagementScreenState extends State<WorkTypeManagementScreen> {
                           decoration: BoxDecoration(
                             gradient: LinearGradient(
                               colors: [
-                                Colors.red,
-                                Colors.red.withValues(alpha: 0.8),
+                                AppColors.error,
+                                AppColors.error.withValues(alpha: 0.8),
                               ],
                             ),
                             borderRadius: BorderRadius.circular(12),
                             boxShadow: [
                               BoxShadow(
-                                color: Colors.red.withValues(alpha: 0.4),
+                                color: AppColors.error.withValues(alpha: 0.4),
                                 blurRadius: 8,
                                 offset: const Offset(0, 4),
                               ),
@@ -557,34 +559,22 @@ class _WorkTypeManagementScreenState extends State<WorkTypeManagementScreen> {
         borderRadius: BorderRadius.circular(16),
         boxShadow: [
           BoxShadow(
-            color: Colors.grey.withValues(alpha: 0.1),
+            color: AppColors.grey500.withValues(alpha: 0.1),
             blurRadius: 8,
             offset: const Offset(0, 2),
           ),
         ],
       ),
-      child: DropdownButtonFormField<BusinessModel>(
-        initialValue: _selectedBusiness,
-        decoration: InputDecoration(
-          labelText: '사업장 선택',
-          prefixIcon: Icon(Icons.business, color: theme.primaryColor),
-          border: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(12),
-          ),
-          filled: true,
-          fillColor: AppColors.grey50,
-        ),
-        items: _myBusinesses.map((business) {
-          return DropdownMenuItem(
-            value: business,
-            child: Text(business.name),
-          );
-        }).toList(),
+      child: AppSelectField<BusinessModel>(
+        value: _selectedBusiness,
+        hintText: '사업장을 선택하세요',
+        sheetTitle: '사업장 선택',
+        items: _myBusinesses,
+        labelOf: (b) => b.name,
+        prefixIcon: Icons.business,
         onChanged: (value) {
           if (value != null) {
-            setState(() {
-              _selectedBusiness = value;
-            });
+            setState(() => _selectedBusiness = value);
             _loadWorkTypes();
           }
         },
@@ -693,7 +683,7 @@ class _WorkTypeManagementScreenState extends State<WorkTypeManagementScreen> {
             borderRadius: BorderRadius.circular(20),
             boxShadow: [
               BoxShadow(
-                color: Colors.grey.withValues(alpha: 0.15),
+                color: AppColors.grey500.withValues(alpha: 0.15),
                 blurRadius: 15,
                 offset: const Offset(0, 4),
               ),
@@ -764,114 +754,73 @@ class _WorkTypeManagementScreenState extends State<WorkTypeManagementScreen> {
               ),
             ),
             // ✨ 더보기 메뉴
-            trailing: PopupMenuButton<String>(
+            trailing: IconButton(
               icon: Icon(
                 Icons.more_vert,
                 color: theme.primaryColor,
                 size: ResponsiveHelper.iconSize(context, 24),
               ),
-              onSelected: (value) => _handleMenuAction(value, workType, index, isFirst, isLast),
-              itemBuilder: (context) => [
-                // 위로 이동
-                PopupMenuItem(
-                  value: 'moveUp',
-                  enabled: !isFirst,
-                  child: Row(
-                    children: [
-                      Icon(
-                        Icons.arrow_upward,
-                        size: ResponsiveHelper.iconSize(context, 20),
-                        color: isFirst ? Colors.grey : theme.primaryColor,
-                      ),
-                      SizedBox(width: ResponsiveHelper.spacing(context, 12)),
-                      Text(
-                        '위로 이동',
-                        style: ResponsiveHelper.bodyStyle(context).copyWith(
-                          color: isFirst ? Colors.grey : null,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                // 아래로 이동
-                PopupMenuItem(
-                  value: 'moveDown',
-                  enabled: !isLast,
-                  child: Row(
-                    children: [
-                      Icon(
-                        Icons.arrow_downward,
-                        size: ResponsiveHelper.iconSize(context, 20),
-                        color: isLast ? Colors.grey : theme.primaryColor,
-                      ),
-                      SizedBox(width: ResponsiveHelper.spacing(context, 12)),
-                      Text(
-                        '아래로 이동',
-                        style: ResponsiveHelper.bodyStyle(context).copyWith(
-                          color: isLast ? Colors.grey : null,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                const PopupMenuDivider(),
-                // 상세 정보
-                PopupMenuItem(
-                  value: 'detail',
-                  child: Row(
-                    children: [
-                      Icon(
-                        Icons.info_outline,
-                        size: ResponsiveHelper.iconSize(context, 20),
-                        color: Colors.blue,
-                      ),
-                      SizedBox(width: ResponsiveHelper.spacing(context, 12)),
-                      Text('상세 정보', style: ResponsiveHelper.bodyStyle(context)),
-                    ],
-                  ),
-                ),
-                // 수정
-                PopupMenuItem(
-                  value: 'edit',
-                  child: Row(
-                    children: [
-                      Icon(
-                        Icons.edit,
-                        size: ResponsiveHelper.iconSize(context, 20),
-                        color: Colors.orange,
-                      ),
-                      SizedBox(width: ResponsiveHelper.spacing(context, 12)),
-                      Text('아이콘수정', style: ResponsiveHelper.bodyStyle(context)),
-                    ],
-                  ),
-                ),
-                // 삭제
-                PopupMenuItem(
-                  value: 'delete',
-                  child: Row(
-                    children: [
-                      Icon(
-                        Icons.delete,
-                        size: ResponsiveHelper.iconSize(context, 20),
-                        color: Colors.red,
-                      ),
-                      SizedBox(width: ResponsiveHelper.spacing(context, 12)),
-                      Text(
-                        '삭제',
-                        style: ResponsiveHelper.bodyStyle(context).copyWith(
-                          color: Colors.red,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ],
+              onPressed: () => _showWorkTypeMenuSheet(context, theme, workType, index, isFirst, isLast),
             ),
           ),
         );
       },
     );
   }
+  void _showWorkTypeMenuSheet(
+    BuildContext context,
+    ThemeData theme,
+    BusinessWorkTypeModel workType,
+    int index,
+    bool isFirst,
+    bool isLast,
+  ) {
+    AppMenuSheet.show(
+      context: context,
+      itemGroups: [
+        [
+          if (!isFirst)
+            AppMenuSheetItem(
+              icon: Icons.arrow_upward,
+              label: '위로 이동',
+              color: theme.primaryColor,
+              onTap: () => _handleMenuAction('moveUp', workType, index, isFirst, isLast),
+            ),
+          if (!isLast)
+            AppMenuSheetItem(
+              icon: Icons.arrow_downward,
+              label: '아래로 이동',
+              color: theme.primaryColor,
+              onTap: () => _handleMenuAction('moveDown', workType, index, isFirst, isLast),
+            ),
+        ],
+        [
+          AppMenuSheetItem(
+            icon: Icons.info_outline,
+            label: '상세 정보',
+            color: AppColors.info,
+            onTap: () => _handleMenuAction('detail', workType, index, isFirst, isLast),
+          ),
+          AppMenuSheetItem(
+            icon: Icons.edit,
+            label: '아이콘수정',
+            color: AppColors.warning,
+            onTap: () => _handleMenuAction('edit', workType, index, isFirst, isLast),
+          ),
+        ],
+        [
+          AppMenuSheetItem(
+            icon: Icons.delete,
+            label: '삭제',
+            color: AppColors.error,
+            isDanger: true,
+            onTap: () => _handleMenuAction('delete', workType, index, isFirst, isLast),
+          ),
+        ],
+      ],
+    );
+  }
+
   /// 메뉴 액션 처리
   void _handleMenuAction(
       String action,

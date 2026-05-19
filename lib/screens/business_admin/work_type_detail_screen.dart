@@ -376,7 +376,7 @@ class _WorkTypeDetailScreenState extends State<WorkTypeDetailScreen> {
                             icon: Container(
                               padding: const EdgeInsets.all(4),
                               decoration: const BoxDecoration(
-                                color: Colors.red,
+                                color: AppColors.error,
                                 shape: BoxShape.circle,
                               ),
                               child: const Icon(Icons.close, color: Colors.white, size: 16),
@@ -613,7 +613,7 @@ class _WorkTypeDetailScreenState extends State<WorkTypeDetailScreen> {
         Icon(
           Icons.check_circle,
           size: ResponsiveHelper.iconSize(context, 20),
-          color: Colors.green,
+          color: AppColors.success,
         ),
       ],
     );

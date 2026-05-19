@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+﻿import 'package:flutter/material.dart';
 
 import '../../../models/core/slot_model.dart';
 import '../../../models/core/to_model.dart';
@@ -7,6 +7,7 @@ import '../../../services/firestore_service.dart';
 import '../../../utils/responsive_helper.dart';
 import '../../../widgets/dialogs/styled_dialog.dart';
 import '../../../theme/app_colors.dart';
+import '../../../widgets/common/app_checkbox.dart';
 
 /// 배치 작업용 날짜(슬롯) 다중선택 다이얼로그
 class SlotBatchSelectDialog extends StatefulWidget {
@@ -85,7 +86,7 @@ class _SlotBatchSelectDialogState extends State<SlotBatchSelectDialog> {
             return true;
           }).toList()
         : widget.openOnly
-            ? slots.where((s) => !s.isClosed).toList()
+            ? slots.where((s) => !s.isEffectivelyClosed && !_isSlotTimeExpired(s)).toList()
             : slots;
 
     setState(() {
@@ -102,6 +103,17 @@ class _SlotBatchSelectDialogState extends State<SlotBatchSelectDialog> {
     return DateTime(s.date.year, s.date.month, s.date.day,
             int.parse(parts[0]), int.parse(parts[1]))
         .subtract(Duration(hours: to.hoursBeforeStart!));
+  }
+
+  /// 슬롯의 모든 업무상세가 시간만료됐는지 확인
+  bool _isSlotTimeExpired(SlotModel slot) {
+    if (slot.workDetails.isEmpty) return false;
+    final now = DateTime.now();
+    return slot.workDetails.every((d) {
+      if (d.isClosed) return true;
+      final deadline = d.applicationDeadline ?? _computeDeadline(d, slot);
+      return deadline != null && now.isAfter(deadline);
+    });
   }
 
   bool get _allSelected => _slots.isNotEmpty && _selectedIds.length == _slots.length;
@@ -201,13 +213,8 @@ class _SlotBatchSelectDialogState extends State<SlotBatchSelectDialog> {
                 ),
                 child: Row(
                   children: [
-                    Icon(
-                      _allSelected
-                          ? Icons.check_box
-                          : Icons.check_box_outline_blank,
-                      color: _allSelected
-                          ? Theme.of(context).primaryColor
-                          : AppColors.grey400,
+                    AppCheckbox(
+                      value: _allSelected,
                       size: ResponsiveHelper.iconSize(context, 20),
                     ),
                     SizedBox(width: ResponsiveHelper.spacing(context, 10)),
@@ -272,11 +279,8 @@ class _SlotBatchSelectDialogState extends State<SlotBatchSelectDialog> {
           ),
           child: Row(
             children: [
-              Icon(
-                isSelected ? Icons.check_box : Icons.check_box_outline_blank,
-                color: isSelected
-                    ? Theme.of(context).primaryColor
-                    : AppColors.grey400,
+              AppCheckbox(
+                value: isSelected,
                 size: ResponsiveHelper.iconSize(context, 20),
               ),
               SizedBox(width: ResponsiveHelper.spacing(context, 12)),
@@ -312,19 +316,23 @@ class _SlotBatchSelectDialogState extends State<SlotBatchSelectDialog> {
     Color color;
     Color bgColor;
     String label;
+    IconData icon;
 
-    if (slot.isClosed) {
+    if (slot.isEffectivelyClosed || _isSlotTimeExpired(slot)) {
       color = AppColors.grey600;
       bgColor = AppColors.grey100;
       label = '마감';
+      icon = Icons.lock;
     } else if (isFull) {
       color = AppColors.successDark;
       bgColor = AppColors.successBg;
       label = '충족';
+      icon = Icons.check_circle_outline;
     } else {
-      color = AppColors.infoDark;
-      bgColor = AppColors.infoBg;
+      color = AppColors.successDark;
+      bgColor = AppColors.successBg;
       label = '모집중';
+      icon = Icons.campaign;
     }
 
     return Container(
@@ -336,10 +344,17 @@ class _SlotBatchSelectDialogState extends State<SlotBatchSelectDialog> {
         color: bgColor,
         borderRadius: BorderRadius.circular(6),
       ),
-      child: Text(
-        label,
-        style: ResponsiveHelper.tinyStyle(context, color: color)
-            .copyWith(fontWeight: FontWeight.w600),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: ResponsiveHelper.iconSize(context, 9), color: color),
+          SizedBox(width: ResponsiveHelper.spacing(context, 3)),
+          Text(
+            label,
+            style: ResponsiveHelper.tinyStyle(context, color: color)
+                .copyWith(fontWeight: FontWeight.w600),
+          ),
+        ],
       ),
     );
   }

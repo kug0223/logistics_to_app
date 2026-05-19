@@ -57,21 +57,21 @@ class MonthlyStatsCard extends StatelessWidget {
                 icon: Icons.check_circle,
                 label: '확정 근무',
                 value: '$confirmedCount일',
-                color: Colors.green,
+                color: AppColors.success,
               ),
               _buildStatItem(
                 context,
                 icon: Icons.schedule,
                 label: '대기 중',
                 value: '$pendingCount건',
-                color: Colors.orange,
+                color: AppColors.warning,
               ),
               _buildStatItem(
                 context,
                 icon: Icons.attach_money,
                 label: '예상 수입',
                 value: '${NumberFormat('#,###').format(totalIncome)}원',
-                color: Colors.blue,
+                color: AppColors.info,
               ),
             ],
           ),
@@ -93,14 +93,14 @@ class MonthlyStatsCard extends StatelessWidget {
                   icon: Icons.directions_run,
                   label: '실근무',
                   value: '$actualWorkDays일',
-                  color: Colors.teal,
+                  color: AppColors.teal,
                 ),
                 _buildStatItem(
                   context,
                   icon: Icons.paid,
                   label: '확정 수입',
                   value: '${NumberFormat('#,###').format(confirmedIncome)}원',
-                  color: Colors.green,
+                  color: AppColors.success,
                 ),
               ],
             ),
@@ -131,13 +131,13 @@ class MonthlyStatsCard extends StatelessWidget {
     required IconData icon,
     required String label,
     required String value,
-    required MaterialColor color,
+    required Color color,
   }) {
     return Column(
       children: [
         Icon(
           icon, 
-          color: color[600], 
+          color: color, 
           size: ResponsiveHelper.iconSize(context, 24)
         ),
         SizedBox(height: ResponsiveHelper.spacing(context, 4)),
@@ -153,7 +153,7 @@ class MonthlyStatsCard extends StatelessWidget {
           value,
           style: ResponsiveHelper.bodyStyle(
             context,
-            color: color[700],
+            color: color,
           ).copyWith(fontWeight: FontWeight.bold),
         ),
       ],

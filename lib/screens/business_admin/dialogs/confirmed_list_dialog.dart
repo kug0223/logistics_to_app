@@ -1,4 +1,4 @@
-// lib/screens/business_admin/dialogs/confirmed_list_dialog.dart
+﻿// lib/screens/business_admin/dialogs/confirmed_list_dialog.dart
 
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
@@ -9,6 +9,8 @@ import '../../../models/core/application_model.dart';
 import '../../../models/core/user_model.dart';
 import '../../../providers/user_provider.dart';
 import '../../../services/firestore_service.dart';
+import '../../../utils/format_helper.dart';
+import '../../../utils/loading_state_mixin.dart';
 import '../../../utils/responsive_helper.dart';
 import '../../../utils/toast_helper.dart';
 import '../../../widgets/work_type_icon.dart';
@@ -16,6 +18,7 @@ import '../../../widgets/dialogs/styled_dialog.dart';
 import '../../../widgets/dialogs/worker_detail_dialog.dart';
 import '../../../models/ui/admin_to_list_ui_models.dart';
 import '../../../theme/app_colors.dart';
+import '../../../widgets/common/app_checkbox.dart';
 import '../../../utils/id_card_helper.dart';
 import '../../../utils/trust_score_helper.dart';
 
@@ -70,9 +73,8 @@ class _ConfirmedListDialogWidget extends StatefulWidget {
       _ConfirmedListDialogWidgetState();
 }
 
-class _ConfirmedListDialogWidgetState
-    extends State<_ConfirmedListDialogWidget> {
-  bool _isLoading = true;
+class _ConfirmedListDialogWidgetState extends State<_ConfirmedListDialogWidget>
+    with LoadingStateMixin {
   bool _hasChanges = false;
   Map<String, List<Map<String, dynamic>>> _confirmedByWork = {};
   Map<String, String> _idCardStatusMap = {};
@@ -90,26 +92,22 @@ class _ConfirmedListDialogWidgetState
   }
 
   Future<void> _loadConfirmedApplicants() async {
-    setState(() {
-      _isLoading = true;
-      _error = null;
-    });
-
+    setLoading(true);
+    if (mounted) setState(() => _error = null);
     final userProvider = context.read<UserProvider>();
-
     try {
-      final applications = widget.slotId != null
+      final confirmed = widget.slotId != null
           ? await widget.firestoreService.getApplicationsBySlotId(
               widget.toItem.to.id,
               widget.slotId!,
+              businessId: widget.toItem.to.businessId,
+              statuses: const ['CONFIRMED'],
             )
           : await widget.firestoreService.getApplicationsByTOId(
               widget.toItem.to.id,
               businessId: widget.toItem.to.businessId,
+              statuses: const ['CONFIRMED'],
             );
-
-      final confirmed =
-          applications.where((app) => app.status == 'CONFIRMED').toList();
 
       // ✅ 1. 중복 제거된 UID 목록
       final uniqueUids = confirmed.map((app) => app.uid).toSet().toList();
@@ -178,18 +176,18 @@ class _ConfirmedListDialogWidgetState
         targetUserIds: confirmedUserIds,
       );
 
+      if (!mounted) return;
       setState(() {
         _confirmedByWork = groupedByWork;
         _idCardStatusMap = idCardStatusMap;
         _totalConfirmed = confirmed.length;
-        _isLoading = false;
       });
     } catch (e) {
       debugPrint('❌ 확정 명단 로드 실패: $e');
-      setState(() {
-        _error = e.toString();
-        _isLoading = false;
-      });
+      if (!mounted) return;
+      setState(() => _error = e.toString());
+    } finally {
+      setLoading(false);
     }
   }
 
@@ -235,7 +233,7 @@ class _ConfirmedListDialogWidgetState
   }
 
   Widget _buildContent() {
-    if (_isLoading) {
+    if (isLoading) {
       return Center(
         child: Column(
           mainAxisSize: MainAxisSize.min,
@@ -282,7 +280,7 @@ class _ConfirmedListDialogWidgetState
 
     // 전체 미요청자 수 계산
     final totalRequestableCount = _idCardStatusMap.entries
-        .where((e) => e.value == 'none')
+        .where((e) => e.value == 'none' || e.value == 'expired' || e.value == 'rejected')
         .length;
 
     return SingleChildScrollView(
@@ -299,12 +297,15 @@ class _ConfirmedListDialogWidgetState
           final groupKey = entry.key;
           final workers = entry.value;
           
-          // ✅ workDetailId로 먼저 찾고, 없으면 workType으로 폴백
+          // compositeId(신규) → legacyId(구) → workType → 첫 번째 순으로 폴백
           final workDetail = widget.toItem.workDetails.firstWhere(
             (w) => w.id == groupKey,
             orElse: () => widget.toItem.workDetails.firstWhere(
-              (w) => w.workType == groupKey,
-              orElse: () => widget.toItem.workDetails.first,
+              (w) => w.legacyId == groupKey,
+              orElse: () => widget.toItem.workDetails.firstWhere(
+                (w) => w.workType == groupKey,
+                orElse: () => widget.toItem.workDetails.first,
+              ),
             ),
           );
           return _buildWorkSection(workDetail.workType, workers, workDetail);
@@ -483,7 +484,7 @@ class _ConfirmedListDialogWidgetState
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           Text(workType, style: ResponsiveHelper.subtitleStyle(context).copyWith(fontWeight: FontWeight.bold)),
-                          Text('${workDetail.startTime} ~ ${workDetail.endTime}', style: ResponsiveHelper.smallStyle(context, color: AppColors.grey600)),
+                          _buildTimeRow(context, workDetail),
                         ],
                       ),
                     ),
@@ -544,7 +545,7 @@ class _ConfirmedListDialogWidgetState
             return Material(
               color: Colors.transparent,
               child: InkWell(
-                onTap: _isIdCardSelectMode && idCardStatus == 'none'
+                onTap: _isIdCardSelectMode && (idCardStatus == 'none' || idCardStatus == 'expired' || idCardStatus == 'rejected')
                     ? () => _toggleIdCardSelection(user.uid)
                     : () => _showWorkerDetailDialog(context, user, application, workDetail),
                 borderRadius: isLast ? const BorderRadius.only(bottomLeft: Radius.circular(16), bottomRight: Radius.circular(16)) : null,
@@ -561,19 +562,13 @@ class _ConfirmedListDialogWidgetState
                         duration: const Duration(milliseconds: 200),
                         width: _isIdCardSelectMode ? 32 : 0,
                         child: _isIdCardSelectMode
-                            ? (idCardStatus == 'none'
-                                ? SizedBox(
-                                    width: 24,
-                                    height: 24,
-                                    child: Checkbox(
-                                      value: isIdCardSelected,
-                                      onChanged: (_) => _toggleIdCardSelection(user.uid),
-                                      activeColor: AppColors.info,
-                                      materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                                      visualDensity: VisualDensity.compact,
-                                    ),
+                            ? ((idCardStatus == 'none' || idCardStatus == 'expired' || idCardStatus == 'rejected')
+                                ? AppCheckbox(
+                                    value: isIdCardSelected,
+                                    activeColor: AppColors.info,
+                                    size: 22,
                                   )
-                                : const SizedBox(width: 24))  // 이미 요청된 사용자는 빈 공간
+                                : const SizedBox(width: 22))  // 이미 요청된 사용자는 빈 공간
                             : const SizedBox.shrink(),
                       ),
                       // 순번
@@ -597,14 +592,20 @@ class _ConfirmedListDialogWidgetState
                             // 1줄: 이름 + 성별·나이 + 화살표
                             Row(
                               children: [
-                                Text(user.name, style: ResponsiveHelper.bodyStyle(context).copyWith(fontWeight: FontWeight.w600)),
-                                SizedBox(width: ResponsiveHelper.spacing(context, 6)),
-                                Text(
-                                  user.gender != null || user.age != null
-                                      ? '(${user.gender ?? ''}${user.age != null ? ' · ${user.age}세' : ''})'
-                                      : '',
-                                  style: ResponsiveHelper.smallStyle(context, color: AppColors.grey600),
+                                Flexible(
+                                  child: Text(
+                                    user.name,
+                                    style: ResponsiveHelper.bodyStyle(context).copyWith(fontWeight: FontWeight.w600),
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
                                 ),
+                                if (user.gender != null || user.age != null) ...[
+                                  SizedBox(width: ResponsiveHelper.spacing(context, 4)),
+                                  Text(
+                                    '(${user.gender ?? ''}${user.age != null ? ' · ${user.age}세' : ''})',
+                                    style: ResponsiveHelper.smallStyle(context, color: AppColors.grey600),
+                                  ),
+                                ],
                                 SizedBox(width: ResponsiveHelper.spacing(context, 4)),
                                 Icon(Icons.chevron_right, size: ResponsiveHelper.iconSize(context, 16), color: AppColors.grey400),
                               ],
@@ -616,7 +617,7 @@ class _ConfirmedListDialogWidgetState
                                 _buildTrustBadge(user),
                                 SizedBox(width: ResponsiveHelper.spacing(context, 8)),
                                 if (user.averageRating > 0) ...[
-                                  Icon(Icons.star, size: ResponsiveHelper.iconSize(context, 12), color: Colors.amber),
+                                  Icon(Icons.star, size: ResponsiveHelper.iconSize(context, 12), color: AppColors.amber),
                                   SizedBox(width: ResponsiveHelper.spacing(context, 2)),
                                   Text(user.averageRating.toStringAsFixed(1), style: ResponsiveHelper.smallStyle(context, color: AppColors.grey600)),
                                 ],
@@ -628,27 +629,29 @@ class _ConfirmedListDialogWidgetState
                             if (widget.toItem.to.isLongTerm && application.isLongTermApplication && application.workPeriodDisplay.isNotEmpty) ...[
                               SizedBox(height: ResponsiveHelper.spacing(context, 6)),
                               Row(
-                                mainAxisSize: MainAxisSize.min,
                                 children: [
                                   Icon(
                                     Icons.date_range,
                                     size: ResponsiveHelper.iconSize(context, 12),
-                                    color: application.desiredStartDate != null 
-                                        ? Theme.of(context).primaryColor 
+                                    color: application.desiredStartDate != null
+                                        ? Theme.of(context).primaryColor
                                         : AppColors.grey500,
                                   ),
                                   SizedBox(width: ResponsiveHelper.spacing(context, 4)),
-                                  Text(
-                                    application.desiredStartDate != null
-                                        ? '희망: ${application.desiredStartDate!.month}/${application.desiredStartDate!.day}~ (${application.workEndDate!.month}/${application.workEndDate!.day}까지)'
-                                        : '장기: ${application.workPeriodDisplay}',
-                                    style: ResponsiveHelper.smallStyle(
-                                      context, 
-                                      color: application.desiredStartDate != null 
-                                          ? Theme.of(context).primaryColor 
-                                          : AppColors.grey600,
-                                    ).copyWith(
-                                      fontWeight: application.desiredStartDate != null ? FontWeight.w600 : FontWeight.normal,
+                                  Flexible(
+                                    child: Text(
+                                      application.desiredStartDate != null
+                                          ? '희망: ${application.desiredStartDate!.month}/${application.desiredStartDate!.day}~ (${application.workEndDate!.month}/${application.workEndDate!.day}까지)'
+                                          : '장기: ${application.workPeriodDisplay}',
+                                      style: ResponsiveHelper.smallStyle(
+                                        context,
+                                        color: application.desiredStartDate != null
+                                            ? Theme.of(context).primaryColor
+                                            : AppColors.grey600,
+                                      ).copyWith(
+                                        fontWeight: application.desiredStartDate != null ? FontWeight.w600 : FontWeight.normal,
+                                      ),
+                                      overflow: TextOverflow.ellipsis,
                                     ),
                                   ),
                                 ],
@@ -665,6 +668,57 @@ class _ConfirmedListDialogWidgetState
           }),
         ],
       ),
+    );
+  }
+
+  Widget _buildTimeRow(BuildContext context, WorkDetailModel workDetail) {
+    final netTime = FormatHelper.calcNetWorkTime(
+      workDetail.startTime,
+      workDetail.endTime,
+      breakMinutes: workDetail.breakMinutes,
+    );
+    return Wrap(
+      spacing: ResponsiveHelper.spacing(context, 6),
+      runSpacing: ResponsiveHelper.spacing(context, 4),
+      crossAxisAlignment: WrapCrossAlignment.center,
+      children: [
+        Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.access_time, size: ResponsiveHelper.iconSize(context, 12), color: AppColors.grey400),
+            SizedBox(width: ResponsiveHelper.spacing(context, 3)),
+            Text(
+              netTime.isNotEmpty
+                  ? '${workDetail.startTime} ~ ${workDetail.endTime} (실근무 $netTime)'
+                  : '${workDetail.startTime} ~ ${workDetail.endTime}',
+              style: ResponsiveHelper.smallStyle(context, color: AppColors.grey600),
+            ),
+          ],
+        ),
+        if (workDetail.breakMinutes > 0)
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+            decoration: BoxDecoration(
+              color: AppColors.successBg,
+              borderRadius: BorderRadius.circular(20),
+              border: Border.all(color: AppColors.successDark.withValues(alpha: 0.2)),
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(Icons.pause_circle_outline, size: 11, color: AppColors.successDark),
+                SizedBox(width: ResponsiveHelper.spacing(context, 3)),
+                Text(
+                  '휴게 ${FormatHelper.formatCompactHours(workDetail.breakMinutes)}',
+                  style: ResponsiveHelper.tinyStyle(context).copyWith(
+                    color: AppColors.successDark,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ],
+            ),
+          ),
+      ],
     );
   }
 
@@ -757,12 +811,12 @@ class _ConfirmedListDialogWidgetState
         _idCardStatusMap.remove(user.uid);
         _selectedIdCardUserIds.remove(user.uid);
         
-        // 5. 부모 toItem.workDetailStats 업데이트
+        // 5. 부모 toItem.workDetailStats 업데이트 (compositeId 기반)
         widget.toItem.workDetailStats ??= {};
-        // workDetailId 우선, 없으면 selectedWorkType으로 폴백 (구 데이터 호환)
-        final statsKey = (application.workDetailId?.isNotEmpty == true)
-            ? application.workDetailId!
-            : application.selectedWorkType;
+        final wdId = application.workDetailId;
+        final statsKey = (wdId != null && wdId.isNotEmpty && wdId != application.selectedWorkType)
+            ? wdId  // 신규 compositeId
+            : '${application.selectedWorkType}_${application.startTime}_${application.endTime}';
         final stats = widget.toItem.workDetailStats![statsKey];
         if (stats != null) {
           stats['confirmed'] = ((stats['confirmed'] ?? 1)) - 1;
@@ -794,7 +848,7 @@ class _ConfirmedListDialogWidgetState
         final user = worker['user'] as UserModel?;
         if (user == null) continue;
         final status = _idCardStatusMap[user.uid] ?? 'none';
-        if (status == 'none') {
+        if (status == 'none' || status == 'expired' || status == 'rejected') {
           _selectedIdCardUserIds.add(user.uid);
         }
       }

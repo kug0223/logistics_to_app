@@ -4,9 +4,12 @@ class LaborStandards {
   
   /// 2025년 최저시급 (원)
   static const int minimumWage2025 = 10030;
-  
+
+  /// 2026년 최저시급 (원)
+  static const int minimumWage2026 = 10320;
+
   /// 현재 연도 최저시급 (나중에 Firestore로 전환 예정)
-  static int get currentMinimumWage => minimumWage2025;
+  static int get currentMinimumWage => minimumWage2026;
   
   // ==================== 근로시간 ====================
   

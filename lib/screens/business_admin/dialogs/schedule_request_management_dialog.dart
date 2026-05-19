@@ -8,6 +8,8 @@ import '../../../services/firestore_service.dart';
 import '../../../providers/user_provider.dart';
 import '../../../utils/toast_helper.dart';
 import '../../../utils/responsive_helper.dart';
+import '../../../utils/format_helper.dart';
+import '../../../utils/loading_state_mixin.dart';
 import '../../../widgets/common/loading_widget.dart';
 import '../../../widgets/common/loading_button.dart';
 import '../../../widgets/dialogs/styled_dialog.dart';
@@ -31,15 +33,14 @@ class ScheduleRequestManagementDialog extends StatefulWidget {
 }
 
 class _ScheduleRequestManagementDialogState
-    extends State<ScheduleRequestManagementDialog> {
+    extends State<ScheduleRequestManagementDialog>
+    with LoadingStateMixin {
   final FirestoreService _firestoreService = FirestoreService();
-  
+
   List<_RequestWithUser> _allRequests = [];
   List<_RequestWithUser> _filteredRequests = [];
-  
-  bool _isLoading = true;
-  String _selectedFilter = 'PENDING'; // PENDING, ALL, APPROVED, REJECTED
-  
+  String _selectedFilter = 'PENDING';
+
   @override
   void initState() {
     super.initState();
@@ -47,53 +48,38 @@ class _ScheduleRequestManagementDialogState
   }
 
   /// 요청 목록 로드
-  Future<void> _loadRequests() async {
-    setState(() => _isLoading = true);
+  Future<void> _loadRequests() => runWithLoading(() async {
+    final allRequests = await _firestoreService.getAllScheduleChangeRequests(
+      widget.businessId,
+    );
 
-    try {
-      final allRequests = await _firestoreService.getAllScheduleChangeRequests(
-        widget.businessId,
+    final workerRequests = allRequests
+        .where((r) => r.requestedBy == RequesterType.APPLICANT)
+        .toList();
+
+    final uniqueUids = workerRequests.map((r) => r.applicantUid).toSet().toList();
+    final userEntries = await Future.wait(uniqueUids.map((uid) async {
+      final user = await _firestoreService.getUser(uid);
+      return MapEntry(uid, user);
+    }));
+    final userMap = Map.fromEntries(userEntries);
+
+    final results = workerRequests.map((request) {
+      final user = userMap[request.applicantUid];
+      return _RequestWithUser(
+        request: request,
+        userName: user?.name ?? '이름 없음',
+        userPhone: user?.phone ?? '전화번호 없음',
       );
+    }).toList();
 
-      // ⭐ 근무자가 보낸 요청만 필터링 (관리자가 보낸 요청 제외!)
-      final workerRequests = allRequests.where((request) {
-        return request.requestedBy == RequesterType.APPLICANT;
-      }).toList();
-
-      // ✅ 1. 중복 제거된 UID 목록
-      final uniqueUids = workerRequests.map((r) => r.applicantUid).toSet().toList();
-      
-      // ✅ 2. 사용자 정보 병렬 조회 (중복 없이)
-      final userFutures = uniqueUids.map((uid) async {
-        final user = await _firestoreService.getUser(uid);
-        return MapEntry(uid, user);
-      });
-      final userEntries = await Future.wait(userFutures);
-      final userMap = Map.fromEntries(userEntries);
-      
-      // ✅ 3. 결과 매핑 (추가 조회 없음)
-      final results = workerRequests.map((request) {
-        final user = userMap[request.applicantUid];
-        return _RequestWithUser(
-          request: request,
-          userName: user?.name ?? '이름 없음',
-          userPhone: user?.phone ?? '전화번호 없음',
-        );
-      }).toList();
-
+    if (mounted) {
       setState(() {
         _allRequests = results;
         _applyFilter();
-        _isLoading = false;
       });
-    } catch (e) {
-      debugPrint('❌ 요청 목록 로드 실패: $e');
-      setState(() => _isLoading = false);
-      if (mounted) {
-        ToastHelper.showError('요청 목록을 불러올 수 없습니다');
-      }
     }
-  }
+  }, errorTag: '요청 목록 로드', errorMessage: '요청 목록을 불러올 수 없습니다');
 
   /// 필터 적용
   void _applyFilter() {
@@ -157,7 +143,7 @@ class _ScheduleRequestManagementDialogState
 
             // 요청 목록
             Expanded(
-              child: _isLoading
+              child: isLoading
                   ? const LoadingWidget(message: '요청 목록을 불러오는 중...')
                   : _filteredRequests.isEmpty
                       ? _buildEmptyState()
@@ -326,7 +312,7 @@ class _ScheduleRequestManagementDialogState
                 ),
                 SizedBox(width: ResponsiveHelper.spacing(context, 8)),
                 Text(
-                  '대상: ${DateFormat('yyyy년 M월 d일 (E)', 'ko_KR').format(request.targetDate)}',
+                  '대상: ${FormatHelper.formatDateLong(request.targetDate)}',
                   style: ResponsiveHelper.bodyStyle(context),
                 ),
               ],
@@ -360,14 +346,14 @@ class _ScheduleRequestManagementDialogState
                   Icon(
                     Icons.admin_panel_settings,
                     size: ResponsiveHelper.iconSize(context, 16),
-                    color: Colors.purple,
+                    color: AppColors.purple,
                   ),
                   SizedBox(width: ResponsiveHelper.spacing(context, 8)),
                   Text(
                     '관리자 요청',
                     style: ResponsiveHelper.smallStyle(
                       context,
-                      color: Colors.purple,
+                      color: AppColors.purple,
                     ).copyWith(fontWeight: FontWeight.bold),
                   ),
                 ],
@@ -414,7 +400,7 @@ class _ScheduleRequestManagementDialogState
                   Icon(
                     request.isApproved ? Icons.check_circle : Icons.cancel,
                     size: ResponsiveHelper.iconSize(context, 16),
-                    color: request.isApproved ? Colors.green : Colors.red,
+                    color: request.isApproved ? AppColors.success : AppColors.error,
                   ),
                   SizedBox(width: ResponsiveHelper.spacing(context, 8)),
                   Text(
@@ -428,9 +414,9 @@ class _ScheduleRequestManagementDialogState
                 Container(
                   padding: ResponsiveHelper.cardPadding(context),
                   decoration: BoxDecoration(
-                    color: Colors.red.withValues(alpha: 0.05),
+                    color: AppColors.error.withValues(alpha: 0.05),
                     borderRadius: BorderRadius.circular(8),
-                    border: Border.all(color: Colors.red.withValues(alpha: 0.2)),
+                    border: Border.all(color: AppColors.error.withValues(alpha: 0.2)),
                   ),
                   child: Row(
                     crossAxisAlignment: CrossAxisAlignment.start,
@@ -438,7 +424,7 @@ class _ScheduleRequestManagementDialogState
                       Icon(
                         Icons.error_outline,
                         size: ResponsiveHelper.iconSize(context, 16),
-                        color: Colors.red,
+                        color: AppColors.error,
                       ),
                       SizedBox(width: ResponsiveHelper.spacing(context, 8)),
                       Expanded(
@@ -446,7 +432,7 @@ class _ScheduleRequestManagementDialogState
                           '거절 사유: ${request.rejectReason}',
                           style: ResponsiveHelper.smallStyle(
                             context,
-                            color: Colors.red,
+                            color: AppColors.error,
                           ),
                         ),
                       ),
@@ -465,8 +451,8 @@ class _ScheduleRequestManagementDialogState
                     child: LoadingButton.outlined(
                       text: '거절',
                       icon: Icons.cancel,
-                      borderColor: Colors.red,
-                      foregroundColor: Colors.red,
+                      borderColor: AppColors.error,
+                      foregroundColor: AppColors.error,
                       onPressed: () async => await _handleReject(item),
                     ),
                   ),
@@ -495,23 +481,23 @@ class _ScheduleRequestManagementDialogState
     switch (type) {
       case RequestType.LEAVE:
         icon = Icons.event_busy;
-        color = Colors.orange;
+        color = AppColors.warning;
         break;
       case RequestType.NO_WORK:
         icon = Icons.block;
-        color = Colors.red;
+        color = AppColors.error;
         break;
       case RequestType.EXTRA_WORK:
         icon = Icons.add_circle;
-        color = Colors.green;
+        color = AppColors.success;
         break;
       case RequestType.CANCEL_LEAVE:
         icon = Icons.event_available;
-        color = Colors.blue;
+        color = AppColors.info;
         break;
       case RequestType.CANCEL_EXTRA:
         icon = Icons.remove_circle;
-        color = Colors.purple;
+        color = AppColors.purple;
         break;
     }
 
@@ -567,19 +553,19 @@ class _ScheduleRequestManagementDialogState
 
     switch (status) {
       case RequestStatus.PENDING:
-        color = Colors.orange;
+        color = AppColors.warning;
         label = '대기중';
         break;
       case RequestStatus.APPROVED:
-        color = Colors.green;
+        color = AppColors.success;
         label = '승인됨';
         break;
       case RequestStatus.REJECTED:
-        color = Colors.red;
+        color = AppColors.error;
         label = '거절됨';
         break;
       case RequestStatus.CANCELED:
-        color = Colors.grey;
+        color = AppColors.grey500;
         label = '취소됨';
         break;
     }
@@ -636,10 +622,10 @@ class _ScheduleRequestManagementDialogState
     );
 
     if (confirmed != true) return;
+    if (!mounted) return;
 
     try {
-      final userProvider = context.read<UserProvider>();
-      final uid = userProvider.currentUser?.uid;
+      final uid = context.read<UserProvider>().currentUser?.uid;
 
       if (uid == null) {
         ToastHelper.showError('관리자 정보를 찾을 수 없습니다');
@@ -730,10 +716,10 @@ class _ScheduleRequestManagementDialogState
     );
 
     if (confirmed != true) return;
+    if (!mounted) return;
 
     try {
-      final userProvider = context.read<UserProvider>();
-      final uid = userProvider.currentUser?.uid;
+      final uid = context.read<UserProvider>().currentUser?.uid;
 
       if (uid == null) {
         ToastHelper.showError('관리자 정보를 찾을 수 없습니다');

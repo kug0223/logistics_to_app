@@ -1,4 +1,4 @@
-// lib/screens/business_admin/dialogs/wage_confirm_dialog.dart
+﻿// lib/screens/business_admin/dialogs/wage_confirm_dialog.dart
 // 급여 확정 다이얼로그 - 탭 구조
 // 
 // 탭 1: 미확정 (pending) → 급여 확정 → calculated
@@ -6,7 +6,6 @@
 
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
 
 // Models
@@ -18,9 +17,11 @@ import '../../../models/core/wage_detail_model.dart';
 // Utils
 import '../../../utils/toast_helper.dart';
 import '../../../utils/responsive_helper.dart';
+import '../../../utils/format_helper.dart';
 import '../../../utils/dialog_helper.dart';
 import '../../../utils/wage_calculator.dart';
 import '../../../theme/app_colors.dart';
+import '../../../widgets/common/app_checkbox.dart';
 
 import '../../../widgets/dialogs/wage/wage_detail_dialog.dart';
 
@@ -69,6 +70,9 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
   
   // 계산된 급여 정보 캐시
   final Map<String, WageDetailModel> _calculatedWages = {};
+
+  // 파트+시간대 그룹별 추가 공제 시간 (분) — key: workType_startTime_endTime
+  final Map<String, int> _groupExtraBreakMinutes = {};
   
   // 근무자 목록 (상태별 분리)
   List<ApplicationModel> _pendingWorkers = [];      // 미확정 (퇴근완료, pending)
@@ -115,19 +119,48 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
     if (mounted) setState(() {});
   }
 
+  /// 파트+시간대 그룹 키 생성
+  String _getGroupKey(ApplicationModel app) =>
+      '${app.selectedWorkType}_${app.startTime}_${app.endTime}';
+
   /// 전체 급여 계산 (async로 변경)
   Future<void> _calculateAllWages() async {
     final allWorkers = [..._pendingWorkers, ..._calculatedWorkers];
     for (var app in allWorkers) {
-      final wage = await _calculateWageForWorker(app);
+      final extra = _groupExtraBreakMinutes[_getGroupKey(app)] ?? 0;
+      final wage = await _calculateWageForWorker(app, extraBreakMinutes: extra);
       if (wage != null) {
         _calculatedWages[app.id] = wage;
       }
     }
   }
 
+  /// workDetailTimeMap에서 예정 휴게시간 조회
+  int _getScheduledBreakMinutes(ApplicationModel app) {
+    final cached = (app.workDetailId != null
+            ? widget.workDetailTimeMap[app.workDetailId]
+            : null) ??
+        widget.workDetailTimeMap[app.selectedWorkType];
+    if (cached is Map<String, dynamic>) {
+      return cached['breakMinutes'] as int? ?? 0;
+    }
+    return 0;
+  }
+
+  /// 그룹 추가 공제 시간 변경 → 그룹 내 전체 근무자 급여 재계산
+  Future<void> _setGroupBreak(List<ApplicationModel> groupWorkers, int extraMinutes) async {
+    final key = _getGroupKey(groupWorkers.first);
+    setState(() => _groupExtraBreakMinutes[key] = extraMinutes);
+    for (final app in groupWorkers) {
+      final wage = await _calculateWageForWorker(app, extraBreakMinutes: extraMinutes);
+      if (wage != null && mounted) {
+        setState(() => _calculatedWages[app.id] = wage);
+      }
+    }
+  }
+
   /// 개별 급여 계산 (async로 변경)
-  Future<WageDetailModel?> _calculateWageForWorker(ApplicationModel app) async {
+  Future<WageDetailModel?> _calculateWageForWorker(ApplicationModel app, {int extraBreakMinutes = 0}) async {
     final attendance = widget.attendanceMap[app.id];
     if (attendance == null || attendance.checkIn == null || attendance.checkOut == null) {
       return null;
@@ -143,50 +176,84 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
     final scheduledEnd = app.endTime;
     final baseWage = app.wage;
     
-    // ✅ wageType, breakMinutes는 workDetailTimeMap에서 먼저 확인
+    // ✅ wageType, breakMinutes, nightAllowanceApplied, nightIncluded는 workDetailTimeMap에서 먼저 확인
     String wageType = 'hourly';
     int breakMinutes = 0;
-    
+    bool nightAllowanceApplied = true;
+    bool nightIncluded = false;
+    int? baseHourlyWage;
+
     // 1순위: 이미 로드된 workDetailTimeMap에서 가져오기
-    if (app.workDetailId != null && widget.workDetailTimeMap.containsKey(app.workDetailId)) {
-      final cached = widget.workDetailTimeMap[app.workDetailId];
-      if (cached is Map<String, dynamic>) {
-        wageType = cached['wageType'] ?? 'hourly';
-        breakMinutes = cached['breakMinutes'] ?? 0;
-        debugPrint('✅ WorkDetail 캐시 사용: wageType=$wageType, breakMinutes=$breakMinutes');
-      }
+    // composite key(workDetailId) 우선, 없으면 workType(selectedWorkType) 폴백
+    final detailCached = (app.workDetailId != null
+            ? widget.workDetailTimeMap[app.workDetailId]
+            : null) ??
+        widget.workDetailTimeMap[app.selectedWorkType];
+
+    if (detailCached is Map<String, dynamic>) {
+      wageType = detailCached['wageType'] ?? 'hourly';
+      breakMinutes = detailCached['breakMinutes'] ?? 0;
+      nightAllowanceApplied = detailCached['nightAllowanceApplied'] ?? true;
+      nightIncluded = detailCached['nightIncluded'] as bool? ?? false;
+      baseHourlyWage = detailCached['baseHourlyWage'] as int?;
+      debugPrint('✅ WorkDetail 캐시 사용: wageType=$wageType, nightIncluded=$nightIncluded');
     }
-    // 2순위: Firestore TO 문서의 embedded workDetails 배열에서 직접 조회
+    // 2순위: Firestore 문서에서 직접 조회 (슬롯 우선 → TO 폴백)
     else if (app.toId != null && app.toId!.isNotEmpty) {
       try {
-        final toDoc = await FirebaseFirestore.instance
-            .collection('tos')
-            .doc(app.toId)
-            .get();
+        // 슬롯 수정이 TO 템플릿과 다를 수 있으므로 슬롯 문서를 우선 조회
+        List<dynamic> rawWorkDetails = [];
+        String source = '';
 
-        if (toDoc.exists) {
-          final rawWorkDetails = toDoc.data()!['workDetails'] as List<dynamic>? ?? [];
-          // workDetailId == workType이므로 workType으로 매칭
-          final targetType = app.workDetailId ?? app.selectedWorkType;
-          for (var wd in rawWorkDetails) {
-            final wdMap = Map<String, dynamic>.from(wd as Map);
-            if (wdMap['workType'] == targetType) {
-              wageType = wdMap['wageType'] ?? 'hourly';
-              breakMinutes = wdMap['breakMinutes'] ?? 0;
-              debugPrint('✅ WorkDetail 배열 조회: wageType=$wageType');
-              break;
+        if (app.slotId != null && app.slotId!.isNotEmpty) {
+          final slotDoc = await FirebaseFirestore.instance
+              .collection('tos')
+              .doc(app.toId)
+              .collection('slots')
+              .doc(app.slotId)
+              .get();
+          if (slotDoc.exists) {
+            final slotWorkDetails = slotDoc.data()?['workDetails'] as List<dynamic>?;
+            if (slotWorkDetails != null && slotWorkDetails.isNotEmpty) {
+              rawWorkDetails = slotWorkDetails;
+              source = 'slot';
             }
           }
-        } else {
-          debugPrint('⚠️ TO 문서 없음: toId=${app.toId}');
+        }
+
+        // 슬롯에 workDetails 없으면 TO 문서 폴백
+        if (rawWorkDetails.isEmpty) {
+          final toDoc = await FirebaseFirestore.instance
+              .collection('tos')
+              .doc(app.toId)
+              .get();
+          if (toDoc.exists) {
+            rawWorkDetails = toDoc.data()?['workDetails'] as List<dynamic>? ?? [];
+            source = 'to';
+          }
+        }
+
+        for (var wd in rawWorkDetails) {
+          final wdMap = Map<String, dynamic>.from(wd as Map);
+          final wdType = wdMap['workType'] as String? ?? '';
+          final wdComposite = '${wdType}_${wdMap['startTime'] ?? ''}_${wdMap['endTime'] ?? ''}';
+          if (wdType == app.selectedWorkType || wdComposite == app.workDetailId) {
+            wageType = wdMap['wageType'] ?? 'hourly';
+            breakMinutes = wdMap['breakMinutes'] ?? 0;
+            nightAllowanceApplied = wdMap['nightAllowanceApplied'] ?? true;
+            nightIncluded = wdMap['nightIncluded'] as bool? ?? false;
+            baseHourlyWage = wdMap['baseHourlyWage'] as int?;
+            debugPrint('✅ WorkDetail Firestore 조회($source): wageType=$wageType, nightIncluded=$nightIncluded');
+            break;
+          }
         }
       } catch (e) {
         debugPrint('⚠️ WorkDetail 조회 실패: $e');
       }
     } else {
-      debugPrint('⚠️ WorkDetail ID 없음: toId=${app.toId}, workDetailId=${app.workDetailId}');
+      debugPrint('⚠️ WorkDetail 조회 불가: toId=${app.toId}, workDetailId=${app.workDetailId}');
     }
-    
+
     try {
       return WageCalculator.calculate(
         wageType: wageType,
@@ -196,8 +263,11 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
         scheduledEnd: scheduledEnd,
         actualStart: attendance.checkIn!,
         actualEnd: attendance.checkOut!,
-        breakMinutes: breakMinutes,
-        nightAllowanceApplied: true,
+        breakMinutes: breakMinutes + extraBreakMinutes,
+        scheduledBreakMinutes: breakMinutes,
+        nightAllowanceApplied: nightAllowanceApplied,
+        nightIncluded: nightIncluded,
+        baseHourlyWage: baseHourlyWage,
       );
     } catch (e) {
       debugPrint('❌ 급여 계산 실패 (${app.id}): $e');
@@ -223,12 +293,13 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
     );
     
     if (!confirmed) return;
-    
+    if (!mounted) return;
+
+    final adminUid = Provider.of<UserProvider>(context, listen: false).currentUser?.uid;
+
     setState(() => _isProcessing = true);
-    
+
     try {
-      final userProvider = Provider.of<UserProvider>(context, listen: false);
-      final adminUid = userProvider.currentUser?.uid;
       
       int successCount = 0;
       int failCount = 0;
@@ -309,13 +380,21 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
       final wage = _calculatedWages[app.id];
       
       if (attendance != null && wage != null) {
+        final detailCached = (app.workDetailId != null
+                ? widget.workDetailTimeMap[app.workDetailId]
+                : null) ??
+            widget.workDetailTimeMap[app.selectedWorkType];
+        final shiftType = detailCached is Map<String, dynamic>
+            ? detailCached['shiftType'] as String?
+            : null;
         final result = await WageDetailDialog.show(
           context: context,
           app: app,
-          user: widget.userMap[app.uid],  // ✅ applicantUID → uid
+          user: widget.userMap[app.uid],
           attendance: attendance,
           wage: wage,
           mode: WageDialogMode.editOnly,
+          shiftType: shiftType,
         );
         
         if (result != null && result.action == 'update') {
@@ -335,14 +414,22 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
     final wage = _calculatedWages[app.id];
     final user = widget.userMap[app.uid];
     final attendance = widget.attendanceMap[app.id];
-    
+
     if (wage == null || attendance == null) {
       ToastHelper.showWarning('급여 정보를 계산할 수 없습니다');
       return;
     }
-    
+
     final mode = isCalculated ? WageDialogMode.calculated : WageDialogMode.pending;
-    
+
+    final detailCached = (app.workDetailId != null
+            ? widget.workDetailTimeMap[app.workDetailId]
+            : null) ??
+        widget.workDetailTimeMap[app.selectedWorkType];
+    final shiftType = detailCached is Map<String, dynamic>
+        ? detailCached['shiftType'] as String?
+        : null;
+
     final result = await WageDetailDialog.show(
       context: context,
       app: app,
@@ -350,6 +437,7 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
       attendance: attendance,
       wage: wage,
       mode: mode,
+      shiftType: shiftType,
     );
     
     if (result == null) return;
@@ -506,8 +594,9 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
       _hasChanges = true;
       widget.onConfirmed?.call();
       
-      // 급여 재계산
-      final newWage = await _calculateWageForWorker(app);
+      // 급여 재계산 (그룹 추가 공제 유지, 재계산만)
+      final extra = _groupExtraBreakMinutes[_getGroupKey(app)] ?? 0;
+      final newWage = await _calculateWageForWorker(app, extraBreakMinutes: extra);
       
       if (mounted) {
         setState(() {
@@ -546,7 +635,7 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final dateStr = DateFormat('M월 d일 (E)', 'ko_KR').format(widget.date);
+    final dateStr = FormatHelper.formatDateKorean(widget.date);
     final screenWidth = MediaQuery.of(context).size.width;
     final screenHeight = MediaQuery.of(context).size.height;
 
@@ -725,23 +814,27 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
     );
   }
 
-  /// 미확정 탭
+  /// 미확정 탭 — 파트+시간대별 그룹 레이아웃
   Widget _buildPendingTab(BuildContext context, ThemeData theme) {
     if (_pendingWorkers.isEmpty) {
       return _buildEmptyState(context, theme, '미확정 인원이 없습니다', '퇴근 완료된 근무자가 여기에 표시됩니다');
+    }
+
+    // 파트+시간대별 그룹화 (입력 순서 유지)
+    final groups = <String, List<ApplicationModel>>{};
+    for (final app in _pendingWorkers) {
+      groups.putIfAbsent(_getGroupKey(app), () => []).add(app);
     }
 
     return Column(
       children: [
         _buildSelectionBar(context, theme, _pendingWorkers, _pendingSelectedIds, true),
         Expanded(
-          child: ListView.builder(
+          child: ListView(
             padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 16)),
-            itemCount: _pendingWorkers.length,
-            itemBuilder: (context, index) {
-              final app = _pendingWorkers[index];
-              return _buildWorkerCard(context, theme, app, _pendingSelectedIds, true);
-            },
+            children: groups.entries.map((entry) {
+              return _buildGroupSection(context, theme, entry.value, _pendingSelectedIds);
+            }).toList(),
           ),
         ),
         _buildBottomSection(context, theme, _pendingSelectedIds, true),
@@ -777,55 +870,53 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
   Widget _buildSelectionBar(BuildContext context, ThemeData theme, List<ApplicationModel> workers, Set<String> selectedIds, bool isPending) {
     final hasSelection = selectedIds.isNotEmpty;
     final selectAll = selectedIds.length == workers.length && workers.isNotEmpty;
-    
+    final accentColor = isPending ? AppColors.warning : theme.primaryColor;
+
     return Container(
-      padding: ResponsiveHelper.symmetricPadding(context, horizontal: 16, vertical: 12),
-      decoration: BoxDecoration(
-        color: theme.scaffoldBackgroundColor,
-        border: Border(bottom: BorderSide(color: theme.dividerColor)),
-      ),
+      padding: ResponsiveHelper.symmetricPadding(context, horizontal: 16, vertical: 10),
+      color: AppColors.grey50,
       child: Row(
         children: [
-          SizedBox(
-            width: ResponsiveHelper.spacing(context, 24),
-            height: ResponsiveHelper.spacing(context, 24),
-            child: Checkbox(
-              value: selectAll,
-              onChanged: (value) {
-                setState(() {
-                  if (value == true) {
-                    selectedIds.addAll(workers.map((a) => a.id));
-                  } else {
-                    selectedIds.clear();
-                  }
-                });
-              },
-              activeColor: theme.primaryColor,
-            ),
+          AppCheckbox(
+            value: selectAll,
+            activeColor: accentColor,
+            onTap: () => setState(() {
+              if (!selectAll) {
+                selectedIds.addAll(workers.map((a) => a.id));
+              } else {
+                selectedIds.clear();
+              }
+            }),
           ),
           SizedBox(width: ResponsiveHelper.spacing(context, 8)),
           Text(
             '전체 선택',
-            style: ResponsiveHelper.bodyStyle(context).copyWith(color: Colors.black87),
+            style: ResponsiveHelper.smallStyle(context).copyWith(
+              color: AppColors.grey700,
+              fontWeight: FontWeight.w500,
+            ),
           ),
           if (hasSelection) ...[
-            SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+            SizedBox(width: ResponsiveHelper.spacing(context, 6)),
             Container(
-              padding: ResponsiveHelper.symmetricPadding(context, horizontal: 8, vertical: 2),
+              padding: ResponsiveHelper.symmetricPadding(context, horizontal: 7, vertical: 2),
               decoration: BoxDecoration(
-                color: isPending ? AppColors.warning : theme.primaryColor,
-                borderRadius: BorderRadius.circular(ResponsiveHelper.spacing(context, 10)),
+                color: accentColor,
+                borderRadius: BorderRadius.circular(10),
               ),
               child: Text(
-                '${selectedIds.length}명',
-                style: ResponsiveHelper.tinyStyle(context).copyWith(color: Colors.white),
+                '${selectedIds.length}명 선택',
+                style: ResponsiveHelper.tinyStyle(context).copyWith(
+                  color: Colors.white,
+                  fontWeight: FontWeight.bold,
+                ),
               ),
             ),
           ],
           const Spacer(),
           Text(
             '총 ${workers.length}명',
-            style: ResponsiveHelper.smallStyle(context, color: AppColors.grey600),
+            style: ResponsiveHelper.tinyStyle(context, color: AppColors.grey400),
           ),
         ],
       ),
@@ -867,190 +958,211 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
     final attendance = widget.attendanceMap[app.id];
     final wage = _calculatedWages[app.id];
     final isSelected = selectedIds.contains(app.id);
-    
+
     final name = user?.name ?? '이름 없음';
     final genderAge = _formatGenderAge(user);
     final workTime = '${attendance?.checkIn ?? '-'} ~ ${attendance?.checkOut ?? '-'}';
     final workHours = wage?.workHours.toStringAsFixed(1) ?? '-';
-    final totalAmount = wage?.formattedTotal ?? '계산 불가';
-    
-    final borderColor = isPending 
-        ? (isSelected ? AppColors.warning : theme.dividerColor)
-        : (isSelected ? theme.primaryColor : theme.dividerColor);
-    
+    final totalAmount = wage?.formattedTotal ?? '계산 중...';
+    final accentColor = isPending ? AppColors.warning : theme.primaryColor;
+    final breakMins = _getScheduledBreakMinutes(app) + (_groupExtraBreakMinutes[_getGroupKey(app)] ?? 0);
+
     return Container(
-      margin: EdgeInsets.only(bottom: ResponsiveHelper.spacing(context, 12)),
-      child: Stack(
-        clipBehavior: Clip.none,
-        children: [
-          // 메인 카드
-          Container(
-            decoration: BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.circular(ResponsiveHelper.spacing(context, 16)),
-              border: Border.all(
-                color: borderColor,
-                width: isSelected ? 2 : 1,
-              ),
-              boxShadow: [
-                BoxShadow(
-                  color: Colors.black.withValues(alpha: 0.05),
-                  blurRadius: ResponsiveHelper.spacing(context, 8),
-                  offset: Offset(0, ResponsiveHelper.spacing(context, 2)),
+      margin: EdgeInsets.only(bottom: ResponsiveHelper.spacing(context, 10)),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(
+          color: isSelected ? accentColor : AppColors.grey200,
+          width: isSelected ? 2 : 1,
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.04),
+            blurRadius: 6,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+      child: Material(
+        color: Colors.transparent,
+        borderRadius: BorderRadius.circular(14),
+        child: InkWell(
+          onTap: () => _showWageDetailDialog(app, isCalculated: !isPending),
+          borderRadius: BorderRadius.circular(14),
+          child: Padding(
+            padding: ResponsiveHelper.cardPadding(context),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // ── 상단: 체크박스 + 정보 ──────────────────────
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    // 체크박스
+                    Padding(
+                      padding: const EdgeInsets.only(top: 2),
+                      child: AppCheckbox(
+                        value: isSelected,
+                        activeColor: accentColor,
+                        onTap: () => setState(() {
+                          if (isSelected) {
+                            selectedIds.remove(app.id);
+                          } else {
+                            selectedIds.add(app.id);
+                          }
+                        }),
+                      ),
+                    ),
+                    SizedBox(width: ResponsiveHelper.spacing(context, 10)),
+
+                    // 정보 — Expanded로 전체 너비 확보
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          // 이름 + 성별나이 + 배지 (한 줄)
+                          Row(
+                            children: [
+                              Flexible(
+                                child: Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    Flexible(
+                                      child: Text(
+                                        name,
+                                        style: ResponsiveHelper.bodyStyle(context)
+                                            .copyWith(fontWeight: FontWeight.bold),
+                                        overflow: TextOverflow.ellipsis,
+                                      ),
+                                    ),
+                                    if (genderAge.isNotEmpty) ...[
+                                      SizedBox(width: ResponsiveHelper.spacing(context, 3)),
+                                      Text(
+                                        genderAge,
+                                        style: ResponsiveHelper.tinyStyle(context,
+                                            color: AppColors.grey400),
+                                      ),
+                                    ],
+                                  ],
+                                ),
+                              ),
+                              SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+                              ConstrainedBox(
+                                constraints: const BoxConstraints(maxWidth: 80),
+                                child: Container(
+                                  padding: const EdgeInsets.symmetric(
+                                      horizontal: 7, vertical: 2),
+                                  decoration: BoxDecoration(
+                                    color: accentColor.withValues(alpha: 0.1),
+                                    borderRadius: BorderRadius.circular(6),
+                                  ),
+                                  child: Text(
+                                    app.selectedWorkType,
+                                    style: ResponsiveHelper.tinyStyle(context)
+                                        .copyWith(
+                                      color: accentColor,
+                                      fontWeight: FontWeight.w600,
+                                    ),
+                                    overflow: TextOverflow.ellipsis,
+                                    maxLines: 1,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                          SizedBox(height: ResponsiveHelper.spacing(context, 5)),
+
+                          // 출퇴근 시간 + 실근무 시간
+                          Row(
+                            children: [
+                              Icon(Icons.schedule_outlined,
+                                  size: 13, color: AppColors.grey400),
+                              SizedBox(width: ResponsiveHelper.spacing(context, 3)),
+                              Text(
+                                '$workTime (실근무 ${workHours}h)',
+                                style: ResponsiveHelper.smallStyle(context,
+                                    color: AppColors.grey500),
+                              ),
+                            ],
+                          ),
+
+                        ],
+                      ),
+                    ),
+                  ],
                 ),
-              ],
-            ),
-            child: Material(
-              color: Colors.transparent,
-              child: InkWell(
-                onTap: () => _showWageDetailDialog(app, isCalculated: !isPending),
-                borderRadius: BorderRadius.circular(ResponsiveHelper.spacing(context, 16)),
-                child: Padding(
-                  padding: ResponsiveHelper.cardPadding(context),
-                  child: Row(
-                    children: [
-                      // 정보
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
+
+                // ── 구분선 ─────────────────────────────────────
+                Padding(
+                  padding: EdgeInsets.symmetric(
+                      vertical: ResponsiveHelper.spacing(context, 10)),
+                  child: Divider(height: 1, color: AppColors.grey100),
+                ),
+
+                // ── 하단: 휴게 배지 + 급여 금액 ─────────────────
+                Row(
+                  children: [
+                    if (breakMins > 0) ...[
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+                        decoration: BoxDecoration(
+                          color: AppColors.successBg,
+                          borderRadius: BorderRadius.circular(20),
+                          border: Border.all(color: AppColors.successDark.withValues(alpha: 0.2)),
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
                           children: [
-                            // 1줄: 이름 + (성별, 나이)
-                            Row(
-                              children: [
-                                Text(
-                                  name,
-                                  style: ResponsiveHelper.bodyStyle(context).copyWith(
-                                    fontWeight: FontWeight.bold,
-                                    color: Colors.black87,
-                                  ),
-                                ),
-                                if (genderAge.isNotEmpty) ...[
-                                  SizedBox(width: ResponsiveHelper.spacing(context, 4)),
-                                  Text(
-                                    genderAge,
-                                    style: ResponsiveHelper.smallStyle(context, color: AppColors.grey500),
-                                  ),
-                                ],
-                              ],
-                            ),
-                            SizedBox(height: ResponsiveHelper.spacing(context, 4)),
-                            
-                            // 2줄: 업무타입 배지
-                            Container(
-                              padding: ResponsiveHelper.symmetricPadding(context, horizontal: 8, vertical: 3),
-                              decoration: BoxDecoration(
-                                color: theme.primaryColor.withValues(alpha: 0.1),
-                                borderRadius: BorderRadius.circular(ResponsiveHelper.spacing(context, 6)),
+                            Icon(Icons.pause_circle_outline,
+                                size: 11, color: AppColors.successDark),
+                            SizedBox(width: ResponsiveHelper.spacing(context, 3)),
+                            Text(
+                              '휴게 ${FormatHelper.formatCompactHours(breakMins)}',
+                              style: ResponsiveHelper.tinyStyle(context).copyWith(
+                                color: AppColors.successDark,
+                                fontWeight: FontWeight.w600,
                               ),
-                              child: Text(
-                                app.selectedWorkType,
-                                style: ResponsiveHelper.tinyStyle(context).copyWith(
-                                  color: theme.primaryColor,
-                                  fontWeight: FontWeight.w600,
-                                ),
-                              ),
-                            ),
-                            SizedBox(height: ResponsiveHelper.spacing(context, 4)),
-                            
-                            // 3줄: 출퇴근 시간
-                            Row(
-                              children: [
-                                Icon(
-                                  Icons.schedule,
-                                  size: ResponsiveHelper.iconSize(context, 14),
-                                  color: AppColors.grey500,
-                                ),
-                                SizedBox(width: ResponsiveHelper.spacing(context, 4)),
-                                Text(
-                                  '$workTime · $workHours시간',
-                                  style: ResponsiveHelper.smallStyle(context, color: AppColors.grey600),
-                                ),
-                              ],
                             ),
                           ],
                         ),
                       ),
-                      
-                      SizedBox(width: ResponsiveHelper.spacing(context, 8)),
-                      
-                      // 급여
-                      Column(
-                        crossAxisAlignment: CrossAxisAlignment.end,
-                        children: [
-                          Text(
-                            totalAmount,
-                            style: ResponsiveHelper.subtitleStyle(context).copyWith(
-                              fontWeight: FontWeight.bold,
-                              color: isPending ? AppColors.warning : theme.primaryColor,
-                            ),
-                          ),
-                          Text(
-                            wage?.wageTypeLabel ?? '',
-                            style: ResponsiveHelper.tinyStyle(context, color: AppColors.grey500),
-                          ),
-                        ],
-                      ),
-                      
-                      SizedBox(width: ResponsiveHelper.spacing(context, 4)),
-                      Icon(
-                        Icons.chevron_right,
-                        color: theme.disabledColor,
-                        size: ResponsiveHelper.iconSize(context, 20),
-                      ),
                     ],
-                  ),
-                ),
-              ),
-            ),
-          ),
-          
-          // 체크박스 오버레이 (좌상단)
-          Positioned(
-            top: ResponsiveHelper.spacing(context, -6),
-            left: ResponsiveHelper.spacing(context, -6),
-            child: GestureDetector(
-              onTap: () {
-                setState(() {
-                  if (selectedIds.contains(app.id)) {
-                    selectedIds.remove(app.id);
-                  } else {
-                    selectedIds.add(app.id);
-                  }
-                });
-              },
-              child: Container(
-                width: ResponsiveHelper.spacing(context, 24),
-                height: ResponsiveHelper.spacing(context, 24),
-                decoration: BoxDecoration(
-                  color: isSelected 
-                      ? (isPending ? AppColors.warning : theme.primaryColor) 
-                      : Colors.white,
-                  shape: BoxShape.circle,
-                  border: Border.all(
-                    color: isSelected 
-                        ? (isPending ? AppColors.warning : theme.primaryColor) 
-                        : AppColors.grey300,
-                    width: 2,
-                  ),
-                  boxShadow: [
-                    BoxShadow(
-                      color: Colors.black.withValues(alpha: 0.1),
-                      blurRadius: ResponsiveHelper.spacing(context, 4),
-                      offset: Offset(0, ResponsiveHelper.spacing(context, 1)),
+                    const Spacer(),
+                    if (wage?.wageTypeLabel != null) ...[
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                        decoration: BoxDecoration(
+                          color: accentColor.withValues(alpha: 0.1),
+                          borderRadius: BorderRadius.circular(4),
+                        ),
+                        child: Text(
+                          wage!.wageTypeLabel,
+                          style: ResponsiveHelper.tinyStyle(context).copyWith(
+                            color: accentColor,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ),
+                      SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+                    ],
+                    Text(
+                      totalAmount,
+                      style: ResponsiveHelper.subtitleStyle(context).copyWith(
+                        fontWeight: FontWeight.bold,
+                        color: accentColor,
+                      ),
                     ),
+                    SizedBox(width: ResponsiveHelper.spacing(context, 2)),
+                    Icon(Icons.chevron_right,
+                        color: AppColors.grey300,
+                        size: ResponsiveHelper.iconSize(context, 18)),
                   ],
                 ),
-                child: isSelected
-                    ? Icon(
-                        Icons.check,
-                        size: ResponsiveHelper.iconSize(context, 14),
-                        color: Colors.white,
-                      )
-                    : null,
-              ),
+              ],
             ),
           ),
-        ],
+        ),
       ),
     );
   }
@@ -1169,6 +1281,153 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
                 ),
               ),
             ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ═══════════════════════════════════════════════════════════
+  // 그룹 섹션 UI (파트+시간대 단위)
+  // ═══════════════════════════════════════════════════════════
+
+  /// 파트+시간대 그룹 섹션 (헤더 + 근무자 카드 목록)
+  Widget _buildGroupSection(
+    BuildContext context,
+    ThemeData theme,
+    List<ApplicationModel> groupWorkers,
+    Set<String> selectedIds,
+  ) {
+    return Padding(
+      padding: EdgeInsets.only(bottom: ResponsiveHelper.spacing(context, 16)),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          _buildGroupHeader(context, theme, groupWorkers, selectedIds),
+          SizedBox(height: ResponsiveHelper.spacing(context, 6)),
+          ...groupWorkers.map(
+            (app) => _buildWorkerCard(context, theme, app, selectedIds, true),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// 그룹 헤더 — 파트명·시간대·인원 + 그룹 선택 + 추가공제 일괄 칩
+  Widget _buildGroupHeader(
+    BuildContext context,
+    ThemeData theme,
+    List<ApplicationModel> groupWorkers,
+    Set<String> selectedIds,
+  ) {
+    final first = groupWorkers.first;
+    final groupKey = _getGroupKey(first);
+    final workType = first.selectedWorkType;
+    final timeRange = '${first.startTime} ~ ${first.endTime}';
+    final schedBreak = _getScheduledBreakMinutes(first);
+    final extra = _groupExtraBreakMinutes[groupKey] ?? 0;
+    const options = [0, 30, 60, 90];
+    final allGroupSelected = groupWorkers.every((a) => selectedIds.contains(a.id));
+
+    return Container(
+      padding: EdgeInsets.symmetric(
+        horizontal: ResponsiveHelper.spacing(context, 12),
+        vertical: ResponsiveHelper.spacing(context, 10),
+      ),
+      decoration: BoxDecoration(
+        color: AppColors.grey50,
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: AppColors.grey200),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // 그룹 체크박스 + 파트 배지 + 시간대 + 인원수
+          Row(
+            children: [
+              AppCheckbox(
+                value: allGroupSelected,
+                activeColor: AppColors.warning,
+                onTap: () => setState(() {
+                  if (allGroupSelected) {
+                    for (final a in groupWorkers) { selectedIds.remove(a.id); }
+                  } else {
+                    for (final a in groupWorkers) { selectedIds.add(a.id); }
+                  }
+                }),
+              ),
+              SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                decoration: BoxDecoration(
+                  color: AppColors.warning.withValues(alpha: 0.12),
+                  borderRadius: BorderRadius.circular(6),
+                ),
+                child: Text(
+                  workType,
+                  style: ResponsiveHelper.tinyStyle(context).copyWith(
+                    color: AppColors.warning,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ),
+              SizedBox(width: ResponsiveHelper.spacing(context, 6)),
+              Icon(Icons.schedule_outlined, size: 12, color: AppColors.grey400),
+              SizedBox(width: ResponsiveHelper.spacing(context, 3)),
+              Text(
+                timeRange,
+                style: ResponsiveHelper.smallStyle(context, color: AppColors.grey500),
+              ),
+              const Spacer(),
+              Text(
+                '${groupWorkers.length}명',
+                style: ResponsiveHelper.tinyStyle(context, color: AppColors.grey400),
+              ),
+            ],
+          ),
+          SizedBox(height: ResponsiveHelper.spacing(context, 8)),
+          // 추가공제 라벨
+          Row(
+            children: [
+              Icon(Icons.coffee, size: 12, color: AppColors.grey400),
+              SizedBox(width: ResponsiveHelper.spacing(context, 3)),
+              Text(
+                schedBreak > 0 ? '추가공제 (기본 ${FormatHelper.formatCompactHours(schedBreak)})' : '추가공제',
+                style: ResponsiveHelper.tinyStyle(context, color: AppColors.grey500),
+              ),
+            ],
+          ),
+          SizedBox(height: ResponsiveHelper.spacing(context, 5)),
+          // 추가공제 칩 (그룹 일괄 적용)
+          Row(
+            children: options.map((min) {
+              final isSelected = extra == min;
+              final label = min == 0 ? '없음' : '+$min분';
+              return GestureDetector(
+                behavior: HitTestBehavior.opaque,
+                onTap: () => _setGroupBreak(groupWorkers, min),
+                child: Container(
+                  margin: EdgeInsets.only(right: ResponsiveHelper.spacing(context, 5)),
+                  padding: ResponsiveHelper.symmetricPadding(
+                      context, horizontal: 10, vertical: 4),
+                  decoration: BoxDecoration(
+                    color: isSelected ? AppColors.amberDark : Colors.white,
+                    border: Border.all(
+                      color: isSelected ? AppColors.amberDark : AppColors.grey300,
+                      width: isSelected ? 1.5 : 1,
+                    ),
+                    borderRadius: BorderRadius.circular(6),
+                  ),
+                  child: Text(
+                    label,
+                    style: ResponsiveHelper.tinyStyle(context).copyWith(
+                      color: isSelected ? Colors.white : AppColors.grey600,
+                      fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+                    ),
+                  ),
+                ),
+              );
+            }).toList(),
           ),
         ],
       ),

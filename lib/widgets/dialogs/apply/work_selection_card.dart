@@ -1,4 +1,4 @@
-// lib/widgets/dialogs/apply/work_selection_card.dart
+﻿// lib/widgets/dialogs/apply/work_selection_card.dart
 
 import 'package:flutter/material.dart';
 import '../../../../models/core/work_detail_model.dart';
@@ -51,6 +51,9 @@ class WorkSelectionCard extends StatelessWidget {
   /// 로딩 상태
   final bool isLoading;
 
+  /// 슬롯 날짜 (날짜가 지났으면 notApplied 상태도 마감으로 표시)
+  final DateTime? slotDate;
+
   const WorkSelectionCard({
     super.key,
     required this.workDetail,
@@ -60,6 +63,7 @@ class WorkSelectionCard extends StatelessWidget {
     this.onCancelApplication,
     this.onCancelConfirm,
     this.isLoading = false,
+    this.slotDate,
   });
 
   @override
@@ -198,8 +202,11 @@ class WorkSelectionCard extends StatelessWidget {
           textColor = AppColors.warningDark;
           break;
       case WorkApplicationStatus.notApplied:
-          // 마감/모집중 표시
-          if (workDetail.isFull || workDetail.isClosed || workDetail.isTimeExpired) {
+          final now = DateTime.now();
+          final isDatePast = slotDate != null &&
+              DateTime(slotDate!.year, slotDate!.month, slotDate!.day)
+                  .isBefore(DateTime(now.year, now.month, now.day));
+          if (isDatePast || workDetail.isFull || workDetail.isClosed || workDetail.isTimeExpired) {
             text = '마감';
             bgColor = AppColors.grey200;
             textColor = AppColors.grey600;
@@ -269,33 +276,6 @@ class WorkSelectionCard extends StatelessWidget {
     );
   }
 
-  Widget _buildDetailItem(
-    BuildContext context, {
-    required IconData icon,
-    required String text,
-    bool highlight = false,
-  }) {
-    return Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Icon(
-          icon,
-          size: ResponsiveHelper.iconSize(context, 16),
-          color: highlight ? AppColors.errorDark : AppColors.grey500,
-        ),
-        SizedBox(width: ResponsiveHelper.spacing(context, 4)),
-        Text(
-          text,
-          style: ResponsiveHelper.smallStyle(
-            context,
-            color: highlight ? AppColors.errorDark : AppColors.grey600,
-          ).copyWith(
-            fontWeight: highlight ? FontWeight.bold : FontWeight.normal,
-          ),
-        ),
-      ],
-    );
-  }
   /// 인라인 액션 버튼 (작은 버튼)
   Widget _buildInlineActionButton(BuildContext context, ThemeData theme) {
     // 로딩 중
@@ -415,173 +395,6 @@ class WorkSelectionCard extends StatelessWidget {
             ),
           ),
         ],
-      ),
-    );
-  }
-
-  // ═══════════════════════════════════════════════════════════
-  // 하단: 액션 버튼
-  // ═══════════════════════════════════════════════════════════
-
-  Widget _buildActionButton(BuildContext context, ThemeData theme) {
-    // 로딩 중
-    if (isLoading) {
-      return SizedBox(
-        height: ResponsiveHelper.spacing(context, 36),
-        child: Center(
-          child: SizedBox(
-            width: ResponsiveHelper.spacing(context, 20),
-            height: ResponsiveHelper.spacing(context, 20),
-            child: CircularProgressIndicator(
-              strokeWidth: 2,
-              color: theme.primaryColor,
-            ),
-          ),
-        ),
-      );
-    }
-
-    // BLOCKED면 선택 불가 표시
-    if (conflictInfo.level == ConflictLevel.blocked) {
-      return _buildDisabledButton(context, '선택 불가');
-    }
-
-    // 상태별 버튼
-    switch (status) {
-      case WorkApplicationStatus.notApplied:
-        if (workDetail.isFull || workDetail.isClosed || workDetail.isTimeExpired) {
-          return _buildSmallButton(context, '마감', AppColors.grey400, null, icon: Icons.block);
-        }
-        return _buildSmallButton(context, '지원', AppColors.success, onApply, icon: Icons.send);
-        
-      case WorkApplicationStatus.pending:
-        return _buildSmallButton(context, '취소', AppColors.grey500, onCancelApplication, icon: Icons.close);
-        
-      case WorkApplicationStatus.confirmed:
-        return _buildSmallButton(context, '확정됨', AppColors.info, null, icon: Icons.check);
-        
-      case WorkApplicationStatus.closed:
-        return _buildSmallButton(context, '마감', AppColors.grey400, null, icon: Icons.block);
-        
-      case WorkApplicationStatus.autoCanceled:
-        return _buildSmallButton(context, '재지원', AppColors.warning, onApply, icon: Icons.refresh);
-    }
-  }
-
-  /// 지원하기 버튼 (초록)
-  Widget _buildApplyButton(BuildContext context, ThemeData theme) {
-    return SizedBox(
-      width: double.infinity,
-      height: ResponsiveHelper.spacing(context, 40),
-      child: ElevatedButton.icon(
-        onPressed: onApply,
-        icon: Icon(
-          Icons.check_circle_outline,
-          size: ResponsiveHelper.iconSize(context, 18),
-        ),
-        label: Text(
-          '지원하기',
-          style: ResponsiveHelper.bodyStyle(context, color: Colors.white).copyWith(
-            fontWeight: FontWeight.w600,
-          ),
-        ),
-        style: ElevatedButton.styleFrom(
-          backgroundColor: AppColors.success,
-          foregroundColor: Colors.white,
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(
-              ResponsiveHelper.spacing(context, 10),
-            ),
-          ),
-          elevation: 0,
-        ),
-      ),
-    );
-  }
-
-  /// 지원취소 버튼 (회색 아웃라인)
-  Widget _buildCancelApplicationButton(BuildContext context) {
-    return SizedBox(
-      width: double.infinity,
-      height: ResponsiveHelper.spacing(context, 40),
-      child: OutlinedButton.icon(
-        onPressed: onCancelApplication,
-        icon: Icon(
-          Icons.cancel_outlined,
-          size: ResponsiveHelper.iconSize(context, 18),
-        ),
-        label: Text(
-          '지원취소',
-          style: ResponsiveHelper.bodyStyle(context, color: AppColors.grey600).copyWith(
-            fontWeight: FontWeight.w600,
-          ),
-        ),
-        style: OutlinedButton.styleFrom(
-          foregroundColor: AppColors.grey600,
-          side: BorderSide(color: AppColors.grey400),
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(
-              ResponsiveHelper.spacing(context, 10),
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-
-  /// 확정취소 버튼 (빨강)
-  Widget _buildCancelConfirmButton(BuildContext context) {
-    return SizedBox(
-      width: double.infinity,
-      height: ResponsiveHelper.spacing(context, 40),
-      child: OutlinedButton.icon(
-        onPressed: onCancelConfirm,
-        icon: Icon(
-          Icons.warning_amber_rounded,
-          size: ResponsiveHelper.iconSize(context, 18),
-        ),
-        label: Text(
-          '확정취소',
-          style: ResponsiveHelper.bodyStyle(context, color: AppColors.error).copyWith(
-            fontWeight: FontWeight.w600,
-          ),
-        ),
-        style: OutlinedButton.styleFrom(
-          foregroundColor: AppColors.error,
-          side: BorderSide(color: AppColors.error),
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(
-              ResponsiveHelper.spacing(context, 10),
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-
-  /// 비활성 버튼
-  Widget _buildDisabledButton(BuildContext context, String text) {
-    return SizedBox(
-      width: double.infinity,
-      height: ResponsiveHelper.spacing(context, 40),
-      child: ElevatedButton(
-        onPressed: null,
-        style: ElevatedButton.styleFrom(
-          backgroundColor: AppColors.grey200,
-          foregroundColor: AppColors.grey500,
-          disabledBackgroundColor: AppColors.grey200,
-          disabledForegroundColor: AppColors.grey500,
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(
-              ResponsiveHelper.spacing(context, 10),
-            ),
-          ),
-          elevation: 0,
-        ),
-        child: Text(
-          text,
-          style: ResponsiveHelper.bodyStyle(context, color: AppColors.grey500),
-        ),
       ),
     );
   }

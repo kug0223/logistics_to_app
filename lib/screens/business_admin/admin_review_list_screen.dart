@@ -12,9 +12,13 @@ import '../../providers/user_provider.dart';
 
 // Models
 import '../../models/core/monthly_review_model.dart';
+import '../../models/core/review_request_model.dart';
 
 // Services
 import '../../services/monthly_review_service.dart';
+
+// Dialogs
+import '../../widgets/dialogs/monthly_review_dialog.dart';
 
 /// 관리자용 리뷰 목록 화면
 /// 
@@ -41,9 +45,10 @@ class _AdminReviewListScreenState extends State<AdminReviewListScreen>
   
   // 상태
   bool _isLoading = true;
-  List<MonthlyReviewModel> _writtenReviews = [];  // 내가 작성한 리뷰
-  List<MonthlyReviewModel> _receivedReviews = []; // 사업장이 받은 리뷰
-  
+  List<MonthlyReviewModel> _writtenReviews = [];
+  List<MonthlyReviewModel> _receivedReviews = [];
+  List<ReviewRequestModel> _pendingRequests = [];
+
   // 필터
   final int _selectedYear = DateTime.now().year;
   int _selectedMonth = 0; // 0 = 전체
@@ -51,7 +56,7 @@ class _AdminReviewListScreenState extends State<AdminReviewListScreen>
   @override
   void initState() {
     super.initState();
-    _tabController = TabController(length: 2, vsync: this);
+    _tabController = TabController(length: 3, vsync: this);
     _loadReviews();
   }
 
@@ -74,32 +79,32 @@ class _AdminReviewListScreenState extends State<AdminReviewListScreen>
     }
     
     try {
-      // 1. 내가 작성한 리뷰 (관리자 → 지원자)
-      _writtenReviews = await _reviewService.getReviewsByBusiness(
-        businessId: businessId,
-        limit: 100,
-      );
-      
-      // 2. 사업장이 받은 리뷰 (지원자 → 사업장)
-      _receivedReviews = await _reviewService.getReviewsForBusiness(
-        businessId: businessId,
-        limit: 100,
-      );
-      
-      // 월별 필터 적용
+      final results = await Future.wait([
+        _reviewService.getReviewsByBusiness(businessId: businessId, limit: 100),
+        _reviewService.getPublishedReviewsForBusiness(businessId: businessId, limit: 100),
+        _reviewService.getPendingRequestsForBusiness(businessId),
+      ]);
+
+      _writtenReviews = results[0] as List<MonthlyReviewModel>;
+      _receivedReviews = results[1] as List<MonthlyReviewModel>;
+      _pendingRequests = results[2] as List<ReviewRequestModel>;
+
       if (_selectedMonth > 0) {
-        _writtenReviews = _writtenReviews.where((r) => 
-          r.reviewYear == _selectedYear && r.reviewMonth == _selectedMonth
-        ).toList();
-        
-        _receivedReviews = _receivedReviews.where((r) => 
-          r.reviewYear == _selectedYear && r.reviewMonth == _selectedMonth
-        ).toList();
+        _writtenReviews = _writtenReviews
+            .where((r) => r.reviewYear == _selectedYear && r.reviewMonth == _selectedMonth)
+            .toList();
+        _receivedReviews = _receivedReviews
+            .where((r) => r.reviewYear == _selectedYear && r.reviewMonth == _selectedMonth)
+            .toList();
+        _pendingRequests = _pendingRequests
+            .where((r) => r.reviewYear == _selectedYear && r.reviewMonth == _selectedMonth)
+            .toList();
       }
     } catch (e) {
       debugPrint('❌ 리뷰 로드 실패: $e');
     }
-    
+
+    if (!mounted) return;
     setState(() => _isLoading = false);
   }
 
@@ -146,6 +151,27 @@ class _AdminReviewListScreenState extends State<AdminReviewListScreen>
                 ],
               ),
             ),
+            Tab(
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(Icons.pending_actions, size: ResponsiveHelper.iconSize(context, 18)),
+                  SizedBox(width: ResponsiveHelper.spacing(context, 6)),
+                  Text('미작성 (${_pendingRequests.length})'),
+                  if (_pendingRequests.isNotEmpty) ...[
+                    SizedBox(width: ResponsiveHelper.spacing(context, 4)),
+                    Container(
+                      width: 8,
+                      height: 8,
+                      decoration: const BoxDecoration(
+                        color: AppColors.error,
+                        shape: BoxShape.circle,
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+            ),
           ],
         ),
         actions: [
@@ -172,11 +198,9 @@ class _AdminReviewListScreenState extends State<AdminReviewListScreen>
           : TabBarView(
               controller: _tabController,
               children: [
-                // 탭 1: 작성한 리뷰
                 _buildReviewList(_writtenReviews, isWritten: true),
-                
-                // 탭 2: 받은 리뷰
                 _buildReviewList(_receivedReviews, isWritten: false),
+                _buildPendingRequestList(),
               ],
             ),
     );
@@ -317,7 +341,7 @@ class _AdminReviewListScreenState extends State<AdminReviewListScreen>
                     ...List.generate(5, (i) => Icon(
                       i < review.rating ? Icons.star : Icons.star_border,
                       size: ResponsiveHelper.iconSize(context, 20),
-                      color: Colors.amber,
+                      color: AppColors.amber,
                     )),
                     SizedBox(width: ResponsiveHelper.spacing(context, 8)),
                     Text(
@@ -435,6 +459,144 @@ class _AdminReviewListScreenState extends State<AdminReviewListScreen>
         ),
       ),
     );
+  }
+
+  Widget _buildPendingRequestList() {
+    if (_pendingRequests.isEmpty) {
+      return Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(
+              Icons.check_circle_outline,
+              size: ResponsiveHelper.iconSize(context, 64),
+              color: AppColors.grey300,
+            ),
+            SizedBox(height: ResponsiveHelper.spacing(context, 16)),
+            Text(
+              '미작성 리뷰가 없습니다',
+              style: ResponsiveHelper.bodyStyle(context, color: AppColors.grey500),
+            ),
+          ],
+        ),
+      );
+    }
+
+    return RefreshIndicator(
+      onRefresh: _loadReviews,
+      child: ListView.builder(
+        padding: ResponsiveHelper.cardPadding(context),
+        itemCount: _pendingRequests.length,
+        itemBuilder: (context, index) =>
+            _buildPendingRequestCard(context, _pendingRequests[index]),
+      ),
+    );
+  }
+
+  Widget _buildPendingRequestCard(BuildContext context, ReviewRequestModel req) {
+    final theme = Theme.of(context);
+    final isDeadlineSoon =
+        !req.isDeadlinePassed && req.deadline.difference(DateTime.now()).inDays <= 3;
+
+    return Container(
+      margin: EdgeInsets.only(bottom: ResponsiveHelper.spacing(context, 12)),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(
+          color: isDeadlineSoon ? AppColors.error.withValues(alpha: 0.4) : Colors.transparent,
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.04),
+            blurRadius: 8,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+      child: Padding(
+        padding: ResponsiveHelper.cardPadding(context),
+        child: Row(
+          children: [
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Icon(Icons.person, size: ResponsiveHelper.iconSize(context, 16), color: theme.primaryColor),
+                      SizedBox(width: ResponsiveHelper.spacing(context, 6)),
+                      Text(
+                        req.workerName,
+                        style: ResponsiveHelper.bodyStyle(context).copyWith(fontWeight: FontWeight.bold),
+                      ),
+                    ],
+                  ),
+                  SizedBox(height: ResponsiveHelper.spacing(context, 4)),
+                  Text(
+                    req.periodText,
+                    style: ResponsiveHelper.smallStyle(context, color: AppColors.grey500),
+                  ),
+                  SizedBox(height: ResponsiveHelper.spacing(context, 4)),
+                  Text(
+                    req.isDeadlinePassed
+                        ? '기한 만료'
+                        : '마감 ${req.deadline.month}/${req.deadline.day}'
+                            '${isDeadlineSoon ? ' (임박!)' : ''}',
+                    style: ResponsiveHelper.tinyStyle(
+                      context,
+                      color: req.isDeadlinePassed
+                          ? AppColors.grey400
+                          : isDeadlineSoon
+                              ? AppColors.error
+                              : AppColors.grey500,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            if (!req.isDeadlinePassed)
+              ElevatedButton(
+                onPressed: () => _openReviewFromRequest(req),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: theme.primaryColor,
+                  foregroundColor: Colors.white,
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                  padding: EdgeInsets.symmetric(
+                    horizontal: ResponsiveHelper.spacing(context, 16),
+                    vertical: ResponsiveHelper.spacing(context, 8),
+                  ),
+                ),
+                child: Text('리뷰 작성', style: ResponsiveHelper.smallStyle(context, color: Colors.white)),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _openReviewFromRequest(ReviewRequestModel req) async {
+    final userProvider = context.read<UserProvider>();
+    final reviewer = userProvider.currentUser;
+    if (reviewer == null) return;
+
+    final result = await showMonthlyReviewDialog(
+      context,
+      reviewerId: reviewer.uid,
+      reviewerName: reviewer.name,
+      businessId: req.businessId,
+      businessName: req.businessName,
+      targetUserId: req.workerId,
+      targetUserName: req.workerName,
+      reviewYear: req.reviewYear,
+      reviewMonth: req.reviewMonth,
+      workDaysInMonth: 1,
+      requestId: req.id,
+    );
+
+    if (result == true && mounted) {
+      _loadReviews();
+    }
   }
 
   String _formatDate(DateTime date) {

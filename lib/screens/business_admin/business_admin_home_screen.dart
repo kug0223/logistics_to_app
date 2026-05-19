@@ -13,6 +13,7 @@ import '../../utils/toast_helper.dart';
 
 // Services
 import '../../services/firestore_service.dart';
+import '../../services/monthly_review_service.dart';
 
 // Screens
 import '../common/settings_screen.dart';
@@ -381,20 +382,30 @@ class BusinessAdminHomeScreen extends StatelessWidget {
                               },
                             ),
                             // 4. 리뷰 관리
-                            _buildMenuCard(
-                              context,
-                              icon: Icons.rate_review_outlined,
-                              title: '리뷰 관리',
-                              subtitle: '평가 작성/조회',
-                              color: theme.primaryColor,
-                              onTap: () {
-                                Navigator.push(
-                                  context,
-                                  MaterialPageRoute(
-                                    builder: (context) => const AdminReviewListScreen(),
-                                  ),
-                                );
-                              },
+                            FutureBuilder<int>(
+                              future: () async {
+                                final user = context.read<UserProvider>().currentUser;
+                                if (user?.businessId == null) return 0;
+                                final list = await MonthlyReviewService()
+                                    .getPendingRequestsForBusiness(user!.businessId!);
+                                return list.length;
+                              }(),
+                              builder: (context, snap) => _buildMenuCard(
+                                context,
+                                icon: Icons.rate_review_outlined,
+                                title: '리뷰 관리',
+                                subtitle: '평가 작성/조회',
+                                color: theme.primaryColor,
+                                badgeCount: snap.data,
+                                onTap: () {
+                                  Navigator.push(
+                                    context,
+                                    MaterialPageRoute(
+                                      builder: (context) => const AdminReviewListScreen(),
+                                    ),
+                                  );
+                                },
+                              ),
                             ),
 
                             // 5. 설정
@@ -435,8 +446,9 @@ class BusinessAdminHomeScreen extends StatelessWidget {
     required String subtitle,
     required Color color,
     required VoidCallback onTap,
+    int? badgeCount,
   }) {
-    return Card(
+    final card = Card(
       elevation: 3,
       shadowColor: Colors.black.withValues(alpha: 0.1),
       shape: RoundedRectangleBorder(
@@ -500,6 +512,34 @@ class BusinessAdminHomeScreen extends StatelessWidget {
           ),
         ),
       ),
+    );
+
+    if (badgeCount == null || badgeCount <= 0) return card;
+
+    return Stack(
+      clipBehavior: Clip.none,
+      children: [
+        card,
+        Positioned(
+          top: -4,
+          right: -4,
+          child: Container(
+            padding: const EdgeInsets.all(6),
+            decoration: const BoxDecoration(
+              color: AppColors.error,
+              shape: BoxShape.circle,
+            ),
+            child: Text(
+              badgeCount > 99 ? '99+' : '$badgeCount',
+              style: const TextStyle(
+                color: Colors.white,
+                fontSize: 11,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+          ),
+        ),
+      ],
     );
   }
 }

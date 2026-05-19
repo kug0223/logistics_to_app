@@ -1,5 +1,4 @@
-import 'package:flutter/material.dart';
-import 'package:intl/intl.dart';
+﻿import 'package:flutter/material.dart';
 import '../../../../utils/responsive_helper.dart';
 import '../../../../utils/format_helper.dart';
 import '../../../../theme/app_colors.dart';
@@ -83,12 +82,13 @@ class _TODateSelectorState extends State<TODateSelector> {
     String dateText;
     if (widget.isLongTerm && widget.rangeStart != null && widget.rangeEnd != null) {
       final isSameYear = widget.rangeStart!.year == now.year;
-      final format = DateFormat(isSameYear ? 'M월 d일 (E)' : 'yyyy년 M월 d일 (E)', 'ko_KR');
-      dateText = '${format.format(widget.rangeStart!)} ~ ${format.format(widget.rangeEnd!)}';
+      final fmt = isSameYear ? FormatHelper.formatDateKorean : FormatHelper.formatDateLong;
+      dateText = '${fmt(widget.rangeStart!)} ~ ${fmt(widget.rangeEnd!)}';
     } else if (widget.displayDate != null) {
       final isSameYear = widget.displayDate!.year == now.year;
-      final format = DateFormat(isSameYear ? 'M월 d일 (E)' : 'yyyy년 M월 d일 (E)', 'ko_KR');
-      dateText = format.format(widget.displayDate!);
+      dateText = isSameYear
+          ? FormatHelper.formatDateKorean(widget.displayDate!)
+          : FormatHelper.formatDateLong(widget.displayDate!);
     } else {
       dateText = '날짜 정보 없음';
     }
@@ -210,7 +210,6 @@ class _TODateSelectorState extends State<TODateSelector> {
 
   /// 헤더 (범위 선택 중일 때 힌트로 교체 - 레이아웃 고정)
   Widget _buildHeader(BuildContext context) {
-    final fmt = DateFormat('M월 d일 (E)', 'ko_KR');
 
     return SizedBox(
       height: ResponsiveHelper.spacing(context, 40),
@@ -250,7 +249,7 @@ class _TODateSelectorState extends State<TODateSelector> {
                           style: ResponsiveHelper.smallStyle(context, color: _kPrimary),
                           children: [
                             TextSpan(
-                              text: fmt.format(_rangeStart!),
+                              text: FormatHelper.formatDateKorean(_rangeStart!),
                               style: const TextStyle(fontWeight: FontWeight.bold),
                             ),
                             const TextSpan(text: ' · 종료 날짜를 탭하세요'),
@@ -493,7 +492,7 @@ class _TODateSelectorState extends State<TODateSelector> {
             ),
           ),
           Text(
-            DateFormat('yyyy년 M월', 'ko_KR').format(_focusedDay),
+            FormatHelper.formatYearMonth(_focusedDay),
             style: ResponsiveHelper.subtitleStyle(context).copyWith(
               fontWeight: FontWeight.bold,
               color: _kPrimary,
@@ -597,14 +596,19 @@ class _TODateSelectorState extends State<TODateSelector> {
     final hasPrev = widget.selectedDates.any((d) => _isSameDay(d, prevDay));
     final hasNext = widget.selectedDates.any((d) => _isSameDay(d, nextDay));
 
+    // 주 행 경계 보정: 일요일(행 시작)은 왼쪽 연결 없음, 토요일(행 끝)은 오른쪽 연결 없음
+    final weekdayIndex = date.weekday % 7; // Sun=0, Sat=6
+    final effectiveHasPrev = hasPrev && weekdayIndex != 0;
+    final effectiveHasNext = hasNext && weekdayIndex != 6;
+
     // 연결 배경 모서리
     BorderRadius borderRadius;
     if (isSelected) {
-      if (hasPrev && hasNext) {
+      if (effectiveHasPrev && effectiveHasNext) {
         borderRadius = BorderRadius.zero;
-      } else if (hasPrev && !hasNext) {
+      } else if (effectiveHasPrev && !effectiveHasNext) {
         borderRadius = BorderRadius.horizontal(right: Radius.circular(ResponsiveHelper.spacing(context, 22)));
-      } else if (!hasPrev && hasNext) {
+      } else if (!effectiveHasPrev && effectiveHasNext) {
         borderRadius = BorderRadius.horizontal(left: Radius.circular(ResponsiveHelper.spacing(context, 22)));
       } else {
         borderRadius = BorderRadius.circular(ResponsiveHelper.spacing(context, 22));

@@ -119,7 +119,9 @@ class NotificationScreen extends StatelessWidget {
   ) async {
     // 1. 읽음 처리
     await provider.markAsRead(notification.id);
-    
+
+    if (!context.mounted) return;
+
     // 2. 알림 타입에 따른 화면 이동
     final userProvider = context.read<UserProvider>();
     final isUser = userProvider.isUser;
@@ -292,6 +294,7 @@ class NotificationScreen extends StatelessWidget {
           .get();
       
       if (!toDoc.exists) {
+        if (!context.mounted) return;
         Navigator.pop(context); // 로딩 닫기
         ToastHelper.showError('공고를 찾을 수 없습니다');
         Navigator.push(
@@ -310,8 +313,9 @@ class NotificationScreen extends StatelessWidget {
           .collection('workDetails')
           .doc(workDetailId)
           .get();
-      
+
       if (!workDetailDoc.exists) {
+        if (!context.mounted) return;
         Navigator.pop(context); // 로딩 닫기
         ToastHelper.showError('업무 정보를 찾을 수 없습니다');
         Navigator.push(
@@ -333,20 +337,20 @@ class NotificationScreen extends StatelessWidget {
         isWorkDetailLoaded: true,
       );
 
+      if (!context.mounted) return;
       Navigator.pop(context); // 로딩 닫기
 
       // 4. 다이얼로그 열기
-      if (context.mounted) {
-        showDialog(
-          context: context,
-          builder: (_) => WorkApplicantsDialog(
-            work: workDetail,
-            toItem: toItem,
-            onChanged: () {},
-          ),
-        );
-      }
+      showDialog(
+        context: context,
+        builder: (_) => WorkApplicantsDialog(
+          work: workDetail,
+          toItem: toItem,
+          onChanged: () {},
+        ),
+      );
     } catch (e) {
+      if (!context.mounted) return;
       Navigator.pop(context); // 로딩 닫기
       debugPrint('❌ 알림 네비게이션 실패: $e');
       ToastHelper.showError('데이터를 불러오는데 실패했습니다');

@@ -1,6 +1,7 @@
 ﻿import 'dart:ui';
 import 'package:flutter/material.dart';
-import 'package:flutter/foundation.dart' show kIsWeb;
+import 'theme/app_colors.dart';
+import 'package:flutter/foundation.dart' show kIsWeb, kDebugMode;
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_crashlytics/firebase_crashlytics.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
@@ -8,7 +9,6 @@ import 'package:provider/provider.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:intl/date_symbol_data_local.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 import 'firebase_options.dart';
 import 'providers/user_provider.dart';
 import 'providers/theme_provider.dart';
@@ -43,6 +43,9 @@ final GlobalKey<ScaffoldMessengerState> scaffoldMessengerKey =
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+
+  // 릴리즈 빌드에서 debugPrint 전체 비활성화
+  if (!kDebugMode) debugPrint = (String? message, {int? wrapWidth}) {};
 
   // 앱 종료 상태 FCM 백그라운드 핸들러 등록 (Firebase 초기화 전에 먼저 등록)
   FirebaseMessaging.onBackgroundMessage(_firebaseMessagingBackgroundHandler);
@@ -151,14 +154,6 @@ class _AuthWrapperState extends State<AuthWrapper> {
     // _checkOnboarding(); // TODO: 테스트 완료 후 주석 해제
   }
 
-  Future<void> _checkOnboarding() async {
-    final prefs = await SharedPreferences.getInstance();
-    final completed = prefs.getBool('onboarding_completed') ?? false;
-    if (mounted) {
-      setState(() => _isOnboardingCompleted = completed);
-    }
-  }
-
   void _completeOnboarding() {
     setState(() => _isOnboardingCompleted = true);
   }
@@ -254,7 +249,7 @@ class _AuthWrapperState extends State<AuthWrapper> {
                 padding: const EdgeInsets.symmetric(
                     horizontal: 16, vertical: 8),
                 leading: const Icon(Icons.mail_outline,
-                    color: Colors.orange),
+                    color: AppColors.warning),
                 backgroundColor: const Color(0xFFFFF8E1),
                 content: const Text(
                   '이메일 인증을 완료하면 더 많은 기능을 이용할 수 있어요',
@@ -267,7 +262,7 @@ class _AuthWrapperState extends State<AuthWrapper> {
                           ?.hideCurrentMaterialBanner();
                     },
                     child: const Text('나중에',
-                        style: TextStyle(color: Colors.grey)),
+                        style: TextStyle(color: AppColors.grey500)),
                   ),
                   TextButton(
                     onPressed: () {
@@ -281,7 +276,7 @@ class _AuthWrapperState extends State<AuthWrapper> {
                     },
                     child: const Text('인증하기',
                         style: TextStyle(
-                            color: Colors.orange,
+                            color: AppColors.warning,
                             fontWeight: FontWeight.w600)),
                   ),
                 ],
@@ -325,7 +320,7 @@ class _AuthWrapperState extends State<AuthWrapper> {
                   const Icon(
                     Icons.error_outline,
                     size: 64,
-                    color: Colors.red,
+                    color: AppColors.error,
                   ),
                   const SizedBox(height: 16),
                   const Text(
@@ -336,7 +331,7 @@ class _AuthWrapperState extends State<AuthWrapper> {
                   Text(
                     e.toString(),
                     textAlign: TextAlign.center,
-                    style: const TextStyle(color: Colors.red),
+                    style: const TextStyle(color: AppColors.error),
                   ),
                   const SizedBox(height: 24),
                   ElevatedButton(

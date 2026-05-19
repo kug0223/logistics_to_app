@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+﻿import 'package:flutter/material.dart';
 
 // Models
 import '../../../models/core/work_detail_model.dart';
@@ -56,6 +56,20 @@ class WorkDetailRow extends StatefulWidget {
 
 class _WorkDetailRowState extends State<WorkDetailRow> {
   
+  String get _netWorkTimeStr => FormatHelper.calcNetWorkTime(
+        widget.work.startTime,
+        widget.work.endTime,
+        breakMinutes: widget.work.breakMinutes,
+      );
+
+  // 급여 색상 — 일급: 주황, 시급: 초록
+  Color _wageColor(bool isClosed) {
+    if (isClosed) return AppColors.grey400;
+    return widget.work.wageType == 'daily'
+        ? AppColors.warningDark
+        : AppColors.successDark;
+  }
+
   // ✅ workDetailId로 조회
   int get _confirmedCount {
     final stats = widget.toItem.workDetailStats?[widget.work.id];
@@ -72,8 +86,12 @@ class _WorkDetailRowState extends State<WorkDetailRow> {
     final theme = Theme.of(context);
     final isFull = _confirmedCount >= widget.work.requiredCount;
     // work.isFull은 항상 false(모델에 통계 없음) → 로컬 isFull 사용
-    final isClosed = widget.toItem.slot?.isManualClosed == true ||
-        widget.work.isClosed || widget.work.isTimeExpired || isFull;
+    final slotDate = widget.toItem.slot?.date;
+    final isClosed = (widget.toItem.slot?.isEffectivelyClosed ?? false) ||
+        (slotDate != null
+            ? widget.work.isEffectivelyClosed(slotDate)
+            : widget.work.isClosed || widget.work.isTimeExpired) ||
+        isFull;
     final isEmergency = widget.work.isEmergencyOpen;
 
     Color statusColor;
@@ -169,6 +187,16 @@ class _WorkDetailRowState extends State<WorkDetailRow> {
                                           color: AppColors.grey600,
                                         ),
                                       ),
+                                      if (_netWorkTimeStr.isNotEmpty) ...[
+                                        SizedBox(width: ResponsiveHelper.spacing(context, 4)),
+                                        Text(
+                                          '($_netWorkTimeStr)',
+                                          style: ResponsiveHelper.tinyStyle(context).copyWith(
+                                            color: AppColors.grey500,
+                                            fontWeight: FontWeight.w500,
+                                          ),
+                                        ),
+                                      ],
                                     ],
                                   ),
                                   if (!widget.toItem.to.isLongTerm)
@@ -199,14 +227,14 @@ class _WorkDetailRowState extends State<WorkDetailRow> {
                                   Icon(
                                     Icons.paid,
                                     size: ResponsiveHelper.iconSize(context, 12),
-                                    color: isClosed ? AppColors.grey400 : AppColors.successDark,
+                                    color: _wageColor(isClosed),
                                   ),
                                   SizedBox(width: ResponsiveHelper.spacing(context, 4)),
                                   Text(
                                     '${FormatHelper.formatWage(widget.work.wage)} / ${widget.work.wageTypeLabel}',
                                     style: ResponsiveHelper.smallStyle(
                                       context,
-                                      color: isClosed ? AppColors.grey400 : AppColors.successDark,
+                                      color: _wageColor(isClosed),
                                     ).copyWith(fontWeight: FontWeight.w600),
                                   ),
                                 ],
@@ -337,15 +365,26 @@ class _WorkDetailRowState extends State<WorkDetailRow> {
           vertical: ResponsiveHelper.spacing(context, 2),
         ),
         decoration: BoxDecoration(
-          color: AppColors.grey200,
-          borderRadius: BorderRadius.circular(4),
+          color: AppColors.grey100,
+          borderRadius: BorderRadius.circular(6),
         ),
-        child: Text(
-          '마감됨',
-          style: ResponsiveHelper.tinyStyle(
-            context,
-            color: AppColors.grey600,
-          ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(
+              Icons.lock,
+              size: ResponsiveHelper.iconSize(context, 9),
+              color: AppColors.grey600,
+            ),
+            SizedBox(width: ResponsiveHelper.spacing(context, 3)),
+            Text(
+              '마감',
+              style: ResponsiveHelper.tinyStyle(
+                context,
+                color: AppColors.grey600,
+              ),
+            ),
+          ],
         ),
       );
     }
@@ -406,7 +445,8 @@ class _WorkDetailRowState extends State<WorkDetailRow> {
     if (result != null && result.hasChanges && mounted) {
       setState(() {});  // 자기 자신 rebuild
       widget.onLocalStatsChanged?.call();  // 부모 TOGroupCard rebuild
-      
+      widget.onChanged();  // 그룹 카드 헤더 통계 갱신 (전체 reload)
+
       // 🔥 충돌로 영향받은 다른 TO가 있으면 상위에 알림
       if (result.affectedTOIds.isNotEmpty) {
         widget.onAffectedTOsChanged?.call(result.affectedTOIds);

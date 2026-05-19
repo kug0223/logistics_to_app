@@ -87,16 +87,16 @@ class DocumentUploadHelper {
           errorMessage: result['error'],
         );
         
-        if (retry) {
+        if (retry && context.mounted) {
           return await pickAndVerifyIdCard(
-            context, 
+            context,
             expectedName,
             expectedResidentNumber: expectedResidentNumber,
           );
         }
         return null;
       }
-      
+
       if (result['isValid'] && result['confidence'] >= 0.7) {
         // 검증 성공
         String extractedInfo = '이름: $expectedName';
@@ -199,9 +199,9 @@ class DocumentUploadHelper {
           errorMessage: result['error'],
         );
         
-        if (retry) {
+        if (retry && context.mounted) {
           return await pickAndVerifyBankbook(
-            context, 
+            context,
             expectedName,
             expectedAccountNumber: expectedAccountNumber,
             expectedBankName: expectedBankName,
@@ -338,7 +338,7 @@ class DocumentUploadHelper {
           errorMessage: result['error'],
         );
         
-        if (retry) {
+        if (retry && context.mounted) {
           return await pickAndVerifyBusinessLicense(
             context,
             businessNumber: businessNumber,

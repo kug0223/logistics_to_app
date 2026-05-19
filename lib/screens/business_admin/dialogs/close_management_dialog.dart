@@ -16,8 +16,9 @@ import '../../../models/core/application_model.dart';
 import '../../../models/core/attendance_model.dart';
 
 // Utils
-import '../../../utils/toast_helper.dart';
+import '../../../utils/loading_state_mixin.dart';
 import '../../../utils/responsive_helper.dart';
+import '../../../utils/format_helper.dart';
 import '../../../theme/app_colors.dart';
 
 // Widgets
@@ -41,13 +42,13 @@ class CloseManagementDialog extends StatefulWidget {
   State<CloseManagementDialog> createState() => _CloseManagementDialogState();
 }
 
-class _CloseManagementDialogState extends State<CloseManagementDialog> {
+class _CloseManagementDialogState extends State<CloseManagementDialog>
+    with LoadingStateMixin {
   // ═══════════════════════════════════════════════════════════
   // 상태 변수
   // ═══════════════════════════════════════════════════════════
-  
+
   late DateTime _currentMonth;
-  bool _isLoading = true;
   bool _hasChanges = false;
   
   // 사업장 정보
@@ -72,44 +73,29 @@ class _CloseManagementDialogState extends State<CloseManagementDialog> {
   // 데이터 로드
   // ═══════════════════════════════════════════════════════════
 
-  Future<void> _loadData() async {
-    setState(() => _isLoading = true);
-
+  Future<void> _loadData() => runWithLoading(() async {
     try {
-      // 1. 사업장 이름 로드
       await _loadBusinessNames();
-      
-      // 2. 마감 현황 로드
-      await _loadCloseStatus();
-      
-      // 3. 요약 통계 계산
-      _calculateSummary();
-      
     } catch (e) {
-      debugPrint('❌ 마감 현황 로드 실패: $e');
-      ToastHelper.showError('마감 현황을 불러오는데 실패했습니다');
-    } finally {
-      if (mounted) {
-        setState(() => _isLoading = false);
-      }
+      debugPrint('❌ [마감관리] 사업장 이름 로드 실패: $e');
+      // 이름 로드 실패해도 현황 조회는 계속 진행
     }
-  }
+    await _loadCloseStatus();
+    _calculateSummary();
+  }, errorTag: '마감 현황 로드', errorMessage: '마감 현황을 불러오는데 실패했습니다');
 
   /// 사업장 이름 로드
   Future<void> _loadBusinessNames() async {
+    final futures = widget.businessIds
+        .map((id) => FirebaseFirestore.instance.collection('businesses').doc(id).get())
+        .toList();
+    final docs = await Future.wait(futures);
     final Map<String, String> nameMap = {};
-    
-    for (final businessId in widget.businessIds) {
-      final doc = await FirebaseFirestore.instance
-          .collection('businesses')
-          .doc(businessId)
-          .get();
-      
-      if (doc.exists) {
-        nameMap[businessId] = doc.data()?['name'] ?? '알 수 없음';
+    for (int i = 0; i < widget.businessIds.length; i++) {
+      if (docs[i].exists) {
+        nameMap[widget.businessIds[i]] = docs[i].data()?['name'] ?? '알 수 없음';
       }
     }
-    
     _businessNameMap = nameMap;
   }
 
@@ -121,7 +107,10 @@ class _CloseManagementDialogState extends State<CloseManagementDialog> {
     final monthStart = DateTime(_currentMonth.year, _currentMonth.month, 1);
     final monthEnd = DateTime(_currentMonth.year, _currentMonth.month + 1, 0, 23, 59, 59);
     final daysInMonth = monthEnd.day;
-    final weekdays = ['월', '화', '수', '목', '금', '토', '일'];
+
+    debugPrint('🔍 [마감관리] 조회 시작 ${DateFormat('yyyy-MM').format(_currentMonth)} '
+        '| businessIds: ${widget.businessIds}');
+    debugPrint('   monthStart=$monthStart, monthEnd=$monthEnd');
 
     for (final businessId in widget.businessIds) {
       final List<DateCloseStatus> dateStatuses = [];
@@ -130,18 +119,24 @@ class _CloseManagementDialogState extends State<CloseManagementDialog> {
       final shortTermSnapshot = await FirebaseFirestore.instance
           .collection('applications')
           .where('businessId', isEqualTo: businessId)
-          .where('status', isEqualTo: 'CONFIRMED')
+          .where('status', isEqualTo: AppStatus.confirmed)
           .where('workDate', isGreaterThanOrEqualTo: Timestamp.fromDate(monthStart))
           .where('workDate', isLessThanOrEqualTo: Timestamp.fromDate(monthEnd))
           .get();
 
+      debugPrint('  [단기] businessId=$businessId → ${shortTermSnapshot.docs.length}건');
+
       final Map<String, List<ApplicationModel>> appsByDate = {};
       for (final doc in shortTermSnapshot.docs) {
         final app = ApplicationModel.fromFirestore(doc);
+        debugPrint('    단기 app: id=${app.id}, workDate=${app.workDate}, '
+            'workDays=${app.workDays}, status=${app.status}');
         if (app.workDays == null || app.workDays!.isEmpty) {
           final dateKey = DateFormat('yyyy-MM-dd').format(app.workDate);
           appsByDate.putIfAbsent(dateKey, () => []);
           appsByDate[dateKey]!.add(app);
+        } else {
+          debugPrint('    → workDays 있음 → 장기 처리로 건너뜀');
         }
       }
 
@@ -149,12 +144,15 @@ class _CloseManagementDialogState extends State<CloseManagementDialog> {
       final longTermSnapshot = await FirebaseFirestore.instance
           .collection('applications')
           .where('businessId', isEqualTo: businessId)
-          .where('status', isEqualTo: 'CONFIRMED')
+          .where('status', isEqualTo: AppStatus.confirmed)
           .get();
+
+      debugPrint('  [장기 전체] businessId=$businessId → ${longTermSnapshot.docs.length}건');
 
       for (final doc in longTermSnapshot.docs) {
         final app = ApplicationModel.fromFirestore(doc);
         if (app.workDays == null || app.workDays!.isEmpty) continue;
+        debugPrint('    장기 app: id=${app.id}, workDate=${app.workDate}, workDays=${app.workDays}');
 
         final endDate = app.actualResignDate ?? app.workEndDate;
         final effectiveStartDate = app.desiredStartDate ?? app.workDate;
@@ -173,7 +171,7 @@ class _CloseManagementDialogState extends State<CloseManagementDialog> {
             continue;
           }
           // 요일 체크
-          final dayWeekday = weekdays[date.weekday - 1];
+          final dayWeekday = FormatHelper.weekday(date);
           if (!app.workDays!.contains(dayWeekday)) continue;
 
           final dateKey = DateFormat('yyyy-MM-dd').format(date);
@@ -183,58 +181,86 @@ class _CloseManagementDialogState extends State<CloseManagementDialog> {
           }
         }
       }
-      
-      // 2. 각 날짜별 마감 상태 확인
+
+      debugPrint('  [appsByDate] ${appsByDate.length}개 날짜: ${appsByDate.keys.toList()}');
+
+      // 3. 배치로 attendance 조회 (N+1 방지)
+      // applicationId whereIn 방식: 단일 필드 자동 인덱스 사용, 복합 인덱스 불필요
+      // key: '{applicationId}_{yyyy-MM-dd}'
+      final Map<String, AttendanceModel> attendanceByKey = {};
+
+      if (appsByDate.isNotEmpty) {
+        final allAppIds = appsByDate.values
+            .expand((apps) => apps.map((a) => a.id))
+            .toSet()
+            .toList();
+
+        // whereIn 최대 30개 제한 → 배치 처리
+        for (int i = 0; i < allAppIds.length; i += 30) {
+          final batchIds = allAppIds.sublist(
+            i,
+            (i + 30).clamp(0, allAppIds.length),
+          );
+          final snap = await FirebaseFirestore.instance
+              .collection('attendance')
+              .where('applicationId', whereIn: batchIds)
+              .get();
+          for (final doc in snap.docs) {
+            final att = AttendanceModel.fromFirestore(doc);
+            // 코드에서 월 범위 필터링
+            if (att.workDate.isBefore(monthStart) || att.workDate.isAfter(monthEnd)) {
+              continue;
+            }
+            final dateKey = DateFormat('yyyy-MM-dd').format(att.workDate);
+            attendanceByKey['${att.applicationId}_$dateKey'] = att;
+          }
+        }
+        debugPrint('  [attendance] 이번달 레코드: ${attendanceByKey.length}건');
+      }
+
+      // 4. 각 날짜별 마감 상태 확인
       for (final entry in appsByDate.entries) {
         final dateKey = entry.key;
         final apps = entry.value;
-        final date = DateTime.parse(dateKey);
-        
-        // 해당 날짜의 attendance 조회
+
         int totalConfirmed = apps.length;
         int closedCount = 0;
         int noshowCount = 0;
-        
+
         for (final app in apps) {
-          final attSnapshot = await FirebaseFirestore.instance
-              .collection('attendance')
-              .where('applicationId', isEqualTo: app.id)
-              .limit(1)
-              .get();
-          
-          if (attSnapshot.docs.isNotEmpty) {
-            final att = AttendanceModel.fromFirestore(attSnapshot.docs.first);
-            if (att.status == 'NO_SHOW') {
+          final att = attendanceByKey['${app.id}_$dateKey'];
+          if (att != null) {
+            if (att.status == AttendanceModel.statusNoShow) {
               noshowCount++;
-              closedCount++;  // 노쇼도 마감 처리된 것으로 간주
-            } else if (att.wageStatus == 'confirmed') {
+              closedCount++; // 노쇼도 마감 처리된 것으로 간주
+            } else if (att.wageStatus == AttendanceModel.wageConfirmed) {
               closedCount++;
             }
           }
         }
-        
+
         // 마감 상태 결정 (전원 마감 = closed, 아니면 unclosed)
-        final statusType = (totalConfirmed == closedCount) 
-            ? CloseStatusType.closed 
+        final statusType = (totalConfirmed > 0 && totalConfirmed == closedCount)
+            ? CloseStatusType.closed
             : CloseStatusType.unclosed;
-        
+
         dateStatuses.add(DateCloseStatus(
-          date: date,
+          date: DateTime.parse(dateKey),
           totalConfirmed: totalConfirmed,
           closedCount: closedCount,
           noshowCount: noshowCount,
           statusType: statusType,
         ));
       }
-      
+
       // 날짜순 정렬
       dateStatuses.sort((a, b) => a.date.compareTo(b.date));
-      
+
       if (dateStatuses.isNotEmpty) {
         statusByBusiness[businessId] = dateStatuses;
       }
     }
-    
+
     _closeStatusByBusiness = statusByBusiness;
   }
 
@@ -341,11 +367,11 @@ class _CloseManagementDialogState extends State<CloseManagementDialog> {
               _buildHeader(theme, monthStr),
               
               // 요약 카드
-              if (!_isLoading) _buildSummaryCard(theme),
+              if (!isLoading) _buildSummaryCard(theme),
               
               // 컨텐츠 (스크롤 가능)
               Expanded(
-                child: _isLoading
+                child: isLoading
                     ? const LoadingWidget(message: '마감 현황 조회 중...')
                     : _closeStatusByBusiness.isEmpty
                         ? _buildEmptyState()
@@ -682,41 +708,55 @@ class _CloseManagementDialogState extends State<CloseManagementDialog> {
   /// 날짜별 행
   Widget _buildDateRow(ThemeData theme, String businessId, DateCloseStatus status) {
     final dateStr = DateFormat('M/d(E)', 'ko_KR').format(status.date);
-    
+    final isClosed = status.statusType == CloseStatusType.closed;
+    final indicatorColor = isClosed ? AppColors.success : AppColors.error;
+
     return InkWell(
       onTap: () => _openAttendanceDialog(businessId, status.date),
-      child: Padding(
-        padding: EdgeInsets.symmetric(
-          horizontal: ResponsiveHelper.spacing(context, 16),
-          vertical: ResponsiveHelper.spacing(context, 12),
-        ),
-        child: Row(
-          children: [
-            // 날짜
-            Text(
-              dateStr,
-              style: ResponsiveHelper.bodyStyle(context).copyWith(
-                fontWeight: FontWeight.w500,
+      child: Row(
+        children: [
+          // 왼쪽 상태 인디케이터 바
+          Container(
+            width: 4,
+            height: ResponsiveHelper.spacing(context, 48),
+            color: indicatorColor,
+          ),
+          Expanded(
+            child: Padding(
+              padding: EdgeInsets.symmetric(
+                horizontal: ResponsiveHelper.spacing(context, 16),
+                vertical: ResponsiveHelper.spacing(context, 12),
+              ),
+              child: Row(
+                children: [
+                  // 날짜
+                  Text(
+                    dateStr,
+                    style: ResponsiveHelper.bodyStyle(context).copyWith(
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+
+                  SizedBox(width: ResponsiveHelper.spacing(context, 12)),
+
+                  // 마감 진행률
+                  Text(
+                    '${status.closedCount}/${status.totalConfirmed}명',
+                    style: ResponsiveHelper.bodyStyle(context).copyWith(
+                      fontWeight: FontWeight.w600,
+                      color: isClosed ? AppColors.success : AppColors.grey600,
+                    ),
+                  ),
+
+                  const Spacer(),
+
+                  // 상태 배지
+                  _buildStatusBadge(status),
+                ],
               ),
             ),
-            
-            SizedBox(width: ResponsiveHelper.spacing(context, 12)),
-            
-            // 확정 인원
-            Text(
-              '${status.totalConfirmed}명',
-              style: ResponsiveHelper.bodyStyle(context).copyWith(
-                fontWeight: FontWeight.w600,
-                color: AppColors.grey600,
-              ),
-            ),
-            
-            const Spacer(),
-            
-            // 상태 배지
-            _buildStatusBadge(status),
-          ],
-        ),
+          ),
+        ],
       ),
     );
   }

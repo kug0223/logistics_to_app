@@ -2,7 +2,6 @@
 
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-import 'package:intl/intl.dart';
 import '../../../models/core/schedule_change_request_model.dart';
 import '../../../models/core/id_card_access_request_model.dart';
 import '../../../models/core/application_model.dart';
@@ -10,6 +9,7 @@ import '../../../services/firestore_service.dart';
 import '../../../providers/user_provider.dart';
 import '../../../utils/toast_helper.dart';
 import '../../../utils/responsive_helper.dart';
+import '../../../utils/format_helper.dart';
 import '../../../widgets/common/loading_widget.dart';
 import '../../../theme/app_colors.dart';
 
@@ -156,7 +156,7 @@ class _MyRequestsDialogState extends State<MyRequestsDialog> {
                       vertical: ResponsiveHelper.spacing(context, 2),
                     ),
                     decoration: BoxDecoration(
-                      color: Colors.red,
+                      color: AppColors.error,
                       borderRadius: BorderRadius.circular(12),
                     ),
                     child: Text(
@@ -239,13 +239,13 @@ class _MyRequestsDialogState extends State<MyRequestsDialog> {
 
     if (request.isLeaveRequest) {
       icon = Icons.beach_access;
-      iconColor = Colors.orange;
+      iconColor = AppColors.warning;
     } else if (request.isNoWorkRequest) {
       icon = Icons.block;
-      iconColor = Colors.red;
+      iconColor = AppColors.error;
     } else {
       icon = Icons.add_circle;
-      iconColor = Colors.green;
+      iconColor = AppColors.success;
     }
 
     return Card(
@@ -264,7 +264,7 @@ class _MyRequestsDialogState extends State<MyRequestsDialog> {
         subtitle: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(DateFormat('M월 d일 (E)', 'ko_KR').format(request.targetDate)),
+            Text(FormatHelper.formatDateKorean(request.targetDate)),
             if (request.reason != null)
               Text(
                 request.reason!,
@@ -276,19 +276,19 @@ class _MyRequestsDialogState extends State<MyRequestsDialog> {
                 overflow: TextOverflow.ellipsis,
               ),
             SizedBox(height: ResponsiveHelper.spacing(context, 4)),
-            _buildStatusChip('대기중', Colors.orange),
+            _buildStatusChip('대기중', AppColors.warning),
           ],
         ),
         trailing: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
             IconButton(
-              icon: const Icon(Icons.close, color: Colors.red),
+              icon: const Icon(Icons.close, color: AppColors.error),
               onPressed: () => _handleScheduleReject(request),
               tooltip: '거절',
             ),
             IconButton(
-              icon: const Icon(Icons.check, color: Colors.green),
+              icon: const Icon(Icons.check, color: AppColors.success),
               onPressed: () => _handleScheduleApprove(request),
               tooltip: '수락',
             ),
@@ -345,12 +345,12 @@ class _MyRequestsDialogState extends State<MyRequestsDialog> {
           mainAxisSize: MainAxisSize.min,
           children: [
             IconButton(
-              icon: const Icon(Icons.close, color: Colors.red),
+              icon: const Icon(Icons.close, color: AppColors.error),
               onPressed: () => _handleIdCardReject(request),
               tooltip: '거절',
             ),
             IconButton(
-              icon: const Icon(Icons.check, color: Colors.green),
+              icon: const Icon(Icons.check, color: AppColors.success),
               onPressed: () => _handleIdCardApprove(request),
               tooltip: '승인',
             ),
@@ -411,12 +411,12 @@ class _MyRequestsDialogState extends State<MyRequestsDialog> {
           mainAxisSize: MainAxisSize.min,
           children: [
             IconButton(
-              icon: const Icon(Icons.close, color: Colors.red),
+              icon: const Icon(Icons.close, color: AppColors.error),
               onPressed: () => _handleTerminationReject(app),
               tooltip: '거절',
             ),
             IconButton(
-              icon: const Icon(Icons.check, color: Colors.green),
+              icon: const Icon(Icons.check, color: AppColors.success),
               onPressed: () => _handleTerminationApprove(app),
               tooltip: '승인',
             ),
@@ -557,7 +557,7 @@ class _MyRequestsDialogState extends State<MyRequestsDialog> {
           ),
           ElevatedButton(
             onPressed: () => Navigator.pop(context, true),
-            style: ElevatedButton.styleFrom(backgroundColor: Colors.green),
+            style: ElevatedButton.styleFrom(backgroundColor: AppColors.success),
             child: const Text('승인'),
           ),
         ],
@@ -606,7 +606,7 @@ class _MyRequestsDialogState extends State<MyRequestsDialog> {
           ),
           ElevatedButton(
             onPressed: () => Navigator.pop(context, true),
-            style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
+            style: ElevatedButton.styleFrom(backgroundColor: AppColors.error),
             child: const Text('거절'),
           ),
         ],
@@ -653,7 +653,7 @@ class _MyRequestsDialogState extends State<MyRequestsDialog> {
               '승인 시 즉시 계약이 해지됩니다.',
               style: ResponsiveHelper.smallStyle(
                 context,
-                color: Colors.red,
+                color: AppColors.error,
               ),
             ),
           ],
@@ -665,7 +665,7 @@ class _MyRequestsDialogState extends State<MyRequestsDialog> {
           ),
           ElevatedButton(
             onPressed: () => Navigator.pop(context, true),
-            style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
+            style: ElevatedButton.styleFrom(backgroundColor: AppColors.error),
             child: const Text('승인 (해지)'),
           ),
         ],
@@ -714,7 +714,7 @@ class _MyRequestsDialogState extends State<MyRequestsDialog> {
           ),
           ElevatedButton(
             onPressed: () => Navigator.pop(context, true),
-            style: ElevatedButton.styleFrom(backgroundColor: Colors.blue),
+            style: ElevatedButton.styleFrom(backgroundColor: AppColors.info),
             child: const Text('거절'),
           ),
         ],

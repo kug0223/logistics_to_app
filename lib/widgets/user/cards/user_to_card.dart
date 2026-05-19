@@ -1,6 +1,4 @@
-import 'package:flutter/material.dart';
-import 'package:intl/intl.dart';
-
+﻿import 'package:flutter/material.dart';
 // Models
 import '../../../models/core/to_model.dart';
 import '../../../models/core/work_detail_model.dart';
@@ -17,7 +15,6 @@ import '../../../utils/toast_helper.dart';
 
 // Theme
 import '../../../theme/app_colors.dart';
-import '../../common/loading_button.dart';
 
 // Widgets
 import '../../work_type_icon.dart';
@@ -150,46 +147,19 @@ class _UserTOCardState extends State<UserTOCard> {
     });
   }
 
-  /// 내가 해당 업무에 지원했는지 확인
-  bool _hasAppliedToWork(String workType) {
-    final targetDate = widget.to.date;
-
-    return widget.myApplications.any((app) {
-      final dateMatch = app.workDate.year == targetDate.year &&
-                        app.workDate.month == targetDate.month &&
-                        app.workDate.day == targetDate.day;
-      final businessMatch = app.businessId == widget.to.businessId;
-      final titleMatch = app.toTitle == widget.to.title;
-      final workTypeMatch = app.selectedWorkType == workType;
-      final isActive = app.status != 'CANCELED' && 
-                       app.status != 'REJECTED' &&
-                       app.status != 'AUTO_CANCELED';
-      
-      if (!isActive) return false;
-      
-      // 🔥 장기공고: 퇴사/해지 완료된 경우 미지원 취급
-      if (app.isLongTermApplication) {
-        if (app.resignStatus == 'APPROVED' || app.resignStatus == 'AUTO_APPROVED' ||
-            app.terminationStatus == 'APPROVED' || app.terminationStatus == 'AUTO_APPROVED') {
-          return false;
-        }
-      }
-      
-      return dateMatch && businessMatch && titleMatch && workTypeMatch;
-    });
-  }
-  ApplicationModel? _getApplicationForWork(String workType) {
+  ApplicationModel? _getApplicationForWork(String workType, String startTime) {
     final targetTO = widget.to;
-    
+
     try {
       return widget.myApplications.firstWhere(
         (app) {
           final workTypeMatch = app.selectedWorkType == workType;
-          final isActive = app.status != 'CANCELED' && 
+          final startTimeMatch = app.startTime == startTime;
+          final isActive = app.status != 'CANCELED' &&
                            app.status != 'REJECTED' &&
                            app.status != 'AUTO_CANCELED';
-          
-          if (!workTypeMatch || !isActive) return false;
+
+          if (!workTypeMatch || !startTimeMatch || !isActive) return false;
           
           // 🔥 장기공고: 퇴사/해지 완료된 경우 미지원 취급
           if (app.isLongTermApplication) {
@@ -426,34 +396,6 @@ class _UserTOCardState extends State<UserTOCard> {
       ],
     );
   }
-  /// 오픈 대기 버튼 (예약 공개 대기 중)
-  Widget _buildPendingButton(BuildContext context) {
-    return Container(
-      padding: EdgeInsets.symmetric(
-        vertical: ResponsiveHelper.spacing(context, 12),
-      ),
-      decoration: BoxDecoration(
-        color: AppColors.grey200,
-        borderRadius: BorderRadius.circular(8),
-      ),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Icon(
-            Icons.lock_outline,
-            size: ResponsiveHelper.iconSize(context, 18),
-            color: AppColors.grey500,
-          ),
-          SizedBox(width: ResponsiveHelper.spacing(context, 6)),
-          Text(
-            '오픈 후 지원가능',
-            style: ResponsiveHelper.bodyStyle(context, color: AppColors.grey500),
-          ),
-        ],
-      ),
-    );
-  }
-
   /// 단기/장기 배지
   Widget _buildJobTypeBadge(BuildContext context) {
     final isLongTerm = widget.to.isLongTerm;
@@ -589,16 +531,16 @@ class _UserTOCardState extends State<UserTOCard> {
     
     // 장기 공고
     if (to.isLongTerm && to.startDate != null && to.endDate != null) {
-      final start = DateFormat('M/d(E)', 'ko_KR').format(to.startDate!);
-      final end = DateFormat('M/d(E)', 'ko_KR').format(to.endDate!);
-      final workDaysLabel = to.workDays != null && to.workDays!.isNotEmpty
+      final start = FormatHelper.formatDateCompact(to.startDate!);
+      final end = FormatHelper.formatDateCompact(to.endDate!);
+      final workDaysLabel = to.workDays.isNotEmpty
           ? ' · ${to.workDaysLabel}'
           : '';
       return '$start~$end$workDaysLabel';
     }
     
     // 단일 TO
-    return DateFormat('M/d(E)', 'ko_KR').format(to.date);
+    return FormatHelper.formatDateCompact(to.date);
   }
 
   /// 4️⃣ 급여 + 업무 개수 + 버튼
@@ -833,21 +775,34 @@ class _UserTOCardState extends State<UserTOCard> {
       );
     }
 
+    final duplicateWorkTypes = _workDetails
+        .map((w) => w.workType)
+        .fold<Map<String, int>>({}, (map, t) {
+          map[t] = (map[t] ?? 0) + 1;
+          return map;
+        })
+        .entries
+        .where((e) => e.value > 1)
+        .map((e) => e.key)
+        .toSet();
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: _workDetails.map((work) {
-        final application = _getApplicationForWork(work.workType);
-        return _buildWorkDetailItem(context, work, application);
+        final application = _getApplicationForWork(work.workType, work.startTime);
+        final hasTimeAmbiguity = duplicateWorkTypes.contains(work.workType);
+        return _buildWorkDetailItem(context, work, application, hasTimeAmbiguity: hasTimeAmbiguity);
       }).toList(),
     );
   }
 
   /// 업무 상세 아이템
   Widget _buildWorkDetailItem(
-    BuildContext context, 
-    WorkDetailModel work, 
-    ApplicationModel? application,
-  ) {
+    BuildContext context,
+    WorkDetailModel work,
+    ApplicationModel? application, {
+    bool hasTimeAmbiguity = false,
+  }) {
     final hasApplied = application != null && application.id.isNotEmpty;
     final isConfirmed = application?.status == 'CONFIRMED';
     
@@ -899,16 +854,45 @@ class _UserTOCardState extends State<UserTOCard> {
                 // 시간 + 급여
                 Row(
                   children: [
-                    Icon(
-                      Icons.access_time,
-                      size: ResponsiveHelper.iconSize(context, 12),
-                      color: AppColors.grey500,
-                    ),
-                    SizedBox(width: ResponsiveHelper.spacing(context, 3)),
-                    Text(
-                      '${work.startTime}~${work.endTime}',
-                      style: ResponsiveHelper.smallStyle(context, color: AppColors.grey600),
-                    ),
+                    if (hasTimeAmbiguity) ...[
+                      Container(
+                        padding: EdgeInsets.symmetric(
+                          horizontal: ResponsiveHelper.spacing(context, 6),
+                          vertical: ResponsiveHelper.spacing(context, 2),
+                        ),
+                        decoration: BoxDecoration(
+                          color: AppColors.infoBg,
+                          borderRadius: BorderRadius.circular(4),
+                          border: Border.all(color: AppColors.infoLight),
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(Icons.access_time,
+                                size: ResponsiveHelper.iconSize(context, 11),
+                                color: AppColors.info),
+                            SizedBox(width: ResponsiveHelper.spacing(context, 3)),
+                            Text(
+                              '${work.startTime}~${work.endTime}',
+                              style: ResponsiveHelper.tinyStyle(context,
+                                  color: AppColors.info,
+                                  fontWeight: FontWeight.bold),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ] else ...[
+                      Icon(
+                        Icons.access_time,
+                        size: ResponsiveHelper.iconSize(context, 12),
+                        color: AppColors.grey500,
+                      ),
+                      SizedBox(width: ResponsiveHelper.spacing(context, 3)),
+                      Text(
+                        '${work.startTime}~${work.endTime}',
+                        style: ResponsiveHelper.smallStyle(context, color: AppColors.grey600),
+                      ),
+                    ],
                     SizedBox(width: ResponsiveHelper.spacing(context, 8)),
                     // 급여타입 배지
                     Container(
@@ -1064,6 +1048,7 @@ class _UserTOCardState extends State<UserTOCard> {
     }
 
     if (_workDetails.isEmpty) return;
+    if (!mounted) return;
 
     final result = await ApplyWorkDialog.show(
       context: context,

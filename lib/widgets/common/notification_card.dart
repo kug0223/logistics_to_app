@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+﻿import 'package:flutter/material.dart';
 import '../../models/core/notification_model.dart';
 import '../../utils/responsive_helper.dart';
 import '../../theme/app_colors.dart';
@@ -28,7 +28,7 @@ class NotificationCard extends StatelessWidget {
       background: Container(
         alignment: Alignment.centerRight,
         padding: EdgeInsets.only(right: ResponsiveHelper.spacing(context, 20)),
-        color: Colors.red,
+        color: AppColors.error,
         child: const Icon(Icons.delete, color: Colors.white),
       ),
       child: InkWell(
@@ -41,7 +41,7 @@ class NotificationCard extends StatelessWidget {
                 : Colors.transparent,
             border: Border(
               bottom: BorderSide(
-                color: Colors.grey.shade200,
+                color: AppColors.grey200,
                 width: 1,
               ),
             ),
@@ -188,7 +188,7 @@ class NotificationCard extends StatelessWidget {
       case NotificationType.wageConfirmed:
         return AppColors.success;
       case NotificationType.reviewReceived:
-        return Colors.amber;
+        return AppColors.amber;
       case NotificationType.workReminder:
       case NotificationType.idCardAccessExpiringSoon:
         return AppColors.warning;

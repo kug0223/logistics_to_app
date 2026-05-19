@@ -431,17 +431,24 @@ export const masterScheduler = onSchedule(
       // 1️⃣ 예약 공개 처리
       await processScheduledPublish(timestamp);
 
-      // 2️⃣ WorkDetail 마감 처리
+      // 2️⃣ WorkDetail 마감 처리 (contract TO)
       await processWorkDetailExpiry(timestamp);
+
+      // 2-2️⃣ 슬롯 WorkDetail 마감 처리 (flex TO)
+      await processSlotWorkDetailExpiry(timestamp);
 
       // 3️⃣ TO 마감 처리
       await processTOExpiry(timestamp);
       // ═══════════════════════════════════════════════════════
-      // ✅ 자정에만 실행 (00:00 ~ 00:09) - 리뷰 공개
+      // ✅ 자정에만 실행 (00:00 ~ 00:09)
       // ═══════════════════════════════════════════════════════
       if (hour === 0 && minute < 10) {
+        // 전날 근무 완료된 단기 지원자 리뷰 요청 생성 (14일 윈도우)
+        console.log("📋 [리뷰 요청] 처리 시작...");
+        await createPendingReviewRequests(timestamp);
+        // 기한 만료 리뷰 요청 자동 공개
         console.log("📝 [리뷰 공개] 처리 시작...");
-        await publishDueReviews(timestamp);
+        await processExpiredReviewRequests(timestamp);
       }
 
       // ═══════════════════════════════════════════════════════
@@ -470,66 +477,252 @@ export const masterScheduler = onSchedule(
   // 📦 리뷰 공개 처리 (매일 자정)
   // ═══════════════════════════════════════════════════════════
 
-/**
-   * 공개 예정일이 지난 리뷰를 공개 처리
-   * @param {Timestamp} now - 현재 시간
-   */
-async function publishDueReviews(now: Timestamp): Promise<void> {
-  console.log("  📝 [리뷰 공개] 처리 중...");
+// ═══════════════════════════════════════════════════════════
+// 📋 전날 완료된 단기 근무 → review_requests 자동 생성
+// ═══════════════════════════════════════════════════════════
 
+/**
+ * 전날 workDate인 CONFIRMED 지원서를 조회해 review_requests 생성
+ * - doc ID = requestKey(businessId_workerId_year_month) → 멱등성 보장
+ * - 이미 존재하는 요청은 set({ merge: false }) 무시됨
+ */
+async function createPendingReviewRequests(now: Timestamp): Promise<void> {
   try {
-    // 공개 예정일이 지났지만 아직 비공개인 리뷰 조회
-    const snapshot = await db
-      .collection("monthly_reviews")
-      .where("isPublished", "==", false)
-      .where("publishAt", "<=", now)
+    const yesterday = new Date(now.toDate());
+    yesterday.setDate(yesterday.getDate() - 1);
+    const dayStart = new Date(yesterday);
+    dayStart.setHours(0, 0, 0, 0);
+    const dayEnd = new Date(yesterday);
+    dayEnd.setHours(23, 59, 59, 999);
+
+    const snap = await db
+      .collection("applications")
+      .where("status", "==", "CONFIRMED")
+      .where("workDate", ">=", Timestamp.fromDate(dayStart))
+      .where("workDate", "<=", Timestamp.fromDate(dayEnd))
       .get();
 
-    if (snapshot.empty) {
-      console.log("  ✅ [리뷰 공개] 공개할 리뷰 없음");
+    if (snap.empty) {
+      console.log("  ✅ [리뷰 요청] 생성 대상 없음");
       return;
     }
 
-    console.log(`  📋 [리뷰 공개] 대상: ${snapshot.size}개`);
+    const deadline = new Date(yesterday);
+    deadline.setDate(deadline.getDate() + 14); // 근무일 + 14일
 
-    const batch = db.batch();
-    const userStatsToUpdate = new Set<string>();
-    const businessStatsToUpdate = new Set<string>();
+    const year = yesterday.getFullYear();
+    const month = yesterday.getMonth() + 1;
 
-    for (const doc of snapshot.docs) {
+    let created = 0;
+
+    for (const doc of snap.docs) {
       const data = doc.data();
+      const workerId = data.uid as string;
+      const businessId = data.businessId as string;
+      if (!workerId || !businessId) continue;
 
-      // 리뷰 공개 처리
-      batch.update(doc.ref, {
-        isPublished: true,
-        publishedAt: now,
-      });
+      const requestKey = `${businessId}_${workerId}_${year}_${month}`;
+      const requestRef = db.collection("review_requests").doc(requestKey);
 
-      console.log(`    → ${doc.id} 공개 처리`);
+      // create() → 이미 존재하면 예외(중복 방지)
+      try {
+        await requestRef.create({
+          requestKey,
+          businessId,
+          businessName: data.businessName ?? "",
+          workerId,
+          workerName: data.applicantName ?? "",
+          reviewYear: year,
+          reviewMonth: month,
+          deadline: Timestamp.fromDate(deadline),
+          adminStatus: "pending",
+          workerStatus: "pending",
+          adminReviewId: null,
+          workerReviewId: null,
+          isPublished: false,
+          publishedAt: null,
+          createdAt: Timestamp.now(),
+        });
+        created++;
 
-      // 통계 업데이트 대상 수집
-      const reviewType = data.reviewType as string;
-      if (reviewType === "ADMIN_TO_USER" && data.targetUserId) {
-        userStatsToUpdate.add(data.targetUserId as string);
-      } else if (reviewType === "USER_TO_BUSINESS" && data.businessId) {
-        businessStatsToUpdate.add(data.businessId as string);
+        // 관리자 알림
+        await _sendReviewRequestNotification(
+          businessId,
+          data.applicantName ?? "근무자",
+          requestKey,
+          year,
+          month,
+          "admin"
+        );
+        // 근무자 알림
+        await _sendReviewRequestNotification(
+          workerId,
+          data.businessName ?? "사업장",
+          requestKey,
+          year,
+          month,
+          "worker"
+        );
+      } catch {
+        // 이미 존재 — 무시
       }
     }
 
-    await batch.commit();
-    console.log(`  ✅ [리뷰 공개] ${snapshot.size}개 리뷰 공개 완료!`);
+    console.log(`  ✅ [리뷰 요청] ${created}개 생성 완료`);
+  } catch (error) {
+    console.error("❌ [리뷰 요청 생성] 실패:", error);
+  }
+}
 
-    // 사용자 통계 업데이트
-    for (const userId of userStatsToUpdate) {
-      await updateUserReviewStats(userId);
+// ═══════════════════════════════════════════════════════════
+// 📝 기한 만료 리뷰 요청 자동 공개
+// ═══════════════════════════════════════════════════════════
+
+/**
+ * deadline이 지난 review_requests 처리
+ * - submitted 상태인 리뷰만 isPublished=true 로 변경
+ * - 통계 업데이트
+ */
+async function processExpiredReviewRequests(now: Timestamp): Promise<void> {
+  try {
+    const snap = await db
+      .collection("review_requests")
+      .where("isPublished", "==", false)
+      .where("deadline", "<=", now)
+      .get();
+
+    if (snap.empty) {
+      console.log("  ✅ [리뷰 공개] 만료된 요청 없음");
+      return;
     }
 
-    // 사업장 통계 업데이트
-    for (const businessId of businessStatsToUpdate) {
-      await updateBusinessReviewStats(businessId);
+    console.log(`  📋 [리뷰 공개] 만료 요청 ${snap.size}개 처리`);
+
+    const userStatsToUpdate = new Set<string>();
+    const businessStatsToUpdate = new Set<string>();
+
+    for (const reqDoc of snap.docs) {
+      const req = reqDoc.data();
+      const reviewIds: string[] = [];
+
+      if (req.adminReviewId) reviewIds.push(req.adminReviewId as string);
+      if (req.workerReviewId) reviewIds.push(req.workerReviewId as string);
+
+      if (reviewIds.length === 0) {
+        // 양쪽 다 작성 안 함 → 요청만 만료 처리
+        await reqDoc.ref.update({ isPublished: true, publishedAt: now });
+        continue;
+      }
+
+      // 작성된 리뷰 공개
+      const batch = db.batch();
+      for (const rid of reviewIds) {
+        batch.update(db.collection("monthly_reviews").doc(rid), {
+          isPublished: true,
+          publishedAt: now,
+        });
+      }
+      batch.update(reqDoc.ref, { isPublished: true, publishedAt: now });
+      await batch.commit();
+
+      // 통계 업데이트 대상 수집
+      if (req.adminReviewId && req.workerId) {
+        userStatsToUpdate.add(req.workerId as string);
+      }
+      if (req.workerReviewId && req.businessId) {
+        businessStatsToUpdate.add(req.businessId as string);
+      }
+
+      console.log(`    → ${reqDoc.id} 자동 공개`);
     }
+
+    for (const uid of userStatsToUpdate) await updateUserReviewStats(uid);
+    for (const bid of businessStatsToUpdate) await updateBusinessReviewStats(bid);
+
+    console.log(`  ✅ [리뷰 공개] 만료 처리 완료`);
   } catch (error) {
     console.error("❌ [리뷰 공개] 실패:", error);
+  }
+}
+
+// ═══════════════════════════════════════════════════════════
+// 🔔 리뷰 작성 완료 트리거 → 양방향 동시 공개
+// ═══════════════════════════════════════════════════════════
+
+/**
+ * monthly_reviews 문서 생성 시 실행
+ * requestId가 있고 양쪽 모두 submitted이면 즉시 동시 공개
+ */
+export const onReviewCreated = onDocumentCreated(
+  { document: "monthly_reviews/{reviewId}", region: "asia-northeast3" },
+  async (event) => {
+    const data = event.data?.data();
+    if (!data) return;
+
+    const requestId = data.requestId as string | undefined;
+    if (!requestId) return;
+
+    const reqRef = db.collection("review_requests").doc(requestId);
+    const reqSnap = await reqRef.get();
+    if (!reqSnap.exists) return;
+
+    const req = reqSnap.data()!;
+    if (req.isPublished) return;
+
+    const bothSubmitted =
+      req.adminStatus === "submitted" && req.workerStatus === "submitted";
+    if (!bothSubmitted) return;
+
+    const now = Timestamp.now();
+    const reviewIds: string[] = [];
+    if (req.adminReviewId) reviewIds.push(req.adminReviewId as string);
+    if (req.workerReviewId) reviewIds.push(req.workerReviewId as string);
+
+    const batch = db.batch();
+    for (const rid of reviewIds) {
+      batch.update(db.collection("monthly_reviews").doc(rid), {
+        isPublished: true,
+        publishedAt: now,
+      });
+    }
+    batch.update(reqRef, { isPublished: true, publishedAt: now });
+    await batch.commit();
+
+    // 통계 업데이트
+    if (req.workerId) await updateUserReviewStats(req.workerId as string);
+    if (req.businessId) await updateBusinessReviewStats(req.businessId as string);
+
+    console.log(`✅ [리뷰 동시공개] ${requestId} 양방향 즉시 공개 완료`);
+  }
+);
+
+// ─── 리뷰 요청 알림 헬퍼 ────────────────────────────────────────
+async function _sendReviewRequestNotification(
+  targetId: string,
+  counterpartName: string,
+  requestKey: string,
+  year: number,
+  month: number,
+  role: "admin" | "worker"
+): Promise<void> {
+  try {
+    const title = "리뷰 작성 요청";
+    const body =
+      role === "admin"
+        ? `${counterpartName}님에 대한 ${year}년 ${month}월 리뷰를 작성해주세요.`
+        : `${counterpartName}에 대한 ${year}년 ${month}월 리뷰를 작성해주세요.`;
+
+    await db.collection("notifications").add({
+      userId: targetId,
+      type: "REVIEW_REQUEST",
+      title,
+      body,
+      data: { requestKey, action: "writeReview" },
+      isRead: false,
+      createdAt: Timestamp.now(),
+    });
+  } catch (e) {
+    console.log(`  ⚠️ 리뷰 알림 실패 (${targetId}):`, e);
   }
 }
 
@@ -634,9 +827,16 @@ async function processScheduledPublish(now: Timestamp): Promise<void> {
 
   const batch = db.batch();
   const affectedGroupIds = new Set<string>();
+  let processedCount = 0;
 
   snapshot.docs.forEach((doc) => {
     const data = doc.data();
+
+    // 관리자가 수동마감한 SCHEDULED TO는 공개 대상 아님
+    if (data.closedBy != null) {
+      console.log(`    ⏭ ${doc.id} 수동마감 상태 — 공개 건너뜀`);
+      return;
+    }
 
     batch.update(doc.ref, {
       isPublished: true,
@@ -645,6 +845,7 @@ async function processScheduledPublish(now: Timestamp): Promise<void> {
       statusUpdatedAt: now,
     });
     console.log(`    → ${doc.id} 공개 처리`);
+    processedCount++;
 
     if (data.groupId) {
       affectedGroupIds.add(data.groupId);
@@ -652,7 +853,7 @@ async function processScheduledPublish(now: Timestamp): Promise<void> {
   });
 
   await batch.commit();
-  console.log(`  ✅ [예약공개] ${snapshot.size}개 TO 공개 완료!`);
+  console.log(`  ✅ [예약공개] ${processedCount}개 TO 공개 완료! (건너뜀: ${snapshot.size - processedCount}개)`);
 
   // 그룹 마스터 상태 동기화
   for (const groupId of affectedGroupIds) {
@@ -665,7 +866,8 @@ async function processScheduledPublish(now: Timestamp): Promise<void> {
 // ═══════════════════════════════════════════════════════════
 
 /**
- * 2️⃣ WorkDetail 시간 마감 처리
+ * 2️⃣ WorkDetail 시간 마감 처리 — contract TO 전용
+ *    flex TO의 workDetail 마감은 processSlotWorkDetailExpiry에서 처리
  * @param {Timestamp} now - 현재 시간
  */
 async function processWorkDetailExpiry(now: Timestamp): Promise<void> {
@@ -674,6 +876,7 @@ async function processWorkDetailExpiry(now: Timestamp): Promise<void> {
   const tosSnapshot = await db
     .collection("tos")
     .where("status", "==", "ACTIVE")
+    .where("type", "==", "contract")
     .get();
 
   if (tosSnapshot.empty) {
@@ -707,13 +910,13 @@ async function processWorkDetailExpiry(now: Timestamp): Promise<void> {
 
     const expiredTypes = new Set(expiredItems.map((wd: any) => wd.workType));
     const updatedWorkDetails = workDetails.map((wd: any) =>
-      expiredTypes.has(wd.workType)
-        ? { ...wd, closedAt: now, closedReason: "TIME_EXPIRED" }
-        : wd
+      expiredTypes.has(wd.workType) ?
+        {...wd, closedAt: now, closedReason: "TIME_EXPIRED"} :
+        wd
     );
 
     const batch = db.batch();
-    batch.update(toDoc.ref, { workDetails: updatedWorkDetails });
+    batch.update(toDoc.ref, {workDetails: updatedWorkDetails});
     await batch.commit();
 
     totalClosed += expiredItems.length;
@@ -734,6 +937,171 @@ async function processWorkDetailExpiry(now: Timestamp): Promise<void> {
   // 영향받은 그룹 마스터 동기화
   for (const groupId of affectedGroupIds) {
     await syncGroupMasterStatus(db, groupId);
+  }
+}
+
+// ═══════════════════════════════════════════════════════════
+// 📦 슬롯 WorkDetail 마감 처리 (flex TO 전용)
+// ═══════════════════════════════════════════════════════════
+
+/**
+ * 2-2️⃣ flex TO 슬롯의 WorkDetail 시간 마감 처리
+ *
+ * flex TO는 workDetails가 슬롯 서브컬렉션에 저장됨.
+ * 각 슬롯의 workDetail.applicationDeadline이 지나면 closedAt을 기록하고,
+ * 슬롯 내 모든 workDetail이 마감되면 슬롯 status를 'closed'로 갱신.
+ * isManualClosed는 건드리지 않음 — 자동 만료와 수동 마감을 구분해야
+ * 재오픈 가능 여부를 올바르게 판단할 수 있음.
+ *
+ * @param {Timestamp} now - 현재 시간
+ */
+async function processSlotWorkDetailExpiry(now: Timestamp): Promise<void> {
+  console.log("  🔒 [슬롯 WorkDetail 마감] 처리 중...");
+
+  // 열린 슬롯 전체 조회 (collection group)
+  const slotsSnap = await db
+    .collectionGroup("slots")
+    .where("status", "==", "open")
+    .get();
+
+  if (slotsSnap.empty) {
+    console.log("  ✅ [슬롯 WorkDetail 마감] 처리할 슬롯 없음");
+    return;
+  }
+
+  console.log(`  📋 [슬롯 WorkDetail 마감] 오픈 슬롯: ${slotsSnap.size}개 검사`);
+
+  let totalClosedDetails = 0;
+  let totalClosedSlots = 0;
+  const affectedTOIds = new Set<string>();
+
+  for (const slotDoc of slotsSnap.docs) {
+    const slotData = slotDoc.data();
+
+    // 관리자 직접마감 슬롯은 건너뜀 (closedBy 있음 = 직접마감)
+    if (slotData.closedBy != null) continue;
+
+    const workDetails: any[] = slotData.workDetails ?? [];
+    if (workDetails.length === 0) continue;
+
+    // 마감 시간이 지난 workDetail 탐색
+    const expiredItems = workDetails.filter((wd: any) => {
+      if (wd.isEmergencyOpen === true) return false;
+      if (wd.closedAt != null) return false;
+      const deadline = wd.applicationDeadline as Timestamp | null | undefined;
+      return (
+        deadline != null &&
+        typeof deadline.toMillis === "function" &&
+        deadline.toMillis() <= now.toMillis()
+      );
+    });
+
+    if (expiredItems.length === 0) continue;
+
+    // 만료된 workDetail에 closedAt 기록
+    const expiredTypes = new Set(
+      expiredItems.map((wd: any) => wd.workType as string)
+    );
+    const updatedWorkDetails = workDetails.map((wd: any) =>
+      expiredTypes.has(wd.workType) ?
+        {...wd, closedAt: now, closedReason: "TIME_EXPIRED"} :
+        wd
+    );
+
+    // 슬롯 내 모든 workDetail이 마감됐는지 확인 (긴급공개 제외)
+    const allDetailsClosed = updatedWorkDetails.every(
+      (wd: any) => wd.isEmergencyOpen === true || wd.closedAt != null
+    );
+
+    const slotUpdate: Record<string, any> = {workDetails: updatedWorkDetails};
+    if (allDetailsClosed) {
+      // isManualClosed는 false 유지 — 자동 만료 슬롯은 재오픈 목록에 나타나지 않아야 함
+      slotUpdate.status = "closed";
+      slotUpdate.closedAt = now;
+      slotUpdate.closedReason = "TIME_EXPIRED";
+      totalClosedSlots++;
+    }
+
+    await slotDoc.ref.update(slotUpdate);
+    totalClosedDetails += expiredItems.length;
+
+    const toId =
+      (slotData.toId as string | undefined) ??
+      slotDoc.ref.parent.parent?.id;
+    if (toId) {
+      affectedTOIds.add(toId);
+      expiredItems.forEach((wd: any) =>
+        console.log(`    → ${toId}/${slotDoc.id}/${wd.workType} 마감`)
+      );
+    }
+  }
+
+  console.log(
+    `  ✅ [슬롯 WorkDetail 마감] 업무상세 ${totalClosedDetails}개, ` +
+      `슬롯 ${totalClosedSlots}개 마감 완료`
+  );
+
+  // 영향받은 TO status를 슬롯 상태 기반으로 동기화
+  for (const toId of affectedTOIds) {
+    await syncTOStatusFromSlots(db, toId, now);
+  }
+}
+
+/**
+ * flex TO의 status를 하위 슬롯 상태 기반으로 동기화
+ * 열린 슬롯이 하나라도 있으면 ACTIVE, 모두 닫혔으면 CLOSED.
+ *
+ * @param {Firestore} firestore
+ * @param {string} toId
+ * @param {Timestamp} now
+ */
+async function syncTOStatusFromSlots(
+  firestore: Firestore,
+  toId: string,
+  now: Timestamp
+): Promise<void> {
+  try {
+    const toDoc = await firestore.collection("tos").doc(toId).get();
+    if (!toDoc.exists) return;
+    const toData = toDoc.data()!;
+    // closedBy 있음 = 관리자 직접마감 → cascade 평가 대상 아님 (Flutter 불변식과 일치)
+    if (toData.closedBy != null) return;
+
+    const slotsSnap = await firestore
+      .collection("tos")
+      .doc(toId)
+      .collection("slots")
+      .get();
+
+    if (slotsSnap.empty) return;
+
+    const hasOpenSlot = slotsSnap.docs.some((doc) => {
+      const d = doc.data();
+      return !d.isManualClosed && d.status === "open";
+    });
+
+    const currentStatus = toData.status as string;
+    const newStatus = hasOpenSlot ? "ACTIVE" : "CLOSED";
+
+    if (currentStatus !== newStatus) {
+      const updateData: Record<string, any> = {
+        status: newStatus,
+        statusUpdatedAt: now,
+      };
+      if (newStatus === "CLOSED") {
+        updateData.closedAt = now;
+        updateData.closedReason = "ALL_SLOTS_EXPIRED";
+      }
+      await firestore.collection("tos").doc(toId).update(updateData);
+      console.log(`    ✓ TO ${toId} status: ${currentStatus} → ${newStatus}`);
+
+      const groupId = toData.groupId as string | undefined;
+      if (groupId) {
+        await syncGroupMasterStatus(firestore, groupId);
+      }
+    }
+  } catch (error) {
+    console.error(`❌ 슬롯 기반 TO status 동기화 실패 (${toId}):`, error);
   }
 }
 
@@ -761,7 +1129,8 @@ async function processTOExpiry(now: Timestamp): Promise<void> {
 
   const tosToClose = snapshot.docs.filter((doc) => {
     const data = doc.data();
-    return !data.isManualClosed;
+    // closedBy 있음 = 관리자 직접마감 → 자동만료 대상 아님
+    return data.closedBy == null;
   });
 
   if (tosToClose.length === 0) {
@@ -798,11 +1167,11 @@ async function processTOExpiry(now: Timestamp): Promise<void> {
       );
       if (hasOpenItems) {
         const updated = workDetails.map((wd: any) =>
-          wd.isEmergencyOpen === true || wd.closedAt != null
-            ? wd
-            : { ...wd, closedAt: now, closedReason: "PARENT_TO_CLOSED" }
+          wd.isEmergencyOpen === true || wd.closedAt != null ?
+            wd :
+            {...wd, closedAt: now, closedReason: "PARENT_TO_CLOSED"}
         );
-        batch.update(doc.ref, { workDetails: updated });
+        batch.update(doc.ref, {workDetails: updated});
       }
     }
   }
@@ -923,7 +1292,8 @@ async function runIntegrityCheck(now: Timestamp): Promise<void> {
     for (const toDoc of activeTOs.docs) {
       const toData = toDoc.data();
 
-      if (toData.isManualClosed === true) continue;
+      // closedBy 있음 = 관리자 직접마감 → 정합성 검사 대상 아님
+      if (toData.closedBy != null) continue;
 
       const deadline = toData.applicationDeadline as Timestamp | null;
       if (deadline && deadline.toMillis() <= now.toMillis()) {
@@ -938,7 +1308,10 @@ async function runIntegrityCheck(now: Timestamp): Promise<void> {
       }
     }
 
-    // 2. 모든 그룹 마스터 상태 재동기화
+    // 2. 슬롯 workDetail 만료 정합성 — 10분 스케줄러에서 못 잡은 케이스 보정
+    await processSlotWorkDetailExpiry(now);
+
+    // 3. 모든 그룹 마스터 상태 재동기화
     const masterTOs = await db
       .collection("tos")
       .where("isGroupMaster", "==", true)
@@ -1059,7 +1432,8 @@ async function syncTOStatusFromWorkDetails(
     const toData = toDoc.data();
     if (!toData) return;
 
-    if (toData.isManualClosed === true) return;
+    // closedBy 있음 = 관리자 직접마감 → cascade 평가 대상 아님 (Flutter 불변식과 일치)
+    if (toData.closedBy != null) return;
 
     const workDetails: any[] = toData.workDetails ?? [];
     if (workDetails.length === 0) return;

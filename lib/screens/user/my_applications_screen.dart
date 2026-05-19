@@ -12,6 +12,7 @@ import '../../widgets/work_type_icon.dart';
 import '../../utils/toast_helper.dart';
 import '../../utils/dialog_helper.dart';
 import '../../utils/responsive_helper.dart';
+import '../../utils/format_helper.dart';
 import '../../theme/app_colors.dart';
 
 /// 내 지원 내역 화면 (리팩토링 버전)
@@ -381,7 +382,7 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
         ),
         SizedBox(width: ResponsiveHelper.spacing(context, 4)),
         Text(
-          DateFormat('yyyy년 M월 d일 (E)', 'ko_KR').format(app.workDate),
+          FormatHelper.formatDateLong(app.workDate),
           style: ResponsiveHelper.smallStyle(context, color: AppColors.grey700),
         ),
         SizedBox(width: ResponsiveHelper.spacing(context, 12)),

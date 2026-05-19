@@ -1,6 +1,6 @@
-import 'package:flutter/material.dart';
-import 'package:intl/intl.dart';
+﻿import 'package:flutter/material.dart';
 import '../../utils/responsive_helper.dart';
+import '../../utils/format_helper.dart';
 import '../../theme/app_colors.dart';
 
 /// 🥕 당근마켓 스타일 월간 캘린더
@@ -50,7 +50,13 @@ class CarrotStyleCalendar extends StatefulWidget {
   
   /// 오늘 이전 날짜 선택 가능 여부
   final bool allowPastDates;
-  
+
+  /// 비활성화할 특정 날짜 목록 (예: 이미 사용된 날짜)
+  final List<DateTime>? disabledDates;
+
+  /// 선택 가능한 날짜 판단 함수 (false 반환 시 비활성화)
+  final bool Function(DateTime)? enabledDayPredicate;
+
   /// 헤더 표시 여부
   final bool showHeader;
   
@@ -73,6 +79,8 @@ class CarrotStyleCalendar extends StatefulWidget {
     this.onRangeChanged,
     this.onMonthChanged,
     this.allowPastDates = false,
+    this.disabledDates,
+    this.enabledDayPredicate,
     this.showHeader = true,
     this.compact = false,
   });
@@ -164,7 +172,7 @@ class _CarrotStyleCalendarState extends State<CarrotStyleCalendar> {
                 borderRadius: BorderRadius.circular(20),
               ),
               child: Text(
-                DateFormat('yyyy년 M월', 'ko_KR').format(_focusedMonth),
+                FormatHelper.formatYearMonth(_focusedMonth),
                 style: ResponsiveHelper.subtitleStyle(context).copyWith(
                   fontWeight: FontWeight.bold,
                   color: theme.primaryColor,
@@ -296,64 +304,105 @@ class _CarrotStyleCalendarState extends State<CarrotStyleCalendar> {
     if (day == null) {
       return SizedBox(height: cellSize);
     }
-    
+
     final now = DateTime.now();
     final today = DateTime(now.year, now.month, now.day);
     final isToday = _isSameDay(day, today);
     final isCurrentMonth = day.month == _focusedMonth.month;
     final isDisabled = _isDateDisabled(day);
-    
+
     // 선택 상태 확인
     final isSelected = _isDateSelected(day);
-    final isRangeStart = widget.mode == CalendarMode.range && 
+    final isRangeStart = widget.mode == CalendarMode.range &&
         widget.rangeStart != null && _isSameDay(day, widget.rangeStart!);
-    final isRangeEnd = widget.mode == CalendarMode.range && 
+    final isRangeEnd = widget.mode == CalendarMode.range &&
         widget.rangeEnd != null && _isSameDay(day, widget.rangeEnd!);
     final isInRange = _isInRange(day);
-    
-    // 색상 결정
+    final isRangeActive = isRangeStart || isRangeEnd || isInRange;
+
+    // ── Range 모드: 전체 너비 배경 + Stack (TODateSelector와 동일 구조) ──
+    // rangeEnd가 null이면 아직 범위 미확정 → circle로 표시 (아래 일반 모드로 fall-through)
+    final rangeConfirmed = widget.rangeEnd != null;
+    if (widget.mode == CalendarMode.range && isRangeActive && !isDisabled && rangeConfirmed) {
+      final isSingleDay = isRangeStart && isRangeEnd &&
+          _isSameDay(widget.rangeStart!, widget.rangeEnd!);
+
+      BorderRadius stripeBorderRadius;
+      if (isSingleDay) {
+        stripeBorderRadius = BorderRadius.circular(cellSize / 2);
+      } else {
+        final roundLeft = isRangeStart || weekdayIndex == 0;
+        final roundRight = isRangeEnd || weekdayIndex == 6;
+        final r = Radius.circular(cellSize / 2);
+        if (roundLeft && roundRight) {
+          stripeBorderRadius = BorderRadius.all(r);
+        } else if (roundLeft) {
+          stripeBorderRadius = BorderRadius.horizontal(left: r);
+        } else if (roundRight) {
+          stripeBorderRadius = BorderRadius.horizontal(right: r);
+        } else {
+          stripeBorderRadius = BorderRadius.zero;
+        }
+      }
+
+      return GestureDetector(
+        onTap: () => _onDayTap(day),
+        child: Container(
+          height: cellSize,
+          // 가로 여백 없음 → 셀이 맞닿아 매끄럽게 연결됨
+          margin: EdgeInsets.symmetric(vertical: ResponsiveHelper.spacing(context, 2)),
+          decoration: BoxDecoration(
+            color: theme.primaryColor,
+            borderRadius: stripeBorderRadius,
+          ),
+          child: Stack(
+            alignment: Alignment.center,
+            children: [
+              if (isRangeStart && !isSingleDay)
+                Container(
+                  width: cellSize - ResponsiveHelper.spacing(context, 8),
+                  height: cellSize - ResponsiveHelper.spacing(context, 8),
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    border: Border.all(color: Colors.white.withValues(alpha: 0.5), width: 2),
+                  ),
+                ),
+              Text(
+                '${day.day}',
+                style: ResponsiveHelper.bodyStyle(context).copyWith(
+                  color: AppColors.surface,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
+    // ── 일반 모드: circle 스타일 ──
     Color textColor;
     Color? backgroundColor;
     Color? borderColor;
-    BoxShape shape = BoxShape.circle;
-    BorderRadius? borderRadius;
-    
+
     if (isDisabled) {
       textColor = AppColors.grey300;
-    } else if (isSelected || isRangeStart || isRangeEnd) {
+    } else if (isSelected) {
       textColor = AppColors.surface;
       backgroundColor = theme.primaryColor;
-    } else if (isInRange) {
-      textColor = theme.primaryColor;
-      backgroundColor = theme.primaryColor.withValues(alpha: 0.15);
-      shape = BoxShape.rectangle;
-      borderRadius = BorderRadius.zero;
-      
-      // 범위 시작/끝 모서리 처리
-      if (weekdayIndex == 0) {
-        borderRadius = const BorderRadius.only(
-          topLeft: Radius.circular(20),
-          bottomLeft: Radius.circular(20),
-        );
-      } else if (weekdayIndex == 6) {
-        borderRadius = const BorderRadius.only(
-          topRight: Radius.circular(20),
-          bottomRight: Radius.circular(20),
-        );
-      }
     } else if (isToday) {
       textColor = theme.primaryColor;
       borderColor = theme.primaryColor;
     } else if (!isCurrentMonth) {
       textColor = AppColors.grey300;
     } else if (weekdayIndex == 0) {
-      textColor = AppColors.error; // 일요일
+      textColor = AppColors.error;
     } else if (weekdayIndex == 6) {
-      textColor = AppColors.info; // 토요일
+      textColor = AppColors.info;
     } else {
       textColor = AppColors.textPrimary;
     }
-    
+
     return GestureDetector(
       onTap: isDisabled ? null : () => _onDayTap(day),
       child: Container(
@@ -361,9 +410,8 @@ class _CarrotStyleCalendarState extends State<CarrotStyleCalendar> {
         margin: EdgeInsets.all(ResponsiveHelper.spacing(context, 2)),
         decoration: BoxDecoration(
           color: backgroundColor,
-          shape: shape,
-          borderRadius: shape == BoxShape.rectangle ? borderRadius : null,
-          border: borderColor != null 
+          shape: BoxShape.circle,
+          border: borderColor != null
               ? Border.all(color: borderColor, width: 2)
               : null,
         ),
@@ -372,9 +420,7 @@ class _CarrotStyleCalendarState extends State<CarrotStyleCalendar> {
             '${day.day}',
             style: ResponsiveHelper.bodyStyle(context).copyWith(
               color: textColor,
-              fontWeight: (isSelected || isRangeStart || isRangeEnd || isToday) 
-                  ? FontWeight.bold 
-                  : FontWeight.normal,
+              fontWeight: (isSelected || isToday) ? FontWeight.bold : FontWeight.normal,
             ),
           ),
         ),
@@ -412,15 +458,21 @@ class _CarrotStyleCalendarState extends State<CarrotStyleCalendar> {
 
   /// 날짜 선택 처리
   void _onDayTap(DateTime day) {
+    // 인접 월 날짜 탭 시 해당 월로 이동
+    if (day.month != _focusedMonth.month || day.year != _focusedMonth.year) {
+      setState(() => _focusedMonth = DateTime(day.year, day.month));
+      widget.onMonthChanged?.call(_focusedMonth);
+    }
+
     switch (widget.mode) {
       case CalendarMode.single:
         widget.onDateSelected?.call(day);
         break;
-        
+
       case CalendarMode.multiple:
         widget.onDateToggled?.call(day);
         break;
-        
+
       case CalendarMode.range:
         _handleRangeSelection(day);
         break;
@@ -467,7 +519,21 @@ class _CarrotStyleCalendarState extends State<CarrotStyleCalendar> {
     if (widget.maxDate != null && day.isAfter(widget.maxDate!)) {
       return true;
     }
-    
+
+    // 명시적 비활성화 날짜 체크
+    if (widget.disabledDates != null) {
+      final dayOnly = DateTime(day.year, day.month, day.day);
+      if (widget.disabledDates!.any((d) => d.year == dayOnly.year && d.month == dayOnly.month && d.day == dayOnly.day)) {
+        return true;
+      }
+    }
+
+    // enabledDayPredicate: false 반환 시 비활성화
+    if (widget.enabledDayPredicate != null) {
+      final dayOnly = DateTime(day.year, day.month, day.day);
+      if (!widget.enabledDayPredicate!(dayOnly)) return true;
+    }
+
     return false;
   }
 

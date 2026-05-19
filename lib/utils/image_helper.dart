@@ -89,7 +89,7 @@ class ImageHelper {
             _buildSourceOption(
               context,
               icon: Icons.camera_alt,
-              color: Colors.blue,
+              color: AppColors.info,
               label: '카메라로 촬영',
               onTap: () => Navigator.pop(context, ImageSource.camera),
             ),
@@ -98,7 +98,7 @@ class ImageHelper {
             _buildSourceOption(
               context,
               icon: Icons.photo_library,
-              color: Colors.green,
+              color: AppColors.success,
               label: '갤러리에서 선택',
               onTap: () => Navigator.pop(context, ImageSource.gallery),
             ),
@@ -143,10 +143,10 @@ class ImageHelper {
                 leading: Container(
                   padding: const EdgeInsets.all(8),
                   decoration: BoxDecoration(
-                    color: Colors.blue.withValues(alpha: 0.1),
+                    color: AppColors.info.withValues(alpha: 0.1),
                     borderRadius: BorderRadius.circular(8),
                   ),
-                  child: const Icon(Icons.camera_alt, color: Colors.blue),
+                  child: const Icon(Icons.camera_alt, color: AppColors.info),
                 ),
                 title: const Text('카메라로 촬영'),
                 onTap: () => Navigator.pop(context, ImageSource.camera),
@@ -155,10 +155,10 @@ class ImageHelper {
                 leading: Container(
                   padding: const EdgeInsets.all(8),
                   decoration: BoxDecoration(
-                    color: Colors.green.withValues(alpha: 0.1),
+                    color: AppColors.success.withValues(alpha: 0.1),
                     borderRadius: BorderRadius.circular(8),
                   ),
-                  child: const Icon(Icons.photo_library, color: Colors.green),
+                  child: const Icon(Icons.photo_library, color: AppColors.success),
                 ),
                 title: const Text('갤러리에서 선택'),
                 onTap: () => Navigator.pop(context, ImageSource.gallery),
@@ -217,11 +217,15 @@ class ImageHelper {
     bool useBottomSheet = false,
   }) async {
     try {
-      final source = useBottomSheet
-          ? await showImageSourceBottomSheet(context)
-          : await showImageSourceDialog(context);
+      ImageSource? source;
+      if (useBottomSheet) {
+        source = await showImageSourceBottomSheet(context);
+      } else {
+        source = await showImageSourceDialog(context);
+      }
 
       if (source == null) return null;
+      if (!context.mounted) return null;
 
       final XFile? image = await _picker.pickImage(
         source: source,
@@ -709,7 +713,7 @@ class ImageHelper {
             child: Container(
               padding: const EdgeInsets.all(4),
               decoration: const BoxDecoration(
-                color: Colors.red,
+                color: AppColors.error,
                 shape: BoxShape.circle,
               ),
               child: const Icon(
@@ -865,7 +869,6 @@ class _FullScreenImageViewer extends StatefulWidget {
 class _FullScreenImageViewerState extends State<_FullScreenImageViewer> {
   final TransformationController _transformController = TransformationController();
   int _rotationQuarter = 0;  // 0, 1, 2, 3 (90도씩)
-  final bool _isLoading = true;
 
   @override
   void dispose() {

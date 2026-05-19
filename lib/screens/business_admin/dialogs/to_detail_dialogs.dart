@@ -1,4 +1,5 @@
-import 'package:flutter/material.dart';
+﻿import 'package:flutter/material.dart';
+import '../../../theme/app_colors.dart';
 import 'package:intl/intl.dart';
 import '../../../models/core/application_model.dart';
 import '../../../services/firestore_service.dart';
@@ -73,8 +74,8 @@ class TODetailDialogs {
                       ),
                       child: ListTile(
                         leading: CircleAvatar(
-                          backgroundColor: Colors.green.withValues(alpha: 0.2),
-                          child: Icon(Icons.person, color: Colors.green),
+                          backgroundColor: AppColors.success.withValues(alpha: 0.2),
+                          child: Icon(Icons.person, color: AppColors.success),
                         ),
                         title: Text(
                           applicant['userName'],
@@ -176,7 +177,7 @@ class TODetailDialogs {
                 
                 // 대기 중
                 if (work.pendingApplicants.isNotEmpty) ...[
-                  _buildSectionHeader('⏳ 대기 중', Colors.orange, work.pendingApplicants.length),
+                  _buildSectionHeader('⏳ 대기 중', AppColors.warning, work.pendingApplicants.length),
                   SizedBox(height: ResponsiveHelper.spacing(context, 8)),  // ⭐ 변경
                   ...work.pendingApplicants.map((applicant) {
                     return _buildApplicantCard(applicant, onConfirm, onReject);
@@ -186,7 +187,7 @@ class TODetailDialogs {
                 
                 // 확정
                 if (work.confirmedApplicants.isNotEmpty) ...[
-                  _buildSectionHeader('✅ 확정', Colors.green, work.confirmedApplicants.length),
+                  _buildSectionHeader('✅ 확정', AppColors.success, work.confirmedApplicants.length),
                   SizedBox(height: ResponsiveHelper.spacing(context, 8)),  // ⭐ 변경
                   ...work.confirmedApplicants.map((applicant) {
                     return _buildApplicantCard(applicant, onConfirm, onReject);
@@ -196,7 +197,7 @@ class TODetailDialogs {
                 
                 // 거절
                 if (work.rejectedApplicants.isNotEmpty) ...[
-                  _buildSectionHeader('❌ 거절', Colors.red, work.rejectedApplicants.length),
+                  _buildSectionHeader('❌ 거절', AppColors.error, work.rejectedApplicants.length),
                   SizedBox(height: ResponsiveHelper.spacing(context, 8)),  // ⭐ 변경
                   ...work.rejectedApplicants.map((applicant) {
                     return _buildApplicantCard(applicant, onConfirm, onReject);
@@ -265,26 +266,8 @@ class TODetailDialogs {
   ) {
     final app = applicant['application'] as ApplicationModel;
     
-    Color statusColor;
-    String statusText;
-    
-    switch (app.status) {
-      case 'PENDING':
-        statusColor = Colors.orange;
-        statusText = '대기중';
-        break;
-      case 'CONFIRMED':
-        statusColor = Colors.green;
-        statusText = '확정';
-        break;
-      case 'REJECTED':
-        statusColor = Colors.red;
-        statusText = '거절';
-        break;
-      default:
-        statusColor = Colors.grey;
-        statusText = app.status;
-    }
+    final statusColor = Color(app.statusColor);
+    final statusText = app.statusText;
 
     return Card(
       margin: EdgeInsets.only(  // ⭐ const 제거
@@ -372,7 +355,7 @@ class TODetailDialogs {
             ),
 
             // 버튼 (대기 중인 경우만)
-            if (app.status == 'PENDING') ...[
+            if (app.status == AppStatus.pending) ...[
               SizedBox(height: ResponsiveHelper.spacing(context, 12)),  // ⭐ 변경
               Row(
                 children: [
@@ -388,8 +371,8 @@ class TODetailDialogs {
                       ),
                       label: const Text('거절'),
                       style: OutlinedButton.styleFrom(
-                        foregroundColor: Colors.red,
-                        side: const BorderSide(color: Colors.red),
+                        foregroundColor: AppColors.error,
+                        side: const BorderSide(color: AppColors.error),
                       ),
                     ),
                   ),
@@ -406,7 +389,7 @@ class TODetailDialogs {
                       ),
                       label: const Text('승인'),
                       style: ElevatedButton.styleFrom(
-                        backgroundColor: Colors.green,
+                        backgroundColor: AppColors.success,
                         foregroundColor: Colors.white,
                       ),
                     ),

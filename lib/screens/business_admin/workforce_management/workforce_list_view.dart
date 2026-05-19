@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+﻿import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 // Models
@@ -41,9 +41,11 @@ class _WorkforceListViewState extends State<WorkforceListView> {
   // 필터 상태
   DateTimeRange? _selectedDateRange;
   String? _selectedBusiness;
+  String? _selectedTOType;        // null / 'flex' / 'contract'
+  String? _selectedPublishStatus; // null / 'published' / 'unpublished' / 'pending'
 
   // 탭 상태
-  String _selectedTab = 'ACTIVE'; // 'ACTIVE' or 'CLOSED'
+  String _selectedTab = TOStatus.active;
 
   // 이중 토글 상태 관리
   final Set<String> _expandedGroups = {};
@@ -73,19 +75,34 @@ class _WorkforceListViewState extends State<WorkforceListView> {
 
   /// controller.items 에서 탭·사업장·날짜 필터 적용
   List<TOGroupItem> _getFilteredItems(List<TOGroupItem> allItems) {
-    Iterable<TOGroupItem> source;
-
-    if (_selectedTab == 'ACTIVE') {
+    final Iterable<TOGroupItem> source;
+    if (_selectedTab == TOStatus.active) {
       source = allItems.where((g) => !g.isClosed);
     } else {
-      // 마감됨: 최근 5개만
-      source = allItems.where((g) => g.isClosed).take(5);
+      source = allItems.where((g) => g.isClosed);
     }
 
-    return source.where((groupItem) {
+    final filtered = source.where((groupItem) {
       if (_selectedBusiness != null &&
           groupItem.businessName != _selectedBusiness) {
         return false;
+      }
+
+      if (_selectedTOType != null &&
+          groupItem.masterTO.type != _selectedTOType) {
+        return false;
+      }
+
+      if (_selectedPublishStatus != null) {
+        final to = groupItem.masterTO;
+        switch (_selectedPublishStatus) {
+          case 'published':
+            if (!to.isPublished) return false;
+          case 'unpublished':
+            if (to.isPublished || to.isPendingPublish) return false;
+          case 'pending':
+            if (!to.isPendingPublish) return false;
+        }
       }
 
       if (_selectedDateRange != null) {
@@ -101,11 +118,25 @@ class _WorkforceListViewState extends State<WorkforceListView> {
           23, 59, 59,
         );
 
-        if (groupItem.masterTO.totalSlots > 1 && groupItem.groupTOs.isNotEmpty) {
-          final hasMatchingDate = groupItem.groupTOs.any(
-            (toItem) => _isDateInRange(toItem.to, filterStart, filterEnd),
-          );
-          if (!hasMatchingDate) return false;
+        if (groupItem.masterTO.isFlexType) {
+          // flex TO: 슬롯별 날짜로 필터 (로드 순서: groupTOs → slotDates → masterTO.date)
+          final slotDates = groupItem.groupTOs.isNotEmpty
+              ? groupItem.groupTOs
+                  .map((t) => t.slot?.date)
+                  .whereType<DateTime>()
+                  .toList()
+              : groupItem.slotDates;
+          if (slotDates.isNotEmpty) {
+            final hasMatch = slotDates.any((d) {
+              final day = DateTime(d.year, d.month, d.day);
+              return !day.isBefore(filterStart) && !day.isAfter(filterEnd);
+            });
+            if (!hasMatch) return false;
+          } else {
+            if (!_isDateInRange(groupItem.masterTO, filterStart, filterEnd)) {
+              return false;
+            }
+          }
         } else {
           if (!_isDateInRange(groupItem.masterTO, filterStart, filterEnd)) {
             return false;
@@ -114,7 +145,22 @@ class _WorkforceListViewState extends State<WorkforceListView> {
       }
 
       return true;
-    }).toList();
+    });
+
+    if (_selectedTab != TOStatus.closed) return filtered.toList();
+
+    // 마감됨 탭: closedAt 기준 최신순 정렬 후 5개
+    final sorted = filtered.toList()
+      ..sort((a, b) {
+        final aDate = a.masterTO.closedAt ??
+            a.masterTO.statusUpdatedAt ??
+            a.masterTO.date;
+        final bDate = b.masterTO.closedAt ??
+            b.masterTO.statusUpdatedAt ??
+            b.masterTO.date;
+        return bDate.compareTo(aDate);
+      });
+    return sorted.take(5).toList();
   }
 
   /// 날짜 범위 체크 (장기/단기 공고 모두 고려)
@@ -145,7 +191,7 @@ class _WorkforceListViewState extends State<WorkforceListView> {
     return Column(
       children: [
         _buildTabBar(),
-        if (_selectedTab == 'CLOSED') _buildClosedTabNotice(),
+        if (_selectedTab == TOStatus.closed) _buildClosedTabNotice(),
         Expanded(child: _buildTOList()),
       ],
     );
@@ -231,11 +277,11 @@ class _WorkforceListViewState extends State<WorkforceListView> {
               child: Row(
                 children: [
                   Expanded(
-                    child: _buildTab('ACTIVE', '진행중', Icons.play_circle_outline),
+                    child: _buildTab(TOStatus.active, '진행중', Icons.play_circle_outline),
                   ),
                   SizedBox(width: ResponsiveHelper.spacing(context, 4)),
                   Expanded(
-                    child: _buildTab('CLOSED', '마감됨', Icons.check_circle_outline),
+                    child: _buildTab(TOStatus.closed, '마감됨', Icons.check_circle_outline),
                   ),
                 ],
               ),
@@ -385,12 +431,17 @@ class _WorkforceListViewState extends State<WorkforceListView> {
   }
 
   bool _hasActiveFilters() =>
-      _selectedBusiness != null || _selectedDateRange != null;
+      _selectedBusiness != null ||
+      _selectedDateRange != null ||
+      _selectedTOType != null ||
+      _selectedPublishStatus != null;
 
   int _getActiveFilterCount() {
     int count = 0;
     if (_selectedBusiness != null) count++;
     if (_selectedDateRange != null) count++;
+    if (_selectedTOType != null) count++;
+    if (_selectedPublishStatus != null) count++;
     return count;
   }
 
@@ -408,14 +459,16 @@ class _WorkforceListViewState extends State<WorkforceListView> {
       builder: (context) => FilterDialog(
         selectedBusiness: _selectedBusiness,
         selectedDateRange: _selectedDateRange,
+        selectedTOType: _selectedTOType,
+        selectedPublishStatus: _selectedPublishStatus,
         businessNames: businessNames,
-        isUserMode: true,
-        onBusinessChanged: (value) {
-          setState(() => _selectedBusiness = value);
-        },
-        onDateRangeChanged: (value) {
-          setState(() => _selectedDateRange = value);
-        },
+        isUserMode: false,
+        showTOTypeFilter: true,
+        showPublishStatusFilter: true,
+        onBusinessChanged: (value) => setState(() => _selectedBusiness = value),
+        onDateRangeChanged: (value) => setState(() => _selectedDateRange = value),
+        onTOTypeChanged: (value) => setState(() => _selectedTOType = value),
+        onPublishStatusChanged: (value) => setState(() => _selectedPublishStatus = value),
       ),
     );
   }
@@ -454,15 +507,15 @@ class _WorkforceListViewState extends State<WorkforceListView> {
               onToggleExpand: () => _handleGroupExpand(groupItem),
               onToggleTOExpand: (toId) async {
                 if (groupItem.groupTOs.isEmpty) return;
-                final toItem = groupItem.groupTOs.firstWhere(
-                  (item) => (item.slot?.id ?? item.to.id) == toId,
-                  orElse: () => groupItem.groupTOs.first,
-                );
-                await _handleTOExpand(toItem);
+                final matches = groupItem.groupTOs
+                    .where((item) => (item.slot?.id ?? item.to.id) == toId);
+                if (matches.isEmpty) return;
+                await _handleTOExpand(matches.first);
               },
               isGroupLoading: _loadingGroups.contains(groupItem.id),
               loadingTOs: _loadingTOs,
               onAffectedTOsChanged: (_) => _reload(),
+              isAnyExpanded: _expandedGroups.isNotEmpty,
             ),
           );
         },
@@ -539,18 +592,21 @@ class _WorkforceListViewState extends State<WorkforceListView> {
       return;
     }
 
+    // 먼저 expand → body 안 스피너가 즉시 표시됨
     setState(() {
       _expandedGroups.clear();
       _expandedTOs.clear();
+      _expandedGroups.add(key);
     });
 
     final controller = context.read<WorkforceController>();
 
     if (groupItem.masterTO.isFlexType) {
-      // Flex TO: 슬롯 미로드 시에만 로드, 이미 로드됐으면 바로 펼치기
+      // Flex TO: 슬롯 미로드 시에만 로드
       if (!groupItem.isGroupDetailLoaded) {
         setState(() => _loadingGroups.add(key));
         await controller.loadGroupDetails(context, groupItem);
+        if (!mounted) return;
         setState(() => _loadingGroups.remove(key));
       }
     } else if (!groupItem.isWorkDetailLoaded) {
@@ -566,10 +622,9 @@ class _WorkforceListViewState extends State<WorkforceListView> {
         debugPrint('❌ 그룹 상세 로드 실패: $e');
         ToastHelper.showError('데이터를 불러오는데 실패했습니다.');
       }
+      if (!mounted) return;
       setState(() => _loadingTOs.remove(key));
     }
-
-    setState(() => _expandedGroups.add(key));
   }
 
   /// TO 카드 펼침 핸들러
@@ -581,14 +636,17 @@ class _WorkforceListViewState extends State<WorkforceListView> {
       return;
     }
 
-    setState(() => _expandedTOs.clear());
+    // 먼저 expand → body 안 스피너가 즉시 표시됨
+    setState(() {
+      _expandedTOs.clear();
+      _expandedTOs.add(key);
+    });
 
     if (toItem.needsWorkDetailLoad) {
       setState(() => _loadingTOs.add(key));
       await context.read<WorkforceController>().loadWorkDetails(toItem);
+      if (!mounted) return;
       setState(() => _loadingTOs.remove(key));
     }
-
-    setState(() => _expandedTOs.add(key));
   }
 }

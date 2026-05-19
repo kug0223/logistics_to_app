@@ -8,6 +8,7 @@ import '../../utils/dialog_helper.dart';
 import '../../theme/app_colors.dart';
 import '../../models/settings/trust_settings_model.dart';
 import '../../widgets/dialogs/styled_dialog.dart';
+import '../../widgets/app_select_field.dart';
 
 /// 배지 관리 화면
 class BadgeSettingsScreen extends StatefulWidget {
@@ -199,7 +200,7 @@ class _BadgeSettingsScreenState extends State<BadgeSettingsScreen> {
                       Icon(
                         Icons.emoji_events,
                         size: ResponsiveHelper.iconSize(context, 32),
-                        color: Colors.amber,
+                        color: AppColors.amber,
                       ),
                       SizedBox(width: ResponsiveHelper.spacing(context, 12)),
                       Expanded(
@@ -223,7 +224,7 @@ class _BadgeSettingsScreenState extends State<BadgeSettingsScreen> {
                     context,
                     title: '신뢰도 배지',
                     icon: Icons.verified,
-                    color: Colors.amber,
+                    color: AppColors.amber,
                     badges: trustBadges,
                   ),
                 
@@ -333,7 +334,7 @@ class _BadgeSettingsScreenState extends State<BadgeSettingsScreen> {
         height: ResponsiveHelper.spacing(context, 48),
         decoration: BoxDecoration(
           color: badge.isActive 
-              ? Colors.amber.withValues(alpha: 0.15) 
+              ? AppColors.amber.withValues(alpha: 0.15) 
               : AppColors.grey200,
           borderRadius: BorderRadius.circular(12),
         ),
@@ -400,7 +401,7 @@ class _BadgeSettingsScreenState extends State<BadgeSettingsScreen> {
           ),
           const PopupMenuItem(
             value: 'delete',
-            child: Text('삭제', style: TextStyle(color: Colors.red)),
+            child: Text('삭제', style: TextStyle(color: AppColors.error)),
           ),
         ],
       ),
@@ -475,7 +476,7 @@ class _BadgeEditDialogState extends State<_BadgeEditDialog> {
     return StyledDialog(
       title: isEdit ? '배지 수정' : '새 배지 추가',
       icon: Icons.emoji_events,
-      headerColor: Colors.amber,
+      headerColor: AppColors.amber,
       content: SingleChildScrollView(
         child: Column(
           mainAxisSize: MainAxisSize.min,
@@ -509,27 +510,17 @@ class _BadgeEditDialogState extends State<_BadgeEditDialog> {
               ),
             ),
             SizedBox(height: ResponsiveHelper.spacing(context, 8)),
-            DropdownButtonFormField<BadgeType>(
+            AppSelectField<BadgeType>(
               value: _selectedType,
-              decoration: InputDecoration(
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                contentPadding: EdgeInsets.symmetric(
-                  horizontal: ResponsiveHelper.spacing(context, 12),
-                  vertical: ResponsiveHelper.spacing(context, 12),
-                ),
-              ),
-              items: BadgeType.values.map((type) {
-                return DropdownMenuItem(
-                  value: type,
-                  child: Text(_getBadgeTypeName(type)),
-                );
-              }).toList(),
+              hintText: '배지 유형 선택',
+              sheetTitle: '배지 유형',
+              items: BadgeType.values,
+              labelOf: _getBadgeTypeName,
+              prefixIcon: Icons.category,
               onChanged: (value) {
+                if (value == null) return;
                 setState(() {
-                  _selectedType = value!;
-                  // 타입에 따른 기본 조건 설정
+                  _selectedType = value;
                   if (value == BadgeType.trustScore) {
                     _selectedCondition = BadgeConditionType.minScore;
                   } else if (value == BadgeType.attendance) {
@@ -551,25 +542,15 @@ class _BadgeEditDialogState extends State<_BadgeEditDialog> {
               ),
             ),
             SizedBox(height: ResponsiveHelper.spacing(context, 8)),
-            DropdownButtonFormField<BadgeConditionType>(
+            AppSelectField<BadgeConditionType>(
               value: _selectedCondition,
-              decoration: InputDecoration(
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                contentPadding: EdgeInsets.symmetric(
-                  horizontal: ResponsiveHelper.spacing(context, 12),
-                  vertical: ResponsiveHelper.spacing(context, 12),
-                ),
-              ),
-              items: BadgeConditionType.values.map((type) {
-                return DropdownMenuItem(
-                  value: type,
-                  child: Text(_getConditionTypeName(type)),
-                );
-              }).toList(),
+              hintText: '획득 조건 선택',
+              sheetTitle: '획득 조건',
+              items: BadgeConditionType.values,
+              labelOf: _getConditionTypeName,
+              prefixIcon: Icons.flag,
               onChanged: (value) {
-                setState(() => _selectedCondition = value!);
+                if (value != null) setState(() => _selectedCondition = value);
               },
             ),
             

@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+﻿import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:intl/intl.dart';
 
@@ -24,9 +24,11 @@ import '../../../theme/app_colors.dart';
 
 // Widgets
 import '../../../widgets/pickers/create&edit_work_detail_dialog.dart';
+import '../../../widgets/dialogs/styled_dialog.dart';
 
 // 공통 위젯
 import 'widgets/to_widgets.dart';
+import '../../../widgets/app_select_field.dart';
 
 class AdminCreateTOScreen extends StatefulWidget {
   const AdminCreateTOScreen({super.key});
@@ -186,6 +188,7 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
     setState(() {
       _titleController.text = to.title;
       _descriptionController.text = to.description ?? '';
+      _hoursBeforeStart = to.hoursBeforeStart ?? 2;
       _workDetails.clear();
       for (final work in to.workDetails) {
         _workDetails.add(WorkDetailInput(
@@ -215,111 +218,81 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
                 .where((to) => to.title.toLowerCase().contains(searchQuery.toLowerCase()))
                 .toList();
 
-        return Dialog(
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-          child: Container(
-            width: double.maxFinite,
-            constraints: BoxConstraints(
-              maxHeight: MediaQuery.of(context).size.height * 0.7,
-              maxWidth: 500,
-            ),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Container(
-                  padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 16)),
-                  decoration: BoxDecoration(
-                    color: Theme.of(context).primaryColor,
-                    borderRadius: const BorderRadius.only(
-                      topLeft: Radius.circular(16),
-                      topRight: Radius.circular(16),
+        return StyledDialog(
+          title: '기존 공고 불러오기',
+          icon: Icons.file_copy_outlined,
+          showCloseButton: true,
+          maxHeightRatio: 0.7,
+          fillHeight: true,
+          content: Column(
+            children: [
+              Padding(
+                padding: EdgeInsets.fromLTRB(
+                  ResponsiveHelper.spacing(context, 16),
+                  ResponsiveHelper.spacing(context, 12),
+                  ResponsiveHelper.spacing(context, 16),
+                  ResponsiveHelper.spacing(context, 8),
+                ),
+                child: TextField(
+                  decoration: InputDecoration(
+                    hintText: '공고 제목 검색...',
+                    prefixIcon: Icon(Icons.search,
+                        size: ResponsiveHelper.iconSize(context, 20)),
+                    border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(12)),
+                    contentPadding: EdgeInsets.symmetric(
+                      horizontal: ResponsiveHelper.spacing(context, 16),
+                      vertical: ResponsiveHelper.spacing(context, 12),
                     ),
                   ),
-                  child: Row(
-                    children: [
-                      Icon(Icons.file_copy_outlined,
-                          color: Colors.white,
-                          size: ResponsiveHelper.iconSize(context, 24)),
-                      SizedBox(width: ResponsiveHelper.spacing(context, 12)),
-                      Expanded(
-                        child: Text(
-                          '기존 공고 불러오기',
-                          style: ResponsiveHelper.subtitleStyle(context)
-                              .copyWith(color: Colors.white, fontWeight: FontWeight.bold),
+                  style: ResponsiveHelper.bodyStyle(context),
+                  onChanged: (v) => setDialogState(() => searchQuery = v),
+                ),
+              ),
+              Expanded(
+                child: filteredTOs.isEmpty
+                    ? Center(
+                        child: Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Icon(Icons.inbox_outlined,
+                                size: ResponsiveHelper.iconSize(context, 48),
+                                color: AppColors.grey400),
+                            SizedBox(height: ResponsiveHelper.spacing(context, 12)),
+                            Text(
+                              searchQuery.isEmpty ? '등록된 공고가 없습니다' : '검색 결과가 없습니다',
+                              style: ResponsiveHelper.bodyStyle(context,
+                                  color: AppColors.grey600),
+                            ),
+                          ],
                         ),
+                      )
+                    : ListView.separated(
+                        padding: EdgeInsets.symmetric(
+                            horizontal: ResponsiveHelper.spacing(context, 12)),
+                        itemCount: filteredTOs.length,
+                        separatorBuilder: (_, __) =>
+                            Divider(height: 1, color: AppColors.divider),
+                        itemBuilder: (context, index) =>
+                            _buildTOListTile(filteredTOs[index]),
                       ),
-                      IconButton(
-                        icon: Icon(Icons.close,
-                            color: Colors.white,
-                            size: ResponsiveHelper.iconSize(context, 24)),
-                        onPressed: () => Navigator.pop(context),
-                      ),
-                    ],
-                  ),
+              ),
+              Container(
+                padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 12)),
+                color: AppColors.grey100,
+                child: Row(
+                  children: [
+                    Icon(Icons.info_outline,
+                        size: ResponsiveHelper.iconSize(context, 16),
+                        color: AppColors.grey600),
+                    SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+                    Text('제목, 업무상세, 설명, 마감시간 설정을 불러옵니다',
+                        style: ResponsiveHelper.smallStyle(context,
+                            color: AppColors.grey600)),
+                  ],
                 ),
-                Padding(
-                  padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 12)),
-                  child: TextField(
-                    decoration: InputDecoration(
-                      hintText: '공고 제목 검색...',
-                      prefixIcon: Icon(Icons.search,
-                          size: ResponsiveHelper.iconSize(context, 20)),
-                      border: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(12)),
-                      contentPadding: EdgeInsets.symmetric(
-                        horizontal: ResponsiveHelper.spacing(context, 16),
-                        vertical: ResponsiveHelper.spacing(context, 12),
-                      ),
-                    ),
-                    style: ResponsiveHelper.bodyStyle(context),
-                    onChanged: (v) => setDialogState(() => searchQuery = v),
-                  ),
-                ),
-                Expanded(
-                  child: filteredTOs.isEmpty
-                      ? Center(
-                          child: Column(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            children: [
-                              Icon(Icons.inbox_outlined,
-                                  size: ResponsiveHelper.iconSize(context, 48),
-                                  color: AppColors.grey400),
-                              SizedBox(height: ResponsiveHelper.spacing(context, 12)),
-                              Text(
-                                searchQuery.isEmpty ? '등록된 공고가 없습니다' : '검색 결과가 없습니다',
-                                style: ResponsiveHelper.bodyStyle(context,
-                                    color: AppColors.grey600),
-                              ),
-                            ],
-                          ),
-                        )
-                      : ListView.separated(
-                          padding: EdgeInsets.symmetric(
-                              horizontal: ResponsiveHelper.spacing(context, 12)),
-                          itemCount: filteredTOs.length,
-                          separatorBuilder: (_, __) =>
-                              Divider(height: 1, color: AppColors.divider),
-                          itemBuilder: (context, index) =>
-                              _buildTOListTile(filteredTOs[index]),
-                        ),
-                ),
-                Container(
-                  padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 12)),
-                  color: AppColors.grey100,
-                  child: Row(
-                    children: [
-                      Icon(Icons.info_outline,
-                          size: ResponsiveHelper.iconSize(context, 16),
-                          color: AppColors.grey600),
-                      SizedBox(width: ResponsiveHelper.spacing(context, 8)),
-                      Text('제목, 업무상세, 설명만 불러옵니다',
-                          style: ResponsiveHelper.smallStyle(context,
-                              color: AppColors.grey600)),
-                    ],
-                  ),
-                ),
-              ],
-            ),
+              ),
+            ],
           ),
         );
       },
@@ -327,6 +300,7 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
   }
 
   Widget _buildTOListTile(TOModel to) {
+    final isFlexNoRange = to.isFlexType && to.rangeStart == null;
     final displayDate = to.rangeStart ?? to.createdAt;
     return Material(
       color: Colors.transparent,
@@ -351,7 +325,9 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
                   borderRadius: BorderRadius.circular(8),
                 ),
                 child: Text(
-                  DateFormat('MM/dd').format(displayDate),
+                  isFlexNoRange
+                      ? '${to.totalSlots}일'
+                      : DateFormat('MM/dd').format(displayDate),
                   style: ResponsiveHelper.smallStyle(
                     context,
                     color: to.isContractType
@@ -427,9 +403,12 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
     );
 
     if (result != null) {
-      final isDuplicate = _workDetails.any((w) => w.workType == result.workType);
+      final isDuplicate = _workDetails.any((w) =>
+          w.workType == result.workType &&
+          w.startTime == result.startTime &&
+          w.endTime == result.endTime);
       if (isDuplicate) {
-        ToastHelper.showWarning('이미 추가된 업무 유형입니다');
+        ToastHelper.showWarning('동일한 업무·시간대가 이미 추가되어 있습니다');
         return;
       }
       setState(() => _workDetails.add(result));
@@ -449,6 +428,11 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
       requiredCount: detail.requiredCount!,
       startTime: detail.startTime!,
       endTime: detail.endTime!,
+      shiftType: detail.shiftType,
+      nightAllowanceApplied: detail.nightAllowanceApplied,
+      nightIncluded: detail.nightIncluded,
+      breakMinutes: detail.breakMinutes,
+      baseHourlyWage: detail.baseHourlyWage,
     );
 
     final result = await WorkDetailDialog.showEditDialog(
@@ -470,6 +454,11 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
           requiredCount: result['requiredCount'],
           startTime: result['startTime'],
           endTime: result['endTime'],
+          shiftType: result['shiftType'],
+          nightAllowanceApplied: result['nightAllowanceApplied'] ?? true,
+          nightIncluded: result['nightIncluded'] ?? false,
+          breakMinutes: result['breakMinutes'] ?? 0,
+          baseHourlyWage: result['baseHourlyWage'],
         );
       });
     }
@@ -530,6 +519,30 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
   // TO 생성
   // ============================================================
 
+  /// 날짜 하나가 이미 마감시간 지났는지 확인
+  bool _isSlotExpired(DateTime date) {
+    final now = DateTime.now();
+    if (!DateUtils.isSameDay(date, now)) return false;
+    if (_workDetails.isEmpty) return false;
+    return _workDetails.every((w) {
+      final start = w.startTime;
+      if (start == null) return false;
+      final parts = start.split(':');
+      if (parts.length != 2) return false;
+      final deadline = DateTime(
+        date.year, date.month, date.day,
+        int.parse(parts[0]), int.parse(parts[1]),
+      ).subtract(Duration(hours: _hoursBeforeStart));
+      return now.isAfter(deadline);
+    });
+  }
+
+  /// 모든 선택 날짜가 마감 경과 → 등록 즉시 전체 마감됨
+  bool get _allSlotsExpired => _selectedDates.isNotEmpty && _selectedDates.every(_isSlotExpired);
+
+  /// 일부 날짜만 마감 경과 (오늘 포함 2일 이상 공고에서 오늘만 만료)
+  bool get _someSlotExpired => !_allSlotsExpired && _selectedDates.any(_isSlotExpired);
+
   Future<void> _createTO() async {
     if (!_formKey.currentState!.validate()) return;
 
@@ -568,6 +581,24 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
       return;
     }
 
+    // flex 당일 슬롯 마감 경과 처리
+    if (_selectedJobType == 'flex') {
+      if (_allSlotsExpired) {
+        // 전체 날짜 만료 → 강한 경고 (팝업)
+        final proceed = await DialogHelper.showConfirm(
+          context,
+          title: '지원 마감 경과',
+          message: '선택한 모든 날짜의 지원 마감이 이미 지났습니다.\n등록 즉시 마감 상태가 됩니다.\n그래도 등록하시겠습니까?',
+          confirmText: '등록',
+          cancelText: '취소',
+        );
+        if (!proceed || !mounted) return;
+      } else if (_someSlotExpired) {
+        // 일부 날짜만 만료 → 토스트 안내 후 그대로 진행
+        ToastHelper.showInfo('오늘 날짜 슬롯은 마감시간이 지나 등록 즉시 마감됩니다');
+      }
+    }
+
     setState(() => _isCreating = true);
 
     try {
@@ -576,6 +607,7 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
 
       if (uid == null) {
         ToastHelper.showError('로그인 정보를 찾을 수 없습니다');
+        setState(() => _isCreating = false);
         return;
       }
 
@@ -772,31 +804,13 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
 
   Widget _buildBusinessSelector() {
     return TOSectionContainer(
-      child: DropdownButtonFormField<BusinessModel>(
-        initialValue: _selectedBusiness,
-        isExpanded: true,
-        decoration: InputDecoration(
-          labelText: '사업장 선택',
-          labelStyle: ResponsiveHelper.bodyStyle(context),
-          prefixIcon: Icon(Icons.business,
-              color: Theme.of(context).primaryColor,
-              size: ResponsiveHelper.iconSize(context, 24)),
-          border: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(12),
-            borderSide: BorderSide(color: AppColors.grey300),
-          ),
-          enabledBorder: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(12),
-            borderSide: BorderSide(color: AppColors.grey300),
-          ),
-          focusedBorder: OutlineInputBorder(
-            borderRadius: const BorderRadius.all(Radius.circular(12)),
-            borderSide: BorderSide(color: Theme.of(context).primaryColor, width: 2),
-          ),
-        ),
-        items: _myBusinesses
-            .map((b) => DropdownMenuItem(value: b, child: Text(b.name)))
-            .toList(),
+      child: AppSelectField<BusinessModel>(
+        value: _selectedBusiness,
+        hintText: '사업장을 선택하세요',
+        sheetTitle: '사업장 선택',
+        items: _myBusinesses,
+        labelOf: (b) => b.name,
+        prefixIcon: Icons.business,
         onChanged: (value) {
           if (value != null) {
             setState(() {

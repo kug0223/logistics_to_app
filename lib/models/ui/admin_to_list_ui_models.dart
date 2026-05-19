@@ -1,6 +1,7 @@
 import '../core/to_model.dart';
 import '../core/slot_model.dart';
 import '../core/work_detail_data.dart';
+import '../../utils/close_state_utils.dart';
 
 /// 공고 리스트 아이템 (관리자용)
 ///
@@ -47,7 +48,36 @@ class TOGroupItem {
   String get businessName => singleTO!.businessName;
   String get businessId => singleTO!.businessId;
   String get status => singleTO!.status;
-  bool get isClosed => singleTO!.isClosed;
+  /// Firestore 상태 + 날짜 경과를 함께 고려한 실질적 마감 여부.
+  /// 마지막 슬롯(또는 계약 종료일)이 오늘 이하면 마감 탭으로 분류.
+  bool get isClosed {
+    final now = DateTime.now();
+    final todayDay = DateTime(now.year, now.month, now.day);
+
+    if (singleTO!.isFlexType) {
+      // 슬롯 로드된 경우: CloseStateUtils로 통일 판단
+      if (_groupTOs != null && _groupTOs!.isNotEmpty) {
+        return _groupTOs!.every(
+          (t) => CloseStateUtils.isToItemClosed(t, singleTO!, now),
+        );
+      }
+
+      // 슬롯 미로드: Firestore status + 날짜 폴백
+      if (singleTO!.isClosed) return true;
+      DateTime? lastDate;
+      if (_slotDates != null && _slotDates!.isNotEmpty) {
+        lastDate = _slotDates!.reduce((a, b) => a.isAfter(b) ? a : b);
+      }
+      if (lastDate == null) return false;
+      return DateTime(lastDate.year, lastDate.month, lastDate.day).isBefore(todayDay);
+    }
+
+    // contract TO: Firestore status + 계약 종료일 체크
+    if (singleTO!.isClosed) return true;
+    final lastDate = singleTO!.rangeEnd;
+    if (lastDate == null) return false;
+    return DateTime(lastDate.year, lastDate.month, lastDate.day).isBefore(todayDay);
+  }
   bool get isManualClosed => singleTO!.isManualClosed;
   bool get isPendingPublish => singleTO!.isPendingPublish;
   DateTime? get publishAt => singleTO!.publishAt;
@@ -188,4 +218,33 @@ class TOItem {
 
   /// 슬롯 날짜 (flex only)
   DateTime? get slotDate => slot?.date;
+
+  /// 슬롯 날짜가 오늘 이전인지 여부
+  bool get isSlotDatePast => slot?.isDatePast ?? false;
+
+  // ── 통계 집계 ────────────────────────────────────────────
+
+  /// workDetailStats 로드 여부에 따라 최적 집계 반환 — 카드 표시용
+  ///
+  /// - workDetails 로드됨: workDetailStats 기준 (업무유형별 정확한 수치)
+  /// - 미로드: slot 수준 confirmedCount/pendingCount 사용
+  ({int confirmed, int pending, int required}) resolveStats() {
+    if (isWorkDetailLoaded && workDetails.isNotEmpty) {
+      var c = 0, p = 0, r = 0;
+      for (final work in workDetails) {
+        final stats = workDetailStats?[work.id];
+        c += (stats?['confirmed'] ?? 0);
+        p += (stats?['pending'] ?? 0);
+        r += work.requiredCount;
+      }
+      return (confirmed: c, pending: p, required: r);
+    }
+    return (confirmed: confirmedCount, pending: pendingCount, required: totalRequired);
+  }
+
+  /// workDetailStats 기준 인원 충족 여부
+  bool get resolvedIsFull {
+    final s = resolveStats();
+    return s.required > 0 && s.confirmed >= s.required;
+  }
 }

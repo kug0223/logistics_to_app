@@ -3,6 +3,7 @@
 import 'package:flutter/material.dart';
 import '../../utils/responsive_helper.dart';
 import '../../theme/app_colors.dart';
+import '../../models/core/monthly_review_model.dart';
 import '../../models/settings/trust_settings_model.dart';
 import '../../services/monthly_review_service.dart';
 import '../../services/tooltip_service.dart';
@@ -49,6 +50,9 @@ class MonthlyReviewDialog extends StatefulWidget {
   /// 해당 월 지각 횟수
   final int lateDays;
 
+  /// review_requests 문서 ID (양방향 공개 연동)
+  final String? requestId;
+
   const MonthlyReviewDialog({
     super.key,
     required this.reviewerId,
@@ -62,6 +66,7 @@ class MonthlyReviewDialog extends StatefulWidget {
     required this.workDaysInMonth,
     this.normalAttendanceDays = 0,
     this.lateDays = 0,
+    this.requestId,
   });
 
   @override
@@ -71,22 +76,32 @@ class MonthlyReviewDialog extends StatefulWidget {
 class _MonthlyReviewDialogState extends State<MonthlyReviewDialog> {
   final _commentController = TextEditingController();
   final _reviewService = MonthlyReviewService();
-  
-  // 상태
+
+  // 평가
   int _rating = 4;
   bool? _wouldRehire;
   List<String> _selectedPositiveTags = [];
   List<String> _selectedImprovementTags = [];
+
+  // 근태 (H-4: 출퇴근 연동 전까지 수동 입력)
+  late int _normalDays;
+  late int _lateDays;
+
   bool _isLoading = false;
   bool _isSubmitting = false;
-  
+
   // 태그 목록
   ReviewTagsModel _tags = ReviewTagsModel.defaults();
 
   @override
   void initState() {
     super.initState();
+    _normalDays = widget.normalAttendanceDays;
+    _lateDays = widget.lateDays;
     _loadTags();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) TooltipContents.showFirstReview(context);
+    });
   }
 
   @override
@@ -102,6 +117,7 @@ class _MonthlyReviewDialogState extends State<MonthlyReviewDialog> {
     } catch (e) {
       debugPrint('❌ 태그 로드 실패: $e');
     }
+    if (!mounted) return;
     setState(() => _isLoading = false);
   }
 
@@ -124,19 +140,20 @@ class _MonthlyReviewDialogState extends State<MonthlyReviewDialog> {
       reviewYear: widget.reviewYear,
       reviewMonth: widget.reviewMonth,
       workDaysInMonth: widget.workDaysInMonth,
-      normalAttendanceDays: widget.normalAttendanceDays,
-      lateDays: widget.lateDays,
+      normalAttendanceDays: _normalDays,
+      lateDays: _lateDays,
       rating: _rating,
       wouldRehire: _wouldRehire!,
       positiveTags: _selectedPositiveTags,
       improvementTags: _selectedImprovementTags,
-      comment: _commentController.text.trim().isEmpty 
-          ? null 
+      comment: _commentController.text.trim().isEmpty
+          ? null
           : _commentController.text.trim(),
+      requestId: widget.requestId,
     );
-    
+
     if (!mounted) return;
-    
+
     if (result.reviewId != null) {
       // 성공 다이얼로그
       await showDialog(
@@ -157,7 +174,7 @@ class _MonthlyReviewDialogState extends State<MonthlyReviewDialog> {
               ),
               SizedBox(height: ResponsiveHelper.spacing(context, 16)),
               Text(
-                '리뷰가 작성되었습니다.\n3일 후 ${widget.targetUserName}님에게 공개됩니다.',
+                '리뷰가 작성되었습니다.\n${widget.targetUserName}님도 사업장 리뷰를 작성하면\n즉시 동시에 공개됩니다.\n(미작성 시 7일 후 자동 공개)',
                 style: ResponsiveHelper.bodyStyle(context),
                 textAlign: TextAlign.center,
               ),
@@ -183,14 +200,6 @@ class _MonthlyReviewDialogState extends State<MonthlyReviewDialog> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    
-    // 🆕 첫 리뷰 작성 툴팁 (1회만)
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) {
-        TooltipContents.showFirstReview(context);
-      }
-    });
-    
     return Dialog(
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(24),
@@ -434,7 +443,7 @@ class _MonthlyReviewDialogState extends State<MonthlyReviewDialog> {
                 child: Icon(
                   starIndex <= _rating ? Icons.star : Icons.star_border,
                   size: ResponsiveHelper.iconSize(context, 40),
-                  color: Colors.amber,
+                  color: AppColors.amber,
                 ),
               ),
             );
@@ -832,6 +841,309 @@ class _MonthlyReviewDialogState extends State<MonthlyReviewDialog> {
   }
 }
 
+// ═══════════════════════════════════════════════════════════════
+// 기작성 리뷰 조회 다이얼로그
+// ═══════════════════════════════════════════════════════════════
+
+Future<void> showMonthlyReviewViewDialog(
+  BuildContext context, {
+  required MonthlyReviewModel review,
+}) {
+  return showDialog<void>(
+    context: context,
+    builder: (ctx) => _MonthlyReviewViewDialog(review: review),
+  );
+}
+
+class _MonthlyReviewViewDialog extends StatelessWidget {
+  final MonthlyReviewModel review;
+  const _MonthlyReviewViewDialog({required this.review});
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Dialog(
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+      child: Container(
+        constraints: BoxConstraints(
+          maxWidth: 500,
+          maxHeight: MediaQuery.of(context).size.height * 0.85,
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            _buildHeader(context, theme),
+            Flexible(
+              child: SingleChildScrollView(
+                padding: ResponsiveHelper.cardPadding(context),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    _buildRatingRow(context),
+                    SizedBox(height: ResponsiveHelper.spacing(context, 16)),
+                    _buildRehireRow(context),
+                    if (review.positiveTags.isNotEmpty) ...[
+                      SizedBox(height: ResponsiveHelper.spacing(context, 16)),
+                      _buildTagRow(context, '좋았던 점', review.positiveTags,
+                          AppColors.success, Icons.thumb_up_outlined),
+                    ],
+                    if (review.improvementTags.isNotEmpty) ...[
+                      SizedBox(height: ResponsiveHelper.spacing(context, 16)),
+                      _buildTagRow(context, '아쉬운 점', review.improvementTags,
+                          AppColors.warning, Icons.lightbulb_outline),
+                    ],
+                    if (review.comment != null &&
+                        review.comment!.isNotEmpty) ...[
+                      SizedBox(height: ResponsiveHelper.spacing(context, 16)),
+                      _buildCommentRow(context),
+                    ],
+                    SizedBox(height: ResponsiveHelper.spacing(context, 16)),
+                    _buildPublishStatus(context),
+                  ],
+                ),
+              ),
+            ),
+            _buildActions(context, theme),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildHeader(BuildContext context, ThemeData theme) {
+    return Container(
+      padding: ResponsiveHelper.cardPadding(context),
+      decoration: BoxDecoration(
+        gradient: LinearGradient(colors: [
+          theme.primaryColor,
+          theme.primaryColor.withValues(alpha: 0.8),
+        ]),
+        borderRadius: const BorderRadius.only(
+          topLeft: Radius.circular(24),
+          topRight: Radius.circular(24),
+        ),
+      ),
+      child: Row(
+        children: [
+          Container(
+            padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 12)),
+            decoration: BoxDecoration(
+              color: Colors.white.withValues(alpha: 0.2),
+              borderRadius: BorderRadius.circular(16),
+            ),
+            child: Icon(Icons.rate_review, color: Colors.white,
+                size: ResponsiveHelper.iconSize(context, 28)),
+          ),
+          SizedBox(width: ResponsiveHelper.spacing(context, 16)),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  '${review.reviewYear}년 ${review.reviewMonth}월 리뷰',
+                  style: ResponsiveHelper.titleStyle(context)
+                      .copyWith(color: Colors.white, fontWeight: FontWeight.bold),
+                ),
+                SizedBox(height: ResponsiveHelper.spacing(context, 4)),
+                Text(review.targetUserName ?? '',
+                    style: ResponsiveHelper.smallStyle(context, color: Colors.white70)),
+              ],
+            ),
+          ),
+          IconButton(
+            onPressed: () => Navigator.pop(context),
+            icon: Icon(Icons.close, color: Colors.white,
+                size: ResponsiveHelper.iconSize(context, 24)),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildRatingRow(BuildContext context) {
+    return Row(
+      children: [
+        ...List.generate(5, (i) => Icon(
+          i < review.rating ? Icons.star : Icons.star_border,
+          size: ResponsiveHelper.iconSize(context, 28),
+          color: AppColors.amber,
+        )),
+        SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+        Text(review.ratingText,
+            style: ResponsiveHelper.bodyStyle(context)
+                .copyWith(fontWeight: FontWeight.bold)),
+      ],
+    );
+  }
+
+  Widget _buildRehireRow(BuildContext context) {
+    final rehire = review.wouldRehire;
+    if (rehire == null) return const SizedBox.shrink();
+    return Row(
+      children: [
+        Icon(
+          rehire ? Icons.thumb_up : Icons.thumb_down,
+          size: ResponsiveHelper.iconSize(context, 18),
+          color: rehire ? AppColors.success : AppColors.error,
+        ),
+        SizedBox(width: ResponsiveHelper.spacing(context, 6)),
+        Text(
+          rehire ? '재고용 의사 있음' : '재고용 의사 없음',
+          style: ResponsiveHelper.smallStyle(context,
+              color: rehire ? AppColors.success : AppColors.error),
+        ),
+        SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+        Container(
+          padding: EdgeInsets.symmetric(
+              horizontal: ResponsiveHelper.spacing(context, 6),
+              vertical: ResponsiveHelper.spacing(context, 2)),
+          decoration: BoxDecoration(
+            color: AppColors.warningBg,
+            borderRadius: BorderRadius.circular(4),
+          ),
+          child: Text('관리자 전용',
+              style: ResponsiveHelper.tinyStyle(context,
+                  color: AppColors.warningDark)),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildTagRow(BuildContext context, String title, List<String> tags,
+      Color color, IconData icon) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Icon(icon, size: ResponsiveHelper.iconSize(context, 16), color: color),
+            SizedBox(width: ResponsiveHelper.spacing(context, 6)),
+            Text(title,
+                style: ResponsiveHelper.smallStyle(context, color: AppColors.grey600)
+                    .copyWith(fontWeight: FontWeight.bold)),
+          ],
+        ),
+        SizedBox(height: ResponsiveHelper.spacing(context, 8)),
+        Wrap(
+          spacing: ResponsiveHelper.spacing(context, 6),
+          runSpacing: ResponsiveHelper.spacing(context, 6),
+          children: tags
+              .map((tag) => Container(
+                    padding: EdgeInsets.symmetric(
+                        horizontal: ResponsiveHelper.spacing(context, 10),
+                        vertical: ResponsiveHelper.spacing(context, 6)),
+                    decoration: BoxDecoration(
+                      color: color.withValues(alpha: 0.1),
+                      borderRadius: BorderRadius.circular(20),
+                      border: Border.all(color: color.withValues(alpha: 0.5)),
+                    ),
+                    child: Text(tag,
+                        style: ResponsiveHelper.smallStyle(context, color: color)),
+                  ))
+              .toList(),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildCommentRow(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Icon(Icons.edit_note,
+                size: ResponsiveHelper.iconSize(context, 16),
+                color: AppColors.grey600),
+            SizedBox(width: ResponsiveHelper.spacing(context, 6)),
+            Text('상세 코멘트',
+                style: ResponsiveHelper.smallStyle(context, color: AppColors.grey600)
+                    .copyWith(fontWeight: FontWeight.bold)),
+            SizedBox(width: ResponsiveHelper.spacing(context, 6)),
+            Container(
+              padding: EdgeInsets.symmetric(
+                  horizontal: ResponsiveHelper.spacing(context, 6),
+                  vertical: ResponsiveHelper.spacing(context, 2)),
+              decoration: BoxDecoration(
+                color: AppColors.warningBg,
+                borderRadius: BorderRadius.circular(4),
+              ),
+              child: Text('관리자 전용',
+                  style: ResponsiveHelper.tinyStyle(context,
+                      color: AppColors.warningDark)),
+            ),
+          ],
+        ),
+        SizedBox(height: ResponsiveHelper.spacing(context, 8)),
+        Container(
+          width: double.infinity,
+          padding: ResponsiveHelper.cardPadding(context),
+          decoration: BoxDecoration(
+            color: AppColors.grey50,
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: AppColors.grey200),
+          ),
+          child: Text(review.comment!,
+              style: ResponsiveHelper.bodyStyle(context, color: AppColors.grey700)),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildPublishStatus(BuildContext context) {
+    return Container(
+      padding: ResponsiveHelper.cardPadding(context),
+      decoration: BoxDecoration(
+        color: AppColors.infoBg,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: AppColors.info.withValues(alpha: 0.3)),
+      ),
+      child: Row(
+        children: [
+          Icon(Icons.schedule,
+              size: ResponsiveHelper.iconSize(context, 18),
+              color: AppColors.infoDark),
+          SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+          Text(
+            review.isPublished
+                ? '공개된 리뷰입니다.'
+                : '${review.publishStatusText} — 상대방 작성 완료 시 즉시 공개',
+            style: ResponsiveHelper.smallStyle(context, color: AppColors.infoDark),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildActions(BuildContext context, ThemeData theme) {
+    return Container(
+      padding: ResponsiveHelper.cardPadding(context),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        border: Border(top: BorderSide(color: AppColors.grey200)),
+      ),
+      child: SizedBox(
+        width: double.infinity,
+        child: ElevatedButton(
+          onPressed: () => Navigator.pop(context),
+          style: ElevatedButton.styleFrom(
+            backgroundColor: theme.primaryColor,
+            foregroundColor: Colors.white,
+            padding: EdgeInsets.symmetric(
+                vertical: ResponsiveHelper.spacing(context, 16)),
+            shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(12)),
+            elevation: 0,
+          ),
+          child: Text('닫기',
+              style: ResponsiveHelper.bodyStyle(context, color: Colors.white)
+                  .copyWith(fontWeight: FontWeight.bold)),
+        ),
+      ),
+    );
+  }
+}
+
 /// 리뷰 작성 다이얼로그 표시 헬퍼
 Future<bool?> showMonthlyReviewDialog(
   BuildContext context, {
@@ -846,6 +1158,7 @@ Future<bool?> showMonthlyReviewDialog(
   required int workDaysInMonth,
   int normalAttendanceDays = 0,
   int lateDays = 0,
+  String? requestId,
 }) {
   return showDialog<bool>(
     context: context,
@@ -862,6 +1175,7 @@ Future<bool?> showMonthlyReviewDialog(
       workDaysInMonth: workDaysInMonth,
       normalAttendanceDays: normalAttendanceDays,
       lateDays: lateDays,
+      requestId: requestId,
     ),
   );
 }

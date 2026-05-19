@@ -254,7 +254,7 @@ class UserModel {
       businessLicenseImageUrl: map['businessLicenseImageUrl'], // ✅ 추가
       ceoName: map['ceoName'],  // ✅ 추가
       // ━━━ 신뢰도 시스템 ━━━
-      storedTrustScore: map['trustScore'],
+      storedTrustScore: (map['trustScore'] as num?)?.toInt(),
       rehireRate: (map['rehireRate'] ?? 0.0).toDouble(),
       badges: map['badges'] != null ? List<String>.from(map['badges']) : [],
       lastRestartAt: map['lastRestartAt']?.toDate(),

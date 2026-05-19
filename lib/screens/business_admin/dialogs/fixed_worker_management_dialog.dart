@@ -9,7 +9,6 @@
 // - 계약해지 요청 (NEW)
 
 import 'package:flutter/material.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:provider/provider.dart';
 import 'package:intl/intl.dart';
 import '../../../models/core/application_model.dart';
@@ -19,12 +18,16 @@ import '../../../services/firestore_service.dart';
 import '../../../providers/user_provider.dart';
 import '../../../utils/toast_helper.dart';
 import '../../../utils/responsive_helper.dart';
+import '../../../utils/format_helper.dart';
 import '../../../utils/dialog_helper.dart';
+import '../../../utils/loading_state_mixin.dart';
 import '../../../widgets/common/loading_widget.dart';
 import '../../../widgets/dialogs/worker_detail_dialog.dart';
 import '../../../theme/app_colors.dart';
 import '../../../widgets/work_type_icon.dart';
 import '../../../widgets/dialogs/styled_dialog.dart';
+import '../../../widgets/pickers/date_picker_bottom_sheet.dart';
+import '../../../widgets/app_select_field.dart';
 
 /// 근무자의 특정 날짜 근무 상태
 enum _WorkerDayStatus {
@@ -56,12 +59,12 @@ class FixedWorkerManagementDialog extends StatefulWidget {
   State<FixedWorkerManagementDialog> createState() => _FixedWorkerManagementDialogState();
 }
 
-class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialog> {
+class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialog>
+    with LoadingStateMixin {
   final FirestoreService _firestoreService = FirestoreService();
 
   // 고정근무자 목록 (사용자 정보 포함)
   List<_FixedWorkerItem> _fixedWorkers = [];
-  bool _isLoading = true;
   
   // 사업장 선택
   String? _selectedBusinessId;
@@ -101,18 +104,7 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
   /// 사업장명 조회
   Future<void> _loadBusinessNames() async {
     try {
-      final nameMap = <String, String>{};
-      for (final id in _businessIds) {
-        final doc = await FirebaseFirestore.instance
-            .collection('businesses')
-            .doc(id)
-            .get();
-        if (doc.exists) {
-          nameMap[id] = doc.data()?['name'] ?? 'Unknown';
-        } else {
-          nameMap[id] = 'Unknown';
-        }
-      }
+      final nameMap = await _firestoreService.getBusinessNames(_businessIds);
       if (mounted) {
         setState(() {
           _businessNameMap = nameMap;
@@ -124,25 +116,19 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
   }
 
   /// 고정근무자 로드
-  Future<void> _loadFixedWorkers() async {
-    if (_selectedBusinessId == null) {
-      setState(() => _isLoading = false);
-      return;
-    }
-    
-    setState(() => _isLoading = true);
+  Future<void> _loadFixedWorkers() => runWithLoading(() async {
+    if (_selectedBusinessId == null) return;
 
-    try {
-      final allApps = await _firestoreService.getApplicationsByBusinessId(_selectedBusinessId!);
+    final allApps = await _firestoreService.getApplicationsByBusinessId(_selectedBusinessId!);
 
       // 장기 근무 확정자만 필터 (퇴사/해지 완료 제외)
       final filtered = allApps.where((app) {
-        return app.status == 'CONFIRMED' &&
+        return app.status == AppStatus.confirmed &&
             app.isLongTermApplication &&  // ✅ 장기 TO 여부 확인
-            app.resignStatus != 'APPROVED' &&
-            app.resignStatus != 'AUTO_APPROVED' &&
-            app.terminationStatus != 'APPROVED' &&      // 🔥 계약해지 완료 제외
-            app.terminationStatus != 'AUTO_APPROVED';   // 🔥 자동해지 완료 제외
+            app.resignStatus != AppStatus.approved &&
+            app.resignStatus != AppStatus.autoApproved &&
+            app.terminationStatus != AppStatus.approved &&      // 🔥 계약해지 완료 제외
+            app.terminationStatus != AppStatus.autoApproved;   // 🔥 자동해지 완료 제외
       }).toList();
 
       // ✅ 1. 업무유형 정보 한 번만 조회 (중복 제거!)
@@ -185,16 +171,11 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
         );
       }
 
+      if (!mounted) return;
       setState(() {
         _fixedWorkers = results;
-        _isLoading = false;
       });
-    } catch (e) {
-      debugPrint('❌ 고정근무자 로드 실패: $e');
-      setState(() => _isLoading = false);
-      ToastHelper.showError('고정근무자 목록을 불러올 수 없습니다');
-    }
-  }
+  }, errorTag: '고정근무자 로드', errorMessage: '고정근무자 목록을 불러올 수 없습니다');
 
   @override
   Widget build(BuildContext context) {
@@ -219,7 +200,7 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
 
             // 목록
             Expanded(
-              child: _isLoading
+              child: isLoading
                   ? const LoadingWidget(message: '고정근무자 로딩 중...')
                   : _fixedWorkers.isEmpty
                       ? _buildEmptyState(context)
@@ -295,57 +276,19 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
 
   /// 사업장 선택 드롭다운
   Widget _buildBusinessDropdown(BuildContext context) {
-    return Container(
-      padding: EdgeInsets.symmetric(
-        horizontal: ResponsiveHelper.spacing(context, 12),
-        vertical: ResponsiveHelper.spacing(context, 4),
-      ),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(12),
-      ),
-      child: DropdownButtonHideUnderline(
-        child: DropdownButton<String>(
-          value: _selectedBusinessId,
-          isExpanded: true,
-          icon: Icon(
-            Icons.keyboard_arrow_down,
-            color: AppColors.longTermDark,
-          ),
-          items: _businessIds.map((id) {
-            return DropdownMenuItem<String>(
-              value: id,
-              child: Row(
-                children: [
-                  Icon(
-                    Icons.business,
-                    size: ResponsiveHelper.iconSize(context, 18),
-                    color: AppColors.longTermDark,
-                  ),
-                  SizedBox(width: ResponsiveHelper.spacing(context, 8)),
-                  Expanded(
-                    child: Text(
-                      _businessNameMap[id] ?? 'Loading...',
-                      style: ResponsiveHelper.bodyStyle(context).copyWith(
-                        fontWeight: FontWeight.w600,
-                      ),
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                  ),
-                ],
-              ),
-            );
-          }).toList(),
-          onChanged: (value) {
-            if (value != null && value != _selectedBusinessId) {
-              setState(() {
-                _selectedBusinessId = value;
-              });
-              _loadFixedWorkers();
-            }
-          },
-        ),
-      ),
+    return AppSelectField<String>(
+      value: _selectedBusinessId,
+      hintText: '사업장을 선택하세요',
+      sheetTitle: '사업장 선택',
+      items: _businessIds,
+      labelOf: (id) => _businessNameMap[id] ?? id,
+      prefixIcon: Icons.business,
+      onChanged: (value) {
+        if (value != null && value != _selectedBusinessId) {
+          setState(() => _selectedBusinessId = value);
+          _loadFixedWorkers();
+        }
+      },
     );
   }
 
@@ -356,8 +299,6 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
   /// 날짜 모드 서브헤더 (선택된 날짜 표시)
   Widget _buildDateModeSubHeader(BuildContext context) {
     final date = widget.focusDate!;
-    const weekdays = ['월', '화', '수', '목', '금', '토', '일'];
-    final weekday = weekdays[date.weekday - 1];
     final isWeekend = date.weekday == DateTime.saturday || date.weekday == DateTime.sunday;
 
     return Container(
@@ -374,7 +315,7 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
           Icon(Icons.event, size: ResponsiveHelper.iconSize(context, 16), color: AppColors.tealDark),
           SizedBox(width: ResponsiveHelper.spacing(context, 6)),
           Text(
-            '${date.month}월 ${date.day}일($weekday) 근무 현황',
+            '${date.month}월 ${date.day}일(${FormatHelper.weekday(date)}) 근무 현황',
             style: ResponsiveHelper.smallStyle(context).copyWith(
               fontWeight: FontWeight.bold,
               color: isWeekend ? AppColors.errorDark : AppColors.tealDark,
@@ -418,9 +359,7 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
     }
 
     // 정규 요일 확인
-    const weekdays = ['월', '화', '수', '목', '금', '토', '일'];
-    final dayOfWeek = weekdays[date.weekday - 1];
-    final isRegularDay = app.workDays?.contains(dayOfWeek) ?? false;
+    final isRegularDay = app.workDays?.contains(FormatHelper.weekday(date)) ?? false;
 
     // 승인된 휴무 확인
     final isOnLeave = app.isLeaveDateOn(date);
@@ -620,8 +559,8 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
     if (_isDateMode) return _buildDateModeStatsBar(context);
 
     final activeCount = _fixedWorkers.where((w) => w.application.resignStatus == null).length;
-    final pendingResignCount = _fixedWorkers.where((w) => w.application.resignStatus == 'PENDING').length;
-    final terminationPendingCount = _fixedWorkers.where((w) => w.application.terminationStatus == 'PENDING').length;
+    final pendingResignCount = _fixedWorkers.where((w) => w.application.resignStatus == AppStatus.pending).length;
+    final terminationPendingCount = _fixedWorkers.where((w) => w.application.terminationStatus == AppStatus.pending).length;
 
     return Container(
       padding: EdgeInsets.symmetric(
@@ -817,8 +756,8 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
     final user = item.user;
     final name = user?.name ?? '이름 없음';
 
-    final hasResignRequest = app.resignStatus == 'PENDING';
-    final hasTerminationRequest = app.terminationStatus == 'PENDING';
+    final hasResignRequest = app.resignStatus == AppStatus.pending;
+    final hasTerminationRequest = app.terminationStatus == AppStatus.pending;
 
     // 날짜 모드 상태
     final dayStatus = _isDateMode ? _getWorkerDayStatus(app) : null;
@@ -1141,7 +1080,7 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
                 ),
 
                 // 계약해지 요청 (퇴사 요청이 없을 때만)
-                if (app.resignStatus != 'PENDING' && app.terminationStatus != 'PENDING')
+                if (app.resignStatus != AppStatus.pending && app.terminationStatus != AppStatus.pending)
                   _buildActionItem(
                     context,
                     icon: Icons.cancel_outlined,
@@ -1155,7 +1094,7 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
                   ),
 
                 // 해지 요청 취소 (요청 중일 때만)
-                if (app.terminationStatus == 'PENDING')
+                if (app.terminationStatus == AppStatus.pending)
                   _buildActionItem(
                     context,
                     icon: Icons.undo,
@@ -1280,9 +1219,7 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
       while (!checkDate.isAfter(workEnd)) {
         bool isOriginalWorkDay = false;
         if (app.workDays != null && app.workDays!.isNotEmpty) {
-          final weekdays = ['월', '화', '수', '목', '금', '토', '일'];
-          final dayOfWeek = weekdays[checkDate.weekday - 1];
-          isOriginalWorkDay = app.workDays!.contains(dayOfWeek);
+          isOriginalWorkDay = app.workDays!.contains(FormatHelper.weekday(checkDate));
         } else {
           isOriginalWorkDay = true;
         }
@@ -1310,44 +1247,27 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
       return;
     }
 
-    final selectedDate = await showDatePicker(
+    final selectedDate = await DatePickerBottomSheet.show(
       context: context,
       initialDate: initialDate,
-      firstDate: DateTime.now(),
-      lastDate: effectiveEndDate,  // 🔥 퇴사일 우선 적용
-      locale: const Locale('ko', 'KR'),
-      builder: (context, child) {
-        return Theme(
-          data: Theme.of(context).copyWith(
-            colorScheme: ColorScheme.light(
-              primary: AppColors.success,
-            ),
-          ),
-          child: child!,
-        );
-      },
-      selectableDayPredicate: (date) {
+      title: '추가 근무 날짜 선택',
+      minDate: DateTime.now(),
+      maxDate: effectiveEndDate,
+      enabledDayPredicate: (date) {
         final workStart = DateTime(effectiveStartDate.year, effectiveStartDate.month, effectiveStartDate.day);
         final workEnd = DateTime(effectiveEndDate.year, effectiveEndDate.month, effectiveEndDate.day);
-        final targetDate = DateTime(date.year, date.month, date.day);
-
-        if (targetDate.isBefore(workStart) || targetDate.isAfter(workEnd)) return false;
+        if (date.isBefore(workStart) || date.isAfter(workEnd)) return false;
 
         bool isOriginalWorkDay = false;
         if (app.workDays != null && app.workDays!.isNotEmpty) {
-          final weekdays = ['월', '화', '수', '목', '금', '토', '일'];
-          final dayOfWeek = weekdays[date.weekday - 1];
-          isOriginalWorkDay = app.workDays!.contains(dayOfWeek);
+          isOriginalWorkDay = app.workDays!.contains(FormatHelper.weekday(date));
         } else {
           isOriginalWorkDay = true;
         }
 
         if (isOriginalWorkDay) {
-          if (app.leaveDates != null) {
-            return app.leaveDates!.any((d) =>
-                d.year == date.year && d.month == date.month && d.day == date.day);
-          }
-          return false;
+          return app.leaveDates?.any((d) =>
+              d.year == date.year && d.month == date.month && d.day == date.day) ?? false;
         }
 
         if (app.extraWorkDates != null) {
@@ -1375,7 +1295,7 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             StyledDialogInfoCard.success(
-              DateFormat('yyyy년 M월 d일 (E)', 'ko_KR').format(selectedDate),
+              FormatHelper.formatDateLong(selectedDate),
             ),
             SizedBox(height: ResponsiveHelper.spacing(context, 16)),
             Text(
@@ -1474,9 +1394,7 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
       while (!checkDate.isAfter(workEnd)) {
         bool isWorkDay = false;
         if (app.workDays != null && app.workDays!.isNotEmpty) {
-          final weekdays = ['월', '화', '수', '목', '금', '토', '일'];
-          final dayOfWeek = weekdays[checkDate.weekday - 1];
-          isWorkDay = app.workDays!.contains(dayOfWeek);
+          isWorkDay = app.workDays!.contains(FormatHelper.weekday(checkDate));
         } else {
           isWorkDay = true;
         }
@@ -1500,47 +1418,28 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
       return;
     }
 
-    final selectedDate = await showDatePicker(
+    final selectedDate = await DatePickerBottomSheet.show(
       context: context,
       initialDate: initialDate,
-      firstDate: DateTime.now(),
-      lastDate: effectiveEndDate,  // 🔥 퇴사일 우선 적용
-      locale: const Locale('ko', 'KR'),
-      builder: (context, child) {
-        return Theme(
-          data: Theme.of(context).copyWith(
-            colorScheme: ColorScheme.light(
-              primary: AppColors.warning,
-            ),
-          ),
-          child: child!,
-        );
-      },
-      selectableDayPredicate: (date) {
+      title: '미출근 날짜 선택',
+      minDate: DateTime.now(),
+      maxDate: effectiveEndDate,
+      enabledDayPredicate: (date) {
         final workStart = DateTime(effectiveStartDate.year, effectiveStartDate.month, effectiveStartDate.day);
         final workEnd = DateTime(effectiveEndDate.year, effectiveEndDate.month, effectiveEndDate.day);
-        final targetDate = DateTime(date.year, date.month, date.day);
-
-        if (targetDate.isBefore(workStart) || targetDate.isAfter(workEnd)) return false;
+        if (date.isBefore(workStart) || date.isAfter(workEnd)) return false;
 
         bool isWorkDay = false;
         if (app.workDays != null && app.workDays!.isNotEmpty) {
-          final weekdays = ['월', '화', '수', '목', '금', '토', '일'];
-          final dayOfWeek = weekdays[date.weekday - 1];
-          isWorkDay = app.workDays!.contains(dayOfWeek);
+          isWorkDay = app.workDays!.contains(FormatHelper.weekday(date));
         } else {
           isWorkDay = true;
         }
 
         if (!isWorkDay) return false;
 
-        if (app.leaveDates != null) {
-          final isLeaveDay = app.leaveDates!.any((d) =>
-              d.year == date.year && d.month == date.month && d.day == date.day);
-          if (isLeaveDay) return false;
-        }
-
-        return true;
+        return !(app.leaveDates?.any((d) =>
+            d.year == date.year && d.month == date.month && d.day == date.day) ?? false);
       },
     );
 
@@ -1559,7 +1458,7 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             StyledDialogInfoCard.warning(
-              DateFormat('yyyy년 M월 d일 (E)', 'ko_KR').format(selectedDate),
+              FormatHelper.formatDateLong(selectedDate),
             ),
             SizedBox(height: ResponsiveHelper.spacing(context, 16)),
             Text(

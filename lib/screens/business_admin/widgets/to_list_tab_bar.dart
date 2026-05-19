@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../../../models/core/to_model.dart';
 import '../../../utils/responsive_helper.dart';
 
 /// ✨ 세련된 TO 목록 탭 위젯 (진행중/마감됨)
@@ -37,8 +38,8 @@ class TOListTabs extends StatelessWidget {
             child: _buildTab(
               context: context,
               label: '진행중',
-              value: 'ACTIVE',
-              isSelected: selectedTab == 'ACTIVE',
+              value: TOStatus.active,
+              isSelected: selectedTab == TOStatus.active,
               theme: theme,
             ),
           ),
@@ -48,8 +49,8 @@ class TOListTabs extends StatelessWidget {
             child: _buildTab(
               context: context,
               label: '마감됨',
-              value: 'CLOSED',
-              isSelected: selectedTab == 'CLOSED',
+              value: TOStatus.closed,
+              isSelected: selectedTab == TOStatus.closed,
               theme: theme,
             ),
           ),
@@ -103,7 +104,7 @@ class TOListTabs extends StatelessWidget {
           children: [
             if (isSelected) ...[
               Icon(
-                value == 'ACTIVE' ? Icons.play_circle_outline : Icons.check_circle_outline,
+                value == TOStatus.active ? Icons.play_circle_outline : Icons.check_circle_outline,
                 size: ResponsiveHelper.iconSize(context, 18),
                 color: Colors.white,
               ),

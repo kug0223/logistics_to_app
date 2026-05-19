@@ -19,9 +19,6 @@ class BusinessReviewDialog extends StatefulWidget {
   /// 작성자 (지원자) UID
   final String reviewerId;
   
-  /// 작성자 이름 (저장 시 익명 처리)
-  final String reviewerName;
-  
   /// 사업장 ID
   final String businessId;
   
@@ -37,15 +34,18 @@ class BusinessReviewDialog extends StatefulWidget {
   /// 해당 월 근무 일수
   final int workDaysInMonth;
 
+  /// review_requests 문서 ID (양방향 공개 연동)
+  final String? requestId;
+
   const BusinessReviewDialog({
     super.key,
     required this.reviewerId,
-    required this.reviewerName,
     required this.businessId,
     required this.businessName,
     required this.reviewYear,
     required this.reviewMonth,
     required this.workDaysInMonth,
+    this.requestId,
   });
 
   @override
@@ -86,6 +86,7 @@ class _BusinessReviewDialogState extends State<BusinessReviewDialog> {
     } catch (e) {
       debugPrint('❌ 태그 로드 실패: $e');
     }
+    if (!mounted) return;
     setState(() => _isLoading = false);
   }
 
@@ -100,7 +101,6 @@ class _BusinessReviewDialogState extends State<BusinessReviewDialog> {
     
     final result = await _reviewService.createReviewForBusiness(
       reviewerId: widget.reviewerId,
-      reviewerName: widget.reviewerName,
       businessId: widget.businessId,
       businessName: widget.businessName,
       reviewYear: widget.reviewYear,
@@ -110,13 +110,14 @@ class _BusinessReviewDialogState extends State<BusinessReviewDialog> {
       wouldWorkAgain: _wouldWorkAgain!,
       positiveTags: _selectedPositiveTags,
       improvementTags: _selectedImprovementTags,
-      comment: _commentController.text.trim().isEmpty 
-          ? null 
+      comment: _commentController.text.trim().isEmpty
+          ? null
           : _commentController.text.trim(),
+      requestId: widget.requestId,
     );
-    
+
     if (!mounted) return;
-    
+
     if (result.reviewId != null) {
       // 성공 다이얼로그
       await showDialog(
@@ -137,7 +138,7 @@ class _BusinessReviewDialogState extends State<BusinessReviewDialog> {
               ),
               SizedBox(height: ResponsiveHelper.spacing(context, 16)),
               Text(
-                '리뷰가 작성되었습니다.\n3일 후 익명으로 공개됩니다.',
+                '리뷰가 작성되었습니다.\n관리자도 리뷰를 작성하면 즉시 공개됩니다.\n(미작성 시 14일 후 자동 공개)',
                 style: ResponsiveHelper.bodyStyle(context),
                 textAlign: TextAlign.center,
               ),
@@ -360,7 +361,7 @@ class _BusinessReviewDialogState extends State<BusinessReviewDialog> {
           children: [
             Icon(
               Icons.star,
-              color: Colors.amber,
+              color: AppColors.amber,
               size: ResponsiveHelper.iconSize(context, 20),
             ),
             SizedBox(width: ResponsiveHelper.spacing(context, 8)),
@@ -384,7 +385,7 @@ class _BusinessReviewDialogState extends State<BusinessReviewDialog> {
                 ),
                 child: Icon(
                   index < _rating ? Icons.star : Icons.star_border,
-                  color: Colors.amber,
+                  color: AppColors.amber,
                   size: ResponsiveHelper.iconSize(context, 40),
                 ),
               ),
@@ -730,23 +731,23 @@ class _BusinessReviewDialogState extends State<BusinessReviewDialog> {
 Future<bool?> showBusinessReviewDialog(
   BuildContext context, {
   required String reviewerId,
-  required String reviewerName,
   required String businessId,
   required String businessName,
   required int reviewYear,
   required int reviewMonth,
   required int workDaysInMonth,
+  String? requestId,
 }) {
   return showDialog<bool>(
     context: context,
     builder: (context) => BusinessReviewDialog(
       reviewerId: reviewerId,
-      reviewerName: reviewerName,
       businessId: businessId,
       businessName: businessName,
       reviewYear: reviewYear,
       reviewMonth: reviewMonth,
       workDaysInMonth: workDaysInMonth,
+      requestId: requestId,
     ),
   );
 }

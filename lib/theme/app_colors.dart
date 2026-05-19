@@ -306,6 +306,9 @@ class AppColors {
   static const Color errorDeep      = Color(0xFFB71C1C);  // red[900]
 
   // --- 황금/노랑 ---
+  static const Color amberLight     = Color(0xFFFFD54F);  // amber[300]
+  static const Color amber          = Color(0xFFFFC107);  // amber[500]
+  static const Color amberMedium    = Color(0xFFFFB300);  // amber[600]
   static const Color amberDark      = Color(0xFFFFA000);  // amber[700]
   static const Color yellowDark     = Color(0xFFFBC02D);  // yellow[700]
 

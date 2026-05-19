@@ -1,7 +1,8 @@
-import 'package:flutter/material.dart';
+﻿import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import '../../utils/responsive_helper.dart';
 import '../../theme/app_colors.dart';
+import '../calendar/carrot_style_calendar.dart';
 
 /// ⏰ 시간 선택 바텀시트 (휠 피커)
 /// 
@@ -36,7 +37,7 @@ class TimePickerBottomSheet extends StatefulWidget {
     this.initialTime,
     required this.title,
     this.subtitle,
-    this.minuteInterval = 5,
+    this.minuteInterval = 10,
     this.use24HourFormat = true,
   });
 
@@ -46,7 +47,7 @@ class TimePickerBottomSheet extends StatefulWidget {
     TimeOfDay? initialTime,
     String title = '시간 선택',
     String? subtitle,
-    int minuteInterval = 5,
+    int minuteInterval = 10,
     bool use24HourFormat = true,
   }) {
     return showModalBottomSheet<TimeOfDay>(
@@ -655,12 +656,32 @@ class _DateTimePickerBottomSheetState extends State<DateTimePickerBottomSheet> {
   late TimeOfDay _selectedTime;
   int _currentStep = 0; // 0: 날짜, 1: 시간
 
+  // 시간 휠 컨트롤러
+  late FixedExtentScrollController _hourController;
+  late FixedExtentScrollController _minuteController;
+  late int _selectedHour;
+  late int _selectedMinute;
+
   @override
   void initState() {
     super.initState();
     final initial = widget.initialDateTime ?? DateTime.now();
     _selectedDate = initial;
     _selectedTime = TimeOfDay.fromDateTime(initial);
+
+    _selectedHour = _selectedTime.hour;
+    final rounded = (_selectedTime.minute / widget.minuteInterval).round() * widget.minuteInterval;
+    _selectedMinute = rounded >= 60 ? 60 - widget.minuteInterval : rounded;
+
+    _hourController = FixedExtentScrollController(initialItem: _selectedHour);
+    _minuteController = FixedExtentScrollController(initialItem: _selectedMinute ~/ widget.minuteInterval);
+  }
+
+  @override
+  void dispose() {
+    _hourController.dispose();
+    _minuteController.dispose();
+    super.dispose();
   }
 
   @override
@@ -893,38 +914,216 @@ class _DateTimePickerBottomSheetState extends State<DateTimePickerBottomSheet> {
   }
 
   Widget _buildDatePicker(BuildContext context, ThemeData theme) {
-    // CarrotStyleCalendar import 필요
     return SingleChildScrollView(
       padding: EdgeInsets.symmetric(
         horizontal: ResponsiveHelper.spacing(context, 16),
       ),
-      child: Column(
-        children: [
-          // 여기에 CarrotStyleCalendar 사용
-          // 임시로 플레이스홀더
-          Container(
-            height: 300,
-            decoration: BoxDecoration(
-              color: AppColors.grey50,
-              borderRadius: BorderRadius.circular(16),
-            ),
-            child: Center(
-              child: Text('달력이 여기에 표시됩니다'),
-            ),
-          ),
-        ],
+      child: CarrotStyleCalendar(
+        mode: CalendarMode.single,
+        selectedDate: _selectedDate,
+        minDate: widget.minDate,
+        maxDate: widget.maxDate,
+        allowPastDates: widget.allowPastDates,
+        onDateSelected: (date) {
+          setState(() {
+            _selectedDate = date;
+            _currentStep = 1;
+          });
+        },
       ),
     );
   }
 
   Widget _buildTimePicker(BuildContext context, ThemeData theme) {
-    // TimePickerBottomSheet의 휠 피커 재사용
-    return Container(
-      padding: EdgeInsets.symmetric(
-        horizontal: ResponsiveHelper.spacing(context, 16),
-      ),
-      child: Center(
-        child: Text('시간 선택 휠이 여기에 표시됩니다'),
+    final wheelHeight = ResponsiveHelper.spacing(context, 180);
+    final itemExtent = ResponsiveHelper.spacing(context, 50);
+
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        // 선택된 시간 미리보기
+        Container(
+          margin: EdgeInsets.symmetric(
+            horizontal: ResponsiveHelper.spacing(context, 16),
+            vertical: ResponsiveHelper.spacing(context, 8),
+          ),
+          padding: EdgeInsets.symmetric(
+            horizontal: ResponsiveHelper.spacing(context, 24),
+            vertical: ResponsiveHelper.spacing(context, 12),
+          ),
+          decoration: BoxDecoration(
+            gradient: LinearGradient(colors: [
+              theme.primaryColor.withValues(alpha: 0.1),
+              theme.primaryColor.withValues(alpha: 0.05),
+            ]),
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(color: theme.primaryColor.withValues(alpha: 0.3)),
+          ),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(Icons.schedule, color: theme.primaryColor, size: ResponsiveHelper.iconSize(context, 24)),
+              SizedBox(width: ResponsiveHelper.spacing(context, 12)),
+              Text(
+                '${_selectedHour.toString().padLeft(2, '0')}:${_selectedMinute.toString().padLeft(2, '0')}',
+                style: ResponsiveHelper.titleStyle(context).copyWith(
+                  color: theme.primaryColor,
+                  fontWeight: FontWeight.bold,
+                  fontSize: ResponsiveHelper.getFontSize(context, 28),
+                ),
+              ),
+            ],
+          ),
+        ),
+
+        // 휠 피커
+        Container(
+          height: wheelHeight,
+          margin: EdgeInsets.symmetric(horizontal: ResponsiveHelper.spacing(context, 16)),
+          decoration: BoxDecoration(
+            color: AppColors.grey50,
+            borderRadius: BorderRadius.circular(16),
+          ),
+          child: Stack(
+            children: [
+              Center(
+                child: Container(
+                  height: itemExtent,
+                  margin: EdgeInsets.symmetric(horizontal: ResponsiveHelper.spacing(context, 16)),
+                  decoration: BoxDecoration(
+                    color: theme.primaryColor.withValues(alpha: 0.1),
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: theme.primaryColor.withValues(alpha: 0.3)),
+                  ),
+                ),
+              ),
+              Row(
+                children: [
+                  // 시
+                  Expanded(
+                    flex: 2,
+                    child: _buildWheelColumn(
+                      context, theme,
+                      controller: _hourController,
+                      itemCount: 24,
+                      itemBuilder: (i) => i.toString().padLeft(2, '0'),
+                      onChanged: (i) => setState(() {
+                        _selectedHour = i;
+                        _selectedTime = TimeOfDay(hour: _selectedHour, minute: _selectedMinute);
+                      }),
+                      itemExtent: itemExtent,
+                    ),
+                  ),
+                  Text(
+                    ':',
+                    style: ResponsiveHelper.titleStyle(context).copyWith(
+                      fontWeight: FontWeight.bold,
+                      fontSize: ResponsiveHelper.getFontSize(context, 24),
+                    ),
+                  ),
+                  // 분
+                  Expanded(
+                    flex: 2,
+                    child: _buildWheelColumn(
+                      context, theme,
+                      controller: _minuteController,
+                      itemCount: 60 ~/ widget.minuteInterval,
+                      itemBuilder: (i) => (i * widget.minuteInterval).toString().padLeft(2, '0'),
+                      onChanged: (i) => setState(() {
+                        _selectedMinute = i * widget.minuteInterval;
+                        _selectedTime = TimeOfDay(hour: _selectedHour, minute: _selectedMinute);
+                      }),
+                      itemExtent: itemExtent,
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+
+        SizedBox(height: ResponsiveHelper.spacing(context, 12)),
+
+        // 빠른 선택
+        Padding(
+          padding: EdgeInsets.symmetric(horizontal: ResponsiveHelper.spacing(context, 16)),
+          child: Row(
+            children: [('09:00', 9, 0), ('12:00', 12, 0), ('14:00', 14, 0), ('18:00', 18, 0)]
+                .map((t) {
+              final isSelected = _selectedHour == t.$2 && _selectedMinute == t.$3;
+              return Expanded(
+                child: Padding(
+                  padding: EdgeInsets.symmetric(horizontal: ResponsiveHelper.spacing(context, 4)),
+                  child: Material(
+                    color: isSelected ? theme.primaryColor : AppColors.grey100,
+                    borderRadius: BorderRadius.circular(10),
+                    child: InkWell(
+                      onTap: () => setState(() {
+                        _selectedHour = t.$2;
+                        _selectedMinute = t.$3;
+                        _selectedTime = TimeOfDay(hour: t.$2, minute: t.$3);
+                        _hourController.jumpToItem(t.$2);
+                        _minuteController.jumpToItem(t.$3 ~/ widget.minuteInterval);
+                      }),
+                      borderRadius: BorderRadius.circular(10),
+                      child: Padding(
+                        padding: EdgeInsets.symmetric(vertical: ResponsiveHelper.spacing(context, 10)),
+                        child: Center(
+                          child: Text(
+                            t.$1,
+                            style: ResponsiveHelper.smallStyle(context).copyWith(
+                              color: isSelected ? AppColors.surface : AppColors.textPrimary,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              );
+            }).toList(),
+          ),
+        ),
+
+        SizedBox(height: ResponsiveHelper.spacing(context, 8)),
+      ],
+    );
+  }
+
+  Widget _buildWheelColumn(
+    BuildContext context,
+    ThemeData theme, {
+    required FixedExtentScrollController controller,
+    required int itemCount,
+    required String Function(int) itemBuilder,
+    required void Function(int) onChanged,
+    required double itemExtent,
+  }) {
+    return ListWheelScrollView.useDelegate(
+      controller: controller,
+      itemExtent: itemExtent,
+      perspective: 0.005,
+      diameterRatio: 1.5,
+      physics: const FixedExtentScrollPhysics(),
+      onSelectedItemChanged: onChanged,
+      childDelegate: ListWheelChildBuilderDelegate(
+        childCount: itemCount,
+        builder: (context, index) {
+          final isSelected = controller.hasClients && controller.selectedItem == index;
+          return Center(
+            child: Text(
+              itemBuilder(index),
+              style: ResponsiveHelper.subtitleStyle(context).copyWith(
+                color: isSelected ? theme.primaryColor : AppColors.textSecondary,
+                fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+                fontSize: isSelected
+                    ? ResponsiveHelper.getFontSize(context, 22)
+                    : ResponsiveHelper.getFontSize(context, 18),
+              ),
+            ),
+          );
+        },
       ),
     );
   }

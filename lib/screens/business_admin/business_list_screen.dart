@@ -29,6 +29,7 @@ import 'business_form_screen.dart';
 import 'to_management/create_to_screen.dart';
 import '../common/settings_screen.dart';
 import '../../widgets/dialogs/styled_dialog.dart';
+import '../../widgets/common/app_menu_sheet.dart';
 import '../../theme/app_colors.dart';
 
 /// 📋 내 사업장 관리 화면 (관리자 전용)
@@ -459,217 +460,122 @@ class _BusinessListScreenState extends State<BusinessListScreen> {
 
   /// 더보기 메뉴
   Widget _buildMoreMenu(BuildContext context, ThemeData theme, BusinessModel business) {
-    return PopupMenuButton<String>(
+    return IconButton(
       icon: Icon(
         Icons.more_vert,
         size: ResponsiveHelper.iconSize(context, 24),
         color: theme.primaryColor,
       ),
-      // ⭐ 둥근 모서리
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(16),
-      ),
-      // ⭐ 그림자
-      elevation: 8,
-      onSelected: (value) async {
-        switch (value) {
-          case 'create_to':
-            if (!business.isApproved) {
-              ToastHelper.showWarning('승인된 사업장만 TO를 등록할 수 있습니다');
-              return;
-            }
-            // 이메일 미인증 / 사업자등록증 미등록 사전 체크
-            final user = Provider.of<UserProvider>(context, listen: false).currentUser;
-            if (user != null) {
-              final missing = <String>[];
-              if (!user.isEmailVerified) missing.add('이메일 인증');
-              if (user.businessLicenseImageUrl == null) missing.add('사업자등록증 등록');
+      tooltip: '메뉴',
+      onPressed: () => _showMoreMenuSheet(context, theme, business),
+    );
+  }
 
-              if (missing.isNotEmpty) {
-                final goToSettings = await showDialog<bool>(
-                  context: context,
-                  builder: (ctx) => StyledDialog(
-                    title: '공고 등록 불가',
-                    subtitle: '다음 항목을 먼저 완료해주세요',
-                    icon: Icons.block_outlined,
-                    headerColor: AppColors.error,
-                    content: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        ...missing.map(
-                          (item) => Padding(
-                            padding: const EdgeInsets.only(bottom: 8),
-                            child: StyledDialogInfoCard.error(item),
-                          ),
-                        ),
-                        const SizedBox(height: 4),
-                        StyledDialogInfoCard.info('설정 화면에서 완료 후 다시 시도해주세요.'),
-                      ],
-                    ),
-                    actions: [
-                      StyledDialogButton.cancel(
-                        onPressed: () => Navigator.pop(ctx, false),
-                      ),
-                      StyledDialogButton.primary(
-                        text: '설정으로 이동',
-                        onPressed: () => Navigator.pop(ctx, true),
-                      ),
-                    ],
-                  ),
-                );
-                if (goToSettings == true && context.mounted) {
-                  Navigator.push(context, MaterialPageRoute(builder: (_) => const SettingsScreen()));
-                }
-                return;
-              }
-            }
-            await NavigationHelper.push<bool>(
-              context,
-              destination: const AdminCreateTOScreen(),
-              onReturn: (result) {
-                if (result == true) _loadBusinesses(forceServer: true);
-              },
-            );
-            break;
-          case 'detail':
-            await NavigationHelper.push<bool>(
+  void _showMoreMenuSheet(BuildContext context, ThemeData theme, BusinessModel business) {
+    AppMenuSheet.show(
+      context: context,
+      itemGroups: [
+        if (business.isApproved)
+          [
+            AppMenuSheetItem(
+              icon: Icons.add_circle_outline,
+              label: 'TO 등록',
+              color: theme.primaryColor,
+              onTap: () => _handleCreateTO(context, business),
+            ),
+          ],
+        [
+          AppMenuSheetItem(
+            icon: Icons.info_outline,
+            label: '상세보기',
+            color: AppColors.info,
+            onTap: () => NavigationHelper.push<bool>(
               context,
               destination: BusinessDetailScreen(business: business),
               onReturn: (result) {
                 if (result == true) _loadBusinesses(forceServer: true);
               },
-            );
-            break;
-          case 'edit':
-            NavigationHelper.push<bool>(
+            ),
+          ),
+          AppMenuSheetItem(
+            icon: Icons.edit,
+            label: '수정',
+            color: AppColors.warning,
+            onTap: () => NavigationHelper.push<bool>(
               context,
               destination: BusinessFormScreen(business: business),
               onReturn: (result) {
                 if (result == true) _loadBusinesses(forceServer: true);
               },
-            );
-            break;
-          case 'delete':
-            await _deleteBusiness(business);
-            break;
-        }
-      },
-      itemBuilder: (context) => [
-        // TO 등록
-        PopupMenuItem<String>(
-          value: 'create_to',
-          enabled: business.isApproved,
-          child: Row(
-            children: [
-              Container(
-                padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 8)),
-                decoration: BoxDecoration(
-                  color: business.isApproved 
-                      ? theme.primaryColor.withValues(alpha: 0.1)
-                      : theme.disabledColor.withValues(alpha: 0.1),
-                  borderRadius: BorderRadius.circular(10),
-                ),
-                child: Icon(
-                  Icons.add_circle_outline,
-                  size: ResponsiveHelper.iconSize(context, 20),
-                  color: business.isApproved 
-                      ? theme.primaryColor 
-                      : theme.disabledColor,
-                ),
-              ),
-              SizedBox(width: ResponsiveHelper.spacing(context, 12)),
-              Text(
-                'TO 등록',
-                style: ResponsiveHelper.bodyStyle(context).copyWith(
-                  color: business.isApproved 
-                      ? null 
-                      : theme.disabledColor,
-                ),
-              ),
-              if (!business.isApproved) ...[
-                SizedBox(width: ResponsiveHelper.spacing(context, 8)),
-                Text(
-                  '(승인필요)',
-                  style: ResponsiveHelper.tinyStyle(context).copyWith(
-                    color: theme.colorScheme.error,
+            ),
+          ),
+        ],
+        [
+          AppMenuSheetItem(
+            icon: Icons.delete,
+            label: '삭제',
+            color: AppColors.error,
+            isDanger: true,
+            onTap: () => _deleteBusiness(business),
+          ),
+        ],
+      ],
+    );
+  }
+
+  Future<void> _handleCreateTO(BuildContext context, BusinessModel business) async {
+    final user = Provider.of<UserProvider>(context, listen: false).currentUser;
+    if (user != null) {
+      final missing = <String>[];
+      if (!user.isEmailVerified) missing.add('이메일 인증');
+      if (user.businessLicenseImageUrl == null) missing.add('사업자등록증 등록');
+
+      if (missing.isNotEmpty) {
+        if (!context.mounted) return;
+        final goToSettings = await showDialog<bool>(
+          context: context,
+          builder: (ctx) => StyledDialog(
+            title: '공고 등록 불가',
+            subtitle: '다음 항목을 먼저 완료해주세요',
+            icon: Icons.block_outlined,
+            headerColor: AppColors.error,
+            content: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                ...missing.map(
+                  (item) => Padding(
+                    padding: const EdgeInsets.only(bottom: 8),
+                    child: StyledDialogInfoCard.error(item),
                   ),
                 ),
+                const SizedBox(height: 4),
+                StyledDialogInfoCard.info('설정 화면에서 완료 후 다시 시도해주세요.'),
               ],
-            ],
-          ),
-        ),
-        // 상세보기
-        PopupMenuItem<String>(
-          value: 'detail',
-          child: Row(
-            children: [
-              Container(
-                padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 8)),
-                decoration: BoxDecoration(
-                  color: AppColors.infoBg,
-                  borderRadius: BorderRadius.circular(10),
-                ),
-                child: Icon(
-                  Icons.info_outline,
-                  size: ResponsiveHelper.iconSize(context, 20),
-                  color: AppColors.infoDark,
-                ),
+            ),
+            actions: [
+              StyledDialogButton.cancel(
+                onPressed: () => Navigator.pop(ctx, false),
               ),
-              SizedBox(width: ResponsiveHelper.spacing(context, 12)),
-              Text('상세보기', style: ResponsiveHelper.bodyStyle(context)),
-            ],
-          ),
-        ),
-        // 수정
-        PopupMenuItem<String>(
-          value: 'edit',
-          child: Row(
-            children: [
-              Container(
-                padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 8)),
-                decoration: BoxDecoration(
-                  color: AppColors.warningBg,
-                  borderRadius: BorderRadius.circular(10),
-                ),
-                child: Icon(
-                  Icons.edit,
-                  size: ResponsiveHelper.iconSize(context, 20),
-                  color: AppColors.warningDark,
-                ),
-              ),
-              SizedBox(width: ResponsiveHelper.spacing(context, 12)),
-              Text('수정', style: ResponsiveHelper.bodyStyle(context)),
-            ],
-          ),
-        ),
-        // 삭제
-        PopupMenuItem<String>(
-          value: 'delete',
-          child: Row(
-            children: [
-              Container(
-                padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 8)),
-                decoration: BoxDecoration(
-                  color: theme.colorScheme.error.withValues(alpha: 0.1),
-                  borderRadius: BorderRadius.circular(10),
-                ),
-                child: Icon(
-                  Icons.delete,
-                  size: ResponsiveHelper.iconSize(context, 20),
-                  color: theme.colorScheme.error,
-                ),
-              ),
-              SizedBox(width: ResponsiveHelper.spacing(context, 12)),
-              Text(
-                '삭제',
-                style: ResponsiveHelper.bodyStyle(context).copyWith(
-                  color: theme.colorScheme.error,
-                ),
+              StyledDialogButton.primary(
+                text: '설정으로 이동',
+                onPressed: () => Navigator.pop(ctx, true),
               ),
             ],
           ),
-        ),
-      ],
+        );
+        if (goToSettings == true && context.mounted) {
+          Navigator.push(context, MaterialPageRoute(builder: (_) => const SettingsScreen()));
+        }
+        return;
+      }
+    }
+    if (!context.mounted) return;
+    await NavigationHelper.push<bool>(
+      context,
+      destination: const AdminCreateTOScreen(),
+      onReturn: (result) {
+        if (result == true) _loadBusinesses(forceServer: true);
+      },
     );
   }
 

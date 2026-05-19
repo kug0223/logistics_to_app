@@ -14,6 +14,7 @@ import '../../../services/firestore_service.dart';
 import '../../../services/schedule_conflict_service.dart';
 import '../../../utils/responsive_helper.dart';
 import '../../../utils/toast_helper.dart';
+import '../../../utils/format_helper.dart';
 import '../../../utils/dialog_helper.dart';
 import '../../../theme/app_colors.dart';
 import 'work_selection_card.dart';
@@ -164,13 +165,6 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
     return activeApp?.desiredStartDate ?? activeApp?.workDate;
   }
 
-  /// 등록된 날짜 목록 (그룹 TO)
-  Set<DateTime> get _availableDates {
-    if (!_isGroupTO) return {};
-    return widget.groupTOsByDate!.keys
-        .map((d) => DateTime(d.year, d.month, d.day))
-        .toSet();
-  }
 
   // ═══════════════════════════════════════════════════════════
   // 라이프사이클
@@ -388,7 +382,7 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
     
     final startDate = widget.mainTO.date;
     final endDate = widget.mainTO.endDate ?? widget.mainTO.date;
-    final workDays = widget.mainTO.workDays ?? [];
+    final workDays = widget.mainTO.workDays;
     final workStartTime = widget.workDetails.isNotEmpty ? widget.workDetails.first.startTime : '';
     final workEndTime = widget.workDetails.isNotEmpty ? widget.workDetails.first.endTime : '';
     
@@ -412,15 +406,15 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
       // ✅ 2. 기간 내 모든 근무 요일에 대해 충돌 체크 (메모리에서!)
       var currentDate = startDate;
       while (!currentDate.isAfter(endDate)) {
-        final dayOfWeek = ['월', '화', '수', '목', '금', '토', '일'][currentDate.weekday - 1];
+        final dayOfWeek = FormatHelper.weekday(currentDate);
         
         // 근무 요일인 경우만 체크
         if (workDays.isEmpty || workDays.contains(dayOfWeek)) {
           // 해당 날짜에 근무하는 확정 스케줄 찾기
           for (final app in allConfirmed) {
-            if (_isWorkingOnDate(app, currentDate)) {
+            if (app.isWorkingOnDate(currentDate)) {
               // 시간 충돌 체크
-              if (_hasTimeOverlap(workStartTime, workEndTime, app.startTime, app.endTime)) {
+              if (ApplicationModel.hasTimeOverlap(workStartTime, workEndTime, app.startTime, app.endTime)) {
                 final dateKey = DateTime(currentDate.year, currentDate.month, currentDate.day);
                 confirmedDates.add(dateKey);
                 conflictInfoByDate[dateKey] = app;
@@ -441,7 +435,7 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
       
       var checkDate = selectableStart;
       while (!checkDate.isAfter(endDate)) {
-        final dayOfWeek = ['월', '화', '수', '목', '금', '토', '일'][checkDate.weekday - 1];
+        final dayOfWeek = FormatHelper.weekday(checkDate);
         final dateKey = DateTime(checkDate.year, checkDate.month, checkDate.day);
         
         // 근무 요일이고 충돌 없으면 → 첫 선택 가능일!
@@ -450,7 +444,7 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
           bool hasConflictAfter = false;
           var futureDate = checkDate;
           while (!futureDate.isAfter(endDate)) {
-            final futureDayOfWeek = ['월', '화', '수', '목', '금', '토', '일'][futureDate.weekday - 1];
+            final futureDayOfWeek = FormatHelper.weekday(futureDate);
             final futureDateKey = DateTime(futureDate.year, futureDate.month, futureDate.day);
             if ((workDays.isEmpty || workDays.contains(futureDayOfWeek)) && confirmedDates.contains(futureDateKey)) {
               hasConflictAfter = true;
@@ -482,75 +476,7 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
     }
   }
   
-  /// 특정 날짜에 근무하는지 확인 (장기공고 포함)
-  bool _isWorkingOnDate(ApplicationModel app, DateTime targetDate) {
-    final isLongTerm = app.workDays != null && app.workDays!.isNotEmpty;
-    
-    // 단기: workDate만 비교
-    if (!isLongTerm) {
-      return app.workDate.year == targetDate.year &&
-             app.workDate.month == targetDate.month &&
-             app.workDate.day == targetDate.day;
-    }
-    
-    // 장기: 기간 + 요일 체크
-    // 🔥 퇴사일이 있으면 그 날짜까지만
-    final endDate = app.actualResignDate ?? app.workEndDate;
-    if (endDate == null) return false;
-    
-    // 🔥 시작일 계산: 확정일이 공고 시작일보다 이후면 확정일 기준
-    DateTime effectiveStartDate = app.workDate;
-    if (app.confirmedAt != null) {
-      final confirmedDate = DateTime(
-        app.confirmedAt!.year,
-        app.confirmedAt!.month,
-        app.confirmedAt!.day,
-      );
-      if (confirmedDate.isAfter(app.workDate)) {
-        effectiveStartDate = confirmedDate;
-      }
-    }
-    
-    final targetOnly = DateTime(targetDate.year, targetDate.month, targetDate.day);
-    final startOnly = DateTime(effectiveStartDate.year, effectiveStartDate.month, effectiveStartDate.day);
-    final endOnly = DateTime(endDate.year, endDate.month, endDate.day);
-    
-    // 기간 체크
-    if (targetOnly.isBefore(startOnly) || targetOnly.isAfter(endOnly)) return false;
-    
-    // 🔥 휴무일 체크 - 휴무일이면 근무 안함
-    if (app.leaveDates != null && app.leaveDates!.isNotEmpty) {
-      final isLeaveDay = app.leaveDates!.any((leaveDate) =>
-          leaveDate.year == targetOnly.year &&
-          leaveDate.month == targetOnly.month &&
-          leaveDate.day == targetOnly.day);
-      if (isLeaveDay) return false;
-    }
-    
-    // 요일 체크
-    final dayOfWeek = ['월', '화', '수', '목', '금', '토', '일'][targetDate.weekday - 1];
-    return app.workDays!.contains(dayOfWeek);
-  }
-  
-  /// 시간 겹침 체크 헬퍼
-  bool _hasTimeOverlap(String start1, String end1, String start2, String end2) {
-    if (start1.isEmpty || end1.isEmpty || start2.isEmpty || end2.isEmpty) return false;
-    
-    int toMinutes(String time) {
-      final parts = time.split(':');
-      if (parts.length < 2) return 0;
-      return int.parse(parts[0]) * 60 + int.parse(parts[1]);
-    }
-    
-    final s1 = toMinutes(start1);
-    final e1 = toMinutes(end1);
-    final s2 = toMinutes(start2);
-    final e2 = toMinutes(end2);
-    
-    return !(e1 <= s2 || e2 <= s1);
-  }
-
-  /// 특정 날짜의 충돌 정보 로드
+/// 특정 날짜의 충돌 정보 로드
   Future<void> _loadConflictsForDate(DateTime date) async {
     if (_currentUserId == null) return;
 
@@ -832,6 +758,7 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
               status: _getApplicationStatus(application),
               conflictInfo: conflictInfo,
               isLoading: _loadingWorkIds.contains(work.id),
+              slotDate: widget.mainTO.date,
               onApply: hasConflictAndNoDate ? null : () => _applyForWork(widget.mainTO, work),
               onCancelApplication: application != null
                   ? () => _cancelApplication(application)
@@ -881,7 +808,7 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
     // 선택 가능 날짜 텍스트
     String selectableText = '';
     if (_firstSelectableDate != null) {
-      final dayOfWeek = ['월', '화', '수', '목', '금', '토', '일'][_firstSelectableDate!.weekday - 1];
+      final dayOfWeek = FormatHelper.weekday(_firstSelectableDate!);
       selectableText = '${_firstSelectableDate!.month}/${_firstSelectableDate!.day}($dayOfWeek)부터 선택 가능';
     } else {
       selectableText = '선택 가능한 날짜가 없습니다';
@@ -921,7 +848,7 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
           // 충돌 날짜 목록 (최대 3개)
           ...sortedDates.take(3).map((date) {
             final app = _conflictInfoByDate[date]!;
-            final dayOfWeek = ['월', '화', '수', '목', '금', '토', '일'][date.weekday - 1];
+            final dayOfWeek = FormatHelper.weekday(date);
             return Padding(
               padding: EdgeInsets.only(
                 left: ResponsiveHelper.spacing(context, 26),
@@ -995,7 +922,7 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
   Widget _buildLongTermCalendarSection(BuildContext context, ThemeData theme) {
     final startDate = widget.mainTO.date;
     final endDate = widget.mainTO.endDate ?? widget.mainTO.date;
-    final workDays = widget.mainTO.workDays ?? [];
+    final workDays = widget.mainTO.workDays;
     
     // 오늘 날짜
     final today = DateTime.now();
@@ -1086,9 +1013,7 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
               if (day.isAfter(endDate)) return false;
               // 근무 요일 체크
               if (workDays.isNotEmpty) {
-                const dayNames = ['월', '화', '수', '목', '금', '토', '일'];
-                final dayName = dayNames[day.weekday - 1];
-                if (!workDays.contains(dayName)) return false;
+                if (!workDays.contains(FormatHelper.weekday(day))) return false;
               }
               
               // ✅ 이 날짜 선택 시, 이후 충돌 있으면 선택 불가
@@ -1137,7 +1062,7 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
             // 요일 헤더 스타일
             daysOfWeekStyle: DaysOfWeekStyle(
               weekdayStyle: ResponsiveHelper.smallStyle(context, color: AppColors.grey600),
-              weekendStyle: ResponsiveHelper.smallStyle(context, color: Colors.red),
+              weekendStyle: ResponsiveHelper.smallStyle(context, color: AppColors.error),
             ),
             
             // 커스텀 빌더
@@ -1168,7 +1093,7 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
               children: [
                 _buildLegendItem(context, theme.primaryColor, '확정'),
                 SizedBox(width: ResponsiveHelper.spacing(context, 12)),
-                _buildLegendItem(context, Colors.orange, '대기'),
+                _buildLegendItem(context, AppColors.warning, '대기'),
                 SizedBox(width: ResponsiveHelper.spacing(context, 12)),
                 _buildLegendItem(context, AppColors.longTerm, '선택가능'),
               ],
@@ -1283,9 +1208,7 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
       if (workDays.isEmpty) {
         isWorkDay = true;
       } else {
-        const dayNames = ['월', '화', '수', '목', '금', '토', '일'];
-        final dayName = dayNames[day.weekday - 1];
-        isWorkDay = workDays.contains(dayName);
+        isWorkDay = workDays.contains(FormatHelper.weekday(day));
       }
     }
     
@@ -1992,13 +1915,14 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
               return WorkSelectionCard(
                 workDetail: work,
                 status: isPending ? WorkApplicationStatus.closed : _getApplicationStatus(application),
-                conflictInfo: isPending 
+                conflictInfo: isPending
                     ? const ConflictInfo(
                         level: ConflictLevel.blocked,
                         message: '예약',
                       )
                     : conflictInfo,
                 isLoading: _loadingWorkIds.contains('${date.millisecondsSinceEpoch}_${work.id}'),
+                slotDate: date,
                 onApply: isPending ? null : () => _applyForWork(to, work, date: date),
                 onCancelApplication: application != null
                     ? () => _cancelApplication(application)
@@ -2161,16 +2085,6 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
     }
   }
 
-  bool _hasAnyApplication(DateTime date) {
-    final dateKey = DateTime(date.year, date.month, date.day);
-    final apps = _applicationsByDate[dateKey];
-    if (apps == null || apps.isEmpty) return false;
-    
-    return apps.values.any((app) => 
-      app.status == 'PENDING' || app.status == 'CONFIRMED'
-    );
-  }
-
   List<WorkDetailModel> _getAppliedWorks(DateTime date, List<WorkDetailModel> workDetails) {
     final dateKey = DateTime(date.year, date.month, date.day);
     final apps = _applicationsByDate[dateKey];
@@ -2222,7 +2136,7 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
       final todayOnly = DateTime(today.year, today.month, today.day);
       final startDate = to.date;
       final endDate = to.endDate ?? to.date;
-      final workDays = to.workDays ?? [];
+      final workDays = to.workDays;
       final selectableStartDate = todayOnly.isAfter(startDate) ? todayOnly : startDate;
       
       final selectedDayOnly = DateTime(_desiredStartDate!.year, _desiredStartDate!.month, _desiredStartDate!.day);
@@ -2241,9 +2155,7 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
       
       // 근무 요일인지
       if (workDays.isNotEmpty) {
-        const dayNames = ['월', '화', '수', '목', '금', '토', '일'];
-        final dayName = dayNames[selectedDayOnly.weekday - 1];
-        if (!workDays.contains(dayName)) {
+        if (!workDays.contains(FormatHelper.weekday(selectedDayOnly))) {
           ToastHelper.showWarning('선택한 날짜는 근무 요일이 아닙니다.');
           return;
         }
@@ -2502,16 +2414,20 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
       await _showScheduledAlert(selectedDay, to!);
       return;
     }
-    
-    // 2. 전체 마감 체크
-    final allClosed = workDetails.isNotEmpty && 
-        workDetails.every((w) => w.isClosed || w.isTimeExpired || w.isFull);
+
+    final nowDay = DateTime.now();
+    final isDatePast = dateKey.isBefore(DateTime(nowDay.year, nowDay.month, nowDay.day));
+    bool isWorkClosed(WorkDetailData d) => d.isClosed || d.isTimeExpired || d.isFull;
+
+    // 2. 전체 마감 체크 (날짜 경과 포함)
+    final allClosed = isDatePast ||
+        (workDetails.isNotEmpty && workDetails.every(isWorkClosed));
     if (allClosed) {
       _shownAlertDates.add(dateKey);
       await _showClosedAlert(selectedDay);
       return;
     }
-    
+
     // 3. 확정 근무 있음 체크 (로드 후)
     await _loadMyConfirmedSchedules(selectedDay);
     if (_myConfirmedSchedules.isNotEmpty && !_shownAlertDates.contains(dateKey)) {
@@ -2519,10 +2435,10 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
       await _showConfirmedScheduleAlert(selectedDay, _myConfirmedSchedules);
       return;
     }
-    
+
     // 4. 부분 마감 체크
-    final hasClosed = workDetails.any((w) => w.isClosed || w.isTimeExpired || w.isFull);
-    final hasOpen = workDetails.any((w) => !w.isClosed && !w.isTimeExpired && !w.isFull);
+    final hasClosed = workDetails.any(isWorkClosed);
+    final hasOpen = workDetails.any((w) => !isWorkClosed(w));
     if (hasClosed && hasOpen) {
       _shownAlertDates.add(dateKey);
       await _showPartialClosedAlert(selectedDay);
@@ -2548,16 +2464,16 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
     
     // 2. 전체 마감 체크
     final workDetails = widget.workDetails;
-    final allClosed = workDetails.isNotEmpty && 
-        workDetails.every((w) => w.isClosed || w.isTimeExpired || w.isFull);
+    bool isWClosed(WorkDetailData d) => d.isClosed || d.isTimeExpired || d.isFull;
+    final allClosed = workDetails.isNotEmpty && workDetails.every(isWClosed);
     if (allClosed) {
       await _showClosedAlert(widget.mainTO.date);
       return;
     }
-    
+
     // 3. 부분 마감 체크
-    final hasClosed = workDetails.any((w) => w.isClosed || w.isTimeExpired || w.isFull);
-    final hasOpen = workDetails.any((w) => !w.isClosed && !w.isTimeExpired && !w.isFull);
+    final hasClosed = workDetails.any(isWClosed);
+    final hasOpen = workDetails.any((w) => !isWClosed(w));
     if (hasClosed && hasOpen) {
       await _showPartialClosedAlert(widget.mainTO.date);
       return;
@@ -2568,24 +2484,28 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
   Future<void> _checkAndShowSingleTOAlert() async {
     final workDate = widget.mainTO.date;
     final workDetails = widget.workDetails;
-    
-    // 1. 전체 마감 체크
-    final allClosed = workDetails.isNotEmpty && 
-        workDetails.every((w) => w.isClosed || w.isTimeExpired || w.isFull);
+    final nowDay = DateTime.now();
+    final isWorkDatePast = DateTime(workDate.year, workDate.month, workDate.day)
+        .isBefore(DateTime(nowDay.year, nowDay.month, nowDay.day));
+    bool isSClosed(WorkDetailData d) => d.isClosed || d.isTimeExpired || d.isFull;
+
+    // 1. 전체 마감 체크 (날짜 경과 포함)
+    final allClosed = isWorkDatePast ||
+        (workDetails.isNotEmpty && workDetails.every(isSClosed));
     if (allClosed) {
       await _showClosedAlert(workDate);
       return;
     }
-    
+
     // 2. 확정 근무 있음 체크
     if (_myConfirmedSchedules.isNotEmpty) {
       await _showConfirmedScheduleAlert(workDate, _myConfirmedSchedules);
       return;
     }
-    
+
     // 3. 부분 마감 체크
-    final hasClosed = workDetails.any((w) => w.isClosed || w.isTimeExpired || w.isFull);
-    final hasOpen = workDetails.any((w) => !w.isClosed && !w.isTimeExpired && !w.isFull);
+    final hasClosed = workDetails.any(isSClosed);
+    final hasOpen = workDetails.any((w) => !isSClosed(w));
     if (hasClosed && hasOpen) {
       await _showPartialClosedAlert(workDate);
       return;
@@ -2664,7 +2584,7 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
   Future<void> _showLongTermConflictAlert() async {
     final sortedConflicts = _confirmedDatesInRange.toList()..sort();
     final conflictDatesStr = sortedConflicts.take(3).map((d) {
-      final dayOfWeek = ['월', '화', '수', '목', '금', '토', '일'][d.weekday - 1];
+      final dayOfWeek = FormatHelper.weekday(d);
       final app = _conflictInfoByDate[d];
       final timeInfo = app != null ? ' ${app.startTime}~${app.endTime}' : '';
       return '${d.month}/${d.day}($dayOfWeek)$timeInfo';

@@ -1,4 +1,4 @@
-package com.example.logistics_to_app
+package com.alfit.app
 
 import io.flutter.embedding.android.FlutterActivity
 

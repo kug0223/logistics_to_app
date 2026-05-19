@@ -209,27 +209,39 @@ class TOWorkDetailsSection extends StatelessWidget {
   Widget _buildWorkDetailCards(BuildContext context) {
     // WorkDetailInput 리스트 (create 모드)
     if (workDetailInputs != null) {
+      final sorted = workDetailInputs!.asMap().entries.toList()
+        ..sort((a, b) {
+          final typeCompare = (a.value.workType ?? '').compareTo(b.value.workType ?? '');
+          if (typeCompare != 0) return typeCompare;
+          final timeCompare = (a.value.startTime ?? '').compareTo(b.value.startTime ?? '');
+          if (timeCompare != 0) return timeCompare;
+          return (a.value.endTime ?? '').compareTo(b.value.endTime ?? '');
+        });
       return Column(
-        children: workDetailInputs!.asMap().entries.map((entry) {
+        children: sorted.map((entry) {
           final index = entry.key;
           final detail = entry.value;
           return TOWorkDetailCard.fromInput(
             detail: detail,
-            onEdit: onEditWorkByIndex != null
-                ? () => onEditWorkByIndex!(index)
-                : null,
-            onDelete: onRemoveWorkByIndex != null 
-                ? () => onRemoveWorkByIndex!(index)
-                : null,
+            onEdit: onEditWorkByIndex != null ? () => onEditWorkByIndex!(index) : null,
+            onDelete: onRemoveWorkByIndex != null ? () => onRemoveWorkByIndex!(index) : null,
           );
         }).toList(),
       );
     }
-    
+
     // WorkDetailModel 리스트 (레거시 edit 모드)
     if (workDetailModels != null) {
+      final sorted = [...workDetailModels!]
+        ..sort((a, b) {
+          final typeCompare = a.workType.compareTo(b.workType);
+          if (typeCompare != 0) return typeCompare;
+          final timeCompare = a.startTime.compareTo(b.startTime);
+          if (timeCompare != 0) return timeCompare;
+          return a.endTime.compareTo(b.endTime);
+        });
       return Column(
-        children: workDetailModels!.map((work) {
+        children: sorted.map((work) {
           return TOWorkDetailCard.fromModel(
             work: work,
             onEdit: onEditWork != null ? () => onEditWork!(work) : null,
@@ -241,8 +253,16 @@ class TOWorkDetailsSection extends StatelessWidget {
 
     // WorkDetailData 리스트 (새 아키텍처 edit 모드)
     if (workDetailData != null) {
+      final sorted = [...workDetailData!]
+        ..sort((a, b) {
+          final typeCompare = a.workType.compareTo(b.workType);
+          if (typeCompare != 0) return typeCompare;
+          final timeCompare = a.startTime.compareTo(b.startTime);
+          if (timeCompare != 0) return timeCompare;
+          return a.endTime.compareTo(b.endTime);
+        });
       return Column(
-        children: workDetailData!.map((work) {
+        children: sorted.map((work) {
           return TOWorkDetailCard.fromData(
             work: work,
             onEdit: onEditWorkData != null ? () => onEditWorkData!(work) : null,

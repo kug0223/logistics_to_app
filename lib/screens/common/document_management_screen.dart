@@ -14,6 +14,7 @@ import 'package:intl/intl.dart';
 import '../../services/storage_service.dart';
 import '../../utils/navigation_helper.dart';
 import '../../theme/app_colors.dart';
+import '../../widgets/app_select_field.dart';
 
 /// 📄 내 서류 관리 화면 (역할별 분기)
 /// - 지원자(USER): 신분증 + 통장 정보
@@ -321,7 +322,7 @@ class _DocumentManagementScreenState extends State<DocumentManagementScreen> {
                 Container(
                   padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 12)),
                   decoration: BoxDecoration(
-                    color: Colors.green.withValues(alpha: 0.1),
+                    color: AppColors.success.withValues(alpha: 0.1),
                     borderRadius: BorderRadius.circular(12),
                   ),
                   child: Icon(
@@ -382,7 +383,7 @@ class _DocumentManagementScreenState extends State<DocumentManagementScreen> {
                     text: '삭제',
                     onPressed: _deleteBusinessLicense,
                     icon: Icons.delete,
-                    color: Colors.red,
+                    color: AppColors.error,
                   ),
                 ),
               ],
@@ -806,7 +807,7 @@ class _DocumentManagementScreenState extends State<DocumentManagementScreen> {
                 Container(
                   padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 12)),
                   decoration: BoxDecoration(
-                    color: Colors.green.withValues(alpha: 0.1),
+                    color: AppColors.success.withValues(alpha: 0.1),
                     borderRadius: BorderRadius.circular(12),
                   ),
                   child: Icon(
@@ -862,7 +863,7 @@ class _DocumentManagementScreenState extends State<DocumentManagementScreen> {
                     text: '삭제',
                     onPressed: _deleteIdCard,
                     icon: Icons.delete,
-                    color: Colors.red,
+                    color: AppColors.error,
                   ),
                 ),
               ],
@@ -957,9 +958,9 @@ class _DocumentManagementScreenState extends State<DocumentManagementScreen> {
               Container(
                 padding: ResponsiveHelper.cardPadding(context),
                 decoration: BoxDecoration(
-                  color: Colors.green.withValues(alpha: 0.1),
+                  color: AppColors.success.withValues(alpha: 0.1),
                   borderRadius: BorderRadius.circular(12),
-                  border: Border.all(color: Colors.green.withValues(alpha: 0.3)),
+                  border: Border.all(color: AppColors.success.withValues(alpha: 0.3)),
                 ),
                 child: Row(
                   children: [
@@ -982,9 +983,9 @@ class _DocumentManagementScreenState extends State<DocumentManagementScreen> {
               Container(
                 padding: ResponsiveHelper.cardPadding(context),
                 decoration: BoxDecoration(
-                  color: Colors.orange.withValues(alpha: 0.1),
+                  color: AppColors.warning.withValues(alpha: 0.1),
                   borderRadius: BorderRadius.circular(12),
-                  border: Border.all(color: Colors.orange.withValues(alpha: 0.3)),
+                  border: Border.all(color: AppColors.warning.withValues(alpha: 0.3)),
                 ),
                 child: Row(
                   children: [
@@ -1038,7 +1039,7 @@ class _DocumentManagementScreenState extends State<DocumentManagementScreen> {
                     text: '삭제',
                     onPressed: _deleteBankInfo,
                     icon: Icons.delete,
-                    color: Colors.red,
+                    color: AppColors.error,
                   ),
                 ),
               ],
@@ -1155,22 +1156,19 @@ class _DocumentManagementScreenState extends State<DocumentManagementScreen> {
           content: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              DropdownButtonFormField<String>(
-                initialValue: localBank,
-                decoration: InputDecoration(
-                  labelText: '은행',
-                  prefixIcon: const Icon(Icons.account_balance),
-                  border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                ),
-                items: [
+              AppSelectField<String>(
+                value: localBank,
+                hintText: '은행을 선택하세요',
+                sheetTitle: '은행 선택',
+                items: const [
                   'KB국민은행', '신한은행', 'NH농협은행', '우리은행', '하나은행',
                   'IBK기업은행', 'SC제일은행', '씨티은행', '카카오뱅크', '토스뱅크',
                   'KEB하나은행', '경남은행', '광주은행', '대구은행', '부산은행',
                   '전북은행', '제주은행', '케이뱅크', '새마을금고', '신협',
                   '저축은행', '우체국',
-                ].map((bank) => DropdownMenuItem(value: bank, child: Text(bank))).toList(),
+                ],
+                labelOf: (b) => b,
+                prefixIcon: Icons.account_balance,
                 onChanged: (value) => setDialogState(() => localBank = value),
               ),
               SizedBox(height: ResponsiveHelper.spacing(ctx, 16)),

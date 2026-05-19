@@ -1,4 +1,5 @@
-import 'package:flutter/material.dart';
+﻿import 'package:flutter/material.dart';
+import '../../../../theme/app_colors.dart';
 import '../../../../utils/responsive_helper.dart';
 
 /// ✨ TO 섹션 공통 컨테이너
@@ -24,7 +25,7 @@ class TOSectionContainer extends StatelessWidget {
         borderRadius: BorderRadius.circular(16),
         boxShadow: [
           BoxShadow(
-            color: Colors.grey.withValues(alpha: 0.15),
+            color: AppColors.grey500.withValues(alpha: 0.15),
             blurRadius: 15,
             offset: const Offset(0, 4),
           ),

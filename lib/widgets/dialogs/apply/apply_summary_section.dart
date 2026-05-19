@@ -1,10 +1,9 @@
-// lib/widgets/dialogs/apply/apply_summary_section.dart
+﻿// lib/widgets/dialogs/apply/apply_summary_section.dart
 
 import 'package:flutter/material.dart';
-import 'package:intl/intl.dart';
+import '../../../../utils/format_helper.dart';
 import '../../../../models/core/work_detail_model.dart';
 import '../../../../utils/responsive_helper.dart';
-import '../../../../utils/format_helper.dart';
 import '../../../../theme/app_colors.dart';
 
 /// 날짜별 지원 정보
@@ -231,14 +230,12 @@ class ApplySummarySection extends StatelessWidget {
     ThemeData theme,
     DateApplicationInfo info,
   ) {
-    final dateFormat = DateFormat('M/d (E)', 'ko_KR');
-    
     // ✅ 장기공고면 희망시작일 ~ 종료일 표시
     String dateDisplay;
     if (info.isLongTerm && info.desiredStartDate != null && info.endDate != null) {
-      dateDisplay = '${dateFormat.format(info.desiredStartDate!)} ~ ${dateFormat.format(info.endDate!)}';
+      dateDisplay = '${FormatHelper.formatDate(info.desiredStartDate!)} ~ ${FormatHelper.formatDate(info.endDate!)}';
     } else {
-      dateDisplay = dateFormat.format(info.date);
+      dateDisplay = FormatHelper.formatDate(info.date);
     }
     
     return Column(
@@ -359,47 +356,4 @@ class ApplySummarySection extends StatelessWidget {
   }
 
   // ═══════════════════════════════════════════════════════════
-  // 총 예상 급여
-  // ═══════════════════════════════════════════════════════════
-
-  Widget _buildTotalWage(BuildContext context, ThemeData theme, int totalWage) {
-    return Container(
-      padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 12)),
-      decoration: BoxDecoration(
-        color: theme.primaryColor.withValues(alpha: 0.1),
-        borderRadius: BorderRadius.only(
-          bottomLeft: Radius.circular(ResponsiveHelper.spacing(context, 12)),
-          bottomRight: Radius.circular(ResponsiveHelper.spacing(context, 12)),
-        ),
-      ),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-        children: [
-          Row(
-            children: [
-              Icon(
-                Icons.payments_outlined,
-                size: ResponsiveHelper.iconSize(context, 18),
-                color: theme.primaryColor,
-              ),
-              SizedBox(width: ResponsiveHelper.spacing(context, 6)),
-              Text(
-                '총 예상 급여',
-                style: ResponsiveHelper.bodyStyle(context).copyWith(
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-            ],
-          ),
-          Text(
-            '약 ${FormatHelper.formatNumber(totalWage)}원',
-            style: ResponsiveHelper.subtitleStyle(context).copyWith(
-              fontWeight: FontWeight.bold,
-              color: theme.primaryColor,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
 }

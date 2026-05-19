@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+﻿import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 
@@ -16,6 +16,7 @@ import '../../../providers/user_provider.dart';
 import '../../../utils/toast_helper.dart';
 import '../../../utils/navigation_helper.dart';
 import '../../../utils/responsive_helper.dart';
+import '../../../utils/format_helper.dart';
 
 // Widgets
 import '../../../widgets/pickers/create&edit_work_detail_dialog.dart';
@@ -168,6 +169,13 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
     try {
       // ── 슬롯 수정 모드 ──────────────────────────────────────
       if (widget.isNewSlot) {
+        if (_isNewSlotDeadlineExpired()) {
+          final proceed = await _showExpiredDeadlineWarning();
+          if (!proceed) {
+            setState(() => _isSaving = false);
+            return;
+          }
+        }
         await _saveNewSlotChanges();
         return;
       }
@@ -211,7 +219,8 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
       final totalRequired =
           _workDetails.fold<int>(0, (s, d) => s + d.requiredCount);
 
-      final wasManualClosed = widget.to.isManualClosed;
+      // isManualClosed가 아닌 isClosed 기준 — CF 자동마감(isManualClosed=false) 포함
+      final wasClosed = widget.to.isClosed;
 
       final updates = <String, dynamic>{
         'title': _titleController.text.trim(),
@@ -227,11 +236,16 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
         'publishDaysBefore':
             _publishMode == 'scheduled' ? _publishDaysBefore : null,
         'publishTime': _publishMode == 'scheduled' ? _publishTime : null,
-        if (wasManualClosed) ...{
+        // SCHEDULED → 즉시공개 전환 시 status도 함께 ACTIVE로 갱신
+        if (shouldPublishImmediately && !widget.to.isPublished) ...{
+          'status': TOStatus.active,
+          'statusUpdatedAt': FieldValue.serverTimestamp(),
+        },
+        if (wasClosed) ...{
           'isManualClosed': false,
           'closedAt': FieldValue.delete(),
           'closedBy': FieldValue.delete(),
-          'status': 'ACTIVE',
+          'status': TOStatus.active,
           'statusUpdatedAt': FieldValue.serverTimestamp(),
         },
       };
@@ -241,7 +255,7 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
             Timestamp.fromDate(_fixedDeadline!.toUtc());
       }
 
-      if (wasManualClosed) {
+      if (wasClosed) {
         final userProvider = Provider.of<UserProvider>(context, listen: false);
         updates['reopenedBy'] = userProvider.currentUser?.uid;
         updates['reopenedAt'] = FieldValue.serverTimestamp();
@@ -325,23 +339,29 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
     try {
       final slot = widget.slot!;
 
-      // 가장 이른 startTime 기준으로 applicationDeadline 계산
+      // 업무별 applicationDeadline 재계산 (슬롯 수정으로 추가된 업무도 deadline 누락 방지)
       DateTime? slotDeadline;
-      if (_workDetails.isNotEmpty) {
-        final earliestStart =
-            (_workDetails.map((d) => d.startTime).toList()..sort()).first;
-        final parts = earliestStart.split(':');
-        final startDt = DateTime(
+      final updatedWorkDetails = _workDetails.map((work) {
+        final parts = work.startTime.split(':');
+        if (parts.length != 2) return work;
+        final deadline = DateTime(
           slot.date.year, slot.date.month, slot.date.day,
           int.parse(parts[0]), int.parse(parts[1]),
-        );
-        slotDeadline = startDt.subtract(Duration(hours: _hoursBeforeStart));
+        ).subtract(Duration(hours: _hoursBeforeStart));
+        return work.copyWith(applicationDeadline: deadline);
+      }).toList();
+
+      // 슬롯 레벨 마감 = 가장 이른 업무 마감
+      if (updatedWorkDetails.isNotEmpty) {
+        slotDeadline = updatedWorkDetails
+            .map((d) => d.applicationDeadline!)
+            .reduce((a, b) => a.isBefore(b) ? a : b);
       }
 
       await _firestoreService.updateSlotFull(
         toId: widget.to.id,
         slotId: slot.id,
-        workDetails: _workDetails,
+        workDetails: updatedWorkDetails,
         applicationDeadline: slotDeadline,
         title: _slotTitleController.text.trim(),
         oldTotalRequired: slot.totalRequired,
@@ -358,6 +378,51 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
     }
   }
 
+  /// 새 슬롯의 모든 업무 마감시각이 이미 지났는지 확인
+  bool _isNewSlotDeadlineExpired() {
+    final slotDate = widget.newSlotDate;
+    if (slotDate == null || _workDetails.isEmpty) return false;
+    final now = DateTime.now();
+    if (!DateUtils.isSameDay(slotDate, now)) return false;
+    return _workDetails.every((d) {
+      final parts = d.startTime.split(':');
+      if (parts.length != 2) return false;
+      final deadline = DateTime(
+        slotDate.year, slotDate.month, slotDate.day,
+        int.parse(parts[0]), int.parse(parts[1]),
+      ).subtract(Duration(hours: _hoursBeforeStart));
+      return now.isAfter(deadline);
+    });
+  }
+
+  /// 마감 경과 경고 다이얼로그 — true: 그래도 등록, false: 취소
+  Future<bool> _showExpiredDeadlineWarning() async {
+    final result = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => StyledDialog(
+        title: '지원 마감 경과',
+        subtitle: '선택한 근무 시간의 지원 마감이 이미 지났습니다',
+        icon: Icons.timer_off_outlined,
+        headerColor: AppColors.warning,
+        content: Text(
+          '등록 즉시 마감 상태가 됩니다.\n그래도 등록하시겠습니까?',
+          style: ResponsiveHelper.bodyStyle(context, color: AppColors.grey700),
+        ),
+        actions: [
+          StyledDialogButton.cancel(
+            onPressed: () => Navigator.pop(ctx, false),
+          ),
+          StyledDialogButton.primary(
+            text: '등록',
+            backgroundColor: AppColors.warning,
+            onPressed: () => Navigator.pop(ctx, true),
+          ),
+        ],
+      ),
+    );
+    return result == true;
+  }
+
   Future<void> _saveNewSlotChanges() async {
     try {
       await _firestoreService.addSlot(
@@ -367,6 +432,29 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
         hoursBeforeStart: _hoursBeforeStart,
         title: _slotTitleController.text.trim(),
       );
+
+      // 공개 설정이 변경됐으면 TO 문서 + 전체 슬롯(새 슬롯 포함) 동기화
+      final publishSettingsChanged =
+          _publishMode != widget.to.publishMode ||
+          _publishDaysBefore != (widget.to.publishDaysBefore ?? 1) ||
+          _publishTime != (widget.to.publishTime ?? '14:00');
+
+      if (publishSettingsChanged) {
+        await _firestoreService.updateTOPublishSettings(
+          toId: widget.to.id,
+          publishMode: _publishMode,
+          publishDaysBefore:
+              _publishMode == 'scheduled' ? _publishDaysBefore : null,
+          publishTime: _publishMode == 'scheduled' ? _publishTime : null,
+        );
+        await _firestoreService.updateSlotsPublishSettings(
+          toId: widget.to.id,
+          publishMode: _publishMode,
+          publishDaysBefore: _publishDaysBefore,
+          publishTime: _publishTime,
+        );
+      }
+
       _firestoreService.clearCache(toId: widget.to.id);
       ToastHelper.showSuccess(
           '${widget.newSlotDate!.month}/${widget.newSlotDate!.day} 날짜가 추가되었습니다');
@@ -436,6 +524,11 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
           requiredCount: result.requiredCount!,
           startTime: result.startTime!,
           endTime: result.endTime!,
+          shiftType: result.shiftType,
+          nightAllowanceApplied: result.nightAllowanceApplied,
+          nightIncluded: result.nightIncluded,
+          breakMinutes: result.breakMinutes,
+          baseHourlyWage: result.baseHourlyWage,
           order: _workDetails.length,
         ));
       });
@@ -463,6 +556,12 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
             requiredCount: result['requiredCount'],
             startTime: result['startTime'],
             endTime: result['endTime'],
+            shiftType: result['shiftType'],
+            nightAllowanceApplied: result['nightAllowanceApplied'] ?? true,
+            nightIncluded: result['nightIncluded'],
+            breakMinutes: result['breakMinutes'],
+            baseHourlyWage: result['baseHourlyWage'],
+            clearBaseHourlyWage: result['baseHourlyWage'] == null,
           );
         });
       }
@@ -632,8 +731,7 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
 
   Widget _buildNewSlotBanner(BuildContext context) {
     final d = widget.newSlotDate!;
-    const weekdays = ['월', '화', '수', '목', '금', '토', '일'];
-    final label = '${d.month}/${d.day} (${weekdays[d.weekday - 1]})';
+    final label = '${d.month}/${d.day} (${FormatHelper.weekday(d)})';
     return Container(
       padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 12)),
       decoration: BoxDecoration(

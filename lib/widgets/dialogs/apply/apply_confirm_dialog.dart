@@ -1,7 +1,6 @@
-// lib/widgets/dialogs/apply/apply_confirm_dialog.dart
+﻿// lib/widgets/dialogs/apply/apply_confirm_dialog.dart
 
 import 'package:flutter/material.dart';
-import 'package:intl/intl.dart';
 import '../../../models/core/work_detail_model.dart';
 import '../../../utils/responsive_helper.dart';
 import '../../../utils/format_helper.dart';
@@ -93,8 +92,6 @@ class ApplyConfirmDialog extends StatelessWidget {
   }
 
   Widget _buildInfoCard(BuildContext context) {
-    final dateFormat = DateFormat('M/d (E)', 'ko_KR');
-    
     return Container(
       padding: ResponsiveHelper.cardPadding(context),
       decoration: BoxDecoration(
@@ -110,7 +107,7 @@ class ApplyConfirmDialog extends StatelessWidget {
             context,
             Icons.calendar_today,
             isLongTerm ? '근무 기간' : '근무일',
-            _getDateDisplay(dateFormat),
+            _getDateDisplay(),
             valueColor: isLongTerm ? AppColors.longTerm : null,
           ),
           if (isLongTerm && workDays != null && workDays!.isNotEmpty) ...[
@@ -169,13 +166,13 @@ class ApplyConfirmDialog extends StatelessWidget {
 
   Widget _buildDivider() => Divider(height: 1, color: AppColors.grey200);
 
-  String _getDateDisplay(DateFormat format) {
+  String _getDateDisplay() {
     if (isLongTerm) {
       final start = desiredStartDate ?? DateTime.now();
       final end = endDate ?? DateTime.now();
-      return '${format.format(start)} ~ ${format.format(end)}';
+      return '${FormatHelper.formatDate(start)} ~ ${FormatHelper.formatDate(end)}';
     }
-    return format.format(workDate ?? DateTime.now());
+    return FormatHelper.formatDate(workDate ?? DateTime.now());
   }
 
   String _getWageDisplay() {

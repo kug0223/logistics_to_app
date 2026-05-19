@@ -3,6 +3,7 @@
 import 'package:flutter/material.dart';
 import '../../utils/responsive_helper.dart';
 import '../../theme/app_colors.dart';
+import '../common/app_checkbox.dart';
 import '../../services/trust_score_service.dart';
 import '../../utils/toast_helper.dart';
 import 'styled_dialog.dart';
@@ -39,7 +40,6 @@ class _RestartProgramDialogState extends State<RestartProgramDialog> {
   bool _isLoading = true;
   bool _isSubmitting = false;
   bool _canRestart = false;
-  String? _reason;
   int? _daysRemaining;
   bool _agreed = false;
 
@@ -56,7 +56,6 @@ class _RestartProgramDialogState extends State<RestartProgramDialog> {
     
     setState(() {
       _canRestart = result.canRestart;
-      _reason = result.reason;
       _daysRemaining = result.daysRemaining;
       _isLoading = false;
     });
@@ -364,10 +363,9 @@ class _RestartProgramDialogState extends State<RestartProgramDialog> {
             borderRadius: BorderRadius.circular(8),
             child: Row(
               children: [
-                Checkbox(
+                AppCheckbox(
                   value: _agreed,
-                  onChanged: (v) => setState(() => _agreed = v ?? false),
-                  activeColor: Theme.of(context).primaryColor,
+                  onTap: () => setState(() => _agreed = !_agreed),
                 ),
                 Expanded(
                   child: Text(

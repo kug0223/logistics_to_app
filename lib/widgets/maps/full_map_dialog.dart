@@ -1,4 +1,5 @@
-import 'package:flutter/material.dart';
+﻿import 'package:flutter/material.dart';
+import '../../theme/app_colors.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../../models/core/business_model.dart';
 import '../../utils/responsive_helper.dart';
@@ -213,7 +214,7 @@ class FullMapDialog extends StatelessWidget {
                     Icon(
                       Icons.subway,
                       size: ResponsiveHelper.iconSize(context, 18),
-                      color: Colors.blue,
+                      color: AppColors.info,
                     ),
                     SizedBox(width: ResponsiveHelper.spacing(context, 6)),
                     Text(

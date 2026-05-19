@@ -1,4 +1,4 @@
-// lib/widgets/common/badge_display_widget.dart
+﻿// lib/widgets/common/badge_display_widget.dart
 
 import 'package:flutter/material.dart';
 import '../../utils/responsive_helper.dart';
@@ -150,7 +150,7 @@ class BadgeDisplayWidget extends StatelessWidget {
   Color _getBadgeColor(BadgeType type) {
     switch (type) {
       case BadgeType.trustScore:
-        return Colors.amber;
+        return AppColors.amber;
       case BadgeType.attendance:
         return AppColors.success;
       case BadgeType.specialty:
@@ -269,7 +269,7 @@ class BadgeDetailDialog extends StatelessWidget {
   Color _getBadgeColor(BadgeType type) {
     switch (type) {
       case BadgeType.trustScore:
-        return Colors.amber;
+        return AppColors.amber;
       case BadgeType.attendance:
         return AppColors.success;
       case BadgeType.specialty:

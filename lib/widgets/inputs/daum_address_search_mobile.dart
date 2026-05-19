@@ -57,7 +57,7 @@ class DaumAddressSearchImpl {
                 longitude: coords?['longitude'],
               );
 
-              Navigator.pop(context, result);
+              if (context.mounted) Navigator.pop(context, result);
             },
           ),
         ),

@@ -10,6 +10,7 @@ extension AttendanceFirestore on FirestoreService {
   // ═══════════════════════════════════════════════════════════
 
   /// 출근 체크
+  /// [scheduledStartTime] "HH:mm" 형식 예정 출근 시간 — 전달 시 지각 여부 자동 판단
   Future<String?> checkIn({
     required String applicationId,
     required String userId,
@@ -20,31 +21,32 @@ extension AttendanceFirestore on FirestoreService {
     required double latitude,
     required double longitude,
     String method = 'gps',
+    String? scheduledStartTime,
   }) async {
     try {
       debugPrint('🕐 [checkIn] 출근 체크 시작...');
       debugPrint('   applicationId: $applicationId');
       debugPrint('   workDate: $workDate');
-      
-      // 🔥 0. 지원서 상태 확인 (CONFIRMED만 출근 가능)
+
+      // 0. 지원서 상태 확인 (CONFIRMED만 출근 가능)
       final appDoc = await _firestore
           .collection('applications')
           .doc(applicationId)
           .get();
-      
+
       if (!appDoc.exists) {
         throw Exception('지원서를 찾을 수 없습니다.');
       }
-      
+
       final appStatus = appDoc.data()?['status'] as String?;
       if (appStatus != 'CONFIRMED') {
         throw Exception('확정된 근무만 출퇴근 체크가 가능합니다. (현재 상태: $appStatus)');
       }
-      
+
       // 1. 오늘 이미 출근했는지 확인
       final todayStart = DateTime(workDate.year, workDate.month, workDate.day);
       final todayEnd = todayStart.add(const Duration(days: 1));
-      
+
       final existing = await _firestore
           .collection('attendance')
           .where('userId', isEqualTo: userId)
@@ -53,7 +55,7 @@ extension AttendanceFirestore on FirestoreService {
           .where('applicationId', isEqualTo: applicationId)
           .limit(1)
           .get();
-      
+
       if (existing.docs.isNotEmpty) {
         final existingData = existing.docs.first.data();
         if (existingData['checkIn'] != null) {
@@ -61,12 +63,25 @@ extension AttendanceFirestore on FirestoreService {
           throw Exception('오늘 이미 출근하셨습니다.');
         }
       }
-      
-      // 2. 출근 시간
+
+      // 2. 출근 시간 기록
       final now = DateTime.now();
-      final checkInTime = '${now.hour.toString().padLeft(2, '0')}:${now.minute.toString().padLeft(2, '0')}:${now.second.toString().padLeft(2, '0')}';
-      
-      // 3. 출근 기록 생성
+      final checkInTime =
+          '${now.hour.toString().padLeft(2, '0')}:${now.minute.toString().padLeft(2, '0')}:${now.second.toString().padLeft(2, '0')}';
+
+      // 3. 지각 여부 판단 (익일 자정 넘김 보정: 23:00 시작 근무에 00:30 출근 등)
+      final isNextDay = now.year != workDate.year ||
+          now.month != workDate.month ||
+          now.day != workDate.day;
+      final isLate = scheduledStartTime != null &&
+          AttendanceStatusHelper.isLate(checkInTime, scheduledStartTime, isNextDay: isNextDay);
+      final dbStatus = isLate
+          ? AttendanceModel.statusLate
+          : AttendanceModel.statusPresent;
+
+      debugPrint('   checkInTime: $checkInTime, scheduled: $scheduledStartTime, isLate: $isLate');
+
+      // 4. 출근 기록 생성
       final attendanceData = {
         'applicationId': applicationId,
         'userId': userId,
@@ -79,16 +94,16 @@ extension AttendanceFirestore on FirestoreService {
         'checkInLng': longitude,
         'checkInMethod': method,
         'checkInTime': FieldValue.serverTimestamp(),
-        'status': 'present',
+        'status': dbStatus,
         'isModified': false,
         'modifyRequested': false,
-        'wageStatus': 'pending',              // ✅ 추가
+        'wageStatus': AttendanceModel.wagePending,
         'createdAt': FieldValue.serverTimestamp(),
       };
-      
+
       final docRef = await _firestore.collection('attendance').add(attendanceData);
-      
-      debugPrint('✅ 출근 체크 완료: ${docRef.id}');
+
+      debugPrint('✅ 출근 체크 완료: ${docRef.id} (status: $dbStatus)');
       return docRef.id;
     } catch (e) {
       debugPrint('❌ 출근 체크 실패: $e');
@@ -97,40 +112,57 @@ extension AttendanceFirestore on FirestoreService {
   }
 
   /// 퇴근 체크
+  /// [scheduledEndTime] "HH:mm" 형식 예정 퇴근 시간 — 전달 시 조퇴 여부 자동 판단
   Future<bool> checkOut({
     required String attendanceId,
     required double latitude,
     required double longitude,
     String method = 'gps',
+    String? scheduledEndTime,
   }) async {
     try {
       debugPrint('🕐 [checkOut] 퇴근 체크 시작...');
       debugPrint('   attendanceId: $attendanceId');
-      
+
       // 1. 출근 기록 조회
       final doc = await _firestore
           .collection('attendance')
           .doc(attendanceId)
           .get();
-      
+
       if (!doc.exists) {
         throw Exception('출근 기록을 찾을 수 없습니다.');
       }
-      
+
       final data = doc.data()!;
       if (data['checkOut'] != null) {
         throw Exception('이미 퇴근하셨습니다.');
       }
-      
-      // 2. 퇴근 시간
+
+      // 2. 퇴근 시간 기록
       final now = DateTime.now();
-      final checkOutTime = '${now.hour.toString().padLeft(2, '0')}:${now.minute.toString().padLeft(2, '0')}:${now.second.toString().padLeft(2, '0')}';
-      
+      final checkOutTime =
+          '${now.hour.toString().padLeft(2, '0')}:${now.minute.toString().padLeft(2, '0')}:${now.second.toString().padLeft(2, '0')}';
+
       // 3. 근무 시간 계산
       final checkInTime = data['checkIn'] as String;
-      final workHours = _calculateWorkHours(checkInTime, checkOutTime);
-      
-      // 4. 퇴근 기록 저장
+      final workMins = AttendanceStatusHelper.workMinutes(checkInTime, checkOutTime);
+      final workHours = workMins / 60.0;
+
+      // 4. 조퇴 여부 판단 (예정보다 1분 이상 일찍 퇴근, 야간 자정 넘김 자동 보정)
+      final currentStatus = data['status'] as String? ?? AttendanceModel.statusPresent;
+      final isEarlyLeave = scheduledEndTime != null &&
+          AttendanceStatusHelper.isEarlyLeave(checkOutTime, scheduledEndTime, checkIn: checkInTime);
+
+      // 지각 + 조퇴가 동시에 발생할 수 있으므로 기존 status 유지하면서 조퇴 덮어쓰기 방지
+      // → 지각이면 early_leave로 갱신(지각+조퇴 케이스는 UI에서 별도 표시)
+      final updatedStatus = isEarlyLeave
+          ? AttendanceModel.statusEarlyLeave
+          : currentStatus;
+
+      debugPrint('   checkOutTime: $checkOutTime, scheduled: $scheduledEndTime, isEarlyLeave: $isEarlyLeave');
+
+      // 5. 퇴근 기록 저장
       await _firestore.collection('attendance').doc(attendanceId).update({
         'checkOut': checkOutTime,
         'checkOutLat': latitude,
@@ -138,10 +170,11 @@ extension AttendanceFirestore on FirestoreService {
         'checkOutMethod': method,
         'checkOutTime': FieldValue.serverTimestamp(),
         'workHours': workHours,
+        'status': updatedStatus,
         'updatedAt': FieldValue.serverTimestamp(),
       });
-      
-      debugPrint('✅ 퇴근 체크 완료');
+
+      debugPrint('✅ 퇴근 체크 완료 (status: $updatedStatus)');
       return true;
     } catch (e) {
       debugPrint('❌ 퇴근 체크 실패: $e');
@@ -149,22 +182,6 @@ extension AttendanceFirestore on FirestoreService {
     }
   }
 
-  /// 근무 시간 계산 (시:분:초 → 시간)
-  double _calculateWorkHours(String checkIn, String checkOut) {
-    try {
-      final inParts = checkIn.split(':');
-      final outParts = checkOut.split(':');
-      
-      final inMinutes = int.parse(inParts[0]) * 60 + int.parse(inParts[1]);
-      final outMinutes = int.parse(outParts[0]) * 60 + int.parse(outParts[1]);
-      
-      final diffMinutes = outMinutes - inMinutes;
-      return diffMinutes / 60.0;
-    } catch (e) {
-      debugPrint('❌ 근무 시간 계산 실패: $e');
-      return 0.0;
-    }
-  }
 
   /// 오늘 내 출근 기록 조회
   Future<AttendanceModel?> getTodayAttendance({
@@ -278,8 +295,7 @@ extension AttendanceFirestore on FirestoreService {
               return true; // 매일 근무
             }
             
-            final weekdays = ['월', '화', '수', '목', '금', '토', '일'];
-            final todayWeekday = weekdays[today.weekday - 1];
+            final todayWeekday = FormatHelper.weekday(today);
             
             return app.workDays!.contains(todayWeekday);
           })
@@ -812,6 +828,73 @@ extension AttendanceFirestore on FirestoreService {
       debugPrint('❌ 스케줄 변경 요청 취소 실패: $e');
       return false;
     }
+  }
+
+  /// 사업장 주간 출근 기록 일괄 조회 (userId → AttendanceModel 리스트)
+  /// weekStart ~ weekEnd(inclusive) 범위 내 모든 근무자의 출근 기록 반환
+  Future<Map<String, List<AttendanceModel>>> getWeeklyAttendanceByBusiness({
+    required String businessId,
+    required DateTime weekStart,
+    required DateTime weekEnd,
+  }) async {
+    try {
+      final start = DateTime(weekStart.year, weekStart.month, weekStart.day);
+      final end = DateTime(weekEnd.year, weekEnd.month, weekEnd.day)
+          .add(const Duration(days: 1));
+      final snapshot = await _firestore
+          .collection('attendance')
+          .where('businessId', isEqualTo: businessId)
+          .where('workDate', isGreaterThanOrEqualTo: Timestamp.fromDate(start))
+          .where('workDate', isLessThan: Timestamp.fromDate(end))
+          .get();
+      final map = <String, List<AttendanceModel>>{};
+      for (final doc in snapshot.docs) {
+        final att = AttendanceModel.fromFirestore(doc);
+        map.putIfAbsent(att.userId, () => []).add(att);
+      }
+      return map;
+    } catch (e) {
+      debugPrint('❌ 주간 출근 기록 조회 실패: $e');
+      return {};
+    }
+  }
+
+  /// 주휴수당 자격 판정
+  /// [weeklyAttendances] 해당 userId의 주간 출근 리스트 (getWeeklyAttendanceByBusiness 결과)
+  WeeklyHolidayEligibility computeWeeklyHolidayEligibility({
+    required List<AttendanceModel> weeklyAttendances,
+    required int scheduledDaysPerWeek,
+    required int ordinaryHourlyWage,
+    required DateTime weekStart,
+    required DateTime weekEnd,
+  }) {
+    // 결근/노쇼가 아니고 실제 출근한 날 카운트
+    final workedDays = weeklyAttendances
+        .where((a) =>
+            a.checkIn != null &&
+            a.status != AttendanceModel.statusAbsent &&
+            a.status != AttendanceModel.statusNoShow)
+        .length;
+    final totalWorkMinutes = weeklyAttendances
+        .fold<int>(0, (acc, a) => acc + ((a.workHours ?? 0) * 60).round());
+    final meetsHours = totalWorkMinutes >= 15 * 60;
+    final meetsDays = workedDays >= scheduledDaysPerWeek;
+    final isEligible = meetsHours && meetsDays;
+    final weeklyHolidayAmount = isEligible
+        ? WageCalculator.calculateWeeklyHolidayPay(
+            ordinaryHourlyWage: ordinaryHourlyWage,
+            weeklyWorkMinutes: totalWorkMinutes,
+          )
+        : 0;
+    return WeeklyHolidayEligibility(
+      isEligible: isEligible,
+      workedDays: workedDays,
+      scheduledDaysPerWeek: scheduledDaysPerWeek,
+      totalWorkMinutes: totalWorkMinutes,
+      weeklyHolidayAmount: weeklyHolidayAmount,
+      weekStart: weekStart,
+      weekEnd: weekEnd,
+    );
   }
 
   /// 대기중인 요청 개수 조회

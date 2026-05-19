@@ -10,14 +10,22 @@ extension ApplicationFirestore on FirestoreService {
   // 조회
   // ───────────────────────────────────────────────────────
 
-  /// TO별 전체 지원서 조회
-  Future<List<ApplicationModel>> getApplicationsByTOId(String toId, {String? businessId}) async {
+  /// TO별 지원서 조회
+  /// [statuses] 지정 시 해당 상태만 조회 (미지정 시 전체)
+  Future<List<ApplicationModel>> getApplicationsByTOId(
+    String toId, {
+    String? businessId,
+    List<String>? statuses,
+  }) async {
     try {
       Query query = _firestore
           .collection('applications')
           .where('toId', isEqualTo: toId);
       if (businessId != null && businessId.isNotEmpty) {
         query = query.where('businessId', isEqualTo: businessId);
+      }
+      if (statuses != null && statuses.isNotEmpty) {
+        query = query.where('status', whereIn: statuses);
       }
       final snap = await query.limit(500).get();
       return snap.docs
@@ -30,17 +38,25 @@ extension ApplicationFirestore on FirestoreService {
   }
 
   /// 슬롯별 지원서 조회 (flex 타입)
+  /// [statuses] 지정 시 해당 상태만 조회 (미지정 시 전체)
   Future<List<ApplicationModel>> getApplicationsBySlotId(
     String toId,
-    String slotId,
-  ) async {
+    String slotId, {
+    String? businessId,
+    List<String>? statuses,
+  }) async {
     try {
-      final snap = await _firestore
+      Query query = _firestore
           .collection('applications')
           .where('toId', isEqualTo: toId)
-          .where('slotId', isEqualTo: slotId)
-          .limit(500)
-          .get();
+          .where('slotId', isEqualTo: slotId);
+      if (businessId != null && businessId.isNotEmpty) {
+        query = query.where('businessId', isEqualTo: businessId);
+      }
+      if (statuses != null && statuses.isNotEmpty) {
+        query = query.where('status', whereIn: statuses);
+      }
+      final snap = await query.limit(500).get();
       return snap.docs
           .map((d) => ApplicationModel.fromFirestore(d))
           .toList();
@@ -161,7 +177,7 @@ extension ApplicationFirestore on FirestoreService {
         return false;
       }
       final toData = toDoc.data()!;
-      if (toData['isManualClosed'] == true || toData['status'] == 'CLOSED') {
+      if (toData['isManualClosed'] == true || toData['status'] == TOStatus.closed) {
         ToastHelper.showError('마감된 공고입니다.');
         return false;
       }
@@ -178,7 +194,7 @@ extension ApplicationFirestore on FirestoreService {
           return false;
         }
         final slotData = slotDoc.data()!;
-        if (slotData['isManualClosed'] == true || slotData['status'] == 'closed') {
+        if (slotData['isManualClosed'] == true || slotData['status'] == SlotStatus.closed) {
           ToastHelper.showError('해당 날짜는 마감되었습니다.');
           return false;
         }
@@ -271,11 +287,10 @@ extension ApplicationFirestore on FirestoreService {
       if (isContract && workEndDate != null) {
         var current = desiredStartDate ?? workDate;
         while (!current.isAfter(workEndDate)) {
-          final day = _getKoreanDayOfWeek(current);
-          if (workDays.contains(day)) {
+          if (workDays.contains(FormatHelper.weekday(current))) {
             for (final s in allConfirmed) {
-              if (_isWorkingOnDate(s, current) &&
-                  _hasTimeOverlap(startTime, endTime, s.startTime, s.endTime)) {
+              if (s.isWorkingOnDate(current) &&
+                  ApplicationModel.hasTimeOverlap(startTime, endTime, s.startTime, s.endTime)) {
                 ToastHelper.showError(
                   '${current.month}/${current.day}에\n'
                   '${s.startTime}~${s.endTime} (${s.businessName})\n'
@@ -289,8 +304,8 @@ extension ApplicationFirestore on FirestoreService {
         }
       } else {
         for (final s in allConfirmed) {
-          if (_isWorkingOnDate(s, workDate) &&
-              _hasTimeOverlap(startTime, endTime, s.startTime, s.endTime)) {
+          if (s.isWorkingOnDate(workDate) &&
+              ApplicationModel.hasTimeOverlap(startTime, endTime, s.startTime, s.endTime)) {
             ToastHelper.showError(
               '이미 ${s.startTime}~${s.endTime}에\n'
               '${s.businessName}에서 확정된 근무가 있습니다.',
@@ -677,6 +692,7 @@ extension ApplicationFirestore on FirestoreService {
         'originalWage': appData['originalWage'] ?? currentWage,
         'changedAt': FieldValue.serverTimestamp(),
         'changedBy': adminUID,
+        if (newWorkDetailId != null) 'workDetailId': newWorkDetailId,
       });
       _sendWorkTypeChangedNotification(
         applicantUid: uid,
@@ -734,22 +750,97 @@ extension ApplicationFirestore on FirestoreService {
     required String endTime,
     required String excludeId,
     String status = 'PENDING',
+    String? businessId,
   }) async {
     try {
-      final snap = await _firestore
+      var query = _firestore
           .collection('applications')
           .where('uid', isEqualTo: uid)
-          .where('status', isEqualTo: status)
-          .get();
+          .where('status', isEqualTo: status);
+      if (businessId != null) {
+        query = query.where('businessId', isEqualTo: businessId);
+      }
+      final snap = await query.get();
 
       return snap.docs
           .where((d) => d.id != excludeId)
           .map((d) => ApplicationModel.fromFirestore(d))
-          .where((a) => _isWorkingOnDate(a, workDate))
-          .where((a) => _hasTimeOverlap(startTime, endTime, a.startTime, a.endTime))
+          .where((a) => a.isWorkingOnDate(workDate))
+          .where((a) => ApplicationModel.hasTimeOverlap(startTime, endTime, a.startTime, a.endTime))
           .toList();
     } catch (e) {
       debugPrint('❌ 충돌 지원서 조회 실패: $e');
+      return [];
+    }
+  }
+
+  /// 특정 날짜 × 사업장의 확정 근무자 조회 (단기 + 장기 병합)
+  Future<List<ApplicationModel>> getConfirmedWorkersByDateAndBusiness({
+    required DateTime date,
+    required String businessId,
+  }) async {
+    final dateStart = DateTime(date.year, date.month, date.day);
+    final dateEnd = dateStart.add(const Duration(days: 1));
+
+    try {
+      final shortTermFuture = _firestore
+          .collection('applications')
+          .where('businessId', isEqualTo: businessId)
+          .where('status', isEqualTo: AppStatus.confirmed)
+          .where('workDate', isGreaterThanOrEqualTo: Timestamp.fromDate(dateStart))
+          .where('workDate', isLessThan: Timestamp.fromDate(dateEnd))
+          .get();
+
+      final longTermFuture = _firestore
+          .collection('applications')
+          .where('businessId', isEqualTo: businessId)
+          .where('status', isEqualTo: AppStatus.confirmed)
+          .where('workEndDate', isGreaterThanOrEqualTo: Timestamp.fromDate(dateStart))
+          .get();
+
+      final results = await Future.wait([shortTermFuture, longTermFuture]);
+
+      final shortTermApps = results[0].docs
+          .map((doc) => ApplicationModel.fromFirestore(doc))
+          .toList();
+
+      final longTermCandidates = results[1].docs
+          .map((doc) => ApplicationModel.fromFirestore(doc))
+          .where((app) => app.workDays != null && app.workDays!.isNotEmpty)
+          .toList();
+
+      final result = <ApplicationModel>[...shortTermApps];
+
+      final dayWeekday = FormatHelper.weekday(date);
+
+      for (final app in longTermCandidates) {
+        final endDate = app.actualResignDate ?? app.workEndDate;
+        if (endDate == null) continue;
+
+        DateTime effectiveStart = app.desiredStartDate ?? app.workDate;
+        if (app.confirmedAt != null && app.desiredStartDate == null) {
+          final confirmedDay = DateTime(
+              app.confirmedAt!.year, app.confirmedAt!.month, app.confirmedAt!.day);
+          if (confirmedDay.isAfter(app.workDate)) effectiveStart = confirmedDay;
+        }
+
+        final startOnly = DateTime(effectiveStart.year, effectiveStart.month, effectiveStart.day);
+        final endOnly = DateTime(endDate.year, endDate.month, endDate.day);
+
+        if (dateStart.isBefore(startOnly) || dateStart.isAfter(endOnly)) continue;
+
+        if (app.leaveDates != null && app.leaveDates!.isNotEmpty) {
+          final isLeave = app.leaveDates!.any((d) =>
+              d.year == dateStart.year && d.month == dateStart.month && d.day == dateStart.day);
+          if (isLeave) continue;
+        }
+
+        if (app.workDays!.contains(dayWeekday)) result.add(app);
+      }
+
+      return result;
+    } catch (e) {
+      debugPrint('❌ 확정 근무자 조회 실패: $e');
       return [];
     }
   }
@@ -766,7 +857,7 @@ extension ApplicationFirestore on FirestoreService {
           .get();
       return snap.docs
           .map((d) => ApplicationModel.fromFirestore(d))
-          .where((a) => _isWorkingOnDate(a, workDate))
+          .where((a) => a.isWorkingOnDate(workDate))
           .toList();
     } catch (e) {
       debugPrint('❌ 확정 일정 조회 실패: $e');
@@ -814,6 +905,7 @@ extension ApplicationFirestore on FirestoreService {
         startTime: app.startTime,
         endTime: app.endTime,
         excludeId: applicationId,
+        businessId: app.businessId,
       );
     } else {
       conflictingApps = await findConflictingApplications(
@@ -823,6 +915,7 @@ extension ApplicationFirestore on FirestoreService {
         endTime: app.endTime,
         excludeId: applicationId,
         status: 'PENDING',
+        businessId: app.businessId,
       );
     }
 
@@ -921,24 +1014,27 @@ extension ApplicationFirestore on FirestoreService {
     required String startTime,
     required String endTime,
     required String excludeId,
+    String? businessId,
   }) async {
     try {
-      final snap = await _firestore
+      var query = _firestore
           .collection('applications')
           .where('uid', isEqualTo: uid)
-          .where('status', isEqualTo: 'PENDING')
-          .get();
+          .where('status', isEqualTo: 'PENDING');
+      if (businessId != null) {
+        query = query.where('businessId', isEqualTo: businessId);
+      }
+      final snap = await query.get();
 
       final conflicts = <ApplicationModel>{};
       var current = startDate;
       while (!current.isAfter(endDate)) {
-        final day = _getKoreanDayOfWeek(current);
-        if (workDays.contains(day)) {
+        if (workDays.contains(FormatHelper.weekday(current))) {
           for (final doc in snap.docs) {
             if (doc.id == excludeId) continue;
             final a = ApplicationModel.fromFirestore(doc);
-            if (_isWorkingOnDate(a, current) &&
-                _hasTimeOverlap(startTime, endTime, a.startTime, a.endTime)) {
+            if (a.isWorkingOnDate(current) &&
+                ApplicationModel.hasTimeOverlap(startTime, endTime, a.startTime, a.endTime)) {
               conflicts.add(a);
             }
           }

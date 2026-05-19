@@ -860,7 +860,7 @@ class _ProfileEditScreenState extends State<ProfileEditScreen> {
                 Container(
                   padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 12)),
                   decoration: BoxDecoration(
-                    color: Colors.orange.withValues(alpha: 0.1),
+                    color: AppColors.warning.withValues(alpha: 0.1),
                     borderRadius: BorderRadius.circular(12),
                   ),
                   child: Icon(

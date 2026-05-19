@@ -1,4 +1,4 @@
-// lib/widgets/dialogs/styled_dialog.dart
+﻿// lib/widgets/dialogs/styled_dialog.dart
 
 import 'package:flutter/material.dart';
 import '../../utils/responsive_helper.dart';
@@ -280,58 +280,40 @@ class StyledDialogButton extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final bg = isOutlined
+        ? AppColors.grey100
+        : (backgroundColor ?? theme.primaryColor);
+    final fg = isOutlined
+        ? AppColors.grey700
+        : (foregroundColor ?? AppColors.surface);
 
-    if (isOutlined) {
-      return OutlinedButton(
-        onPressed: isLoading ? null : onPressed,
-        style: OutlinedButton.styleFrom(
+    return Material(
+      color: bg,
+      borderRadius: BorderRadius.circular(10),
+      child: InkWell(
+        onTap: isLoading ? null : onPressed,
+        borderRadius: BorderRadius.circular(10),
+        child: Padding(
           padding: EdgeInsets.symmetric(
-            vertical: ResponsiveHelper.spacing(context, 16),
+            vertical: ResponsiveHelper.spacing(context, 14),
           ),
-          side: BorderSide(color: AppColors.grey400),
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(12),
+          child: Center(
+            child: isLoading
+                ? SizedBox(
+                    height: ResponsiveHelper.iconSize(context, 18),
+                    width: ResponsiveHelper.iconSize(context, 18),
+                    child: CircularProgressIndicator(strokeWidth: 2, color: fg),
+                  )
+                : Text(
+                    text,
+                    style: ResponsiveHelper.bodyStyle(context).copyWith(
+                      color: fg,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
           ),
         ),
-        child: Text(
-          text,
-          style: ResponsiveHelper.bodyStyle(context).copyWith(
-            color: AppColors.grey700,
-            fontWeight: FontWeight.w600,
-          ),
-        ),
-      );
-    }
-
-    return ElevatedButton(
-      onPressed: isLoading ? null : onPressed,
-      style: ElevatedButton.styleFrom(
-        backgroundColor: backgroundColor ?? theme.primaryColor,
-        foregroundColor: foregroundColor ?? AppColors.surface,
-        padding: EdgeInsets.symmetric(
-          vertical: ResponsiveHelper.spacing(context, 16),
-        ),
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(12),
-        ),
-        elevation: 0,
       ),
-      child: isLoading
-          ? SizedBox(
-              height: ResponsiveHelper.iconSize(context, 20),
-              width: ResponsiveHelper.iconSize(context, 20),
-              child: CircularProgressIndicator(
-                strokeWidth: 2,
-                color: AppColors.surface,
-              ),
-            )
-          : Text(
-              text,
-              style: ResponsiveHelper.bodyStyle(context).copyWith(
-                color: foregroundColor ?? AppColors.surface,
-                fontWeight: FontWeight.bold,
-              ),
-            ),
     );
   }
 }
@@ -446,7 +428,7 @@ class StyledDialogInfoCard extends StatelessWidget {
     super.key,
     required this.message,
     this.icon = Icons.info_outline,
-    this.color = Colors.blue,
+    this.color = AppColors.info,
   });
 
   /// Info 카드 (파란색)

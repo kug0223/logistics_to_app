@@ -3,6 +3,8 @@ import '../main.dart';
 import '../theme/app_colors.dart';
 
 class ToastHelper {
+  static OverlayEntry? _currentEntry;
+
   static void showSuccess(String message) => _show(
         message: message,
         backgroundColor: AppColors.success,
@@ -34,11 +36,64 @@ class ToastHelper {
     required IconData icon,
     Duration duration = const Duration(seconds: 2),
   }) {
-    scaffoldMessengerKey.currentState
-      ?..hideCurrentSnackBar()
-      ..showSnackBar(
-        SnackBar(
-          content: Row(
+    final overlay = navigatorKey.currentState?.overlay;
+    if (overlay == null) return;
+
+    _currentEntry?.remove();
+    _currentEntry = null;
+
+    late OverlayEntry entry;
+    entry = OverlayEntry(
+      builder: (_) => _ToastWidget(
+        message: message,
+        backgroundColor: backgroundColor,
+        icon: icon,
+      ),
+    );
+    _currentEntry = entry;
+    overlay.insert(entry);
+
+    Future.delayed(duration, () {
+      if (entry.mounted) entry.remove();
+      if (_currentEntry == entry) _currentEntry = null;
+    });
+  }
+}
+
+class _ToastWidget extends StatelessWidget {
+  final String message;
+  final Color backgroundColor;
+  final IconData icon;
+
+  const _ToastWidget({
+    required this.message,
+    required this.backgroundColor,
+    required this.icon,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final bottomPadding = MediaQuery.of(context).padding.bottom;
+    return Positioned(
+      bottom: 24 + bottomPadding,
+      left: 16,
+      right: 16,
+      child: Material(
+        color: Colors.transparent,
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+          decoration: BoxDecoration(
+            color: backgroundColor,
+            borderRadius: BorderRadius.circular(12),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withValues(alpha: 0.2),
+                blurRadius: 8,
+                offset: const Offset(0, 2),
+              ),
+            ],
+          ),
+          child: Row(
             children: [
               Icon(icon, color: AppColors.textOnDark, size: 20),
               const SizedBox(width: 12),
@@ -54,14 +109,8 @@ class ToastHelper {
               ),
             ],
           ),
-          backgroundColor: backgroundColor,
-          duration: duration,
-          behavior: SnackBarBehavior.floating,
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(12),
-          ),
-          margin: const EdgeInsets.fromLTRB(16, 0, 16, 24),
         ),
-      );
+      ),
+    );
   }
 }

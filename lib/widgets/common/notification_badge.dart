@@ -1,4 +1,5 @@
-import 'package:flutter/material.dart';
+﻿import 'package:flutter/material.dart';
+import '../../theme/app_colors.dart';
 import 'package:provider/provider.dart';
 import '../../providers/notification_provider.dart';
 import '../../utils/responsive_helper.dart';
@@ -34,7 +35,7 @@ class NotificationBadge extends StatelessWidget {
               child: Container(
                 padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 4)),
                 decoration: const BoxDecoration(
-                  color: Colors.red,
+                  color: AppColors.error,
                   shape: BoxShape.circle,
                 ),
                 constraints: BoxConstraints(

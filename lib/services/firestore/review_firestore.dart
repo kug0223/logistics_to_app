@@ -87,7 +87,7 @@
       
       double totalRating = 0;
       for (var doc in reviews.docs) {
-        totalRating += (doc.data()['rating'] ?? 0) as int;
+        totalRating += ((doc.data()['rating'] ?? 0) as num).toDouble();
       }
       
       final avgRating = totalRating / reviews.docs.length;

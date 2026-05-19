@@ -89,7 +89,7 @@ class TOModel {
     this.totalRequired = 0,
     this.totalConfirmed = 0,
     this.totalPending = 0,
-    this.status = 'ACTIVE',
+    this.status = TOStatus.active,
     this.statusUpdatedAt,
     this.isManualClosed = false,
     this.closedAt,
@@ -133,7 +133,7 @@ class TOModel {
       totalRequired: data['totalRequired'] as int? ?? 0,
       totalConfirmed: data['totalConfirmed'] as int? ?? 0,
       totalPending: data['totalPending'] as int? ?? 0,
-      status: data['status'] as String? ?? 'ACTIVE',
+      status: data['status'] as String? ?? TOStatus.active,
       statusUpdatedAt: (data['statusUpdatedAt'] as Timestamp?)?.toDate(),
       isManualClosed: data['isManualClosed'] as bool? ?? false,
       closedAt: (data['closedAt'] as Timestamp?)?.toDate(),
@@ -303,7 +303,7 @@ class TOModel {
   // ── 상태 헬퍼 ─────────────────────────────────────
 
   bool get isFull => totalRequired > 0 && totalConfirmed >= totalRequired;
-  bool get isActive => status == 'ACTIVE';
+  bool get isActive => status == TOStatus.active;
   bool get isScheduledPublish => publishMode == 'scheduled';
 
   bool get isPendingPublish {
@@ -311,12 +311,14 @@ class TOModel {
     return DateTime.now().isBefore(publishAt!);
   }
 
-  bool get isClosed => isManualClosed || isFull || status == 'CLOSED';
+  // isManualClosed는 메타데이터 (누가 닫았나)일 뿐 — 닫힘 여부는 status 필드만 사용
+  bool get isClosed =>
+      isFull || status == TOStatus.closed || status == TOStatus.expired;
 
   String get calculatedStatus {
-    if (isManualClosed) return 'CLOSED';
-    if (isFull) return 'FULL';
-    return 'ACTIVE';
+    if (isManualClosed) return TOStatus.closed;
+    if (isFull) return TOStatus.full;
+    return TOStatus.active;
   }
 
   // ── contract 전용 ─────────────────────────────────
@@ -445,4 +447,18 @@ class TOModel {
   /// 구 그룹 시간 범위 설정 — no-op (TO는 불변 객체, 이 필드 제거됨)
   // ignore: use_setters_to_change_properties
   void setTimeRange(String? minStart, String? maxEnd) {}
+}
+
+/// TO Firestore 상태 상수 (대문자 — TO 컬렉션 convention)
+abstract class TOStatus {
+  static const String active    = 'ACTIVE';
+  static const String closed    = 'CLOSED';
+  static const String full      = 'FULL';
+  static const String expired   = 'EXPIRED';
+  static const String scheduled = 'SCHEDULED';
+
+  /// 모집 중 상태 그룹 (Firestore whereIn 쿼리용)
+  static const List<String> openStates   = [active, full, scheduled];
+  /// 마감 상태 그룹
+  static const List<String> closedStates = [closed, expired];
 }

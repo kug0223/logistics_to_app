@@ -1,10 +1,11 @@
-import 'package:flutter/material.dart';
+﻿import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import '../../../../utils/responsive_helper.dart';
 import '../../../../utils/toast_helper.dart';
 import '../../../../theme/app_colors.dart';
 import '../../../../widgets/pickers/date_picker_bottom_sheet.dart';
 import '../../../../widgets/pickers/time_picker_bottom_sheet.dart';
+import '../../../../widgets/app_select_field.dart';
 import 'to_section_container.dart';
 
 /// ✨ TO 마감 설정 섹션
@@ -100,8 +101,6 @@ class TODeadlineSection extends StatelessWidget {
 
   /// 단기 TO: N시간 전 마감
   Widget _buildHoursBeforeDeadline(BuildContext context) {
-    final theme = Theme.of(context);
-    
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -151,94 +150,17 @@ class TODeadlineSection extends StatelessWidget {
         
         SizedBox(height: ResponsiveHelper.spacing(context, 20)),
         
-        // 시간 선택 카드
-        Container(
-          padding: ResponsiveHelper.cardPadding(context),
-          decoration: BoxDecoration(
-            color: AppColors.grey50,
-            borderRadius: BorderRadius.circular(12),
-            border: Border.all(color: AppColors.border),
-          ),
-          child: Row(
-            children: [
-              // 아이콘
-              Container(
-                padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 10)),
-                decoration: BoxDecoration(
-                  color: theme.primaryColor.withValues(alpha: 0.1),
-                  borderRadius: BorderRadius.circular(10),
-                ),
-                child: Icon(
-                  Icons.schedule,
-                  color: theme.primaryColor,
-                  size: ResponsiveHelper.iconSize(context, 22),
-                ),
-              ),
-              
-              SizedBox(width: ResponsiveHelper.spacing(context, 16)),
-              
-              // 텍스트
-              Text(
-                '업무 시작',
-                style: ResponsiveHelper.bodyStyle(context).copyWith(
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-              
-              SizedBox(width: ResponsiveHelper.spacing(context, 12)),
-              
-              // 드롭다운
-              Expanded(
-                child: Container(
-                  padding: EdgeInsets.symmetric(
-                    horizontal: ResponsiveHelper.spacing(context, 12),
-                    vertical: ResponsiveHelper.spacing(context, 4),
-                  ),
-                  decoration: BoxDecoration(
-                    color: AppColors.surface,
-                    borderRadius: BorderRadius.circular(10),
-                    border: Border.all(color: theme.primaryColor),
-                  ),
-                  child: DropdownButton<int>(
-                    value: hoursBeforeStart,
-                    underline: const SizedBox(),
-                    isExpanded: true,
-                    icon: Icon(
-                      Icons.keyboard_arrow_down,
-                      color: theme.primaryColor,
-                    ),
-                    style: ResponsiveHelper.bodyStyle(context).copyWith(
-                      color: theme.primaryColor,
-                      fontWeight: FontWeight.bold,
-                    ),
-                    items: List.generate(24, (index) => index + 1)
-                        .map((hour) => DropdownMenuItem(
-                              value: hour,
-                              child: Text(
-                                '$hour시간 전',
-                                style: ResponsiveHelper.bodyStyle(context).copyWith(
-                                  color: AppColors.textPrimary,
-                                ),
-                              ),
-                            ))
-                        .toList(),
-                    onChanged: onHoursChanged != null 
-                        ? (value) => onHoursChanged!(value!)
-                        : null,
-                  ),
-                ),
-              ),
-              
-              SizedBox(width: ResponsiveHelper.spacing(context, 12)),
-              
-              Text(
-                '마감',
-                style: ResponsiveHelper.bodyStyle(context).copyWith(
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-            ],
-          ),
+        AppSelectField<int>(
+          value: hoursBeforeStart,
+          hintText: '마감 기준 시간 선택',
+          sheetTitle: '마감 시간 선택',
+          items: List.generate(24, (i) => i + 1),
+          labelOf: (h) => '$h시간 전 마감',
+          prefixIcon: Icons.schedule,
+          enabled: onHoursChanged != null,
+          onChanged: (value) {
+            if (value != null) onHoursChanged!(value);
+          },
         ),
         
         SizedBox(height: ResponsiveHelper.spacing(context, 12)),

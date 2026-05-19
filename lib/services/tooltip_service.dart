@@ -1,4 +1,4 @@
-// lib/services/tooltip_service.dart
+﻿// lib/services/tooltip_service.dart
 
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -271,7 +271,7 @@ class TooltipContents {
         '같은 지원자는 월 1회만 작성 가능해요.',
       ],
       icon: Icons.rate_review,
-      iconColor: Colors.amber,
+      iconColor: AppColors.amber,
     );
   }
 

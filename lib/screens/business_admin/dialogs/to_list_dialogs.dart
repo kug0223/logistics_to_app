@@ -41,6 +41,7 @@ class TOListDialogs {
       }
     }
 
+    if (!context.mounted) return;
     final confirmed = await DialogHelper.showDeleteConfirm(
       context,
       itemName: 'TO',
@@ -72,7 +73,7 @@ class TOListDialogs {
           Container(
             padding: ResponsiveHelper.cardPadding(context),  // ⭐ 변경
             decoration: BoxDecoration(
-              color: Colors.orange.withValues(alpha: 0.1),
+              color: AppColors.warningBg,
               borderRadius: BorderRadius.circular(8),
             ),
             child: Column(
@@ -99,7 +100,7 @@ class TOListDialogs {
         ElevatedButton(
           onPressed: () => Navigator.pop(context, true),
           style: ElevatedButton.styleFrom(
-            backgroundColor: Colors.orange,
+            backgroundColor: AppColors.warning,
             foregroundColor: Colors.white,
           ),
           child: const Text('마감'),
@@ -108,12 +109,14 @@ class TOListDialogs {
     );
 
     if (confirmed != true) return;
+    if (!context.mounted) return;
 
     DialogHelper.showLoading(context, message: '처리 중...');
 
     try {
       final success = await firestoreService.closeTOManually(to.id, adminUID);
 
+      if (!context.mounted) return;
       Navigator.pop(context); // 로딩 닫기
 
       if (success) {
@@ -123,7 +126,7 @@ class TOListDialogs {
         ToastHelper.showError('TO 마감에 실패했습니다.');
       }
     } catch (e) {
-      Navigator.pop(context);
+      if (context.mounted) Navigator.pop(context);
       debugPrint('❌ TO 마감 실패: $e');
       ToastHelper.showError('TO 마감 중 오류가 발생했습니다.');
     }
@@ -175,12 +178,14 @@ class TOListDialogs {
     );
 
     if (confirmed != true) return;
+    if (!context.mounted) return;
 
     DialogHelper.showLoading(context, message: '재오픈 중...');
 
     try {
       final success = await firestoreService.reopenTO(to.id, adminUID);
 
+      if (!context.mounted) return;
       Navigator.pop(context);
 
       if (success) {
@@ -190,7 +195,7 @@ class TOListDialogs {
         ToastHelper.showError('TO 재오픈에 실패했습니다.');
       }
     } catch (e) {
-      Navigator.pop(context);
+      if (context.mounted) Navigator.pop(context);
       debugPrint('❌ TO 재오픈 실패: $e');
       ToastHelper.showError('TO 재오픈 중 오류가 발생했습니다.');
     }

@@ -1,8 +1,11 @@
-import 'package:flutter/material.dart';
+﻿import 'package:flutter/material.dart';
 
 // Models
 import '../../../models/ui/admin_to_list_ui_models.dart';
 import '../../../models/core/work_detail_data.dart';
+
+// Widgets
+import '../../common/app_menu_sheet.dart';
 
 // Helper
 import '../../../utils/toast_helper.dart';
@@ -14,6 +17,7 @@ import '../../../services/firestore_service.dart';
 import '../../../utils/responsive_helper.dart';
 import '../../../utils/navigation_helper.dart';
 import '../../../utils/format_helper.dart';
+import '../../../utils/close_state_utils.dart';
 
 // Theme
 import '../../../theme/app_colors.dart';
@@ -72,46 +76,17 @@ class _TOItemCardState extends State<TOItemCard> {
     final to = widget.toItem.to;
     final theme = Theme.of(context);
     
-    // 인원 계산 (workDetails 로드 안됐으면 TOItem 통계 사용)
-    int confirmed = 0;
-    int pending = 0;
-    int required = 0;
+    final (:confirmed, :pending, :required) = widget.toItem.resolveStats();
+    final isFull = widget.toItem.resolvedIsFull;
     
-    if (!widget.toItem.isWorkDetailLoaded || widget.toItem.workDetails.isEmpty) {
-      // ✨ 아직 상세 로드 안됨 - TOItem의 통계 사용
-      confirmed = widget.toItem.confirmedCount;
-      pending = widget.toItem.pendingCount;
-      required = widget.toItem.totalRequired;
-    } else {
-      // 상세 로드됨 - workDetails에서 계산
-      for (var work in widget.toItem.workDetails) {
-        // ✅ workDetailId로 조회
-        final stats = widget.toItem.workDetailStats?[work.id];
-        confirmed += (stats?['confirmed'] ?? 0);
-        pending += (stats?['pending'] ?? 0);
-        required += work.requiredCount;
-      }
-    }
-    
-    final isFull = confirmed >= required && required > 0;
-    
-    // ✅ 전체 마감 여부 — 슬롯 수동마감 > WorkDetail 상태 > DB status 순으로 판단
-    bool allClosed;
-
-    if (widget.toItem.slot?.isManualClosed == true) {
-      allClosed = true;
-    } else if (widget.toItem.isWorkDetailLoaded && widget.toItem.workDetails.isNotEmpty) {
-      allClosed = widget.toItem.workDetails.every((work) =>
-          work.isClosed || work.isTimeExpired || work.isFull);
-    } else {
-      if (to.status == 'CLOSED' || to.status == 'EXPIRED' || to.status == 'FULL') {
-        allClosed = true;
-      } else if (to.isManualClosed) {
-        allClosed = true;
-      } else {
-        allClosed = false;
-      }
-    }
+    // 전체 마감 여부 — CloseStateUtils로 통일 판단
+    final allClosed = CloseStateUtils.isToItemClosed(
+      widget.toItem,
+      widget.groupItem.masterTO,
+      DateTime.now(),
+      localConfirmed: confirmed,
+      localRequired: required,
+    );
     // 상태별 컬러 (장기/단기 구분)
     Color statusColor;
     if (allClosed) {
@@ -531,7 +506,7 @@ class _TOItemCardState extends State<TOItemCard> {
 
   /// 팝업 메뉴
   Widget _buildPopupMenu(BuildContext context) {
-    return PopupMenuButton<String>(
+    return IconButton(
       icon: Icon(
         Icons.more_vert,
         size: ResponsiveHelper.iconSize(context, 18),
@@ -539,81 +514,52 @@ class _TOItemCardState extends State<TOItemCard> {
       ),
       padding: EdgeInsets.zero,
       tooltip: '메뉴',
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(12),
-      ),
-      onSelected: (value) => _handleMenuAction(context, value),
-      itemBuilder: (context) => [
-        PopupMenuItem(
-          value: 'preview',
-          child: Row(
-            children: [
-              Icon(
-                Icons.visibility,
-                size: ResponsiveHelper.iconSize(context, 18),
-                color: AppColors.info,
-              ),
-              SizedBox(width: ResponsiveHelper.spacing(context, 12)),
-              const Text('공고 상세보기'),
-            ],
+      onPressed: () => _showMenuSheet(context),
+    );
+  }
+
+  void _showMenuSheet(BuildContext context) {
+    final primaryColor = Theme.of(context).primaryColor;
+    AppMenuSheet.show(
+      context: context,
+      itemGroups: [
+        [
+          AppMenuSheetItem(
+            icon: Icons.visibility,
+            label: '공고 상세보기',
+            color: AppColors.info,
+            onTap: () => _handleMenuAction(context, 'preview'),
           ),
-        ),
-        PopupMenuItem(
-          value: 'edit',
-          child: Row(
-            children: [
-              Icon(
-                Icons.edit,
-                size: ResponsiveHelper.iconSize(context, 18),
-                color: AppColors.warning,
-              ),
-              SizedBox(width: ResponsiveHelper.spacing(context, 12)),
-              const Text('수정'),
-            ],
+        ],
+        [
+          AppMenuSheetItem(
+            icon: Icons.edit,
+            label: '수정',
+            color: AppColors.warning,
+            onTap: () => _handleMenuAction(context, 'edit'),
           ),
-        ),
-        PopupMenuItem(
-          value: 'delete',
-          child: Row(
-            children: [
-              Icon(
-                Icons.delete,
-                size: ResponsiveHelper.iconSize(context, 18),
-                color: AppColors.error,
-              ),
-              SizedBox(width: ResponsiveHelper.spacing(context, 12)),
-              const Text('삭제'),
-            ],
+          AppMenuSheetItem(
+            icon: Icons.delete,
+            label: '삭제',
+            color: AppColors.error,
+            isDanger: true,
+            onTap: () => _handleMenuAction(context, 'delete'),
           ),
-        ),
-        PopupMenuItem(
-          value: 'confirmedList',
-          child: Row(
-            children: [
-              Icon(
-                Icons.check_circle_outline,
-                size: ResponsiveHelper.iconSize(context, 18),
-                color: AppColors.success,
-              ),
-              SizedBox(width: ResponsiveHelper.spacing(context, 12)),
-              const Text('확정명단'),
-            ],
+        ],
+        [
+          AppMenuSheetItem(
+            icon: Icons.check_circle_outline,
+            label: '확정명단',
+            color: AppColors.success,
+            onTap: () => _handleMenuAction(context, 'confirmedList'),
           ),
-        ),
-        PopupMenuItem(
-          value: 'manageWorkDetails',
-          child: Row(
-            children: [
-              Icon(
-                Icons.assignment_turned_in,
-                size: ResponsiveHelper.iconSize(context, 18),
-                color: AppColors.purple,
-              ),
-              SizedBox(width: ResponsiveHelper.spacing(context, 12)),
-              const Text('업무별 마감'),
-            ],
+          AppMenuSheetItem(
+            icon: Icons.assignment_turned_in,
+            label: '업무별 마감',
+            color: primaryColor,
+            onTap: () => _handleMenuAction(context, 'manageWorkDetails'),
           ),
-        ),
+        ],
       ],
     );
   }
@@ -622,14 +568,12 @@ class _TOItemCardState extends State<TOItemCard> {
   Future<void> _handleMenuAction(BuildContext context, String value) async {
     switch (value) {
       case 'preview':
-        // ✅ WorkDetails 로드 확인 후 미리보기 열기
         if (!widget.toItem.isWorkDetailLoaded || widget.toItem.workDetails.isEmpty) {
           showDialog(
             context: context,
             barrierDismissible: false,
             builder: (_) => const Center(child: CircularProgressIndicator()),
           );
-          
           try {
             final result = await widget.firestoreService.loadTOWorkDetails(widget.toItem.to, slotId: widget.toItem.slot?.id, slotWorkDetails: widget.toItem.slot?.workDetails);
             widget.toItem.setWorkDetails(
@@ -637,26 +581,33 @@ class _TOItemCardState extends State<TOItemCard> {
               result['workStats'] as Map<String, Map<String, int>>,
             );
           } catch (e) {
-            Navigator.pop(context);
+            if (!mounted) return;
+            Navigator.pop(this.context);
             ToastHelper.showError('데이터를 불러오는데 실패했습니다.');
             return;
           }
-          
-          Navigator.pop(context);
+          if (!mounted) return;
+          Navigator.pop(this.context);
         }
-        
+        if (!mounted) return;
+        final resolvedStats = widget.toItem.resolveStats();
         Navigator.push(
-          context,
+          this.context,
           MaterialPageRoute(
             builder: (_) => JobPostingScreen(
               to: widget.toItem.to,
               workDetails: widget.toItem.workDetails,
               mode: TODetailMode.adminPreview,
+              slotDate: widget.toItem.slot?.date,
+              slotTotalRequired: resolvedStats.required,
+              slotConfirmedCount: resolvedStats.confirmed,
+              slotPendingCount: resolvedStats.pending,
+              workDetailStats: widget.toItem.workDetailStats,
             ),
           ),
         );
         break;
-        
+
       case 'edit':
         await NavigationHelper.push<bool>(
           context,
@@ -672,20 +623,18 @@ class _TOItemCardState extends State<TOItemCard> {
           },
         );
         break;
-        
+
       case 'delete':
         widget.dialogs.showDeleteTODialog(widget.toItem);
         break;
-        
-case 'confirmedList':
-        // ✅ WorkDetails 로드 확인 후 다이얼로그 열기
+
+      case 'confirmedList':
         if (!widget.toItem.isWorkDetailLoaded || widget.toItem.workDetails.isEmpty) {
           showDialog(
             context: context,
             barrierDismissible: false,
             builder: (_) => const Center(child: CircularProgressIndicator()),
           );
-          
           try {
             final result = await widget.firestoreService.loadTOWorkDetails(widget.toItem.to, slotId: widget.toItem.slot?.id, slotWorkDetails: widget.toItem.slot?.workDetails);
             widget.toItem.setWorkDetails(
@@ -693,16 +642,17 @@ case 'confirmedList':
               result['workStats'] as Map<String, Map<String, int>>,
             );
           } catch (e) {
-            Navigator.pop(context);
+            if (!mounted) return;
+            Navigator.pop(this.context);
             ToastHelper.showError('데이터를 불러오는데 실패했습니다.');
             return;
           }
-          
-          Navigator.pop(context);
+          if (!mounted) return;
+          Navigator.pop(this.context);
         }
-        
+        if (!mounted) return;
         ConfirmedListDialog(
-          context: context,
+          context: this.context,
           toItem: widget.toItem,
           firestoreService: widget.firestoreService,
           slotId: widget.toItem.slot?.id,
@@ -712,17 +662,14 @@ case 'confirmedList':
           },
         ).show();
         break;
-        
+
       case 'manageWorkDetails':
-        // ✅ WorkDetails 로드 확인 후 다이얼로그 열기
         if (!widget.toItem.isWorkDetailLoaded || widget.toItem.workDetails.isEmpty) {
-          // 로딩 표시
           showDialog(
             context: context,
             barrierDismissible: false,
             builder: (_) => const Center(child: CircularProgressIndicator()),
           );
-          
           try {
             final result = await widget.firestoreService.loadTOWorkDetails(widget.toItem.to, slotId: widget.toItem.slot?.id, slotWorkDetails: widget.toItem.slot?.workDetails);
             widget.toItem.setWorkDetails(
@@ -730,22 +677,23 @@ case 'confirmedList':
               result['workStats'] as Map<String, Map<String, int>>,
             );
           } catch (e) {
-            Navigator.pop(context); // 로딩 닫기
+            if (!mounted) return;
+            Navigator.pop(this.context);
             ToastHelper.showError('데이터를 불러오는데 실패했습니다.');
             return;
           }
-          
-          Navigator.pop(context); // 로딩 닫기
+          if (!mounted) return;
+          Navigator.pop(this.context);
         }
-        
+        if (!mounted) return;
         WorkDetailManagementDialog(
-          context: context,
+          context: this.context,
           toItem: widget.toItem,
           firestoreService: widget.firestoreService,
           onComplete: widget.onChanged,
           onLocalStatsChanged: () {
             if (mounted) setState(() {});
-            widget.onLocalStatsChanged?.call();  // ✅ 상위로 전파
+            widget.onLocalStatsChanged?.call();
           },
         ).show();
         break;

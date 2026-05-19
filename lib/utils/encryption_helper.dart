@@ -19,11 +19,14 @@ class EncryptionHelper {
 
   static enc.Encrypter? _encrypter;
   static enc.IV? _iv;
+  static bool _keyMissing = false;
 
   static void _init() {
     if (_encrypter != null) return;
+    if (_keyMissing) return;
 
     if (_keyString.isEmpty || _ivString.isEmpty) {
+      _keyMissing = true;
       debugPrint('❌ [EncryptionHelper] 암호화 키가 설정되지 않았습니다!');
       debugPrint('   launch.json 또는 빌드 명령어에 --dart-define 확인하세요');
       return;

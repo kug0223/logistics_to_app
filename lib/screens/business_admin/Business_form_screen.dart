@@ -33,6 +33,7 @@ import '../../utils/navigation_helper.dart';
 import '../../utils/format_helper.dart';
 import '../../theme/app_colors.dart';
 import '../../widgets/dialogs/styled_dialog.dart';
+import '../../widgets/app_select_field.dart';
 
 /// 🏢 사업장 등록/수정 화면 (Stepper 방식)
 class BusinessFormScreen extends StatefulWidget {
@@ -839,12 +840,23 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
           Divider(height: ResponsiveHelper.spacing(context, 16)),
 
           // 복장
-          _buildDropdownRow(
-            context: context,
-            label: '복장',
-            icon: Icons.checkroom,
+          Row(
+            children: [
+              Icon(Icons.checkroom, color: Theme.of(context).primaryColor),
+              SizedBox(width: ResponsiveHelper.spacing(context, 12)),
+              Text(
+                '복장',
+                style: ResponsiveHelper.bodyStyle(context).copyWith(fontWeight: FontWeight.bold),
+              ),
+            ],
+          ),
+          SizedBox(height: ResponsiveHelper.spacing(context, 8)),
+          AppSelectField<String>(
             value: _uniformProvided,
+            hintText: '복장을 선택하세요',
+            sheetTitle: '복장 선택',
             items: _uniformOptions,
+            labelOf: (v) => v,
             onChanged: (value) => setState(() => _uniformProvided = value),
           ),
 
@@ -911,38 +923,6 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
           ),
         ],
       ),
-    );
-  }
-
-  /// 드롭다운 행
-  Widget _buildDropdownRow({
-    required BuildContext context,
-    required String label,
-    required IconData icon,
-    required String? value,
-    required List<String> items,
-    required Function(String?) onChanged,
-  }) {
-    return Row(
-      children: [
-        Icon(icon, color: Theme.of(context).primaryColor),
-        SizedBox(width: ResponsiveHelper.spacing(context, 12)),
-        Expanded(
-          child: Text(
-            label,
-            style: ResponsiveHelper.bodyStyle(context).copyWith(
-              fontWeight: FontWeight.bold,
-            ),
-          ),
-        ),
-        DropdownButton<String>(
-          value: value,
-          items: items.map((item) {
-            return DropdownMenuItem(value: item, child: Text(item));
-          }).toList(),
-          onChanged: onChanged,
-        ),
-      ],
     );
   }
 
@@ -1016,7 +996,7 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
               child: Container(
                 padding: const EdgeInsets.all(4),
                 decoration: const BoxDecoration(
-                  color: Colors.red,
+                  color: AppColors.error,
                   shape: BoxShape.circle,
                 ),
                 child: const Icon(Icons.close, size: 16, color: Colors.white),

@@ -3,6 +3,17 @@ import 'wage_detail_model.dart';
 
 /// 출근 기록 모델
 class AttendanceModel {
+  // ── DB status 상수 ──────────────────────────────────────────
+  static const String statusPresent    = 'present';
+  static const String statusLate       = 'late';
+  static const String statusEarlyLeave = 'early_leave';
+  static const String statusAbsent     = 'absent';
+  static const String statusNoShow     = 'NO_SHOW';
+
+  // ── wageStatus 상수 ─────────────────────────────────────────
+  static const String wagePending    = 'pending';
+  static const String wageCalculated = 'calculated';
+  static const String wageConfirmed  = 'confirmed';
   final String id;
   final String applicationId;    // 소속 지원서 ID
   final String userId;
@@ -206,19 +217,33 @@ class AttendanceModel {
   bool get hasCheckedOut => checkOut != null;
 
   /// 지각 여부
-  bool get isLate => status == 'late';
+  bool get isLate => status == statusLate;
+
+  /// 조퇴 여부
+  bool get isEarlyLeave => status == statusEarlyLeave;
+
+  /// 노쇼 여부
+  bool get isNoShow => status == statusNoShow;
+
+  /// 결근 여부
+  bool get isAbsent => status == statusAbsent;
+
+  /// 퇴근 미체크 여부 (출근했지만 퇴근 기록 없음, 노쇼 제외)
+  bool get isMissedCheckout => hasCheckedIn && !hasCheckedOut && !isNoShow;
 
   /// 출근 상태 라벨
   String get statusLabel {
     switch (status) {
-      case 'present':
+      case statusPresent:
         return '출근';
-      case 'late':
+      case statusLate:
         return '지각';
-      case 'absent':
+      case statusAbsent:
         return '결근';
-      case 'early_leave':
+      case statusEarlyLeave:
         return '조퇴';
+      case statusNoShow:
+        return '노쇼';
       default:
         return '미출근';
     }
@@ -227,22 +252,22 @@ class AttendanceModel {
   // ========== 급여 관련 Getter ==========
   
   /// 급여 미계산 상태
-  bool get isWagePending => wageStatus == 'pending';
-  
+  bool get isWagePending => wageStatus == wagePending;
+
   /// 급여 1차 확정 상태 (관리자 검토중)
-  bool get isWageCalculated => wageStatus == 'calculated';
-  
+  bool get isWageCalculated => wageStatus == wageCalculated;
+
   /// 급여 최종 확정 상태 (지원자 노출)
-  bool get isWageConfirmed => wageStatus == 'confirmed';
-  
+  bool get isWageConfirmed => wageStatus == wageConfirmed;
+
   /// 급여 상태 라벨
   String get wageStatusLabel {
     switch (wageStatus) {
-      case 'pending':
+      case wagePending:
         return '미계산';
-      case 'calculated':
+      case wageCalculated:
         return '검토중';
-      case 'confirmed':
+      case wageConfirmed:
         return '확정';
       default:
         return '미계산';

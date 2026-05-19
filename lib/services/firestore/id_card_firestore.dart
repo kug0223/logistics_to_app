@@ -178,36 +178,49 @@ extension IdCardFirestore on FirestoreService {
 
 
 
-  /// 신분증 열람 권한 확인 (pending, approved 모두 조회)
+  /// 신분증 열람 권한 확인 (최신 요청 1건 반환 — 상태 무관)
   Future<IdCardAccessRequestModel?> checkIdCardAccess({
     required String requesterId,
     required String targetUserId,
   }) async {
     try {
-      // ✅ pending 또는 approved 상태 조회 (최신순)
       final snapshot = await _firestore
           .collection('idCardAccessRequests')
           .where('requesterId', isEqualTo: requesterId)
           .where('targetUserId', isEqualTo: targetUserId)
-          .where('status', whereIn: ['pending', 'approved'])
           .orderBy('requestedAt', descending: true)
           .limit(1)
           .get(const GetOptions(source: Source.server));
-      
+
       if (snapshot.docs.isEmpty) return null;
-      
-      final request = IdCardAccessRequestModel.fromFirestore(snapshot.docs.first);
-      
-      // 승인된 경우 만료 확인
+
+      var request = IdCardAccessRequestModel.fromFirestore(snapshot.docs.first);
+
+      // approved 상태인데 만료됐으면 Firestore 업데이트 + expired로 반환
       if (request.status == IdCardAccessStatus.approved && request.isExpired) {
-        // 만료 상태로 업데이트
         await _firestore
             .collection('idCardAccessRequests')
             .doc(request.id)
             .update({'status': 'expired'});
-        return null;
+        request = IdCardAccessRequestModel(
+          id: request.id,
+          requesterId: request.requesterId,
+          requesterName: request.requesterName,
+          requesterBusinessId: request.requesterBusinessId,
+          requesterBusinessName: request.requesterBusinessName,
+          targetUserId: request.targetUserId,
+          targetUserName: request.targetUserName,
+          reason: request.reason,
+          customReason: request.customReason,
+          status: IdCardAccessStatus.expired,
+          requestedAt: request.requestedAt,
+          respondedAt: request.respondedAt,
+          expiresAt: request.expiresAt,
+          applicationId: request.applicationId,
+          rejectionReason: request.rejectionReason,
+        );
       }
-      
+
       return request;
     } catch (e) {
       debugPrint('❌ 열람 권한 확인 실패: $e');

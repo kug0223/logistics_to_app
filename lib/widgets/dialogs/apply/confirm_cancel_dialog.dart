@@ -1,7 +1,7 @@
-// lib/widgets/dialogs/apply/confirm_cancel_dialog.dart
+﻿// lib/widgets/dialogs/apply/confirm_cancel_dialog.dart
 
 import 'package:flutter/material.dart';
-import 'package:intl/intl.dart';
+import '../../../../utils/format_helper.dart';
 import '../../../../utils/responsive_helper.dart';
 import '../../../../theme/app_colors.dart';
 import '../styled_dialog.dart';
@@ -79,8 +79,6 @@ class ConfirmCancelDialog extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final dateFormat = DateFormat('M/d (E)', 'ko_KR');
-
     return StyledDialog(
       title: '확정 취소 안내',
       icon: Icons.warning_amber_rounded,
@@ -90,7 +88,7 @@ class ConfirmCancelDialog extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           // 근무 정보 카드
-          _buildWorkInfoCard(context, theme, dateFormat),
+          _buildWorkInfoCard(context, theme),
           
           SizedBox(height: ResponsiveHelper.spacing(context, 16)),
           
@@ -128,7 +126,6 @@ class ConfirmCancelDialog extends StatelessWidget {
   Widget _buildWorkInfoCard(
     BuildContext context,
     ThemeData theme,
-    DateFormat dateFormat,
   ) {
     return Container(
       padding: ResponsiveHelper.cardPadding(context),
@@ -161,7 +158,7 @@ class ConfirmCancelDialog extends StatelessWidget {
               ),
               SizedBox(width: ResponsiveHelper.spacing(context, 6)),
               Text(
-                dateFormat.format(workDate),
+                FormatHelper.formatDate(workDate),
                 style: ResponsiveHelper.bodyStyle(context, color: AppColors.grey700),
               ),
               SizedBox(width: ResponsiveHelper.spacing(context, 16)),

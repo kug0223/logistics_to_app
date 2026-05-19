@@ -1,5 +1,6 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'work_detail_data.dart';
+import '../../utils/format_helper.dart';
 
 /// 슬롯 내 업무유형별 지원 현황 (key: workType)
 class SlotWorkTypeCount {
@@ -78,7 +79,7 @@ class SlotModel {
     required this.date,
     this.workDetails = const [],
     this.workTypeCounts = const {},
-    this.status = 'open',
+    this.status = SlotStatus.open,
     this.confirmedCount = 0,
     this.pendingCount = 0,
     this.applicationDeadline,
@@ -107,7 +108,7 @@ class SlotModel {
       date: (data['date'] as Timestamp).toDate(),
       workDetails: workDetails,
       workTypeCounts: workTypeCounts,
-      status: data['status'] as String? ?? 'open',
+      status: data['status'] as String? ?? SlotStatus.open,
       confirmedCount: data['confirmedCount'] as int? ?? 0,
       pendingCount: data['pendingCount'] as int? ?? 0,
       applicationDeadline:
@@ -190,9 +191,20 @@ class SlotModel {
 
   // ── 헬퍼 ──────────────────────────────────────────
 
-  bool get isOpen => status == 'open' && !isManualClosed;
-  bool get isFull => status == 'full';
-  bool get isClosed => isManualClosed || status == 'closed';
+  bool get isOpen => status == SlotStatus.open;
+  bool get isFull => status == SlotStatus.full;
+  // isManualClosed는 메타데이터 — 닫힘 여부는 status만 사용
+  bool get isClosed => status == SlotStatus.closed;
+
+  /// 슬롯 날짜(date)가 오늘 이전인지 여부
+  bool get isDatePast {
+    final today = DateTime.now();
+    return DateTime(date.year, date.month, date.day)
+        .isBefore(DateTime(today.year, today.month, today.day));
+  }
+
+  /// 수동마감·CF마감·인원충족·날짜경과 중 하나라도 해당하면 true (UI 상태 표시용)
+  bool get isEffectivelyClosed => isClosed || isFull || isDatePast;
 
   bool get isDeadlinePassed {
     if (applicationDeadline == null) return false;
@@ -215,20 +227,20 @@ class SlotModel {
   }
 
   /// 날짜 포맷 (예: "5/6 (수)")
-  String get formattedDate {
-    const weekdays = ['월', '화', '수', '목', '금', '토', '일'];
-    final w = weekdays[date.weekday - 1];
-    return '${date.month}/${date.day} ($w)';
-  }
+  String get formattedDate => FormatHelper.formatDate(date);
 
   /// 요일 (예: "수")
-  String get weekday {
-    const weekdays = ['월', '화', '수', '목', '금', '토', '일'];
-    return weekdays[date.weekday - 1];
-  }
+  String get weekday => FormatHelper.weekday(date);
 
   @override
   String toString() =>
       'SlotModel(id: $id, date: ${date.toIso8601String().substring(0, 10)}, '
       'status: $status, confirmed: $confirmedCount, pending: $pendingCount)';
+}
+
+/// Slot Firestore 상태 상수 (소문자 — slots 컬렉션 convention)
+abstract class SlotStatus {
+  static const String open   = 'open';
+  static const String full   = 'full';
+  static const String closed = 'closed';
 }

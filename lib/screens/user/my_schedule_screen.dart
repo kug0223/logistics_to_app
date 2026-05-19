@@ -7,6 +7,7 @@ import '../../providers/user_provider.dart';
 import '../../utils/toast_helper.dart';
 import '../../utils/calendar_helper.dart';
 import '../../utils/responsive_helper.dart';
+import '../../utils/format_helper.dart';
 import '../../widgets/common/loading_widget.dart';
 import '../../widgets/calendar/schedule_calendar.dart';
 import '../../widgets/calendar/schedule_card.dart';
@@ -224,7 +225,7 @@ class _MyScheduleScreenState extends State<MyScheduleScreen> {
                           child: Container(
                             padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 4)),
                             decoration: const BoxDecoration(
-                              color: Colors.red,
+                              color: AppColors.error,
                               shape: BoxShape.circle,
                             ),
                             constraints: BoxConstraints(
@@ -280,7 +281,7 @@ class _MyScheduleScreenState extends State<MyScheduleScreen> {
                         children: [
                           Icon(
                             Icons.list_alt,
-                            color: _selectedFilter == 'ALL' ? theme.primaryColor : Colors.grey,
+                            color: _selectedFilter == 'ALL' ? theme.primaryColor : AppColors.grey500,
                           ),
                           SizedBox(width: ResponsiveHelper.spacing(context, 8)),
                           const Text('전체 보기'),
@@ -293,7 +294,7 @@ class _MyScheduleScreenState extends State<MyScheduleScreen> {
                         children: [
                           Icon(
                             Icons.check_circle,
-                            color: _selectedFilter == 'CONFIRMED' ? Colors.green : Colors.grey,
+                            color: _selectedFilter == 'CONFIRMED' ? AppColors.success : AppColors.grey500,
                           ),
                           SizedBox(width: ResponsiveHelper.spacing(context, 8)),
                           const Text('확정만 보기'),
@@ -306,7 +307,7 @@ class _MyScheduleScreenState extends State<MyScheduleScreen> {
                         children: [
                           Icon(
                             Icons.schedule,
-                            color: _selectedFilter == 'PENDING' ? Colors.orange : Colors.grey,
+                            color: _selectedFilter == 'PENDING' ? AppColors.warning : AppColors.grey500,
                           ),
                           SizedBox(width: ResponsiveHelper.spacing(context, 8)),
                           const Text('대기만 보기'),
@@ -336,7 +337,7 @@ class _MyScheduleScreenState extends State<MyScheduleScreen> {
           
           // 두 번째 줄: 현재 월 표시
           Text(
-            DateFormat('yyyy년 M월', 'ko_KR').format(_focusedDay),
+            FormatHelper.formatYearMonth(_focusedDay),
             style: ResponsiveHelper.bodyStyle(
               context,
               color: Colors.white.withValues(alpha: 0.9),
@@ -454,21 +455,21 @@ class _MyScheduleScreenState extends State<MyScheduleScreen> {
                       icon: Icons.schedule,
                       label: '대기',
                       value: '$pendingCount건',
-                      color: Colors.orange,
+                      color: AppColors.warning,
                     ),
                     Container(width: 1, height: 24, color: AppColors.grey200),
                     _buildCompactStatItem(
                       icon: Icons.check_circle,
                       label: '확정',
                       value: '$confirmedCount일',
-                      color: Colors.green,
+                      color: AppColors.success,
                     ),
                     Container(width: 1, height: 24, color: AppColors.grey200),
                     _buildCompactStatItem(
                       icon: Icons.directions_run,
                       label: '실근무',
                       value: '${CalendarHelper.getActualWorkDays(_attendances, _focusedDay)}일',
-                      color: Colors.teal,
+                      color: AppColors.teal,
                     ),
                   ],
                 ),
@@ -485,14 +486,14 @@ class _MyScheduleScreenState extends State<MyScheduleScreen> {
                       icon: Icons.payments,
                       label: '예상수입',
                       value: '${NumberFormat('#,###').format(totalIncome)}원',
-                      color: Colors.blue,
+                      color: AppColors.info,
                     ),
                     Container(width: 1, height: 24, color: AppColors.grey200),
                     _buildCompactStatItem(
                       icon: Icons.paid,
                       label: '확정수입',
                       value: '${NumberFormat('#,###').format(CalendarHelper.getConfirmedIncome(_attendances, _focusedDay))}원',
-                      color: Colors.green,
+                      color: AppColors.success,
                     ),
                   ],
                 ),
@@ -531,7 +532,7 @@ class _MyScheduleScreenState extends State<MyScheduleScreen> {
                   ),
                   SizedBox(width: ResponsiveHelper.spacing(context, 8)),
                   Text(
-                    DateFormat('M월 d일 (E)', 'ko_KR').format(_selectedDay!),
+                    FormatHelper.formatDateKorean(_selectedDay!),
                     style: ResponsiveHelper.bodyStyle(
                       context,
                       color: Theme.of(context).primaryColor,
@@ -586,12 +587,12 @@ class _MyScheduleScreenState extends State<MyScheduleScreen> {
     required IconData icon,
     required String label,
     required String value,
-    required MaterialColor color,
+    required Color color,
   }) {
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: [
-        Icon(icon, size: 16, color: color[600]),
+        Icon(icon, size: 16, color: color),
         SizedBox(width: 6),
         Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -609,7 +610,7 @@ class _MyScheduleScreenState extends State<MyScheduleScreen> {
               style: TextStyle(
                 fontSize: 13,
                 fontWeight: FontWeight.bold,
-                color: color[700],
+                color: color,
               ),
             ),
           ],
@@ -816,34 +817,6 @@ class _MyScheduleScreenState extends State<MyScheduleScreen> {
       default:
         return 6;
     }
-  }
-
-  /// Legend 아이템
-  Widget _buildLegendItem(Color color, String label, {required bool isLongTerm, bool isSmall = false}) {
-    return Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        if (isLongTerm)
-          Icon(Icons.star, size: isSmall ? 6 : 8, color: color)
-        else
-          Container(
-            width: isSmall ? 5 : 7,
-            height: isSmall ? 5 : 7,
-            decoration: BoxDecoration(
-              color: color,
-              shape: BoxShape.circle,
-            ),
-          ),
-        SizedBox(width: isSmall ? 3 : 4),
-        Text(
-          label,
-          style: TextStyle(
-            fontSize: isSmall ? 9 : 11,
-            color: AppColors.grey700,
-          ),
-        ),
-      ],
-    );
   }
 
   /// 고정근무 관리 다이얼로그 표시

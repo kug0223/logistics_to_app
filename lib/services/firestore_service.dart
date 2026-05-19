@@ -1,7 +1,7 @@
 ﻿import 'package:flutter/foundation.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_storage/firebase_storage.dart';
-import 'package:intl/intl.dart';
+import '../utils/format_helper.dart';
 import '../models/core/user_model.dart';
 import '../models/core/to_model.dart';
 import '../models/core/slot_model.dart';
@@ -11,12 +11,16 @@ import '../models/ui/admin_to_list_ui_models.dart';
 import '../models/core/business_model.dart';
 import '../models/core/work_type_model.dart';
 import '../utils/toast_helper.dart';
+import '../utils/attendance_status_helper.dart';
 import '../models/core/business_work_type_model.dart';
 import '../models/core/attendance_model.dart';
 import '../models/core/schedule_change_request_model.dart';
 import '../models/core/review_model.dart';
 import '../models/core/id_card_access_request_model.dart';
 import '../models/core/notification_model.dart';
+import '../models/core/worker_location_model.dart';
+import '../utils/week_helper.dart';
+import '../utils/wage_calculator.dart';
 
 // ═══════════════════════════════════════════════════════════
 // Part 파일 선언
@@ -29,6 +33,7 @@ part 'firestore/attendance_firestore.dart';
 part 'firestore/notification_firestore.dart';
 part 'firestore/review_firestore.dart';
 part 'firestore/id_card_firestore.dart';
+part 'firestore/worker_location_firestore.dart';
 
 /// 배치 처리 결과
 class BatchResult {
@@ -59,8 +64,6 @@ class FirestoreService {
   final Map<String, DateTime> _userCacheTimestamps = {};
   final Duration _userCacheValidDuration = const Duration(hours: 1);
 
-  // 캐시 유효 시간
-  final Duration _cacheValidDuration = const Duration(minutes: 5);
   final Map<String, DateTime> _cacheTimestamps = {};
 
   // ═══════════════════════════════════════════════════════════
@@ -84,71 +87,6 @@ class FirestoreService {
   // 헬퍼 메서드들
   // ═══════════════════════════════════════════════════════════
   
-  /// 시간이 겹치는지 체크
-  bool _hasTimeOverlap(String s1, String e1, String s2, String e2) {
-    final start1 = _timeToMinutes(s1);
-    final end1 = _timeToMinutes(e1);
-    final start2 = _timeToMinutes(s2);
-    final end2 = _timeToMinutes(e2);
-    
-    return !(end1 <= start2 || end2 <= start1);
-  }
-  
-  /// 시간을 분 단위로 변환 (예: "09:30" → 570)
-  int _timeToMinutes(String time) {
-    final parts = time.split(':');
-    return int.parse(parts[0]) * 60 + int.parse(parts[1]);
-  }
-  
-  /// 특정 날짜에 근무하는지 확인 (장기 공고 고려)
-  bool _isWorkingOnDate(ApplicationModel app, DateTime targetDate) {
-    final isLongTerm = app.workDays != null && app.workDays!.isNotEmpty;
-    
-    if (!isLongTerm) {
-      return _isSameDate(app.workDate, targetDate);
-    }
-    
-    // 🔥 퇴사일이 있으면 그 날짜까지만
-    final endDate = app.actualResignDate ?? app.workEndDate;
-    if (endDate == null) return false;
-    
-    DateTime effectiveStartDate = app.workDate;
-    if (app.confirmedAt != null) {
-      final confirmedDate = DateTime(
-        app.confirmedAt!.year,
-        app.confirmedAt!.month,
-        app.confirmedAt!.day,
-      );
-      if (confirmedDate.isAfter(app.workDate)) {
-        effectiveStartDate = confirmedDate;
-      }
-    }
-    
-    final isInRange = !targetDate.isBefore(effectiveStartDate) && 
-                      !targetDate.isAfter(endDate);
-    
-    if (!isInRange) return false;
-    
-    if (app.workDays == null || app.workDays!.isEmpty) {
-      return true;
-    }
-    
-    final targetDayKorean = _getKoreanDayOfWeek(targetDate);
-    return app.workDays!.contains(targetDayKorean);
-  }
-  
-  /// 두 날짜가 같은지 비교 (시간 제외)
-  bool _isSameDate(DateTime date1, DateTime date2) {
-    return date1.year == date2.year &&
-           date1.month == date2.month &&
-           date1.day == date2.day;
-  }
-  
-  /// 요일을 한글로 변환
-  String _getKoreanDayOfWeek(DateTime date) {
-    const days = ['월', '화', '수', '목', '금', '토', '일'];
-    return days[date.weekday - 1];
-  }
   
 
   // ═══════════════════════════════════════════════════════════
@@ -162,7 +100,7 @@ class FirestoreService {
         'isManualClosed': true,
         'closedAt': FieldValue.serverTimestamp(),
         'closedBy': adminUID,
-        'status': 'CLOSED',
+        'status': TOStatus.closed,
         'statusUpdatedAt': FieldValue.serverTimestamp(),
       });
       clearCache(toId: toId);
@@ -174,6 +112,18 @@ class FirestoreService {
     }
   }
 
+  /// TO 시간만료 자동 마감 (isManualClosed: false — 재오픈 버튼 미표시)
+  Future<void> markTOAsExpired(String toId) async {
+    await _firestore.collection('tos').doc(toId).update({
+      'status': TOStatus.closed,
+      'isManualClosed': false,
+      'closedAt': FieldValue.serverTimestamp(),
+      'statusUpdatedAt': FieldValue.serverTimestamp(),
+      'closedBy': FieldValue.delete(), // cascade 재오픈 허용 (직접 마감 아님)
+    });
+    clearCache(toId: toId);
+  }
+
   /// TO 재오픈 (마감 취소)
   Future<bool> reopenTO(String toId, String adminUID) async {
     try {
@@ -181,8 +131,9 @@ class FirestoreService {
         'isManualClosed': false,
         'reopenedAt': FieldValue.serverTimestamp(),
         'reopenedBy': adminUID,
-        'status': 'ACTIVE',
+        'status': TOStatus.active,
         'statusUpdatedAt': FieldValue.serverTimestamp(),
+        'closedBy': FieldValue.delete(), // 재오픈 시 직접마감 표시 초기화
       });
       clearCache(toId: toId);
       debugPrint('✅ TO 재오픈 완료: $toId');
@@ -221,6 +172,37 @@ class FirestoreService {
         'totalPending': totalPending,
         'totalConfirmed': totalConfirmed,
       });
+
+      // flex TO: 슬롯별 통계도 재계산
+      if (to.isFlexType) {
+        // slotId별 집계
+        final Map<String, Map<String, int>> slotStats = {};
+        for (final doc in appsSnap.docs) {
+          final data = doc.data();
+          final status = data['status'] as String?;
+          final sid = data['slotId'] as String?;
+          if (sid == null || (status != 'PENDING' && status != 'CONFIRMED')) continue;
+          slotStats[sid] ??= {'pending': 0, 'confirmed': 0};
+          if (status == 'PENDING') slotStats[sid]!['pending'] = slotStats[sid]!['pending']! + 1;
+          if (status == 'CONFIRMED') slotStats[sid]!['confirmed'] = slotStats[sid]!['confirmed']! + 1;
+        }
+
+        // 슬롯 전체 조회 후 일괄 업데이트
+        final slotsSnap = await _firestore
+            .collection('tos').doc(toId)
+            .collection('slots').get();
+        if (slotsSnap.docs.isNotEmpty) {
+          final batch = _firestore.batch();
+          for (final slotDoc in slotsSnap.docs) {
+            final stats = slotStats[slotDoc.id] ?? {'pending': 0, 'confirmed': 0};
+            batch.update(slotDoc.reference, {
+              'pendingCount': stats['pending'],
+              'confirmedCount': stats['confirmed'],
+            });
+          }
+          await batch.commit();
+        }
+      }
 
       clearCache(toId: toId);
       debugPrint('✅ TO 통계 재계산 완료: $toId (대기 $totalPending, 확정 $totalConfirmed)');
@@ -262,13 +244,21 @@ class FirestoreService {
     };
     try {
       // slotId 쿼리는 보안 규칙 제한 — toId 전체를 가져와 클라이언트에서 필터
-      final allApps = await getApplicationsByTOId(to.id, businessId: to.businessId);
+      final allApps = await getApplicationsByTOId(
+        to.id,
+        businessId: to.businessId,
+        statuses: const ['PENDING', 'CONFIRMED'],
+      );
       final apps = slotId != null
           ? allApps.where((a) => a.slotId == slotId).toList()
           : allApps;
       for (final app in apps) {
-        if (app.status != 'CONFIRMED' && app.status != 'PENDING') continue;
-        final key = app.selectedWorkType;
+        // workDetailId가 compositeId 형식(workType과 다름)이면 그대로 사용,
+        // 아니면 시간 정보로 composite key 생성 (레거시 데이터 호환)
+        final wdId = app.workDetailId;
+        final key = (wdId != null && wdId.isNotEmpty && wdId != app.selectedWorkType)
+            ? wdId
+            : '${app.selectedWorkType}_${app.startTime}_${app.endTime}';
         workStats[key] ??= {'confirmed': 0, 'pending': 0};
         if (app.status == 'CONFIRMED') {
           workStats[key]!['confirmed'] = (workStats[key]!['confirmed'] ?? 0) + 1;
@@ -300,9 +290,9 @@ class FirestoreService {
         query = query.where('businessId', whereIn: businessIds.take(10).toList());
       }
       if (activeOnly) {
-        query = query.where('status', whereIn: ['ACTIVE', 'FULL', 'SCHEDULED']);
+        query = query.where('status', whereIn: TOStatus.openStates);
       } else if (closedOnly) {
-        query = query.where('status', whereIn: ['CLOSED', 'EXPIRED']);
+        query = query.where('status', whereIn: TOStatus.closedStates);
       }
       final snap = await query.get();
       return snap.docs
@@ -466,7 +456,8 @@ class FirestoreService {
   }
 
   /// workDetails 배열에서 특정 업무를 수정하는 공통 헬퍼
-  Future<bool> _updateWorkDetailInArray({
+  /// workDetails 배열 수정 후 업데이트된 목록 반환 (실패 시 null)
+  Future<List<WorkDetailData>?> _updateWorkDetailInArray({
     required String toId,
     String? slotId,
     required String workDetailId,
@@ -478,7 +469,7 @@ class FirestoreService {
           : _firestore.collection('tos').doc(toId);
 
       final snap = await docRef.get();
-      if (!snap.exists) return false;
+      if (!snap.exists) return null;
 
       final raw = (snap.data() as Map<String, dynamic>)['workDetails'] as List? ?? [];
       final details = raw
@@ -486,15 +477,15 @@ class FirestoreService {
           .toList();
 
       final idx = details.indexWhere((d) => d.workType == workDetailId);
-      if (idx == -1) return false;
+      if (idx == -1) return null;
 
       details[idx] = updater(details[idx]);
       await docRef.update({'workDetails': WorkDetailData.listToFirestore(details)});
       clearCache(toId: toId);
-      return true;
+      return details;
     } catch (e) {
       debugPrint('❌ [WorkDetail] 배열 수정 실패: $e');
-      return false;
+      return null;
     }
   }
 
@@ -503,43 +494,191 @@ class FirestoreService {
     required String workDetailId,
     required String adminUID,
     String? slotId,
-  }) =>
-      _updateWorkDetailInArray(
-        toId: toId,
-        slotId: slotId,
-        workDetailId: workDetailId,
-        updater: (d) => d.copyWith(
-          isManualClosed: true,
-          closedAt: DateTime.now(),
-          closedBy: adminUID,
-        ),
-      );
+  }) async {
+    final updated = await _updateWorkDetailInArray(
+      toId: toId,
+      slotId: slotId,
+      workDetailId: workDetailId,
+      updater: (d) => d.copyWith(
+        isManualClosed: true,
+        closedAt: DateTime.now(),
+        closedBy: adminUID,
+      ),
+    );
+    if (updated == null) return false;
+
+    if (slotId != null) {
+      await _syncSlotCascadeStatus(toId, slotId);
+      await _syncTOCascadeStatus(toId);
+    }
+    return true;
+  }
 
   Future<bool> reopenWorkDetail({
     required String toId,
     required String workDetailId,
     required String adminUID,
     String? slotId,
-  }) =>
-      _updateWorkDetailInArray(
-        toId: toId,
-        slotId: slotId,
-        workDetailId: workDetailId,
-        updater: (d) => d.copyWith(clearClosedAt: true),
-      );
+  }) async {
+    final updated = await _updateWorkDetailInArray(
+      toId: toId,
+      slotId: slotId,
+      workDetailId: workDetailId,
+      updater: (d) => d.copyWith(clearClosedAt: true),
+    );
+    if (updated == null) return false;
+
+    if (slotId != null) {
+      await _syncSlotCascadeStatus(toId, slotId);
+      await _syncTOCascadeStatus(toId);
+    }
+    return true;
+  }
+
+  // ═══════════════════════════════════════════════════════════
+  // Cascade 상태 동기화 (단일 진입점)
+  //
+  // 마감 이유 구분 기준 — closedBy 필드:
+  //   있음(adminUID) → 관리자 직접 마감 → cascade 재오픈 불가
+  //   없음            → cascade/시간만료 → cascade 재오픈 가능
+  //
+  // 호출 규칙:
+  //   workDetail 변경 → _syncSlotCascadeStatus → _syncTOCascadeStatus
+  //   slot 배치 변경  → _syncTOCascadeStatus 만
+  // ═══════════════════════════════════════════════════════════
+
+  /// 슬롯의 cascade 상태를 workDetail 기반으로 평가
+  ///
+  /// - 직접 마감된 슬롯(closedBy 있음) · 날짜 경과 슬롯은 건드리지 않음
+  /// - 모든 workDetail 닫힘 → cascade 마감 (closedBy 없음)
+  /// - workDetail 하나라도 열림 + 슬롯이 cascade 마감 상태 → cascade 재오픈
+  Future<void> _syncSlotCascadeStatus(String toId, String slotId) async {
+    try {
+      final slotRef = _firestore
+          .collection('tos').doc(toId)
+          .collection('slots').doc(slotId);
+      final slotSnap = await slotRef.get(const GetOptions(source: Source.server));
+      if (!slotSnap.exists) return;
+      final slotData = slotSnap.data()!;
+
+      // 직접 마감된 슬롯 — cascade 평가 대상 아님
+      if (slotData['closedBy'] != null) return;
+
+      // 날짜 경과 슬롯 — 상태 변경 불필요 (TO 레벨에서 날짜 기반으로 처리)
+      final dateTs = slotData['date'] as Timestamp?;
+      if (dateTs != null) {
+        final sd = dateTs.toDate();
+        final now = DateTime.now();
+        if (DateTime(sd.year, sd.month, sd.day)
+            .isBefore(DateTime(now.year, now.month, now.day))) { return; }
+      }
+
+      final rawList = slotData['workDetails'] as List? ?? [];
+      if (rawList.isEmpty) return;
+      final workDetails = rawList
+          .map((e) => WorkDetailData.fromMap(Map<String, dynamic>.from(e as Map)))
+          .toList();
+
+      final allClosed = workDetails.every((d) => d.isClosed || d.isTimeExpired);
+      final currentStatus = slotData['status'] as String? ?? SlotStatus.open;
+      // cascade 재오픈 가능 조건: 슬롯이 닫혀 있고 관리자 직접마감(closedBy)이 없음
+      // isManualClosed 체크 제거 — CF 자동만료 슬롯(isManualClosed 미설정)도 포함
+      final isCascadeClosed =
+          currentStatus == SlotStatus.closed && slotData['closedBy'] == null;
+
+      if (allClosed && currentStatus != SlotStatus.closed) {
+        await slotRef.update({
+          'status': SlotStatus.closed,
+          'isManualClosed': false,
+          'closedAt': FieldValue.serverTimestamp(),
+          'closedBy': FieldValue.delete(),
+        });
+      } else if (!allClosed && isCascadeClosed) {
+        await slotRef.update({
+          'status': SlotStatus.open,
+          'isManualClosed': false,
+          'reopenedAt': FieldValue.serverTimestamp(),
+          'closedAt': FieldValue.delete(),
+        });
+      }
+    } catch (e) {
+      debugPrint('❌ [Slot] cascade 상태 동기화 실패: $e');
+    }
+  }
+
+  /// TO의 cascade 상태를 슬롯 기반으로 평가
+  ///
+  /// - 직접 마감된 TO(closedBy 있음)는 건드리지 않음
+  /// - 모든 슬롯 실질적으로 닫힘 → cascade 마감 (closedBy 없음)
+  /// - 열린 슬롯 있음 + TO가 cascade 마감 상태 → cascade 재오픈
+  Future<void> _syncTOCascadeStatus(String toId) async {
+    try {
+      final toRef = _firestore.collection('tos').doc(toId);
+      final toSnap = await toRef.get(const GetOptions(source: Source.server));
+      if (!toSnap.exists) return;
+      final toData = toSnap.data()!;
+
+      // 직접 마감된 TO — cascade 평가 대상 아님
+      if (toData['closedBy'] != null) return;
+
+      final slotsSnap = await _firestore
+          .collection('tos').doc(toId).collection('slots')
+          .get(const GetOptions(source: Source.server));
+      if (slotsSnap.docs.isEmpty) return;
+
+      final now = DateTime.now();
+      final todayMidnight = DateTime(now.year, now.month, now.day);
+
+      final allClosed = slotsSnap.docs.every((d) {
+        final data = d.data();
+        if (data['isManualClosed'] == true) return true;
+        final status = data['status'] as String? ?? '';
+        if (status == SlotStatus.closed || status == SlotStatus.full) return true;
+        final dateTs = data['date'] as Timestamp?;
+        if (dateTs != null) {
+          final sd = dateTs.toDate();
+          if (DateTime(sd.year, sd.month, sd.day).isBefore(todayMidnight)) return true;
+        }
+        return false;
+      });
+
+      final toStatus = toData['status'] as String? ?? '';
+
+      if (allClosed && toStatus != TOStatus.closed) {
+        await toRef.update({
+          'status': TOStatus.closed,
+          'isManualClosed': false,
+          'closedAt': FieldValue.serverTimestamp(),
+          'closedBy': FieldValue.delete(),
+        });
+        clearCache(toId: toId);
+      } else if (!allClosed && (toStatus == TOStatus.closed || toStatus == TOStatus.expired)) {
+        await toRef.update({
+          'status': TOStatus.active,
+          'isManualClosed': false,
+          'reopenedAt': FieldValue.serverTimestamp(),
+        });
+        clearCache(toId: toId);
+      }
+    } catch (e) {
+      debugPrint('❌ [TO] cascade 상태 동기화 실패: $e');
+    }
+  }
 
   Future<bool> stopEmergencyRecruitment({
     required String toId,
     required String workDetailId,
     String? adminUID,
     String? slotId,
-  }) =>
-      _updateWorkDetailInArray(
-        toId: toId,
-        slotId: slotId,
-        workDetailId: workDetailId,
-        updater: (d) => d.copyWith(clearEmergency: true),
-      );
+  }) async {
+    final result = await _updateWorkDetailInArray(
+      toId: toId,
+      slotId: slotId,
+      workDetailId: workDetailId,
+      updater: (d) => d.copyWith(clearEmergency: true),
+    );
+    return result != null;
+  }
 
   /// 출근 기록 확인 — attendance_firestore에서 처리, 여기서는 false 반환
   Future<bool> hasAttendanceRecord(String applicationId) async => false;

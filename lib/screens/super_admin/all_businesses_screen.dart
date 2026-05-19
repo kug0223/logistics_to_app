@@ -1,4 +1,5 @@
 ﻿import 'package:flutter/material.dart';
+import '../../theme/app_colors.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import '../../models/core/business_model.dart';
 import '../../widgets/common/loading_widget.dart';
@@ -95,7 +96,7 @@ class _AllBusinessesScreenState extends State<AllBusinessesScreen> {
     return Scaffold(
       appBar: AppBar(
         title: const Text('전체 사업장 관리'),
-        backgroundColor: Colors.purple,
+        backgroundColor: AppColors.purple,
         actions: [
           IconButton(
             icon: const Icon(Icons.refresh),
@@ -181,14 +182,14 @@ class _AllBusinessesScreenState extends State<AllBusinessesScreen> {
                 business.isApproved
                     ? StyledBadge(
                         label: '승인됨',
-                        backgroundColor: Colors.green.withValues(alpha: 0.1),
-                        textColor: Colors.green,
+                        backgroundColor: AppColors.success.withValues(alpha: 0.1),
+                        textColor: AppColors.success,
                         fontSize: ResponsiveHelper.tinyStyle(context).fontSize!,  // ⭐ 변경
                       )
                     : StyledBadge(
                         label: '대기중',
-                        backgroundColor: Colors.orange.withValues(alpha: 0.1),
-                        textColor: Colors.orange,
+                        backgroundColor: AppColors.warning.withValues(alpha: 0.1),
+                        textColor: AppColors.warning,
                         fontSize: ResponsiveHelper.tinyStyle(context).fontSize!,  // ⭐ 변경
                       ),
               ],
@@ -200,7 +201,7 @@ class _AllBusinessesScreenState extends State<AllBusinessesScreen> {
               icon: Icons.person,
               label: '소유자',
               value: '${item.ownerName}${item.ownerEmail.isNotEmpty ? " (${item.ownerEmail})" : ""}',
-              color: Colors.purple,
+              color: AppColors.purple,
             ),
             SizedBox(height: ResponsiveHelper.spacing(context, 12)),  // ⭐ 변경
 
@@ -218,7 +219,7 @@ class _AllBusinessesScreenState extends State<AllBusinessesScreen> {
               icon: Icons.category,
               label: '업종',
               value: '${business.category} / ${business.subCategory}',
-              color: Colors.green,
+              color: AppColors.success,
             ),
             SizedBox(height: ResponsiveHelper.spacing(context, 12)),  // ⭐ 변경
 
@@ -227,7 +228,7 @@ class _AllBusinessesScreenState extends State<AllBusinessesScreen> {
               icon: Icons.location_on,
               label: '주소',
               value: business.address,
-              color: Colors.red,
+              color: AppColors.error,
             ),
 
             // 연락처 (있을 경우)
@@ -237,7 +238,7 @@ class _AllBusinessesScreenState extends State<AllBusinessesScreen> {
                 icon: Icons.phone,
                 label: '연락처',
                 value: business.phone!,
-                color: Colors.orange,
+                color: AppColors.warning,
               ),
             ],
 

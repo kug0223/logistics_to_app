@@ -2,20 +2,46 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../../theme/app_colors.dart';
-import 'package:intl/intl.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import '../../../providers/user_provider.dart';
 import '../../../utils/toast_helper.dart';
 import '../../../utils/responsive_helper.dart';
+import '../../../utils/format_helper.dart';
 import '../../../services/firestore_service.dart';
 import '../../../controllers/workforce_controller.dart';
 import 'workforce_list_view.dart';
 import 'workforce_calendar_view.dart';
 import '../../../utils/test_data_helper.dart';
-import '../../../models/core/to_model.dart';
+import '../../../models/core/slot_model.dart';
 import '../dialogs/schedule_request_management_dialog.dart';
 import '../../../utils/dialog_helper.dart';
 import '../../../widgets/dialogs/styled_dialog.dart';
+import '../../../widgets/app_select_field.dart';
+
+/// 공고 선택 드롭다운 아이템 (flex TO의 경우 슬롯별로 확장됨)
+class _TODropdownItem {
+  final String toId;
+  final String? slotId;
+  final DateTime date;
+  final String displayTitle;
+
+  _TODropdownItem({
+    required this.toId,
+    this.slotId,
+    required this.date,
+    required this.displayTitle,
+  });
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      (other is _TODropdownItem &&
+          toId == other.toId &&
+          slotId == other.slotId);
+
+  @override
+  int get hashCode => Object.hash(toId, slotId);
+}
 
 /// ✨ 세련된 통합 인력 관리 화면 (business_home_screen 테마 적용)
 class IntegratedWorkforceScreen extends StatefulWidget {
@@ -56,6 +82,8 @@ class _IntegratedWorkforceScreenState extends State<IntegratedWorkforceScreen>
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
       _refreshScheduleCount();
+      // Cloud Functions이 갱신한 Firestore 상태를 반영
+      if (mounted) _controller.reload(context);
     }
   }
 
@@ -176,7 +204,7 @@ class _IntegratedWorkforceScreenState extends State<IntegratedWorkforceScreen>
                           child: Container(
                             padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 4)),
                             decoration: BoxDecoration(
-                              color: Colors.red,
+                              color: AppColors.error,
                               shape: BoxShape.circle,
                             ),
                             constraints: BoxConstraints(
@@ -364,7 +392,7 @@ class _IntegratedWorkforceScreenState extends State<IntegratedWorkforceScreen>
             ListTile(
               leading: Icon(
                 Icons.star,
-                color: Colors.amber,
+                color: AppColors.amber,
                 size: ResponsiveHelper.iconSize(context, 24),
               ),
               title: Text(
@@ -389,7 +417,7 @@ class _IntegratedWorkforceScreenState extends State<IntegratedWorkforceScreen>
             ListTile(
               leading: Icon(
                 Icons.add_circle,
-                color: Colors.green,
+                color: AppColors.success,
                 size: ResponsiveHelper.iconSize(context, 24),
               ),
               title: Text(
@@ -414,7 +442,7 @@ class _IntegratedWorkforceScreenState extends State<IntegratedWorkforceScreen>
             ListTile(
               leading: Icon(
                 Icons.delete_sweep,
-                color: Colors.orange,
+                color: AppColors.warning,
                 size: ResponsiveHelper.iconSize(context, 24),
               ),
               title: Text(
@@ -496,33 +524,66 @@ class _IntegratedWorkforceScreenState extends State<IntegratedWorkforceScreen>
   /// ⭐ TO 선택하여 지원자 생성 다이얼로그 (반응형 + 테마)
   Future<void> _showCreateApplicantsDialog() async {
     String? targetBusinessId = _selectedBusinessId;
-    
+
     if (_allBusinessIds.length > 1) {
       targetBusinessId = await _selectBusinessForDummyData();
       if (targetBusinessId == null) return;
     }
-    
+
     debugPrint('🔍 [DummyData] 선택된 사업장: $targetBusinessId');
-    
-    final activeTOs = await _firestoreService.getActiveTOs();
-    final allSelectableTOs = activeTOs
-        .where((to) => to.businessId == targetBusinessId)
-        .toList();
 
-    debugPrint('   🎯 선택 가능한 TO: ${allSelectableTOs.length}개');
+    final allTOs = await _firestoreService.getActiveTOs(
+      businessId: targetBusinessId,
+    );
 
-    if (allSelectableTOs.isEmpty) {
+    debugPrint('   🎯 활성 TO: ${allTOs.length}개');
+
+    if (allTOs.isEmpty) {
       ToastHelper.showWarning('선택 가능한 TO가 없습니다.');
       return;
     }
 
-    allSelectableTOs.sort((a, b) => a.date.compareTo(b.date));
+    // flex TO는 슬롯별로 확장, contract TO는 그대로 1개 아이템
+    final List<_TODropdownItem> dropdownItems = [];
+    for (final to in allTOs) {
+      if (to.type == 'flex') {
+        final slots = await _firestoreService.getSlots(to.id);
+        if (slots.isEmpty) {
+          dropdownItems.add(_TODropdownItem(
+            toId: to.id,
+            date: to.createdAt,
+            displayTitle: to.title,
+          ));
+        } else {
+          for (final slot in slots) {
+            dropdownItems.add(_TODropdownItem(
+              toId: to.id,
+              slotId: slot.id,
+              date: slot.date,
+              displayTitle: slot.title ?? to.title,
+            ));
+          }
+        }
+      } else {
+        dropdownItems.add(_TODropdownItem(
+          toId: to.id,
+          date: to.rangeStart ?? to.createdAt,
+          displayTitle: to.title,
+        ));
+      }
+    }
 
-    TOModel? selectedTO = allSelectableTOs.isNotEmpty ? allSelectableTOs.first : null;
-    
+    dropdownItems.sort((a, b) => a.date.compareTo(b.date));
+
+    debugPrint('   📋 드롭다운 아이템: ${dropdownItems.length}개');
+
+    _TODropdownItem? selectedItem =
+        dropdownItems.isNotEmpty ? dropdownItems.first : null;
+
     final confirmedController = TextEditingController();
     final pendingController = TextEditingController();
 
+    if (!mounted) return;
     final result = await showDialog<bool>(
       context: context,
       builder: (context) => StatefulBuilder(
@@ -536,47 +597,18 @@ class _IntegratedWorkforceScreenState extends State<IntegratedWorkforceScreen>
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 // TO 선택
-                Text(
-                  'TO 선택',
-                  style: ResponsiveHelper.bodyStyle(context).copyWith(
-                    fontWeight: FontWeight.bold,
-                  ),
+                AppSelectField<_TODropdownItem>(
+                  value: selectedItem,
+                  hintText: 'TO를 선택하세요',
+                  sheetTitle: 'TO 선택',
+                  items: dropdownItems,
+                  labelOf: (item) => '${FormatHelper.formatDate(item.date)} - ${item.displayTitle}',
+                  prefixIcon: Icons.assignment,
+                  onChanged: (value) => setState(() => selectedItem = value),
                 ),
-                SizedBox(height: ResponsiveHelper.spacing(context, 8)),
-                Container(
-                  padding: EdgeInsets.symmetric(
-                    horizontal: ResponsiveHelper.spacing(context, 12),
-                  ),
-                  decoration: BoxDecoration(
-                    border: Border.all(color: Theme.of(context).dividerColor),
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  child: DropdownButtonHideUnderline(
-                    child: DropdownButton<TOModel>(
-                      isExpanded: true,
-                      value: selectedTO,
-                      style: ResponsiveHelper.bodyStyle(context),
-                      items: allSelectableTOs.map((to) {
-                        final dateStr = DateFormat('M/d (E)', 'ko_KR').format(to.date);
-                        return DropdownMenuItem(
-                          value: to,
-                          child: Text(
-                            '$dateStr - ${to.title}',
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                        );
-                      }).toList(),
-                      onChanged: (value) {
-                        setState(() {
-                          selectedTO = value;
-                        });
-                      },
-                    ),
-                  ),
-                ),
-                
+
                 SizedBox(height: ResponsiveHelper.spacing(context, 24)),
-                
+
                 // 확정 인원
                 Text(
                   '확정 인원',
@@ -590,7 +622,7 @@ class _IntegratedWorkforceScreenState extends State<IntegratedWorkforceScreen>
                   keyboardType: TextInputType.number,
                   style: ResponsiveHelper.bodyStyle(context),
                   decoration: InputDecoration(
-                    border: OutlineInputBorder(),
+                    border: const OutlineInputBorder(),
                     suffixText: '명',
                     hintText: '0',
                     hintStyle: ResponsiveHelper.bodyStyle(
@@ -599,9 +631,9 @@ class _IntegratedWorkforceScreenState extends State<IntegratedWorkforceScreen>
                     ),
                   ),
                 ),
-                
+
                 SizedBox(height: ResponsiveHelper.spacing(context, 16)),
-                
+
                 // 대기 인원
                 Text(
                   '대기 인원',
@@ -615,7 +647,7 @@ class _IntegratedWorkforceScreenState extends State<IntegratedWorkforceScreen>
                   keyboardType: TextInputType.number,
                   style: ResponsiveHelper.bodyStyle(context),
                   decoration: InputDecoration(
-                    border: OutlineInputBorder(),
+                    border: const OutlineInputBorder(),
                     suffixText: '명',
                     hintText: '0',
                     hintStyle: ResponsiveHelper.bodyStyle(
@@ -624,20 +656,21 @@ class _IntegratedWorkforceScreenState extends State<IntegratedWorkforceScreen>
                     ),
                   ),
                 ),
-                
+
                 SizedBox(height: ResponsiveHelper.spacing(context, 16)),
-                
+
                 // 안내
                 Container(
                   padding: ResponsiveHelper.cardPadding(context),
                   decoration: BoxDecoration(
-                    color: Theme.of(context).primaryColor.withValues(alpha: 0.1),
+                    color:
+                        Theme.of(context).primaryColor.withValues(alpha: 0.1),
                     borderRadius: BorderRadius.circular(8),
                   ),
                   child: Row(
                     children: [
                       Icon(
-                        Icons.info_outline, 
+                        Icons.info_outline,
                         size: ResponsiveHelper.iconSize(context, 20),
                         color: Theme.of(context).primaryColor,
                       ),
@@ -662,7 +695,7 @@ class _IntegratedWorkforceScreenState extends State<IntegratedWorkforceScreen>
               onPressed: () => Navigator.pop(context, false),
             ),
             ElevatedButton(
-              onPressed: selectedTO == null
+              onPressed: selectedItem == null
                   ? null
                   : () => Navigator.pop(context, true),
               style: ElevatedButton.styleFrom(
@@ -681,7 +714,7 @@ class _IntegratedWorkforceScreenState extends State<IntegratedWorkforceScreen>
       ),
     );
 
-    if (result != true || selectedTO == null) return;
+    if (result != true || selectedItem == null) return;
 
     try {
       final confirmedCount = int.tryParse(confirmedController.text) ?? 0;
@@ -694,23 +727,20 @@ class _IntegratedWorkforceScreenState extends State<IntegratedWorkforceScreen>
 
       ToastHelper.showInfo('지원자 생성 중...');
 
-      final workDetails = await _firestoreService.getWorkDetails(selectedTO!.id);
-      final workTypes = workDetails.map((wd) => wd.workType).toList();
-
       await TestDataHelper.createDummyApplications(
-        toId: selectedTO!.id,
-        workTypes: workTypes,
+        toId: selectedItem!.toId,
         pendingCount: pendingCount,
         confirmedCount: confirmedCount,
+        slotId: selectedItem!.slotId,
+        slotDate: selectedItem!.slotId != null ? selectedItem!.date : null,
       );
 
       ToastHelper.showSuccess('지원자가 생성되었습니다!');
 
-      _firestoreService.clearCache(toId: selectedTO!.id);
-      _firestoreService.invalidateListCache();  // 🔥 목록 캐시도 무효화
-      
+      _firestoreService.clearCache(toId: selectedItem!.toId);
+
       if (mounted) {
-        setState(() {});
+        _controller.reload(context);
       }
     } catch (e) {
       debugPrint('❌ 지원자 생성 실패: $e');
@@ -729,12 +759,11 @@ class _IntegratedWorkforceScreenState extends State<IntegratedWorkforceScreen>
       );
       
       ToastHelper.showSuccess('출근 데이터가 생성되었습니다!');
-      
+
       _firestoreService.clearCache();
-      _firestoreService.invalidateListCache();  // 🔥 목록 캐시도 무효화
-      
+
       if (mounted) {
-        setState(() {});
+        _controller.reload(context);
       }
     } catch (e) {
       debugPrint('❌ 출근 데이터 생성 실패: $e');
@@ -771,11 +800,11 @@ class _IntegratedWorkforceScreenState extends State<IntegratedWorkforceScreen>
       await TestDataHelper.clearDummyAttendance();
       
       ToastHelper.showSuccess('출근 데이터가 삭제되었습니다!');
-      
+
       _firestoreService.clearCache();
-      
+
       if (mounted) {
-        setState(() {});
+        _controller.reload(context);
       }
     } catch (e) {
       debugPrint('❌ 출근 데이터 삭제 실패: $e');
@@ -812,11 +841,11 @@ class _IntegratedWorkforceScreenState extends State<IntegratedWorkforceScreen>
       await TestDataHelper.clearDummyReviews();
       
       ToastHelper.showSuccess('더미 리뷰가 삭제되었습니다!');
-      
+
       _firestoreService.clearCache();
-      
+
       if (mounted) {
-        setState(() {});
+        _controller.reload(context);
       }
     } catch (e) {
       debugPrint('❌ 더미 리뷰 삭제 실패: $e');
@@ -840,18 +869,8 @@ class _IntegratedWorkforceScreenState extends State<IntegratedWorkforceScreen>
       }
 
       // 사업장 이름 가져오기
-      String businessName = '사업장';
-      try {
-        final businessDoc = await FirebaseFirestore.instance
-            .collection('businesses')
-            .doc(_selectedBusinessId)
-            .get();
-        if (businessDoc.exists) {
-          businessName = businessDoc.data()?['name'] ?? '사업장';
-        }
-      } catch (e) {
-        debugPrint('⚠️ 사업장명 조회 실패: $e');
-      }
+      final business = await _firestoreService.getBusinessById(_selectedBusinessId!);
+      final businessName = business?.name ?? '사업장';
 
       ToastHelper.showInfo('리뷰 생성 중...');
       
@@ -863,9 +882,9 @@ class _IntegratedWorkforceScreenState extends State<IntegratedWorkforceScreen>
       );
       
       ToastHelper.showSuccess('더미 리뷰 생성 완료!');
-      
+
       if (mounted) {
-        setState(() {});
+        _controller.reload(context);
       }
     } catch (e) {
       debugPrint('❌ 리뷰 생성 실패: $e');
@@ -902,17 +921,16 @@ class _IntegratedWorkforceScreenState extends State<IntegratedWorkforceScreen>
 
     try {
       ToastHelper.showInfo('모든 더미 데이터 삭제 중...');
-      
-      await TestDataHelper.clearDummyAttendance();
+
+      // clearAllDummyData가 내부적으로 attendance·reviews 삭제까지 처리함
       await TestDataHelper.clearAllDummyData();
       
       _firestoreService.clearCache();
-      _firestoreService.invalidateListCache();
-      
+
       ToastHelper.showSuccess('모든 더미 데이터가 삭제되었습니다!');
-      
+
       if (mounted) {
-        setState(() {});
+        _controller.reload(context);
       }
     } catch (e) {
       debugPrint('❌ 더미 데이터 삭제 실패: $e');
@@ -922,22 +940,9 @@ class _IntegratedWorkforceScreenState extends State<IntegratedWorkforceScreen>
   
   /// ⭐ 더미 데이터용 사업장 선택 (반응형 + 테마)
   Future<String?> _selectBusinessForDummyData() async {
-    final businessNames = <String, String>{};
-    
-    try {
-      final snapshot = await FirebaseFirestore.instance
-          .collection('businesses')
-          .where(FieldPath.documentId, whereIn: _allBusinessIds)
-          .get();
+    final businessNames = await _firestoreService.getBusinessNames(_allBusinessIds);
 
-      for (var doc in snapshot.docs) {
-        final data = doc.data();
-        businessNames[doc.id] = data['name'] ?? 'Unknown';
-      }
-    } catch (e) {
-      debugPrint('❌ 사업장명 조회 실패: $e');
-    }
-
+    if (!mounted) return null;
     return await showDialog<String>(
       context: context,
       builder: (context) => StyledDialog(
@@ -978,7 +983,8 @@ class _IntegratedWorkforceScreenState extends State<IntegratedWorkforceScreen>
     );
     
     if (!confirmed) return;
-    
+    if (!mounted) return;
+
     // 로딩 표시
     showDialog(
       context: context,

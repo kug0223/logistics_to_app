@@ -14,13 +14,16 @@ import '../../services/firestore_service.dart';
 import '../../providers/user_provider.dart';
 import '../../utils/toast_helper.dart';
 import '../../utils/responsive_helper.dart';
+import '../../utils/format_helper.dart';
 import '../../utils/dialog_helper.dart';
 import '../../theme/app_colors.dart';
 import '../../utils/id_card_helper.dart';
 import '../../screens/business_admin/dialogs/fixed_worker_management_dialog.dart';
-import '../common/loading_button.dart';
 import '../../utils/image_helper.dart';
 import 'monthly_review_dialog.dart';
+import '../../models/core/monthly_review_model.dart';
+import '../../models/core/review_request_model.dart';
+import '../../services/monthly_review_service.dart';
 
 /// 공통 근무자/지원자 상세 다이얼로그
 /// 
@@ -91,6 +94,7 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
   List<ReviewModel> _recentReviews = [];
   IdCardAccessRequestModel? _idCardAccess;
   bool _hasAttendance = false;  // ✅ 출퇴근 기록 여부 (장기 확정자용)
+  bool? _hasWrittenReview;     // 리뷰 작성 여부 (null=미확인)
 
   @override
   void initState() {
@@ -100,81 +104,100 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
 
   Future<void> _loadAdditionalData() async {
     setState(() => _isLoading = true);
-    
+
     try {
       final userProvider = context.read<UserProvider>();
       final currentUserId = userProvider.currentUser?.uid ?? '';
       final businessId = widget.businessId ?? widget.toItem?.to.businessId;
-      
-      // 병렬로 데이터 로드
-      final futures = <Future>[];
-      
-      // 우리 사업장 이력 (businessId가 있을 때만)
-      if (businessId != null) {
-        futures.add(_firestoreService.getBusinessWorkHistory(
-          businessId: businessId,
-          userId: widget.user.uid,
-        ));
-      } else {
-        futures.add(Future.value(null));
-      }
-      
-      // 최근 리뷰 (항상 로드)
-      futures.add(_firestoreService.getUserReviews(widget.user.uid, limit: 5));
-      
-      // 신분증 열람 권한 (확정자일 때만)
-      if (widget.isConfirmed) {
-        futures.add(_firestoreService.checkIdCardAccess(
-          requesterId: currentUserId,
-          targetUserId: widget.user.uid,
-        ));
-      } else {
-        futures.add(Future.value(null));
-      }
-      
-      final results = await Future.wait(futures);
-      
-      // 결과 할당 (setState 밖에서)
+      final app = widget.application;
+
+      final results = await Future.wait([
+        // 0: 우리 사업장 이력
+        businessId != null
+            ? _firestoreService.getBusinessWorkHistory(
+                businessId: businessId, userId: widget.user.uid)
+            : Future.value(null),
+
+        // 1: 최근 리뷰
+        _firestoreService.getUserReviews(widget.user.uid, limit: 5),
+
+        // 2: 신분증 열람 권한 (확정자만)
+        widget.isConfirmed
+            ? _firestoreService.checkIdCardAccess(
+                requesterId: currentUserId, targetUserId: widget.user.uid)
+            : Future.value(null),
+
+        // 3: 장기 출퇴근 기록 여부
+        (app != null &&
+                widget.isConfirmed &&
+                (app.isLongTermApplication ||
+                    widget.toItem?.to.isLongTerm == true))
+            ? _firestoreService.hasAttendanceRecord(app.id)
+            : Future.value(false),
+
+        // 4: 근무 시간 (toItem 없을 때)
+        (app != null && widget.toItem == null)
+            ? _fetchWorkTime(app)
+            : Future.value(null),
+
+        // 5: 리뷰 작성 여부 (확정자 + businessId 있을 때)
+        (widget.isConfirmed && app != null && widget.businessId != null)
+            ? _checkReviewWritten(app)
+            : Future.value(null),
+      ]);
+
       _businessHistory = results[0] as Map<String, dynamic>?;
       _recentReviews = results[1] as List<ReviewModel>;
       _idCardAccess = results[2] as IdCardAccessRequestModel?;
-      
-      // ✅ 장기 확정자인 경우 출퇴근 기록 체크
-      final app = widget.application;
-      if (app != null && 
-          widget.isConfirmed && 
-          (app.isLongTermApplication || widget.toItem?.to.isLongTerm == true)) {
-        _hasAttendance = await _firestoreService.hasAttendanceRecord(app.id);
-        debugPrint('📋 출퇴근 기록 여부: $_hasAttendance (appId: ${app.id})');
-      }
-      
-      // 🔥 근무 시간 조회 (장기 지원자용 - toItem 없을 때)
-      if (app != null && widget.toItem == null) {
-        if (app.startTime.isNotEmpty && app.endTime.isNotEmpty) {
-          _workTime = '${app.startTime} ~ ${app.endTime}';
-        } else {
-          // TO 조회 후 workDetails에서 시간 가져오기
-          final to = await _firestoreService.getTOByApplication(app);
-          if (to != null) {
-            final workDetails = await _firestoreService.getWorkDetails(to.id);
-            final matched = workDetails.where((w) => w.workType == app.selectedWorkType).firstOrNull;
-            if (matched != null) {
-              _workTime = '${matched.startTime} ~ ${matched.endTime}';
-            }
-          }
-        }
-      }
-      
-      // 모든 작업 완료 후 UI 업데이트
-      if (mounted) {
-        setState(() => _isLoading = false);
-      }
+      _hasAttendance = results[3] as bool;
+      _workTime = results[4] as String?;
+      _hasWrittenReview = results[5] as bool?;
+
+      if (mounted) setState(() => _isLoading = false);
     } catch (e) {
       debugPrint('❌ 추가 데이터 로드 실패: $e');
-      if (mounted) {
-        setState(() => _isLoading = false);
-      }
+      if (mounted) setState(() => _isLoading = false);
     }
+  }
+
+  Future<String?> _fetchWorkTime(ApplicationModel app) async {
+    if (app.startTime.isNotEmpty && app.endTime.isNotEmpty) {
+      return '${app.startTime} ~ ${app.endTime}';
+    }
+    final to = await _firestoreService.getTOByApplication(app);
+    if (to == null) return null;
+    final workDetails = await _firestoreService.getWorkDetails(to.id);
+    final matched = workDetails
+        .where((w) => w.workType == app.selectedWorkType)
+        .firstOrNull;
+    if (matched == null) return null;
+    return '${matched.startTime} ~ ${matched.endTime}';
+  }
+
+  Future<bool> _checkReviewWritten(ApplicationModel app) async {
+    final now = DateTime.now();
+    int reviewYear;
+    int reviewMonth;
+    if (app.isLongTermApplication) {
+      if (now.month == 1) {
+        reviewYear = now.year - 1;
+        reviewMonth = 12;
+      } else {
+        reviewYear = now.year;
+        reviewMonth = now.day < 5 ? now.month - 1 : now.month;
+      }
+    } else {
+      reviewYear = app.workDate.year;
+      reviewMonth = app.workDate.month;
+    }
+    final reviewKey = MonthlyReviewModel.generateKeyForUser(
+      businessId: widget.businessId!,
+      targetUserId: widget.user.uid,
+      year: reviewYear,
+      month: reviewMonth,
+    );
+    final existing = await MonthlyReviewService().getReviewById(reviewKey);
+    return existing != null;
   }
 
   /// 신뢰도 점수 계산
@@ -191,7 +214,7 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final trustScore = _calculateTrustScore(widget.user);
-    final isPending = widget.application?.status == 'PENDING';
+    final isPending = widget.application?.status == AppStatus.pending;
 
    return Dialog(
       backgroundColor: Colors.transparent,
@@ -234,35 +257,28 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          // 기본 정보
                           _buildBasicInfo(context),
                           SizedBox(height: ResponsiveHelper.spacing(context, 20)),
-                          
-                          // 근무 통계
-                          _buildWorkStats(context),
-                          SizedBox(height: ResponsiveHelper.spacing(context, 20)),
-                          
-                          // 우리 사업장 이력
-                          _buildBusinessHistory(context),
-                          SizedBox(height: ResponsiveHelper.spacing(context, 20)),
-                          
-                          // 자기소개
-                          _buildSelfIntro(context),
-                          
-                          // 최근 리뷰 (항상 표시)
-                          SizedBox(height: ResponsiveHelper.spacing(context, 20)),
-                          _buildRecentReviews(context),
-                          
-                          // 급여 정보 (확정자만)
                           if (widget.isConfirmed) ...[
-                            SizedBox(height: ResponsiveHelper.spacing(context, 20)),
                             _buildPaymentInfo(context),
-                          ],
-                          
-                          // 신분증 섹션 (확정자만)
-                          if (widget.isConfirmed) ...[
                             SizedBox(height: ResponsiveHelper.spacing(context, 20)),
                             _buildIdCardSection(context),
+                            SizedBox(height: ResponsiveHelper.spacing(context, 20)),
+                            _buildWorkStats(context),
+                            SizedBox(height: ResponsiveHelper.spacing(context, 20)),
+                            _buildBusinessHistory(context),
+                            SizedBox(height: ResponsiveHelper.spacing(context, 20)),
+                            _buildRecentReviews(context),
+                            SizedBox(height: ResponsiveHelper.spacing(context, 20)),
+                            _buildSelfIntro(context),
+                          ] else ...[
+                            _buildWorkStats(context),
+                            SizedBox(height: ResponsiveHelper.spacing(context, 20)),
+                            _buildBusinessHistory(context),
+                            SizedBox(height: ResponsiveHelper.spacing(context, 20)),
+                            _buildSelfIntro(context),
+                            SizedBox(height: ResponsiveHelper.spacing(context, 20)),
+                            _buildRecentReviews(context),
                           ],
                         ],
                       ),
@@ -300,13 +316,18 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
               CircleAvatar(
                 radius: ResponsiveHelper.spacing(context, 28),
                 backgroundColor: Colors.white,
-                child: Text(
-                  widget.user.name.isNotEmpty ? widget.user.name[0] : '?',
-                  style: ResponsiveHelper.titleStyle(context).copyWith(
-                    fontWeight: FontWeight.bold,
-                    color: theme.primaryColor,
-                  ),
-                ),
+                backgroundImage: widget.user.profileImageUrl != null
+                    ? CachedNetworkImageProvider(widget.user.profileImageUrl!)
+                    : null,
+                child: widget.user.profileImageUrl == null
+                    ? Text(
+                        widget.user.name.isNotEmpty ? widget.user.name[0] : '?',
+                        style: ResponsiveHelper.titleStyle(context).copyWith(
+                          fontWeight: FontWeight.bold,
+                          color: theme.primaryColor,
+                        ),
+                      )
+                    : null,
               ),
               SizedBox(width: ResponsiveHelper.spacing(context, 12)),
               
@@ -364,7 +385,11 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
                   vertical: ResponsiveHelper.spacing(context, 6),
                 ),
                 decoration: BoxDecoration(
-                  color: Colors.white.withValues(alpha: 0.2),
+                  color: trustScore >= 80
+                      ? AppColors.success.withValues(alpha: 0.25)
+                      : trustScore >= 60
+                          ? AppColors.amber.withValues(alpha: 0.25)
+                          : AppColors.error.withValues(alpha: 0.25),
                   borderRadius: BorderRadius.circular(12),
                 ),
                 child: Column(
@@ -372,7 +397,11 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
                     Text(
                       '$trustScore',
                       style: ResponsiveHelper.titleStyle(context).copyWith(
-                        color: Colors.white,
+                        color: trustScore >= 80
+                            ? AppColors.success
+                            : trustScore >= 60
+                                ? AppColors.amber
+                                : AppColors.error,
                         fontWeight: FontWeight.bold,
                       ),
                     ),
@@ -448,11 +477,11 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
 
   Color _getStatusColor(String status) {
     switch (status) {
-      case 'PENDING':
+      case AppStatus.pending:
         return AppColors.warning;
-      case 'CONFIRMED':
+      case AppStatus.confirmed:
         return AppColors.success;
-      case 'REJECTED':
+      case AppStatus.rejected:
         return AppColors.error;
       default:
         return AppColors.grey500;
@@ -461,11 +490,11 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
 
   String _getStatusLabel(String status) {
     switch (status) {
-      case 'PENDING':
+      case AppStatus.pending:
         return '대기중';
-      case 'CONFIRMED':
+      case AppStatus.confirmed:
         return '확정';
-      case 'REJECTED':
+      case AppStatus.rejected:
         return '거절';
       default:
         return status;
@@ -486,7 +515,9 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
             _buildInfoRow(context, '주소', 
               '${widget.user.address}${widget.user.detailAddress != null ? ' ${widget.user.detailAddress}' : ''}'),
           if (app != null)
-            _buildInfoRow(context, '지원일', DateFormat('yyyy.MM.dd HH:mm').format(app.appliedAt)),
+            widget.isConfirmed && app.confirmedAt != null
+                ? _buildInfoRow(context, '확정일', DateFormat('yyyy.MM.dd HH:mm').format(app.confirmedAt!))
+                : _buildInfoRow(context, '지원일', DateFormat('yyyy.MM.dd HH:mm').format(app.appliedAt)),
           if (app != null)
             _buildInfoRow(context, '지원 업무', app.selectedWorkType),
           // 근무 시간 표시
@@ -522,58 +553,106 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
       
     );
   }
-  String _getWeekdayName(DateTime date) {
-    const weekdays = ['월', '화', '수', '목', '금', '토', '일'];
-    return weekdays[date.weekday - 1];
-  }
+  String _getWeekdayName(DateTime date) => FormatHelper.weekday(date);
 
   /// 근무 통계
   Widget _buildWorkStats(BuildContext context) {
+    final user = widget.user;
     return _buildSection(
       context,
       title: '근무 통계',
       icon: Icons.bar_chart,
-      child: Row(
+      child: Column(
         children: [
-          _buildStatCard(context, '총 근무', '${widget.user.totalWorkDays}일', AppColors.info),
-          SizedBox(width: ResponsiveHelper.spacing(context, 8)),
-          _buildStatCard(context, '평균 평점', widget.user.averageRating > 0 ? widget.user.averageRating.toStringAsFixed(1) : '-', Colors.amber),
-          SizedBox(width: ResponsiveHelper.spacing(context, 8)),
-          _buildStatCard(context, '무단결근', '${widget.user.noShowCount}회', AppColors.error),
-          SizedBox(width: ResponsiveHelper.spacing(context, 8)),
-          _buildStatCard(context, '지각', '${widget.user.lateCount}회', AppColors.warning),
+          Row(
+            children: [
+              Expanded(
+                child: _buildStatCard(
+                  context,
+                  icon: Icons.work_history_outlined,
+                  label: '총 근무',
+                  value: '${user.totalWorkDays}일',
+                  color: AppColors.info,
+                ),
+              ),
+              SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+              Expanded(
+                child: _buildStatCard(
+                  context,
+                  icon: Icons.star_rounded,
+                  label: '평균 평점',
+                  value: user.averageRating > 0
+                      ? user.averageRating.toStringAsFixed(1)
+                      : '-',
+                  color: AppColors.amberMedium,
+                ),
+              ),
+            ],
+          ),
+          SizedBox(height: ResponsiveHelper.spacing(context, 8)),
+          Row(
+            children: [
+              Expanded(
+                child: _buildStatCard(
+                  context,
+                  icon: Icons.cancel_outlined,
+                  label: '무단결근',
+                  value: '${user.noShowCount}회',
+                  color: user.noShowCount > 0 ? AppColors.error : AppColors.grey400,
+                  bgColor: user.noShowCount > 0 ? AppColors.errorBg : AppColors.grey100,
+                ),
+              ),
+              SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+              Expanded(
+                child: _buildStatCard(
+                  context,
+                  icon: Icons.schedule_outlined,
+                  label: '지각',
+                  value: '${user.lateCount}회',
+                  color: user.lateCount > 0 ? AppColors.warning : AppColors.grey400,
+                  bgColor: user.lateCount > 0 ? AppColors.warningBg : AppColors.grey100,
+                ),
+              ),
+            ],
+          ),
         ],
       ),
     );
   }
 
-  Widget _buildStatCard(BuildContext context, String label, String value, Color color) {
-    return Expanded(
-      child: Container(
-        padding: EdgeInsets.symmetric(
-          horizontal: ResponsiveHelper.spacing(context, 8),
-          vertical: ResponsiveHelper.spacing(context, 10),
-        ),
-        decoration: BoxDecoration(
-          color: color.withValues(alpha: 0.1),
-          borderRadius: BorderRadius.circular(8),
-        ),
-        child: Column(
-          children: [
-            Text(
-              value,
-              style: ResponsiveHelper.subtitleStyle(context).copyWith(
-                fontWeight: FontWeight.bold,
-                color: color,
-              ),
+  Widget _buildStatCard(
+    BuildContext context, {
+    required IconData icon,
+    required String label,
+    required String value,
+    required Color color,
+    Color? bgColor,
+  }) {
+    final bg = bgColor ?? color.withValues(alpha: 0.1);
+    return Container(
+      padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 12)),
+      decoration: BoxDecoration(
+        color: bg,
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Column(
+        children: [
+          Icon(icon, size: ResponsiveHelper.iconSize(context, 20), color: color),
+          SizedBox(height: ResponsiveHelper.spacing(context, 6)),
+          Text(
+            value,
+            style: ResponsiveHelper.subtitleStyle(context).copyWith(
+              fontWeight: FontWeight.bold,
+              color: color,
             ),
-            SizedBox(height: ResponsiveHelper.spacing(context, 2)),
-            Text(
-              label,
-              style: ResponsiveHelper.tinyStyle(context, color: AppColors.grey600),
-            ),
-          ],
-        ),
+          ),
+          SizedBox(height: ResponsiveHelper.spacing(context, 2)),
+          Text(
+            label,
+            style: ResponsiveHelper.tinyStyle(context, color: AppColors.grey600),
+            textAlign: TextAlign.center,
+          ),
+        ],
       ),
     );
   }
@@ -607,7 +686,7 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
                 _buildInfoRow(context, '근무 횟수', '${_businessHistory!['workCount']}회'),
                 _buildInfoRow(context, '최근 근무', _businessHistory!['lastWork'] ?? '-'),
                 if (_businessHistory!['avgRating'] != null && _businessHistory!['avgRating'] > 0)
-                  _buildInfoRow(context, '평균 평점', '${(_businessHistory!['avgRating'] as double).toStringAsFixed(1)}점'),
+                  _buildInfoRow(context, '평균 평점', '${(_businessHistory!['avgRating'] as num).toDouble().toStringAsFixed(1)}점'),
               ],
             ),
     );
@@ -689,7 +768,7 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
                 children: List.generate(5, (index) => Icon(
                   index < review.rating ? Icons.star : Icons.star_border,
                   size: ResponsiveHelper.iconSize(context, 14),
-                  color: Colors.amber,
+                  color: AppColors.amber,
                 )),
               ),
               const Spacer(),
@@ -899,16 +978,12 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
           SizedBox(height: ResponsiveHelper.spacing(context, 12)),
           SizedBox(
             width: double.infinity,
-            child: ElevatedButton.icon(
-              onPressed: () => _showIdCardAccessRequestDialog(),
-              icon: Icon(Icons.send, size: ResponsiveHelper.iconSize(context, 16)),
-              label: const Text('열람 요청'),
-              style: ElevatedButton.styleFrom(
-                backgroundColor: AppColors.info,
-                foregroundColor: Colors.white,
-                padding: EdgeInsets.symmetric(vertical: ResponsiveHelper.spacing(context, 12)),
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-              ),
+            child: _buildDialogButton(
+              label: '열람 요청',
+              icon: Icons.send_outlined,
+              bgColor: AppColors.infoBg,
+              textColor: AppColors.infoDark,
+              onTap: () => _showIdCardAccessRequestDialog(),
             ),
           ),
         ],
@@ -918,13 +993,23 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
 
   /// 공통 섹션 빌더
   Widget _buildSection(BuildContext context, {required String title, required IconData icon, required Widget child}) {
+    final primary = Theme.of(context).primaryColor;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Row(
           children: [
-            Icon(icon, size: ResponsiveHelper.iconSize(context, 18), color: AppColors.grey600),
+            Container(
+              width: ResponsiveHelper.spacing(context, 3),
+              height: ResponsiveHelper.spacing(context, 16),
+              decoration: BoxDecoration(
+                color: primary,
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
             SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+            Icon(icon, size: ResponsiveHelper.iconSize(context, 15), color: primary.withValues(alpha: 0.8)),
+            SizedBox(width: ResponsiveHelper.spacing(context, 6)),
             Text(
               title,
               style: ResponsiveHelper.subtitleStyle(context).copyWith(fontWeight: FontWeight.bold),
@@ -968,12 +1053,49 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
   }
 
   /// 하단 버튼
+  Widget _buildDialogButton({
+    required String label,
+    required IconData icon,
+    required Color bgColor,
+    required Color textColor,
+    required VoidCallback onTap,
+    double verticalPadding = 12,
+  }) {
+    return Material(
+      color: bgColor,
+      borderRadius: BorderRadius.circular(10),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(10),
+        child: Padding(
+          padding: EdgeInsets.symmetric(vertical: verticalPadding),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(icon, size: 15, color: textColor),
+              const SizedBox(width: 5),
+              Text(
+                label,
+                style: TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w600,
+                  color: textColor,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
   Widget _buildBottomButtons(BuildContext context, bool isPending) {
-    final isConfirmed = widget.application?.status == 'CONFIRMED';
-    // ✅ TO 또는 Application 기준으로 장기 판단 (toItem 우선, 없으면 application 폴백)
-    final isLongTerm = widget.toItem?.to.isLongTerm ?? 
-                       widget.application?.isLongTermApplication ?? 
+    final isConfirmed = widget.application?.status == AppStatus.confirmed;
+    final isLongTerm = widget.toItem?.to.isLongTerm ??
+                       widget.application?.isLongTermApplication ??
                        false;
+    final primary = Theme.of(context).primaryColor;
+
     return Container(
       padding: ResponsiveHelper.cardPadding(context),
       decoration: BoxDecoration(
@@ -983,62 +1105,55 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
         children: [
           // 닫기 버튼 (항상)
           Expanded(
-            child: OutlinedButton(
-              onPressed: () => Navigator.pop(context, _hasChanges),
-              style: OutlinedButton.styleFrom(
-                foregroundColor: AppColors.grey600,
-                side: BorderSide(color: AppColors.grey300),
-                padding: EdgeInsets.symmetric(vertical: ResponsiveHelper.spacing(context, 12)),
-              ),
-              child: const Text('닫기'),
+            child: _buildDialogButton(
+              label: '닫기',
+              icon: Icons.close,
+              bgColor: AppColors.grey100,
+              textColor: AppColors.grey600,
+              onTap: () => Navigator.pop(context, _hasChanges),
             ),
           ),
-          
+
           // 승인/거절 버튼 (대기중이고 showApprovalButtons가 true일 때만)
           if (isPending && widget.showApprovalButtons && widget.application != null) ...[
             SizedBox(width: ResponsiveHelper.spacing(context, 8)),
-            
-            // 거절 버튼
             Expanded(
-              child: LoadingButton.outlined(
-                text: '거절',
-                borderColor: AppColors.error,
-                foregroundColor: AppColors.error,
-                onPressed: () async => await _updateStatus('REJECTED'),
+              child: _buildDialogButton(
+                label: '거절',
+                icon: Icons.cancel_outlined,
+                bgColor: AppColors.errorBg,
+                textColor: AppColors.error,
+                onTap: () => _updateStatus(AppStatus.rejected),
               ),
             ),
             SizedBox(width: ResponsiveHelper.spacing(context, 8)),
-            
-            // 승인 버튼
             Expanded(
-              child: LoadingButton.success(
-                text: '승인',
-                onPressed: () async => await _updateStatus('CONFIRMED'),
+              child: _buildDialogButton(
+                label: '승인',
+                icon: Icons.check_circle_outline,
+                bgColor: AppColors.successBg,
+                textColor: AppColors.successDark,
+                onTap: () => _updateStatus(AppStatus.confirmed),
               ),
             ),
           ],
 
-          // 🆕 리뷰 버튼 (확정자 + businessId 있을 때)
+          // 리뷰 버튼 (확정자 + businessId 있을 때)
           if (isConfirmed && widget.application != null && widget.businessId != null) ...[
             SizedBox(width: ResponsiveHelper.spacing(context, 8)),
-            SizedBox(
-              width: ResponsiveHelper.spacing(context, 48),
-              child: OutlinedButton(
-                onPressed: _openReviewDialog,
-                style: OutlinedButton.styleFrom(
-                  foregroundColor: Theme.of(context).primaryColor,
-                  side: BorderSide(color: Theme.of(context).primaryColor),
-                  padding: EdgeInsets.symmetric(
-                    vertical: ResponsiveHelper.spacing(context, 12),
-                  ),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                ),
-                child: Icon(
-                  Icons.rate_review,
-                  size: ResponsiveHelper.iconSize(context, 20),
-                ),
+            Expanded(
+              child: _buildDialogButton(
+                label: _hasWrittenReview == true ? '리뷰 확인' : '리뷰 작성',
+                icon: _hasWrittenReview == true
+                    ? Icons.rate_review
+                    : Icons.rate_review_outlined,
+                bgColor: _hasWrittenReview == true
+                    ? AppColors.successBg
+                    : primary.withValues(alpha: 0.08),
+                textColor: _hasWrittenReview == true
+                    ? AppColors.successDark
+                    : primary,
+                onTap: _openReviewDialog,
               ),
             ),
           ],
@@ -1046,61 +1161,51 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
           // 확정자 액션 버튼
           if (isConfirmed && widget.application != null) ...[
             SizedBox(width: ResponsiveHelper.spacing(context, 8)),
-            
-            // ✅ 장기 + 로딩 중: 로딩 스피너
+
+            // 장기 + 로딩 중
             if (_isLoading && isLongTerm) ...[
               Expanded(
                 child: Container(
-                  height: ResponsiveHelper.spacing(context, 44),
+                  height: 44,
                   decoration: BoxDecoration(
                     color: AppColors.grey100,
-                    borderRadius: BorderRadius.circular(8),
+                    borderRadius: BorderRadius.circular(10),
                   ),
                   child: Center(
                     child: SizedBox(
-                      width: ResponsiveHelper.spacing(context, 20),
-                      height: ResponsiveHelper.spacing(context, 20),
-                      child: CircularProgressIndicator(
-                        strokeWidth: 2,
-                        color: AppColors.grey400,
-                      ),
+                      width: 20,
+                      height: 20,
+                      child: CircularProgressIndicator(strokeWidth: 2, color: AppColors.grey400),
                     ),
                   ),
                 ),
               ),
-            // ✅ 장기 + 출퇴근 있음: 고정근무 관리
+            // 장기 + 출퇴근 있음: 고정근무 관리
             ] else if (isLongTerm && _hasAttendance) ...[
               Expanded(
-                child: ElevatedButton.icon(
-                  onPressed: _openFixedWorkerManagement,
-                  icon: Icon(
-                    Icons.settings,
-                    size: ResponsiveHelper.iconSize(context, 18),
-                  ),
-                  label: const Text('고정근무 관리'),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: AppColors.longTermDark,
-                    foregroundColor: Colors.white,
-                    padding: EdgeInsets.symmetric(vertical: ResponsiveHelper.spacing(context, 12)),
-                  ),
+                child: _buildDialogButton(
+                  label: '고정근무 관리',
+                  icon: Icons.settings_outlined,
+                  bgColor: AppColors.longTermDark,
+                  textColor: Colors.white,
+                  onTap: _openFixedWorkerManagement,
                 ),
               ),
-            // ✅ 장기 + 출퇴근 없음 OR 단기: 확정취소
+            // 장기 + 출퇴근 없음 OR 단기: 확정취소
             ] else ...[
               Expanded(
                 child: Builder(
                   builder: (context) {
-                    // 미출근 상태일 때만 확정취소 가능
-                    final canCancel = widget.attendanceStatus == null || 
+                    final canCancel = widget.attendanceStatus == null ||
                                       widget.attendanceStatus == 'pending';
-                    return LoadingButton.outlined(
-                      text: '확정취소',
+                    return _buildDialogButton(
+                      label: '확정취소',
                       icon: Icons.cancel_outlined,
-                      borderColor: canCancel ? AppColors.error : AppColors.grey400,
-                      foregroundColor: canCancel ? AppColors.error : AppColors.grey400,
-                      onPressed: () async {
+                      bgColor: canCancel ? AppColors.errorBg : AppColors.grey100,
+                      textColor: canCancel ? AppColors.error : AppColors.grey400,
+                      onTap: () {
                         if (canCancel) {
-                          await _cancelConfirmation();
+                          _cancelConfirmation();
                         } else {
                           ToastHelper.showWarning('확정취소는 미출근 상태일 때만 가능합니다');
                         }
@@ -1134,11 +1239,12 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
   /// 상태 업데이트
   Future<void> _updateStatus(String newStatus) async {
     if (widget.application == null) return;
-    
-    final actionText = newStatus == 'CONFIRMED' ? '승인' : '거절';
+
+    final actionText = newStatus == AppStatus.confirmed ? '승인' : '거절';
+    final adminUID = context.read<UserProvider>().currentUser?.uid;
     String? rejectReason;
-    
-    if (newStatus == 'CONFIRMED') {
+
+    if (newStatus == AppStatus.confirmed) {
       // 승인
       final confirm = await DialogHelper.showConfirm(
         context,
@@ -1163,14 +1269,11 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
     }
 
     try {
-      final userProvider = context.read<UserProvider>();
-      final adminUID = userProvider.currentUser?.uid;
-      
       await _firestoreService.updateApplicationStatus(
         applicationId: widget.application!.id,
         status: newStatus,
-        confirmedBy: newStatus == 'CONFIRMED' ? adminUID : null,
-        rejectedBy: newStatus == 'REJECTED' ? adminUID : null,
+        confirmedBy: newStatus == AppStatus.confirmed ? adminUID : null,
+        rejectedBy: newStatus == AppStatus.rejected ? adminUID : null,
         message: rejectReason,
       );
 
@@ -1197,9 +1300,11 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
     }
 
     final businessId = widget.businessId ?? widget.toItem?.to.businessId;
-    final business = businessId != null 
+    final business = businessId != null
         ? await _firestoreService.getBusinessById(businessId)
         : null;
+
+    if (!mounted) return;
 
     final successCount = await IdCardHelper.showBatchRequestDialog(
       context: context,
@@ -1244,17 +1349,15 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
   Future<void> _cancelConfirmation() async {
     if (widget.application == null) return;
 
-    // 취소 사유 선택
+    final adminUID = context.read<UserProvider>().currentUser?.uid;
+
     final cancelReason = await _showCancelReasonPicker();
     if (cancelReason == null) return;
 
     try {
-      final userProvider = context.read<UserProvider>();
-      final adminUID = userProvider.currentUser?.uid;
-
       await _firestoreService.updateApplicationStatus(
         applicationId: widget.application!.id,
-        status: 'CANCELED',
+        status: AppStatus.canceled,
         rejectedBy: adminUID,
         message: cancelReason,
       );
@@ -1276,6 +1379,7 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
   Future<String?> _showCancelReasonPicker() async {
     String? selectedReason;
     final customReasonController = TextEditingController();
+    // ignore: unawaited_futures — result awaited below; controller disposed after
 
     final reasons = [
       '일정 변경',
@@ -1479,6 +1583,7 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
         },
       ),
     );
+    customReasonController.dispose();
     return result;
   }
 
@@ -1486,17 +1591,63 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
   Future<void> _openReviewDialog() async {
     final app = widget.application;
     if (app == null || widget.businessId == null) return;
-    
-    final userProvider = context.read<UserProvider>();
-    final reviewer = userProvider.currentUser;
+
+    final reviewer = context.read<UserProvider>().currentUser;
     if (reviewer == null) return;
-    
-    // 현재 월 기준
+
     final now = DateTime.now();
-    
-    // 해당 월 근무 일수 계산 (간단 버전 - 실제로는 출퇴근 기록 기반)
     final workDays = _businessHistory?['totalDays'] ?? 1;
-    
+
+    // 리뷰 기준 월: 단기는 실제 근무일, 장기는 직전 완료 달
+    int reviewYear;
+    int reviewMonth;
+    if (app.isLongTermApplication) {
+      // 장기: 당월 5일 이전이면 전달, 이후면 이번달
+      if (now.month == 1) {
+        reviewYear = now.year - 1;
+        reviewMonth = 12;
+      } else {
+        reviewYear = now.year;
+        reviewMonth = now.day < 5 ? now.month - 1 : now.month;
+      }
+    } else {
+      reviewYear = app.workDate.year;
+      reviewMonth = app.workDate.month;
+    }
+
+    final requestKey = ReviewRequestModel.generateKey(
+      businessId: widget.businessId!,
+      workerId: widget.user.uid,
+      year: reviewYear,
+      month: reviewMonth,
+    );
+    final reviewRequest =
+        await MonthlyReviewService().getReviewRequest(requestKey);
+
+    // review_request가 있으면 해당 년/월로 보정 (CF 기준이 정확)
+    if (reviewRequest != null) {
+      reviewYear = reviewRequest.reviewYear;
+      reviewMonth = reviewRequest.reviewMonth;
+    }
+
+    if (!mounted) return;
+
+    // 기작성 리뷰 확인: monthly_reviews 직접 조회 (review_requests.adminStatus 갱신 여부 무관)
+    final reviewKey = MonthlyReviewModel.generateKeyForUser(
+      businessId: widget.businessId!,
+      targetUserId: widget.user.uid,
+      year: reviewYear,
+      month: reviewMonth,
+    );
+    final existingReview =
+        await MonthlyReviewService().getReviewById(reviewKey);
+    if (!mounted) return;
+
+    if (existingReview != null) {
+      await showMonthlyReviewViewDialog(context, review: existingReview);
+      return;
+    }
+
     final result = await showMonthlyReviewDialog(
       context,
       reviewerId: reviewer.uid,
@@ -1505,13 +1656,14 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
       businessName: widget.toItem?.to.businessName ?? '',
       targetUserId: widget.user.uid,
       targetUserName: widget.user.name,
-      reviewYear: now.year,
-      reviewMonth: now.month,
+      reviewYear: reviewYear,
+      reviewMonth: reviewMonth,
       workDaysInMonth: workDays,
-      normalAttendanceDays: workDays,  // TODO: 실제 출퇴근 기록 기반 계산
-      lateDays: 0,  // TODO: 실제 지각 횟수
+      normalAttendanceDays: workDays,
+      lateDays: 0,
+      requestId: reviewRequest?.id,
     );
-    
+
     if (result == true) {
       _hasChanges = true;
       widget.onStatusChanged?.call();

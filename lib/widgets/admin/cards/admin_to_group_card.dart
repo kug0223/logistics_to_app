@@ -1,6 +1,8 @@
 ﻿import 'package:flutter/material.dart';
 
 // Models
+import '../../../models/core/to_model.dart';
+import '../../../utils/close_state_utils.dart';
 import '../../../models/ui/admin_to_list_ui_models.dart';
 import '../../../models/core/work_detail_data.dart';
 
@@ -25,6 +27,7 @@ import '../../../screens/business_admin/to_management/edit_to_screen.dart';
 import '../../../screens/business_admin/dialogs/confirmed_list_dialog.dart';
 import '../../../screens/business_admin/dialogs/to_list_dialogs.dart';
 import '../../../screens/business_admin/dialogs/slot_batch_select_dialog.dart';
+import '../../common/app_menu_sheet.dart';
 
 // Providers
 import 'package:provider/provider.dart';
@@ -34,6 +37,7 @@ import '../../../widgets/dialogs/styled_dialog.dart';
 // Local Widgets
 import 'admin_to_item_card.dart';
 import 'admin_work_detail.dart';
+import '../../pickers/date_picker_bottom_sheet.dart';
 
 /// ✨ TO 그룹 카드 (개선된 디자인 - 한눈에 들어오는 UI)
 /// 
@@ -56,7 +60,9 @@ class TOGroupCard extends StatefulWidget {
   // ✨ Lazy Loading 상태
   final bool isGroupLoading;      // 그룹 로딩 중
   final Set<String> loadingTOs;   // 로딩 중인 TO 목록
-  final void Function(Set<String> affectedTOIds)? onAffectedTOsChanged;  // 🔥 추가
+  final void Function(Set<String> affectedTOIds)? onAffectedTOsChanged;
+  /// 리스트에서 다른 카드가 하나라도 펼쳐진 상태인지 (dimming용)
+  final bool isAnyExpanded;
 
   const TOGroupCard({
     super.key,
@@ -70,8 +76,9 @@ class TOGroupCard extends StatefulWidget {
     required this.onToggleTOExpand,
     this.selectedDate,
     this.isGroupLoading = false,
-    this.loadingTOs = const {},
-    this.onAffectedTOsChanged,  // 🔥 추가
+    this.loadingTOs = const <String>{},
+    this.onAffectedTOsChanged,
+    this.isAnyExpanded = false,
   });
 
   @override
@@ -87,7 +94,7 @@ class _TOGroupCardState extends State<TOGroupCard> with SingleTickerProviderStat
     // flex TO이고 날짜 필터가 있으면 해당 날짜 슬롯만, 아니면 전체
     final targetTOs = (widget.selectedDate != null && !widget.groupItem.isLongTerm)
         ? widget.groupItem.groupTOs.where((toItem) =>
-            DateUtils.isSameDay(toItem.to.date, widget.selectedDate!)).toList()
+            DateUtils.isSameDay(toItem.slot?.date ?? toItem.to.date, widget.selectedDate!)).toList()
         : widget.groupItem.groupTOs;
 
     // 전체 통계 계산
@@ -109,73 +116,44 @@ class _TOGroupCardState extends State<TOGroupCard> with SingleTickerProviderStat
       }
     }
     
-    debugPrint('🔍 [TOGroupCard] 최종 통계: $totalConfirmed/$totalRequired (+$totalPending)');
-    
-    // 인원 충족 여부 (groupTOs 로드 안됐으면 groupItem에서 직접 체크)
-    final isFull = widget.groupItem.groupTOs.isEmpty 
-        ? widget.groupItem.isFull 
-        : widget.groupItem.groupTOs.every((toItem) {
-            // workDetails 로드 안됐으면 TO 문서의 통계 사용
-            if (!toItem.isWorkDetailLoaded || toItem.workDetails.isEmpty) {
-              return toItem.confirmedCount >= toItem.totalRequired && toItem.totalRequired > 0;
-            }
-            return toItem.workDetails.every((work) {
-              final stats = toItem.workDetailStats?[work.id];
-              final confirmed = stats?['confirmed'] ?? 0;
-              return confirmed >= work.requiredCount;
-            });
-          });
+    // 인원 충족 여부 — targetTOs 기준 (날짜 필터 반영)
+    final isFull = targetTOs.isEmpty
+        ? widget.groupItem.isFull
+        : targetTOs.every((toItem) => toItem.resolvedIsFull);
 
     // ✅ 전체 마감 여부 (WorkDetail 실제 상태 + isTimeExpired 포함)
-    final singleTODetails = widget.groupItem.groupTOs.isEmpty
-        ? _getSingleTOWorkDetails()
-        : <WorkDetailData>[];
-    final allClosed = widget.groupItem.groupTOs.isEmpty
-        ? (widget.groupItem.isClosed ||
-           (singleTODetails.isNotEmpty &&
-            singleTODetails.every((d) => d.isClosed || d.isTimeExpired)))
-        : widget.groupItem.groupTOs.every((toItem) {
-            final to = toItem.to;
+    final isMultiSlotCollapsed = widget.groupItem.groupTOs.isEmpty &&
+        !masterTO.isLongTerm && masterTO.totalSlots > 1;
 
-            // WorkDetails 로드된 경우: 실제 상태 우선
-            if (toItem.isWorkDetailLoaded && toItem.workDetails.isNotEmpty) {
-              return toItem.workDetails.every((work) {
-                if (work.isClosed || work.isTimeExpired) return true;
-                final stats = toItem.workDetailStats?[work.id];
-                final confirmed = stats?['confirmed'] ?? 0;
-                return confirmed >= work.requiredCount;
-              });
-            }
+    // 멀티슬롯 collapsed: HOURS_BEFORE 타입은 rangeEnd(마지막 슬롯 날짜)로
+    // 마지막 슬롯의 모든 업무 마감시간이 지났는지 계산.
+    // 마지막 슬롯이 만료됐으면 앞 슬롯들도 이미 만료된 것이므로 전체 마감.
+    final now = DateTime.now();
 
-            // 슬롯/TO 수동 마감
-            if (toItem.slot?.isManualClosed == true || to.isManualClosed) return true;
+    // 슬롯 미로드 상태에서 HOURS_BEFORE 타입 폴백 (마지막 슬롯 기준 마감 여부)
+    bool multiSlotTimeExpired = false;
+    if (isMultiSlotCollapsed &&
+        masterTO.deadlineType == 'HOURS_BEFORE' &&
+        (masterTO.hoursBeforeStart ?? 0) > 0) {
+      final lastDate = masterTO.rangeEnd;
+      if (lastDate != null && masterTO.workDetails.isNotEmpty) {
+        multiSlotTimeExpired = masterTO.workDetails.every((d) {
+          final parts = d.startTime.split(':');
+          if (parts.length != 2) return false;
+          final deadline = DateTime(lastDate.year, lastDate.month, lastDate.day,
+              int.parse(parts[0]), int.parse(parts[1]))
+              .subtract(Duration(hours: masterTO.hoursBeforeStart!));
+          return now.isAfter(deadline);
+        });
+      }
+    }
 
-            // DB status 기반 판단
-            if (to.status == 'CLOSED' || to.status == 'EXPIRED' || to.status == 'FULL') return true;
-
-            // 슬롯 날짜 + masterTO 설정으로 시간초과 여부 계산 (workDetails 미로드 시)
-            final slotDate = toItem.slot?.date;
-            final masterTO = widget.groupItem.masterTO;
-            if (slotDate != null &&
-                masterTO.deadlineType == 'HOURS_BEFORE' &&
-                (masterTO.hoursBeforeStart ?? 0) > 0) {
-              final masterDetails = masterTO.workDetails;
-              if (masterDetails.isNotEmpty &&
-                  masterDetails.every((d) {
-                    final parts = d.startTime.split(':');
-                    if (parts.length != 2) return false;
-                    final deadline = DateTime(
-                      slotDate.year, slotDate.month, slotDate.day,
-                      int.parse(parts[0]), int.parse(parts[1]),
-                    ).subtract(Duration(hours: masterTO.hoursBeforeStart!));
-                    return DateTime.now().isAfter(deadline);
-                  })) {
-                return true;
-              }
-            }
-
-            return false;
-          });
+    // 전체 마감 여부 — CloseStateUtils로 통일 판단
+    final allClosed = targetTOs.isEmpty
+        ? (widget.groupItem.isClosed || multiSlotTimeExpired)
+        : targetTOs.every(
+            (toItem) => CloseStateUtils.isToItemClosed(toItem, masterTO, now),
+          );
 
     // ✨ 컬러바 색상 결정 (장기: 보라, 단기: 초록)
     Color statusBarColor;
@@ -185,7 +163,16 @@ class _TOGroupCardState extends State<TOGroupCard> with SingleTickerProviderStat
       statusBarColor = widget.groupItem.isLongTerm ? AppColors.longTerm : AppColors.shortTerm;
     }
 
-    return Container(
+    final isDimmed = widget.isAnyExpanded && !widget.isExpanded;
+
+    return AnimatedOpacity(
+      opacity: isDimmed ? 0.45 : 1.0,
+      duration: const Duration(milliseconds: 220),
+      child: AnimatedScale(
+        scale: isDimmed ? 0.98 : 1.0,
+        duration: const Duration(milliseconds: 220),
+        alignment: Alignment.topCenter,
+        child: Container(
       margin: EdgeInsets.only(
         bottom: ResponsiveHelper.spacing(context, 12),
       ),
@@ -259,27 +246,39 @@ class _TOGroupCardState extends State<TOGroupCard> with SingleTickerProviderStat
                             ),
                           ),
                           
-                          // 플렉스 TO: 날짜 슬롯 수 뱃지
-                          if (!widget.groupItem.isLongTerm && masterTO.totalSlots > 1) ...[
-                            SizedBox(width: ResponsiveHelper.spacing(context, 4)),
-                            Container(
-                              padding: EdgeInsets.symmetric(
-                                horizontal: ResponsiveHelper.spacing(context, 6),
-                                vertical: ResponsiveHelper.spacing(context, 3),
-                              ),
-                              decoration: BoxDecoration(
-                                color: AppColors.infoBg,
-                                borderRadius: BorderRadius.circular(6),
-                                border: Border.all(color: AppColors.infoLight),
-                              ),
-                              child: Text(
-                                '${masterTO.totalSlots}일',
-                                style: ResponsiveHelper.smallStyle(
-                                  context,
-                                  color: AppColors.infoDark,
-                                ).copyWith(fontWeight: FontWeight.bold),
-                              ),
-                            ),
+                          // 플렉스 TO: 날짜 슬롯 수 뱃지 (1일 이상 항상 표시)
+                          if (!widget.groupItem.isLongTerm) ...[
+                            Builder(builder: (context) {
+                              final effectiveCount = widget.groupItem.isGroupDetailLoaded &&
+                                      widget.groupItem.groupTOs.isNotEmpty
+                                  ? widget.groupItem.groupTOs.length
+                                  : masterTO.totalSlots;
+                              if (effectiveCount < 1) return const SizedBox.shrink();
+                              return Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  SizedBox(width: ResponsiveHelper.spacing(context, 4)),
+                                  Container(
+                                    padding: EdgeInsets.symmetric(
+                                      horizontal: ResponsiveHelper.spacing(context, 6),
+                                      vertical: ResponsiveHelper.spacing(context, 3),
+                                    ),
+                                    decoration: BoxDecoration(
+                                      color: AppColors.infoBg,
+                                      borderRadius: BorderRadius.circular(6),
+                                      border: Border.all(color: AppColors.infoLight),
+                                    ),
+                                    child: Text(
+                                      '$effectiveCount일',
+                                      style: ResponsiveHelper.smallStyle(
+                                        context,
+                                        color: AppColors.infoDark,
+                                      ).copyWith(fontWeight: FontWeight.bold),
+                                    ),
+                                  ),
+                                ],
+                              );
+                            }),
                           ],
 
                           SizedBox(width: ResponsiveHelper.spacing(context, 8)),
@@ -312,8 +311,8 @@ class _TOGroupCardState extends State<TOGroupCard> with SingleTickerProviderStat
                         ],
                       ),
                       
-                      SizedBox(height: ResponsiveHelper.spacing(context, 10)),
-                      
+                      SizedBox(height: ResponsiveHelper.spacing(context, 6)),
+
                       // ✨ 둘째 줄: 제목 (크게 강조!)
                       Text(
                         widget.groupItem.groupName,
@@ -325,8 +324,8 @@ class _TOGroupCardState extends State<TOGroupCard> with SingleTickerProviderStat
                         maxLines: 2,
                         overflow: TextOverflow.ellipsis,
                       ),
-                      
-                      SizedBox(height: ResponsiveHelper.spacing(context, 12)),
+
+                      SizedBox(height: ResponsiveHelper.spacing(context, 8)),
                       
                       // ✨ 셋째 줄: 날짜 + 인원현황 (핵심 정보만!)
                       Row(
@@ -405,7 +404,13 @@ class _TOGroupCardState extends State<TOGroupCard> with SingleTickerProviderStat
                           if (deadline == null) return const SizedBox.shrink();
                           final now = DateTime.now();
                           final isPast = deadline.isBefore(now);
-                          final isSoon = !isPast && deadline.difference(now).inHours < 2;
+                          final remaining = deadline.difference(now);
+                          final isSoon = !isPast && remaining.inHours < 2;
+                          final label = isPast
+                              ? '지원마감 ${FormatHelper.formatTime(deadline)}'
+                              : isSoon
+                                  ? '마감까지 ${_formatRemaining(remaining)}'
+                                  : '지원마감 ${FormatHelper.formatTime(deadline)}';
                           return Padding(
                             padding: EdgeInsets.only(
                               top: ResponsiveHelper.spacing(context, 8),
@@ -419,7 +424,7 @@ class _TOGroupCardState extends State<TOGroupCard> with SingleTickerProviderStat
                                 ),
                                 SizedBox(width: ResponsiveHelper.spacing(context, 6)),
                                 Text(
-                                  '지원마감 ${FormatHelper.formatTime(deadline)}',
+                                  label,
                                   style: ResponsiveHelper.smallStyle(
                                     context,
                                     color: isPast ? AppColors.grey500 : AppColors.warningDark,
@@ -436,11 +441,11 @@ class _TOGroupCardState extends State<TOGroupCard> with SingleTickerProviderStat
                       ],
                       
                       // ✨ 상태 표시 (마감/예약/모집중) - targetTOs 기준
-                      SizedBox(height: ResponsiveHelper.spacing(context, 8)),
+                      SizedBox(height: ResponsiveHelper.spacing(context, 6)),
                       _buildStatusBadge(context, allClosed: allClosed, targetTOs: targetTOs),
-                      
+
                       // 펼침 힌트
-                      SizedBox(height: ResponsiveHelper.spacing(context, 8)),
+                      SizedBox(height: ResponsiveHelper.spacing(context, 4)),
                       Center(
                         child: Icon(
                           widget.isExpanded 
@@ -589,6 +594,67 @@ class _TOGroupCardState extends State<TOGroupCard> with SingleTickerProviderStat
                                 : Column(
                                     crossAxisAlignment: CrossAxisAlignment.start,
                                     children: [
+                                      // 단기 단일슬롯: 슬롯 날짜 + 개별 제목 (있는 경우)
+                                      if (!widget.groupItem.isLongTerm &&
+                                          widget.groupItem.groupTOs.isNotEmpty) ...[
+                                        Builder(builder: (context) {
+                                          final toItem = widget.groupItem.groupTOs.first;
+                                          final slot = toItem.slot;
+                                          final slotTitle = slot?.title;
+                                          if (slotTitle == null || slotTitle.isEmpty) {
+                                            return const SizedBox.shrink();
+                                          }
+                                          return Padding(
+                                            padding: EdgeInsets.only(
+                                              bottom: ResponsiveHelper.spacing(context, 12),
+                                            ),
+                                            child: Container(
+                                              padding: EdgeInsets.symmetric(
+                                                horizontal: ResponsiveHelper.spacing(context, 10),
+                                                vertical: ResponsiveHelper.spacing(context, 8),
+                                              ),
+                                              decoration: BoxDecoration(
+                                                color: Colors.white,
+                                                borderRadius: BorderRadius.circular(10),
+                                                border: Border.all(color: AppColors.grey200),
+                                              ),
+                                              child: Row(
+                                                children: [
+                                                  Container(
+                                                    padding: EdgeInsets.symmetric(
+                                                      horizontal: ResponsiveHelper.spacing(context, 8),
+                                                      vertical: ResponsiveHelper.spacing(context, 4),
+                                                    ),
+                                                    decoration: BoxDecoration(
+                                                      color: theme.primaryColor.withValues(alpha: 0.1),
+                                                      borderRadius: BorderRadius.circular(6),
+                                                    ),
+                                                    child: Text(
+                                                      FormatHelper.formatDate(slot!.date),
+                                                      style: ResponsiveHelper.smallStyle(
+                                                        context,
+                                                        color: theme.primaryColor,
+                                                      ).copyWith(fontWeight: FontWeight.bold),
+                                                    ),
+                                                  ),
+                                                  SizedBox(width: ResponsiveHelper.spacing(context, 10)),
+                                                  Expanded(
+                                                    child: Text(
+                                                      slotTitle,
+                                                      style: ResponsiveHelper.bodyStyle(context).copyWith(
+                                                        fontWeight: FontWeight.w600,
+                                                        color: AppColors.textPrimary,
+                                                      ),
+                                                      maxLines: 1,
+                                                      overflow: TextOverflow.ellipsis,
+                                                    ),
+                                                  ),
+                                                ],
+                                              ),
+                                            ),
+                                          );
+                                        }),
+                                      ],
                                       // 업무 상세 헤더
                                       Row(
                                         children: [
@@ -654,6 +720,8 @@ class _TOGroupCardState extends State<TOGroupCard> with SingleTickerProviderStat
           ),
         ],
       ),
+        ),
+      ),
     );
   }
 
@@ -677,18 +745,32 @@ class _TOGroupCardState extends State<TOGroupCard> with SingleTickerProviderStat
   }
 
   /// 날짜 텍스트 생성
-  String _getDateText(dynamic masterTO) {
+  String _getDateText(TOModel masterTO) {
     if (masterTO.isLongTerm) {
-      return masterTO.longTermPeriodWithDays;
+      return FormatHelper.formatWorkPeriod(
+        startDate: masterTO.rangeStart ?? masterTO.createdAt,
+        isLongTerm: true,
+        workDays: masterTO.workDays.isEmpty ? null : masterTO.workDays,
+      );
     }
     // flex TO: 로드된 슬롯 수 우선, 없으면 totalSlots 사용
     final int count = widget.groupItem.isGroupDetailLoaded && widget.groupItem.groupTOs.isNotEmpty
         ? widget.groupItem.groupTOs.length
         : masterTO.totalSlots;
-    if (count <= 1) {
-      return FormatHelper.formatDate(masterTO.rangeStart ?? masterTO.createdAt);
+
+    // 슬롯 날짜 우선 사용 (rangeStart가 null인 기존 데이터 호환)
+    final DateTime dateToShow;
+    if (widget.groupItem.isGroupDetailLoaded && widget.groupItem.groupTOs.isNotEmpty) {
+      final firstSlot = widget.groupItem.groupTOs.first;
+      dateToShow = firstSlot.slot?.date ?? masterTO.rangeStart ?? masterTO.createdAt;
+    } else {
+      dateToShow = masterTO.rangeStart ?? masterTO.createdAt;
     }
-    return '${FormatHelper.formatDate(masterTO.rangeStart ?? masterTO.createdAt)} 외 ${count - 1}일';
+
+    if (count <= 1) {
+      return FormatHelper.formatDate(dateToShow);
+    }
+    return '${FormatHelper.formatDate(dateToShow)} 외 ${count - 1}일';
   }
 /// ✨ 인원 현황 배지 (핵심 정보)
   Widget _buildPersonnelBadge(
@@ -698,46 +780,11 @@ class _TOGroupCardState extends State<TOGroupCard> with SingleTickerProviderStat
     required int pending,
     required bool isFull,
   }) {
-    return Container(
-      padding: EdgeInsets.symmetric(
-        horizontal: ResponsiveHelper.spacing(context, 10),
-        vertical: ResponsiveHelper.spacing(context, 6),
-      ),
-      decoration: BoxDecoration(
-        color: isFull ? AppColors.successBg : AppColors.infoBg,
-        borderRadius: BorderRadius.circular(20),
-        border: Border.all(
-          color: isFull ? AppColors.successLight : AppColors.infoLight,
-          width: 1,
-        ),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(
-            isFull ? Icons.check_circle : Icons.people,
-            size: ResponsiveHelper.iconSize(context, 14),
-            color: isFull ? AppColors.successDark : AppColors.infoDark,
-          ),
-          SizedBox(width: ResponsiveHelper.spacing(context, 4)),
-          Text(
-            '$confirmed/$required',
-            style: ResponsiveHelper.bodyStyle(
-              context,
-              color: isFull ? AppColors.successDark : AppColors.infoDark,
-            ).copyWith(fontWeight: FontWeight.bold),
-          ),
-          if (pending > 0) ...[
-            Text(
-              ' +$pending',
-              style: ResponsiveHelper.smallStyle(
-                context,
-                color: AppColors.warningDark,
-              ),
-            ),
-          ],
-        ],
-      ),
+    return PersonnelBadge(
+      confirmed: confirmed,
+      required: required,
+      pending: pending,
+      isFull: isFull,
     );
   }
 
@@ -860,7 +907,7 @@ class _TOGroupCardState extends State<TOGroupCard> with SingleTickerProviderStat
           ),
           SizedBox(width: ResponsiveHelper.spacing(context, 4)),
           Text(
-            '마감됨',
+            '마감',
             style: ResponsiveHelper.smallStyle(
               context,
               color: AppColors.grey600,
@@ -897,7 +944,7 @@ class _TOGroupCardState extends State<TOGroupCard> with SingleTickerProviderStat
 
   /// 단일 TO 메뉴
   Widget _buildSingleTOMenu(BuildContext context) {
-    return PopupMenuButton<String>(
+    return IconButton(
       icon: Icon(
         Icons.more_vert,
         size: ResponsiveHelper.iconSize(context, 20),
@@ -905,138 +952,95 @@ class _TOGroupCardState extends State<TOGroupCard> with SingleTickerProviderStat
       ),
       padding: EdgeInsets.zero,
       tooltip: '메뉴',
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(12),
-      ),
-      onSelected: (value) => _handleSingleTOMenuAction(context, value),
-      itemBuilder: (context) => [
-        if (!widget.groupItem.masterTO.isContractType)
-          PopupMenuItem(
-            value: 'addSlot',
-            child: Row(
-              children: [
-                Icon(
-                  Icons.event_available,
-                  size: ResponsiveHelper.iconSize(context, 18),
-                  color: AppColors.info,
-                ),
-                SizedBox(width: ResponsiveHelper.spacing(context, 12)),
-                const Text('날짜 추가'),
-              ],
+      onPressed: () => _showSingleTOMenuSheet(context),
+    );
+  }
+
+  void _showSingleTOMenuSheet(BuildContext context) {
+    final isContract = widget.groupItem.masterTO.isContractType;
+    final isClosed = widget.groupItem.isClosed;
+    final isManualClosed = widget.groupItem.isManualClosed;
+
+    AppMenuSheet.show(
+      context: context,
+      itemGroups: [
+        // 날짜 추가 (flex 전용)
+        if (!isContract)
+          [
+            AppMenuSheetItem(
+              icon: Icons.event_available,
+              label: '날짜 추가',
+              color: AppColors.info,
+              onTap: () => _handleSingleTOMenuAction(context, 'addSlot'),
             ),
+          ],
+        // 수정
+        [
+          AppMenuSheetItem(
+            icon: isContract ? Icons.edit : Icons.edit_calendar,
+            label: isContract ? '수정' : '일괄수정',
+            color: AppColors.warning,
+            onTap: () => _handleSingleTOMenuAction(context, isContract ? 'edit' : 'batchEdit'),
           ),
-        PopupMenuItem(
-          value: widget.groupItem.masterTO.isContractType ? 'edit' : 'batchEdit',
-          child: Row(
-            children: [
-              Icon(
-                widget.groupItem.masterTO.isContractType
-                    ? Icons.edit
-                    : Icons.edit_calendar,
-                size: ResponsiveHelper.iconSize(context, 18),
-                color: AppColors.warning,
-              ),
-              SizedBox(width: ResponsiveHelper.spacing(context, 12)),
-              Text(widget.groupItem.masterTO.isContractType ? '수정' : '일괄수정'),
-            ],
-          ),
-        ),
-        if (widget.groupItem.isClosed)
-          PopupMenuItem(
-            value: 'reopen',
-            child: Row(
-              children: [
-                Icon(Icons.lock_open,
-                    size: ResponsiveHelper.iconSize(context, 18),
-                    color: AppColors.success),
-                SizedBox(width: ResponsiveHelper.spacing(context, 12)),
-                const Text('재오픈'),
-              ],
-            ),
-          )
-        else ...[
-          if (widget.groupItem.masterTO.isContractType)
-            PopupMenuItem(
-              value: 'close',
-              child: Row(
-                children: [
-                  Icon(Icons.lock_outline,
-                      size: ResponsiveHelper.iconSize(context, 18),
-                      color: AppColors.warning),
-                  SizedBox(width: ResponsiveHelper.spacing(context, 12)),
-                  const Text('마감'),
-                ],
-              ),
-            )
-          else
-            PopupMenuItem(
-              value: 'batchClose',
-              child: Row(
-                children: [
-                  Icon(Icons.lock_outline,
-                      size: ResponsiveHelper.iconSize(context, 18),
-                      color: AppColors.warning),
-                  SizedBox(width: ResponsiveHelper.spacing(context, 12)),
-                  const Text('일괄마감'),
-                ],
-              ),
-            ),
-          if (!widget.groupItem.masterTO.isContractType)
-            PopupMenuItem(
-              value: 'batchReopen',
-              child: Row(
-                children: [
-                  Icon(Icons.lock_open,
-                      size: ResponsiveHelper.iconSize(context, 18),
-                      color: AppColors.success),
-                  SizedBox(width: ResponsiveHelper.spacing(context, 12)),
-                  const Text('일괄재오픈'),
-                ],
-              ),
-            ),
         ],
-        PopupMenuItem(
-          value: widget.groupItem.masterTO.isContractType ? 'delete' : 'batchDelete',
-          child: Row(
-            children: [
-              Icon(
-                Icons.delete,
-                size: ResponsiveHelper.iconSize(context, 18),
-                color: AppColors.error,
-              ),
-              SizedBox(width: ResponsiveHelper.spacing(context, 12)),
-              Text(widget.groupItem.masterTO.isContractType ? '삭제' : '일괄삭제'),
-            ],
-          ),
-        ),
-        PopupMenuItem(
-          value: 'confirmedList',
-          child: Row(
-            children: [
-              Icon(
-                Icons.check_circle_outline,
-                size: ResponsiveHelper.iconSize(context, 18),
+        // 마감 / 재오픈
+        [
+          if (isClosed) ...[
+            if (isContract && isManualClosed)
+              AppMenuSheetItem(
+                icon: Icons.lock_open,
+                label: '재오픈',
                 color: AppColors.success,
+                onTap: () => _handleSingleTOMenuAction(context, 'reopen'),
               ),
-              SizedBox(width: ResponsiveHelper.spacing(context, 12)),
-              const Text('전체 확정명단'),
-            ],
-          ),
-        ),
-        PopupMenuItem(
-          value: 'renameCard',
-          child: Row(
-            children: [
-              Icon(
-                Icons.drive_file_rename_outline,
-                size: ResponsiveHelper.iconSize(context, 18),
-                color: AppColors.purple,
+            if (!isContract)
+              AppMenuSheetItem(
+                icon: Icons.lock_open,
+                label: '일괄재오픈',
+                color: AppColors.success,
+                onTap: () => _handleSingleTOMenuAction(context, 'batchReopen'),
               ),
-              SizedBox(width: ResponsiveHelper.spacing(context, 12)),
-              const Text('카드 제목 변경'),
-            ],
+          ] else ...[
+            AppMenuSheetItem(
+              icon: Icons.lock_outline,
+              label: isContract ? '마감' : '일괄마감',
+              color: AppColors.warning,
+              onTap: () => _handleSingleTOMenuAction(context, isContract ? 'close' : 'batchClose'),
+            ),
+            if (!isContract)
+              AppMenuSheetItem(
+                icon: Icons.lock_open,
+                label: '일괄재오픈',
+                color: AppColors.success,
+                onTap: () => _handleSingleTOMenuAction(context, 'batchReopen'),
+              ),
+          ],
+        ],
+        // 확정명단 / 카드 제목 변경
+        [
+          AppMenuSheetItem(
+            icon: Icons.check_circle_outline,
+            label: '전체 확정명단',
+            color: AppColors.success,
+            onTap: () => _handleSingleTOMenuAction(context, 'confirmedList'),
           ),
-        ),
+          AppMenuSheetItem(
+            icon: Icons.drive_file_rename_outline,
+            label: '카드 제목 변경',
+            color: AppColors.purple,
+            onTap: () => _handleSingleTOMenuAction(context, 'renameCard'),
+          ),
+        ],
+        // 삭제
+        [
+          AppMenuSheetItem(
+            icon: Icons.delete,
+            label: isContract ? '삭제' : '일괄삭제',
+            color: AppColors.error,
+            isDanger: true,
+            onTap: () => _handleSingleTOMenuAction(context, isContract ? 'delete' : 'batchDelete'),
+          ),
+        ],
       ],
     );
   }
@@ -1065,45 +1069,13 @@ class _TOGroupCardState extends State<TOGroupCard> with SingleTickerProviderStat
           ToastHelper.showError('추가 가능한 날짜가 없습니다');
           return;
         }
-        final picked = await showDatePicker(
+        final picked = await DatePickerBottomSheet.show(
           context: this.context,
           initialDate: initialDate,
-          firstDate: today,
-          lastDate: today.add(const Duration(days: 365)),
-          helpText: '근무 날짜 선택',
-          cancelText: '취소',
-          confirmText: '선택',
-          selectableDayPredicate: (date) {
-            final d = DateTime(date.year, date.month, date.day);
-            return !takenDates.contains(d);
-          },
-          builder: (context, child) {
-            final primary = Theme.of(context).primaryColor;
-            return Theme(
-              data: Theme.of(context).copyWith(
-                colorScheme: ColorScheme.light(
-                  primary: primary,
-                  onPrimary: Colors.white,
-                  surface: Colors.white,
-                  onSurface: AppColors.textPrimary,
-                  surfaceContainerHighest: primary.withValues(alpha: 0.08),
-                ),
-                textButtonTheme: TextButtonThemeData(
-                  style: TextButton.styleFrom(
-                    foregroundColor: primary,
-                    textStyle: const TextStyle(fontWeight: FontWeight.bold),
-                  ),
-                ),
-                dialogTheme: DialogThemeData(
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(24),
-                  ),
-                  elevation: 8,
-                ),
-              ),
-              child: child!,
-            );
-          },
+          title: '근무 날짜 선택',
+          minDate: today,
+          maxDate: today.add(const Duration(days: 365)),
+          disabledDates: takenDates.toList(),
         );
         if (picked == null || !mounted) return;
         await NavigationHelper.push<bool>(
@@ -1173,8 +1145,9 @@ class _TOGroupCardState extends State<TOGroupCard> with SingleTickerProviderStat
             actions: [
               StyledDialogButton.cancel(
                   onPressed: () => Navigator.pop(dialogCtx, false)),
-              StyledDialogButton.danger(
+              StyledDialogButton.primary(
                 text: '마감',
+                backgroundColor: AppColors.warning,
                 onPressed: () => Navigator.pop(dialogCtx, true),
               ),
             ],
@@ -1251,11 +1224,19 @@ class _TOGroupCardState extends State<TOGroupCard> with SingleTickerProviderStat
           confirmLabel: '삭제',
         );
         if (deleteSlots == null || deleteSlots.isEmpty || !mounted) return;
+
+        // 전체 슬롯 수 확인 — 마지막 날짜 삭제 시 공고 자체가 삭제됨을 안내
+        final allSlots = await widget.firestoreService.getSlots(masterTO.id);
+        if (!mounted) return;
+        final deletesAll = deleteSlots.length >= allSlots.length;
+
         final deleteConfirmed = await showDialog<bool>(
           context: this.context,
           builder: (dialogCtx) => StyledDialog(
             title: '일괄 삭제',
-            subtitle: '선택한 ${deleteSlots.length}개 날짜를 삭제하시겠습니까?\n이 작업은 되돌릴 수 없습니다.',
+            subtitle: deletesAll
+                ? '모든 날짜를 삭제하면 공고 자체도 삭제됩니다.\n이 작업은 되돌릴 수 없습니다.'
+                : '선택한 ${deleteSlots.length}개 날짜를 삭제하시겠습니까?\n이 작업은 되돌릴 수 없습니다.',
             icon: Icons.delete_forever,
             headerColor: AppColors.error,
             content: const SizedBox.shrink(),
@@ -1278,9 +1259,15 @@ class _TOGroupCardState extends State<TOGroupCard> with SingleTickerProviderStat
             removedConfirmed: deleteSlots.fold<int>(0, (s, slot) => s + slot.confirmedCount),
             removedPending: deleteSlots.fold<int>(0, (s, slot) => s + slot.pendingCount),
           );
-          widget.firestoreService.clearCache(toId: masterTO.id);
+          if (!mounted) return;
+          if (deletesAll) {
+            // 슬롯을 모두 삭제했으니 TO 문서도 삭제 (지원서·알림 포함)
+            await widget.firestoreService.deleteTO(masterTO.id);
+          } else {
+            widget.firestoreService.clearCache(toId: masterTO.id);
+            ToastHelper.showSuccess('${deleteSlots.length}개 날짜가 삭제되었습니다');
+          }
           widget.onChanged();
-          ToastHelper.showSuccess('${deleteSlots.length}개 날짜가 삭제되었습니다');
         } catch (e) {
           ToastHelper.showError('삭제 처리에 실패했습니다');
         }
@@ -1473,6 +1460,8 @@ class _TOGroupCardState extends State<TOGroupCard> with SingleTickerProviderStat
 
   /// 단건 TO 로딩 중 여부
   bool _isSingleTOLoading() {
+    // 플렉스 단일슬롯: 그룹 로딩이 isGroupLoading으로 추적됨
+    if (widget.isGroupLoading) return true;
     if (widget.groupItem.groupTOs.isNotEmpty) {
       return widget.loadingTOs.contains(widget.groupItem.groupTOs.first.to.id);
     }
@@ -1487,7 +1476,15 @@ class _TOGroupCardState extends State<TOGroupCard> with SingleTickerProviderStat
 
     if (widget.groupItem.groupTOs.isNotEmpty) {
       final firstSlot = widget.groupItem.groupTOs.first;
-      details = firstSlot.workDetails;
+      // slot.workDetails(SlotModel — loadGroupTOsLight에서 로드됨) 우선,
+      // 없으면 TOItem._workDetails(loadWorkDetails에서 로드됨),
+      // 그것도 없으면 마스터 TO 템플릿
+      final slotWorkDetails = firstSlot.slot?.workDetails ?? [];
+      details = slotWorkDetails.isNotEmpty
+          ? slotWorkDetails
+          : firstSlot.workDetails.isNotEmpty
+              ? firstSlot.workDetails
+              : to.workDetails;
       // 슬롯의 실제 날짜 사용, 없으면 마스터 TO 기준
       refDate = firstSlot.slot?.date ?? to.rangeStart ?? DateTime.now();
     } else {
@@ -1512,11 +1509,25 @@ class _TOGroupCardState extends State<TOGroupCard> with SingleTickerProviderStat
     }).toList();
   }
 
+  /// 남은 시간을 "X시간 Y분" 또는 "Y분" 형태로 반환
+  String _formatRemaining(Duration remaining) {
+    if (remaining.isNegative) return '0분';
+    final h = remaining.inHours;
+    final m = remaining.inMinutes.remainder(60);
+    if (h >= 1) return '$h시간 $m분';
+    return '$m분';
+  }
+
   /// 단기 단일슬롯 공고의 가장 이른 지원 마감시간 반환
-  /// totalSlots > 1이면 null (슬롯별로 달라서 헤더에 표시 의미 없음)
+  /// 슬롯이 2개 이상이면 null (슬롯별로 달라서 헤더에 표시 의미 없음)
   DateTime? _getEarliestDeadline() {
     final to = widget.groupItem.masterTO;
-    if (to.isLongTerm || to.totalSlots > 1) return null;
+    if (to.isLongTerm) return null;
+    final effectiveCount = widget.groupItem.isGroupDetailLoaded &&
+            widget.groupItem.groupTOs.isNotEmpty
+        ? widget.groupItem.groupTOs.length
+        : to.totalSlots;
+    if (effectiveCount > 1) return null;
     final workDetails = _getSingleTOWorkDetails();
     DateTime? earliest;
     for (final d in workDetails) {
@@ -1560,7 +1571,66 @@ class _TOGroupCardState extends State<TOGroupCard> with SingleTickerProviderStat
     
     // selectedDate가 있으면 해당 날짜 TO만 필터링 (캘린더 뷰)
     return widget.groupItem.groupTOs.where((toItem) {
-      return DateUtils.isSameDay(toItem.to.date, widget.selectedDate!);
+      return DateUtils.isSameDay(toItem.slot?.date ?? toItem.to.date, widget.selectedDate!);
     }).toList();
+  }
+}
+
+/// 인원 현황 배지 — 리스트/캘린더 뷰 공용
+class PersonnelBadge extends StatelessWidget {
+  final int confirmed;
+  final int required;
+  final int pending;
+  final bool isFull;
+
+  const PersonnelBadge({
+    super.key,
+    required this.confirmed,
+    required this.required,
+    required this.pending,
+    required this.isFull,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: EdgeInsets.symmetric(
+        horizontal: ResponsiveHelper.spacing(context, 10),
+        vertical: ResponsiveHelper.spacing(context, 6),
+      ),
+      decoration: BoxDecoration(
+        color: isFull ? AppColors.successBg : AppColors.infoBg,
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(
+          color: isFull ? AppColors.successLight : AppColors.infoLight,
+        ),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(
+            isFull ? Icons.check_circle : Icons.people,
+            size: ResponsiveHelper.iconSize(context, 14),
+            color: isFull ? AppColors.successDark : AppColors.infoDark,
+          ),
+          SizedBox(width: ResponsiveHelper.spacing(context, 4)),
+          Text(
+            '$confirmed/$required',
+            style: ResponsiveHelper.bodyStyle(
+              context,
+              color: isFull ? AppColors.successDark : AppColors.infoDark,
+            ).copyWith(fontWeight: FontWeight.bold),
+          ),
+          if (pending > 0)
+            Text(
+              ' +$pending',
+              style: ResponsiveHelper.smallStyle(
+                context,
+                color: AppColors.warningDark,
+              ),
+            ),
+        ],
+      ),
+    );
   }
 }

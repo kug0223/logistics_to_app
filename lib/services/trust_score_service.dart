@@ -39,7 +39,7 @@ class TrustScoreService {
       
       // 저장된 신뢰도가 있으면 반환
       if (userData['trustScore'] != null) {
-        return userData['trustScore'] as int;
+        return (userData['trustScore'] as num).toInt();
       }
       
       // 없으면 계산
@@ -55,14 +55,14 @@ class TrustScoreService {
     int score = settings.startScore;
     
     // 1. 근무 완료 가산 (+1점/일)
-    final int totalWorkDays = (userData['totalWorkDays'] ?? 0) as int;
+    final int totalWorkDays = ((userData['totalWorkDays'] ?? 0) as num).toInt();
     final workCompleteRule = settings.increaseRules
         .firstWhere((r) => r.type == 'work_complete', 
             orElse: () => TrustRule(type: '', points: 1, description: ''));
     score += totalWorkDays * workCompleteRule.points;
     
     // 2. 평균 평점 기반 가감
-    final avgRating = (userData['averageRating'] ?? 0.0) as double;
+    final avgRating = ((userData['averageRating'] ?? 0) as num).toDouble();
     final reviewCount = userData['reviewCount'] ?? 0;
     
     if (reviewCount > 0) {
@@ -84,7 +84,7 @@ class TrustScoreService {
     }
     
     // 3. 재고용 희망률 가산
-    final rehireRate = (userData['rehireRate'] ?? 0.0) as double;
+    final rehireRate = ((userData['rehireRate'] ?? 0) as num).toDouble();
     if (rehireRate >= 0.8 && reviewCount >= 3) {
       final rehireRule = settings.increaseRules
           .firstWhere((r) => r.type == 'rehire_yes',
@@ -93,7 +93,7 @@ class TrustScoreService {
     }
     
     // 4. 지각 감점
-    final int lateCount = (userData['lateCount'] ?? 0) as int;
+    final int lateCount = ((userData['lateCount'] ?? 0) as num).toInt();
     final lateRule = settings.decreaseRules
         .firstWhere((r) => r.type == 'late',
             orElse: () => TrustRule(type: '', points: -1, description: ''));
@@ -131,7 +131,7 @@ class TrustScoreService {
   Future<void> onNoShow(String userId) async {
     // 노쇼 횟수 증가
     final userDoc = await _firestore.collection('users').doc(userId).get();
-    final currentNoShowCount = (userDoc.data()?['noShowCount'] ?? 0) as int;
+    final currentNoShowCount = ((userDoc.data()?['noShowCount'] ?? 0) as num).toInt();
     final newNoShowCount = currentNoShowCount + 1;
     
     await _firestore.collection('users').doc(userId).update({

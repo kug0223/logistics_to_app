@@ -44,6 +44,11 @@ app.*.map.json
 /android/app/profile
 /android/app/release
 
+# 릴리즈 서명 키 (절대 커밋 금지)
+/android/key.properties
+/android/app/*.jks
+/android/app/*.keystore
+
 
 # VSCode 실행 설정 (암호화 키 포함 - GitHub 업로드 금지!)
 .vscode/launch.json

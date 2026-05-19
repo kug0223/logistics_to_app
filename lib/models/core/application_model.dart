@@ -551,20 +551,116 @@ class ApplicationModel {
   // ⭐ 특정 날짜가 휴무일인지 확인
   bool isLeaveDateOn(DateTime date) {
     if (leaveDates == null || leaveDates!.isEmpty) return false;
-    
-    return leaveDates!.any((leaveDate) =>
-        leaveDate.year == date.year &&
-        leaveDate.month == date.month &&
-        leaveDate.day == date.day);
+    return leaveDates!.any((d) => _isSameDay(d, date));
   }
-  
+
   // ⭐ 특정 날짜가 추가 근무일인지 확인
   bool isExtraWorkDateOn(DateTime date) {
     if (extraWorkDates == null || extraWorkDates!.isEmpty) return false;
-    
-    return extraWorkDates!.any((extraDate) =>
-        extraDate.year == date.year &&
-        extraDate.month == date.month &&
-        extraDate.day == date.day);
+    return extraWorkDates!.any((d) => _isSameDay(d, date));
   }
+
+  // ─────────────────────────────────────────────────────────
+  // 스케줄 판단 (단일 진실의 원천)
+  // ─────────────────────────────────────────────────────────
+
+  /// 충돌 판단용: 해당 날짜에 이 지원이 근무 중인지 확인
+  /// - 휴무일(leaveDates) → false (근무 없음)
+  /// - 추가 근무일(extraWorkDates) → true (요일 무관)
+  bool isWorkingOnDate(DateTime targetDate) {
+    if (!isLongTermApplication) {
+      return _isSameDay(workDate, targetDate);
+    }
+
+    final endDate = actualResignDate ?? workEndDate;
+    if (endDate == null) return false;
+
+    DateTime effectiveStart = desiredStartDate ?? workDate;
+    if (confirmedAt != null && desiredStartDate == null) {
+      final confirmedDay = DateTime(confirmedAt!.year, confirmedAt!.month, confirmedAt!.day);
+      if (confirmedDay.isAfter(workDate)) effectiveStart = confirmedDay;
+    }
+
+    final targetOnly = DateTime(targetDate.year, targetDate.month, targetDate.day);
+    final startOnly = DateTime(effectiveStart.year, effectiveStart.month, effectiveStart.day);
+    final endOnly = DateTime(endDate.year, endDate.month, endDate.day);
+
+    if (targetOnly.isBefore(startOnly) || targetOnly.isAfter(endOnly)) return false;
+
+    if (isExtraWorkDateOn(targetOnly)) return true;
+    if (isLeaveDateOn(targetOnly)) return false;
+
+    return workDays!.contains(FormatHelper.weekday(targetDate));
+  }
+
+  /// 캘린더 표시용: 해당 날짜에 이 지원이 일정으로 표시되어야 하는지 확인
+  /// - 미확정 장기공고 → 지원일에만 표시
+  /// - 퇴사/계약해지 완료 → false
+  /// - 휴무일도 true (캘린더에 휴무 상태로 표시)
+  bool isScheduledOnDate(DateTime targetDate) {
+    if (!isLongTermApplication) {
+      return _isSameDay(workDate, targetDate);
+    }
+
+    if (status != AppStatus.confirmed) {
+      return _isSameDay(workDate, targetDate);
+    }
+
+    if (resignStatus == AppStatus.approved || resignStatus == AppStatus.autoApproved ||
+        terminationStatus == AppStatus.approved || terminationStatus == AppStatus.autoApproved) {
+      return false;
+    }
+
+    final endDate = actualResignDate ?? workEndDate;
+    if (endDate == null) return false;
+
+    DateTime effectiveStart = desiredStartDate ?? workDate;
+    if (confirmedAt != null && desiredStartDate == null) {
+      final confirmedDay = DateTime(confirmedAt!.year, confirmedAt!.month, confirmedAt!.day);
+      if (confirmedDay.isAfter(workDate)) effectiveStart = confirmedDay;
+    }
+
+    final targetOnly = DateTime(targetDate.year, targetDate.month, targetDate.day);
+    final startOnly = DateTime(effectiveStart.year, effectiveStart.month, effectiveStart.day);
+    final endOnly = DateTime(endDate.year, endDate.month, endDate.day);
+
+    if (targetOnly.isBefore(startOnly) || targetOnly.isAfter(endOnly)) return false;
+
+    if (isExtraWorkDateOn(targetOnly)) return true;
+    if (isLeaveDateOn(targetOnly)) return true; // 휴무일도 캘린더에 표시
+
+    return workDays!.contains(FormatHelper.weekday(targetDate));
+  }
+
+  /// 시간대 겹침 여부 (충돌 판단용 정적 유틸)
+  static bool hasTimeOverlap(String s1, String e1, String s2, String e2) {
+    if (s1.isEmpty || e1.isEmpty || s2.isEmpty || e2.isEmpty) return false;
+    int toMin(String t) {
+      final p = t.split(':');
+      if (p.length < 2) return 0;
+      return int.parse(p[0]) * 60 + int.parse(p[1]);
+    }
+    return !(toMin(e1) <= toMin(s2) || toMin(e2) <= toMin(s1));
+  }
+
+  static bool _isSameDay(DateTime a, DateTime b) =>
+      a.year == b.year && a.month == b.month && a.day == b.day;
+}
+
+/// 지원서 Firestore 상태 상수 (대문자 — applications 컬렉션 convention)
+abstract class AppStatus {
+  static const String pending     = 'PENDING';
+  static const String confirmed   = 'CONFIRMED';
+  static const String rejected    = 'REJECTED';
+  static const String canceled    = 'CANCELED';
+  static const String autoCanceled = 'AUTO_CANCELED';
+
+  /// 퇴사·계약해지 하위 상태 (resignStatus / terminationStatus 필드용)
+  static const String approved    = 'APPROVED';
+  static const String autoApproved = 'AUTO_APPROVED';
+
+  /// 활성 상태 그룹
+  static const List<String> activeStates   = [pending, confirmed];
+  /// 비활성 상태 그룹
+  static const List<String> inactiveStates = [rejected, canceled, autoCanceled];
 }

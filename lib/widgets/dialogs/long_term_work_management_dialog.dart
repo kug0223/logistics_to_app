@@ -1,4 +1,5 @@
-import 'package:flutter/material.dart';
+﻿import 'package:flutter/material.dart';
+import '../../theme/app_colors.dart';
 import 'package:intl/intl.dart';
 import '../../models/core/application_model.dart';
 import '../../services/firestore_service.dart';
@@ -6,6 +7,7 @@ import '../../utils/toast_helper.dart';
 import '../../utils/dialog_helper.dart';
 import '../../utils/format_helper.dart';
 import '../../utils/responsive_helper.dart';  // ⭐ 추가
+import '../pickers/date_picker_bottom_sheet.dart';
 
 /// 고정근무 관리 다이얼로그
 class LongTermWorkManagementDialog extends StatefulWidget {
@@ -215,8 +217,8 @@ class _LongTermWorkManagementDialogState
                   icon: const Icon(Icons.cancel_outlined),
                   label: const Text('퇴사 요청 취소'),
                   style: OutlinedButton.styleFrom(
-                    foregroundColor: Colors.orange,
-                    side: const BorderSide(color: Colors.orange),
+                    foregroundColor: AppColors.warning,
+                    side: const BorderSide(color: AppColors.warning),
                   ),
                 ),
               )
@@ -229,7 +231,7 @@ class _LongTermWorkManagementDialogState
                   icon: const Icon(Icons.refresh),
                   label: const Text('퇴사 재요청'),
                   style: ElevatedButton.styleFrom(
-                    backgroundColor: Colors.red,
+                    backgroundColor: AppColors.error,
                     foregroundColor: Colors.white,
                   ),
                 ),
@@ -243,8 +245,8 @@ class _LongTermWorkManagementDialogState
                   icon: const Icon(Icons.exit_to_app),
                   label: const Text('퇴사 요청'),
                   style: OutlinedButton.styleFrom(
-                    foregroundColor: Colors.red,
-                    side: const BorderSide(color: Colors.red),
+                    foregroundColor: AppColors.error,
+                    side: const BorderSide(color: AppColors.error),
                   ),
                 ),
               ),
@@ -264,8 +266,8 @@ class _LongTermWorkManagementDialogState
 
     switch (app.resignStatus) {
       case 'PENDING':
-        bgColor = Colors.orange.withValues(alpha: 0.1);
-        textColor = Colors.orange;
+        bgColor = AppColors.warning.withValues(alpha: 0.1);
+        textColor = AppColors.warning;
         icon = Icons.schedule;
         statusText = '퇴사 승인 대기중';
         final requestDate = DateFormat('M월 d일').format(app.resignRequestDate!);
@@ -273,16 +275,16 @@ class _LongTermWorkManagementDialogState
         detailText = '$requestDate 퇴사 요청 ($daysLeft일 후 자동 승인)';
         break;
       case 'REJECTED':
-        bgColor = Colors.red.withValues(alpha: 0.1);
-        textColor = Colors.red;
+        bgColor = AppColors.error.withValues(alpha: 0.1);
+        textColor = AppColors.error;
         icon = Icons.cancel;
         statusText = '퇴사 요청 거절됨';
         detailText = app.resignRejectReason ?? '사유 없음';
         break;
       case 'APPROVED':
       case 'AUTO_APPROVED':
-        bgColor = Colors.green.withValues(alpha: 0.1);
-        textColor = Colors.green;
+        bgColor = AppColors.success.withValues(alpha: 0.1);
+        textColor = AppColors.success;
         icon = Icons.check_circle;
         statusText = app.resignStatus == 'AUTO_APPROVED' ? '퇴사 자동 승인됨' : '퇴사 승인됨';
         final resignDate = DateFormat('M월 d일').format(app.actualResignDate!);
@@ -368,22 +370,11 @@ class _LongTermWorkManagementDialogState
   /// 퇴사 요청
   Future<void> _handleResignRequest(ApplicationModel app) async {
     // 퇴사 희망일 선택
-    final resignDate = await showDatePicker(
+    final resignDate = await DatePickerBottomSheet.show(
       context: context,
-      initialDate: DateTime.now(),
-      firstDate: DateTime.now(),
-      lastDate: app.workEndDate ?? DateTime.now().add(const Duration(days: 365)),
-      locale: const Locale('ko', 'KR'),
-      builder: (context, child) {
-        return Theme(
-          data: Theme.of(context).copyWith(
-            colorScheme: ColorScheme.light(
-              primary: Theme.of(context).primaryColor,
-            ),
-          ),
-          child: child!,
-        );
-      },
+      title: '퇴사 희망일 선택',
+      minDate: DateTime.now(),
+      maxDate: app.workEndDate ?? DateTime.now().add(const Duration(days: 365)),
     );
 
     if (resignDate == null || !mounted) return;
@@ -399,7 +390,7 @@ class _LongTermWorkManagementDialogState
           '✓ 승인 전까지 요청을 취소할 수 있습니다\n\n'
           '요청하시겠습니까?',
       confirmText: '퇴사 요청',
-      confirmColor: Colors.red,
+      confirmColor: AppColors.error,
     );
 
     if (!confirmed || !mounted) return;
@@ -431,7 +422,7 @@ class _LongTermWorkManagementDialogState
       title: '퇴사 요청 취소',
       message: '퇴사 요청을 취소하시겠습니까?',
       confirmText: '취소하기',
-      confirmColor: Colors.orange,
+      confirmColor: AppColors.warning,
     );
 
     if (!confirmed || !mounted) return;

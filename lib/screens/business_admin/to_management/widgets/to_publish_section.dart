@@ -1,8 +1,10 @@
 ﻿import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import '../../../../utils/responsive_helper.dart';
+import '../../../../utils/format_helper.dart';
 import 'to_section_container.dart';
 import '../../../../theme/app_colors.dart';
+import '../../../../widgets/app_select_field.dart';
 
 /// ✨ TO 공개 설정 섹션
 /// create_to_screen, edit_to_screen에서 공통으로 사용
@@ -198,92 +200,45 @@ class TOPublishSection extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           // D-N 선택
-          Row(
-            children: [
-              Text(
-                '근무일',
-                style: ResponsiveHelper.bodyStyle(context).copyWith(
-                  fontWeight: FontWeight.w500,
-                ),
-              ),
-              SizedBox(width: ResponsiveHelper.spacing(context, 12)),
-              Container(
-                padding: EdgeInsets.symmetric(
-                  horizontal: ResponsiveHelper.spacing(context, 12),
-                ),
-                decoration: BoxDecoration(
-                  color: Colors.white,
-                  borderRadius: BorderRadius.circular(8),
-                  border: Border.all(color: AppColors.warningSoft),
-                ),
-                child: DropdownButtonHideUnderline(
-                  child: DropdownButton<int>(
-                    value: publishDaysBefore,
-                    items: [1, 2, 3, 4, 5, 7, 14].map((days) {
-                      return DropdownMenuItem(
-                        value: days,
-                        child: Text(
-                          'D-$days',
-                          style: ResponsiveHelper.bodyStyle(context),
-                        ),
-                      );
-                    }).toList(),
-                    onChanged: (value) {
-                      if (value != null) onDaysBeforeChanged(value);
-                    },
-                  ),
-                ),
-              ),
-              SizedBox(width: ResponsiveHelper.spacing(context, 8)),
-              Text(
-                '전',
-                style: ResponsiveHelper.bodyStyle(context).copyWith(
-                  fontWeight: FontWeight.w500,
-                ),
-              ),
-            ],
+          Text(
+            '근무일 기준 (전)',
+            style: ResponsiveHelper.bodyStyle(context).copyWith(
+              fontWeight: FontWeight.w500,
+            ),
           ),
-          
+          SizedBox(height: ResponsiveHelper.spacing(context, 8)),
+          AppSelectField<int>(
+            value: publishDaysBefore,
+            hintText: 'D-N 선택',
+            sheetTitle: '공개 기준일 선택',
+            items: const [1, 2, 3, 4, 5, 7, 14],
+            labelOf: (d) => 'D-$d (근무 $d일 전)',
+            prefixIcon: Icons.event,
+            onChanged: (value) {
+              if (value != null) onDaysBeforeChanged(value);
+            },
+          ),
+
           SizedBox(height: ResponsiveHelper.spacing(context, 16)),
-          
-          // 시간 선택
-          Row(
-            children: [
-              Text(
-                '공개 시간',
-                style: ResponsiveHelper.bodyStyle(context).copyWith(
-                  fontWeight: FontWeight.w500,
-                ),
-              ),
-              SizedBox(width: ResponsiveHelper.spacing(context, 12)),
-              Container(
-                padding: EdgeInsets.symmetric(
-                  horizontal: ResponsiveHelper.spacing(context, 12),
-                ),
-                decoration: BoxDecoration(
-                  color: Colors.white,
-                  borderRadius: BorderRadius.circular(8),
-                  border: Border.all(color: AppColors.warningSoft),
-                ),
-                child: DropdownButtonHideUnderline(
-                  child: DropdownButton<String>(
-                    value: publishTime,
-                    items: _generateTimeOptions().map((time) {
-                      return DropdownMenuItem(
-                        value: time,
-                        child: Text(
-                          time,
-                          style: ResponsiveHelper.bodyStyle(context),
-                        ),
-                      );
-                    }).toList(),
-                    onChanged: (value) {
-                      if (value != null) onTimeChanged(value);
-                    },
-                  ),
-                ),
-              ),
-            ],
+
+          // 공개 시간 선택
+          Text(
+            '공개 시간',
+            style: ResponsiveHelper.bodyStyle(context).copyWith(
+              fontWeight: FontWeight.w500,
+            ),
+          ),
+          SizedBox(height: ResponsiveHelper.spacing(context, 8)),
+          AppSelectField<String>(
+            value: publishTime,
+            hintText: '시간 선택',
+            sheetTitle: '공개 시간 선택',
+            items: _generateTimeOptions(),
+            labelOf: (t) => t,
+            prefixIcon: Icons.access_time,
+            onChanged: (value) {
+              if (value != null) onTimeChanged(value);
+            },
           ),
         ],
       ),
@@ -301,7 +256,6 @@ class TOPublishSection extends StatelessWidget {
 
   /// 미리보기
   Widget _buildPreview(BuildContext context, ThemeData theme) {
-    final dateFormat = DateFormat('M/d (E)', 'ko_KR');
     
     // 최대 3개만 표시
     final displayDates = previewDates.take(3).toList();
@@ -347,7 +301,7 @@ class TOPublishSection extends StatelessWidget {
               child: Row(
                 children: [
                   Text(
-                    isLongTerm ? '시작일' : dateFormat.format(date),
+                    isLongTerm ? '시작일' : FormatHelper.formatDate(date),
                     style: ResponsiveHelper.smallStyle(context),
                   ),
                   SizedBox(width: ResponsiveHelper.spacing(context, 8)),

@@ -1,4 +1,5 @@
 ﻿import 'package:flutter/material.dart';
+import '../../../theme/app_colors.dart';
 import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
 import '../../../models/core/application_model.dart';
@@ -7,6 +8,7 @@ import '../../../services/firestore_service.dart';
 import '../../../utils/toast_helper.dart';
 import '../../../utils/responsive_helper.dart';
 import '../../../utils/dialog_helper.dart';
+import '../../../utils/loading_state_mixin.dart';
 import '../../../widgets/common/loading_button.dart';
 
 /// 퇴사 요청 관리 다이얼로그 (관리자용)
@@ -26,10 +28,10 @@ class ResignRequestManagementDialog extends StatefulWidget {
 }
 
 class _ResignRequestManagementDialogState
-    extends State<ResignRequestManagementDialog> {
+    extends State<ResignRequestManagementDialog>
+    with LoadingStateMixin {
   final FirestoreService _firestoreService = FirestoreService();
   List<_ResignRequestWithUser> _requests = [];
-  bool _isLoading = true;
 
   @override
   void initState() {
@@ -38,51 +40,33 @@ class _ResignRequestManagementDialogState
   }
 
   /// 퇴사 요청 목록 로드
-  Future<void> _loadResignRequests() async {
-    setState(() => _isLoading = true);
+  Future<void> _loadResignRequests() => runWithLoading(() async {
+    final applications = await _firestoreService.getResignRequests(
+      widget.businessId,
+    );
 
-    try {
-      // 해당 사업장의 모든 장기 근무 확정 건 중 퇴사 요청이 있는 것만
-      final applications = await _firestoreService.getResignRequests(
-        widget.businessId,
+    final uniqueUids = applications.map((app) => app.uid).toSet().toList();
+    final userEntries = await Future.wait(uniqueUids.map((uid) async {
+      final user = await _firestoreService.getUser(uid);
+      return MapEntry(uid, user);
+    }));
+    final userMap = Map.fromEntries(userEntries);
+
+    final results = applications.map((app) {
+      final user = userMap[app.uid];
+      return _ResignRequestWithUser(
+        application: app,
+        userName: user?.name ?? '이름 없음',
+        userPhone: user?.phone ?? '전화번호 없음',
       );
+    }).toList();
 
-      // ✅ 1. 중복 제거된 UID 목록
-      final uniqueUids = applications.map((app) => app.uid).toSet().toList();
-      
-      // ✅ 2. 사용자 정보 병렬 조회 (중복 없이)
-      final userFutures = uniqueUids.map((uid) async {
-        final user = await _firestoreService.getUser(uid);
-        return MapEntry(uid, user);
-      });
-      final userEntries = await Future.wait(userFutures);
-      final userMap = Map.fromEntries(userEntries);
-      
-      // ✅ 3. 결과 매핑 (추가 조회 없음)
-      final results = applications.map((app) {
-        final user = userMap[app.uid];
-        return _ResignRequestWithUser(
-          application: app,
-          userName: user?.name ?? '이름 없음',
-          userPhone: user?.phone ?? '전화번호 없음',
-        );
-      }).toList();
+    results.sort((a, b) => b.application.resignRequestedAt!
+        .compareTo(a.application.resignRequestedAt!));
 
-      // 요청일 최신순 정렬
-      results.sort((a, b) => b.application.resignRequestedAt!
-          .compareTo(a.application.resignRequestedAt!));
-
-      setState(() {
-        _requests = results;
-        _isLoading = false;
-      });
-
-      debugPrint('✅ 퇴사 요청 ${results.length}건 로드 완료');
-    } catch (e) {
-      debugPrint('❌ 퇴사 요청 로드 실패: $e');
-      setState(() => _isLoading = false);
-    }
-  }
+    if (mounted) setState(() => _requests = results);
+    debugPrint('✅ 퇴사 요청 ${results.length}건 로드 완료');
+  }, errorTag: '퇴사 요청 로드');
 
   @override
   Widget build(BuildContext context) {
@@ -123,7 +107,7 @@ class _ResignRequestManagementDialogState
 
             // 본문
             Expanded(
-              child: _isLoading
+              child: isLoading
                   ? const Center(child: CircularProgressIndicator())
                   : _requests.isEmpty
                       ? _buildEmptyState()
@@ -179,7 +163,7 @@ class _ResignRequestManagementDialogState
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(12),
         side: BorderSide(
-          color: isUrgent ? Colors.red.withValues(alpha: 0.5) : Theme.of(context).dividerColor,
+          color: isUrgent ? AppColors.error.withValues(alpha: 0.5) : Theme.of(context).dividerColor,
           width: isUrgent ? 2 : 1,
         ),
       ),
@@ -230,9 +214,9 @@ class _ResignRequestManagementDialogState
                       vertical: ResponsiveHelper.spacing(context, 4),  // ⭐ 변경
                     ),
                     decoration: BoxDecoration(
-                      color: Colors.red.withValues(alpha: 0.1),
+                      color: AppColors.error.withValues(alpha: 0.1),
                       borderRadius: BorderRadius.circular(4),
-                      border: Border.all(color: Colors.red.withValues(alpha: 0.5)),
+                      border: Border.all(color: AppColors.error.withValues(alpha: 0.5)),
                     ),
                     child: Row(
                       mainAxisSize: MainAxisSize.min,
@@ -240,14 +224,14 @@ class _ResignRequestManagementDialogState
                         Icon(
                           Icons.warning, 
                           size: ResponsiveHelper.iconSize(context, 14),  // ⭐ 변경
-                          color: Colors.red,
+                          color: AppColors.error,
                         ),
                         SizedBox(width: ResponsiveHelper.spacing(context, 4)),  // ⭐ 변경
                         Text(
                           '긴급',
                           style: ResponsiveHelper.tinyStyle(  // ⭐ 변경
                             context,
-                            color: Colors.red,
+                            color: AppColors.error,
                           ).copyWith(fontWeight: FontWeight.bold),
                         ),
                       ],
@@ -290,9 +274,9 @@ class _ResignRequestManagementDialogState
             Container(
               padding: ResponsiveHelper.cardPadding(context),  // ⭐ 변경
               decoration: BoxDecoration(
-                color: Colors.orange.withValues(alpha: 0.1),
+                color: AppColors.warning.withValues(alpha: 0.1),
                 borderRadius: BorderRadius.circular(8),
-                border: Border.all(color: Colors.orange.withValues(alpha: 0.3)),
+                border: Border.all(color: AppColors.warning.withValues(alpha: 0.3)),
               ),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -302,14 +286,14 @@ class _ResignRequestManagementDialogState
                       Icon(
                         Icons.exit_to_app,
                         size: ResponsiveHelper.iconSize(context, 16),  // ⭐ 변경
-                        color: Colors.orange,
+                        color: AppColors.warning,
                       ),
                       SizedBox(width: ResponsiveHelper.spacing(context, 8)),  // ⭐ 변경
                       Text(
                         '퇴사 희망일: ${DateFormat('yyyy년 M월 d일').format(app.resignRequestDate!)}',
                         style: ResponsiveHelper.bodyStyle(  // ⭐ 변경
                           context,
-                          color: Colors.orange,
+                          color: AppColors.warning,
                         ).copyWith(fontWeight: FontWeight.bold),
                       ),
                     ],
@@ -320,14 +304,14 @@ class _ResignRequestManagementDialogState
                       Icon(
                         Icons.schedule, 
                         size: ResponsiveHelper.iconSize(context, 16),  // ⭐ 변경
-                        color: Colors.orange,
+                        color: AppColors.warning,
                       ),
                       SizedBox(width: ResponsiveHelper.spacing(context, 8)),  // ⭐ 변경
                       Text(
                         '요청일: ${DateFormat('M월 d일 HH:mm').format(app.resignRequestedAt!)}',
                         style: ResponsiveHelper.smallStyle(  // ⭐ 변경
                           context,
-                          color: Colors.orange,
+                          color: AppColors.warning,
                         ),
                       ),
                     ],
@@ -338,7 +322,7 @@ class _ResignRequestManagementDialogState
                       Icon(
                         isUrgent ? Icons.warning : Icons.info_outline,
                         size: ResponsiveHelper.iconSize(context, 16),  // ⭐ 변경
-                        color: isUrgent ? Colors.red : Colors.orange,
+                        color: isUrgent ? AppColors.error : AppColors.warning,
                       ),
                       SizedBox(width: ResponsiveHelper.spacing(context, 8)),  // ⭐ 변경
                       Text(
@@ -347,7 +331,7 @@ class _ResignRequestManagementDialogState
                             : '오늘 자정 자동 승인',
                         style: ResponsiveHelper.smallStyle(  // ⭐ 변경
                           context,
-                          color: isUrgent ? Colors.red : Colors.orange,
+                          color: isUrgent ? AppColors.error : AppColors.warning,
                         ).copyWith(fontWeight: FontWeight.bold),
                       ),
                     ],
@@ -364,8 +348,8 @@ class _ResignRequestManagementDialogState
                   child: LoadingButton.outlined(
                     text: '거절',
                     icon: Icons.cancel,
-                    borderColor: Colors.red,
-                    foregroundColor: Colors.red,
+                    borderColor: AppColors.error,
+                    foregroundColor: AppColors.error,
                     onPressed: () async => await _handleReject(item),
                   ),
                 ),
@@ -424,7 +408,7 @@ class _ResignRequestManagementDialogState
           '퇴사일: ${DateFormat('yyyy년 M월 d일').format(item.application.resignRequestDate!)}\n\n'
           '승인 후에는 취소할 수 없습니다.',
       confirmText: '승인',
-      confirmColor: Colors.green,
+      confirmColor: AppColors.success,
     );
 
     if (!confirmed || !mounted) return;
@@ -461,9 +445,9 @@ class _ResignRequestManagementDialogState
       maxLines: 3,
       maxLength: 200,
       confirmText: '거절',
-      confirmColor: Colors.red,
+      confirmColor: AppColors.error,
       icon: Icons.cancel,
-      iconColor: Colors.red,
+      iconColor: AppColors.error,
       validator: (value) {
         if (value == null || value.isEmpty) {
           ToastHelper.showWarning('거절 사유를 입력해주세요.');

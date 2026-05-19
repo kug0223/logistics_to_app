@@ -1,4 +1,5 @@
-import 'package:flutter/material.dart';
+﻿import 'package:flutter/material.dart';
+import '../theme/app_colors.dart';
 import 'package:flutter/services.dart';
 
 /// 포맷팅 및 파싱 유틸리티 클래스
@@ -11,8 +12,8 @@ class FormatHelper {
   /// 
   /// 예시:
   /// - parseColor('#2196F3') → Color(0xFF2196F3)
-  /// - parseColor(null) → Colors.blue (기본값)
-  static Color parseColor(String? colorString, {Color defaultColor = Colors.blue}) {
+  /// - parseColor(null) → AppColors.info (기본값)
+  static Color parseColor(String? colorString, {Color defaultColor = AppColors.info}) {
     if (colorString == null || colorString.isEmpty) {
       return defaultColor;
     }
@@ -77,14 +78,17 @@ class FormatHelper {
            '${dateTime.minute.toString().padLeft(2, '0')}';
   }
 
+  static const _weekdays = ['월', '화', '수', '목', '금', '토', '일'];
+
+  /// 요일 한글 (월~일) — ['월','화','수','목','금','토','일'][date.weekday-1] 대체
+  static String weekday(DateTime date) => _weekdays[date.weekday - 1];
+
   /// DateTime을 날짜만 포맷팅 (요일 포함)
-  /// 
+  ///
   /// 예시:
   /// - formatDate(DateTime(2024, 11, 27)) → '11/27 (수)'
   static String formatDate(DateTime date) {
-    final weekdays = ['월', '화', '수', '목', '금', '토', '일'];
-    final weekday = weekdays[date.weekday - 1];
-    return '${date.month}/${date.day} ($weekday)';
+    return '${date.month}/${date.day} (${weekday(date)})';
   }
 
   /// DateTime을 날짜만 포맷팅 (요일 없이)
@@ -257,10 +261,23 @@ class FormatHelper {
   /// 
   /// 예시:
   /// - formatDateCompact(DateTime(2024, 11, 28)) → '11/28(목)'
-  static String formatDateCompact(DateTime date) {
-    final weekdays = ['월', '화', '수', '목', '금', '토', '일'];
-    final weekday = weekdays[date.weekday - 1];
-    return '${date.month}/${date.day}($weekday)';
+  static String formatDateCompact(DateTime date) =>
+      '${date.month}/${date.day}(${weekday(date)})';
+
+  /// 날짜를 한국어 긴 형식으로 포맷팅
+  /// 예시: '2024년 5월 13일 (화)'
+  static String formatDateLong(DateTime date) =>
+      '${date.year}년 ${date.month}월 ${date.day}일 (${weekday(date)})';
+
+  /// 날짜를 한국어 짧은 형식으로 포맷팅 (연도 없음)
+  /// 예시: '5월 13일 (화)'
+  static String formatDateKorean(DateTime date) =>
+      '${date.month}월 ${date.day}일 (${weekday(date)})';
+
+  /// 연월 포맷팅
+  /// 예시: '2024년 5월'
+  static String formatYearMonth(DateTime date) {
+    return '${date.year}년 ${date.month}월';
   }
 
   /// 근무 기간 포맷팅 (단기/장기 구분)
@@ -310,54 +327,26 @@ class FormatHelper {
   /// - formatWageWithType(110000, 'daily') → '일급 110,000원'
   /// - formatWageWithType(2500000, 'monthly') → '월급 2,500,000원'
   static String formatWageWithType(int wage, String wageType) {
-    final typeLabel = _getWageTypeLabel(wageType);
-    return '$typeLabel ${FormatHelper.formatNumber(wage)}원';
+    return '${getWageTypeLabel(wageType)} ${FormatHelper.formatNumber(wage)}원';
   }
 
   /// 급여 범위 포맷팅
-  /// 
-  /// 예시:
-  /// - formatWageRange(11000, 12000, 'hourly') → '시급 11,000~12,000원'
-  /// - formatWageRange(11000, 11000, 'hourly') → '시급 11,000원' (같으면 단일)
   static String formatWageRange(int minWage, int maxWage, String wageType) {
-    final typeLabel = _getWageTypeLabel(wageType);
-    
+    final typeLabel = getWageTypeLabel(wageType);
     if (minWage == maxWage) {
       return '$typeLabel ${FormatHelper.formatNumber(minWage)}원';
     }
-    
     return '$typeLabel ${FormatHelper.formatNumber(minWage)}~${FormatHelper.formatNumber(maxWage)}원';
   }
-  /// 급여 타입 라벨 반환 (public)
+
+  /// 급여 타입 라벨
   static String getWageTypeLabel(String wageType) {
     switch (wageType.toLowerCase()) {
-      case 'hourly':
-        return '시급';
-      case 'daily':
-        return '일급';
-      case 'monthly':
-        return '월급';
-      case 'per_case':
-        return '건당';
-      default:
-        return '시급';
-    }
-  }
-  
-
-  /// 급여 타입 라벨 변환
-  static String _getWageTypeLabel(String wageType) {
-    switch (wageType.toLowerCase()) {
-      case 'hourly':
-        return '시급';
-      case 'daily':
-        return '일급';
-      case 'monthly':
-        return '월급';
-      case 'per_case':
-        return '건당';
-      default:
-        return '시급';
+      case 'hourly':   return '시급';
+      case 'daily':    return '일급';
+      case 'monthly':  return '월급';
+      case 'per_case': return '건당';
+      default:         return '급여';
     }
   }
 
@@ -436,6 +425,39 @@ class FormatHelper {
     
     return '';
   }
+  // ============================================================
+  // 근무 시간 (분 → 소수 시간) 관련
+  // ============================================================
+
+  /// 분(minutes)을 소수 시간 형식으로 변환
+  /// - 90분 → "1.5h", 60분 → "1h", 30분 → "0.5h"
+  static String formatCompactHours(int mins) {
+    if (mins <= 0) return '0h';
+    final h = mins / 60;
+    final str = h.toStringAsFixed(1);
+    return str.endsWith('.0') ? '${str.substring(0, str.length - 2)}h' : '${str}h';
+  }
+
+  /// HH:mm 시작/종료 시간과 휴게시간으로 순 근무시간 계산 후 소수 시간 형식 반환
+  /// - 자정 넘는 근무 지원 (endTime <= startTime이면 +24h)
+  /// - 결과 0 이하면 '' 반환
+  static String calcNetWorkTime(String startTime, String endTime, {int breakMinutes = 0}) {
+    try {
+      int toMins(String t) {
+        final p = t.split(':');
+        return int.parse(p[0]) * 60 + int.parse(p[1]);
+      }
+      int s = toMins(startTime);
+      int e = toMins(endTime);
+      if (e <= s) e += 1440;
+      final net = (e - s - breakMinutes).clamp(0, 1440);
+      if (net <= 0) return '';
+      return formatCompactHours(net);
+    } catch (_) {
+      return '';
+    }
+  }
+
   /// 근무 요일 포맷팅
   /// 
   /// 예시:
@@ -447,7 +469,7 @@ class FormatHelper {
   static String formatWorkDays(List<String>? workDays) {
     if (workDays == null || workDays.isEmpty) return '';
     
-    const allDays = ['월', '화', '수', '목', '금', '토', '일'];
+    const allDays = _weekdays;
     const weekdays = ['월', '화', '수', '목', '금'];
     const weekend = ['토', '일'];
     

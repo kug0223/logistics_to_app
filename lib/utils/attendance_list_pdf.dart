@@ -1,26 +1,66 @@
 ﻿// lib/utils/attendance_list_pdf.dart
-// 인원현황 명단 PDF 생성 유틸리티
-//
-// 필요 패키지:
-// pdf: ^3.10.8
-// printing: ^5.12.0
-//
-// pubspec.yaml에 추가:
-// dependencies:
-//   pdf: ^3.10.8
-//   printing: ^5.12.0
+// 인원현황 명단 PDF/Excel 생성 유틸리티
 
+import 'dart:io';
 import 'dart:typed_data';
 
+import 'package:excel/excel.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart' show rootBundle;  // ✅ 추가
+import 'package:flutter/services.dart' show rootBundle;
+import 'package:path_provider/path_provider.dart';
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 import 'package:printing/printing.dart';
+import 'package:share_plus/share_plus.dart';
 
 import '../models/core/application_model.dart';
 import '../models/core/user_model.dart';
 import '../theme/app_colors.dart';
+import 'format_helper.dart';
+
+/// 그룹(파트) 정렬 기준
+enum AttendanceGroupSort {
+  partName, // 파트별 근무시간 (파트명 → 같은 파트 내 빠른 시간순)
+  workTime, // 근무시간/파트이름 (빠른 시간 → 같은 시간 내 파트명순)
+}
+
+extension AttendanceGroupSortExt on AttendanceGroupSort {
+  String get label {
+    switch (this) {
+      case AttendanceGroupSort.partName: return '파트·근무시간';
+      case AttendanceGroupSort.workTime: return '근무시간·파트';
+    }
+  }
+
+  IconData get icon {
+    switch (this) {
+      case AttendanceGroupSort.workTime: return Icons.schedule_outlined;
+      case AttendanceGroupSort.partName: return Icons.work_outline;
+    }
+  }
+}
+
+/// 파트 내 개인 정렬 기준
+enum AttendanceItemSort {
+  nameOnly,       // 이름순 (기본 — 가나다)
+  genderThenName, // 성별·이름순 (남→여→가나다)
+}
+
+extension AttendanceItemSortExt on AttendanceItemSort {
+  String get label {
+    switch (this) {
+      case AttendanceItemSort.nameOnly: return '성명';
+      case AttendanceItemSort.genderThenName: return '성별·성명';
+    }
+  }
+
+  IconData get icon {
+    switch (this) {
+      case AttendanceItemSort.genderThenName: return Icons.people_outline;
+      case AttendanceItemSort.nameOnly: return Icons.sort_by_alpha;
+    }
+  }
+}
 
 /// 명단 출력용 데이터 모델
 class AttendanceListData {
@@ -41,16 +81,22 @@ class AttendanceListData {
 
 /// 개별 근무자 데이터
 class AttendanceListItem {
+  final String workType;
   final String name;
   final String gender;
   final String phone;
-  final String workTime;
+  final String workTime; // 'HH:mm~HH:mm' 형식 (PDF용)
+  final String startTime;
+  final String endTime;
 
   AttendanceListItem({
+    required this.workType,
     required this.name,
     required this.gender,
     required this.phone,
     required this.workTime,
+    required this.startTime,
+    required this.endTime,
   });
 }
 
@@ -107,15 +153,145 @@ class AttendanceListPdf {
     required BuildContext context,
     required AttendanceListData data,
     required Uint8List pdfBytes,
+    // 정렬 변경 시 재생성용
+    List<ApplicationModel>? confirmedWorkers,
+    Map<String, UserModel>? userMap,
+    String? businessName,
+    DateTime? date,
   }) async {
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
       builder: (context) => _PreviewBottomSheetWithBytes(
-        data: data,
-        pdfBytes: pdfBytes,
+        initialData: data,
+        initialPdfBytes: pdfBytes,
+        confirmedWorkers: confirmedWorkers,
+        userMap: userMap,
+        businessName: businessName,
+        date: date,
       ),
+    );
+  }
+
+  /// Excel 명단 생성 (.xlsx)
+  static Future<Uint8List> generateExcel(AttendanceListData data) async {
+    final excel = Excel.createExcel();
+    excel.delete('Sheet1');
+    final sheet = excel['근무명단'];
+
+    final dateStr =
+        '${data.date.year}년 ${data.date.month}월 ${data.date.day}일 (${FormatHelper.weekday(data.date)})';
+
+    // 열 너비 설정
+    sheet.setColumnWidth(0, 16);  // 사업장명
+    sheet.setColumnWidth(1, 14);  // 근무일자
+    sheet.setColumnWidth(2, 14);  // 파트
+    sheet.setColumnWidth(3, 14);  // 성명
+    sheet.setColumnWidth(4, 6);   // 성별
+    sheet.setColumnWidth(5, 18);  // 연락처
+    sheet.setColumnWidth(6, 12);  // 근무시작시간
+    sheet.setColumnWidth(7, 12);  // 퇴근시간
+    sheet.setColumnWidth(8, 20);  // 비고
+
+    int row = 0;
+
+    final workDateStr =
+        '${data.date.year}-${data.date.month.toString().padLeft(2, '0')}-${data.date.day.toString().padLeft(2, '0')}';
+
+    // 제목
+    _excelCell(sheet, row, 0,
+        '${data.businessName} 근무명단',
+        bold: true, fontSize: 14);
+    sheet.merge(
+      CellIndex.indexByColumnRow(columnIndex: 0, rowIndex: row),
+      CellIndex.indexByColumnRow(columnIndex: 8, rowIndex: row),
+    );
+    row++;
+
+    // 날짜 + 총 인원
+    _excelCell(sheet, row, 0, '$dateStr   |   전체 ${data.totalCount}명');
+    sheet.merge(
+      CellIndex.indexByColumnRow(columnIndex: 0, rowIndex: row),
+      CellIndex.indexByColumnRow(columnIndex: 8, rowIndex: row),
+    );
+    row++;
+    row++; // 빈 행
+
+    // 컬럼 헤더
+    const headers = ['사업장명', '근무일자', '파트', '성명', '성별', '연락처', '근무시작시간', '퇴근시간', '비고'];
+    for (int c = 0; c < headers.length; c++) {
+      _excelCell(sheet, row, c, headers[c], bold: true, bgHex: 'FFD6E4F0');
+    }
+    row++;
+
+    // 데이터 행
+    for (final entry in data.workTypeGroups.entries) {
+      for (final worker in entry.value) {
+        final gender = worker.gender == '남성'
+            ? '남'
+            : (worker.gender == '여성' ? '여' : '-');
+        final rowData = [
+          data.businessName,
+          workDateStr,
+          worker.workType,
+          worker.name,
+          gender,
+          worker.phone,
+          worker.startTime,
+          worker.endTime,
+          '',
+        ];
+        for (int c = 0; c < rowData.length; c++) {
+          _excelCell(sheet, row, c, rowData[c]);
+        }
+        row++;
+      }
+    }
+
+    // 출력일시
+    final now = DateTime.now();
+    final printTime =
+        '출력일시: ${now.year}.${now.month.toString().padLeft(2, '0')}.${now.day.toString().padLeft(2, '0')} ${now.hour.toString().padLeft(2, '0')}:${now.minute.toString().padLeft(2, '0')}';
+    _excelCell(sheet, row, 0, printTime, fontSize: 9);
+
+    final bytes = excel.encode();
+    if (bytes == null) throw Exception('Excel 생성 실패');
+    return Uint8List.fromList(bytes);
+  }
+
+  static void _excelCell(
+    Sheet sheet,
+    int row,
+    int col,
+    String text, {
+    bool bold = false,
+    int fontSize = 10,
+    String? bgHex,
+  }) {
+    final cell = sheet.cell(
+        CellIndex.indexByColumnRow(columnIndex: col, rowIndex: row));
+    cell.value = TextCellValue(text);
+    cell.cellStyle = bgHex != null
+        ? CellStyle(
+            bold: bold,
+            fontSize: fontSize,
+            backgroundColorHex: ExcelColor.fromHexString('#$bgHex'),
+          )
+        : CellStyle(bold: bold, fontSize: fontSize);
+  }
+
+  /// Excel 파일 공유 (기기 공유 시트)
+  static Future<void> shareAsExcel(AttendanceListData data) async {
+    final bytes = await generateExcel(data);
+    final dir = await getTemporaryDirectory();
+    final fileName =
+        '${data.businessName}_근무명단_${data.date.year}${data.date.month.toString().padLeft(2, '0')}${data.date.day.toString().padLeft(2, '0')}.xlsx';
+    final file = File('${dir.path}/$fileName');
+    await file.writeAsBytes(bytes);
+    await Share.shareXFiles(
+      [XFile(file.path, mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')],
+      subject: '${data.businessName} 근무명단',
     );
   }
 
@@ -130,9 +306,7 @@ class AttendanceListPdf {
     final pdf = pw.Document();
     
     // 날짜 포맷 (한글 로케일 문제 방지)
-    final weekdays = ['월', '화', '수', '목', '금', '토', '일'];
-    final weekday = weekdays[data.date.weekday - 1];
-    final dateStr = '${data.date.year}년 ${data.date.month}월 ${data.date.day}일 ($weekday)';
+    final dateStr = '${data.date.year}년 ${data.date.month}월 ${data.date.day}일 (${FormatHelper.weekday(data.date)})';
 
     // 스타일 정의 (폰트가 null이면 기본 폰트 사용)
     final titleStyle = pw.TextStyle(
@@ -284,7 +458,7 @@ class AttendanceListPdf {
             border: pw.TableBorder.all(color: PdfColors.grey400, width: 0.5),
             columnWidths: {
               0: const pw.FixedColumnWidth(25),   // 체크박스
-              1: const pw.FixedColumnWidth(55),   // 이름
+              1: const pw.FixedColumnWidth(55),   // 성명
               2: const pw.FixedColumnWidth(35),   // 성별
               3: const pw.FixedColumnWidth(95),   // 연락처
               4: const pw.FixedColumnWidth(80),   // 시간 (18:00~22:00)
@@ -296,7 +470,7 @@ class AttendanceListPdf {
                 decoration: const pw.BoxDecoration(color: PdfColors.grey100),
                 children: [
                   _buildTableCell('□', headerStyle, isHeader: true),
-                  _buildTableCell('이름', headerStyle, isHeader: true),
+                  _buildTableCell('성명', headerStyle, isHeader: true),
                   _buildTableCell('성별', headerStyle, isHeader: true),
                   _buildTableCell('연락처', headerStyle, isHeader: true),
                   _buildTableCell('시간', headerStyle, isHeader: true),
@@ -388,56 +562,53 @@ class AttendanceListPdf {
     required DateTime date,
     required List<ApplicationModel> confirmedWorkers,
     required Map<String, UserModel> userMap,
-    Map<String, dynamic>? workTypeMap,  // 업무유형별 시간 정보
+    Map<String, dynamic>? workTypeMap,
+    AttendanceGroupSort groupSort = AttendanceGroupSort.partName,
+    AttendanceItemSort itemSort = AttendanceItemSort.nameOnly,
   }) {
-    // ✅ workType + 시간 조합으로 그룹화 (장기/단기 합침)
+    // workType + 시간 조합으로 그룹화
     final Map<String, List<ApplicationModel>> workTypeGroups = {};
-    
     for (var app in confirmedWorkers) {
-      // 항상 workType + startTime + endTime 조합으로 그룹화
       final groupKey = '${app.selectedWorkType}_${app.startTime}_${app.endTime}';
-      
       workTypeGroups.putIfAbsent(groupKey, () => []);
       workTypeGroups[groupKey]!.add(app);
     }
 
-    // ✅ 시간순 정렬 (빠른 시간 먼저)
+    // 그룹 정렬
     final sortedEntries = workTypeGroups.entries.toList()
       ..sort((a, b) {
         final appA = a.value.first;
         final appB = b.value.first;
-        
-        // 1. 시작시간 기준 정렬
-        final timeCompare = appA.startTime.compareTo(appB.startTime);
-        if (timeCompare != 0) return timeCompare;
-        
-        // 2. 같은 시작시간이면 종료시간 기준
-        final endCompare = appA.endTime.compareTo(appB.endTime);
-        if (endCompare != 0) return endCompare;
-        
-        // 3. 같은 시간이면 업무명 기준
-        return appA.selectedWorkType.compareTo(appB.selectedWorkType);
+        switch (groupSort) {
+          case AttendanceGroupSort.partName:
+            final typeCompare = appA.selectedWorkType.compareTo(appB.selectedWorkType);
+            if (typeCompare != 0) return typeCompare;
+            return appA.startTime.compareTo(appB.startTime);
+          case AttendanceGroupSort.workTime:
+            final timeCompare = appA.startTime.compareTo(appB.startTime);
+            if (timeCompare != 0) return timeCompare;
+            final endCompare = appA.endTime.compareTo(appB.endTime);
+            if (endCompare != 0) return endCompare;
+            return appA.selectedWorkType.compareTo(appB.selectedWorkType);
+        }
       });
 
-    // 각 그룹 내 정렬 (성별 → 이름 가나다순)
+    // 파트 내 개인 정렬
     for (var entry in sortedEntries) {
       entry.value.sort((a, b) {
         final userA = userMap[a.uid];
         final userB = userMap[b.uid];
-
         if (userA == null || userB == null) return 0;
-
-        // 1. 성별 정렬 (남성 먼저)
-        final genderOrder = {'남성': 0, '여성': 1};
-        final genderA = genderOrder[userA.gender] ?? 2;
-        final genderB = genderOrder[userB.gender] ?? 2;
-
-        if (genderA != genderB) {
-          return genderA.compareTo(genderB);
+        switch (itemSort) {
+          case AttendanceItemSort.nameOnly:
+            return userA.name.compareTo(userB.name);
+          case AttendanceItemSort.genderThenName:
+            final genderOrder = {'남성': 0, '여성': 1};
+            final gA = genderOrder[userA.gender] ?? 2;
+            final gB = genderOrder[userB.gender] ?? 2;
+            if (gA != gB) return gA.compareTo(gB);
+            return userA.name.compareTo(userB.name);
         }
-
-        // 2. 이름 가나다순
-        return userA.name.compareTo(userB.name);
       });
     }
 
@@ -462,10 +633,13 @@ class AttendanceListPdf {
         final user = userMap[app.uid];
         
         return AttendanceListItem(
+          workType: workType,
           name: user?.name ?? 'Unknown',
           gender: user?.gender ?? '',
           phone: _formatPhone(user?.phone ?? ''),
           workTime: '${app.startTime}~${app.endTime}',
+          startTime: app.startTime,
+          endTime: app.endTime,
         );
       }).toList();
     }
@@ -495,61 +669,106 @@ class AttendanceListPdf {
     return phone;
   }
 
-  /// 근무시간 포맷 (09:00~18:00 형식 유지)
-  static String _formatWorkTime(String start, String end) {
-    if (start.isEmpty || end.isEmpty) return '-';
-    return '$start~$end';
-  }
 }
 
-/// PDF 미리보기 바텀시트 (성능 최적화 + 핀치 줌)
-class _PreviewBottomSheet extends StatefulWidget {
-  final AttendanceListData data;
+/// PDF 미리보기 바텀시트 (정렬 선택 + 재생성 지원)
+class _PreviewBottomSheetWithBytes extends StatefulWidget {
+  final AttendanceListData initialData;
+  final Uint8List initialPdfBytes;
+  final List<ApplicationModel>? confirmedWorkers;
+  final Map<String, UserModel>? userMap;
+  final String? businessName;
+  final DateTime? date;
 
-  const _PreviewBottomSheet({required this.data});
+  const _PreviewBottomSheetWithBytes({
+    required this.initialData,
+    required this.initialPdfBytes,
+    this.confirmedWorkers,
+    this.userMap,
+    this.businessName,
+    this.date,
+  });
 
   @override
-  State<_PreviewBottomSheet> createState() => _PreviewBottomSheetState();
+  State<_PreviewBottomSheetWithBytes> createState() =>
+      _PreviewBottomSheetWithBytesState();
 }
 
-class _PreviewBottomSheetState extends State<_PreviewBottomSheet> {
-  Uint8List? _pdfBytes;
-  bool _isLoading = true;
-  String? _error;
+class _PreviewBottomSheetWithBytesState
+    extends State<_PreviewBottomSheetWithBytes> {
+  late AttendanceListData _data;
+  late Uint8List _pdfBytes;
+  AttendanceGroupSort _groupSort = AttendanceGroupSort.partName;
+  AttendanceItemSort _itemSort = AttendanceItemSort.nameOnly;
+  bool _isRegenerating = false;
+  bool _isExporting = false;
 
   @override
   void initState() {
     super.initState();
-    _generatePdf();
+    _data = widget.initialData;
+    _pdfBytes = widget.initialPdfBytes;
   }
 
-  /// ✅ PDF 미리 생성 (한 번만)
-  Future<void> _generatePdf() async {
+  Future<void> _exportExcel() async {
+    if (_isExporting) return;
+    setState(() => _isExporting = true);
     try {
-      final bytes = await AttendanceListPdf.generatePdf(widget.data);
+      await AttendanceListPdf.shareAsExcel(_data);
+    } catch (_) {
+      // 실패 시 조용히 무시 (share_plus 취소 포함)
+    } finally {
+      if (mounted) setState(() => _isExporting = false);
+    }
+  }
+
+  bool get _canSort =>
+      widget.confirmedWorkers != null &&
+      widget.userMap != null &&
+      widget.businessName != null &&
+      widget.date != null;
+
+  Future<void> _applySort({
+    AttendanceGroupSort? groupSort,
+    AttendanceItemSort? itemSort,
+  }) async {
+    if (_isRegenerating || !_canSort) return;
+    final newGroup = groupSort ?? _groupSort;
+    final newItem = itemSort ?? _itemSort;
+    if (newGroup == _groupSort && newItem == _itemSort) return;
+
+    setState(() => _isRegenerating = true);
+    try {
+      final newData = AttendanceListPdf.convertFromDialogData(
+        businessName: widget.businessName!,
+        date: widget.date!,
+        confirmedWorkers: widget.confirmedWorkers!,
+        userMap: widget.userMap!,
+        groupSort: newGroup,
+        itemSort: newItem,
+      );
+      final newBytes = await AttendanceListPdf.generatePdf(newData);
       if (mounted) {
         setState(() {
-          _pdfBytes = bytes;
-          _isLoading = false;
+          _data = newData;
+          _pdfBytes = newBytes;
+          _groupSort = newGroup;
+          _itemSort = newItem;
+          _isRegenerating = false;
         });
       }
-    } catch (e) {
-      if (mounted) {
-        setState(() {
-          _error = e.toString();
-          _isLoading = false;
-        });
-      }
+    } catch (_) {
+      if (mounted) setState(() => _isRegenerating = false);
     }
   }
 
   @override
   Widget build(BuildContext context) {
     return Container(
-      height: MediaQuery.of(context).size.height * 0.85,
-      decoration: const BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      height: MediaQuery.of(context).size.height * 0.9,
+      decoration: BoxDecoration(
+        color: AppColors.surface,
+        borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
       ),
       child: Column(
         children: [
@@ -566,31 +785,30 @@ class _PreviewBottomSheetState extends State<_PreviewBottomSheet> {
 
           // 헤더
           Padding(
-            padding: const EdgeInsets.all(16),
+            padding: const EdgeInsets.fromLTRB(16, 12, 8, 8),
             child: Row(
               children: [
-                const Icon(Icons.description_outlined, color: Colors.blue),
+                const Icon(Icons.description_outlined, color: AppColors.info),
                 const SizedBox(width: 8),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      const Text(
-                        '명단 미리보기',
-                        style: TextStyle(
-                          fontSize: 18,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                      // ✅ 줌 힌트 추가
-                      Text(
-                        '두 손가락으로 확대/축소 가능',
-                        style: TextStyle(
-                          fontSize: 12,
-                          color: AppColors.grey600,
-                        ),
-                      ),
-                    ],
+                const Expanded(
+                  child: Text(
+                    '명단 미리보기',
+                    style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                  ),
+                ),
+                TextButton.icon(
+                  onPressed: _isExporting ? null : _exportExcel,
+                  icon: _isExporting
+                      ? const SizedBox(
+                          width: 16,
+                          height: 16,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Icon(Icons.table_chart_outlined, size: 18),
+                  label: const Text('엑셀 내보내기'),
+                  style: TextButton.styleFrom(
+                    foregroundColor: AppColors.success,
+                    padding: const EdgeInsets.symmetric(horizontal: 8),
                   ),
                 ),
                 IconButton(
@@ -601,53 +819,86 @@ class _PreviewBottomSheetState extends State<_PreviewBottomSheet> {
             ),
           ),
 
+          // 정렬 선택 바
+          if (_canSort)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 10),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  // 그룹 정렬
+                  _SortRow(
+                    label: '파트순서',
+                    options: AttendanceGroupSort.values
+                        .map((o) => _SortChipData(
+                              label: o.label,
+                              icon: o.icon,
+                              selected: o == _groupSort,
+                              onTap: () => _applySort(groupSort: o),
+                            ))
+                        .toList(),
+                  ),
+                  const SizedBox(height: 6),
+                  // 파트 내 개인 정렬
+                  _SortRow(
+                    label: '파트 내 순서',
+                    options: AttendanceItemSort.values
+                        .map((o) => _SortChipData(
+                              label: o.label,
+                              icon: o.icon,
+                              selected: o == _itemSort,
+                              onTap: () => _applySort(itemSort: o),
+                            ))
+                        .toList(),
+                  ),
+                ],
+              ),
+            ),
+
           const Divider(height: 1),
 
           // PDF 미리보기
           Expanded(
-            child: _isLoading
-                ? const Center(
-                    child: Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        CircularProgressIndicator(),
-                        SizedBox(height: 16),
-                        Text('PDF 생성 중...'),
-                      ],
-                    ),
-                  )
-                : _error != null
-                    ? Center(
-                        child: Column(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            const Icon(Icons.error_outline, size: 48, color: Colors.red),
-                            const SizedBox(height: 16),
-                            Text('PDF 생성 실패\n$_error', textAlign: TextAlign.center),
-                          ],
-                        ),
-                      )
-                    // ✅ 미리 생성된 PDF 사용 + InteractiveViewer로 줌 지원
-                    : PdfPreview(
-                        build: (format) async => _pdfBytes!,
-                        canChangeOrientation: false,
-                        canChangePageFormat: false,
-                        canDebug: false,
-                        allowPrinting: true,
-                        allowSharing: true,
-                        useActions: true,
-                        pdfPreviewPageDecoration: BoxDecoration(
-                          color: Colors.white,
-                          boxShadow: [
-                            BoxShadow(
-                              color: Colors.black.withValues(alpha: 0.1),
-                              blurRadius: 10,
-                              offset: const Offset(0, 2),
-                            ),
-                          ],
-                        ),
-                        pdfFileName: '${widget.data.businessName}_근무명단_${widget.data.date.year}${widget.data.date.month.toString().padLeft(2, '0')}${widget.data.date.day.toString().padLeft(2, '0')}.pdf',
+            child: Stack(
+              children: [
+                PdfPreview(
+                  key: ValueKey('${_groupSort.name}_${_itemSort.name}'),
+                  build: (format) async => _pdfBytes,
+                  canChangeOrientation: false,
+                  canChangePageFormat: false,
+                  canDebug: false,
+                  allowPrinting: true,
+                  allowSharing: true,
+                  useActions: true,
+                  pdfPreviewPageDecoration: BoxDecoration(
+                    color: Colors.white,
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withValues(alpha: 0.1),
+                        blurRadius: 10,
+                        offset: const Offset(0, 2),
                       ),
+                    ],
+                  ),
+                  pdfFileName:
+                      '${_data.businessName}_근무명단_${_data.date.year}${_data.date.month.toString().padLeft(2, '0')}${_data.date.day.toString().padLeft(2, '0')}.pdf',
+                ),
+                if (_isRegenerating)
+                  Container(
+                    color: Colors.white.withValues(alpha: 0.75),
+                    child: const Center(
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          CircularProgressIndicator(),
+                          SizedBox(height: 12),
+                          Text('정렬 적용 중...'),
+                        ],
+                      ),
+                    ),
+                  ),
+              ],
+            ),
           ),
         ],
       ),
@@ -655,99 +906,99 @@ class _PreviewBottomSheetState extends State<_PreviewBottomSheet> {
   }
 }
 
-/// ✅ 미리 생성된 PDF로 바로 표시하는 바텀시트 (로딩 없음)
-class _PreviewBottomSheetWithBytes extends StatelessWidget {
-  final AttendanceListData data;
-  final Uint8List pdfBytes;
+class _SortChipData {
+  final String label;
+  final IconData icon;
+  final bool selected;
+  final VoidCallback onTap;
 
-  const _PreviewBottomSheetWithBytes({
-    required this.data,
-    required this.pdfBytes,
+  const _SortChipData({
+    required this.label,
+    required this.icon,
+    required this.selected,
+    required this.onTap,
+  });
+}
+
+class _SortRow extends StatelessWidget {
+  final String label;
+  final List<_SortChipData> options;
+
+  const _SortRow({required this.label, required this.options});
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: [
+        SizedBox(
+          width: 68,
+          child: Text(
+            label,
+            style: const TextStyle(fontSize: 11, color: AppColors.textSecondary),
+          ),
+        ),
+        Expanded(
+          child: Wrap(
+            spacing: 6,
+            children: options
+                .map((o) => _SortChip(
+                      label: o.label,
+                      icon: o.icon,
+                      selected: o.selected,
+                      onTap: o.onTap,
+                    ))
+                .toList(),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _SortChip extends StatelessWidget {
+  final String label;
+  final IconData icon;
+  final bool selected;
+  final VoidCallback onTap;
+
+  const _SortChip({
+    required this.label,
+    required this.icon,
+    required this.selected,
+    required this.onTap,
   });
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      height: MediaQuery.of(context).size.height * 0.85,
-      decoration: const BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-      ),
-      child: Column(
-        children: [
-          // 핸들바
-          Container(
-            margin: const EdgeInsets.only(top: 12),
-            width: 40,
-            height: 4,
-            decoration: BoxDecoration(
-              color: AppColors.grey300,
-              borderRadius: BorderRadius.circular(2),
-            ),
-          ),
-
-          // 헤더
-          Padding(
-            padding: const EdgeInsets.all(16),
-            child: Row(
-              children: [
-                const Icon(Icons.description_outlined, color: Colors.blue),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      const Text(
-                        '명단 미리보기',
-                        style: TextStyle(
-                          fontSize: 18,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                      Text(
-                        '두 손가락으로 확대/축소 가능',
-                        style: TextStyle(
-                          fontSize: 12,
-                          color: AppColors.grey600,
-                        ),
-                      ),
-                    ],
-                  ),
+    final theme = Theme.of(context);
+    final color = selected ? theme.primaryColor : AppColors.grey500;
+    return Material(
+      color: selected
+          ? theme.primaryColor.withValues(alpha: 0.1)
+          : AppColors.grey100,
+      borderRadius: BorderRadius.circular(20),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(20),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(icon, size: 13, color: color),
+              const SizedBox(width: 4),
+              Text(
+                label,
+                style: TextStyle(
+                  fontSize: 12,
+                  color: color,
+                  fontWeight:
+                      selected ? FontWeight.bold : FontWeight.w500,
                 ),
-                IconButton(
-                  icon: const Icon(Icons.close),
-                  onPressed: () => Navigator.pop(context),
-                ),
-              ],
-            ),
-          ),
-
-          const Divider(height: 1),
-
-          // ✅ PDF 바로 표시 (로딩 없음!)
-          Expanded(
-            child: PdfPreview(
-              build: (format) async => pdfBytes,
-              canChangeOrientation: false,
-              canChangePageFormat: false,
-              canDebug: false,
-              allowPrinting: true,
-              allowSharing: true,
-              useActions: true,
-              pdfPreviewPageDecoration: BoxDecoration(
-                color: Colors.white,
-                boxShadow: [
-                  BoxShadow(
-                    color: Colors.black.withValues(alpha: 0.1),
-                    blurRadius: 10,
-                    offset: const Offset(0, 2),
-                  ),
-                ],
               ),
-              pdfFileName: '${data.businessName}_근무명단_${data.date.year}${data.date.month.toString().padLeft(2, '0')}${data.date.day.toString().padLeft(2, '0')}.pdf',
-            ),
+            ],
           ),
-        ],
+        ),
       ),
     );
   }

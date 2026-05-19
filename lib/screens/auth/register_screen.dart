@@ -15,6 +15,7 @@ import '../business_admin/business_form_screen.dart';
 
 import 'package:flutter/foundation.dart' show kIsWeb;
 import '../../theme/app_colors.dart';
+import '../../widgets/app_select_field.dart';
 
 /// 개선된 회원가입 화면 - 자동 스크롤 + 여백 최적화 + Storage 업로드
 class RegisterScreen extends StatefulWidget {
@@ -1011,7 +1012,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
                       : _isUsernameAvailable
                           ? Icon(
                               Icons.check_circle,
-                              color: Colors.green,
+                              color: AppColors.success,
                               size: ResponsiveHelper.iconSize(context, 22),
                             )
                           : _usernameError != null
@@ -2207,27 +2208,16 @@ class _RegisterScreenState extends State<RegisterScreen> {
           SizedBox(height: ResponsiveHelper.spacing(context, 12)),
           
           // 은행 선택
-          DropdownButtonFormField<String>(
-            initialValue: _selectedBank,
-            decoration: InputDecoration(
-              labelText: '은행',
-              prefixIcon: Icon(Icons.account_balance, size: ResponsiveHelper.iconSize(context, 20)),
-              border: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(10),
-              ),
-              isDense: true,
-              contentPadding: EdgeInsets.symmetric(
-                horizontal: ResponsiveHelper.spacing(context, 12),
-                vertical: ResponsiveHelper.spacing(context, 12),
-              ),
-            ),
-            items: [
+          AppSelectField<String>(
+            value: _selectedBank,
+            hintText: '은행을 선택하세요',
+            sheetTitle: '은행 선택',
+            items: const [
               'KB국민은행', '신한은행', 'NH농협은행', '우리은행', '하나은행',
               'IBK기업은행', '카카오뱅크', '토스뱅크', '새마을금고', '우체국',
-            ].map((bank) => DropdownMenuItem(
-              value: bank,
-              child: Text(bank, style: ResponsiveHelper.bodyStyle(context)),
-            )).toList(),
+            ],
+            labelOf: (b) => b,
+            prefixIcon: Icons.account_balance,
             onChanged: (value) {
               setState(() => _selectedBank = value);
               Future.delayed(const Duration(milliseconds: 200), () {
@@ -2265,9 +2255,9 @@ class _RegisterScreenState extends State<RegisterScreen> {
           Container(
             padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 10)),
             decoration: BoxDecoration(
-              color: Colors.green.withValues(alpha: 0.1),
+              color: AppColors.success.withValues(alpha: 0.1),
               borderRadius: BorderRadius.circular(10),
-              border: Border.all(color: Colors.green.withValues(alpha: 0.3)),
+              border: Border.all(color: AppColors.success.withValues(alpha: 0.3)),
             ),
             child: Row(
               children: [

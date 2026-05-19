@@ -26,6 +26,30 @@ extension BusinessFirestore on FirestoreService {
     }
   }
 
+  /// 여러 사업장의 이름을 한 번에 조회 (whereIn 배치)
+  Future<Map<String, String>> getBusinessNames(List<String> businessIds) async {
+    if (businessIds.isEmpty) return {};
+    try {
+      final ids = businessIds.toSet().toList();
+      final Map<String, String> result = {};
+      // whereIn 최대 30개 제한 처리
+      for (int i = 0; i < ids.length; i += 30) {
+        final chunk = ids.sublist(i, i + 30 > ids.length ? ids.length : i + 30);
+        final snapshot = await _firestore
+            .collection('businesses')
+            .where(FieldPath.documentId, whereIn: chunk)
+            .get();
+        for (final doc in snapshot.docs) {
+          result[doc.id] = (doc.data()['name'] as String?) ?? 'Unknown';
+        }
+      }
+      return result;
+    } catch (e) {
+      debugPrint('❌ 사업장명 일괄 조회 실패: $e');
+      return {};
+    }
+  }
+
   /// 내 사업장 목록 조회 (adminIds에 포함된 모든 사업장)
   Future<List<BusinessModel>> getMyBusiness(String uid) async {
     try {
@@ -378,7 +402,7 @@ extension BusinessFirestore on FirestoreService {
       final snapshot = await _firestore
           .collection('tos')
           .where('businessId', isEqualTo: businessId)
-          .where('status', whereIn: ['ACTIVE', 'FULL', 'SCHEDULED'])
+          .where('status', whereIn: TOStatus.openStates)
           .limit(100)
           .get();
       return snapshot.docs
@@ -396,7 +420,7 @@ extension BusinessFirestore on FirestoreService {
       final snapshot = await _firestore
           .collection('tos')
           .where('businessId', isEqualTo: businessId)
-          .where('status', whereIn: ['CLOSED', 'EXPIRED'])
+          .where('status', whereIn: TOStatus.closedStates)
           .limit(100)
           .get();
       return snapshot.docs

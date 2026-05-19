@@ -1,4 +1,5 @@
 ﻿import 'package:flutter/material.dart';
+import '../../theme/app_colors.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../../models/core/application_model.dart';
 import '../../models/core/business_model.dart';
@@ -154,7 +155,7 @@ class _ScheduleDetailDialogState extends State<ScheduleDetailDialog> {
               ),
               label: Text('전화하기 (${_business!.phone})'),
               style: ElevatedButton.styleFrom(
-                backgroundColor: Colors.green,
+                backgroundColor: AppColors.success,
                 foregroundColor: Colors.white,
               ),
             ),
@@ -249,9 +250,9 @@ class _ScheduleDetailDialogState extends State<ScheduleDetailDialog> {
           Container(
             padding: ResponsiveHelper.cardPadding(context),  // ⭐ 변경
             decoration: BoxDecoration(
-              color: Colors.orange.withValues(alpha: 0.1),
+              color: AppColors.warning.withValues(alpha: 0.1),
               borderRadius: BorderRadius.circular(8),
-              border: Border.all(color: Colors.orange.withValues(alpha: 0.3)),
+              border: Border.all(color: AppColors.warning.withValues(alpha: 0.3)),
             ),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -261,14 +262,14 @@ class _ScheduleDetailDialogState extends State<ScheduleDetailDialog> {
                     Icon(
                       Icons.description, 
                       size: ResponsiveHelper.iconSize(context, 16),  // ⭐ 변경
-                      color: Colors.orange,
+                      color: AppColors.warning,
                     ),
                     SizedBox(width: ResponsiveHelper.spacing(context, 6)),  // ⭐ 변경
                     Text(
                       '업무 설명',
                       style: ResponsiveHelper.bodyStyle(  // ⭐ 변경
                         context,
-                        color: Colors.orange,
+                        color: AppColors.warning,
                       ).copyWith(fontWeight: FontWeight.bold),
                     ),
                   ],

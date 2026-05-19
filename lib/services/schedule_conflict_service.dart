@@ -189,9 +189,7 @@ class ScheduleConflictService {
           .toList();
 
       // ✅ 해당 날짜에 근무하는 지원서만 필터링 (장기공고 포함)
-      final workingOnDate = allConfirmed.where((app) {
-        return _isWorkingOnDate(app, workDate);
-      }).toList();
+      final workingOnDate = allConfirmed.where((app) => app.isWorkingOnDate(workDate)).toList();
 
       debugPrint('📅 [충돌체크] ${workDate.month}/${workDate.day} 확정 근무: ${workingOnDate.length}건');
       return workingOnDate;
@@ -201,78 +199,7 @@ class ScheduleConflictService {
     }
   }
 
-  /// 특정 날짜에 근무하는지 확인 (장기공고 포함)
-  bool _isWorkingOnDate(ApplicationModel app, DateTime targetDate) {
-    // ✅ 장기공고 판단: workDays가 있으면 장기
-    final isLongTerm = app.workDays != null && app.workDays!.isNotEmpty;
-
-    // 단기: workDate만 비교
-    if (!isLongTerm) {
-      return _isSameDate(app.workDate, targetDate);
-    }
-
-    // 장기: 시작일~종료일 범위 + 근무요일 체크
-    // 🔥 퇴사일이 있으면 그 날짜까지만
-    final endDate = app.actualResignDate ?? app.workEndDate;
-    if (endDate == null) return false;
-
-    // 🔥 시작일 계산: desiredStartDate 우선 → confirmedAt → workDate
-    DateTime effectiveStartDate = app.desiredStartDate ?? app.workDate;
-    if (app.confirmedAt != null && app.desiredStartDate == null) {
-      final confirmedDate = DateTime(
-        app.confirmedAt!.year,
-        app.confirmedAt!.month,
-        app.confirmedAt!.day,
-      );
-      if (confirmedDate.isAfter(app.workDate)) {
-        effectiveStartDate = confirmedDate;
-      }
-    }
-
-    // 날짜 범위 체크
-    final targetOnly = DateTime(targetDate.year, targetDate.month, targetDate.day);
-    final isInRange = !targetOnly.isBefore(effectiveStartDate) &&
-                      !targetOnly.isAfter(endDate);
-
-    if (!isInRange) return false;
-
-    // ⭐ 휴무일(leaveDates) 체크 - 휴무일이면 근무 안 함
-    if (app.leaveDates != null && app.leaveDates!.isNotEmpty) {
-      final isLeaveDay = app.leaveDates!.any((leaveDate) =>
-          leaveDate.year == targetDate.year &&
-          leaveDate.month == targetDate.month &&
-          leaveDate.day == targetDate.day);
-      if (isLeaveDay) return false;
-    }
-
-    // ⭐ 추가 근무일(extraWorkDates) 체크
-    if (app.extraWorkDates != null && app.extraWorkDates!.isNotEmpty) {
-      final isExtraDay = app.extraWorkDates!.any((extraDate) =>
-          extraDate.year == targetDate.year &&
-          extraDate.month == targetDate.month &&
-          extraDate.day == targetDate.day);
-      if (isExtraDay) return true;  // 추가 근무일이면 요일 무관하게 근무
-    }
-
-    // 근무 요일 체크
-    final targetDayKorean = _getKoreanDayOfWeek(targetDate);
-    return app.workDays!.contains(targetDayKorean);
-  }
-
-  /// 두 날짜가 같은지 비교 (시간 제외)
-  bool _isSameDate(DateTime date1, DateTime date2) {
-    return date1.year == date2.year &&
-           date1.month == date2.month &&
-           date1.day == date2.day;
-  }
-
-  /// 요일을 한글로 변환
-  String _getKoreanDayOfWeek(DateTime date) {
-    const days = ['월', '화', '수', '목', '금', '토', '일'];
-    return days[date.weekday - 1];
-  }
-
-  /// 시간 충돌 레벨 판정
+/// 시간 충돌 레벨 판정
   /// 
   /// - BLOCKED: 시간이 겹침
   /// - WARNING: 시간이 딱 붙음 (기존 종료 = 새 시작)

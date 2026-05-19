@@ -39,9 +39,9 @@ extension TOFirestore on FirestoreService {
           .orderBy('createdAt', descending: true);
 
       if (activeOnly) {
-        query = query.where('status', whereIn: ['ACTIVE', 'FULL', 'SCHEDULED']);
+        query = query.where('status', whereIn: TOStatus.openStates);
       } else if (closedOnly) {
-        query = query.where('status', whereIn: ['CLOSED', 'EXPIRED']);
+        query = query.where('status', whereIn: TOStatus.closedStates);
       }
 
       final snap = await query.get();
@@ -58,7 +58,7 @@ extension TOFirestore on FirestoreService {
       final snap = await _firestore
           .collection('tos')
           .where('isPublished', isEqualTo: true)
-          .where('status', whereIn: ['ACTIVE', 'FULL'])
+          .where('status', whereIn: [TOStatus.active, TOStatus.full])
           .orderBy('createdAt', descending: true)
           .limit(50)
           .get();
@@ -79,7 +79,7 @@ extension TOFirestore on FirestoreService {
       Query query = _firestore
           .collection('tos')
           .where('isPublished', isEqualTo: true)
-          .where('status', whereIn: ['ACTIVE', 'FULL'])
+          .where('status', whereIn: [TOStatus.active, TOStatus.full])
           .orderBy('createdAt', descending: true)
           .limit(pageSize);
 
@@ -205,7 +205,9 @@ extension TOFirestore on FirestoreService {
         description: description,
         workDetails: workDetails,
         totalSlots: type == 'flex' ? (dates?.length ?? 0) : 0,
-        rangeStart: rangeStart,
+        rangeStart: type == 'flex'
+            ? dates?.reduce((a, b) => a.isBefore(b) ? a : b)
+            : rangeStart,
         rangeEnd: rangeEnd,
         workDays: workDays ?? const [],
         deadlineType: deadlineType,
@@ -219,7 +221,7 @@ extension TOFirestore on FirestoreService {
         publishTime: publishTime,
         creatorUID: creatorUID,
         createdAt: DateTime.now(),
-        status: isPublished ? 'ACTIVE' : 'SCHEDULED',
+        status: isPublished ? TOStatus.active : TOStatus.scheduled,
       ).toMap()
         ..['createdAt'] = FieldValue.serverTimestamp()
         ..['statusUpdatedAt'] = FieldValue.serverTimestamp();
@@ -278,7 +280,11 @@ extension TOFirestore on FirestoreService {
     required String businessId,
   }) async {
     try {
-      final apps = await getApplicationsByTOId(toId, businessId: businessId);
+      final apps = await getApplicationsByTOId(
+        toId,
+        businessId: businessId,
+        statuses: const ['PENDING', 'CONFIRMED'],
+      );
       final confirmed = apps.where((a) => a.status == 'CONFIRMED').length;
       return {
         'hasApplicants': apps.isNotEmpty,
@@ -395,12 +401,11 @@ extension TOFirestore on FirestoreService {
             .collection('tos').doc(toId)
             .collection('slots').doc(slot.id);
 
-        // 슬롯의 각 workDetail에 대해 새 마감 계산
-        final updatedWorkDetails = slot.workDetails.map((d) {
-          // 동일 workType의 새 설정에서 startTime 가져오기
-          final newDef = newWorkDetails.firstWhere(
-            (nd) => nd.workType == d.workType,
-            orElse: () => d,
+        // newWorkDetails 기준으로 슬롯 업무상세 재구성 (신규 업무유형 추가 포함)
+        final updatedWorkDetails = newWorkDetails.map((newDef) {
+          final existing = slot.workDetails.firstWhere(
+            (d) => d.workType == newDef.workType,
+            orElse: () => newDef,
           );
           DateTime? deadline;
           if (deadlineType == 'HOURS_BEFORE') {
@@ -412,7 +417,12 @@ extension TOFirestore on FirestoreService {
           } else if (deadlineType == 'FIXED_TIME' && fixedDeadline != null) {
             deadline = fixedDeadline.toUtc();
           }
-          return d.copyWith(
+          // 기존 슬롯에 같은 workType이 있으면 기존 상태(closedBy 등) 유지하면서 갱신
+          final isNew = slot.workDetails.every((d) => d.workType != newDef.workType);
+          if (isNew) {
+            return newDef.copyWith(applicationDeadline: deadline);
+          }
+          return existing.copyWith(
             startTime: newDef.startTime,
             endTime: newDef.endTime,
             applicationDeadline: deadline,
@@ -429,12 +439,27 @@ extension TOFirestore on FirestoreService {
             .fold<DateTime?>(null, (earliest, dt) =>
                 earliest == null || dt.isBefore(earliest) ? dt : earliest);
 
-        batch.update(slotRef, {
+        // 미래 마감시간이 있는 활성 업무상세가 존재하면 자동마감 슬롯 재오픈
+        final now = DateTime.now();
+        final hasOpenDetail = updatedWorkDetails.any((d) =>
+            !d.isClosed &&
+            (d.applicationDeadline == null || d.applicationDeadline!.isAfter(now)));
+        final isAutoClosed =
+            slot.status == SlotStatus.closed && slot.closedBy == null;
+
+        final updateData = <String, dynamic>{
           'workDetails': WorkDetailData.listToFirestore(updatedWorkDetails),
           'applicationDeadline': slotDeadline != null
               ? Timestamp.fromDate(slotDeadline)
               : FieldValue.delete(),
-        });
+          if (hasOpenDetail && isAutoClosed) ...{
+            'status': SlotStatus.open,
+            'isManualClosed': false,
+            'closedAt': FieldValue.delete(),
+          },
+        };
+
+        batch.update(slotRef, updateData);
       }
 
       await batch.commit();
@@ -481,7 +506,7 @@ extension TOFirestore on FirestoreService {
     debugPrint('✅ [Slot] 슬롯 $slotId 전체 수정 완료');
   }
 
-  /// 선택한 슬롯들 일괄 마감
+  /// 선택한 슬롯들 일괄 마감 (직접 마감 — closedBy 설정)
   Future<void> batchCloseSlots({
     required String toId,
     required List<String> slotIds,
@@ -495,16 +520,18 @@ extension TOFirestore on FirestoreService {
           .collection('slots').doc(slotId);
       batch.update(ref, {
         'isManualClosed': true,
-        'status': 'closed',
+        'status': SlotStatus.closed,
         'closedAt': FieldValue.serverTimestamp(),
         'closedBy': closedBy,
       });
     }
     await batch.commit();
     debugPrint('✅ [Slot] ${slotIds.length}개 슬롯 일괄 마감 완료');
+
+    await _syncTOCascadeStatus(toId);
   }
 
-  /// 선택한 슬롯들 일괄 재오픈
+  /// 선택한 슬롯들 일괄 재오픈 (직접 마감 해제 — closedBy 삭제)
   Future<void> batchReopenSlots({
     required String toId,
     required List<String> slotIds,
@@ -518,7 +545,7 @@ extension TOFirestore on FirestoreService {
           .collection('slots').doc(slotId);
       batch.update(ref, {
         'isManualClosed': false,
-        'status': 'open',
+        'status': SlotStatus.open,
         'reopenedAt': FieldValue.serverTimestamp(),
         'reopenedBy': reopenedBy,
         'closedAt': FieldValue.delete(),
@@ -527,6 +554,8 @@ extension TOFirestore on FirestoreService {
     }
     await batch.commit();
     debugPrint('✅ [Slot] ${slotIds.length}개 슬롯 일괄 재오픈 완료');
+
+    await _syncTOCascadeStatus(toId);
   }
 
   /// 선택한 슬롯들 일괄 삭제
@@ -577,11 +606,47 @@ extension TOFirestore on FirestoreService {
     );
 
     final slotRequired = workDetails.fold<int>(0, (s, d) => s + d.requiredCount);
-    await _firestore.collection('tos').doc(to.id).update({
+    final dateOnly = DateTime(date.year, date.month, date.day);
+
+    final Map<String, dynamic> toUpdates = {
       'totalSlots': FieldValue.increment(1),
       'totalRequired': FieldValue.increment(slotRequired),
-    });
+    };
+
+    // 마감/만료 상태였으면 새 슬롯 추가 시 ACTIVE로 복구
+    if (TOStatus.closedStates.contains(to.status)) {
+      toUpdates['status'] = TOStatus.active;
+      toUpdates['statusUpdatedAt'] = FieldValue.serverTimestamp();
+      debugPrint('🔄 [TO] 상태 복구: ${to.status} → ACTIVE (새 슬롯 추가)');
+    }
+
+    // 새 슬롯이 날짜 범위를 벗어나면 rangeStart/rangeEnd 갱신
+    final rangeEnd = to.rangeEnd;
+    final rangeStart = to.rangeStart;
+    if (rangeEnd == null || dateOnly.isAfter(rangeEnd)) {
+      toUpdates['rangeEnd'] = Timestamp.fromDate(dateOnly);
+    }
+    if (rangeStart == null || dateOnly.isBefore(rangeStart)) {
+      toUpdates['rangeStart'] = Timestamp.fromDate(dateOnly);
+    }
+
+    await _firestore.collection('tos').doc(to.id).update(toUpdates);
     debugPrint('✅ [TO] 슬롯 추가 완료: ${date.toIso8601String().substring(0, 10)}');
+  }
+
+  /// TO 문서의 공개 설정(publishMode/publishDaysBefore/publishTime) 업데이트
+  Future<void> updateTOPublishSettings({
+    required String toId,
+    required String publishMode,
+    int? publishDaysBefore,
+    String? publishTime,
+  }) async {
+    await _firestore.collection('tos').doc(toId).update({
+      'publishMode': publishMode,
+      'publishDaysBefore': publishDaysBefore,
+      'publishTime': publishTime,
+    });
+    debugPrint('✅ [TO] 공개 설정 업데이트: $publishMode D-${publishDaysBefore ?? '-'} $publishTime');
   }
 
   /// publish 설정 변경 시 모든 슬롯의 visibleFrom 일괄 업데이트
@@ -659,8 +724,8 @@ extension TOFirestore on FirestoreService {
 
         // 슬롯 상태 갱신
         final slotStatus = slotTotalRequired > 0 && newSlotConfirmed >= slotTotalRequired
-            ? 'full'
-            : 'open';
+            ? SlotStatus.full
+            : SlotStatus.open;
 
         tx.update(slotRef, {
           'confirmedCount': newSlotConfirmed,

@@ -1,5 +1,6 @@
 ﻿import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
+import '../../theme/app_colors.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 import '../../utils/responsive_helper.dart';
 
@@ -180,7 +181,7 @@ class _KakaoMapWidgetState extends State<KakaoMapWidget> {
         ),
         boxShadow: [
           BoxShadow(
-            color: Colors.grey.withValues(alpha: 0.1),
+            color: AppColors.grey500.withValues(alpha: 0.1),
             blurRadius: 8,
             offset: const Offset(0, 2),
           ),

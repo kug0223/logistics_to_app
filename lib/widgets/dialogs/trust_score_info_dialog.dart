@@ -1,4 +1,4 @@
-// lib/widgets/dialogs/trust_score_info_dialog.dart
+﻿// lib/widgets/dialogs/trust_score_info_dialog.dart
 
 import 'package:flutter/material.dart';
 import '../../utils/responsive_helper.dart';
@@ -208,7 +208,7 @@ class TrustScoreInfoDialog extends StatelessWidget {
             Icon(
               Icons.emoji_events,
               size: ResponsiveHelper.iconSize(context, 20),
-              color: Colors.amber,
+              color: AppColors.amber,
             ),
             SizedBox(width: ResponsiveHelper.spacing(context, 6)),
             Text(

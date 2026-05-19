@@ -22,7 +22,6 @@ class _ReviewTagsSettingsScreenState extends State<ReviewTagsSettingsScreen>
   late TabController _tabController;
   
   bool _isLoading = true;
-  bool _isSaving = false;
   
   // 태그 목록
   List<String> _positiveTags = [];
@@ -76,8 +75,6 @@ class _ReviewTagsSettingsScreenState extends State<ReviewTagsSettingsScreen>
   }
 
   Future<void> _saveTags() async {
-    setState(() => _isSaving = true);
-    
     try {
       await _firestore.collection('settings').doc('review_tags').set({
         'positiveTags': _positiveTags,
@@ -91,10 +88,6 @@ class _ReviewTagsSettingsScreenState extends State<ReviewTagsSettingsScreen>
     } catch (e) {
       debugPrint('❌ 태그 저장 실패: $e');
       ToastHelper.showError('저장에 실패했습니다');
-    } finally {
-      if (mounted) {
-        setState(() => _isSaving = false);
-      }
     }
   }
 
