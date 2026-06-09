@@ -206,19 +206,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
   // 🔧 핵심 함수들
   // ============================================================
 
-  /// 주민번호 체크디짓 검증 (13자리 숫자 문자열)
-  bool _isValidResidentNumber(String rn) {
-    if (rn.length != 13) return false;
-    const weights = [2, 3, 4, 5, 6, 7, 8, 9, 2, 3, 4, 5];
-    int sum = 0;
-    for (int i = 0; i < 12; i++) {
-      sum += int.parse(rn[i]) * weights[i];
-    }
-    final check = (11 - (sum % 11)) % 10;
-    return check == int.parse(rn[12]);
-  }
-
-  /// 주민번호/외국인등록번호로 생년월일과 성별 파싱 — setState 없이 notifier만 업데이트
+/// 주민번호/외국인등록번호로 생년월일과 성별 파싱 — setState 없이 notifier만 업데이트
   void _parseResidentNumber() {
     final rn1 = _residentNumber1Controller.text;
     final rn2 = _residentNumber2Controller.text;
@@ -293,11 +281,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
         return;
       }
 
-      // 체크디짓 검증 (주민등록번호만, 뒷자리 7자리 입력된 경우)
-      if (!isForeign && rn2.length == 7 && !_isValidResidentNumber(rn1 + rn2)) {
-        _residentResult.value = const _ResidentResult(error: '유효하지 않은 주민번호입니다');
-        return;
-      }
+      // 뒷자리 첫 자리(성별코드)만 입력받으므로 체크섬 검증 불가 — 서버 측 검증으로 대체 예정
 
       final gender = (effectiveCode == 1 || effectiveCode == 3) ? '남성' : '여성';
       _residentResult.value = _ResidentResult(birthDate: birthDate, gender: gender);
