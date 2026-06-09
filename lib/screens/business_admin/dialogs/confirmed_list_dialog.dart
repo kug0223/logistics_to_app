@@ -19,6 +19,7 @@ import '../../../widgets/dialogs/worker_detail_dialog.dart';
 import '../../../models/ui/admin_to_list_ui_models.dart';
 import '../../../theme/app_colors.dart';
 import '../../../widgets/common/app_checkbox.dart';
+import '../../../widgets/common/loading_widget.dart';
 import '../../../utils/id_card_helper.dart';
 import '../../../utils/trust_score_helper.dart';
 
@@ -85,6 +86,10 @@ class _ConfirmedListDialogWidgetState extends State<_ConfirmedListDialogWidget>
   bool _isIdCardSelectMode = false;
   final Set<String> _selectedIdCardUserIds = {};
 
+  // 확정 취소 모드
+  bool _isCancelSelectMode = false;
+  final Set<String> _selectedCancelAppIds = {};
+
   @override
   void initState() {
     super.initState();
@@ -101,24 +106,19 @@ class _ConfirmedListDialogWidgetState extends State<_ConfirmedListDialogWidget>
               widget.toItem.to.id,
               widget.slotId!,
               businessId: widget.toItem.to.businessId,
-              statuses: const ['CONFIRMED'],
+              statuses: const ['CONFIRMED', 'CONTRACT_PENDING'],
             )
           : await widget.firestoreService.getApplicationsByTOId(
               widget.toItem.to.id,
               businessId: widget.toItem.to.businessId,
-              statuses: const ['CONFIRMED'],
+              statuses: const ['CONFIRMED', 'CONTRACT_PENDING'],
             );
 
       // ✅ 1. 중복 제거된 UID 목록
       final uniqueUids = confirmed.map((app) => app.uid).toSet().toList();
-      
-      // ✅ 2. 사용자 정보 한 번만 조회 (병렬)
-      final userFutures = uniqueUids.map((uid) async {
-        final user = await widget.firestoreService.getUser(uid);
-        return MapEntry(uid, user);
-      });
-      final userEntries = await Future.wait(userFutures);
-      final userMap = Map.fromEntries(userEntries);
+
+      // ✅ 2. 사용자 정보 일괄 조회 (캐시 포함)
+      final userMap = await widget.firestoreService.getUsersBatch(uniqueUids);
       
       // ✅ 3. 결과 매핑 (추가 조회 없음)
       final results = confirmed.map((app) {
@@ -180,7 +180,7 @@ class _ConfirmedListDialogWidgetState extends State<_ConfirmedListDialogWidget>
       setState(() {
         _confirmedByWork = groupedByWork;
         _idCardStatusMap = idCardStatusMap;
-        _totalConfirmed = confirmed.length;
+        _totalConfirmed = groupedByWork.values.fold(0, (sum, list) => sum + list.length);
       });
     } catch (e) {
       debugPrint('❌ 확정 명단 로드 실패: $e');
@@ -238,10 +238,7 @@ class _ConfirmedListDialogWidgetState extends State<_ConfirmedListDialogWidget>
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            CircularProgressIndicator(
-              strokeWidth: 2,
-              valueColor: AlwaysStoppedAnimation<Color>(AppColors.success),
-            ),
+            const LoadingWidget(),
             SizedBox(height: ResponsiveHelper.spacing(context, 16)),
             Text(
               '확정 명단 불러오는 중...',
@@ -280,7 +277,7 @@ class _ConfirmedListDialogWidgetState extends State<_ConfirmedListDialogWidget>
 
     // 전체 미요청자 수 계산
     final totalRequestableCount = _idCardStatusMap.entries
-        .where((e) => e.value == 'none' || e.value == 'expired' || e.value == 'rejected')
+        .where((e) => IdCardHelper.isRequestable(e.value))
         .length;
 
     return SingleChildScrollView(
@@ -292,6 +289,7 @@ class _ConfirmedListDialogWidgetState extends State<_ConfirmedListDialogWidget>
         // 신분증 일괄 요청 영역
         if (totalRequestableCount > 0)
           _buildIdCardRequestSection(totalRequestableCount),
+        _buildCancelSection(),
         SizedBox(height: ResponsiveHelper.spacing(context, 16)),
         ..._confirmedByWork.entries.map((entry) {
           final groupKey = entry.key;
@@ -421,6 +419,8 @@ class _ConfirmedListDialogWidgetState extends State<_ConfirmedListDialogWidget>
                     _selectedIdCardUserIds.clear();
                   } else {
                     _selectAllRequestableUsers();
+                    _isCancelSelectMode = false;
+                    _selectedCancelAppIds.clear();
                   }
                 });
               },
@@ -452,7 +452,6 @@ class _ConfirmedListDialogWidgetState extends State<_ConfirmedListDialogWidget>
   Widget _buildWorkSection(String workType, List<Map<String, dynamic>> workers, WorkDetailModel workDetail) {
     final confirmedCount = workers.length;
     final requiredCount = workDetail.requiredCount;
-    final pendingCount = widget.toItem.workDetailStats?[workDetail.id]?['pending'] ?? 0;
     final progress = requiredCount > 0 ? (confirmedCount / requiredCount).clamp(0.0, 1.0) : 0.0;
     final isFull = confirmedCount >= requiredCount;
 
@@ -488,32 +487,23 @@ class _ConfirmedListDialogWidgetState extends State<_ConfirmedListDialogWidget>
                         ],
                       ),
                     ),
-                    Column(
-                      crossAxisAlignment: CrossAxisAlignment.end,
-                      children: [
-                        Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Icon(isFull ? Icons.check_circle : Icons.people_outline,
-                                size: ResponsiveHelper.iconSize(context, 14),
-                                color: isFull ? AppColors.success : AppColors.infoDark),
-                            SizedBox(width: ResponsiveHelper.spacing(context, 4)),
-                            Text(
-                              '확정 $confirmedCount/$requiredCount명',
-                              style: ResponsiveHelper.smallStyle(context,
-                                  color: isFull ? AppColors.success : AppColors.infoDark)
-                                  .copyWith(fontWeight: FontWeight.bold),
-                            ),
-                          ],
-                        ),
-                        if (pendingCount > 0) ...[
-                          SizedBox(height: ResponsiveHelper.spacing(context, 2)),
-                          Text(
-                            '+$pendingCount 대기',
-                            style: ResponsiveHelper.tinyStyle(context, color: AppColors.warningDark),
-                          ),
-                        ],
-                      ],
+                    Container(
+                      padding: EdgeInsets.symmetric(
+                        horizontal: ResponsiveHelper.spacing(context, 10),
+                        vertical: ResponsiveHelper.spacing(context, 4),
+                      ),
+                      decoration: BoxDecoration(
+                        color: (isFull ? AppColors.success : AppColors.info)
+                            .withValues(alpha: 0.12),
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: Text(
+                        '$confirmedCount/$requiredCount명',
+                        style: ResponsiveHelper.smallStyle(
+                          context,
+                          color: isFull ? AppColors.success : AppColors.infoDark,
+                        ).copyWith(fontWeight: FontWeight.bold),
+                      ),
                     ),
                   ],
                 ),
@@ -545,9 +535,11 @@ class _ConfirmedListDialogWidgetState extends State<_ConfirmedListDialogWidget>
             return Material(
               color: Colors.transparent,
               child: InkWell(
-                onTap: _isIdCardSelectMode && (idCardStatus == 'none' || idCardStatus == 'expired' || idCardStatus == 'rejected')
-                    ? () => _toggleIdCardSelection(user.uid)
-                    : () => _showWorkerDetailDialog(context, user, application, workDetail),
+                onTap: _isCancelSelectMode
+                    ? () => _toggleCancelSelection(application.id)
+                    : _isIdCardSelectMode && (idCardStatus == 'none' || idCardStatus == 'expired' || idCardStatus == 'rejected')
+                        ? () => _toggleIdCardSelection(user.uid)
+                        : () => _showWorkerDetailDialog(context, user, application, workDetail),
                 borderRadius: isLast ? const BorderRadius.only(bottomLeft: Radius.circular(16), bottomRight: Radius.circular(16)) : null,
                 child: Container(
                   padding: ResponsiveHelper.cardPadding(context),
@@ -560,16 +552,22 @@ class _ConfirmedListDialogWidgetState extends State<_ConfirmedListDialogWidget>
                       // ✅ 체크박스 영역 (애니메이션)
                       AnimatedContainer(
                         duration: const Duration(milliseconds: 200),
-                        width: _isIdCardSelectMode ? 32 : 0,
-                        child: _isIdCardSelectMode
-                            ? ((idCardStatus == 'none' || idCardStatus == 'expired' || idCardStatus == 'rejected')
-                                ? AppCheckbox(
-                                    value: isIdCardSelected,
-                                    activeColor: AppColors.info,
-                                    size: 22,
-                                  )
-                                : const SizedBox(width: 22))  // 이미 요청된 사용자는 빈 공간
-                            : const SizedBox.shrink(),
+                        width: (_isIdCardSelectMode || _isCancelSelectMode) ? 32 : 0,
+                        child: _isCancelSelectMode
+                            ? AppCheckbox(
+                                value: _selectedCancelAppIds.contains(application.id),
+                                activeColor: AppColors.error,
+                                size: 22,
+                              )
+                            : _isIdCardSelectMode
+                                ? ((idCardStatus == 'none' || idCardStatus == 'expired' || idCardStatus == 'rejected')
+                                    ? AppCheckbox(
+                                        value: isIdCardSelected,
+                                        activeColor: AppColors.info,
+                                        size: 22,
+                                      )
+                                    : const SizedBox(width: 22))
+                                : const SizedBox.shrink(),
                       ),
                       // 순번
                       CircleAvatar(
@@ -601,9 +599,12 @@ class _ConfirmedListDialogWidgetState extends State<_ConfirmedListDialogWidget>
                                 ),
                                 if (user.gender != null || user.age != null) ...[
                                   SizedBox(width: ResponsiveHelper.spacing(context, 4)),
-                                  Text(
-                                    '(${user.gender ?? ''}${user.age != null ? ' · ${user.age}세' : ''})',
-                                    style: ResponsiveHelper.smallStyle(context, color: AppColors.grey600),
+                                  Flexible(
+                                    child: Text(
+                                      '(${user.gender ?? ''}${user.age != null ? ' · ${user.age}세' : ''})',
+                                      style: ResponsiveHelper.smallStyle(context, color: AppColors.grey600),
+                                      overflow: TextOverflow.ellipsis,
+                                    ),
                                   ),
                                 ],
                                 SizedBox(width: ResponsiveHelper.spacing(context, 4)),
@@ -641,7 +642,8 @@ class _ConfirmedListDialogWidgetState extends State<_ConfirmedListDialogWidget>
                                   Flexible(
                                     child: Text(
                                       application.desiredStartDate != null
-                                          ? '희망: ${application.desiredStartDate!.month}/${application.desiredStartDate!.day}~ (${application.workEndDate!.month}/${application.workEndDate!.day}까지)'
+                                          ? '희망: ${application.desiredStartDate!.month}/${application.desiredStartDate!.day}~'
+                                            '${application.workEndDate != null ? " (${application.workEndDate!.month}/${application.workEndDate!.day}까지)" : ""}'
                                           : '장기: ${application.workPeriodDisplay}',
                                       style: ResponsiveHelper.smallStyle(
                                         context,
@@ -819,7 +821,7 @@ class _ConfirmedListDialogWidgetState extends State<_ConfirmedListDialogWidget>
             : '${application.selectedWorkType}_${application.startTime}_${application.endTime}';
         final stats = widget.toItem.workDetailStats![statsKey];
         if (stats != null) {
-          stats['confirmed'] = ((stats['confirmed'] ?? 1)) - 1;
+          stats['confirmed'] = ((stats['confirmed'] ?? 0) - 1).clamp(0, 9999);
         }
       });
     } else if (mounted) {
@@ -848,7 +850,7 @@ class _ConfirmedListDialogWidgetState extends State<_ConfirmedListDialogWidget>
         final user = worker['user'] as UserModel?;
         if (user == null) continue;
         final status = _idCardStatusMap[user.uid] ?? 'none';
-        if (status == 'none' || status == 'expired' || status == 'rejected') {
+        if (IdCardHelper.isRequestable(status)) {
           _selectedIdCardUserIds.add(user.uid);
         }
       }
@@ -864,6 +866,320 @@ class _ConfirmedListDialogWidgetState extends State<_ConfirmedListDialogWidget>
         _selectedIdCardUserIds.add(uid);
       }
     });
+  }
+
+  // ── 확정 취소 섹션 ───────────────────────────────────────────
+
+  Widget _buildCancelSection() {
+    return Container(
+      margin: EdgeInsets.only(top: ResponsiveHelper.spacing(context, 12)),
+      padding: EdgeInsets.symmetric(
+        horizontal: ResponsiveHelper.spacing(context, 16),
+        vertical: ResponsiveHelper.spacing(context, 10),
+      ),
+      decoration: BoxDecoration(
+        color: _isCancelSelectMode ? AppColors.errorBg : Colors.white,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(
+          color: _isCancelSelectMode
+              ? AppColors.errorDark.withValues(alpha: 0.4)
+              : AppColors.border,
+        ),
+      ),
+      child: Row(
+        children: [
+          Icon(
+            Icons.cancel_outlined,
+            size: ResponsiveHelper.iconSize(context, 18),
+            color: AppColors.error,
+          ),
+          SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+          Expanded(
+            child: Text(
+              _isCancelSelectMode
+                  ? '${_selectedCancelAppIds.length}명 선택됨'
+                  : '확정 취소 관리',
+              style: ResponsiveHelper.bodyStyle(context, color: AppColors.errorDark),
+            ),
+          ),
+          if (_isCancelSelectMode && _selectedCancelAppIds.isNotEmpty) ...[
+            Material(
+              color: Colors.transparent,
+              child: InkWell(
+                onTap: _batchCancelConfirmation,
+                borderRadius: BorderRadius.circular(8),
+                child: Container(
+                  padding: EdgeInsets.symmetric(
+                    horizontal: ResponsiveHelper.spacing(context, 12),
+                    vertical: ResponsiveHelper.spacing(context, 6),
+                  ),
+                  decoration: BoxDecoration(
+                    color: AppColors.error,
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Text(
+                    '마감취소',
+                    style: ResponsiveHelper.smallStyle(context, color: Colors.white)
+                        .copyWith(fontWeight: FontWeight.w600),
+                  ),
+                ),
+              ),
+            ),
+            SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+          ],
+          Material(
+            color: Colors.transparent,
+            child: InkWell(
+              onTap: () {
+                setState(() {
+                  _isCancelSelectMode = !_isCancelSelectMode;
+                  if (_isCancelSelectMode) {
+                    _isIdCardSelectMode = false;
+                    _selectedIdCardUserIds.clear();
+                  } else {
+                    _selectedCancelAppIds.clear();
+                  }
+                });
+              },
+              borderRadius: BorderRadius.circular(8),
+              child: Container(
+                padding: EdgeInsets.symmetric(
+                  horizontal: ResponsiveHelper.spacing(context, 12),
+                  vertical: ResponsiveHelper.spacing(context, 6),
+                ),
+                decoration: BoxDecoration(
+                  color: _isCancelSelectMode ? AppColors.grey100 : AppColors.errorBg,
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Text(
+                  _isCancelSelectMode ? '취소' : '일괄 취소',
+                  style: ResponsiveHelper.smallStyle(
+                    context,
+                    color: _isCancelSelectMode ? AppColors.grey700 : AppColors.errorDark,
+                  ).copyWith(fontWeight: FontWeight.w600),
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _toggleCancelSelection(String applicationId) {
+    setState(() {
+      if (_selectedCancelAppIds.contains(applicationId)) {
+        _selectedCancelAppIds.remove(applicationId);
+      } else {
+        _selectedCancelAppIds.add(applicationId);
+      }
+    });
+  }
+
+  Future<void> _batchCancelConfirmation() async {
+    if (_selectedCancelAppIds.isEmpty) return;
+
+    final cancelReason = await _showCancelReasonPicker();
+    if (cancelReason == null || !mounted) return;
+
+    final adminUID = context.read<UserProvider>().currentUser?.uid;
+    if (adminUID == null) {
+      ToastHelper.showError('로그인 정보를 찾을 수 없습니다');
+      return;
+    }
+    final targetIds = Set<String>.from(_selectedCancelAppIds);
+
+    setLoading(true);
+    int successCount = 0;
+    final Set<String> successIds = {};
+    try {
+      for (final appId in targetIds) {
+        final success = await widget.firestoreService.cancelConfirmedApplication(
+          appId,
+          canceledBy: adminUID,
+          cancelReason: cancelReason,
+        );
+        if (success) {
+          successCount++;
+          successIds.add(appId);
+        }
+      }
+    } catch (e) {
+      debugPrint('❌ 일괄 확정 취소 실패: $e');
+      if (mounted) ToastHelper.showError('확정 취소 중 오류가 발생했습니다');
+    } finally {
+      setLoading(false);
+    }
+
+    if (successCount > 0 && mounted) {
+      setState(() {
+        for (final entry in _confirmedByWork.entries.toList()) {
+          // 실제 성공한 ID만 UI에서 제거
+          entry.value.removeWhere((w) {
+            final app = w['application'] as ApplicationModel;
+            return successIds.contains(app.id);
+          });
+          if (entry.value.isEmpty) _confirmedByWork.remove(entry.key);
+        }
+        _totalConfirmed -= successCount;
+        _isCancelSelectMode = false;
+        _selectedCancelAppIds.clear();
+        _hasChanges = true;
+      });
+      ToastHelper.showSuccess('$successCount명의 확정이 취소되었습니다');
+      widget.onLocalStatsChanged?.call();
+    }
+  }
+
+  Future<String?> _showCancelReasonPicker() async {
+    String? selectedReason;
+    final customController = TextEditingController();
+    final count = _selectedCancelAppIds.length;
+    const reasons = ['일정 변경', '인원 조정', '업무 취소', '근무자 요청', '기타'];
+
+    final result = await showDialog<String>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setDialogState) => Dialog(
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          child: Container(
+            constraints: const BoxConstraints(maxWidth: 400),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Container(
+                  width: double.infinity,
+                  padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 16)),
+                  decoration: const BoxDecoration(
+                    color: AppColors.error,
+                    borderRadius: BorderRadius.only(
+                      topLeft: Radius.circular(16),
+                      topRight: Radius.circular(16),
+                    ),
+                  ),
+                  child: Row(
+                    children: [
+                      Icon(Icons.cancel_outlined, color: Colors.white,
+                          size: ResponsiveHelper.iconSize(context, 24)),
+                      SizedBox(width: ResponsiveHelper.spacing(context, 12)),
+                      Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            '확정 취소 ($count명)',
+                            style: ResponsiveHelper.subtitleStyle(context)
+                                .copyWith(color: Colors.white, fontWeight: FontWeight.bold),
+                          ),
+                          Text(
+                            '취소 사유를 선택하세요',
+                            style: ResponsiveHelper.smallStyle(context)
+                                .copyWith(color: Colors.white.withValues(alpha: 0.8)),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+                SingleChildScrollView(
+                  child: Padding(
+                    padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 16)),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Wrap(
+                          spacing: ResponsiveHelper.spacing(context, 8),
+                          runSpacing: ResponsiveHelper.spacing(context, 8),
+                          children: reasons.map((r) {
+                            final isSelected = selectedReason == r;
+                            return GestureDetector(
+                              onTap: () => setDialogState(() => selectedReason = r),
+                              child: Container(
+                                padding: EdgeInsets.symmetric(
+                                  horizontal: ResponsiveHelper.spacing(context, 14),
+                                  vertical: ResponsiveHelper.spacing(context, 8),
+                                ),
+                                decoration: BoxDecoration(
+                                  color: isSelected ? AppColors.error : AppColors.grey100,
+                                  borderRadius: BorderRadius.circular(20),
+                                  border: Border.all(
+                                    color: isSelected ? AppColors.error : AppColors.grey200,
+                                  ),
+                                ),
+                                child: Text(
+                                  r,
+                                  style: ResponsiveHelper.smallStyle(
+                                    context,
+                                    color: isSelected ? Colors.white : AppColors.grey700,
+                                  ).copyWith(fontWeight: FontWeight.w600),
+                                ),
+                              ),
+                            );
+                          }).toList(),
+                        ),
+                        if (selectedReason == '기타') ...[
+                          SizedBox(height: ResponsiveHelper.spacing(context, 12)),
+                          TextField(
+                            controller: customController,
+                            decoration: InputDecoration(
+                              hintText: '취소 사유를 입력하세요',
+                              border: OutlineInputBorder(
+                                  borderRadius: BorderRadius.circular(8)),
+                              contentPadding: EdgeInsets.symmetric(
+                                horizontal: ResponsiveHelper.spacing(context, 12),
+                                vertical: ResponsiveHelper.spacing(context, 10),
+                              ),
+                            ),
+                          ),
+                        ],
+                      ],
+                    ),
+                  ),
+                ),
+                Padding(
+                  padding: EdgeInsets.fromLTRB(
+                    ResponsiveHelper.spacing(context, 16),
+                    0,
+                    ResponsiveHelper.spacing(context, 16),
+                    ResponsiveHelper.spacing(context, 16),
+                  ),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: OutlinedButton(
+                          onPressed: () => Navigator.pop(ctx),
+                          child: const Text('취소'),
+                        ),
+                      ),
+                      SizedBox(width: ResponsiveHelper.spacing(context, 12)),
+                      Expanded(
+                        child: ElevatedButton(
+                          onPressed: selectedReason == null
+                              ? null
+                              : () {
+                                  final reason = selectedReason == '기타' &&
+                                          customController.text.trim().isNotEmpty
+                                      ? customController.text.trim()
+                                      : selectedReason!;
+                                  Navigator.pop(ctx, reason);
+                                },
+                          style: ElevatedButton.styleFrom(
+                              backgroundColor: AppColors.error),
+                          child: Text('확정 취소',
+                              style: ResponsiveHelper.bodyStyle(ctx, color: Colors.white)),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+
+    customController.dispose();
+    return result;
   }
 
   /// 일괄 신분증 요청
@@ -911,7 +1227,7 @@ class _ConfirmedListDialogWidgetState extends State<_ConfirmedListDialogWidget>
       targets: targets,
     );
 
-    if (successCount > 0) {
+    if (successCount > 0 && mounted) {
       setState(() {
         for (final uid in _selectedIdCardUserIds) {
           _idCardStatusMap[uid] = 'pending';

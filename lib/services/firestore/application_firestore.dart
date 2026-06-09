@@ -1436,12 +1436,12 @@ extension ApplicationFirestore on FirestoreService {
     required String excludeId,
   }) async {
     try {
-      // 타사 포함 전체 PENDING·CONTRACT_PENDING 조회 — businessId 필터 없음
-      // CONTRACT_PENDING도 포함: 이미 확정됐지만 서명 대기 중인 일정도 충돌 대상
+      // 타사 포함 전체 PENDING·CONTRACT_PENDING·CONFIRMED 조회 — businessId 필터 없음
+      // CONFIRMED도 포함: 단기 확정 근무자와도 충돌 방지
       final snap = await _firestore
           .collection('applications')
           .where('uid', isEqualTo: uid)
-          .where('status', whereIn: [AppStatus.pending, AppStatus.contractPending])
+          .where('status', whereIn: [AppStatus.pending, AppStatus.contractPending, AppStatus.confirmed])
           .get();
 
       final startOnly = DateTime(startDate.year, startDate.month, startDate.day);

@@ -1,8 +1,8 @@
 ﻿// lib/screens/business_admin/dialogs/wage_confirm_dialog.dart
 // 급여 확정 다이얼로그 - 탭 구조
 // 
-// 탭 1: 미확정 (pending) → 급여 확정 → calculated
-// 탭 2: 급여확정 (calculated) → 최종 확정 → confirmed
+// 탭 1: 미확정 (pending) → 급여 계산·확정 → calculated
+// 탭 2: 확정내역 (calculated) → 수정·취소 가능 / 최종확정은 당일명단 마감 버튼에서 일괄 처리
 
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -15,15 +15,21 @@ import '../../../models/core/user_model.dart';
 import '../../../models/core/wage_detail_model.dart';
 
 // Utils
+import '../../../utils/attendance_badge_helper.dart';
 import '../../../utils/toast_helper.dart';
 import '../../../utils/responsive_helper.dart';
 import '../../../utils/format_helper.dart';
 import '../../../utils/dialog_helper.dart';
 import '../../../utils/wage_calculator.dart';
+import '../../../utils/work_detail_helper.dart';
+import '../../../services/tax_deduction_service.dart';
+import '../../../models/core/insurance_rate_model.dart';
 import '../../../theme/app_colors.dart';
 import '../../../widgets/common/app_checkbox.dart';
 
 import '../../../widgets/dialogs/wage/wage_detail_dialog.dart';
+import '../../../models/core/notification_model.dart';
+import '../../../services/firestore_service.dart';
 
 // Providers
 import '../../../providers/user_provider.dart';
@@ -60,8 +66,11 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
   // 상태 변수
   // ═══════════════════════════════════════════════════════════
   
+  final _firestoreService = FirestoreService();
+
   late TabController _tabController;
   bool _isProcessing = false;
+  bool _isInitializing = true;
   bool _hasChanges = false;
   
   // 선택 상태 (탭별로 분리)
@@ -71,8 +80,11 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
   // 계산된 급여 정보 캐시
   final Map<String, WageDetailModel> _calculatedWages = {};
 
-  // 파트+시간대 그룹별 추가 공제 시간 (분) — key: workType_startTime_endTime
+  // 파트+시간대 그룹별 칩 선택 상태 — key: workType_startTime_endTime
   final Map<String, int> _groupExtraBreakMinutes = {};
+
+  // 근무자별 실제 적용된 추가공제 시간 (선택된 근무자만 반영)
+  final Map<String, int> _workerExtraBreakMinutes = {};
   
   // 근무자 목록 (상태별 분리)
   List<ApplicationModel> _pendingWorkers = [];      // 미확정 (퇴근완료, pending)
@@ -104,9 +116,9 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
       if (attendance.checkOut == null) continue;
       
       // 상태별 분류
-      if (attendance.wageStatus == 'calculated') {
+      if (attendance.wageStatus == AttendanceModel.wageCalculated) {
         _calculatedWorkers.add(app);
-      } else if (attendance.wageStatus == 'pending') {
+      } else if (attendance.wageStatus == AttendanceModel.wagePending) {
         _pendingWorkers.add(app);
       }
       // confirmed는 이미 최종확정이므로 표시 안함
@@ -114,9 +126,9 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
     
     // 급여 미리 계산 (async)
     await _calculateAllWages();
-    
-    // ✅ 계산 완료 후 UI 갱신
-    if (mounted) setState(() {});
+
+    // 계산 완료 후 UI 갱신 + 초기화 플래그 해제
+    if (mounted) setState(() { _isInitializing = false; });
   }
 
   /// 파트+시간대 그룹 키 생성
@@ -127,7 +139,7 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
   Future<void> _calculateAllWages() async {
     final allWorkers = [..._pendingWorkers, ..._calculatedWorkers];
     for (var app in allWorkers) {
-      final extra = _groupExtraBreakMinutes[_getGroupKey(app)] ?? 0;
+      final extra = _workerExtraBreakMinutes[app.id] ?? 0;
       final wage = await _calculateWageForWorker(app, extraBreakMinutes: extra);
       if (wage != null) {
         _calculatedWages[app.id] = wage;
@@ -136,38 +148,85 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
   }
 
   /// workDetailTimeMap에서 예정 휴게시간 조회
-  int _getScheduledBreakMinutes(ApplicationModel app) {
-    final cached = (app.workDetailId != null
-            ? widget.workDetailTimeMap[app.workDetailId]
-            : null) ??
-        widget.workDetailTimeMap[app.selectedWorkType];
-    if (cached is Map<String, dynamic>) {
-      return cached['breakMinutes'] as int? ?? 0;
-    }
-    return 0;
+  int _getScheduledBreakMinutes(ApplicationModel app) =>
+      WorkDetailHelper.breakMinutes(WorkDetailHelper.resolve(app, widget.workDetailTimeMap));
+
+  /// 연장근무 여부 확인 — 석식/야식공제 적용 가능 조건
+  bool _workerHasOvertime(ApplicationModel app) {
+    final attendance = widget.attendanceMap[app.id];
+    if (attendance?.checkIn == null || attendance?.checkOut == null) return false;
+    final elapsed = WageCalculator.elapsedMinutes(attendance!.checkIn!, attendance.checkOut!);
+    final schedBreak = _getScheduledBreakMinutes(app);
+    final scheduledElapsed = WageCalculator.elapsedMinutes(app.startTime, app.endTime);
+    final scheduledWorkMins = (scheduledElapsed - schedBreak).clamp(0, 9999);
+    final actualWorkMins = (elapsed - schedBreak).clamp(0, 9999);
+    return actualWorkMins > scheduledWorkMins;
   }
 
-  /// 그룹 추가 공제 시간 변경 → 그룹 내 전체 근무자 급여 재계산
+  /// 그룹 추가 공제 시간 변경 → 선택된 근무자만 급여 재계산
   Future<void> _setGroupBreak(List<ApplicationModel> groupWorkers, int extraMinutes) async {
     final key = _getGroupKey(groupWorkers.first);
-    setState(() => _groupExtraBreakMinutes[key] = extraMinutes);
-    for (final app in groupWorkers) {
-      final wage = await _calculateWageForWorker(app, extraBreakMinutes: extraMinutes);
-      if (wage != null && mounted) {
-        setState(() => _calculatedWages[app.id] = wage);
+    final selectedInGroup = groupWorkers.where((a) => _pendingSelectedIds.contains(a.id)).toList();
+
+    // 선택된 근무자 extra break 반영 — 한 번에 setState
+    setState(() {
+      _groupExtraBreakMinutes[key] = extraMinutes;
+      for (final app in selectedInGroup) {
+        _workerExtraBreakMinutes[app.id] = extraMinutes;
+      }
+    });
+
+    // 급여 병렬 계산 후 한 번에 반영
+    final results = await Future.wait(
+      selectedInGroup.map((app) async {
+        final wage = await _calculateWageForWorker(app, extraBreakMinutes: extraMinutes, forceRecalculate: true);
+        return (id: app.id, wage: wage);
+      }),
+    );
+    if (!mounted) return;
+    setState(() {
+      for (final r in results) {
+        if (r.wage != null) _calculatedWages[r.id] = r.wage!;
+      }
+    });
+  }
+
+  /// 근무자 체크박스 토글 — 신규 선택 시 그룹 칩 값 동기화 및 급여 재계산
+  Future<void> _handleWorkerCheckboxTap(ApplicationModel app, Set<String> selectedIds) async {
+    final wasSelected = selectedIds.contains(app.id);
+    setState(() {
+      if (wasSelected) {
+        selectedIds.remove(app.id);
+      } else {
+        selectedIds.add(app.id);
+      }
+    });
+    if (!wasSelected) {
+      final groupKey = _getGroupKey(app);
+      final groupExtra = _groupExtraBreakMinutes[groupKey] ?? 0;
+      if (groupExtra > 0) {
+        setState(() => _workerExtraBreakMinutes[app.id] = groupExtra);
+        final wage = await _calculateWageForWorker(app, extraBreakMinutes: groupExtra, forceRecalculate: true);
+        if (wage != null && mounted) {
+          setState(() => _calculatedWages[app.id] = wage);
+        }
       }
     }
   }
 
   /// 개별 급여 계산 (async로 변경)
-  Future<WageDetailModel?> _calculateWageForWorker(ApplicationModel app, {int extraBreakMinutes = 0}) async {
+  Future<WageDetailModel?> _calculateWageForWorker(
+    ApplicationModel app, {
+    int extraBreakMinutes = 0,
+    bool forceRecalculate = false,
+  }) async {
     final attendance = widget.attendanceMap[app.id];
     if (attendance == null || attendance.checkIn == null || attendance.checkOut == null) {
       return null;
     }
-    
-    // 이미 계산된 급여가 있으면 그것 사용 (calculated 상태)
-    if (attendance.wageDetail != null) {
+
+    // 이미 계산된 급여가 있으면 그것 사용 (calculated 상태), 강제 재계산 시 제외
+    if (!forceRecalculate && attendance.wageDetail != null) {
       return attendance.wageDetail;
     }
     
@@ -182,21 +241,20 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
     bool nightAllowanceApplied = true;
     bool nightIncluded = false;
     int? baseHourlyWage;
+    String taxDeductionType = InsuranceRateModel.typeNone;
 
     // 1순위: 이미 로드된 workDetailTimeMap에서 가져오기
     // composite key(workDetailId) 우선, 없으면 workType(selectedWorkType) 폴백
-    final detailCached = (app.workDetailId != null
-            ? widget.workDetailTimeMap[app.workDetailId]
-            : null) ??
-        widget.workDetailTimeMap[app.selectedWorkType];
+    final detail = WorkDetailHelper.resolve(app, widget.workDetailTimeMap);
 
-    if (detailCached is Map<String, dynamic>) {
-      wageType = detailCached['wageType'] ?? 'hourly';
-      breakMinutes = detailCached['breakMinutes'] ?? 0;
-      nightAllowanceApplied = detailCached['nightAllowanceApplied'] ?? true;
-      nightIncluded = detailCached['nightIncluded'] as bool? ?? false;
-      baseHourlyWage = detailCached['baseHourlyWage'] as int?;
-      debugPrint('✅ WorkDetail 캐시 사용: wageType=$wageType, nightIncluded=$nightIncluded');
+    if (detail != null) {
+      wageType = WorkDetailHelper.wageType(detail);
+      breakMinutes = WorkDetailHelper.breakMinutes(detail);
+      nightAllowanceApplied = WorkDetailHelper.nightAllowanceApplied(detail);
+      nightIncluded = WorkDetailHelper.nightIncluded(detail);
+      baseHourlyWage = WorkDetailHelper.baseHourlyWage(detail);
+      taxDeductionType = WorkDetailHelper.taxDeductionType(detail);
+      debugPrint('✅ WorkDetail 캐시 사용: wageType=$wageType, taxDeductionType=$taxDeductionType');
     }
     // 2순위: Firestore 문서에서 직접 조회 (슬롯 우선 → TO 폴백)
     else if (app.toId != null && app.toId!.isNotEmpty) {
@@ -242,8 +300,9 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
             breakMinutes = wdMap['breakMinutes'] ?? 0;
             nightAllowanceApplied = wdMap['nightAllowanceApplied'] ?? true;
             nightIncluded = wdMap['nightIncluded'] as bool? ?? false;
-            baseHourlyWage = wdMap['baseHourlyWage'] as int?;
-            debugPrint('✅ WorkDetail Firestore 조회($source): wageType=$wageType, nightIncluded=$nightIncluded');
+            baseHourlyWage = (wdMap['baseHourlyWage'] as num?)?.toInt();
+            taxDeductionType = wdMap['taxDeductionType'] as String? ?? InsuranceRateModel.typeNone;
+            debugPrint('✅ WorkDetail Firestore 조회($source): wageType=$wageType, taxDeductionType=$taxDeductionType');
             break;
           }
         }
@@ -255,7 +314,10 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
     }
 
     try {
-      return WageCalculator.calculate(
+      // 관리자가 직접 선택한 석식/야식공제 그대로 적용
+      final effectiveBreak = breakMinutes + extraBreakMinutes;
+
+      final base = WageCalculator.calculate(
         wageType: wageType,
         baseWage: baseWage,
         workDate: widget.date,
@@ -263,11 +325,17 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
         scheduledEnd: scheduledEnd,
         actualStart: attendance.checkIn!,
         actualEnd: attendance.checkOut!,
-        breakMinutes: breakMinutes + extraBreakMinutes,
+        breakMinutes: effectiveBreak,
         scheduledBreakMinutes: breakMinutes,
         nightAllowanceApplied: nightAllowanceApplied,
         nightIncluded: nightIncluded,
         baseHourlyWage: baseHourlyWage,
+      );
+
+      return TaxDeductionService.applyDeduction(
+        base: base,
+        taxDeductionType: taxDeductionType,
+        workYear: widget.date.year,
       );
     } catch (e) {
       debugPrint('❌ 급여 계산 실패 (${app.id}): $e');
@@ -280,6 +348,7 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
   // ═══════════════════════════════════════════════════════════
 
   Future<void> _confirmWages() async {
+    if (_isProcessing) return;
     if (_pendingSelectedIds.isEmpty) {
       ToastHelper.showWarning('급여 확정할 인원을 선택해주세요');
       return;
@@ -292,44 +361,152 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
       confirmText: '확정',
     );
     
-    if (!confirmed) return;
-    if (!mounted) return;
+    if (confirmed != true || !mounted) return;
 
     final adminUid = Provider.of<UserProvider>(context, listen: false).currentUser?.uid;
 
+    // ── 8일 소급 사전 체크 ──────────────────────────────────────
     setState(() => _isProcessing = true);
 
     try {
-      
+      final day8Previews = <String, WageDetailModel>{};
+      for (var appId in _pendingSelectedIds) {
+        final w = _calculatedWages[appId];
+        final att = widget.attendanceMap[appId];
+        if (w == null || att == null) continue;
+        if (w.taxDeductionType != InsuranceRateModel.typeDailyAuto8) continue;
+
+        final preview = await _checkAndApplyRetroactive(att, w);
+        if (preview.retroactiveDeduction > 0) {
+          day8Previews[appId] = preview;
+        }
+      }
+
+      if (day8Previews.isNotEmpty && mounted) {
+        // _isProcessing을 false로 내리지 않음 — 다이얼로그 중 버튼 재진입 방지
+        final day8Confirmed = await _showDay8RetroactiveWarning(
+          day8Previews.entries.map((e) {
+            final app = widget.workers.firstWhere(
+              (w) => w.id == e.key,
+              orElse: () => throw StateError('worker not found: ${e.key}'),
+            );
+            final user = widget.userMap[app.uid];
+            return (
+              name: user?.name ?? '근무자',
+              retroactive: e.value.retroactiveDeduction,
+              gross: e.value.totalAmount,
+              net: e.value.netWage,
+            );
+          }).toList(),
+        );
+        if (!day8Confirmed || !mounted) return;
+      }
+      // ────────────────────────────────────────────────────────────
+
+
       int successCount = 0;
       int failCount = 0;
       final confirmedIds = <String>{};
-      
+
       for (var appId in _pendingSelectedIds) {
-        final wage = _calculatedWages[appId];
+        // 사전 계산된 8일 소급 결과 재사용, 없으면 원본 사용
+        var wage = day8Previews[appId] ?? _calculatedWages[appId];
         final attendance = widget.attendanceMap[appId];
-        
+
         if (wage == null || attendance == null) {
           failCount++;
           continue;
         }
-        
+
         try {
+          // daily_auto_8이지만 8일차가 아닌 경우(1~7일) 처리
+          if (_calculatedWages[appId]?.taxDeductionType == InsuranceRateModel.typeDailyAuto8
+              && !day8Previews.containsKey(appId)) {
+            wage = await _checkAndApplyRetroactive(attendance, _calculatedWages[appId]!);
+          }
+
+          final appIdx = widget.workers.indexWhere((w) => w.id == appId);
+          final app = appIdx >= 0 ? widget.workers[appIdx] : null;
+          final detail = app != null ? WorkDetailHelper.resolve(app, widget.workDetailTimeMap) : null;
+          String? payScheduleType = detail?['payScheduleType'] as String?;
+          int?    payScheduleDay  = (detail?['payScheduleDay'] as num?)?.toInt();
+
+          // 캐시에 payScheduleType 없으면 Firestore에서 직접 조회
+          if (payScheduleType == null && app != null && app.toId != null) {
+            try {
+              List<dynamic> rawWd = [];
+              if (app.slotId != null && app.slotId!.isNotEmpty) {
+                final slotDoc = await FirebaseFirestore.instance
+                    .collection('tos').doc(app.toId)
+                    .collection('slots').doc(app.slotId).get();
+                rawWd = slotDoc.data()?['workDetails'] as List<dynamic>? ?? [];
+              }
+              if (rawWd.isEmpty) {
+                final toDoc = await FirebaseFirestore.instance
+                    .collection('tos').doc(app.toId).get();
+                rawWd = toDoc.data()?['workDetails'] as List<dynamic>? ?? [];
+              }
+              for (var wd in rawWd) {
+                final wdMap = Map<String, dynamic>.from(wd as Map);
+                final wdType = wdMap['workType'] as String? ?? '';
+                if (wdType == app.selectedWorkType ||
+                    '${wdType}_${wdMap['startTime'] ?? ''}_${wdMap['endTime'] ?? ''}' == app.workDetailId) {
+                  payScheduleType = wdMap['payScheduleType'] as String?;
+                  payScheduleDay  = (wdMap['payScheduleDay'] as num?)?.toInt();
+                  debugPrint('✅ payScheduleType Firestore 폴백: $payScheduleType');
+                  break;
+                }
+              }
+            } catch (e) {
+              debugPrint('⚠️ payScheduleType 조회 실패: $e');
+            }
+          }
+
+          final yearMonth = _toYearMonth(attendance.workDate);
           final calculatedWage = wage.copyWith(
             calculatedBy: adminUid,
             calculatedAt: DateTime.now(),
+            payScheduleType: payScheduleType ?? wage.payScheduleType,
+            payScheduleDay:  payScheduleDay  ?? wage.payScheduleDay,
           );
-          
-          await FirebaseFirestore.instance
+
+          // 동시 확정 방지 — 현재 wageStatus가 pending인지 트랜잭션으로 검증
+          final attRef = FirebaseFirestore.instance
               .collection('attendance')
-              .doc(attendance.id)
-              .update({
-            'wageStatus': 'calculated',
-            'finalWage': calculatedWage.totalAmount,
-            'wageDetail': calculatedWage.toMap(),
-            'updatedAt': FieldValue.serverTimestamp(),
+              .doc(attendance.id);
+          await FirebaseFirestore.instance.runTransaction((tx) async {
+            final snap = await tx.get(attRef);
+            final currentStatus = snap.data()?['wageStatus'] as String?;
+            if (currentStatus == AttendanceModel.wageCalculated ||
+                currentStatus == AttendanceModel.wageConfirmed ||
+                currentStatus == AttendanceModel.wageTransferred) {
+              throw Exception('이미 처리된 급여입니다 (${AttendanceModel.wageCalculated})');
+            }
+            tx.update(attRef, {
+              'wageStatus': AttendanceModel.wageCalculated,
+              'finalWage': calculatedWage.netWage,
+              'wageDetail': calculatedWage.toMap(),
+              'yearMonth': yearMonth,
+              'updatedAt': FieldValue.serverTimestamp(),
+            });
           });
-          
+
+          // 8일 소급 적용된 근로자에게 알림 발송
+          if (calculatedWage.retroactiveDeduction > 0 && app != null) {
+            _firestoreService.createNotification(
+              NotificationModel.createRetroactiveDeductionAlert(
+                userId: app.uid,
+                businessName: widget.businessName,
+                businessId: widget.businessId,
+                workDate: attendance.workDate,
+                retroactiveAmount: calculatedWage.retroactiveDeduction,
+                grossWage: calculatedWage.totalAmount,
+                netWage: calculatedWage.netWage,
+                attendanceId: attendance.id,
+              ),
+            );
+          }
+
           successCount++;
           confirmedIds.add(appId);
           _calculatedWages[appId] = calculatedWage;
@@ -343,12 +520,14 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
         _hasChanges = true;
         ToastHelper.showSuccess('$successCount명 급여 확정 완료');
         widget.onConfirmed?.call();
-        
+        if (!mounted) return;
+
         setState(() {
           // 확정된 근무자를 calculated 탭으로 이동
+          final pendingMap = {for (final w in _pendingWorkers) w.id: w};
           for (var id in confirmedIds) {
-            final worker = _pendingWorkers.firstWhere((w) => w.id == id);
-            _calculatedWorkers.add(worker);
+            final worker = pendingMap[id];
+            if (worker != null) _calculatedWorkers.add(worker);
           }
           _pendingWorkers.removeWhere((app) => confirmedIds.contains(app.id));
           _pendingSelectedIds.clear();
@@ -367,43 +546,202 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
   }
 
   // ═══════════════════════════════════════════════════════════
-  // 최종 확정 처리 (calculated → confirmed)
+  // 8일 소급 헬퍼
   // ═══════════════════════════════════════════════════════════
 
-  /// 일괄 급여 수정 다이얼로그
-  Future<void> _openBatchEditDialog() async {
-    // 선택된 인원이 1명이면 개별 수정 다이얼로그로
-    if (_calculatedSelectedIds.length == 1) {
-      final appId = _calculatedSelectedIds.first;
-      final app = _calculatedWorkers.firstWhere((a) => a.id == appId);
-      final attendance = widget.attendanceMap[app.id];
-      final wage = _calculatedWages[app.id];
-      
-      if (attendance != null && wage != null) {
-        final detailCached = (app.workDetailId != null
-                ? widget.workDetailTimeMap[app.workDetailId]
-                : null) ??
-            widget.workDetailTimeMap[app.selectedWorkType];
-        final shiftType = detailCached is Map<String, dynamic>
-            ? detailCached['shiftType'] as String?
-            : null;
-        final result = await WageDetailDialog.show(
-          context: context,
-          app: app,
-          user: widget.userMap[app.uid],
-          attendance: attendance,
-          wage: wage,
-          mode: WageDialogMode.editOnly,
-          shiftType: shiftType,
-        );
-        
-        if (result != null && result.action == 'update') {
-          await _processWageUpdate(app, attendance, result.wage);  // ✅ 기존 메서드 사용
-        }
-      }
-    } else {
-      ToastHelper.showInfo('여러 명 수정은 개별 카드를 클릭해주세요');
+  String _toYearMonth(DateTime date) => FormatHelper.formatYearMonthISO(date);
+
+  /// daily_auto_8 타입 근무자의 당일 순서(N번째 근무일)를 확인해 소급 계산 적용
+  Future<WageDetailModel> _checkAndApplyRetroactive(
+    AttendanceModel attendance,
+    WageDetailModel wage,
+  ) async {
+    final yearMonth = _toYearMonth(attendance.workDate);
+    final prevDays = await TaxDeductionService.getMonthlyWorkDays(
+      userId: attendance.userId,
+      businessId: attendance.businessId,
+      yearMonth: yearMonth,
+      excludeAttendanceId: attendance.id,
+    );
+
+    if (prevDays + 1 == 8) {
+      // 8일째: 1~7일 소급 공제
+      final prevGrossTotal = await _getPrevGrossTotal(
+          attendance.userId, attendance.businessId, yearMonth, attendance.id);
+      return TaxDeductionService.applyDay8Retroactive(
+        day8Base: wage,
+        prevGrossTotal: prevGrossTotal,
+        workYear: attendance.workDate.year,
+      );
+    } else if (prevDays + 1 > 8) {
+      // 9일 이상: 4대보험 풀 공제 (소급 없음)
+      final baseWage = wage.copyWith(
+        taxDeductionType: InsuranceRateModel.typeNone,
+        employmentInsuranceDeduction: 0,
+        nationalPensionDeduction: 0,
+        healthInsuranceDeduction: 0,
+        ltcInsuranceDeduction: 0,
+        incomeTaxDeduction: 0,
+        retroactiveDeduction: 0,
+        netWage: wage.totalAmount,
+      );
+      return TaxDeductionService.applyDeduction(
+        base: baseWage,
+        taxDeductionType: InsuranceRateModel.typeFourInsuranceFixed,
+        workYear: attendance.workDate.year,
+      );
     }
+
+    return wage; // 1~7일: 그대로 (고용보험만 공제)
+  }
+
+  /// 이전 근무일 세전 총액 합계 조회 (8일 소급 계산용)
+  Future<int> _getPrevGrossTotal(
+    String userId,
+    String businessId,
+    String yearMonth,
+    String excludeId,
+  ) async {
+    try {
+      final snapshot = await FirebaseFirestore.instance
+          .collection('attendance')
+          .where('userId', isEqualTo: userId)
+          .where('businessId', isEqualTo: businessId)
+          .where('yearMonth', isEqualTo: yearMonth)
+          .where('wageStatus', whereIn: ['calculated', 'confirmed'])
+          .get();
+      int total = 0;
+      for (final doc in snapshot.docs) {
+        if (doc.id == excludeId) continue;
+        final wageDetail = doc.data()['wageDetail'] as Map<String, dynamic>?;
+        total += (wageDetail?['totalAmount'] as num?)?.toInt() ?? 0;
+      }
+      return total;
+    } catch (e) {
+      debugPrint('⚠️ 이전 세전 총액 조회 실패: $e');
+      return 0;
+    }
+  }
+
+  // ═══════════════════════════════════════════════════════════
+  // 8일차 소급 경고 다이얼로그
+  // ═══════════════════════════════════════════════════════════
+
+  Future<bool> _showDay8RetroactiveWarning(
+    List<({String name, int retroactive, int gross, int net})> affected,
+  ) async {
+    if (!mounted) return false;
+    return await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        insetPadding: const EdgeInsets.symmetric(horizontal: 24, vertical: 24),
+        contentPadding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
+        constraints: BoxConstraints(
+          maxHeight: MediaQuery.of(ctx).size.height * 0.8,
+        ),
+        title: Row(
+          children: [
+            const Icon(Icons.warning_amber_rounded, color: AppColors.warning, size: 22),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text('8일차 소급 공제 안내', style: ResponsiveHelper.subtitleStyle(ctx)),
+            ),
+          ],
+        ),
+        content: SizedBox(
+          width: double.maxFinite,
+          child: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  '이번 달 8번째 근무일입니다. 1~7일분 4대보험이 소급 공제됩니다.',
+                  style: ResponsiveHelper.smallStyle(ctx, color: AppColors.grey700),
+                ),
+                const SizedBox(height: 12),
+                ...affected.map((w) => _buildDay8WarningCard(w.name, w.retroactive, w.gross, w.net)),
+                const SizedBox(height: 12),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                  decoration: BoxDecoration(
+                    color: AppColors.warningBg,
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(color: AppColors.warningLight),
+                  ),
+                  child: Row(
+                    children: [
+                      const Icon(Icons.info_outline, size: 14, color: AppColors.warningDark),
+                      const SizedBox(width: 6),
+                      Expanded(
+                        child: Text(
+                          '확정 시 근로자에게 자동으로 알림이 발송됩니다.',
+                          style: ResponsiveHelper.smallStyle(ctx, color: AppColors.warningDark),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('취소', style: TextStyle(color: AppColors.grey600)),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: AppColors.warning,
+              foregroundColor: Colors.white,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+            ),
+            child: const Text('확인 후 진행'),
+          ),
+        ],
+      ),
+    ) ?? false;
+  }
+
+  Widget _buildDay8WarningCard(String name, int retroactive, int gross, int net) {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 8),
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: AppColors.grey200),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(name, style: ResponsiveHelper.smallStyle(context).copyWith(fontWeight: FontWeight.bold)),
+          const SizedBox(height: 6),
+          _buildWarningInfoRow('소급 공제', '- ${FormatHelper.formatWage(retroactive)}', AppColors.errorDark),
+          _buildWarningInfoRow('세전 급여', FormatHelper.formatWage(gross), AppColors.grey700),
+          _buildWarningInfoRow('실수령액', FormatHelper.formatWage(net), AppColors.successDark),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildWarningInfoRow(String label, String value, Color valueColor) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 2),
+      child: Row(
+        children: [
+          SizedBox(
+            width: 70,
+            child: Text(label, style: ResponsiveHelper.tinyStyle(context, color: AppColors.grey500)),
+          ),
+          Text(value, style: ResponsiveHelper.tinyStyle(context, color: valueColor).copyWith(fontWeight: FontWeight.w600)),
+        ],
+      ),
+    );
   }
 
   // ═══════════════════════════════════════════════════════════
@@ -422,13 +760,11 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
 
     final mode = isCalculated ? WageDialogMode.calculated : WageDialogMode.pending;
 
-    final detailCached = (app.workDetailId != null
-            ? widget.workDetailTimeMap[app.workDetailId]
-            : null) ??
-        widget.workDetailTimeMap[app.selectedWorkType];
-    final shiftType = detailCached is Map<String, dynamic>
-        ? detailCached['shiftType'] as String?
-        : null;
+    final detail = WorkDetailHelper.resolve(app, widget.workDetailTimeMap);
+    final shiftType = WorkDetailHelper.shiftType(detail);
+    final nightIncluded = WorkDetailHelper.nightIncluded(detail);
+    final schedBreak = WorkDetailHelper.breakMinutes(detail);
+    final baseHourlyWage = WorkDetailHelper.baseHourlyWage(detail);
 
     final result = await WageDetailDialog.show(
       context: context,
@@ -437,7 +773,11 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
       attendance: attendance,
       wage: wage,
       mode: mode,
+      businessName: widget.businessName,
       shiftType: shiftType,
+      nightIncluded: nightIncluded,
+      scheduledBreakMinutes: schedBreak,
+      baseHourlyWage: baseHourlyWage,
     );
     
     if (result == null) return;
@@ -448,9 +788,6 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
         break;
       case 'update':
         await _processWageUpdate(app, attendance, result.wage);
-        break;
-      case 'final_confirm':
-        await _processIndividualFinalConfirm(app, attendance, result.wage);
         break;
       case 'cancel':
         await _processWageCancel(app, attendance);
@@ -464,22 +801,56 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
       final userProvider = Provider.of<UserProvider>(context, listen: false);
       final adminUid = userProvider.currentUser?.uid;
       final user = widget.userMap[app.uid];
-      
-      final calculatedWage = wage.copyWith(
+
+      // 8일 소급 체크 및 경고
+      var finalWage = wage;
+      if (wage.taxDeductionType == InsuranceRateModel.typeDailyAuto8) {
+        finalWage = await _checkAndApplyRetroactive(attendance, wage);
+        if (finalWage.retroactiveDeduction > 0 && mounted) {
+          final confirmed = await _showDay8RetroactiveWarning([
+            (
+              name: user?.name ?? '근무자',
+              retroactive: finalWage.retroactiveDeduction,
+              gross: finalWage.totalAmount,
+              net: finalWage.netWage,
+            ),
+          ]);
+          if (!confirmed || !mounted) return;
+        }
+      }
+
+      final yearMonth = _toYearMonth(attendance.workDate);
+      final calculatedWage = finalWage.copyWith(
         calculatedBy: adminUid,
         calculatedAt: DateTime.now(),
       );
-      
+
       await FirebaseFirestore.instance
           .collection('attendance')
           .doc(attendance.id)
           .update({
         'wageStatus': 'calculated',
-        'finalWage': calculatedWage.totalAmount,
+        'finalWage': calculatedWage.netWage,
         'wageDetail': calculatedWage.toMap(),
+        'yearMonth': yearMonth,
         'updatedAt': FieldValue.serverTimestamp(),
       });
-      
+
+      if (calculatedWage.retroactiveDeduction > 0) {
+        _firestoreService.createNotification(
+          NotificationModel.createRetroactiveDeductionAlert(
+            userId: app.uid,
+            businessName: widget.businessName,
+            businessId: widget.businessId,
+            workDate: attendance.workDate,
+            retroactiveAmount: calculatedWage.retroactiveDeduction,
+            grossWage: calculatedWage.totalAmount,
+            netWage: calculatedWage.netWage,
+            attendanceId: attendance.id,
+          ),
+        );
+      }
+
       _hasChanges = true;
       widget.onConfirmed?.call();
       
@@ -515,11 +886,11 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
           .collection('attendance')
           .doc(attendance.id)
           .update({
-        'finalWage': updatedWage.totalAmount,
+        'finalWage': updatedWage.netWage,
         'wageDetail': updatedWage.toMap(),
         'updatedAt': FieldValue.serverTimestamp(),
       });
-      
+
       _hasChanges = true;
       widget.onConfirmed?.call();
       
@@ -536,45 +907,6 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
     }
   }
 
-  /// 개별 최종 확정
-  Future<void> _processIndividualFinalConfirm(ApplicationModel app, AttendanceModel attendance, WageDetailModel wage) async {
-    try {
-      final userProvider = Provider.of<UserProvider>(context, listen: false);
-      final adminUid = userProvider.currentUser?.uid;
-      final user = widget.userMap[app.uid];
-      
-      final finalWage = wage.copyWith(
-        confirmedBy: adminUid,
-        confirmedAt: DateTime.now(),
-      );
-      
-      await FirebaseFirestore.instance
-          .collection('attendance')
-          .doc(attendance.id)
-          .update({
-        'wageStatus': 'confirmed',
-        'finalWage': finalWage.totalAmount,
-        'wageDetail': finalWage.toMap(),
-        'updatedAt': FieldValue.serverTimestamp(),
-      });
-      
-      _hasChanges = true;
-      widget.onConfirmed?.call();
-      
-      if (mounted) {
-        setState(() {
-          _calculatedWorkers.removeWhere((w) => w.id == app.id);
-          _calculatedWages.remove(app.id);
-          _calculatedSelectedIds.remove(app.id);
-        });
-      }
-      
-      ToastHelper.showSuccess('${user?.name ?? '근무자'} 최종 확정 완료');
-    } catch (e) {
-      debugPrint('❌ 개별 최종 확정 실패: $e');
-      ToastHelper.showError('최종 확정에 실패했습니다');
-    }
-  }
 
   /// 급여 취소 (calculated → pending)
   Future<void> _processWageCancel(ApplicationModel app, AttendanceModel attendance) async {
@@ -585,7 +917,7 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
           .collection('attendance')
           .doc(attendance.id)
           .update({
-        'wageStatus': 'pending',
+        'wageStatus': AttendanceModel.wagePending,
         'finalWage': FieldValue.delete(),
         'wageDetail': FieldValue.delete(),
         'updatedAt': FieldValue.serverTimestamp(),
@@ -594,8 +926,8 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
       _hasChanges = true;
       widget.onConfirmed?.call();
       
-      // 급여 재계산 (그룹 추가 공제 유지, 재계산만)
-      final extra = _groupExtraBreakMinutes[_getGroupKey(app)] ?? 0;
+      // 급여 재계산 (근무자별 추가 공제 유지, 재계산만)
+      final extra = _workerExtraBreakMinutes[app.id] ?? 0;
       final newWage = await _calculateWageForWorker(app, extraBreakMinutes: extra);
       
       if (mounted) {
@@ -616,6 +948,44 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
     }
   }
 
+  /// 선택된 인원 일괄 급여 확정 취소
+  Future<void> _cancelSelectedWages() async {
+    if (_calculatedSelectedIds.isEmpty) return;
+
+    final count = _calculatedSelectedIds.length;
+    final confirmed = await DialogHelper.showDangerConfirm(
+      context,
+      title: '급여 확정 취소',
+      message: '선택한 $count명의 급여 확정을 취소하시겠습니까?\n미확정 상태로 되돌아갑니다.',
+      confirmText: '취소',
+    );
+    if (!confirmed) return;
+
+    setState(() => _isProcessing = true);
+    try {
+      final ids = List<String>.from(_calculatedSelectedIds);
+      // 루프 전에 앱 스냅샷 확보 — _processWageCancel 내부 setState가 _calculatedWorkers를 수정하기 때문
+      final appSnapshots = <String, ApplicationModel>{};
+      for (final id in ids) {
+        final matches = _calculatedWorkers.where((a) => a.id == id);
+        if (matches.isNotEmpty) appSnapshots[id] = matches.first;
+      }
+      for (final appId in ids) {
+        final app = appSnapshots[appId];
+        if (app == null) continue;
+        final attendance = widget.attendanceMap[appId];
+        if (attendance == null) continue;
+        await _processWageCancel(app, attendance);
+      }
+      ToastHelper.showSuccess('$count명 급여 확정 취소 완료');
+    } catch (e) {
+      debugPrint('❌ 일괄 급여 취소 실패: $e');
+      ToastHelper.showError('급여 확정 취소에 실패했습니다');
+    } finally {
+      if (mounted) setState(() => _isProcessing = false);
+    }
+  }
+
   // ═══════════════════════════════════════════════════════════
   // 합계 계산
   // ═══════════════════════════════════════════════════════════
@@ -623,7 +993,7 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
   int _getSelectedTotal(Set<String> selectedIds) {
     int total = 0;
     for (var appId in selectedIds) {
-      total += _calculatedWages[appId]?.totalAmount ?? 0;
+      total += _calculatedWages[appId]?.netWage ?? 0;
     }
     return total;
   }
@@ -636,8 +1006,8 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final dateStr = FormatHelper.formatDateKorean(widget.date);
-    final screenWidth = MediaQuery.of(context).size.width;
-    final screenHeight = MediaQuery.of(context).size.height;
+    final screenWidth = MediaQuery.sizeOf(context).width;
+    final screenHeight = MediaQuery.sizeOf(context).height;
 
     return PopScope(
       canPop: false,
@@ -652,8 +1022,7 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
         ),
         child: Container(
           width: screenWidth * 0.92,
-          height: screenHeight * 0.85,
-          constraints: BoxConstraints(maxWidth: screenWidth * 0.95),
+          constraints: BoxConstraints(maxWidth: screenWidth * 0.95, maxHeight: screenHeight * 0.92),
           child: Column(
             children: [
               _buildHeader(context, theme, dateStr),
@@ -788,7 +1157,7 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
             child: Row(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                Text('급여확정'),
+                Text('확정내역'),
                 if (_calculatedWorkers.isNotEmpty) ...[
                   SizedBox(width: ResponsiveHelper.spacing(context, 6)),
                   Container(
@@ -963,9 +1332,17 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
     final genderAge = _formatGenderAge(user);
     final workTime = '${attendance?.checkIn ?? '-'} ~ ${attendance?.checkOut ?? '-'}';
     final workHours = wage?.workHours.toStringAsFixed(1) ?? '-';
-    final totalAmount = wage?.formattedTotal ?? '계산 중...';
+    final hasDeductions = wage != null &&
+        wage.taxDeductionType != InsuranceRateModel.typeNone &&
+        wage.totalInsuranceDeduction > 0;
+    final totalAmount = hasDeductions
+        ? wage.formattedNetWage
+        : (wage?.formattedTotal ?? '계산 중...');
     final accentColor = isPending ? AppColors.warning : theme.primaryColor;
-    final breakMins = _getScheduledBreakMinutes(app) + (_groupExtraBreakMinutes[_getGroupKey(app)] ?? 0);
+    // 실제 적용된 휴게시간 (석식/야식공제는 연장시간 있을 때만 합산)
+    final hasOvertime = _workerHasOvertime(app);
+    final extraApplied = hasOvertime ? (_workerExtraBreakMinutes[app.id] ?? 0) : 0;
+    final breakMins = wage?.breakMinutes ?? (_getScheduledBreakMinutes(app) + extraApplied);
 
     return Container(
       margin: EdgeInsets.only(bottom: ResponsiveHelper.spacing(context, 10)),
@@ -1005,13 +1382,7 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
                       child: AppCheckbox(
                         value: isSelected,
                         activeColor: accentColor,
-                        onTap: () => setState(() {
-                          if (isSelected) {
-                            selectedIds.remove(app.id);
-                          } else {
-                            selectedIds.add(app.id);
-                          }
-                        }),
+                        onTap: () => _handleWorkerCheckboxTap(app, selectedIds),
                       ),
                     ),
                     SizedBox(width: ResponsiveHelper.spacing(context, 10)),
@@ -1038,10 +1409,13 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
                                     ),
                                     if (genderAge.isNotEmpty) ...[
                                       SizedBox(width: ResponsiveHelper.spacing(context, 3)),
-                                      Text(
-                                        genderAge,
-                                        style: ResponsiveHelper.tinyStyle(context,
-                                            color: AppColors.grey400),
+                                      Flexible(
+                                        child: Text(
+                                          genderAge,
+                                          style: ResponsiveHelper.tinyStyle(context,
+                                              color: AppColors.grey400),
+                                          overflow: TextOverflow.ellipsis,
+                                        ),
                                       ),
                                     ],
                                   ],
@@ -1086,6 +1460,16 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
                               ),
                             ],
                           ),
+
+                          // 상태 배지 (지각/조퇴/연장/심야)
+                          Builder(builder: (context) {
+                            final flagBadges = _buildWageFlagBadges(app);
+                            if (flagBadges.isEmpty) return const SizedBox.shrink();
+                            return Padding(
+                              padding: EdgeInsets.only(top: ResponsiveHelper.spacing(context, 5)),
+                              child: Row(children: flagBadges),
+                            );
+                          }),
 
                         ],
                       ),
@@ -1173,9 +1557,7 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
     final totalWage = _getSelectedTotal(selectedIds);
     
     final buttonColor = isPending ? AppColors.warning : theme.primaryColor;
-    final buttonText = isPending 
-        ? '급여 확정 (${selectedIds.length}명)'
-        : '급여 수정 (${selectedIds.length}명)';
+    final buttonText = '급여 확정 (${selectedIds.length}명)';
     
     return Container(
       padding: ResponsiveHelper.cardPadding(context),
@@ -1206,10 +1588,10 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
                   SizedBox(width: ResponsiveHelper.spacing(context, 8)),
                   Text(
                     '선택 급여 합계: ',
-                    style: ResponsiveHelper.bodyStyle(context).copyWith(color: Colors.black87),
+                    style: ResponsiveHelper.bodyStyle(context).copyWith(color: AppColors.grey800),
                   ),
                   Text(
-                    _formatCurrency(totalWage),
+                    FormatHelper.formatWage(totalWage),
                     style: ResponsiveHelper.subtitleStyle(context).copyWith(
                       fontWeight: FontWeight.bold,
                       color: buttonColor,
@@ -1242,13 +1624,50 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
                 ),
               ),
               SizedBox(width: ResponsiveHelper.spacing(context, 12)),
+              // 급여확정 탭: 확정 취소만
+              if (!isPending)
+                Expanded(
+                  flex: 2,
+                  child: ElevatedButton.icon(
+                    onPressed: (hasSelection && !_isProcessing) ? _cancelSelectedWages : null,
+                    icon: _isProcessing
+                        ? SizedBox(
+                            width: ResponsiveHelper.spacing(context, 18),
+                            height: ResponsiveHelper.spacing(context, 18),
+                            child: CircularProgressIndicator(
+                              strokeWidth: ResponsiveHelper.spacing(context, 2),
+                              color: Colors.white,
+                            ),
+                          )
+                        : Icon(Icons.undo, size: ResponsiveHelper.iconSize(context, 20)),
+                    label: Text(
+                      _isProcessing ? '처리 중...' : '확정 취소 (${_calculatedSelectedIds.length}명)',
+                      style: ResponsiveHelper.bodyStyle(context).copyWith(
+                        color: Colors.white,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: hasSelection ? AppColors.error : theme.disabledColor,
+                      foregroundColor: Colors.white,
+                      padding: EdgeInsets.symmetric(
+                        vertical: ResponsiveHelper.spacing(context, 14),
+                      ),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(ResponsiveHelper.spacing(context, 12)),
+                      ),
+                    ),
+                  ),
+                ),
+              // 미확정 탭: 급여 확정
+              if (isPending)
               Expanded(
                 flex: 2,
                 child: ElevatedButton.icon(
-                  onPressed: (hasSelection && !_isProcessing) 
-                      ? (isPending ? _confirmWages : _openBatchEditDialog)
+                  onPressed: (hasSelection && !_isProcessing && !_isInitializing)
+                      ? _confirmWages
                       : null,
-                  icon: _isProcessing
+                  icon: (_isProcessing || _isInitializing)
                       ? SizedBox(
                           width: ResponsiveHelper.spacing(context, 18),
                           height: ResponsiveHelper.spacing(context, 18),
@@ -1262,7 +1681,7 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
                           size: ResponsiveHelper.iconSize(context, 20),
                         ),
                   label: Text(
-                    _isProcessing ? '처리 중...' : buttonText,
+                    _isInitializing ? '계산 중...' : (_isProcessing ? '처리 중...' : buttonText),
                     style: ResponsiveHelper.bodyStyle(context).copyWith(
                       color: Colors.white,
                       fontWeight: FontWeight.w600,
@@ -1323,11 +1742,12 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
     final first = groupWorkers.first;
     final groupKey = _getGroupKey(first);
     final workType = first.selectedWorkType;
-    final timeRange = '${first.startTime} ~ ${first.endTime}';
+    final timeRange = '${WorkDetailHelper.effectiveStart(first, widget.workDetailTimeMap)} ~ ${WorkDetailHelper.effectiveEnd(first, widget.workDetailTimeMap)}';
     final schedBreak = _getScheduledBreakMinutes(first);
     final extra = _groupExtraBreakMinutes[groupKey] ?? 0;
     const options = [0, 30, 60, 90];
-    final allGroupSelected = groupWorkers.every((a) => selectedIds.contains(a.id));
+    final allGroupSelected = groupWorkers.isNotEmpty &&
+        groupWorkers.every((a) => selectedIds.contains(a.id));
 
     return Container(
       padding: EdgeInsets.symmetric(
@@ -1347,7 +1767,6 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
             children: [
               AppCheckbox(
                 value: allGroupSelected,
-                activeColor: AppColors.warning,
                 onTap: () => setState(() {
                   if (allGroupSelected) {
                     for (final a in groupWorkers) { selectedIds.remove(a.id); }
@@ -1386,19 +1805,24 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
             ],
           ),
           SizedBox(height: ResponsiveHelper.spacing(context, 8)),
-          // 추가공제 라벨
+          // 석식/야식공제 라벨
           Row(
             children: [
-              Icon(Icons.coffee, size: 12, color: AppColors.grey400),
+              Icon(Icons.restaurant_outlined, size: 12, color: AppColors.grey500),
               SizedBox(width: ResponsiveHelper.spacing(context, 3)),
-              Text(
-                schedBreak > 0 ? '추가공제 (기본 ${FormatHelper.formatCompactHours(schedBreak)})' : '추가공제',
-                style: ResponsiveHelper.tinyStyle(context, color: AppColors.grey500),
+              Flexible(
+                child: Text(
+                  schedBreak > 0
+                      ? '석식/야식공제 (기본 ${FormatHelper.formatCompactHours(schedBreak)})'
+                      : '석식/야식공제',
+                  style: ResponsiveHelper.tinyStyle(context, color: AppColors.grey500),
+                  overflow: TextOverflow.ellipsis,
+                ),
               ),
             ],
           ),
           SizedBox(height: ResponsiveHelper.spacing(context, 5)),
-          // 추가공제 칩 (그룹 일괄 적용)
+          // 석식/야식공제 칩 (그룹 일괄 적용 — 선택된 근무자 전체에 반영)
           Row(
             children: options.map((min) {
               final isSelected = extra == min;
@@ -1450,10 +1874,40 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
     return parts.isNotEmpty ? '(${parts.join(', ')})' : '';
   }
 
-  String _formatCurrency(int amount) {
-    return '${amount.toString().replaceAllMapped(
-      RegExp(r'(\d{1,3})(?=(\d{3})+(?!\d))'),
-      (Match m) => '${m[1]},',
-    )}원';
+  List<Widget> _buildWageFlagBadges(ApplicationModel app) {
+    final attendance = widget.attendanceMap[app.id];
+    final flags = AttendanceBadgeHelper.compute(
+      checkIn: attendance?.checkIn,
+      checkOut: attendance?.checkOut,
+      effStart: WorkDetailHelper.effectiveStart(app, widget.workDetailTimeMap),
+      effEnd: WorkDetailHelper.effectiveEnd(app, widget.workDetailTimeMap),
+      wageDetail: _calculatedWages[app.id],
+      graceMinutes: 5,
+    );
+
+    return [
+      if (flags.isEarlyArrival) _buildFlagBadge('조출', AppColors.success),
+      if (flags.isLate) _buildFlagBadge('지각', AppColors.error),
+      if (flags.isEarlyLeave) _buildFlagBadge('조퇴', AppColors.warning),
+      if (flags.isOvertime) _buildFlagBadge('연장', Colors.blue),
+      if (flags.isNight) _buildFlagBadge('심야', AppColors.purpleDark),
+    ];
   }
+
+  Widget _buildFlagBadge(String label, Color color) {
+    return Container(
+      margin: const EdgeInsets.only(right: 4),
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.08),
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: color.withValues(alpha: 0.35)),
+      ),
+      child: Text(
+        label,
+        style: ResponsiveHelper.tinyStyle(context, color: color).copyWith(fontWeight: FontWeight.w600),
+      ),
+    );
+  }
+
 }

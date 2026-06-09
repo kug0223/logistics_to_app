@@ -32,8 +32,10 @@
     try {
       debugPrint('📝 [createReview] 리뷰 작성 시작');
       
-      // 1. 리뷰 생성
-      final docRef = await _firestore.collection('reviews').add({
+      // 1+3. 리뷰 생성 + 지원서 업데이트를 batch로 원자화
+      final reviewRef = _firestore.collection('reviews').doc();
+      final batch = _firestore.batch();
+      batch.set(reviewRef, {
         'applicationId': applicationId,
         'reviewerId': reviewerId,
         'reviewerName': reviewerName,
@@ -47,28 +49,31 @@
         'wouldRehire': wouldRehire,
         'createdAt': FieldValue.serverTimestamp(),
       });
-      
-      // 2. 사용자 통계 업데이트 (평균 평점, 리뷰 수)
-      await _updateUserReviewStats(targetUserId);
-      
-      // 3. 지원서에 리뷰 작성 표시
-      await _firestore.collection('applications').doc(applicationId).update({
+      batch.update(_firestore.collection('applications').doc(applicationId), {
         'hasReview': true,
-        'reviewId': docRef.id,
+        'reviewId': reviewRef.id,
       });
-      
-      // 4. 알림 생성
-      await createNotification(
-        NotificationModel.createReviewReceived(
-          userId: targetUserId,
-          businessName: businessName,
-          rating: rating,
-          reviewId: docRef.id,
-        ),
-      );
-      
-      debugPrint('✅ [createReview] 리뷰 작성 완료: ${docRef.id}');
-      return docRef.id;
+      await batch.commit();
+
+      // 2. 사용자 통계 업데이트 (평균 평점, 리뷰 수) — 독립 실행
+      await _updateUserReviewStats(targetUserId);
+
+      // 4. 알림 생성 — 실패해도 리뷰 결과에 영향 없음
+      try {
+        await createNotification(
+          NotificationModel.createReviewReceived(
+            userId: targetUserId,
+            businessName: businessName,
+            rating: rating,
+            reviewId: reviewRef.id,
+          ),
+        );
+      } catch (e) {
+        debugPrint('⚠️ [createReview] 알림 생성 실패: $e');
+      }
+
+      debugPrint('✅ [createReview] 리뷰 작성 완료: ${reviewRef.id}');
+      return reviewRef.id;
     } catch (e) {
       debugPrint('❌ [createReview] 실패: $e');
       return null;
@@ -81,23 +86,24 @@
       final reviews = await _firestore
           .collection('reviews')
           .where('targetUserId', isEqualTo: userId)
+          .where('isPublished', isEqualTo: true)
           .get();
       
       if (reviews.docs.isEmpty) return;
       
       double totalRating = 0;
+      int ratedCount = 0;
       for (var doc in reviews.docs) {
-        totalRating += ((doc.data()['rating'] ?? 0) as num).toDouble();
+        final r = ((doc.data()['rating'] ?? 0) as num).toInt();
+        if (r > 0) { totalRating += r; ratedCount++; }
       }
-      
-      final avgRating = totalRating / reviews.docs.length;
-      
+
       await _firestore.collection('users').doc(userId).update({
-        'averageRating': avgRating,
+        'averageRating': ratedCount > 0 ? totalRating / ratedCount : null,
         'reviewCount': reviews.docs.length,
       });
       
-      debugPrint('✅ 사용자 리뷰 통계 업데이트: avg=$avgRating, count=${reviews.docs.length}');
+      debugPrint('✅ 사용자 리뷰 통계 업데이트: avg=${ratedCount > 0 ? totalRating / ratedCount : null}, count=${reviews.docs.length}');
     } catch (e) {
       debugPrint('⚠️ 사용자 리뷰 통계 업데이트 실패: $e');
     }

@@ -585,6 +585,34 @@ extension TOFirestore on FirestoreService {
     required String closedBy,
   }) async {
     if (slotIds.isEmpty) return;
+
+    // 마감 대상 슬롯의 PENDING 지원서 자동 취소
+    for (final slotId in slotIds) {
+      final pendingSnap = await _firestore
+          .collection('applications')
+          .where('toId', isEqualTo: toId)
+          .where('slotId', isEqualTo: slotId)
+          .where('status', isEqualTo: AppStatus.pending)
+          .get();
+      if (pendingSnap.docs.isEmpty) continue;
+      var cancelBatch = _firestore.batch();
+      int cancelCount = 0;
+      for (final doc in pendingSnap.docs) {
+        cancelBatch.update(doc.reference, {
+          'status': AppStatus.rejected,
+          'rejectedAt': FieldValue.serverTimestamp(),
+          'rejectReason': '공고 슬롯이 마감되었습니다',
+        });
+        cancelCount++;
+        if (cancelCount >= 499) {
+          await cancelBatch.commit();
+          cancelBatch = _firestore.batch();
+          cancelCount = 0;
+        }
+      }
+      if (cancelCount > 0) await cancelBatch.commit();
+    }
+
     var batch = _firestore.batch();
     int count = 0;
     for (final slotId in slotIds) {
@@ -646,18 +674,18 @@ extension TOFirestore on FirestoreService {
   }) async {
     if (slotIds.isEmpty) return;
 
-    // 삭제 대상 슬롯에 연결된 PENDING 지원서 취소 처리
+    // 삭제 대상 슬롯에 연결된 활성 지원서 전체 취소 처리 (PENDING/CONFIRMED/CONTRACT_PENDING)
     for (final slotId in slotIds) {
-      final pendingSnap = await _firestore
+      final activeSnap = await _firestore
           .collection('applications')
           .where('toId', isEqualTo: toId)
           .where('slotId', isEqualTo: slotId)
-          .where('status', isEqualTo: AppStatus.pending)
+          .where('status', whereIn: [AppStatus.pending, AppStatus.confirmed, AppStatus.contractPending])
           .get();
-      if (pendingSnap.docs.isEmpty) continue;
+      if (activeSnap.docs.isEmpty) continue;
       var cancelBatch = _firestore.batch();
       int cancelCount = 0;
-      for (final doc in pendingSnap.docs) {
+      for (final doc in activeSnap.docs) {
         cancelBatch.update(doc.reference, {
           'status': AppStatus.rejected,
           'rejectedAt': FieldValue.serverTimestamp(),

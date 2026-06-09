@@ -10,20 +10,23 @@ import '../../utils/dialog_helper.dart';
 import '../../utils/navigation_helper.dart';
 import '../../utils/responsive_helper.dart';
 import '../../utils/toast_helper.dart';
+import '../../utils/tour_helper.dart';
+import '../common/tour_screen.dart';
 
 // Services
 import '../../services/firestore_service.dart';
-import '../../services/monthly_review_service.dart';
 
 // Screens
 import '../common/settings_screen.dart';
-import 'business_list_screen.dart';
 import 'to_management/create_to_screen.dart';
 import 'workforce_management/integrated_workforce_screen.dart';
 import '../common/notification_screen.dart';
 import '../../widgets/common/notification_badge.dart';
-import '../../widgets/dialogs/styled_dialog.dart';
-import 'admin_review_list_screen.dart';
+import 'admin_stats_screen.dart';
+import 'admin_contract_management_screen.dart';
+import 'payroll/payroll_overview_screen.dart';
+import '../../services/payroll_payment_service.dart';
+import 'to_prerequisites_helper.dart';
 import '../../theme/app_colors.dart';
 
 /// 공고 등록 전 필수 요건 체크 — 미충족 시 안내 다이얼로그 후 설정 화면으로 이동
@@ -31,80 +34,66 @@ import '../../theme/app_colors.dart';
 /// 공고 등록 전 필수 요건 체크
 /// 미충족 항목 표시 후 가장 우선순위 높은 목적지로 이동
 /// 사업장 미등록 → BusinessListScreen / 이메일·사업자등록증 → SettingsScreen
-Future<bool> _checkTORequirements(
-  BuildContext context, {
-  required bool hasApprovedBusiness,
-  required bool isEmailVerified,
-  required bool hasLicense,
-}) async {
-  final missing = <String>[];
-  if (!hasApprovedBusiness) missing.add('사업장 등록');
-  if (!isEmailVerified) missing.add('이메일 인증');
-  if (!hasLicense) missing.add('사업자등록증 등록');
-  if (missing.isEmpty) return true;
-
-  // 사업장 미등록이 최우선 — BusinessListScreen으로, 나머지는 SettingsScreen으로
-  final needsBusiness = !hasApprovedBusiness;
-  final buttonText = needsBusiness ? '사업장 등록하러 가기' : '설정으로 이동';
-
-  final proceed = await showDialog<bool>(
-    context: context,
-    builder: (ctx) => StyledDialog(
-      title: '공고 등록 불가',
-      subtitle: '다음 항목을 먼저 완료해주세요',
-      icon: Icons.block_outlined,
-      headerColor: AppColors.error,
-      content: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          ...missing.map(
-            (item) => Padding(
-              padding: const EdgeInsets.only(bottom: 8),
-              child: StyledDialogInfoCard.error(item),
-            ),
-          ),
-          const SizedBox(height: 4),
-          StyledDialogInfoCard.info(
-            needsBusiness
-                ? '사업장을 먼저 등록한 후 공고를 작성해주세요.'
-                : '설정 화면에서 완료 후 다시 시도해주세요.',
-          ),
-        ],
-      ),
-      actions: [
-        StyledDialogButton.cancel(
-          onPressed: () => Navigator.pop(ctx, false),
-        ),
-        StyledDialogButton.primary(
-          text: buttonText,
-          onPressed: () => Navigator.pop(ctx, true),
-        ),
-      ],
-    ),
-  );
-
-  if (proceed == true && context.mounted) {
-    Navigator.push(
-      context,
-      MaterialPageRoute(
-        builder: (_) => needsBusiness
-            ? const BusinessListScreen()
-            : const SettingsScreen(),
-      ),
-    );
-  }
-  return false;
-}
 
 /// 사업장 관리자 홈 화면 - 세련된 디자인
-class BusinessAdminHomeScreen extends StatelessWidget {
+class BusinessAdminHomeScreen extends StatefulWidget {
   const BusinessAdminHomeScreen({super.key});
+
+  @override
+  State<BusinessAdminHomeScreen> createState() => _BusinessAdminHomeScreenState();
+}
+
+class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen> {
+  final _firestoreService = FirestoreService();
+  bool? _hasApprovedBusiness; // null = 미조회, false = 미승인, true = 승인됨
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      // 승인된 사업장 유무 사전 조회 (메뉴 접근 가드용)
+      _loadApprovedBusinessStatus();
+      if (!await TourHelper.isCompleted(TourHelper.adminHome)) {
+        if (mounted) {
+          await pushTourScreen(context, role: 'BUSINESS_ADMIN');
+          await TourHelper.markCompleted(TourHelper.adminHome);
+        }
+      }
+    });
+  }
+
+  Future<void> _loadApprovedBusinessStatus() async {
+    final uid = context.read<UserProvider>().currentUser?.uid;
+    if (uid == null) return;
+    try {
+      final businesses = await _firestoreService.getMyBusiness(uid);
+      if (mounted) setState(() => _hasApprovedBusiness = businesses.any((b) => b.isApproved));
+    } catch (e) {
+      debugPrint('❌ 사업장 조회 실패: $e');
+      if (mounted) setState(() => _hasApprovedBusiness = false);
+    }
+  }
+
+  void _requireApprovedBusiness(BuildContext context, VoidCallback proceed) {
+    if (_hasApprovedBusiness == null) {
+      ToastHelper.showWarning('사업장 정보를 불러오는 중입니다. 잠시 후 다시 시도해주세요.');
+      return;
+    }
+    if (_hasApprovedBusiness == false) {
+      ToastHelper.showWarning('승인된 사업장이 있어야 이용할 수 있습니다.\n사업장 승인 후 다시 시도해주세요.');
+      return;
+    }
+    proceed();
+  }
 
   @override
   Widget build(BuildContext context) {
     return Consumer<UserProvider>(
       builder: (context, userProvider, _) {
         final theme = Theme.of(context);
+        final isSubAdmin = userProvider.isSubAdmin;
+        final isLandscape =
+            MediaQuery.orientationOf(context) == Orientation.landscape;
         return Scaffold(
           body: Container(
             decoration: BoxDecoration(
@@ -118,11 +107,12 @@ class BusinessAdminHomeScreen extends StatelessWidget {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  // 상단 헤더
+                  // 상단 헤더 — 가로 모드에서 vertical 패딩 축소
                   Padding(
                     padding: EdgeInsets.symmetric(
                       horizontal: ResponsiveHelper.spacing(context, 24),
-                      vertical: ResponsiveHelper.spacing(context, 20),
+                      vertical: ResponsiveHelper.spacing(
+                          context, isLandscape ? 8 : 20),
                     ),
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
@@ -140,7 +130,7 @@ class BusinessAdminHomeScreen extends StatelessWidget {
                                   children: [
                                     Text(
                                       'ALfit',
-                                      style: TextStyle(
+                                      style: ResponsiveHelper.titleStyle(context).copyWith(
                                         color: Colors.white,
                                         fontSize: ResponsiveHelper.titleStyle(context).fontSize! * 1.3,
                                         fontWeight: FontWeight.w800,
@@ -182,7 +172,7 @@ class BusinessAdminHomeScreen extends StatelessWidget {
                                       ),
                                       SizedBox(width: ResponsiveHelper.spacing(context, 4)),
                                       Text(
-                                        '사업장',
+                                        isSubAdmin ? '하위 관리자' : '관리자',
                                         style: ResponsiveHelper.tinyStyle(
                                           context,
                                           color: Colors.white,
@@ -199,6 +189,42 @@ class BusinessAdminHomeScreen extends StatelessWidget {
                             // 🔔 알림 + 로그아웃 버튼
                             Row(
                               children: [
+                                // 하위 관리자: 근무자 모드 전환 버튼
+                                if (isSubAdmin) ...[
+                                  Material(
+                                    color: Colors.white.withValues(alpha: 0.2),
+                                    borderRadius: BorderRadius.circular(12),
+                                    child: InkWell(
+                                      onTap: () => userProvider.toggleAdminMode(),
+                                      borderRadius: BorderRadius.circular(12),
+                                      child: Padding(
+                                        padding: EdgeInsets.symmetric(
+                                          horizontal: ResponsiveHelper.spacing(context, 10),
+                                          vertical: ResponsiveHelper.spacing(context, 8),
+                                        ),
+                                        child: Row(
+                                          mainAxisSize: MainAxisSize.min,
+                                          children: [
+                                            Icon(
+                                              Icons.person_outline,
+                                              color: Colors.white,
+                                              size: ResponsiveHelper.iconSize(context, 16),
+                                            ),
+                                            SizedBox(width: ResponsiveHelper.spacing(context, 4)),
+                                            Text(
+                                              '근무자 모드',
+                                              style: ResponsiveHelper.tinyStyle(
+                                                context,
+                                                color: Colors.white,
+                                              ).copyWith(fontWeight: FontWeight.w600),
+                                            ),
+                                          ],
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                  SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+                                ],
                                 // 알림 버튼
                                 NotificationBadge(
                                   child: Material(
@@ -254,43 +280,38 @@ class BusinessAdminHomeScreen extends StatelessWidget {
                           ],
                         ),
                         
-                        SizedBox(height: ResponsiveHelper.spacing(context, 24)),
-                        
-                        // 인사말
-                        Text(
-                          '안녕하세요,',
-                          style: ResponsiveHelper.bodyStyle(
-                            context,
-                            color: Colors.white.withValues(alpha: 0.95),
+                        // 가로 모드에서 인사말 섹션 숨김 (공간 절약)
+                        if (!isLandscape) ...[
+                          SizedBox(height: ResponsiveHelper.spacing(context, 24)),
+                          Text(
+                            '안녕하세요,',
+                            style: ResponsiveHelper.bodyStyle(
+                              context,
+                              color: Colors.white.withValues(alpha: 0.95),
+                            ),
                           ),
-                        ),
-                        
-                        SizedBox(height: ResponsiveHelper.spacing(context, 8)),
-                        
-                        // 사용자 이름
-                        Text(
-                          '${userProvider.currentUser?.name ?? '관리자'}님',
-                          style: ResponsiveHelper.titleStyle(context).copyWith(
-                            color: Colors.white,
-                            fontSize: ResponsiveHelper.titleStyle(context).fontSize! * 1.5,
-                            fontWeight: FontWeight.bold,
+                          SizedBox(height: ResponsiveHelper.spacing(context, 8)),
+                          Text(
+                            '${userProvider.currentUser?.name ?? '관리자'}님',
+                            style: ResponsiveHelper.titleStyle(context).copyWith(
+                              color: Colors.white,
+                              fontSize: ResponsiveHelper.titleStyle(context).fontSize! * 1.5,
+                              fontWeight: FontWeight.bold,
+                            ),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
                           ),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                        
-                        SizedBox(height: ResponsiveHelper.spacing(context, 4)),
-                        
-                        // 이메일
-                        Text(
-                          userProvider.currentUser?.userEmail ?? '',
-                          style: ResponsiveHelper.smallStyle(
-                            context,
-                            color: Colors.white.withValues(alpha: 0.9),
+                          SizedBox(height: ResponsiveHelper.spacing(context, 4)),
+                          Text(
+                            userProvider.currentUser?.userEmail ?? '',
+                            style: ResponsiveHelper.smallStyle(
+                              context,
+                              color: Colors.white.withValues(alpha: 0.9),
+                            ),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
                           ),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                        ),
+                        ],
                       ],
                     ),
                   ),
@@ -312,103 +333,127 @@ class BusinessAdminHomeScreen extends StatelessWidget {
                           crossAxisSpacing: ResponsiveHelper.spacing(context, 16),
                           mainAxisSpacing: ResponsiveHelper.spacing(context, 16),
                           children: [
-                            // 1. 공고 등록
-                            _buildMenuCard(
-                              context,
-                              icon: Icons.post_add,
-                              title: '공고 등록',
-                              subtitle: '새 공고 작성',
-                              color: theme.primaryColor,
-                              onTap: () async {
-                                final user = userProvider.currentUser;
-                                if (user == null) return;
-
-                                // 승인된 사업장 보유 여부 확인
-                                final businesses = await FirestoreService()
-                                    .getMyBusiness(user.uid);
-                                final hasApprovedBusiness =
-                                    businesses.any((b) => b.isApproved);
-
-                                if (!context.mounted) return;
-
-                                final canProceed = await _checkTORequirements(
-                                  context,
-                                  hasApprovedBusiness: hasApprovedBusiness,
-                                  isEmailVerified: user.isEmailVerified,
-                                  hasLicense: user.businessLicenseImageUrl != null,
-                                );
-                                if (!canProceed || !context.mounted) return;
-
-                                await NavigationHelper.push<bool>(
-                                  context,
-                                  destination: const AdminCreateTOScreen(),
-                                  onReturn: (result) {
-                                    if (result == true) {
-                                      ToastHelper.showSuccess('공고가 등록되었습니다');
-                                    }
-                                  },
-                                );
-                              },
-                            ),
-
-                            // 2. 공고 관리
-                            _buildMenuCard(
-                              context,
-                              icon: Icons.work_outline,
-                              title: '공고 관리',
-                              subtitle: '지원자 · 공고 현황',
-                              color: theme.primaryColor,
-                              onTap: () {
-                                Navigator.push(
-                                  context,
-                                  MaterialPageRoute(
-                                    builder: (context) => const IntegratedWorkforceScreen(),
-                                  ),
-                                );
-                              },
-                            ),
-
-                            // 3. 통계
-                            _buildMenuCard(
-                              context,
-                              icon: Icons.bar_chart_outlined,
-                              title: '통계',
-                              subtitle: '공고 현황',
-                              color: theme.primaryColor,
-                              onTap: () {
-                                ScaffoldMessenger.of(context).showSnackBar(
-                                  const SnackBar(content: Text('통계 화면 준비 중입니다')),
-                                );
-                              },
-                            ),
-                            // 4. 리뷰 관리
-                            FutureBuilder<int>(
-                              future: () async {
-                                final user = context.read<UserProvider>().currentUser;
-                                if (user?.businessId == null) return 0;
-                                final list = await MonthlyReviewService()
-                                    .getPendingRequestsForBusiness(user!.businessId!);
-                                return list.length;
-                              }(),
-                              builder: (context, snap) => _buildMenuCard(
+                            // 1. 공고 등록: BUSINESS_ADMIN 항상 / SUB_ADMIN은 canManageTo
+                            if (!isSubAdmin || userProvider.can((p) => p.canManageTo))
+                              _buildMenuCard(
                                 context,
-                                icon: Icons.rate_review_outlined,
-                                title: '리뷰 관리',
-                                subtitle: '평가 작성/조회',
+                                icon: Icons.post_add,
+                                title: '공고 등록',
+                                subtitle: '새 공고 작성',
                                 color: theme.primaryColor,
-                                badgeCount: snap.data,
-                                onTap: () {
-                                  Navigator.push(
+                                onTap: () async {
+                                  final user = userProvider.currentUser;
+                                  if (user == null) return;
+
+                                  if (!isSubAdmin) {
+                                    final businesses = await _firestoreService
+                                        .getMyBusiness(user.uid);
+                                    final hasApprovedBusiness =
+                                        businesses.any((b) => b.isApproved);
+                                    if (!context.mounted) return;
+                                    final canProceed = await checkTOPrerequisites(
+                                      context,
+                                      hasApprovedBusiness: hasApprovedBusiness,
+                                      isEmailVerified: user.isEmailVerified,
+                                      hasLicense: user.businessLicenseImageUrl != null,
+                                    );
+                                    if (!canProceed || !context.mounted) return;
+                                  }
+
+                                  await NavigationHelper.push<bool>(
                                     context,
-                                    MaterialPageRoute(
-                                      builder: (context) => const AdminReviewListScreen(),
-                                    ),
+                                    destination: const AdminCreateTOScreen(),
+                                    onReturn: (result) {
+                                      if (result == true) {
+                                        ToastHelper.showSuccess('공고가 등록되었습니다');
+                                      }
+                                    },
                                   );
                                 },
                               ),
-                            ),
 
-                            // 5. 설정
+                            // 2. 공고 관리: BUSINESS_ADMIN 항상 / SUB_ADMIN은 canManageTo OR canManageWorkers
+                            if (!isSubAdmin ||
+                                userProvider.can((p) => p.canManageTo) ||
+                                userProvider.can((p) => p.canManageWorkers))
+                              _buildMenuCard(
+                                context,
+                                icon: Icons.work_outline,
+                                title: '공고 관리',
+                                subtitle: '지원자 · 공고 현황',
+                                color: theme.primaryColor,
+                                onTap: () => _requireApprovedBusiness(context, () {
+                                  Navigator.push(
+                                    context,
+                                    MaterialPageRoute(
+                                      builder: (context) => const IntegratedWorkforceScreen(),
+                                    ),
+                                  );
+                                }),
+                              ),
+
+                            // 3. 급여 관리: 오늘 지급 배지 포함
+                            if (!isSubAdmin || userProvider.can((p) => p.canManageWage))
+                              _TodayPaymentBadgeCard(
+                                businessId: userProvider.effectiveBusinessId,
+                                onTap: (reload) async {
+                                  _requireApprovedBusiness(context, () async {
+                                    await Navigator.push(
+                                      context,
+                                      MaterialPageRoute(
+                                        builder: (_) => const PayrollOverviewScreen(),
+                                      ),
+                                    );
+                                    reload();
+                                  });
+                                },
+                              ),
+
+                            // 4. 계약서 관리: BUSINESS_ADMIN 항상 / SUB_ADMIN은 canManageContract
+                            if (!isSubAdmin || userProvider.can((p) => p.canManageContract))
+                              _buildMenuCard(
+                                context,
+                                icon: Icons.folder_outlined,
+                                title: '계약서 관리',
+                                subtitle: '계약서 현황·서명',
+                                color: theme.primaryColor,
+                                onTap: () => _requireApprovedBusiness(context, () async {
+                                  var bizId = userProvider.effectiveBusinessId;
+                                  if (bizId == null) {
+                                    final uid = userProvider.currentUser?.uid;
+                                    if (uid != null) {
+                                      final businesses = await _firestoreService.getMyBusiness(uid);
+                                      bizId = businesses.isNotEmpty ? businesses.first.id : null;
+                                    }
+                                  }
+                                  if (bizId == null) {
+                                    ToastHelper.showWarning('사업장 정보를 먼저 등록해주세요');
+                                    return;
+                                  }
+                                  if (!context.mounted) return;
+                                  Navigator.push(
+                                    context,
+                                    MaterialPageRoute(
+                                      builder: (_) => AdminContractManagementScreen(
+                                        businessId: bizId!,
+                                      ),
+                                    ),
+                                  );
+                                }),  // _requireApprovedBusiness 닫힘
+                              ),
+
+                            // 5. 통계: BUSINESS_ADMIN 항상 / SUB_ADMIN은 canManageWage
+                            if (!isSubAdmin || userProvider.can((p) => p.canManageWage))
+                              _buildMenuCard(
+                                context,
+                                icon: Icons.bar_chart_outlined,
+                                title: '통계',
+                                subtitle: '근태 · 급여 · 리뷰',
+                                color: theme.primaryColor,
+                                onTap: () => pushAdminStatsScreen(context),
+                              ),
+
+                            // 6. 설정: 항상 표시
                             _buildMenuCard(
                               context,
                               icon: Icons.settings_outlined,
@@ -424,6 +469,7 @@ class BusinessAdminHomeScreen extends StatelessWidget {
                                 );
                               },
                             ),
+
                           ],
                         ),
                       ),
@@ -446,9 +492,8 @@ class BusinessAdminHomeScreen extends StatelessWidget {
     required String subtitle,
     required Color color,
     required VoidCallback onTap,
-    int? badgeCount,
   }) {
-    final card = Card(
+    return Card(
       elevation: 3,
       shadowColor: Colors.black.withValues(alpha: 0.1),
       shape: RoundedRectangleBorder(
@@ -467,7 +512,6 @@ class BusinessAdminHomeScreen extends StatelessWidget {
             child: Column(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                // 아이콘
                 Container(
                   padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 16)),
                   decoration: BoxDecoration(
@@ -480,10 +524,7 @@ class BusinessAdminHomeScreen extends StatelessWidget {
                     color: color,
                   ),
                 ),
-                
                 SizedBox(height: ResponsiveHelper.spacing(context, 12)),
-                
-                // 제목
                 Text(
                   title,
                   style: ResponsiveHelper.subtitleStyle(context).copyWith(
@@ -493,10 +534,7 @@ class BusinessAdminHomeScreen extends StatelessWidget {
                   maxLines: 2,
                   overflow: TextOverflow.ellipsis,
                 ),
-                
                 SizedBox(height: ResponsiveHelper.spacing(context, 4)),
-                
-                // 부제목
                 Text(
                   subtitle,
                   style: ResponsiveHelper.smallStyle(
@@ -513,8 +551,106 @@ class BusinessAdminHomeScreen extends StatelessWidget {
         ),
       ),
     );
+  }
+}
 
-    if (badgeCount == null || badgeCount <= 0) return card;
+// ── 오늘 지급 배지가 있는 급여 관리 카드 ────────────────────────────────
+
+class _TodayPaymentBadgeCard extends StatefulWidget {
+  final String? businessId;
+  // reload 콜백을 전달받아 호출자가 복귀 후 카운트 갱신 가능
+  final void Function(VoidCallback reload) onTap;
+
+  const _TodayPaymentBadgeCard({
+    required this.businessId,
+    required this.onTap,
+  });
+
+  @override
+  State<_TodayPaymentBadgeCard> createState() => _TodayPaymentBadgeCardState();
+}
+
+class _TodayPaymentBadgeCardState extends State<_TodayPaymentBadgeCard> {
+  int _count = 0;
+  final _payrollService = PayrollPaymentService();
+
+  @override
+  void initState() {
+    super.initState();
+    _loadCount();
+  }
+
+  @override
+  void didUpdateWidget(_TodayPaymentBadgeCard old) {
+    super.didUpdateWidget(old);
+    if (old.businessId != widget.businessId) _loadCount();
+  }
+
+  Future<void> _loadCount() async {
+    if (widget.businessId == null) return;
+    final count = await _payrollService.getTodayPaymentCount(
+      businessId: widget.businessId!,
+    );
+    if (mounted) setState(() => _count = count);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final card = Card(
+      elevation: 3,
+      shadowColor: Colors.black.withValues(alpha: 0.1),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+      child: InkWell(
+        onTap: () => widget.onTap(_loadCount),
+        borderRadius: BorderRadius.circular(20),
+        child: Container(
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(20),
+          ),
+          child: Padding(
+            padding: ResponsiveHelper.cardPadding(context),
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Container(
+                  padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 16)),
+                  decoration: BoxDecoration(
+                    color: Theme.of(context).primaryColor.withValues(alpha: 0.1),
+                    shape: BoxShape.circle,
+                  ),
+                  child: Icon(
+                    Icons.account_balance_wallet_outlined,
+                    size: ResponsiveHelper.iconSize(context, 32),
+                    color: Theme.of(context).primaryColor,
+                  ),
+                ),
+                SizedBox(height: ResponsiveHelper.spacing(context, 12)),
+                Text(
+                  '급여 관리',
+                  style: ResponsiveHelper.subtitleStyle(context)
+                      .copyWith(fontWeight: FontWeight.bold),
+                  textAlign: TextAlign.center,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                ),
+                SizedBox(height: ResponsiveHelper.spacing(context, 4)),
+                Text(
+                  '월별 급여·지급 현황',
+                  style: ResponsiveHelper.smallStyle(
+                      context, color: AppColors.grey600),
+                  textAlign: TextAlign.center,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+
+    if (_count <= 0) return card;
 
     return Stack(
       clipBehavior: Clip.none,
@@ -523,18 +659,19 @@ class BusinessAdminHomeScreen extends StatelessWidget {
         Positioned(
           top: -4,
           right: -4,
-          child: Container(
-            padding: const EdgeInsets.all(6),
-            decoration: const BoxDecoration(
-              color: AppColors.error,
-              shape: BoxShape.circle,
-            ),
-            child: Text(
-              badgeCount > 99 ? '99+' : '$badgeCount',
-              style: const TextStyle(
-                color: Colors.white,
-                fontSize: 11,
-                fontWeight: FontWeight.bold,
+          child: Semantics(
+            label: '오늘 지급 예정 ${_count > 99 ? '99건 이상' : '$_count건'}',
+            child: Container(
+              padding: const EdgeInsets.all(6),
+              decoration: const BoxDecoration(
+                color: AppColors.error,
+                shape: BoxShape.circle,
+              ),
+              child: ExcludeSemantics(
+                child: Text(
+                  _count > 99 ? '99+' : '$_count',
+                  style: ResponsiveHelper.tinyStyle(context, color: Colors.white, fontWeight: FontWeight.bold),
+                ),
               ),
             ),
           ),

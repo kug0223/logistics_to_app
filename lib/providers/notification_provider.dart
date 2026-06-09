@@ -8,31 +8,27 @@ class NotificationProvider with ChangeNotifier {
   final FirestoreService _firestoreService = FirestoreService();
   
   List<NotificationModel> _notifications = [];
-  int _unreadCount = 0;
-  final bool _isLoading = false;
+  bool _isLoading = false;
+  bool _disposed = false;
   String? _userId;
-  
+
   StreamSubscription? _notificationSubscription;
-  StreamSubscription? _unreadCountSubscription;
-  
-  // ═══════════════════════════════════════════════════════════
-  // Getters
-  // ═══════════════════════════════════════════════════════════
-  
+
+  // ── Getters ───────────────────────────────────────────────
+
   List<NotificationModel> get notifications => _notifications;
-  int get unreadCount => _unreadCount;
+  int get unreadCount => _notifications.where((n) => !n.isRead).length;
   bool get isLoading => _isLoading;
-  bool get hasUnread => _unreadCount > 0;
+  bool get hasUnread => _notifications.any((n) => !n.isRead);
   String? get userId => _userId;
   
-  // ═══════════════════════════════════════════════════════════
-  // 초기화 / 정리
-  // ═══════════════════════════════════════════════════════════
+  // ── 초기화 / 정리 ─────────────────────────────────────────
   
   /// 사용자 설정 및 실시간 리스닝 시작
   void setUser(String userId) {
-    if (_userId == userId) return;
-    
+    if (_disposed) return;
+    if (_userId == userId && _notificationSubscription != null) return;
+
     debugPrint('🔔 [NotificationProvider] 사용자 설정: $userId');
     _userId = userId;
     _startListening();
@@ -40,17 +36,17 @@ class NotificationProvider with ChangeNotifier {
   
   /// 로그아웃 시 정리
   void clearUser() {
+    if (_disposed) return;
     debugPrint('🔔 [NotificationProvider] 사용자 정리');
     _stopListening();
     _userId = null;
     _notifications = [];
-    _unreadCount = 0;
     notifyListeners();
   }
   
   /// 실시간 리스닝 시작
   void _startListening() {
-    if (_userId == null) return;
+    if (_userId == null || _disposed) return;
     
     // 기존 구독 취소
     _stopListening();
@@ -58,43 +54,35 @@ class NotificationProvider with ChangeNotifier {
     debugPrint('🔔 [NotificationProvider] 실시간 리스닝 시작');
     
     // 알림 목록 리스닝
+    _isLoading = true;
+    notifyListeners();
+
     _notificationSubscription = _firestoreService
         .watchUserNotifications(_userId!)
         .listen(
           (notifications) {
+            if (_disposed) return;
             _notifications = notifications;
+            _isLoading = false;
             notifyListeners();
           },
           onError: (e) {
+            if (_disposed) return;
             debugPrint('❌ 알림 스트림 에러: $e');
+            _isLoading = false;
+            notifyListeners();
           },
         );
     
-    // 읽지 않은 개수 리스닝
-    _unreadCountSubscription = _firestoreService
-        .watchUnreadNotificationCount(_userId!)
-        .listen(
-          (count) {
-            _unreadCount = count;
-            notifyListeners();
-          },
-          onError: (e) {
-            debugPrint('❌ 읽지않은 알림 개수 스트림 에러: $e');
-          },
-        );
   }
-  
+
   /// 리스닝 중지
   void _stopListening() {
     _notificationSubscription?.cancel();
-    _unreadCountSubscription?.cancel();
     _notificationSubscription = null;
-    _unreadCountSubscription = null;
   }
   
-  // ═══════════════════════════════════════════════════════════
-  // 알림 액션
-  // ═══════════════════════════════════════════════════════════
+  // ── 알림 액션 ─────────────────────────────────────────────
   
   /// 알림 읽음 처리
   Future<void> markAsRead(String notificationId) async {
@@ -118,12 +106,11 @@ class NotificationProvider with ChangeNotifier {
     return await _firestoreService.deleteOldNotifications(_userId!);
   }
   
-  // ═══════════════════════════════════════════════════════════
-  // 리소스 정리
-  // ═══════════════════════════════════════════════════════════
+  // ── 리소스 정리 ───────────────────────────────────────────
   
   @override
   void dispose() {
+    _disposed = true;
     _stopListening();
     super.dispose();
   }

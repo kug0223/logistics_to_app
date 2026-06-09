@@ -1,4 +1,5 @@
-﻿import 'package:flutter/material.dart';
+﻿import 'dart:async';
+import 'package:flutter/material.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -16,6 +17,10 @@ class FCMService {
 
   String? _currentUserId;
   bool _isInitialized = false;
+  bool _isInitializing = false; // 중복 초기화 방지 플래그
+  StreamSubscription? _tokenRefreshSub;
+  StreamSubscription? _onMessageSub;
+  StreamSubscription? _onMessageOpenedAppSub;
   
   /// 전역 Navigator Key (main.dart에서 설정)
   GlobalKey<NavigatorState>? _navigatorKey;
@@ -31,38 +36,55 @@ class FCMService {
       debugPrint('ℹ️ FCM 이미 초기화됨: $userId');
       return;
     }
-
-    _currentUserId = userId;
-
-    // 1. 알림 권한 요청
-    await _requestPermission();
-
-    // 2. 로컬 알림 초기화 (포그라운드용)
-    await _initializeLocalNotifications();
-
-    // 3. FCM 토큰 저장
-    await _saveToken();
-
-    // 4. 토큰 갱신 리스너
-    _messaging.onTokenRefresh.listen((newToken) {
-      _updateToken(newToken);
-    });
-
-    // 5. 포그라운드 메시지 리스너
-    FirebaseMessaging.onMessage.listen(_handleForegroundMessage);
-
-    // 6. 백그라운드 메시지 클릭 리스너
-    FirebaseMessaging.onMessageOpenedApp.listen(_handleMessageOpenedApp);
-
-    // 7. 앱이 완전히 종료된 상태에서 알림 탭으로 시작된 경우 처리
-    final initialMessage = await _messaging.getInitialMessage();
-    if (initialMessage != null) {
-      debugPrint('🔔 종료 상태에서 알림 탭으로 앱 시작: ${initialMessage.notification?.title}');
-      Future.delayed(const Duration(milliseconds: 500), _navigateToNotificationScreen);
+    if (_isInitializing) {
+      debugPrint('ℹ️ FCM 초기화 진행 중 — 중복 호출 무시');
+      return;
     }
+    _isInitializing = true;
 
-    _isInitialized = true;
-    debugPrint('✅ FCM 초기화 완료: $userId');
+    try {
+      _currentUserId = userId;
+
+      // 1. 알림 권한 요청
+      await _requestPermission();
+
+      // 2. 로컬 알림 초기화 (포그라운드용)
+      await _initializeLocalNotifications();
+
+      // 3. FCM 토큰 저장
+      await _saveToken();
+
+      // 4. 토큰 갱신 리스너
+      _tokenRefreshSub?.cancel();
+      _tokenRefreshSub = _messaging.onTokenRefresh.listen((newToken) async {
+        await _updateToken(newToken);
+      });
+
+      // 5. 포그라운드 메시지 리스너
+      _onMessageSub?.cancel();
+      _onMessageSub = FirebaseMessaging.onMessage.listen(_handleForegroundMessage);
+
+      // 6. 백그라운드 메시지 클릭 리스너
+      _onMessageOpenedAppSub?.cancel();
+      _onMessageOpenedAppSub =
+          FirebaseMessaging.onMessageOpenedApp.listen(_handleMessageOpenedApp);
+
+      // 7. 앱이 완전히 종료된 상태에서 알림 탭으로 시작된 경우 처리
+      final initialMessage = await _messaging.getInitialMessage();
+      if (initialMessage != null) {
+        debugPrint('🔔 종료 상태에서 알림 탭으로 앱 시작: ${initialMessage.notification?.title}');
+        // 고정 500ms 대신 Navigator가 실제로 준비될 때까지 최대 5초 대기
+        _navigateWhenReady();
+      }
+
+      _isInitialized = true;
+      debugPrint('✅ FCM 초기화 완료: $userId');
+    } catch (e) {
+      debugPrint('❌ FCM 초기화 실패: $e');
+      _currentUserId = null;
+    } finally {
+      _isInitializing = false;
+    }
   }
 
   /// 알림 권한 요청
@@ -126,12 +148,22 @@ class FCMService {
     if (_currentUserId == null) return;
 
     try {
-      await FirebaseFirestore.instance
-          .collection('users')
-          .doc(_currentUserId)
-          .update({
-        'fcmToken': token,
-        'fcmTokenUpdatedAt': FieldValue.serverTimestamp(),
+      // 멀티 디바이스 지원 — fcmTokens 배열에 현재 토큰 추가 (최대 5개 유지)
+      final userRef = FirebaseFirestore.instance.collection('users').doc(_currentUserId);
+      await FirebaseFirestore.instance.runTransaction((tx) async {
+        final snap = await tx.get(userRef);
+        if (!snap.exists) return;
+        final tokens = List<String>.from(snap.data()?['fcmTokens'] as List? ?? []);
+        if (!tokens.contains(token)) {
+          tokens.add(token);
+          // 최대 5개 유지 (오래된 토큰부터 제거)
+          if (tokens.length > 5) tokens.removeRange(0, tokens.length - 5);
+        }
+        tx.update(userRef, {
+          'fcmTokens': tokens,
+          'fcmToken': token,             // 하위 호환용 — 마지막 토큰 단일 필드도 유지
+          'fcmTokenUpdatedAt': FieldValue.serverTimestamp(),
+        });
       });
       debugPrint('✅ FCM 토큰 저장 완료');
     } catch (e) {
@@ -144,10 +176,12 @@ class FCMService {
     debugPrint('📩 포그라운드 메시지 수신: ${message.notification?.title}');
 
     final notification = message.notification;
-    if (notification != null) {
+    final title = notification?.title ?? message.data['title'] as String? ?? '';
+    final body = notification?.body ?? message.data['body'] as String? ?? '';
+    if (title.isNotEmpty || body.isNotEmpty) {
       _showLocalNotification(
-        title: notification.title ?? '',
-        body: notification.body ?? '',
+        title: title,
+        body: body,
         payload: message.data.toString(),
       );
     }
@@ -180,7 +214,7 @@ class FCMService {
     );
 
     await _localNotifications.show(
-      DateTime.now().millisecondsSinceEpoch ~/ 1000,
+      DateTime.now().microsecondsSinceEpoch.remainder(0x7FFFFFFF),
       title,
       body,
       details,
@@ -194,12 +228,37 @@ class FCMService {
     _navigateToNotificationScreen();
   }
 
-  /// 백그라운드 메시지 클릭 처리
+  /// 백그라운드 메시지 클릭 처리 — payload type으로 세부 화면 이동
   void _handleMessageOpenedApp(RemoteMessage message) {
     debugPrint('📩 백그라운드 메시지 클릭: ${message.data}');
+    _navigateByPayload(message.data);
+  }
+
+  /// FCM data payload 기반 딥링크 라우팅
+  ///
+  /// NotificationScreen 진입 후 _handleNotificationTap에서 type별 세부 화면 이동 처리
+  void _navigateByPayload(Map<String, dynamic> data) {
+    if (_navigatorKey?.currentState == null) return;
+    // 향후 type별 직접 라우팅 확장 지점
+    // 예: type == 'CONTRACT_SIGN' → ContractSignScreen
+    //     type == 'ATTENDANCE'   → AttendanceCheckScreen
+    // 현재는 알림 목록 화면으로 이동 (NotificationScreen 내 탭으로 세부 이동)
     _navigateToNotificationScreen();
   }
   
+  /// Navigator 준비될 때까지 최대 5초 대기 후 알림 화면 이동 (앱 종료 상태 복귀 처리)
+  Future<void> _navigateWhenReady() async {
+    const maxWait = 50;  // 100ms × 50 = 5초
+    for (var i = 0; i < maxWait; i++) {
+      if (_navigatorKey?.currentState != null) {
+        _navigateToNotificationScreen();
+        return;
+      }
+      await Future.delayed(const Duration(milliseconds: 100));
+    }
+    debugPrint('⚠️ Navigator 준비 타임아웃 — 알림 화면 이동 생략');
+  }
+
   /// 알림 화면으로 이동
   void _navigateToNotificationScreen() {
     if (_navigatorKey?.currentState == null) {
@@ -212,23 +271,42 @@ class FCMService {
     );
   }
 
+  /// 근무지 이탈 경고 로컬 알림 (출퇴근 화면 전용)
+  Future<void> showGeofenceAlert(String businessName) async {
+    await _showLocalNotification(
+      title: '근무지 이탈 감지',
+      body: '$businessName 근무지에서 벗어났습니다. 복귀 또는 퇴근 처리를 확인해주세요.',
+    );
+  }
+
   /// 로그아웃 시 토큰 삭제
   Future<void> clearToken() async {
     if (_currentUserId == null) return;
 
     try {
+      final currentToken = await _messaging.getToken();
+      final updates = <String, dynamic>{'fcmToken': FieldValue.delete()};
+      if (currentToken != null) {
+        // 현재 디바이스 토큰만 배열에서 제거 — 다른 디바이스 토큰은 유지
+        updates['fcmTokens'] = FieldValue.arrayRemove([currentToken]);
+      }
       await FirebaseFirestore.instance
           .collection('users')
           .doc(_currentUserId)
-          .update({
-        'fcmToken': FieldValue.delete(),
-      });
+          .update(updates);
       debugPrint('✅ FCM 토큰 삭제 완료');
     } catch (e) {
       debugPrint('❌ FCM 토큰 삭제 실패: $e');
     }
 
+    _tokenRefreshSub?.cancel();
+    _tokenRefreshSub = null;
+    _onMessageSub?.cancel();
+    _onMessageSub = null;
+    _onMessageOpenedAppSub?.cancel();
+    _onMessageOpenedAppSub = null;
     _currentUserId = null;
     _isInitialized = false;
+    _isInitializing = false;
   }
 }

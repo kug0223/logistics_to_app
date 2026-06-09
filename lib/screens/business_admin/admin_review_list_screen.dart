@@ -205,7 +205,7 @@ class _AdminReviewListScreenState extends State<AdminReviewListScreen>
                           label: '미작성',
                           count: _pendingRequests.length,
                           badgeColor: AppColors.error,
-                          urgent: _pendingRequests.any((r) => !r.isDeadlinePassed))),
+                          urgent: _pendingRequests.any((r) => !r.isDeadlinePassed && r.deadline.difference(DateTime.now()).inDays <= 3))),
                     ],
                   ),
                 ),

@@ -6,42 +6,16 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import '../../../providers/user_provider.dart';
 import '../../../utils/toast_helper.dart';
 import '../../../utils/responsive_helper.dart';
-import '../../../utils/format_helper.dart';
 import '../../../services/firestore_service.dart';
 import '../../../controllers/workforce_controller.dart';
 import 'workforce_list_view.dart';
 import 'workforce_calendar_view.dart';
 import '../../../utils/test_data_helper.dart';
-import '../../../models/core/slot_model.dart';
-import '../dialogs/schedule_request_management_dialog.dart';
 import '../../../utils/dialog_helper.dart';
 import '../../../widgets/dialogs/styled_dialog.dart';
-import '../../../widgets/app_select_field.dart';
+import '../../../widgets/common/gradient_scaffold.dart';
+import '../../../widgets/common/app_empty_state.dart';
 
-/// 공고 선택 드롭다운 아이템 (flex TO의 경우 슬롯별로 확장됨)
-class _TODropdownItem {
-  final String toId;
-  final String? slotId;
-  final DateTime date;
-  final String displayTitle;
-
-  _TODropdownItem({
-    required this.toId,
-    this.slotId,
-    required this.date,
-    required this.displayTitle,
-  });
-
-  @override
-  bool operator ==(Object other) =>
-      identical(this, other) ||
-      (other is _TODropdownItem &&
-          toId == other.toId &&
-          slotId == other.slotId);
-
-  @override
-  int get hashCode => Object.hash(toId, slotId);
-}
 
 /// ✨ 세련된 통합 인력 관리 화면 (business_home_screen 테마 적용)
 class IntegratedWorkforceScreen extends StatefulWidget {
@@ -59,16 +33,12 @@ class _IntegratedWorkforceScreenState extends State<IntegratedWorkforceScreen>
   List<String> _allBusinessIds = [];
   String? _selectedBusinessId;
   bool _isCalendarView = false;
-  Future<int>? _scheduleRequestCountFuture;
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     _loadBusinessIds();
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) _controller.load(context);
-    });
   }
 
   @override
@@ -81,18 +51,9 @@ class _IntegratedWorkforceScreenState extends State<IntegratedWorkforceScreen>
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
-      _refreshScheduleCount();
       // Cloud Functions이 갱신한 Firestore 상태를 반영
       if (mounted) _controller.reload(context);
     }
-  }
-
-  void _refreshScheduleCount() {
-    if (_selectedBusinessId == null) return;
-    setState(() {
-      _scheduleRequestCountFuture = _firestoreService
-          .getPendingScheduleChangeRequestCount(_selectedBusinessId!);
-    });
   }
 
   /// 관리자의 모든 사업장 ID 로드
@@ -108,6 +69,8 @@ class _IntegratedWorkforceScreenState extends State<IntegratedWorkforceScreen>
 
       final businesses = await _firestoreService.getMyBusiness(uid);
 
+      if (!mounted) return;
+
       if (businesses.isEmpty) {
         ToastHelper.showWarning('등록된 사업장이 없습니다.');
         return;
@@ -116,10 +79,9 @@ class _IntegratedWorkforceScreenState extends State<IntegratedWorkforceScreen>
       setState(() {
         _allBusinessIds = businesses.map((b) => b.id).toList();
         _selectedBusinessId = _allBusinessIds.first;
-        _scheduleRequestCountFuture = _firestoreService
-            .getPendingScheduleChangeRequestCount(_allBusinessIds.first);
       });
 
+      if (mounted) _controller.load(context);
       debugPrint('✅ 관리 사업장: ${_allBusinessIds.length}개');
     } catch (e) {
       debugPrint('❌ 사업장 조회 실패: $e');
@@ -129,140 +91,50 @@ class _IntegratedWorkforceScreenState extends State<IntegratedWorkforceScreen>
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    
     if (_selectedBusinessId == null) {
-      return Scaffold(
-        body: Center(
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Container(
-                padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 24)),
-                decoration: BoxDecoration(
-                  color: theme.primaryColor.withValues(alpha: 0.1),
-                  shape: BoxShape.circle,
-                ),
-                child: Icon(
-                  Icons.business_center,
-                  size: ResponsiveHelper.iconSize(context, 64),
-                  color: theme.primaryColor.withValues(alpha: 0.5),
-                ),
-              ),
-              SizedBox(height: ResponsiveHelper.spacing(context, 24)),
-              Text(
-                '등록된 사업장이 없습니다',
-                style: ResponsiveHelper.titleStyle(context).copyWith(
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
-            ],
-          ),
+      return GradientScaffold(
+        title: '공고 관리',
+        body: AppEmptyState(
+          icon: Icons.business_center,
+          title: '등록된 사업장이 없습니다',
         ),
       );
     }
 
-    return Scaffold(
-      // ✨ 깔끔한 AppBar (홈 화면 스타일)
-      appBar: AppBar(
-        title: const Text('공고 관리'),
-        actions: [
-              // 디버그 전용 버튼 (릴리즈 빌드에서 자동 제거)
-              if (kDebugMode) ...[
-                IconButton(
-                  icon: Icon(Icons.sync, size: ResponsiveHelper.iconSize(context, 24)),
-                  onPressed: _recalculateAllStats,
-                  tooltip: '통계 재계산',
-                ),
-                IconButton(
-                  icon: Icon(Icons.science, size: ResponsiveHelper.iconSize(context, 24)),
-                  onPressed: _showDummyDataDialog,
-                  tooltip: '테스트 데이터',
-                ),
-              ],
-
-              // 스케줄 변경 요청 관리 버튼
-              FutureBuilder<int>(
-                future: _scheduleRequestCountFuture,
-                builder: (context, snapshot) {
-                  final count = snapshot.data ?? 0;
-                  
-                  return Stack(
-                    children: [
-                      IconButton(
-                        icon: Icon(
-                          Icons.edit_calendar,
-                          size: ResponsiveHelper.iconSize(context, 24),
-                        ),
-                        onPressed: _showScheduleRequestManagement,
-                        tooltip: '스케줄 변경 요청',
-                      ),
-                      if (count > 0)
-                        Positioned(
-                          right: 8,
-                          top: 8,
-                          child: Container(
-                            padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 4)),
-                            decoration: BoxDecoration(
-                              color: AppColors.error,
-                              shape: BoxShape.circle,
-                            ),
-                            constraints: BoxConstraints(
-                              minWidth: ResponsiveHelper.iconSize(context, 18),
-                              minHeight: ResponsiveHelper.iconSize(context, 18),
-                            ),
-                            child: Text(
-                              '$count',
-                              style: ResponsiveHelper.tinyStyle(context).copyWith(
-                                color: Colors.white,
-                                fontWeight: FontWeight.bold,
-                              ),
-                              textAlign: TextAlign.center,
-                            ),
-                          ),
-                        ),
-                    ],
-                  );
-                },
-              ),
-              
-              
-              // 리스트/캘린더 토글 (탭바 스타일)
-              Container(
-                margin: EdgeInsets.only(right: ResponsiveHelper.spacing(context, 8)),
-                padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 4)),
-                decoration: BoxDecoration(
-                  color: Colors.white.withValues(alpha: 0.3),
-                  borderRadius: BorderRadius.circular(10),
-                ),
-                child: Row(
-                  children: [
-                    _buildToggleButton(
-                      icon: Icons.view_list,
-                      label: '목록',
-                      isSelected: !_isCalendarView,
-                      onTap: () {
-                        setState(() {
-                          _isCalendarView = false;
-                        });
-                      },
-                    ),
-                    SizedBox(width: ResponsiveHelper.spacing(context, 4)),
-                    _buildToggleButton(
-                      icon: Icons.calendar_month,
-                      label: '캘린더',
-                      isSelected: _isCalendarView,
-                      onTap: () {
-                        setState(() {
-                          _isCalendarView = true;
-                        });
-                      },
-                    ),
-                  ],
-                ),
-              ),
-            ],
+    return GradientScaffold(
+      title: '공고 관리',
+      actions: [
+        // 더미 데이터 (디버그 전용)
+        if (kDebugMode)
+          IconButton(
+            icon: Icon(Icons.science,
+                size: ResponsiveHelper.iconSize(context, 24),
+                color: Colors.white),
+            onPressed: _showDummyDataDialog,
+            tooltip: '테스트 데이터',
           ),
+        // 목록/캘린더 토글
+        Container(
+          margin: EdgeInsets.only(right: ResponsiveHelper.spacing(context, 8)),
+          padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 4)),
+          decoration: BoxDecoration(
+              color: Colors.white.withValues(alpha: 0.3),
+              borderRadius: BorderRadius.circular(10)),
+          child: Row(children: [
+            _buildToggleButton(
+              icon: Icons.view_list, label: '목록',
+              isSelected: !_isCalendarView,
+              onTap: () => setState(() => _isCalendarView = false),
+            ),
+            SizedBox(width: ResponsiveHelper.spacing(context, 4)),
+            _buildToggleButton(
+              icon: Icons.calendar_month, label: '캘린더',
+              isSelected: _isCalendarView,
+              onTap: () => setState(() => _isCalendarView = true),
+            ),
+          ]),
+        ),
+      ],
       body: ChangeNotifierProvider.value(
         value: _controller,
         child: _isCalendarView
@@ -321,24 +193,9 @@ class _IntegratedWorkforceScreenState extends State<IntegratedWorkforceScreen>
       ),
     );
   }
-  
-  /// 스케줄 변경 요청 관리 다이얼로그 표시
-  void _showScheduleRequestManagement() {
-    if (_selectedBusinessId == null) {
-      ToastHelper.showWarning('사업장 정보를 찾을 수 없습니다.');
-      return;
-    }
-    
-    showDialog(
-      context: context,
-      builder: (context) => ScheduleRequestManagementDialog(
-        businessId: _selectedBusinessId!,
-        onChanged: _refreshScheduleCount,
-      ),
-    );
-  }
 
-  /// ⭐ 더미 데이터 다이얼로그 (반응형 + 테마)
+  // ─── 더미 데이터 다이얼로그 (디버그 전용) ─────────────────────────
+
   Future<void> _showDummyDataDialog() async {
     if (_selectedBusinessId == null) {
       ToastHelper.showError('사업장이 선택되지 않았습니다.');
@@ -347,702 +204,101 @@ class _IntegratedWorkforceScreenState extends State<IntegratedWorkforceScreen>
 
     showDialog(
       context: context,
-      builder: (context) => StyledDialog(
+      builder: (ctx) => StyledDialog(
         title: '테스트 데이터 관리',
         icon: Icons.science,
         headerColor: AppColors.warning,
         content: Column(
           mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(
-              '개발/테스트용 더미 데이터를 관리합니다.',
-              style: ResponsiveHelper.bodyStyle(
-                context,
-                color: Theme.of(context).textTheme.bodySmall?.color,
-              ),
-            ),
-            SizedBox(height: ResponsiveHelper.spacing(context, 16)),
-
-            // ⭐ TO 선택하여 지원자 생성
             ListTile(
-              leading: Icon(
-                Icons.group_add,
-                color: Theme.of(context).primaryColor,
-                size: ResponsiveHelper.iconSize(context, 24),
-              ),
-              title: Text(
-                'TO에 지원자 추가',
-                style: ResponsiveHelper.bodyStyle(context).copyWith(
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
-              subtitle: Text(
-                'TO 선택 → 확정/대기 인원 생성',
-                style: ResponsiveHelper.smallStyle(context),
-              ),
+              leading: const Icon(Icons.group_add),
+              title: const Text('TO에 지원자 추가'),
+              subtitle: const Text('공고 선택 → 확정/대기 인원 생성'),
               onTap: () async {
-                Navigator.pop(context);
-                await _showCreateApplicantsDialog();
+                Navigator.pop(ctx);
+                await _createDummyApplicationsFlow();
               },
             ),
-
-            const Divider(),
-            // ⭐ 리뷰 생성
+            const Divider(height: 1),
             ListTile(
-              leading: Icon(
-                Icons.star,
-                color: AppColors.amber,
-                size: ResponsiveHelper.iconSize(context, 24),
-              ),
-              title: Text(
-                '더미 리뷰 생성',
-                style: ResponsiveHelper.bodyStyle(context).copyWith(
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
-              subtitle: Text(
-                '확정 지원서에 랜덤 리뷰 추가',
-                style: ResponsiveHelper.smallStyle(context),
-              ),
+              leading: const Icon(Icons.delete_forever, color: AppColors.error),
+              title: const Text('더미 데이터 전체 삭제',
+                  style: TextStyle(color: AppColors.error)),
               onTap: () async {
-                Navigator.pop(context);
-                await _createDummyReviews();
-              },
-            ),
-
-            const Divider(),
-
-            // ⭐ 출근 데이터 생성
-            ListTile(
-              leading: Icon(
-                Icons.add_circle,
-                color: AppColors.success,
-                size: ResponsiveHelper.iconSize(context, 24),
-              ),
-              title: Text(
-                '오늘 출근 데이터 생성',
-                style: ResponsiveHelper.bodyStyle(context).copyWith(
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
-              subtitle: Text(
-                '확정 인원의 70% 출근 처리',
-                style: ResponsiveHelper.smallStyle(context),
-              ),
-              onTap: () async {
-                Navigator.pop(context);
-                await _createTodayAttendance();
-              },
-            ),
-
-            const Divider(),
-
-            // ⭐ 출근 데이터 삭제
-            ListTile(
-              leading: Icon(
-                Icons.delete_sweep,
-                color: AppColors.warning,
-                size: ResponsiveHelper.iconSize(context, 24),
-              ),
-              title: Text(
-                '출근 데이터 삭제',
-                style: ResponsiveHelper.bodyStyle(context).copyWith(
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
-              subtitle: Text(
-                '모든 더미 출근 기록 삭제',
-                style: ResponsiveHelper.smallStyle(context),
-              ),
-              onTap: () async {
-                Navigator.pop(context);
-                await _clearAttendanceData();
-              },
-            ),
-
-            const Divider(),
-
-            // ⭐ 더미 리뷰 삭제
-            ListTile(
-              leading: Icon(
-                Icons.star_border,
-                color: AppColors.amberDark,
-                size: ResponsiveHelper.iconSize(context, 24),
-              ),
-              title: Text(
-                '더미 리뷰 삭제',
-                style: ResponsiveHelper.bodyStyle(context).copyWith(
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
-              subtitle: Text(
-                '모든 더미 리뷰 삭제',
-                style: ResponsiveHelper.smallStyle(context),
-              ),
-              onTap: () async {
-                Navigator.pop(context);
-                await _clearDummyReviews();
-              },
-            ),
-
-            const Divider(),
-
-            // ⭐ 지원자 데이터 삭제
-            ListTile(
-              leading: Icon(
-                Icons.delete_forever,
-                color: Theme.of(context).colorScheme.error,
-                size: ResponsiveHelper.iconSize(context, 24),
-              ),
-              title: Text(
-                '모든 더미 데이터 삭제',
-                style: ResponsiveHelper.bodyStyle(context).copyWith(
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
-              subtitle: Text(
-                '지원자 + 지원서 + 출근 기록',
-                style: ResponsiveHelper.smallStyle(context),
-              ),
-              onTap: () async {
-                Navigator.pop(context);
-                await _clearAllDummyData();
+                Navigator.pop(ctx);
+                final ok = await DialogHelper.showDangerConfirm(
+                  context,
+                  title: '더미 데이터 삭제',
+                  message: '모든 더미 데이터를 삭제합니다.',
+                  confirmText: '삭제',
+                );
+                if (ok && mounted) {
+                  await TestDataHelper.clearAllDummyData();
+                  if (mounted) {
+                    ToastHelper.showSuccess('더미 데이터 삭제 완료');
+                    _controller.reload(context);
+                  }
+                }
               },
             ),
           ],
         ),
         actions: [
-          StyledDialogButton.cancel(
-            onPressed: () => Navigator.pop(context),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('닫기'),
           ),
         ],
       ),
     );
   }
-  
-  /// ⭐ TO 선택하여 지원자 생성 다이얼로그 (반응형 + 테마)
-  Future<void> _showCreateApplicantsDialog() async {
-    String? targetBusinessId = _selectedBusinessId;
 
-    if (_allBusinessIds.length > 1) {
-      targetBusinessId = await _selectBusinessForDummyData();
-      if (targetBusinessId == null) return;
-    }
+  Future<void> _createDummyApplicationsFlow() async {
+    // TO 목록 조회
+    final snap = await FirebaseFirestore.instance
+        .collection('tos')
+        .where('businessId', isEqualTo: _selectedBusinessId)
+        .where('status', whereIn: ['active', 'full'])
+        .limit(50)
+        .get();
 
-    debugPrint('🔍 [DummyData] 선택된 사업장: $targetBusinessId');
-
-    final allTOs = await _firestoreService.getActiveTOs(
-      businessId: targetBusinessId,
-    );
-
-    debugPrint('   🎯 활성 TO: ${allTOs.length}개');
-
-    if (allTOs.isEmpty) {
-      ToastHelper.showWarning('선택 가능한 TO가 없습니다.');
+    if (snap.docs.isEmpty) {
+      ToastHelper.showWarning('등록된 공고가 없습니다. 먼저 공고를 생성하세요.');
       return;
     }
 
-    // flex TO는 슬롯별로 확장, contract TO는 그대로 1개 아이템
-    final List<_TODropdownItem> dropdownItems = [];
-    for (final to in allTOs) {
-      if (to.type == 'flex') {
-        final slots = await _firestoreService.getSlots(to.id);
-        if (slots.isEmpty) {
-          dropdownItems.add(_TODropdownItem(
-            toId: to.id,
-            date: to.createdAt,
-            displayTitle: to.title,
-          ));
-        } else {
-          for (final slot in slots) {
-            dropdownItems.add(_TODropdownItem(
-              toId: to.id,
-              slotId: slot.id,
-              date: slot.date,
-              displayTitle: slot.title ?? to.title,
-            ));
-          }
-        }
-      } else {
-        dropdownItems.add(_TODropdownItem(
-          toId: to.id,
-          date: to.rangeStart ?? to.createdAt,
-          displayTitle: to.title,
-        ));
-      }
-    }
-
-    dropdownItems.sort((a, b) => a.date.compareTo(b.date));
-
-    debugPrint('   📋 드롭다운 아이템: ${dropdownItems.length}개');
-
-    _TODropdownItem? selectedItem =
-        dropdownItems.isNotEmpty ? dropdownItems.first : null;
-
-    final confirmedController = TextEditingController();
-    final pendingController = TextEditingController();
+    final options = snap.docs
+        .map((d) => MapEntry(d.id, d.data()['title'] as String? ?? d.id))
+        .toList();
 
     if (!mounted) return;
-    final result = await showDialog<bool>(
+
+    final selectedId = await showModalBottomSheet<String>(
       context: context,
-      builder: (context) => StatefulBuilder(
-        builder: (context, setState) => StyledDialog(
-          title: '지원자 생성',
-          icon: Icons.group_add,
-          content: SizedBox(
-            width: MediaQuery.of(context).size.width * 0.8,
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                // TO 선택
-                AppSelectField<_TODropdownItem>(
-                  value: selectedItem,
-                  hintText: 'TO를 선택하세요',
-                  sheetTitle: 'TO 선택',
-                  items: dropdownItems,
-                  labelOf: (item) => '${FormatHelper.formatDate(item.date)} - ${item.displayTitle}',
-                  prefixIcon: Icons.assignment,
-                  onChanged: (value) => setState(() => selectedItem = value),
-                ),
-
-                SizedBox(height: ResponsiveHelper.spacing(context, 24)),
-
-                // 확정 인원
-                Text(
-                  '확정 인원',
-                  style: ResponsiveHelper.bodyStyle(context).copyWith(
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-                SizedBox(height: ResponsiveHelper.spacing(context, 8)),
-                TextField(
-                  controller: confirmedController,
-                  keyboardType: TextInputType.number,
-                  style: ResponsiveHelper.bodyStyle(context),
-                  decoration: InputDecoration(
-                    border: const OutlineInputBorder(),
-                    suffixText: '명',
-                    hintText: '0',
-                    hintStyle: ResponsiveHelper.bodyStyle(
-                      context,
-                      color: Theme.of(context).hintColor,
-                    ),
-                  ),
-                ),
-
-                SizedBox(height: ResponsiveHelper.spacing(context, 16)),
-
-                // 대기 인원
-                Text(
-                  '대기 인원',
-                  style: ResponsiveHelper.bodyStyle(context).copyWith(
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-                SizedBox(height: ResponsiveHelper.spacing(context, 8)),
-                TextField(
-                  controller: pendingController,
-                  keyboardType: TextInputType.number,
-                  style: ResponsiveHelper.bodyStyle(context),
-                  decoration: InputDecoration(
-                    border: const OutlineInputBorder(),
-                    suffixText: '명',
-                    hintText: '0',
-                    hintStyle: ResponsiveHelper.bodyStyle(
-                      context,
-                      color: Theme.of(context).hintColor,
-                    ),
-                  ),
-                ),
-
-                SizedBox(height: ResponsiveHelper.spacing(context, 16)),
-
-                // 안내
-                Container(
-                  padding: ResponsiveHelper.cardPadding(context),
-                  decoration: BoxDecoration(
-                    color:
-                        Theme.of(context).primaryColor.withValues(alpha: 0.1),
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  child: Row(
-                    children: [
-                      Icon(
-                        Icons.info_outline,
-                        size: ResponsiveHelper.iconSize(context, 20),
-                        color: Theme.of(context).primaryColor,
-                      ),
-                      SizedBox(width: ResponsiveHelper.spacing(context, 8)),
-                      Expanded(
-                        child: Text(
-                          '업무 유형별로 랜덤 배분됩니다',
-                          style: ResponsiveHelper.smallStyle(
-                            context,
-                            color: Theme.of(context).primaryColor,
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ],
-            ),
-          ),
-          actions: [
-            StyledDialogButton.cancel(
-              onPressed: () => Navigator.pop(context, false),
-            ),
-            ElevatedButton(
-              onPressed: selectedItem == null
-                  ? null
-                  : () => Navigator.pop(context, true),
-              style: ElevatedButton.styleFrom(
-                padding: EdgeInsets.symmetric(
-                  vertical: ResponsiveHelper.spacing(context, 16),
-                ),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                elevation: 0,
-              ),
-              child: const Text('생성하기'),
-            ),
-          ],
-        ),
+      builder: (_) => ListView(
+        shrinkWrap: true,
+        children: options
+            .map((e) => ListTile(
+                  title: Text(e.value),
+                  onTap: () => Navigator.pop(context, e.key),
+                ))
+            .toList(),
       ),
     );
 
-    if (result != true || selectedItem == null) return;
+    if (selectedId == null || !mounted) return;
 
-    try {
-      final confirmedCount = int.tryParse(confirmedController.text) ?? 0;
-      final pendingCount = int.tryParse(pendingController.text) ?? 0;
-
-      if (confirmedCount == 0 && pendingCount == 0) {
-        ToastHelper.showWarning('인원을 1명 이상 입력하세요.');
-        return;
-      }
-
-      ToastHelper.showInfo('지원자 생성 중...');
-
-      await TestDataHelper.createDummyApplications(
-        toId: selectedItem!.toId,
-        pendingCount: pendingCount,
-        confirmedCount: confirmedCount,
-        slotId: selectedItem!.slotId,
-        slotDate: selectedItem!.slotId != null ? selectedItem!.date : null,
-      );
-
-      ToastHelper.showSuccess('지원자가 생성되었습니다!');
-
-      _firestoreService.clearCache(toId: selectedItem!.toId);
-
-      if (mounted) {
-        _controller.reload(context);
-      }
-    } catch (e) {
-      debugPrint('❌ 지원자 생성 실패: $e');
-      ToastHelper.showError('지원자 생성 실패: $e');
-    }
-  }
-
-  /// 오늘 출근 데이터 생성
-  Future<void> _createTodayAttendance() async {
-    try {
-      ToastHelper.showInfo('출근 데이터 생성 중...');
-      
-      await TestDataHelper.createDummyAttendance(
-        businessId: _selectedBusinessId!,
-        date: DateTime.now(),
-      );
-      
-      ToastHelper.showSuccess('출근 데이터가 생성되었습니다!');
-
-      _firestoreService.clearCache();
-
-      if (mounted) {
-        _controller.reload(context);
-      }
-    } catch (e) {
-      debugPrint('❌ 출근 데이터 생성 실패: $e');
-      ToastHelper.showError('출근 데이터 생성 실패: $e');
-    }
-  }
-
-  /// 출근 데이터 삭제
-  Future<void> _clearAttendanceData() async {
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (context) => StyledDialog(
-        title: '출근 데이터 삭제',
-        icon: Icons.delete_sweep,
-        headerColor: AppColors.warning,
-        content: const Text('모든 더미 출근 기록을 삭제하시겠습니까?'),
-        actions: [
-          StyledDialogButton.cancel(
-            onPressed: () => Navigator.pop(context, false),
-          ),
-          StyledDialogButton.danger(
-            text: '삭제',
-            onPressed: () => Navigator.pop(context, true),
-          ),
-        ],
-      ),
+    await TestDataHelper.createDummyApplications(
+      toId: selectedId,
+      pendingCount: 2,
+      confirmedCount: 3,
     );
 
-    if (confirmed != true) return;
-
-    try {
-      ToastHelper.showInfo('출근 데이터 삭제 중...');
-      
-      await TestDataHelper.clearDummyAttendance();
-      
-      ToastHelper.showSuccess('출근 데이터가 삭제되었습니다!');
-
-      _firestoreService.clearCache();
-
-      if (mounted) {
-        _controller.reload(context);
-      }
-    } catch (e) {
-      debugPrint('❌ 출근 데이터 삭제 실패: $e');
-      ToastHelper.showError('출근 데이터 삭제 실패: $e');
+    if (mounted) {
+      ToastHelper.showSuccess('더미 지원자 생성 완료');
+      _controller.reload(context);
     }
   }
 
-  /// 더미 리뷰 삭제
-  Future<void> _clearDummyReviews() async {
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (context) => StyledDialog(
-        title: '더미 리뷰 삭제',
-        icon: Icons.star_border,
-        headerColor: AppColors.warning,
-        content: const Text('모든 더미 리뷰를 삭제하시겠습니까?'),
-        actions: [
-          StyledDialogButton.cancel(
-            onPressed: () => Navigator.pop(context, false),
-          ),
-          StyledDialogButton.danger(
-            text: '삭제',
-            onPressed: () => Navigator.pop(context, true),
-          ),
-        ],
-      ),
-    );
-
-    if (confirmed != true) return;
-
-    try {
-      ToastHelper.showInfo('더미 리뷰 삭제 중...');
-      
-      await TestDataHelper.clearDummyReviews();
-      
-      ToastHelper.showSuccess('더미 리뷰가 삭제되었습니다!');
-
-      _firestoreService.clearCache();
-
-      if (mounted) {
-        _controller.reload(context);
-      }
-    } catch (e) {
-      debugPrint('❌ 더미 리뷰 삭제 실패: $e');
-      ToastHelper.showError('더미 리뷰 삭제 실패: $e');
-    }
-  }
-  /// 더미 리뷰 생성
-  Future<void> _createDummyReviews() async {
-    if (_selectedBusinessId == null) {
-      ToastHelper.showWarning('사업장을 선택해주세요');
-      return;
-    }
-
-    try {
-      final userProvider = context.read<UserProvider>();
-      final currentUser = userProvider.currentUser;
-      
-      if (currentUser == null) {
-        ToastHelper.showError('로그인 정보를 확인할 수 없습니다');
-        return;
-      }
-
-      // 사업장 이름 가져오기
-      final business = await _firestoreService.getBusinessById(_selectedBusinessId!);
-      final businessName = business?.name ?? '사업장';
-
-      ToastHelper.showInfo('리뷰 생성 중...');
-      
-      await TestDataHelper.createDummyReviews(
-        businessId: _selectedBusinessId!,
-        businessName: businessName,
-        reviewerId: currentUser.uid,
-        reviewerName: currentUser.name,
-      );
-      
-      ToastHelper.showSuccess('더미 리뷰 생성 완료!');
-
-      if (mounted) {
-        _controller.reload(context);
-      }
-    } catch (e) {
-      debugPrint('❌ 리뷰 생성 실패: $e');
-      ToastHelper.showError('리뷰 생성 실패: $e');
-    }
-  }
-  
-
-  /// 모든 더미 데이터 삭제
-  Future<void> _clearAllDummyData() async {
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (context) => StyledDialog(
-        title: '모든 더미 데이터 삭제',
-        icon: Icons.delete_forever,
-        headerColor: AppColors.error,
-        content: const Text(
-          '지원자, 지원서, 출근 기록을 모두 삭제합니다.\n'
-          '이 작업은 되돌릴 수 없습니다.',
-        ),
-        actions: [
-          StyledDialogButton.cancel(
-            onPressed: () => Navigator.pop(context, false),
-          ),
-          StyledDialogButton.danger(
-            text: '삭제',
-            onPressed: () => Navigator.pop(context, true),
-          ),
-        ],
-      ),
-    );
-
-    if (confirmed != true) return;
-
-    try {
-      ToastHelper.showInfo('모든 더미 데이터 삭제 중...');
-
-      // clearAllDummyData가 내부적으로 attendance·reviews 삭제까지 처리함
-      await TestDataHelper.clearAllDummyData();
-      
-      _firestoreService.clearCache();
-
-      ToastHelper.showSuccess('모든 더미 데이터가 삭제되었습니다!');
-
-      if (mounted) {
-        _controller.reload(context);
-      }
-    } catch (e) {
-      debugPrint('❌ 더미 데이터 삭제 실패: $e');
-      ToastHelper.showError('더미 데이터 삭제 실패: $e');
-    }
-  }
-  
-  /// ⭐ 더미 데이터용 사업장 선택 (반응형 + 테마)
-  Future<String?> _selectBusinessForDummyData() async {
-    final businessNames = await _firestoreService.getBusinessNames(_allBusinessIds);
-
-    if (!mounted) return null;
-    return await showDialog<String>(
-      context: context,
-      builder: (context) => StyledDialog(
-        title: '사업장 선택',
-        icon: Icons.business,
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: _allBusinessIds.map((id) {
-            return ListTile(
-              leading: Icon(
-                Icons.business,
-                size: ResponsiveHelper.iconSize(context, 24),
-                color: Theme.of(context).primaryColor,
-              ),
-              title: Text(
-                businessNames[id] ?? id,
-                style: ResponsiveHelper.bodyStyle(context),
-              ),
-              onTap: () => Navigator.pop(context, id),
-            );
-          }).toList(),
-        ),
-        actions: [
-          StyledDialogButton.cancel(
-            onPressed: () => Navigator.pop(context),
-          ),
-        ],
-      ),
-    );
-  }
-  /// ✅ 전체 TO 통계 재계산 (디버그용)
-  Future<void> _recalculateAllStats() async {
-    final confirmed = await DialogHelper.showConfirm(
-      context,
-      title: '통계 재계산',
-      message: '모든 TO의 통계를 재계산합니다.\n시간이 걸릴 수 있습니다.\n\n계속하시겠습니까?',
-      confirmText: '재계산',
-    );
-    
-    if (!confirmed) return;
-    if (!mounted) return;
-
-    // 로딩 표시
-    showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder: (_) => PopScope(
-        canPop: false,
-        child: Center(
-          child: Container(
-            padding: const EdgeInsets.all(24),
-            decoration: BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.circular(16),
-            ),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                const CircularProgressIndicator(),
-                const SizedBox(height: 16),
-                Text(
-                  '통계 재계산 중...',
-                  style: ResponsiveHelper.bodyStyle(context),
-                ),
-              ],
-            ),
-          ),
-        ),
-      ),
-    );
-    
-    try {
-      // 1. 모든 TO 통계 재계산
-      final snapshot = await FirebaseFirestore.instance.collection('tos').get();
-      int count = 0;
-      
-      for (var doc in snapshot.docs) {
-        await _firestoreService.recalculateTOStats(doc.id);
-        count++;
-        debugPrint('📊 [$count/${snapshot.docs.length}] ${doc.id} 재계산 완료');
-      }
-      
-      // 2. 그룹 마스터 통계 동기화
-      final groupCount = await _firestoreService.migrateAllGroupMasterStats();
-      
-      // 3. 캐시 클리어
-      _firestoreService.clearCache();
-      
-      if (mounted) Navigator.pop(context);
-      
-      ToastHelper.showSuccess('$count개 TO, $groupCount개 그룹 통계 재계산 완료');
-      
-      // 화면 새로고침
-      setState(() {});
-      
-    } catch (e) {
-      if (mounted) Navigator.pop(context);
-      debugPrint('❌ 통계 재계산 실패: $e');
-      ToastHelper.showError('통계 재계산 실패: $e');
-    }
-  }
-  
 }

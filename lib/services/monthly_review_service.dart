@@ -19,7 +19,7 @@ import '../models/settings/trust_settings_model.dart';
 class MonthlyReviewService {
   final FirebaseFirestore _db = FirebaseFirestore.instance;
 
-  static const int _reviewWindowDays = 7;
+  static const int _reviewWindowDays = 14;
 
   // ═══════════════════════════════════════════════════════════
   // 리뷰 요청 (review_requests)
@@ -71,6 +71,23 @@ class MonthlyReviewService {
     }
   }
 
+  /// 미공개 리뷰 요청 전체 조회 (deadline 맵 구성용)
+  /// adminStatus 무관 — 작성완료 후 상대방 대기 중인 요청도 포함
+  Future<List<ReviewRequestModel>> getAllNonPublishedRequestsForBusiness(
+      String businessId) async {
+    try {
+      final snap = await _db
+          .collection('review_requests')
+          .where('businessId', isEqualTo: businessId)
+          .where('isPublished', isEqualTo: false)
+          .get();
+      return snap.docs.map(ReviewRequestModel.fromFirestore).toList();
+    } catch (e) {
+      debugPrint('❌ 미공개 리뷰 요청 조회 실패: $e');
+      return [];
+    }
+  }
+
   // ═══════════════════════════════════════════════════════════
   // 리뷰 작성
   // ═══════════════════════════════════════════════════════════
@@ -87,6 +104,8 @@ class MonthlyReviewService {
     required String businessName,
     required String targetUserId,
     required String targetUserName,
+    String? targetUserGender,
+    int? targetUserAge,
     required int reviewYear,
     required int reviewMonth,
     required int workDaysInMonth,
@@ -122,6 +141,8 @@ class MonthlyReviewService {
         businessName: businessName,
         targetUserId: targetUserId,
         targetUserName: targetUserName,
+        targetUserGender: targetUserGender,
+        targetUserAge: targetUserAge,
         reviewYear: reviewYear,
         reviewMonth: reviewMonth,
         workDaysInMonth: workDaysInMonth,
@@ -136,16 +157,22 @@ class MonthlyReviewService {
         createdAt: DateTime.now(),
       );
 
-      // set() with doc ID = reviewKey → 중복 시 이미 존재 예외 발생
+      // 트랜잭션으로 중복 제출 방지 (동시 요청에서도 안전)
       final docRef = _db.collection('monthly_reviews').doc(reviewKey);
-      await docRef.set(review.toMap());
+      await _db.runTransaction((tx) async {
+        final existing = await tx.get(docRef);
+        if (existing.exists) {
+          throw FirebaseException(plugin: 'firestore', code: 'already-exists');
+        }
+        tx.set(docRef, review.toMap());
+      });
 
-      // review_requests 업데이트
+      // review_requests 업데이트 (문서 없는 경우에도 merge로 처리)
       if (requestId != null) {
-        await _db.collection('review_requests').doc(requestId).update({
+        await _db.collection('review_requests').doc(requestId).set({
           'adminStatus': 'submitted',
           'adminReviewId': reviewKey,
-        });
+        }, SetOptions(merge: true));
       }
 
       debugPrint('✅ 리뷰 작성 완료: $reviewKey');
@@ -216,10 +243,10 @@ class MonthlyReviewService {
       await docRef.set(review.toMap());
 
       if (requestId != null) {
-        await _db.collection('review_requests').doc(requestId).update({
+        await _db.collection('review_requests').doc(requestId).set({
           'workerStatus': 'submitted',
           'workerReviewId': reviewKey,
-        });
+        }, SetOptions(merge: true));
       }
 
       debugPrint('✅ 사업장 리뷰 작성 완료: $reviewKey');
@@ -353,24 +380,25 @@ class MonthlyReviewService {
       final monthStart = DateTime(year, month, 1);
       final monthEnd = DateTime(year, month + 1, 0, 23, 59, 59);
 
-      // 단기: workDate가 해당 월인 확정 지원서
+      // 단기: workDate가 해당 월인 확정 지원서 (CONTRACT_PENDING 포함)
       final shortTermFuture = _db
           .collection('applications')
           .where('businessId', isEqualTo: businessId)
-          .where('status', isEqualTo: AppStatus.confirmed)
+          .where('status', whereIn: [AppStatus.confirmed, AppStatus.contractPending])
           .where('workDate',
               isGreaterThanOrEqualTo: Timestamp.fromDate(monthStart))
           .where('workDate',
               isLessThanOrEqualTo: Timestamp.fromDate(monthEnd))
           .get();
 
-      // 장기: workEndDate가 해당 월 이후 (계약이 해당 월에 걸침)
+      // 장기: workEndDate가 해당 월 이후 (계약이 해당 월에 걸침, CONTRACT_PENDING 포함)
       final longTermFuture = _db
           .collection('applications')
           .where('businessId', isEqualTo: businessId)
-          .where('status', isEqualTo: AppStatus.confirmed)
+          .where('status', whereIn: [AppStatus.confirmed, AppStatus.contractPending])
           .where('workEndDate',
               isGreaterThanOrEqualTo: Timestamp.fromDate(monthStart))
+          .limit(500)  // 과다 조회 방지 (대형 사업장도 월 500명 초과 없음)
           .get();
 
       // 해당 월 기존 리뷰 일괄 조회 (N+1 제거)
@@ -421,13 +449,13 @@ class MonthlyReviewService {
         if (uid.isEmpty || workDays == null || workDays.isEmpty) continue;
         if (reviewedUserIds.contains(uid)) continue;
 
-        final workDate = (data['workDate'] as Timestamp?)?.toDate();
-        final workEndDate = (data['workEndDate'] as Timestamp?)?.toDate();
+        final workDate = (data['workDate'] as Timestamp?)?.toDate().toLocal();
+        final workEndDate = (data['workEndDate'] as Timestamp?)?.toDate().toLocal();
         if (workDate == null || workEndDate == null) continue;
 
         // 해당 월 근무 일수 추정 (요일 기반)
         final daysInMonth = _countWorkingDaysInMonth(
-          workDays.cast<String>(),
+          workDays.whereType<String>().toList(),
           year,
           month,
           workDate,
@@ -561,15 +589,17 @@ class MonthlyReviewService {
       if (snap.docs.isEmpty) return;
 
       double totalRating = 0;
+      int ratedCount = 0;
       int rehireYesCount = 0;
       for (final doc in snap.docs) {
         final data = doc.data();
-        totalRating += (data['rating'] as num? ?? 0).toDouble();
+        final r = (data['rating'] as num? ?? 0).toInt();
+        if (r > 0) { totalRating += r; ratedCount++; }
         if (data['wouldRehire'] == true) rehireYesCount++;
       }
 
       await _db.collection('users').doc(userId).update({
-        'averageRating': totalRating / snap.size,
+        'averageRating': ratedCount > 0 ? totalRating / ratedCount : null,
         'reviewCount': snap.size,
         'rehireRate': rehireYesCount / snap.size,
       });
@@ -590,12 +620,14 @@ class MonthlyReviewService {
       if (snap.docs.isEmpty) return;
 
       double totalRating = 0;
+      int ratedCount = 0;
       for (final doc in snap.docs) {
-        totalRating += (doc.data()['rating'] as num? ?? 0).toDouble();
+        final r = (doc.data()['rating'] as num? ?? 0).toInt();
+        if (r > 0) { totalRating += r; ratedCount++; }
       }
 
       await _db.collection('businesses').doc(businessId).update({
-        'rating': totalRating / snap.size,
+        'rating': ratedCount > 0 ? totalRating / ratedCount : null,
         'reviewCount': snap.size,
       });
     } catch (e) {

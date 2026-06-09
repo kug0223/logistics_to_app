@@ -1,21 +1,31 @@
-﻿import 'package:flutter/foundation.dart';
+﻿import 'dart:async';
+import 'package:flutter/foundation.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import '../models/core/user_model.dart';
+import '../models/core/business_member_model.dart';
 import '../services/auth_service.dart';
+import '../services/member_service.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'notification_provider.dart';
-import '../../../services/fcm_service.dart';
+import '../services/fcm_service.dart';
 
 class UserProvider with ChangeNotifier {
   final AuthService _authService = AuthService();
-  
+
   UserModel? _currentUser;
   bool _isLoading = false;
   String? _error;
-  
-  // 🔔 NotificationProvider 연결용
+
+  // 하위 관리자 모드
+  bool _isAdminMode = false;
+  MemberPermissions? _memberPermissions;
+
+  // NotificationProvider 연결용
   NotificationProvider? _notificationProvider;
-  
+
+  StreamSubscription? _authSubscription;
+  bool _disposed = false;
+
   void setNotificationProvider(NotificationProvider provider) {
     _notificationProvider = provider;
   }
@@ -24,16 +34,57 @@ class UserProvider with ChangeNotifier {
   bool get isLoading => _isLoading;
   String? get error => _error;
   bool get isLoggedIn => _currentUser != null;
-  
+
   bool get isAdmin => _currentUser?.isAdmin ?? false;
   bool get isSuperAdmin => _currentUser?.isSuperAdmin ?? false;
   bool get isBusinessAdmin => _currentUser?.isBusinessAdmin ?? false;
   bool get isUser => _currentUser?.isUser ?? false;
+  bool get isSubAdmin => _currentUser?.isSubAdmin ?? false;
   String? get businessId => _currentUser?.businessId;
+
+  // 하위 관리자 모드 관련
+  bool get isAdminMode => _isAdminMode;
+  MemberPermissions? get memberPermissions => _memberPermissions;
+
+  /// 관리자 모드 전환 (하위 관리자만 호출 가능)
+  void toggleAdminMode() {
+    if (!isSubAdmin) return;
+    _isAdminMode = !_isAdminMode;
+    notifyListeners();
+  }
+
+  /// 현재 유저의 유효한 businessId (BUSINESS_ADMIN은 자체, SUB_ADMIN은 subAdminOf)
+  String? get effectiveBusinessId {
+    final user = _currentUser;
+    if (user == null) return null;
+    if (user.isBusinessAdmin) return user.businessId;
+    if (user.isSubAdmin) return user.subAdminOf;
+    return null;
+  }
+
+  /// 특정 권한 체크 — BUSINESS_ADMIN은 항상 true, SUB_ADMIN은 permissions 확인
+  bool can(bool Function(MemberPermissions p) check) {
+    if (_currentUser?.isBusinessAdmin == true) return true;
+    if (_memberPermissions != null) return check(_memberPermissions!);
+    return false;
+  }
+
+  @override
+  void dispose() {
+    _disposed = true;
+    _authSubscription?.cancel();
+    super.dispose();
+  }
+
+  @override
+  void notifyListeners() {
+    if (!_disposed) super.notifyListeners();
+  }
 
   // 초기화 - Firebase Auth 상태 리스닝
   void initialize() {
-    _authService.authStateChanges.listen((User? firebaseUser) async {
+    _authSubscription = _authService.authStateChanges.listen((User? firebaseUser) async {
+      if (_disposed) return;
       if (firebaseUser != null) {
         await _loadUserData(firebaseUser.uid);
       } else {
@@ -41,8 +92,9 @@ class UserProvider with ChangeNotifier {
         notifyListeners();
       }
     }, onError: (error) {
+      if (_disposed) return;
       debugPrint('❌ Auth 상태 변경 에러: $error');
-      if (error.toString().contains('invalid-user-token') || 
+      if (error.toString().contains('invalid-user-token') ||
           error.toString().contains('user-token-expired')) {
         debugPrint('🔄 토큰 만료 - 자동 로그아웃');
         signOut();
@@ -54,15 +106,26 @@ class UserProvider with ChangeNotifier {
   Future<void> _loadUserData(String uid) async {
     try {
       _currentUser = await _authService.getUserData(uid);
-      
+
       if (_currentUser != null) {
-        // 🔔 알림 Provider 초기화
+        // 알림 Provider 초기화
         _notificationProvider?.setUser(_currentUser!.uid);
-        
-        // 🔔 FCM 푸시 알림 초기화
+
+        // FCM 푸시 알림 초기화
         await FCMService().initialize(_currentUser!.uid);
+
+        // 하위 관리자이면 권한 로드
+        if (_currentUser!.isSubAdmin && _currentUser!.subAdminOf != null) {
+          _memberPermissions = await MemberService().getMemberPermissions(
+            _currentUser!.subAdminOf!,
+            uid,
+          );
+        } else {
+          _memberPermissions = null;
+          _isAdminMode = false;
+        }
       }
-      
+
       notifyListeners();
     } catch (e) {
       debugPrint('❌ 사용자 데이터 로드 실패: $e');
@@ -87,7 +150,7 @@ class UserProvider with ChangeNotifier {
     }
   }
 
-  // ⭐ 개선된 회원가입 - 주민번호 기반 + 서류 업로드 + 통장정보
+  // 회원가입
   Future<bool> signUp({
     required String username,
     required String userEmail,
@@ -110,7 +173,7 @@ class UserProvider with ChangeNotifier {
     // 사업자 정보
     String? businessNumber,
     String? businessName,
-    // ✅ 통장 정보 추가
+    String? ceoName,
     String? bankName,
     String? accountNumber,
   }) async {
@@ -137,7 +200,7 @@ class UserProvider with ChangeNotifier {
         businessLicenseImageUrl: businessLicenseImageUrl,
         businessNumber: businessNumber,
         businessName: businessName,
-        // ✅ 통장 정보 전달
+        ceoName: ceoName,
         bankName: bankName,
         accountNumber: accountNumber,
       );
@@ -166,7 +229,8 @@ class UserProvider with ChangeNotifier {
 
       final user = await _authService.signIn(username, password);
       if (user != null) {
-        _currentUser = user;
+        // _loadUserData로 FCM·NotificationProvider·권한 초기화까지 한번에 처리
+        await _loadUserData(user.uid);
         debugPrint('✅ 로그인 성공: ${user.email}');
         return true;
       }
@@ -198,21 +262,26 @@ class UserProvider with ChangeNotifier {
   // 로그아웃
   Future<void> signOut() async {
     try {
-      // 🔔 알림 Provider 정리
+      // 알림 Provider 정리
       _notificationProvider?.clearUser();
       
-      // 🔔 FCM 토큰 삭제
+      // FCM 토큰 삭제
       await FCMService().clearToken();
       
       await _authService.signOut();
       _currentUser = null;
+      _memberPermissions = null;
+      _isAdminMode = false;
       _error = null;
       debugPrint('✅ 로그아웃 성공');
       notifyListeners();
     } catch (e) {
       debugPrint('❌ 로그아웃 실패: $e');
       // 로그아웃 실패해도 로컬 상태는 초기화
+      _notificationProvider?.clearUser();
       _currentUser = null;
+      _memberPermissions = null;
+      _isAdminMode = false;
       _error = null;
       notifyListeners();
     }
@@ -232,11 +301,9 @@ class UserProvider with ChangeNotifier {
             .doc(_currentUser!.uid)
             .get();
         
-        if (doc.exists) {
-          _currentUser = UserModel.fromMap(
-            doc.data() as Map<String, dynamic>,
-            doc.id,
-          );
+        final data = doc.data();
+        if (doc.exists && data != null) {
+          _currentUser = UserModel.fromMap(data, doc.id);
           notifyListeners();
         }
       } catch (e) {

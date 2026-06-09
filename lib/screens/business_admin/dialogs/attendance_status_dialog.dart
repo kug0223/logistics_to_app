@@ -518,11 +518,26 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
     // 출근 완료 (퇴근 미체크)
     if (attendance?.checkIn != null) {
       final isLate = AttendanceStatusHelper.isLate(attendance!.checkIn!, expectedStart);
-      // 과거 날짜이고 퇴근을 안 찍은 경우 → 퇴근 미체크 경고
-      final isPastDay = widget.date.isBefore(
-        DateTime(DateTime.now().year, DateTime.now().month, DateTime.now().day),
-      );
-      if (isPastDay) {
+      // 과거 날짜이거나 당일 퇴근 예정 시간 초과 → 퇴근 미체크 경고
+      final today = DateTime(DateTime.now().year, DateTime.now().month, DateTime.now().day);
+      final isPastDay = widget.date.isBefore(today);
+      bool isOverdue = false;
+      if (!isPastDay && expectedEnd.isNotEmpty) {
+        final endParts = expectedEnd.split(':');
+        if (endParts.length == 2) {
+          final endH = int.tryParse(endParts[0]);
+          final endM = int.tryParse(endParts[1]);
+          if (endH != null && endM != null) {
+            final workDay = widget.date;
+            var endAt = DateTime(workDay.year, workDay.month, workDay.day, endH, endM);
+            final startParts = expectedStart.split(':');
+            final startH = int.tryParse(startParts.first) ?? 0;
+            if (endH < startH) endAt = endAt.add(const Duration(days: 1));
+            isOverdue = DateTime.now().isAfter(endAt);
+          }
+        }
+      }
+      if (isPastDay || isOverdue) {
         return {
           'status': 'missed_checkout',
           'color': AppColors.error,
@@ -1494,9 +1509,14 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
     final endH = int.tryParse(parts[0]);
     final endM = int.tryParse(parts[1]);
     if (endH == null || endM == null) return false;
-    final now = DateTime.now();
-    final endAt = DateTime(now.year, now.month, now.day, endH, endM);
-    return now.isAfter(endAt);
+    // widget.date 기준으로 퇴근 예정시각 계산 (야간 자정 넘김 보정)
+    final workDay = widget.date;
+    var endAt = DateTime(workDay.year, workDay.month, workDay.day, endH, endM);
+    final effStart = WorkDetailHelper.effectiveStart(app, _workDetailTimeMap);
+    final startParts = effStart.split(':');
+    final startH = int.tryParse(startParts.first) ?? 0;
+    if (endH < startH) endAt = endAt.add(const Duration(days: 1));
+    return DateTime.now().isAfter(endAt);
   }
 
   /// 근무자 카드
