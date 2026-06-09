@@ -20,6 +20,7 @@ class _MyReviewsScreenState extends State<MyReviewsScreen> {
   final MonthlyReviewService _reviewService = MonthlyReviewService();
 
   List<MonthlyReviewModel> _reviews = [];
+  double _avgRating = 0.0;
   bool _isLoading = true;
   String? _loadError;
 
@@ -38,7 +39,16 @@ class _MyReviewsScreenState extends State<MyReviewsScreen> {
         targetUserId: uid,
         limit: 50,
       );
-      if (mounted) setState(() { _reviews = reviews; _isLoading = false; });
+      final avg = reviews.isEmpty
+          ? 0.0
+          : reviews.map((r) => r.rating).reduce((a, b) => a + b) / reviews.length;
+      if (mounted) {
+        setState(() {
+          _reviews = reviews;
+          _avgRating = avg;
+          _isLoading = false;
+        });
+      }
     } catch (e) {
       if (mounted) setState(() { _loadError = e.toString(); _isLoading = false; });
     }
@@ -73,41 +83,43 @@ class _MyReviewsScreenState extends State<MyReviewsScreen> {
                     child: const Text('다시 시도'),
                   ),
                 )
-              : _reviews.isEmpty
-                  ? const AppEmptyState(
-                      icon: Icons.star_border_rounded,
-                      title: '아직 받은 평가가 없습니다',
-                      subtitle: '근무 완료 후 사업장에서 평가를 남기면\n여기에 표시됩니다',
-                    )
-                  : RefreshIndicator(
-                      onRefresh: _loadReviews,
-                      child: CustomScrollView(
-                        slivers: [
-                          SliverToBoxAdapter(child: _buildSummaryHeader(context)),
-                          SliverPadding(
-                            padding: EdgeInsets.fromLTRB(
-                              ResponsiveHelper.spacing(context, 16),
-                              0,
-                              ResponsiveHelper.spacing(context, 16),
-                              ResponsiveHelper.spacing(context, 24),
-                            ),
-                            sliver: SliverList(
-                              delegate: SliverChildBuilderDelegate(
-                                (ctx, i) => _ReviewCard(review: _reviews[i]),
-                                childCount: _reviews.length,
-                              ),
+              : RefreshIndicator(
+                  onRefresh: _loadReviews,
+                  child: CustomScrollView(
+                    physics: const AlwaysScrollableScrollPhysics(),
+                    slivers: [
+                      if (_reviews.isNotEmpty)
+                        SliverToBoxAdapter(child: _buildSummaryHeader(context)),
+                      if (_reviews.isEmpty)
+                        const AppEmptyState(
+                          asSliver: true,
+                          icon: Icons.star_border_rounded,
+                          title: '아직 받은 평가가 없습니다',
+                          subtitle: '근무 완료 후 사업장에서 평가를 남기면\n여기에 표시됩니다',
+                        )
+                      else
+                        SliverPadding(
+                          padding: EdgeInsets.fromLTRB(
+                            ResponsiveHelper.spacing(context, 16),
+                            0,
+                            ResponsiveHelper.spacing(context, 16),
+                            ResponsiveHelper.spacing(context, 24),
+                          ),
+                          sliver: SliverList(
+                            delegate: SliverChildBuilderDelegate(
+                              (ctx, i) => _ReviewCard(review: _reviews[i]),
+                              childCount: _reviews.length,
                             ),
                           ),
-                        ],
-                      ),
-                    ),
+                        ),
+                    ],
+                  ),
+                ),
     );
   }
 
   Widget _buildSummaryHeader(BuildContext context) {
-    final avgRating = _reviews.isEmpty
-        ? 0.0
-        : _reviews.map((r) => r.rating).reduce((a, b) => a + b) / _reviews.length;
+    final avgRating = _avgRating;
     final theme = Theme.of(context);
 
     return Container(
@@ -309,23 +321,6 @@ class _ReviewCard extends StatelessWidget {
               ),
             ],
 
-            // 공개 상태 (미공개인 경우만 표시)
-            if (!review.isPublished) ...[
-              SizedBox(height: ResponsiveHelper.spacing(context, 8)),
-              Row(
-                children: [
-                  Icon(Icons.schedule_outlined,
-                      size: ResponsiveHelper.iconSize(context, 12),
-                      color: AppColors.grey400),
-                  SizedBox(width: ResponsiveHelper.spacing(context, 4)),
-                  Text(
-                    review.publishStatusText,
-                    style: ResponsiveHelper.tinyStyle(context,
-                        color: AppColors.grey400),
-                  ),
-                ],
-              ),
-            ],
           ],
         ),
       ),

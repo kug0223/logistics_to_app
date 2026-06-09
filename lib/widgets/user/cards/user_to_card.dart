@@ -386,17 +386,21 @@ class _UserTOCardState extends State<UserTOCard> {
   }
 
   Widget _buildFavoriteButton(BuildContext context) {
-    final userProvider = context.watch<UserProvider>();
-    final isFav = userProvider.isFavoriteTo(widget.to.id);
-    return GestureDetector(
-      onTap: () => context.read<UserProvider>().toggleFavoriteTo(widget.to.id),
-      behavior: HitTestBehavior.opaque,
-      child: Padding(
-        padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 2)),
-        child: Icon(
-          isFav ? Icons.favorite_rounded : Icons.favorite_border_rounded,
-          size: ResponsiveHelper.iconSize(context, 18),
-          color: isFav ? AppColors.error : AppColors.grey300,
+    return Selector<UserProvider, bool>(
+      selector: (_, p) => p.isFavoriteTo(widget.to.id),
+      builder: (ctx, isFav, _) => GestureDetector(
+        onTap: () => ctx.read<UserProvider>().toggleFavoriteTo(widget.to.id),
+        behavior: HitTestBehavior.opaque,
+        child: SizedBox(
+          width: ResponsiveHelper.spacing(context, 36),
+          height: ResponsiveHelper.spacing(context, 36),
+          child: Center(
+            child: Icon(
+              isFav ? Icons.favorite_rounded : Icons.favorite_border_rounded,
+              size: ResponsiveHelper.iconSize(context, 18),
+              color: isFav ? AppColors.error : AppColors.grey300,
+            ),
+          ),
         ),
       ),
     );

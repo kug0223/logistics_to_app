@@ -671,7 +671,7 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
           ),
           SizedBox(width: ResponsiveHelper.spacing(context, 4)),
           Text(
-            '($reviewCount건)',
+            '(전체 $reviewCount건)',
             style: ResponsiveHelper.tinyStyle(context, color: color),
           ),
         ],
