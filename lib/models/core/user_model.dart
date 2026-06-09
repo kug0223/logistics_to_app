@@ -1,5 +1,3 @@
-// lib/models/core/user_model.dart
-
 import 'package:cloud_firestore/cloud_firestore.dart';
 import '../../utils/encryption_helper.dart';
 
@@ -11,73 +9,92 @@ enum UserRole {
 }
 
 class UserModel {
-  // ━━━ 기본 인증 정보 ━━━
+  // ── 기본 인증 정보 ──
   final String uid;
   final String username;
-  final String email;              // ⚠️ 이건 systemEmail로 사용됨
-  final String? userEmail;         // ⭐ 실제 이메일 추가
+  final String email;              // systemEmail로 사용됨
+  final String? userEmail;         // 실제 이메일
   final UserRole role;
   final String? businessId;             // 대표 사업장 ID (하위 호환용)
   final List<String> managedBusinessIds; // 관리하는 모든 사업장 ID 목록
   final DateTime? createdAt;
   final DateTime? lastLoginAt;
   
-  // ━━━ 필수 개인 정보 ━━━
+  // ── 필수 개인 정보 ──
   final String name;
   final String? phone;
   final String? gender;                  // '남성' | '여성'
   final DateTime? birthDate;             // 생년월일
-  final String? residentNumber;          // 주민등록번호 (⚠️ 실제론 암호화 필요!)
+  final String? residentNumber;          // 주민등록번호 (암호화 저장)
   final String? address;                 // 주소
   final String? detailAddress;           // 상세 주소
-  
-  // ━━━ 신분증 정보 ━━━
+
+  // ── 신분증 정보 ──
   final String? idCardImageUrl;         // 신분증 앞면 이미지 URL
   final DateTime? idCardVerifiedAt;     // 신분증 인증 시각
   final bool isIdVerified;              // 신분증 인증 여부
   final bool isEmailVerified;           // 이메일 인증 여부
   
-  // ━━━ 급여 통장 정보 ━━━
+  // ── 급여 통장 정보 ──
   final String? bankName;               // 은행명
-  final String? accountNumber;          // 계좌번호 (⚠️ 실제론 암호화 필요!)
+  final String? accountNumber;          // 계좌번호 (암호화 저장)
   final String? accountHolder;          // 예금주
   final String? bankbookImageUrl;
   
-  // ━━━ 프로필 & 경력 ━━━
+  // ── 프로필 & 경력 ──
   final String? profileImageUrl;        // 프로필 사진 URL
   final String? bio;                    // 자기소개
   final List<String>? skills;           // 보유 스킬/자격증
   final List<String>? preferredWorkTypes; // 선호 업무 (예: ['피킹', '패킹'])
   
-  // ━━━ 근무 이력 & 통계 ━━━
+  // ── 근무 이력 & 통계 ──
   final int totalWorkDays;              // 총 근무 일수
   final int totalWorkHours;             // 총 근무 시간
   final double averageRating;           // 평균 평점 (0.0~5.0)
   final int reviewCount;                // 받은 리뷰 수
   final int noShowCount;                // 무단 결근 횟수
   final int lateCount;                  // 지각 횟수
-  // ━━━ 상태 정보 ━━━
+  // ── 상태 정보 ──
   final bool isAvailable;               // 근무 가능 여부
   final String? unavailableReason;      // 불가 사유
   final DateTime? availableFrom;        // 근무 가능 시작일
   final bool isBlacklisted;             // 블랙리스트 여부
   final String? blacklistReason;        // 블랙리스트 사유
-  final String? businessNumber;         // ✅ 추가: 사업자등록번호 (관리자용)
-  final String? businessName;           // ✅ 추가: 상호명 (관리자용)
-  final String? businessLicenseImageUrl; // ✅ 추가: 사업자등록증 이미지
-  final String? ceoName;                 // ✅ 추가: 대표자명
-  // ━━━ 신뢰도 시스템 ━━━
+  final String? businessNumber;         // 사업자등록번호 (관리자용)
+  final String? businessName;           // 상호명 (관리자용)
+  final String? businessLicenseImageUrl; // 사업자등록증 이미지
+  final String? ceoName;                 // 대표자명
+  // ── 신뢰도 시스템 ──
   final int? storedTrustScore;           // 저장된 신뢰도 점수
   final double rehireRate;               // 재고용 희망률 (0.0~1.0)
   final List<String> badges;             // 배지 ID 목록
   final DateTime? lastRestartAt;         // 마지막 재시작 프로그램 일시
+  final String? signatureBase64;         // 사전 등록 서명 이미지 (base64)
+  final String? subAdminOf;              // 하위 관리자로 참여 중인 사업장 ID
+  final DateTime? restrictedUntil;       // 제재 만료 시각 (noShow 2회 이상 시 3일 제재)
+  final Map<String, bool> notifPrefs;    // 알림 종류별 수신 설정 (기본 모두 true)
+
+  // 알림 카테고리 키 상수
+  static const String notifWorkReminder    = 'workReminder';
+  static const String notifApplicationUpdate = 'applicationUpdate';
+  static const String notifReviewAlert     = 'reviewAlert';
+  static const String notifContractAlert   = 'contractAlert';
+  static const String notifWageAlert       = 'wageAlert';
+
+  static const Map<String, bool> defaultNotifPrefs = {
+    'workReminder':      true,
+    'applicationUpdate': true,
+    'reviewAlert':       true,
+    'contractAlert':     true,
+    'wageAlert':         true,
+  };
 
   UserModel({
     required this.uid,
     required this.username,
     required this.name,
     required this.email,           // systemEmail
-    this.userEmail,                // ⭐ 추가
+    this.userEmail,
     this.phone,
     required this.role,
     this.businessId,
@@ -113,19 +130,25 @@ class UserModel {
     this.availableFrom,
     this.isBlacklisted = false,
     this.blacklistReason,
-    this.businessNumber,              // ✅ 추가
-    this.businessName,     
-    this.businessLicenseImageUrl,     // ✅ 추가
-    this.ceoName,  // ✅ 추가
-    // ━━━ 신뢰도 시스템 ━━━
+    this.businessNumber,
+    this.businessName,
+    this.businessLicenseImageUrl,
+    this.ceoName,
+    // ── 신뢰도 시스템 ──
     this.storedTrustScore,
     this.rehireRate = 0.0,
     this.badges = const [],
     this.lastRestartAt,
-  }) : managedBusinessIds = managedBusinessIds ??
+    this.signatureBase64,
+    this.subAdminOf,
+    this.restrictedUntil,
+    Map<String, bool>? notifPrefs,
+  }) : notifPrefs = notifPrefs ?? defaultNotifPrefs,
+       managedBusinessIds = managedBusinessIds ??
            (businessId != null ? [businessId] : const []);
 
-  // ━━━ 편의 메서드 ━━━
+
+  // ── 편의 메서드 ──
   
   /// 슈퍼관리자인지 확인
   bool get isSuperAdmin => role == UserRole.SUPER_ADMIN;
@@ -136,8 +159,15 @@ class UserModel {
   /// 일반 사용자인지 확인
   bool get isUser => role == UserRole.USER;
   
-  /// 관리자 권한이 있는지 (슈퍼 또는 사업장 관리자)
-  bool get isAdmin => role == UserRole.SUPER_ADMIN || role == UserRole.BUSINESS_ADMIN;
+  /// 하위 관리자인지 (근무자이면서 특정 사업장 관리 권한 보유)
+  bool get isSubAdmin => role == UserRole.USER && subAdminOf != null;
+
+  /// 현재 제재 중인지 (noShow 페널티)
+  bool get isRestricted =>
+      restrictedUntil != null && restrictedUntil!.isAfter(DateTime.now());
+
+  /// 관리자 권한이 있는지 (슈퍼 또는 사업장 관리자 또는 하위 관리자)
+  bool get isAdmin => role == UserRole.SUPER_ADMIN || role == UserRole.BUSINESS_ADMIN || isSubAdmin;
 
   /// 역할 문자열
   String get roleString => _roleToString(role);
@@ -190,7 +220,7 @@ class UserModel {
     return '🚨';
   }
 
-  // ━━━ Firestore 변환 ━━━
+  // ── Firestore 변환 ──
 
   /// Firestore에서 데이터 가져올 때
   factory UserModel.fromMap(Map<String, dynamic> map, String uid) {
@@ -209,18 +239,18 @@ class UserModel {
       username: map['username'] ?? '',
       name: map['name'] ?? '',
       email: map['email'] ?? '',           // systemEmail
-      userEmail: map['userEmail'],         // ⭐ 추가
+      userEmail: map['userEmail'],
       phone: map['phone'],
       role: role,
       businessId: map['businessId'],
       managedBusinessIds: map['managedBusinessIds'] != null
           ? List<String>.from(map['managedBusinessIds'])
           : null,
-      createdAt: map['createdAt']?.toDate(),
-      lastLoginAt: map['lastLoginAt']?.toDate(),
+      createdAt: map['createdAt']?.toDate().toLocal(),
+      lastLoginAt: map['lastLoginAt']?.toDate().toLocal(),
       // 신규 필드
       gender: map['gender'],
-      birthDate: map['birthDate']?.toDate(),
+      birthDate: map['birthDate']?.toDate().toLocal(),
       residentNumber: EncryptionHelper.decrypt(map['residentNumber']),
       address: map['address'],
       detailAddress: map['detailAddress'],
@@ -238,26 +268,33 @@ class UserModel {
       preferredWorkTypes: map['preferredWorkTypes'] != null 
           ? List<String>.from(map['preferredWorkTypes']) 
           : null,
-      totalWorkDays: map['totalWorkDays'] ?? 0,
-      totalWorkHours: map['totalWorkHours'] ?? 0,
+      totalWorkDays: (map['totalWorkDays'] as num?)?.toInt() ?? 0,
+      totalWorkHours: (map['totalWorkHours'] as num?)?.toInt() ?? 0,
       averageRating: (map['averageRating'] ?? 0.0).toDouble(),
-      reviewCount: map['reviewCount'] ?? 0,
-      noShowCount: map['noShowCount'] ?? 0,
-      lateCount: map['lateCount'] ?? 0,
+      reviewCount: (map['reviewCount'] as num?)?.toInt() ?? 0,
+      noShowCount: (map['noShowCount'] as num?)?.toInt() ?? 0,
+      lateCount: (map['lateCount'] as num?)?.toInt() ?? 0,
       isAvailable: map['isAvailable'] ?? true,
       unavailableReason: map['unavailableReason'],
-      availableFrom: map['availableFrom']?.toDate(),
+      availableFrom: map['availableFrom']?.toDate().toLocal(),
       isBlacklisted: map['isBlacklisted'] ?? false,
       blacklistReason: map['blacklistReason'],
-      businessNumber: map['businessNumber'],              // ✅ 추가
-      businessName: map['businessName'],         
-      businessLicenseImageUrl: map['businessLicenseImageUrl'], // ✅ 추가
-      ceoName: map['ceoName'],  // ✅ 추가
-      // ━━━ 신뢰도 시스템 ━━━
+      businessNumber: map['businessNumber'],
+      businessName: map['businessName'],
+      businessLicenseImageUrl: map['businessLicenseImageUrl'],
+      ceoName: map['ceoName'],
+      // ── 신뢰도 시스템 ──
       storedTrustScore: (map['trustScore'] as num?)?.toInt(),
       rehireRate: (map['rehireRate'] ?? 0.0).toDouble(),
       badges: map['badges'] != null ? List<String>.from(map['badges']) : [],
-      lastRestartAt: map['lastRestartAt']?.toDate(),
+      lastRestartAt: map['lastRestartAt']?.toDate().toLocal(),
+      signatureBase64: map['signatureBase64'],
+      subAdminOf: map['subAdminOf'],
+      restrictedUntil: _parseDateTime(map['restrictedUntil']),
+      notifPrefs: map['notifPrefs'] != null
+          ? Map<String, bool>.from(
+              (map['notifPrefs'] as Map).map((k, v) => MapEntry(k.toString(), v == true)))
+          : null,
     );
   }
 
@@ -267,7 +304,7 @@ class UserModel {
       'username': username,
       'name': name,
       'email': email,              // systemEmail
-      'userEmail': userEmail,      // ⭐ 추가
+      'userEmail': userEmail,
       'phone': phone,
       'role': _roleToString(role),
       'businessId': businessId,
@@ -307,21 +344,27 @@ class UserModel {
           : null,
       'isBlacklisted': isBlacklisted,
       'blacklistReason': blacklistReason,
-      'businessNumber': businessNumber,              // ✅ 추가
-      'businessName': businessName,             
-      'businessLicenseImageUrl': businessLicenseImageUrl, // ✅ 추가
-      'ceoName': ceoName,  // ✅ 추가
-      // ━━━ 신뢰도 시스템 ━━━
+      'businessNumber': businessNumber,
+      'businessName': businessName,
+      'businessLicenseImageUrl': businessLicenseImageUrl,
+      'ceoName': ceoName,
+      // ── 신뢰도 시스템 ──
       'trustScore': storedTrustScore,
       'rehireRate': rehireRate,
       'badges': badges,
-      'lastRestartAt': lastRestartAt != null 
-          ? Timestamp.fromDate(lastRestartAt!) 
+      'lastRestartAt': lastRestartAt != null
+          ? Timestamp.fromDate(lastRestartAt!)
           : null,
+      'signatureBase64': signatureBase64,
+      'subAdminOf': subAdminOf,
+      'restrictedUntil': restrictedUntil != null
+          ? Timestamp.fromDate(restrictedUntil!)
+          : null,
+      'notifPrefs': notifPrefs,
     };
   }
 
-  // ━━━ 내부 헬퍼 메서드 ━━━
+  // ── 내부 헬퍼 메서드 ──
 
   /// UserRole을 String으로 변환
   static String _roleToString(UserRole role) {
@@ -355,7 +398,7 @@ class UserModel {
     String? username,
     String? name,
     String? email,
-    String? userEmail,             // ⭐ 추가
+    String? userEmail,
     String? phone,
     UserRole? role,
     String? businessId,
@@ -390,22 +433,29 @@ class UserModel {
     DateTime? availableFrom,
     bool? isBlacklisted,
     String? blacklistReason,
-    String? businessNumber,              // ✅ 추가
-    String? businessName,      
-    String? businessLicenseImageUrl,     // ✅ 추가
-    String? ceoName,  // ✅ 추가
-    // ━━━ 신뢰도 시스템 ━━━
+    String? businessNumber,
+    String? businessName,
+    String? businessLicenseImageUrl,
+    String? ceoName,
+    // ── 신뢰도 시스템 ──
     int? storedTrustScore,
     double? rehireRate,
     List<String>? badges,
     DateTime? lastRestartAt,
+    String? signatureBase64,
+    bool clearSignature = false,
+    String? subAdminOf,
+    bool clearSubAdminOf = false,
+    DateTime? restrictedUntil,
+    bool clearRestriction = false,
+    Map<String, bool>? notifPrefs,
   }) {
     return UserModel(
       uid: uid ?? this.uid,
       username: username ?? this.username,
       name: name ?? this.name,
       email: email ?? this.email,
-      userEmail: userEmail ?? this.userEmail,  // ⭐ 추가
+      userEmail: userEmail ?? this.userEmail,
       phone: phone ?? this.phone,
       role: role ?? this.role,
       businessId: businessId ?? this.businessId,
@@ -440,21 +490,25 @@ class UserModel {
       availableFrom: availableFrom ?? this.availableFrom,
       isBlacklisted: isBlacklisted ?? this.isBlacklisted,
       blacklistReason: blacklistReason ?? this.blacklistReason,
-      businessNumber: businessNumber ?? this.businessNumber,              // ✅ 추가
-      businessName: businessName ?? this.businessName,      
-      businessLicenseImageUrl: businessLicenseImageUrl ?? this.businessLicenseImageUrl, // ✅ 추가
-      ceoName: ceoName ?? this.ceoName,  // ✅ 추가
-      // ━━━ 신뢰도 시스템 ━━━
+      businessNumber: businessNumber ?? this.businessNumber,
+      businessName: businessName ?? this.businessName,
+      businessLicenseImageUrl: businessLicenseImageUrl ?? this.businessLicenseImageUrl,
+      ceoName: ceoName ?? this.ceoName,
+      // ── 신뢰도 시스템 ──
       storedTrustScore: storedTrustScore ?? this.storedTrustScore,
       rehireRate: rehireRate ?? this.rehireRate,
       badges: badges ?? this.badges,
       lastRestartAt: lastRestartAt ?? this.lastRestartAt,
+      signatureBase64: clearSignature ? null : (signatureBase64 ?? this.signatureBase64),
+      subAdminOf: clearSubAdminOf ? null : (subAdminOf ?? this.subAdminOf),
+      restrictedUntil: clearRestriction ? null : (restrictedUntil ?? this.restrictedUntil),
+      notifPrefs: notifPrefs ?? this.notifPrefs,
     );
   }
   /// 안전한 DateTime 파싱
   static DateTime? _parseDateTime(dynamic value) {
     if (value == null) return null;
-    if (value is Timestamp) return value.toDate();
+    if (value is Timestamp) return value.toDate().toLocal();
     if (value is DateTime) return value;
     if (value is String) return DateTime.tryParse(value);
     return null;

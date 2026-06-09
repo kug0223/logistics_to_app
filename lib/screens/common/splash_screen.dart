@@ -1,5 +1,9 @@
+import 'package:firebase_remote_config/firebase_remote_config.dart';
 import 'package:flutter/material.dart';
+import 'package:url_launcher/url_launcher.dart';
 import '../../main.dart' show AuthWrapper;
+import '../../services/app_version_service.dart';
+import '../../utils/responsive_helper.dart';
 
 class SplashScreen extends StatefulWidget {
   const SplashScreen({super.key});
@@ -34,9 +38,86 @@ class _SplashScreenState extends State<SplashScreen>
 
     _controller.forward();
 
-    Future.delayed(const Duration(milliseconds: 2000), () {
-      if (mounted) _navigateToHome();
+    Future.delayed(const Duration(milliseconds: 2000), () async {
+      if (!mounted) return;
+      final canProceed = await _checkVersion();
+      if (mounted && canProceed) _navigateToHome();
     });
+  }
+
+  /// 버전 체크 후 홈으로 진행 가능 여부 반환.
+  /// forceUpdate이면 false(진입 영구 차단), 그 외 true.
+  Future<bool> _checkVersion() async {
+    final result = await AppVersionService.check();
+    if (!mounted) return true;
+
+    if (result == VersionCheckResult.forceUpdate) {
+      _showForceUpdateDialog();
+      return false;
+    } else if (result == VersionCheckResult.recommendUpdate) {
+      await _showRecommendUpdateDialog();
+    }
+    return true;
+  }
+
+  void _showForceUpdateDialog() {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) {
+        final rawUrl = Theme.of(ctx).platform == TargetPlatform.iOS
+            ? FirebaseRemoteConfig.instance.getString('update_url_ios')
+            : FirebaseRemoteConfig.instance.getString('update_url_android');
+        return PopScope(
+          canPop: false,
+          child: AlertDialog(
+            title: const Text('업데이트 필요'),
+            content: const Text('앱을 최신 버전으로 업데이트해야 합니다.\n업데이트 후 다시 실행해주세요.'),
+            actions: [
+              TextButton(
+                onPressed: rawUrl.isEmpty
+                    ? null
+                    : () async {
+                        final url = Uri.parse(rawUrl);
+                        if (await canLaunchUrl(url)) {
+                          await launchUrl(url, mode: LaunchMode.externalApplication);
+                        }
+                      },
+                child: const Text('스토어로 이동'),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  Future<void> _showRecommendUpdateDialog() async {
+    await showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('업데이트 안내'),
+        content: const Text('새 버전이 출시됐습니다. 업데이트를 권장합니다.'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('나중에'),
+          ),
+          TextButton(
+            onPressed: () async {
+              Navigator.pop(ctx);
+              final rawUrl = Theme.of(ctx).platform == TargetPlatform.iOS
+                  ? FirebaseRemoteConfig.instance.getString('update_url_ios')
+                  : FirebaseRemoteConfig.instance.getString('update_url_android');
+              if (rawUrl.isEmpty) return;
+              final url = Uri.parse(rawUrl);
+              if (await canLaunchUrl(url)) await launchUrl(url, mode: LaunchMode.externalApplication);
+            },
+            child: const Text('업데이트'),
+          ),
+        ],
+      ),
+    );
   }
 
   void _navigateToHome() {
@@ -64,13 +145,13 @@ class _SplashScreenState extends State<SplashScreen>
       body: Container(
         width: double.infinity,
         height: double.infinity,
-        decoration: const BoxDecoration(
+        decoration: BoxDecoration(
           gradient: LinearGradient(
             begin: Alignment.topCenter,
             end: Alignment.bottomCenter,
             colors: [
-              Color(0xFF1565C0),
-              Color(0xFF1E88E5),
+              Theme.of(context).primaryColor,
+              Theme.of(context).colorScheme.secondary,
             ],
           ),
         ),
@@ -96,10 +177,10 @@ class _SplashScreenState extends State<SplashScreen>
                   const SizedBox(height: 24),
 
                   // 앱 이름
-                  const Text(
+                  Text(
                     'ALfit',
                     style: TextStyle(
-                      fontSize: 40,
+                      fontSize: ResponsiveHelper.titleStyle(context).fontSize! * 2.2,
                       fontWeight: FontWeight.w800,
                       color: Colors.white,
                       letterSpacing: 1.5,
@@ -112,10 +193,11 @@ class _SplashScreenState extends State<SplashScreen>
                   // 태그라인
                   Text(
                     '나에게 딱 맞는 알바 매칭',
-                    style: TextStyle(
-                      fontSize: 14,
-                      fontWeight: FontWeight.w400,
+                    style: ResponsiveHelper.bodyStyle(
+                      context,
                       color: Colors.white.withValues(alpha: 0.7),
+                    ).copyWith(
+                      fontWeight: FontWeight.w400,
                       letterSpacing: 0.5,
                     ),
                   ),
