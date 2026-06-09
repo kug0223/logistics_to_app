@@ -2669,8 +2669,9 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
         }
       }
 
-      // TO 마스터로 workType 단독 키를 덮어씀
-      // 슬롯 동기화가 지연되어도 TO 마스터(항상 최신)로 startTime/endTime 보정
+      // TO 마스터로 slotId 없는 경우의 workType 키 폴백 보정
+      // 슬롯 문서가 이미 데이터를 채웠으면 덮어쓰지 않음 (??=)
+      // → 슬롯 수정 시 TO 마스터(구시간)가 최신 슬롯값을 되돌리는 버그 방지
       final masterIds = slotPairs.keys.toSet();
       if (masterIds.isNotEmpty) {
         final masterFutures = masterIds.map((id) =>
@@ -2684,7 +2685,7 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
             final data = Map<String, dynamic>.from(wd as Map);
             final workType = data['workType'] as String? ?? '';
             if (workType.isEmpty) continue;
-            timeInfoMap[workType] = {
+            timeInfoMap[workType] ??= {
               'startTime': data['startTime'] ?? '',
               'endTime': data['endTime'] ?? '',
               'wage': data['wage'] ?? 0,
