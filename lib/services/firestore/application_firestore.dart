@@ -357,10 +357,10 @@ extension ApplicationFirestore on FirestoreService {
         if (slotId != null && doc.data()['slotId'] != slotId) continue;
         final data = doc.data();
         final status = data['status'] as String?;
-        final isResignDone = ['APPROVED', 'AUTO_APPROVED']
-            .contains(data['resignStatus']);
-        final isTermDone = ['APPROVED', 'AUTO_APPROVED']
-            .contains(data['terminationStatus']);
+        final isResignDone = data['resignStatus'] == AppStatus.approved ||
+            data['resignStatus'] == AppStatus.autoApproved;
+        final isTermDone = data['terminationStatus'] == AppStatus.approved ||
+            data['terminationStatus'] == AppStatus.autoApproved;
         if (isResignDone || isTermDone) continue;
         if (AppStatus.activeStates.contains(status)) {
           activeApp = doc;

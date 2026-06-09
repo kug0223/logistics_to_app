@@ -240,14 +240,16 @@ class MonthlyReviewService {
       );
 
       final docRef = _db.collection('monthly_reviews').doc(reviewKey);
-      await docRef.set(review.toMap());
-
+      final batch = _db.batch();
+      batch.set(docRef, review.toMap());
       if (requestId != null) {
-        await _db.collection('review_requests').doc(requestId).set({
+        final requestRef = _db.collection('review_requests').doc(requestId);
+        batch.set(requestRef, {
           'workerStatus': 'submitted',
           'workerReviewId': reviewKey,
         }, SetOptions(merge: true));
       }
+      await batch.commit();
 
       debugPrint('✅ 사업장 리뷰 작성 완료: $reviewKey');
       return (reviewId: reviewKey, error: null);

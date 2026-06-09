@@ -18,17 +18,32 @@ extension AttendanceFirestore on FirestoreService {
     required String businessName,
     required DateTime workDate,
     required String workType,
-    required double latitude,
-    required double longitude,
+    double? latitude,   // 비콘 방식은 null 가능
+    double? longitude,  // 비콘 방식은 null 가능
     String method = 'gps',
     String? scheduledStartTime,
   }) async {
+    NetworkChecker.instance.assertOnline('출근 체크를 하려면 인터넷 연결이 필요합니다.');
     try {
       debugPrint('🕐 [checkIn] 출근 체크 시작...');
       debugPrint('   applicationId: $applicationId');
       debugPrint('   workDate: $workDate');
 
-      // 0. 지원서 상태 확인 (CONFIRMED만 출근 가능)
+      // 0. 사용자 제재 상태 확인
+      final userDoc = await _firestore.collection('users').doc(userId).get();
+      if (userDoc.exists) {
+        final restrictedUntil = userDoc.data()?['restrictedUntil'];
+        DateTime? restrictedDate;
+        if (restrictedUntil is Timestamp) {
+          restrictedDate = restrictedUntil.toDate().toLocal();
+        }
+        if (restrictedDate != null && restrictedDate.isAfter(DateTime.now())) {
+          final until = FormatHelper.formatDateTime(restrictedDate);
+          throw Exception('현재 근무 제재 중입니다. 제재 해제일: $until');
+        }
+      }
+
+      // 1. 지원서 상태 확인 (CONFIRMED만 출근 가능)
       final appDoc = await _firestore
           .collection('applications')
           .doc(applicationId)
@@ -39,37 +54,22 @@ extension AttendanceFirestore on FirestoreService {
       }
 
       final appStatus = appDoc.data()?['status'] as String?;
-      if (appStatus != 'CONFIRMED') {
+      // CONTRACT_PENDING 포함 허용 — 의도된 정책:
+      // 계약서 서명 전이더라도 근무 시작은 가능하게 하여 현장 마찰 최소화.
+      // 서명 완료(CONFIRMED) 요구가 필요하다면 AppStatus.confirmed 단독으로 변경할 것.
+      if (!AppStatus.confirmedStatuses.contains(appStatus)) {
         throw Exception('확정된 근무만 출퇴근 체크가 가능합니다. (현재 상태: $appStatus)');
       }
 
-      // 1. 오늘 이미 출근했는지 확인
+      // 2. 결정적 문서 ID — applicationId + 날짜 조합으로 중복 방지
       final todayStart = DateTime(workDate.year, workDate.month, workDate.day);
-      final todayEnd = todayStart.add(const Duration(days: 1));
+      final dateStr = '${todayStart.year}${todayStart.month.toString().padLeft(2,'0')}${todayStart.day.toString().padLeft(2,'0')}';
+      final attendanceDocId = '${applicationId}_$dateStr';
+      final docRef = _firestore.collection('attendance').doc(attendanceDocId);
 
-      final existing = await _firestore
-          .collection('attendance')
-          .where('userId', isEqualTo: userId)
-          .where('workDate', isGreaterThanOrEqualTo: Timestamp.fromDate(todayStart))
-          .where('workDate', isLessThan: Timestamp.fromDate(todayEnd))
-          .where('applicationId', isEqualTo: applicationId)
-          .limit(1)
-          .get();
-
-      if (existing.docs.isNotEmpty) {
-        final existingData = existing.docs.first.data();
-        if (existingData['checkIn'] != null) {
-          debugPrint('⚠️ 이미 출근 완료');
-          throw Exception('오늘 이미 출근하셨습니다.');
-        }
-      }
-
-      // 2. 출근 시간 기록
+      // 3. 출근 시간 계산 (트랜잭션 밖에서 수행해도 무방)
       final now = DateTime.now();
-      final checkInTime =
-          '${now.hour.toString().padLeft(2, '0')}:${now.minute.toString().padLeft(2, '0')}:${now.second.toString().padLeft(2, '0')}';
-
-      // 3. 지각 여부 판단 (익일 자정 넘김 보정: 23:00 시작 근무에 00:30 출근 등)
+      final checkInTime = FormatHelper.formatTimeWithSeconds(now);
       final isNextDay = now.year != workDate.year ||
           now.month != workDate.month ||
           now.day != workDate.day;
@@ -81,30 +81,36 @@ extension AttendanceFirestore on FirestoreService {
 
       debugPrint('   checkInTime: $checkInTime, scheduled: $scheduledStartTime, isLate: $isLate');
 
-      // 4. 출근 기록 생성
-      final attendanceData = {
-        'applicationId': applicationId,
-        'userId': userId,
-        'businessId': businessId,
-        'businessName': businessName,
-        'workDate': Timestamp.fromDate(workDate),
-        'workType': workType,
-        'checkIn': checkInTime,
-        'checkInLat': latitude,
-        'checkInLng': longitude,
-        'checkInMethod': method,
-        'checkInTime': FieldValue.serverTimestamp(),
-        'status': dbStatus,
-        'isModified': false,
-        'modifyRequested': false,
-        'wageStatus': AttendanceModel.wagePending,
-        'createdAt': FieldValue.serverTimestamp(),
-      };
+      // 4. 트랜잭션으로 원자적 체크 + 생성 (동시 요청 시 중복 출근 방지)
+      await _firestore.runTransaction((tx) async {
+        final existing = await tx.get(docRef);
+        if (existing.exists && (existing.data()?['checkIn'] as String?)?.isNotEmpty == true) {
+          debugPrint('⚠️ 이미 출근 완료');
+          throw Exception('오늘 이미 출근하셨습니다.');
+        }
+        tx.set(docRef, {
+          'applicationId': applicationId,
+          'userId': userId,
+          'businessId': businessId,
+          'businessName': businessName,
+          'workDate': Timestamp.fromDate(workDate),
+          'workType': workType,
+          'checkIn': checkInTime,           // HH:mm:ss 표시용 (클라이언트 로컬 시간)
+          'checkInTime': FieldValue.serverTimestamp(), // 서버 시간 기준 실제 기록
+          'originalCheckIn': checkInTime,  // 원본 보존
+          if (latitude != null) 'checkInLat': latitude,
+          if (longitude != null) 'checkInLng': longitude,
+          'checkInMethod': method,
+          'status': dbStatus,
+          'isModified': false,
+          'modifyRequested': false,
+          'wageStatus': AttendanceModel.wagePending,
+          'createdAt': FieldValue.serverTimestamp(),
+        });
+      });
 
-      final docRef = await _firestore.collection('attendance').add(attendanceData);
-
-      debugPrint('✅ 출근 체크 완료: ${docRef.id} (status: $dbStatus)');
-      return docRef.id;
+      debugPrint('✅ 출근 체크 완료: $attendanceDocId (status: $dbStatus)');
+      return attendanceDocId;
     } catch (e) {
       debugPrint('❌ 출근 체크 실패: $e');
       rethrow;
@@ -115,66 +121,57 @@ extension AttendanceFirestore on FirestoreService {
   /// [scheduledEndTime] "HH:mm" 형식 예정 퇴근 시간 — 전달 시 조퇴 여부 자동 판단
   Future<bool> checkOut({
     required String attendanceId,
-    required double latitude,
-    required double longitude,
+    double? latitude,
+    double? longitude,
     String method = 'gps',
     String? scheduledEndTime,
   }) async {
+    NetworkChecker.instance.assertOnline('퇴근 체크를 하려면 인터넷 연결이 필요합니다.');
     try {
       debugPrint('🕐 [checkOut] 퇴근 체크 시작...');
       debugPrint('   attendanceId: $attendanceId');
 
-      // 1. 출근 기록 조회
-      final doc = await _firestore
-          .collection('attendance')
-          .doc(attendanceId)
-          .get();
-
-      if (!doc.exists) {
-        throw Exception('출근 기록을 찾을 수 없습니다.');
-      }
-
-      final data = doc.data()!;
-      if (data['checkOut'] != null) {
-        throw Exception('이미 퇴근하셨습니다.');
-      }
-
-      // 2. 퇴근 시간 기록
+      final attendanceRef =
+          _firestore.collection('attendance').doc(attendanceId);
       final now = DateTime.now();
-      final checkOutTime =
-          '${now.hour.toString().padLeft(2, '0')}:${now.minute.toString().padLeft(2, '0')}:${now.second.toString().padLeft(2, '0')}';
+      final checkOutTime = FormatHelper.formatTimeWithSeconds(now);
 
-      // 3. 근무 시간 계산
-      final checkInTime = data['checkIn'] as String;
-      final workMins = AttendanceStatusHelper.workMinutes(checkInTime, checkOutTime);
-      final workHours = workMins / 60.0;
+      // 트랜잭션으로 원자적 체크 + 업데이트 (동시 요청 시 중복 퇴근 방지)
+      await _firestore.runTransaction((tx) async {
+        final snap = await tx.get(attendanceRef);
+        if (!snap.exists) throw Exception('출근 기록을 찾을 수 없습니다.');
+        final data = snap.data()!;
+        if (data['checkOut'] != null) throw Exception('이미 퇴근하셨습니다.');
 
-      // 4. 조퇴 여부 판단 (예정보다 1분 이상 일찍 퇴근, 야간 자정 넘김 자동 보정)
-      final currentStatus = data['status'] as String? ?? AttendanceModel.statusPresent;
-      final isEarlyLeave = scheduledEndTime != null &&
-          AttendanceStatusHelper.isEarlyLeave(checkOutTime, scheduledEndTime, checkIn: checkInTime);
+        final checkInTime = data['checkIn'] as String?;
+        if (checkInTime == null) throw Exception('출근 기록에 시간 정보가 없습니다.');
+        final workMins = AttendanceStatusHelper.workMinutes(checkInTime, checkOutTime);
+        final workHours = workMins / 60.0;
 
-      // 지각 + 조퇴가 동시에 발생할 수 있으므로 기존 status 유지하면서 조퇴 덮어쓰기 방지
-      // → 지각이면 early_leave로 갱신(지각+조퇴 케이스는 UI에서 별도 표시)
-      final updatedStatus = isEarlyLeave
-          ? AttendanceModel.statusEarlyLeave
-          : currentStatus;
+        final currentStatus =
+            data['status'] as String? ?? AttendanceModel.statusPresent;
+        final isEarlyLeave = scheduledEndTime != null &&
+            AttendanceStatusHelper.isEarlyLeave(
+                checkOutTime, scheduledEndTime, checkIn: checkInTime);
+        final updatedStatus = isEarlyLeave
+            ? AttendanceModel.statusEarlyLeave
+            : currentStatus;
 
-      debugPrint('   checkOutTime: $checkOutTime, scheduled: $scheduledEndTime, isEarlyLeave: $isEarlyLeave');
-
-      // 5. 퇴근 기록 저장
-      await _firestore.collection('attendance').doc(attendanceId).update({
-        'checkOut': checkOutTime,
-        'checkOutLat': latitude,
-        'checkOutLng': longitude,
-        'checkOutMethod': method,
-        'checkOutTime': FieldValue.serverTimestamp(),
-        'workHours': workHours,
-        'status': updatedStatus,
-        'updatedAt': FieldValue.serverTimestamp(),
+        tx.update(attendanceRef, {
+          'checkOut': checkOutTime,
+          if (data['originalCheckOut'] == null)
+            'originalCheckOut': checkOutTime,  // 최초 퇴근 시에만 원본 보존
+          if (latitude != null) 'checkOutLat': latitude,
+          if (longitude != null) 'checkOutLng': longitude,
+          'checkOutMethod': method,
+          'workHours': workHours,
+          'status': updatedStatus,
+          'updatedAt': FieldValue.serverTimestamp(),
+        });
+        debugPrint('   checkOutTime: $checkOutTime, scheduled: $scheduledEndTime, isEarlyLeave: $isEarlyLeave');
       });
 
-      debugPrint('✅ 퇴근 체크 완료 (status: $updatedStatus)');
+      debugPrint('✅ 퇴근 체크 완료');
       return true;
     } catch (e) {
       debugPrint('❌ 퇴근 체크 실패: $e');
@@ -192,12 +189,14 @@ extension AttendanceFirestore on FirestoreService {
       final today = DateTime.now();
       final todayStart = DateTime(today.year, today.month, today.day);
       final todayEnd = todayStart.add(const Duration(days: 1));
-      
+      // 야간 단기 근무(전날 출근 후 자정 이후 퇴근)를 위해 어제부터 조회
+      final yesterdayStart = todayStart.subtract(const Duration(days: 1));
+
       final snapshot = await _firestore
           .collection('attendance')
           .where('userId', isEqualTo: userId)
           .where('applicationId', isEqualTo: applicationId)
-          .where('workDate', isGreaterThanOrEqualTo: Timestamp.fromDate(todayStart))
+          .where('workDate', isGreaterThanOrEqualTo: Timestamp.fromDate(yesterdayStart))
           .where('workDate', isLessThan: Timestamp.fromDate(todayEnd))
           .limit(1)
           .get();
@@ -257,11 +256,11 @@ extension AttendanceFirestore on FirestoreService {
       
       debugPrint('🔍 [getTodayConfirmedWorkers] 조회 시작...');
       
-      // 1. 오늘 확정된 단기 근무
+      // 1. 오늘 확정된 단기 근무 (CONTRACT_PENDING 포함)
       final shortTermSnapshot = await _firestore
           .collection('applications')
           .where('businessId', isEqualTo: businessId)
-          .where('status', isEqualTo: 'CONFIRMED')
+          .where('status', whereIn: AppStatus.confirmedStatuses)
           .where('workDate', isEqualTo: Timestamp.fromDate(todayStart))
           .get();
       
@@ -271,12 +270,12 @@ extension AttendanceFirestore on FirestoreService {
       
       debugPrint('   단기 근무자: ${shortTerm.length}명');
       
-      // 2. 오늘 근무하는 장기 근무자
+      // 2. 오늘 근무하는 장기 근무자 (CONTRACT_PENDING 포함)
       final longTermSnapshot = await _firestore
           .collection('applications')
           .where('businessId', isEqualTo: businessId)
-          .where('status', isEqualTo: 'CONFIRMED')
-          .where('type', isEqualTo: 'long_term')
+          .where('status', whereIn: AppStatus.confirmedStatuses)
+          .where('type', isEqualTo: AppType.longTerm)
           .get();
       
       final longTerm = longTermSnapshot.docs
@@ -351,20 +350,6 @@ extension AttendanceFirestore on FirestoreService {
       debugPrint('   userId: $userId');
       debugPrint('   monthStart: $monthStart');
       debugPrint('   monthEnd: $monthEnd');
-      
-      // 🔍 디버그: userId만으로 전체 조회
-      final debugSnapshot = await _firestore
-          .collection('attendance')
-          .where('userId', isEqualTo: userId)
-          .get();
-      debugPrint('🔍 [DEBUG] userId로만 조회: ${debugSnapshot.docs.length}건');
-      for (var doc in debugSnapshot.docs) {
-        final data = doc.data();
-        debugPrint('   📋 docId: ${doc.id}');
-        debugPrint('      workDate: ${data['workDate']}');
-        debugPrint('      wageStatus: ${data['wageStatus']}');
-        debugPrint('      finalWage: ${data['finalWage']}');
-      }
       
       final snapshot = await _firestore
           .collection('attendance')
@@ -521,91 +506,89 @@ extension AttendanceFirestore on FirestoreService {
     required String requestId,
     required String approverUid,
   }) async {
+    ScheduleChangeRequestModel? request;
     try {
-      // 1. 요청 정보 조회
-      final requestDoc = await _firestore
-          .collection('schedule_change_requests')
-          .doc(requestId)
-          .get();
+      final requestRef = _firestore.collection('schedule_change_requests').doc(requestId);
 
-      if (!requestDoc.exists) {
-        debugPrint('❌ 요청을 찾을 수 없음');
-        return false;
-      }
+      await _firestore.runTransaction((tx) async {
+        final requestDoc = await tx.get(requestRef);
+        if (!requestDoc.exists) throw Exception('요청을 찾을 수 없음');
 
-      final request = ScheduleChangeRequestModel.fromMap(requestDoc.data()!, requestId);
+        request = ScheduleChangeRequestModel.fromMap(requestDoc.data()!, requestId);
 
-      // 2. 요청 상태 업데이트
-      await _firestore.collection('schedule_change_requests').doc(requestId).update({
-        'status': 'APPROVED',
-        'respondedByUid': approverUid,
-        'respondedAt': FieldValue.serverTimestamp(),
+        // 이미 처리된 요청 중복 승인 방지 (트랜잭션 내 원자적 체크)
+        if (!request!.isPending) {
+          throw Exception('이미 처리된 요청 (${request!.status})');
+        }
+
+        tx.update(requestRef, {
+          'status': 'APPROVED',
+          'respondedByUid': approverUid,
+          'respondedAt': FieldValue.serverTimestamp(),
+        });
+
+        // Application leaveDates / extraWorkDates 원자적 업데이트
+        final appRef = _firestore.collection('applications').doc(request!.applicationId);
+        final appSnapshot = await tx.get(appRef);
+        if (appSnapshot.exists) {
+          final appData = appSnapshot.data()!;
+
+          if (request!.isLeaveRequest || request!.isNoWorkRequest) {
+            List<DateTime> leaveDates = [];
+            if (appData['leaveDates'] != null) {
+              leaveDates = (appData['leaveDates'] as List)
+                  .map((e) => (e as Timestamp).toDate().toLocal())
+                  .toList();
+            }
+            if (!leaveDates.any((d) =>
+                d.year == request!.targetDate.year &&
+                d.month == request!.targetDate.month &&
+                d.day == request!.targetDate.day)) {
+              leaveDates.add(request!.targetDate);
+            }
+            tx.update(appRef, {
+              'leaveDates': leaveDates.map((e) => Timestamp.fromDate(e)).toList(),
+            });
+          } else if (request!.isExtraWorkRequest) {
+            List<DateTime> extraWorkDates = [];
+            if (appData['extraWorkDates'] != null) {
+              extraWorkDates = (appData['extraWorkDates'] as List)
+                  .map((e) => (e as Timestamp).toDate().toLocal())
+                  .toList();
+            }
+            if (!extraWorkDates.any((d) =>
+                d.year == request!.targetDate.year &&
+                d.month == request!.targetDate.month &&
+                d.day == request!.targetDate.day)) {
+              extraWorkDates.add(request!.targetDate);
+            }
+            tx.update(appRef, {
+              'extraWorkDates': extraWorkDates.map((e) => Timestamp.fromDate(e)).toList(),
+            });
+          }
+        }
       });
 
-      // 3. ApplicationModel의 leaveDates 또는 extraWorkDates 업데이트
-      final appSnapshot = await _firestore
-          .collection('applications')
-          .doc(request.applicationId)
-          .get();
+      debugPrint('✅ 스케줄 변경 요청 승인 완료: $requestId');
 
-      if (appSnapshot.exists) {
-        final appData = appSnapshot.data()!;
-        
-        if (request.isLeaveRequest || request.isNoWorkRequest) {
-          // 휴무/미출근 → leaveDates에 추가
-          List<DateTime> leaveDates = [];
-          if (appData['leaveDates'] != null) {
-            leaveDates = (appData['leaveDates'] as List)
-                .map((e) => (e as Timestamp).toDate())
-                .toList();
-          }
-          
-          if (!leaveDates.any((d) => 
-              d.year == request.targetDate.year &&
-              d.month == request.targetDate.month &&
-              d.day == request.targetDate.day)) {
-            leaveDates.add(request.targetDate);
-          }
-
-          await _firestore.collection('applications').doc(request.applicationId).update({
-            'leaveDates': leaveDates.map((e) => Timestamp.fromDate(e)).toList(),
-          });
-        } else if (request.isExtraWorkRequest) {
-          // 추가 근무 → extraWorkDates에 추가
-          List<DateTime> extraWorkDates = [];
-          if (appData['extraWorkDates'] != null) {
-            extraWorkDates = (appData['extraWorkDates'] as List)
-                .map((e) => (e as Timestamp).toDate())
-                .toList();
-          }
-          
-          if (!extraWorkDates.any((d) => 
-              d.year == request.targetDate.year &&
-              d.month == request.targetDate.month &&
-              d.day == request.targetDate.day)) {
-            extraWorkDates.add(request.targetDate);
-          }
-
-          await _firestore.collection('applications').doc(request.applicationId).update({
-            'extraWorkDates': extraWorkDates.map((e) => Timestamp.fromDate(e)).toList(),
-          });
-        }
+      // 🔔 알림 생성 (트랜잭션 외부 — 알림 실패가 승인을 롤백하지 않도록)
+      if (request != null) {
+        _sendScheduleChangeApprovedNotification(
+          applicantUid: request!.applicantUid,
+          businessId: request!.businessId,
+          requestType: request!.requestType.name,
+          targetDate: request!.targetDate,
+          requestId: requestId,
+        );
       }
 
-      debugPrint('✅ 스케줄 변경 요청 승인 완료: $requestId');
-      
-      // 🔔 알림 생성 (요청자에게)
-      _sendScheduleChangeApprovedNotification(
-        applicantUid: request.applicantUid,
-        businessId: request.businessId,
-        requestType: request.requestType.name,
-        targetDate: request.targetDate,
-        requestId: requestId,
-      );
-      
       return true;
     } catch (e) {
-      debugPrint('❌ 스케줄 변경 요청 승인 실패: $e');
+      if (e.toString().contains('이미 처리된 요청')) {
+        debugPrint('⚠️ 이미 처리된 요청: $requestId');
+      } else {
+        debugPrint('❌ 스케줄 변경 요청 승인 실패: $e');
+      }
       return false;
     }
   }
@@ -616,39 +599,45 @@ extension AttendanceFirestore on FirestoreService {
     required String rejectorUid,
     String? rejectReason,
   }) async {
+    ScheduleChangeRequestModel? request;
     try {
-      // 1. 요청 정보 먼저 조회 (알림용)
-      final requestDoc = await _firestore
-          .collection('schedule_change_requests')
-          .doc(requestId)
-          .get();
-      
-      // 2. 상태 업데이트
-      await _firestore.collection('schedule_change_requests').doc(requestId).update({
-        'status': 'REJECTED',
-        'respondedByUid': rejectorUid,
-        'respondedAt': FieldValue.serverTimestamp(),
-        'rejectReason': rejectReason,
+      final requestRef = _firestore.collection('schedule_change_requests').doc(requestId);
+
+      await _firestore.runTransaction((tx) async {
+        final requestDoc = await tx.get(requestRef);
+        if (!requestDoc.exists) throw Exception('요청 문서 없음');
+
+        request = ScheduleChangeRequestModel.fromMap(requestDoc.data()!, requestId);
+        if (!request!.isPending) throw Exception('이미 처리된 요청 (${request!.status})');
+
+        tx.update(requestRef, {
+          'status': 'REJECTED',
+          'respondedByUid': rejectorUid,
+          'respondedAt': FieldValue.serverTimestamp(),
+          'rejectReason': rejectReason,
+        });
       });
 
       debugPrint('✅ 스케줄 변경 요청 거절 완료: $requestId');
-      
-      // 🔔 알림 생성 (요청자에게)
-      if (requestDoc.exists) {
-        final request = ScheduleChangeRequestModel.fromMap(requestDoc.data()!, requestId);
+
+      if (request != null) {
         _sendScheduleChangeRejectedNotification(
-          applicantUid: request.applicantUid,
-          businessId: request.businessId,
-          requestType: request.requestType.name,
-          targetDate: request.targetDate,
+          applicantUid: request!.applicantUid,
+          businessId: request!.businessId,
+          requestType: request!.requestType.name,
+          targetDate: request!.targetDate,
           requestId: requestId,
           rejectReason: rejectReason,
         );
       }
-      
+
       return true;
     } catch (e) {
-      debugPrint('❌ 스케줄 변경 요청 거절 실패: $e');
+      if (e.toString().contains('이미 처리된 요청')) {
+        debugPrint('⚠️ 이미 처리된 요청: $requestId');
+      } else {
+        debugPrint('❌ 스케줄 변경 요청 거절 실패: $e');
+      }
       return false;
     }
   }
@@ -707,6 +696,7 @@ extension AttendanceFirestore on FirestoreService {
           targetDate: targetDate,
           requestId: requestId,
           businessName: businessName,
+          businessId: businessId,
         ),
       );
       
@@ -737,6 +727,7 @@ extension AttendanceFirestore on FirestoreService {
           targetDate: targetDate,
           requestId: requestId,
           businessName: businessName,
+          businessId: businessId,
           rejectReason: rejectReason,
         ),
       );
@@ -767,7 +758,9 @@ extension AttendanceFirestore on FirestoreService {
 
       final request = ScheduleChangeRequestModel.fromMap(requestDoc.data()!, requestId);
 
-      // 2. 승인된 요청이면 ApplicationModel에서도 제거
+      // 2. 승인된 요청이면 ApplicationModel에서도 제거 (batch로 원자화)
+      final batch = _firestore.batch();
+
       if (request.isApproved) {
         final appSnapshot = await _firestore
             .collection('applications')
@@ -776,51 +769,52 @@ extension AttendanceFirestore on FirestoreService {
 
         if (appSnapshot.exists) {
           final appData = appSnapshot.data()!;
-          
+
           if (request.isLeaveRequest || request.isNoWorkRequest) {
-            // leaveDates에서 제거
+            // leaveDates에서 제거 (.toLocal()로 approve 경로와 일관성 유지)
             List<DateTime> leaveDates = [];
             if (appData['leaveDates'] != null) {
               leaveDates = (appData['leaveDates'] as List)
-                  .map((e) => (e as Timestamp).toDate())
+                  .map((e) => (e as Timestamp).toDate().toLocal())
                   .toList();
             }
-            
-            leaveDates.removeWhere((d) => 
+
+            leaveDates.removeWhere((d) =>
                 d.year == request.targetDate.year &&
                 d.month == request.targetDate.month &&
                 d.day == request.targetDate.day);
 
-            await _firestore.collection('applications').doc(request.applicationId).update({
+            batch.update(_firestore.collection('applications').doc(request.applicationId), {
               'leaveDates': leaveDates.map((e) => Timestamp.fromDate(e)).toList(),
             });
           } else if (request.isExtraWorkRequest) {
-            // extraWorkDates에서 제거
+            // extraWorkDates에서 제거 (.toLocal()로 approve 경로와 일관성 유지)
             List<DateTime> extraWorkDates = [];
             if (appData['extraWorkDates'] != null) {
               extraWorkDates = (appData['extraWorkDates'] as List)
-                  .map((e) => (e as Timestamp).toDate())
+                  .map((e) => (e as Timestamp).toDate().toLocal())
                   .toList();
             }
-            
-            extraWorkDates.removeWhere((d) => 
+
+            extraWorkDates.removeWhere((d) =>
                 d.year == request.targetDate.year &&
                 d.month == request.targetDate.month &&
                 d.day == request.targetDate.day);
 
-            await _firestore.collection('applications').doc(request.applicationId).update({
+            batch.update(_firestore.collection('applications').doc(request.applicationId), {
               'extraWorkDates': extraWorkDates.map((e) => Timestamp.fromDate(e)).toList(),
             });
           }
         }
       }
 
-      // 3. 요청 상태 업데이트
-      await _firestore.collection('schedule_change_requests').doc(requestId).update({
+      // 3. 요청 상태 업데이트 (batch에 포함 — applications 업데이트와 원자적으로 처리)
+      batch.update(_firestore.collection('schedule_change_requests').doc(requestId), {
         'status': 'CANCELED',
         'respondedByUid': canceledByUid,
         'respondedAt': FieldValue.serverTimestamp(),
       });
+      await batch.commit();
 
       debugPrint('✅ 스케줄 변경 요청 취소 완료: $requestId');
       return true;
@@ -859,7 +853,7 @@ extension AttendanceFirestore on FirestoreService {
     }
   }
 
-  /// 주휴수당 자격 판정
+  /// 주휴수당 자격 판정 (현재 미사용 — 주휴 자동계산 기능 제거됨, 수동 확인용으로만 보존)
   /// [weeklyAttendances] 해당 userId의 주간 출근 리스트 (getWeeklyAttendanceByBusiness 결과)
   WeeklyHolidayEligibility computeWeeklyHolidayEligibility({
     required List<AttendanceModel> weeklyAttendances,

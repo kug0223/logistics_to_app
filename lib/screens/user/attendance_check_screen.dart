@@ -105,7 +105,10 @@ class _AttendanceCheckScreenState extends State<AttendanceCheckScreen>
         final isReallyLongTerm = app.workDays != null && app.workDays!.isNotEmpty;
 
         if (!isReallyLongTerm) {
-          if (DateUtils.isSameDay(app.workDate, todayStart)) {
+          // 어제 시작한 야간 근무(자정 이후 퇴근 대기)도 포함
+          final yesterday = todayStart.subtract(const Duration(days: 1));
+          if (DateUtils.isSameDay(app.workDate, todayStart) ||
+              DateUtils.isSameDay(app.workDate, yesterday)) {
             todayWorks.add(app);
           }
           continue;
@@ -938,7 +941,7 @@ class _AttendanceCheckScreenState extends State<AttendanceCheckScreen>
             SizedBox(height: ResponsiveHelper.spacing(context, 4)),
             _buildInfoRow(
               Icons.payments_outlined,
-              '${NumberFormat('#,###').format(work.wage)}원/시간',
+              '${NumberFormat('#,###').format(work.wage)}원/${work.wageType == 'daily' ? '일' : '시간'}',
             ),
 
             Divider(

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../providers/network_provider.dart';
 import '../../theme/app_colors.dart';
+import '../../utils/responsive_helper.dart';
 
 /// 네트워크 상태를 앱 상단에 배너로 표시하는 래퍼 위젯
 class NetworkBanner extends StatefulWidget {
@@ -40,12 +41,12 @@ class _NetworkBannerState extends State<NetworkBanner>
       builder: (context, network, child) {
         final isOnline = network.isOnline;
 
-        // 상태가 바뀔 때만 애니메이션
-        if (_prevOnline != null && _prevOnline != isOnline) {
+        // 초기 오프라인 상태 또는 상태 변경 시 애니메이션
+        if (_prevOnline != isOnline) {
           if (!isOnline) {
             _controller.forward();
-          } else {
-            // 재연결 시 잠깐 초록 배너 보여주고 닫기
+          } else if (_prevOnline != null) {
+            // 재연결 시(초기 온라인 제외) 잠깐 초록 배너 보여주고 닫기
             _controller.forward().then((_) async {
               await Future.delayed(const Duration(seconds: 2));
               if (mounted) _controller.reverse();
@@ -89,11 +90,7 @@ class _NetworkBar extends StatelessWidget {
           const SizedBox(width: 6),
           Text(
             isOnline ? '인터넷 연결이 복구되었습니다' : '인터넷 연결이 없습니다',
-            style: const TextStyle(
-              color: Colors.white,
-              fontSize: 13,
-              fontWeight: FontWeight.w500,
-            ),
+            style: ResponsiveHelper.smallStyle(context, color: Colors.white).copyWith(fontWeight: FontWeight.w500),
           ),
         ],
       ),

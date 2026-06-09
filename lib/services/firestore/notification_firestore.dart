@@ -32,13 +32,14 @@ extension NotificationFirestore on FirestoreService {
     try {
       Query query = _firestore
           .collection('notifications')
-          .where('userId', isEqualTo: userId)
-          .orderBy('createdAt', descending: true)
-          .limit(limit);
-      
+          .where('userId', isEqualTo: userId);
+
+      // isRead 필터는 orderBy 전에 적용 (복합 인덱스: userId + isRead + createdAt)
       if (unreadOnly) {
         query = query.where('isRead', isEqualTo: false);
       }
+
+      query = query.orderBy('createdAt', descending: true).limit(limit);
       
       final snapshot = await query.get();
       
@@ -94,27 +95,28 @@ extension NotificationFirestore on FirestoreService {
     }
   }
 
-  /// 모든 알림 읽음 처리
-
-  /// 모든 알림 읽음 처리
+  /// 모든 알림 읽음 처리 (Firestore batch 500개 제한 대응: 청크 분할)
   Future<bool> markAllNotificationsAsRead(String userId) async {
     try {
-      final batch = _firestore.batch();
-      
       final snapshot = await _firestore
           .collection('notifications')
           .where('userId', isEqualTo: userId)
           .where('isRead', isEqualTo: false)
           .get();
-      
-      for (var doc in snapshot.docs) {
-        batch.update(doc.reference, {
-          'isRead': true,
-          'readAt': FieldValue.serverTimestamp(),
-        });
+
+      const chunkSize = 500;
+      for (int i = 0; i < snapshot.docs.length; i += chunkSize) {
+        final batch = _firestore.batch();
+        final end = (i + chunkSize).clamp(0, snapshot.docs.length);
+        for (int j = i; j < end; j++) {
+          batch.update(snapshot.docs[j].reference, {
+            'isRead': true,
+            'readAt': FieldValue.serverTimestamp(),
+          });
+        }
+        await batch.commit();
       }
-      
-      await batch.commit();
+
       debugPrint('✅ ${snapshot.docs.length}개 알림 읽음 처리');
       return true;
     } catch (e) {
@@ -134,12 +136,15 @@ extension NotificationFirestore on FirestoreService {
           .where('createdAt', isLessThan: Timestamp.fromDate(cutoffDate))
           .get();
       
-      final batch = _firestore.batch();
-      for (var doc in snapshot.docs) {
-        batch.delete(doc.reference);
+      const chunkSize = 500;
+      for (int i = 0; i < snapshot.docs.length; i += chunkSize) {
+        final batch = _firestore.batch();
+        final end = (i + chunkSize).clamp(0, snapshot.docs.length);
+        for (int j = i; j < end; j++) {
+          batch.delete(snapshot.docs[j].reference);
+        }
+        await batch.commit();
       }
-      
-      await batch.commit();
       debugPrint('✅ ${snapshot.docs.length}개 오래된 알림 삭제');
       return snapshot.docs.length;
     } catch (e) {
@@ -154,21 +159,14 @@ extension NotificationFirestore on FirestoreService {
         .collection('notifications')
         .where('userId', isEqualTo: userId)
         .orderBy('createdAt', descending: true)
-        .limit(50)
+        .limit(100)
         .snapshots()
         .map((snapshot) => snapshot.docs
             .map((doc) => NotificationModel.fromFirestore(doc))
             .toList());
   }
 
-  /// 읽지 않은 알림 개수 스트림 (실시간)
-  Stream<int> watchUnreadNotificationCount(String userId) {
-    return _firestore
-        .collection('notifications')
-        .where('userId', isEqualTo: userId)
-        .where('isRead', isEqualTo: false)
-        .snapshots()
-        .map((snapshot) => snapshot.docs.length);
-  }
+  /// 읽지 않은 알림 개수 — NotificationProvider.unreadCount에서 파생 (별도 쿼리 불필요)
+  /// Deprecated: NotificationProvider.unreadCount getter를 사용하세요.
 
 }

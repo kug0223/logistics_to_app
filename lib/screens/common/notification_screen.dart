@@ -259,10 +259,16 @@ class NotificationScreen extends StatelessWidget {
 
       case NotificationType.wageConfirmed:
       case NotificationType.wageCancelConfirmed:
+        if (isUser) {
+          Navigator.push(
+            context,
+            MaterialPageRoute(builder: (_) => const MyApplicationsScreen()),
+          );
+        }
+        break;
       case NotificationType.reviewReceived:
       case NotificationType.systemNotice:
       case NotificationType.other:
-        // 일단 스케줄 화면으로
         if (isUser) {
           Navigator.push(
             context,
