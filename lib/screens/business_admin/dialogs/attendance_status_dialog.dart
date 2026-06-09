@@ -3925,6 +3925,7 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
 
       if (successCount > 0) {
         ToastHelper.showSuccess('$successCount명 출근 처리 완료');
+        _hasChanges = true;
       }
       if (failCount > 0) {
         ToastHelper.showWarning('$failCount명 처리 실패');
@@ -3985,7 +3986,10 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
         }
       }
 
-      if (successCount > 0) ToastHelper.showSuccess('$successCount명 퇴근 처리 완료');
+      if (successCount > 0) {
+        ToastHelper.showSuccess('$successCount명 퇴근 처리 완료');
+        _hasChanges = true;
+      }
       if (failCount > 0) ToastHelper.showWarning('$failCount명 처리 실패');
 
       await _loadData();
@@ -4051,6 +4055,13 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
 
         try {
           final checkIn = attendance.checkIn ?? app.startTime;
+
+          // 시간 역전 검사
+          if (!AttendanceStatusHelper.isValidWorkPeriod(checkIn, time)) {
+            failCount++;
+            continue;
+          }
+
           final workHours = _calcWorkHoursCompat(checkIn, time);
           final newStatus = _deriveStatus(app, checkIn, time);
 
@@ -4071,10 +4082,12 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
         }
       }
 
-      if (successCount > 0) ToastHelper.showSuccess('$successCount명 퇴근 처리 완료');
+      if (successCount > 0) {
+        ToastHelper.showSuccess('$successCount명 퇴근 처리 완료');
+        _hasChanges = true;
+      }
       if (failCount > 0) ToastHelper.showWarning('$failCount명 처리 실패');
 
-      _hasChanges = true;
       await _loadData();
     } catch (e) {
       debugPrint('❌ 파트별 일괄 퇴근 처리 실패: $e');
@@ -4089,8 +4102,8 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
     try {
       await _createOrUpdateAttendance(app: app, checkIn: time);
       
-      // 🆕 지각 여부 체크 및 신뢰도 반영
-      final expectedStartTime = app.startTime.isNotEmpty ? app.startTime : '09:00';
+      // 지각 여부 체크 및 신뢰도 반영 (WorkDetail 오버라이드 반영)
+      final expectedStartTime = WorkDetailHelper.effectiveStart(app, _workDetailTimeMap);
       if (AttendanceStatusHelper.isLate(time, expectedStartTime)) {
         final trustService = TrustScoreService();
         await trustService.onLate(app.uid, app.businessId);
@@ -4437,11 +4450,13 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
     try {
       final attendance = _attendanceMap[app.id];
       if (attendance != null) {
+        // checkIn이 없으면 노쇼 전 상태인 'scheduled'로 복원, 있으면 'present'로 복원
+        final restoredStatus = attendance.checkIn != null ? 'present' : 'scheduled';
         await FirebaseFirestore.instance
             .collection('attendance')
             .doc(attendance.id)
             .update({
-          'status': 'present',
+          'status': restoredStatus,
           'updatedAt': FieldValue.serverTimestamp(),
         });
       }
@@ -4666,6 +4681,7 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
             .update({
           'wageStatus': AttendanceModel.wageCalculated,
           'wageDetail': wageDetail?.toMap(),
+          'finalConfirmedAt': FieldValue.delete(),
           'updatedAt': FieldValue.serverTimestamp(),
         });
         final trustService = TrustScoreService();
@@ -4729,6 +4745,7 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
           .update({
         'wageStatus': AttendanceModel.wageCalculated,
         'wageDetail': wageDetail?.toMap(),
+        'finalConfirmedAt': FieldValue.delete(),
         'updatedAt': FieldValue.serverTimestamp(),
       });
 

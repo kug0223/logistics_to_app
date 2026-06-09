@@ -63,9 +63,17 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen> {
   }
 
   Future<void> _loadApprovedBusinessStatus() async {
-    final uid = context.read<UserProvider>().currentUser?.uid;
+    final userProvider = context.read<UserProvider>();
+    final uid = userProvider.currentUser?.uid;
     if (uid == null) return;
     try {
+      // SubAdmin은 adminIds에 없으므로 getMyBusiness 결과 0건 → effectiveBusinessId로 직접 조회
+      final effectiveBizId = userProvider.effectiveBusinessId;
+      if (userProvider.isSubAdmin && effectiveBizId != null) {
+        final biz = await _firestoreService.getBusinessById(effectiveBizId);
+        if (mounted) setState(() => _hasApprovedBusiness = biz?.isApproved ?? false);
+        return;
+      }
       final businesses = await _firestoreService.getMyBusiness(uid);
       if (mounted) setState(() => _hasApprovedBusiness = businesses.any((b) => b.isApproved));
     } catch (e) {

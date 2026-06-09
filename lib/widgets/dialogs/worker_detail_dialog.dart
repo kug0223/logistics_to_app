@@ -213,20 +213,10 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
     return existing != null;
   }
 
-  /// 신뢰도 점수 계산
-  int _calculateTrustScore(UserModel user) {
-    int score = 60; // 기본 점수
-    score += ((user.averageRating) * 4).round(); // 평점 반영 (최대 20점)
-    score += (user.totalWorkDays / 10).clamp(0, 15).round(); // 근무일 반영 (최대 15점)
-    score -= user.noShowCount * 5; // 무단결근 감점
-    score -= user.lateCount * 2; // 지각 감점
-    return score.clamp(0, 100);
-  }
-
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final trustScore = _calculateTrustScore(widget.user);
+    final trustScore = widget.user.trustScore;
     final isPending = widget.application?.status == AppStatus.pending;
 
    return Dialog(
