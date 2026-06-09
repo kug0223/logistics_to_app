@@ -116,6 +116,7 @@ class FirestoreService {
       final snap = await _firestore
           .collection('users')
           .where(FieldPath.documentId, whereIn: chunk)
+          .limit(chunk.length) // 보안규칙 request.query.limit <= 30 충족
           .get();
       for (final doc in snap.docs) {
         final user = UserModel.fromMap(doc.data(), doc.id);

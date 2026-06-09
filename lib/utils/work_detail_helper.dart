@@ -13,12 +13,16 @@ import '../models/core/insurance_rate_model.dart';
 
 class WorkDetailHelper {
   /// workDetailTimeMap 에서 해당 지원자의 캐시를 조회
+  ///
+  /// TO 마스터(workType 단독 키)가 항상 최신값이므로 먼저 조회한다.
+  /// workDetailId 복합키는 TO 마스터 키가 없을 때의 폴백이다.
+  /// (TO 수정 후 슬롯 복합키는 구시간 그대로이므로 마스터를 우선해야 헤더 시간이 갱신됨)
   static Map<String, dynamic>? resolve(
     ApplicationModel app,
     Map<String, dynamic> timeMap,
   ) {
-    final raw = (app.workDetailId != null ? timeMap[app.workDetailId] : null)
-        ?? timeMap[app.selectedWorkType];
+    final raw = timeMap[app.selectedWorkType]
+        ?? (app.workDetailId != null ? timeMap[app.workDetailId] : null);
     return raw is Map<String, dynamic> ? raw : null;
   }
 
