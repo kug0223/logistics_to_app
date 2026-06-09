@@ -115,11 +115,11 @@ class _CloseManagementDialogState extends State<CloseManagementDialog>
     for (final businessId in widget.businessIds) {
       final List<DateCloseStatus> dateStatuses = [];
 
-      // 1. 단기 확정자: 해당 월의 workDate 범위로 조회
+      // 1. 단기 확정자: 해당 월의 workDate 범위로 조회 (CONTRACT_PENDING 포함)
       final shortTermSnapshot = await FirebaseFirestore.instance
           .collection('applications')
           .where('businessId', isEqualTo: businessId)
-          .where('status', isEqualTo: AppStatus.confirmed)
+          .where('status', whereIn: AppStatus.confirmedStatuses)
           .where('workDate', isGreaterThanOrEqualTo: Timestamp.fromDate(monthStart))
           .where('workDate', isLessThanOrEqualTo: Timestamp.fromDate(monthEnd))
           .get();
@@ -140,11 +140,11 @@ class _CloseManagementDialogState extends State<CloseManagementDialog>
         }
       }
 
-      // 2. 장기 확정자: 전체 조회 후 해당 월의 활성 날짜로 확장
+      // 2. 장기 확정자: 전체 조회 후 해당 월의 활성 날짜로 확장 (CONTRACT_PENDING 포함)
       final longTermSnapshot = await FirebaseFirestore.instance
           .collection('applications')
           .where('businessId', isEqualTo: businessId)
-          .where('status', isEqualTo: AppStatus.confirmed)
+          .where('status', whereIn: AppStatus.confirmedStatuses)
           .get();
 
       debugPrint('  [장기 전체] businessId=$businessId → ${longTermSnapshot.docs.length}건');
@@ -155,16 +155,16 @@ class _CloseManagementDialogState extends State<CloseManagementDialog>
         debugPrint('    장기 app: id=${app.id}, workDate=${app.workDate}, workDays=${app.workDays}');
 
         final endDate = app.actualResignDate ?? app.workEndDate;
+        // 종료일 없는 장기 지원서는 영구 활성으로 잘못 집계되는 것 방지
+        if (endDate == null) continue;
         final effectiveStartDate = app.desiredStartDate ?? app.workDate;
         final startDateOnly = DateTime(effectiveStartDate.year, effectiveStartDate.month, effectiveStartDate.day);
 
         for (int d = 1; d <= daysInMonth; d++) {
           final date = DateTime(_currentMonth.year, _currentMonth.month, d);
           if (date.isBefore(startDateOnly)) continue;
-          if (endDate != null) {
-            final endDateOnly = DateTime(endDate.year, endDate.month, endDate.day);
-            if (date.isAfter(endDateOnly)) continue;
-          }
+          final endDateOnly = DateTime(endDate.year, endDate.month, endDate.day);
+          if (date.isAfter(endDateOnly)) continue;
           // 휴무일 체크
           if (app.leaveDates != null && app.leaveDates!.any((ld) =>
               ld.year == date.year && ld.month == date.month && ld.day == date.day)) {
@@ -270,21 +270,25 @@ class _CloseManagementDialogState extends State<CloseManagementDialog>
     int closedDays = 0;
     int unclosedDays = 0;
     
-    // 중복 날짜 제거를 위해 Set 사용
+    // 날짜별 모든 사업장이 마감됐는지 추적
+    // (한 사업장이라도 미마감이면 해당 날짜는 미마감으로 집계)
     final Set<String> allDates = {};
-    final Set<String> closedDates = {};
-    
+    final Map<String, bool> dateAllClosed = {};
+
     for (final statuses in _closeStatusByBusiness.values) {
       for (final status in statuses) {
         final dateKey = DateFormat('yyyy-MM-dd').format(status.date);
         allDates.add(dateKey);
-        
-        if (status.statusType == CloseStatusType.closed) {
-          closedDates.add(dateKey);
-        }
+        final isClosed = status.statusType == CloseStatusType.closed;
+        dateAllClosed[dateKey] = (dateAllClosed[dateKey] ?? true) && isClosed;
       }
     }
-    
+
+    final closedDates = dateAllClosed.entries
+        .where((e) => e.value)
+        .map((e) => e.key)
+        .toSet();
+
     totalDays = allDates.length;
     closedDays = closedDates.length;
     unclosedDays = totalDays - closedDays;
@@ -358,9 +362,8 @@ class _CloseManagementDialogState extends State<CloseManagementDialog>
           horizontal: ResponsiveHelper.spacing(context, 16),
           vertical: ResponsiveHelper.spacing(context, 24),
         ),
-        child: SizedBox(
-          width: double.infinity,
-          height: MediaQuery.of(context).size.height * 0.7,
+        child: ConstrainedBox(
+          constraints: BoxConstraints(maxHeight: MediaQuery.sizeOf(context).height * 0.92),
           child: Column(
             children: [
               // 헤더
@@ -445,6 +448,7 @@ class _CloseManagementDialogState extends State<CloseManagementDialog>
               const Spacer(),
               IconButton(
                 onPressed: () => Navigator.pop(context, _hasChanges),
+                tooltip: '닫기',
                 icon: Icon(
                   Icons.close,
                   color: Colors.white,

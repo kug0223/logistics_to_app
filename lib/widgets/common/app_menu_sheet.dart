@@ -1,5 +1,6 @@
-import 'package:flutter/material.dart';
+﻿import 'package:flutter/material.dart';
 import '../../theme/app_colors.dart';
+import '../../utils/responsive_helper.dart';
 
 // ─────────────────────────────────────────────────────────
 // AppMenuSheetItem — 바텀시트 메뉴 항목 하나를 정의
@@ -61,6 +62,7 @@ class AppMenuSheet {
   }) {
     return showModalBottomSheet(
       context: context,
+      useSafeArea: true,
       backgroundColor: Colors.transparent,
       isScrollControlled: true,
       builder: (ctx) => _AppMenuSheetContent(
@@ -97,7 +99,7 @@ class _AppMenuSheetContent extends StatelessWidget {
   Widget build(BuildContext context) {
     final hasHeader = headerTitle != null || headerSubtitle != null;
 
-    final maxHeight = MediaQuery.of(context).size.height * 0.85;
+    final maxHeight = MediaQuery.sizeOf(context).height * 0.85;
 
     return Container(
       decoration: const BoxDecoration(
@@ -186,8 +188,8 @@ class _Header extends StatelessWidget {
       child: Row(
         children: [
           Container(
-            width: 48,
-            height: 48,
+            width: ResponsiveHelper.spacing(context, 48),
+            height: ResponsiveHelper.spacing(context, 48),
             decoration: BoxDecoration(
               color: avatarColor.withValues(alpha: 0.1),
               shape: BoxShape.circle,
@@ -195,10 +197,9 @@ class _Header extends StatelessWidget {
             child: Center(
               child: Text(
                 avatarLetter?.isNotEmpty == true ? avatarLetter! : '?',
-                style: TextStyle(
+                style: ResponsiveHelper.subtitleStyle(context).copyWith(
                   color: avatarColor,
                   fontWeight: FontWeight.bold,
-                  fontSize: 20,
                 ),
               ),
             ),
@@ -211,19 +212,15 @@ class _Header extends StatelessWidget {
                 if (title != null)
                   Text(
                     title!,
-                    style: const TextStyle(
+                    style: ResponsiveHelper.subtitleStyle(context).copyWith(
                       fontWeight: FontWeight.bold,
-                      fontSize: 16,
                     ),
                   ),
                 if (subtitle != null) ...[
                   const SizedBox(height: 2),
                   Text(
                     subtitle!,
-                    style: const TextStyle(
-                      color: AppColors.grey500,
-                      fontSize: 13,
-                    ),
+                    style: ResponsiveHelper.smallStyle(context, color: AppColors.grey500),
                   ),
                 ],
               ],
@@ -258,22 +255,20 @@ class _MenuItem extends StatelessWidget {
           child: Row(
             children: [
               Container(
-                width: 44,
-                height: 44,
+                width: ResponsiveHelper.spacing(context, 44),
+                height: ResponsiveHelper.spacing(context, 44),
                 decoration: BoxDecoration(
                   color: item.color.withValues(alpha: 0.1),
                   borderRadius: BorderRadius.circular(14),
                 ),
-                child: Icon(item.icon, color: item.color, size: 22),
+                child: Icon(item.icon, color: item.color, size: ResponsiveHelper.iconSize(context, 22)),
               ),
               const SizedBox(width: 16),
               Text(
                 item.label,
-                style: TextStyle(
-                  fontSize: 15,
-                  fontWeight: FontWeight.w500,
+                style: ResponsiveHelper.bodyStyle(context,
                   color: item.isDanger ? AppColors.error : AppColors.grey800,
-                ),
+                ).copyWith(fontWeight: FontWeight.w500),
               ),
               const Spacer(),
               Icon(Icons.chevron_right, color: AppColors.grey300, size: 20),

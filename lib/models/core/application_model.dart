@@ -1,5 +1,3 @@
-// ✅ lib/models/application_model.dart 전체 수정
-
 import 'package:cloud_firestore/cloud_firestore.dart';
 import '../../utils/format_helper.dart';
 
@@ -7,7 +5,7 @@ import '../../utils/format_helper.dart';
 class ApplicationModel {
   final String id; // 문서 ID
   
-  // ✅ 변경: toId 제거, TO 식별 정보 추가
+  
   final String businessId; // 사업장 ID
   final String businessName; // 사업장명
   final String toTitle; // TO 제목
@@ -74,9 +72,18 @@ class ApplicationModel {
   final String? terminationStatus;          // 'PENDING', 'APPROVED', 'REJECTED', 'AUTO_APPROVED'
   final DateTime? terminationRequestedAt;   // 해지 요청 시각
   final String? terminationReason;          // 해지 사유
+  final DateTime? terminationEffectiveDate; // 해지 효력 발생일
   final String? terminationRequestedByUid;  // 요청한 관리자 UID
   final DateTime? terminationRespondedAt;   // 근무자 응답 시각
   final String? terminationRejectReason;    // 근무자 거절 사유
+
+  // 🔄 계약 연장/종료 관리
+  final String? renewalDecision;            // 'EXTEND' | 'TERMINATE' (관리자 선택)
+  final DateTime? renewalNotifiedAt;        // D-15 알림 발송 시각
+  final String? renewedFromApplicationId;   // 연장 시 이전 계약 Application ID
+
+  /// 지원 유형: 'long_term' (장기/고정) | 'short' (단기)
+  final String? applicationType;
 
   ApplicationModel({
     required this.id,
@@ -130,9 +137,14 @@ class ApplicationModel {
     this.terminationStatus,
     this.terminationRequestedAt,
     this.terminationReason,
+    this.terminationEffectiveDate,
     this.terminationRequestedByUid,
     this.terminationRespondedAt,
     this.terminationRejectReason,
+    // 🔄 계약 연장/종료 관리
+    this.renewalDecision,
+    this.renewalNotifiedAt,
+    this.renewedFromApplicationId,
     // ⭐ 장기공고 희망 시작일
     this.desiredStartDate,
     // ⭐ 여기에 추가
@@ -140,7 +152,8 @@ class ApplicationModel {
     this.extraWorkDates,
     // 🔥 상태 변경 이력
     this.statusHistory,
-    
+    this.applicationType,
+
   });
 
   /// Firestore 문서를 ApplicationModel로 변환
@@ -151,11 +164,11 @@ class ApplicationModel {
       businessName: data['businessName'] ?? '',
       toTitle: data['toTitle'] ?? '',
       workDate: data['workDate'] != null
-          ? (data['workDate'] as Timestamp).toDate()
-          : DateTime.now(),
+          ? (data['workDate'] as Timestamp).toDate().toLocal()
+          : (throw ArgumentError('ApplicationModel: workDate 필드 누락 (id: $documentId)')),
       workEndDate: data['workEndDate'] != null
-          ? (data['workEndDate'] as Timestamp).toDate()
-          : null,  // ⭐
+          ? (data['workEndDate'] as Timestamp).toDate().toLocal()
+          : null,
       workDays: data['workDays'] != null
           ? List<String>.from(data['workDays'])
           : null,  // ⭐
@@ -167,22 +180,22 @@ class ApplicationModel {
       toId: data['toId'],
       slotId: data['slotId'],
       groupId: data['groupId'],
-      wage: data['wage'] ?? 0,
+      wage: (data['wage'] as num?)?.toInt() ?? 0,
       // 🔥 업무 상세 정보
       wageType: data['wageType'],
       workTypeIcon: data['workTypeIcon'],
       workTypeColor: data['workTypeColor'],
       workTypeBackgroundColor: data['workTypeBackgroundColor'],
       originalWorkType: data['originalWorkType'],
-      originalWage: data['originalWage'],
+      originalWage: (data['originalWage'] as num?)?.toInt(),
       changedAt: data['changedAt'] != null
           ? (data['changedAt'] as Timestamp).toDate().toLocal()  // 🔥 .toLocal() 추가
           : null,
       changedBy: data['changedBy'],
       status: data['status'] ?? 'PENDING',
       appliedAt: data['appliedAt'] != null
-          ? (data['appliedAt'] as Timestamp).toDate().toLocal()  // 🔥 .toLocal() 추가
-          : DateTime.now(),
+          ? (data['appliedAt'] as Timestamp).toDate().toLocal()
+          : (throw ArgumentError('ApplicationModel: appliedAt 필드 누락 (id: $documentId)')),
       confirmedAt: data['confirmedAt'] != null
           ? (data['confirmedAt'] as Timestamp).toDate().toLocal()  // 🔥 .toLocal() 추가
           : null,
@@ -204,7 +217,7 @@ class ApplicationModel {
           ? (data['resignRequestedAt'] as Timestamp).toDate().toLocal()  // 🔥 .toLocal() 추가
           : null,
       resignRequestDate: data['resignRequestDate'] != null
-          ? (data['resignRequestDate'] as Timestamp).toDate()
+          ? (data['resignRequestDate'] as Timestamp).toDate().toLocal()
           : null,
       resignStatus: data['resignStatus'],
       resignApprovedAt: data['resignApprovedAt'] != null
@@ -213,7 +226,7 @@ class ApplicationModel {
       resignApprovedBy: data['resignApprovedBy'],
       resignRejectReason: data['resignRejectReason'],
       actualResignDate: data['actualResignDate'] != null
-          ? (data['actualResignDate'] as Timestamp).toDate()
+          ? (data['actualResignDate'] as Timestamp).toDate().toLocal()
           : null,
       // 🔥 Phase C: 계약해지 관리
       terminationStatus: data['terminationStatus'],
@@ -221,24 +234,34 @@ class ApplicationModel {
           ? (data['terminationRequestedAt'] as Timestamp).toDate().toLocal()  // 🔥 .toLocal() 추가
           : null,
       terminationReason: data['terminationReason'],
+      terminationEffectiveDate: data['terminationEffectiveDate'] != null
+          ? (data['terminationEffectiveDate'] as Timestamp).toDate().toLocal()
+          : null,
       terminationRequestedByUid: data['terminationRequestedByUid'],
       terminationRespondedAt: data['terminationRespondedAt'] != null
           ? (data['terminationRespondedAt'] as Timestamp).toDate().toLocal()  // 🔥 .toLocal() 추가
           : null,
       terminationRejectReason: data['terminationRejectReason'],
+      // 🔄 계약 연장/종료 관리
+      renewalDecision: data['renewalDecision'],
+      renewalNotifiedAt: data['renewalNotifiedAt'] != null
+          ? (data['renewalNotifiedAt'] as Timestamp).toDate().toLocal()
+          : null,
+      renewedFromApplicationId: data['renewedFromApplicationId'],
       // ⭐ 장기공고 희망 시작일
       desiredStartDate: data['desiredStartDate'] != null
-          ? (data['desiredStartDate'] as Timestamp).toDate()
+          ? (data['desiredStartDate'] as Timestamp).toDate().toLocal()
           : null,
-      // ⭐ 여기에 추가
       leaveDates: data['leaveDates'] != null
           ? (data['leaveDates'] as List)
-              .map((e) => (e as Timestamp).toDate())
+              .whereType<Timestamp>()
+              .map((e) => e.toDate().toLocal())
               .toList()
           : null,
       extraWorkDates: data['extraWorkDates'] != null
           ? (data['extraWorkDates'] as List)
-              .map((e) => (e as Timestamp).toDate())
+              .whereType<Timestamp>()
+              .map((e) => e.toDate().toLocal())
               .toList()
           : null,
           // 🔥 상태 변경 이력
@@ -247,13 +270,17 @@ class ApplicationModel {
               .map((e) => Map<String, dynamic>.from(e as Map))
               .toList()
           : null,
+      applicationType: data['type'] as String?,
     );
   }
   
   /// Firestore DocumentSnapshot에서 변환
   factory ApplicationModel.fromFirestore(DocumentSnapshot doc) {
-    final data = doc.data() as Map<String, dynamic>;
-    return ApplicationModel.fromMap(data, doc.id);
+    final raw = doc.data();
+    if (raw == null) {
+      throw ArgumentError('ApplicationModel.fromFirestore: 문서 데이터 없음 (id: ${doc.id})');
+    }
+    return ApplicationModel.fromMap(raw as Map<String, dynamic>, doc.id);
   }
   
   /// ApplicationModel을 Firestore 문서로 변환
@@ -310,55 +337,38 @@ class ApplicationModel {
       'terminationStatus': terminationStatus,
       'terminationRequestedAt': terminationRequestedAt != null ? Timestamp.fromDate(terminationRequestedAt!) : null,
       'terminationReason': terminationReason,
+      'terminationEffectiveDate': terminationEffectiveDate != null ? Timestamp.fromDate(terminationEffectiveDate!) : null,
       'terminationRequestedByUid': terminationRequestedByUid,
       'terminationRespondedAt': terminationRespondedAt != null ? Timestamp.fromDate(terminationRespondedAt!) : null,
       'terminationRejectReason': terminationRejectReason,
-      
+      // 🔄 계약 연장/종료 관리
+      'renewalDecision': renewalDecision,
+      'renewalNotifiedAt': renewalNotifiedAt != null ? Timestamp.fromDate(renewalNotifiedAt!) : null,
+      'renewedFromApplicationId': renewedFromApplicationId,
+
       // ⭐ 여기에 추가
       'leaveDates': leaveDates?.map((e) => Timestamp.fromDate(e)).toList(),
       'extraWorkDates': extraWorkDates?.map((e) => Timestamp.fromDate(e)).toList(),
       // 🔥 상태 변경 이력 (Timestamp 변환)
       'statusHistory': statusHistory,
+      'type': applicationType,
     };
   }
 
   /// 상태 한글 표시
   String get statusText {
     switch (status) {
-      case 'PENDING':
-        return '대기 중';
-      case 'CONFIRMED':
-        return '확정';
-      case 'REJECTED':
-        return '거절';
-      case 'CANCELED':
-        return '취소됨';
-      case 'AUTO_CANCELED':  // ⭐ 추가
-        return '자동 취소됨';
-      default:
-        return '알 수 없음';
+      case 'PENDING':           return '대기 중';
+      case 'CONTRACT_PENDING':  return '계약 대기';
+      case 'CONFIRMED':         return '확정';
+      case 'REJECTED':          return '거절';
+      case 'CANCELED':          return '취소됨';
+      case 'AUTO_CANCELED':     return '자동 취소됨';
+      default:                  return '알 수 없음';
     }
   }
 
-  /// 상태별 색상
-  int get statusColor {
-    switch (status) {
-      case 'PENDING':
-        return 0xFFF59E0B; // 주황색
-      case 'CONFIRMED':
-        return 0xFF10B981; // 초록색
-      case 'REJECTED':
-        return 0xFFEF4444; // 빨간색
-      case 'CANCELED':
-        return 0xFF6B7280; // 회색
-      case 'AUTO_CANCELED':  // ⭐ 추가
-        return 0xFFEF4444; // 빨간색
-      default:
-        return 0xFF9CA3AF; // 기본 회색
-    }
-  }
-
-  /// 업무유형이 변경되었는지 여부
+/// 업무유형이 변경되었는지 여부
   bool get isWorkTypeChanged => originalWorkType != null;
   
    /// 포맷팅된 금액 (예: "50,000원")
@@ -386,6 +396,7 @@ class ApplicationModel {
     String? uid,
     String? selectedWorkType,
     String? toId,
+    String? workDetailId,
     String? slotId,
     String? groupId,
     int? wage,
@@ -424,15 +435,19 @@ class ApplicationModel {
     String? terminationStatus,
     DateTime? terminationRequestedAt,
     String? terminationReason,
+    DateTime? terminationEffectiveDate,
     String? terminationRequestedByUid,
     DateTime? terminationRespondedAt,
     String? terminationRejectReason,
+    String? renewalDecision,
+    DateTime? renewalNotifiedAt,
+    String? renewedFromApplicationId,
     DateTime? desiredStartDate,
     List<DateTime>? leaveDates,
     List<DateTime>? extraWorkDates,
     // 🔥 상태 변경 이력
     List<Map<String, dynamic>>? statusHistory,
-    
+    String? applicationType,
   }) {
     return ApplicationModel(
       id: id ?? this.id,
@@ -447,7 +462,8 @@ class ApplicationModel {
       endTime: endTime ?? this.endTime,
       uid: uid ?? this.uid,
       selectedWorkType: selectedWorkType ?? this.selectedWorkType,
-      toId: toId ?? this.toId,          // ✅ 추가
+      toId: toId ?? this.toId,
+      workDetailId: workDetailId ?? this.workDetailId,
       slotId: slotId ?? this.slotId,
       groupId: groupId ?? this.groupId,
       wage: wage ?? this.wage,
@@ -486,13 +502,18 @@ class ApplicationModel {
       terminationStatus: terminationStatus ?? this.terminationStatus,
       terminationRequestedAt: terminationRequestedAt ?? this.terminationRequestedAt,
       terminationReason: terminationReason ?? this.terminationReason,
+      terminationEffectiveDate: terminationEffectiveDate ?? this.terminationEffectiveDate,
       terminationRequestedByUid: terminationRequestedByUid ?? this.terminationRequestedByUid,
       terminationRespondedAt: terminationRespondedAt ?? this.terminationRespondedAt,
       terminationRejectReason: terminationRejectReason ?? this.terminationRejectReason,
+      renewalDecision: renewalDecision ?? this.renewalDecision,
+      renewalNotifiedAt: renewalNotifiedAt ?? this.renewalNotifiedAt,
+      renewedFromApplicationId: renewedFromApplicationId ?? this.renewedFromApplicationId,
       leaveDates: leaveDates ?? this.leaveDates,
       extraWorkDates: extraWorkDates ?? this.extraWorkDates,
       // 🔥 상태 변경 이력
       statusHistory: statusHistory ?? this.statusHistory,
+      applicationType: applicationType ?? this.applicationType,
     );
   }
 
@@ -505,10 +526,16 @@ class ApplicationModel {
   // ⭐ Phase 1-B: 장기 공고 표시용 헬퍼
   
   /// 장기 지원인지 확인
-  /// ✅ workDays가 있어야만 장기 (workEndDate는 단기에도 있을 수 있음)
   bool get isLongTermApplication {
-    // workDays가 있으면 확실히 장기
-    return workDays != null && workDays!.isNotEmpty;
+    // 명시적으로 단기 → false
+    if (applicationType == AppType.shortTerm) return false;
+    // 명시적으로 장기 → true
+    if (applicationType == AppType.longTerm) return true;
+    // workDays가 있으면 장기 (신규 데이터)
+    if (workDays != null && workDays!.isNotEmpty) return true;
+    // 계약 종료일이 있으면 장기 (구 데이터 — contract-type TO 지원서)
+    if (workEndDate != null) return true;
+    return false;
   }
   
   /// 근무 기간 표시 (예: "11/1~11/30")
@@ -543,7 +570,8 @@ class ApplicationModel {
     }
     
     if (isContinuous && count > 1) {
-      return '주 $count일 (${workDays!.first}~${workDays!.last})';
+      // 정렬된 indices 기준 시작~끝 요일 표시 (원본 배열 순서 의존 방지)
+      return '주 $count일 (${weekDays[indices.first]}~${weekDays[indices.last]})';
     } else {
       return '주 $count일 ($daysStr)';
     }
@@ -590,7 +618,7 @@ class ApplicationModel {
     if (isExtraWorkDateOn(targetOnly)) return true;
     if (isLeaveDateOn(targetOnly)) return false;
 
-    return workDays!.contains(FormatHelper.weekday(targetDate));
+    return workDays?.contains(FormatHelper.weekday(targetDate)) ?? false;
   }
 
   /// 캘린더 표시용: 해당 날짜에 이 지원이 일정으로 표시되어야 하는지 확인
@@ -602,12 +630,11 @@ class ApplicationModel {
       return _isSameDay(workDate, targetDate);
     }
 
-    if (status != AppStatus.confirmed) {
+    if (status != AppStatus.confirmed && status != AppStatus.contractPending) {
       return _isSameDay(workDate, targetDate);
     }
 
-    if (resignStatus == AppStatus.approved || resignStatus == AppStatus.autoApproved ||
-        terminationStatus == AppStatus.approved || terminationStatus == AppStatus.autoApproved) {
+    if (isTerminationApproved) {
       return false;
     }
 
@@ -629,10 +656,13 @@ class ApplicationModel {
     if (isExtraWorkDateOn(targetOnly)) return true;
     if (isLeaveDateOn(targetOnly)) return true; // 휴무일도 캘린더에 표시
 
-    return workDays!.contains(FormatHelper.weekday(targetDate));
+    return workDays?.contains(FormatHelper.weekday(targetDate)) ?? false;
   }
 
   /// 시간대 겹침 여부 (충돌 판단용 정적 유틸)
+  ///
+  /// 야간 근무(22:00~02:00 등 자정 경계)를 정확히 처리합니다.
+  /// end <= start 이면 야간 시프트로 간주하여 +24h 정규화 후 비교.
   static bool hasTimeOverlap(String s1, String e1, String s2, String e2) {
     if (s1.isEmpty || e1.isEmpty || s2.isEmpty || e2.isEmpty) return false;
     int toMin(String t) {
@@ -640,8 +670,30 @@ class ApplicationModel {
       if (p.length < 2) return 0;
       return int.parse(p[0]) * 60 + int.parse(p[1]);
     }
-    return !(toMin(e1) <= toMin(s2) || toMin(e2) <= toMin(s1));
+
+    final a1 = toMin(s1);
+    final rawB1 = toMin(e1);
+    final a2 = toMin(s2);
+    final rawB2 = toMin(e2);
+
+    // 야간 시프트: end <= start → end + 24h 로 정규화
+    final b1 = rawB1 <= a1 ? rawB1 + 1440 : rawB1;
+    final b2 = rawB2 <= a2 ? rawB2 + 1440 : rawB2;
+
+    bool overlaps(int x1, int y1, int x2, int y2) => x1 < y2 && x2 < y1;
+
+    // 동일 날짜, 다음 날 shift2, 이전 날 shift2 세 가지 경우 검사
+    return overlaps(a1, b1, a2, b2) ||
+        overlaps(a1, b1, a2 + 1440, b2 + 1440) ||
+        overlaps(a1, b1, a2 - 1440, b2 - 1440);
   }
+
+  /// 퇴사 또는 계약해지가 승인 완료된 상태 (APPROVED / AUTO_APPROVED)
+  bool get isTerminationApproved =>
+      resignStatus == AppStatus.approved ||
+      resignStatus == AppStatus.autoApproved ||
+      terminationStatus == AppStatus.approved ||
+      terminationStatus == AppStatus.autoApproved;
 
   static bool _isSameDay(DateTime a, DateTime b) =>
       a.year == b.year && a.month == b.month && a.day == b.day;
@@ -649,18 +701,31 @@ class ApplicationModel {
 
 /// 지원서 Firestore 상태 상수 (대문자 — applications 컬렉션 convention)
 abstract class AppStatus {
-  static const String pending     = 'PENDING';
-  static const String confirmed   = 'CONFIRMED';
-  static const String rejected    = 'REJECTED';
-  static const String canceled    = 'CANCELED';
-  static const String autoCanceled = 'AUTO_CANCELED';
+  static const String pending          = 'PENDING';
+  static const String contractPending  = 'CONTRACT_PENDING'; // 관리자 확정 후 쌍방 서명 대기
+  static const String confirmed        = 'CONFIRMED';        // 계약 체결 완료
+  static const String rejected         = 'REJECTED';
+  static const String canceled         = 'CANCELED';
+  static const String autoCanceled     = 'AUTO_CANCELED';
 
   /// 퇴사·계약해지 하위 상태 (resignStatus / terminationStatus 필드용)
   static const String approved    = 'APPROVED';
   static const String autoApproved = 'AUTO_APPROVED';
 
-  /// 활성 상태 그룹
-  static const List<String> activeStates   = [pending, confirmed];
+  /// 계약 연장/종료 결정 (renewalDecision 필드용)
+  static const String renewalExtend    = 'EXTEND';
+  static const String renewalTerminate = 'TERMINATE';
+
+  /// 활성 상태 그룹 (CONTRACT_PENDING도 활성으로 취급)
+  static const List<String> activeStates   = [pending, contractPending, confirmed];
+  /// 확정 완료 상태 그룹 (Firestore whereIn 쿼리 및 in-memory 체크에 사용)
+  static const List<String> confirmedStatuses = [confirmed, contractPending];
   /// 비활성 상태 그룹
   static const List<String> inactiveStates = [rejected, canceled, autoCanceled];
+}
+
+/// 지원서 타입 상수 (applications 컬렉션 type 필드)
+abstract class AppType {
+  static const String longTerm = 'long_term'; // 장기 고정 근무 지원서
+  static const String shortTerm = 'short';    // 단기 근무 지원서
 }

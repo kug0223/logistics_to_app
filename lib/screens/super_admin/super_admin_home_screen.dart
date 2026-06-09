@@ -8,6 +8,7 @@ import '../../utils/responsive_helper.dart';
 import '../common/settings_screen.dart';
 import 'system_settings_screen.dart';
 import '../../theme/app_colors.dart';
+import '../../utils/toast_helper.dart';
 
 /// 최고관리자(SUPER_ADMIN) 홈 화면 - 세련된 디자인
 class AdminHomeScreen extends StatelessWidget {
@@ -19,6 +20,8 @@ class AdminHomeScreen extends StatelessWidget {
       builder: (context, userProvider, _) {
         final user = userProvider.currentUser;
         final theme = Theme.of(context);
+        final isLandscape =
+            MediaQuery.of(context).orientation == Orientation.landscape;
 
         return Scaffold(
           body: Container(
@@ -33,11 +36,12 @@ class AdminHomeScreen extends StatelessWidget {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  // 상단 헤더
+                  // 상단 헤더 — 가로 모드에서 vertical 패딩 축소
                   Padding(
                     padding: EdgeInsets.symmetric(
                       horizontal: ResponsiveHelper.spacing(context, 24),
-                      vertical: ResponsiveHelper.spacing(context, 20),
+                      vertical: ResponsiveHelper.spacing(
+                          context, isLandscape ? 8 : 20),
                     ),
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
@@ -55,12 +59,7 @@ class AdminHomeScreen extends StatelessWidget {
                                   children: [
                                     Text(
                                       'ALfit',
-                                      style: TextStyle(
-                                        color: Colors.white,
-                                        fontSize: ResponsiveHelper.titleStyle(context).fontSize! * 1.3,
-                                        fontWeight: FontWeight.w800,
-                                        letterSpacing: 1.5,
-                                      ),
+                                      style: ResponsiveHelper.titleStyle(context).copyWith(color: Colors.white, fontSize: ResponsiveHelper.titleStyle(context).fontSize! * 1.3, fontWeight: FontWeight.w800, letterSpacing: 1.5),
                                     ),
                                     Positioned(
                                       right: -ResponsiveHelper.spacing(context, 3),
@@ -137,43 +136,39 @@ class AdminHomeScreen extends StatelessWidget {
                           ],
                         ),
                         
-                        SizedBox(height: ResponsiveHelper.spacing(context, 24)),
-                        
-                        // 인사말
-                        Text(
-                          '안녕하세요,',
-                          style: ResponsiveHelper.bodyStyle(
-                            context,
-                            color: Colors.white.withValues(alpha: 0.95),
+                        // 가로 모드에서 인사말 섹션 숨김 (공간 절약)
+                        if (!isLandscape) ...[
+                          SizedBox(height: ResponsiveHelper.spacing(context, 24)),
+                          Text(
+                            '안녕하세요,',
+                            style: ResponsiveHelper.bodyStyle(
+                              context,
+                              color: Colors.white.withValues(alpha: 0.95),
+                            ),
                           ),
-                        ),
-                        
-                        SizedBox(height: ResponsiveHelper.spacing(context, 8)),
-                        
-                        // 사용자 이름
-                        Text(
-                          '${user?.name ?? '관리자'}님',
-                          style: ResponsiveHelper.titleStyle(context).copyWith(
-                            color: Colors.white,
-                            fontSize: ResponsiveHelper.titleStyle(context).fontSize! * 1.5,
-                            fontWeight: FontWeight.bold,
+                          SizedBox(height: ResponsiveHelper.spacing(context, 8)),
+                          Text(
+                            '${user?.name ?? '관리자'}님',
+                            style: ResponsiveHelper.titleStyle(context).copyWith(
+                              color: Colors.white,
+                              fontSize:
+                                  ResponsiveHelper.titleStyle(context).fontSize! * 1.5,
+                              fontWeight: FontWeight.bold,
+                            ),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
                           ),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                        
-                        SizedBox(height: ResponsiveHelper.spacing(context, 4)),
-                        
-                        // 이메일
-                        Text(
-                          user?.userEmail ?? '',
-                          style: ResponsiveHelper.smallStyle(
-                            context,
-                            color: Colors.white.withValues(alpha: 0.9),
+                          SizedBox(height: ResponsiveHelper.spacing(context, 4)),
+                          Text(
+                            user?.userEmail ?? '',
+                            style: ResponsiveHelper.smallStyle(
+                              context,
+                              color: Colors.white.withValues(alpha: 0.9),
+                            ),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
                           ),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                        ),
+                        ],
                       ],
                     ),
                   ),
@@ -220,9 +215,7 @@ class AdminHomeScreen extends StatelessWidget {
                               subtitle: '전체 공고 현황',
                               color: theme.primaryColor,
                               onTap: () {
-                                ScaffoldMessenger.of(context).showSnackBar(
-                                  const SnackBar(content: Text('공고 모니터링 기능은 준비 중입니다')),
-                                );
+                                ToastHelper.showInfo('공고 모니터링 기능은 준비 중입니다');
                               },
                             ),
 
@@ -234,9 +227,7 @@ class AdminHomeScreen extends StatelessWidget {
                               subtitle: '회원 관리',
                               color: theme.primaryColor,
                               onTap: () {
-                                ScaffoldMessenger.of(context).showSnackBar(
-                                  const SnackBar(content: Text('사용자 관리 기능은 준비 중입니다')),
-                                );
+                                ToastHelper.showInfo('사용자 관리 기능은 준비 중입니다');
                               },
                             ),
 
@@ -248,9 +239,7 @@ class AdminHomeScreen extends StatelessWidget {
                               subtitle: '전체 통계 분석',
                               color: theme.primaryColor,
                               onTap: () {
-                                ScaffoldMessenger.of(context).showSnackBar(
-                                  const SnackBar(content: Text('통계 기능은 준비 중입니다')),
-                                );
+                                ToastHelper.showInfo('통계 기능은 준비 중입니다');
                               },
                             ),
 

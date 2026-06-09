@@ -62,6 +62,10 @@ class StyledDialog extends StatelessWidget {
   /// 콘텐츠는 직접 SingleChildScrollView 를 감싸야 함
   final bool fillHeight;
 
+  /// Dialog의 insetPadding (기본값: Flutter 기본값과 동일)
+  /// landscape 등에서 다이얼로그가 화면 밖으로 나가지 않도록 조정
+  final EdgeInsets insetPadding;
+
   const StyledDialog({
     super.key,
     required this.title,
@@ -74,6 +78,7 @@ class StyledDialog extends StatelessWidget {
     this.maxWidth = 500,
     this.maxHeightRatio = 0.8,
     this.fillHeight = false,
+    this.insetPadding = const EdgeInsets.symmetric(horizontal: 40, vertical: 24),
   });
 
   @override
@@ -81,9 +86,10 @@ class StyledDialog extends StatelessWidget {
     final theme = Theme.of(context);
     final color = headerColor ?? theme.primaryColor;
 
-    final screenH = MediaQuery.of(context).size.height;
+    final screenH = MediaQuery.sizeOf(context).height;
 
     return Dialog(
+      insetPadding: insetPadding,
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(24),
       ),
@@ -166,6 +172,8 @@ class StyledDialog extends StatelessWidget {
                     style: ResponsiveHelper.smallStyle(context).copyWith(
                       color: AppColors.surface.withValues(alpha: 0.9),
                     ),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
                   ),
                 ],
               ],
@@ -175,6 +183,7 @@ class StyledDialog extends StatelessWidget {
           // 닫기 버튼
           if (showCloseButton)
             IconButton(
+              tooltip: '닫기',
               onPressed: () => Navigator.pop(context),
               icon: Icon(Icons.close, color: AppColors.surface),
               padding: EdgeInsets.zero,
@@ -218,7 +227,7 @@ class StyledDialog extends StatelessWidget {
 /// 스타일 다이얼로그 버튼
 class StyledDialogButton extends StatelessWidget {
   final String text;
-  final VoidCallback onPressed;
+  final VoidCallback? onPressed;
   final Color? backgroundColor;
   final Color? foregroundColor;
   final bool isOutlined;
@@ -237,7 +246,7 @@ class StyledDialogButton extends StatelessWidget {
   /// Primary 버튼 (채워진 버튼)
   factory StyledDialogButton.primary({
     required String text,
-    required VoidCallback onPressed,
+    required VoidCallback? onPressed,
     Color? backgroundColor,
     bool isLoading = false,
   }) {
@@ -253,7 +262,7 @@ class StyledDialogButton extends StatelessWidget {
   /// Cancel 버튼 (아웃라인 버튼)
   factory StyledDialogButton.cancel({
     String text = '취소',
-    required VoidCallback onPressed,
+    required VoidCallback? onPressed,
   }) {
     return StyledDialogButton(
       text: text,
@@ -265,7 +274,7 @@ class StyledDialogButton extends StatelessWidget {
   /// Danger 버튼 (빨간색)
   factory StyledDialogButton.danger({
     required String text,
-    required VoidCallback onPressed,
+    required VoidCallback? onPressed,
     bool isLoading = false,
   }) {
     return StyledDialogButton(
@@ -280,18 +289,23 @@ class StyledDialogButton extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final bg = isOutlined
-        ? AppColors.grey100
-        : (backgroundColor ?? theme.primaryColor);
-    final fg = isOutlined
-        ? AppColors.grey700
-        : (foregroundColor ?? AppColors.surface);
+    final isDisabled = !isLoading && onPressed == null;
+    final bg = isDisabled
+        ? AppColors.grey200
+        : isOutlined
+            ? AppColors.grey100
+            : (backgroundColor ?? theme.primaryColor);
+    final fg = isDisabled
+        ? AppColors.grey400
+        : isOutlined
+            ? AppColors.grey700
+            : (foregroundColor ?? AppColors.surface);
 
     return Material(
       color: bg,
       borderRadius: BorderRadius.circular(10),
       child: InkWell(
-        onTap: isLoading ? null : onPressed,
+        onTap: isLoading || isDisabled ? null : onPressed,
         borderRadius: BorderRadius.circular(10),
         child: Padding(
           padding: EdgeInsets.symmetric(

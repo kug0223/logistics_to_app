@@ -3,6 +3,7 @@
 // Models
 import '../../../models/ui/admin_to_list_ui_models.dart';
 import '../../../models/core/work_detail_data.dart';
+import '../../../models/core/to_model.dart' show TOStatus;
 
 // Widgets
 import '../../common/app_menu_sheet.dart';
@@ -22,6 +23,9 @@ import '../../../utils/close_state_utils.dart';
 // Theme
 import '../../../theme/app_colors.dart';
 
+// Common Widgets
+import '../../common/loading_widget.dart';
+
 // Screens
 import '../../../screens/business_admin/to_management/edit_to_screen.dart';
 import '../../../screens/common/job_posting_screen.dart';
@@ -34,12 +38,20 @@ import '../../../screens/business_admin/dialogs/to_list_dialogs.dart';
 // Local Widgets
 import 'admin_work_detail.dart';
 
-/// ✨ TO 아이템 카드 (그룹 내 개별 TO - 간소화된 디자인)
-/// 
-/// 개선 사항:
-/// - 좌측 연결선으로 그룹 소속 표시
-/// - 정보 간소화 (날짜 + 인원만)
-/// - 배지 최소화
+/// 슬롯 단위 TO 카드 — 날짜가 이미 선택된 컨텍스트(캘린더 뷰)에 특화.
+///
+/// ## TOGroupCard와의 역할 분리
+/// - TOGroupCard: 날짜 미선택 리스트 뷰에서 공고 그룹 전체를 표시. 날짜 범위/N일 배지/등록시간 등 포함.
+/// - TOItemCard(이 클래스): 날짜가 이미 결정된 상황에서 해당 날짜의 특정 슬롯 하나를 표시.
+///   날짜 배지를 헤더 첫 번째에 강조. compact 레이아웃으로 하루에 여러 장 나열에 적합.
+///
+/// ## 캘린더 뷰에서 TOGroupCard 대신 이것을 써야 하는 이유
+/// 1. [dateOverride]: 고정 TO는 슬롯 날짜가 없으므로, 사용자가 선택한 날짜를 날짜 배지에 표시.
+///    TOGroupCard에는 이 기능이 없어 고정 TO가 캘린더에서 날짜를 올바로 표시하지 못함.
+/// 2. 슬롯 단위 정밀 통계: [toItem.resolveStats()]로 해당 슬롯의 인원만 반영.
+/// 3. compact 레이아웃: 날짜 범위/N일/등록시간 같은 리스트 전용 정보를 제거해 캘린더에 적합.
+///
+/// ⚠️ TOGroupCard의 [TOCardDisplayMode.calendar]가 있어도 이 카드를 대체할 수 없음. 위 이유 참고.
 class TOItemCard extends StatefulWidget {
   final TOItem toItem;
   final TOGroupItem groupItem;
@@ -48,9 +60,13 @@ class TOItemCard extends StatefulWidget {
   final VoidCallback onChanged;
   final bool isExpanded;
   final VoidCallback onToggleExpand;
-  final bool isLoading;  // ✨ 추가: WorkDetails 로딩 중
+  final bool isLoading;
   final VoidCallback? onLocalStatsChanged;
-  final void Function(Set<String> affectedTOIds)? onAffectedTOsChanged;  // 🔥 추가
+  final void Function(Set<String> affectedTOIds)? onAffectedTOsChanged;
+  /// 캘린더 모드: 슬롯 날짜 대신 표시할 날짜 (고정 TO에 선택된 날짜 표시용)
+  final DateTime? dateOverride;
+  /// false면 좌측 그룹 연결선을 숨김 (캘린더 모드 등 독립 카드 표시 시)
+  final bool showConnector;
 
   const TOItemCard({
     super.key,
@@ -63,7 +79,9 @@ class TOItemCard extends StatefulWidget {
     required this.onToggleExpand,
     this.isLoading = false,
     this.onLocalStatsChanged,
-    this.onAffectedTOsChanged,  // 🔥 추가
+    this.onAffectedTOsChanged,
+    this.dateOverride,
+    this.showConnector = true,
   });
 
   @override
@@ -105,7 +123,7 @@ class _TOItemCardState extends State<TOItemCard> {
         children: [
           // ✨ 메인 카드
           Container(
-            margin: const EdgeInsets.only(left: 16),
+            margin: EdgeInsets.only(left: widget.showConnector ? 16 : 0),
             decoration: BoxDecoration(
               color: Colors.white,
               borderRadius: BorderRadius.circular(12),
@@ -131,7 +149,7 @@ class _TOItemCardState extends State<TOItemCard> {
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          // ✨ 1줄: 날짜 + 제목 (전체 표시)
+                          // ✨ 1줄: 날짜 + [고정/단기 배지] + 제목
                           Row(
                             children: [
                               // 날짜 배지
@@ -145,14 +163,44 @@ class _TOItemCardState extends State<TOItemCard> {
                                   borderRadius: BorderRadius.circular(6),
                                 ),
                                 child: Text(
-                                  FormatHelper.formatDate(widget.toItem.slot?.date ?? to.date),
+                                  FormatHelper.formatDate(widget.dateOverride ?? widget.toItem.slot?.date ?? to.date),
                                   style: ResponsiveHelper.smallStyle(
                                     context,
                                     color: theme.primaryColor,
                                   ).copyWith(fontWeight: FontWeight.bold),
                                 ),
                               ),
-                              SizedBox(width: ResponsiveHelper.spacing(context, 10)),
+                              // 고정/단기 타입 배지 (캘린더 독립 카드에서만 표시)
+                              if (!widget.showConnector) ...[
+                                SizedBox(width: ResponsiveHelper.spacing(context, 6)),
+                                Container(
+                                  padding: EdgeInsets.symmetric(
+                                    horizontal: ResponsiveHelper.spacing(context, 6),
+                                    vertical: ResponsiveHelper.spacing(context, 3),
+                                  ),
+                                  decoration: BoxDecoration(
+                                    color: widget.groupItem.isLongTerm
+                                        ? AppColors.longTermBg
+                                        : AppColors.shortTermBg,
+                                    borderRadius: BorderRadius.circular(4),
+                                    border: Border.all(
+                                      color: widget.groupItem.isLongTerm
+                                          ? AppColors.longTermLight
+                                          : AppColors.shortTermLight,
+                                    ),
+                                  ),
+                                  child: Text(
+                                    widget.groupItem.isLongTerm ? '고정' : '단기',
+                                    style: ResponsiveHelper.tinyStyle(
+                                      context,
+                                      color: widget.groupItem.isLongTerm
+                                          ? AppColors.longTermDark
+                                          : AppColors.shortTermDark,
+                                    ).copyWith(fontWeight: FontWeight.bold),
+                                  ),
+                                ),
+                              ],
+                              SizedBox(width: ResponsiveHelper.spacing(context, 6)),
                               // 제목 (슬롯 개별 제목 우선, 없으면 마스터 TO 제목)
                               Expanded(
                                 child: Text(
@@ -168,8 +216,41 @@ class _TOItemCardState extends State<TOItemCard> {
                             ],
                           ),
                           
+                          // 계약기간 + 근무요일 (캘린더 고정 카드에서만 표시)
+                          if (!widget.showConnector && widget.groupItem.isLongTerm) ...[
+                            SizedBox(height: ResponsiveHelper.spacing(context, 4)),
+                            // 계약 기간 (프리셋이면 "계약 1개월", custom이면 생략)
+                            if (to.contractPeriodLabel.isNotEmpty)
+                              Row(
+                                children: [
+                                  Icon(
+                                    Icons.assignment_outlined,
+                                    size: ResponsiveHelper.iconSize(context, 12),
+                                    color: AppColors.longTermDark,
+                                  ),
+                                  SizedBox(width: ResponsiveHelper.spacing(context, 4)),
+                                  Text(
+                                    '계약 ${to.contractPeriodLabel}',
+                                    style: ResponsiveHelper.smallStyle(context, color: AppColors.longTermDark)
+                                        .copyWith(fontWeight: FontWeight.w600),
+                                  ),
+                                ],
+                              ),
+                            // 근무 일정 (시작일 ~ 종료일 · 요일)
+                            SizedBox(height: ResponsiveHelper.spacing(context, 2)),
+                            Text(
+                              FormatHelper.formatWorkPeriod(
+                                startDate: to.rangeStart ?? to.createdAt,
+                                endDate: to.endDate,
+                                isLongTerm: true,
+                                workDays: to.workDays.isEmpty ? null : to.workDays,
+                              ),
+                              style: ResponsiveHelper.smallStyle(context, color: AppColors.grey600),
+                            ),
+                          ],
+
                           SizedBox(height: ResponsiveHelper.spacing(context, 8)),
-                          
+
                           // ✨ 2줄: 인원 + 마감 + 메뉴 + 펼침
                           Row(
                             children: [
@@ -227,32 +308,11 @@ class _TOItemCardState extends State<TOItemCard> {
                                 ),
                                 child: widget.isLoading
                                     // ✨ 로딩 중 스피너
-                                    ? Center(
-                                        child: Padding(
-                                          padding: EdgeInsets.all(
-                                            ResponsiveHelper.spacing(context, 16),
-                                          ),
-                                          child: Row(
-                                            mainAxisAlignment: MainAxisAlignment.center,
-                                            children: [
-                                              SizedBox(
-                                                width: 20,
-                                                height: 20,
-                                                child: CircularProgressIndicator(
-                                                  strokeWidth: 2,
-                                                  color: theme.primaryColor,
-                                                ),
-                                              ),
-                                              SizedBox(width: ResponsiveHelper.spacing(context, 8)),
-                                              Text(
-                                                '업무 정보 불러오는 중...',
-                                                style: ResponsiveHelper.smallStyle(context).copyWith(
-                                                  color: AppColors.grey500,
-                                                ),
-                                              ),
-                                            ],
-                                          ),
+                                    ? Padding(
+                                        padding: EdgeInsets.all(
+                                          ResponsiveHelper.spacing(context, 16),
                                         ),
+                                        child: const LoadingWidget(message: '업무 정보 불러오는 중...'),
                                       )
                                     // ✨ 로드 완료 - 업무 상세 표시
                                     : Column(
@@ -309,8 +369,8 @@ class _TOItemCardState extends State<TOItemCard> {
             ),
           ),
           
-          // ✨ 좌측 연결선 (Stack으로 전체 높이 커버)
-          Positioned(
+          // ✨ 좌측 연결선 (그룹 카드 내부에서만 표시)
+          if (widget.showConnector) Positioned(
             left: 0,
             top: 0,
             bottom: 0,
@@ -388,27 +448,49 @@ class _TOItemCardState extends State<TOItemCard> {
   /// ✨ 상태 배지 (마감/예약/모집중)
   Widget _buildStatusBadge(BuildContext context, {required bool allClosed}) {
     final to = widget.toItem.to;
-    
+
+    // 0. 미공개(초안)
+    if (to.status == TOStatus.draft) {
+      return Container(
+        padding: EdgeInsets.symmetric(
+          horizontal: ResponsiveHelper.spacing(context, 6),
+          vertical: ResponsiveHelper.spacing(context, 3),
+        ),
+        decoration: BoxDecoration(
+          color: AppColors.grey200,
+          borderRadius: BorderRadius.circular(6),
+        ),
+        child: Row(mainAxisSize: MainAxisSize.min, children: [
+          Icon(Icons.visibility_off_outlined,
+              size: ResponsiveHelper.iconSize(context, 10),
+              color: AppColors.grey500),
+          SizedBox(width: ResponsiveHelper.spacing(context, 2)),
+          Text('미공개',
+              style: ResponsiveHelper.tinyStyle(context,
+                  color: AppColors.grey500)),
+        ]),
+      );
+    }
+
     // 1. 마감됨
     if (allClosed) {
       return _buildClosedBadge(context);
     }
-    
+
     // 2. 예약 공개 대기
     if (to.isPendingPublish) {
       return _buildScheduledBadge(context, to.publishAt);
     }
-    
+
     // 3. 모집중
     return _buildRecruitingBadge(context);
   }
 
   /// ✨ 예약 배지 (오픈 예정)
   Widget _buildScheduledBadge(BuildContext context, DateTime? publishAt) {
-    String displayText = '예약';
-    if (publishAt != null) {
-      displayText = '${publishAt.month}/${publishAt.day} ${publishAt.hour.toString().padLeft(2, '0')}:${publishAt.minute.toString().padLeft(2, '0')} 오픈';
-    }
+    final displayText = publishAt != null
+        ? '${FormatHelper.formatDateTime(publishAt)} 오픈'
+        : '예약';
     
     return Container(
       padding: EdgeInsets.symmetric(
@@ -572,7 +654,7 @@ class _TOItemCardState extends State<TOItemCard> {
           showDialog(
             context: context,
             barrierDismissible: false,
-            builder: (_) => const Center(child: CircularProgressIndicator()),
+            builder: (_) => const Center(child: LoadingWidget()),
           );
           try {
             final result = await widget.firestoreService.loadTOWorkDetails(widget.toItem.to, slotId: widget.toItem.slot?.id, slotWorkDetails: widget.toItem.slot?.workDetails);
@@ -633,7 +715,7 @@ class _TOItemCardState extends State<TOItemCard> {
           showDialog(
             context: context,
             barrierDismissible: false,
-            builder: (_) => const Center(child: CircularProgressIndicator()),
+            builder: (_) => const Center(child: LoadingWidget()),
           );
           try {
             final result = await widget.firestoreService.loadTOWorkDetails(widget.toItem.to, slotId: widget.toItem.slot?.id, slotWorkDetails: widget.toItem.slot?.workDetails);
@@ -668,7 +750,7 @@ class _TOItemCardState extends State<TOItemCard> {
           showDialog(
             context: context,
             barrierDismissible: false,
-            builder: (_) => const Center(child: CircularProgressIndicator()),
+            builder: (_) => const Center(child: LoadingWidget()),
           );
           try {
             final result = await widget.firestoreService.loadTOWorkDetails(widget.toItem.to, slotId: widget.toItem.slot?.id, slotWorkDetails: widget.toItem.slot?.workDetails);

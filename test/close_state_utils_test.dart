@@ -209,13 +209,15 @@ void main() {
       expect(CloseStateUtils.isToItemClosed(item, master, now), isFalse);
     });
 
-    test('HOURS_BEFORE: 마감시간 이후 → 마감', () {
-      // 시작시각 11:00, 2h 전 마감 → deadline 09:00, now는 10:00 → 마감
+    test('HOURS_BEFORE: applicationDeadline 저장값 기준 (09:00 마감, now=10:00) → 마감', () {
+      // 설계: HOURS_BEFORE는 슬롯 생성 시 applicationDeadline으로 미리 계산해 저장됨
+      // CloseStateUtils는 저장된 applicationDeadline만 체크
       final slot = _slot(date: today);
       final master = _masterTO(deadlineType: 'HOURS_BEFORE', hoursBeforeStart: 2);
+      final deadline = DateTime(today.year, today.month, today.day, 9, 0); // 09:00 (now보다 이전)
       final item = _toItem(
         slot: slot,
-        loadedWorkDetails: [_detail(startTime: '11:00')],
+        loadedWorkDetails: [_detail(startTime: '11:00', applicationDeadline: deadline)],
       );
       expect(CloseStateUtils.isToItemClosed(item, master, now), isTrue);
     });

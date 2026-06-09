@@ -209,6 +209,8 @@ class TOWorkDetailsSection extends StatelessWidget {
   Widget _buildWorkDetailCards(BuildContext context) {
     // WorkDetailInput 리스트 (create 모드)
     if (workDetailInputs != null) {
+      // 정렬 후 화면 위치(i)를 원본 인덱스(entry.key)와 분리해서 사용
+      // entry.key = 원본 리스트 인덱스 → onEdit/onDelete에 전달
       final sorted = workDetailInputs!.asMap().entries.toList()
         ..sort((a, b) {
           final typeCompare = (a.value.workType ?? '').compareTo(b.value.workType ?? '');
@@ -219,12 +221,12 @@ class TOWorkDetailsSection extends StatelessWidget {
         });
       return Column(
         children: sorted.map((entry) {
-          final index = entry.key;
+          final originalIndex = entry.key; // 정렬 전 원본 인덱스 사용
           final detail = entry.value;
           return TOWorkDetailCard.fromInput(
             detail: detail,
-            onEdit: onEditWorkByIndex != null ? () => onEditWorkByIndex!(index) : null,
-            onDelete: onRemoveWorkByIndex != null ? () => onRemoveWorkByIndex!(index) : null,
+            onEdit: onEditWorkByIndex != null ? () => onEditWorkByIndex!(originalIndex) : null,
+            onDelete: onRemoveWorkByIndex != null ? () => onRemoveWorkByIndex!(originalIndex) : null,
           );
         }).toList(),
       );

@@ -7,6 +7,8 @@ import '../../../../utils/responsive_helper.dart';
 import '../../../../utils/format_helper.dart';
 import '../../../../theme/app_colors.dart';
 import '../../work_type_icon.dart';
+import '../../common/loading_widget.dart';
+import '../../common/tax_deduction_badge.dart';
 
 /// 업무 지원 상태
 enum WorkApplicationStatus {
@@ -54,6 +56,9 @@ class WorkSelectionCard extends StatelessWidget {
   /// 슬롯 날짜 (날짜가 지났으면 notApplied 상태도 마감으로 표시)
   final DateTime? slotDate;
 
+  /// 장기공고 여부 — true면 isTimeExpired 체크 생략 (계약 시작일 기준 판단)
+  final bool isLongTerm;
+
   const WorkSelectionCard({
     super.key,
     required this.workDetail,
@@ -64,7 +69,33 @@ class WorkSelectionCard extends StatelessWidget {
     this.onCancelConfirm,
     this.isLoading = false,
     this.slotDate,
+    this.isLongTerm = false,
   });
+
+  Color get _wageColor => workDetail.wageType == 'daily'
+      ? AppColors.warningDark
+      : workDetail.wageType == 'hourly'
+          ? AppColors.successDark
+          : AppColors.grey600;
+
+  String get _netWorkTime => FormatHelper.calcNetWorkTime(
+        workDetail.startTime,
+        workDetail.endTime,
+        breakMinutes: workDetail.breakMinutes,
+      );
+
+  /// 마감 시각 표시 레이블 — slotDate 기준으로 전날/당일 구분
+  String? get _deadlineLabel {
+    final deadline = workDetail.applicationDeadline;
+    if (deadline == null) return null;
+    final timeStr = FormatHelper.formatTime(deadline);
+    if (slotDate != null) {
+      final deadlineDay = DateTime(deadline.year, deadline.month, deadline.day);
+      final workDay = DateTime(slotDate!.year, slotDate!.month, slotDate!.day);
+      if (deadlineDay.isBefore(workDay)) return '전날 $timeStr까지';
+    }
+    return '마감 $timeStr';
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -202,11 +233,7 @@ class WorkSelectionCard extends StatelessWidget {
           textColor = AppColors.warningDark;
           break;
       case WorkApplicationStatus.notApplied:
-          final now = DateTime.now();
-          final isDatePast = slotDate != null &&
-              DateTime(slotDate!.year, slotDate!.month, slotDate!.day)
-                  .isBefore(DateTime(now.year, now.month, now.day));
-          if (isDatePast || workDetail.isFull || workDetail.isClosed || workDetail.isTimeExpired) {
+          if (_isClosed) {
             text = '마감';
             bgColor = AppColors.grey200;
             textColor = AppColors.grey600;
@@ -246,31 +273,131 @@ class WorkSelectionCard extends StatelessWidget {
   Widget _buildDetails(BuildContext context, ThemeData theme) {
     return Padding(
       padding: EdgeInsets.only(
-        left: ResponsiveHelper.spacing(context, 42), // 아이콘 너비만큼 들여쓰기
+        left: ResponsiveHelper.spacing(context, 42),
       ),
-      child: Row(
+      child: Wrap(
+        spacing: ResponsiveHelper.spacing(context, 12),
+        runSpacing: ResponsiveHelper.spacing(context, 4),
+        crossAxisAlignment: WrapCrossAlignment.center,
         children: [
-          Icon(
-            Icons.access_time,
-            size: ResponsiveHelper.iconSize(context, 14),
-            color: AppColors.grey500,
+          // 근무시간 + 순근무시간
+          Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(
+                Icons.access_time,
+                size: ResponsiveHelper.iconSize(context, 14),
+                color: AppColors.grey500,
+              ),
+              SizedBox(width: ResponsiveHelper.spacing(context, 4)),
+              Text(
+                workDetail.timeRange,
+                style: ResponsiveHelper.smallStyle(context, color: AppColors.grey700),
+              ),
+              if (_netWorkTime.isNotEmpty) ...[
+                SizedBox(width: ResponsiveHelper.spacing(context, 3)),
+                Text(
+                  '($_netWorkTime)',
+                  style: ResponsiveHelper.tinyStyle(context).copyWith(
+                    color: AppColors.grey500,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+              ],
+            ],
           ),
-          SizedBox(width: ResponsiveHelper.spacing(context, 4)),
-          Text(
-            workDetail.timeRange,
-            style: ResponsiveHelper.smallStyle(context, color: AppColors.grey700),
+          // 지원 마감 시각 (단기 TO, 마감 정보 있을 때)
+          if (!isLongTerm && _deadlineLabel != null)
+            Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(
+                  Icons.timer_off_outlined,
+                  size: ResponsiveHelper.iconSize(context, 14),
+                  color: AppColors.warningDark,
+                ),
+                SizedBox(width: ResponsiveHelper.spacing(context, 4)),
+                Text(
+                  _deadlineLabel!,
+                  style: ResponsiveHelper.smallStyle(
+                    context,
+                    color: AppColors.warningDark,
+                  ),
+                ),
+              ],
+            ),
+          // 급여 (아이콘 + 금액/유형) — 배지는 별도 Wrap 아이템으로 분리해 overflow 방지
+          Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(
+                Icons.payments_outlined,
+                size: ResponsiveHelper.iconSize(context, 14),
+                color: _wageColor,
+              ),
+              SizedBox(width: ResponsiveHelper.spacing(context, 4)),
+              Text(
+                '${FormatHelper.formatNumber(workDetail.wage)}원/${workDetail.wageTypeLabel}',
+                style: ResponsiveHelper.smallStyle(context, color: _wageColor)
+                    .copyWith(fontWeight: FontWeight.w600),
+              ),
+            ],
           ),
-          SizedBox(width: ResponsiveHelper.spacing(context, 12)),
-          Icon(
-            Icons.payments_outlined,
-            size: ResponsiveHelper.iconSize(context, 14),
-            color: AppColors.grey500,
-          ),
-          SizedBox(width: ResponsiveHelper.spacing(context, 4)),
-          Text(
-            '${FormatHelper.formatNumber(workDetail.wage)}원/${workDetail.wageTypeLabel}',
-            style: ResponsiveHelper.smallStyle(context, color: AppColors.grey700),
-          ),
+          // 정산방식 배지 — Wrap 아이템으로 독립 분리 (좁은 화면에서 다음 줄 개행)
+          if (workDetail.payScheduleTypeLabel.isNotEmpty)
+            Container(
+              padding: EdgeInsets.symmetric(
+                horizontal: ResponsiveHelper.spacing(context, 6),
+                vertical: 1,
+              ),
+              decoration: BoxDecoration(
+                color: _wageColor.withValues(alpha: 0.12),
+                borderRadius: BorderRadius.circular(4),
+              ),
+              child: Text(
+                workDetail.payScheduleTypeLabel,
+                style: ResponsiveHelper.tinyStyle(context,
+                    color: _wageColor, fontWeight: FontWeight.w600),
+              ),
+            ),
+          // 입금일 상세 (주급/월급 등 날짜·시간 있을 때만)
+          if (workDetail.payScheduleDetail.isNotEmpty)
+            Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(
+                  Icons.account_balance_wallet_outlined,
+                  size: ResponsiveHelper.iconSize(context, 14),
+                  color: AppColors.grey500,
+                ),
+                SizedBox(width: ResponsiveHelper.spacing(context, 4)),
+                Text(
+                  '${workDetail.payScheduleDetail} 입금',
+                  style: ResponsiveHelper.smallStyle(context, color: AppColors.grey700),
+                ),
+              ],
+            ),
+
+          // 모집 인원
+          if (workDetail.requiredCount > 0)
+            Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(
+                  Icons.people_outline,
+                  size: ResponsiveHelper.iconSize(context, 14),
+                  color: AppColors.grey500,
+                ),
+                SizedBox(width: ResponsiveHelper.spacing(context, 4)),
+                Text(
+                  '${workDetail.requiredCount}명 모집',
+                  style: ResponsiveHelper.smallStyle(context, color: AppColors.grey700),
+                ),
+              ],
+            ),
+
+          // 공제 방식 (none이면 자동으로 SizedBox.shrink)
+          TaxDeductionBadge.chip(taxDeductionType: workDetail.taxDeductionType),
         ],
       ),
     );
@@ -283,10 +410,7 @@ class WorkSelectionCard extends StatelessWidget {
       return SizedBox(
         width: ResponsiveHelper.spacing(context, 20),
         height: ResponsiveHelper.spacing(context, 20),
-        child: CircularProgressIndicator(
-          strokeWidth: 2,
-          color: theme.primaryColor,
-        ),
+        child: LoadingWidget(color: theme.primaryColor),
       );
     }
 
@@ -303,7 +427,7 @@ class WorkSelectionCard extends StatelessWidget {
     // 상태별 버튼
     switch (status) {
       case WorkApplicationStatus.notApplied:
-        if (workDetail.isFull || workDetail.isClosed || workDetail.isTimeExpired) {
+        if (_isClosed) {
           return _buildSmallButton(context, '마감', AppColors.grey400, null, icon: Icons.block);
         }
         return _buildSmallButton(context, '지원', AppColors.success, onApply, icon: Icons.send);
@@ -403,6 +527,26 @@ class WorkSelectionCard extends StatelessWidget {
   // 헬퍼 메서드
   // ═══════════════════════════════════════════════════════════
 
+  /// 날짜·마감·인원 기준 마감 여부
+  ///
+  /// 장기공고는 applicationDeadline(isTimeExpired) 체크를 제외.
+  /// 단기공고는 slotDate가 과거이면 마감 처리.
+  bool get _isClosed {
+    if (workDetail.isFull || workDetail.isClosed) return true;
+    if (!isLongTerm && workDetail.isTimeExpired) return true;
+    if (!isLongTerm && slotDate != null) {
+      final now = DateTime.now();
+      return DateTime(slotDate!.year, slotDate!.month, slotDate!.day)
+          .isBefore(DateTime(now.year, now.month, now.day));
+    }
+    if (isLongTerm && slotDate != null) {
+      final now = DateTime.now();
+      return DateTime(slotDate!.year, slotDate!.month, slotDate!.day)
+          .isBefore(DateTime(now.year, now.month, now.day));
+    }
+    return false;
+  }
+
   bool _canInteract() {
     // ✅ 확정 상태면 항상 활성화 (확정취소 가능)
     if (status == WorkApplicationStatus.confirmed) return true;
@@ -412,7 +556,7 @@ class WorkSelectionCard extends StatelessWidget {
     
     // 마감이면 불가
     if (status == WorkApplicationStatus.closed) return false;
-    if ((workDetail.isFull || workDetail.isClosed || workDetail.isTimeExpired) && status == WorkApplicationStatus.notApplied) return false;
+    if (_isClosed && status == WorkApplicationStatus.notApplied) return false;
     
     // autoCanceled는 재지원 가능
     return true;

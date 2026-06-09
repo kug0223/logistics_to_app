@@ -146,11 +146,25 @@ class NotificationCard extends StatelessWidget {
         return Icons.event_available;
       case NotificationType.scheduleChangeRejected:
         return Icons.event_busy;
+      case NotificationType.contractSignRequested:
+        return Icons.draw;
+      case NotificationType.contractExpiringReminder:
+        return Icons.event_note;
+      case NotificationType.contractRenewed:
+        return Icons.autorenew;
+      case NotificationType.contractTerminating:
+        return Icons.event_busy;
       case NotificationType.terminationRequested:
+      case NotificationType.resignRequested:
         return Icons.exit_to_app;
       case NotificationType.terminationApproved:
+      case NotificationType.resignApproved:
         return Icons.logout;
+      case NotificationType.resignRejected:
+        return Icons.do_not_disturb_on;
       case NotificationType.wageConfirmed:
+        return Icons.payments;
+      case NotificationType.wageCancelConfirmed:
         return Icons.payments;
       case NotificationType.idCardAccessRequested:
         return Icons.badge;
@@ -160,6 +174,12 @@ class NotificationCard extends StatelessWidget {
         return Icons.block;
       case NotificationType.idCardAccessExpiringSoon:
         return Icons.schedule;
+      case NotificationType.memberInvitationReceived:
+        return Icons.group_add;
+      case NotificationType.memberInvitationAccepted:
+        return Icons.group;
+      case NotificationType.memberInvitationRejected:
+        return Icons.group_remove;
       case NotificationType.systemNotice:
         return Icons.campaign;
       case NotificationType.other:
@@ -178,20 +198,39 @@ class NotificationCard extends StatelessWidget {
       case NotificationType.workCanceled:
       case NotificationType.scheduleChangeRejected:
       case NotificationType.terminationRequested:
-      case NotificationType.terminationApproved:
+      case NotificationType.resignRejected:
       case NotificationType.idCardAccessRejected:
         return AppColors.error;
+      case NotificationType.terminationApproved:
+      case NotificationType.resignApproved:
+        return AppColors.success;
+      case NotificationType.resignRequested:
+      case NotificationType.contractSignRequested:
+      case NotificationType.contractExpiringReminder:
       case NotificationType.newApplication:
       case NotificationType.scheduleChangeRequested:
       case NotificationType.idCardAccessRequested:
         return AppColors.info;
+      case NotificationType.contractRenewed:
+        return AppColors.success;
+      case NotificationType.contractTerminating:
+        return AppColors.warning;
       case NotificationType.wageConfirmed:
         return AppColors.success;
+      case NotificationType.wageCancelConfirmed:
+        return AppColors.warning;
       case NotificationType.reviewReceived:
         return AppColors.amber;
       case NotificationType.workReminder:
       case NotificationType.idCardAccessExpiringSoon:
         return AppColors.warning;
+      case NotificationType.memberInvitationReceived:
+        return AppColors.info;
+      case NotificationType.memberInvitationAccepted:
+        return AppColors.success;
+      case NotificationType.memberInvitationRejected:
+        return AppColors.grey500;
+      case NotificationType.applicationCanceled:
       default:
         return AppColors.grey500;
     }

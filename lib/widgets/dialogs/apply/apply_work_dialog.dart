@@ -22,8 +22,11 @@ import 'apply_summary_section.dart';
 import 'confirm_cancel_dialog.dart';
 import 'apply_confirm_dialog.dart';
 import '../../../utils/navigation_helper.dart';
+import '../../../utils/network_checker.dart';
 import '../../../screens/common/job_posting_screen.dart';
 import '../../../services/tooltip_service.dart';
+import '../../../services/analytics_service.dart';
+import '../../../widgets/common/loading_widget.dart';
 
 /// 지원 다이얼로그 결과
 class ApplyDialogResult {
@@ -57,6 +60,9 @@ class ApplyWorkDialog extends StatefulWidget {
   /// 사업장명
   final String businessName;
 
+  /// 사전 로드된 내 전체 지원 목록 (없으면 다이얼로그 내에서 로드)
+  final List<ApplicationModel>? myApplications;
+
   const ApplyWorkDialog({
     super.key,
     required this.mainTO,
@@ -64,6 +70,7 @@ class ApplyWorkDialog extends StatefulWidget {
     this.groupTOsByDate,
     this.groupWorkDetailsByDate,
     required this.businessName,
+    this.myApplications,
   });
 
   /// 다이얼로그 표시 (간편 호출)
@@ -74,9 +81,11 @@ class ApplyWorkDialog extends StatefulWidget {
     Map<DateTime, TOModel>? groupTOsByDate,
     Map<DateTime, List<WorkDetailModel>>? groupWorkDetailsByDate,
     required String businessName,
+    List<ApplicationModel>? myApplications,
   }) {
     return showModalBottomSheet<ApplyDialogResult>(
       context: context,
+      useSafeArea: true,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
       builder: (context) => ApplyWorkDialog(
@@ -85,6 +94,7 @@ class ApplyWorkDialog extends StatefulWidget {
         groupTOsByDate: groupTOsByDate,
         groupWorkDetailsByDate: groupWorkDetailsByDate,
         businessName: businessName,
+        myApplications: myApplications,
       ),
     );
   }
@@ -131,6 +141,10 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
   // ✅ 이미 알림 표시한 날짜 (중복 표시 방지)
   final Set<DateTime> _shownAlertDates = {};
 
+  // 내 전체 지원 현황 (모든 공고 포함 — 내 지원 현황 섹션용)
+  List<ApplicationModel> _allMyApplications = [];
+  bool _allMyApplicationsLoadError = false;
+
   // ✅ 출퇴근 기록이 있는 application ID (장기공고용)
   final Set<String> _hasAttendanceIds = {};
   // ✅ 장기공고 희망 시작일
@@ -140,26 +154,42 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
   // Getter
   // ═══════════════════════════════════════════════════════════
   
-  bool get _isGroupTO => 
+  bool get _isGroupTO =>
       widget.groupTOsByDate != null && widget.groupTOsByDate!.isNotEmpty;
 
   bool get _isLongTerm => widget.mainTO.isLongTerm;
+
+  /// preset 기간이면 desiredStartDate 기준으로 종료일 계산, 아니면 rangeEnd 사용
+  DateTime get _effectiveEndDate {
+    final to = widget.mainTO;
+    if (to.hasPresetPeriod && _desiredStartDate != null) {
+      return to.computeContractEndDate(_desiredStartDate!);
+    }
+    return to.endDate ?? to.date;
+  }
+
+  /// 캘린더 표시 범위 최대일 (preset이면 1년 후, 아니면 rangeEnd)
+  DateTime get _calendarLastDay {
+    final to = widget.mainTO;
+    if (to.hasPresetPeriod) return DateTime.now().add(const Duration(days: 365));
+    return to.endDate ?? to.date;
+  }
   
   // 🔥 이미 지원 완료 상태인지 체크
   bool get _hasActiveApplication {
     final dateKey = DateTime(widget.mainTO.date.year, widget.mainTO.date.month, widget.mainTO.date.day);
     final apps = _applicationsByDate[dateKey];
     if (apps == null) return false;
-    return apps.values.any((app) => app.status == 'PENDING' || app.status == 'CONFIRMED');
+    return apps.values.any((app) => app.status == AppStatus.pending || AppStatus.confirmedStatuses.contains(app.status));
   }
-  
+
   // 🔥 지원된 희망시작일 가져오기
   DateTime? get _appliedDesiredStartDate {
     final dateKey = DateTime(widget.mainTO.date.year, widget.mainTO.date.month, widget.mainTO.date.day);
     final apps = _applicationsByDate[dateKey];
     if (apps == null) return null;
     final activeApp = apps.values.cast<ApplicationModel?>().firstWhere(
-      (app) => app?.status == 'PENDING' || app?.status == 'CONFIRMED',
+      (app) => app?.status == AppStatus.pending || AppStatus.confirmedStatuses.contains(app?.status),
       orElse: () => null,
     );
     return activeApp?.desiredStartDate ?? activeApp?.workDate;
@@ -173,7 +203,10 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
   @override
   void initState() {
     super.initState();
-    _initializeData();
+    // postFrameCallback: context 완전히 준비된 후 실행 (initState 내 직접 context 사용 방지)
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _initializeData();
+    });
   }
 
   Future<void> _initializeData() async {
@@ -186,6 +219,25 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
       Navigator.pop(context);
       return;
     }
+
+    // 전체 지원 현황 초기화
+    // 1) 캐시가 있으면 즉시 반영 (빠른 초기 표시)
+    _allMyApplications = widget.myApplications ?? [];
+    // 2) 항상 Firestore 최신 데이터로 갱신 (캐시 누락·다른 경로 지원 보완)
+    _firestoreService.getMyApplications(_currentUserId!).then((apps) {
+      if (mounted) {
+        setState(() {
+          _allMyApplications = apps;
+          _allMyApplicationsLoadError = false;
+        });
+      }
+    }).catchError((e) {
+      debugPrint('⚠️ 지원 현황 초기 로드 실패: $e');
+      // 캐시도 없고 로드도 실패한 경우 에러 상태 표시
+      if (mounted && _allMyApplications.isEmpty) {
+        setState(() => _allMyApplicationsLoadError = true);
+      }
+    });
 
     // ✅ 장기공고: 희망 시작일 기본값 = null (사용자가 직접 선택해야 함)
     // 🔥 기본값 설정 제거 - 사용자가 캘린더에서 선택 가능한 날짜를 직접 선택해야 함
@@ -299,13 +351,10 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
       final activeApplications = applications.where((app) {
         if (app.isLongTermApplication) {
           // ✅ PENDING/CONFIRMED 상태면 무조건 활성 (재지원 케이스 포함)
-          if (app.status == 'PENDING' || app.status == 'CONFIRMED') {
+          if (app.status == AppStatus.pending || AppStatus.confirmedStatuses.contains(app.status)) {
             return true;
           }
-          if (app.resignStatus == 'APPROVED' || app.resignStatus == 'AUTO_APPROVED' ||
-              app.terminationStatus == 'APPROVED' || app.terminationStatus == 'AUTO_APPROVED') {
-            return false;
-          }
+          if (app.isTerminationApproved) return false;
         }
         return true;
       }).toList();
@@ -325,7 +374,7 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
       
       // ✅ 장기공고: 확정된 application의 출퇴근 기록 확인
       if (_isLongTerm) {
-        for (final app in applications.where((a) => a.status == 'CONFIRMED')) {
+        for (final app in applications.where((a) => AppStatus.confirmedStatuses.contains(a.status))) {
           final hasRecord = await _firestoreService.hasAttendanceRecord(app.id);
           if (hasRecord) {
             _hasAttendanceIds.add(app.id);
@@ -333,8 +382,8 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
         }
         
         // activeApplications = 필터링 후
-        final activeApp = activeApplications.where((a) => 
-          a.status == 'PENDING' || a.status == 'CONFIRMED'
+        final activeApp = activeApplications.where((a) =>
+          a.status == AppStatus.pending || AppStatus.confirmedStatuses.contains(a.status)
         ).firstOrNull;
         
         if (activeApp != null && mounted) {
@@ -381,7 +430,7 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
     }
     
     final startDate = widget.mainTO.date;
-    final endDate = widget.mainTO.endDate ?? widget.mainTO.date;
+    final endDate = _calendarLastDay;
     final workDays = widget.mainTO.workDays;
     final workStartTime = widget.workDetails.isNotEmpty ? widget.workDetails.first.startTime : '';
     final workEndTime = widget.workDetails.isNotEmpty ? widget.workDetails.first.endTime : '';
@@ -391,7 +440,7 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
       final snapshot = await FirebaseFirestore.instance
           .collection('applications')
           .where('uid', isEqualTo: _currentUserId)
-          .where('status', isEqualTo: 'CONFIRMED')
+          .where('status', whereIn: AppStatus.confirmedStatuses)
           .get();
       
       final allConfirmed = snapshot.docs
@@ -524,7 +573,7 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
         }
       },
       child: Container(
-        height: dialogHeight,
+        constraints: BoxConstraints(maxHeight: dialogHeight),
         decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.vertical(
@@ -545,7 +594,7 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
           // 내용
           Expanded(
             child: _isLoading
-                ? const Center(child: CircularProgressIndicator())
+                ? const LoadingWidget()
                 : _buildContent(context, theme),
           ),
           
@@ -571,55 +620,69 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
 
   Widget _buildHeader(BuildContext context, ThemeData theme) {
     final dateFormat = DateFormat('M/d (E)', 'ko_KR');
-    
+
     return Padding(
       padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 16)),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // 제목
+          // 제목 + 공고명
           Text(
             '지원하기',
             style: ResponsiveHelper.titleStyle(context).copyWith(
               fontWeight: FontWeight.bold,
             ),
           ),
-          
-          SizedBox(height: ResponsiveHelper.spacing(context, 8)),
-          
+          SizedBox(height: ResponsiveHelper.spacing(context, 3)),
+          Text(
+            widget.mainTO.title,
+            style: ResponsiveHelper.bodyStyle(context).copyWith(
+              color: theme.primaryColor,
+              fontWeight: FontWeight.w600,
+            ),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+          ),
+
+          SizedBox(height: ResponsiveHelper.spacing(context, 10)),
+
           // 사업장 & 날짜 정보
           Row(
             children: [
               Icon(
                 Icons.business,
-                size: ResponsiveHelper.iconSize(context, 16),
-                color: AppColors.grey600,
+                size: ResponsiveHelper.iconSize(context, 15),
+                color: AppColors.grey500,
               ),
               SizedBox(width: ResponsiveHelper.spacing(context, 4)),
               Expanded(
                 child: Text(
                   widget.businessName,
-                  style: ResponsiveHelper.bodyStyle(context, color: AppColors.grey600),
+                  style: ResponsiveHelper.smallStyle(context, color: AppColors.grey600),
                   overflow: TextOverflow.ellipsis,
                 ),
               ),
-              
-              SizedBox(width: ResponsiveHelper.spacing(context, 12)),
-              
-              Icon(
-                Icons.calendar_today,
-                size: ResponsiveHelper.iconSize(context, 16),
-                color: AppColors.grey600,
-              ),
-              SizedBox(width: ResponsiveHelper.spacing(context, 4)),
-              Text(
-                _isGroupTO
-                    ? '${dateFormat.format(widget.groupTOsByDate!.keys.first)} ~ ${dateFormat.format(widget.groupTOsByDate!.keys.last)} (${widget.groupTOsByDate!.length}일)'
-                    : _isLongTerm
-                        ? '${dateFormat.format(widget.mainTO.date)} ~ ${dateFormat.format(widget.mainTO.endDate ?? widget.mainTO.date)}'
-                        : dateFormat.format(widget.mainTO.date),
-                style: ResponsiveHelper.bodyStyle(context, color: AppColors.grey600),
-              ),
+
+              if (_isGroupTO || _isLongTerm) ...[
+                SizedBox(width: ResponsiveHelper.spacing(context, 12)),
+                Icon(
+                  Icons.calendar_today,
+                  size: ResponsiveHelper.iconSize(context, 15),
+                  color: AppColors.grey500,
+                ),
+                SizedBox(width: ResponsiveHelper.spacing(context, 4)),
+                Flexible(
+                  child: Text(
+                    _isGroupTO
+                        ? '${dateFormat.format(widget.groupTOsByDate!.keys.first)} ~ ${dateFormat.format(widget.groupTOsByDate!.keys.last)} (${widget.groupTOsByDate!.length}일)'
+                        : widget.mainTO.hasPresetPeriod
+                            ? widget.mainTO.contractPeriodLabel
+                            : '${dateFormat.format(widget.mainTO.date)} ~ ${dateFormat.format(widget.mainTO.endDate ?? widget.mainTO.date)}',
+                    style: ResponsiveHelper.smallStyle(context, color: AppColors.grey600),
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+              ],
             ],
           ),
         ],
@@ -645,13 +708,12 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // ✅ 캘린더 (단일 단기 / 장기 모두 표시)
+          // 캘린더(장기) / 날짜 카드(단기)
           if (_isLongTerm) ...[
             _buildLongTermCalendarSection(context, theme),
             SizedBox(height: ResponsiveHelper.spacing(context, 16)),
           ] else ...[
-            // ✅ 단일 단기: 기존 캘린더 재활용 (날짜 1개)
-            _buildCalendarSection(context, theme, [widget.mainTO.date]),
+            _buildSingleDateInfo(context, theme),
             SizedBox(height: ResponsiveHelper.spacing(context, 16)),
           ],
           
@@ -759,6 +821,7 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
               conflictInfo: conflictInfo,
               isLoading: _loadingWorkIds.contains(work.id),
               slotDate: widget.mainTO.date,
+              isLongTerm: _isLongTerm,
               onApply: hasConflictAndNoDate ? null : () => _applyForWork(widget.mainTO, work),
               onCancelApplication: application != null
                   ? () => _cancelApplication(application)
@@ -771,25 +834,101 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
           
           SizedBox(height: ResponsiveHelper.spacing(context, 16)),
           
-          // 지원 요약
+          // 내 지원 현황 (전체 공고 통합)
           ApplySummarySection(
-            applicationInfos: [
-              DateApplicationInfo(
-                date: widget.mainTO.date,
-                appliedWorks: _getAppliedWorks(widget.mainTO.date, widget.workDetails),
-                confirmedWorks: _getConfirmedWorks(widget.mainTO.date, widget.workDetails),
-                // ✅ 장기공고 정보 추가
-                isLongTerm: _isLongTerm,
-                desiredStartDate: _desiredStartDate,
-                endDate: widget.mainTO.endDate,
-                workDays: widget.mainTO.workDays,
-              ),
-            ],
+            myApplications: _allMyApplications,
+            isLoadError: _allMyApplicationsLoadError,
           ),
         ],
       ),
     );
   }
+  // ═══════════════════════════════════════════════════════════
+  // 단기 TO 날짜 정보 카드 (캘린더 대체)
+  // ═══════════════════════════════════════════════════════════
+
+  Widget _buildSingleDateInfo(BuildContext context, ThemeData theme) {
+    final to = widget.mainTO;
+    final dateFormat = DateFormat('M월 d일 (E)', 'ko_KR');
+
+    // 모든 업무 시간이 동일하면 시간 표시, 다르면 업무 수 표시
+    String timeText;
+    if (widget.workDetails.isEmpty) {
+      timeText = '';
+    } else if (widget.workDetails.length == 1 ||
+        widget.workDetails.every((w) =>
+            w.startTime == widget.workDetails.first.startTime &&
+            w.endTime == widget.workDetails.first.endTime)) {
+      timeText = widget.workDetails.first.timeRange;
+    } else {
+      timeText = '${widget.workDetails.length}개 업무 (시간 상이)';
+    }
+
+    return Container(
+      padding: EdgeInsets.symmetric(
+        horizontal: ResponsiveHelper.spacing(context, 16),
+        vertical: ResponsiveHelper.spacing(context, 14),
+      ),
+      decoration: BoxDecoration(
+        color: theme.primaryColor.withValues(alpha: 0.05),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: theme.primaryColor.withValues(alpha: 0.15)),
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: ResponsiveHelper.spacing(context, 44),
+            height: ResponsiveHelper.spacing(context, 44),
+            decoration: BoxDecoration(
+              color: theme.primaryColor.withValues(alpha: 0.12),
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: Icon(
+              Icons.event,
+              size: ResponsiveHelper.iconSize(context, 24),
+              color: theme.primaryColor,
+            ),
+          ),
+          SizedBox(width: ResponsiveHelper.spacing(context, 14)),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  '근무 날짜',
+                  style: ResponsiveHelper.tinyStyle(context,
+                      color: AppColors.grey500, fontWeight: FontWeight.w500),
+                ),
+                SizedBox(height: ResponsiveHelper.spacing(context, 3)),
+                Text(
+                  dateFormat.format(to.date),
+                  style: ResponsiveHelper.subtitleStyle(context).copyWith(
+                    fontWeight: FontWeight.bold,
+                    color: AppColors.grey800,
+                  ),
+                ),
+                if (timeText.isNotEmpty) ...[
+                  SizedBox(height: ResponsiveHelper.spacing(context, 3)),
+                  Row(
+                    children: [
+                      Icon(Icons.access_time,
+                          size: ResponsiveHelper.iconSize(context, 13),
+                          color: AppColors.grey500),
+                      SizedBox(width: ResponsiveHelper.spacing(context, 4)),
+                      Text(timeText,
+                          style: ResponsiveHelper.smallStyle(context,
+                              color: AppColors.grey600)),
+                    ],
+                  ),
+                ],
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   // ═══════════════════════════════════════════════════════════
   // 장기공고 캘린더 섹션 (읽기전용)
   // ═══════════════════════════════════════════════════════════
@@ -800,7 +939,7 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
     // 🔥 FIX: 이미 지원한 상태면 경고 박스 숨김
     final dateKey = DateTime(widget.mainTO.date.year, widget.mainTO.date.month, widget.mainTO.date.day);
     final apps = _applicationsByDate[dateKey];
-    if (apps != null && apps.values.any((app) => app.status == 'PENDING' || app.status == 'CONFIRMED')) {
+    if (apps != null && apps.values.any((app) => app.status == AppStatus.pending || AppStatus.confirmedStatuses.contains(app.status))) {
       return const SizedBox.shrink();
     }
     
@@ -921,7 +1060,7 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
   /// 장기공고용 캘린더 (희망 시작일 선택 가능)
   Widget _buildLongTermCalendarSection(BuildContext context, ThemeData theme) {
     final startDate = widget.mainTO.date;
-    final endDate = widget.mainTO.endDate ?? widget.mainTO.date;
+    final endDate = _calendarLastDay;
     final workDays = widget.mainTO.workDays;
     
     // 오늘 날짜
@@ -1128,8 +1267,8 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
                     Expanded(
                       child: Text(
                         _desiredStartDate != null
-                            ? '${DateFormat('M/d (E)', 'ko_KR').format(_desiredStartDate!)}부터 ${DateFormat('M/d', 'ko_KR').format(endDate)}까지 일괄 지원됩니다.\n${widget.mainTO.workDaysLabel}'
-                            : '희망 시작일을 선택하면 해당일부터 종료일까지 일괄 지원됩니다.\n${widget.mainTO.workDaysLabel}',
+                            ? '${DateFormat('M/d (E)', 'ko_KR').format(_desiredStartDate!)}부터 ${DateFormat('M/d', 'ko_KR').format(_effectiveEndDate)}까지 일괄 지원됩니다.\n${widget.mainTO.workDaysLabel}'
+                            : '희망 시작일을 선택하면 해당일부터 ${widget.mainTO.hasPresetPeriod ? widget.mainTO.contractPeriodLabel : "종료일"}까지 일괄 지원됩니다.\n${widget.mainTO.workDaysLabel}',
                         style: ResponsiveHelper.smallStyle(context, color: AppColors.infoDark),
                       ),
                     ),
@@ -1338,16 +1477,10 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
           
           SizedBox(height: ResponsiveHelper.spacing(context, 16)),
           
-          // 지원 요약
+          // 내 지원 현황 (전체 공고 통합)
           ApplySummarySection(
-            applicationInfos: sortedDates.map((date) {
-              final workDetails = widget.groupWorkDetailsByDate?[date] ?? [];
-              return DateApplicationInfo(
-                date: date,
-                appliedWorks: _getAppliedWorks(date, workDetails),
-                confirmedWorks: _getConfirmedWorks(date, workDetails),
-              );
-            }).toList(),
+            myApplications: _allMyApplications,
+            isLoadError: _allMyApplicationsLoadError,
           ),
           
           SizedBox(height: ResponsiveHelper.spacing(context, 16)),
@@ -1446,9 +1579,9 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
               // 마커용 이벤트 리스트 반환
               final events = <String>[];
               for (final app in apps.values) {
-                if (app.status == 'CONFIRMED') {
+                if (AppStatus.confirmedStatuses.contains(app.status)) {
                   events.add('confirmed');
-                } else if (app.status == 'PENDING') {
+                } else if (app.status == AppStatus.pending) {
                   events.add('pending');
                 }
               }
@@ -1496,12 +1629,10 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
                 final isAvailable = availableDates.any(
                   (d) => DateUtils.isSameDay(d, day),
                 );
-                
-                // ✅ 예약 공개 체크
                 final dateKey = DateTime(day.year, day.month, day.day);
                 final to = widget.groupTOsByDate?[dateKey];
                 final isPending = to?.isPendingPublish ?? false;
-                
+
                 return _buildDayCell(
                   context,
                   day,
@@ -1510,9 +1641,10 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
                   isToday: false,
                   isPendingPublish: isPending,
                   publishAt: to?.publishAt,
+                  isClosed: isAvailable && _isDateAllClosed(dateKey),
                 );
               },
-              
+
               // 선택된 날짜
               selectedBuilder: (context, day, focusedDay) {
                 return _buildDayCell(
@@ -1523,21 +1655,23 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
                   isToday: DateUtils.isSameDay(day, DateTime.now()),
                 );
               },
-              
+
               // 오늘
               todayBuilder: (context, day, focusedDay) {
                 final isAvailable = availableDates.any(
                   (d) => DateUtils.isSameDay(d, day),
                 );
-                final isSelected = _selectedDate != null && 
+                final isSelected = _selectedDate != null &&
                     DateUtils.isSameDay(_selectedDate, day);
-                
+                final dateKey = DateTime(day.year, day.month, day.day);
+
                 return _buildDayCell(
                   context,
                   day,
                   isAvailable: isAvailable,
                   isSelected: isSelected,
                   isToday: true,
+                  isClosed: isAvailable && !isSelected && _isDateAllClosed(dateKey),
                 );
               },
               
@@ -1649,8 +1783,6 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
   }
 
   /// 날짜 셀 빌드
-
-  /// 날짜 셀 빌드
   Widget _buildDayCell(
     BuildContext context,
     DateTime day, {
@@ -1659,13 +1791,34 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
     required bool isToday,
     bool isPendingPublish = false,
     DateTime? publishAt,
+    bool isClosed = false,
   }) {
     final theme = Theme.of(context);
-    
+
     Color backgroundColor;
     Color textColor;
     BoxBorder? border;
-    
+
+    // 마감 날짜: 회색 배경 + 취소선
+    if (isAvailable && isClosed && !isSelected) {
+      return Container(
+        margin: EdgeInsets.all(ResponsiveHelper.spacing(context, 2)),
+        decoration: BoxDecoration(
+          color: AppColors.grey100,
+          shape: BoxShape.circle,
+        ),
+        child: Center(
+          child: Text(
+            '${day.day}',
+            style: ResponsiveHelper.bodyStyle(context, color: AppColors.grey400).copyWith(
+              decoration: TextDecoration.lineThrough,
+              decorationColor: AppColors.grey400,
+            ),
+          ),
+        ),
+      );
+    }
+
     if (isSelected) {
       backgroundColor = theme.primaryColor;
       textColor = Colors.white;
@@ -1699,7 +1852,7 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
         ),
       );
     }
-    
+
     return Container(
       margin: EdgeInsets.all(ResponsiveHelper.spacing(context, 2)),
       decoration: BoxDecoration(
@@ -1716,6 +1869,15 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
         ),
       ),
     );
+  }
+
+  /// 날짜의 모든 업무가 마감됐는지 (isTimeExpired 포함)
+  bool _isDateAllClosed(DateTime dateKey) {
+    final now = DateTime.now();
+    if (dateKey.isBefore(DateTime(now.year, now.month, now.day))) return true;
+    final workDetails = widget.groupWorkDetailsByDate?[dateKey] ?? [];
+    if (workDetails.isEmpty) return false;
+    return workDetails.every((d) => d.isClosed || d.isTimeExpired || d.isFull);
   }
 
   /// 내 확정 스케줄 경고
@@ -1940,8 +2102,8 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
   /// ✅ 예약 공개 대기 메시지
   Widget _buildPendingPublishNotice(BuildContext context, TOModel to) {
     final publishAt = to.publishAt;
-    final displayText = publishAt != null 
-        ? '${publishAt.month}/${publishAt.day} ${publishAt.hour.toString().padLeft(2, '0')}:${publishAt.minute.toString().padLeft(2, '0')}에 오픈됩니다'
+    final displayText = publishAt != null
+        ? '${FormatHelper.formatDateTime(publishAt)}에 오픈됩니다'
         : '곧 오픈 예정입니다';
     
     return Container(
@@ -2062,51 +2224,19 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
 
   WorkApplicationStatus _getApplicationStatus(ApplicationModel? application) {
     if (application == null) return WorkApplicationStatus.notApplied;
-    
+
     // 🔥 퇴사/해지 완료된 장기공고는 미지원 취급
-    if (application.isLongTermApplication) {
-      if (application.resignStatus == 'APPROVED' || application.resignStatus == 'AUTO_APPROVED' ||
-          application.terminationStatus == 'APPROVED' || application.terminationStatus == 'AUTO_APPROVED') {
-        return WorkApplicationStatus.notApplied;
-      }
+    if (application.isLongTermApplication && application.isTerminationApproved) {
+      return WorkApplicationStatus.notApplied;
     }
-    
-    switch (application.status) {
-      case 'CONFIRMED':
-        return WorkApplicationStatus.confirmed;
-      case 'PENDING':
-        return WorkApplicationStatus.pending;
-      case 'REJECTED':
-      case 'CANCELED':
-      case 'AUTO_CANCELED':
-        return WorkApplicationStatus.notApplied;
-      default:
-        return WorkApplicationStatus.notApplied;
+
+    if (AppStatus.confirmedStatuses.contains(application.status)) {
+      return WorkApplicationStatus.confirmed;
     }
-  }
-
-  List<WorkDetailModel> _getAppliedWorks(DateTime date, List<WorkDetailModel> workDetails) {
-    final dateKey = DateTime(date.year, date.month, date.day);
-    final apps = _applicationsByDate[dateKey];
-    if (apps == null) return [];
-    
-    return workDetails.where((work) {
-      final workKey = _makeWorkKey(work.workType, work.startTime, work.endTime);
-      final app = apps[workKey];
-      return app != null && app.status == 'PENDING';
-    }).toList();
-  }
-
-  List<WorkDetailModel> _getConfirmedWorks(DateTime date, List<WorkDetailModel> workDetails) {
-    final dateKey = DateTime(date.year, date.month, date.day);
-    final apps = _applicationsByDate[dateKey];
-    if (apps == null) return [];
-    
-    return workDetails.where((work) {
-      final workKey = _makeWorkKey(work.workType, work.startTime, work.endTime);
-      final app = apps[workKey];
-      return app != null && app.status == 'CONFIRMED';
-    }).toList();
+    if (application.status == AppStatus.pending) {
+      return WorkApplicationStatus.pending;
+    }
+    return WorkApplicationStatus.notApplied;
   }
 
   String _dateKey(DateTime date) {
@@ -2135,20 +2265,20 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
       final today = DateTime.now();
       final todayOnly = DateTime(today.year, today.month, today.day);
       final startDate = to.date;
-      final endDate = to.endDate ?? to.date;
+      final endDate = _calendarLastDay;
       final workDays = to.workDays;
       final selectableStartDate = todayOnly.isAfter(startDate) ? todayOnly : startDate;
-      
+
       final selectedDayOnly = DateTime(_desiredStartDate!.year, _desiredStartDate!.month, _desiredStartDate!.day);
-      
+
       // 과거 날짜인지
       if (selectedDayOnly.isBefore(selectableStartDate)) {
         ToastHelper.showWarning('선택한 날짜는 지원할 수 없습니다.\n캘린더에서 희망 시작일을 다시 선택해주세요.');
         return;
       }
-      
-      // 종료일 이후인지
-      if (selectedDayOnly.isAfter(endDate)) {
+
+      // 종료일 이후인지 (preset 타입이면 미래 제한 없음)
+      if (!to.hasPresetPeriod && selectedDayOnly.isAfter(endDate)) {
         ToastHelper.showWarning('선택한 날짜가 근무 종료일 이후입니다.');
         return;
       }
@@ -2178,16 +2308,16 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
       isLongTerm: _isLongTerm,
       workDate: date ?? to.date,
       desiredStartDate: _isLongTerm ? _desiredStartDate : null,
-      endDate: _isLongTerm ? to.endDate : null,
+      endDate: _isLongTerm ? _effectiveEndDate : null,
       workDays: _isLongTerm ? to.workDays : null,
     );
-    
-    if (!confirmed) return;  // 취소 시 종료
-    
-    final loadingKey = date != null 
-        ? '${date.millisecondsSinceEpoch}_${work.id}' 
+
+    if (!confirmed || !mounted) return;  // 취소 시 종료
+
+    final loadingKey = date != null
+        ? '${date.millisecondsSinceEpoch}_${work.id}'
         : work.id;
-    
+
     setState(() => _loadingWorkIds.add(loadingKey));
 
     try {
@@ -2206,7 +2336,7 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
         workTypeBackgroundColor: work.workTypeBackgroundColor,
         startTime: work.startTime,
         endTime: work.endTime,
-        workEndDate: to.endDate,
+        workEndDate: _isLongTerm ? _effectiveEndDate : to.endDate,
         workDays: to.workDays,
         type: to.type,
         toId: to.id,
@@ -2216,9 +2346,16 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
 
       // 상태 새로고침
       await _refreshApplicationStatus(date ?? to.date, work.workType);
-      
+      _reloadAllMyApplications(); // fire-and-forget: 내 지원 현황 갱신
+
       _hasChanges = true;
       ToastHelper.showSuccess('지원이 완료되었습니다');
+      AnalyticsService.logApply(
+        toId: to.id,
+        businessName: to.businessName,
+        workType: work.workType,
+        appType: _isLongTerm ? 'long_term' : 'short',
+      );
       
       // 🆕 첫 지원 툴팁
       if (mounted) {
@@ -2226,7 +2363,9 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
       }
     } catch (e) {
       debugPrint('❌ 지원 실패: $e');
-      ToastHelper.showError('지원에 실패했습니다');
+      ToastHelper.showError(
+        e is NetworkOfflineException ? e.message : '지원에 실패했습니다',
+      );
     } finally {
       if (mounted) {
         setState(() => _loadingWorkIds.remove(loadingKey));
@@ -2237,7 +2376,7 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
   /// 지원 취소
   Future<void> _cancelApplication(ApplicationModel application) async {
     // AUTO_CANCELED 상태면 이미 취소된 것
-    if (application.status == 'AUTO_CANCELED') {
+    if (application.status == AppStatus.autoCanceled) {
       ToastHelper.showInfo('이미 자동취소된 지원입니다 (시간 충돌)');
       return;
     }
@@ -2249,7 +2388,7 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
       confirmText: '취소하기',
     );
 
-    if (!confirmed) return;
+    if (!confirmed || !mounted) return;
 
     // ✅ 로딩 키 통일 (applyForWork와 동일한 방식)
     final loadingKey = _makeWorkKey(
@@ -2264,7 +2403,8 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
       
       // 상태 새로고침
       await _refreshApplicationStatus(application.workDate, application.selectedWorkType);
-      
+      _reloadAllMyApplications(); // fire-and-forget: 내 지원 현황 갱신
+
       _hasChanges = true;
       ToastHelper.showSuccess('지원이 취소되었습니다');
     } catch (e) {
@@ -2298,10 +2438,10 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
       currentNoShowCount: _userNoShowCount,
     );
 
-    if (result != ConfirmCancelResult.proceed) return;
+    if (result != ConfirmCancelResult.proceed || !mounted) return;
 
-    final loadingKey = date != null 
-        ? '${date.millisecondsSinceEpoch}_${work.id}' 
+    final loadingKey = date != null
+        ? '${date.millisecondsSinceEpoch}_${work.id}'
         : work.id;
     
     setState(() => _loadingWorkIds.add(loadingKey));
@@ -2325,7 +2465,8 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
       await _refreshApplicationStatus(targetDate, application.selectedWorkType);
       await _loadMyConfirmedSchedules(targetDate);
       await _loadConflictsForDate(targetDate);
-      
+      _reloadAllMyApplications(); // fire-and-forget: 내 지원 현황 갱신
+
       _hasChanges = true;
       
       if (hasPenalty) {
@@ -2344,6 +2485,18 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
   }
 
   /// 특정 날짜/업무의 상태 새로고침
+  /// 지원/취소 후 전체 지원 현황 갱신 (내 지원 현황 섹션 실시간 업데이트)
+  Future<void> _reloadAllMyApplications() async {
+    if (_currentUserId == null) return;
+    try {
+      final apps =
+          await _firestoreService.getMyApplications(_currentUserId!);
+      if (mounted) setState(() => _allMyApplications = apps);
+    } catch (e) {
+      debugPrint('⚠️ 전체 지원 현황 갱신 실패: $e');
+    }
+  }
+
   Future<void> _refreshApplicationStatus(DateTime date, String workType) async {
     if (_currentUserId == null) return;
 
@@ -2367,8 +2520,8 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
       if (mounted) {
         setState(() {
           // ✅ PENDING, CONFIRMED만 유지 (CANCELED, REJECTED, AUTO_CANCELED 제외)
-          final activeApps = applications.where((app) => 
-            app.status == 'PENDING' || app.status == 'CONFIRMED'
+          final activeApps = applications.where((app) =>
+            app.status == AppStatus.pending || AppStatus.confirmedStatuses.contains(app.status)
           ).toList();
           
           _applicationsByDate[dateKey] = {
@@ -2383,13 +2536,15 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
   }
   /// 상세보기 화면 이동
   void _goToJobPosting(TOModel to, List<WorkDetailModel> workDetails) {
-    Navigator.pop(context); // 다이얼로그 닫기
-    
+    final nav = Navigator.of(context);
+    nav.pop();
     NavigationHelper.push(
-      context,
+      nav.context,
       destination: JobPostingScreen(
         to: to,
         workDetails: workDetails,
+        // flex TO 그룹 슬롯 → rangeStart에 슬롯 날짜 복사됨 → slotDate로 전달
+        slotDate: to.isFlexType ? to.date : null,
       ),
     );
   }
@@ -2451,7 +2606,7 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
     // 🔥 FIX: 이미 지원한 상태면 충돌 알림 표시 안 함
     final dateKey = DateTime(widget.mainTO.date.year, widget.mainTO.date.month, widget.mainTO.date.day);
     final apps = _applicationsByDate[dateKey];
-    if (apps != null && apps.values.any((app) => app.status == 'PENDING' || app.status == 'CONFIRMED')) {
+    if (apps != null && apps.values.any((app) => app.status == AppStatus.pending || AppStatus.confirmedStatuses.contains(app.status))) {
       debugPrint('🔍 [장기공고] 이미 지원 중 - 충돌 알림 스킵');
       return;  // 이미 지원했으면 알림 표시 안 함
     }
@@ -2517,7 +2672,7 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
     final dateStr = DateFormat('M/d (E)', 'ko_KR').format(date);
     final publishAt = to.publishAt;
     final publishStr = publishAt != null
-        ? '${publishAt.month}/${publishAt.day} ${publishAt.hour.toString().padLeft(2, '0')}:${publishAt.minute.toString().padLeft(2, '0')}'
+        ? FormatHelper.formatDateTime(publishAt)
         : '예정된 시간';
 
     await _showAlertDialog(
@@ -2613,6 +2768,7 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
     String? detail,
     String? subMessage,
   }) async {
+    if (!mounted) return;
     await showDialog(
       context: context,
       builder: (ctx) => AlertDialog(

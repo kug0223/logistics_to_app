@@ -1,0 +1,264 @@
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:flutter/foundation.dart';
+
+import '../models/core/business_member_model.dart';
+import '../models/core/member_invitation_model.dart';
+import '../models/core/notification_model.dart';
+import '../utils/format_helper.dart';
+import 'firestore_service.dart';
+
+class MemberService {
+  final _db = FirebaseFirestore.instance;
+  final _firestoreService = FirestoreService();
+
+  CollectionReference _members(String businessId) => _db
+      .collection('businesses')
+      .doc(businessId)
+      .collection('members');
+
+  CollectionReference get _invitations =>
+      _db.collection('member_invitations');
+
+  // ── 초대 발송 ─────────────────────────────────────────────────
+
+  /// 전화번호로 근무자 검색 (숫자형·하이픈형 모두 시도)
+  Future<Map<String, dynamic>?> findUserByPhone(String phone) async {
+    // 입력값 정규화: 숫자만 추출
+    final digits = phone.replaceAll(RegExp(r'[^0-9]'), '');
+    final formatted = FormatHelper.formatPhone(digits); // 010-1234-5678
+
+    // 두 형식으로 순차 조회 (DB 저장 방식이 다를 수 있음)
+    for (final query in [digits, formatted]) {
+      try {
+        final snap = await _db
+            .collection('users')
+            .where('phone', isEqualTo: query)
+            .where('role', isEqualTo: 'USER')
+            .limit(1)
+            .get();
+        if (snap.docs.isNotEmpty) {
+          final doc = snap.docs.first;
+          final data = doc.data();
+          return {
+            'uid': doc.id,
+            'name': data['name'] ?? '',
+            'phone': data['phone'] ?? '',
+          };
+        }
+      } catch (e) {
+        debugPrint('전화번호 검색 실패 ($query): $e');
+      }
+    }
+    return null;
+  }
+
+  /// 이미 해당 사업장 멤버인지 확인
+  Future<bool> isAlreadyMember(String businessId, String uid) async {
+    final doc = await _members(businessId).doc(uid).get();
+    return doc.exists;
+  }
+
+  /// 이미 pending 초대가 있는지 확인
+  Future<bool> hasPendingInvitation(String businessId, String targetUid) async {
+    final snap = await _invitations
+        .where('businessId', isEqualTo: businessId)
+        .where('targetUid', isEqualTo: targetUid)
+        .where('status', isEqualTo: 'pending')
+        .limit(1)
+        .get();
+    return snap.docs.isNotEmpty;
+  }
+
+  /// 초대 발송
+  Future<void> sendInvitation({
+    required String businessId,
+    required String businessName,
+    required String targetUid,
+    required String targetName,
+    String? targetPhone,
+    required String invitedBy,
+    required String invitedByName,
+    required MemberPermissions permissions,
+  }) async {
+    final ref = _invitations.doc();
+    final invitation = MemberInvitationModel(
+      id: ref.id,
+      businessId: businessId,
+      businessName: businessName,
+      targetUid: targetUid,
+      targetName: targetName,
+      targetPhone: targetPhone,
+      invitedBy: invitedBy,
+      invitedByName: invitedByName,
+      permissions: permissions,
+      status: InvitationStatus.pending,
+      createdAt: DateTime.now(),
+    );
+    await ref.set(invitation.toMap());
+
+    // 초대받은 사람에게 알림
+    try {
+      await _firestoreService.createNotification(
+        NotificationModel.createMemberInvitation(
+          targetUid: targetUid,
+          businessName: businessName,
+          businessId: businessId,
+          invitedByName: invitedByName,
+          invitationId: ref.id,
+        ),
+      );
+    } catch (e) {
+      debugPrint('멤버 초대 알림 발송 실패: $e');
+    }
+  }
+
+  // ── 초대 수락/거절 ─────────────────────────────────────────────
+
+  /// 초대 수락 → members 서브컬렉션에 추가
+  /// user.subAdminOf 설정은 onMemberInvitationAccepted CF trigger가 담당 (BUG-33C-33 fix)
+  Future<void> acceptInvitation(MemberInvitationModel invitation) async {
+    final batch = _db.batch();
+    final now = DateTime.now();
+
+    // 1. 초대 상태 업데이트 → trigger에서 subAdminOf 설정
+    batch.update(_invitations.doc(invitation.id), {
+      'status': 'accepted',
+      'respondedAt': Timestamp.fromDate(now),
+    });
+
+    // 2. members 서브컬렉션에 추가
+    final member = BusinessMemberModel(
+      uid: invitation.targetUid,
+      name: invitation.targetName,
+      phone: invitation.targetPhone,
+      permissions: invitation.permissions,
+      addedAt: now,
+      addedBy: invitation.invitedBy,
+    );
+    batch.set(
+      _members(invitation.businessId).doc(invitation.targetUid),
+      member.toMap(),
+    );
+
+    await batch.commit();
+
+    // 4. 초대한 관리자에게 수락 알림
+    try {
+      await _firestoreService.createNotification(
+        NotificationModel.createMemberInvitationAccepted(
+          adminUid: invitation.invitedBy,
+          acceptedName: invitation.targetName,
+          businessName: invitation.businessName,
+          businessId: invitation.businessId,
+        ),
+      );
+    } catch (e) {
+      debugPrint('초대 수락 알림 발송 실패: $e');
+    }
+  }
+
+  /// 초대 거절
+  Future<void> rejectInvitation(MemberInvitationModel invitation) async {
+    await _invitations.doc(invitation.id).update({
+      'status': 'rejected',
+      'respondedAt': Timestamp.fromDate(DateTime.now()),
+    });
+
+    // 초대한 관리자에게 거절 알림
+    try {
+      await _firestoreService.createNotification(
+        NotificationModel.createMemberInvitationRejected(
+          adminUid: invitation.invitedBy,
+          rejectedName: invitation.targetName,
+          businessName: invitation.businessName,
+          businessId: invitation.businessId,
+        ),
+      );
+    } catch (e) {
+      debugPrint('초대 거절 알림 발송 실패: $e');
+    }
+  }
+
+  // ── 초대 조회 ─────────────────────────────────────────────────
+
+  /// 특정 사용자의 pending 초대 목록
+  Future<List<MemberInvitationModel>> getPendingInvitations(String uid) async {
+    try {
+      final snap = await _invitations
+          .where('targetUid', isEqualTo: uid)
+          .where('status', isEqualTo: 'pending')
+          .orderBy('createdAt', descending: true)
+          .get();
+      return snap.docs.map(MemberInvitationModel.fromFirestore).toList();
+    } catch (e) {
+      debugPrint('초대 목록 조회 실패: $e');
+      return [];
+    }
+  }
+
+  /// invitationId로 초대 조회
+  Future<MemberInvitationModel?> getInvitation(String invitationId) async {
+    try {
+      final doc = await _invitations.doc(invitationId).get();
+      if (!doc.exists) return null;
+      return MemberInvitationModel.fromFirestore(doc);
+    } catch (e) {
+      debugPrint('초대 조회 실패: $e');
+      return null;
+    }
+  }
+
+  // ── 멤버 관리 ─────────────────────────────────────────────────
+
+  /// 사업장 멤버 목록 조회
+  Future<List<BusinessMemberModel>> getMembers(String businessId) async {
+    try {
+      final snap = await _members(businessId)
+          .orderBy('addedAt', descending: false)
+          .get();
+      return snap.docs.map(BusinessMemberModel.fromFirestore).toList();
+    } catch (e) {
+      debugPrint('멤버 목록 조회 실패: $e');
+      return [];
+    }
+  }
+
+  /// 특정 멤버 권한 조회
+  Future<MemberPermissions?> getMemberPermissions(
+      String businessId, String uid) async {
+    try {
+      final doc = await _members(businessId).doc(uid).get();
+      if (!doc.exists) return null;
+      final data = doc.data() as Map<String, dynamic>;
+      return MemberPermissions.fromMap(
+          (data['permissions'] as Map<String, dynamic>?) ?? {});
+    } catch (e) {
+      debugPrint('멤버 권한 조회 실패: $e');
+      return null;
+    }
+  }
+
+  /// 멤버 권한 업데이트
+  Future<void> updatePermissions({
+    required String businessId,
+    required String uid,
+    required MemberPermissions permissions,
+  }) async {
+    await _members(businessId).doc(uid).update({
+      'permissions': permissions.toMap(),
+    });
+  }
+
+  /// 멤버 제거 → user.subAdminOf 초기화
+  Future<void> removeMember({
+    required String businessId,
+    required String uid,
+  }) async {
+    final batch = _db.batch();
+    batch.delete(_members(businessId).doc(uid));
+    batch.update(_db.collection('users').doc(uid), {
+      'subAdminOf': FieldValue.delete(),
+    });
+    await batch.commit();
+  }
+}

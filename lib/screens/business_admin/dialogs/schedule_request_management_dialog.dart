@@ -58,11 +58,7 @@ class _ScheduleRequestManagementDialogState
         .toList();
 
     final uniqueUids = workerRequests.map((r) => r.applicantUid).toSet().toList();
-    final userEntries = await Future.wait(uniqueUids.map((uid) async {
-      final user = await _firestoreService.getUser(uid);
-      return MapEntry(uid, user);
-    }));
-    final userMap = Map.fromEntries(userEntries);
+    final userMap = await _firestoreService.getUsersBatch(uniqueUids);
 
     final results = workerRequests.map((request) {
       final user = userMap[request.applicantUid];
@@ -100,8 +96,12 @@ class _ScheduleRequestManagementDialogState
   @override
   Widget build(BuildContext context) {
     return Dialog(
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
       child: Container(
-        constraints: const BoxConstraints(maxWidth: 600, maxHeight: 700),
+        constraints: BoxConstraints(
+          maxWidth: 600,
+          maxHeight: MediaQuery.sizeOf(context).height * 0.88,
+        ),
         child: Column(
           children: [
             // 헤더
@@ -715,6 +715,8 @@ class _ScheduleRequestManagementDialogState
       ),
     );
 
+    final rejectReason = reasonController.text.trim().isEmpty ? null : reasonController.text.trim();
+    reasonController.dispose();
     if (confirmed != true) return;
     if (!mounted) return;
 
@@ -729,9 +731,7 @@ class _ScheduleRequestManagementDialogState
       final success = await _firestoreService.rejectScheduleChangeRequest(
         requestId: item.request.id,
         rejectorUid: uid,
-        rejectReason: reasonController.text.trim().isEmpty 
-            ? null 
-            : reasonController.text.trim(),
+        rejectReason: rejectReason,
       );
 
       if (success && mounted) {

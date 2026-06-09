@@ -25,6 +25,7 @@ import '../dialogs/to_list_dialogs.dart';
 // Local Widgets
 import '../../../widgets/admin/cards/admin_to_group_card.dart';
 import '../../../theme/app_colors.dart';
+import '../../../widgets/common/app_empty_state.dart';
 
 /// 인력 관리 - 리스트 뷰
 class WorkforceListView extends StatefulWidget {
@@ -55,6 +56,11 @@ class _WorkforceListViewState extends State<WorkforceListView> {
   final Set<String> _loadingGroups = {};
   final Set<String> _loadingTOs = {};
 
+  // 마감됨 탭 페이지네이션
+  static const int _closedPageSize = 5;
+  int _closedDisplayCount = _closedPageSize;
+  final ScrollController _scrollController = ScrollController();
+
   @override
   void initState() {
     super.initState();
@@ -63,6 +69,26 @@ class _WorkforceListViewState extends State<WorkforceListView> {
       firestoreService: _firestoreService,
       onChanged: _reload,
     );
+    _scrollController.addListener(_onScroll);
+  }
+
+  @override
+  void dispose() {
+    _scrollController.dispose();
+    super.dispose();
+  }
+
+  void _onScroll() {
+    if (_selectedTab != TOStatus.closed) return;
+    final pos = _scrollController.position;
+    if (pos.pixels >= pos.maxScrollExtent - 150) {
+      final controller = context.read<WorkforceController>();
+      final total = _getFilteredItems(controller.items).length;
+      if (_closedDisplayCount < total) {
+        setState(() => _closedDisplayCount =
+            (_closedDisplayCount + _closedPageSize).clamp(0, total));
+      }
+    }
   }
 
   void _reload() {
@@ -149,8 +175,8 @@ class _WorkforceListViewState extends State<WorkforceListView> {
 
     if (_selectedTab != TOStatus.closed) return filtered.toList();
 
-    // 마감됨 탭: closedAt 기준 최신순 정렬 후 5개
-    final sorted = filtered.toList()
+    // 마감됨 탭: closedAt 기준 최신순 정렬
+    return filtered.toList()
       ..sort((a, b) {
         final aDate = a.masterTO.closedAt ??
             a.masterTO.statusUpdatedAt ??
@@ -160,21 +186,18 @@ class _WorkforceListViewState extends State<WorkforceListView> {
             b.masterTO.date;
         return bDate.compareTo(aDate);
       });
-    return sorted.take(5).toList();
   }
 
   /// 날짜 범위 체크 (장기/단기 공고 모두 고려)
   bool _isDateInRange(TOModel to, DateTime filterStart, DateTime filterEnd) {
     if (!to.isLongTerm) {
       final toDate = DateTime(to.date.year, to.date.month, to.date.day);
-      return toDate.isAfter(filterStart.subtract(const Duration(days: 1))) &&
-          toDate.isBefore(filterEnd.add(const Duration(days: 1)));
+      return !toDate.isBefore(filterStart) && !toDate.isAfter(filterEnd);
     }
 
     if (to.endDate == null) {
       final toDate = DateTime(to.date.year, to.date.month, to.date.day);
-      return toDate.isAfter(filterStart.subtract(const Duration(days: 1))) &&
-          toDate.isBefore(filterEnd.add(const Duration(days: 1)));
+      return !toDate.isBefore(filterStart) && !toDate.isAfter(filterEnd);
     }
 
     final toStart = DateTime(to.date.year, to.date.month, to.date.day);
@@ -191,61 +214,8 @@ class _WorkforceListViewState extends State<WorkforceListView> {
     return Column(
       children: [
         _buildTabBar(),
-        if (_selectedTab == TOStatus.closed) _buildClosedTabNotice(),
         Expanded(child: _buildTOList()),
       ],
-    );
-  }
-
-  Widget _buildClosedTabNotice() {
-    final theme = Theme.of(context);
-
-    return Container(
-      padding: ResponsiveHelper.cardPadding(context),
-      margin: EdgeInsets.symmetric(
-        horizontal: ResponsiveHelper.spacing(context, 16),
-      ),
-      decoration: BoxDecoration(
-        gradient: LinearGradient(
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-          colors: [
-            theme.primaryColor.withValues(alpha: 0.1),
-            theme.primaryColor.withValues(alpha: 0.05),
-          ],
-        ),
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(
-          color: theme.primaryColor.withValues(alpha: 0.3),
-          width: 1.5,
-        ),
-      ),
-      child: Row(
-        children: [
-          Container(
-            padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 8)),
-            decoration: BoxDecoration(
-              color: theme.primaryColor.withValues(alpha: 0.15),
-              borderRadius: BorderRadius.circular(8),
-            ),
-            child: Icon(
-              Icons.info_outline,
-              color: theme.primaryColor,
-              size: ResponsiveHelper.iconSize(context, 20),
-            ),
-          ),
-          SizedBox(width: ResponsiveHelper.spacing(context, 12)),
-          Expanded(
-            child: Text(
-              '최근 마감된 5개만 표시됩니다. 이전 마감은 캘린더를 이용하세요.',
-              style: ResponsiveHelper.smallStyle(
-                context,
-                color: theme.primaryColor.withValues(alpha: 0.9),
-              ),
-            ),
-          ),
-        ],
-      ),
     );
   }
 
@@ -305,6 +275,7 @@ class _WorkforceListViewState extends State<WorkforceListView> {
             _selectedTab = tab;
             _expandedGroups.clear();
             _expandedTOs.clear();
+            _closedDisplayCount = _closedPageSize;
           });
         }
       },
@@ -480,42 +451,58 @@ class _WorkforceListViewState extends State<WorkforceListView> {
       return const LoadingWidget(message: 'TO 목록을 불러오는 중...');
     }
 
-    final filteredItems = _getFilteredItems(controller.items);
+    final allFilteredItems = _getFilteredItems(controller.items);
 
-    if (filteredItems.isEmpty) {
+    if (allFilteredItems.isEmpty) {
       return _buildEmptyState();
     }
+
+    // 마감됨 탭: 표시 개수 제한 (스크롤 시 추가 로드)
+    final isClosedTab = _selectedTab == TOStatus.closed;
+    final filteredItems = isClosedTab
+        ? allFilteredItems.take(_closedDisplayCount).toList()
+        : allFilteredItems;
+    final hasMore = isClosedTab && _closedDisplayCount < allFilteredItems.length;
 
     return RefreshIndicator(
       onRefresh: () async => _reload(),
       child: ListView.builder(
+        controller: _scrollController,
         padding: ResponsiveHelper.cardPadding(context),
-        itemCount: filteredItems.length,
+        itemCount: filteredItems.length + (hasMore ? 1 : 0),
         itemBuilder: (context, index) {
+          if (index == filteredItems.length) {
+            return Padding(
+              padding: EdgeInsets.symmetric(vertical: ResponsiveHelper.spacing(context, 16)),
+              child: const LoadingWidget(),
+            );
+          }
           final groupItem = filteredItems[index];
-          return Padding(
-            padding: EdgeInsets.only(
-              bottom: ResponsiveHelper.spacing(context, 16),
-            ),
-            child: TOGroupCard(
-              groupItem: groupItem,
-              firestoreService: _firestoreService,
-              dialogs: _dialogs,
-              onChanged: _reload,
-              isExpanded: _expandedGroups.contains(groupItem.id),
-              expandedTOs: _expandedTOs,
-              onToggleExpand: () => _handleGroupExpand(groupItem),
-              onToggleTOExpand: (toId) async {
-                if (groupItem.groupTOs.isEmpty) return;
-                final matches = groupItem.groupTOs
-                    .where((item) => (item.slot?.id ?? item.to.id) == toId);
-                if (matches.isEmpty) return;
-                await _handleTOExpand(matches.first);
-              },
-              isGroupLoading: _loadingGroups.contains(groupItem.id),
-              loadingTOs: _loadingTOs,
-              onAffectedTOsChanged: (_) => _reload(),
-              isAnyExpanded: _expandedGroups.isNotEmpty,
+          return RepaintBoundary(
+            child: Padding(
+              padding: EdgeInsets.only(
+                bottom: ResponsiveHelper.spacing(context, 16),
+              ),
+              child: TOGroupCard(
+                groupItem: groupItem,
+                firestoreService: _firestoreService,
+                dialogs: _dialogs,
+                onChanged: _reload,
+                isExpanded: _expandedGroups.contains(groupItem.id),
+                expandedTOs: _expandedTOs,
+                onToggleExpand: () => _handleGroupExpand(groupItem),
+                onToggleTOExpand: (toId) async {
+                  if (groupItem.groupTOs.isEmpty) return;
+                  final matches = groupItem.groupTOs
+                      .where((item) => (item.slot?.id ?? item.to.id) == toId);
+                  if (matches.isEmpty) return;
+                  await _handleTOExpand(matches.first);
+                },
+                isGroupLoading: _loadingGroups.contains(groupItem.id),
+                loadingTOs: _loadingTOs,
+                onAffectedTOsChanged: (_) => _reload(),
+                isAnyExpanded: _expandedGroups.isNotEmpty,
+              ),
             ),
           );
         },
@@ -524,59 +511,10 @@ class _WorkforceListViewState extends State<WorkforceListView> {
   }
 
   Widget _buildEmptyState() {
-    final theme = Theme.of(context);
-
-    return Center(
-      child: Container(
-        margin: EdgeInsets.all(ResponsiveHelper.spacing(context, 40)),
-        padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 40)),
-        decoration: BoxDecoration(
-          gradient: LinearGradient(
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
-            colors: [
-              theme.primaryColor.withValues(alpha: 0.08),
-              theme.primaryColor.withValues(alpha: 0.04),
-            ],
-          ),
-          borderRadius: BorderRadius.circular(24),
-          border: Border.all(
-            color: theme.primaryColor.withValues(alpha: 0.2),
-            width: 1.5,
-          ),
-        ),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Container(
-              padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 20)),
-              decoration: BoxDecoration(
-                color: theme.primaryColor.withValues(alpha: 0.1),
-                shape: BoxShape.circle,
-              ),
-              child: Icon(
-                Icons.inbox_outlined,
-                size: ResponsiveHelper.iconSize(context, 64),
-                color: theme.primaryColor.withValues(alpha: 0.4),
-              ),
-            ),
-            SizedBox(height: ResponsiveHelper.spacing(context, 24)),
-            Text(
-              '조건에 맞는 TO가 없습니다',
-              style: ResponsiveHelper.titleStyle(context).copyWith(
-                fontWeight: FontWeight.bold,
-                color: theme.primaryColor.withValues(alpha: 0.8),
-              ),
-            ),
-            SizedBox(height: ResponsiveHelper.spacing(context, 12)),
-            Text(
-              '필터를 변경하거나 새로운 TO를 생성하세요',
-              style: ResponsiveHelper.bodyStyle(context, color: AppColors.grey600),
-              textAlign: TextAlign.center,
-            ),
-          ],
-        ),
-      ),
+    return const AppEmptyState(
+      icon: Icons.inbox_outlined,
+      title: '조건에 맞는 TO가 없습니다',
+      subtitle: '필터를 변경하거나 새로운 TO를 생성하세요',
     );
   }
 
@@ -605,9 +543,13 @@ class _WorkforceListViewState extends State<WorkforceListView> {
       // Flex TO: 슬롯 미로드 시에만 로드
       if (!groupItem.isGroupDetailLoaded) {
         setState(() => _loadingGroups.add(key));
-        await controller.loadGroupDetails(context, groupItem);
-        if (!mounted) return;
-        setState(() => _loadingGroups.remove(key));
+        try {
+          await controller.loadGroupDetails(context, groupItem);
+        } catch (e) {
+          debugPrint('❌ 그룹 상세 로드 실패: $e');
+        } finally {
+          if (mounted) setState(() => _loadingGroups.remove(key));
+        }
       }
     } else if (!groupItem.isWorkDetailLoaded) {
       // 단건 TO: 업무별 통계 lazy load
@@ -644,9 +586,13 @@ class _WorkforceListViewState extends State<WorkforceListView> {
 
     if (toItem.needsWorkDetailLoad) {
       setState(() => _loadingTOs.add(key));
-      await context.read<WorkforceController>().loadWorkDetails(toItem);
-      if (!mounted) return;
-      setState(() => _loadingTOs.remove(key));
+      try {
+        await context.read<WorkforceController>().loadWorkDetails(toItem);
+      } catch (e) {
+        debugPrint('❌ 업무 상세 로드 실패: $e');
+      } finally {
+        if (mounted) setState(() => _loadingTOs.remove(key));
+      }
     }
   }
 }

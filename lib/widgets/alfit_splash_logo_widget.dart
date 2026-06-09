@@ -13,10 +13,10 @@ class ALfitSplashLogo extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final primaryColor = isDark ? Colors.white : const Color(0xFF1976D2);
+    final primaryColor = isDark ? Colors.white : Theme.of(context).primaryColor;
     final taglineColor = isDark
         ? Colors.white.withValues(alpha: 0.6)
-        : const Color(0xFF1976D2).withValues(alpha: 0.55);
+        : Theme.of(context).primaryColor.withValues(alpha: 0.55);
 
     return Column(
       mainAxisSize: MainAxisSize.min,

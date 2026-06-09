@@ -6,7 +6,6 @@ import '../../../../widgets/pickers/date_picker_bottom_sheet.dart';
 import 'to_section_container.dart';
 import '../../../../utils/toast_helper.dart';
 
-const _kPrimary = Color(0xFF1565C0);
 
 /// TO 날짜 선택 공통 위젯 (당근 스타일)
 class TODateSelector extends StatefulWidget {
@@ -27,6 +26,9 @@ class TODateSelector extends StatefulWidget {
   final Function(DateTime)? onRangeStartChanged;
   final Function(DateTime)? onRangeEndChanged;
   final Function(String)? onWeekdayToggle;
+  /// 계약 기간 유형: '15days' | '1month' | '3months' | '6months' | '1year' | 'custom'
+  final String? contractPeriodType;
+  final Function(String)? onContractPeriodTypeChanged;
 
   // 읽기 전용
   final DateTime? displayDate;
@@ -47,6 +49,8 @@ class TODateSelector extends StatefulWidget {
     this.onRangeStartChanged,
     this.onRangeEndChanged,
     this.onWeekdayToggle,
+    this.contractPeriodType,
+    this.onContractPeriodTypeChanged,
     this.displayDate,
     this.displayWorkDays,
   });
@@ -80,7 +84,19 @@ class _TODateSelectorState extends State<TODateSelector> {
     final now = DateTime.now();
 
     String dateText;
-    if (widget.isLongTerm && widget.rangeStart != null && widget.rangeEnd != null) {
+    if (widget.isLongTerm && widget.contractPeriodType != null && widget.contractPeriodType != 'custom') {
+      // preset 기간 유형: 레이블 표시 + 시작 가능일
+      final Map<String, String> labels = {
+        '15days': '15일', '1month': '1개월', '3months': '3개월',
+        '6months': '6개월', '1year': '1년',
+      };
+      dateText = labels[widget.contractPeriodType] ?? widget.contractPeriodType!;
+      if (widget.rangeStart != null) {
+        final isSameYear = widget.rangeStart!.year == now.year;
+        final fmt = isSameYear ? FormatHelper.formatDateKorean : FormatHelper.formatDateLong;
+        dateText += ' · ${fmt(widget.rangeStart!)} 이후 시작 가능';
+      }
+    } else if (widget.isLongTerm && widget.rangeStart != null && widget.rangeEnd != null) {
       final isSameYear = widget.rangeStart!.year == now.year;
       final fmt = isSameYear ? FormatHelper.formatDateKorean : FormatHelper.formatDateLong;
       dateText = '${fmt(widget.rangeStart!)} ~ ${fmt(widget.rangeEnd!)}';
@@ -102,11 +118,11 @@ class _TODateSelectorState extends State<TODateSelector> {
               Container(
                 padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 12)),
                 decoration: BoxDecoration(
-                  color: _kPrimary,
+                  color: Theme.of(context).primaryColor,
                   borderRadius: BorderRadius.circular(12),
                   boxShadow: [
                     BoxShadow(
-                      color: _kPrimary.withValues(alpha: 0.3),
+                      color: Theme.of(context).primaryColor.withValues(alpha: 0.3),
                       blurRadius: 8,
                       offset: const Offset(0, 4),
                     ),
@@ -235,18 +251,18 @@ class _TODateSelectorState extends State<TODateSelector> {
                 key: const ValueKey('hint'),
                 padding: EdgeInsets.symmetric(horizontal: ResponsiveHelper.spacing(context, 12)),
                 decoration: BoxDecoration(
-                  color: _kPrimary.withValues(alpha: 0.08),
+                  color: Theme.of(context).primaryColor.withValues(alpha: 0.08),
                   borderRadius: BorderRadius.circular(10),
-                  border: Border.all(color: _kPrimary.withValues(alpha: 0.3)),
+                  border: Border.all(color: Theme.of(context).primaryColor.withValues(alpha: 0.3)),
                 ),
                 child: Row(
                   children: [
-                    Icon(Icons.touch_app, color: _kPrimary, size: ResponsiveHelper.iconSize(context, 16)),
+                    Icon(Icons.touch_app, color: Theme.of(context).primaryColor, size: ResponsiveHelper.iconSize(context, 16)),
                     SizedBox(width: ResponsiveHelper.spacing(context, 8)),
                     Expanded(
                       child: RichText(
                         text: TextSpan(
-                          style: ResponsiveHelper.smallStyle(context, color: _kPrimary),
+                          style: ResponsiveHelper.smallStyle(context, color: Theme.of(context).primaryColor),
                           children: [
                             TextSpan(
                               text: FormatHelper.formatDateKorean(_rangeStart!),
@@ -263,7 +279,7 @@ class _TODateSelectorState extends State<TODateSelector> {
                         setState(() => _rangeStart = null);
                         widget.onDateToggle?.call(start);
                       },
-                      child: Icon(Icons.close, color: _kPrimary, size: ResponsiveHelper.iconSize(context, 16)),
+                      child: Icon(Icons.close, color: Theme.of(context).primaryColor, size: ResponsiveHelper.iconSize(context, 16)),
                     ),
                   ],
                 ),
@@ -287,7 +303,7 @@ class _TODateSelectorState extends State<TODateSelector> {
                             vertical: ResponsiveHelper.spacing(context, 4),
                           ),
                           decoration: BoxDecoration(
-                            color: _kPrimary,
+                            color: Theme.of(context).primaryColor,
                             borderRadius: BorderRadius.circular(12),
                           ),
                           child: Text(
@@ -370,7 +386,7 @@ class _TODateSelectorState extends State<TODateSelector> {
 
     return Expanded(
       child: Material(
-        color: isActive ? _kPrimary : _kPrimary.withValues(alpha: 0.1),
+        color: isActive ? Theme.of(context).primaryColor : Theme.of(context).primaryColor.withValues(alpha: 0.1),
         borderRadius: BorderRadius.circular(12),
         child: InkWell(
           onTap: () => _handleQuickSelect(id),
@@ -383,13 +399,13 @@ class _TODateSelectorState extends State<TODateSelector> {
                 Icon(
                   icon,
                   size: ResponsiveHelper.iconSize(context, 18),
-                  color: isActive ? AppColors.surface : _kPrimary,
+                  color: isActive ? AppColors.surface : Theme.of(context).primaryColor,
                 ),
                 SizedBox(height: ResponsiveHelper.spacing(context, 4)),
                 Text(
                   label,
                   style: ResponsiveHelper.tinyStyle(context).copyWith(
-                    color: isActive ? AppColors.surface : _kPrimary,
+                    color: isActive ? AppColors.surface : Theme.of(context).primaryColor,
                     fontWeight: FontWeight.w600,
                   ),
                 ),
@@ -485,17 +501,17 @@ class _TODateSelectorState extends State<TODateSelector> {
             icon: Container(
               padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 8)),
               decoration: BoxDecoration(
-                color: _kPrimary.withValues(alpha: 0.1),
+                color: Theme.of(context).primaryColor.withValues(alpha: 0.1),
                 shape: BoxShape.circle,
               ),
-              child: const Icon(Icons.chevron_left, color: _kPrimary),
+              child: Icon(Icons.chevron_left, color: Theme.of(context).primaryColor),
             ),
           ),
           Text(
             FormatHelper.formatYearMonth(_focusedDay),
             style: ResponsiveHelper.subtitleStyle(context).copyWith(
               fontWeight: FontWeight.bold,
-              color: _kPrimary,
+              color: Theme.of(context).primaryColor,
             ),
           ),
           IconButton(
@@ -507,10 +523,10 @@ class _TODateSelectorState extends State<TODateSelector> {
             icon: Container(
               padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 8)),
               decoration: BoxDecoration(
-                color: _kPrimary.withValues(alpha: 0.1),
+                color: Theme.of(context).primaryColor.withValues(alpha: 0.1),
                 shape: BoxShape.circle,
               ),
-              child: const Icon(Icons.chevron_right, color: _kPrimary),
+              child: Icon(Icons.chevron_right, color: Theme.of(context).primaryColor),
             ),
           ),
         ],
@@ -625,7 +641,7 @@ class _TODateSelectorState extends State<TODateSelector> {
       backgroundColor = Colors.transparent;
       textColor = AppColors.grey300;
     } else if (isSelected) {
-      backgroundColor = _kPrimary;
+      backgroundColor = Theme.of(context).primaryColor;
       textColor = AppColors.surface;
     } else {
       backgroundColor = Colors.transparent;
@@ -653,7 +669,7 @@ class _TODateSelectorState extends State<TODateSelector> {
                 height: ResponsiveHelper.spacing(context, 36),
                 decoration: BoxDecoration(
                   shape: BoxShape.circle,
-                  border: Border.all(color: _kPrimary, width: 2),
+                  border: Border.all(color: Theme.of(context).primaryColor, width: 2),
                 ),
               ),
 
@@ -688,9 +704,22 @@ class _TODateSelectorState extends State<TODateSelector> {
   }
 
   // ============================================================
-  // 📅 장기 근무 - 기간 + 요일 선택
+  // 📅 장기 근무 - 계약 기간 유형 + 요일 선택
   // ============================================================
+
+  static const _periodOptions = [
+    ('15days', '15일'),
+    ('1month', '1개월'),
+    ('3months', '3개월'),
+    ('6months', '6개월'),
+    ('1year', '1년'),
+    ('custom', '직접 입력'),
+  ];
+
   Widget _buildLongTermSelector(BuildContext context) {
+    final isCustom = widget.contractPeriodType == 'custom';
+    final hasPreset = widget.contractPeriodType != null && !isCustom;
+
     return TOSectionContainer(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -699,32 +728,50 @@ class _TODateSelectorState extends State<TODateSelector> {
             '계약 기간',
             style: ResponsiveHelper.subtitleStyle(context).copyWith(fontWeight: FontWeight.bold),
           ),
-          SizedBox(height: ResponsiveHelper.spacing(context, 16)),
-
-          Row(
-            children: [
-              Expanded(
-                child: _buildDateField(
-                  context: context,
-                  label: '시작일',
-                  date: widget.rangeStart,
-                  onTap: () => _selectLongTermDate(context, isStart: true),
-                ),
-              ),
-              Padding(
-                padding: EdgeInsets.symmetric(horizontal: ResponsiveHelper.spacing(context, 12)),
-                child: const Icon(Icons.arrow_forward, color: _kPrimary),
-              ),
-              Expanded(
-                child: _buildDateField(
-                  context: context,
-                  label: '종료일',
-                  date: widget.rangeEnd,
-                  onTap: () => _selectLongTermDate(context, isStart: false),
-                ),
-              ),
-            ],
+          SizedBox(height: ResponsiveHelper.spacing(context, 4)),
+          Text(
+            '지원자의 희망 근무 시작일 기준으로 종료일이 자동 계산됩니다',
+            style: ResponsiveHelper.smallStyle(context, color: AppColors.textSecondary),
           ),
+          SizedBox(height: ResponsiveHelper.spacing(context, 12)),
+
+          // 기간 유형 칩
+          _buildPeriodTypeChips(context),
+
+          // 직접 입력: 기존 날짜 범위 피커
+          if (isCustom) ...[
+            SizedBox(height: ResponsiveHelper.spacing(context, 16)),
+            Row(
+              children: [
+                Expanded(
+                  child: _buildDateField(
+                    context: context,
+                    label: '시작일',
+                    date: widget.rangeStart,
+                    onTap: () => _selectLongTermDate(context, isStart: true),
+                  ),
+                ),
+                Padding(
+                  padding: EdgeInsets.symmetric(horizontal: ResponsiveHelper.spacing(context, 12)),
+                  child: Icon(Icons.arrow_forward, color: Theme.of(context).primaryColor),
+                ),
+                Expanded(
+                  child: _buildDateField(
+                    context: context,
+                    label: '종료일',
+                    date: widget.rangeEnd,
+                    onTap: () => _selectLongTermDate(context, isStart: false),
+                  ),
+                ),
+              ],
+            ),
+          ],
+
+          // preset 선택 시: 선택 가능한 최초 시작일(선택 사항)
+          if (hasPreset) ...[
+            SizedBox(height: ResponsiveHelper.spacing(context, 16)),
+            _buildEarliestStartField(context),
+          ],
 
           SizedBox(height: ResponsiveHelper.spacing(context, 24)),
           Divider(color: AppColors.grey300),
@@ -752,6 +799,92 @@ class _TODateSelectorState extends State<TODateSelector> {
     );
   }
 
+  Widget _buildPeriodTypeChips(BuildContext context) {
+    return Wrap(
+      spacing: ResponsiveHelper.spacing(context, 8),
+      runSpacing: ResponsiveHelper.spacing(context, 8),
+      children: _periodOptions.map(((String, String) opt) {
+        final (value, label) = opt;
+        final isSelected = widget.contractPeriodType == value;
+        return GestureDetector(
+          onTap: () => widget.onContractPeriodTypeChanged?.call(value),
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 180),
+            padding: EdgeInsets.symmetric(
+              horizontal: ResponsiveHelper.spacing(context, 16),
+              vertical: ResponsiveHelper.spacing(context, 10),
+            ),
+            decoration: BoxDecoration(
+              color: isSelected ? Theme.of(context).primaryColor : AppColors.grey100,
+              borderRadius: BorderRadius.circular(20),
+              border: Border.all(
+                color: isSelected ? Theme.of(context).primaryColor : AppColors.grey300,
+                width: isSelected ? 2 : 1,
+              ),
+              boxShadow: isSelected
+                  ? [BoxShadow(color: Theme.of(context).primaryColor.withValues(alpha: 0.3), blurRadius: 6, offset: const Offset(0, 3))]
+                  : null,
+            ),
+            child: Text(
+              label,
+              style: ResponsiveHelper.bodyStyle(context).copyWith(
+                color: isSelected ? Colors.white : AppColors.grey700,
+                fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+              ),
+            ),
+          ),
+        );
+      }).toList(),
+    );
+  }
+
+  Widget _buildEarliestStartField(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Text(
+              '근무 시작 가능일',
+              style: ResponsiveHelper.bodyStyle(context).copyWith(fontWeight: FontWeight.w600),
+            ),
+            SizedBox(width: ResponsiveHelper.spacing(context, 6)),
+            Text(
+              '(선택)',
+              style: ResponsiveHelper.smallStyle(context, color: AppColors.grey500),
+            ),
+          ],
+        ),
+        SizedBox(height: ResponsiveHelper.spacing(context, 4)),
+        Text(
+          '지원자가 선택 가능한 최초 시작일입니다. 미설정 시 즉시 시작 가능',
+          style: ResponsiveHelper.smallStyle(context, color: AppColors.textSecondary),
+        ),
+        SizedBox(height: ResponsiveHelper.spacing(context, 8)),
+        Row(
+          children: [
+            Expanded(
+              child: _buildDateField(
+                context: context,
+                label: '시작 가능일',
+                date: widget.rangeStart,
+                onTap: () => _selectLongTermDate(context, isStart: true),
+              ),
+            ),
+            SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+            if (widget.rangeStart != null)
+              TextButton.icon(
+                onPressed: () => widget.onRangeStartChanged?.call(DateTime(0)),
+                icon: const Icon(Icons.clear, size: 16),
+                label: const Text('초기화'),
+                style: TextButton.styleFrom(foregroundColor: AppColors.grey600),
+              ),
+          ],
+        ),
+      ],
+    );
+  }
+
   Widget _buildDateField({
     required BuildContext context,
     required String label,
@@ -769,9 +902,9 @@ class _TODateSelectorState extends State<TODateSelector> {
             vertical: ResponsiveHelper.spacing(context, 10),
           ),
           decoration: BoxDecoration(
-            color: date != null ? _kPrimary.withValues(alpha: 0.05) : AppColors.grey50,
+            color: date != null ? Theme.of(context).primaryColor.withValues(alpha: 0.05) : AppColors.grey50,
             border: Border.all(
-              color: date != null ? _kPrimary : AppColors.border,
+              color: date != null ? Theme.of(context).primaryColor : AppColors.border,
               width: date != null ? 2 : 1,
             ),
             borderRadius: BorderRadius.circular(12),
@@ -836,10 +969,10 @@ class _TODateSelectorState extends State<TODateSelector> {
                 width: buttonWidth,
                 height: buttonWidth,
                 decoration: BoxDecoration(
-                  color: isSelected ? _kPrimary : (isWeekend ? AppColors.errorBg : AppColors.grey100),
+                  color: isSelected ? Theme.of(context).primaryColor : (isWeekend ? AppColors.errorBg : AppColors.grey100),
                   borderRadius: BorderRadius.circular(12),
                   boxShadow: isSelected
-                      ? [BoxShadow(color: _kPrimary.withValues(alpha: 0.3), blurRadius: 8, offset: const Offset(0, 4))]
+                      ? [BoxShadow(color: Theme.of(context).primaryColor.withValues(alpha: 0.3), blurRadius: 8, offset: const Offset(0, 4))]
                       : null,
                 ),
                 child: Center(

@@ -9,7 +9,7 @@ import '../../utils/close_state_utils.dart';
 /// [Phase 3 리팩토링] groups 구조 제거, slots 구조로 전환.
 class TOGroupItem {
   /// 공고 모델 (항상 non-null)
-  final TOModel? singleTO;
+  final TOModel singleTO;
 
   // flex 타입 슬롯 목록 (lazy-load)
   List<TOItem>? _groupTOs;
@@ -28,12 +28,10 @@ class TOGroupItem {
   int? _cachedTotalRequired;
 
   TOGroupItem({
-    this.singleTO,
+    required this.singleTO,
     List<TOItem>? groupTOs,
     this.isGroupDetailLoaded = false,
-  }) : _groupTOs = groupTOs {
-    assert(singleTO != null, 'singleTO is required');
-  }
+  }) : _groupTOs = groupTOs;
 
   void setWorkDetailStats(Map<String, Map<String, int>> stats) {
     workDetailStats = stats;
@@ -43,27 +41,27 @@ class TOGroupItem {
   // ── 기본 정보 ──────────────────────────────────────────
 
   bool get isGrouped => false;
-  String get id => singleTO!.id;
-  String get title => singleTO!.title;
-  String get businessName => singleTO!.businessName;
-  String get businessId => singleTO!.businessId;
-  String get status => singleTO!.status;
+  String get id => singleTO.id;
+  String get title => singleTO.title;
+  String get businessName => singleTO.businessName;
+  String get businessId => singleTO.businessId;
+  String get status => singleTO.status;
   /// Firestore 상태 + 날짜 경과를 함께 고려한 실질적 마감 여부.
   /// 마지막 슬롯(또는 계약 종료일)이 오늘 이하면 마감 탭으로 분류.
   bool get isClosed {
     final now = DateTime.now();
     final todayDay = DateTime(now.year, now.month, now.day);
 
-    if (singleTO!.isFlexType) {
+    if (singleTO.isFlexType) {
       // 슬롯 로드된 경우: CloseStateUtils로 통일 판단
       if (_groupTOs != null && _groupTOs!.isNotEmpty) {
         return _groupTOs!.every(
-          (t) => CloseStateUtils.isToItemClosed(t, singleTO!, now),
+          (t) => CloseStateUtils.isToItemClosed(t, singleTO, now),
         );
       }
 
       // 슬롯 미로드: Firestore status + 날짜 폴백
-      if (singleTO!.isClosed) return true;
+      if (singleTO.isClosed) return true;
       DateTime? lastDate;
       if (_slotDates != null && _slotDates!.isNotEmpty) {
         lastDate = _slotDates!.reduce((a, b) => a.isAfter(b) ? a : b);
@@ -72,67 +70,67 @@ class TOGroupItem {
       return DateTime(lastDate.year, lastDate.month, lastDate.day).isBefore(todayDay);
     }
 
-    // contract TO: Firestore status + 계약 종료일 체크
-    if (singleTO!.isClosed) return true;
-    final lastDate = singleTO!.rangeEnd;
+    // contract TO: TOModel.isClosed(게시만료 포함) + 계약 근무 종료일 체크
+    if (singleTO.isClosed) return true;
+    final lastDate = singleTO.rangeEnd;
     if (lastDate == null) return false;
     return DateTime(lastDate.year, lastDate.month, lastDate.day).isBefore(todayDay);
   }
-  bool get isManualClosed => singleTO!.isManualClosed;
-  bool get isPendingPublish => singleTO!.isPendingPublish;
-  DateTime? get publishAt => singleTO!.publishAt;
+  bool get isManualClosed => singleTO.isManualClosed;
+  bool get isPendingPublish => singleTO.isPendingPublish;
+  DateTime? get publishAt => singleTO.publishAt;
 
   /// contract 타입 여부 (구 isLongTerm)
-  bool get isLongTerm => singleTO!.isContractType;
+  bool get isLongTerm => singleTO.isContractType;
 
   // ── 통계 ─────────────────────────────────────────────
 
   int get totalRequired =>
-      _cachedTotalRequired ?? singleTO!.totalRequired;
+      _cachedTotalRequired ?? singleTO.totalRequired;
   int get totalConfirmed =>
-      _cachedTotalConfirmed ?? singleTO!.totalConfirmed;
+      _cachedTotalConfirmed ?? singleTO.totalConfirmed;
   int get totalPending =>
-      _cachedTotalPending ?? singleTO!.totalPending;
-  bool get isFull => singleTO!.isFull;
+      _cachedTotalPending ?? singleTO.totalPending;
+  bool get isFull => singleTO.isFull;
 
   // ── 날짜 ─────────────────────────────────────────────
 
   /// 시작일. flex: 첫 슬롯 날짜 또는 createdAt; contract: rangeStart
   DateTime get startDate =>
-      singleTO!.rangeStart ?? singleTO!.createdAt;
+      singleTO.rangeStart ?? singleTO.createdAt;
 
   /// 종료일. flex: 마지막 슬롯 날짜 또는 createdAt; contract: rangeEnd
   DateTime get endDate =>
-      singleTO!.rangeEnd ?? singleTO!.createdAt;
+      singleTO.rangeEnd ?? singleTO.createdAt;
 
   /// 날짜 범위 문자열
   String get dateRangeString {
-    if (singleTO!.isFlexType) {
-      final count = singleTO!.totalSlots;
+    if (singleTO.isFlexType) {
+      final count = singleTO.totalSlots;
       return count > 0 ? '$count일' : '';
     }
-    return singleTO!.contractPeriodDisplay;
+    return singleTO.contractPeriodDisplay;
   }
 
   // ── 급여 ─────────────────────────────────────────────
 
-  int? get minWage => singleTO!.minWage;
-  int? get maxWage => singleTO!.maxWage;
-  String? get wageType => singleTO!.wageType;
+  int? get minWage => singleTO.minWage;
+  int? get maxWage => singleTO.maxWage;
+  String? get wageType => singleTO.wageType;
 
   // ── 기타 ─────────────────────────────────────────────
 
   /// 표시명 — groupTitle 설정 시 그것을, 없으면 title 사용
-  String get groupName => singleTO!.displayGroupTitle;
-  DateTime get createdAt => singleTO!.createdAt;
-  String? get description => singleTO!.description;
-  String get creatorUID => singleTO!.creatorUID;
+  String get groupName => singleTO.displayGroupTitle;
+  DateTime get createdAt => singleTO.createdAt;
+  String? get description => singleTO.description;
+  String get creatorUID => singleTO.creatorUID;
 
   /// flex: 슬롯 수; contract: 1
   int get actualDaysCount =>
-      singleTO!.isFlexType ? singleTO!.totalSlots : 1;
+      singleTO.isFlexType ? singleTO.totalSlots : 1;
 
-  int get workDetailCount => singleTO!.workDetailCount;
+  int get workDetailCount => singleTO.workDetailCount;
 
   // ── TOItem 목록 (flex 전용 날짜별 아이템) ─────────────
 
@@ -151,7 +149,7 @@ class TOGroupItem {
   void setSlotDates(List<DateTime> dates) => _slotDates = dates;
 
   /// 공고 모델 직접 접근
-  TOModel get masterTO => singleTO!;
+  TOModel get masterTO => singleTO;
 
   // ── 통계 업데이트 ─────────────────────────────────────
 

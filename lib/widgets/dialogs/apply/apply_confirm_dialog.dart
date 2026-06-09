@@ -127,6 +127,15 @@ class ApplyConfirmDialog extends StatelessWidget {
             valueColor: AppColors.success,
             valueBold: true,
           ),
+          if (work.payScheduleLabel.isNotEmpty) ...[
+            _buildDivider(),
+            _buildInfoRow(
+              context,
+              Icons.account_balance_wallet_outlined,
+              '지급 일정',
+              work.payScheduleLabel,
+            ),
+          ],
         ],
       ),
     );
@@ -168,11 +177,11 @@ class ApplyConfirmDialog extends StatelessWidget {
 
   String _getDateDisplay() {
     if (isLongTerm) {
-      final start = desiredStartDate ?? DateTime.now();
-      final end = endDate ?? DateTime.now();
-      return '${FormatHelper.formatDate(start)} ~ ${FormatHelper.formatDate(end)}';
+      if (desiredStartDate == null || endDate == null) return '날짜 미선택';
+      return '${FormatHelper.formatDate(desiredStartDate!)} ~ ${FormatHelper.formatDate(endDate!)}';
     }
-    return FormatHelper.formatDate(workDate ?? DateTime.now());
+    if (workDate == null) return '날짜 정보 없음';
+    return FormatHelper.formatDate(workDate!);
   }
 
   String _getWageDisplay() {

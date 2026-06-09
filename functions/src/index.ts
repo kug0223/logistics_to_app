@@ -1884,7 +1884,6 @@ async function sendWorkReminders(now: Timestamp): Promise<void> {
   console.log("  📢 [리마인더] 처리 중...");
 
   try {
-    // 내일 날짜 계산 (KST 기준) — Cloud Function은 UTC로 실행되므로 +9h 보정 필요
     // workDate는 Flutter에서 DateTime(y,m,d) 로컬(KST)로 생성 후 UTC Timestamp로 저장됨
     const KST_OFFSET_MS = 9 * 60 * 60 * 1000;
     const nowKST = new Date(now.toDate().getTime() + KST_OFFSET_MS);
@@ -1898,7 +1897,7 @@ async function sendWorkReminders(now: Timestamp): Promise<void> {
     const tomorrow = new Date(tomorrowKST.getTime() - KST_OFFSET_MS);
     const tomorrowEnd = new Date(tomorrowKSTEnd.getTime() - KST_OFFSET_MS);
 
-    // 내일 근무 확정된 지원서 조회 (CONTRACT_PENDING 포함)
+    // 내일 근무 확정된 지원서 조회
     const applicationsSnapshot = await db
       .collection("applications")
       .where("status", "in", CONFIRMED_STATUSES)
@@ -1911,9 +1910,9 @@ async function sendWorkReminders(now: Timestamp): Promise<void> {
       return;
     }
 
-    console.log(`  📋 [리마인더] 대상: ${applicationsSnapshot.size}명`);
+    console.log(`  📋 [리마인더] 대상 지원서: ${applicationsSnapshot.size}건`);
 
-    // 오늘(KST) 이미 발송된 workReminder 알림 userId 목록 조회 — 재시도 시 중복 방지
+    // 오늘(KST) 이미 발송된 workReminder userId 조회 — 재시도 시 중복 방지
     const todayKSTStart = new Date(nowKST);
     todayKSTStart.setHours(0, 0, 0, 0);
     const todayUTC = new Date(todayKSTStart.getTime() - KST_OFFSET_MS);
@@ -1922,64 +1921,92 @@ async function sendWorkReminders(now: Timestamp): Promise<void> {
       .where("type", "==", "workReminder")
       .where("createdAt", ">=", Timestamp.fromDate(todayUTC))
       .get();
-    const alreadySentUsers = new Set(alreadySentSnap.docs.map((d) => d.data().userId as string));
+    const alreadySentUsers = new Set(
+      alreadySentSnap.docs.map((d) => d.data().userId as string)
+    );
+
+    // userId별로 근무 목록 묶기 — 이미 발송된 사용자는 제외
+    const userJobsMap = new Map<string, admin.firestore.QueryDocumentSnapshot[]>();
+    for (const appDoc of applicationsSnapshot.docs) {
+      const uid = appDoc.data().uid as string;
+      if (alreadySentUsers.has(uid)) continue;
+      if (!userJobsMap.has(uid)) userJobsMap.set(uid, []);
+      userJobsMap.get(uid)!.push(appDoc);
+    }
+
+    if (userJobsMap.size === 0) {
+      console.log("  ✅ [리마인더] 신규 발송 대상 없음 (모두 이미 발송됨)");
+      return;
+    }
+
+    // user 문서 배치 읽기 (최대 30개 단위) — notifPrefs + fcmToken 동시 취득
+    const userIds = [...userJobsMap.keys()];
+    const userDataMap = new Map<string, admin.firestore.DocumentData>();
+    for (let i = 0; i < userIds.length; i += 30) {
+      const chunk = userIds.slice(i, i + 30);
+      const refs = chunk.map((uid) => db.collection("users").doc(uid));
+      const docs = await db.getAll(...refs);
+      for (const doc of docs) {
+        if (doc.exists && doc.data()) userDataMap.set(doc.id, doc.data()!);
+      }
+    }
 
     let sentCount = 0;
-    // 단일 실행 내 같은 사용자 중복 방지
-    const processedUsers = new Set<string>();
 
-    for (const appDoc of applicationsSnapshot.docs) {
-      const appData = appDoc.data();
-      const userId = appData.uid as string;
+    for (const [userId, jobs] of userJobsMap.entries()) {
+      try {
+        const userData = userDataMap.get(userId);
 
-      // 오늘 이미 발송된 사용자 스킵 (스케줄러 재시도 멱등성)
-      if (alreadySentUsers.has(userId)) {
-        continue;
-      }
+        // 알림 본문 구성 — 여러 근무가 있으면 모두 표시
+        let notifBody: string;
+        let fcmBody: string;
+        if (jobs.length === 1) {
+          const d = jobs[0].data();
+          notifBody =
+            `${d.businessName}에서 내일 ${d.selectedWorkType} ` +
+            `근무가 있습니다.\n시간: ${d.startTime}~${d.endTime}`;
+          fcmBody = `${d.businessName} ${d.startTime} 출근`;
+        } else {
+          notifBody =
+            `내일 ${jobs.length}건의 근무가 예정되어 있습니다.\n` +
+            jobs
+              .map((j) => `• ${j.data().businessName} ${j.data().startTime}~${j.data().endTime}`)
+              .join("\n");
+          fcmBody = `내일 ${jobs.length}건의 근무가 예정되어 있습니다`;
+        }
 
-      // 같은 사용자에게 여러 근무가 있으면 한 번만 전송
-      if (processedUsers.has(userId)) {
-        continue;
-      }
-      processedUsers.add(userId);
-
-      // 앱 내 알림 생성
-      const notificationBody =
-        `${appData.businessName}에서 내일 ${appData.selectedWorkType} ` +
-        `근무가 있습니다.\n시간: ${appData.startTime}~${appData.endTime}`;
-
-      await db.collection("notifications").add({
-        userId: userId,
-        type: "workReminder",
-        title: "내일 근무 알림",
-        body: notificationBody,
-        data: {
-          applicationId: appDoc.id,
-          action: "applicationDetail",
-        },
-        isRead: false,
-        createdAt: now,
-      });
-
-      // FCM 푸시 전송 (workReminder 수신 설정 확인 — onNotificationCreated가 workReminder 스킵하므로 여기서 직접 체크)
-      const userDocForPref = await db.collection("users").doc(userId).get();
-      const notifPrefsForReminder = userDocForPref.data()?.notifPrefs as Record<string, boolean> | undefined;
-      if (notifPrefsForReminder && notifPrefsForReminder["workReminder"] === false) {
-        console.log(`    ⚠️ 근무 리마인더 FCM 스킵 (수신 차단): ${userId}`);
-        sentCount++;
-        continue;
-      }
-
-      await sendFCMToUser(userId, {
-        title: "내일 근무 알림 📅",
-        body: `${appData.businessName} ${appData.startTime} 출근`,
-        data: {
+        // 앱 내 알림 저장
+        await db.collection("notifications").add({
+          userId,
           type: "workReminder",
-          applicationId: appDoc.id,
-        },
-      });
+          title: "내일 근무 알림",
+          body: notifBody,
+          data: { applicationId: jobs[0].id, action: "applicationDetail" },
+          isRead: false,
+          createdAt: now,
+        });
 
-      sentCount++;
+        // FCM 푸시 — workReminder 수신 설정 확인 (onNotificationCreated가 workReminder 스킵하므로 여기서 직접 처리)
+        const notifPrefs = userData?.notifPrefs as Record<string, boolean> | undefined;
+        if (notifPrefs?.["workReminder"] === false) {
+          console.log(`    ⚠️ 근무 리마인더 FCM 스킵 (수신 차단): ${userId}`);
+        } else {
+          const fcmToken = userData?.fcmToken as string | undefined;
+          await sendFCMToUser(
+            userId,
+            {
+              title: "내일 근무 알림 📅",
+              body: fcmBody,
+              data: { type: "workReminder", applicationId: jobs[0].id },
+            },
+            fcmToken ?? null
+          );
+        }
+
+        sentCount++;
+      } catch (err) {
+        console.error(`    ❌ [리마인더] userId ${userId} 처리 실패:`, err);
+      }
     }
 
     console.log(`  ✅ [리마인더] ${sentCount}명에게 알림 전송 완료`);
@@ -2093,15 +2120,19 @@ interface FCMPayload {
  */
 async function sendFCMToUser(
   userId: string,
-  payload: FCMPayload
+  payload: FCMPayload,
+  existingToken?: string | null
 ): Promise<void> {
   try {
-    // 사용자의 FCM 토큰 조회
-    const userDoc = await db.collection("users").doc(userId).get();
-    if (!userDoc.exists) return;
-
-    const userData = userDoc.data();
-    const fcmToken = userData?.fcmToken as string | undefined;
+    let fcmToken: string | undefined;
+    if (existingToken !== undefined) {
+      fcmToken = existingToken ?? undefined;
+    } else {
+      // 토큰이 전달되지 않은 경우에만 user 문서 읽기
+      const userDoc = await db.collection("users").doc(userId).get();
+      if (!userDoc.exists) return;
+      fcmToken = userDoc.data()?.fcmToken as string | undefined;
+    }
 
     if (!fcmToken) {
       console.log(`    ⚠️ FCM 토큰 없음: ${userId}`);

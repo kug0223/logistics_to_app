@@ -44,14 +44,17 @@ class WorkDetailManagementDialog {
       builder: (context) => StatefulBuilder(
         builder: (context, setDialogState) {
           // 선택된 상태 확인
-          if (selectedWorkDetails.isNotEmpty) {
-            final firstSelected = toItem.workDetails.firstWhere(
-              (w) => selectedWorkDetails.contains(w.id),
-            );
+          final firstSelected = selectedWorkDetails.isNotEmpty
+              ? toItem.workDetails
+                  .where((w) => selectedWorkDetails.contains(w.id))
+                  .firstOrNull
+              : null;
+          if (firstSelected != null) {
             final stats = toItem.workDetailStats?[firstSelected.id];
             final confirmed = stats?['confirmed'] ?? 0;
             selectedStatus = _getWorkStatus(firstSelected, confirmed);
           } else {
+            selectedWorkDetails.clear();
             selectedStatus = null;
           }
 
@@ -463,33 +466,40 @@ class WorkDetailManagementDialog {
     );
 
     if (confirm) {
-      final adminUID = FirebaseAuth.instance.currentUser!.uid;
-      final now = DateTime.now();
-      
-      for (var work in works) {
-        await firestoreService.closeWorkDetail(
-          toId: toItem.to.id,
-          workDetailId: work.id,
-          adminUID: adminUID,
-          slotId: toItem.slot?.id,
-        );
-        
-        // ⭐ 로컬 데이터 업데이트
-        final index = toItem.workDetails.indexWhere((w) => w.id == work.id);
-        if (index != -1) {
-          toItem.workDetails[index] = work.copyWith(
-            closedAt: now,
-            closedBy: adminUID,
-            isManualClosed: true,
-          );
-        }
+      final adminUID = FirebaseAuth.instance.currentUser?.uid;
+      if (adminUID == null) {
+        ToastHelper.showError('로그인 정보를 찾을 수 없습니다');
+        return;
       }
+      final now = DateTime.now();
+      try {
+        for (var work in works) {
+          await firestoreService.closeWorkDetail(
+            toId: toItem.to.id,
+            workDetailId: work.id,
+            adminUID: adminUID,
+            slotId: toItem.slot?.id,
+          );
 
-      if (!context.mounted) return;
-      Navigator.pop(context);
-      onLocalStatsChanged?.call();
-      onComplete(); // cascade 마감으로 탭이 바뀔 수 있으므로 full reload
-      ToastHelper.showSuccess('${works.length}개 업무가 마감되었습니다');
+          // ⭐ 로컬 데이터 업데이트
+          final index = toItem.workDetails.indexWhere((w) => w.id == work.id);
+          if (index != -1) {
+            toItem.workDetails[index] = work.copyWith(
+              closedAt: now,
+              closedBy: adminUID,
+              isManualClosed: true,
+            );
+          }
+        }
+
+        if (!context.mounted) return;
+        Navigator.pop(context);
+        onLocalStatsChanged?.call();
+        onComplete();
+        ToastHelper.showSuccess('${works.length}개 업무가 마감되었습니다');
+      } catch (e) {
+        if (context.mounted) ToastHelper.showError('일부 업무 마감에 실패했습니다');
+      }
     }
   }
 
@@ -504,28 +514,35 @@ class WorkDetailManagementDialog {
     );
 
     if (confirm) {
-      final adminUID = FirebaseAuth.instance.currentUser!.uid;
-      
-      for (var work in works) {
-        await firestoreService.reopenWorkDetail(
-          toId: toItem.to.id,
-          workDetailId: work.id,
-          adminUID: adminUID,
-          slotId: toItem.slot?.id,
-        );
-        
-        // ⭐ 로컬 데이터 업데이트 (clearClosedAt 사용)
-        final index = toItem.workDetails.indexWhere((w) => w.id == work.id);
-        if (index != -1) {
-          toItem.workDetails[index] = work.copyWith(clearClosedAt: true);
-        }
+      final adminUID = FirebaseAuth.instance.currentUser?.uid;
+      if (adminUID == null) {
+        ToastHelper.showError('로그인 정보를 찾을 수 없습니다');
+        return;
       }
+      try {
+        for (var work in works) {
+          await firestoreService.reopenWorkDetail(
+            toId: toItem.to.id,
+            workDetailId: work.id,
+            adminUID: adminUID,
+            slotId: toItem.slot?.id,
+          );
 
-      if (!context.mounted) return;
-      Navigator.pop(context);
-      onLocalStatsChanged?.call();
-      onComplete(); // cascade 재오픈으로 탭이 바뀔 수 있으므로 full reload
-      ToastHelper.showSuccess('${works.length}개 업무가 재오픈되었습니다');
+          // ⭐ 로컬 데이터 업데이트 (clearClosedAt 사용)
+          final index = toItem.workDetails.indexWhere((w) => w.id == work.id);
+          if (index != -1) {
+            toItem.workDetails[index] = work.copyWith(clearClosedAt: true);
+          }
+        }
+
+        if (!context.mounted) return;
+        Navigator.pop(context);
+        onLocalStatsChanged?.call();
+        onComplete();
+        ToastHelper.showSuccess('${works.length}개 업무가 재오픈되었습니다');
+      } catch (e) {
+        if (context.mounted) ToastHelper.showError('일부 업무 재오픈에 실패했습니다');
+      }
     }
   }
 
@@ -540,27 +557,34 @@ class WorkDetailManagementDialog {
     );
 
     if (confirm) {
-      final adminUID = FirebaseAuth.instance.currentUser!.uid;
-      
-      for (var work in works) {
-        await firestoreService.stopEmergencyRecruitment(
-          toId: toItem.to.id,
-          workDetailId: work.id,
-          adminUID: adminUID,
-          slotId: toItem.slot?.id,
-        );
-        
-        // ⭐ 로컬 데이터 업데이트 (clearEmergency 사용)
-        final index = toItem.workDetails.indexWhere((w) => w.id == work.id);
-        if (index != -1) {
-          toItem.workDetails[index] = work.copyWith(clearEmergency: true);
-        }
+      final adminUID = FirebaseAuth.instance.currentUser?.uid;
+      if (adminUID == null) {
+        ToastHelper.showError('로그인 정보를 찾을 수 없습니다');
+        return;
       }
+      try {
+        for (var work in works) {
+          await firestoreService.stopEmergencyRecruitment(
+            toId: toItem.to.id,
+            workDetailId: work.id,
+            adminUID: adminUID,
+            slotId: toItem.slot?.id,
+          );
 
-      if (!context.mounted) return;
-      Navigator.pop(context);
-      onLocalStatsChanged?.call();
-      ToastHelper.showSuccess('${works.length}개 업무 긴급모집이 종료되었습니다');
+          // ⭐ 로컬 데이터 업데이트 (clearEmergency 사용)
+          final index = toItem.workDetails.indexWhere((w) => w.id == work.id);
+          if (index != -1) {
+            toItem.workDetails[index] = work.copyWith(clearEmergency: true);
+          }
+        }
+
+        if (!context.mounted) return;
+        Navigator.pop(context);
+        onLocalStatsChanged?.call();
+        ToastHelper.showSuccess('${works.length}개 업무 긴급모집이 종료되었습니다');
+      } catch (e) {
+        if (context.mounted) ToastHelper.showError('일부 긴급모집 종료에 실패했습니다');
+      }
     }
   }
 }

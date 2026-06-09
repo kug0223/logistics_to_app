@@ -111,115 +111,147 @@ class _TooltipDialog extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final effectiveIconColor = iconColor ?? theme.primaryColor;
+    // 제목에서 앞쪽 이모지 제거 (디자인으로 대신 표현)
+    final cleanTitle = title.replaceAll(RegExp(r'^[\u{1F300}-\u{1FAFF}⭐💡📍✅❌✨🔔]\s*', unicode: true), '');
 
     return Dialog(
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(20),
-      ),
-      child: Container(
-        padding: ResponsiveHelper.cardPadding(context),
-        constraints: BoxConstraints(
-          maxWidth: MediaQuery.of(context).size.width * 0.85,
-        ),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            // 아이콘
-            Container(
-              padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 16)),
-              decoration: BoxDecoration(
-                color: effectiveIconColor.withValues(alpha: 0.1),
-                shape: BoxShape.circle,
-              ),
-              child: Icon(
-                icon,
-                size: ResponsiveHelper.iconSize(context, 40),
-                color: effectiveIconColor,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+      clipBehavior: Clip.antiAlias,
+      insetPadding: const EdgeInsets.symmetric(horizontal: 32, vertical: 40),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          // 헤더 — 앱 그라데이션 스타일
+          Container(
+            padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 20)),
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                colors: [theme.primaryColor, theme.colorScheme.secondary],
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
               ),
             ),
-
-            SizedBox(height: ResponsiveHelper.spacing(context, 16)),
-
-            // 제목
-            Text(
-              title,
-              style: ResponsiveHelper.subtitleStyle(context).copyWith(
-                fontWeight: FontWeight.bold,
-              ),
-              textAlign: TextAlign.center,
-            ),
-
-            SizedBox(height: ResponsiveHelper.spacing(context, 12)),
-
-            // 메시지
-            Text(
-              message,
-              style: ResponsiveHelper.bodyStyle(context, color: AppColors.grey600),
-              textAlign: TextAlign.center,
-            ),
-
-            // 팁 목록
-            if (tips != null && tips!.isNotEmpty) ...[
-              SizedBox(height: ResponsiveHelper.spacing(context, 16)),
-              Container(
-                padding: ResponsiveHelper.cardPadding(context),
-                decoration: BoxDecoration(
-                  color: AppColors.warning.withValues(alpha: 0.1),
-                  borderRadius: BorderRadius.circular(12),
+            child: Row(
+              children: [
+                Container(
+                  padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 10)),
+                  decoration: BoxDecoration(
+                    color: Colors.white.withValues(alpha: 0.2),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Icon(icon,
+                      color: Colors.white,
+                      size: ResponsiveHelper.iconSize(context, 22)),
                 ),
-                child: Column(
-                  children: tips!.map((tip) => Padding(
-                    padding: EdgeInsets.symmetric(
-                      vertical: ResponsiveHelper.spacing(context, 4),
-                    ),
-                    child: Row(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          '💡 ',
-                          style: ResponsiveHelper.bodyStyle(context),
-                        ),
-                        Expanded(
-                          child: Text(
-                            tip,
-                            style: ResponsiveHelper.smallStyle(context),
-                          ),
+                SizedBox(width: ResponsiveHelper.spacing(context, 12)),
+                Expanded(
+                  child: Text(
+                    cleanTitle,
+                    style: ResponsiveHelper.subtitleStyle(context).copyWith(
+                        color: Colors.white, fontWeight: FontWeight.bold),
+                  ),
+                ),
+              ],
+            ),
+          ),
+
+          // 본문
+          Container(
+            color: AppColors.grey50,
+            padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 18)),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // 메시지
+                Text(
+                  message,
+                  style: ResponsiveHelper.bodyStyle(context,
+                      color: AppColors.grey700),
+                ),
+
+                // 팁 목록 — 아이콘 불렛
+                if (tips != null && tips!.isNotEmpty) ...[
+                  SizedBox(height: ResponsiveHelper.spacing(context, 12)),
+                  Container(
+                    padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 14)),
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(12),
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.black.withValues(alpha: 0.04),
+                          blurRadius: 6,
+                          offset: const Offset(0, 2),
                         ),
                       ],
                     ),
-                  )).toList(),
-                ),
-              ),
-            ],
+                    child: Column(
+                      children: tips!.asMap().entries.map((e) {
+                        final isLast = e.key == tips!.length - 1;
+                        return Column(
+                          children: [
+                            Row(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Container(
+                                  margin: EdgeInsets.only(
+                                      top: ResponsiveHelper.spacing(context, 2),
+                                      right: ResponsiveHelper.spacing(context, 8)),
+                                  width: 5, height: 5,
+                                  decoration: BoxDecoration(
+                                    color: effectiveIconColor,
+                                    shape: BoxShape.circle,
+                                  ),
+                                ),
+                                Expanded(
+                                  child: Text(
+                                    e.value,
+                                    style: ResponsiveHelper.smallStyle(context,
+                                        color: AppColors.grey600),
+                                  ),
+                                ),
+                              ],
+                            ),
+                            if (!isLast)
+                              Divider(
+                                height: ResponsiveHelper.spacing(context, 12),
+                                color: AppColors.grey100,
+                              ),
+                          ],
+                        );
+                      }).toList(),
+                    ),
+                  ),
+                ],
 
-            SizedBox(height: ResponsiveHelper.spacing(context, 20)),
+                SizedBox(height: ResponsiveHelper.spacing(context, 16)),
 
-            // 확인 버튼
-            SizedBox(
-              width: double.infinity,
-              child: ElevatedButton(
-                onPressed: () => Navigator.pop(context),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: theme.primaryColor,
-                  foregroundColor: Colors.white,
-                  padding: EdgeInsets.symmetric(
-                    vertical: ResponsiveHelper.spacing(context, 14),
-                  ),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(12),
+                // 확인 버튼
+                SizedBox(
+                  width: double.infinity,
+                  child: ElevatedButton(
+                    onPressed: () => Navigator.pop(context),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: effectiveIconColor,
+                      foregroundColor: Colors.white,
+                      elevation: 0,
+                      padding: EdgeInsets.symmetric(
+                          vertical: ResponsiveHelper.spacing(context, 14)),
+                      shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(14)),
+                    ),
+                    child: Text(
+                      '확인',
+                      style: ResponsiveHelper.bodyStyle(context).copyWith(
+                          color: Colors.white, fontWeight: FontWeight.bold),
+                    ),
                   ),
                 ),
-                child: Text(
-                  '알겠어요!',
-                  style: ResponsiveHelper.bodyStyle(context).copyWith(
-                    color: Colors.white,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-              ),
+              ],
             ),
-          ],
-        ),
+          ),
+        ],
       ),
     );
   }

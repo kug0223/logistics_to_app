@@ -56,8 +56,6 @@ class WorkDetailDialog {
                 label: '모집 인원',
                 value: '${work.requiredCount}명',
               ),
-              // TODO: WorkDetailModel에 description 필드 추가 필요
-              /* 
               if (work.description != null && work.description!.isNotEmpty) ...[
                 SizedBox(height: ResponsiveHelper.spacing(context, 12)),
                 const Divider(),
@@ -69,7 +67,6 @@ class WorkDetailDialog {
                   value: work.description!,
                 ),
               ],
-              */
             ],
           ),
         ),
@@ -116,7 +113,7 @@ class WorkDetailDialog {
                 value,
                 style: ResponsiveHelper.bodyStyle(
                   context,
-                  color: valueColor ?? Colors.black87,
+                  color: valueColor ?? AppColors.grey800,
                 ).copyWith(fontWeight: FontWeight.bold),
               ),
             ],

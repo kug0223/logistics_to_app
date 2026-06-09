@@ -43,13 +43,11 @@ class OcrVerificationHelper {
           final back = match.group(2);
           extractedResidentNumber = '$front-$back';
           
-          debugPrint('📄 [신분증 OCR] 추출된 주민번호: $extractedResidentNumber');
-          
           final cleanedExtracted = extractedResidentNumber.replaceAll(RegExp(r'\D'), '');
           final cleanedExpectedRN = expectedResidentNumber.replaceAll(RegExp(r'\D'), '');
-          
+
           isResidentNumberValid = cleanedExtracted == cleanedExpectedRN;
-          
+
           debugPrint('📄 [신분증 OCR] 주민번호 검증: ${isResidentNumberValid ? "✅" : "❌"}');
         } else {
           isResidentNumberValid = false;
@@ -127,7 +125,7 @@ class OcrVerificationHelper {
       String? extractedBankName = _extractBankName(rawText);
       
       debugPrint('📄 [통장사본 OCR] 추출된 예금주: $extractedName');
-      debugPrint('📄 [통장사본 OCR] 추출된 계좌번호: $extractedAccountNumber');
+      debugPrint('📄 [통장사본 OCR] 계좌번호 추출 완료');
       debugPrint('📄 [통장사본 OCR] 추출된 은행명: $extractedBankName');
       debugPrint('📄 [통장사본 OCR] 예상 예금주: $expectedName');
       
@@ -145,7 +143,7 @@ class OcrVerificationHelper {
         final cleanedExpectedAccount = expectedAccountNumber.replaceAll(RegExp(r'\D'), '');
         final cleanedExtractedAccount = (extractedAccountNumber ?? '').replaceAll(RegExp(r'\D'), '');
         isAccountValid = cleanedExtractedAccount == cleanedExpectedAccount;
-        debugPrint('📄 [통장사본 OCR] 계좌번호 검증: $cleanedExtractedAccount == $cleanedExpectedAccount → ${isAccountValid ? "✅" : "❌"}');
+        debugPrint('📄 [통장사본 OCR] 계좌번호 검증: ${isAccountValid ? "✅" : "❌"}');
       }
       
       // 3. 은행명 검증 (선택)

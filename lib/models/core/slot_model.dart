@@ -14,8 +14,8 @@ class SlotWorkTypeCount {
 
   factory SlotWorkTypeCount.fromMap(Map<String, dynamic> map) {
     return SlotWorkTypeCount(
-      confirmedCount: map['confirmedCount'] as int? ?? 0,
-      pendingCount: map['pendingCount'] as int? ?? 0,
+      confirmedCount: (map['confirmedCount'] as num?)?.toInt() ?? 0,
+      pendingCount: (map['pendingCount'] as num?)?.toInt() ?? 0,
     );
   }
 
@@ -105,22 +105,24 @@ class SlotModel {
     return SlotModel(
       id: documentId,
       toId: toId,
-      date: (data['date'] as Timestamp).toDate(),
+      date: (data['date'] as Timestamp?)?.toDate().toLocal() ??
+          (throw ArgumentError('SlotModel: date is required')),
       workDetails: workDetails,
       workTypeCounts: workTypeCounts,
       status: data['status'] as String? ?? SlotStatus.open,
-      confirmedCount: data['confirmedCount'] as int? ?? 0,
-      pendingCount: data['pendingCount'] as int? ?? 0,
+      confirmedCount: (data['confirmedCount'] as num?)?.toInt() ?? 0,
+      pendingCount: (data['pendingCount'] as num?)?.toInt() ?? 0,
       applicationDeadline:
           (data['applicationDeadline'] as Timestamp?)?.toDate().toLocal(),
       visibleFrom: (data['visibleFrom'] as Timestamp?)?.toDate().toLocal(),
       title: data['title'] as String?,
       isManualClosed: data['isManualClosed'] as bool? ?? false,
-      closedAt: (data['closedAt'] as Timestamp?)?.toDate(),
+      closedAt: (data['closedAt'] as Timestamp?)?.toDate().toLocal(),
       closedBy: data['closedBy'] as String?,
-      reopenedAt: (data['reopenedAt'] as Timestamp?)?.toDate(),
+      reopenedAt: (data['reopenedAt'] as Timestamp?)?.toDate().toLocal(),
       reopenedBy: data['reopenedBy'] as String?,
-      createdAt: (data['createdAt'] as Timestamp?)?.toDate() ?? DateTime.now(),
+      createdAt: (data['createdAt'] as Timestamp?)?.toDate().toLocal() ??
+          (throw ArgumentError('SlotModel: createdAt is required')),
     );
   }
 
@@ -203,8 +205,17 @@ class SlotModel {
         .isBefore(DateTime(today.year, today.month, today.day));
   }
 
-  /// 수동마감·CF마감·인원충족·날짜경과 중 하나라도 해당하면 true (UI 상태 표시용)
-  bool get isEffectivelyClosed => isClosed || isFull || isDatePast;
+  /// 수동마감·CF마감·인원충족·날짜경과·지원마감 중 하나라도 해당하면 true (UI 상태 표시용)
+  ///
+  /// workDetails가 있으면 모든 업무의 applicationDeadline이 경과한 경우도 포함.
+  /// workDetails가 없는 구 데이터는 슬롯 레벨 isDeadlinePassed로 폴백.
+  bool get isEffectivelyClosed =>
+      isClosed ||
+      isFull ||
+      isDatePast ||
+      (workDetails.isNotEmpty
+          ? workDetails.every((wd) => wd.isTimeExpired)
+          : isDeadlinePassed);
 
   bool get isDeadlinePassed {
     if (applicationDeadline == null) return false;

@@ -3,8 +3,40 @@ import 'package:geolocator/geolocator.dart';
 import 'dart:math' show cos, sqrt, asin;
 
 /// GPS 위치 및 권한 관리 헬퍼
+
+/// GPS 권한/서비스 상태 — 호출부에서 상황별 메시지 분기에 사용
+enum LocationCheckResult {
+  ok,
+  serviceDisabled,  // 시스템 GPS(위치 서비스) Off
+  permissionDenied, // 앱 권한 거부
+  permissionDeniedForever, // 영구 거부
+  error,
+}
+
 class LocationHelper {
-  /// GPS 권한 확인 및 요청
+  /// GPS 권한 확인 및 요청 (결과 상세 반환)
+  static Future<LocationCheckResult> checkAndRequestPermissionDetailed() async {
+    try {
+      final serviceEnabled = await Geolocator.isLocationServiceEnabled();
+      if (!serviceEnabled) return LocationCheckResult.serviceDisabled;
+
+      LocationPermission permission = await Geolocator.checkPermission();
+      if (permission == LocationPermission.denied) {
+        permission = await Geolocator.requestPermission();
+        if (permission == LocationPermission.denied) {
+          return LocationCheckResult.permissionDenied;
+        }
+      }
+      if (permission == LocationPermission.deniedForever) {
+        return LocationCheckResult.permissionDeniedForever;
+      }
+      return LocationCheckResult.ok;
+    } catch (_) {
+      return LocationCheckResult.error;
+    }
+  }
+
+  /// GPS 권한 확인 및 요청 (하위 호환 — bool 반환)
   static Future<bool> checkAndRequestPermission() async {
     try {
       // 1. 위치 서비스 활성화 확인
@@ -26,10 +58,10 @@ class LocationHelper {
         }
       }
 
-      // 4. 영구 거부된 경우
+      // 4. 영구 거부된 경우 — 앱 설정으로 유도
       if (permission == LocationPermission.deniedForever) {
-        debugPrint('❌ 위치 권한이 영구적으로 거부되었습니다.');
-        return false;
+        debugPrint('❌ 위치 권한이 영구적으로 거부되었습니다. 앱 설정에서 허용 필요.');
+        return false; // 호출부에서 openAppSettings() 제공 필요
       }
 
       debugPrint('✅ 위치 권한 확인 완료');
@@ -51,10 +83,17 @@ class LocationHelper {
 
       // 현재 위치 가져오기
       final position = await Geolocator.getCurrentPosition(
-        desiredAccuracy: LocationAccuracy.high,
-        timeLimit: const Duration(seconds: 10),
+        locationSettings: const LocationSettings(
+          accuracy: LocationAccuracy.high,
+          timeLimit: Duration(seconds: 10),
+        ),
       );
 
+      // 가짜 GPS 앱(Mock Location) 감지 — 위치 스푸핑 차단
+      if (position.isMocked) {
+        debugPrint('⚠️ Mock GPS 감지됨 — 위치 위조 시도');
+        return null;
+      }
       debugPrint('✅ 현재 위치: ${position.latitude}, ${position.longitude}');
       return position;
     } catch (e) {
@@ -121,7 +160,9 @@ class LocationHelper {
   static Future<bool> isAccuracyGood() async {
     try {
       final position = await Geolocator.getCurrentPosition(
-        desiredAccuracy: LocationAccuracy.high,
+        locationSettings: const LocationSettings(
+          accuracy: LocationAccuracy.high,
+        ),
       );
 
       // 정확도가 50m 이하면 양호

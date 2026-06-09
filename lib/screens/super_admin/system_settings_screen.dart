@@ -3,10 +3,13 @@
 import 'package:flutter/material.dart';
 import '../../utils/responsive_helper.dart';
 import '../../theme/app_colors.dart';
+import '../../utils/toast_helper.dart';
 import 'trust_rules_settings_screen.dart';
 import 'review_tags_settings_screen.dart';
 import 'badge_settings_screen.dart';
 import 'minimum_wage_settings_screen.dart';
+import 'insurance_rate_settings_screen.dart';
+import '../../widgets/common/gradient_scaffold.dart';
 
 /// 슈퍼관리자 시스템 설정 화면
 /// 
@@ -16,21 +19,8 @@ class SystemSettingsScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    
-    return Scaffold(
-      appBar: AppBar(
-        title: Text(
-          '시스템 설정',
-          style: ResponsiveHelper.subtitleStyle(context).copyWith(
-            color: Colors.white,
-            fontWeight: FontWeight.bold,
-          ),
-        ),
-        backgroundColor: theme.primaryColor,
-        foregroundColor: Colors.white,
-        elevation: 0,
-      ),
+    return GradientScaffold(
+      title: '시스템 설정',
       body: ListView(
         padding: ResponsiveHelper.cardPadding(context),
         children: [
@@ -114,12 +104,23 @@ class SystemSettingsScreen extends StatelessWidget {
             items: [
               _SettingItem(
                 icon: Icons.monetization_on_outlined,
-                title: '급여 설정',
+                title: '최저시급 설정',
                 subtitle: '연도별 최저시급 관리',
                 onTap: () => Navigator.push(
                   context,
                   MaterialPageRoute(
                     builder: (context) => const MinimumWageSettingsScreen(),
+                  ),
+                ),
+              ),
+              _SettingItem(
+                icon: Icons.account_balance_outlined,
+                title: '보험료율 설정',
+                subtitle: '연도별 4대보험·소득세 요율 관리',
+                onTap: () => Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (context) => const InsuranceRateSettingsScreen(),
                   ),
                 ),
               ),
@@ -231,9 +232,7 @@ class SystemSettingsScreen extends StatelessWidget {
   }
 
   void _showComingSoon(BuildContext context) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('준비 중인 기능입니다')),
-    );
+    ToastHelper.showInfo('준비 중인 기능입니다');
   }
 }
 

@@ -41,6 +41,10 @@ class TOModel {
   final String deadlineType;   // 'HOURS_BEFORE' | 'FIXED_TIME'
   final int? hoursBeforeStart;
   final DateTime? applicationDeadline; // contract: 공고 마감일
+  /// 계약 기간 유형: '15days' | '1month' | '3months' | '6months' | '1year' | 'custom'
+  final String? contractPeriodType;
+  /// 게시 기간 (일수): null=무기한, 7, 14, 30, 60
+  final int? postingDurationDays;
 
   // ── 인원 집계 ─────────────────────────────────────
   final int totalRequired;
@@ -86,6 +90,8 @@ class TOModel {
     this.deadlineType = 'HOURS_BEFORE',
     this.hoursBeforeStart = 2,
     this.applicationDeadline,
+    this.contractPeriodType,
+    this.postingDurationDays,
     this.totalRequired = 0,
     this.totalConfirmed = 0,
     this.totalPending = 0,
@@ -120,33 +126,35 @@ class TOModel {
       groupTitle: data['groupTitle'] as String?,
       description: data['description'] as String?,
       workDetails: WorkDetailData.listFromFirestore(data['workDetails']),
-      totalSlots: data['totalSlots'] as int? ?? 0,
-      rangeStart: (data['rangeStart'] as Timestamp?)?.toDate(),
-      rangeEnd: (data['rangeEnd'] as Timestamp?)?.toDate(),
+      totalSlots: (data['totalSlots'] as num?)?.toInt() ?? 0,
+      rangeStart: (data['rangeStart'] as Timestamp?)?.toDate().toLocal(),
+      rangeEnd: (data['rangeEnd'] as Timestamp?)?.toDate().toLocal(),
       workDays: data['workDays'] != null
           ? List<String>.from(data['workDays'] as List)
           : const [],
       deadlineType: data['deadlineType'] as String? ?? 'HOURS_BEFORE',
-      hoursBeforeStart: data['hoursBeforeStart'] as int? ?? 2,
+      hoursBeforeStart: (data['hoursBeforeStart'] as num?)?.toInt() ?? 2,
       applicationDeadline:
           (data['applicationDeadline'] as Timestamp?)?.toDate().toLocal(),
-      totalRequired: data['totalRequired'] as int? ?? 0,
-      totalConfirmed: data['totalConfirmed'] as int? ?? 0,
-      totalPending: data['totalPending'] as int? ?? 0,
+      contractPeriodType: data['contractPeriodType'] as String?,
+      postingDurationDays: (data['postingDurationDays'] as num?)?.toInt(),
+      totalRequired: (data['totalRequired'] as num?)?.toInt() ?? 0,
+      totalConfirmed: (data['totalConfirmed'] as num?)?.toInt() ?? 0,
+      totalPending: (data['totalPending'] as num?)?.toInt() ?? 0,
       status: data['status'] as String? ?? TOStatus.active,
-      statusUpdatedAt: (data['statusUpdatedAt'] as Timestamp?)?.toDate(),
+      statusUpdatedAt: (data['statusUpdatedAt'] as Timestamp?)?.toDate().toLocal(),
       isManualClosed: data['isManualClosed'] as bool? ?? false,
-      closedAt: (data['closedAt'] as Timestamp?)?.toDate(),
+      closedAt: (data['closedAt'] as Timestamp?)?.toDate().toLocal(),
       closedBy: data['closedBy'] as String?,
-      reopenedAt: (data['reopenedAt'] as Timestamp?)?.toDate(),
+      reopenedAt: (data['reopenedAt'] as Timestamp?)?.toDate().toLocal(),
       reopenedBy: data['reopenedBy'] as String?,
       publishMode: data['publishMode'] as String? ?? 'immediate',
       publishAt: (data['publishAt'] as Timestamp?)?.toDate().toLocal(),
       isPublished: data['isPublished'] as bool? ?? true,
-      publishDaysBefore: data['publishDaysBefore'] as int?,
+      publishDaysBefore: (data['publishDaysBefore'] as num?)?.toInt(),
       publishTime: data['publishTime'] as String?,
       creatorUID: data['creatorUID'] as String? ?? '',
-      createdAt: (data['createdAt'] as Timestamp?)?.toDate() ?? DateTime.now(),
+      createdAt: (data['createdAt'] as Timestamp?)?.toDate().toLocal() ?? DateTime.now(),
     );
   }
 
@@ -170,6 +178,8 @@ class TOModel {
       'hoursBeforeStart': hoursBeforeStart,
       if (applicationDeadline != null)
         'applicationDeadline': Timestamp.fromDate(applicationDeadline!),
+      if (contractPeriodType != null) 'contractPeriodType': contractPeriodType,
+      if (postingDurationDays != null) 'postingDurationDays': postingDurationDays,
       'totalRequired': totalRequired,
       'totalConfirmed': totalConfirmed,
       'totalPending': totalPending,
@@ -226,6 +236,10 @@ class TOModel {
     bool? isPublished,
     int? publishDaysBefore,
     String? publishTime,
+    String? contractPeriodType,
+    bool clearContractPeriodType = false,
+    int? postingDurationDays,
+    bool clearPostingDuration = false,
     String? creatorUID,
     DateTime? createdAt,
   }) {
@@ -263,6 +277,8 @@ class TOModel {
       isPublished: isPublished ?? this.isPublished,
       publishDaysBefore: publishDaysBefore ?? this.publishDaysBefore,
       publishTime: publishTime ?? this.publishTime,
+      contractPeriodType: clearContractPeriodType ? null : (contractPeriodType ?? this.contractPeriodType),
+      postingDurationDays: clearPostingDuration ? null : (postingDurationDays ?? this.postingDurationDays),
       creatorUID: creatorUID ?? this.creatorUID,
       createdAt: createdAt ?? this.createdAt,
     );
@@ -270,8 +286,8 @@ class TOModel {
 
   // ── 타입 헬퍼 ─────────────────────────────────────
 
-  bool get isFlexType => type == 'flex';
-  bool get isContractType => type == 'contract';
+  bool get isFlexType => type == TOType.flex;
+  bool get isContractType => type == TOType.contract;
 
   /// 관리자 카드에 표시할 제목 (groupTitle 없으면 title 사용)
   String get displayGroupTitle =>
@@ -311,9 +327,15 @@ class TOModel {
     return DateTime.now().isBefore(publishAt!);
   }
 
-  // isManualClosed는 메타데이터 (누가 닫았나)일 뿐 — 닫힘 여부는 status 필드만 사용
+  // 닫힘 여부 단일 판단 — Firestore status + 런타임 만료 조건 통합
+  // isManualClosed는 CF 갱신 전(최대 30분)에도 즉시 반영
+  // contract TO: 게시만료(isPostingExpired) 또는 지원마감(isDeadlinePassed)도 마감으로 처리
   bool get isClosed =>
-      isFull || status == TOStatus.closed || status == TOStatus.expired;
+      isManualClosed ||
+      isFull ||
+      status == TOStatus.closed ||
+      status == TOStatus.expired ||
+      (isContractType && (isPostingExpired || isDeadlinePassed));
 
   String get calculatedStatus {
     if (isManualClosed) return TOStatus.closed;
@@ -323,8 +345,59 @@ class TOModel {
 
   // ── contract 전용 ─────────────────────────────────
 
+  /// preset 기간 여부
+  bool get hasPresetPeriod => contractPeriodType != null && contractPeriodType != 'custom';
+
+  /// 계약 기간 레이블
+  String get contractPeriodLabel {
+    switch (contractPeriodType) {
+      case '15days': return '15일';
+      case '1month': return '1개월';
+      case '3months': return '3개월';
+      case '6months': return '6개월';
+      case '1year': return '1년';
+      case 'custom': return '직접 입력';
+      default: return '';
+    }
+  }
+
+  /// 주어진 시작일에서 계약 종료일 계산 (preset 타입 전용)
+  /// day를 그대로 넘기면 월말 오버플로우 발생(예: 1/31+1개월→3/3)
+  /// 다음달 1일 - 1일 패턴으로 월말을 안전하게 계산
+  DateTime computeContractEndDate(DateTime startDate) {
+    switch (contractPeriodType) {
+      case '15days':
+        return startDate.add(const Duration(days: 14));
+      // 패턴: DateTime(y, startMonth + N + 1, 1) - 1day = N개월 뒤 달의 말일
+      // 예) 1월 시작 → 1month: DateTime(y, 3, 1)-1 = 2월 말일 ✓
+      case '1month':
+        return DateTime(startDate.year, startDate.month + 2, 1)
+            .subtract(const Duration(days: 1));
+      case '3months':
+        return DateTime(startDate.year, startDate.month + 4, 1)
+            .subtract(const Duration(days: 1));
+      case '6months':
+        return DateTime(startDate.year, startDate.month + 7, 1)
+            .subtract(const Duration(days: 1));
+      case '1year':
+        // 시작월과 같은 달의 다음해 말일 = DateTime(year+1, month+1, 0) 패턴
+        return DateTime(startDate.year + 1, startDate.month + 1, 1)
+            .subtract(const Duration(days: 1));
+      default:
+        return rangeEnd ?? startDate;
+    }
+  }
+
   String get contractPeriodDisplay {
-    if (!isContractType || rangeStart == null || rangeEnd == null) return '';
+    if (!isContractType) return '';
+    if (hasPresetPeriod) {
+      if (rangeStart != null) {
+        final end = computeContractEndDate(rangeStart!);
+        return '${FormatHelper.formatDate(rangeStart!)} ~ ${FormatHelper.formatDate(end)} ($contractPeriodLabel)';
+      }
+      return contractPeriodLabel;
+    }
+    if (rangeStart == null || rangeEnd == null) return '';
     return '${FormatHelper.formatDate(rangeStart!)} ~ ${FormatHelper.formatDate(rangeEnd!)}';
   }
 
@@ -347,12 +420,8 @@ class TOModel {
 
   // ── 예약 공개 ─────────────────────────────────────
 
-  String? get publishAtDisplay {
-    if (publishAt == null) return null;
-    return '${publishAt!.month}/${publishAt!.day} '
-        '${publishAt!.hour.toString().padLeft(2, '0')}:'
-        '${publishAt!.minute.toString().padLeft(2, '0')}';
-  }
+  String? get publishAtDisplay =>
+      publishAt != null ? FormatHelper.formatDateTime(publishAt!) : null;
 
   // ── 인원 ─────────────────────────────────────────
 
@@ -365,9 +434,38 @@ class TOModel {
     return DateTime.now().isAfter(applicationDeadline!);
   }
 
+  // ── 게시 만료 (contract용, postingDurationDays 기반) ─────────
+
+  /// 게시 만료일: publishAt(또는 createdAt) + postingDurationDays
+  DateTime? get postingExpiryDate {
+    if (postingDurationDays == null) return null;
+    final base = publishAt ?? createdAt;
+    return base.add(Duration(days: postingDurationDays!));
+  }
+
+  /// "MM/DD" 형식 게시 만료일 (null = 무기한)
+  String? get formattedPostingExpiry {
+    final d = postingExpiryDate;
+    if (d == null) return null;
+    return '${d.month}/${d.day}';
+  }
+
+  bool get isPostingExpired {
+    final d = postingExpiryDate;
+    if (d == null) return false;
+    // 만료일 당일은 표시, 다음날 00:00 이후 숨김
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    final expiry = DateTime(d.year, d.month, d.day);
+    return today.isAfter(expiry);
+  }
+
   String get closedReason {
     if (isManualClosed) return '수동 마감';
     if (isFull) return '인원 충족';
+    if (status == TOStatus.expired) return '슬롯 만료';
+    if (isDeadlinePassed) return '지원 마감';
+    if (isPostingExpired) return '게시 기간 만료';
     return '';
   }
 
@@ -389,8 +487,11 @@ class TOModel {
   /// isFlexType 별칭
   bool get isShortTerm => isFlexType;
 
-  /// rangeEnd 별칭
-  DateTime? get endDate => rangeEnd;
+  /// rangeEnd 별칭 — preset 타입이면 rangeStart 기준으로 종료일 자동 계산
+  DateTime? get endDate {
+    if (hasPresetPeriod && rangeStart != null) return computeContractEndDate(rangeStart!);
+    return rangeEnd;
+  }
 
   /// rangeStart 별칭
   DateTime? get startDate => rangeStart;
@@ -410,18 +511,28 @@ class TOModel {
   /// 마감일 표시
   String get formattedDeadline {
     final dl = applicationDeadline;
-    if (dl == null) return '-';
-    return '${dl.month}/${dl.day} '
-        '${dl.hour.toString().padLeft(2, '0')}:'
-        '${dl.minute.toString().padLeft(2, '0')}';
+    return dl != null ? FormatHelper.formatDateTime(dl) : '-';
   }
+
+  /// 실질 마감시각 — applicationDeadline 우선, 없으면 HOURS_BEFORE 계산
+  /// user_to_card / 마감임박 판단의 단일 소스
+  /// 공고 레벨 마감 시각 — 저장된 값만 반환 (contract TO: 지원 마감일)
+  DateTime? get effectiveDeadline => applicationDeadline;
 
   /// 마감 30분 이내 여부
   bool get isDeadlineSoon {
-    final dl = applicationDeadline;
+    final dl = effectiveDeadline;
     if (dl == null) return false;
     final diff = dl.difference(DateTime.now()).inMinutes;
     return diff >= 0 && diff <= 30;
+  }
+
+  /// 마감 24시간 이내 여부 (유저 카드 "마감임박" 뱃지 기준)
+  bool get isDeadlineUrgent {
+    final dl = effectiveDeadline;
+    if (dl == null) return false;
+    final hours = dl.difference(DateTime.now()).inHours;
+    return hours >= 0 && hours <= 24;
   }
 
   /// 날짜 범위 표시 (구 groupDateRangeDisplay)
@@ -449,6 +560,12 @@ class TOModel {
   void setTimeRange(String? minStart, String? maxEnd) {}
 }
 
+/// TO 타입 상수 (to 컬렉션 type 필드)
+abstract class TOType {
+  static const String contract = 'contract'; // 장기 고정 근무
+  static const String flex     = 'flex';     // 단기 날짜별 근무
+}
+
 /// TO Firestore 상태 상수 (대문자 — TO 컬렉션 convention)
 abstract class TOStatus {
   static const String active    = 'ACTIVE';
@@ -456,9 +573,13 @@ abstract class TOStatus {
   static const String full      = 'FULL';
   static const String expired   = 'EXPIRED';
   static const String scheduled = 'SCHEDULED';
+  /// 미공개(초안) — 관리자에게만 보이고 지원자에게 비공개
+  static const String draft     = 'DRAFT';
 
   /// 모집 중 상태 그룹 (Firestore whereIn 쿼리용)
   static const List<String> openStates   = [active, full, scheduled];
   /// 마감 상태 그룹
   static const List<String> closedStates = [closed, expired];
+  /// 공개 상태 전체 (지원 가능)
+  static const List<String> publishedStates = [active, full, scheduled, closed, expired];
 }

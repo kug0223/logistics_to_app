@@ -45,8 +45,9 @@ class WorkerLocationModel {
   });
 
   factory WorkerLocationModel.fromFirestore(DocumentSnapshot doc) {
-    final data = doc.data() as Map<String, dynamic>;
-    return WorkerLocationModel.fromMap(data, doc.id);
+    final raw = doc.data();
+    if (raw == null) throw ArgumentError('WorkerLocationModel.fromFirestore: doc.data() is null (id: ${doc.id})');
+    return WorkerLocationModel.fromMap(raw as Map<String, dynamic>, doc.id);
   }
 
   factory WorkerLocationModel.fromMap(Map<String, dynamic> map, String id) {
@@ -59,11 +60,14 @@ class WorkerLocationModel {
       accuracy: (map['accuracy'] as num?)?.toDouble() ?? 0.0,
       distanceMeters: (map['distanceMeters'] as num?)?.toDouble(),
       isActive: map['isActive'] ?? false,
-      workDate: (map['workDate'] as Timestamp).toDate(),
+      workDate: (map['workDate'] as Timestamp?)?.toDate().toLocal() ??
+          (throw ArgumentError('WorkerLocationModel: workDate is required')),
       scheduledStart: map['scheduledStart'] ?? '',
       consentGiven: map['consentGiven'] ?? false,
-      updatedAt: (map['updatedAt'] as Timestamp?)?.toDate() ?? DateTime.now(),
-      createdAt: (map['createdAt'] as Timestamp?)?.toDate() ?? DateTime.now(),
+      updatedAt: (map['updatedAt'] as Timestamp?)?.toDate().toLocal() ??
+          (throw ArgumentError('WorkerLocationModel: updatedAt is required')),
+      createdAt: (map['createdAt'] as Timestamp?)?.toDate().toLocal() ??
+          (throw ArgumentError('WorkerLocationModel: createdAt is required')),
     );
   }
 
@@ -119,6 +123,7 @@ class WorkerLocationModel {
     return '${(distanceMeters! / 1000).toStringAsFixed(1)}km';
   }
 
-  /// 사업장 근처 여부 (100m 기준)
-  bool get isNearBusiness => (distanceMeters ?? double.infinity) <= 100;
+  /// 사업장 근처 여부
+  /// gpsRadius와 비교가 이상적이나 위치 모델에서 접근 불가 → 200m 기준 (배지와 동일)
+  bool get isNearBusiness => (distanceMeters ?? double.infinity) <= 200;
 }

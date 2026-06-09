@@ -1,6 +1,7 @@
 ﻿// lib/widgets/common/common_widgets.dart
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import '../../utils/responsive_helper.dart';
 import '../../theme/app_colors.dart';
 
@@ -18,6 +19,21 @@ class CommonWidgets {
           color: AppColors.grey500.withValues(alpha: 0.1),
           blurRadius: 10,
           offset: const Offset(0, 4),
+        ),
+      ],
+    );
+  }
+
+  /// 설정/프로필/서류 화면 컴팩트 카드 데코레이션 (radius 12, 가벼운 그림자)
+  static BoxDecoration compactCardDecoration({Color? color}) {
+    return BoxDecoration(
+      color: color ?? AppColors.surface,
+      borderRadius: BorderRadius.circular(12),
+      boxShadow: [
+        BoxShadow(
+          color: Colors.black.withValues(alpha: 0.05),
+          blurRadius: 4,
+          offset: const Offset(0, 1),
         ),
       ],
     );
@@ -183,52 +199,66 @@ class CommonWidgets {
     IconData? icon,
     bool obscureText = false,
     bool readOnly = false,
+    bool enabled = true,
     TextInputType? keyboardType,
+    List<TextInputFormatter>? inputFormatters,
     String? Function(String?)? validator,
+    void Function(String)? onChanged,
     Widget? suffixIcon,
     VoidCallback? onTap,
+    FocusNode? focusNode,
+    TextInputAction? textInputAction,
+    void Function(String)? onFieldSubmitted,
+    int? maxLength,
   }) {
     final theme = Theme.of(context);
-    
     return TextFormField(
       controller: controller,
+      focusNode: focusNode,
       obscureText: obscureText,
       readOnly: readOnly,
+      enabled: enabled,
       keyboardType: keyboardType,
+      inputFormatters: inputFormatters,
+      textInputAction: textInputAction,
+      onFieldSubmitted: onFieldSubmitted,
+      onChanged: onChanged,
+      maxLength: maxLength,
       onTap: onTap,
       style: ResponsiveHelper.bodyStyle(context),
       decoration: InputDecoration(
         labelText: label,
         hintText: hint,
-        hintStyle: ResponsiveHelper.smallStyle(
-          context,
-          color: AppColors.grey400,
-        ),
+        hintStyle: ResponsiveHelper.smallStyle(context, color: AppColors.grey400),
         prefixIcon: icon != null
-            ? Icon(
-                icon,
+            ? Icon(icon,
                 color: theme.primaryColor,
-                size: ResponsiveHelper.iconSize(context, 24),
-              )
+                size: ResponsiveHelper.iconSize(context, 18))
             : null,
         suffixIcon: suffixIcon,
+        counterText: maxLength != null ? '' : null,
         border: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(12),
-          borderSide: BorderSide(color: AppColors.border),
+          borderRadius: BorderRadius.circular(10),
+          borderSide: const BorderSide(color: AppColors.grey300),
         ),
         enabledBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(12),
-          borderSide: BorderSide(color: AppColors.border),
+          borderRadius: BorderRadius.circular(10),
+          borderSide: const BorderSide(color: AppColors.grey300),
         ),
         focusedBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(12),
-          borderSide: BorderSide(color: theme.primaryColor, width: 2),
+          borderRadius: BorderRadius.circular(10),
+          borderSide: BorderSide(color: theme.primaryColor, width: 1.5),
+        ),
+        disabledBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(10),
+          borderSide: const BorderSide(color: AppColors.grey200),
         ),
         filled: true,
-        fillColor: readOnly ? AppColors.disabledBackground : AppColors.inputBackground,
+        fillColor: !enabled || readOnly ? AppColors.grey100 : AppColors.grey50,
+        isDense: true,
         contentPadding: EdgeInsets.symmetric(
-          horizontal: ResponsiveHelper.spacing(context, 16),
-          vertical: ResponsiveHelper.spacing(context, 18),
+          horizontal: ResponsiveHelper.spacing(context, 12),
+          vertical: ResponsiveHelper.spacing(context, 12),
         ),
       ),
       validator: validator,

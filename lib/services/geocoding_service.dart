@@ -5,12 +5,15 @@ import 'dart:convert';
 import 'package:http/http.dart' as http;
 
 class GeocodingService {
-  // ⚠️ TODO: Kakao REST API 키를 입력하세요
-  // https://developers.kakao.com 에서 발급
-  static const String _kakaoRestApiKey = 'e92e01cbd8ecf4c54c9035d1eef1bd36';
+  static const String _kakaoRestApiKey =
+      String.fromEnvironment('KAKAO_REST_API_KEY');
   
   /// 주소로 GPS 좌표 조회 (Kakao Local API)
   static Future<Map<String, double>?> getCoordinatesFromAddress(String address) async {
+    if (_kakaoRestApiKey.isEmpty) {
+      debugPrint('⚠️ [Geocoding] KAKAO_REST_API_KEY 미설정 — --dart-define=KAKAO_REST_API_KEY=xxx 필요');
+      return null;
+    }
     try {
       debugPrint('🗺️ [Geocoding] 주소 → GPS 변환 시작...');
       debugPrint('   주소: $address');

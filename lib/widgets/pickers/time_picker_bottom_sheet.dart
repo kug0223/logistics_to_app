@@ -1,5 +1,6 @@
 ﻿import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
+import '../../utils/format_helper.dart';
 import '../../utils/responsive_helper.dart';
 import '../../theme/app_colors.dart';
 import '../calendar/carrot_style_calendar.dart';
@@ -590,12 +591,9 @@ class _TimePickerBottomSheetState extends State<TimePickerBottomSheet> {
 
   /// 표시용 시간 문자열
   String _getDisplayTime() {
-    if (widget.use24HourFormat) {
-      return '${_selectedHour.toString().padLeft(2, '0')}:${_selectedMinute.toString().padLeft(2, '0')}';
-    } else {
-      final ampm = _isAM ? '오전' : '오후';
-      return '$ampm ${_selectedHour.toString().padLeft(2, '0')}:${_selectedMinute.toString().padLeft(2, '0')}';
-    }
+    final hm = FormatHelper.formatHourMinute(_selectedHour, _selectedMinute);
+    if (widget.use24HourFormat) return hm;
+    return '${_isAM ? '오전' : '오후'} $hm';
   }
 }
 
@@ -690,7 +688,7 @@ class _DateTimePickerBottomSheetState extends State<DateTimePickerBottomSheet> {
     
     return Container(
       constraints: BoxConstraints(
-        maxHeight: MediaQuery.of(context).size.height * 0.85,
+        maxHeight: MediaQuery.sizeOf(context).height * 0.85,
       ),
       decoration: BoxDecoration(
         color: AppColors.surface,
@@ -796,7 +794,7 @@ class _DateTimePickerBottomSheetState extends State<DateTimePickerBottomSheet> {
 
   Widget _buildSelectedDisplay(BuildContext context, ThemeData theme) {
     final dateFormat = DateFormat('M월 d일 (E)', 'ko_KR');
-    final timeStr = '${_selectedTime.hour.toString().padLeft(2, '0')}:${_selectedTime.minute.toString().padLeft(2, '0')}';
+    final timeStr = FormatHelper.formatHourMinute(_selectedTime.hour, _selectedTime.minute);
     
     return Container(
       margin: EdgeInsets.symmetric(
@@ -965,7 +963,7 @@ class _DateTimePickerBottomSheetState extends State<DateTimePickerBottomSheet> {
               Icon(Icons.schedule, color: theme.primaryColor, size: ResponsiveHelper.iconSize(context, 24)),
               SizedBox(width: ResponsiveHelper.spacing(context, 12)),
               Text(
-                '${_selectedHour.toString().padLeft(2, '0')}:${_selectedMinute.toString().padLeft(2, '0')}',
+                FormatHelper.formatHourMinute(_selectedHour, _selectedMinute),
                 style: ResponsiveHelper.titleStyle(context).copyWith(
                   color: theme.primaryColor,
                   fontWeight: FontWeight.bold,

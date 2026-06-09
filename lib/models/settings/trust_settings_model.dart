@@ -1,5 +1,3 @@
-// lib/models/settings/trust_settings_model.dart
-
 import 'package:cloud_firestore/cloud_firestore.dart';
 
 /// 신뢰도 증감 규칙
@@ -124,7 +122,9 @@ class TrustSettingsModel {
   }
 
   factory TrustSettingsModel.fromFirestore(DocumentSnapshot doc) {
-    return TrustSettingsModel.fromMap(doc.data() as Map<String, dynamic>);
+    final raw = doc.data();
+    if (raw == null) throw ArgumentError('TrustSettingsModel.fromFirestore: doc.data() is null (id: ${doc.id})');
+    return TrustSettingsModel.fromMap(raw as Map<String, dynamic>);
   }
 
   Map<String, dynamic> toMap() {
@@ -231,7 +231,9 @@ class ReviewTagsModel {
   }
 
   factory ReviewTagsModel.fromFirestore(DocumentSnapshot doc) {
-    return ReviewTagsModel.fromMap(doc.data() as Map<String, dynamic>);
+    final raw = doc.data();
+    if (raw == null) throw ArgumentError('ReviewTagsModel.fromFirestore: doc.data() is null (id: ${doc.id})');
+    return ReviewTagsModel.fromMap(raw as Map<String, dynamic>);
   }
 
   Map<String, dynamic> toMap() {
@@ -302,7 +304,8 @@ class BadgeModel {
       workType: map['workType'],
       isActive: map['isActive'] ?? true,
       order: map['order'] ?? 0,
-      createdAt: (map['createdAt'] as Timestamp?)?.toDate() ?? DateTime.now(),
+      createdAt: (map['createdAt'] as Timestamp?)?.toDate().toLocal() ??
+          (throw ArgumentError('BadgeModel: createdAt is required')),
     );
   }
 

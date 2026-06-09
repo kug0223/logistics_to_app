@@ -245,14 +245,12 @@ class _AddWorkTypeSheetState extends State<AddWorkTypeSheet> {
               controller: _nameCtrl,
               autofocus: !_isEdit,
               textAlign: TextAlign.center,
-              style: const TextStyle(
-                color: Colors.white,
-                fontSize: 15,
-                fontWeight: FontWeight.w600,
-              ),
-              decoration: const InputDecoration(
+              style: ResponsiveHelper.bodyStyle(context, color: Colors.white)
+                  .copyWith(fontWeight: FontWeight.w600),
+              decoration: InputDecoration(
                 hintText: '업무유형 이름 입력',
-                hintStyle: TextStyle(color: Colors.white54, fontSize: 15),
+                hintStyle: ResponsiveHelper.bodyStyle(context,
+                    color: Colors.white54),
                 border: InputBorder.none,
                 enabledBorder: InputBorder.none,
                 focusedBorder: InputBorder.none,
@@ -272,22 +270,23 @@ class _AddWorkTypeSheetState extends State<AddWorkTypeSheet> {
 
   Widget _buildPreviewIcon() {
     if (_selectedIcon != null) {
-      return Icon(_selectedIcon!.icon, color: Colors.white, size: 22);
+      return Icon(_selectedIcon!.icon,
+          color: Colors.white,
+          size: ResponsiveHelper.iconSize(context, 22));
     }
     return ListenableBuilder(
       listenable: _nameCtrl,
-      builder: (_, __) {
+      builder: (ctx, __) {
         if (_nameCtrl.text.isNotEmpty) {
           return Text(
             _nameCtrl.text.characters.first,
-            style: const TextStyle(
-              color: Colors.white,
-              fontSize: 20,
-              fontWeight: FontWeight.bold,
-            ),
+            style: ResponsiveHelper.subtitleStyle(ctx)
+                .copyWith(color: Colors.white, fontWeight: FontWeight.bold),
           );
         }
-        return const Icon(Icons.edit, color: Colors.white54, size: 20);
+        return Icon(Icons.edit,
+            color: Colors.white54,
+            size: ResponsiveHelper.iconSize(context, 20));
       },
     );
   }
@@ -333,8 +332,8 @@ class _AddWorkTypeSheetState extends State<AddWorkTypeSheet> {
                     size: 15, color: theme.primaryColor),
                 label: Text(
                   '전체 보기',
-                  style: TextStyle(
-                      fontSize: 12, color: theme.primaryColor),
+                  style: ResponsiveHelper.smallStyle(context,
+                      color: theme.primaryColor),
                 ),
                 style: TextButton.styleFrom(
                   padding:
@@ -347,7 +346,7 @@ class _AddWorkTypeSheetState extends State<AddWorkTypeSheet> {
           ),
           SizedBox(height: ResponsiveHelper.spacing(context, 10)),
           SizedBox(
-            height: 80,
+            height: ResponsiveHelper.spacing(context, 80),
             child: ListView(
               scrollDirection: Axis.horizontal,
               children: [
@@ -413,9 +412,9 @@ class _AddWorkTypeSheetState extends State<AddWorkTypeSheet> {
             width: 52,
             child: Text(
               isNone ? '없음' : (item!.label),
-              style: TextStyle(
-                fontSize: 10,
-                color: isSelected ? theme.primaryColor : AppColors.grey500,
+              style: ResponsiveHelper.tinyStyle(context,
+                      color: isSelected ? theme.primaryColor : AppColors.grey500)
+                  .copyWith(
                 fontWeight:
                     isSelected ? FontWeight.bold : FontWeight.normal,
               ),

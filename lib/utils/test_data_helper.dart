@@ -4,9 +4,12 @@ import 'package:flutter/foundation.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'dart:math';
 import '../services/firestore_service.dart';
+import '../models/core/application_model.dart';
+import '../models/core/to_model.dart';
 import '../models/core/work_detail_data.dart';
 import 'format_helper.dart';
 import 'toast_helper.dart';
+import 'encryption_helper.dart';
 
 class TestDataHelper {
   static final FirebaseFirestore _firestore = FirebaseFirestore.instance;
@@ -169,32 +172,37 @@ class TestDataHelper {
       final lateCount = _random.nextInt(5);
       
       // ━━━ Firestore에 저장 ━━━
+      final username = 'dummy_${baseTs}_$i'; // 아이디 (로그인·검색 기준)
       await _firestore.collection('users').doc(uid).set({
         // 기본 정보
         'name': name,
+        'username': username,
+        'userEmail': email,
         'email': email,
         'phone': phone,
         'role': 'USER',
+        'isEmailVerified': true, // 지원 조건 충족
         'createdAt': FieldValue.serverTimestamp(),
         'lastLoginAt': FieldValue.serverTimestamp(),
         
         // ⭐ 주민번호 기반 정보
         'gender': gender,
         'birthDate': Timestamp.fromDate(birthDate),
-        'residentNumber': residentNumber, // ⚠️ 실제론 암호화 필요!
+        'residentNumber': EncryptionHelper.encrypt(residentNumber) ?? residentNumber,
         
         // 주소
         'address': address,
         'detailAddress': detailAddress,
         
-        // 신분증 정보 (더미는 null)
-        'idCardImageUrl': null,
-        'idCardVerifiedAt': null,
-        'isIdVerified': false,
+        // 신분증·통장 — 더미값 설정 (지원 조건 충족용)
+        'idCardImageUrl': 'https://placehold.co/300x200?text=dummy_id',
+        'bankbookImageUrl': 'https://placehold.co/300x200?text=dummy_bank',
+        'idCardVerifiedAt': FieldValue.serverTimestamp(),
+        'isIdVerified': true,
         
         // 급여 정보
         'bankName': bankName,
-        'accountNumber': accountNumber, // ⚠️ 실제론 암호화 필요
+        'accountNumber': EncryptionHelper.encrypt(accountNumber) ?? accountNumber,
         'accountHolder': accountHolder,
         
         // 프로필
@@ -305,16 +313,14 @@ class TestDataHelper {
     }
     final businessName = toData['businessName'] as String? ?? '';
     final toTitle = toData['title'] as String? ?? '';
-    final toType = toData['type'] as String? ?? 'flex';         // 'flex' | 'contract'
-    final isContract = toType == 'contract';
+    final toType = toData['type'] as String? ?? TOType.flex;
+    final isContract = toType == TOType.contract;
 
-    final rangeStart = toData['rangeStart'] != null
-        ? (toData['rangeStart'] as Timestamp).toDate()
-        : DateTime.now();
-    final rangeEnd = toData['rangeEnd'] != null
-        ? (toData['rangeEnd'] as Timestamp).toDate()
-        : null;
-    final toWorkDays = toData['workDays'] as List? ?? [];
+    // TOModel 생성 → computeContractEndDate 사용
+    final toModel = TOModel.fromMap(toData, toId);
+
+    final rangeStart = toModel.rangeStart ?? DateTime.now();
+    final toWorkDays = List<String>.from(toData['workDays'] as List? ?? []);
 
     // flex TO: slotDate 지정 시 그 날짜, 없으면 오늘 → 출근 데이터 생성 즉시 테스트 가능
     // contract TO: rangeStart(근무 시작일) 사용
@@ -327,10 +333,11 @@ class TestDataHelper {
             : todayStart);
 
     if (isContract) {
-      debugPrint('📌 장기(contract) TO 감지!');
-      if (rangeEnd != null) {
-        debugPrint('   근무 기간: ${rangeStart.year}-${rangeStart.month}-${rangeStart.day} ~ ${rangeEnd.year}-${rangeEnd.month}-${rangeEnd.day}');
-      }
+      debugPrint('📌 장기(long_term) TO 감지!');
+      debugPrint('   contractPeriodType: ${toModel.contractPeriodType ?? "custom"}');
+      final sampleEnd = toModel.computeContractEndDate(todayStart);
+      debugPrint('   근무 시작: ${rangeStart.month}/${rangeStart.day}');
+      debugPrint('   계약 종료 예시(오늘 기준): ${sampleEnd.month}/${sampleEnd.day}');
       if (toWorkDays.isNotEmpty) {
         debugPrint('   근무 요일: ${toWorkDays.join(", ")}');
       }
@@ -387,6 +394,17 @@ class TestDataHelper {
       // 업무상세 골고루 분배 (라운드 로빈)
       final workDetail = workDetailsList[i % workDetailsList.length];
 
+      // contract TO: 희망 시작일 = 오늘 ~ 3일 후 중 랜덤 (당일 테스트 가능하도록)
+      DateTime? desiredStartDate;
+      DateTime? workEndDate;
+      if (isContract) {
+        final daysToAdd = _random.nextInt(4); // 0~3일
+        final ds = DateTime.now().add(Duration(days: daysToAdd));
+        desiredStartDate = DateTime(ds.year, ds.month, ds.day);
+        workEndDate = toModel.computeContractEndDate(desiredStartDate);
+        debugPrint('     📅 희망시작일: ${desiredStartDate.month}/${desiredStartDate.day} → 종료: ${workEndDate.month}/${workEndDate.day}');
+      }
+
       final applicationData = <String, dynamic>{
         'businessId': businessId,
         'businessName': businessName,
@@ -400,30 +418,27 @@ class TestDataHelper {
         'selectedWorkType': workDetail.workType,
         'workDetailId': workDetail.id,
         'wage': workDetail.wage,
+        'wageType': workDetail.wageType,
         'status': isConfirmed ? 'CONFIRMED' : 'PENDING',
         'appliedAt': now,
         'confirmedAt': isConfirmed ? now : null,
+        if (isConfirmed) 'confirmedBy': 'SYSTEM',
         'isDummy': true,
-        'type': toType,
+        // 실제 로직과 동일: contract → 'long_term', flex → 'short'
+        'type': isContract ? 'long_term' : 'short',
+        'statusHistory': [{
+          'status': isConfirmed ? 'CONFIRMED' : 'PENDING',
+          'at': Timestamp.now(),
+          'by': isConfirmed ? 'SYSTEM' : null,
+          'action': isConfirmed ? 'CONFIRM' : 'APPLY',
+        }],
+        // contract TO 전용 필드
+        if (isContract) ...{
+          'workDays': toWorkDays,
+          'desiredStartDate': Timestamp.fromDate(desiredStartDate!),
+          'workEndDate': Timestamp.fromDate(workEndDate!),
+        },
       };
-
-      // contract TO 추가 필드
-      if (isContract && rangeEnd != null) {
-        applicationData['isLongTermApplication'] = true;
-        applicationData['workEndDate'] = Timestamp.fromDate(rangeEnd);
-
-        if (toWorkDays.isNotEmpty) {
-          applicationData['workDays'] = List<String>.from(toWorkDays);
-        }
-
-        // 희망 시작일 랜덤 생성 (오늘 ~ 7일 후)
-        final daysToAdd = _random.nextInt(8);
-        final desiredStart = DateTime.now().add(Duration(days: daysToAdd));
-        final desiredStartDate = DateTime(desiredStart.year, desiredStart.month, desiredStart.day);
-        applicationData['desiredStartDate'] = Timestamp.fromDate(desiredStartDate);
-
-        debugPrint('     📅 희망시작일: ${desiredStartDate.month}/${desiredStartDate.day}');
-      }
 
       final appDoc = await _firestore.collection('applications').add(applicationData);
       createdAppIds.add(appDoc.id);
@@ -492,7 +507,7 @@ class TestDataHelper {
       final todayWorkers = confirmedSnapshot.docs.where((doc) {
         final data = doc.data();
         final workDate = (data['workDate'] as Timestamp).toDate();
-        final isLongTerm = data['type'] == 'contract' || data['isLongTermApplication'] == true;
+        final isLongTerm = data['type'] == AppType.longTerm;
 
         if (!isLongTerm) {
           // 단기: 날짜 일치
@@ -506,7 +521,12 @@ class TestDataHelper {
         if (workEndDate == null) return false;
 
         final endDate = workEndDate.toDate();
-        if (dateStart.isBefore(workDate) || dateStart.isAfter(endDate)) {
+        final desiredStartTs = data['desiredStartDate'] as Timestamp?;
+        final effectiveStart = desiredStartTs != null
+            ? DateTime(desiredStartTs.toDate().year, desiredStartTs.toDate().month, desiredStartTs.toDate().day)
+            : DateTime(workDate.year, workDate.month, workDate.day);
+
+        if (dateStart.isBefore(effectiveStart) || dateStart.isAfter(endDate)) {
           return false;
         }
 
@@ -715,15 +735,34 @@ class TestDataHelper {
 
       // 3. 더미 출근 데이터 삭제
       await clearDummyAttendance();
-      
-      // 4. 더미 리뷰 삭제
+
+      // 4. 더미 위치 추적 데이터 삭제 (worker_locations)
+      debugPrint('📋 4단계: 더미 위치 데이터(worker_locations) 삭제 중...');
+      try {
+        // worker_locations는 applicationId를 문서 ID로 사용
+        // isDummy 마커가 없으므로 더미 applicationId 기반으로 삭제
+        final dummyAppIds = dummyApps.map((d) => d.id).toList();
+        for (int i = 0; i < dummyAppIds.length; i += 500) {
+          final batch = _firestore.batch();
+          final chunk = dummyAppIds.skip(i).take(500);
+          for (final appId in chunk) {
+            batch.delete(_firestore.collection('worker_locations').doc(appId));
+          }
+          await batch.commit();
+        }
+        debugPrint('✅ 더미 위치 데이터 삭제 완료');
+      } catch (e) {
+        debugPrint('⚠️ 위치 데이터 삭제 실패 (무시): $e');
+      }
+
+      // 5. 더미 리뷰 삭제
       await clearDummyReviews();
 
-      // 5. ✅ 모든 TO 통계 재계산
+      // 6. ✅ 모든 TO 통계 재계산
       debugPrint('');
       debugPrint('📊 5단계: TO 통계 재계산 중...');
       
-      final allTOsSnapshot = await _firestore.collection('tos').get();
+      final allTOsSnapshot = await _firestore.collection('tos').limit(500).get();
 
       // 병렬로 TO 통계 재계산 + 영향받은 groupId 수집
       final groupIdResults = await Future.wait(

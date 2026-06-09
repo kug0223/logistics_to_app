@@ -52,3 +52,13 @@ app.*.map.json
 
 # VSCode 실행 설정 (암호화 키 포함 - GitHub 업로드 금지!)
 .vscode/launch.json
+# 빌드 스크립트 (키 하드코딩 방지)
+build_release.bat
+build_release.sh
+*.env.local
+
+# Firebase 설정 (API 키 포함 — 공개 레포 업로드 금지)
+# flutter pub run flutterfire_cli:flutterfire configure 로 재생성 가능
+lib/firebase_options.dart
+google-services.json
+GoogleService-Info.plist

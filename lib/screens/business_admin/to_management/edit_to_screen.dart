@@ -17,14 +17,17 @@ import '../../../utils/toast_helper.dart';
 import '../../../utils/navigation_helper.dart';
 import '../../../utils/responsive_helper.dart';
 import '../../../utils/format_helper.dart';
+import '../../../utils/dialog_helper.dart';
 
 // Widgets
-import '../../../widgets/pickers/create&edit_work_detail_dialog.dart';
+import '../../../widgets/pickers/create_edit_work_detail_dialog.dart';
 import '../../../widgets/dialogs/styled_dialog.dart';
 
 // 공통 위젯
 import 'widgets/to_widgets.dart';
 import '../../../theme/app_colors.dart';
+import '../../../widgets/common/gradient_scaffold.dart';
+import '../../../widgets/common/loading_widget.dart';
 
 class AdminEditTOScreen extends StatefulWidget {
   final TOModel to;
@@ -58,6 +61,7 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
 
   bool _isLoading = true;
   bool _isSaving = false;
+  bool _hasChanges = false;
   List<WorkDetailData> _workDetails = [];
   List<BusinessWorkTypeModel> _businessWorkTypes = [];
   DateTime? _firstSlotDate; // 단기 TO 예약 공개 기준일용
@@ -68,6 +72,7 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
   String _publishMode = 'immediate';
   int _publishDaysBefore = 1;
   String _publishTime = '14:00';
+  int? _postingDurationDays;
 
   @override
   void initState() {
@@ -82,7 +87,14 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
     _publishMode = widget.to.publishMode;
     _publishDaysBefore = widget.to.publishDaysBefore ?? 1;
     _publishTime = widget.to.publishTime ?? '14:00';
+    _postingDurationDays = widget.to.postingDurationDays;
+    _titleController.addListener(_markChanged);
+    _descriptionController.addListener(_markChanged);
     _loadData();
+  }
+
+  void _markChanged() {
+    if (!_hasChanges) setState(() => _hasChanges = true);
   }
 
   @override
@@ -103,9 +115,16 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
       final workTypes = await _firestoreService
           .getBusinessWorkTypes(widget.to.businessId);
 
+      if (!mounted) return;
+
       if (widget.isBatchMode) {
+        final batchSlots = widget.batchSlots;
+        if (batchSlots == null || batchSlots.isEmpty) {
+          setState(() => _isLoading = false);
+          return;
+        }
         setState(() {
-          _workDetails = List<WorkDetailData>.from(widget.batchSlots!.first.workDetails);
+          _workDetails = List<WorkDetailData>.from(batchSlots.first.workDetails);
           _businessWorkTypes = workTypes;
           _isLoading = false;
         });
@@ -124,6 +143,7 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
 
       if (widget.isNewSlot) {
         final slots = await _firestoreService.getSlots(widget.to.id);
+        if (!mounted) return;
         final template = slots.isNotEmpty ? slots.first : null;
         _slotTitleController.text = template?.title ?? widget.to.title;
         setState(() {
@@ -138,6 +158,7 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
       DateTime? firstSlotDate;
       if (!widget.to.isContractType) {
         final slots = await _firestoreService.getSlots(widget.to.id);
+        if (!mounted) return;
         if (slots.isNotEmpty) {
           slots.sort((a, b) => a.date.compareTo(b.date));
           firstSlotDate = slots.first.date;
@@ -152,8 +173,8 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
       });
     } catch (e) {
       debugPrint('❌ 데이터 로드 실패: $e');
-      ToastHelper.showError('데이터를 불러오는데 실패했습니다');
-      setState(() => _isLoading = false);
+      if (mounted) ToastHelper.showError('데이터를 불러오는데 실패했습니다');
+      if (mounted) setState(() => _isLoading = false);
     }
   }
 
@@ -164,13 +185,28 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
   Future<void> _saveChanges() async {
     if (!_formKey.currentState!.validate()) return;
 
-    setState(() => _isSaving = true);
+    // 공통 업무상세 검증 (슬롯/TO 모두)
+    if (_workDetails.isEmpty) {
+      ToastHelper.showError('최소 1개의 업무를 추가해주세요');
+      return;
+    }
+    if (_workDetails.any((w) => w.wage <= 0)) {
+      ToastHelper.showError('급여는 0원보다 커야 합니다');
+      return;
+    }
+    if (_workDetails.any((w) => w.requiredCount <= 0)) {
+      ToastHelper.showError('필요 인원은 1명 이상이어야 합니다');
+      return;
+    }
+
+    setState(() { _isSaving = true; _hasChanges = false; });
 
     try {
       // ── 슬롯 수정 모드 ──────────────────────────────────────
       if (widget.isNewSlot) {
         if (_isNewSlotDeadlineExpired()) {
           final proceed = await _showExpiredDeadlineWarning();
+          if (!mounted) { _isSaving = false; return; }
           if (!proceed) {
             setState(() => _isSaving = false);
             return;
@@ -188,6 +224,27 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
         return;
       }
 
+      // ── 미공개(draft) 처리 ───────────────────────────────────
+      if (_publishMode == 'draft') {
+        final draftUpdates = <String, dynamic>{
+          'publishMode': 'draft',
+          'isPublished': false,
+          'status': TOStatus.draft,
+          'statusUpdatedAt': FieldValue.serverTimestamp(),
+          'publishAt': FieldValue.delete(),
+          'title': _titleController.text.trim(),
+          'description': _descriptionController.text.trim(),
+          'workDetails': WorkDetailData.listToFirestore(_workDetails),
+          'postingDurationDays': _postingDurationDays,
+        };
+        await _firestoreService.updateTO(widget.to.id, draftUpdates);
+        if (mounted) {
+          ToastHelper.showSuccess('미공개로 저장되었습니다');
+          NavigationHelper.popWithChange(context);
+        }
+        return;
+      }
+
       // ── 공개 시각 계산 ──────────────────────────────────────
       // 이미 공개된 TO는 수정해도 비공개로 되돌리지 않음
       DateTime? publishAt;
@@ -196,9 +253,10 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
 
       if (!widget.to.isPublished && _publishMode == 'scheduled') {
         // 장기: rangeStart 기준 / 단기: 첫 슬롯 날짜 기준
+        // _firstSlotDate null(슬롯 없음)이면 오늘 기준으로 예약 설정
         final refDate = widget.to.isContractType
             ? (widget.to.rangeStart ?? widget.to.createdAt)
-            : (_firstSlotDate ?? widget.to.createdAt);
+            : (_firstSlotDate ?? DateTime.now());
         final targetDate =
             refDate.subtract(Duration(days: _publishDaysBefore));
         final timeParts = _publishTime.split(':');
@@ -236,6 +294,7 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
         'publishDaysBefore':
             _publishMode == 'scheduled' ? _publishDaysBefore : null,
         'publishTime': _publishMode == 'scheduled' ? _publishTime : null,
+        'postingDurationDays': _postingDurationDays,
         // SCHEDULED → 즉시공개 전환 시 status도 함께 ACTIVE로 갱신
         if (shouldPublishImmediately && !widget.to.isPublished) ...{
           'status': TOStatus.active,
@@ -264,68 +323,52 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
       await _firestoreService.updateTO(widget.to.id, updates);
 
       // ── 단기 TO: 슬롯 일괄 갱신 ──────────────────────────────
+      // updateTO가 이미 커밋됐으므로 슬롯 동기화 실패는 별도 처리
+      bool slotSyncFailed = false;
       if (!widget.to.isContractType) {
-        // publish 설정 변경 → 슬롯별 visibleFrom 재계산
-        final publishSettingsChanged =
-            _publishMode != widget.to.publishMode ||
-            _publishDaysBefore != (widget.to.publishDaysBefore ?? 1) ||
-            _publishTime != (widget.to.publishTime ?? '14:00');
+        try {
+          // publish 설정 변경 → 슬롯별 visibleFrom 재계산
+          final publishSettingsChanged =
+              _publishMode != widget.to.publishMode ||
+              _publishDaysBefore != (widget.to.publishDaysBefore ?? 1) ||
+              _publishTime != (widget.to.publishTime ?? '14:00');
 
-        if (publishSettingsChanged) {
-          await _firestoreService.updateSlotsPublishSettings(
-            toId: widget.to.id,
-            publishMode: _publishMode,
-            publishDaysBefore: _publishDaysBefore,
-            publishTime: _publishTime,
-          );
-        }
+          if (publishSettingsChanged) {
+            await _firestoreService.updateSlotsPublishSettings(
+              toId: widget.to.id,
+              publishMode: _publishMode,
+              publishDaysBefore: _publishDaysBefore,
+              publishTime: _publishTime,
+            );
+          }
 
-        // 업무 구성 변경 감지 (추가/삭제)
-        final oldWorkTypes =
-            widget.to.workDetails.map((d) => d.workType).toSet();
-        final newWorkTypes = _workDetails.map((d) => d.workType).toSet();
-        final workTypesChanged = oldWorkTypes.length != newWorkTypes.length ||
-            !oldWorkTypes.containsAll(newWorkTypes);
-
-        // 근무시간 or 마감 기준 변경 → 슬롯별 applicationDeadline 재계산
-        final oldEarliestStart = widget.to.workDetails.isNotEmpty
-            ? (widget.to.workDetails.map((d) => d.startTime).toList()..sort()).first
-            : null;
-        final newEarliestStart = _workDetails.isNotEmpty
-            ? (_workDetails.map((d) => d.startTime).toList()..sort()).first
-            : null;
-
-        final deadlineSettingsChanged =
-            _hoursBeforeStart != (widget.to.hoursBeforeStart ?? 2) ||
-            oldEarliestStart != newEarliestStart;
-
-        // 임금·인원 변경 감지 (임금만 바뀌어도 슬롯 동기화 필요)
-        final wageOrCountChanged = _workDetails.any((newD) {
-          final oldD = widget.to.workDetails.where((d) => d.workType == newD.workType).firstOrNull;
-          if (oldD == null) return true;
-          return oldD.wage != newD.wage ||
-              oldD.wageType != newD.wageType ||
-              oldD.requiredCount != newD.requiredCount;
-        });
-
-        // 업무 구성·마감·임금·인원 변경 시 슬롯 workDetails 일괄 동기화
-        if (workTypesChanged || deadlineSettingsChanged || wageOrCountChanged) {
+          // 슬롯 workDetails 항상 동기화
+          // 외부(Firestore 콘솔 등)에서 hoursBeforeStart 변경 시 조건 감지 불가하므로
+          // 저장 시 무조건 전체 동기화로 deadline 불일치 방지
           await _firestoreService.updateSlotsDeadlines(
             toId: widget.to.id,
             deadlineType: 'HOURS_BEFORE',
             hoursBeforeStart: _hoursBeforeStart,
             newWorkDetails: _workDetails,
           );
+        } catch (e) {
+          debugPrint('⚠️ 슬롯 동기화 실패 (TO는 저장됨): $e');
+          slotSyncFailed = true;
         }
       }
 
       _firestoreService.clearCache(toId: widget.to.id);
 
-      ToastHelper.showSuccess('TO가 수정되었습니다');
+      if (slotSyncFailed) {
+        ToastHelper.showWarning('TO가 수정되었으나 슬롯 동기화에 실패했습니다. 다시 저장해 주세요.');
+      } else {
+        ToastHelper.showSuccess('TO가 수정되었습니다');
+      }
       if (mounted) NavigationHelper.popWithChange(context);
     } catch (e) {
       debugPrint('❌ TO 수정 실패: $e');
       ToastHelper.showError('수정에 실패했습니다');
+      if (mounted) setState(() => _hasChanges = true);
     } finally {
       if (mounted) setState(() => _isSaving = false);
     }
@@ -352,10 +395,13 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
       }).toList();
 
       // 슬롯 레벨 마감 = 가장 이른 업무 마감
-      if (updatedWorkDetails.isNotEmpty) {
-        slotDeadline = updatedWorkDetails
-            .map((d) => d.applicationDeadline!)
-            .reduce((a, b) => a.isBefore(b) ? a : b);
+      // applicationDeadline이 null인 항목 제외 후 최솟값 계산
+      final deadlines = updatedWorkDetails
+          .map((d) => d.applicationDeadline)
+          .whereType<DateTime>()
+          .toList();
+      if (deadlines.isNotEmpty) {
+        slotDeadline = deadlines.reduce((a, b) => a.isBefore(b) ? a : b);
       }
 
       await _firestoreService.updateSlotFull(
@@ -471,26 +517,47 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
     try {
       final slots = widget.batchSlots!;
 
-      await Future.wait(slots.map((slot) async {
-        DateTime? slotDeadline;
-        if (_workDetails.isNotEmpty) {
-          final earliestStart =
-              (_workDetails.map((d) => d.startTime).toList()..sort()).first;
-          final parts = earliestStart.split(':');
-          final startDt = DateTime(
+      int successCount = 0;
+      final failedSlots = <String>[];
+      for (final slot in slots) {
+        // 슬롯 날짜 기준으로 각 업무의 applicationDeadline 재계산
+        final updatedWorkDetails = _workDetails.map((work) {
+          final parts = work.startTime.split(':');
+          if (parts.length != 2) return work;
+          final deadline = DateTime(
             slot.date.year, slot.date.month, slot.date.day,
             int.parse(parts[0]), int.parse(parts[1]),
-          );
-          slotDeadline = startDt.subtract(Duration(hours: _hoursBeforeStart));
+          ).subtract(Duration(hours: _hoursBeforeStart));
+          return work.copyWith(applicationDeadline: deadline);
+        }).toList();
+
+        // 슬롯 레벨 마감 = 가장 이른 업무 마감
+        DateTime? slotDeadline;
+        if (updatedWorkDetails.isNotEmpty) {
+          slotDeadline = updatedWorkDetails
+              .where((d) => d.applicationDeadline != null)
+              .map((d) => d.applicationDeadline!)
+              .fold<DateTime?>(null, (earliest, dt) =>
+                  earliest == null || dt.isBefore(earliest) ? dt : earliest);
         }
-        await _firestoreService.updateSlotFull(
-          toId: widget.to.id,
-          slotId: slot.id,
-          workDetails: _workDetails,
-          applicationDeadline: slotDeadline,
-          oldTotalRequired: slot.totalRequired,
-        );
-      }));
+
+        try {
+          await _firestoreService.updateSlotFull(
+            toId: widget.to.id,
+            slotId: slot.id,
+            workDetails: updatedWorkDetails,
+            applicationDeadline: slotDeadline,
+            oldTotalRequired: slot.totalRequired,
+          );
+          successCount++;
+        } catch (e) {
+          debugPrint('❌ 슬롯 [${slot.id}] 수정 실패: $e');
+          failedSlots.add('${slot.date.month}/${slot.date.day}');
+        }
+      }
+      if (failedSlots.isNotEmpty) {
+        throw Exception('${failedSlots.join(', ')} 날짜 수정 실패 ($successCount/${slots.length}개 성공)');
+      }
 
       _firestoreService.clearCache(toId: widget.to.id);
       ToastHelper.showSuccess('${slots.length}개 날짜가 수정되었습니다');
@@ -529,6 +596,10 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
           nightIncluded: result.nightIncluded,
           breakMinutes: result.breakMinutes,
           baseHourlyWage: result.baseHourlyWage,
+          payScheduleType: result.payScheduleType,
+          payScheduleDay: result.payScheduleDay,
+          payScheduleTime: result.payScheduleTime,
+          taxDeductionType: result.taxDeductionType,
           order: _workDetails.length,
         ));
       });
@@ -562,6 +633,15 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
             breakMinutes: result['breakMinutes'],
             baseHourlyWage: result['baseHourlyWage'],
             clearBaseHourlyWage: result['baseHourlyWage'] == null,
+            payScheduleType: result['payScheduleType'],
+            clearPayScheduleType: result['payScheduleType'] == null,
+            payScheduleDay: result['payScheduleDay'],
+            clearPayScheduleDay: result['payScheduleDay'] == null,
+            payScheduleTime: result['payScheduleTime'],
+            clearPayScheduleTime: result['payScheduleTime'] == null,
+            taxDeductionType: result['taxDeductionType'],
+            description: result['description'],
+            clearDescription: result['description'] == null,
           );
         });
       }
@@ -593,20 +673,33 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
                 : 'TO 수정';
 
     if (_isLoading) {
-      return Scaffold(
-        appBar: AppBar(title: Text(appBarTitle)),
-        body: const Center(child: CircularProgressIndicator()),
+      return GradientScaffold(
+        title: appBarTitle,
+        body: const LoadingWidget(),
       );
     }
 
-    return Scaffold(
-      appBar: AppBar(title: Text(appBarTitle)),
-      body: Container(
-        color: AppColors.grey50,
-        child: Form(
+    return PopScope(
+      canPop: !_hasChanges,
+      onPopInvokedWithResult: (didPop, _) async {
+        if (didPop) return;
+        final nav = Navigator.of(context);
+        final leave = await DialogHelper.showConfirm(
+          context,
+          title: '변경사항 취소',
+          message: '저장하지 않은 변경사항이 있습니다.\n나가시겠습니까?',
+          confirmText: '나가기',
+          cancelText: '계속 수정',
+          icon: Icons.exit_to_app_outlined,
+        );
+        if (leave && mounted) nav.pop();
+      },
+      child: GradientScaffold(
+        title: appBarTitle,
+        body: Form(
           key: _formKey,
           child: ListView(
-            padding: ResponsiveHelper.cardPadding(context),
+            padding: ResponsiveHelper.listPadding(context),
             children: [
               if (widget.isNewSlot) ...[
                 _buildNewSlotBanner(context),
@@ -627,6 +720,7 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
                   rangeStart: widget.to.rangeStart,
                   rangeEnd: widget.to.rangeEnd,
                   displayWorkDays: widget.to.workDays,
+                  contractPeriodType: widget.to.contractPeriodType,
                 ),
                 SizedBox(height: ResponsiveHelper.spacing(context, 16)),
                 TOTitleSection(titleController: _titleController),
@@ -641,17 +735,17 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
               ),
               SizedBox(height: ResponsiveHelper.spacing(context, 16)),
 
-              TODeadlineSection(
-                isLongTerm: widget.isSlotMode ? false : widget.to.isContractType,
-                hoursBeforeStart: _hoursBeforeStart,
-                onHoursChanged: (h) => setState(() => _hoursBeforeStart = h),
-                fixedDeadline: widget.isSlotMode ? null : _fixedDeadline,
-                onFixedDeadlineChanged: widget.isSlotMode
-                    ? null
-                    : (dt) => setState(() => _fixedDeadline = dt),
-                rangeStartDate: widget.isSlotMode ? null : widget.to.rangeStart,
-              ),
-              SizedBox(height: ResponsiveHelper.spacing(context, 16)),
+              if (!widget.to.isContractType) ...[
+                TODeadlineSection(
+                  isLongTerm: false,
+                  hoursBeforeStart: _hoursBeforeStart,
+                  onHoursChanged: (h) => setState(() => _hoursBeforeStart = h),
+                  fixedDeadline: _fixedDeadline,
+                  onFixedDeadlineChanged: (dt) => setState(() => _fixedDeadline = dt),
+                  rangeStartDate: null,
+                ),
+                SizedBox(height: ResponsiveHelper.spacing(context, 16)),
+              ],
 
               if (!widget.isSlotMode) ...[
                 TOPublishSection(
@@ -666,6 +760,9 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
                       ? (widget.to.rangeStart != null ? [widget.to.rangeStart!] : [])
                       : (_firstSlotDate != null ? [_firstSlotDate!] : []),
                   isLongTerm: widget.to.isContractType,
+                  postingDurationDays: _postingDurationDays,
+                  onPostingDurationChanged: (d) =>
+                      setState(() => _postingDurationDays = d),
                 ),
                 SizedBox(height: ResponsiveHelper.spacing(context, 16)),
                 TODescriptionSection(controller: _descriptionController),
@@ -673,7 +770,7 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
               ],
 
               TOActionButton.save(
-                onPressed: _saveChanges,
+                onPressed: _isSaving ? null : _saveChanges,
                 isLoading: _isSaving,
               ),
               SizedBox(height: ResponsiveHelper.spacing(context, 40)),
@@ -681,7 +778,7 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
           ),
         ),
       ),
-    );
+    );    // PopScope
   }
 
   Widget _buildSlotTitleField(BuildContext context) {

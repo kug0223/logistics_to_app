@@ -9,6 +9,8 @@ extension UserFirestore on FirestoreService {
   /// 사용자 정보 저장
   Future<void> saveUser(UserModel user) async {
     await _firestore.collection('users').doc(user.uid).set(user.toMap());
+    _userCache.remove(user.uid);
+    _userCacheTimestamps.remove(user.uid);
   }
 
   /// 사용자 정보 조회 (캐싱 적용!)
@@ -19,7 +21,7 @@ extension UserFirestore on FirestoreService {
       // 🔥 강제 새로고침이 아닐 때만 캐시 확인
       if (!forceRefresh && _userCache.containsKey(uid)) {
         final cacheTime = _userCacheTimestamps[uid];
-        if (cacheTime != null && DateTime.now().difference(cacheTime) < _userCacheValidDuration) {
+        if (cacheTime != null && DateTime.now().difference(cacheTime) < FirestoreService._userCacheTTL) {
           debugPrint('📦 User 캐시 사용: $uid');
           return _userCache[uid];
         }
@@ -49,9 +51,13 @@ extension UserFirestore on FirestoreService {
 
   /// 마지막 로그인 시간 업데이트
   Future<void> updateLastLogin(String uid) async {
-    await _firestore.collection('users').doc(uid).update({
-      'lastLoginAt': FieldValue.serverTimestamp(),
-    });
+    try {
+      await _firestore.collection('users').doc(uid).update({
+        'lastLoginAt': FieldValue.serverTimestamp(),
+      });
+    } catch (e) {
+      debugPrint('⚠️ updateLastLogin 실패 ($uid): $e');
+    }
   }
 
   Future<void> updateUserDocument(String uid, Map<String, dynamic> data) async {

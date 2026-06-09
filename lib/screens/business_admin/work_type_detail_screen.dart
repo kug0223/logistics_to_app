@@ -14,11 +14,13 @@ import '../../../utils/format_helper.dart';
 
 // Widgets
 import '../../widgets/common/common_widgets.dart';
+import '../../widgets/common/loading_widget.dart';
 import '../../../widgets/work_type_icon.dart';
 
 // Services
 import '../../services/storage_service.dart';
 import '../../theme/app_colors.dart';
+import '../../widgets/common/gradient_scaffold.dart';
 
 /// 📦 업무유형 상세 화면
 class WorkTypeDetailScreen extends StatefulWidget {
@@ -86,8 +88,6 @@ class _WorkTypeDetailScreenState extends State<WorkTypeDetailScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-
     return PopScope(
       canPop: !_hasChanges,
       onPopInvokedWithResult: (didPop, result) async {
@@ -95,29 +95,24 @@ class _WorkTypeDetailScreenState extends State<WorkTypeDetailScreen> {
           NavigationHelper.popWithChange(context);
         }
       },
-      child: Scaffold(
-        backgroundColor: AppColors.grey50,
-        appBar: AppBar(
-          title: Text(_isEditing ? '업무유형 수정' : '업무유형 상세'),
-          backgroundColor: theme.primaryColor,
-          foregroundColor: Colors.white,
-          actions: [
-            if (!_isEditing)
-              IconButton(
-                icon: const Icon(Icons.edit),
-                onPressed: () => setState(() => _isEditing = true),
-                tooltip: '수정',
-              )
-            else
-              IconButton(
-                icon: const Icon(Icons.close),
-                onPressed: _cancelEditing,
-                tooltip: '취소',
-              ),
-          ],
-        ),
+      child: GradientScaffold(
+        title: _isEditing ? '업무유형 수정' : '업무유형 상세',
+        actions: [
+          if (!_isEditing)
+            IconButton(
+              icon: const Icon(Icons.edit, color: Colors.white),
+              onPressed: () => setState(() => _isEditing = true),
+              tooltip: '수정',
+            )
+          else
+            IconButton(
+              icon: const Icon(Icons.close, color: Colors.white),
+              onPressed: _cancelEditing,
+              tooltip: '취소',
+            ),
+        ],
         body: _isLoading
-            ? const Center(child: CircularProgressIndicator())
+            ? const LoadingWidget()
             : SingleChildScrollView(
                 padding: ResponsiveHelper.screenPadding(context),
                 child: Column(
@@ -715,7 +710,7 @@ class _WorkTypeDetailScreenState extends State<WorkTypeDetailScreen> {
         children: [
           Row(
             children: [
-              Icon(icon, size: 18, color: Theme.of(context).primaryColor),
+              Icon(icon, size: ResponsiveHelper.iconSize(context, 18), color: Theme.of(context).primaryColor),
               SizedBox(width: ResponsiveHelper.spacing(context, 8)),
               Text(
                 label,
@@ -875,6 +870,7 @@ class _WorkTypeDetailScreenState extends State<WorkTypeDetailScreen> {
       }
 
       for (var image in _newImages) {
+        if (!mounted) return;
         final url = await _uploadImage(image, 'image');
         if (url != null) imageUrls.add(url);
       }
@@ -914,6 +910,7 @@ class _WorkTypeDetailScreenState extends State<WorkTypeDetailScreen> {
           .update(updateData);
 
       // 4. 로컬 상태 업데이트
+      if (!mounted) return;
       setState(() {
         _currentWorkType = _currentWorkType.copyWith(
           oneLineIntro: updateData['oneLineIntro'] as String?,
@@ -937,7 +934,7 @@ class _WorkTypeDetailScreenState extends State<WorkTypeDetailScreen> {
       debugPrint('❌ 저장 실패: $e');
       ToastHelper.showError('저장에 실패했습니다');
     } finally {
-      setState(() => _isLoading = false);
+      if (mounted) setState(() => _isLoading = false);
     }
   }
 

@@ -1,9 +1,11 @@
 ﻿// lib/widgets/dialogs/restart_program_dialog.dart
 
+import 'package:cloud_functions/cloud_functions.dart';
 import 'package:flutter/material.dart';
 import '../../utils/responsive_helper.dart';
 import '../../theme/app_colors.dart';
 import '../common/app_checkbox.dart';
+import '../common/loading_widget.dart';
 import '../../services/trust_score_service.dart';
 import '../../utils/toast_helper.dart';
 import 'styled_dialog.dart';
@@ -51,14 +53,18 @@ class _RestartProgramDialogState extends State<RestartProgramDialog> {
 
   Future<void> _checkCanRestart() async {
     setState(() => _isLoading = true);
-    
-    final result = await _trustService.canApplyRestart(widget.userId);
-    
-    setState(() {
-      _canRestart = result.canRestart;
-      _daysRemaining = result.daysRemaining;
-      _isLoading = false;
-    });
+    try {
+      final result = await _trustService.canApplyRestart(widget.userId);
+      if (!mounted) return;
+      setState(() {
+        _canRestart = result.canRestart;
+        _daysRemaining = result.daysRemaining;
+        _isLoading = false;
+      });
+    } catch (e) {
+      debugPrint('❌ 재시작 프로그램 확인 실패: $e');
+      if (mounted) setState(() => _isLoading = false);
+    }
   }
 
   Future<void> _applyRestart() async {
@@ -68,16 +74,27 @@ class _RestartProgramDialogState extends State<RestartProgramDialog> {
     }
     
     setState(() => _isSubmitting = true);
-    
-    final success = await _trustService.applyRestartProgram(widget.userId);
-    
-    if (success) {
+
+    try {
+      final callable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+          .httpsCallable('applyRestartProgram');
+      await callable.call();
+
       ToastHelper.showSuccess('재시작 프로그램이 적용되었습니다!');
       widget.onSuccess?.call();
       if (mounted) Navigator.pop(context, true);
-    } else {
-      ToastHelper.showError('재시작 프로그램 적용에 실패했습니다.');
-      setState(() => _isSubmitting = false);
+    } on FirebaseFunctionsException catch (e) {
+      debugPrint('❌ 재시작 프로그램 적용 실패: ${e.code} — ${e.message}');
+      if (mounted) {
+        setState(() => _isSubmitting = false);
+        ToastHelper.showError(e.message ?? '재시작 프로그램 적용에 실패했습니다.');
+      }
+    } catch (e) {
+      debugPrint('❌ 재시작 프로그램 적용 실패: $e');
+      if (mounted) {
+        setState(() => _isSubmitting = false);
+        ToastHelper.showError('재시작 프로그램 적용에 실패했습니다.');
+      }
     }
   }
 
@@ -90,11 +107,9 @@ class _RestartProgramDialogState extends State<RestartProgramDialog> {
       icon: Icons.refresh,
       headerColor: theme.primaryColor,
       content: _isLoading
-          ? Center(
-              child: Padding(
-                padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 32)),
-                child: CircularProgressIndicator(),
-              ),
+          ? Padding(
+              padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 32)),
+              child: const LoadingWidget(),
             )
           : _buildContent(context),
       actions: _isLoading
@@ -112,13 +127,10 @@ class _RestartProgramDialogState extends State<RestartProgramDialog> {
                     foregroundColor: Colors.white,
                   ),
                   child: _isSubmitting
-                      ? SizedBox(
+                      ? const SizedBox(
                           width: 20,
                           height: 20,
-                          child: CircularProgressIndicator(
-                            strokeWidth: 2,
-                            valueColor: AlwaysStoppedAnimation(Colors.white),
-                          ),
+                          child: LoadingWidget(color: Colors.white),
                         )
                       : Text('신청하기'),
                 ),
@@ -416,7 +428,7 @@ class _RestartProgramDialogState extends State<RestartProgramDialog> {
   }
 
   Color _getScoreColor(int score) {
-    if (score >= 90) return Color(0xFFFFD700);
+    if (score >= 90) return const Color(0xFFFFD700); // TODO: AppColors에 gold 색상 추가 후 교체
     if (score >= 70) return AppColors.success;
     if (score >= 50) return AppColors.grey600;
     if (score >= 30) return AppColors.warning;

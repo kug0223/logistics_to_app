@@ -60,8 +60,9 @@ class WorkTypeModel {
 
   /// Firestore 문서를 WorkTypeModel로 변환
   factory WorkTypeModel.fromFirestore(DocumentSnapshot doc) {
-    final data = doc.data() as Map<String, dynamic>;
-    return WorkTypeModel.fromMap(data, doc.id);
+    final raw = doc.data();
+    if (raw == null) throw ArgumentError('WorkTypeModel.fromFirestore: doc.data() is null (id: ${doc.id})');
+    return WorkTypeModel.fromMap(raw as Map<String, dynamic>, doc.id);
   }
 
   /// Map을 WorkTypeModel로 변환
@@ -82,9 +83,11 @@ class WorkTypeModel {
       videoUrl: map['videoUrl'],
       baseHourlyRate: map['baseHourlyRate']?.toDouble(),
       isActive: map['isActive'] ?? true,
-      displayOrder: map['displayOrder'] ?? 0,
-      createdAt: (map['createdAt'] as Timestamp).toDate(),
-      updatedAt: (map['updatedAt'] as Timestamp).toDate(),
+      displayOrder: (map['displayOrder'] as num?)?.toInt() ?? 0,
+      createdAt: (map['createdAt'] as Timestamp?)?.toDate().toLocal() ??
+          (throw ArgumentError('WorkTypeModel: createdAt is required')),
+      updatedAt: (map['updatedAt'] as Timestamp?)?.toDate().toLocal() ??
+          (throw ArgumentError('WorkTypeModel: updatedAt is required')),
       createdBy: map['createdBy'] ?? '',
     );
   }

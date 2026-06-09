@@ -38,6 +38,13 @@ class _KakaoMapWidgetState extends State<KakaoMapWidget> {
     _initializeWebView();
   }
 
+  @override
+  void dispose() {
+    _controller.clearCache();
+    _controller.clearLocalStorage();
+    super.dispose();
+  }
+
   void _initializeWebView() {
     _controller = WebViewController()
       ..setJavaScriptMode(JavaScriptMode.unrestricted)
@@ -49,11 +56,11 @@ class _KakaoMapWidgetState extends State<KakaoMapWidget> {
           },
           onPageFinished: (String url) {
             debugPrint('✅ 지도 로딩 완료: $url');
-            setState(() => _isLoading = false);
+            if (mounted) setState(() => _isLoading = false);
           },
           onWebResourceError: (WebResourceError error) {
             debugPrint('❌ 지도 로딩 에러: ${error.description}');
-            setState(() => _isLoading = false);
+            if (mounted) setState(() => _isLoading = false);
           },
         ),
       )

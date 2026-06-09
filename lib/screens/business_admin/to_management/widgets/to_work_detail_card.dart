@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import '../../../../models/work_detail_input.dart';
 import '../../../../models/core/work_detail_model.dart';
+import '../../../../models/core/insurance_rate_model.dart';
+import '../../../../widgets/common/tax_deduction_badge.dart';
 import '../../../../utils/responsive_helper.dart';
 import '../../../../utils/format_helper.dart';
 import '../../../../utils/labor_standards.dart';
@@ -28,6 +30,12 @@ class TOWorkDetailCard extends StatelessWidget {
   final int? currentCount;
   final bool canDelete;
 
+  // 급여 지급 일정 레이블 (precomputed)
+  final String payScheduleLabel;
+
+  // 세금 공제 타입
+  final String taxDeductionType;
+
   // 콜백
   final VoidCallback? onEdit;
   final VoidCallback? onDelete;
@@ -48,6 +56,8 @@ class TOWorkDetailCard extends StatelessWidget {
     this.shiftType,
     this.currentCount,
     this.canDelete = true,
+    this.payScheduleLabel = '',
+    this.taxDeductionType = InsuranceRateModel.typeNone,
     this.onEdit,
     this.onDelete,
   });
@@ -70,6 +80,9 @@ class TOWorkDetailCard extends StatelessWidget {
       breakMinutes: detail.breakMinutes,
       baseHourlyWage: detail.baseHourlyWage,
       shiftType: detail.shiftType,
+      taxDeductionType: detail.taxDeductionType,
+      payScheduleLabel: _computeLabel(
+          detail.payScheduleType, detail.payScheduleDay, detail.payScheduleTime),
       canDelete: true,
       onEdit: onEdit,
       onDelete: onDelete,
@@ -93,6 +106,7 @@ class TOWorkDetailCard extends StatelessWidget {
       wageType: work.wageType,
       currentCount: work.currentCount,
       canDelete: work.currentCount == 0,
+      taxDeductionType: work.taxDeductionType,
       onEdit: onEdit,
       onDelete: onDelete,
     );
@@ -116,10 +130,31 @@ class TOWorkDetailCard extends StatelessWidget {
       breakMinutes: work.breakMinutes,
       baseHourlyWage: work.baseHourlyWage,
       shiftType: work.shiftType,
+      taxDeductionType: work.taxDeductionType,
+      payScheduleLabel: _computeLabel(
+          work.payScheduleType, work.payScheduleDay, work.payScheduleTime),
       canDelete: true,
       onEdit: onEdit,
       onDelete: onDelete,
     );
+  }
+
+  static const _weekdayLabels = ['', '월', '화', '수', '목', '금', '토', '일'];
+
+  static String _computeLabel(String? type, int? day, String? time) {
+    if (type == null) return '';
+    final t = time != null ? ' $time' : '';
+    switch (type) {
+      case 'same_day': return '당일 지급$t';
+      case 'next_day': return '익일 지급$t';
+      case 'weekly':
+        final d = _weekdayLabels[day?.clamp(1, 7) ?? 1];
+        return '매주 $d요일$t';
+      case 'monthly':
+        final n = day ?? 1;
+        return '매월 ${n == 31 ? '말일' : '$n일'}$t';
+      default: return '';
+    }
   }
 
   String get _wageTypeLabel {
@@ -144,11 +179,7 @@ class TOWorkDetailCard extends StatelessWidget {
     }
   }
 
-  String get _formattedWage =>
-      wage.toString().replaceAllMapped(
-        RegExp(r'(\d)(?=(\d{3})+(?!\d))'),
-        (m) => '${m[1]},',
-      );
+  String get _formattedWage => FormatHelper.formatNumber(wage);
 
   String get _netWorkTimeStr =>
       FormatHelper.calcNetWorkTime(startTime, endTime, breakMinutes: breakMinutes);
@@ -304,8 +335,8 @@ class TOWorkDetailCard extends StatelessWidget {
             ),
           ),
 
-          // ── 보조 칩: 근무시간대 + 휴게 + 통상시급 ─────────────
-          if (shiftType != null || breakMinutes > 0 || baseHourlyWage != null) ...[
+          // ── 보조 칩: 근무시간대 + 휴게 + 통상시급 + 지급일정 + 세금 ──
+          if (shiftType != null || breakMinutes > 0 || baseHourlyWage != null || payScheduleLabel.isNotEmpty || taxDeductionType != InsuranceRateModel.typeNone) ...[
             Padding(
               padding: EdgeInsets.only(
                 left: ResponsiveHelper.spacing(context, 14),
@@ -340,6 +371,18 @@ class TOWorkDetailCard extends StatelessWidget {
                       text: '통상시급 자동계산',
                       color: AppColors.grey500,
                     ),
+                  if (payScheduleLabel.isNotEmpty)
+                    _DetailChip(
+                      icon: Icons.account_balance_wallet_outlined,
+                      text: payScheduleLabel,
+                      color: AppColors.successDark,
+                    ),
+                  if (taxDeductionType != InsuranceRateModel.typeNone)
+                    _DetailChip(
+                      icon: Icons.receipt_long_outlined,
+                      text: InsuranceRateModel.typeLabel(taxDeductionType),
+                      color: TaxDeductionBadge.colorFor(taxDeductionType),
+                    ),
                 ],
               ),
             ),
@@ -357,6 +400,7 @@ class TOWorkDetailCard extends StatelessWidget {
       default:    return AppColors.amberDark;
     }
   }
+
 }
 
 // ── 메인 스탯 배지 ────────────────────────────────────────────

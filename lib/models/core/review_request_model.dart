@@ -67,7 +67,19 @@ class ReviewRequestModel {
       '${businessId}_${workerId}_${year}_$month';
 
   factory ReviewRequestModel.fromFirestore(DocumentSnapshot doc) {
-    final data = doc.data() as Map<String, dynamic>;
+    final raw = doc.data();
+    if (raw == null) {
+      throw ArgumentError('ReviewRequestModel: document ${doc.id} has no data');
+    }
+    final data = raw as Map<String, dynamic>;
+    final deadline = (data['deadline'] as Timestamp?)?.toDate().toLocal();
+    if (deadline == null) {
+      throw ArgumentError('ReviewRequestModel: deadline is missing (id=${doc.id})');
+    }
+    final createdAt = (data['createdAt'] as Timestamp?)?.toDate().toLocal();
+    if (createdAt == null) {
+      throw ArgumentError('ReviewRequestModel: createdAt is missing (id=${doc.id})');
+    }
     return ReviewRequestModel(
       id: doc.id,
       requestKey: data['requestKey'] ?? doc.id,
@@ -75,18 +87,16 @@ class ReviewRequestModel {
       businessName: data['businessName'] ?? '',
       workerId: data['workerId'] ?? '',
       workerName: data['workerName'] ?? '',
-      reviewYear: data['reviewYear'] ?? DateTime.now().year,
-      reviewMonth: data['reviewMonth'] ?? DateTime.now().month,
-      deadline:
-          (data['deadline'] as Timestamp?)?.toDate().toLocal() ?? DateTime.now(),
+      reviewYear: data['reviewYear'] ?? 0,
+      reviewMonth: data['reviewMonth'] ?? 0,
+      deadline: deadline,
       adminStatus: _parseStatus(data['adminStatus']),
       workerStatus: _parseStatus(data['workerStatus']),
       adminReviewId: data['adminReviewId'],
       workerReviewId: data['workerReviewId'],
       isPublished: data['isPublished'] ?? false,
       publishedAt: (data['publishedAt'] as Timestamp?)?.toDate().toLocal(),
-      createdAt:
-          (data['createdAt'] as Timestamp?)?.toDate().toLocal() ?? DateTime.now(),
+      createdAt: createdAt,
     );
   }
 

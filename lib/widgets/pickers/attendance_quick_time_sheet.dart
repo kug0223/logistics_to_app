@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../../utils/format_helper.dart';
 import '../../utils/responsive_helper.dart';
 import '../../theme/app_colors.dart';
 
@@ -89,8 +90,7 @@ class _AttendanceQuickTimeSheetState extends State<AttendanceQuickTimeSheet> {
     _minute = now.minute;
   }
 
-  String get _timeString =>
-      '${_hour.toString().padLeft(2, '0')}:${_minute.toString().padLeft(2, '0')}';
+  String get _timeString => FormatHelper.formatHourMinute(_hour, _minute);
 
   void _adjustMinutes(int delta) {
     setState(() {
@@ -230,7 +230,7 @@ class _AttendanceQuickTimeSheetState extends State<AttendanceQuickTimeSheet> {
                   // 예정 시간 칩 (업무별 고유 시간 목록)
                   ...scheduledList.map((s) => _buildChip(
                     context: context,
-                    label: '예정  ${s.hour.toString().padLeft(2, '0')}:${s.minute.toString().padLeft(2, '0')}',
+                    label: '예정  ${FormatHelper.formatHourMinute(s.hour, s.minute)}',
                     hour: s.hour,
                     minute: s.minute,
                     actionColor: actionColor,
@@ -238,7 +238,7 @@ class _AttendanceQuickTimeSheetState extends State<AttendanceQuickTimeSheet> {
                   // 현재 시각 칩
                   _buildChip(
                     context: context,
-                    label: '현재  ${now.hour.toString().padLeft(2, '0')}:${now.minute.toString().padLeft(2, '0')}',
+                    label: '현재  ${FormatHelper.formatHourMinute(now.hour, now.minute)}',
                     hour: now.hour,
                     minute: now.minute,
                     actionColor: actionColor,

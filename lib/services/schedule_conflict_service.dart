@@ -105,7 +105,11 @@ class ScheduleConflictService {
       return ConflictInfo.ok;
     } catch (e) {
       debugPrint('❌ 충돌 체크 실패: $e');
-      return ConflictInfo.ok; // 에러 시 허용
+      // 에러 시 경고 반환 (ok 반환 시 실제 충돌을 묵인할 수 있음)
+      return ConflictInfo(
+        level: ConflictLevel.warning,
+        message: '충돌 여부를 확인할 수 없습니다. 관리자에게 문의하세요.',
+      );
     }
   }
 
@@ -119,49 +123,60 @@ class ScheduleConflictService {
   }) async {
     final results = <String, ConflictInfo>{};
 
-    // 해당 날짜의 확정된 근무 한번만 조회
-    final confirmedSchedules = await _getConfirmedSchedules(
-      uid: uid,
-      workDate: workDate,
-    );
+    try {
+      // 해당 날짜의 확정된 근무 한번만 조회
+      final confirmedSchedules = await _getConfirmedSchedules(
+        uid: uid,
+        workDate: workDate,
+      );
 
-    for (final work in workDetails) {
-      if (confirmedSchedules.isEmpty) {
-        results[work.id] = ConflictInfo.ok;
-        continue;
-      }
-
-      ConflictInfo? worstConflict;
-
-      for (final schedule in confirmedSchedules) {
-        final conflictLevel = _checkTimeConflict(
-          existingStart: schedule.startTime,
-          existingEnd: schedule.endTime,
-          newStart: work.startTime,
-          newEnd: work.endTime,
-        );
-
-        if (conflictLevel == ConflictLevel.blocked) {
-          worstConflict = ConflictInfo(
-            level: ConflictLevel.blocked,
-            businessName: schedule.businessName,
-            conflictTime: '${schedule.startTime}~${schedule.endTime}',
-            message: '${schedule.startTime}~${schedule.endTime} 확정 근무 (${schedule.businessName})와 시간 충돌',
-          );
-          break; // BLOCKED면 더 이상 확인 불필요
+      for (final work in workDetails) {
+        if (confirmedSchedules.isEmpty) {
+          results[work.id] = ConflictInfo.ok;
+          continue;
         }
 
-        if (conflictLevel == ConflictLevel.warning && worstConflict == null) {
-          worstConflict = ConflictInfo(
-            level: ConflictLevel.warning,
-            businessName: schedule.businessName,
-            conflictTime: '${schedule.startTime}~${schedule.endTime}',
-            message: '이전 근무(~${schedule.endTime}) 종료 직후입니다. 이동 시간을 고려하세요.',
-          );
-        }
-      }
+        ConflictInfo? worstConflict;
 
-      results[work.id] = worstConflict ?? ConflictInfo.ok;
+        for (final schedule in confirmedSchedules) {
+          final conflictLevel = _checkTimeConflict(
+            existingStart: schedule.startTime,
+            existingEnd: schedule.endTime,
+            newStart: work.startTime,
+            newEnd: work.endTime,
+          );
+
+          if (conflictLevel == ConflictLevel.blocked) {
+            worstConflict = ConflictInfo(
+              level: ConflictLevel.blocked,
+              businessName: schedule.businessName,
+              conflictTime: '${schedule.startTime}~${schedule.endTime}',
+              message: '${schedule.startTime}~${schedule.endTime} 확정 근무 (${schedule.businessName})와 시간 충돌',
+            );
+            break; // BLOCKED면 더 이상 확인 불필요
+          }
+
+          if (conflictLevel == ConflictLevel.warning && worstConflict == null) {
+            worstConflict = ConflictInfo(
+              level: ConflictLevel.warning,
+              businessName: schedule.businessName,
+              conflictTime: '${schedule.startTime}~${schedule.endTime}',
+              message: '이전 근무(~${schedule.endTime}) 종료 직후입니다. 이동 시간을 고려하세요.',
+            );
+          }
+        }
+
+        results[work.id] = worstConflict ?? ConflictInfo.ok;
+      }
+    } catch (e) {
+      debugPrint('❌ 충돌 체크 실패 (벌크): $e');
+      const fallback = ConflictInfo(
+        level: ConflictLevel.warning,
+        message: '충돌 여부를 확인할 수 없습니다. 관리자에게 문의하세요.',
+      );
+      for (final work in workDetails) {
+        results[work.id] = fallback;
+      }
     }
 
     return results;
@@ -177,11 +192,13 @@ class ScheduleConflictService {
     required DateTime workDate,
   }) async {
     try {
-      // ✅ 모든 CONFIRMED 지원서 조회 후 날짜 필터링
+      // 만료된 지원서 제외 — workEndDate >= 검사일 (장기공고도 정상 포함)
+      final queryDate = Timestamp.fromDate(workDate);
       final snapshot = await _firestore
           .collection('applications')
           .where('uid', isEqualTo: uid)
-          .where('status', isEqualTo: 'CONFIRMED')
+          .where('status', whereIn: AppStatus.confirmedStatuses)
+          .where('workEndDate', isGreaterThanOrEqualTo: queryDate)
           .get();
 
       final allConfirmed = snapshot.docs
@@ -195,7 +212,7 @@ class ScheduleConflictService {
       return workingOnDate;
     } catch (e) {
       debugPrint('❌ 확정 스케줄 조회 실패: $e');
-      return [];
+      rethrow;
     }
   }
 
@@ -210,12 +227,23 @@ class ScheduleConflictService {
     required String newStart,
     required String newEnd,
   }) {
-    final existStartMin = _timeToMinutes(existingStart);
-    final existEndMin = _timeToMinutes(existingEnd);
-    final newStartMin = _timeToMinutes(newStart);
-    final newEndMin = _timeToMinutes(newEnd);
+    int existStartMin = _timeToMinutes(existingStart);
+    int existEndMin = _timeToMinutes(existingEnd);
+    int newStartMin = _timeToMinutes(newStart);
+    int newEndMin = _timeToMinutes(newEnd);
 
-    // 시간이 겹치는지 확인
+    // 자정 넘김 정규화: 종료시간 <= 시작시간이면 +1440(다음날)으로 보정
+    if (existEndMin <= existStartMin) existEndMin += 1440;
+    if (newEndMin <= newStartMin) newEndMin += 1440;
+
+    // 비교 기준 통일: 두 근무를 공통 기준점으로 정렬
+    // 기존 근무가 새 근무 시작보다 12시간 이상 늦으면 전날 기준으로 이동
+    // ※ existEndMin은 이미 +1440이 적용됐을 수 있으므로 shift는 existStartMin에만 적용
+    if (existStartMin > newStartMin + 720) {
+      existStartMin -= 1440;
+      existEndMin -= 1440; // start와 end를 함께 이동해야 상대 간격 유지
+    }
+
     // 겹치지 않는 조건: 새 종료 <= 기존 시작 OR 기존 종료 <= 새 시작
     final noOverlap = newEndMin <= existStartMin || existEndMin <= newStartMin;
 
@@ -224,13 +252,7 @@ class ScheduleConflictService {
     }
 
     // 시간이 딱 붙는지 확인
-    // 기존 종료 == 새 시작 (예: 14:00 종료 → 14:00 시작)
-    if (existEndMin == newStartMin) {
-      return ConflictLevel.warning;
-    }
-
-    // 새 종료 == 기존 시작 (예: 09:00 종료 → 09:00 시작)
-    if (newEndMin == existStartMin) {
+    if (existEndMin == newStartMin || newEndMin == existStartMin) {
       return ConflictLevel.warning;
     }
 
@@ -241,10 +263,10 @@ class ScheduleConflictService {
   int _timeToMinutes(String time) {
     final parts = time.split(':');
     if (parts.length != 2) return 0;
-    
+
     final hours = int.tryParse(parts[0]) ?? 0;
     final minutes = int.tryParse(parts[1]) ?? 0;
-    
+
     return hours * 60 + minutes;
   }
 
@@ -260,13 +282,13 @@ class ScheduleConflictService {
       final userDoc = await _firestore.collection('users').doc(uid).get();
       
       if (!userDoc.exists) return null;
-      
-      final data = userDoc.data()!;
+      final data = userDoc.data();
+      if (data == null) return null;
       final restrictedUntil = data['restrictedUntil'] as Timestamp?;
 
       // 이미 제한 중인지 확인
       if (restrictedUntil != null) {
-        final restrictDate = restrictedUntil.toDate();
+        final restrictDate = restrictedUntil.toDate().toLocal();
         if (DateTime.now().isBefore(restrictDate)) {
           return restrictDate;
         }

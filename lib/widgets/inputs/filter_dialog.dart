@@ -1,5 +1,6 @@
 ﻿import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
+import '../../models/core/to_model.dart';
 import '../../theme/app_colors.dart';
 import '../../utils/responsive_helper.dart';
 import '../pickers/date_picker_bottom_sheet.dart';
@@ -77,7 +78,12 @@ class _FilterDialogState extends State<FilterDialog> {
             _buildHeader(context, primary),
             Flexible(
               child: SingleChildScrollView(
-                padding: const EdgeInsets.fromLTRB(20, 18, 20, 4),
+                padding: EdgeInsets.fromLTRB(
+                  ResponsiveHelper.spacing(context, 20),
+                  ResponsiveHelper.spacing(context, 18),
+                  ResponsiveHelper.spacing(context, 20),
+                  ResponsiveHelper.spacing(context, 4),
+                ),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
@@ -114,7 +120,7 @@ class _FilterDialogState extends State<FilterDialog> {
                       icon: Icons.calendar_today_outlined,
                       child: _buildDateChips(context, primary),
                     ),
-                    const SizedBox(height: 16),
+                    SizedBox(height: ResponsiveHelper.spacing(context, 16)),
                   ],
                 ),
               ),
@@ -130,7 +136,12 @@ class _FilterDialogState extends State<FilterDialog> {
 
   Widget _buildHeader(BuildContext context, Color primary) {
     return Container(
-      padding: const EdgeInsets.fromLTRB(20, 16, 8, 16),
+      padding: EdgeInsets.fromLTRB(
+        ResponsiveHelper.spacing(context, 20),
+        ResponsiveHelper.spacing(context, 16),
+        ResponsiveHelper.spacing(context, 8),
+        ResponsiveHelper.spacing(context, 16),
+      ),
       decoration: BoxDecoration(
         gradient: LinearGradient(
           colors: [primary, primary.withValues(alpha: 0.82)],
@@ -147,7 +158,7 @@ class _FilterDialogState extends State<FilterDialog> {
               color: Colors.white.withValues(alpha: 0.2),
               shape: BoxShape.circle,
             ),
-            child: const Icon(Icons.tune, color: Colors.white, size: 18),
+            child: Icon(Icons.tune, color: Colors.white, size: ResponsiveHelper.iconSize(context, 18)),
           ),
           const SizedBox(width: 12),
           Text(
@@ -187,6 +198,7 @@ class _FilterDialogState extends State<FilterDialog> {
             ),
           ),
           IconButton(
+            tooltip: '닫기',
             onPressed: () => Navigator.pop(context),
             icon: const Icon(Icons.close, color: Colors.white54, size: 20),
             padding: EdgeInsets.zero,
@@ -210,7 +222,7 @@ class _FilterDialogState extends State<FilterDialog> {
       children: [
         Row(
           children: [
-            Icon(icon, size: 15, color: AppColors.grey500),
+            Icon(icon, size: ResponsiveHelper.iconSize(context, 15), color: AppColors.grey500),
             const SizedBox(width: 5),
             Text(
               label,
@@ -221,7 +233,7 @@ class _FilterDialogState extends State<FilterDialog> {
             ),
           ],
         ),
-        const SizedBox(height: 10),
+        SizedBox(height: ResponsiveHelper.spacing(context, 10)),
         child,
       ],
     );
@@ -239,8 +251,8 @@ class _FilterDialogState extends State<FilterDialog> {
 
   Widget _buildBusinessChips(BuildContext context, Color primary) {
     return Wrap(
-      spacing: 8,
-      runSpacing: 8,
+      spacing: ResponsiveHelper.spacing(context, 8),
+      runSpacing: ResponsiveHelper.spacing(context, 8),
       children: [
         _chip(
           context,
@@ -264,15 +276,15 @@ class _FilterDialogState extends State<FilterDialog> {
 
   Widget _buildTOTypeChips(BuildContext context, Color primary) {
     return Wrap(
-      spacing: 8,
-      runSpacing: 8,
+      spacing: ResponsiveHelper.spacing(context, 8),
+      runSpacing: ResponsiveHelper.spacing(context, 8),
       children: [
         _chip(context, label: '전체', isSelected: _tempTOType == null, primary: primary,
             onTap: () => setState(() => _tempTOType = null)),
-        _chip(context, label: '단기', icon: Icons.bolt_outlined, isSelected: _tempTOType == 'flex',
-            primary: primary, onTap: () => setState(() => _tempTOType = 'flex')),
-        _chip(context, label: '장기', icon: Icons.calendar_month_outlined, isSelected: _tempTOType == 'contract',
-            primary: primary, onTap: () => setState(() => _tempTOType = 'contract')),
+        _chip(context, label: '단기', icon: Icons.bolt_outlined, isSelected: _tempTOType == TOType.flex,
+            primary: primary, onTap: () => setState(() => _tempTOType = TOType.flex)),
+        _chip(context, label: '장기', icon: Icons.calendar_month_outlined, isSelected: _tempTOType == TOType.contract,
+            primary: primary, onTap: () => setState(() => _tempTOType = TOType.contract)),
       ],
     );
   }
@@ -281,8 +293,8 @@ class _FilterDialogState extends State<FilterDialog> {
 
   Widget _buildPublishStatusChips(BuildContext context, Color primary) {
     return Wrap(
-      spacing: 8,
-      runSpacing: 8,
+      spacing: ResponsiveHelper.spacing(context, 8),
+      runSpacing: ResponsiveHelper.spacing(context, 8),
       children: [
         _chip(context, label: '전체', isSelected: _tempPublishStatus == null, primary: primary,
             onTap: () => setState(() => _tempPublishStatus = null)),
@@ -317,8 +329,8 @@ class _FilterDialogState extends State<FilterDialog> {
         !presets.any((p) => p.range != null && _rangeEquals(p.range!, _tempDateRange!));
 
     return Wrap(
-      spacing: 8,
-      runSpacing: 8,
+      spacing: ResponsiveHelper.spacing(context, 8),
+      runSpacing: ResponsiveHelper.spacing(context, 8),
       children: [
         ...presets.map((p) => _chip(
               context,
@@ -382,6 +394,7 @@ class _FilterDialogState extends State<FilterDialog> {
     );
 
     if (picked != null) {
+      if (!mounted) return;
       setState(() => _tempDateRange = picked);
     }
   }
@@ -416,7 +429,7 @@ class _FilterDialogState extends State<FilterDialog> {
           mainAxisSize: MainAxisSize.min,
           children: [
             if (icon != null) ...[
-              Icon(icon, size: 13, color: isSelected ? primary : AppColors.grey500),
+              Icon(icon, size: ResponsiveHelper.iconSize(context, 13), color: isSelected ? primary : AppColors.grey500),
               const SizedBox(width: 4),
             ],
             Text(
@@ -438,9 +451,14 @@ class _FilterDialogState extends State<FilterDialog> {
 
   Widget _buildBottomBar(BuildContext context, Color primary) {
     return Container(
-      padding: const EdgeInsets.fromLTRB(20, 12, 20, 16),
+      padding: EdgeInsets.fromLTRB(
+        ResponsiveHelper.spacing(context, 20),
+        ResponsiveHelper.spacing(context, 12),
+        ResponsiveHelper.spacing(context, 20),
+        ResponsiveHelper.spacing(context, 16),
+      ),
       decoration: const BoxDecoration(
-        border: Border(top: BorderSide(color: Color(0xFFF0F0F0))),
+        border: Border(top: BorderSide(color: AppColors.grey200)),
       ),
       child: Row(
         children: [
@@ -456,7 +474,7 @@ class _FilterDialogState extends State<FilterDialog> {
               child: Text('취소', style: ResponsiveHelper.bodyStyle(context)),
             ),
           ),
-          const SizedBox(width: 10),
+          SizedBox(width: ResponsiveHelper.spacing(context, 10)),
           Expanded(
             flex: 2,
             child: ElevatedButton(

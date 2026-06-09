@@ -1,5 +1,6 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import '../../utils/format_helper.dart';
+import 'insurance_rate_model.dart';
 
 /// TO 문서 내 배열로 저장되는 업무 상세 데이터 (경량 모델)
 ///
@@ -44,6 +45,19 @@ class WorkDetailData {
   /// 해당 주에 workedDays >= scheduledDaysPerWeek 충족 시 주휴 발생
   final int? scheduledDaysPerWeek;
 
+  /// 급여 지급 유형: 'same_day' | 'next_day' | 'weekly' | 'monthly'
+  final String? payScheduleType;
+  /// 지급 기준일: 주급=1~7(월~일, Dart weekday 기준), 월급=1~31(31=말일), 당일/익일=null
+  final int? payScheduleDay;
+  /// 입금 예정 시간 'HH:mm' (선택)
+  final String? payScheduleTime;
+
+  /// 공제 방식: InsuranceRateModel.typeNone | typeFreelancer33 | typeDailyWorker | typeDailyAuto8 | typeFourInsuranceFixed
+  final String taxDeductionType;
+
+  /// 업무 설명 (선택 사항)
+  final String? description;
+
   /// 업무 시작시간 기준으로 계산된 지원 마감 시각
   /// 슬롯 생성/수정 시 자동 계산되어 Firestore에 저장됨
   final DateTime? applicationDeadline;
@@ -54,6 +68,10 @@ class WorkDetailData {
   final DateTime? closedAt;
   final String? closedBy;
   final DateTime? emergencyOpenedAt;
+
+  /// 슬롯 workTypeCounts 기반 정원 충족 여부 — 다이얼로그 구성 시 주입
+  /// Firestore에 저장하지 않음; `isFull` getter가 이 값을 반환
+  final bool runtimeFull;
 
   const WorkDetailData({
     required this.workType,
@@ -73,12 +91,18 @@ class WorkDetailData {
     this.baseHourlyWage,
     this.weeklyHolidayIncluded = false,
     this.scheduledDaysPerWeek,
+    this.payScheduleType,
+    this.payScheduleDay,
+    this.payScheduleTime,
+    this.taxDeductionType = InsuranceRateModel.typeNone,
+    this.description,
     this.applicationDeadline,
     this.isManualClosed = false,
     this.isEmergencyOpen = false,
     this.closedAt,
     this.closedBy,
     this.emergencyOpenedAt,
+    this.runtimeFull = false,
   });
 
   factory WorkDetailData.fromMap(Map<String, dynamic> map, [String? id]) {
@@ -87,19 +111,28 @@ class WorkDetailData {
       workTypeIcon: map['workTypeIcon'] as String? ?? '📋',
       workTypeColor: map['workTypeColor'] as String? ?? '#2196F3',
       workTypeBackgroundColor: map['workTypeBackgroundColor'] as String? ?? '#E3F2FD',
-      wage: map['wage'] as int? ?? 0,
-      wageType: map['wageType'] as String? ?? 'hourly',
-      requiredCount: map['requiredCount'] as int? ?? 0,
+      wage: (map['wage'] as num?)?.toInt() ?? 0,
+      wageType: const ['hourly', 'daily'].contains(map['wageType'])
+          ? map['wageType'] as String
+          : 'hourly',
+      requiredCount: (map['requiredCount'] as num?)?.toInt() ?? 0,
       startTime: map['startTime'] as String? ?? '09:00',
       endTime: map['endTime'] as String? ?? '18:00',
-      order: map['order'] as int? ?? 0,
+      order: (map['order'] as num?)?.toInt() ?? 0,
       shiftType: map['shiftType'] as String?,
       nightAllowanceApplied: map['nightAllowanceApplied'] as bool? ?? true,
       nightIncluded: map['nightIncluded'] as bool? ?? false,
-      breakMinutes: map['breakMinutes'] as int? ?? 0,
-      baseHourlyWage: map['baseHourlyWage'] as int?,
+      breakMinutes: (map['breakMinutes'] as num?)?.toInt() ?? 0,
+      baseHourlyWage: (map['baseHourlyWage'] as num?)?.toInt(),
       weeklyHolidayIncluded: map['weeklyHolidayIncluded'] as bool? ?? false,
-      scheduledDaysPerWeek: map['scheduledDaysPerWeek'] as int?,
+      scheduledDaysPerWeek: (map['scheduledDaysPerWeek'] as num?)?.toInt(),
+      payScheduleType: map['payScheduleType'] as String?,
+      payScheduleDay: (map['payScheduleDay'] as num?)?.toInt(),
+      payScheduleTime: map['payScheduleTime'] as String?,
+      taxDeductionType: InsuranceRateModel.allTypes.contains(map['taxDeductionType'])
+          ? map['taxDeductionType'] as String
+          : InsuranceRateModel.typeNone,
+      description: map['description'] as String?,
       applicationDeadline:
           (map['applicationDeadline'] as Timestamp?)?.toDate().toLocal(),
       isManualClosed: map['isManualClosed'] as bool? ?? false,
@@ -128,6 +161,11 @@ class WorkDetailData {
     if (baseHourlyWage != null) 'baseHourlyWage': baseHourlyWage,
     if (weeklyHolidayIncluded) 'weeklyHolidayIncluded': true,
     if (scheduledDaysPerWeek != null) 'scheduledDaysPerWeek': scheduledDaysPerWeek,
+    if (payScheduleType != null) 'payScheduleType': payScheduleType,
+    if (payScheduleDay != null) 'payScheduleDay': payScheduleDay,
+    if (payScheduleTime != null) 'payScheduleTime': payScheduleTime,
+    if (taxDeductionType != InsuranceRateModel.typeNone) 'taxDeductionType': taxDeductionType,
+    if (description != null) 'description': description,
     if (applicationDeadline != null)
       'applicationDeadline': Timestamp.fromDate(applicationDeadline!.toUtc()),
     if (isManualClosed) 'isManualClosed': true,
@@ -158,6 +196,15 @@ class WorkDetailData {
     bool? weeklyHolidayIncluded,
     int? scheduledDaysPerWeek,
     bool clearScheduledDaysPerWeek = false,
+    String? payScheduleType,
+    bool clearPayScheduleType = false,
+    int? payScheduleDay,
+    bool clearPayScheduleDay = false,
+    String? payScheduleTime,
+    bool clearPayScheduleTime = false,
+    String? taxDeductionType,
+    String? description,
+    bool clearDescription = false,
     bool? isManualClosed,
     bool? isEmergencyOpen,
     DateTime? closedAt,
@@ -166,6 +213,7 @@ class WorkDetailData {
     DateTime? applicationDeadline,
     bool clearClosedAt = false,
     bool clearEmergency = false,
+    bool? runtimeFull,
   }) {
     return WorkDetailData(
       workType: workType ?? this.workType,
@@ -185,18 +233,73 @@ class WorkDetailData {
       baseHourlyWage: clearBaseHourlyWage ? null : (baseHourlyWage ?? this.baseHourlyWage),
       weeklyHolidayIncluded: weeklyHolidayIncluded ?? this.weeklyHolidayIncluded,
       scheduledDaysPerWeek: clearScheduledDaysPerWeek ? null : (scheduledDaysPerWeek ?? this.scheduledDaysPerWeek),
+      payScheduleType: clearPayScheduleType ? null : (payScheduleType ?? this.payScheduleType),
+      payScheduleDay: clearPayScheduleDay ? null : (payScheduleDay ?? this.payScheduleDay),
+      payScheduleTime: clearPayScheduleTime ? null : (payScheduleTime ?? this.payScheduleTime),
+      taxDeductionType: taxDeductionType ?? this.taxDeductionType,
+      description: clearDescription ? null : (description ?? this.description),
       isManualClosed: clearClosedAt ? false : (isManualClosed ?? this.isManualClosed),
       isEmergencyOpen: clearEmergency ? false : (isEmergencyOpen ?? this.isEmergencyOpen),
       closedAt: clearClosedAt ? null : (closedAt ?? this.closedAt),
       closedBy: clearClosedAt ? null : (closedBy ?? this.closedBy),
       emergencyOpenedAt: clearEmergency ? null : (emergencyOpenedAt ?? this.emergencyOpenedAt),
       applicationDeadline: applicationDeadline ?? this.applicationDeadline,
+      runtimeFull: runtimeFull ?? this.runtimeFull,  // bool? → bool 안전
     );
   }
 
   // ── 헬퍼 ──────────────────────────────────────────
 
   String get timeRange => '$startTime ~ $endTime';
+
+  static const _weekdayLabels = ['', '월', '화', '수', '목', '금', '토', '일'];
+
+  /// 급여 지급 일정 표시 레이블 (예: "당일 18:00", "매주 금요일 17:00", "매월 25일")
+  String get payScheduleLabel {
+    if (payScheduleType == null) return '';
+    final timeStr = payScheduleTime != null ? ' $payScheduleTime' : '';
+    switch (payScheduleType) {
+      case 'same_day':  return '당일 지급$timeStr';
+      case 'next_day':  return '익일 지급$timeStr';
+      case 'weekly':
+        final day = _weekdayLabels[payScheduleDay?.clamp(1, 7) ?? 1];
+        return '매주 $day요일$timeStr';
+      case 'monthly':
+        final d = payScheduleDay ?? 1;
+        final dateStr = d == 31 ? '말일' : '$d일';
+        return '매월 $dateStr$timeStr';
+      default: return '';
+    }
+  }
+
+  /// 정산 주기 레이블만 — 임금 타입과 함께 한 줄 표시용
+  /// 예: '당일 지급', '익일 지급', '주급 정산', '월급 정산'
+  String get payScheduleTypeLabel {
+    switch (payScheduleType) {
+      case 'same_day': return '당일 지급';
+      case 'next_day': return '익일 지급';
+      case 'weekly':   return '주급 정산';
+      case 'monthly':  return '월급 정산';
+      default: return '';
+    }
+  }
+
+  /// 지급 날짜/시간 상세 — 입금 예정 시간이 있을 때 반환
+  /// 예: '익일 17:30', '매주 화 17:30', '매월 25일 17:00'
+  String get payScheduleDetail {
+    final timeStr = payScheduleTime != null ? ' $payScheduleTime' : '';
+    switch (payScheduleType) {
+      case 'same_day': return payScheduleTime != null ? '당일$timeStr' : '';
+      case 'next_day': return payScheduleTime != null ? '익일$timeStr' : '';
+      case 'weekly':
+        final day = _weekdayLabels[payScheduleDay?.clamp(1, 7) ?? 1];
+        return '매주 $day$timeStr';
+      case 'monthly':
+        final d = payScheduleDay ?? 1;
+        return '매월 ${d == 31 ? '말일' : '$d일'}$timeStr';
+      default: return '';
+    }
+  }
 
   // ── 하위 호환성 getters (구 WorkDetailModel 기반 화면용) ──────
 
@@ -223,8 +326,8 @@ class WorkDetailData {
         .isBefore(DateTime(today.year, today.month, today.day));
   }
 
-  /// 인원 충족 여부 — 런타임에 설정되지 않으면 false
-  bool get isFull => false;
+  /// 인원 충족 여부 — SlotModel.workTypeCounts 기반으로 다이얼로그 구성 시 주입
+  bool get isFull => runtimeFull;
 
   /// 확정 인원 — 구 아키텍처 제거됨, 항상 0
   int get currentCount => 0;

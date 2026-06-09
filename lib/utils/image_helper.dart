@@ -13,6 +13,7 @@ import 'toast_helper.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:shimmer/shimmer.dart';
 import '../theme/app_colors.dart';
+import '../widgets/common/loading_widget.dart';
 
 /// 🖼️ 이미지 관련 공용 헬퍼
 /// 
@@ -494,32 +495,23 @@ class ImageHelper {
           ? Image.network(image.path, fit: fit, width: width ?? double.infinity, height: height)
           : Image.file(image, fit: fit, width: width ?? double.infinity, height: height);
     } else if (image is String && image.isNotEmpty) {
-      imageWidget = Image.network(
-        image,
+      imageWidget = CachedNetworkImage(
+        imageUrl: image,
         fit: fit,
         width: width ?? double.infinity,
         height: height,
-        loadingBuilder: (context, child, loadingProgress) {
-          if (loadingProgress == null) return child;
-          return placeholder ?? Center(
-            child: CircularProgressIndicator(
-              value: loadingProgress.expectedTotalBytes != null
-                  ? loadingProgress.cumulativeBytesLoaded /
-                      loadingProgress.expectedTotalBytes!
-                  : null,
-            ),
-          );
-        },
-        errorBuilder: (context, error, stackTrace) {
-          return errorWidget ?? Container(
-            color: AppColors.grey200,
-            child: Icon(
-              Icons.broken_image,
-              color: AppColors.grey400,
-              size: 48,
-            ),
-          );
-        },
+        // 메모리 캐시 크기 제한 (원본 해상도 대신 표시 크기에 맞게 디코딩)
+        memCacheWidth: width != null ? (width * 2).toInt() : 800,
+        memCacheHeight: height != null ? (height * 2).toInt() : null,
+        placeholder: (context, url) => placeholder ?? const LoadingWidget(),
+        errorWidget: (context, url, error) => errorWidget ?? Container(
+          color: AppColors.grey200,
+          child: Icon(
+            Icons.broken_image,
+            color: AppColors.grey400,
+            size: 48,
+          ),
+        ),
       );
     } else {
       return errorWidget ?? Container(
@@ -706,20 +698,28 @@ class ImageHelper {
           ),
         ),
         Positioned(
-          top: 4,
-          right: 12,
-          child: GestureDetector(
-            onTap: onDelete,
-            child: Container(
-              padding: const EdgeInsets.all(4),
-              decoration: const BoxDecoration(
-                color: AppColors.error,
-                shape: BoxShape.circle,
-              ),
-              child: const Icon(
-                Icons.close,
-                color: Colors.white,
-                size: 14,
+          top: 0,
+          right: 4,
+          child: Semantics(
+            label: '이미지 삭제',
+            button: true,
+            child: GestureDetector(
+              onTap: onDelete,
+              behavior: HitTestBehavior.opaque,
+              child: Padding(
+                padding: const EdgeInsets.all(6),
+                child: Container(
+                  padding: const EdgeInsets.all(4),
+                  decoration: const BoxDecoration(
+                    color: AppColors.error,
+                    shape: BoxShape.circle,
+                  ),
+                  child: const Icon(
+                    Icons.close,
+                    color: Colors.white,
+                    size: 14,
+                  ),
+                ),
               ),
             ),
           ),
@@ -794,7 +794,7 @@ class ImageHelper {
 
     await showDialog(
       context: context,
-      barrierColor: Colors.black87,
+      barrierColor: AppColors.textPrimary.withValues(alpha: 0.87),
       builder: (context) => _FullScreenImageViewer(
         imageUrl: imageUrl,
         imageFile: imageFile,

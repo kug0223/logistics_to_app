@@ -27,7 +27,7 @@ class MonthlyStatsCard extends StatelessWidget {
     // 예정 통계
     final confirmedCount = CalendarHelper.getConfirmedCount(thisMonth);
     final pendingCount = CalendarHelper.getPendingCount(thisMonth);
-    final totalIncome = CalendarHelper.getTotalIncome(thisMonth);
+    final totalIncome = CalendarHelper.getTotalIncome(thisMonth, focusedDay);
     
     // 완료 통계
     final actualWorkDays = CalendarHelper.getActualWorkDays(attendances, focusedDay);
@@ -69,7 +69,7 @@ class MonthlyStatsCard extends StatelessWidget {
               _buildStatItem(
                 context,
                 icon: Icons.attach_money,
-                label: '예상 수입',
+                label: '예상수입(세전)',
                 value: '${NumberFormat('#,###').format(totalIncome)}원',
                 color: AppColors.info,
               ),

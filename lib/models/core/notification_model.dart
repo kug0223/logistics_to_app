@@ -1,6 +1,6 @@
-// lib/models/core/notification_model.dart
-
 import 'package:cloud_firestore/cloud_firestore.dart';
+
+import 'application_model.dart';
 
 /// 알림 유형
 enum NotificationType {
@@ -25,11 +25,19 @@ enum NotificationType {
   scheduleChangeRejected,  // 스케줄 변경 거절
   
   // 계약 관련
-  terminationRequested,    // 계약해지 요청됨
-  terminationApproved,     // 계약해지 승인됨
+  contractSignRequested,    // 계약서 서명 요청됨 (근무자에게)
+  contractExpiringReminder, // 계약 만료 D-15 알림 (관리자에게)
+  contractRenewed,          // 계약 연장 확정됨 (근무자에게)
+  contractTerminating,      // 계약 종료 통보됨 (근무자에게)
+  terminationRequested,     // 계약해지 요청됨
+  terminationApproved,      // 계약해지 승인됨
+  resignRequested,          // 퇴사 요청됨 (근무자→관리자)
+  resignApproved,           // 퇴사 승인됨 (관리자→근무자)
+  resignRejected,           // 퇴사 거절됨 (관리자→근무자)
   
   // 급여 관련
   wageConfirmed,           // 급여 정산 완료
+  wageCancelConfirmed,     // 급여 마감 취소 (수정 중)
   
   // 리뷰 관련
   reviewReceived,          // 리뷰 받음
@@ -40,6 +48,11 @@ enum NotificationType {
   idCardAccessRejected,    // 신분증 열람 거절됨 (관리자에게)
   idCardAccessExpiringSoon,// 신분증 열람 권한 만료 임박
   
+  // 멤버 관리
+  memberInvitationReceived, // 하위 관리자 초대 받음 (근무자에게)
+  memberInvitationAccepted, // 초대 수락됨 (관리자에게)
+  memberInvitationRejected, // 초대 거절됨 (관리자에게)
+
   // 시스템
   systemNotice,            // 시스템 공지
   other,                   // 기타
@@ -79,16 +92,15 @@ class NotificationModel {
       body: map['body'] ?? '',
       data: map['data'],
       isRead: map['isRead'] ?? false,
-      createdAt: (map['createdAt'] as Timestamp?)?.toDate().toLocal() ?? DateTime.now(),  // 🔥 .toLocal() 추가
-      readAt: (map['readAt'] as Timestamp?)?.toDate().toLocal(),  // 🔥 .toLocal() 추가
+      createdAt: (map['createdAt'] as Timestamp?)?.toDate().toLocal() ?? (throw ArgumentError('Missing required field: createdAt')),
+      readAt: (map['readAt'] as Timestamp?)?.toDate().toLocal(),
     );
   }
 
   factory NotificationModel.fromFirestore(DocumentSnapshot doc) {
-    return NotificationModel.fromMap(
-      doc.data() as Map<String, dynamic>, 
-      doc.id,
-    );
+    final raw = doc.data();
+    if (raw == null) throw ArgumentError('Document ${doc.id} has no data');
+    return NotificationModel.fromMap(raw as Map<String, dynamic>, doc.id);
   }
 
   /// Firestore에 저장
@@ -130,9 +142,7 @@ class NotificationModel {
     );
   }
 
-  // ═══════════════════════════════════════════════════════════
-  // Getter
-  // ═══════════════════════════════════════════════════════════
+  // ── Getter ──
 
   /// 알림 아이콘
   String get iconName {
@@ -161,12 +171,29 @@ class NotificationModel {
       case NotificationType.scheduleChangeRejected:
         return 'event_busy';
       // 계약 관련
+      case NotificationType.contractSignRequested:
+        return 'draw';
+      case NotificationType.contractExpiringReminder:
+        return 'event_note';
+      case NotificationType.contractRenewed:
+        return 'autorenew';
+      case NotificationType.contractTerminating:
+        return 'event_busy';
       case NotificationType.terminationRequested:
         return 'exit_to_app';
       case NotificationType.terminationApproved:
         return 'logout';
+      // 퇴사 관련
+      case NotificationType.resignRequested:
+        return 'exit_to_app';
+      case NotificationType.resignApproved:
+        return 'logout';
+      case NotificationType.resignRejected:
+        return 'do_not_disturb_on';
       // 급여 관련
       case NotificationType.wageConfirmed:
+        return 'payments';
+      case NotificationType.wageCancelConfirmed:
         return 'payments';
       // 리뷰
       case NotificationType.reviewReceived:
@@ -180,6 +207,13 @@ class NotificationModel {
         return 'block';
       case NotificationType.idCardAccessExpiringSoon:
         return 'schedule';
+      // 멤버 관리
+      case NotificationType.memberInvitationReceived:
+        return 'group_add';
+      case NotificationType.memberInvitationAccepted:
+        return 'how_to_reg';
+      case NotificationType.memberInvitationRejected:
+        return 'person_remove';
       // 시스템
       case NotificationType.systemNotice:
         return 'campaign';
@@ -206,9 +240,7 @@ class NotificationModel {
     }
   }
 
-  // ═══════════════════════════════════════════════════════════
-  // Static Helper
-  // ═══════════════════════════════════════════════════════════
+  // ── Static Helper ──
 
   static NotificationType _typeFromString(String value) {
     switch (value) {
@@ -226,10 +258,19 @@ class NotificationModel {
       case 'scheduleChangeApproved': return NotificationType.scheduleChangeApproved;
       case 'scheduleChangeRejected': return NotificationType.scheduleChangeRejected;
       // 계약 관련
+      case 'contractSignRequested': return NotificationType.contractSignRequested;
+      case 'contractExpiringReminder': return NotificationType.contractExpiringReminder;
+      case 'contractRenewed': return NotificationType.contractRenewed;
+      case 'contractTerminating': return NotificationType.contractTerminating;
       case 'terminationRequested': return NotificationType.terminationRequested;
       case 'terminationApproved': return NotificationType.terminationApproved;
+      // 퇴사 관련
+      case 'resignRequested': return NotificationType.resignRequested;
+      case 'resignApproved': return NotificationType.resignApproved;
+      case 'resignRejected': return NotificationType.resignRejected;
       // 급여 관련
       case 'wageConfirmed': return NotificationType.wageConfirmed;
+      case 'wageCancelConfirmed': return NotificationType.wageCancelConfirmed;
       // 리뷰
       case 'reviewReceived': return NotificationType.reviewReceived;
       // 신분증
@@ -237,6 +278,10 @@ class NotificationModel {
       case 'idCardAccessApproved': return NotificationType.idCardAccessApproved;
       case 'idCardAccessRejected': return NotificationType.idCardAccessRejected;
       case 'idCardAccessExpiringSoon': return NotificationType.idCardAccessExpiringSoon;
+      // 멤버 관리
+      case 'memberInvitationReceived': return NotificationType.memberInvitationReceived;
+      case 'memberInvitationAccepted': return NotificationType.memberInvitationAccepted;
+      case 'memberInvitationRejected': return NotificationType.memberInvitationRejected;
       // 시스템
       case 'systemNotice': return NotificationType.systemNotice;
       default: return NotificationType.other;
@@ -259,10 +304,19 @@ class NotificationModel {
       case NotificationType.scheduleChangeApproved: return 'scheduleChangeApproved';
       case NotificationType.scheduleChangeRejected: return 'scheduleChangeRejected';
       // 계약 관련
+      case NotificationType.contractSignRequested: return 'contractSignRequested';
+      case NotificationType.contractExpiringReminder: return 'contractExpiringReminder';
+      case NotificationType.contractRenewed: return 'contractRenewed';
+      case NotificationType.contractTerminating: return 'contractTerminating';
       case NotificationType.terminationRequested: return 'terminationRequested';
       case NotificationType.terminationApproved: return 'terminationApproved';
+      // 퇴사 관련
+      case NotificationType.resignRequested: return 'resignRequested';
+      case NotificationType.resignApproved: return 'resignApproved';
+      case NotificationType.resignRejected: return 'resignRejected';
       // 급여 관련
       case NotificationType.wageConfirmed: return 'wageConfirmed';
+      case NotificationType.wageCancelConfirmed: return 'wageCancelConfirmed';
       // 리뷰
       case NotificationType.reviewReceived: return 'reviewReceived';
       // 신분증
@@ -270,15 +324,17 @@ class NotificationModel {
       case NotificationType.idCardAccessApproved: return 'idCardAccessApproved';
       case NotificationType.idCardAccessRejected: return 'idCardAccessRejected';
       case NotificationType.idCardAccessExpiringSoon: return 'idCardAccessExpiringSoon';
+      // 멤버 관리
+      case NotificationType.memberInvitationReceived: return 'memberInvitationReceived';
+      case NotificationType.memberInvitationAccepted: return 'memberInvitationAccepted';
+      case NotificationType.memberInvitationRejected: return 'memberInvitationRejected';
       // 시스템
       case NotificationType.systemNotice: return 'systemNotice';
       case NotificationType.other: return 'other';
     }
   }
 
-  // ═══════════════════════════════════════════════════════════
-  // Factory Methods (알림 생성 헬퍼)
-  // ═══════════════════════════════════════════════════════════
+  // ── Factory Methods (알림 생성 헬퍼) ──
 
   /// 신분증 열람 요청 알림 생성
   static NotificationModel createIdCardAccessRequest({
@@ -346,6 +402,7 @@ class NotificationModel {
   static NotificationModel createApplicationConfirmed({
     required String userId,
     required String businessName,
+    required String businessId,
     required String workType,
     required DateTime workDate,
     required String applicationId,
@@ -358,6 +415,7 @@ class NotificationModel {
       body: '$businessName의 $workType 근무가 확정되었습니다.\n근무일: ${workDate.month}/${workDate.day}',
       data: {
         'applicationId': applicationId,
+        'businessId': businessId,
         'action': 'applicationDetail',
       },
       createdAt: DateTime.now(),
@@ -385,14 +443,11 @@ class NotificationModel {
     );
   }
 
-  // ═══════════════════════════════════════════════════════════
-  // 🆕 추가 Factory Methods
-  // ═══════════════════════════════════════════════════════════
-
   /// 지원 거절 알림 생성 (지원자에게)
   static NotificationModel createApplicationRejected({
     required String userId,
     required String businessName,
+    required String businessId,
     required String workType,
     required DateTime workDate,
     required String applicationId,
@@ -406,6 +461,7 @@ class NotificationModel {
       body: '$businessName의 $workType 지원이 거절되었습니다.${rejectReason != null ? '\n사유: $rejectReason' : ''}\n근무일: ${workDate.month}/${workDate.day}',
       data: {
         'applicationId': applicationId,
+        'businessId': businessId,
         'action': 'applicationDetail',
       },
       createdAt: DateTime.now(),
@@ -474,6 +530,7 @@ class NotificationModel {
   static NotificationModel createConfirmationCanceled({
     required String userId,
     required String businessName,
+    required String businessId,
     required String workType,
     required DateTime workDate,
     required String applicationId,
@@ -487,6 +544,7 @@ class NotificationModel {
       body: '$businessName의 $workType 확정이 취소되었습니다.${cancelReason != null ? '\n사유: $cancelReason' : ''}\n근무일: ${workDate.month}/${workDate.day}',
       data: {
         'applicationId': applicationId,
+        'businessId': businessId,
         'action': 'applicationDetail',
       },
       createdAt: DateTime.now(),
@@ -546,6 +604,7 @@ class NotificationModel {
     required DateTime targetDate,
     required String requestId,
     required String businessName,
+    required String businessId,
   }) {
     String typeText;
     switch (requestType) {
@@ -576,6 +635,7 @@ class NotificationModel {
       body: '$businessName에서 ${targetDate.month}/${targetDate.day} $typeText 요청을 승인했습니다.',
       data: {
         'requestId': requestId,
+        'businessId': businessId,
         'action': 'scheduleDetail',
       },
       createdAt: DateTime.now(),
@@ -589,6 +649,7 @@ class NotificationModel {
     required DateTime targetDate,
     required String requestId,
     required String businessName,
+    required String businessId,
     String? rejectReason,
   }) {
     String typeText;
@@ -620,7 +681,32 @@ class NotificationModel {
       body: '$businessName에서 ${targetDate.month}/${targetDate.day} $typeText 요청을 거절했습니다.${rejectReason != null ? '\n사유: $rejectReason' : ''}',
       data: {
         'requestId': requestId,
+        'businessId': businessId,
         'action': 'scheduleDetail',
+      },
+      createdAt: DateTime.now(),
+    );
+  }
+
+  /// 계약서 서명 요청 알림 생성 (근무자에게)
+  static NotificationModel createContractSignRequested({
+    required String userId,
+    required String businessName,
+    required String businessId,
+    required String contractId,
+    required String applicationId,
+  }) {
+    return NotificationModel(
+      id: '',
+      userId: userId,
+      type: NotificationType.contractSignRequested,
+      title: '근로계약서 서명 요청',
+      body: '$businessName에서 근로계약서 서명을 요청했습니다. 확인 후 서명해 주세요.',
+      data: {
+        'contractId': contractId,
+        'applicationId': applicationId,
+        'businessId': businessId,
+        'screen': 'contractSign',
       },
       createdAt: DateTime.now(),
     );
@@ -630,6 +716,7 @@ class NotificationModel {
   static NotificationModel createTerminationRequested({
     required String userId,
     required String businessName,
+    required String businessId,
     required DateTime terminationDate,
     required String applicationId,
     String? reason,
@@ -642,6 +729,7 @@ class NotificationModel {
       body: '$businessName에서 계약해지를 요청했습니다.${reason != null ? '\n사유: $reason' : ''}\n해지 예정일: ${terminationDate.month}/${terminationDate.day}',
       data: {
         'applicationId': applicationId,
+        'businessId': businessId,
         'action': 'terminationRequest',
       },
       createdAt: DateTime.now(),
@@ -652,6 +740,7 @@ class NotificationModel {
   static NotificationModel createTerminationApproved({
     required String userId,
     required String businessName,
+    required String businessId,
     required String applicationId,
     required DateTime actualResignDate,
   }) {
@@ -663,15 +752,86 @@ class NotificationModel {
       body: '$businessName과의 계약이 해지되었습니다.\n해지일: ${actualResignDate.month}/${actualResignDate.day}',
       data: {
         'applicationId': applicationId,
+        'businessId': businessId,
         'action': 'applicationDetail',
       },
       createdAt: DateTime.now(),
     );
   }
+  /// 퇴사 요청 알림 생성 (관리자에게)
+  static NotificationModel createResignRequested({
+    required String userId,
+    required String workerName,
+    required String businessName,
+    required DateTime resignDate,
+    required String applicationId,
+  }) {
+    return NotificationModel(
+      id: '',
+      userId: userId,
+      type: NotificationType.resignRequested,
+      title: '퇴사 요청',
+      body: '$workerName님이 ${resignDate.month}/${resignDate.day}자 퇴사를 요청했습니다.',
+      data: {
+        'applicationId': applicationId,
+        'action': 'resignRequest',
+        'businessName': businessName,
+      },
+      createdAt: DateTime.now(),
+    );
+  }
+
+  /// 퇴사 승인 알림 생성 (근무자에게)
+  static NotificationModel createResignApproved({
+    required String userId,
+    required String businessName,
+    required String businessId,
+    required DateTime actualResignDate,
+    required String applicationId,
+  }) {
+    return NotificationModel(
+      id: '',
+      userId: userId,
+      type: NotificationType.resignApproved,
+      title: '퇴사 승인',
+      body: '$businessName에서 퇴사 요청을 승인했습니다.\n퇴사일: ${actualResignDate.month}/${actualResignDate.day}',
+      data: {
+        'applicationId': applicationId,
+        'businessId': businessId,
+        'action': 'applicationDetail',
+      },
+      createdAt: DateTime.now(),
+    );
+  }
+
+  /// 퇴사 거절 알림 생성 (근무자에게)
+  static NotificationModel createResignRejected({
+    required String userId,
+    required String businessName,
+    required String businessId,
+    required String applicationId,
+    String? rejectReason,
+  }) {
+    return NotificationModel(
+      id: '',
+      userId: userId,
+      type: NotificationType.resignRejected,
+      title: '퇴사 거절',
+      body: '$businessName에서 퇴사 요청을 거절했습니다.${rejectReason != null ? '\n사유: $rejectReason' : ''}',
+      data: {
+        'applicationId': applicationId,
+        'businessId': businessId,
+        'action': 'applicationDetail',
+      },
+      createdAt: DateTime.now(),
+    );
+  }
+
   /// 지원 자동 취소 알림 생성 (시간 충돌로 인한 자동취소)
   static NotificationModel createApplicationAutoCanceled({
     required String userId,
     required String businessName,
+    required String businessId,
     required String workType,
     required DateTime workDate,
     required String applicationId,
@@ -686,6 +846,7 @@ class NotificationModel {
       body: '$businessName $workType 지원이 시간 충돌로 자동 취소되었습니다.\n확정된 근무: $conflictingBusinessName ($conflictingTime)',
       data: {
         'applicationId': applicationId,
+        'businessId': businessId,
         'reason': 'SCHEDULE_CONFLICT',
         'action': 'applicationDetail',
       },
@@ -696,11 +857,12 @@ class NotificationModel {
   static NotificationModel createTOCanceled({
     required String userId,
     required String businessName,
+    required String businessId,
     required String toTitle,
     required DateTime workDate,
-    required String status,  // 'PENDING' 또는 'CONFIRMED'
+    required String status,  // AppStatus.pending 또는 AppStatus.confirmed
   }) {
-    final statusText = status == 'CONFIRMED' ? '확정된 근무' : '지원';
+    final statusText = AppStatus.confirmedStatuses.contains(status) ? '확정된 근무' : '지원';
     return NotificationModel(
       id: '',
       userId: userId,
@@ -708,6 +870,7 @@ class NotificationModel {
       title: '공고 취소',
       body: '$businessName의 "$toTitle" 공고가 취소되어 $statusText이(가) 무효화되었습니다.\n근무일: ${workDate.month}/${workDate.day}',
       data: {
+        'businessId': businessId,
         'action': 'toList',
         'reason': 'TO_DELETED',
       },
@@ -718,6 +881,7 @@ class NotificationModel {
   static NotificationModel createWorkTypeChanged({
     required String userId,
     required String businessName,
+    required String businessId,
     required DateTime workDate,
     required String originalWorkType,
     required String newWorkType,
@@ -737,7 +901,43 @@ class NotificationModel {
       body: '$businessName에서 귀하의 파트가 변경되었습니다.\n$originalWorkType → $newWorkType ($formattedWage원)\n근무일: ${workDate.month}/${workDate.day}',
       data: {
         'applicationId': applicationId,
+        'businessId': businessId,
         'action': 'applicationDetail',
+      },
+      createdAt: DateTime.now(),
+    );
+  }
+
+  /// 8일차 4대보험 소급 공제 알림 생성 (근로자에게)
+  static NotificationModel createRetroactiveDeductionAlert({
+    required String userId,
+    required String businessName,
+    required String businessId,
+    required DateTime workDate,
+    required int retroactiveAmount,
+    required int grossWage,
+    required int netWage,
+    required String attendanceId,
+  }) {
+    final retroFormatted = retroactiveAmount.toString().replaceAllMapped(
+      RegExp(r'(\d{1,3})(?=(\d{3})+(?!\d))'),
+      (Match m) => '${m[1]},',
+    );
+    final netFormatted = netWage.toString().replaceAllMapped(
+      RegExp(r'(\d{1,3})(?=(\d{3})+(?!\d))'),
+      (Match m) => '${m[1]},',
+    );
+    return NotificationModel(
+      id: '',
+      userId: userId,
+      type: NotificationType.wageConfirmed,
+      title: '4대보험 소급 공제 안내',
+      body: '$businessName ${workDate.month}/${workDate.day} 근무는 이번 달 8번째 근무일로, '
+          '1~7일분 4대보험 $retroFormatted원이 소급 공제됩니다.\n실수령액: $netFormatted원',
+      data: {
+        'attendanceId': attendanceId,
+        'businessId': businessId,
+        'action': 'wageDetail',
       },
       createdAt: DateTime.now(),
     );
@@ -747,6 +947,7 @@ class NotificationModel {
   static NotificationModel createWageConfirmed({
     required String userId,
     required String businessName,
+    required String businessId,
     required DateTime workDate,
     required int totalWage,
     required String attendanceId,
@@ -755,7 +956,7 @@ class NotificationModel {
       RegExp(r'(\d{1,3})(?=(\d{3})+(?!\d))'),
       (Match m) => '${m[1]},',
     );
-    
+
     return NotificationModel(
       id: '',
       userId: userId,
@@ -764,8 +965,157 @@ class NotificationModel {
       body: '$businessName ${workDate.month}/${workDate.day} 근무 급여가 정산되었습니다.\n정산 금액: $formattedWage원',
       data: {
         'attendanceId': attendanceId,
+        'businessId': businessId,
         'action': 'wageDetail',
       },
+      createdAt: DateTime.now(),
+    );
+  }
+
+  /// 계약 만료 D-15 알림 (관리자에게)
+  static NotificationModel createContractExpiringReminder({
+    required String userId,
+    required String workerName,
+    required String businessName,
+    required DateTime expiryDate,
+    required String applicationId,
+  }) {
+    return NotificationModel(
+      id: '',
+      userId: userId,
+      type: NotificationType.contractExpiringReminder,
+      title: '계약 만료 임박',
+      body: '$workerName님의 계약이 ${expiryDate.month}/${expiryDate.day}에 만료됩니다. 연장 또는 종료를 선택해 주세요.',
+      data: {
+        'applicationId': applicationId,
+        'expiryDate': expiryDate.toIso8601String(),
+        'screen': 'contractRenewal',
+      },
+      createdAt: DateTime.now(),
+    );
+  }
+
+  /// 계약 연장 확정 알림 (근무자에게)
+  static NotificationModel createContractRenewed({
+    required String userId,
+    required String businessName,
+    required DateTime newEndDate,
+    required String applicationId,
+  }) {
+    return NotificationModel(
+      id: '',
+      userId: userId,
+      type: NotificationType.contractRenewed,
+      title: '계약 연장 확정',
+      body: '$businessName과의 계약이 ${newEndDate.month}/${newEndDate.day}까지 연장되었습니다.',
+      data: {
+        'applicationId': applicationId,
+        'screen': 'mySchedule',
+      },
+      createdAt: DateTime.now(),
+    );
+  }
+
+  /// 계약 종료 통보 알림 (근무자에게)
+  static NotificationModel createContractTerminating({
+    required String userId,
+    required String businessName,
+    required String businessId,
+    required DateTime endDate,
+    required String applicationId,
+  }) {
+    return NotificationModel(
+      id: '',
+      userId: userId,
+      type: NotificationType.contractTerminating,
+      title: '계약 종료 통보',
+      body: '$businessName과의 계약이 ${endDate.month}/${endDate.day}에 종료됩니다.',
+      data: {
+        'applicationId': applicationId,
+        'businessId': businessId,
+        'screen': 'mySchedule',
+      },
+      createdAt: DateTime.now(),
+    );
+  }
+
+  static NotificationModel createWageCancelConfirmed({
+    required String userId,
+    required String businessName,
+    required String businessId,
+    required DateTime workDate,
+    required String attendanceId,
+  }) {
+    return NotificationModel(
+      id: '',
+      userId: userId,
+      type: NotificationType.wageCancelConfirmed,
+      title: '급여 수정 중',
+      body: '$businessName ${workDate.month}/${workDate.day} 근무 급여가 수정 중입니다. 잠시 후 다시 확인해주세요.',
+      data: {
+        'attendanceId': attendanceId,
+        'businessId': businessId,
+        'action': 'wageDetail',
+      },
+      createdAt: DateTime.now(),
+    );
+  }
+
+  /// 멤버 초대 알림 생성 (초대받은 근무자에게)
+  static NotificationModel createMemberInvitation({
+    required String targetUid,
+    required String businessName,
+    required String businessId,
+    required String invitedByName,
+    required String invitationId,
+  }) {
+    return NotificationModel(
+      id: '',
+      userId: targetUid,
+      type: NotificationType.memberInvitationReceived,
+      title: '관리자 초대',
+      body: '$invitedByName님이 $businessName의 관리자로 초대했습니다.',
+      data: {
+        'invitationId': invitationId,
+        'businessId': businessId,
+        'action': 'memberInvitation',
+      },
+      createdAt: DateTime.now(),
+    );
+  }
+
+  /// 초대 수락 알림 (초대한 관리자에게)
+  static NotificationModel createMemberInvitationAccepted({
+    required String adminUid,
+    required String acceptedName,
+    required String businessName,
+    required String businessId,
+  }) {
+    return NotificationModel(
+      id: '',
+      userId: adminUid,
+      type: NotificationType.memberInvitationAccepted,
+      title: '초대 수락됨',
+      body: '$acceptedName님이 $businessName 관리자 초대를 수락했습니다.',
+      data: {'action': 'memberManagement', 'businessId': businessId},
+      createdAt: DateTime.now(),
+    );
+  }
+
+  /// 초대 거절 알림 (초대한 관리자에게)
+  static NotificationModel createMemberInvitationRejected({
+    required String adminUid,
+    required String rejectedName,
+    required String businessName,
+    required String businessId,
+  }) {
+    return NotificationModel(
+      id: '',
+      userId: adminUid,
+      type: NotificationType.memberInvitationRejected,
+      title: '초대 거절됨',
+      body: '$rejectedName님이 $businessName 관리자 초대를 거절했습니다.',
+      data: {'action': 'memberManagement', 'businessId': businessId},
       createdAt: DateTime.now(),
     );
   }

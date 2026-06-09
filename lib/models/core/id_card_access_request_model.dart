@@ -1,5 +1,3 @@
-// lib/models/core/id_card_access_request_model.dart
-
 import 'package:cloud_firestore/cloud_firestore.dart';
 
 /// 신분증 열람 요청 사유
@@ -68,19 +66,22 @@ class IdCardAccessRequestModel {
       reason: _reasonFromString(map['reason'] ?? 'other'),
       customReason: map['customReason'],
       status: _statusFromString(map['status'] ?? 'pending'),
-      requestedAt: (map['requestedAt'] as Timestamp?)?.toDate().toLocal() ?? DateTime.now(),  // 🔥 .toLocal() 추가
-      respondedAt: (map['respondedAt'] as Timestamp?)?.toDate().toLocal(),  // 🔥 .toLocal() 추가
-      expiresAt: (map['expiresAt'] as Timestamp?)?.toDate().toLocal(),  // 🔥 .toLocal() 추가
+      requestedAt: map['requestedAt'] != null
+          ? (map['requestedAt'] as Timestamp).toDate().toLocal()
+          : (throw ArgumentError('IdCardAccessRequestModel: requestedAt 필드 누락 (id: $id)')),
+      respondedAt: (map['respondedAt'] as Timestamp?)?.toDate().toLocal(),
+      expiresAt: (map['expiresAt'] as Timestamp?)?.toDate().toLocal(),
       applicationId: map['applicationId'],
       rejectionReason: map['rejectionReason'],
     );
   }
 
   factory IdCardAccessRequestModel.fromFirestore(DocumentSnapshot doc) {
-    return IdCardAccessRequestModel.fromMap(
-      doc.data() as Map<String, dynamic>, 
-      doc.id,
-    );
+    final raw = doc.data();
+    if (raw == null) {
+      throw ArgumentError('IdCardAccessRequestModel.fromFirestore: 문서 데이터 없음 (id: ${doc.id})');
+    }
+    return IdCardAccessRequestModel.fromMap(raw as Map<String, dynamic>, doc.id);
   }
 
   /// Firestore에 저장
@@ -103,9 +104,7 @@ class IdCardAccessRequestModel {
     };
   }
 
-  // ═══════════════════════════════════════════════════════════
-  // Getter
-  // ═══════════════════════════════════════════════════════════
+  // ── Getter ────────────────────────────────────────────────
 
   /// 승인되었고 아직 유효한지
   bool get isValidAccess {
@@ -160,9 +159,7 @@ class IdCardAccessRequestModel {
     return diff > 0 ? diff : 0;
   }
 
-  // ═══════════════════════════════════════════════════════════
-  // Static Helper
-  // ═══════════════════════════════════════════════════════════
+  // ── Static Helper ─────────────────────────────────────────
 
   /// 요청 사유 목록 (선택용)
   static List<Map<String, dynamic>> get reasonOptions => [

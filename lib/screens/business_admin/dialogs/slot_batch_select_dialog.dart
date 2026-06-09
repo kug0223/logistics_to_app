@@ -2,12 +2,12 @@
 
 import '../../../models/core/slot_model.dart';
 import '../../../models/core/to_model.dart';
-import '../../../models/core/work_detail_data.dart';
 import '../../../services/firestore_service.dart';
 import '../../../utils/responsive_helper.dart';
 import '../../../widgets/dialogs/styled_dialog.dart';
 import '../../../theme/app_colors.dart';
 import '../../../widgets/common/app_checkbox.dart';
+import '../../../widgets/common/loading_widget.dart';
 
 /// 배치 작업용 날짜(슬롯) 다중선택 다이얼로그
 class SlotBatchSelectDialog extends StatefulWidget {
@@ -66,54 +66,33 @@ class _SlotBatchSelectDialogState extends State<SlotBatchSelectDialog> {
   }
 
   Future<void> _loadSlots() async {
-    final slots = await widget.firestoreService.getSlots(widget.to.id);
-    slots.sort((a, b) => a.date.compareTo(b.date));
+    try {
+      final slots = await widget.firestoreService.getSlots(widget.to.id);
+      slots.sort((a, b) => a.date.compareTo(b.date));
 
-    final now = DateTime.now();
-    final today = DateTime(now.year, now.month, now.day);
+      final now = DateTime.now();
+      final today = DateTime(now.year, now.month, now.day);
 
-    final filtered = widget.closedAndReopenable
-        ? slots.where((s) {
-            if (!s.isManualClosed || s.date.isBefore(today)) return false;
-            // 모든 업무상세의 지원마감이 이미 지난 슬롯은 재오픈해도 의미 없음
-            if (s.workDetails.isNotEmpty &&
-                s.workDetails.every((d) {
-                  final deadline = d.applicationDeadline ?? _computeDeadline(d, s);
-                  return deadline != null && now.isAfter(deadline);
-                })) {
-              return false;
-            }
-            return true;
-          }).toList()
-        : widget.openOnly
-            ? slots.where((s) => !s.isEffectivelyClosed && !_isSlotTimeExpired(s)).toList()
-            : slots;
+      if (!mounted) return;
+      final filtered = widget.closedAndReopenable
+          ? slots.where((s) {
+              if (!s.isManualClosed || s.date.isBefore(today)) return false;
+              if (s.workDetails.isNotEmpty &&
+                  s.workDetails.every((d) => d.isTimeExpired)) { return false; }
+              return true;
+            }).toList()
+          : widget.openOnly
+              ? slots.where((s) => !s.isEffectivelyClosed).toList()
+              : slots;
 
-    setState(() {
-      _slots = filtered;
-      _isLoading = false;
-    });
-  }
-
-  DateTime? _computeDeadline(WorkDetailData d, SlotModel s) {
-    final to = widget.to;
-    if (to.deadlineType != 'HOURS_BEFORE' || (to.hoursBeforeStart ?? 0) <= 0) return null;
-    final parts = d.startTime.split(':');
-    if (parts.length != 2) return null;
-    return DateTime(s.date.year, s.date.month, s.date.day,
-            int.parse(parts[0]), int.parse(parts[1]))
-        .subtract(Duration(hours: to.hoursBeforeStart!));
-  }
-
-  /// 슬롯의 모든 업무상세가 시간만료됐는지 확인
-  bool _isSlotTimeExpired(SlotModel slot) {
-    if (slot.workDetails.isEmpty) return false;
-    final now = DateTime.now();
-    return slot.workDetails.every((d) {
-      if (d.isClosed) return true;
-      final deadline = d.applicationDeadline ?? _computeDeadline(d, slot);
-      return deadline != null && now.isAfter(deadline);
-    });
+      setState(() {
+        _slots = filtered;
+        _isLoading = false;
+      });
+    } catch (e) {
+      debugPrint('❌ 슬롯 로드 실패: $e');
+      if (mounted) setState(() => _isLoading = false);
+    }
   }
 
   bool get _allSelected => _slots.isNotEmpty && _selectedIds.length == _slots.length;
@@ -158,7 +137,7 @@ class _SlotBatchSelectDialogState extends State<SlotBatchSelectDialog> {
 
   Widget _buildContent() {
     if (_isLoading) {
-      return const Center(child: CircularProgressIndicator());
+      return const LoadingWidget();
     }
 
     if (_slots.isEmpty) {
@@ -318,7 +297,7 @@ class _SlotBatchSelectDialogState extends State<SlotBatchSelectDialog> {
     String label;
     IconData icon;
 
-    if (slot.isEffectivelyClosed || _isSlotTimeExpired(slot)) {
+    if (slot.isEffectivelyClosed) {
       color = AppColors.grey600;
       bgColor = AppColors.grey100;
       label = '마감';

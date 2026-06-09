@@ -7,6 +7,8 @@ import '../../utils/toast_helper.dart';
 import '../../utils/dialog_helper.dart';
 import '../../theme/app_colors.dart';
 import '../../models/settings/trust_settings_model.dart';
+import '../../widgets/common/gradient_scaffold.dart';
+import '../../widgets/common/loading_widget.dart';
 
 /// 신뢰도 규칙 설정 화면
 class TrustRulesSettingsScreen extends StatefulWidget {
@@ -111,8 +113,8 @@ class _TrustRulesSettingsScreenState extends State<TrustRulesSettingsScreen> {
       confirmText: '저장',
     );
     
-    if (!confirmed) return;
-    
+    if (!confirmed || !mounted) return;
+
     setState(() => _isSaving = true);
     
     try {
@@ -154,12 +156,12 @@ class _TrustRulesSettingsScreenState extends State<TrustRulesSettingsScreen> {
       );
       
       await _firestore.collection('settings').doc('trust_rules').set(updatedSettings.toMap());
-      
+
       _settings = updatedSettings;
-      ToastHelper.showSuccess('설정이 저장되었습니다');
+      if (mounted) ToastHelper.showSuccess('설정이 저장되었습니다');
     } catch (e) {
       debugPrint('❌ 설정 저장 실패: $e');
-      ToastHelper.showError('설정 저장에 실패했습니다');
+      if (mounted) ToastHelper.showError('설정 저장에 실패했습니다');
     } finally {
       if (mounted) {
         setState(() => _isSaving = false);
@@ -197,25 +199,24 @@ class _TrustRulesSettingsScreenState extends State<TrustRulesSettingsScreen> {
       confirmText: '복원',
     );
     
-    if (!confirmed) return;
-    
+    if (!confirmed || !mounted) return;
+
     setState(() => _isSaving = true);
-    
+
     try {
       _settings = TrustSettingsModel.defaults();
       await _firestore.collection('settings').doc('trust_rules').set(_settings!.toMap());
-      
-      // 컨트롤러 초기화
+
+      // 컨트롤러 초기화 (기존 컨트롤러 먼저 dispose)
+      for (final c in _ruleControllers.values) { c.dispose(); }
       _ruleControllers.clear();
       _populateControllers();
-      
-      ToastHelper.showSuccess('기본값으로 복원되었습니다');
+
+      if (mounted) ToastHelper.showSuccess('기본값으로 복원되었습니다');
     } catch (e) {
-      ToastHelper.showError('복원에 실패했습니다');
+      if (mounted) ToastHelper.showError('복원에 실패했습니다');
     } finally {
-      if (mounted) {
-        setState(() => _isSaving = false);
-      }
+      if (mounted) setState(() => _isSaving = false);
     }
   }
 
@@ -223,32 +224,19 @@ class _TrustRulesSettingsScreenState extends State<TrustRulesSettingsScreen> {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     
-    return Scaffold(
-      appBar: AppBar(
-        title: Text(
-          '신뢰도 규칙',
-          style: ResponsiveHelper.subtitleStyle(context).copyWith(
-            color: Colors.white,
-            fontWeight: FontWeight.bold,
+    return GradientScaffold(
+      title: '신뢰도 규칙',
+      actions: [
+        TextButton(
+          onPressed: _isSaving ? null : _resetToDefaults,
+          child: Text(
+            '초기화',
+            style: ResponsiveHelper.bodyStyle(context).copyWith(color: Colors.white),
           ),
         ),
-        backgroundColor: theme.primaryColor,
-        foregroundColor: Colors.white,
-        elevation: 0,
-        actions: [
-          TextButton(
-            onPressed: _isSaving ? null : _resetToDefaults,
-            child: Text(
-              '초기화',
-              style: ResponsiveHelper.bodyStyle(context).copyWith(
-                color: Colors.white.withValues(alpha: 0.8),
-              ),
-            ),
-          ),
-        ],
-      ),
+      ],
       body: _isLoading
-          ? const Center(child: CircularProgressIndicator())
+          ? const LoadingWidget()
           : SingleChildScrollView(
               padding: ResponsiveHelper.cardPadding(context),
               child: Column(

@@ -69,6 +69,6 @@ class DefaultFirebaseOptions {
     messagingSenderId: '635507076709',
     projectId: 'logistics-to-system',
     storageBucket: 'logistics-to-system.firebasestorage.app',
-    iosBundleId: 'com.example.logisticsToApp',
+    iosBundleId: 'com.alfit.app',
   );
 }

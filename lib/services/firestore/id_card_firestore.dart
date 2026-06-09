@@ -40,21 +40,21 @@ extension IdCardFirestore on FirestoreService {
         return null;
       }
       
-      // 2. 유효한 승인이 있는지 확인
+      // 2. 유효한 승인이 있는지 확인 — expiresAt > now 조건을 서버에서 필터링
+      final now = Timestamp.fromDate(DateTime.now());
       final existingApproved = await _firestore
           .collection('idCardAccessRequests')
           .where('requesterId', isEqualTo: requesterId)
           .where('targetUserId', isEqualTo: targetUserId)
           .where('status', isEqualTo: 'approved')
+          .where('expiresAt', isGreaterThan: now)
+          .limit(1)
           .get();
-      
-      for (var doc in existingApproved.docs) {
-        final expiresAt = (doc.data()['expiresAt'] as Timestamp?)?.toDate();
-        if (expiresAt != null && DateTime.now().isBefore(expiresAt)) {
-          debugPrint('⚠️ 이미 유효한 열람 권한이 있습니다');
-          ToastHelper.showInfo('이미 열람 권한이 있습니다.');
-          return doc.id;
-        }
+
+      if (existingApproved.docs.isNotEmpty) {
+        debugPrint('⚠️ 이미 유효한 열람 권한이 있습니다');
+        ToastHelper.showInfo('이미 열람 권한이 있습니다.');
+        return existingApproved.docs.first.id;
       }
       
       // 3. 요청 생성
@@ -119,15 +119,19 @@ extension IdCardFirestore on FirestoreService {
         'expiresAt': Timestamp.fromDate(expiresAt),
       });
       
-      // 2. 알림 생성 (관리자에게)
-      await createNotification(
-        NotificationModel.createIdCardAccessApproved(
-          userId: data['requesterId'],
-          targetUserName: data['targetUserName'],
-          requestId: requestId,
-        ),
-      );
-      
+      // 2. 알림 생성 — 실패해도 승인 결과에 영향 없음
+      try {
+        await createNotification(
+          NotificationModel.createIdCardAccessApproved(
+            userId: data['requesterId'],
+            targetUserName: data['targetUserName'],
+            requestId: requestId,
+          ),
+        );
+      } catch (e) {
+        debugPrint('⚠️ [approveIdCardAccessRequest] 알림 생성 실패: $e');
+      }
+
       debugPrint('✅ [approveIdCardAccessRequest] 승인 완료');
       return true;
     } catch (e) {
@@ -158,16 +162,20 @@ extension IdCardFirestore on FirestoreService {
         'rejectionReason': reason,
       });
       
-      // 2. 알림 생성 (관리자에게)
-      await createNotification(
-        NotificationModel.createIdCardAccessRejected(
-          userId: data['requesterId'],
-          targetUserName: data['targetUserName'],
-          requestId: requestId,
-          rejectionReason: reason,
-        ),
-      );
-      
+      // 2. 알림 생성 — 실패해도 거절 결과에 영향 없음
+      try {
+        await createNotification(
+          NotificationModel.createIdCardAccessRejected(
+            userId: data['requesterId'],
+            targetUserName: data['targetUserName'],
+            requestId: requestId,
+            rejectionReason: reason,
+          ),
+        );
+      } catch (e) {
+        debugPrint('⚠️ [rejectIdCardAccessRequest] 알림 생성 실패: $e');
+      }
+
       debugPrint('✅ [rejectIdCardAccessRequest] 거절 완료');
       return true;
     } catch (e) {
@@ -252,7 +260,7 @@ extension IdCardFirestore on FirestoreService {
       final snapshot = await _firestore
           .collection('applications')
           .where('uid', isEqualTo: uid)
-          .where('status', isEqualTo: 'CONFIRMED')
+          .where('status', whereIn: ['CONFIRMED', 'CONTRACT_PENDING'])
           .where('terminationStatus', isEqualTo: 'PENDING')
           .get();
 

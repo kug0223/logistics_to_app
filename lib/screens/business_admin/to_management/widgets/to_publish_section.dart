@@ -9,7 +9,7 @@ import '../../../../widgets/app_select_field.dart';
 /// ✨ TO 공개 설정 섹션
 /// create_to_screen, edit_to_screen에서 공통으로 사용
 class TOPublishSection extends StatelessWidget {
-  /// 공개 모드: 'immediate' (즉시) | 'scheduled' (예약)
+  /// 공개 모드: 'immediate' (즉시) | 'scheduled' (예약) | 'draft' (미공개)
   final String publishMode;
   final void Function(String mode) onPublishModeChanged;
   
@@ -27,6 +27,10 @@ class TOPublishSection extends StatelessWidget {
   /// 장기 근무 여부
   final bool isLongTerm;
 
+  /// 게시 기간 (일수): null=무기한, 7, 14, 30, 60
+  final int? postingDurationDays;
+  final void Function(int? days)? onPostingDurationChanged;
+
   const TOPublishSection({
     super.key,
     required this.publishMode,
@@ -37,6 +41,8 @@ class TOPublishSection extends StatelessWidget {
     required this.onTimeChanged,
     this.previewDates = const [],
     this.isLongTerm = false,
+    this.postingDurationDays,
+    this.onPostingDurationChanged,
   });
 
   @override
@@ -77,17 +83,36 @@ class TOPublishSection extends StatelessWidget {
             subtitle: '지정한 시간에 자동 공개',
             icon: Icons.schedule,
           ),
-          
+
+          SizedBox(height: ResponsiveHelper.spacing(context, 12)),
+
+          // 미공개(초안) 옵션
+          _buildRadioOption(
+            context,
+            theme,
+            value: 'draft',
+            title: '미공개 저장',
+            subtitle: '지원자에게 노출되지 않음 · 나중에 직접 공개',
+            icon: Icons.visibility_off_outlined,
+          ),
+
           // 예약 설정 상세 (예약 모드일 때만)
           if (publishMode == 'scheduled') ...[
             SizedBox(height: ResponsiveHelper.spacing(context, 16)),
             _buildScheduleSettings(context, theme),
-            
+
             // 미리보기
             if (previewDates.isNotEmpty) ...[
               SizedBox(height: ResponsiveHelper.spacing(context, 16)),
               _buildPreview(context, theme),
             ],
+          ],
+
+          if (onPostingDurationChanged != null) ...[
+            SizedBox(height: ResponsiveHelper.spacing(context, 16)),
+            Divider(color: AppColors.grey200),
+            SizedBox(height: ResponsiveHelper.spacing(context, 16)),
+            _buildPostingDurationSection(context, theme),
           ],
         ],
       ),
@@ -333,6 +358,85 @@ class TOPublishSection extends StatelessWidget {
               ),
             ),
         ],
+      ),
+    );
+  }
+
+  static const _durationOptions = [
+    (7, '7일'),
+    (14, '14일'),
+    (30, '30일'),
+    (60, '60일'),
+  ];
+
+  Widget _buildPostingDurationSection(BuildContext context, ThemeData theme) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          '게시 기간',
+          style: ResponsiveHelper.bodyStyle(context).copyWith(fontWeight: FontWeight.bold),
+        ),
+        SizedBox(height: ResponsiveHelper.spacing(context, 4)),
+        Text(
+          '게시 기간이 만료되면 공고가 자동으로 마감됩니다.',
+          style: ResponsiveHelper.smallStyle(context, color: AppColors.grey600),
+        ),
+        SizedBox(height: ResponsiveHelper.spacing(context, 10)),
+        Wrap(
+          spacing: ResponsiveHelper.spacing(context, 8),
+          runSpacing: ResponsiveHelper.spacing(context, 8),
+          children: [
+            // 무기한 칩 (선택된 기간 재탭 시 null로 초기화)
+            _buildDurationChip(
+              context, theme, '무기한',
+              postingDurationDays == null,
+              () => onPostingDurationChanged?.call(null),
+            ),
+            ..._durationOptions.map(((int, String) opt) {
+              final (days, label) = opt;
+              final isSelected = postingDurationDays == days;
+              return _buildDurationChip(context, theme, label, isSelected, () {
+                // 이미 선택된 칩 재탭 → 무기한(null)으로 해제
+                onPostingDurationChanged?.call(isSelected ? null : days);
+              });
+            }),
+          ],
+        ),
+      ],
+    );
+  }
+
+  Widget _buildDurationChip(
+    BuildContext context,
+    ThemeData theme,
+    String label,
+    bool isSelected,
+    VoidCallback onTap,
+  ) {
+    return GestureDetector(
+      onTap: onTap,
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 180),
+        padding: EdgeInsets.symmetric(
+          horizontal: ResponsiveHelper.spacing(context, 14),
+          vertical: ResponsiveHelper.spacing(context, 8),
+        ),
+        decoration: BoxDecoration(
+          color: isSelected ? theme.primaryColor : AppColors.grey100,
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(
+            color: isSelected ? theme.primaryColor : AppColors.grey300,
+            width: isSelected ? 2 : 1,
+          ),
+        ),
+        child: Text(
+          label,
+          style: ResponsiveHelper.smallStyle(context).copyWith(
+            color: isSelected ? Colors.white : AppColors.grey700,
+            fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+          ),
+        ),
       ),
     );
   }

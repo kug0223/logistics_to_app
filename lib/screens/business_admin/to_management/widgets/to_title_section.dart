@@ -62,6 +62,12 @@ class TOTitleSection extends StatelessWidget {
                   if (value == null || value.trim().isEmpty) {
                     return '공고 제목을 입력해주세요';
                   }
+                  if (value.trim().length < 2) {
+                    return '제목은 최소 2자 이상이어야 합니다';
+                  }
+                  if (value.trim().length > 100) {
+                    return '제목은 100자 이내여야 합니다';
+                  }
                   return null;
                 },
           ),

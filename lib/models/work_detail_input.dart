@@ -1,9 +1,11 @@
+import 'core/insurance_rate_model.dart';
+
 /// 업무 상세 입력 데이터 클래스
 class WorkDetailInput {
   final String? workType;
   final String workTypeIcon;
   final String workTypeColor;
-  final String? workTypeBackgroundColor; // ✅ 추가
+  final String? workTypeBackgroundColor;
   final int? wage;
   final int? requiredCount;
   final String? startTime;
@@ -17,11 +19,18 @@ class WorkDetailInput {
   /// null이면 최저시급 적용
   final int? baseHourlyWage;
 
-  /// 주휴수당 포함 여부
-  final bool weeklyHolidayIncluded;
+  /// 급여 지급 유형: 'same_day' | 'next_day' | 'weekly' | 'monthly'
+  final String? payScheduleType;
+  /// 지급 기준일: 주급=1~7(월~일), 월급=1~31(31=말일), 당일/익일=null
+  final int? payScheduleDay;
+  /// 입금 예정 시간 'HH:mm' (선택)
+  final String? payScheduleTime;
 
-  /// 소정근로일 수 (주휴미포함 시, 1~7)
-  final int? scheduledDaysPerWeek;
+  /// 공제 방식: InsuranceRateModel.typeNone | typeFreelancer33 | typeDailyWorker | typeDailyAuto8 | typeFourInsuranceFixed
+  final String taxDeductionType;
+
+  /// 업무 설명 (선택 사항)
+  final String? description;
 
   WorkDetailInput({
     this.workType,
@@ -38,8 +47,11 @@ class WorkDetailInput {
     this.nightIncluded = false,
     this.breakMinutes = 0,
     this.baseHourlyWage,
-    this.weeklyHolidayIncluded = false,
-    this.scheduledDaysPerWeek,
+    this.payScheduleType,
+    this.payScheduleDay,
+    this.payScheduleTime,
+    this.taxDeductionType = InsuranceRateModel.typeNone,
+    this.description,
   });
 
   bool get isValid =>
@@ -54,7 +66,7 @@ class WorkDetailInput {
       'workType': workType!,
       'workTypeIcon': workTypeIcon,
       'workTypeColor': workTypeColor,
-      'workTypeBackgroundColor': workTypeBackgroundColor, // ✅ 추가
+      'workTypeBackgroundColor': workTypeBackgroundColor,
       'wage': wage!,
       'wageType': wageType,
       'requiredCount': requiredCount!,
@@ -65,8 +77,11 @@ class WorkDetailInput {
       if (nightIncluded) 'nightIncluded': true,
       if (breakMinutes > 0) 'breakMinutes': breakMinutes,
       if (baseHourlyWage != null) 'baseHourlyWage': baseHourlyWage,
-      if (weeklyHolidayIncluded) 'weeklyHolidayIncluded': true,
-      if (scheduledDaysPerWeek != null) 'scheduledDaysPerWeek': scheduledDaysPerWeek,
+      if (payScheduleType != null) 'payScheduleType': payScheduleType,
+      if (payScheduleDay != null) 'payScheduleDay': payScheduleDay,
+      if (payScheduleTime != null) 'payScheduleTime': payScheduleTime,
+      if (taxDeductionType != InsuranceRateModel.typeNone) 'taxDeductionType': taxDeductionType,
+      if (description != null) 'description': description,
     };
   }
 }

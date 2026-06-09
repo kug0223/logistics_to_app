@@ -1,6 +1,7 @@
 ﻿import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import '../../../models/core/application_model.dart';
 import '../../../models/core/work_detail_model.dart';
 import '../../../models/core/to_model.dart';
 import '../../../services/firestore_service.dart';
@@ -9,6 +10,7 @@ import '../../../utils/toast_helper.dart';
 import '../../../utils/format_helper.dart';
 import '../../../widgets/work_type_icon.dart';
 import '../../../theme/app_colors.dart';
+import '../../../utils/responsive_helper.dart';
 
 /// 지원하기 확인 다이얼로그
 class ApplyDialog {
@@ -28,10 +30,8 @@ class ApplyDialog {
           children: [
             Text(
               '다음 업무에 지원하시겠습니까?',
-              style: TextStyle(
-                fontSize: 14,
-                color: AppColors.grey700,
-              ),
+              style: ResponsiveHelper.bodyStyle(dialogContext,
+                  color: AppColors.grey700),
             ),
             const SizedBox(height: 16),
             Container(
@@ -57,21 +57,21 @@ class ApplyDialog {
                       Expanded(
                         child: Text(
                           work.workType,
-                          style: const TextStyle(
-                            fontWeight: FontWeight.bold,
-                            fontSize: 15,
-                          ),
+                          style: ResponsiveHelper.bodyStyle(dialogContext)
+                              .copyWith(fontWeight: FontWeight.bold),
                         ),
                       ),
                     ],
                   ),
                   const SizedBox(height: 8),
                   _buildInfoText(
+                    context: dialogContext,
                     icon: Icons.access_time,
                     text: '${work.startTime} ~ ${work.endTime}',
                   ),
                   const SizedBox(height: 4),
                   _buildInfoText(
+                    context: dialogContext,
                     icon: Icons.attach_money,
                     text: FormatHelper.formatWage(work.wage),
                     color: AppColors.successDark,
@@ -107,20 +107,21 @@ class ApplyDialog {
   }
 
   static Widget _buildInfoText({
+    required BuildContext context,
     required IconData icon,
     required String text,
     Color? color,
   }) {
     return Row(
       children: [
-        Icon(icon, size: 14, color: color ?? AppColors.grey600),
+        Icon(icon,
+            size: ResponsiveHelper.iconSize(context, 14),
+            color: color ?? AppColors.grey600),
         const SizedBox(width: 6),
         Text(
           text,
-          style: TextStyle(
-            fontSize: 13,
-            color: color ?? AppColors.grey700,
-          ),
+          style: ResponsiveHelper.smallStyle(context,
+              color: color ?? AppColors.grey700),
         ),
       ],
     );
@@ -164,9 +165,7 @@ class ApplyDialog {
         
         debugPrint('🔍 apply_dialog 중복 체크: status = $status');
         
-        if (status == 'CANCELED' || 
-            status == 'AUTO_CANCELED' || 
-            status == 'REJECTED') {
+        if (AppStatus.inactiveStates.contains(status)) {
           debugPrint('✅ 취소된 지원 → 재지원 허용');
           // 계속 진행
         } else {

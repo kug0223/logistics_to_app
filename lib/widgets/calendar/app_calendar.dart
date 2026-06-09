@@ -41,7 +41,7 @@ class AppCalendar extends StatelessWidget {
     required this.eventLoader,
     this.markerBuilder,
     this.enabledDayPredicate,
-    this.rowHeight = 44,
+    this.rowHeight = 40,
   });
 
   @override
@@ -55,7 +55,8 @@ class AppCalendar extends StatelessWidget {
       lastDay: _lastDay,
       focusedDay: focusedDay,
       calendarFormat: CalendarFormat.month,
-      daysOfWeekHeight: 32,
+      sixWeekMonthsEnforced: true, // 항상 6행 → 달 전환 시 높이 고정
+      daysOfWeekHeight: 28,
       rowHeight: rowHeight,
       selectedDayPredicate: (day) => DateUtils.isSameDay(selectedDay, day),
       enabledDayPredicate: enabledDayPredicate,
@@ -120,7 +121,7 @@ class AppCalendar extends StatelessWidget {
           fontWeight: FontWeight.bold,
         ),
         headerPadding: EdgeInsets.symmetric(
-          vertical: ResponsiveHelper.spacing(context, 12),
+          vertical: ResponsiveHelper.spacing(context, 8),
           horizontal: ResponsiveHelper.spacing(context, 8),
         ),
         leftChevronIcon: Icon(Icons.chevron_left, color: theme.primaryColor, size: 24),

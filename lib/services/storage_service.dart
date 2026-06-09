@@ -7,24 +7,57 @@ import 'package:image_picker/image_picker.dart' show XFile;
 class StorageService {
   final FirebaseStorage _storage = FirebaseStorage.instance;
 
+  static const _validImageExtensions = {
+    '.jpg', '.jpeg', '.png', '.gif', '.webp', '.heic', '.heif'
+  };
+
+  static const _extensionToMime = {
+    '.jpg': 'image/jpeg',
+    '.jpeg': 'image/jpeg',
+    '.png': 'image/png',
+    '.gif': 'image/gif',
+    '.webp': 'image/webp',
+    '.heic': 'image/heic',
+    '.heif': 'image/heif',
+  };
+
+  String? _mimeFromPath(String filePath) {
+    final lower = filePath.toLowerCase();
+    for (final entry in _extensionToMime.entries) {
+      if (lower.endsWith(entry.key)) return entry.value;
+    }
+    return null;
+  }
+
+  bool _isValidImagePath(String filePath) {
+    final lower = filePath.toLowerCase();
+    return _validImageExtensions.any((ext) => lower.endsWith(ext));
+  }
+
   /// 이미지 업로드 후 다운로드 URL 반환
   ///
   /// 웹: XFile로 bytes를 읽어 putData 사용
   /// 모바일: putFile 사용
   Future<String?> uploadImage(String filePath, String storagePath) async {
+    if (!_isValidImagePath(filePath)) {
+      debugPrint('❌ 유효하지 않은 이미지 형식: $filePath');
+      return null;
+    }
     try {
       final ref = _storage.ref().child(storagePath);
+      final contentType = _mimeFromPath(filePath) ?? 'image/jpeg';
+      final metadata = SettableMetadata(contentType: contentType);
 
       if (kIsWeb) {
         final bytes = await XFile(filePath).readAsBytes();
-        await ref.putData(bytes);
+        await ref.putData(bytes, metadata);
       } else {
         final file = File(filePath);
         if (!await file.exists()) {
           debugPrint('❌ 파일이 존재하지 않음: $filePath');
           return null;
         }
-        await ref.putFile(file);
+        await ref.putFile(file, metadata);
       }
 
       final downloadUrl = await ref.getDownloadURL();
@@ -37,10 +70,14 @@ class StorageService {
   }
 
   /// bytes 직접 업로드 (웹에서 XFile.readAsBytes() 결과 전달 시 사용)
-  Future<String?> uploadImageBytes(Uint8List bytes, String storagePath) async {
+  Future<String?> uploadImageBytes(
+    Uint8List bytes,
+    String storagePath, {
+    String contentType = 'image/jpeg',
+  }) async {
     try {
       final ref = _storage.ref().child(storagePath);
-      await ref.putData(bytes);
+      await ref.putData(bytes, SettableMetadata(contentType: contentType));
       final downloadUrl = await ref.getDownloadURL();
       debugPrint('✅ Storage 바이트 업로드 성공: $downloadUrl');
       return downloadUrl;
@@ -128,11 +165,9 @@ class StorageService {
     }
   }
 
-  /// 여러 이미지 일괄 삭제
+  /// 여러 이미지 일괄 삭제 (병렬)
   Future<void> deleteMultipleByUrls(List<String> urls) async {
-    for (final url in urls) {
-      await deleteImageByUrl(url);
-    }
+    await Future.wait(urls.map((url) => deleteImageByUrl(url)));
   }
 
   /// Firebase Storage URL인지 확인

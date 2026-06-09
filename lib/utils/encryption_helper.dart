@@ -29,6 +29,12 @@ class EncryptionHelper {
       _keyMissing = true;
       debugPrint('❌ [EncryptionHelper] 암호화 키가 설정되지 않았습니다!');
       debugPrint('   launch.json 또는 빌드 명령어에 --dart-define 확인하세요');
+      // 릴리즈 빌드에서 키 미설정은 치명적 오류 — 평문 저장 방지
+      if (kReleaseMode) {
+        throw StateError(
+          '[EncryptionHelper] ENCRYPT_KEY / ENCRYPT_IV must be set in release builds.',
+        );
+      }
       return;
     }
 

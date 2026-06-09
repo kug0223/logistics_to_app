@@ -197,7 +197,7 @@ class _AppSelectSheetState<T> extends State<_AppSelectSheet<T>> {
 
   @override
   Widget build(BuildContext context) {
-    final maxHeight = MediaQuery.of(context).size.height * 0.75;
+    final maxHeight = MediaQuery.sizeOf(context).height * 0.75;
 
     return ConstrainedBox(
       constraints: BoxConstraints(maxHeight: maxHeight),
@@ -206,7 +206,10 @@ class _AppSelectSheetState<T> extends State<_AppSelectSheet<T>> {
         children: [
           // 핸들바
           Container(
-            margin: const EdgeInsets.only(top: 12, bottom: 4),
+            margin: EdgeInsets.only(
+              top: ResponsiveHelper.spacing(context, 12),
+              bottom: ResponsiveHelper.spacing(context, 4),
+            ),
             width: 40,
             height: 4,
             decoration: BoxDecoration(
@@ -217,17 +220,17 @@ class _AppSelectSheetState<T> extends State<_AppSelectSheet<T>> {
 
           // 제목 + 닫기
           Padding(
-            padding:
-                const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
+            padding: EdgeInsets.symmetric(
+              horizontal: ResponsiveHelper.spacing(context, 20),
+              vertical: ResponsiveHelper.spacing(context, 8),
+            ),
             child: Row(
               children: [
                 Expanded(
                   child: Text(
                     widget.title,
-                    style: const TextStyle(
-                      fontSize: 16,
-                      fontWeight: FontWeight.bold,
-                    ),
+                    style: ResponsiveHelper.subtitleStyle(context)
+                        .copyWith(fontWeight: FontWeight.bold),
                   ),
                 ),
                 IconButton(
@@ -243,15 +246,21 @@ class _AppSelectSheetState<T> extends State<_AppSelectSheet<T>> {
           // 검색창 (8개 초과 시 자동 표시)
           if (_showSearch)
             Padding(
-              padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+              padding: EdgeInsets.fromLTRB(
+                ResponsiveHelper.spacing(context, 16),
+                0,
+                ResponsiveHelper.spacing(context, 16),
+                ResponsiveHelper.spacing(context, 8),
+              ),
               child: TextField(
                 controller: _searchController,
                 decoration: InputDecoration(
                   hintText: '검색',
-                  hintStyle:
-                      TextStyle(color: AppColors.grey400, fontSize: 14),
+                  hintStyle: ResponsiveHelper.bodyStyle(context,
+                      color: AppColors.grey400),
                   prefixIcon: Icon(Icons.search,
-                      size: 20, color: AppColors.grey400),
+                      size: ResponsiveHelper.iconSize(context, 20),
+                      color: AppColors.grey400),
                   contentPadding: const EdgeInsets.symmetric(
                       horizontal: 16, vertical: 10),
                   filled: true,
@@ -273,8 +282,8 @@ class _AppSelectSheetState<T> extends State<_AppSelectSheet<T>> {
                     padding: const EdgeInsets.all(32),
                     child: Text(
                       '검색 결과가 없습니다',
-                      style: TextStyle(
-                          color: AppColors.grey400, fontSize: 14),
+                      style: ResponsiveHelper.bodyStyle(context,
+                          color: AppColors.grey400),
                       textAlign: TextAlign.center,
                     ),
                   )
@@ -290,8 +299,10 @@ class _AppSelectSheetState<T> extends State<_AppSelectSheet<T>> {
                       return InkWell(
                         onTap: () => Navigator.pop(context, item),
                         child: Padding(
-                          padding: const EdgeInsets.symmetric(
-                              horizontal: 16, vertical: 13),
+                          padding: EdgeInsets.symmetric(
+                            horizontal: ResponsiveHelper.spacing(context, 16),
+                            vertical: ResponsiveHelper.spacing(context, 13),
+                          ),
                           child: Row(
                             children: [
                               if (widget.leadingOf != null) ...[
@@ -301,21 +312,22 @@ class _AppSelectSheetState<T> extends State<_AppSelectSheet<T>> {
                               Expanded(
                                 child: Text(
                                   widget.labelOf(item),
-                                  style: TextStyle(
-                                    fontWeight: isSelected
-                                        ? FontWeight.bold
-                                        : FontWeight.normal,
+                                  style: ResponsiveHelper.bodyStyle(
+                                    context,
                                     color: isSelected
                                         ? widget.theme.primaryColor
                                         : AppColors.textPrimary,
-                                    fontSize: 15,
+                                  ).copyWith(
+                                    fontWeight: isSelected
+                                        ? FontWeight.bold
+                                        : FontWeight.normal,
                                   ),
                                 ),
                               ),
                               if (isSelected)
                                 Icon(Icons.check,
                                     color: widget.theme.primaryColor,
-                                    size: 20),
+                                    size: ResponsiveHelper.iconSize(context, 20)),
                             ],
                           ),
                         ),

@@ -1,5 +1,3 @@
-// lib/models/core/schedule_change_request_model.dart
-
 import 'package:cloud_firestore/cloud_firestore.dart';
 
 /// 스케줄 변경 요청 타입
@@ -7,8 +5,8 @@ enum RequestType {
   LEAVE,        // 지원자 → 관리자: 휴무 요청
   NO_WORK,      // 관리자 → 지원자: 미출근 요청
   EXTRA_WORK,   // 관리자 → 지원자: 추가 근무 요청
-  CANCEL_LEAVE,    // ⭐ 지원자 → 관리자: 휴무 취소 요청
-  CANCEL_EXTRA,    // ⭐ 지원자 → 관리자: 추가근무 취소 요청
+  CANCEL_LEAVE,    // 지원자 → 관리자: 휴무 취소 요청
+  CANCEL_EXTRA,    // 지원자 → 관리자: 추가근무 취소 요청
 }
 
 /// 요청 상태
@@ -33,20 +31,20 @@ class ScheduleChangeRequestModel {
   final String applicantUid;         // 지원자 UID
   final String applicantName;        // 지원자 이름
   final DateTime targetDate;         // 대상 날짜
-  
+
   // 요청 정보
   final RequestType requestType;     // 요청 타입
   final RequesterType requestedBy;   // 요청자 타입
   final String requestedByUid;       // 요청자 UID
   final DateTime requestedAt;        // 요청 시각
   final String? reason;              // 요청 사유
-  
+
   // 응답 정보
   final RequestStatus status;        // 상태
   final String? respondedByUid;      // 응답자 UID
   final DateTime? respondedAt;       // 응답 시각
   final String? rejectReason;        // 거절 사유
-  
+
   // 급여 영향
   final bool affectsSalary;          // 급여 영향 여부
   final int? wageAmount;             // 급여 금액
@@ -71,7 +69,7 @@ class ScheduleChangeRequestModel {
     this.wageAmount,
   });
 
-  // ━━━ 편의 메서드 ━━━
+  // ── 편의 메서드 ──────────────────────────────────────────────
 
   /// 대기중인가?
   bool get isPending => status == RequestStatus.PENDING;
@@ -109,9 +107,9 @@ class ScheduleChangeRequestModel {
         return '미출근 요청';
       case RequestType.EXTRA_WORK:
         return '추가 근무 요청';
-      case RequestType.CANCEL_LEAVE:      // ⭐ 추가
+      case RequestType.CANCEL_LEAVE:
         return '휴무 취소 요청';
-      case RequestType.CANCEL_EXTRA:      // ⭐ 추가
+      case RequestType.CANCEL_EXTRA:
         return '추가근무 취소 요청';
     }
   }
@@ -130,26 +128,32 @@ class ScheduleChangeRequestModel {
     }
   }
 
-  // ━━━ Firestore 변환 ━━━
+  // ── Firestore 변환 ───────────────────────────────────────────
 
   factory ScheduleChangeRequestModel.fromMap(Map<String, dynamic> map, String id) {
+    final targetDate = (map['targetDate'] as Timestamp?)?.toDate().toLocal();
+    if (targetDate == null) {
+      throw ArgumentError('ScheduleChangeRequestModel: targetDate is missing (id=$id)');
+    }
+    final requestedAt = (map['requestedAt'] as Timestamp?)?.toDate().toLocal();
+    if (requestedAt == null) {
+      throw ArgumentError('ScheduleChangeRequestModel: requestedAt is missing (id=$id)');
+    }
     return ScheduleChangeRequestModel(
       id: id,
       businessId: map['businessId'] ?? '',
       applicationId: map['applicationId'] ?? '',
       applicantUid: map['applicantUid'] ?? '',
       applicantName: map['applicantName'] ?? '',
-      targetDate: (map['targetDate'] as Timestamp).toDate(),
+      targetDate: targetDate,
       requestType: _requestTypeFromString(map['requestType']),
       requestedBy: _requesterTypeFromString(map['requestedBy']),
       requestedByUid: map['requestedByUid'] ?? '',
-      requestedAt: (map['requestedAt'] as Timestamp).toDate().toLocal(),  // 🔥 .toLocal() 추가
+      requestedAt: requestedAt,
       reason: map['reason'],
       status: _statusFromString(map['status']),
       respondedByUid: map['respondedByUid'],
-      respondedAt: map['respondedAt'] != null 
-          ? (map['respondedAt'] as Timestamp).toDate().toLocal()  // 🔥 .toLocal() 추가
-          : null,
+      respondedAt: (map['respondedAt'] as Timestamp?)?.toDate().toLocal(),
       rejectReason: map['rejectReason'],
       affectsSalary: map['affectsSalary'] ?? true,
       wageAmount: map['wageAmount'],
@@ -170,8 +174,8 @@ class ScheduleChangeRequestModel {
       'reason': reason,
       'status': _statusToString(status),
       'respondedByUid': respondedByUid,
-      'respondedAt': respondedAt != null 
-          ? Timestamp.fromDate(respondedAt!) 
+      'respondedAt': respondedAt != null
+          ? Timestamp.fromDate(respondedAt!)
           : null,
       'rejectReason': rejectReason,
       'affectsSalary': affectsSalary,
@@ -179,15 +183,15 @@ class ScheduleChangeRequestModel {
     };
   }
 
-  // ━━━ Enum 변환 헬퍼 ━━━
+  // ── Enum 변환 헬퍼 ───────────────────────────────────────────
 
   static RequestType _requestTypeFromString(String str) {
     switch (str) {
       case 'LEAVE': return RequestType.LEAVE;
       case 'NO_WORK': return RequestType.NO_WORK;
       case 'EXTRA_WORK': return RequestType.EXTRA_WORK;
-      case 'CANCEL_LEAVE': return RequestType.CANCEL_LEAVE;  // ⭐ 추가
-      case 'CANCEL_EXTRA': return RequestType.CANCEL_EXTRA;  // ⭐ 추가
+      case 'CANCEL_LEAVE': return RequestType.CANCEL_LEAVE;
+      case 'CANCEL_EXTRA': return RequestType.CANCEL_EXTRA;
       default: return RequestType.LEAVE;
     }
   }
@@ -197,8 +201,8 @@ class ScheduleChangeRequestModel {
       case RequestType.LEAVE: return 'LEAVE';
       case RequestType.NO_WORK: return 'NO_WORK';
       case RequestType.EXTRA_WORK: return 'EXTRA_WORK';
-      case RequestType.CANCEL_LEAVE: return 'CANCEL_LEAVE';  // ⭐ 추가
-      case RequestType.CANCEL_EXTRA: return 'CANCEL_EXTRA';  // ⭐ 추가
+      case RequestType.CANCEL_LEAVE: return 'CANCEL_LEAVE';
+      case RequestType.CANCEL_EXTRA: return 'CANCEL_EXTRA';
     }
   }
 
@@ -236,7 +240,7 @@ class ScheduleChangeRequestModel {
     }
   }
 
-  // ━━━ copyWith ━━━
+  // ── copyWith ─────────────────────────────────────────────────
 
   ScheduleChangeRequestModel copyWith({
     String? id,

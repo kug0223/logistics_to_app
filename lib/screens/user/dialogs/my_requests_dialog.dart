@@ -121,7 +121,7 @@ class _MyRequestsDialogState extends State<MyRequestsDialog> {
       debugPrint('✅ 알림 로드 완료: ${notifications.length}건');
     } catch (e) {
       debugPrint('❌ 알림 로드 실패: $e');
-      setState(() => _isLoading = false);
+      if (mounted) setState(() => _isLoading = false);
     }
   }
 
@@ -130,10 +130,12 @@ class _MyRequestsDialogState extends State<MyRequestsDialog> {
     return Dialog(
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
       child: Container(
-        width: MediaQuery.of(context).size.width * 0.92,
-        height: MediaQuery.of(context).size.height * 0.7,
-        constraints: const BoxConstraints(maxWidth: 500),
-        padding: ResponsiveHelper.cardPadding(context),
+        width: MediaQuery.sizeOf(context).width * 0.92,
+        constraints: BoxConstraints(
+          maxWidth: 500,
+          maxHeight: MediaQuery.sizeOf(context).height * 0.85,
+        ),
+        padding: ResponsiveHelper.listPadding(context),
         child: Column(
           children: [
             // 헤더
@@ -167,6 +169,7 @@ class _MyRequestsDialogState extends State<MyRequestsDialog> {
                 const Spacer(),
                 IconButton(
                   icon: const Icon(Icons.close),
+                  tooltip: '닫기',
                   onPressed: () => Navigator.pop(context),
                 ),
               ],
@@ -365,7 +368,10 @@ class _MyRequestsDialogState extends State<MyRequestsDialog> {
   // ═══════════════════════════════════════════════════════════
 
   Widget _buildTerminationCard(ApplicationModel app) {
-    final daysLeft = 3 - DateTime.now().difference(app.terminationRequestedAt!).inDays;
+    final requestedAt = app.terminationRequestedAt;
+    final daysLeft = requestedAt != null
+        ? 3 - DateTime.now().difference(requestedAt).inDays
+        : 0;
 
     return Card(
       margin: EdgeInsets.only(bottom: ResponsiveHelper.spacing(context, 12)),
@@ -464,6 +470,7 @@ class _MyRequestsDialogState extends State<MyRequestsDialog> {
       approverUid: uid,
     );
 
+    if (!mounted) return;
     if (success) {
       ToastHelper.showSuccess('수락되었습니다');
       await _loadAllNotifications();
@@ -483,14 +490,17 @@ class _MyRequestsDialogState extends State<MyRequestsDialog> {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
+        insetPadding: const EdgeInsets.symmetric(horizontal: 24, vertical: 24),
         title: const Text('거절 사유'),
-        content: TextField(
+        content: SingleChildScrollView(
+          child: TextField(
           controller: reasonController,
           decoration: const InputDecoration(
             hintText: '거절 사유를 입력하세요 (선택)',
             border: OutlineInputBorder(),
           ),
           maxLines: 3,
+        ),
         ),
         actions: [
           TextButton(
@@ -505,16 +515,19 @@ class _MyRequestsDialogState extends State<MyRequestsDialog> {
       ),
     );
 
+    final scheduleRejectReason = reasonController.text.trim().isEmpty ? null : reasonController.text.trim();
+    reasonController.dispose();
+
     if (confirmed != true) return;
+    if (!mounted) return;
 
     final success = await _firestoreService.rejectScheduleChangeRequest(
       requestId: request.id,
       rejectorUid: uid,
-      rejectReason: reasonController.text.trim().isEmpty
-          ? null
-          : reasonController.text.trim(),
+      rejectReason: scheduleRejectReason,
     );
 
+    if (!mounted) return;
     if (success) {
       ToastHelper.showSuccess('거절되었습니다');
       await _loadAllNotifications();
@@ -565,9 +578,11 @@ class _MyRequestsDialogState extends State<MyRequestsDialog> {
     );
 
     if (confirmed != true) return;
+    if (!mounted) return;
 
     final success = await _firestoreService.approveIdCardAccessRequest(request.id);
 
+    if (!mounted) return;
     if (success) {
       ToastHelper.showSuccess('승인되었습니다');
       await _loadAllNotifications();
@@ -583,8 +598,10 @@ class _MyRequestsDialogState extends State<MyRequestsDialog> {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
+        insetPadding: const EdgeInsets.symmetric(horizontal: 24, vertical: 24),
         title: const Text('신분증 열람 거절'),
-        content: Column(
+        content: SingleChildScrollView(
+          child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
             Text('${request.requesterBusinessName}의 요청을 거절합니다.'),
@@ -598,6 +615,7 @@ class _MyRequestsDialogState extends State<MyRequestsDialog> {
               maxLines: 2,
             ),
           ],
+          ),
         ),
         actions: [
           TextButton(
@@ -613,15 +631,18 @@ class _MyRequestsDialogState extends State<MyRequestsDialog> {
       ),
     );
 
+    final idCardRejectReason = reasonController.text.trim().isEmpty ? null : reasonController.text.trim();
+    reasonController.dispose();
+
     if (confirmed != true) return;
+    if (!mounted) return;
 
     final success = await _firestoreService.rejectIdCardAccessRequest(
       request.id,
-      reason: reasonController.text.trim().isEmpty
-          ? null
-          : reasonController.text.trim(),
+      reason: idCardRejectReason,
     );
 
+    if (!mounted) return;
     if (success) {
       ToastHelper.showSuccess('거절되었습니다');
       await _loadAllNotifications();
@@ -673,9 +694,11 @@ class _MyRequestsDialogState extends State<MyRequestsDialog> {
     );
 
     if (confirmed != true) return;
+    if (!mounted) return;
 
     final success = await _firestoreService.approveTermination(app.id);
 
+    if (!mounted) return;
     if (success) {
       ToastHelper.showSuccess('계약이 해지되었습니다');
       await _loadAllNotifications();
@@ -691,8 +714,10 @@ class _MyRequestsDialogState extends State<MyRequestsDialog> {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
+        insetPadding: const EdgeInsets.symmetric(horizontal: 24, vertical: 24),
         title: const Text('계약해지 거절'),
-        content: Column(
+        content: SingleChildScrollView(
+          child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
             Text('${app.businessName}의 계약해지 요청을 거절합니다.'),
@@ -706,6 +731,7 @@ class _MyRequestsDialogState extends State<MyRequestsDialog> {
               maxLines: 2,
             ),
           ],
+          ),
         ),
         actions: [
           TextButton(
@@ -721,15 +747,18 @@ class _MyRequestsDialogState extends State<MyRequestsDialog> {
       ),
     );
 
+    final terminationRejectReason = reasonController.text.trim().isEmpty ? null : reasonController.text.trim();
+    reasonController.dispose();
+
     if (confirmed != true) return;
+    if (!mounted) return;
 
     final success = await _firestoreService.rejectTermination(
       applicationId: app.id,
-      rejectReason: reasonController.text.trim().isEmpty
-          ? null
-          : reasonController.text.trim(),
+      rejectReason: terminationRejectReason,
     );
 
+    if (!mounted) return;
     if (success) {
       ToastHelper.showSuccess('거절되었습니다');
       await _loadAllNotifications();

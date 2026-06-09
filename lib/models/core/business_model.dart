@@ -20,44 +20,51 @@ class BusinessModel {
   final bool isApproved;         // 슈퍼관리자 승인 여부
   final DateTime createdAt;
   final DateTime? updatedAt;
-  // ⭐ 출퇴근 설정 추가
-  final String attendanceType;   // "gps" | "beacon" | "manual"
-  final int gpsRadius;            // GPS 반경 (미터)
+  // ── 출퇴근 설정 ──────────────────────────────────────────
+  final String attendanceType;   // "gps" | "beacon" | "both" | "manual"
+  final int gpsRadius;            // GPS 반경 (미터, 기본 100)
+
+  // 비콘 설정 (attendanceType == 'beacon' || 'both' 일 때 사용)
+  final String? beaconUUID;       // 비콘 UUID (ex: 'E2C56DB5-DFFB-48D2-B060-D0F5A71096E0')
+  final int? beaconMajor;         // Major 값 (0~65535)
+  final int? beaconMinor;         // Minor 값 (0~65535)
+  final int beaconRssiThreshold;  // 신호 강도 임계값 (dBm, 기본 -75 = 약 3~5m 이내)
   
-  // ═══════════════════════════════════════════════════════════
-  // 📸 이미지
-  // ═══════════════════════════════════════════════════════════
+  // ── 이미지 ──────────────────────────────────────────────────
   final String? mainImageUrl;          // 대표 이미지
   final List<String>? imageUrls;       // 사업장 사진들 (최대 5장)
   
-  // ═══════════════════════════════════════════════════════════
-  // 💬 소개
-  // ═══════════════════════════════════════════════════════════
+  // ── 소개 ──────────────────────────────────────────────────
   final String? oneLineIntro;          // 한 줄 소개
   final String? detailedDescription;   // 상세 소개
   
-  // ═══════════════════════════════════════════════════════════
-  // 🚗 시설 및 환경
-  // ═══════════════════════════════════════════════════════════
+  // ── 시설 및 환경 ────────────────────────────────────────────
   final bool parkingAvailable;         // 주차 가능 여부
   final List<String>? mealsProvided;       // 식사 제공 (조식/중식/석식/간식/없음)
   final String? uniformProvided;       // 복장 (유니폼제공/자유복/정장/없음)
   final List<String>? facilities;      // 편의시설 [휴게실, 사물함, 탈의실, 샤워실]
   
-  // ═══════════════════════════════════════════════════════════
-  // 🗺️ 교통편
-  // ═══════════════════════════════════════════════════════════
+  // ── 교통편 ──────────────────────────────────────────────────
   final String? nearestStation;        // 가까운 역 (예: 강남역 3번 출구)
   final int? walkingMinutes;           // 역에서 도보 시간 (분)
   final String? busInfo;               // 버스 정보 (예: 146, 740)
   
-  // ═══════════════════════════════════════════════════════════
-  // 📝 기타
-  // ═══════════════════════════════════════════════════════════
+  // ── 기타 ──────────────────────────────────────────────────
   final String? precautions;           // 준비사항/주의사항
   final double? rating;                // 평점
   final int? reviewCount;              // 리뷰 수
-  final String? companyName; 
+  final String? companyName;
+
+  // ── 근로계약서용 추가 정보 ────────────────────────────────
+
+  /// 대표자 성명 (근로계약서 갑 서명란)
+  final String? ownerName;
+
+  /// 급여 지급일 (1~31, 예: 10 → 매월 10일 지급)
+  final int? wagePaymentDay;
+
+  /// 사업자 인감/도장 이미지 (base64, 계약서 자동 날인용)
+  final String? sealBase64;
 
   BusinessModel({
     required this.id,
@@ -80,6 +87,10 @@ class BusinessModel {
     this.updatedAt,
     this.attendanceType = 'gps',
     this.gpsRadius = 100,
+    this.beaconUUID,
+    this.beaconMajor,
+    this.beaconMinor,
+    this.beaconRssiThreshold = -75,
     // 이미지
     this.mainImageUrl,
     this.imageUrls,
@@ -100,6 +111,9 @@ class BusinessModel {
     this.rating,
     this.reviewCount,
     this.companyName,
+    this.ownerName,
+    this.wagePaymentDay,
+    this.sealBase64,
   }) : adminIds = (adminIds != null && adminIds.isNotEmpty)
            ? adminIds
            : [ownerId];
@@ -125,12 +139,18 @@ class BusinessModel {
       phone: map['phone'],
       description: map['description'],
       isApproved: map['isApproved'] ?? false,
-      createdAt: (map['createdAt'] as Timestamp).toDate(),
-      updatedAt: map['updatedAt'] != null 
-          ? (map['updatedAt'] as Timestamp).toDate() 
+      createdAt: map['createdAt'] != null
+          ? (map['createdAt'] as Timestamp).toDate().toLocal()
+          : (throw ArgumentError('BusinessModel: createdAt 필드 누락 (id: $id)')),
+      updatedAt: map['updatedAt'] != null
+          ? (map['updatedAt'] as Timestamp).toDate().toLocal()
           : null,
       attendanceType: map['attendanceType'] ?? 'gps',
-      gpsRadius: map['gpsRadius'] ?? 100,
+      gpsRadius: (map['gpsRadius'] as num?)?.toInt() ?? 100,
+      beaconUUID: map['beaconUUID'],
+      beaconMajor: (map['beaconMajor'] as num?)?.toInt(),
+      beaconMinor: (map['beaconMinor'] as num?)?.toInt(),
+      beaconRssiThreshold: (map['beaconRssiThreshold'] as num?)?.toInt() ?? -75,
       // 이미지
       mainImageUrl: map['mainImageUrl'],
       imageUrls: map['imageUrls'] != null 
@@ -150,19 +170,24 @@ class BusinessModel {
           : null,
       // 교통편
       nearestStation: map['nearestStation'],
-      walkingMinutes: map['walkingMinutes'],
+      walkingMinutes: (map['walkingMinutes'] as num?)?.toInt(),
       busInfo: map['busInfo'],
       // 기타
       precautions: map['precautions'],
       rating: map['rating']?.toDouble(),
-      reviewCount: map['reviewCount'],
+      reviewCount: (map['reviewCount'] as num?)?.toInt(),
       companyName: map['companyName'],
+      ownerName: map['ownerName'],
+      wagePaymentDay: (map['wagePaymentDay'] as num?)?.toInt(),
+      sealBase64: map['sealBase64'],
     );
   }
-  /// ⭐ Firestore DocumentSnapshot에서 변환 (추가!)
   factory BusinessModel.fromFirestore(DocumentSnapshot doc) {
-    final data = doc.data() as Map<String, dynamic>;
-    return BusinessModel.fromMap(data, doc.id);
+    final raw = doc.data();
+    if (raw == null) {
+      throw ArgumentError('BusinessModel.fromFirestore: 문서 데이터 없음 (id: ${doc.id})');
+    }
+    return BusinessModel.fromMap(raw as Map<String, dynamic>, doc.id);
   }
 
   // Firestore에 저장할 때
@@ -187,6 +212,10 @@ class BusinessModel {
       'updatedAt': updatedAt != null ? Timestamp.fromDate(updatedAt!) : null,
       'attendanceType': attendanceType,
       'gpsRadius': gpsRadius,
+      if (beaconUUID != null) 'beaconUUID': beaconUUID,
+      if (beaconMajor != null) 'beaconMajor': beaconMajor,
+      if (beaconMinor != null) 'beaconMinor': beaconMinor,
+      'beaconRssiThreshold': beaconRssiThreshold,
       // 이미지
       'mainImageUrl': mainImageUrl,
       'imageUrls': imageUrls,
@@ -207,6 +236,9 @@ class BusinessModel {
       'rating': rating,
       'reviewCount': reviewCount,
       'companyName': companyName,
+      'ownerName': ownerName,
+      'wagePaymentDay': wagePaymentDay,
+      'sealBase64': sealBase64,
     };
   }
   String get formattedBusinessNumber {
@@ -236,13 +268,13 @@ class BusinessModel {
     bool? isApproved,
     DateTime? createdAt,
     DateTime? updatedAt,
-    // 새 파라미터 추가
+
     String? mainImageUrl,
     List<String>? imageUrls,
     String? oneLineIntro,
     String? detailedDescription,
     bool? parkingAvailable,
-    String? mealProvided,
+    List<String>? mealsProvided,
     String? uniformProvided,
     List<String>? facilities,
     String? nearestStation,
@@ -252,7 +284,17 @@ class BusinessModel {
     double? rating,
     int? reviewCount,
     String? companyName,
-    
+    String? ownerName,
+    int? wagePaymentDay,
+    String? sealBase64,
+    bool clearSeal = false,
+    String? attendanceType,
+    int? gpsRadius,
+    String? beaconUUID,
+    bool clearBeaconUUID = false,
+    int? beaconMajor,
+    int? beaconMinor,
+    int? beaconRssiThreshold,
   }) {
     return BusinessModel(
       id: id ?? this.id,
@@ -273,13 +315,12 @@ class BusinessModel {
       isApproved: isApproved ?? this.isApproved,
       createdAt: createdAt ?? this.createdAt,
       updatedAt: updatedAt ?? this.updatedAt,
-      // 새 필드 추가
       mainImageUrl: mainImageUrl ?? this.mainImageUrl,
       imageUrls: imageUrls ?? this.imageUrls,
       oneLineIntro: oneLineIntro ?? this.oneLineIntro,
       detailedDescription: detailedDescription ?? this.detailedDescription,
       parkingAvailable: parkingAvailable ?? this.parkingAvailable,
-      mealsProvided: mealsProvided ?? mealsProvided,
+      mealsProvided: mealsProvided ?? this.mealsProvided,
       uniformProvided: uniformProvided ?? this.uniformProvided,
       facilities: facilities ?? this.facilities,
       nearestStation: nearestStation ?? this.nearestStation,
@@ -289,6 +330,15 @@ class BusinessModel {
       rating: rating ?? this.rating,
       reviewCount: reviewCount ?? this.reviewCount,
       companyName: companyName ?? this.companyName,
+      ownerName: ownerName ?? this.ownerName,
+      wagePaymentDay: wagePaymentDay ?? this.wagePaymentDay,
+      sealBase64: clearSeal ? null : (sealBase64 ?? this.sealBase64),
+      attendanceType: attendanceType ?? this.attendanceType,
+      gpsRadius: gpsRadius ?? this.gpsRadius,
+      beaconUUID: clearBeaconUUID ? null : (beaconUUID ?? this.beaconUUID),
+      beaconMajor: beaconMajor ?? this.beaconMajor,
+      beaconMinor: beaconMinor ?? this.beaconMinor,
+      beaconRssiThreshold: beaconRssiThreshold ?? this.beaconRssiThreshold,
     );
   }
 

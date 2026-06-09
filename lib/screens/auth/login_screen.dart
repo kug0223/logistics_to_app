@@ -1,8 +1,10 @@
-﻿import 'package:flutter/material.dart';
+﻿import 'dart:math' as math;
+import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 // Providers
 import '../../providers/user_provider.dart';
+import '../../services/analytics_service.dart';
 
 // Utils
 import 'package:cloud_functions/cloud_functions.dart';
@@ -33,7 +35,9 @@ class _LoginScreenState extends State<LoginScreen> {
   final _passwordController = TextEditingController();
   bool _obscurePassword = true;
 
-  // ✨ FocusNode 추가
+  final _authService = AuthService();
+  final _fn = FirebaseFunctions.instanceFor(region: 'asia-northeast3');
+
   final _usernameFocus = FocusNode();
   final _passwordFocus = FocusNode();
 
@@ -50,13 +54,21 @@ class _LoginScreenState extends State<LoginScreen> {
     if (!_formKey.currentState!.validate()) return;
 
     final userProvider = context.read<UserProvider>();
+    if (userProvider.isLoading) return;
     final success = await userProvider.signIn(
       _usernameController.text.trim(),
       _passwordController.text,
     );
 
-    if (!success && mounted) {
-      // 에러 처리는 AuthService에서 Toast로 표시됨
+    if (!mounted) return;
+    if (success) {
+      AnalyticsService.logLogin(userProvider.currentUser?.role.name ?? 'UNKNOWN');
+    } else {
+      // signIn 실패 시 provider의 _error를 toast로 표시
+      final err = userProvider.error;
+      ToastHelper.showError(
+        (err != null && err.isNotEmpty) ? err : '아이디 또는 비밀번호가 올바르지 않습니다.',
+      );
     }
   }
 
@@ -71,10 +83,11 @@ class _LoginScreenState extends State<LoginScreen> {
 
     await showModalBottomSheet(
       context: context,
+      useSafeArea: true,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
       builder: (sheetContext) => StatefulBuilder(
-        builder: (_, setSheetState) {
+        builder: (ctx, setSheetState) {
           Future<void> search() async {
             if (nameController.text.isEmpty) {
               ToastHelper.showWarning('이름을 입력해주세요');
@@ -87,10 +100,11 @@ class _LoginScreenState extends State<LoginScreen> {
               return;
             }
             setSheetState(() => isSearching = true);
-            final result = await AuthService().findUsername(
+            final result = await _authService.findUsername(
               name: nameController.text,
               phone: phoneController.text,
             );
+            if (!ctx.mounted) return;
             setSheetState(() {
               isSearching = false;
               foundUsername = result ?? '';
@@ -106,30 +120,32 @@ class _LoginScreenState extends State<LoginScreen> {
                 color: Colors.white,
                 borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
               ),
-              padding: const EdgeInsets.fromLTRB(24, 0, 24, 40),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  Center(
-                    child: Container(
-                      margin: const EdgeInsets.only(top: 12, bottom: 24),
-                      width: 40, height: 4,
-                      decoration: BoxDecoration(
-                        color: AppColors.grey300,
-                        borderRadius: BorderRadius.circular(2),
+              child: SingleChildScrollView(
+                padding: const EdgeInsets.fromLTRB(24, 0, 24, 40),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Center(
+                      child: Container(
+                        margin: const EdgeInsets.only(top: 12, bottom: 24),
+                        width: 40, height: 4,
+                        decoration: BoxDecoration(
+                          color: AppColors.grey300,
+                          borderRadius: BorderRadius.circular(2),
+                        ),
                       ),
                     ),
-                  ),
 
                   if (foundUsername == null) ...[
-                    const Text('아이디 찾기',
-                        style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700, color: Color(0xFF1A1A1A))),
+                    Text('아이디 찾기',
+                        style: ResponsiveHelper.titleStyle(ctx).copyWith(fontWeight: FontWeight.w700, color: AppColors.grey900)),
                     const SizedBox(height: 6),
                     Text('가입 시 입력한 이름과 전화번호를 입력해주세요',
-                        style: TextStyle(fontSize: 14, color: AppColors.grey500)),
+                        style: ResponsiveHelper.bodyStyle(ctx).copyWith(color: AppColors.grey500)),
                     const SizedBox(height: 24),
                     _buildSheetTextField(
+                      context: ctx,
                       controller: nameController,
                       focusNode: nameFocus,
                       label: '이름',
@@ -139,6 +155,7 @@ class _LoginScreenState extends State<LoginScreen> {
                     ),
                     const SizedBox(height: 12),
                     _buildSheetTextField(
+                      context: ctx,
                       controller: phoneController,
                       focusNode: phoneFocus,
                       label: '전화번호',
@@ -149,10 +166,13 @@ class _LoginScreenState extends State<LoginScreen> {
                       onSubmitted: (_) => search(),
                     ),
                     const SizedBox(height: 24),
-                    ElevatedButton(
+                    Semantics(
+                      enabled: !isSearching,
+                      hint: isSearching ? '검색 중입니다' : null,
+                      child: ElevatedButton(
                       onPressed: isSearching ? null : search,
                       style: ElevatedButton.styleFrom(
-                        backgroundColor: const Color(0xFF1565C0),
+                        backgroundColor: Theme.of(ctx).primaryColor,
                         foregroundColor: Colors.white,
                         padding: const EdgeInsets.symmetric(vertical: 16),
                         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
@@ -161,45 +181,46 @@ class _LoginScreenState extends State<LoginScreen> {
                       child: isSearching
                           ? const SizedBox(width: 20, height: 20,
                               child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2))
-                          : const Text('찾기', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
-                    ),
+                          : Text('찾기', style: ResponsiveHelper.subtitleStyle(ctx).copyWith(fontWeight: FontWeight.w600)),
+                      ),
+                    ), // Semantics
 
                   ] else if (foundUsername!.isEmpty) ...[
                     const SizedBox(height: 8),
-                    const Icon(Icons.search_off_rounded, size: 60, color: Color(0xFFCCCCCC)),
+                    Icon(Icons.search_off_rounded, size: ResponsiveHelper.iconSize(context, 60), color: AppColors.grey300),
                     const SizedBox(height: 16),
-                    const Text('일치하는 계정을 찾을 수 없어요',
+                    Text('일치하는 계정을 찾을 수 없어요',
                         textAlign: TextAlign.center,
-                        style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700, color: Color(0xFF1A1A1A))),
+                        style: ResponsiveHelper.subtitleStyle(ctx).copyWith(fontWeight: FontWeight.w700, color: AppColors.grey900)),
                     const SizedBox(height: 8),
                     Text('입력하신 정보를 다시 확인해주세요',
                         textAlign: TextAlign.center,
-                        style: TextStyle(fontSize: 14, color: AppColors.grey500)),
+                        style: ResponsiveHelper.bodyStyle(ctx).copyWith(color: AppColors.grey500)),
                     const SizedBox(height: 28),
                     OutlinedButton(
                       onPressed: () => setSheetState(() => foundUsername = null),
                       style: OutlinedButton.styleFrom(
                         padding: const EdgeInsets.symmetric(vertical: 16),
-                        side: const BorderSide(color: Color(0xFF1565C0)),
+                        side: BorderSide(color: Theme.of(ctx).primaryColor),
                         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
                       ),
-                      child: const Text('다시 찾기',
-                          style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600, color: Color(0xFF1565C0))),
+                      child: Text('다시 찾기',
+                          style: ResponsiveHelper.subtitleStyle(ctx).copyWith(fontWeight: FontWeight.w600, color: Theme.of(ctx).primaryColor)),
                     ),
                     const SizedBox(height: 8),
 
                   ] else ...[
                     const SizedBox(height: 8),
-                    const Icon(Icons.check_circle_rounded, size: 60, color: Color(0xFF1565C0)),
+                    Icon(Icons.check_circle_rounded, size: 60, color: Theme.of(ctx).primaryColor),
                     const SizedBox(height: 16),
-                    const Text('아이디를 찾았어요',
+                    Text('아이디를 찾았어요',
                         textAlign: TextAlign.center,
-                        style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700, color: Color(0xFF1A1A1A))),
+                        style: ResponsiveHelper.subtitleStyle(ctx).copyWith(fontWeight: FontWeight.w700, color: AppColors.grey900)),
                     const SizedBox(height: 20),
                     Container(
                       padding: const EdgeInsets.symmetric(vertical: 20, horizontal: 24),
                       decoration: BoxDecoration(
-                        color: const Color(0xFFE3F2FD),
+                        color: Theme.of(ctx).primaryColor.withValues(alpha: 0.08),
                         borderRadius: BorderRadius.circular(14),
                       ),
                       child: Text(
@@ -207,10 +228,9 @@ class _LoginScreenState extends State<LoginScreen> {
                             ? '${foundUsername!.substring(0, 4)}${'*' * (foundUsername!.length - 4)}'
                             : foundUsername!,
                         textAlign: TextAlign.center,
-                        style: const TextStyle(
-                          fontSize: 22,
+                        style: ResponsiveHelper.titleStyle(ctx).copyWith(
                           fontWeight: FontWeight.w800,
-                          color: Color(0xFF1565C0),
+                          color: Theme.of(ctx).primaryColor,
                           letterSpacing: 2,
                         ),
                       ),
@@ -219,17 +239,18 @@ class _LoginScreenState extends State<LoginScreen> {
                     ElevatedButton(
                       onPressed: () => Navigator.pop(sheetContext),
                       style: ElevatedButton.styleFrom(
-                        backgroundColor: const Color(0xFF1565C0),
+                        backgroundColor: Theme.of(ctx).primaryColor,
                         foregroundColor: Colors.white,
                         padding: const EdgeInsets.symmetric(vertical: 16),
                         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
                         elevation: 0,
                       ),
-                      child: const Text('확인', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
+                      child: Text('확인', style: ResponsiveHelper.subtitleStyle(ctx).copyWith(fontWeight: FontWeight.w600)),
                     ),
                     const SizedBox(height: 8),
                   ],
                 ],
+                ),
               ),
             ),
           );
@@ -262,14 +283,13 @@ class _LoginScreenState extends State<LoginScreen> {
     bool obscureNew = true;
     bool obscureConfirm = true;
 
-    final fn = FirebaseFunctions.instanceFor(region: 'asia-northeast3');
-
     await showModalBottomSheet(
       context: context,
+      useSafeArea: true,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
       builder: (sheetContext) => StatefulBuilder(
-        builder: (_, setSheetState) {
+        builder: (ctx, setSheetState) {
           Future<void> sendCode() async {
             if (usernameController.text.isEmpty) {
               ToastHelper.showWarning('아이디를 입력해주세요');
@@ -283,17 +303,21 @@ class _LoginScreenState extends State<LoginScreen> {
             }
             setSheetState(() => isSending = true);
             try {
-              await fn.httpsCallable('sendPasswordResetCode').call({
+              await _fn.httpsCallable('sendPasswordResetCode').call({
                 'username': usernameController.text.trim(),
                 'email': emailController.text.trim(),
               });
+              if (!ctx.mounted) return;
               setSheetState(() { isSending = false; step = 1; });
               ToastHelper.showSuccess('인증번호가 이메일로 발송되었습니다 (5분 유효)');
               Future.delayed(const Duration(milliseconds: 300), () => codeFocus.requestFocus());
             } on FirebaseFunctionsException catch (e) {
+              if (!ctx.mounted) return;
               setSheetState(() => isSending = false);
               ToastHelper.showError(e.message ?? '인증번호 발송에 실패했습니다');
-            } catch (_) {
+            } catch (e) {
+              debugPrint('❌ 비밀번호 찾기 인증번호 발송 실패: $e');
+              if (!ctx.mounted) return;
               setSheetState(() => isSending = false);
               ToastHelper.showError('오류가 발생했습니다. 다시 시도해주세요');
             }
@@ -305,8 +329,11 @@ class _LoginScreenState extends State<LoginScreen> {
               codeFocus.requestFocus();
               return;
             }
-            if (newPasswordController.text.length < 6) {
-              ToastHelper.showWarning('비밀번호는 6자 이상이어야 합니다');
+            // 비밀번호 정책: 8자 이상 + 영문 + 숫자 + 특수문자 (회원가입 기준과 동일)
+            final pw = newPasswordController.text;
+            final pwRegex = RegExp(r'^(?=.*[a-zA-Z])(?=.*\d)(?=.*[!@#$%^&*(),.?":{}|<>]).{8,}$');
+            if (!pwRegex.hasMatch(pw)) {
+              ToastHelper.showWarning('비밀번호는 8자 이상이며\n영문·숫자·특수문자를 포함해야 합니다');
               newPasswordFocus.requestFocus();
               return;
             }
@@ -317,16 +344,20 @@ class _LoginScreenState extends State<LoginScreen> {
             }
             setSheetState(() => isChanging = true);
             try {
-              await fn.httpsCallable('resetPasswordWithCode').call({
+              await _fn.httpsCallable('resetPasswordWithCode').call({
                 'username': usernameController.text.trim(),
                 'code': codeController.text.trim(),
                 'newPassword': newPasswordController.text,
               });
+              if (!ctx.mounted) return;
               setSheetState(() { isChanging = false; step = 2; });
             } on FirebaseFunctionsException catch (e) {
+              if (!ctx.mounted) return;
               setSheetState(() => isChanging = false);
               ToastHelper.showError(e.message ?? '비밀번호 변경에 실패했습니다');
-            } catch (_) {
+            } catch (e) {
+              debugPrint('❌ 비밀번호 변경 실패: $e');
+              if (!ctx.mounted) return;
               setSheetState(() => isChanging = false);
               ToastHelper.showError('오류가 발생했습니다. 다시 시도해주세요');
             }
@@ -341,57 +372,59 @@ class _LoginScreenState extends State<LoginScreen> {
                 color: Colors.white,
                 borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
               ),
-              padding: const EdgeInsets.fromLTRB(24, 0, 24, 40),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  Center(
-                    child: Container(
-                      margin: const EdgeInsets.only(top: 12, bottom: 24),
-                      width: 40, height: 4,
-                      decoration: BoxDecoration(
-                        color: AppColors.grey300,
-                        borderRadius: BorderRadius.circular(2),
+              child: SingleChildScrollView(
+                padding: const EdgeInsets.fromLTRB(24, 0, 24, 40),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Center(
+                      child: Container(
+                        margin: const EdgeInsets.only(top: 12, bottom: 24),
+                        width: 40, height: 4,
+                        decoration: BoxDecoration(
+                          color: AppColors.grey300,
+                          borderRadius: BorderRadius.circular(2),
+                        ),
                       ),
                     ),
-                  ),
 
                   // ── 완료 화면 ──
                   if (step == 2) ...[
                     const SizedBox(height: 8),
-                    const Icon(Icons.check_circle_rounded, size: 60, color: Color(0xFF1565C0)),
+                    Icon(Icons.check_circle_rounded, size: 60, color: Theme.of(ctx).primaryColor),
                     const SizedBox(height: 16),
-                    const Text('비밀번호가 변경되었어요',
+                    Text('비밀번호가 변경되었어요',
                         textAlign: TextAlign.center,
-                        style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700, color: Color(0xFF1A1A1A))),
+                        style: ResponsiveHelper.subtitleStyle(ctx).copyWith(fontWeight: FontWeight.w700, color: AppColors.grey900)),
                     const SizedBox(height: 8),
                     Text('새 비밀번호로 로그인해주세요',
                         textAlign: TextAlign.center,
-                        style: TextStyle(fontSize: 14, color: AppColors.grey500)),
+                        style: ResponsiveHelper.bodyStyle(ctx).copyWith(color: AppColors.grey500)),
                     const SizedBox(height: 28),
                     ElevatedButton(
                       onPressed: () => Navigator.pop(sheetContext),
                       style: ElevatedButton.styleFrom(
-                        backgroundColor: const Color(0xFF1565C0),
+                        backgroundColor: Theme.of(ctx).primaryColor,
                         foregroundColor: Colors.white,
                         padding: const EdgeInsets.symmetric(vertical: 16),
                         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
                         elevation: 0,
                       ),
-                      child: const Text('로그인하러 가기', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
+                      child: Text('로그인하러 가기', style: ResponsiveHelper.subtitleStyle(ctx).copyWith(fontWeight: FontWeight.w600)),
                     ),
                     const SizedBox(height: 8),
 
                   // ── 인증코드 + 새 비밀번호 입력 ──
                   ] else if (step == 1) ...[
-                    const Text('비밀번호 재설정',
-                        style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700, color: Color(0xFF1A1A1A))),
+                    Text('비밀번호 재설정',
+                        style: ResponsiveHelper.titleStyle(ctx).copyWith(fontWeight: FontWeight.w700, color: AppColors.grey900)),
                     const SizedBox(height: 6),
                     Text('이메일로 발송된 인증번호와 새 비밀번호를 입력해주세요',
-                        style: TextStyle(fontSize: 14, color: AppColors.grey500)),
+                        style: ResponsiveHelper.bodyStyle(ctx).copyWith(color: AppColors.grey500)),
                     const SizedBox(height: 24),
                     _buildSheetTextField(
+                      context: ctx,
                       controller: codeController,
                       focusNode: codeFocus,
                       label: '인증번호',
@@ -403,31 +436,41 @@ class _LoginScreenState extends State<LoginScreen> {
                     ),
                     const SizedBox(height: 12),
                     _buildSheetTextField(
+                      context: ctx,
                       controller: newPasswordController,
                       focusNode: newPasswordFocus,
                       label: '새 비밀번호',
-                      hint: '6자 이상',
+                      hint: '8자 이상, 영문·숫자·특수문자 포함',
                       icon: Icons.lock_outline,
                       obscureText: obscureNew,
-                      suffixWidget: GestureDetector(
-                        onTap: () => setSheetState(() => obscureNew = !obscureNew),
-                        child: Icon(obscureNew ? Icons.visibility_off : Icons.visibility,
-                            color: AppColors.grey400, size: 20),
+                      suffixWidget: Semantics(
+                        button: true,
+                        label: obscureNew ? '비밀번호 표시' : '비밀번호 숨김',
+                        child: GestureDetector(
+                          onTap: () => setSheetState(() => obscureNew = !obscureNew),
+                          child: Icon(obscureNew ? Icons.visibility_off : Icons.visibility,
+                              color: AppColors.grey400, size: 20),
+                        ),
                       ),
                       onSubmitted: (_) => confirmPasswordFocus.requestFocus(),
                     ),
                     const SizedBox(height: 12),
                     _buildSheetTextField(
+                      context: ctx,
                       controller: confirmPasswordController,
                       focusNode: confirmPasswordFocus,
                       label: '비밀번호 확인',
                       hint: '비밀번호를 다시 입력해주세요',
                       icon: Icons.lock_outline,
                       obscureText: obscureConfirm,
-                      suffixWidget: GestureDetector(
-                        onTap: () => setSheetState(() => obscureConfirm = !obscureConfirm),
-                        child: Icon(obscureConfirm ? Icons.visibility_off : Icons.visibility,
-                            color: AppColors.grey400, size: 20),
+                      suffixWidget: Semantics(
+                        button: true,
+                        label: obscureConfirm ? '비밀번호 표시' : '비밀번호 숨김',
+                        child: GestureDetector(
+                          onTap: () => setSheetState(() => obscureConfirm = !obscureConfirm),
+                          child: Icon(obscureConfirm ? Icons.visibility_off : Icons.visibility,
+                              color: AppColors.grey400, size: 20),
+                        ),
                       ),
                       onSubmitted: (_) => resetPassword(),
                     ),
@@ -435,7 +478,7 @@ class _LoginScreenState extends State<LoginScreen> {
                     ElevatedButton(
                       onPressed: isChanging ? null : resetPassword,
                       style: ElevatedButton.styleFrom(
-                        backgroundColor: const Color(0xFF1565C0),
+                        backgroundColor: Theme.of(ctx).primaryColor,
                         foregroundColor: Colors.white,
                         padding: const EdgeInsets.symmetric(vertical: 16),
                         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
@@ -444,18 +487,19 @@ class _LoginScreenState extends State<LoginScreen> {
                       child: isChanging
                           ? const SizedBox(width: 20, height: 20,
                               child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2))
-                          : const Text('비밀번호 변경', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
+                          : Text('비밀번호 변경', style: ResponsiveHelper.subtitleStyle(ctx).copyWith(fontWeight: FontWeight.w600)),
                     ),
 
                   // ── 아이디 + 이메일 입력 ──
                   ] else ...[
-                    const Text('비밀번호 찾기',
-                        style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700, color: Color(0xFF1A1A1A))),
+                    Text('비밀번호 찾기',
+                        style: ResponsiveHelper.titleStyle(ctx).copyWith(fontWeight: FontWeight.w700, color: AppColors.grey900)),
                     const SizedBox(height: 6),
                     Text('가입 시 등록한 아이디와 이메일을 입력해주세요',
-                        style: TextStyle(fontSize: 14, color: AppColors.grey500)),
+                        style: ResponsiveHelper.bodyStyle(ctx).copyWith(color: AppColors.grey500)),
                     const SizedBox(height: 24),
                     _buildSheetTextField(
+                      context: ctx,
                       controller: usernameController,
                       focusNode: usernameFocus,
                       label: '아이디',
@@ -465,6 +509,7 @@ class _LoginScreenState extends State<LoginScreen> {
                     ),
                     const SizedBox(height: 12),
                     _buildSheetTextField(
+                      context: ctx,
                       controller: emailController,
                       focusNode: emailFocus,
                       label: '이메일',
@@ -477,7 +522,7 @@ class _LoginScreenState extends State<LoginScreen> {
                     ElevatedButton(
                       onPressed: isSending ? null : sendCode,
                       style: ElevatedButton.styleFrom(
-                        backgroundColor: const Color(0xFF1565C0),
+                        backgroundColor: Theme.of(ctx).primaryColor,
                         foregroundColor: Colors.white,
                         padding: const EdgeInsets.symmetric(vertical: 16),
                         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
@@ -486,10 +531,11 @@ class _LoginScreenState extends State<LoginScreen> {
                       child: isSending
                           ? const SizedBox(width: 20, height: 20,
                               child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2))
-                          : const Text('인증번호 발송', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
+                          : Text('인증번호 발송', style: ResponsiveHelper.subtitleStyle(ctx).copyWith(fontWeight: FontWeight.w600)),
                     ),
                   ],
                 ],
+                ),
               ),
             ),
           );
@@ -513,17 +559,18 @@ class _LoginScreenState extends State<LoginScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       resizeToAvoidBottomInset: true,
-      body: Consumer<UserProvider>(
-        builder: (context, userProvider, _) {
+      body: Builder(
+        builder: (context) {
+          final isLoading = context.select<UserProvider, bool>((p) => p.isLoading);
           return LoadingOverlay(
-            isLoading: userProvider.isLoading,
+            isLoading: isLoading,
             message: '로그인 중...',
             child: Container(
-              decoration: const BoxDecoration(
+              decoration: BoxDecoration(
                 gradient: LinearGradient(
                   begin: Alignment.topCenter,
                   end: Alignment.bottomCenter,
-                  colors: [Color(0xFF1565C0), Color(0xFF1E88E5)],
+                  colors: [Theme.of(context).primaryColor, Theme.of(context).colorScheme.secondary],
                 ),
               ),
               child: SafeArea(
@@ -532,15 +579,15 @@ class _LoginScreenState extends State<LoginScreen> {
                   children: [
                     // 상단 로고 영역
                     SizedBox(
-                      height: MediaQuery.of(context).size.height * 0.27,
+                      height: math.max(80, MediaQuery.sizeOf(context).height * 0.22),
                       child: Center(
                         child: Column(
                           mainAxisSize: MainAxisSize.min,
                           children: [
-                            const Text(
+                            Text(
                               'ALfit',
                               style: TextStyle(
-                                fontSize: 44,
+                                fontSize: ResponsiveHelper.titleStyle(context).fontSize! * 2.2,
                                 fontWeight: FontWeight.w800,
                                 color: Colors.white,
                                 letterSpacing: 1.5,
@@ -550,8 +597,7 @@ class _LoginScreenState extends State<LoginScreen> {
                             const SizedBox(height: 8),
                             Text(
                               '나에게 딱 맞는 알바 매칭',
-                              style: TextStyle(
-                                fontSize: 14,
+                              style: ResponsiveHelper.bodyStyle(context).copyWith(
                                 fontWeight: FontWeight.w400,
                                 color: Colors.white.withValues(alpha: 0.75),
                                 letterSpacing: 0.5,
@@ -573,7 +619,7 @@ class _LoginScreenState extends State<LoginScreen> {
                         ),
                         child: SingleChildScrollView(
                           padding: const EdgeInsets.fromLTRB(28, 32, 28, 40),
-                          child: _buildForm(context, userProvider),
+                          child: _buildForm(context, isLoading),
                         ),
                       ),
                     ),
@@ -587,7 +633,7 @@ class _LoginScreenState extends State<LoginScreen> {
     );
   }
 
-  Widget _buildForm(BuildContext context, UserProvider userProvider) {
+  Widget _buildForm(BuildContext context, bool isLoading) {
     final theme = Theme.of(context);
 
     return Form(
@@ -595,12 +641,11 @@ class _LoginScreenState extends State<LoginScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          const Text(
+          Text(
             '로그인',
-            style: TextStyle(
-              fontSize: 24,
+            style: ResponsiveHelper.titleStyle(context).copyWith(
               fontWeight: FontWeight.w700,
-              color: Color(0xFF1A1A1A),
+              color: AppColors.grey900,
               height: 1,
             ),
           ),
@@ -646,7 +691,7 @@ class _LoginScreenState extends State<LoginScreen> {
             ),
             validator: (value) {
               if (value == null || value.isEmpty) return '비밀번호를 입력해주세요';
-              if (value.length < 6) return '비밀번호는 6자 이상이어야 합니다';
+              if (value.length < 8) return '비밀번호는 8자 이상이어야 합니다';
               return null;
             },
           ),
@@ -665,7 +710,7 @@ class _LoginScreenState extends State<LoginScreen> {
                   padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                   tapTargetSize: MaterialTapTargetSize.shrinkWrap,
                 ),
-                child: const Text('아이디 찾기', style: TextStyle(fontSize: 13)),
+                child: Text('아이디 찾기', style: ResponsiveHelper.smallStyle(context)),
               ),
               Container(width: 1, height: 12, color: AppColors.grey300,
                   margin: const EdgeInsets.symmetric(horizontal: 4)),
@@ -677,7 +722,7 @@ class _LoginScreenState extends State<LoginScreen> {
                   padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                   tapTargetSize: MaterialTapTargetSize.shrinkWrap,
                 ),
-                child: const Text('비밀번호 찾기', style: TextStyle(fontSize: 13)),
+                child: Text('비밀번호 찾기', style: ResponsiveHelper.smallStyle(context)),
               ),
             ],
           ),
@@ -686,9 +731,9 @@ class _LoginScreenState extends State<LoginScreen> {
 
           // 로그인 버튼
           ElevatedButton(
-            onPressed: userProvider.isLoading ? null : _handleLogin,
+            onPressed: isLoading ? null : _handleLogin,
             style: ElevatedButton.styleFrom(
-              backgroundColor: const Color(0xFF1565C0),
+              backgroundColor: Theme.of(context).primaryColor,
               foregroundColor: Colors.white,
               padding: const EdgeInsets.symmetric(vertical: 16),
               shape: RoundedRectangleBorder(
@@ -696,9 +741,9 @@ class _LoginScreenState extends State<LoginScreen> {
               ),
               elevation: 0,
             ),
-            child: const Text(
+            child: Text(
               '로그인',
-              style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
+              style: ResponsiveHelper.subtitleStyle(context).copyWith(fontWeight: FontWeight.w600),
             ),
           ),
 
@@ -710,7 +755,7 @@ class _LoginScreenState extends State<LoginScreen> {
             children: [
               Text(
                 '계정이 없으신가요?',
-                style: TextStyle(fontSize: 14, color: AppColors.grey500),
+                style: ResponsiveHelper.bodyStyle(context).copyWith(color: AppColors.grey500),
               ),
               TextButton(
                 onPressed: () => Navigator.push(
@@ -718,14 +763,14 @@ class _LoginScreenState extends State<LoginScreen> {
                   MaterialPageRoute(builder: (_) => const RegisterScreen()),
                 ),
                 style: TextButton.styleFrom(
-                  foregroundColor: const Color(0xFF1565C0),
+                  foregroundColor: Theme.of(context).primaryColor,
                   minimumSize: Size.zero,
                   padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
                   tapTargetSize: MaterialTapTargetSize.shrinkWrap,
                 ),
-                child: const Text(
+                child: Text(
                   '회원가입',
-                  style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
+                  style: ResponsiveHelper.bodyStyle(context).copyWith(fontWeight: FontWeight.w600),
                 ),
               ),
             ],
@@ -795,6 +840,7 @@ class _LoginScreenState extends State<LoginScreen> {
   }
 
   Widget _buildSheetTextField({
+    required BuildContext context,
     required TextEditingController controller,
     required FocusNode focusNode,
     required String label,
@@ -815,12 +861,12 @@ class _LoginScreenState extends State<LoginScreen> {
       enabled: enabled,
       obscureText: obscureText,
       onSubmitted: onSubmitted,
-      style: const TextStyle(fontSize: 15),
+      style: ResponsiveHelper.bodyStyle(context),
       decoration: InputDecoration(
         labelText: label,
         hintText: hint,
-        hintStyle: TextStyle(color: AppColors.grey400, fontSize: 14),
-        prefixIcon: Icon(icon, color: const Color(0xFF1565C0), size: 20),
+        hintStyle: ResponsiveHelper.smallStyle(context, color: AppColors.grey400),
+        prefixIcon: Icon(icon, color: Theme.of(context).primaryColor, size: 20),
         suffixIcon: suffixWidget != null
             ? Padding(
                 padding: const EdgeInsets.only(right: 12),
@@ -843,7 +889,7 @@ class _LoginScreenState extends State<LoginScreen> {
         ),
         focusedBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(12),
-          borderSide: const BorderSide(color: Color(0xFF1565C0), width: 2),
+          borderSide: BorderSide(color: Theme.of(context).primaryColor, width: 2),
         ),
         filled: true,
         fillColor: enabled ? AppColors.grey50 : AppColors.grey100,

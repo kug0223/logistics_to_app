@@ -6,6 +6,8 @@ import '../../utils/toast_helper.dart';
 import '../../utils/format_helper.dart';
 import '../../utils/wage_calculator.dart';
 import '../../theme/app_colors.dart';
+import '../../widgets/common/gradient_scaffold.dart';
+import '../../widgets/common/loading_widget.dart';
 
 /// 연도별 최저시급 관리 화면
 ///
@@ -41,7 +43,7 @@ class _MinimumWageSettingsScreenState extends State<MinimumWageSettingsScreen> {
       if (raw is Map) {
         _wages = {
           for (final e in raw.entries)
-            int.tryParse(e.key.toString()) ?? 0: (e.value as num).toInt()
+            int.tryParse(e.key.toString()) ?? 0: (e.value as num?)?.toInt() ?? 0
         };
         _wages.remove(0);
       }
@@ -60,6 +62,7 @@ class _MinimumWageSettingsScreenState extends State<MinimumWageSettingsScreen> {
   }
 
   Future<void> _save() async {
+    if (_isSaving) return;
     setState(() => _isSaving = true);
     try {
       final data = {
@@ -92,37 +95,40 @@ class _MinimumWageSettingsScreenState extends State<MinimumWageSettingsScreen> {
       context: context,
       builder: (ctx) => AlertDialog(
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        insetPadding: const EdgeInsets.symmetric(horizontal: 24, vertical: 24),
         title: Text(isEdit ? '$existingYear년 수정' : '연도 추가'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            if (!isEdit) ...[
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              if (!isEdit) ...[
+                TextField(
+                  controller: yearController,
+                  keyboardType: TextInputType.number,
+                  inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+                  decoration: const InputDecoration(
+                    labelText: '연도',
+                    hintText: '예) 2027',
+                    suffixText: '년',
+                    border: OutlineInputBorder(),
+                  ),
+                ),
+                const SizedBox(height: 16),
+              ],
               TextField(
-                controller: yearController,
+                controller: wageController,
                 keyboardType: TextInputType.number,
-                inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+                inputFormatters: [NumberInputFormatter()],
                 decoration: const InputDecoration(
-                  labelText: '연도',
-                  hintText: '예) 2027',
-                  suffixText: '년',
+                  labelText: '최저시급',
+                  hintText: '예) 10,030',
+                  suffixText: '원',
                   border: OutlineInputBorder(),
                 ),
+                autofocus: true,
               ),
-              const SizedBox(height: 16),
             ],
-            TextField(
-              controller: wageController,
-              keyboardType: TextInputType.number,
-              inputFormatters: [NumberInputFormatter()],
-              decoration: const InputDecoration(
-                labelText: '최저시급',
-                hintText: '예) 10,030',
-                suffixText: '원',
-                border: OutlineInputBorder(),
-              ),
-              autofocus: true,
-            ),
-          ],
+          ),
         ),
         actions: [
           TextButton(
@@ -164,8 +170,11 @@ class _MinimumWageSettingsScreenState extends State<MinimumWageSettingsScreen> {
       context: context,
       builder: (ctx) => AlertDialog(
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        insetPadding: const EdgeInsets.symmetric(horizontal: 24, vertical: 24),
         title: const Text('삭제 확인'),
-        content: Text('$year년 최저시급을 삭제하시겠습니까?\n삭제하면 해당 연도는 직전 연도 값이 적용됩니다.'),
+        content: SingleChildScrollView(
+          child: Text('$year년 최저시급을 삭제하시겠습니까?\n삭제하면 해당 연도는 직전 연도 값이 적용됩니다.'),
+        ),
         actions: [
           TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('취소')),
           TextButton(
@@ -176,7 +185,7 @@ class _MinimumWageSettingsScreenState extends State<MinimumWageSettingsScreen> {
         ],
       ),
     );
-    if (ok == true) setState(() => _wages.remove(year));
+    if (ok == true && mounted) setState(() => _wages.remove(year));
   }
 
   @override
@@ -185,38 +194,27 @@ class _MinimumWageSettingsScreenState extends State<MinimumWageSettingsScreen> {
     final currentYear = DateTime.now().year;
     final sortedYears = _wages.keys.toList()..sort((a, b) => b.compareTo(a));
 
-    return Scaffold(
-      appBar: AppBar(
-        title: Text(
-          '최저시급 관리',
-          style: ResponsiveHelper.subtitleStyle(context).copyWith(
-            color: Colors.white,
-            fontWeight: FontWeight.bold,
-          ),
-        ),
-        backgroundColor: theme.primaryColor,
-        foregroundColor: Colors.white,
-        elevation: 0,
-        actions: [
-          if (!_isLoading)
-            Padding(
-              padding: const EdgeInsets.only(right: 12),
-              child: FilledButton.icon(
-                onPressed: _isSaving ? null : _save,
-                icon: _isSaving
-                    ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
-                    : const Icon(Icons.save, size: 18),
-                label: const Text('저장'),
-                style: FilledButton.styleFrom(
-                  backgroundColor: Colors.white,
-                  foregroundColor: theme.primaryColor,
-                ),
+    return GradientScaffold(
+      title: '최저시급 관리',
+      actions: [
+        if (!_isLoading)
+          Padding(
+            padding: const EdgeInsets.only(right: 12),
+            child: FilledButton.icon(
+              onPressed: _isSaving ? null : _save,
+              icon: _isSaving
+                  ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                  : const Icon(Icons.save, size: 18),
+              label: const Text('저장'),
+              style: FilledButton.styleFrom(
+                backgroundColor: Colors.white,
+                foregroundColor: theme.primaryColor,
               ),
             ),
-        ],
-      ),
+          ),
+      ],
       body: _isLoading
-          ? const Center(child: CircularProgressIndicator())
+          ? const LoadingWidget()
           : Column(
               children: [
                 // 안내 배너
@@ -285,15 +283,14 @@ class _MinimumWageSettingsScreenState extends State<MinimumWageSettingsScreen> {
                             child: Center(
                               child: Text(
                                 '$year',
-                                style: TextStyle(
-                                  fontSize: 13,
-                                  fontWeight: FontWeight.bold,
+                                style: ResponsiveHelper.smallStyle(
+                                  context,
                                   color: isCurrentYear
                                       ? theme.primaryColor
                                       : isNextYear
                                           ? AppColors.successDark
                                           : AppColors.grey600,
-                                ),
+                                ).copyWith(fontWeight: FontWeight.bold),
                               ),
                             ),
                           ),
@@ -304,9 +301,9 @@ class _MinimumWageSettingsScreenState extends State<MinimumWageSettingsScreen> {
                             ),
                           ),
                           subtitle: isCurrentYear
-                              ? Text('현재 적용 중', style: TextStyle(color: theme.primaryColor, fontSize: 12, fontWeight: FontWeight.w600))
+                              ? Text('현재 적용 중', style: ResponsiveHelper.smallStyle(context, color: theme.primaryColor).copyWith(fontWeight: FontWeight.w600))
                               : isNextYear
-                                  ? Text('내년 적용 예정', style: TextStyle(color: AppColors.successDark, fontSize: 12, fontWeight: FontWeight.w600))
+                                  ? Text('내년 적용 예정', style: ResponsiveHelper.smallStyle(context, color: AppColors.successDark).copyWith(fontWeight: FontWeight.w600))
                                   : null,
                           trailing: Row(
                             mainAxisSize: MainAxisSize.min,

@@ -3,6 +3,7 @@ import 'responsive_helper.dart';
 import 'toast_helper.dart';
 import '../theme/app_colors.dart';
 import '../widgets/dialogs/styled_dialog.dart';
+import '../widgets/common/loading_widget.dart';
 
 /// 공통 다이얼로그 헬퍼
 class DialogHelper {
@@ -185,8 +186,6 @@ class DialogHelper {
     BuildContext context, {
     String message = '처리 중...',
   }) {
-    final theme = Theme.of(context);
-    
     showDialog(
       context: context,
       barrierDismissible: false,
@@ -202,9 +201,7 @@ class DialogHelper {
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  CircularProgressIndicator(
-                    color: theme.primaryColor,
-                  ),
+                  const LoadingWidget(),
                   SizedBox(height: ResponsiveHelper.spacing(context, 16)),
                   Text(
                     message,
@@ -508,25 +505,26 @@ class DialogHelper {
               content: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  // 라디오 리스트
-                  ...reasons.map((reason) {
-                    return RadioListTile<String>(
-                      title: Text(
-                        reason,
-                        style: ResponsiveHelper.bodyStyle(context),
-                      ),
-                      value: reason,
-                      groupValue: selectedReason,
-                      activeColor: AppColors.error,
-                      contentPadding: EdgeInsets.zero,
-                      dense: true,
-                      onChanged: (value) {
-                        setDialogState(() {
-                          selectedReason = value;
-                        });
-                      },
-                    );
-                  }),
+                  // 라디오 리스트 (RadioGroup으로 groupValue/onChanged 위임)
+                  RadioGroup<String>(
+                    groupValue: selectedReason,
+                    onChanged: (value) {
+                      setDialogState(() => selectedReason = value);
+                    },
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: reasons.map((reason) => RadioListTile<String>(
+                        title: Text(
+                          reason,
+                          style: ResponsiveHelper.bodyStyle(context),
+                        ),
+                        value: reason,
+                        activeColor: AppColors.error,
+                        contentPadding: EdgeInsets.zero,
+                        dense: true,
+                      )).toList(),
+                    ),
+                  ),
                   
                   // 기타 선택 시 입력 필드
                   if (isCustom) ...[
@@ -587,6 +585,7 @@ class DialogHelper {
         );
       },
     );
+    customController.dispose();
     return result;
   }
 

@@ -1,24 +1,28 @@
+import 'format_helper.dart';
+import 'wage_calculator.dart';
+
 /// 근로기준법 관련 상수 및 계산 로직
 class LaborStandards {
   // ==================== 최저임금 ====================
-  
+
   /// 2025년 최저시급 (원)
   static const int minimumWage2025 = 10030;
 
   /// 2026년 최저시급 (원)
   static const int minimumWage2026 = 10320;
 
-  /// 현재 연도 최저시급 (나중에 Firestore로 전환 예정)
-  static int get currentMinimumWage => minimumWage2026;
+  /// 현재 연도 최저시급 — WageCalculator에 위임 (Firestore 우선, 로컬 백업)
+  static int get currentMinimumWage => WageCalculator.currentMinimumWage;
   
   // ==================== 근로시간 ====================
   
   /// 주 법정 근로시간
   static const int weeklyStandardHours = 40;
   
-  /// 월 소정근로시간 (주 40시간 기준)
-  /// 계산식: (40시간 × 52주) ÷ 12개월 = 173.33... ≈ 174시간
-  static const double monthlyStandardHours = 174.0;
+  /// 월 소정근로시간 (고용노동부 고시 기준 — 주휴 포함)
+  /// 계산식: (주 40시간 + 주휴 8시간) × (52주 ÷ 12개월) ≈ 209시간
+  /// ※ 174시간은 주휴 제외 기준 — 통상임금·월급 환산에는 209시간 사용
+  static const double monthlyStandardHours = 209.0;
   
   /// 1일 기본 근로시간
   static const int dailyStandardHours = 8;
@@ -33,19 +37,12 @@ class LaborStandards {
   static const double weeklyHolidayPayRate = 0.2;
   
   // ==================== 포맷팅 ====================
-  
+
   /// 금액을 천단위 콤마 형식으로 변환
-  static String formatCurrency(int amount) {
-    return amount.toString().replaceAllMapped(
-      RegExp(r'(\d{1,3})(?=(\d{3})+(?!\d))'),
-      (Match m) => '${m[1]},',
-    );
-  }
-  
+  static String formatCurrency(int amount) => FormatHelper.formatNumber(amount);
+
   /// 금액을 "원" 단위 문자열로 변환
-  static String formatCurrencyWithUnit(int amount) {
-    return '${formatCurrency(amount)}원';
-  }
+  static String formatCurrencyWithUnit(int amount) => FormatHelper.formatWage(amount);
   
   // ==================== 검증 ====================
   

@@ -34,6 +34,8 @@ class MonthlyReviewModel {
   /// ADMIN_TO_USER 전용
   final String? targetUserId;
   final String? targetUserName;
+  final String? targetUserGender; // '남성' | '여성'
+  final int? targetUserAge;       // 작성 시점 만 나이
 
   // ─── 기간 ───────────────────────────────────────────────────
   final int reviewYear;
@@ -84,6 +86,8 @@ class MonthlyReviewModel {
     required this.businessName,
     this.targetUserId,
     this.targetUserName,
+    this.targetUserGender,
+    this.targetUserAge,
     required this.reviewYear,
     required this.reviewMonth,
     required this.workDaysInMonth,
@@ -104,7 +108,15 @@ class MonthlyReviewModel {
   });
 
   factory MonthlyReviewModel.fromFirestore(DocumentSnapshot doc) {
-    final data = doc.data() as Map<String, dynamic>;
+    final raw = doc.data();
+    if (raw == null) throw ArgumentError('Document ${doc.id} has no data');
+    final data = raw as Map<String, dynamic>;
+    final reviewYear = data['reviewYear'] as int?;
+    if (reviewYear == null) throw ArgumentError('Document ${doc.id} missing required field: reviewYear');
+    final reviewMonth = data['reviewMonth'] as int?;
+    if (reviewMonth == null) throw ArgumentError('Document ${doc.id} missing required field: reviewMonth');
+    final createdAtTs = data['createdAt'] as Timestamp?;
+    if (createdAtTs == null) throw ArgumentError('Document ${doc.id} missing required field: createdAt');
     return MonthlyReviewModel(
       id: doc.id,
       reviewKey: data['reviewKey'] ?? doc.id,
@@ -118,12 +130,14 @@ class MonthlyReviewModel {
       businessName: data['businessName'] ?? '',
       targetUserId: data['targetUserId'],
       targetUserName: data['targetUserName'],
-      reviewYear: data['reviewYear'] ?? DateTime.now().year,
-      reviewMonth: data['reviewMonth'] ?? DateTime.now().month,
-      workDaysInMonth: data['workDaysInMonth'] ?? 0,
-      normalAttendanceDays: data['normalAttendanceDays'] ?? 0,
-      lateDays: data['lateDays'] ?? 0,
-      rating: data['rating'] ?? 0,
+      targetUserGender: data['targetUserGender'],
+      targetUserAge: (data['targetUserAge'] as num?)?.toInt(),
+      reviewYear: reviewYear,
+      reviewMonth: reviewMonth,
+      workDaysInMonth: (data['workDaysInMonth'] as num?)?.toInt() ?? 0,
+      normalAttendanceDays: (data['normalAttendanceDays'] as num?)?.toInt() ?? 0,
+      lateDays: (data['lateDays'] as num?)?.toInt() ?? 0,
+      rating: (data['rating'] as num?)?.toInt() ?? 0,
       wouldRehire: data['wouldRehire'],
       positiveTags: List<String>.from(data['positiveTags'] ?? []),
       improvementTags: List<String>.from(data['improvementTags'] ?? []),
@@ -135,8 +149,7 @@ class MonthlyReviewModel {
       businessResponse: data['businessResponse'],
       businessRespondedAt:
           (data['businessRespondedAt'] as Timestamp?)?.toDate().toLocal(),
-      createdAt:
-          (data['createdAt'] as Timestamp?)?.toDate().toLocal() ?? DateTime.now(),
+      createdAt: createdAtTs.toDate().toLocal(),
     );
   }
 
@@ -151,6 +164,8 @@ class MonthlyReviewModel {
         'businessName': businessName,
         'targetUserId': targetUserId,
         'targetUserName': targetUserName,
+        'targetUserGender': targetUserGender,
+        'targetUserAge': targetUserAge,
         'reviewYear': reviewYear,
         'reviewMonth': reviewMonth,
         'workDaysInMonth': workDaysInMonth,
@@ -224,6 +239,8 @@ class MonthlyReviewModel {
     String? businessName,
     String? targetUserId,
     String? targetUserName,
+    String? targetUserGender,
+    int? targetUserAge,
     int? reviewYear,
     int? reviewMonth,
     int? workDaysInMonth,
@@ -252,6 +269,8 @@ class MonthlyReviewModel {
         businessName: businessName ?? this.businessName,
         targetUserId: targetUserId ?? this.targetUserId,
         targetUserName: targetUserName ?? this.targetUserName,
+        targetUserGender: targetUserGender ?? this.targetUserGender,
+        targetUserAge: targetUserAge ?? this.targetUserAge,
         reviewYear: reviewYear ?? this.reviewYear,
         reviewMonth: reviewMonth ?? this.reviewMonth,
         workDaysInMonth: workDaysInMonth ?? this.workDaysInMonth,

@@ -1,5 +1,3 @@
-// lib/models/core/review_model.dart
-
 import 'package:cloud_firestore/cloud_firestore.dart';
 
 /// 근무 리뷰 모델
@@ -39,6 +37,14 @@ class ReviewModel {
 
   /// Firestore에서 변환
   factory ReviewModel.fromMap(Map<String, dynamic> map, String id) {
+    final workDate = (map['workDate'] as Timestamp?)?.toDate().toLocal();
+    if (workDate == null) {
+      throw ArgumentError('ReviewModel: workDate is missing (id=$id)');
+    }
+    final createdAt = (map['createdAt'] as Timestamp?)?.toDate().toLocal();
+    if (createdAt == null) {
+      throw ArgumentError('ReviewModel: createdAt is missing (id=$id)');
+    }
     return ReviewModel(
       id: id,
       applicationId: map['applicationId'] ?? '',
@@ -48,17 +54,21 @@ class ReviewModel {
       businessId: map['businessId'] ?? '',
       businessName: map['businessName'] ?? '',
       workType: map['workType'] ?? '',
-      workDate: (map['workDate'] as Timestamp).toDate(),
-      rating: map['rating'] ?? 0,
+      workDate: workDate,
+      rating: ((map['rating'] as num?)?.toInt() ?? 0).clamp(0, 5),
       comment: map['comment'],
       wouldRehire: map['wouldRehire'] ?? true,
-      createdAt: (map['createdAt'] as Timestamp?)?.toDate().toLocal() ?? DateTime.now(),  // 🔥 .toLocal() 추가
-      updatedAt: (map['updatedAt'] as Timestamp?)?.toDate().toLocal(),  // 🔥 .toLocal() 추가
+      createdAt: createdAt,
+      updatedAt: (map['updatedAt'] as Timestamp?)?.toDate().toLocal(),
     );
   }
 
   factory ReviewModel.fromFirestore(DocumentSnapshot doc) {
-    return ReviewModel.fromMap(doc.data() as Map<String, dynamic>, doc.id);
+    final raw = doc.data();
+    if (raw == null) {
+      throw ArgumentError('ReviewModel: document ${doc.id} has no data');
+    }
+    return ReviewModel.fromMap(raw as Map<String, dynamic>, doc.id);
   }
 
   /// Firestore에 저장

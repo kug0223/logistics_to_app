@@ -373,7 +373,8 @@ extension BusinessFirestore on FirestoreService {
     try {
       debugPrint('🔍 [FirestoreService] 업무 유형 순서 변경...');
 
-      final batch = _firestore.batch();
+      var batch = _firestore.batch();
+      int batchCount = 0;
 
       for (int i = 0; i < workTypeIds.length; i++) {
         final docRef = _firestore
@@ -383,9 +384,15 @@ extension BusinessFirestore on FirestoreService {
             .doc(workTypeIds[i]);
 
         batch.update(docRef, {'displayOrder': i});
+        batchCount++;
+        if (batchCount >= 499) {
+          await batch.commit();
+          batch = _firestore.batch();
+          batchCount = 0;
+        }
       }
 
-      await batch.commit();
+      if (batchCount > 0) await batch.commit();
 
       debugPrint('✅ [FirestoreService] 순서 변경 완료');
       ToastHelper.showSuccess('순서가 변경되었습니다');

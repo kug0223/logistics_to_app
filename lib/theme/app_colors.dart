@@ -322,27 +322,31 @@ class AppColors {
       case 'PENDING':
         return pendingBg;
       case 'CONFIRMED':
+      case 'CONTRACT_PENDING':
         return confirmedBg;
       case 'REJECTED':
         return rejectedBg;
       case 'CANCELED':
+      case 'AUTO_CANCELED':
       case 'CLOSED':
         return canceledBg;
       default:
         return grey100;
     }
   }
-  
+
   /// 상태에 따른 텍스트/아이콘 색상 반환
   static Color getStatusColor(String status) {
     switch (status.toUpperCase()) {
       case 'PENDING':
         return pendingDark;
       case 'CONFIRMED':
+      case 'CONTRACT_PENDING':
         return confirmedDark;
       case 'REJECTED':
         return rejectedDark;
       case 'CANCELED':
+      case 'AUTO_CANCELED':
       case 'CLOSED':
         return canceledDark;
       default:
@@ -355,23 +359,27 @@ class AppColors {
     switch (jobType.toLowerCase()) {
       case 'short':
       case 'short_term':
+      case 'flex':
         return shortTermDark;
       case 'long':
       case 'long_term':
+      case 'contract':
         return longTermDark;
       default:
         return infoDark;
     }
   }
-  
+
   /// 근무 유형에 따른 배경색 반환
   static Color getJobTypeBackground(String jobType) {
     switch (jobType.toLowerCase()) {
       case 'short':
       case 'short_term':
+      case 'flex':
         return shortTermBg;
       case 'long':
       case 'long_term':
+      case 'contract':
         return longTermBg;
       default:
         return infoBg;

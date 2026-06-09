@@ -7,6 +7,8 @@ import '../../utils/toast_helper.dart';
 import '../../utils/dialog_helper.dart';
 import '../../theme/app_colors.dart';
 import '../../widgets/dialogs/styled_dialog.dart';
+import '../../widgets/common/gradient_scaffold.dart';
+import '../../widgets/common/loading_widget.dart';
 
 /// 리뷰 태그 관리 화면
 class ReviewTagsSettingsScreen extends StatefulWidget {
@@ -84,42 +86,46 @@ class _ReviewTagsSettingsScreenState extends State<ReviewTagsSettingsScreen>
         'updatedAt': FieldValue.serverTimestamp(),
       });
       
-      ToastHelper.showSuccess('태그가 저장되었습니다');
+      if (mounted) ToastHelper.showSuccess('태그가 저장되었습니다');
     } catch (e) {
       debugPrint('❌ 태그 저장 실패: $e');
-      ToastHelper.showError('저장에 실패했습니다');
+      if (mounted) ToastHelper.showError('저장에 실패했습니다');
     }
   }
 
   Future<void> _addTag(String type) async {
     final controller = TextEditingController();
-    
-    final result = await showDialog<String>(
-      context: context,
-      builder: (context) => _TagInputDialog(
-        title: '태그 추가',
-        controller: controller,
-      ),
-    );
-    
-    if (result != null && result.isNotEmpty) {
-      setState(() {
-        switch (type) {
-          case 'positive':
-            if (!_positiveTags.contains(result)) _positiveTags.add(result);
-            break;
-          case 'improvement':
-            if (!_improvementTags.contains(result)) _improvementTags.add(result);
-            break;
-          case 'businessPositive':
-            if (!_businessPositiveTags.contains(result)) _businessPositiveTags.add(result);
-            break;
-          case 'businessImprovement':
-            if (!_businessImprovementTags.contains(result)) _businessImprovementTags.add(result);
-            break;
-        }
-      });
-      await _saveTags();
+    try {
+      final result = await showDialog<String>(
+        context: context,
+        builder: (context) => _TagInputDialog(
+          title: '태그 추가',
+          controller: controller,
+        ),
+      );
+
+      if (result != null && result.isNotEmpty) {
+        if (!mounted) return;
+        setState(() {
+          switch (type) {
+            case 'positive':
+              if (!_positiveTags.contains(result)) _positiveTags.add(result);
+              break;
+            case 'improvement':
+              if (!_improvementTags.contains(result)) _improvementTags.add(result);
+              break;
+            case 'businessPositive':
+              if (!_businessPositiveTags.contains(result)) _businessPositiveTags.add(result);
+              break;
+            case 'businessImprovement':
+              if (!_businessImprovementTags.contains(result)) _businessImprovementTags.add(result);
+              break;
+          }
+        });
+        await _saveTags();
+      }
+    } finally {
+      controller.dispose();
     }
   }
 
@@ -131,8 +137,8 @@ class _ReviewTagsSettingsScreenState extends State<ReviewTagsSettingsScreen>
       confirmText: '삭제',
     );
     
-    if (!confirmed) return;
-    
+    if (!confirmed || !mounted) return;
+
     setState(() {
       switch (type) {
         case 'positive':
@@ -154,33 +160,20 @@ class _ReviewTagsSettingsScreenState extends State<ReviewTagsSettingsScreen>
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    
-    return Scaffold(
-      appBar: AppBar(
-        title: Text(
-          '리뷰 태그 관리',
-          style: ResponsiveHelper.subtitleStyle(context).copyWith(
-            color: Colors.white,
-            fontWeight: FontWeight.bold,
-          ),
-        ),
-        backgroundColor: theme.primaryColor,
-        foregroundColor: Colors.white,
-        elevation: 0,
-        bottom: TabBar(
-          controller: _tabController,
-          indicatorColor: Colors.white,
-          labelColor: Colors.white,
-          unselectedLabelColor: Colors.white.withValues(alpha: 0.6),
-          tabs: const [
-            Tab(text: '지원자 평가'),
-            Tab(text: '사업장 평가'),
-          ],
-        ),
+    return GradientScaffold(
+      title: '리뷰 태그 관리',
+      headerBottom: TabBar(
+        controller: _tabController,
+        indicatorColor: Colors.white,
+        labelColor: Colors.white,
+        unselectedLabelColor: Colors.white.withValues(alpha: 0.6),
+        tabs: const [
+          Tab(text: '지원자 평가'),
+          Tab(text: '사업장 평가'),
+        ],
       ),
       body: _isLoading
-          ? const Center(child: CircularProgressIndicator())
+          ? const LoadingWidget()
           : TabBarView(
               controller: _tabController,
               children: [
@@ -384,12 +377,16 @@ class _ReviewTagsSettingsScreenState extends State<ReviewTagsSettingsScreen>
             ),
           ),
           SizedBox(width: ResponsiveHelper.spacing(context, 6)),
-          GestureDetector(
-            onTap: () => _removeTag(type, tag),
-            child: Icon(
-              Icons.close,
-              size: ResponsiveHelper.iconSize(context, 16),
-              color: color,
+          Semantics(
+            button: true,
+            label: '태그 $tag 삭제',
+            child: GestureDetector(
+              onTap: () => _removeTag(type, tag),
+              child: Icon(
+                Icons.close,
+                size: ResponsiveHelper.iconSize(context, 16),
+                color: color,
+              ),
             ),
           ),
         ],

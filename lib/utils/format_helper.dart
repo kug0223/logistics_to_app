@@ -100,12 +100,24 @@ class FormatHelper {
   }
 
   /// DateTime을 시간만 포맷팅
-  /// 
+  ///
   /// 예시:
   /// - formatTime(DateTime(2024, 11, 27, 18, 30)) → '18:30'
-  static String formatTime(DateTime dateTime) {
+  static String formatTime(DateTime dateTime) =>
+      formatHourMinute(dateTime.hour, dateTime.minute);
+
+  /// 시/분 정수를 'HH:mm' 형식으로 포맷팅
+  /// 예시: formatHourMinute(9, 5) → '09:05'
+  static String formatHourMinute(int hour, int minute) {
+    return '${hour.toString().padLeft(2, '0')}:${minute.toString().padLeft(2, '0')}';
+  }
+
+  /// DateTime을 초 포함 시간으로 포맷팅 (출퇴근 기록용)
+  /// 예시: '18:30:45'
+  static String formatTimeWithSeconds(DateTime dateTime) {
     return '${dateTime.hour.toString().padLeft(2, '0')}:'
-           '${dateTime.minute.toString().padLeft(2, '0')}';
+           '${dateTime.minute.toString().padLeft(2, '0')}:'
+           '${dateTime.second.toString().padLeft(2, '0')}';
   }
 
   /// 날짜 범위 포맷팅
@@ -257,8 +269,28 @@ class FormatHelper {
   // 공고 카드용 포맷팅 (2024.12.04 추가)
   // ============================================================
 
+  /// 날짜를 ISO 형식으로 포맷팅
+  /// 예시: '2024-11-28'
+  static String formatDateISO(DateTime date) =>
+      '${date.year}-${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')}';
+
+  /// 연월을 ISO 형식으로 포맷팅 (급여 문서 키 등에 사용)
+  /// 예시: '2024-11'
+  static String formatYearMonthISO(DateTime date) =>
+      '${date.year}-${date.month.toString().padLeft(2, '0')}';
+
+  /// 날짜를 점 구분 형식으로 포맷팅
+  /// 예시: '2024.11.28'
+  static String formatDateDot(DateTime date) =>
+      '${date.year}.${date.month.toString().padLeft(2, '0')}.${date.day.toString().padLeft(2, '0')}';
+
+  /// 날짜를 구분자 없는 숫자 형식으로 포맷팅 (파일명 등에 사용)
+  /// 예시: '20241128'
+  static String formatDateStamp(DateTime date) =>
+      '${date.year}${date.month.toString().padLeft(2, '0')}${date.day.toString().padLeft(2, '0')}';
+
   /// 날짜를 간결하게 포맷팅 (요일 포함)
-  /// 
+  ///
   /// 예시:
   /// - formatDateCompact(DateTime(2024, 11, 28)) → '11/28(목)'
   static String formatDateCompact(DateTime date) =>
@@ -298,10 +330,11 @@ class FormatHelper {
     
     // 장기 공고
     if (isLongTerm) {
+      final endStr = endDate != null ? ' ~ ${formatDateCompact(endDate)}' : '~';
       if (workDays != null && workDays.isNotEmpty) {
-        return '$startStr~ · ${workDays.join(",")}';
+        return '$startStr$endStr · ${workDays.join(",")}';
       }
-      return '$startStr~ 장기';
+      return '$startStr$endStr';
     }
     
     // 단기 1일

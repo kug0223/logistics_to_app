@@ -2,18 +2,19 @@
 
 import 'package:flutter/material.dart';
 import '../../theme/role_theme.dart';
+import '../../utils/responsive_helper.dart';
 
 /// 사용자 역할을 표시하는 배지
 class RoleBadge extends StatelessWidget {
   final String? role;
   final bool showIcon;
-  final double fontSize;
-  
+  final double? fontSize;
+
   const RoleBadge({
     super.key,
     required this.role,
     this.showIcon = true,
-    this.fontSize = 13,
+    this.fontSize,
   });
 
   @override
@@ -22,9 +23,13 @@ class RoleBadge extends StatelessWidget {
     final backgroundColor = RoleTheme.getBackgroundColor(role);
     final icon = RoleTheme.getRoleIcon(role);
     final label = RoleTheme.getRoleLabel(role);
-    
+    final resolvedFontSize = fontSize ?? ResponsiveHelper.smallStyle(context).fontSize!;
+
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+      padding: EdgeInsets.symmetric(
+        horizontal: ResponsiveHelper.spacing(context, 12),
+        vertical: ResponsiveHelper.spacing(context, 6),
+      ),
       decoration: BoxDecoration(
         color: backgroundColor,
         border: Border.all(color: primaryColor, width: 1.5),
@@ -34,14 +39,14 @@ class RoleBadge extends StatelessWidget {
         mainAxisSize: MainAxisSize.min,
         children: [
           if (showIcon) ...[
-            Icon(icon, size: fontSize + 3, color: primaryColor),
-            const SizedBox(width: 6),
+            Icon(icon, size: resolvedFontSize + 3, color: primaryColor),
+            SizedBox(width: ResponsiveHelper.spacing(context, 6)),
           ],
           Text(
             label,
             style: TextStyle(
               color: primaryColor,
-              fontSize: fontSize,
+              fontSize: resolvedFontSize,
               fontWeight: FontWeight.bold,
             ),
           ),

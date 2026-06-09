@@ -9,6 +9,8 @@ import '../../theme/app_colors.dart';
 import '../../models/settings/trust_settings_model.dart';
 import '../../widgets/dialogs/styled_dialog.dart';
 import '../../widgets/app_select_field.dart';
+import '../../widgets/common/gradient_scaffold.dart';
+import '../../widgets/common/loading_widget.dart';
 
 /// 배지 관리 화면
 class BadgeSettingsScreen extends StatefulWidget {
@@ -40,9 +42,11 @@ class _BadgeSettingsScreenState extends State<BadgeSettingsScreen> {
       if (snapshot.docs.isEmpty) {
         // 기본 배지 생성
         _badges = BadgeModel.defaultBadges();
+        final batch = _firestore.batch();
         for (final badge in _badges) {
-          await _firestore.collection('badges').doc(badge.id).set(badge.toMap());
+          batch.set(_firestore.collection('badges').doc(badge.id), badge.toMap());
         }
+        await batch.commit();
       } else {
         _badges = snapshot.docs
             .map((doc) => BadgeModel.fromMap(doc.data(), doc.id))
@@ -63,7 +67,8 @@ class _BadgeSettingsScreenState extends State<BadgeSettingsScreen> {
       await _firestore.collection('badges').doc(badge.id).update({
         'isActive': !badge.isActive,
       });
-      
+
+      if (!mounted) return;
       setState(() {
         final index = _badges.indexWhere((b) => b.id == badge.id);
         if (index != -1) {
@@ -95,12 +100,13 @@ class _BadgeSettingsScreenState extends State<BadgeSettingsScreen> {
     );
     
     if (result != null) {
+      if (!mounted) return;
       try {
         await _firestore.collection('badges').doc(result.id).update(result.toMap());
         await _loadBadges();
-        ToastHelper.showSuccess('배지가 수정되었습니다');
+        if (mounted) ToastHelper.showSuccess('배지가 수정되었습니다');
       } catch (e) {
-        ToastHelper.showError('수정에 실패했습니다');
+        if (mounted) ToastHelper.showError('수정에 실패했습니다');
       }
     }
   }
@@ -110,10 +116,11 @@ class _BadgeSettingsScreenState extends State<BadgeSettingsScreen> {
       context: context,
       builder: (context) => const _BadgeEditDialog(),
     );
-    
+
     if (result != null) {
+      if (!mounted) return;
       try {
-        final newId = 'badge_${DateTime.now().millisecondsSinceEpoch}';
+        final newId = _firestore.collection('badges').doc().id;
         final newBadge = BadgeModel(
           id: newId,
           name: result.name,
@@ -126,12 +133,12 @@ class _BadgeSettingsScreenState extends State<BadgeSettingsScreen> {
           order: _badges.length + 1,
           createdAt: DateTime.now(),
         );
-        
+
         await _firestore.collection('badges').doc(newId).set(newBadge.toMap());
         await _loadBadges();
-        ToastHelper.showSuccess('배지가 추가되었습니다');
+        if (mounted) ToastHelper.showSuccess('배지가 추가되었습니다');
       } catch (e) {
-        ToastHelper.showError('추가에 실패했습니다');
+        if (mounted) ToastHelper.showError('추가에 실패했습니다');
       }
     }
   }
@@ -143,15 +150,15 @@ class _BadgeSettingsScreenState extends State<BadgeSettingsScreen> {
       message: '"${badge.name}" 배지를 삭제하시겠습니까?\n이미 획득한 사용자에게는 영향이 없습니다.',
       confirmText: '삭제',
     );
-    
-    if (!confirmed) return;
-    
+
+    if (!confirmed || !mounted) return;
+
     try {
       await _firestore.collection('badges').doc(badge.id).delete();
       await _loadBadges();
-      ToastHelper.showSuccess('배지가 삭제되었습니다');
+      if (mounted) ToastHelper.showSuccess('배지가 삭제되었습니다');
     } catch (e) {
-      ToastHelper.showError('삭제에 실패했습니다');
+      if (mounted) ToastHelper.showError('삭제에 실패했습니다');
     }
   }
 
@@ -164,19 +171,8 @@ class _BadgeSettingsScreenState extends State<BadgeSettingsScreen> {
     final attendanceBadges = _badges.where((b) => b.type == BadgeType.attendance).toList();
     final specialtyBadges = _badges.where((b) => b.type == BadgeType.specialty).toList();
     
-    return Scaffold(
-      appBar: AppBar(
-        title: Text(
-          '배지 관리',
-          style: ResponsiveHelper.subtitleStyle(context).copyWith(
-            color: Colors.white,
-            fontWeight: FontWeight.bold,
-          ),
-        ),
-        backgroundColor: theme.primaryColor,
-        foregroundColor: Colors.white,
-        elevation: 0,
-      ),
+    return GradientScaffold(
+      title: '배지 관리',
       floatingActionButton: FloatingActionButton.extended(
         onPressed: _addBadge,
         backgroundColor: theme.primaryColor,
@@ -184,7 +180,7 @@ class _BadgeSettingsScreenState extends State<BadgeSettingsScreen> {
         label: const Text('배지 추가'),
       ),
       body: _isLoading
-          ? const Center(child: CircularProgressIndicator())
+          ? const LoadingWidget()
           : ListView(
               padding: ResponsiveHelper.cardPadding(context),
               children: [
@@ -341,9 +337,7 @@ class _BadgeSettingsScreenState extends State<BadgeSettingsScreen> {
         child: Center(
           child: Text(
             badge.icon,
-            style: TextStyle(
-              fontSize: ResponsiveHelper.spacing(context, 24),
-            ),
+            style: ResponsiveHelper.titleStyle(context),
           ),
         ),
       ),
@@ -399,9 +393,9 @@ class _BadgeSettingsScreenState extends State<BadgeSettingsScreen> {
             value: 'toggle',
             child: Text(badge.isActive ? '비활성화' : '활성화'),
           ),
-          const PopupMenuItem(
+          PopupMenuItem(
             value: 'delete',
-            child: Text('삭제', style: TextStyle(color: AppColors.error)),
+            child: Text('삭제', style: ResponsiveHelper.bodyStyle(context, color: AppColors.error)),
           ),
         ],
       ),

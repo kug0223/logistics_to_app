@@ -8,8 +8,11 @@ import '../../utils/responsive_helper.dart';
 import '../../utils/format_helper.dart';
 import '../dialogs/schedule_detail_dialog.dart';
 import '../dialogs/wage/wage_detail_dialog.dart';
+import '../../screens/payroll/payslip_view_screen.dart';
 import '../../models/core/schedule_change_request_model.dart';
 import '../../theme/app_colors.dart';
+import '../../models/core/insurance_rate_model.dart';
+import '../common/tax_deduction_badge.dart';
 import '../work_type_icon.dart';
 import '../dialogs/business_review_dialog.dart';
 import '../../models/core/review_request_model.dart';
@@ -52,8 +55,14 @@ class ScheduleCard extends StatelessWidget {
             offset: const Offset(0, 2),
           ),
         ],
-        border: application.status == AppStatus.confirmed
-            ? Border.all(color: AppColors.success.withValues(alpha: 0.5), width: 1.5)
+        border: (application.status == AppStatus.confirmed ||
+                application.status == AppStatus.contractPending)
+            ? Border.all(
+                color: application.status == AppStatus.contractPending
+                    ? Theme.of(context).primaryColor.withValues(alpha: 0.5)
+                    : AppColors.success.withValues(alpha: 0.5),
+                width: 1.5,
+              )
             : null,
       ),
       child: Material(
@@ -157,6 +166,15 @@ class ScheduleCard extends StatelessWidget {
                 ),
                 
                 // ═══════════════════════════════════════════════════
+                // 세금 공제 배지 (급여 계산 후에만 표시)
+                // ═══════════════════════════════════════════════════
+                if (attendance?.wageDetail?.taxDeductionType case final taxType?
+                    when taxType != InsuranceRateModel.typeNone) ...[
+                  SizedBox(height: ResponsiveHelper.spacing(context, 6)),
+                  TaxDeductionBadge.row(taxDeductionType: taxType),
+                ],
+
+                // ═══════════════════════════════════════════════════
                 // 장기 근무 정보 (있을 때만)
                 // ═══════════════════════════════════════════════════
                 if (application.isLongTermApplication) ...[
@@ -186,9 +204,12 @@ class ScheduleCard extends StatelessWidget {
                           ),
                         ),
                         SizedBox(width: ResponsiveHelper.spacing(context, 8)),
-                        Text(
-                          '${application.workDaysDisplay ?? ""} · ${application.workPeriodDisplay}',
-                          style: ResponsiveHelper.tinyStyle(context, color: AppColors.purple),
+                        Flexible(
+                          child: Text(
+                            '${application.workDaysDisplay ?? ""} · ${application.workPeriodDisplay}',
+                            style: ResponsiveHelper.tinyStyle(context, color: AppColors.purple),
+                            overflow: TextOverflow.ellipsis,
+                          ),
                         ),
                       ],
                     ),
@@ -251,7 +272,8 @@ class ScheduleCard extends StatelessWidget {
     // 장기 확정 지원건만 대기 요청 체크
     final hasPendingRequest = selectedDay != null &&
             application.isLongTermApplication &&
-            application.status == AppStatus.confirmed
+            (application.status == AppStatus.confirmed ||
+             application.status == AppStatus.contractPending)
         ? await _hasPendingRequest(selectedDay!)
         : false;
 
@@ -304,11 +326,13 @@ class ScheduleCard extends StatelessWidget {
         menuText = '근무 취소';
         menuColor = AppColors.warning;
       } else if (application.isLongTermApplication &&
-          application.status == AppStatus.confirmed) {
+          (application.status == AppStatus.confirmed ||
+           application.status == AppStatus.contractPending)) {
         menuIcon = Icons.beach_access;
         menuText = '휴무 요청';
         menuColor = AppColors.error;
-      } else if (application.status == AppStatus.confirmed) {
+      } else if (application.status == AppStatus.confirmed ||
+          application.status == AppStatus.contractPending) {
         menuIcon = Icons.cancel_outlined;
         menuText = '확정 취소';
         menuColor = AppColors.error;
@@ -337,13 +361,20 @@ class ScheduleCard extends StatelessWidget {
             color: AppColors.info,
             onTap: () => _handleMenuAction(context, 'detail'),
           ),
-          if (isWageConfirmed && attendance?.wageDetail != null)
+          if (isWageConfirmed && attendance?.wageDetail != null) ...[
             AppMenuSheetItem(
               icon: Icons.receipt_long,
               label: '급여 명세서',
               color: AppColors.success,
               onTap: () => _handleMenuAction(context, 'wage_detail'),
             ),
+            AppMenuSheetItem(
+              icon: Icons.picture_as_pdf_outlined,
+              label: '임금명세서 PDF',
+              color: AppColors.infoDark,
+              onTap: () => _handleMenuAction(context, 'payslip_pdf'),
+            ),
+          ],
           if (hasWorked && !hasReviewedThisMonth)
             AppMenuSheetItem(
               icon: Icons.rate_review,
@@ -366,6 +397,9 @@ class ScheduleCard extends StatelessWidget {
       case 'wage_detail':
         _showWageDetailDialog(context);
         break;
+      case 'payslip_pdf':
+        _openPayslipPdf(context);
+        break;
       case 'write_review':
           _showBusinessReviewDialog(context);
           break;
@@ -373,6 +407,27 @@ class ScheduleCard extends StatelessWidget {
         _handleCancel(context);
         break;
     }
+  }
+
+  /// 임금명세서 PDF 화면으로 직접 이동
+  Future<void> _openPayslipPdf(BuildContext context) async {
+    if (attendance?.wageDetail == null) {
+      ToastHelper.showWarning('급여 정보가 없습니다');
+      return;
+    }
+    final firestoreService = FirestoreService();
+    final user = await firestoreService.getUser(application.uid);
+    if (!context.mounted) return;
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => PayslipViewScreen(
+          attendance: attendance!,
+          worker: user,
+          workerNameOverride: user?.name ?? '근무자',
+        ),
+      ),
+    );
   }
 
   /// ✅ 급여 명세서 다이얼로그
@@ -404,8 +459,11 @@ class ScheduleCard extends StatelessWidget {
   
   /// 상세 정보 다이얼로그
   void _showDetailDialog(BuildContext context) {
-    showDialog(
+    showModalBottomSheet(
       context: context,
+      useSafeArea: true,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
       builder: (context) => ScheduleDetailDialog(application: application),
     );
   }
@@ -430,14 +488,17 @@ class ScheduleCard extends StatelessWidget {
       return;
     }
     
-    // ⭐ 장기 근무 확정 → 휴무 요청
-    if (application.isLongTermApplication && application.status == AppStatus.confirmed) {
+    // ⭐ 장기 근무 확정/계약대기 → 휴무 요청
+    if (application.isLongTermApplication &&
+        (application.status == AppStatus.confirmed ||
+         application.status == AppStatus.contractPending)) {
       await _showLeaveRequestDialog(context);
       return;
     }
-      
-    // 단기 근무 확정 → 취소 요청
-    if (application.status == AppStatus.confirmed) {
+
+    // 단기 근무 확정/계약대기 → 취소 요청
+    if (application.status == AppStatus.confirmed ||
+        application.status == AppStatus.contractPending) {
       final confirmed = await _showConfirmedCancelDialog(context);
       
       if (confirmed != true) return;
@@ -745,11 +806,14 @@ class ScheduleCard extends StatelessWidget {
       ),
     );
 
+    final reason = reasonController.text.trim().isEmpty ? null : reasonController.text.trim();
+    reasonController.dispose();
+
     if (confirmed != true) return;
 
     // 휴무 요청 생성
     final firestoreService = FirestoreService();
-    
+
     final request = ScheduleChangeRequestModel(
       id: '',
       businessId: application.businessId,
@@ -761,9 +825,7 @@ class ScheduleCard extends StatelessWidget {
       requestedBy: RequesterType.APPLICANT,
       requestedByUid: application.uid,
       requestedAt: DateTime.now(),
-      reason: reasonController.text.trim().isEmpty 
-          ? null 
-          : reasonController.text.trim(),
+      reason: reason,
       wageAmount: application.wage,
     );
 
@@ -883,11 +945,14 @@ class ScheduleCard extends StatelessWidget {
       ),
     );
 
+    final reason2 = reasonController.text.trim().isEmpty ? null : reasonController.text.trim();
+    reasonController.dispose();
+
     if (confirmed != true) return;
 
     // 추가근무 취소 요청 생성
     final firestoreService = FirestoreService();
-    
+
     final request = ScheduleChangeRequestModel(
       id: '',
       businessId: application.businessId,
@@ -899,9 +964,7 @@ class ScheduleCard extends StatelessWidget {
       requestedBy: RequesterType.APPLICANT,
       requestedByUid: application.uid,
       requestedAt: DateTime.now(),
-      reason: reasonController.text.trim().isEmpty 
-          ? null 
-          : reasonController.text.trim(),
+      reason: reason2,
       wageAmount: application.wage,
     );
 
@@ -1021,11 +1084,14 @@ class ScheduleCard extends StatelessWidget {
       ),
     );
 
+    final reason3 = reasonController.text.trim().isEmpty ? null : reasonController.text.trim();
+    reasonController.dispose();
+
     if (confirmed != true) return;
 
     // 휴무 취소 요청 생성
     final firestoreService = FirestoreService();
-    
+
     final request = ScheduleChangeRequestModel(
       id: '',
       businessId: application.businessId,
@@ -1037,9 +1103,7 @@ class ScheduleCard extends StatelessWidget {
       requestedBy: RequesterType.APPLICANT,
       requestedByUid: application.uid,
       requestedAt: DateTime.now(),
-      reason: reasonController.text.trim().isEmpty 
-          ? null 
-          : reasonController.text.trim(),
+      reason: reason3,
       wageAmount: application.wage,
     );
 
@@ -1150,6 +1214,8 @@ class ScheduleCard extends StatelessWidget {
       icon: Icons.check_circle,
     );
   }
+
+
 
   /// ✅ 급여 표시 (wageType 포함) - 모든 상태 통일
   String _getWageDisplay() {

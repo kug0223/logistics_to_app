@@ -6,27 +6,39 @@ service firebase.storage {
       return request.auth != null;
     }
 
-    // ═══════════════════════════════════════════════════════════
-    // businesses/ — 사업장 이미지 (대표, 추가, 업무유형)
-    // ═══════════════════════════════════════════════════════════
-    // 읽기: 로그인된 사용자
-    // 쓰기: 로그인된 사용자 (role 권한은 Firestore 규칙에서 담당)
-    match /businesses/{allPaths=**} {
-      allow read: if isLoggedIn();
-      allow write: if isLoggedIn();
+    // 일반 이미지: 5MB 제한
+    function isUnder5MB() {
+      return request.resource.size < 5 * 1024 * 1024;
+    }
+
+    // 계약서 PDF: 10MB 제한
+    function isUnder10MB() {
+      return request.resource.size < 10 * 1024 * 1024;
     }
 
     // ═══════════════════════════════════════════════════════════
-    // users/ — 신분증, 통장, 사업자등록증, 회원가입 임시 파일
+    // businesses/ — 사업장 이미지 (대표, 추가, 업무유형)
     // ═══════════════════════════════════════════════════════════
-    // 읽기: 로그인된 사용자 (관리자가 서류 확인 필요)
-    // 쓰기: 로그인된 사용자
-    //   - 일반 경로: users/{uid}/ → 본인만 업로드
-    //   - 임시 경로: users/temp_{timestamp}/ → 회원가입 중 업로드
-    //     (temp_ 경로는 Storage 규칙에서 부분 문자열 매칭 불가 → 통합 허용)
-    match /users/{allPaths=**} {
+    match /businesses/{allPaths=**} {
       allow read: if isLoggedIn();
-      allow write: if isLoggedIn();
+      allow write: if isLoggedIn() && isUnder5MB();
+    }
+
+    // ── users/ — 신분증·통장·사업자등록증 (민감 파일) ───────────
+    // 읽기: 본인 또는 SUPER_ADMIN만 허용 (관리자 열람은 Firestore id_card_access_requests로 제어)
+    match /users/{uid}/{allPaths=**} {
+      allow read: if request.auth != null && request.auth.uid == uid;
+      allow write: if isLoggedIn() && isUnder5MB() && (
+        request.auth.uid == uid ||
+        uid.matches('temp_.*')   // 회원가입 임시 경로
+      );
+    }
+
+    // ── contracts/ — 근로계약서 서명 이미지·완성 PDF ───────────
+    // 읽기: 로그인 사용자만 (계약서는 Firestore workerId/businessId로 앱 레벨 접근 제어)
+    match /contracts/{allPaths=**} {
+      allow read: if isLoggedIn();
+      allow write: if isLoggedIn() && isUnder10MB();
     }
 
     // ═══════════════════════════════════════════════════════════

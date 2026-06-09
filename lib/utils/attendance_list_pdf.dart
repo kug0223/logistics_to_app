@@ -16,7 +16,9 @@ import 'package:share_plus/share_plus.dart';
 import '../models/core/application_model.dart';
 import '../models/core/user_model.dart';
 import '../theme/app_colors.dart';
+import '../widgets/common/loading_widget.dart';
 import 'format_helper.dart';
+import 'responsive_helper.dart';
 
 /// 그룹(파트) 정렬 기준
 enum AttendanceGroupSort {
@@ -161,8 +163,11 @@ class AttendanceListPdf {
   }) async {
     showModalBottomSheet(
       context: context,
+      useSafeArea: true,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
+      enableDrag: false,    // InteractiveViewer 제스처와 충돌 방지
+      isDismissible: false, // PDF 재생성 중 실수로 닫히는 것 방지
       builder: (context) => _PreviewBottomSheetWithBytes(
         initialData: data,
         initialPdfBytes: pdfBytes,
@@ -196,8 +201,7 @@ class AttendanceListPdf {
 
     int row = 0;
 
-    final workDateStr =
-        '${data.date.year}-${data.date.month.toString().padLeft(2, '0')}-${data.date.day.toString().padLeft(2, '0')}';
+    final workDateStr = FormatHelper.formatDateISO(data.date);
 
     // 제목
     _excelCell(sheet, row, 0,
@@ -251,8 +255,7 @@ class AttendanceListPdf {
 
     // 출력일시
     final now = DateTime.now();
-    final printTime =
-        '출력일시: ${now.year}.${now.month.toString().padLeft(2, '0')}.${now.day.toString().padLeft(2, '0')} ${now.hour.toString().padLeft(2, '0')}:${now.minute.toString().padLeft(2, '0')}';
+    final printTime = '출력일시: ${FormatHelper.formatDateDot(now)} ${FormatHelper.formatTime(now)}';
     _excelCell(sheet, row, 0, printTime, fontSize: 9);
 
     final bytes = excel.encode();
@@ -286,7 +289,7 @@ class AttendanceListPdf {
     final bytes = await generateExcel(data);
     final dir = await getTemporaryDirectory();
     final fileName =
-        '${data.businessName}_근무명단_${data.date.year}${data.date.month.toString().padLeft(2, '0')}${data.date.day.toString().padLeft(2, '0')}.xlsx';
+        '${data.businessName}_근무명단_${FormatHelper.formatDateStamp(data.date)}.xlsx';
     final file = File('${dir.path}/$fileName');
     await file.writeAsBytes(bytes);
     await Share.shareXFiles(
@@ -522,7 +525,7 @@ class AttendanceListPdf {
   /// 하단 정보 (출력일시 + 서명란)
   static pw.Widget _buildFooter(pw.TextStyle bodyStyle) {
     final now = DateTime.now();
-    final printTime = '${now.year}.${now.month.toString().padLeft(2, '0')}.${now.day.toString().padLeft(2, '0')} ${now.hour.toString().padLeft(2, '0')}:${now.minute.toString().padLeft(2, '0')}';
+    final printTime = '${FormatHelper.formatDateDot(now)} ${FormatHelper.formatTime(now)}';
 
     return pw.Container(
       padding: const pw.EdgeInsets.all(12),
@@ -702,6 +705,8 @@ class _PreviewBottomSheetWithBytesState
   AttendanceItemSort _itemSort = AttendanceItemSort.nameOnly;
   bool _isRegenerating = false;
   bool _isExporting = false;
+  bool _isPdfSharing = false;
+  bool _isPdfPrinting = false;
 
   @override
   void initState() {
@@ -719,6 +724,31 @@ class _PreviewBottomSheetWithBytesState
       // 실패 시 조용히 무시 (share_plus 취소 포함)
     } finally {
       if (mounted) setState(() => _isExporting = false);
+    }
+  }
+
+  Future<void> _sharePdf() async {
+    if (_isPdfSharing) return;
+    setState(() => _isPdfSharing = true);
+    try {
+      final name =
+          '${_data.businessName}_근무명단_${FormatHelper.formatDateStamp(_data.date)}.pdf';
+      await Printing.sharePdf(bytes: _pdfBytes, filename: name);
+    } catch (_) {
+    } finally {
+      if (mounted) setState(() => _isPdfSharing = false);
+    }
+  }
+
+  Future<void> _printPdf() async {
+    if (_isPdfPrinting) return;
+    setState(() => _isPdfPrinting = true);
+    try {
+      final name =
+          '${_data.businessName}_근무명단_${FormatHelper.formatDateStamp(_data.date)}.pdf';
+      await Printing.layoutPdf(onLayout: (_) async => _pdfBytes, name: name);
+    } finally {
+      if (mounted) setState(() => _isPdfPrinting = false);
     }
   }
 
@@ -764,8 +794,10 @@ class _PreviewBottomSheetWithBytesState
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      height: MediaQuery.of(context).size.height * 0.9,
+    final maxH = MediaQuery.sizeOf(context).height * 0.92;
+    return ConstrainedBox(
+      constraints: BoxConstraints(maxHeight: maxH),
+      child: Container(
       decoration: BoxDecoration(
         color: AppColors.surface,
         borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
@@ -790,10 +822,10 @@ class _PreviewBottomSheetWithBytesState
               children: [
                 const Icon(Icons.description_outlined, color: AppColors.info),
                 const SizedBox(width: 8),
-                const Expanded(
+                Expanded(
                   child: Text(
-                    '명단 미리보기',
-                    style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                    '미리보기',
+                    style: ResponsiveHelper.subtitleStyle(context).copyWith(fontWeight: FontWeight.bold),
                   ),
                 ),
                 TextButton.icon(
@@ -805,11 +837,27 @@ class _PreviewBottomSheetWithBytesState
                           child: CircularProgressIndicator(strokeWidth: 2),
                         )
                       : const Icon(Icons.table_chart_outlined, size: 18),
-                  label: const Text('엑셀 내보내기'),
+                  label: const Text('엑셀'),
                   style: TextButton.styleFrom(
                     foregroundColor: AppColors.success,
                     padding: const EdgeInsets.symmetric(horizontal: 8),
                   ),
+                ),
+                IconButton(
+                  icon: const Icon(Icons.print_outlined, size: 20),
+                  tooltip: '인쇄',
+                  onPressed: _printPdf,
+                ),
+                IconButton(
+                  icon: _isPdfSharing
+                      ? const SizedBox(
+                          width: 18,
+                          height: 18,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Icon(Icons.share_outlined, size: 20),
+                  tooltip: 'PDF 공유',
+                  onPressed: _isPdfSharing ? null : _sharePdf,
                 ),
                 IconButton(
                   icon: const Icon(Icons.close),
@@ -857,31 +905,13 @@ class _PreviewBottomSheetWithBytesState
 
           const Divider(height: 1),
 
-          // PDF 미리보기
+          // PDF 미리보기 — 직접 핀치줌 (PdfPreview 더블탭 문제 해결)
           Expanded(
             child: Stack(
               children: [
-                PdfPreview(
+                _AttendancePdfViewer(
                   key: ValueKey('${_groupSort.name}_${_itemSort.name}'),
-                  build: (format) async => _pdfBytes,
-                  canChangeOrientation: false,
-                  canChangePageFormat: false,
-                  canDebug: false,
-                  allowPrinting: true,
-                  allowSharing: true,
-                  useActions: true,
-                  pdfPreviewPageDecoration: BoxDecoration(
-                    color: Colors.white,
-                    boxShadow: [
-                      BoxShadow(
-                        color: Colors.black.withValues(alpha: 0.1),
-                        blurRadius: 10,
-                        offset: const Offset(0, 2),
-                      ),
-                    ],
-                  ),
-                  pdfFileName:
-                      '${_data.businessName}_근무명단_${_data.date.year}${_data.date.month.toString().padLeft(2, '0')}${_data.date.day.toString().padLeft(2, '0')}.pdf',
+                  pdfBytes: _pdfBytes,
                 ),
                 if (_isRegenerating)
                   Container(
@@ -902,7 +932,8 @@ class _PreviewBottomSheetWithBytesState
           ),
         ],
       ),
-    );
+      ), // Container
+    ); // ConstrainedBox
   }
 }
 
@@ -934,7 +965,7 @@ class _SortRow extends StatelessWidget {
           width: 68,
           child: Text(
             label,
-            style: const TextStyle(fontSize: 11, color: AppColors.textSecondary),
+            style: ResponsiveHelper.tinyStyle(context, color: AppColors.textSecondary),
           ),
         ),
         Expanded(
@@ -989,17 +1020,97 @@ class _SortChip extends StatelessWidget {
               const SizedBox(width: 4),
               Text(
                 label,
-                style: TextStyle(
-                  fontSize: 12,
-                  color: color,
-                  fontWeight:
-                      selected ? FontWeight.bold : FontWeight.w500,
+                style: ResponsiveHelper.smallStyle(context, color: color).copyWith(
+                  fontWeight: selected ? FontWeight.bold : FontWeight.w500,
                 ),
               ),
             ],
           ),
         ),
       ),
+    );
+  }
+}
+
+// ─── 핀치줌 PDF 뷰어 ─────────────────────────────────────────────
+// PdfPreview는 더블탭 후 줌 → Printing.raster() + InteractiveViewer로 교체
+class _AttendancePdfViewer extends StatefulWidget {
+  final Uint8List pdfBytes;
+  const _AttendancePdfViewer({super.key, required this.pdfBytes});
+
+  @override
+  State<_AttendancePdfViewer> createState() => _AttendancePdfViewerState();
+}
+
+class _AttendancePdfViewerState extends State<_AttendancePdfViewer> {
+  late final Future<List<Uint8List>> _pagesFuture;
+
+  @override
+  void initState() {
+    super.initState();
+    _pagesFuture = _rasterPages();
+  }
+
+  Future<List<Uint8List>> _rasterPages() async {
+    final pages = <Uint8List>[];
+    await for (final page in Printing.raster(widget.pdfBytes, dpi: 150)) {
+      pages.add(await page.toPng());
+    }
+    return pages;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return FutureBuilder<List<Uint8List>>(
+      future: _pagesFuture,
+      builder: (ctx, snap) {
+        if (snap.connectionState != ConnectionState.done) {
+          return const LoadingWidget();
+        }
+        if (snap.hasError || snap.data == null || snap.data!.isEmpty) {
+          return const Center(child: Text('PDF를 불러올 수 없습니다'));
+        }
+        final pages = snap.data!;
+        return LayoutBuilder(
+          builder: (ctx, constraints) {
+            final pageWidth = constraints.maxWidth - 16;
+            return InteractiveViewer(
+              constrained: false,
+              boundaryMargin: const EdgeInsets.all(20),
+              minScale: 0.5,
+              maxScale: 5.0,
+              child: Padding(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 8, vertical: 12),
+                child: Column(
+                  children: pages
+                      .map((pageBytes) => Container(
+                            margin: const EdgeInsets.only(bottom: 12),
+                            width: pageWidth,
+                            decoration: BoxDecoration(
+                              color: Colors.white,
+                              boxShadow: [
+                                BoxShadow(
+                                  color:
+                                      Colors.black.withValues(alpha: 0.08),
+                                  blurRadius: 10,
+                                  offset: const Offset(0, 3),
+                                ),
+                              ],
+                            ),
+                            child: Image.memory(
+                              pageBytes,
+                              width: pageWidth,
+                              fit: BoxFit.fitWidth,
+                            ),
+                          ))
+                      .toList(),
+                ),
+              ),
+            );
+          },
+        );
+      },
     );
   }
 }

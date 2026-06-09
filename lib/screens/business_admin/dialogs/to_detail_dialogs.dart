@@ -1,4 +1,5 @@
 ﻿import 'package:flutter/material.dart';
+import 'package:flutter/services.dart' show Clipboard, ClipboardData;
 import '../../../theme/app_colors.dart';
 import 'package:intl/intl.dart';
 import '../../../models/core/application_model.dart';
@@ -86,10 +87,22 @@ class TODetailDialogs {
                         subtitle: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            Text('📱 ${applicant['userPhone']}'),
-                            Text('💼 ${applicant['workType']} (${applicant['workTime']})'),
+                            Row(children: [
+                              const Icon(Icons.phone_outlined, size: 14, color: AppColors.grey600),
+                              const SizedBox(width: 4),
+                              Text(applicant['userPhone']),
+                            ]),
+                            Row(children: [
+                              const Icon(Icons.work_outline, size: 14, color: AppColors.grey600),
+                              const SizedBox(width: 4),
+                              Text('${applicant['workType']} (${applicant['workTime']})'),
+                            ]),
                             if (toItems.length > 1)
-                              Text('📋 ${applicant['toTitle']}'),
+                              Row(children: [
+                                const Icon(Icons.assignment_outlined, size: 14, color: AppColors.grey600),
+                                const SizedBox(width: 4),
+                                Text(applicant['toTitle']),
+                              ]),
                           ],
                         ),
                         dense: true,
@@ -102,8 +115,11 @@ class TODetailDialogs {
           if (confirmedList.isNotEmpty)
             TextButton.icon(
               onPressed: () {
-                // TODO: 연락처 복사 기능
-                ToastHelper.showInfo('연락처 복사 기능은 준비 중입니다');
+                final lines = confirmedList.map((a) =>
+                  '${a['userName']}  ${a['userPhone']}  ${a['workType']}(${a['workTime']})'
+                ).join('\n');
+                Clipboard.setData(ClipboardData(text: lines));
+                ToastHelper.showSuccess('연락처가 클립보드에 복사되었습니다');
               },
               icon: const Icon(Icons.content_copy),
               label: const Text('연락처 복사'),
@@ -220,6 +236,18 @@ class TODetailDialogs {
   // Helper 위젯들
   // ========================================
 
+  static Color _appStatusColor(String status) {
+    switch (status) {
+      case AppStatus.pending:          return AppColors.warning;
+      case AppStatus.contractPending:  return AppColors.info;
+      case AppStatus.confirmed:        return AppColors.confirmed;
+      case AppStatus.rejected:         return AppColors.rejected;
+      case AppStatus.canceled:
+      case AppStatus.autoCanceled:     return AppColors.grey500;
+      default:                         return AppColors.grey500;
+    }
+  }
+
   /// 섹션 헤더
   Widget _buildSectionHeader(String title, Color color, int count) {
     return Row(
@@ -264,9 +292,10 @@ class TODetailDialogs {
     Function(String) onConfirm,
     Function(String) onReject,
   ) {
-    final app = applicant['application'] as ApplicationModel;
+    final app = applicant['application'] as ApplicationModel?;
+    if (app == null) return const SizedBox.shrink();
     
-    final statusColor = Color(app.statusColor);
+    final statusColor = _appStatusColor(app.status);
     final statusText = app.statusText;
 
     return Card(

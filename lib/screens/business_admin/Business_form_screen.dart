@@ -8,6 +8,7 @@ import 'dart:io';
 
 // Models
 import '../../models/core/business_model.dart';
+import '../../utils/beacon_helper.dart';
 
 // Providers
 import '../../providers/user_provider.dart';
@@ -25,6 +26,7 @@ import '../../utils/dialog_helper.dart';
 
 // Widgets
 import '../../widgets/common/common_widgets.dart';
+import '../../widgets/common/loading_widget.dart';
 import '../../widgets/inputs/daum_address_search.dart';
 
 // Screen
@@ -34,6 +36,7 @@ import '../../utils/format_helper.dart';
 import '../../theme/app_colors.dart';
 import '../../widgets/dialogs/styled_dialog.dart';
 import '../../widgets/app_select_field.dart';
+import '../../widgets/common/gradient_scaffold.dart';
 
 /// 🏢 사업장 등록/수정 화면 (Stepper 방식)
 class BusinessFormScreen extends StatefulWidget {
@@ -66,18 +69,20 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
   // Step 2: 기본 정보
   final _nameController = TextEditingController();
   final _businessNumberController = TextEditingController();
-  final _companyNameController = TextEditingController(); 
+  final _companyNameController = TextEditingController();
   final _addressController = TextEditingController();
   final _detailAddressController = TextEditingController();
   final _phoneController = TextEditingController();
   double? _latitude;
   double? _longitude;
+  String? _city;      // 시/군/구 (예: 강남구, 수원시)
+  String? _district;  // 법정읍면동 (예: 역삼동, 세교동)
 
   // 이미지
   File? _mainImage;
   String? _mainImageUrl;
 
-   // ✅ 삭제할 이미지 URL 추적
+  // 삭제할 이미지 URL 추적
   final List<String> _imagesToDelete = [];
   final StorageService _storageService = StorageService();
 
@@ -101,10 +106,22 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
   // 기타
   final _precautionsController = TextEditingController();
 
+  // 근로계약서 설정
+  final _ownerNameController = TextEditingController();
+  int? _wagePaymentDay; // 1~31
+
   // 선택 옵션
   final List<String> _mealOptions = ['조식', '중식', '석식', '야식', '간식'];
   final List<String> _uniformOptions = ['없음', '유니폼 제공', '자유복', '정장'];
   final List<String> _facilityOptions = ['휴게실', '사물함', '탈의실', '샤워실', '흡연실'];
+
+  // 출퇴근 설정
+  String _attendanceType = 'gps';
+  double _gpsRadius = 100;
+  int _beaconRssiThreshold = -75; // dBm 기본값
+  final _beaconUUIDController = TextEditingController();
+  final _beaconMajorController = TextEditingController();
+  final _beaconMinorController = TextEditingController();
 
   @override
   void initState() {
@@ -127,9 +144,14 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
       _businessNumberController.text = FormatHelper.formatBusinessNumber(user.businessNumber!);
     }
     
-    // ✅ 상호명 자동 완성
+    // 상호명 자동 완성
     if (user?.businessName != null && user!.businessName!.isNotEmpty) {
       _companyNameController.text = user.businessName!;
+    }
+
+    // 대표자 성명: ceoName 우선 자동 완성
+    if (user?.ceoName != null && user!.ceoName!.isNotEmpty) {
+      _ownerNameController.text = user.ceoName!;
     }
   }
 
@@ -144,11 +166,13 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
     _companyNameController.text = business.companyName ?? '';
     _businessNumberController.text = FormatHelper.formatBusinessNumber(business.businessNumber);
     _addressController.text = business.address;
-    if (business.detailAddress != null) {  // ⭐ 추가
+    if (business.detailAddress != null) {
       _detailAddressController.text = business.detailAddress!;
     }
     _latitude = business.latitude;
     _longitude = business.longitude;
+    _city = business.city;
+    _district = business.district;
 
     if (business.phone != null) _phoneController.text = business.phone!;
     if (business.oneLineIntro != null) _oneLineIntroController.text = business.oneLineIntro!;
@@ -161,10 +185,21 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
     _mainImageUrl = business.mainImageUrl;
     _additionalImageUrls = business.imageUrls ?? [];
 
+    if (business.ownerName != null) _ownerNameController.text = business.ownerName!;
+    _wagePaymentDay = business.wagePaymentDay;
+
     _parkingAvailable = business.parkingAvailable;
     _selectedMeals = business.mealsProvided ?? [];
     _uniformProvided = business.uniformProvided ?? '없음';
     _selectedFacilities = business.facilities ?? [];
+
+    // 출퇴근 설정
+    _attendanceType = business.attendanceType;
+    _gpsRadius = business.gpsRadius.toDouble();
+    _beaconRssiThreshold = business.beaconRssiThreshold;
+    if (business.beaconUUID != null) _beaconUUIDController.text = business.beaconUUID!;
+    if (business.beaconMajor != null) _beaconMajorController.text = business.beaconMajor.toString();
+    if (business.beaconMinor != null) _beaconMinorController.text = business.beaconMinor.toString();
   }
 
 
@@ -182,6 +217,10 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
     _walkingMinutesController.dispose();
     _busInfoController.dispose();
     _precautionsController.dispose();
+    _ownerNameController.dispose();
+    _beaconUUIDController.dispose();
+    _beaconMajorController.dispose();
+    _beaconMinorController.dispose();
     super.dispose();
   }
 
@@ -221,13 +260,10 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
           }
         }
       },
-      child: Scaffold(
-        appBar: AppBar(
-          title: Text(_isEditMode ? '사업장 수정' : '사업장 등록'),
-          automaticallyImplyLeading: !widget.isFromSignUp,  // ✅ 추가
-        ),
-      body: _isLoading
-          ? const Center(child: CircularProgressIndicator())
+      child: GradientScaffold(
+        title: _isEditMode ? '사업장 수정' : '사업장 등록',
+        body: _isLoading
+          ? const LoadingWidget()
           : Theme(
               data: theme.copyWith(
                 colorScheme: theme.colorScheme.copyWith(
@@ -361,44 +397,50 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
                       fontWeight: FontWeight.bold,
                       color: _selectedCategory == entry.key
                           ? theme.primaryColor
-                          : Colors.black87,
+                          : AppColors.grey800,
                     ),
                   ),
                 ],
               ),
-              children: entry.value.map((subCategory) {
-                final isSelected = _selectedSubCategory == subCategory;
-                return Container(
-                  margin: EdgeInsets.symmetric(
-                    horizontal: ResponsiveHelper.spacing(context, 8),
-                    vertical: ResponsiveHelper.spacing(context, 4),
-                  ),
-                  decoration: BoxDecoration(
-                    color: isSelected
-                        ? theme.primaryColor.withValues(alpha: 0.1)
-                        : Colors.transparent,
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  child: RadioListTile<String>(
-                    title: Text(
-                      subCategory,
-                      style: ResponsiveHelper.bodyStyle(context).copyWith(
-                        color: isSelected ? theme.primaryColor : Colors.black87,
-                        fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+              children: [
+              RadioGroup<String>(
+                groupValue: _selectedSubCategory,
+                onChanged: (value) {
+                  setState(() {
+                    _selectedCategory = entry.key;
+                    _selectedSubCategory = value;
+                  });
+                },
+                child: Column(
+                  children: entry.value.map((subCategory) {
+                    final isSelected = _selectedSubCategory == subCategory;
+                    return Container(
+                      margin: EdgeInsets.symmetric(
+                        horizontal: ResponsiveHelper.spacing(context, 8),
+                        vertical: ResponsiveHelper.spacing(context, 4),
                       ),
-                    ),
-                    value: subCategory,
-                    groupValue: _selectedSubCategory,
-                    activeColor: theme.primaryColor,
-                    onChanged: (value) {
-                      setState(() {
-                        _selectedCategory = entry.key;
-                        _selectedSubCategory = value;
-                      });
-                    },
-                  ),
-                );
-              }).toList(),
+                      decoration: BoxDecoration(
+                        color: isSelected
+                            ? theme.primaryColor.withValues(alpha: 0.1)
+                            : Colors.transparent,
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: RadioListTile<String>(
+                        title: Text(
+                          subCategory,
+                          style: ResponsiveHelper.bodyStyle(context).copyWith(
+                            color: isSelected ? theme.primaryColor : AppColors.grey800,
+                            fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+                          ),
+                        ),
+                        value: subCategory,
+                        activeColor: theme.primaryColor,
+                      ),
+                    );
+                  }).toList(),
+                ),
+              ),
+            ],
             ),
           );
         }),
@@ -430,7 +472,7 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
         key: _formKey,
         autovalidateMode: _autoValidate 
             ? AutovalidateMode.onUserInteraction 
-            : AutovalidateMode.disabled,  // ✅ 추가
+            : AutovalidateMode.disabled,
         child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -504,7 +546,6 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
           ),
           
           SizedBox(height: ResponsiveHelper.spacing(context, 16)),
-          // ✅ 상호명 추가
           CommonWidgets.textField(
             context: context,
             controller: _companyNameController,
@@ -558,9 +599,111 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
             keyboardType: TextInputType.phone,
           ),
 
+          SizedBox(height: ResponsiveHelper.spacing(context, 32)),
+
+          // ── 근로계약서 설정 ─────────────────────────────────────
+          CommonWidgets.sectionHeader(
+            context: context,
+            title: '근로계약서 설정',
+            icon: Icons.description_outlined,
+          ),
+          SizedBox(height: ResponsiveHelper.spacing(context, 6)),
+          Text(
+            '지원 확정 시 근로계약서에 자동으로 입력되는 정보입니다.',
+            style: ResponsiveHelper.smallStyle(context, color: AppColors.grey500),
+          ),
+          SizedBox(height: ResponsiveHelper.spacing(context, 12)),
+
+          // 대표자 성명
+          CommonWidgets.textField(
+            context: context,
+            controller: _ownerNameController,
+            label: '대표자 성명',
+            hint: '예: 홍길동',
+            icon: Icons.person_outline,
+          ),
+
+          SizedBox(height: ResponsiveHelper.spacing(context, 16)),
+
+          // 급여 지급일
+          _buildWagePaymentDayPicker(theme),
+
           SizedBox(height: ResponsiveHelper.spacing(context, 16)),
         ],
       ),
+    );
+  }
+
+  Widget _buildWagePaymentDayPicker(ThemeData theme) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Icon(Icons.calendar_today_outlined,
+                color: theme.primaryColor,
+                size: ResponsiveHelper.iconSize(context, 18)),
+            SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+            Text('급여 지급일',
+                style: ResponsiveHelper.bodyStyle(context)
+                    .copyWith(fontWeight: FontWeight.w500)),
+            const Spacer(),
+            if (_wagePaymentDay != null)
+              Text(
+                '매월 $_wagePaymentDay일',
+                style: ResponsiveHelper.bodyStyle(context).copyWith(
+                    color: theme.primaryColor, fontWeight: FontWeight.bold),
+              ),
+          ],
+        ),
+        SizedBox(height: ResponsiveHelper.spacing(context, 8)),
+        SizedBox(
+          height: 48,
+          child: ListView.separated(
+            scrollDirection: Axis.horizontal,
+            itemCount: 31,
+            separatorBuilder: (_, __) =>
+                SizedBox(width: ResponsiveHelper.spacing(context, 6)),
+            itemBuilder: (_, i) {
+              final day = i + 1;
+              final selected = _wagePaymentDay == day;
+              return GestureDetector(
+                onTap: () => setState(() => _wagePaymentDay = day),
+                child: AnimatedContainer(
+                  duration: const Duration(milliseconds: 150),
+                  width: 40,
+                  decoration: BoxDecoration(
+                    color: selected
+                        ? theme.primaryColor
+                        : AppColors.grey100,
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(
+                      color: selected
+                          ? theme.primaryColor
+                          : AppColors.grey300,
+                    ),
+                  ),
+                  alignment: Alignment.center,
+                  child: Text(
+                    '$day',
+                    style: ResponsiveHelper.smallStyle(context).copyWith(
+                      color: selected ? Colors.white : AppColors.grey700,
+                      fontWeight: selected
+                          ? FontWeight.bold
+                          : FontWeight.normal,
+                    ),
+                  ),
+                ),
+              );
+            },
+          ),
+        ),
+        SizedBox(height: ResponsiveHelper.spacing(context, 4)),
+        Text(
+          '* 29~31일 선택 시 해당 월 말일이 없으면 말일에 지급됩니다',
+          style: ResponsiveHelper.tinyStyle(context, color: AppColors.grey400),
+        ),
+      ],
     );
   }
 
@@ -614,7 +757,7 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
                 : null,
           ),
         ),
-        // ✅ 삭제 버튼 (이미지가 있을 때만 표시)
+        // 삭제 버튼 (이미지가 있을 때만 표시)
         if (hasImage)
           Positioned(
             top: ResponsiveHelper.spacing(context, 8),
@@ -623,7 +766,7 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
               onTap: () {
                 setState(() {
                   _mainImage = null;
-                  // ✅ 기존 URL이 있으면 삭제 목록에 추가
+                  // 기존 URL 삭제 목록에 추가
                   if (_mainImageUrl != null) {
                     _imagesToDelete.add(_mainImageUrl!);
                   }
@@ -751,8 +894,366 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
           ),
         ),
 
+        SizedBox(height: ResponsiveHelper.spacing(context, 24)),
+
+        // 출퇴근 설정
+        CommonWidgets.sectionHeader(
+          context: context,
+          title: '출퇴근 방식',
+          icon: Icons.location_on_outlined,
+        ),
+        SizedBox(height: ResponsiveHelper.spacing(context, 8)),
+        Text(
+          '근로자가 출퇴근 체크 시 사용할 방식을 선택하세요.',
+          style: ResponsiveHelper.smallStyle(context, color: AppColors.grey600),
+        ),
+        SizedBox(height: ResponsiveHelper.spacing(context, 12)),
+        _buildAttendanceSection(context, theme),
+
         SizedBox(height: ResponsiveHelper.spacing(context, 16)),
       ],
+    );
+  }
+
+  /// 출퇴근 방식 섹션
+  Widget _buildAttendanceSection(BuildContext context, ThemeData theme) {
+    return Column(
+      children: [
+        // ── 방식 선택 카드들 ───────────────────────────────────────
+        Row(
+          children: [
+            _attendanceTypeCard(
+              context, theme,
+              type: 'gps',
+              icon: Icons.gps_fixed,
+              label: 'GPS',
+              desc: '반경 내 위치 확인',
+            ),
+            SizedBox(width: ResponsiveHelper.spacing(context, 10)),
+            _attendanceTypeCard(
+              context, theme,
+              type: 'beacon',
+              icon: Icons.bluetooth,
+              label: '비콘',
+              desc: 'BLE 기기 신호 감지',
+            ),
+            SizedBox(width: ResponsiveHelper.spacing(context, 10)),
+            _attendanceTypeCard(
+              context, theme,
+              type: 'both',
+              icon: Icons.tune,
+              label: '병행',
+              desc: 'GPS + 비콘',
+            ),
+          ],
+        ),
+
+        SizedBox(height: ResponsiveHelper.spacing(context, 16)),
+
+        // ── GPS 반경 설정 ──────────────────────────────────────────
+        if (_attendanceType == 'gps' || _attendanceType == 'both') ...[
+          Container(
+            padding: ResponsiveHelper.cardPadding(context),
+            decoration: CommonWidgets.cardDecoration(),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Icon(Icons.radar,
+                        size: ResponsiveHelper.iconSize(context, 18),
+                        color: theme.primaryColor),
+                    SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+                    Text('GPS 허용 반경',
+                        style: ResponsiveHelper.bodyStyle(context)
+                            .copyWith(fontWeight: FontWeight.bold)),
+                    const Spacer(),
+                    Container(
+                      padding: EdgeInsets.symmetric(
+                        horizontal: ResponsiveHelper.spacing(context, 10),
+                        vertical: ResponsiveHelper.spacing(context, 4),
+                      ),
+                      decoration: BoxDecoration(
+                        color: theme.primaryColor.withValues(alpha: 0.1),
+                        borderRadius: BorderRadius.circular(20),
+                      ),
+                      child: Text(
+                        '${_gpsRadius.toInt()}m',
+                        style: ResponsiveHelper.bodyStyle(context,
+                            color: theme.primaryColor)
+                            .copyWith(fontWeight: FontWeight.bold),
+                      ),
+                    ),
+                  ],
+                ),
+                SizedBox(height: ResponsiveHelper.spacing(context, 4)),
+                Text(
+                  '사업장 위치에서 이 거리 이내여야 출퇴근 가능합니다.',
+                  style: ResponsiveHelper.smallStyle(context, color: AppColors.grey500),
+                ),
+                Slider(
+                  value: _gpsRadius,
+                  min: 30,
+                  max: 500,
+                  divisions: 47,
+                  activeColor: theme.primaryColor,
+                  label: '${_gpsRadius.toInt()}m',
+                  onChanged: (v) => setState(() => _gpsRadius = v),
+                ),
+                // 눈금 힌트
+                Padding(
+                  padding: EdgeInsets.symmetric(
+                      horizontal: ResponsiveHelper.spacing(context, 8)),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Text('30m', style: ResponsiveHelper.tinyStyle(context, color: AppColors.grey400)),
+                      Text('100m', style: ResponsiveHelper.tinyStyle(context, color: AppColors.grey400)),
+                      Text('500m', style: ResponsiveHelper.tinyStyle(context, color: AppColors.grey400)),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+          SizedBox(height: ResponsiveHelper.spacing(context, 12)),
+        ],
+
+        // ── 비콘 설정 ──────────────────────────────────────────────
+        if (_attendanceType == 'beacon' || _attendanceType == 'both') ...[
+          Container(
+            padding: ResponsiveHelper.cardPadding(context),
+            decoration: CommonWidgets.cardDecoration(),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Icon(Icons.bluetooth,
+                        size: ResponsiveHelper.iconSize(context, 18),
+                        color: AppColors.info),
+                    SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+                    Text('비콘 정보',
+                        style: ResponsiveHelper.bodyStyle(context)
+                            .copyWith(fontWeight: FontWeight.bold)),
+                  ],
+                ),
+                SizedBox(height: ResponsiveHelper.spacing(context, 4)),
+                Text(
+                  '사업장에 설치된 iBeacon/Eddystone 기기 정보를 입력하세요.',
+                  style: ResponsiveHelper.smallStyle(context, color: AppColors.grey500),
+                ),
+                SizedBox(height: ResponsiveHelper.spacing(context, 16)),
+
+                // UUID
+                TextFormField(
+                  controller: _beaconUUIDController,
+                  style: ResponsiveHelper.bodyStyle(context),
+                  decoration: InputDecoration(
+                    labelText: 'Beacon UUID *',
+                    hintText: 'E2C56DB5-DFFB-48D2-B060-D0F5A71096E0',
+                    prefixIcon: Icon(Icons.vpn_key_outlined, color: AppColors.info),
+                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                    helperText: '비콘 기기의 UUID를 대문자로 입력하세요.',
+                  ),
+                  textCapitalization: TextCapitalization.characters,
+                  validator: (_attendanceType == 'beacon' || _attendanceType == 'both')
+                      ? (v) {
+                          if (v == null || v.isEmpty) return 'UUID를 입력해주세요';
+                          final uuidRegex = RegExp(
+                            r'^[0-9A-F]{8}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{12}$',
+                          );
+                          if (!uuidRegex.hasMatch(v.toUpperCase())) {
+                            return 'UUID 형식이 올바르지 않습니다\n(예: XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX)';
+                          }
+                          return null;
+                        }
+                      : null,
+                ),
+                SizedBox(height: ResponsiveHelper.spacing(context, 12)),
+
+                // Major / Minor (선택)
+                Row(
+                  children: [
+                    Expanded(
+                      child: TextFormField(
+                        controller: _beaconMajorController,
+                        style: ResponsiveHelper.bodyStyle(context),
+                        keyboardType: TextInputType.number,
+                        decoration: InputDecoration(
+                          labelText: 'Major (선택)',
+                          hintText: '0~65535',
+                          border: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(12)),
+                        ),
+                      ),
+                    ),
+                    SizedBox(width: ResponsiveHelper.spacing(context, 12)),
+                    Expanded(
+                      child: TextFormField(
+                        controller: _beaconMinorController,
+                        style: ResponsiveHelper.bodyStyle(context),
+                        keyboardType: TextInputType.number,
+                        decoration: InputDecoration(
+                          labelText: 'Minor (선택)',
+                          hintText: '0~65535',
+                          border: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(12)),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+                SizedBox(height: ResponsiveHelper.spacing(context, 8)),
+                Container(
+                  padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 10)),
+                  decoration: BoxDecoration(
+                    color: AppColors.infoBg,
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Row(
+                    children: [
+                      Icon(Icons.info_outline,
+                          size: ResponsiveHelper.iconSize(context, 16),
+                          color: AppColors.infoDark),
+                      SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+                      Expanded(
+                        child: Text(
+                          'Major/Minor를 설정하면 해당 비콘만 인식합니다. '
+                          '비워두면 UUID만으로 매칭합니다.',
+                          style: ResponsiveHelper.tinyStyle(context,
+                              color: AppColors.infoDark),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                SizedBox(height: ResponsiveHelper.spacing(context, 16)),
+
+                // 인식 거리 (RSSI 임계값)
+                Row(
+                  children: [
+                    Icon(Icons.signal_wifi_4_bar,
+                        size: ResponsiveHelper.iconSize(context, 18),
+                        color: AppColors.info),
+                    SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+                    Text('인식 거리',
+                        style: ResponsiveHelper.bodyStyle(context)
+                            .copyWith(fontWeight: FontWeight.bold)),
+                    const Spacer(),
+                    Container(
+                      padding: EdgeInsets.symmetric(
+                        horizontal: ResponsiveHelper.spacing(context, 10),
+                        vertical: ResponsiveHelper.spacing(context, 4),
+                      ),
+                      decoration: BoxDecoration(
+                        color: AppColors.info.withValues(alpha: 0.1),
+                        borderRadius: BorderRadius.circular(20),
+                      ),
+                      child: Text(
+                        BeaconHelper.proximityLabel(_beaconRssiThreshold),
+                        style: ResponsiveHelper.smallStyle(context,
+                            color: AppColors.infoDark,
+                            fontWeight: FontWeight.bold),
+                      ),
+                    ),
+                  ],
+                ),
+                Slider(
+                  value: _beaconRssiThreshold.toDouble(),
+                  min: -90,
+                  max: -50,
+                  divisions: 8,
+                  activeColor: AppColors.info,
+                  label: '${_beaconRssiThreshold}dBm',
+                  onChanged: (v) =>
+                      setState(() => _beaconRssiThreshold = v.toInt()),
+                ),
+                Padding(
+                  padding: EdgeInsets.symmetric(
+                      horizontal: ResponsiveHelper.spacing(context, 8)),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Text('멀리(~10m)', style: ResponsiveHelper.tinyStyle(context, color: AppColors.grey400)),
+                      Text('보통(~5m)', style: ResponsiveHelper.tinyStyle(context, color: AppColors.grey400)),
+                      Text('가까이(~1m)', style: ResponsiveHelper.tinyStyle(context, color: AppColors.grey400)),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ],
+    );
+  }
+
+  /// 출퇴근 방식 선택 카드
+  Widget _attendanceTypeCard(
+    BuildContext context,
+    ThemeData theme, {
+    required String type,
+    required IconData icon,
+    required String label,
+    required String desc,
+  }) {
+    final isSelected = _attendanceType == type;
+    return Expanded(
+      child: GestureDetector(
+        onTap: () => setState(() => _attendanceType = type),
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 200),
+          padding: EdgeInsets.symmetric(
+            horizontal: ResponsiveHelper.spacing(context, 8),
+            vertical: ResponsiveHelper.spacing(context, 12),
+          ),
+          decoration: BoxDecoration(
+            color: isSelected
+                ? theme.primaryColor.withValues(alpha: 0.08)
+                : Colors.white,
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(
+              color: isSelected ? theme.primaryColor : AppColors.grey300,
+              width: isSelected ? 2.0 : 1.0,
+            ),
+            boxShadow: isSelected
+                ? [
+                    BoxShadow(
+                      color: theme.primaryColor.withValues(alpha: 0.12),
+                      blurRadius: 8,
+                      offset: const Offset(0, 2),
+                    )
+                  ]
+                : null,
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(
+                icon,
+                size: ResponsiveHelper.iconSize(context, 24),
+                color: isSelected ? theme.primaryColor : AppColors.grey500,
+              ),
+              SizedBox(height: ResponsiveHelper.spacing(context, 6)),
+              Text(
+                label,
+                style: ResponsiveHelper.smallStyle(context,
+                    color: isSelected ? theme.primaryColor : AppColors.grey700,
+                    fontWeight: isSelected ? FontWeight.bold : FontWeight.normal),
+              ),
+              SizedBox(height: ResponsiveHelper.spacing(context, 2)),
+              Text(
+                desc,
+                style: ResponsiveHelper.tinyStyle(context,
+                    color: isSelected ? theme.primaryColor : AppColors.grey400),
+                textAlign: TextAlign.center,
+                maxLines: 2,
+              ),
+            ],
+          ),
+        ),
+      ),
     );
   }
 
@@ -813,7 +1314,6 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
                       }
                     });
                   },
-                  // ⭐ Theme 사용
                   backgroundColor: theme.colorScheme.surfaceContainerHighest,  // 선택 안 된 것
                   selectedColor: theme.primaryColor,  // 선택된 것
                   checkmarkColor: theme.colorScheme.onPrimary,  // 체크마크 (흰색)
@@ -898,8 +1398,7 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
                         }
                       });
                     },
-                    // ⭐ Theme 사용
-                    backgroundColor: theme.colorScheme.surfaceContainerHighest,  // 선택 안 된 것
+                      backgroundColor: theme.colorScheme.surfaceContainerHighest,  // 선택 안 된 것
                     selectedColor: theme.primaryColor,  // 선택된 것
                     checkmarkColor: theme.colorScheme.onPrimary,  // 체크마크 (흰색)
                     labelStyle: ResponsiveHelper.bodyStyle(context).copyWith(
@@ -1035,10 +1534,7 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
             ),
             Text(
               '(복수선택)',
-              style: ResponsiveHelper.tinyStyle(context).copyWith(
-                color: AppColors.grey500,
-                fontSize: 9,
-              ),
+              style: ResponsiveHelper.tinyStyle(context, color: AppColors.grey500),
             ),
           ],
         ),
@@ -1095,14 +1591,14 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
       if (_validateStep1()) {
         setState(() {
           _currentStep = 1;
-          _autoValidate = false;  // ✅ 추가: 다음 스텝으로 이동 시 초기화
+          _autoValidate = false;
         });
       }
     } else if (_currentStep == 1) {
       if (_validateStep2()) {
         setState(() {
           _currentStep = 2;
-          _autoValidate = false;  // ✅ 추가
+          _autoValidate = false;
         });
       }
     } else if (_currentStep == 2) {
@@ -1173,6 +1669,12 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
           _addressController.text = result.fullAddress;
           _latitude = result.latitude;
           _longitude = result.longitude;
+          _city = result.sigungu?.isNotEmpty == true
+              ? result.sigungu
+              : FormatHelper.parseAddressCity(result.fullAddress);
+          _district = result.bname?.isNotEmpty == true
+              ? result.bname
+              : FormatHelper.parseAddressDistrict(result.fullAddress);
         });
       }
     } catch (e) {
@@ -1186,12 +1688,15 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
     final latController = TextEditingController(text: '37.5665');
     final lngController = TextEditingController(text: '126.9780');
 
+    try {
     final result = await showDialog<bool>(
       context: context,
       builder: (context) => StyledDialog(
         title: '주소 직접 입력',
         icon: Icons.location_on,
-        content: Column(
+        insetPadding: const EdgeInsets.symmetric(horizontal: 24, vertical: 24),
+        content: SingleChildScrollView(
+          child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
             TextField(
@@ -1222,6 +1727,7 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
               ],
             ),
           ],
+          ),
         ),
         actions: [
           StyledDialogButton.cancel(
@@ -1238,69 +1744,107 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
     if (result == true && addressController.text.isNotEmpty) {
       setState(() {
         _addressController.text = addressController.text;
-        _latitude = double.tryParse(latController.text) ?? 37.5665;
-        _longitude = double.tryParse(lngController.text) ?? 126.9780;
+        _latitude = double.tryParse(latController.text);
+        _longitude = double.tryParse(lngController.text);
       });
+    }
+    } finally {
+      addressController.dispose();
+      latController.dispose();
+      lngController.dispose();
     }
   }
 
   Future<void> _saveBusiness() async {
-    // ✅ 사업자등록증 체크 (사업장 등록 전) - Firestore에서 최신 데이터 가져오기
-    final userProvider = context.read<UserProvider>();
-    
-    // 최신 사용자 정보 가져오기 (캐시 무시)
-    await userProvider.refreshCurrentUser();
-
-    if (!mounted) return;
-
-    final user = userProvider.currentUser;
-
-    if (user == null) {
-      ToastHelper.showError('로그인이 필요합니다.');
-      return;
-    }
-
-    // 사업자등록증 미등록 시 다이얼로그
-    if (user.businessLicenseImageUrl == null) {
-      final shouldNavigate = await DialogHelper.showDocumentRequired(
-        context,
-        title: '사업자등록증 등록 필요',
-        missingDocuments: ['사업자등록증'],
-      );
-      
-      if (shouldNavigate && mounted) {
-        // 서류 관리 화면으로 이동
-        Navigator.push(
-          context,
-          MaterialPageRoute(
-            builder: (context) => const DocumentManagementScreen(),
-          ),
-        );
-      }
-      return;
-    }
-    
+    if (_isLoading) return;
     setState(() => _isLoading = true);
 
     try {
+      // 사업자등록증 체크 (Firestore에서 최신 데이터 기준)
+      final userProvider = context.read<UserProvider>();
+
+      // 최신 사용자 정보 가져오기 (캐시 무시)
+      await userProvider.refreshCurrentUser();
+
+      if (!mounted) return;
+
+      final user = userProvider.currentUser;
+
+      if (user == null) {
+        ToastHelper.showError('로그인이 필요합니다.');
+        return;
+      }
+
+      // 사업자등록증 미등록 시 다이얼로그
+      if (user.businessLicenseImageUrl == null) {
+        final shouldNavigate = await DialogHelper.showDocumentRequired(
+          context,
+          title: '사업자등록증 등록 필요',
+          missingDocuments: ['사업자등록증'],
+        );
+
+        if (shouldNavigate && mounted) {
+          Navigator.push(
+            context,
+            MaterialPageRoute(
+              builder: (context) => const DocumentManagementScreen(),
+            ),
+          );
+        }
+        return;
+      }
+
       final ownerId = user.uid;
 
-      // 위도/경도 기본값
-      _latitude ??= 37.5665;
-      _longitude ??= 126.9780;
+      // 위도/경도 미설정 경고 (GPS 출퇴근 방식 사용 시 필수)
+      if (_latitude == null || _longitude == null) {
+        if ((_attendanceType == 'gps' || _attendanceType == 'both') && mounted) {
+          final proceed = await showDialog<bool>(
+            context: context,
+            builder: (ctx) => AlertDialog(
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(20),
+              ),
+              title: const Text('GPS 좌표 미설정'),
+              content: const Text(
+                'GPS 출퇴근 방식을 사용하려면 사업장 위치(GPS 좌표)가 필요합니다.\n'
+                '주소 검색 후 좌표가 자동 설정됩니다.\n\n'
+                '지금 저장하면 근로자가 출퇴근 체크를 할 수 없습니다.',
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(ctx, false),
+                  child: const Text('취소'),
+                ),
+                TextButton(
+                  onPressed: () => Navigator.pop(ctx, true),
+                  child: const Text('그래도 저장'),
+                ),
+              ],
+            ),
+          );
+          if (proceed != true) return;
+        }
+      }
 
-      // ✅ 삭제할 이미지 처리 (Storage에서 실제 삭제)
-      for (var url in _imagesToDelete) {
-        await _storageService.deleteImageByUrl(url);
+      // 삭제할 이미지 처리 (병렬)
+      if (_imagesToDelete.isNotEmpty) {
+        await _storageService.deleteMultipleByUrls(_imagesToDelete);
       }
 
       // 이미지 업로드
+      final newlyUploadedUrls = <String>[];
       String? mainImageUrl = _mainImageUrl;
       if (_mainImage != null) {
         if (_isEditMode && widget.business?.mainImageUrl != null && !_imagesToDelete.contains(widget.business!.mainImageUrl)) {
           await _storageService.deleteImageByUrl(widget.business!.mainImageUrl!);
         }
         mainImageUrl = await _uploadImage(_mainImage!, 'main');
+        if (mainImageUrl != null) newlyUploadedUrls.add(mainImageUrl);
+        if (!mounted) {
+          if (newlyUploadedUrls.isNotEmpty) await _storageService.deleteMultipleByUrls(newlyUploadedUrls);
+          return;
+        }
         if (mainImageUrl == null) {
           debugPrint('⚠️ 대표 이미지 업로드 실패 — 이미지 없이 저장');
           ToastHelper.showWarning('이미지 업로드에 실패했습니다. 이미지 없이 저장됩니다.');
@@ -1310,6 +1854,11 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
       List<String> additionalUrls = List.from(_additionalImageUrls);
       for (var image in _additionalImages) {
         final url = await _uploadImage(image, 'additional');
+        if (url != null) newlyUploadedUrls.add(url);
+        if (!mounted) {
+          if (newlyUploadedUrls.isNotEmpty) await _storageService.deleteMultipleByUrls(newlyUploadedUrls);
+          return;
+        }
         if (url != null) additionalUrls.add(url);
       }
 
@@ -1319,8 +1868,10 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
         'companyName': _companyNameController.text.trim(),
         'category': _selectedCategory,
         'subCategory': _selectedSubCategory,
-        'address': _addressController.text.trim(),  // ⭐ 분리 저장
-        'detailAddress': _detailAddressController.text.trim().isEmpty ? null : _detailAddressController.text.trim(),  // ⭐ 추가
+        'address': _addressController.text.trim(),
+        'detailAddress': _detailAddressController.text.trim().isEmpty ? null : _detailAddressController.text.trim(),
+        'city': _city ?? FormatHelper.parseAddressCity(_addressController.text.trim()),
+        'district': _district ?? FormatHelper.parseAddressDistrict(_addressController.text.trim()),
         'latitude': _latitude,
         'longitude': _longitude,
         'phone': _phoneController.text.trim().isEmpty ? null : _phoneController.text.trim(),
@@ -1338,7 +1889,17 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
         'walkingMinutes': _walkingMinutesController.text.trim().isEmpty ? null : int.tryParse(_walkingMinutesController.text.trim()),
         'busInfo': _busInfoController.text.trim().isEmpty ? null : _busInfoController.text.trim(),
         'precautions': _precautionsController.text.trim().isEmpty ? null : _precautionsController.text.trim(),
+        'ownerName': _ownerNameController.text.trim().isEmpty ? null : _ownerNameController.text.trim(),
+        'wagePaymentDay': _wagePaymentDay,
         'updatedAt': FieldValue.serverTimestamp(),
+        // 출퇴근 설정
+        'attendanceType': _attendanceType,
+        'gpsRadius': _gpsRadius.toInt(),
+        if (_beaconUUIDController.text.trim().isNotEmpty)
+          'beaconUUID': _beaconUUIDController.text.trim().toUpperCase(),
+        'beaconMajor': int.tryParse(_beaconMajorController.text.trim()),
+        'beaconMinor': int.tryParse(_beaconMinorController.text.trim()),
+        'beaconRssiThreshold': _beaconRssiThreshold,
       };
 
       if (_isEditMode) {
@@ -1359,19 +1920,23 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
         ToastHelper.showSuccess('사업장이 수정되었습니다');
       } else {
         businessData['createdAt'] = FieldValue.serverTimestamp();
-        businessData['attendanceType'] = 'gps';
-        businessData['gpsRadius'] = 100;
         businessData['adminIds'] = [ownerId];
-        final docRef = await FirebaseFirestore.instance.collection('businesses').add(businessData);
 
-        // 유저 문서의 managedBusinessIds에 새 사업장 ID 추가
-        await FirebaseFirestore.instance
-            .collection('users')
-            .doc(ownerId)
-            .update({
-          'managedBusinessIds': FieldValue.arrayUnion([docRef.id]),
-          'businessId': docRef.id,
-        });
+        // 사업장 생성 + 유저 업데이트를 WriteBatch로 원자적 처리
+        // (하나라도 실패하면 전체 롤백)
+        final batch = FirebaseFirestore.instance.batch();
+        final bizRef = FirebaseFirestore.instance.collection('businesses').doc();
+        batch.set(bizRef, businessData);
+
+        final isFirstBusiness = userProvider.currentUser?.managedBusinessIds.isEmpty ?? true;
+        batch.update(
+          FirebaseFirestore.instance.collection('users').doc(ownerId),
+          {
+            'managedBusinessIds': FieldValue.arrayUnion([bizRef.id]),
+            if (isFirstBusiness) 'businessId': bizRef.id,
+          },
+        );
+        await batch.commit();
         await userProvider.refreshCurrentUser();
 
         ToastHelper.showSuccess('사업장이 등록되었습니다\n바로 사용하실 수 있습니다');

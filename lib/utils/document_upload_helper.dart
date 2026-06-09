@@ -1,11 +1,11 @@
 ﻿// lib/utils/document_upload_helper.dart
 import 'dart:io';
 import 'package:flutter/material.dart';
-import '../theme/app_colors.dart';
 import '../widgets/dialogs/ocr_verification_dialog.dart';
 import 'ocr_verification_helper.dart';
 import 'responsive_helper.dart';
 import 'image_helper.dart';
+import 'toast_helper.dart';
 
 /// 📄 서류 업로드 통합 헬퍼
 /// 
@@ -103,7 +103,8 @@ class DocumentUploadHelper {
         if (expectedResidentNumber != null && expectedResidentNumber.isNotEmpty) {
           extractedInfo += '\n주민번호: ${expectedResidentNumber.replaceAll(RegExp(r'(\d{6})-(\d)'), r'$1-$2******')}';
         }
-        
+
+        if (!context.mounted) return null;
         await OcrVerificationDialog.showSuccess(
           context: context,
           documentType: '신분증',
@@ -137,25 +138,7 @@ class DocumentUploadHelper {
       
     } catch (e) {
       debugPrint('❌ 신분증 업로드 실패: $e');
-      
-      if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Row(
-              children: [
-                Icon(Icons.error_outline, color: Colors.white),
-                SizedBox(width: 12),
-                Text('이미지를 선택할 수 없습니다'),
-              ],
-            ),
-            backgroundColor: AppColors.errorMedium,
-            behavior: SnackBarBehavior.floating,
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(10),
-            ),
-          ),
-        );
-      }
+      if (context.mounted) ToastHelper.showError('이미지를 선택할 수 없습니다');
       
       return null;
     }
@@ -221,15 +204,16 @@ class DocumentUploadHelper {
           extractedInfo += '\n은행: $expectedBankName';
         }
         
+        if (!context.mounted) return null;
         await OcrVerificationDialog.showSuccess(
           context: context,
           documentType: '통장사본',
           extractedInfo: extractedInfo,
           confidence: result['confidence'],
         );
-        
+
         return image.path;
-        
+
       } else {
         // ✅ 검증 실패 - 상세 이유 표시
         String reason = '';
@@ -265,25 +249,7 @@ class DocumentUploadHelper {
       
     } catch (e) {
       debugPrint('❌ 통장사본 업로드 실패: $e');
-      
-      if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Row(
-              children: [
-                Icon(Icons.error_outline, color: Colors.white),
-                SizedBox(width: 12),
-                Text('이미지를 선택할 수 없습니다'),
-              ],
-            ),
-            backgroundColor: AppColors.errorMedium,
-            behavior: SnackBarBehavior.floating,
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(10),
-            ),
-          ),
-        );
-      }
+      if (context.mounted) ToastHelper.showError('이미지를 선택할 수 없습니다');
       
       return null;
     }
@@ -294,6 +260,7 @@ class DocumentUploadHelper {
     BuildContext context, {
     String? businessNumber,
     String? ceoName,
+    void Function(String)? onCeoNameExtracted,
   }) async {
     try {
       // ✅ ImageHelper 사용 (선택 + 압축)
@@ -307,14 +274,7 @@ class DocumentUploadHelper {
       // 입력된 정보 없으면 검증 없이 바로 반환
       if ((businessNumber == null || businessNumber.isEmpty) &&
           (ceoName == null || ceoName.isEmpty)) {
-        if (context.mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text('사업자등록증이 선택되었습니다'),
-              backgroundColor: AppColors.successMedium,
-            ),
-          );
-        }
+        if (context.mounted) ToastHelper.showSuccess('사업자등록증이 선택되었습니다');
         return image.path;
       }
       
@@ -343,6 +303,7 @@ class DocumentUploadHelper {
             context,
             businessNumber: businessNumber,
             ceoName: ceoName,
+            onCeoNameExtracted: onCeoNameExtracted,
           );
         }
         return null;
@@ -355,6 +316,12 @@ class DocumentUploadHelper {
                       (hasCeoName ? result['isValidName'] : true);
       
       if (isValid && result['confidence'] >= 0.6) {
+        // OCR에서 추출한 대표자명이 있으면 콜백으로 전달 (자동 완성)
+        final extracted = result['extractedName'] as String?;
+        if (extracted != null && extracted.trim().isNotEmpty) {
+          onCeoNameExtracted?.call(extracted.trim());
+        }
+
         String extractedInfo = '';
         if (hasBusinessNumber) {
           extractedInfo += '사업자번호: $businessNumber\n';
@@ -362,14 +329,15 @@ class DocumentUploadHelper {
         if (hasCeoName) {
           extractedInfo += '대표자: $ceoName';
         }
-        
+
+        if (!context.mounted) return null;
         await OcrVerificationDialog.showSuccess(
           context: context,
           documentType: '사업자등록증',
           extractedInfo: extractedInfo.trim(),
           confidence: result['confidence'],
         );
-        
+
         return image.path;
         
       } else {
@@ -398,26 +366,7 @@ class DocumentUploadHelper {
       
     } catch (e) {
       debugPrint('❌ 사업자등록증 업로드 실패: $e');
-      
-      if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Row(
-              children: [
-                Icon(Icons.error_outline, color: Colors.white),
-                SizedBox(width: 12),
-                Text('이미지를 선택할 수 없습니다'),
-              ],
-            ),
-            backgroundColor: AppColors.errorMedium,
-            behavior: SnackBarBehavior.floating,
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(10),
-            ),
-          ),
-        );
-      }
-      
+      if (context.mounted) ToastHelper.showError('이미지를 선택할 수 없습니다');
       return null;
     }
   }

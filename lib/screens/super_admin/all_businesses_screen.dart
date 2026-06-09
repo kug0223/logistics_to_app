@@ -6,6 +6,9 @@ import '../../widgets/common/loading_widget.dart';
 import '../../widgets/common/styled_container.dart';
 import '../../utils/toast_helper.dart';
 import '../../utils/responsive_helper.dart';  // ⭐ 추가
+import '../../utils/format_helper.dart';
+import '../../widgets/common/app_empty_state.dart';
+import '../../widgets/common/gradient_scaffold.dart';
 
 
 /// ✅ 모든 사업장 조회 화면 (최고관리자 전용)
@@ -40,42 +43,43 @@ class _AllBusinessesScreenState extends State<AllBusinessesScreen> {
       final businessSnapshot = await FirebaseFirestore.instance
           .collection('businesses')
           .orderBy('createdAt', descending: true)
+          .limit(300) // OOM 방지
           .get();
 
       debugPrint('✅ [SUPER_ADMIN] 조회된 사업장: ${businessSnapshot.docs.length}개');
 
-      // 2. 각 사업장의 소유자 정보 조회
-      final List<_BusinessWithOwner> businessesWithOwner = [];
-      
-      for (var doc in businessSnapshot.docs) {
-        final business = BusinessModel.fromMap(doc.data(), doc.id);
-        
-        // 소유자 정보 조회
-        String ownerName = '알 수 없음';
-        String ownerEmail = '';
-        
+      // 2. 각 사업장의 소유자 정보 조회 (병렬)
+      final businesses = businessSnapshot.docs
+          .map((doc) => BusinessModel.fromMap(doc.data(), doc.id))
+          .toList();
+
+      final ownerFutures = businesses.map((business) async {
         try {
           final ownerDoc = await FirebaseFirestore.instance
               .collection('users')
               .doc(business.ownerId)
               .get();
-          
           if (ownerDoc.exists) {
-            final ownerData = ownerDoc.data()!;
-            ownerName = ownerData['name'] ?? '알 수 없음';
-            ownerEmail = ownerData['email'] ?? '';
+            final data = ownerDoc.data()!;
+            return (name: data['name'] as String? ?? '알 수 없음', email: data['email'] as String? ?? '');
           }
         } catch (e) {
           debugPrint('⚠️ 소유자 정보 조회 실패: $e');
         }
+        return (name: '알 수 없음', email: '');
+      }).toList();
 
-        businessesWithOwner.add(_BusinessWithOwner(
-          business: business,
-          ownerName: ownerName,
-          ownerEmail: ownerEmail,
-        ));
-      }
+      final ownerInfos = await Future.wait(ownerFutures);
 
+      final businessesWithOwner = List.generate(businesses.length, (i) {
+        return _BusinessWithOwner(
+          business: businesses[i],
+          ownerName: ownerInfos[i].name,
+          ownerEmail: ownerInfos[i].email,
+        );
+      });
+
+      if (!mounted) return;
       setState(() {
         _businesses = businessesWithOwner;
         _isLoading = false;
@@ -84,6 +88,7 @@ class _AllBusinessesScreenState extends State<AllBusinessesScreen> {
       debugPrint('✅ [SUPER_ADMIN] 사업장 로드 완료: ${_businesses.length}개');
     } catch (e) {
       debugPrint('❌ [SUPER_ADMIN] 사업장 로드 실패: $e');
+      if (!mounted) return;
       ToastHelper.showError('사업장 목록을 불러오는데 실패했습니다: $e');
       setState(() {
         _isLoading = false;
@@ -93,18 +98,15 @@ class _AllBusinessesScreenState extends State<AllBusinessesScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('전체 사업장 관리'),
-        backgroundColor: AppColors.purple,
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.refresh),
-            onPressed: _loadAllBusinesses,
-            tooltip: '새로고침',
-          ),
-        ],
-      ),
+    return GradientScaffold(
+      title: '전체 사업장 관리',
+      actions: [
+        IconButton(
+          icon: const Icon(Icons.refresh, color: Colors.white),
+          onPressed: _loadAllBusinesses,
+          tooltip: '새로고침',
+        ),
+      ],
       body: _isLoading
           ? const LoadingWidget(message: '사업장 목록을 불러오는 중...')
           : _businesses.isEmpty
@@ -115,25 +117,9 @@ class _AllBusinessesScreenState extends State<AllBusinessesScreen> {
 
   /// 빈 상태
   Widget _buildEmptyState() {
-    return Center(
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Icon(
-            Icons.business_outlined,
-            size: ResponsiveHelper.iconSize(context, 80),  // ⭐ 변경
-            color: Theme.of(context).disabledColor,
-          ),
-          SizedBox(height: ResponsiveHelper.spacing(context, 16)),  // ⭐ 변경
-          Text(
-            '등록된 사업장이 없습니다',
-            style: ResponsiveHelper.titleStyle(  // ⭐ 변경
-              context,
-              color: Theme.of(context).textTheme.bodySmall?.color,
-            ).copyWith(fontWeight: FontWeight.w500),
-          ),
-        ],
-      ),
+    return const AppEmptyState(
+      icon: Icons.business_outlined,
+      title: '등록된 사업장이 없습니다',
     );
   }
 
@@ -313,10 +299,7 @@ class _AllBusinessesScreenState extends State<AllBusinessesScreen> {
     );
   }
 
-  /// 날짜 포맷팅
-  String _formatDate(DateTime date) {
-    return '${date.year}-${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')}';
-  }
+  String _formatDate(DateTime date) => FormatHelper.formatDateISO(date);
 }
 
 /// 사업장 + 소유자 정보를 담는 클래스

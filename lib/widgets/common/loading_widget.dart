@@ -1,6 +1,7 @@
 ﻿import 'package:flutter/material.dart';
 import 'package:loading_animation_widget/loading_animation_widget.dart';
 import '../../theme/app_colors.dart';
+import '../../utils/responsive_helper.dart';
 
 class LoadingWidget extends StatelessWidget {
   final String? message;
@@ -14,25 +15,29 @@ class LoadingWidget extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Center(
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          LoadingAnimationWidget.threeArchedCircle(
-            color: color ?? Theme.of(context).primaryColor,
-            size: 50,
-          ),
-          if (message != null) ...[
-            const SizedBox(height: 16),
-            Text(
-              message!,
-              style: TextStyle(
-                fontSize: 14,
-                color: AppColors.grey600,
+    final label = message ?? '로딩 중';
+    return Semantics(
+      label: label,
+      liveRegion: true,
+      child: Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            ExcludeSemantics(
+              child: LoadingAnimationWidget.threeArchedCircle(
+                color: color ?? Theme.of(context).primaryColor,
+                size: 50,
               ),
             ),
+            if (message != null) ...[
+              const SizedBox(height: 16),
+              Text(
+                message!,
+                style: ResponsiveHelper.bodyStyle(context, color: AppColors.grey600),
+              ),
+            ],
           ],
-        ],
+        ),
       ),
     );
   }

@@ -11,7 +11,7 @@ class BusinessWorkTypeModel {
   final int displayOrder;        // 정렬 순서 (낮을수록 위)
   final bool isActive;           // 활성화 여부
   final DateTime createdAt;      // 생성 일시
-  // ✅ 확장 필드
+
   final String? oneLineIntro;    // 한 줄 소개
   final String? description;     // 상세 설명
   final String? workEnvironment; // 근무 환경 (실내/실외/혼합)
@@ -31,7 +31,7 @@ class BusinessWorkTypeModel {
     required this.displayOrder,
     this.isActive = true,
     required this.createdAt,
-    // ✅ 확장 필드
+  
     this.oneLineIntro,
     this.description,
     this.workEnvironment,
@@ -51,10 +51,12 @@ class BusinessWorkTypeModel {
       icon: map['icon'] ?? '📋',
       color: map['color'],
       backgroundColor: map['backgroundColor'],
-      displayOrder: map['displayOrder'] ?? 0,
+      displayOrder: (map['displayOrder'] as num?)?.toInt() ?? 0,
       isActive: map['isActive'] ?? true,
-      createdAt: (map['createdAt'] as Timestamp).toDate(),
-      // ✅ 확장 필드
+      createdAt: map['createdAt'] != null
+          ? (map['createdAt'] as Timestamp).toDate().toLocal()
+          : (throw ArgumentError('BusinessWorkTypeModel: createdAt 필드 누락 (id: $id)')),
+    
       oneLineIntro: map['oneLineIntro'],
       description: map['description'],
       workEnvironment: map['workEnvironment'],
@@ -70,8 +72,11 @@ class BusinessWorkTypeModel {
 
   /// Firestore DocumentSnapshot → 모델
   factory BusinessWorkTypeModel.fromFirestore(DocumentSnapshot doc) {
-    final data = doc.data() as Map<String, dynamic>;
-    return BusinessWorkTypeModel.fromMap(data, doc.id);
+    final raw = doc.data();
+    if (raw == null) {
+      throw ArgumentError('BusinessWorkTypeModel.fromFirestore: 문서 데이터 없음 (id: ${doc.id})');
+    }
+    return BusinessWorkTypeModel.fromMap(raw as Map<String, dynamic>, doc.id);
   }
 
   /// 모델 → Firestore 문서
@@ -85,7 +90,7 @@ class BusinessWorkTypeModel {
       'displayOrder': displayOrder,
       'isActive': isActive,
       'createdAt': Timestamp.fromDate(createdAt),
-      // ✅ 확장 필드
+    
       'oneLineIntro': oneLineIntro,
       'description': description,
       'workEnvironment': workEnvironment,
@@ -108,7 +113,7 @@ class BusinessWorkTypeModel {
     int? displayOrder,
     bool? isActive,
     DateTime? createdAt,
-    // ✅ 확장 필드
+  
     String? oneLineIntro,
     String? description,
     String? workEnvironment,
@@ -128,7 +133,7 @@ class BusinessWorkTypeModel {
       displayOrder: displayOrder ?? this.displayOrder,
       isActive: isActive ?? this.isActive,
       createdAt: createdAt ?? this.createdAt,
-      // ✅ 확장 필드
+    
       oneLineIntro: oneLineIntro ?? this.oneLineIntro,
       description: description ?? this.description,
       workEnvironment: workEnvironment ?? this.workEnvironment,

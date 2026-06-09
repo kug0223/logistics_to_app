@@ -429,7 +429,10 @@ class TODeadlineSection extends StatelessWidget {
     // 1단계: 날짜 선택 (커스텀 바텀시트)
     final pickedDate = await DatePickerBottomSheet.show(
       context: context,
-      initialDate: fixedDeadline ?? DateTime.now(),
+      // 과거 마감일이 저장된 경우 오늘로 초기값 설정 (과거 선택 방지)
+      initialDate: (fixedDeadline != null && fixedDeadline!.isAfter(DateTime.now()))
+          ? fixedDeadline!
+          : DateTime.now(),
       title: '마감 날짜 선택',
       subtitle: '지원 마감일을 선택하세요 (시작일 이전)',
       minDate: DateTime.now(),

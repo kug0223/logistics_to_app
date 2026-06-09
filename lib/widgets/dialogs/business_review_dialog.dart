@@ -6,6 +6,7 @@ import '../../theme/app_colors.dart';
 import '../../models/settings/trust_settings_model.dart';
 import '../../services/monthly_review_service.dart';
 import '../../utils/toast_helper.dart';
+import '../common/loading_widget.dart';
 import 'styled_dialog.dart';
 
 /// 지원자 → 사업장 리뷰 작성 다이얼로그
@@ -98,66 +99,74 @@ class _BusinessReviewDialogState extends State<BusinessReviewDialog> {
     }
     
     setState(() => _isSubmitting = true);
-    
-    final result = await _reviewService.createReviewForBusiness(
-      reviewerId: widget.reviewerId,
-      businessId: widget.businessId,
-      businessName: widget.businessName,
-      reviewYear: widget.reviewYear,
-      reviewMonth: widget.reviewMonth,
-      workDaysInMonth: widget.workDaysInMonth,
-      rating: _rating,
-      wouldWorkAgain: _wouldWorkAgain!,
-      positiveTags: _selectedPositiveTags,
-      improvementTags: _selectedImprovementTags,
-      comment: _commentController.text.trim().isEmpty
-          ? null
-          : _commentController.text.trim(),
-      requestId: widget.requestId,
-    );
 
-    if (!mounted) return;
+    try {
+      final result = await _reviewService.createReviewForBusiness(
+        reviewerId: widget.reviewerId,
+        businessId: widget.businessId,
+        businessName: widget.businessName,
+        reviewYear: widget.reviewYear,
+        reviewMonth: widget.reviewMonth,
+        workDaysInMonth: widget.workDaysInMonth,
+        rating: _rating,
+        wouldWorkAgain: _wouldWorkAgain!,
+        positiveTags: _selectedPositiveTags,
+        improvementTags: _selectedImprovementTags,
+        comment: _commentController.text.trim().isEmpty
+            ? null
+            : _commentController.text.trim(),
+        requestId: widget.requestId,
+      );
 
-    if (result.reviewId != null) {
-      // 성공 다이얼로그
-      await showDialog(
-        context: context,
-        barrierDismissible: false,
-        builder: (resultContext) => StyledDialog(
-          title: '리뷰 작성 완료',
-          subtitle: null,
-          icon: Icons.check_circle,
-          headerColor: AppColors.success,
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(
-                Icons.schedule,
-                size: ResponsiveHelper.iconSize(context, 48),
-                color: AppColors.info,
-              ),
-              SizedBox(height: ResponsiveHelper.spacing(context, 16)),
-              Text(
-                '리뷰가 작성되었습니다.\n관리자도 리뷰를 작성하면 즉시 공개됩니다.\n(미작성 시 14일 후 자동 공개)',
-                style: ResponsiveHelper.bodyStyle(context),
-                textAlign: TextAlign.center,
+      if (!mounted) return;
+
+      if (result.reviewId != null) {
+        // 성공 다이얼로그
+        await showDialog(
+          context: context,
+          barrierDismissible: false,
+          builder: (resultContext) => StyledDialog(
+            title: '리뷰 작성 완료',
+            subtitle: null,
+            icon: Icons.check_circle,
+            headerColor: AppColors.success,
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(
+                  Icons.schedule,
+                  size: ResponsiveHelper.iconSize(context, 48),
+                  color: AppColors.info,
+                ),
+                SizedBox(height: ResponsiveHelper.spacing(context, 16)),
+                Text(
+                  '리뷰가 작성되었습니다.\n관리자도 리뷰를 작성하면 즉시 공개됩니다.\n(미작성 시 14일 후 자동 공개)',
+                  style: ResponsiveHelper.bodyStyle(context),
+                  textAlign: TextAlign.center,
+                ),
+              ],
+            ),
+            actions: [
+              StyledDialogButton.primary(
+                text: '확인',
+                onPressed: () {
+                  Navigator.pop(resultContext);
+                  Navigator.pop(context, true);
+                },
               ),
             ],
           ),
-          actions: [
-            StyledDialogButton.primary(
-              text: '확인',
-              onPressed: () {
-                Navigator.pop(resultContext);
-                Navigator.pop(context, true);
-              },
-            ),
-          ],
-        ),
-      );
-    } else {
-      setState(() => _isSubmitting = false);
-      ToastHelper.showError(result.error ?? '리뷰 작성에 실패했습니다.');
+        );
+      } else {
+        if (mounted) setState(() => _isSubmitting = false);
+        ToastHelper.showError(result.error ?? '리뷰 작성에 실패했습니다.');
+      }
+    } catch (e) {
+      debugPrint('❌ 리뷰 제출 실패: $e');
+      if (mounted) {
+        setState(() => _isSubmitting = false);
+        ToastHelper.showError('리뷰 작성에 실패했습니다.');
+      }
     }
   }
 
@@ -174,7 +183,7 @@ class _BusinessReviewDialogState extends State<BusinessReviewDialog> {
       child: Container(
         constraints: BoxConstraints(
           maxWidth: 500,
-          maxHeight: MediaQuery.of(context).size.height * 0.9,
+          maxHeight: MediaQuery.sizeOf(context).height * 0.9,
         ),
         child: Column(
           mainAxisSize: MainAxisSize.min,
@@ -185,11 +194,9 @@ class _BusinessReviewDialogState extends State<BusinessReviewDialog> {
             // 내용
             Flexible(
               child: _isLoading
-                  ? Center(
-                      child: Padding(
-                        padding: ResponsiveHelper.cardPadding(context),
-                        child: CircularProgressIndicator(),
-                      ),
+                  ? Padding(
+                      padding: ResponsiveHelper.cardPadding(context),
+                      child: const LoadingWidget(),
                     )
                   : SingleChildScrollView(
                       padding: ResponsiveHelper.cardPadding(context),
@@ -304,6 +311,7 @@ class _BusinessReviewDialogState extends State<BusinessReviewDialog> {
                 ),
               ),
               IconButton(
+                tooltip: '닫기',
                 onPressed: () => Navigator.pop(context),
                 icon: Icon(Icons.close, color: Colors.white),
               ),
@@ -377,16 +385,22 @@ class _BusinessReviewDialogState extends State<BusinessReviewDialog> {
         Row(
           mainAxisAlignment: MainAxisAlignment.center,
           children: List.generate(5, (index) {
-            return GestureDetector(
-              onTap: () => setState(() => _rating = index + 1),
-              child: Padding(
-                padding: EdgeInsets.symmetric(
-                  horizontal: ResponsiveHelper.spacing(context, 4),
-                ),
-                child: Icon(
-                  index < _rating ? Icons.star : Icons.star_border,
-                  color: AppColors.amber,
-                  size: ResponsiveHelper.iconSize(context, 40),
+            final starValue = index + 1;
+            return Semantics(
+              label: '$starValue점',
+              button: true,
+              selected: _rating == starValue,
+              child: GestureDetector(
+                onTap: () => setState(() => _rating = starValue),
+                child: Padding(
+                  padding: EdgeInsets.symmetric(
+                    horizontal: ResponsiveHelper.spacing(context, 4),
+                  ),
+                  child: Icon(
+                    index < _rating ? Icons.star : Icons.star_border,
+                    color: AppColors.amber,
+                    size: ResponsiveHelper.iconSize(context, 40),
+                  ),
                 ),
               ),
             );
@@ -710,13 +724,10 @@ class _BusinessReviewDialogState extends State<BusinessReviewDialog> {
                 ),
               ),
               child: _isSubmitting
-                  ? SizedBox(
+                  ? const SizedBox(
                       width: 20,
                       height: 20,
-                      child: CircularProgressIndicator(
-                        strokeWidth: 2,
-                        color: Colors.white,
-                      ),
+                      child: LoadingWidget(color: Colors.white),
                     )
                   : Text('리뷰 작성'),
             ),

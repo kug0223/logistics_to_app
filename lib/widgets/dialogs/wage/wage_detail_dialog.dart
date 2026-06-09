@@ -3,13 +3,15 @@
 import 'package:flutter/material.dart';
 
 import '../../../models/core/application_model.dart';
+import '../../../screens/payroll/payslip_view_screen.dart';
 import '../../../models/core/attendance_model.dart';
+import '../../../models/core/insurance_rate_model.dart';
 import '../../../models/core/user_model.dart';
 import '../../../models/core/wage_detail_model.dart';
 import '../../../utils/responsive_helper.dart';
 import '../../../utils/dialog_helper.dart';
 import '../../../utils/format_helper.dart';
-import '../../../utils/week_helper.dart';
+import '../../../utils/wage_calculator.dart';
 import '../../../theme/app_colors.dart';
 
 enum WageDialogMode {
@@ -33,8 +35,9 @@ class WageDetailDialog extends StatefulWidget {
   final WageDialogMode mode;
   final String? businessName;
   final String? shiftType;
-  final bool weeklyHolidayIncluded;
-  final WeeklyHolidayEligibility? weeklyHolidayEligibility;
+  final bool nightIncluded;
+  final int scheduledBreakMinutes;
+  final int? baseHourlyWage; // 사업주가 업무상세에 입력한 통상시급
 
   const WageDetailDialog({
     super.key,
@@ -45,8 +48,9 @@ class WageDetailDialog extends StatefulWidget {
     required this.mode,
     this.businessName,
     this.shiftType,
-    this.weeklyHolidayIncluded = false,
-    this.weeklyHolidayEligibility,
+    this.nightIncluded = false,
+    this.scheduledBreakMinutes = 0,
+    this.baseHourlyWage,
   });
 
   static Future<WageDialogResult?> show({
@@ -58,8 +62,9 @@ class WageDetailDialog extends StatefulWidget {
     required WageDialogMode mode,
     String? businessName,
     String? shiftType,
-    bool weeklyHolidayIncluded = false,
-    WeeklyHolidayEligibility? weeklyHolidayEligibility,
+    bool nightIncluded = false,
+    int scheduledBreakMinutes = 0,
+    int? baseHourlyWage,
   }) {
     return showDialog<WageDialogResult>(
       context: context,
@@ -71,8 +76,9 @@ class WageDetailDialog extends StatefulWidget {
         mode: mode,
         businessName: businessName,
         shiftType: shiftType,
-        weeklyHolidayIncluded: weeklyHolidayIncluded,
-        weeklyHolidayEligibility: weeklyHolidayEligibility,
+        nightIncluded: nightIncluded,
+        scheduledBreakMinutes: scheduledBreakMinutes,
+        baseHourlyWage: baseHourlyWage,
       ),
     );
   }
@@ -85,7 +91,6 @@ class _WageDetailDialogState extends State<WageDetailDialog> {
   late WageDetailModel _wage;
   final _additionalController = TextEditingController();
   final _deductionController = TextEditingController();
-  final _weeklyHolidayController = TextEditingController();
   final _memoController = TextEditingController();
 
   @override
@@ -96,15 +101,6 @@ class _WageDetailDialogState extends State<WageDetailDialog> {
         widget.wage.additionalAmount > 0 ? widget.wage.additionalAmount.toString() : '';
     _deductionController.text =
         widget.wage.deductionAmount > 0 ? widget.wage.deductionAmount.toString() : '';
-    // 저장된 금액이 있으면 우선 사용, 없고 자격 충족이면 자동 제안
-    final savedAmount = widget.wage.weeklyHolidayAmount;
-    final suggestedAmount = (savedAmount == 0 &&
-            widget.weeklyHolidayIncluded &&
-            widget.weeklyHolidayEligibility?.isEligible == true)
-        ? widget.weeklyHolidayEligibility!.weeklyHolidayAmount
-        : savedAmount;
-    _weeklyHolidayController.text =
-        suggestedAmount > 0 ? suggestedAmount.toString() : '';
     _memoController.text = widget.wage.memo ?? '';
   }
 
@@ -112,7 +108,6 @@ class _WageDetailDialogState extends State<WageDetailDialog> {
   void dispose() {
     _additionalController.dispose();
     _deductionController.dispose();
-    _weeklyHolidayController.dispose();
     _memoController.dispose();
     super.dispose();
   }
@@ -122,17 +117,15 @@ class _WageDetailDialogState extends State<WageDetailDialog> {
         int.tryParse(_additionalController.text.replaceAll(',', '')) ?? 0;
     final deduction =
         int.tryParse(_deductionController.text.replaceAll(',', '')) ?? 0;
-    final weeklyHoliday = widget.weeklyHolidayIncluded
-        ? (int.tryParse(_weeklyHolidayController.text.replaceAll(',', '')) ?? 0)
-        : 0;
     final newTotal = _wage.baseAmount + _wage.overtimeAmount + _wage.nightAmount +
-        additional - deduction + weeklyHoliday;
+        additional - deduction + _wage.weeklyHolidayAmount;
     setState(() {
       _wage = _wage.copyWith(
         additionalAmount: additional,
         deductionAmount: deduction,
-        weeklyHolidayAmount: weeklyHoliday,
         totalAmount: newTotal,
+        // 보험 공제액은 기본급 기준으로 이미 확정됐으므로 그대로 유지
+        netWage: newTotal - _wage.totalInsuranceDeduction,
         memo: _memoController.text.trim().isNotEmpty
             ? _memoController.text.trim()
             : null,
@@ -140,10 +133,168 @@ class _WageDetailDialogState extends State<WageDetailDialog> {
     });
   }
 
+  /// 무급 휴게시간 수정 bottom sheet
+  void _showEditBreakSheet(BuildContext context) {
+    final legalMax = WageCalculator.legalMaxBreakMinutes(_wage.actualMinutes);
+    final isOver = _wage.breakMinutes > legalMax;
+    final legalLabel = legalMax == 0
+        ? '없음 (4시간 미만 근무)'
+        : '$legalMax분';
+
+    showModalBottomSheet<void>(
+      context: context,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      builder: (ctx) => Padding(
+        padding: const EdgeInsets.fromLTRB(20, 20, 20, 32),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('무급 휴게시간 수정',
+                style: ResponsiveHelper.subtitleStyle(context)
+                    .copyWith(fontWeight: FontWeight.bold)),
+            SizedBox(height: ResponsiveHelper.spacing(context, 10)),
+            // 법정 기준 안내
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              decoration: BoxDecoration(
+                color: isOver ? AppColors.errorBg : AppColors.infoBg,
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Row(
+                children: [
+                  Icon(
+                    isOver
+                        ? Icons.warning_amber_outlined
+                        : Icons.info_outline,
+                    size: ResponsiveHelper.iconSize(context, 14),
+                    color: isOver ? AppColors.errorDark : AppColors.infoDark,
+                  ),
+                  SizedBox(width: ResponsiveHelper.spacing(context, 6)),
+                  Expanded(
+                    child: Text(
+                      '체류 ${FormatHelper.formatCompactHours(_wage.actualMinutes)} 기준  법정 최대: $legalLabel',
+                      style: ResponsiveHelper.tinyStyle(context,
+                          color: isOver
+                              ? AppColors.errorDark
+                              : AppColors.infoDark),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            SizedBox(height: ResponsiveHelper.spacing(context, 16)),
+            Text('적용할 휴게시간 선택',
+                style: ResponsiveHelper.smallStyle(context,
+                    color: AppColors.grey500)),
+            SizedBox(height: ResponsiveHelper.spacing(context, 10)),
+            Wrap(
+              spacing: ResponsiveHelper.spacing(context, 8),
+              runSpacing: ResponsiveHelper.spacing(context, 8),
+              children: [0, 30, 60, 90].map((min) {
+                final isSelected = _wage.breakMinutes == min;
+                final exceedsLegal = legalMax > 0 && min > legalMax;
+                return GestureDetector(
+                  onTap: () {
+                    Navigator.pop(ctx);
+                    _applyNewBreak(min);
+                  },
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 16, vertical: 8),
+                    decoration: BoxDecoration(
+                      color: isSelected
+                          ? AppColors.info
+                          : exceedsLegal
+                              ? AppColors.errorBg
+                              : AppColors.grey100,
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(
+                        color: isSelected
+                            ? AppColors.info
+                            : exceedsLegal
+                                ? AppColors.errorDark
+                                : AppColors.grey200,
+                      ),
+                    ),
+                    child: Text(
+                      min == 0 ? '없음' : '$min분',
+                      style: ResponsiveHelper.smallStyle(context,
+                              color: isSelected
+                                  ? Colors.white
+                                  : exceedsLegal
+                                      ? AppColors.errorDark
+                                      : AppColors.grey700)
+                          .copyWith(fontWeight: FontWeight.w600),
+                    ),
+                  ),
+                );
+              }).toList(),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// 새 휴게시간으로 급여 재계산 (보험공제·추가수당·메모 유지)
+  void _applyNewBreak(int newBreakMinutes) {
+    final checkIn = widget.attendance.checkIn;
+    final checkOut = widget.attendance.checkOut;
+    if (checkIn == null || checkOut == null) return;
+
+    // 컨트롤러의 최신 공제 값 직접 파싱 (미반영 상태의 _wage.deductionAmount 사용 방지)
+    final currentDeduction = int.tryParse(_deductionController.text.replaceAll(',', '')) ?? 0;
+
+    final recalculated = WageCalculator.calculate(
+      wageType: _wage.wageType,
+      baseWage: _wage.baseWage,
+      workDate: widget.attendance.workDate,
+      scheduledStart: widget.app.startTime,
+      scheduledEnd: widget.app.endTime,
+      actualStart: checkIn,
+      actualEnd: checkOut,
+      breakMinutes: newBreakMinutes,
+      scheduledBreakMinutes: widget.scheduledBreakMinutes,
+      nightAllowanceApplied: _wage.nightAllowanceApplied,
+      nightIncluded: widget.nightIncluded,
+      additionalAmount: _wage.additionalAmount,
+      memo: _wage.memo,
+      baseHourlyWage: widget.baseHourlyWage,
+    );
+
+    setState(() {
+      _wage = recalculated.copyWith(
+        // 수동 공제는 컨트롤러 최신 값 사용
+        deductionAmount: currentDeduction,
+        totalAmount: recalculated.totalAmount - currentDeduction,
+        // 보험·세금 공제는 기확정 값 유지
+        taxDeductionType: _wage.taxDeductionType,
+        employmentInsuranceDeduction: _wage.employmentInsuranceDeduction,
+        nationalPensionDeduction: _wage.nationalPensionDeduction,
+        healthInsuranceDeduction: _wage.healthInsuranceDeduction,
+        ltcInsuranceDeduction: _wage.ltcInsuranceDeduction,
+        incomeTaxDeduction: _wage.incomeTaxDeduction,
+        retroactiveDeduction: _wage.retroactiveDeduction,
+        netWage: recalculated.totalAmount - currentDeduction -
+            _wage.totalInsuranceDeduction,
+        // 계산 타임스탬프 유지
+        calculatedBy: _wage.calculatedBy,
+        calculatedAt: _wage.calculatedAt,
+      );
+    });
+  }
+
   Future<void> _onAction(String action) async {
     _updateWage();
     final userName = widget.user?.name ?? '근무자';
-    final totalText = FormatHelper.formatWage(_wage.totalAmount);
+    final hasDeductions = _wage.taxDeductionType != InsuranceRateModel.typeNone &&
+        _wage.totalInsuranceDeduction > 0;
+    final grossText = FormatHelper.formatWage(_wage.totalAmount);
+    final netText = FormatHelper.formatWage(_wage.netWage);
 
     String confirmTitle, confirmMessage, confirmText;
     bool isDanger = false;
@@ -151,7 +302,9 @@ class _WageDetailDialogState extends State<WageDetailDialog> {
     switch (action) {
       case 'confirm':
         confirmTitle = '급여 확정';
-        confirmMessage = '$userName의 급여를 확정하시겠습니까?\n\n총 급여: $totalText';
+        confirmMessage = hasDeductions
+            ? '$userName의 급여를 확정하시겠습니까?\n\n세전: $grossText\n실수령액: $netText'
+            : '$userName의 급여를 확정하시겠습니까?\n\n총 급여: $grossText';
         confirmText = '확정';
         break;
       case 'update':
@@ -159,8 +312,9 @@ class _WageDetailDialogState extends State<WageDetailDialog> {
         return;
       case 'final_confirm':
         confirmTitle = '최종 확정';
-        confirmMessage =
-            '$userName의 급여를 최종 확정하시겠습니까?\n\n총 급여: $totalText\n\n⚠️ 최종 확정 후에는 수정이 불가합니다.';
+        confirmMessage = hasDeductions
+            ? '$userName의 급여를 최종 확정하시겠습니까?\n\n세전: $grossText\n실수령액: $netText\n\n⚠️ 최종 확정 후에는 수정이 불가합니다.'
+            : '$userName의 급여를 최종 확정하시겠습니까?\n\n총 급여: $grossText\n\n⚠️ 최종 확정 후에는 수정이 불가합니다.';
         confirmText = '최종 확정';
         break;
       case 'cancel':
@@ -173,11 +327,23 @@ class _WageDetailDialogState extends State<WageDetailDialog> {
         return;
     }
 
-    final confirmed = isDanger
-        ? await DialogHelper.showDangerConfirm(context,
-            title: confirmTitle, message: confirmMessage, confirmText: confirmText)
-        : await DialogHelper.showConfirm(context,
-            title: confirmTitle, message: confirmMessage, confirmText: confirmText);
+    if (!mounted) return;
+    bool confirmed;
+    if (isDanger) {
+      confirmed = await DialogHelper.showDangerConfirm(
+        context,
+        title: confirmTitle,
+        message: confirmMessage,
+        confirmText: confirmText,
+      );
+    } else {
+      confirmed = await DialogHelper.showConfirm(
+        context,
+        title: confirmTitle,
+        message: confirmMessage,
+        confirmText: confirmText,
+      );
+    }
 
     if (confirmed && mounted) {
       Navigator.pop(context, WageDialogResult(action: action, wage: _wage));
@@ -185,6 +351,20 @@ class _WageDetailDialogState extends State<WageDetailDialog> {
   }
 
   // ── UI 속성 ──────────────────────────────────────────────────
+
+  /// 임금명세서 화면 진입
+  void _openPayslip(BuildContext context) {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => PayslipViewScreen(
+          attendance: widget.attendance,
+          worker: widget.user,
+          workerNameOverride: widget.user?.name ?? '근무자',
+        ),
+      ),
+    );
+  }
 
   Color get _headerColor {
     switch (widget.mode) {
@@ -215,6 +395,22 @@ class _WageDetailDialogState extends State<WageDetailDialog> {
 
   bool get _isEditable => widget.mode != WageDialogMode.confirmed;
 
+  /// 연장·야간수당 기초 시급 — 사업주 설정값 우선
+  int get _supplementWage {
+    // 1순위: 최근 계산 레코드에 저장된 값
+    if (_wage.appliedSupplementWage > 0) return _wage.appliedSupplementWage;
+    // 2순위: 호출자가 넘긴 업무상세의 baseHourlyWage
+    if (widget.baseHourlyWage != null && widget.baseHourlyWage! > 0) {
+      return widget.baseHourlyWage!;
+    }
+    // 3순위: 시급제는 시급 자체
+    if (_wage.wageType == 'hourly') return _wage.baseWage;
+    // 4순위: 일급÷예정순근무 역산 (구형 레코드 + baseHourlyWage 미입력)
+    final schedNetMins =
+        (_wage.scheduledMinutes - widget.scheduledBreakMinutes).clamp(1, 9999);
+    return (_wage.baseWage / schedNetMins * 60).round();
+  }
+
   Color get _wageColor =>
       _wage.wageType == 'daily' ? AppColors.warningDark : AppColors.successDark;
   Color get _wageBg =>
@@ -244,7 +440,7 @@ class _WageDetailDialogState extends State<WageDetailDialog> {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final name = widget.user?.name ?? '이름 없음';
-    final screenWidth = MediaQuery.of(context).size.width;
+    final screenWidth = MediaQuery.sizeOf(context).width;
 
     return Dialog(
       shape: RoundedRectangleBorder(
@@ -361,6 +557,12 @@ class _WageDetailDialogState extends State<WageDetailDialog> {
         ? FormatHelper.formatCompactHours(unworkedMins)
         : null;
 
+    // 법정 휴게 초과 여부 (체류 시간 기준)
+    final legalMax = WageCalculator.legalMaxBreakMinutes(_wage.actualMinutes);
+    final isBreakExceeded = _wage.breakMinutes > legalMax;
+    // 석식/야식 공제 분리 (total - 기본 scheduled)
+    final mealMins = (_wage.breakMinutes - widget.scheduledBreakMinutes).clamp(0, 9999);
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -476,20 +678,84 @@ class _WageDetailDialogState extends State<WageDetailDialog> {
                       vertical: ResponsiveHelper.spacing(context, 8)),
                   child: Divider(height: 1, color: AppColors.grey200),
                 ),
+                // 총 근무시간 (체류 시간 = 실근무 + 휴게)
                 Row(
                   children: [
-                    Icon(Icons.pause_circle_outline,
+                    Icon(Icons.timelapse_outlined,
                         size: ResponsiveHelper.iconSize(context, 13),
-                        color: AppColors.successDark),
+                        color: AppColors.grey500),
                     SizedBox(width: ResponsiveHelper.spacing(context, 5)),
-                    Text('휴게',
+                    Text('총 근무시간',
                         style: ResponsiveHelper.tinyStyle(context,
-                            color: AppColors.successDark)),
+                            color: AppColors.grey500)),
                     const Spacer(),
-                    Text(breakTimeStr,
-                        style: ResponsiveHelper.smallStyle(context,
-                            color: AppColors.successDark)
-                            .copyWith(fontWeight: FontWeight.w600)),
+                    Text(
+                      FormatHelper.formatCompactHours(
+                          _wage.workMinutes + _wage.breakMinutes),
+                      style: ResponsiveHelper.smallStyle(context,
+                              color: AppColors.grey700)
+                          .copyWith(fontWeight: FontWeight.w600),
+                    ),
+                  ],
+                ),
+                Padding(
+                  padding: EdgeInsets.symmetric(
+                      vertical: ResponsiveHelper.spacing(context, 8)),
+                  child: Divider(height: 1, color: AppColors.grey200),
+                ),
+                Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Icon(Icons.pause_circle_outline,
+                            size: ResponsiveHelper.iconSize(context, 13),
+                            color: isBreakExceeded
+                                ? AppColors.errorDark
+                                : AppColors.amber),
+                        SizedBox(width: ResponsiveHelper.spacing(context, 5)),
+                        Text('무급 휴게',
+                            style: ResponsiveHelper.tinyStyle(context,
+                                color: isBreakExceeded
+                                    ? AppColors.errorDark
+                                    : AppColors.amber)),
+                        const Spacer(),
+                        Text('- $breakTimeStr',
+                            style: ResponsiveHelper.smallStyle(context,
+                                    color: isBreakExceeded
+                                        ? AppColors.errorDark
+                                        : AppColors.amber)
+                                .copyWith(fontWeight: FontWeight.w600)),
+                        if (_isEditable) ...[
+                          SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+                          GestureDetector(
+                            onTap: () => _showEditBreakSheet(context),
+                            child: Container(
+                              padding: const EdgeInsets.all(4),
+                              decoration: const BoxDecoration(
+                                color: AppColors.grey100,
+                                shape: BoxShape.circle,
+                              ),
+                              child: Icon(Icons.edit_outlined,
+                                  size: ResponsiveHelper.iconSize(context, 12),
+                                  color: AppColors.grey600),
+                            ),
+                          ),
+                        ],
+                      ],
+                    ),
+                    if (mealMins > 0 && widget.scheduledBreakMinutes > 0) ...[
+                      SizedBox(height: ResponsiveHelper.spacing(context, 3)),
+                      Padding(
+                        padding: EdgeInsets.only(
+                            left: ResponsiveHelper.spacing(context, 18)),
+                        child: Text(
+                          '기본 ${FormatHelper.formatCompactHours(widget.scheduledBreakMinutes)} · 석식/야식 +${FormatHelper.formatCompactHours(mealMins)}',
+                          style: ResponsiveHelper.tinyStyle(context,
+                              color: AppColors.grey400),
+                        ),
+                      ),
+                    ],
                   ],
                 ),
               ],
@@ -565,8 +831,9 @@ class _WageDetailDialogState extends State<WageDetailDialog> {
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
               decoration: BoxDecoration(
-                color: AppColors.grey100,
+                color: Colors.white,
                 borderRadius: BorderRadius.circular(20),
+                border: Border.all(color: AppColors.grey200),
               ),
               child: Row(
                 mainAxisSize: MainAxisSize.min,
@@ -576,7 +843,7 @@ class _WageDetailDialogState extends State<WageDetailDialog> {
                       color: AppColors.grey600),
                   SizedBox(width: ResponsiveHelper.spacing(context, 3)),
                   Text(
-                    '통상시급 ${FormatHelper.formatWage(_wage.appliedMinimumWage)}',
+                    '통상시급 ${FormatHelper.formatWage(_supplementWage)}',
                     style: ResponsiveHelper.tinyStyle(context,
                         color: AppColors.grey600),
                   ),
@@ -590,8 +857,16 @@ class _WageDetailDialogState extends State<WageDetailDialog> {
         // 급여 항목 카드
         Container(
           decoration: BoxDecoration(
+            color: Colors.white,
             border: Border.all(color: AppColors.grey200),
             borderRadius: BorderRadius.circular(12),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withValues(alpha: 0.05),
+                blurRadius: 8,
+                offset: const Offset(0, 2),
+              ),
+            ],
           ),
           child: Column(
             children: [
@@ -675,6 +950,110 @@ class _WageDetailDialogState extends State<WageDetailDialog> {
                   icon: Icons.event_available_outlined,
                 ),
               ],
+              // ── 세전 총급여 소계 (공제가 있는 경우) ──────────────
+              if (_wage.taxDeductionType != InsuranceRateModel.typeNone &&
+                  _wage.totalInsuranceDeduction > 0) ...[
+                Divider(height: 1, color: AppColors.grey200),
+                Container(
+                  color: AppColors.grey50,
+                  child: _buildWageLineItem(
+                    context,
+                    label: '세전 총급여',
+                    amount: _wage.totalAmount,
+                    color: AppColors.grey700,
+                    icon: Icons.receipt_long_outlined,
+                  ),
+                ),
+              ],
+              // ── 세금·보험 공제 항목 ────────────────────────────
+              if (_wage.taxDeductionType != InsuranceRateModel.typeNone) ...[
+                Divider(height: 1, color: AppColors.grey200),
+                Padding(
+                  padding: EdgeInsets.symmetric(
+                    horizontal: ResponsiveHelper.spacing(context, 14),
+                    vertical: ResponsiveHelper.spacing(context, 8),
+                  ),
+                  child: Row(
+                    children: [
+                      Icon(Icons.account_balance_outlined,
+                          size: 13, color: AppColors.grey500),
+                      SizedBox(width: ResponsiveHelper.spacing(context, 6)),
+                      Text(
+                        '공제 (${_wage.taxDeductionLabel})',
+                        style: ResponsiveHelper.tinyStyle(context,
+                            color: AppColors.grey500)
+                            .copyWith(fontWeight: FontWeight.bold),
+                      ),
+                    ],
+                  ),
+                ),
+                if (_wage.employmentInsuranceDeduction > 0) ...[
+                  Divider(height: 1, color: AppColors.grey100),
+                  _buildWageLineItem(
+                    context,
+                    label: '고용보험',
+                    amount: _wage.employmentInsuranceDeduction,
+                    color: AppColors.errorDark,
+                    icon: Icons.work_outline,
+                    isDeduction: true,
+                  ),
+                ],
+                if (_wage.nationalPensionDeduction > 0) ...[
+                  Divider(height: 1, color: AppColors.grey100),
+                  _buildWageLineItem(
+                    context,
+                    label: '국민연금',
+                    amount: _wage.nationalPensionDeduction,
+                    color: AppColors.errorDark,
+                    icon: Icons.savings,
+                    isDeduction: true,
+                  ),
+                ],
+                if (_wage.healthInsuranceDeduction > 0) ...[
+                  Divider(height: 1, color: AppColors.grey100),
+                  _buildWageLineItem(
+                    context,
+                    label: '건강보험',
+                    amount: _wage.healthInsuranceDeduction,
+                    color: AppColors.errorDark,
+                    icon: Icons.favorite_border,
+                    isDeduction: true,
+                  ),
+                ],
+                if (_wage.ltcInsuranceDeduction > 0) ...[
+                  Divider(height: 1, color: AppColors.grey100),
+                  _buildWageLineItem(
+                    context,
+                    label: '장기요양보험',
+                    amount: _wage.ltcInsuranceDeduction,
+                    color: AppColors.errorDark,
+                    icon: Icons.elderly,
+                    isDeduction: true,
+                  ),
+                ],
+                if (_wage.incomeTaxDeduction > 0) ...[
+                  Divider(height: 1, color: AppColors.grey100),
+                  _buildWageLineItem(
+                    context,
+                    label: '소득세·지방세',
+                    amount: _wage.incomeTaxDeduction,
+                    color: AppColors.errorDark,
+                    icon: Icons.account_balance,
+                    isDeduction: true,
+                  ),
+                ],
+                if (_wage.retroactiveDeduction > 0) ...[
+                  Divider(height: 1, color: AppColors.grey100),
+                  _buildWageLineItem(
+                    context,
+                    label: '소급 공제 (1~7일분)',
+                    amount: _wage.retroactiveDeduction,
+                    color: AppColors.errorDark,
+                    icon: Icons.history_outlined,
+                    isDeduction: true,
+                  ),
+                ],
+              ],
             ],
           ),
         ),
@@ -687,40 +1066,56 @@ class _WageDetailDialogState extends State<WageDetailDialog> {
   }
 
   Widget _buildTotalRow(BuildContext context) {
-    return Container(
-      padding: ResponsiveHelper.symmetricPadding(context, horizontal: 16, vertical: 14),
-      decoration: BoxDecoration(
-        gradient: LinearGradient(
-          colors: [
-            _headerColor.withValues(alpha: 0.12),
-            _headerColor.withValues(alpha: 0.06),
-          ],
-          begin: Alignment.centerLeft,
-          end: Alignment.centerRight,
-        ),
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: _headerColor.withValues(alpha: 0.25)),
-      ),
-      child: Row(
-        children: [
-          Icon(Icons.account_balance_wallet_outlined,
-              size: ResponsiveHelper.iconSize(context, 18), color: _headerColor),
-          SizedBox(width: ResponsiveHelper.spacing(context, 8)),
-          Text(
-            '총 급여',
-            style: ResponsiveHelper.bodyStyle(context)
-                .copyWith(fontWeight: FontWeight.bold, color: Colors.black87),
-          ),
-          const Spacer(),
-          Text(
-            FormatHelper.formatWage(_wage.totalAmount),
-            style: ResponsiveHelper.titleStyle(context).copyWith(
-              fontWeight: FontWeight.bold,
-              color: _headerColor,
+    final hasDeductions = _wage.taxDeductionType != InsuranceRateModel.typeNone &&
+        _wage.totalInsuranceDeduction > 0;
+
+    return Column(
+      children: [
+        // 실수령액 (또는 공제 없을 때 "총 급여")
+        Container(
+          padding: ResponsiveHelper.symmetricPadding(context, horizontal: 16, vertical: 14),
+          decoration: BoxDecoration(
+            gradient: LinearGradient(
+              colors: [
+                _headerColor.withValues(alpha: 0.12),
+                _headerColor.withValues(alpha: 0.06),
+              ],
+              begin: Alignment.centerLeft,
+              end: Alignment.centerRight,
             ),
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: _headerColor.withValues(alpha: 0.25)),
+            boxShadow: [
+              BoxShadow(
+                color: _headerColor.withValues(alpha: 0.12),
+                blurRadius: 10,
+                offset: const Offset(0, 3),
+              ),
+            ],
           ),
-        ],
-      ),
+          child: Row(
+            children: [
+              Icon(Icons.account_balance_wallet_outlined,
+                  size: ResponsiveHelper.iconSize(context, 18), color: _headerColor),
+              SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+              Text(
+                hasDeductions ? '실수령액' : '총 급여',
+                style: ResponsiveHelper.bodyStyle(context)
+                    .copyWith(fontWeight: FontWeight.bold, color: AppColors.grey800),
+              ),
+              const Spacer(),
+              Text(
+                FormatHelper.formatWage(
+                    hasDeductions ? _wage.netWage : _wage.totalAmount),
+                style: ResponsiveHelper.titleStyle(context).copyWith(
+                  fontWeight: FontWeight.bold,
+                  color: _headerColor,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
     );
   }
 
@@ -728,8 +1123,9 @@ class _WageDetailDialogState extends State<WageDetailDialog> {
 
   Widget _buildCalculationGuide(BuildContext context) {
     final isDaily = _wage.wageType == 'daily';
+    final supplementWage = _supplementWage;
     final scheduledNetMins =
-        (_wage.scheduledMinutes - _wage.breakMinutes).clamp(0, 9999);
+        (_wage.scheduledMinutes - widget.scheduledBreakMinutes).clamp(0, 9999);
     final unworkedMins =
         (scheduledNetMins - _wage.workMinutes).clamp(0, scheduledNetMins);
     final absenceDeduction = isDaily
@@ -738,6 +1134,7 @@ class _WageDetailDialogState extends State<WageDetailDialog> {
 
     final lines = <String>[];
 
+    // ── 기본급 / 일급 ──
     if (isDaily) {
       if (absenceDeduction > 0) {
         final scheduledH = FormatHelper.formatCompactHours(scheduledNetMins);
@@ -749,27 +1146,47 @@ class _WageDetailDialogState extends State<WageDetailDialog> {
         lines.add('일급 = ${FormatHelper.formatWage(_wage.baseWage)} (전일 근무)');
       }
     } else {
-      final workH = FormatHelper.formatCompactHours(_wage.workMinutes);
+      // 시급제: 기본급은 정규 근무(연장 제외)만 포함
+      final regularMins = _wage.workMinutes - _wage.overtimeMinutes;
+      final regularH = FormatHelper.formatCompactHours(regularMins);
       lines.add(
-          '기본급 = ${FormatHelper.formatWage(_wage.baseWage)}/h × $workH = ${FormatHelper.formatWage(_wage.baseAmount)}');
+          '기본급 = ${FormatHelper.formatWage(_wage.baseWage)}/h × $regularH = ${FormatHelper.formatWage(_wage.baseAmount)}');
     }
 
+    // ── 연장수당 ──
     if (_wage.overtimeAmount > 0) {
-      final h = FormatHelper.formatCompactHours(_wage.overtimeMinutes);
-      lines.add(
-          '연장수당 = ${FormatHelper.formatWage(_wage.appliedMinimumWage)}/h × $h × 1.5 = ${FormatHelper.formatWage(_wage.overtimeAmount)}');
+      final wageStr = FormatHelper.formatWage(supplementWage);
+      if (!isDaily) {
+        // 시급제: 항상 ×1.5
+        final h = FormatHelper.formatCompactHours(_wage.overtimeMinutes);
+        lines.add('연장수당 = $wageStr/h × $h × 1.5 = ${FormatHelper.formatWage(_wage.overtimeAmount)}');
+      } else if (_wage.workMinutes <= WageCalculator.standardWorkMinutes) {
+        // 일급제, 총 근무 8h 이하: ×1.0
+        final h = FormatHelper.formatCompactHours(_wage.overtimeMinutes);
+        lines.add('연장수당 = $wageStr/h × $h × 1.0 = ${FormatHelper.formatWage(_wage.overtimeAmount)}');
+      } else {
+        // 일급제, 총 근무 8h 초과: 구간 분리
+        final over8 = (_wage.workMinutes - WageCalculator.standardWorkMinutes)
+            .clamp(0, _wage.overtimeMinutes);
+        final within8 = (_wage.overtimeMinutes - over8).clamp(0, _wage.overtimeMinutes);
+        if (within8 > 0) {
+          final h = FormatHelper.formatCompactHours(within8);
+          final amt = (within8 * supplementWage / 60).round();
+          lines.add('연장수당 (8h내) = $wageStr/h × $h × 1.0 = ${FormatHelper.formatWage(amt)}');
+        }
+        final h8 = FormatHelper.formatCompactHours(over8);
+        final amt8 = (over8 * supplementWage * 1.5 / 60).round();
+        lines.add('연장수당 (8h초과) = $wageStr/h × $h8 × 1.5 = ${FormatHelper.formatWage(amt8)}');
+      }
     }
 
+    // ── 야간수당 ──
     if (_wage.nightAmount > 0) {
       final h = FormatHelper.formatCompactHours(_wage.nightMinutes);
       lines.add(
-          '야간수당 = ${FormatHelper.formatWage(_wage.appliedMinimumWage)}/h × $h × 0.5 = ${FormatHelper.formatWage(_wage.nightAmount)}');
+          '야간수당 = ${FormatHelper.formatWage(supplementWage)}/h × $h × 0.5 = ${FormatHelper.formatWage(_wage.nightAmount)}');
     }
 
-    if (widget.weeklyHolidayIncluded && _wage.weeklyHolidayAmount > 0) {
-      lines.add(
-          '주휴수당 = ${FormatHelper.formatWage(_wage.appliedMinimumWage)}/h × 8h = ${FormatHelper.formatWage(_wage.weeklyHolidayAmount)}');
-    }
 
     return Container(
       padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 12)),
@@ -821,9 +1238,23 @@ class _WageDetailDialogState extends State<WageDetailDialog> {
   // ── 수정 섹션 (에디터블 모드) ─────────────────────────────────
 
   Widget _buildEditSection(BuildContext context, ThemeData theme) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
+    return Container(
+      padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 16)),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: AppColors.grey200),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.04),
+            blurRadius: 6,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
 
         // 추가수당 / 추가공제 — 나란히 배치
         Row(
@@ -839,7 +1270,7 @@ class _WageDetailDialogState extends State<WageDetailDialog> {
                     controller: _additionalController,
                     keyboardType: TextInputType.number,
                     inputFormatters: [NumberInputFormatter()],
-                    style: ResponsiveHelper.bodyStyle(context).copyWith(color: Colors.black87),
+                    style: ResponsiveHelper.bodyStyle(context).copyWith(color: AppColors.grey800),
                     decoration: InputDecoration(
                       hintText: '0',
                       hintStyle: ResponsiveHelper.bodyStyle(context, color: AppColors.grey400),
@@ -876,7 +1307,7 @@ class _WageDetailDialogState extends State<WageDetailDialog> {
                     controller: _deductionController,
                     keyboardType: TextInputType.number,
                     inputFormatters: [NumberInputFormatter()],
-                    style: ResponsiveHelper.bodyStyle(context).copyWith(color: Colors.black87),
+                    style: ResponsiveHelper.bodyStyle(context).copyWith(color: AppColors.grey800),
                     decoration: InputDecoration(
                       hintText: '0',
                       hintStyle: ResponsiveHelper.bodyStyle(context, color: AppColors.grey400),
@@ -906,60 +1337,13 @@ class _WageDetailDialogState extends State<WageDetailDialog> {
         ),
         SizedBox(height: ResponsiveHelper.spacing(context, 16)),
 
-        // 주휴수당 (주휴 별도지급 설정인 경우만 표시)
-        if (widget.weeklyHolidayIncluded) ...[
-          SizedBox(height: ResponsiveHelper.spacing(context, 16)),
-          _buildSectionTitle(context, '주휴수당'),
-          SizedBox(height: ResponsiveHelper.spacing(context, 8)),
-          // 자격 상태 칩
-          _buildWeeklyHolidayStatusChip(context),
-          SizedBox(height: ResponsiveHelper.spacing(context, 8)),
-          TextField(
-            controller: _weeklyHolidayController,
-            keyboardType: TextInputType.number,
-            inputFormatters: [NumberInputFormatter()],
-            style: ResponsiveHelper.bodyStyle(context)
-                .copyWith(color: Colors.black87),
-            decoration: InputDecoration(
-              hintText: '0',
-              hintStyle: ResponsiveHelper.bodyStyle(context,
-                  color: AppColors.grey400),
-              suffixText: '원',
-              suffixStyle: ResponsiveHelper.bodyStyle(context),
-              helperText:
-                  '통상시급 ${FormatHelper.formatWage(_wage.appliedMinimumWage)}/h × 8h = ${FormatHelper.formatWage((_wage.appliedMinimumWage * 8))}',
-              helperStyle: ResponsiveHelper.tinyStyle(context,
-                  color: AppColors.grey500),
-              border: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(
-                    ResponsiveHelper.spacing(context, 12)),
-                borderSide: const BorderSide(color: AppColors.grey300),
-              ),
-              enabledBorder: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(
-                    ResponsiveHelper.spacing(context, 12)),
-                borderSide: const BorderSide(color: AppColors.grey300),
-              ),
-              focusedBorder: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(
-                    ResponsiveHelper.spacing(context, 12)),
-                borderSide: const BorderSide(color: AppColors.successDark),
-              ),
-              contentPadding: ResponsiveHelper.symmetricPadding(
-                  context, horizontal: 12, vertical: 12),
-            ),
-            onChanged: (_) => _updateWage(),
-          ),
-        ],
-        SizedBox(height: ResponsiveHelper.spacing(context, 16)),
-
         // 메모
         _buildSectionTitle(context, '메모'),
         SizedBox(height: ResponsiveHelper.spacing(context, 8)),
         TextField(
           controller: _memoController,
           maxLines: 2,
-          style: ResponsiveHelper.bodyStyle(context).copyWith(color: Colors.black87),
+          style: ResponsiveHelper.bodyStyle(context).copyWith(color: AppColors.grey800),
           decoration: InputDecoration(
             hintText: '메모 입력 (선택)',
             hintStyle: ResponsiveHelper.bodyStyle(context, color: AppColors.grey400),
@@ -970,6 +1354,7 @@ class _WageDetailDialogState extends State<WageDetailDialog> {
           ),
         ),
       ],
+    ),
     );
   }
 
@@ -1013,21 +1398,46 @@ class _WageDetailDialogState extends State<WageDetailDialog> {
             confirmIcon: Icons.save,
             onConfirm: () => _onAction('update'));
       case WageDialogMode.confirmed:
-        return SizedBox(
-          width: double.infinity,
-          child: ElevatedButton(
-            onPressed: () => Navigator.pop(context),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: AppColors.success,
-              foregroundColor: Colors.white,
-              padding: EdgeInsets.symmetric(vertical: ResponsiveHelper.spacing(context, 14)),
-              shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(ResponsiveHelper.spacing(context, 12))),
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            // 임금명세서 보기 버튼 (wageDetail 있을 때만)
+            if (widget.attendance.wageDetail != null)
+              OutlinedButton.icon(
+                onPressed: () => _openPayslip(context),
+                icon: const Icon(Icons.receipt_long_outlined),
+                label: const Text('임금명세서 보기'),
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: AppColors.infoDark,
+                  side: const BorderSide(color: AppColors.info),
+                  padding: EdgeInsets.symmetric(
+                      vertical: ResponsiveHelper.spacing(context, 12)),
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(
+                          ResponsiveHelper.spacing(context, 12))),
+                ),
+              ),
+            if (widget.attendance.wageDetail != null)
+              SizedBox(height: ResponsiveHelper.spacing(context, 8)),
+            SizedBox(
+              width: double.infinity,
+              child: ElevatedButton(
+                onPressed: () => Navigator.pop(context),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: AppColors.success,
+                  foregroundColor: Colors.white,
+                  padding: EdgeInsets.symmetric(
+                      vertical: ResponsiveHelper.spacing(context, 14)),
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(
+                          ResponsiveHelper.spacing(context, 12))),
+                ),
+                child: Text('확인',
+                    style: ResponsiveHelper.bodyStyle(context).copyWith(
+                        color: Colors.white, fontWeight: FontWeight.w600)),
+              ),
             ),
-            child: Text('확인',
-                style: ResponsiveHelper.bodyStyle(context)
-                    .copyWith(color: Colors.white, fontWeight: FontWeight.w600)),
-          ),
+          ],
         );
     }
   }
@@ -1082,62 +1492,6 @@ class _WageDetailDialogState extends State<WageDetailDialog> {
 
   // ── 헬퍼 위젯 ────────────────────────────────────────────────
 
-  /// 주휴수당 자격 상태 칩
-  Widget _buildWeeklyHolidayStatusChip(BuildContext context) {
-    final e = widget.weeklyHolidayEligibility;
-
-    // 자격 정보 없음 — 조건 미확인 안내
-    if (e == null) {
-      return Container(
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-        decoration: BoxDecoration(
-          color: AppColors.grey100,
-          borderRadius: BorderRadius.circular(8),
-          border: Border.all(color: AppColors.grey300),
-        ),
-        child: Row(children: [
-          Icon(Icons.info_outline, size: 14, color: AppColors.grey500),
-          const SizedBox(width: 6),
-          Text('소정근로일 정보를 불러오지 못했습니다',
-              style: ResponsiveHelper.tinyStyle(context, color: AppColors.grey600)),
-        ]),
-      );
-    }
-
-    final workedH = (e.totalWorkMinutes / 60).toStringAsFixed(1);
-    final color = e.isEligible ? AppColors.successDark : AppColors.warningDark;
-    final bg = e.isEligible ? AppColors.successBg : AppColors.warningBg;
-    final border = e.isEligible ? AppColors.successLight : AppColors.warningLight;
-    final icon = e.isEligible ? Icons.check_circle_outline : Icons.pending_outlined;
-
-    String statusText;
-    if (e.isEligible) {
-      statusText = '소정근로일 ${e.workedDays}/${e.scheduledDaysPerWeek}일 충족  ·  주간 ${workedH}h';
-    } else if (!e.meetsHours) {
-      statusText = '주간 ${workedH}h (15h 미달)  ·  소정근로일 ${e.workedDays}/${e.scheduledDaysPerWeek}일';
-    } else {
-      statusText = '소정근로일 ${e.workedDays}/${e.scheduledDaysPerWeek}일 (미충족)  ·  주간 ${workedH}h';
-    }
-
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-      decoration: BoxDecoration(
-        color: bg,
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: border),
-      ),
-      child: Row(children: [
-        Icon(icon, size: 14, color: color),
-        const SizedBox(width: 6),
-        Expanded(
-          child: Text(statusText,
-              style: ResponsiveHelper.tinyStyle(context, color: color)
-                  .copyWith(fontWeight: FontWeight.w600)),
-        ),
-      ]),
-    );
-  }
-
   Widget _buildSectionTitle(BuildContext context, String title) {
     return Row(
       children: [
@@ -1153,7 +1507,7 @@ class _WageDetailDialogState extends State<WageDetailDialog> {
         Text(
           title,
           style: ResponsiveHelper.bodyStyle(context)
-              .copyWith(fontWeight: FontWeight.bold, color: Colors.black87),
+              .copyWith(fontWeight: FontWeight.bold, color: AppColors.grey800),
         ),
       ],
     );
@@ -1254,7 +1608,7 @@ class _WageDetailDialogState extends State<WageDetailDialog> {
               children: [
                 Text(label,
                     style: ResponsiveHelper.bodyStyle(context)
-                        .copyWith(color: Colors.black87)),
+                        .copyWith(color: AppColors.grey800)),
                 if (subLabel != null)
                   Text(subLabel,
                       style: ResponsiveHelper.tinyStyle(context, color: color)

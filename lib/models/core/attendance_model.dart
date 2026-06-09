@@ -11,9 +11,10 @@ class AttendanceModel {
   static const String statusNoShow     = 'NO_SHOW';
 
   // ── wageStatus 상수 ─────────────────────────────────────────
-  static const String wagePending    = 'pending';
-  static const String wageCalculated = 'calculated';
-  static const String wageConfirmed  = 'confirmed';
+  static const String wagePending     = 'pending';
+  static const String wageCalculated  = 'calculated';
+  static const String wageConfirmed   = 'confirmed';
+  static const String wageTransferred = 'transferred'; // 송금 완료
   final String id;
   final String applicationId;    // 소속 지원서 ID
   final String userId;
@@ -26,13 +27,15 @@ class AttendanceModel {
   
   // 출근 정보
   final String? checkIn;         // "09:05:23"
+  final String? originalCheckIn; // 근무자가 최초 체크한 출근 시각 (관리자 수정 이전값 보존)
   final double? checkInLat;
   final double? checkInLng;
   final String? checkInMethod;   // "gps" | "beacon" | "manual"
   final DateTime? checkInTime;   // Timestamp
-  
+
   // 퇴근 정보
   final String? checkOut;        // "18:10:45"
+  final String? originalCheckOut; // 근무자가 최초 체크한 퇴근 시각
   final double? checkOutLat;
   final double? checkOutLng;
   final String? checkOutMethod;  // "gps" | "beacon" | "manual"
@@ -57,15 +60,31 @@ class AttendanceModel {
   final DateTime? confirmedAt;
   
   // ========== 급여 관련 (신규) ==========
-  /// 급여 상태 - 'pending' | 'calculated' | 'confirmed'
+  /// 급여 상태 - 'pending' | 'calculated' | 'confirmed' | 'transferred'
   final String wageStatus;
-  
+
   /// 최종 확정된 급여 (인덱싱/쿼리용, confirmed 시 totalAmount 복사)
   final int? finalWage;
-  
+
   /// 급여 상세 정보 (임베디드)
   final WageDetailModel? wageDetail;
-  
+
+  /// 월별 근무일수 집계용 인덱스 필드 ('yyyy-MM')
+  final String? yearMonth;
+
+  // ========== 지급 예정일 (오늘 처리할 송금 기능) ==========
+  /// 급여 확정 시 payScheduleType 기반으로 자동 계산된 지급 예정일
+  /// null = 기존 데이터 (수동 처리)
+  final DateTime? paymentDueDate;
+
+  // ========== 송금 관련 (transferred 상태) ==========
+  /// 송금 완료 일시
+  final DateTime? transferDate;
+  /// 송금 메모 (이체번호, 메모 등)
+  final String? transferNote;
+  /// 송금 처리한 관리자 UID
+  final String? transferredBy;
+
   final DateTime createdAt;
   final DateTime? updatedAt;
 
@@ -78,11 +97,13 @@ class AttendanceModel {
     required this.workDate,
     required this.workType,
     this.checkIn,
+    this.originalCheckIn,
     this.checkInLat,
     this.checkInLng,
     this.checkInMethod,
     this.checkInTime,
     this.checkOut,
+    this.originalCheckOut,
     this.checkOutLat,
     this.checkOutLng,
     this.checkOutMethod,
@@ -103,12 +124,21 @@ class AttendanceModel {
     this.wageStatus = 'pending',
     this.finalWage,
     this.wageDetail,
+    this.yearMonth,
+    this.paymentDueDate,
+    // 송금 관련
+    this.transferDate,
+    this.transferNote,
+    this.transferredBy,
   });
 
   /// Firestore → AttendanceModel
   factory AttendanceModel.fromFirestore(DocumentSnapshot doc) {
-    final data = doc.data() as Map<String, dynamic>;
-    return AttendanceModel.fromMap(data, doc.id);
+    final raw = doc.data();
+    if (raw == null) {
+      throw ArgumentError('AttendanceModel.fromFirestore: 문서 데이터 없음 (id: ${doc.id})');
+    }
+    return AttendanceModel.fromMap(raw as Map<String, dynamic>, doc.id);
   }
 
   /// Map → AttendanceModel
@@ -119,46 +149,55 @@ class AttendanceModel {
       userId: map['userId'] ?? '',
       businessId: map['businessId'] ?? '',
       businessName: map['businessName'] ?? '',
-      workDate: (map['workDate'] as Timestamp).toDate(),
+      workDate: map['workDate'] != null
+          ? (map['workDate'] as Timestamp).toDate().toLocal()
+          : (throw ArgumentError('AttendanceModel: workDate 필드 누락 (id: $id)')),
       workType: map['workType'] ?? '',
       checkIn: map['checkIn'],
+      originalCheckIn: map['originalCheckIn'] as String?,
       checkInLat: map['checkInLat']?.toDouble(),
       checkInLng: map['checkInLng']?.toDouble(),
       checkInMethod: map['checkInMethod'],
       checkInTime: map['checkInTime'] != null 
-          ? (map['checkInTime'] as Timestamp).toDate().toLocal()  // 🔥 .toLocal() 추가
-          : null,
+          ? (map['checkInTime'] as Timestamp).toDate().toLocal()          : null,
       checkOut: map['checkOut'],
+      originalCheckOut: map['originalCheckOut'] as String?,
       checkOutLat: map['checkOutLat']?.toDouble(),
       checkOutLng: map['checkOutLng']?.toDouble(),
       checkOutMethod: map['checkOutMethod'],
       checkOutTime: map['checkOutTime'] != null
-          ? (map['checkOutTime'] as Timestamp).toDate().toLocal()  // 🔥 .toLocal() 추가
-          : null,
+          ? (map['checkOutTime'] as Timestamp).toDate().toLocal()          : null,
       status: map['status'] ?? 'absent',
       isModified: map['isModified'] ?? false,
       modifyRequested: map['modifyRequested'] ?? false,
       modifyReason: map['modifyReason'],
       modifiedBy: map['modifiedBy'],
       modifiedAt: map['modifiedAt'] != null
-          ? (map['modifiedAt'] as Timestamp).toDate().toLocal()  // 🔥 .toLocal() 추가
-          : null,
+          ? (map['modifiedAt'] as Timestamp).toDate().toLocal()          : null,
       workHours: map['workHours']?.toDouble(),
-      calculatedWage: map['calculatedWage'],
+      calculatedWage: (map['calculatedWage'] as num?)?.toInt(),
       confirmedBy: map['confirmedBy'],
       confirmedAt: map['confirmedAt'] != null
           ? (map['confirmedAt'] as Timestamp).toDate().toLocal()
           : null,
-      createdAt: (map['createdAt'] as Timestamp).toDate(),
+      createdAt: map['createdAt'] != null
+          ? (map['createdAt'] as Timestamp).toDate().toLocal()
+          : (throw ArgumentError('AttendanceModel: createdAt 필드 누락 (id: $id)')),
       updatedAt: map['updatedAt'] != null
-          ? (map['updatedAt'] as Timestamp).toDate()
+          ? (map['updatedAt'] as Timestamp).toDate().toLocal()
           : null,
       // 급여 관련 (신규)
       wageStatus: map['wageStatus'] ?? 'pending',
-      finalWage: map['finalWage'],
+      finalWage: (map['finalWage'] as num?)?.toInt(),
       wageDetail: map['wageDetail'] != null
           ? WageDetailModel.fromMap(map['wageDetail'] as Map<String, dynamic>)
           : null,
+      yearMonth: map['yearMonth'] as String?,
+      paymentDueDate: (map['paymentDueDate'] as Timestamp?)?.toDate().toLocal(),
+      // 송금 관련
+      transferDate: (map['transferDate'] as Timestamp?)?.toDate().toLocal(),
+      transferNote: map['transferNote'] as String?,
+      transferredBy: map['transferredBy'] as String?,
     );
   }
 
@@ -172,6 +211,7 @@ class AttendanceModel {
       'workDate': Timestamp.fromDate(workDate),
       'workType': workType,
       'checkIn': checkIn,
+      'originalCheckIn': originalCheckIn,
       'checkInLat': checkInLat,
       'checkInLng': checkInLng,
       'checkInMethod': checkInMethod,
@@ -179,6 +219,7 @@ class AttendanceModel {
           ? Timestamp.fromDate(checkInTime!) 
           : null,
       'checkOut': checkOut,
+      'originalCheckOut': originalCheckOut,
       'checkOutLat': checkOutLat,
       'checkOutLng': checkOutLng,
       'checkOutMethod': checkOutMethod,
@@ -207,6 +248,14 @@ class AttendanceModel {
       'wageStatus': wageStatus,
       'finalWage': finalWage,
       'wageDetail': wageDetail?.toMap(),
+      if (yearMonth != null) 'yearMonth': yearMonth,
+      if (paymentDueDate != null)
+        'paymentDueDate': Timestamp.fromDate(paymentDueDate!),
+      // 송금 관련
+      if (transferDate != null)
+        'transferDate': Timestamp.fromDate(transferDate!),
+      if (transferNote != null) 'transferNote': transferNote,
+      if (transferredBy != null) 'transferredBy': transferredBy,
     };
   }
 
@@ -260,6 +309,9 @@ class AttendanceModel {
   /// 급여 최종 확정 상태 (지원자 노출)
   bool get isWageConfirmed => wageStatus == wageConfirmed;
 
+  /// 송금 완료 상태
+  bool get isWageTransferred => wageStatus == wageTransferred;
+
   /// 급여 상태 라벨
   String get wageStatusLabel {
     switch (wageStatus) {
@@ -269,13 +321,15 @@ class AttendanceModel {
         return '검토중';
       case wageConfirmed:
         return '확정';
+      case wageTransferred:
+        return '송금완료';
       default:
         return '미계산';
     }
   }
   
-  /// 표시용 급여 (지원자용 - confirmed만 표시)
-  int? get displayWage => isWageConfirmed ? finalWage : null;
+  /// 표시용 급여 (지원자용 - confirmed·transferred 모두 표시)
+  int? get displayWage => (isWageConfirmed || isWageTransferred) ? finalWage : null;
   
   /// 포맷팅된 표시용 급여
   String get formattedDisplayWage {
@@ -296,11 +350,13 @@ class AttendanceModel {
     DateTime? workDate,
     String? workType,
     String? checkIn,
+    String? originalCheckIn,
     double? checkInLat,
     double? checkInLng,
     String? checkInMethod,
     DateTime? checkInTime,
     String? checkOut,
+    String? originalCheckOut,
     double? checkOutLat,
     double? checkOutLng,
     String? checkOutMethod,
@@ -321,6 +377,12 @@ class AttendanceModel {
     String? wageStatus,
     int? finalWage,
     WageDetailModel? wageDetail,
+    String? yearMonth,
+    DateTime? paymentDueDate,
+    // 송금 관련
+    DateTime? transferDate,
+    String? transferNote,
+    String? transferredBy,
   }) {
     return AttendanceModel(
       id: id ?? this.id,
@@ -331,11 +393,13 @@ class AttendanceModel {
       workDate: workDate ?? this.workDate,
       workType: workType ?? this.workType,
       checkIn: checkIn ?? this.checkIn,
+      originalCheckIn: originalCheckIn ?? this.originalCheckIn,
       checkInLat: checkInLat ?? this.checkInLat,
       checkInLng: checkInLng ?? this.checkInLng,
       checkInMethod: checkInMethod ?? this.checkInMethod,
       checkInTime: checkInTime ?? this.checkInTime,
       checkOut: checkOut ?? this.checkOut,
+      originalCheckOut: originalCheckOut ?? this.originalCheckOut,
       checkOutLat: checkOutLat ?? this.checkOutLat,
       checkOutLng: checkOutLng ?? this.checkOutLng,
       checkOutMethod: checkOutMethod ?? this.checkOutMethod,
@@ -356,6 +420,12 @@ class AttendanceModel {
       wageStatus: wageStatus ?? this.wageStatus,
       finalWage: finalWage ?? this.finalWage,
       wageDetail: wageDetail ?? this.wageDetail,
+      yearMonth: yearMonth ?? this.yearMonth,
+      paymentDueDate: paymentDueDate ?? this.paymentDueDate,
+      // 송금 관련
+      transferDate: transferDate ?? this.transferDate,
+      transferNote: transferNote ?? this.transferNote,
+      transferredBy: transferredBy ?? this.transferredBy,
     );
   }
 }

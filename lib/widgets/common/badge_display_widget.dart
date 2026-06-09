@@ -113,7 +113,7 @@ class BadgeDisplayWidget extends StatelessWidget {
             child: Text(
               badge.icon,
               style: TextStyle(
-                fontSize: ResponsiveHelper.spacing(context, compact ? 14 : 18),
+                fontSize: compact ? ResponsiveHelper.bodyStyle(context).fontSize! : ResponsiveHelper.subtitleStyle(context).fontSize!,
               ),
             ),
           ),
@@ -204,7 +204,7 @@ class BadgeDetailDialog extends StatelessWidget {
             child: Center(
               child: Text(
                 badge.icon,
-                style: TextStyle(fontSize: ResponsiveHelper.spacing(context, 40)),
+                style: TextStyle(fontSize: ResponsiveHelper.titleStyle(context).fontSize! * 2.0),
               ),
             ),
           ),
@@ -322,7 +322,7 @@ class AllBadgesDialog extends StatelessWidget {
       child: Container(
         constraints: BoxConstraints(
           maxWidth: 400,
-          maxHeight: MediaQuery.of(context).size.height * 0.7,
+          maxHeight: MediaQuery.sizeOf(context).height * 0.7,
         ),
         child: Column(
           mainAxisSize: MainAxisSize.min,
@@ -411,10 +411,11 @@ class AllBadgesDialog extends StatelessWidget {
   Widget _buildBadgeItem(BuildContext context, BadgeModel badge) {
     return GestureDetector(
       onTap: () {
-        Navigator.pop(context);
+        final nav = Navigator.of(context);
+        nav.pop();
         showDialog(
-          context: context,
-          builder: (context) => BadgeDetailDialog(badge: badge),
+          context: nav.context,
+          builder: (ctx) => BadgeDetailDialog(badge: badge),
         );
       },
       child: Container(
@@ -429,7 +430,7 @@ class AllBadgesDialog extends StatelessWidget {
           children: [
             Text(
               badge.icon,
-              style: TextStyle(fontSize: ResponsiveHelper.spacing(context, 28)),
+              style: TextStyle(fontSize: ResponsiveHelper.titleStyle(context).fontSize! * 1.5),
             ),
             SizedBox(height: ResponsiveHelper.spacing(context, 4)),
             Text(

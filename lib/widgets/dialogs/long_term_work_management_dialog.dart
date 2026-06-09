@@ -34,17 +34,14 @@ class _LongTermWorkManagementDialogState
     // 확정된 장기 근무만 필터링 (퇴사/해지 완료 제외)
     final longTermWorks = widget.applications
         .where((app) =>
-            app.isLongTermApplication && 
-            app.status == 'CONFIRMED' &&
-            app.resignStatus != 'APPROVED' &&        // 🔥 퇴사 완료 제외
-            app.resignStatus != 'AUTO_APPROVED' &&   // 🔥 자동 퇴사 제외
-            app.terminationStatus != 'APPROVED' &&   // 🔥 해지 완료 제외
-            app.terminationStatus != 'AUTO_APPROVED') // 🔥 자동 해지 제외
+            app.isLongTermApplication &&
+            AppStatus.confirmedStatuses.contains(app.status) &&
+            !app.isTerminationApproved)
         .toList();
 
     return Dialog(
       child: Container(
-        constraints: const BoxConstraints(maxWidth: 500, maxHeight: 600),
+        constraints: BoxConstraints(maxWidth: 500, maxHeight: MediaQuery.sizeOf(context).height * 0.9),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
@@ -122,8 +119,8 @@ class _LongTermWorkManagementDialogState
   /// 근무 카드
   Widget _buildWorkCard(ApplicationModel app) {
     final hasResignRequest = app.resignStatus != null;
-    final isPending = app.resignStatus == 'PENDING';
-    final isRejected = app.resignStatus == 'REJECTED';
+    final isPending = app.resignStatus == AppStatus.pending;
+    final isRejected = app.resignStatus == AppStatus.rejected;
 
     return Card(
       margin: EdgeInsets.only(  // ⭐ const 제거
@@ -265,29 +262,29 @@ class _LongTermWorkManagementDialogState
     String? detailText;
 
     switch (app.resignStatus) {
-      case 'PENDING':
+      case AppStatus.pending:
         bgColor = AppColors.warning.withValues(alpha: 0.1);
         textColor = AppColors.warning;
         icon = Icons.schedule;
         statusText = '퇴사 승인 대기중';
-        final requestDate = DateFormat('M월 d일').format(app.resignRequestDate!);
-        final daysLeft = 3 - DateTime.now().difference(app.resignRequestedAt!).inDays;
+        final requestDate = DateFormat('M월 d일').format(app.resignRequestDate ?? DateTime.now());
+        final daysLeft = 3 - DateTime.now().difference(app.resignRequestedAt ?? DateTime.now()).inDays;
         detailText = '$requestDate 퇴사 요청 ($daysLeft일 후 자동 승인)';
         break;
-      case 'REJECTED':
+      case AppStatus.rejected:
         bgColor = AppColors.error.withValues(alpha: 0.1);
         textColor = AppColors.error;
         icon = Icons.cancel;
         statusText = '퇴사 요청 거절됨';
         detailText = app.resignRejectReason ?? '사유 없음';
         break;
-      case 'APPROVED':
-      case 'AUTO_APPROVED':
+      case AppStatus.approved:
+      case AppStatus.autoApproved:
         bgColor = AppColors.success.withValues(alpha: 0.1);
         textColor = AppColors.success;
         icon = Icons.check_circle;
-        statusText = app.resignStatus == 'AUTO_APPROVED' ? '퇴사 자동 승인됨' : '퇴사 승인됨';
-        final resignDate = DateFormat('M월 d일').format(app.actualResignDate!);
+        statusText = app.resignStatus == AppStatus.autoApproved ? '퇴사 자동 승인됨' : '퇴사 승인됨';
+        final resignDate = DateFormat('M월 d일').format(app.actualResignDate ?? DateTime.now());
         detailText = '$resignDate자로 퇴사 처리';
         break;
       default:
@@ -404,7 +401,6 @@ class _LongTermWorkManagementDialogState
       if (success && mounted) {
         ToastHelper.showSuccess('퇴사 요청이 완료되었습니다.');
         widget.onChanged();
-        setState(() {});
       } else if (mounted) {
         ToastHelper.showError('퇴사 요청 중 오류가 발생했습니다.');
       }
@@ -433,7 +429,6 @@ class _LongTermWorkManagementDialogState
       if (success && mounted) {
         ToastHelper.showSuccess('퇴사 요청이 취소되었습니다.');
         widget.onChanged();
-        setState(() {});
       } else if (mounted) {
         ToastHelper.showError('취소 중 오류가 발생했습니다.');
       }

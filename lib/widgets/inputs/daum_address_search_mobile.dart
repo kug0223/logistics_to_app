@@ -55,6 +55,8 @@ class DaumAddressSearchImpl {
                 zonecode: selectedResult.zonecode,
                 latitude: coords?['latitude'],
                 longitude: coords?['longitude'],
+                sigungu: selectedResult.sigungu,
+                bname: selectedResult.bname,
               );
 
               if (context.mounted) Navigator.pop(context, result);
@@ -120,6 +122,8 @@ class _DaumPostcodeWebViewState extends State<_DaumPostcodeWebView> {
         zonecode: data['zonecode'] ?? '',
         latitude: null, // Geocoding으로 채움
         longitude: null,
+        sigungu: data['sigungu']?.toString().isEmpty == true ? null : data['sigungu'] as String?,
+        bname: data['bname']?.toString().isEmpty == true ? null : data['bname'] as String?,
       );
 
       widget.onAddressSelected(result);
@@ -229,7 +233,9 @@ class _DaumPostcodeWebViewState extends State<_DaumPostcodeWebView> {
                     address: data.address,
                     roadAddress: data.roadAddress || data.address,
                     jibunAddress: data.jibunAddress || '',
-                    zonecode: data.zonecode
+                    zonecode: data.zonecode,
+                    sigungu: data.sigungu || '',
+                    bname: data.bname || ''
                 };
                 
                 handleAddress.postMessage(JSON.stringify(result));

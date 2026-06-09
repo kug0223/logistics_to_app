@@ -697,7 +697,7 @@ class _IconPickerWidgetState extends State<_IconPickerWidget> {
       child: Container(
         constraints: BoxConstraints(
           maxWidth: 600,
-          maxHeight: MediaQuery.of(context).size.height * 0.9,
+          maxHeight: MediaQuery.sizeOf(context).height * 0.9,
         ),
         child: Column(
           mainAxisSize: MainAxisSize.min,
@@ -880,8 +880,8 @@ class _IconPickerWidgetState extends State<_IconPickerWidget> {
                     ),
                     child: Text(
                       category,
-                      style: TextStyle(
-                        fontSize: 12.5,
+                      style: ResponsiveHelper.smallStyle(
+                        context,
                         color: isSelected ? Colors.white : AppColors.grey600,
                         fontWeight:
                             isSelected ? FontWeight.bold : FontWeight.w500,
@@ -1055,7 +1055,7 @@ class _IconPickerWidgetState extends State<_IconPickerWidget> {
                       color: widget.theme.primaryColor,
                       borderRadius: BorderRadius.circular(8),
                     ),
-                    child: Icon(_selectedIcon, color: Colors.white, size: 18),
+                    child: Icon(_selectedIcon, color: Colors.white, size: ResponsiveHelper.iconSize(context, 18)),
                   ),
                   SizedBox(width: ResponsiveHelper.spacing(context, 10)),
                   Expanded(
@@ -1078,8 +1078,8 @@ class _IconPickerWidgetState extends State<_IconPickerWidget> {
                     ),
                     child: Text(
                       '선택 해제',
-                      style: TextStyle(
-                        fontSize: 12,
+                      style: ResponsiveHelper.smallStyle(
+                        context,
                         color: AppColors.grey500,
                       ),
                     ),

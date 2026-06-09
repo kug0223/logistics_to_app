@@ -1,4 +1,3 @@
-import '../models/core/slot_model.dart';
 import '../models/core/to_model.dart';
 import '../models/core/work_detail_data.dart';
 import '../models/ui/admin_to_list_ui_models.dart';
@@ -18,9 +17,9 @@ class CloseStateUtils {
 
   /// 슬롯 단위 마감 여부 (카드 배지, 탭 필터 공용)
   ///
-  /// [toItem]   — 판단 대상 슬롯
-  /// [masterTO] — 마감 설정(deadlineType, hoursBeforeStart) 소스
-  /// [now]      — 현재 시각 (테스트 주입 가능)
+  /// [toItem]      — 판단 대상 슬롯
+  /// [masterTO]    — 하위 호환 유지용 (내부에서 미사용 — applicationDeadline이 항상 저장됨)
+  /// [now]         — 현재 시각 (테스트 주입 가능)
   /// [localConfirmed] / [localRequired] — 카드에서 집계한 인원 (null이면 toItem 값 사용)
   static bool isToItemClosed(
     TOItem toItem,
@@ -51,35 +50,17 @@ class CloseStateUtils {
     final details = _effectiveDetails(toItem);
     if (details.isEmpty) return false;
 
-    return details.every((d) => _isDetailClosed(d, slot, masterTO, now));
+    return details.every((d) => _isDetailClosed(d, now));
   }
 
   /// 업무상세 단위 마감 여부 — now를 주입받아 DateTime.now() 호출 없이 판단
-  static bool _isDetailClosed(
-    WorkDetailData d,
-    SlotModel slot,
-    TOModel masterTO,
-    DateTime now,
-  ) {
+  static bool _isDetailClosed(WorkDetailData d, DateTime now) {
     // 수동 마감
     if (d.isManualClosed || d.closedAt != null) return true;
 
-    // 마감 시간 경과
+    // 마감 시간 경과 — applicationDeadline은 슬롯 생성·수정 시 항상 저장됨
     if (d.applicationDeadline != null && now.isAfter(d.applicationDeadline!)) return true;
 
-    // applicationDeadline 미설정 + HOURS_BEFORE → 직접 계산
-    if (d.applicationDeadline == null &&
-        masterTO.deadlineType == 'HOURS_BEFORE' &&
-        (masterTO.hoursBeforeStart ?? 0) > 0) {
-      final parts = d.startTime.split(':');
-      if (parts.length == 2) {
-        final dl = DateTime(
-          slot.date.year, slot.date.month, slot.date.day,
-          int.parse(parts[0]), int.parse(parts[1]),
-        ).subtract(Duration(hours: masterTO.hoursBeforeStart!));
-        return now.isAfter(dl);
-      }
-    }
     return false;
   }
 

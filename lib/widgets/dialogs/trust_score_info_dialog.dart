@@ -257,7 +257,7 @@ class TrustScoreInfoDialog extends StatelessWidget {
         children: [
           Text(
             '💡',
-            style: TextStyle(fontSize: ResponsiveHelper.spacing(context, 24)),
+            style: ResponsiveHelper.titleStyle(context),
           ),
           SizedBox(width: ResponsiveHelper.spacing(context, 12)),
           Expanded(
@@ -292,7 +292,7 @@ class TrustScoreInfoDialog extends StatelessWidget {
         children: [
           Text(
             emoji,
-            style: TextStyle(fontSize: ResponsiveHelper.spacing(context, 18)),
+            style: ResponsiveHelper.subtitleStyle(context),
           ),
           SizedBox(width: ResponsiveHelper.spacing(context, 10)),
           Expanded(
@@ -344,7 +344,9 @@ class TrustScoreInfoDialog extends StatelessWidget {
       children: [
         Text(
           emoji,
-          style: TextStyle(fontSize: ResponsiveHelper.spacing(context, 22)),
+          style: ResponsiveHelper.titleStyle(context).copyWith(
+            fontSize: ResponsiveHelper.titleStyle(context).fontSize! * 1.1,
+          ),
         ),
         SizedBox(width: ResponsiveHelper.spacing(context, 12)),
         Text(

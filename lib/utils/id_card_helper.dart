@@ -97,21 +97,21 @@ class IdCardHelper {
   // 일괄 신분증 요청 기능
   // ═══════════════════════════════════════════════════════════
 
+  /// 신분증 열람 요청 가능한 상태인지 확인 (미요청·만료·거절)
+  static bool isRequestable(String status) =>
+      status == 'none' || status == 'expired' || status == 'rejected';
+
   /// 신분증 요청 가능한 사용자 필터링
-  /// 
+  ///
   /// [statusMap] - {userId: 'approved' | 'pending' | 'none'}
   /// [userIds] - 필터링할 사용자 ID 목록
-  /// 
-  /// 반환: 'none' 상태인 사용자 ID 목록 (요청 가능)
+  ///
+  /// 반환: 요청 가능 상태(none/expired/rejected)인 사용자 ID 목록
   static List<String> filterRequestableUsers({
     required Map<String, String> statusMap,
     required List<String> userIds,
   }) {
-    return userIds.where((uid) {
-      final status = statusMap[uid] ?? 'none';
-      // 미요청·만료·거절 → 재요청 가능
-      return status == 'none' || status == 'expired' || status == 'rejected';
-    }).toList();
+    return userIds.where((uid) => isRequestable(statusMap[uid] ?? 'none')).toList();
   }
 
   /// 일괄 신분증 요청
@@ -357,6 +357,7 @@ class IdCardHelper {
 
     customReasonController.dispose();
 
+    if (!context.mounted) return successCount;
     if (successCount > 0) {
       ToastHelper.showSuccess('$successCount명에게 신분증 요청을 보냈습니다');
     }

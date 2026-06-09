@@ -13,6 +13,8 @@ class AddressResult {
   final String zonecode;        // 우편번호
   final double? latitude;       // GPS 위도 (Geocoding)
   final double? longitude;      // GPS 경도 (Geocoding)
+  final String? sigungu;        // 시/군/구 (예: 강남구, 수원시)
+  final String? bname;          // 법정읍면동 (예: 역삼동, 세교동)
 
   AddressResult({
     required this.fullAddress,
@@ -21,6 +23,8 @@ class AddressResult {
     required this.zonecode,
     this.latitude,
     this.longitude,
+    this.sigungu,
+    this.bname,
   });
 }
 

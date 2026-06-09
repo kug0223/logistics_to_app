@@ -52,7 +52,7 @@ class TOActionButton extends StatelessWidget {
 
     return Container(
       width: double.infinity,
-      height: 56,
+      height: ResponsiveHelper.spacing(context, 56),
       decoration: BoxDecoration(
         gradient: LinearGradient(
           begin: Alignment.topLeft,

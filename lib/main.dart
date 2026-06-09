@@ -1,8 +1,11 @@
 ﻿import 'dart:ui';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'theme/app_colors.dart';
 import 'package:flutter/foundation.dart' show kIsWeb, kDebugMode;
+import 'package:firebase_app_check/firebase_app_check.dart';
 import 'package:firebase_core/firebase_core.dart';
+import 'services/app_version_service.dart';
 import 'package:firebase_crashlytics/firebase_crashlytics.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:provider/provider.dart';
@@ -23,7 +26,11 @@ import 'screens/common/splash_screen.dart';
 import 'screens/common/onboarding_screen.dart';
 import 'screens/common/settings_screen.dart';
 import 'utils/attendance_list_pdf.dart';
+import 'utils/wage_calculator.dart';
 import 'services/fcm_service.dart';
+import 'services/insurance_rate_service.dart';
+import 'services/analytics_service.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'widgets/common/network_banner.dart';
 
 /// 앱이 완전히 종료된 상태에서 FCM 메시지 수신 시 호출되는 최상위 핸들러
@@ -44,6 +51,12 @@ final GlobalKey<ScaffoldMessengerState> scaffoldMessengerKey =
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
+  // 세로 모드 고정 — 가로 회전 레이아웃 깨짐 방지
+  await SystemChrome.setPreferredOrientations([
+    DeviceOrientation.portraitUp,
+    DeviceOrientation.portraitDown,
+  ]);
+
   // 릴리즈 빌드에서 debugPrint 전체 비활성화
   if (!kDebugMode) debugPrint = (String? message, {int? wrapWidth}) {};
 
@@ -56,10 +69,25 @@ void main() async {
       options: DefaultFirebaseOptions.currentPlatform,
     );
 
+    // Remote Config 초기화 (버전 체크용)
+    await AppVersionService.init();
+
+    // Firebase App Check — API 키 무단 사용 방지
+    // 릴리즈: Play Integrity(Android) / DeviceCheck(iOS) 사용
+    // 디버그: DebugProvider (Firebase 콘솔에서 디버그 토큰 등록 필요)
+    await FirebaseAppCheck.instance.activate(
+      androidProvider: kDebugMode
+          ? AndroidProvider.debug
+          : AndroidProvider.playIntegrity,
+      appleProvider: kDebugMode
+          ? AppleProvider.debug
+          : AppleProvider.deviceCheck,
+    );
+
     // Firestore 캐시 설정 (서버 우선)
     FirebaseFirestore.instance.settings = const Settings(
       persistenceEnabled: true,
-      cacheSizeBytes: Settings.CACHE_SIZE_UNLIMITED,
+      cacheSizeBytes: 100 * 1024 * 1024, // 100MB 상한 (무제한 → 저장공간 보호)
     );
 
     // Crashlytics: 웹 미지원 — 모바일/데스크톱에서만 활성화
@@ -71,13 +99,24 @@ void main() async {
       };
     }
 
+    // 위젯 빌드 에러 → 기본 빨간 화면 대신 사용자 친화적 UI
+    ErrorWidget.builder = (FlutterErrorDetails details) {
+      // 디버그 모드에서는 기본 에러 위젯 유지 (스택 추적 확인)
+      if (kDebugMode) return ErrorWidget(details.exception);
+      return _AppErrorWidget(details: details);
+    };
+
     debugPrint('✅ Firebase 초기화 완료');
   } catch (e) {
     debugPrint('❌ Firebase 초기화 에러: $e');
   }
   // ✅ PDF 한글 폰트 백그라운드 프리로드 (await 없이 - 병렬 실행)
   AttendanceListPdf.preloadFonts();
-  
+
+  // 최저시급·보험료율 캐시 로드 (병렬, 실패해도 로컬 백업 사용)
+  WageCalculator.loadMinimumWages();
+  InsuranceRateService.loadRates();
+
   // 🔔 FCM에 Navigator Key 전달
   FCMService().setNavigatorKey(navigatorKey);
   
@@ -89,7 +128,7 @@ class MyApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return MultiProvider(  // 🔥 변경!
+    return MultiProvider(
       providers: [
         ChangeNotifierProvider(
           create: (_) => NotificationProvider(),
@@ -126,6 +165,7 @@ class MyApp extends StatelessWidget {
               Locale('en', 'US'),
             ],
             theme: themeProvider.theme,
+            navigatorObservers: [AnalyticsService.observer],
             home: const NetworkBanner(child: SplashScreen()),
           );
         },
@@ -143,32 +183,47 @@ class AuthWrapper extends StatefulWidget {
 }
 
 class _AuthWrapperState extends State<AuthWrapper> {
-  // TODO: 테스트 완료 후 아래 줄을 "bool? _isOnboardingCompleted;" 로 되돌리고
-  //       initState에서 _checkOnboarding(); 호출 복구
-  bool? _isOnboardingCompleted = false;
+  bool? _isOnboardingCompleted;
   bool _emailBannerShown = false;
 
   @override
   void initState() {
     super.initState();
-    // _checkOnboarding(); // TODO: 테스트 완료 후 주석 해제
+    // postFrameCallback: 위젯 트리가 완전히 준비된 후 context.read 안전 호출
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _checkOnboarding();
+    });
   }
 
-  void _completeOnboarding() {
-    setState(() => _isOnboardingCompleted = true);
+  Future<void> _checkOnboarding() async {
+    final user = context.read<UserProvider>().currentUser;
+    final roleKey = user?.roleString ?? 'unknown';
+    final prefs = await SharedPreferences.getInstance();
+    final completed = prefs.getBool('onboarding_completed_$roleKey') ?? false;
+    if (mounted) setState(() => _isOnboardingCompleted = completed);
+  }
+
+  Future<void> _completeOnboarding() async {
+    final user = context.read<UserProvider>().currentUser;
+    final roleKey = user?.roleString ?? 'unknown';
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool('onboarding_completed_$roleKey', true);
+    if (mounted) setState(() => _isOnboardingCompleted = true);
   }
 
   @override
   Widget build(BuildContext context) {
     return Consumer<UserProvider>(
       builder: (context, userProvider, _) {
-        debugPrint('\n====== AuthWrapper 빌드 시작 ======');
-        debugPrint('isLoading: ${userProvider.isLoading}');
-        debugPrint('isLoggedIn: ${userProvider.isLoggedIn}');
+        if (kDebugMode) {
+          debugPrint('\n====== AuthWrapper 빌드 시작 ======');
+          debugPrint('isLoading: ${userProvider.isLoading}');
+          debugPrint('isLoggedIn: ${userProvider.isLoggedIn}');
+        }
         
         // 🔄 로딩 중
         if (userProvider.isLoading) {
-          debugPrint('⏳ 로딩 중...');
+          if (kDebugMode) debugPrint('⏳ 로딩 중...');
           return const Scaffold(
             body: Center(
               child: Column(
@@ -185,11 +240,11 @@ class _AuthWrapperState extends State<AuthWrapper> {
 
         // 🚫 로그인 안됨
         if (!userProvider.isLoggedIn) {
-          debugPrint('🚫 로그인되지 않음 → LoginScreen');
-          // 로그아웃 시 온보딩 상태 리셋 (다음 로그인 때 다시 보이도록)
-          if (_isOnboardingCompleted != false) {
+          if (kDebugMode) debugPrint('🚫 로그인되지 않음 → LoginScreen');
+          // 로그아웃 시 온보딩 상태 리셋 (다음 로그인 때 다시 체크)
+          if (_isOnboardingCompleted != null) {
             WidgetsBinding.instance.addPostFrameCallback((_) {
-              if (mounted) setState(() => _isOnboardingCompleted = false);
+              if (mounted) setState(() => _isOnboardingCompleted = null);
             });
           }
           return const LoginScreen();
@@ -199,34 +254,35 @@ class _AuthWrapperState extends State<AuthWrapper> {
         final user = userProvider.currentUser;
         
         if (user == null) {
-          debugPrint('⚠️ currentUser가 null → LoginScreen');
+          if (kDebugMode) debugPrint('⚠️ currentUser가 null → LoginScreen');
           return const LoginScreen();
         }
-        
-        // ✅ 테마 설정 (빌드 완료 후 안전하게)
-        Future.microtask(() {
-          if (context.mounted) {
-            context.read<ThemeProvider>().setRole(user.roleString);
-          }
-        });
 
-        // 🎭 사용자 정보 출력
-        debugPrint('\n===== 사용자 권한 정보 =====');
-        debugPrint('📧 이메일: ${user.email}');
-        debugPrint('👤 이름: ${user.name}');
-        debugPrint('🎭 역할: ${user.role}');
-        debugPrint('🏢 사업장 ID: ${user.businessId}');
-        debugPrint('\n📊 권한 체크:');
-        debugPrint('  - isSuperAdmin: ${user.isSuperAdmin}');
-        debugPrint('  - isBusinessAdmin: ${user.isBusinessAdmin}');
-        debugPrint('  - isUser: ${user.isUser}');
-        debugPrint('  - isAdmin: ${user.isAdmin}');
-        debugPrint('============================\n');
+        // ✅ 테마 설정 (빌드 완료 후 안전하게 — context 캡처 없이 provider 직접 참조)
+        final themeProvider = context.read<ThemeProvider>();
+        Future.microtask(() => themeProvider.setRole(user.roleString));
+
+        if (kDebugMode) {
+          debugPrint('\n===== 사용자 권한 정보 =====');
+          debugPrint('📧 이메일: ${user.email}');
+          debugPrint('👤 이름: ${user.name}');
+          debugPrint('🎭 역할: ${user.role}');
+          debugPrint('🏢 사업장 ID: ${user.businessId}');
+          debugPrint('\n📊 권한 체크:');
+          debugPrint('  - isSuperAdmin: ${user.isSuperAdmin}');
+          debugPrint('  - isBusinessAdmin: ${user.isBusinessAdmin}');
+          debugPrint('  - isUser: ${user.isUser}');
+          debugPrint('  - isAdmin: ${user.isAdmin}');
+          debugPrint('============================\n');
+        }
 
         // 🆕 온보딩 체크
-        debugPrint('📚 _isOnboardingCompleted = $_isOnboardingCompleted');
+        if (kDebugMode) debugPrint('📚 _isOnboardingCompleted = $_isOnboardingCompleted');
         if (_isOnboardingCompleted == null) {
-          // 온보딩 상태 로딩 중
+          // 로그아웃 후 재로그인 시 SharedPreferences 재확인
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (mounted) _checkOnboarding();
+          });
           return const Scaffold(
             body: Center(child: CircularProgressIndicator()),
           );
@@ -250,7 +306,7 @@ class _AuthWrapperState extends State<AuthWrapper> {
                     horizontal: 16, vertical: 8),
                 leading: const Icon(Icons.mail_outline,
                     color: AppColors.warning),
-                backgroundColor: const Color(0xFFFFF8E1),
+                backgroundColor: AppColors.warningBg,
                 content: const Text(
                   '이메일 인증을 완료하면 더 많은 기능을 이용할 수 있어요',
                   style: TextStyle(fontSize: 13),
@@ -303,6 +359,11 @@ class _AuthWrapperState extends State<AuthWrapper> {
               return const BusinessAdminHomeScreen();
             
             case UserRole.USER:
+              // 하위 관리자이고 관리자 모드인 경우 → 관리자 홈
+              if (user.isSubAdmin && userProvider.isAdminMode) {
+                debugPrint('🎯 SUB_ADMIN(관리자 모드) → BusinessAdminHomeScreen으로 이동');
+                return const BusinessAdminHomeScreen();
+              }
               debugPrint('🎯 USER → UserHomeScreen으로 이동');
               return const UserHomeScreen();
           }
@@ -346,6 +407,65 @@ class _AuthWrapperState extends State<AuthWrapper> {
           );
         }
       },
+    );
+  }
+}
+
+/// 위젯 빌드 에러 발생 시 표시되는 사용자 친화적 화면 (릴리즈 모드 전용)
+class _AppErrorWidget extends StatelessWidget {
+  final FlutterErrorDetails details;
+  const _AppErrorWidget({required this.details});
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: Colors.white,
+      body: SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.all(32),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              const Icon(Icons.error_outline, size: 64, color: AppColors.error),
+              const SizedBox(height: 16),
+              const Text(
+                '오류가 발생했습니다',
+                style: TextStyle(
+                  fontSize: 18,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+              const SizedBox(height: 8),
+              const Text(
+                '잠시 후 다시 시도해주세요.',
+                textAlign: TextAlign.center,
+                style: TextStyle(color: AppColors.grey500),
+              ),
+              const SizedBox(height: 32),
+              SizedBox(
+                width: double.infinity,
+                child: ElevatedButton(
+                  onPressed: () {
+                    // 이전 화면으로 돌아가기
+                    if (Navigator.canPop(context)) {
+                      Navigator.pop(context);
+                    }
+                  },
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: AppColors.info,
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(vertical: 14),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                  ),
+                  child: const Text('돌아가기'),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
     );
   }
 }

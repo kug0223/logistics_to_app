@@ -27,19 +27,21 @@ class FullMapDialog extends StatelessWidget {
       backgroundColor: Colors.transparent,
       insetPadding: EdgeInsets.zero,
       child: Container(
-        width: MediaQuery.of(context).size.width,
-        height: MediaQuery.of(context).size.height,
+        width: MediaQuery.sizeOf(context).width,
+        height: MediaQuery.sizeOf(context).height,
         color: Colors.white,
         child: Stack(
           children: [
             // 전체 화면 지도
             Positioned.fill(
-              child: KakaoMapWidget(
-                latitude: business.latitude!,
-                longitude: business.longitude!,
-                placeName: business.name,
-                showControls: true,
-              ),
+              child: business.latitude != null && business.longitude != null
+                  ? KakaoMapWidget(
+                      latitude: business.latitude!,
+                      longitude: business.longitude!,
+                      placeName: business.name,
+                      showControls: true,
+                    )
+                  : const Center(child: Text('위치 정보를 불러올 수 없습니다')),
             ),
             
             // 상단: 닫기 버튼
@@ -286,8 +288,14 @@ class FullMapDialog extends StatelessWidget {
 
   /// 길찾기
   void _openDirections(BuildContext context) async {
+    final lat = business.latitude;
+    final lng = business.longitude;
+    if (lat == null || lng == null) {
+      ToastHelper.showError('위치 정보가 없습니다');
+      return;
+    }
     final uri = Uri.parse(
-      'https://map.kakao.com/link/to/${business.name},${business.latitude},${business.longitude}',
+      'https://map.kakao.com/link/to/${business.name},$lat,$lng',
     );
 
     if (await canLaunchUrl(uri)) {

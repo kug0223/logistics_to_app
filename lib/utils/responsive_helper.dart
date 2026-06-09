@@ -5,7 +5,8 @@ import '../theme/app_colors.dart';
 class ResponsiveHelper {
   /// 화면 크기에 따른 scale 계산
   static double getScale(BuildContext context) {
-    final width = MediaQuery.of(context).size.width;
+    // sizeOf: 화면 크기(가로폭) 변경에만 구독 — viewInsets(키보드) 변경 시 rebuild 안 함
+    final width = MediaQuery.sizeOf(context).width;
     if (width < 360) return 0.85;
     if (width < 400) return 0.9;
     return 1.0;
@@ -21,6 +22,17 @@ class ResponsiveHelper {
   static EdgeInsets cardPadding(BuildContext context) {
     final scale = getScale(context);
     return EdgeInsets.all(16 * scale);
+  }
+
+  /// ListView / CustomScrollView 전용 패딩
+  /// 하단에 홈 인디케이터·네비게이션 바 높이를 자동으로 더해 마지막 항목 잘림 방지
+  static EdgeInsets listPadding(BuildContext context, {double extra = 0}) {
+    final scale  = getScale(context);
+    final bottom = MediaQuery.viewPaddingOf(context).bottom;
+    return EdgeInsets.fromLTRB(
+      16 * scale, 16 * scale, 16 * scale,
+      16 * scale + bottom + extra,
+    );
   }
   
   /// 반응형 패딩 (가로/세로 다름)
@@ -51,7 +63,7 @@ class ResponsiveHelper {
     return TextStyle(
       fontSize: 16 * scale,
       fontWeight: fontWeight ?? FontWeight.bold,
-      color: color ?? Colors.black87,
+      color: color ?? AppColors.textPrimary,
     );
   }
   
@@ -107,20 +119,20 @@ class ResponsiveHelper {
     return baseSize * scale;
   }
   static double buttonHeight(BuildContext context) {
-    final size = MediaQuery.of(context).size;
+    final size = MediaQuery.sizeOf(context);
     if (size.width < 600) return 48.0;  // 모바일
     if (size.width < 1200) return 52.0; // 태블릿
     return 56.0;                         // 데스크톱
   }
   static double dialogHeight(BuildContext context) {
-    final size = MediaQuery.of(context).size;
-    if (size.width < 600) return 600.0;  // 500 → 600 (100px 증가)
-    if (size.width < 1200) return 650.0; // 550 → 650 (100px 증가)
-    return 700.0;                         // 600 → 700 (100px 증가)
+    final size = MediaQuery.sizeOf(context);
+    if (size.width < 600) return 600.0;
+    if (size.width < 1200) return 650.0;
+    return 700.0;
   }
   /// 화면 전체 패딩 (좌우)
   static EdgeInsets screenPadding(BuildContext context) {
-    final width = MediaQuery.of(context).size.width;
+    final width = MediaQuery.sizeOf(context).width;
     
     if (width < 360) {
       return const EdgeInsets.symmetric(horizontal: 16, vertical: 20);

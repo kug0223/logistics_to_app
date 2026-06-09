@@ -37,7 +37,9 @@ class TOListDialogs {
     if (hasApplicants) {
       content += '\n\n👤 지원자: $totalCount명 (확정 $confirmedCount명)';
       if (confirmedCount > 0) {
-        content += '\n⚠️ 확정된 지원자가 있습니다!';
+        content += '\n⚠️ 확정된 근무자가 있습니다!\n삭제 시 모든 지원서가 자동 취소되고 알림이 발송됩니다.';
+      } else {
+        content += '\n삭제 시 모든 지원서가 자동 취소됩니다.';
       }
     }
 
@@ -49,9 +51,15 @@ class TOListDialogs {
     );
 
     if (confirmed == true) {
-      final success = await firestoreService.deleteTO(to.id);
-      if (success) {
-        onChanged();
+      try {
+        final success = await firestoreService.deleteTO(to.id);
+        if (success) {
+          if (!context.mounted) return;
+          onChanged();
+        }
+      } catch (e) {
+        debugPrint('❌ TO 삭제 실패: $e');
+        if (context.mounted) ToastHelper.showError('TO 삭제 중 오류가 발생했습니다.');
       }
     }
   }

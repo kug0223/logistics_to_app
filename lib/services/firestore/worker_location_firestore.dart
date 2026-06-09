@@ -52,18 +52,22 @@ extension WorkerLocationFirestore on FirestoreService {
     required double accuracy,
     double? distanceMeters,
   }) async {
-    final now = DateTime.now();
-    await _firestore.collection(_workerLocationCol).doc(applicationId).update({
-      'lat': lat,
-      'lng': lng,
-      'accuracy': accuracy,
-      'distanceMeters': distanceMeters,
-      'isActive': true,
-      'updatedAt': Timestamp.fromDate(now),
-    });
-    debugPrint('📍 [WorkerLocation] 위치 갱신: $applicationId '
-        '(${lat.toStringAsFixed(5)}, ${lng.toStringAsFixed(5)}) '
-        '${distanceMeters != null ? "${distanceMeters.toStringAsFixed(0)}m" : ""}');
+    try {
+      final now = DateTime.now();
+      await _firestore.collection(_workerLocationCol).doc(applicationId).update({
+        'lat': lat,
+        'lng': lng,
+        'accuracy': accuracy,
+        'distanceMeters': distanceMeters,
+        'isActive': true,
+        'updatedAt': Timestamp.fromDate(now),
+      });
+      debugPrint('📍 [WorkerLocation] 위치 갱신: $applicationId '
+          '(${lat.toStringAsFixed(5)}, ${lng.toStringAsFixed(5)}) '
+          '${distanceMeters != null ? "${distanceMeters.toStringAsFixed(0)}m" : ""}');
+    } catch (e) {
+      debugPrint('⚠️ [WorkerLocation] 위치 갱신 실패 ($applicationId): $e');
+    }
   }
 
   /// 추적 중지 (출근 체크 완료 또는 추적 윈도우 종료 시 호출)
