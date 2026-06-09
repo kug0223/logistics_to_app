@@ -1,4 +1,5 @@
 ﻿import 'package:flutter/material.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:provider/provider.dart';
 import '../../models/core/business_work_type_model.dart';
 import '../../models/core/business_model.dart';
@@ -16,6 +17,9 @@ import '../../theme/app_colors.dart';
 import '../../utils/image_helper.dart';
 import '../../widgets/common/app_menu_sheet.dart';
 import '../../widgets/app_select_field.dart';
+import '../../widgets/common/gradient_scaffold.dart';
+import '../../widgets/common/app_empty_state.dart';
+import '../../models/core/to_model.dart';
 
 /// ✨ 세련된 업무 유형 관리 화면
 class WorkTypeManagementScreen extends StatefulWidget {
@@ -50,11 +54,13 @@ class _WorkTypeManagementScreenState extends State<WorkTypeManagementScreen> {
 
       if (uid == null) {
         ToastHelper.showError('로그인 정보를 찾을 수 없습니다');
+        if (mounted) setState(() => _isLoadingBusinesses = false);
         return;
       }
 
       final businesses = await _firestoreService.getMyBusiness(uid);
 
+      if (!mounted) return;
       setState(() {
         _myBusinesses = businesses;
         if (_myBusinesses.isNotEmpty) {
@@ -71,6 +77,7 @@ class _WorkTypeManagementScreenState extends State<WorkTypeManagementScreen> {
       }
     } catch (e) {
       debugPrint('❌ 사업장 목록 로드 실패: $e');
+      if (!mounted) return;
       setState(() {
         _isLoadingBusinesses = false;
         _isLoading = false;
@@ -89,12 +96,14 @@ class _WorkTypeManagementScreenState extends State<WorkTypeManagementScreen> {
 
     try {
       final workTypes = await _firestoreService.getBusinessWorkTypes(_selectedBusiness!.id);
+      if (!mounted) return;
       setState(() {
         _workTypes = workTypes;
         _isLoading = false;
       });
     } catch (e) {
       debugPrint('❌ 업무 유형 로드 실패: $e');
+      if (!mounted) return;
       setState(() => _isLoading = false);
       ToastHelper.showError('업무 유형을 불러올 수 없습니다');
     }
@@ -120,6 +129,7 @@ class _WorkTypeManagementScreenState extends State<WorkTypeManagementScreen> {
 
     if (newId != null && mounted) {
       await _loadWorkTypes();
+      if (!mounted) return; // _loadWorkTypes await 후 재확인
 
       // 상세 정보 바로 입력 여부
       final newWorkType = _workTypes.firstWhere(
@@ -189,6 +199,7 @@ class _WorkTypeManagementScreenState extends State<WorkTypeManagementScreen> {
       color: result['iconColor'] as String? ?? '#FFFFFF',
       backgroundColor: result['backgroundColor'] as String?,
     );
+    if (!mounted) return;
 
     if (success) _loadWorkTypes();
   }
@@ -196,6 +207,42 @@ class _WorkTypeManagementScreenState extends State<WorkTypeManagementScreen> {
   /// ✨ 세련된 삭제 확인 다이얼로그
   Future<void> _confirmDelete(BusinessWorkTypeModel workType) async {
     if (_selectedBusiness == null) return;
+
+    // 이 업무 유형을 사용하는 활성 TO가 있는지 사전 확인
+    final activeTOSnap = await FirebaseFirestore.instance
+        .collection('tos')
+        .where('businessId', isEqualTo: _selectedBusiness!.id)
+        .where('status', whereIn: [TOStatus.active, TOStatus.full, TOStatus.scheduled])
+        .get();
+
+    final affectedCount = activeTOSnap.docs.where((doc) {
+      final details = doc.data()['workDetails'] as List<dynamic>? ?? [];
+      return details.any((d) => (d as Map<String, dynamic>)['workType'] == workType.name);
+    }).length;
+
+    if (!mounted) return;
+
+    if (affectedCount > 0) {
+      final proceed = await showDialog<bool>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: const Text('활성 공고 있음'),
+          content: Text(
+            '이 업무 유형을 사용하는 활성 공고가 $affectedCount개 있습니다.\n'
+            '삭제하면 해당 공고의 업무 유형 표시에 영향을 줄 수 있습니다.\n계속하시겠습니까?',
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('취소')),
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              style: TextButton.styleFrom(foregroundColor: AppColors.error),
+              child: const Text('계속'),
+            ),
+          ],
+        ),
+      );
+      if (proceed != true || !mounted) return;
+    }
 
     final confirmed = await showDialog<bool>(
       context: context,
@@ -208,9 +255,10 @@ class _WorkTypeManagementScreenState extends State<WorkTypeManagementScreen> {
             constraints: BoxConstraints(
               maxWidth: 400,
             ),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
                 // ✨ 헤더
                 Container(
                   padding: ResponsiveHelper.cardPadding(context),
@@ -373,6 +421,7 @@ class _WorkTypeManagementScreenState extends State<WorkTypeManagementScreen> {
                 ),
               ],
             ),
+            ),
           ),
         );
       },
@@ -384,82 +433,57 @@ class _WorkTypeManagementScreenState extends State<WorkTypeManagementScreen> {
         workTypeId: workType.id,
       );
 
-      if (success) {
+      if (success && mounted) {
         _loadWorkTypes();
       }
+    }
+  }
+
+  Future<void> _swapWorkTypeOrder(
+      BusinessWorkTypeModel a, BusinessWorkTypeModel b) async {
+    final bizId = _selectedBusiness!.id;
+    final db = FirebaseFirestore.instance;
+    final batch = db.batch();
+    batch.update(
+        db.collection('businesses').doc(bizId).collection('workTypes').doc(a.id),
+        {'displayOrder': b.displayOrder});
+    batch.update(
+        db.collection('businesses').doc(bizId).collection('workTypes').doc(b.id),
+        {'displayOrder': a.displayOrder});
+    try {
+      await batch.commit();
+      if (!mounted) return;
+      ToastHelper.showSuccess('순서가 변경되었습니다');
+      _loadWorkTypes();
+    } catch (e) {
+      if (mounted) ToastHelper.showError('순서 변경에 실패했습니다');
     }
   }
 
   /// 순서 위로 이동
   Future<void> _moveUp(int index) async {
     if (index == 0 || _selectedBusiness == null) return;
-    
-    final current = _workTypes[index];
-    final above = _workTypes[index - 1];
-    final temp = current.displayOrder;
-    
-    await _firestoreService.updateBusinessWorkType(
-      businessId: _selectedBusiness!.id,
-      workTypeId: current.id,
-      displayOrder: above.displayOrder,
-      showToast: false,
-    );
-    
-    await _firestoreService.updateBusinessWorkType(
-      businessId: _selectedBusiness!.id,
-      workTypeId: above.id,
-      displayOrder: temp,
-      showToast: false,
-    );
-    
-    ToastHelper.showSuccess('순서가 변경되었습니다');
-    _loadWorkTypes();
+    await _swapWorkTypeOrder(_workTypes[index], _workTypes[index - 1]);
   }
 
   /// 순서 아래로 이동
   Future<void> _moveDown(int index) async {
     if (index >= _workTypes.length - 1 || _selectedBusiness == null) return;
-    
-    final current = _workTypes[index];
-    final below = _workTypes[index + 1];
-    final temp = current.displayOrder;
-    
-    await _firestoreService.updateBusinessWorkType(
-      businessId: _selectedBusiness!.id,
-      workTypeId: current.id,
-      displayOrder: below.displayOrder,
-      showToast: false,
-    );
-    
-    await _firestoreService.updateBusinessWorkType(
-      businessId: _selectedBusiness!.id,
-      workTypeId: below.id,
-      displayOrder: temp,
-      showToast: false,
-    );
-    
-    ToastHelper.showSuccess('순서가 변경되었습니다');
-    _loadWorkTypes();
+    await _swapWorkTypeOrder(_workTypes[index], _workTypes[index + 1]);
   }
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      // ✨ 깔끔한 단색 AppBar
-      appBar: AppBar(
-        title: Text('업무 유형 관리'),
-        actions: [
-          IconButton(
-            icon: Icon(Icons.add_circle_outline),
-            onPressed: _selectedBusiness != null ? _showAddDialog : null,
-            tooltip: '업무 유형 추가',
-          ),
-        ],
-      ),
-      // ✨ 연한 회색 배경 (카드와 대비)
-      body: Container(
-        color: AppColors.grey50,
-        child: _isLoadingBusinesses
+    return GradientScaffold(
+      title: '업무 유형 관리',
+      actions: [
+        IconButton(
+          icon: const Icon(Icons.add_circle_outline, color: Colors.white),
+          onPressed: _selectedBusiness != null ? _showAddDialog : null,
+          tooltip: '업무 유형 추가',
+        ),
+      ],
+      body: _isLoadingBusinesses
             ? const LoadingWidget(message: '사업장 정보를 불러오는 중...')
             : _myBusinesses.isEmpty
                 ? _buildNoBusinessState()
@@ -475,7 +499,6 @@ class _WorkTypeManagementScreenState extends State<WorkTypeManagementScreen> {
                       ),
                     ],
                   ),
-      ),
     );
   }
 
@@ -624,147 +647,110 @@ class _WorkTypeManagementScreenState extends State<WorkTypeManagementScreen> {
 
   /// ✨ 세련된 업무 유형 없음 상태
   Widget _buildEmptyState() {
-    final theme = Theme.of(context);
-    
-    return Center(
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Container(
-            padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 24)),
-            decoration: BoxDecoration(
-              color: theme.primaryColor.withValues(alpha: 0.1),
-              shape: BoxShape.circle,
-            ),
-            child: Icon(
-              Icons.work_outline,
-              size: ResponsiveHelper.iconSize(context, 80),
-              color: theme.primaryColor.withValues(alpha: 0.5),
-            ),
-          ),
-          SizedBox(height: ResponsiveHelper.spacing(context, 24)),
-          Text(
-            '등록된 업무 유형이 없습니다',
-            style: ResponsiveHelper.titleStyle(context).copyWith(
-              fontWeight: FontWeight.bold,
-            ),
-          ),
-          SizedBox(height: ResponsiveHelper.spacing(context, 8)),
-          Text(
-            '상단의 + 버튼을 눌러 업무 유형을 추가하세요',
-            style: ResponsiveHelper.bodyStyle(
-              context,
-              color: theme.textTheme.bodySmall?.color,
-            ),
-          ),
-        ],
-      ),
+    return const AppEmptyState(
+      icon: Icons.work_outline,
+      title: '등록된 업무 유형이 없습니다',
+      subtitle: '상단의 + 버튼을 눌러 업무 유형을 추가하세요',
     );
   }
 
-  /// ✨ 세련된 업무 유형 리스트 (더보기 메뉴 버전)
+  /// 업무 유형 리스트 — 섹션 카드 방식 (앱 디자인 통일)
   Widget _buildWorkTypeList() {
     final theme = Theme.of(context);
-    
-    return ListView.builder(
-      padding: ResponsiveHelper.cardPadding(context),
-      itemCount: _workTypes.length,
-      itemBuilder: (context, index) {
-        final workType = _workTypes[index];
-        final isFirst = index == 0;
-        final isLast = index == _workTypes.length - 1;
 
-        return Container(
-          margin: EdgeInsets.only(
-            bottom: ResponsiveHelper.spacing(context, 16),
-          ),
+    return ListView(
+      padding: ResponsiveHelper.listPadding(context),
+      children: [
+        // 전체 항목을 하나의 섹션 카드에 묶음
+        Container(
           decoration: BoxDecoration(
             color: Colors.white,
-            borderRadius: BorderRadius.circular(20),
+            borderRadius: BorderRadius.circular(16),
             boxShadow: [
               BoxShadow(
-                color: AppColors.grey500.withValues(alpha: 0.15),
-                blurRadius: 15,
-                offset: const Offset(0, 4),
+                color: Colors.black.withValues(alpha: 0.06),
+                blurRadius: 10,
+                offset: const Offset(0, 2),
               ),
             ],
           ),
-          child: ListTile(
-            onTap: () => _openDetailScreen(workType),
-            contentPadding: EdgeInsets.symmetric(
-              horizontal: ResponsiveHelper.spacing(context, 20),
-              vertical: ResponsiveHelper.spacing(context, 12),
-            ),
-            // ✨ 아이콘
-            leading: Container(
-              width: ResponsiveHelper.iconSize(context, 56),
-              height: ResponsiveHelper.iconSize(context, 56),
-              decoration: BoxDecoration(
-                gradient: LinearGradient(
-                  colors: [
-                    FormatHelper.parseColor(workType.backgroundColor ?? '#2196F3'),
-                    FormatHelper.parseColor(workType.backgroundColor ?? '#2196F3').withValues(alpha: 0.8),
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(16),
+            child: Column(
+              children: List.generate(_workTypes.length, (index) {
+                final workType = _workTypes[index];
+                final isFirst = index == 0;
+                final isLast = index == _workTypes.length - 1;
+                final iconColor = FormatHelper.parseColor(
+                    workType.backgroundColor ?? '#2196F3');
+
+                return Column(
+                  children: [
+                    InkWell(
+                      onTap: () => _openDetailScreen(workType),
+                      child: Padding(
+                        padding: EdgeInsets.symmetric(
+                          horizontal: ResponsiveHelper.spacing(context, 16),
+                          vertical: ResponsiveHelper.spacing(context, 12),
+                        ),
+                        child: Row(
+                          children: [
+                            // 아이콘 — 그림자 없이 깔끔하게
+                            Container(
+                              width: ResponsiveHelper.iconSize(context, 46),
+                              height: ResponsiveHelper.iconSize(context, 46),
+                              decoration: BoxDecoration(
+                                color: iconColor,
+                                borderRadius: BorderRadius.circular(12),
+                              ),
+                              child: Center(
+                                child: WorkTypeIcon.build(
+                                  workType,
+                                  size: ResponsiveHelper.iconSize(context, 24),
+                                ),
+                              ),
+                            ),
+                            SizedBox(width: ResponsiveHelper.spacing(context, 14)),
+                            // 이름만 (순서 배지 제거 — 위치가 순서를 나타냄)
+                            Expanded(
+                              child: Text(
+                                workType.name,
+                                style: ResponsiveHelper.bodyStyle(context)
+                                    .copyWith(fontWeight: FontWeight.w600),
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                            // 더보기 메뉴
+                            IconButton(
+                              icon: Icon(Icons.more_vert,
+                                  color: AppColors.grey400,
+                                  size: ResponsiveHelper.iconSize(context, 20)),
+                              onPressed: () => _showWorkTypeMenuSheet(
+                                  context, theme, workType, index, isFirst, isLast),
+                              padding: EdgeInsets.zero,
+                              constraints: const BoxConstraints(),
+                              tooltip: '더보기',
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                    // 마지막 항목 아래는 구분선 없음
+                    if (!isLast)
+                      Divider(
+                        height: 1,
+                        indent: ResponsiveHelper.spacing(context, 76),
+                        endIndent: 0,
+                        color: AppColors.grey100,
+                      ),
                   ],
-                ),
-                borderRadius: BorderRadius.circular(16),
-                boxShadow: [
-                  BoxShadow(
-                    color: FormatHelper.parseColor(workType.backgroundColor ?? '#2196F3').withValues(alpha: 0.3),
-                    blurRadius: 8,
-                    offset: const Offset(0, 4),
-                  ),
-                ],
-              ),
-              child: Center(
-                child: WorkTypeIcon.build(
-                  workType,
-                  size: ResponsiveHelper.iconSize(context, 28),
-                ),
-              ),
-            ),
-            // ✨ 이름 및 순서
-            title: Text(
-              workType.name,
-              style: ResponsiveHelper.subtitleStyle(context).copyWith(
-                fontWeight: FontWeight.bold,
-              ),
-            ),
-            subtitle: Padding(
-              padding: EdgeInsets.only(top: ResponsiveHelper.spacing(context, 4)),
-              child: Row(
-                children: [
-                  Container(
-                    padding: EdgeInsets.symmetric(
-                      horizontal: ResponsiveHelper.spacing(context, 8),
-                      vertical: ResponsiveHelper.spacing(context, 4),
-                    ),
-                    decoration: BoxDecoration(
-                      color: theme.primaryColor.withValues(alpha: 0.1),
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                    child: Text(
-                      '순서: ${index + 1}',
-                      style: ResponsiveHelper.tinyStyle(
-                        context,
-                        color: theme.primaryColor,
-                      ).copyWith(fontWeight: FontWeight.bold),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            // ✨ 더보기 메뉴
-            trailing: IconButton(
-              icon: Icon(
-                Icons.more_vert,
-                color: theme.primaryColor,
-                size: ResponsiveHelper.iconSize(context, 24),
-              ),
-              onPressed: () => _showWorkTypeMenuSheet(context, theme, workType, index, isFirst, isLast),
+                );
+              }),
             ),
           ),
-        );
-      },
+        ),
+        SizedBox(height: ResponsiveHelper.spacing(context, 16)),
+      ],
     );
   }
   void _showWorkTypeMenuSheet(

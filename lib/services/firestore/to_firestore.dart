@@ -31,6 +31,7 @@ extension TOFirestore on FirestoreService {
     String businessId, {
     bool activeOnly = false,
     bool closedOnly = false,
+    int? limit,
   }) async {
     try {
       Query query = _firestore
@@ -43,6 +44,7 @@ extension TOFirestore on FirestoreService {
       } else if (closedOnly) {
         query = query.where('status', whereIn: TOStatus.closedStates);
       }
+      if (limit != null) query = query.limit(limit);
 
       final snap = await query.get();
       return snap.docs.map((d) => TOModel.fromMap(d.data() as Map<String, dynamic>, d.id)).toList();
@@ -74,29 +76,57 @@ extension TOFirestore on FirestoreService {
   Future<Map<String, dynamic>> getPublishedTOsPaged({
     DocumentSnapshot? startAfter,
     int pageSize = 30,
+    TOFilterState? filter,
   }) async {
-    try {
-      Query query = _firestore
-          .collection('tos')
-          .where('isPublished', isEqualTo: true)
-          .where('status', whereIn: [TOStatus.active, TOStatus.full])
-          .orderBy('createdAt', descending: true)
-          .limit(pageSize);
+    Query query = _firestore
+        .collection('tos')
+        .where('isPublished', isEqualTo: true)
+        .where('status', whereIn: [TOStatus.active, TOStatus.full]);
 
-      if (startAfter != null) {
-        query = query.startAfterDocument(startAfter);
-      }
-
-      final snap = await query.get();
-      return {
-        'items': snap.docs.map((d) => TOModel.fromMap(d.data() as Map<String, dynamic>, d.id)).toList(),
-        'lastDoc': snap.docs.isNotEmpty ? snap.docs.last : null,
-        'hasMore': snap.docs.length >= pageSize,
-      };
-    } catch (e) {
-      debugPrint('❌ [TO] 공개 공고 페이지 조회 실패: $e');
-      return {'items': <TOModel>[], 'lastDoc': null, 'hasMore': false};
+    if (filter?.type != null) {
+      query = query.where('type', isEqualTo: filter!.type);
     }
+    if (filter?.city != null) {
+      query = query.where('businessCity', isEqualTo: filter!.city);
+      if (filter.district != null) {
+        query = query.where('businessDistrict', isEqualTo: filter.district);
+      }
+    }
+
+    query = query.orderBy('createdAt', descending: true).limit(pageSize);
+
+    if (startAfter != null) {
+      query = query.startAfterDocument(startAfter);
+    }
+
+    final snap = await query.get();
+    return {
+      'items': snap.docs.map((d) => TOModel.fromMap(d.data() as Map<String, dynamic>, d.id)).toList(),
+      'lastDoc': snap.docs.isNotEmpty ? snap.docs.last : null,
+      'hasMore': snap.docs.length >= pageSize,
+    };
+  }
+
+  /// ID 목록으로 공고 배치 조회 (Algolia 검색 결과 fetch용)
+  /// 마감/비공개 TO는 클라이언트에서 필터링 (Algolia 인덱스와 Firestore 상태 불일치 방어)
+  Future<List<TOModel>> getTOsByIds(List<String> ids) async {
+    if (ids.isEmpty) return [];
+    final results = <TOModel>[];
+    // Firestore whereIn 30개 제한 — 청크 처리
+    for (var i = 0; i < ids.length; i += 30) {
+      final chunk = ids.sublist(i, i + 30 > ids.length ? ids.length : i + 30);
+      final snap = await _firestore
+          .collection('tos')
+          .where(FieldPath.documentId, whereIn: chunk)
+          .get();
+      // Firestore whereIn을 두 개 쓸 수 없으므로 클라이언트 필터링
+      results.addAll(
+        snap.docs
+            .map((d) => TOModel.fromMap(d.data(), d.id))
+            .where((to) => to.isPublished && !to.isClosed),
+      );
+    }
+    return results;
   }
 
   /// 최근 등록 공고 (기존 공고 연결용)
@@ -147,12 +177,15 @@ extension TOFirestore on FirestoreService {
     DateTime? rangeEnd,
     List<String>? workDays,
     DateTime? contractDeadline,
+    String? contractPeriodType,
+    int? postingDurationDays,
 
     // 예약 공개
     String publishMode = 'immediate',
     int? publishDaysBefore,
     String? publishTime,
   }) async {
+    NetworkChecker.instance.assertOnline('공고 등록을 하려면 인터넷 연결이 필요합니다.');
     try {
       // 사업장 주소 조회
       String? businessAddress, businessCity, businessDistrict;
@@ -161,11 +194,13 @@ extension TOFirestore on FirestoreService {
         businessAddress = biz?.address;
         businessCity = biz?.city;
         businessDistrict = biz?.district;
-      } catch (_) {}
+      } catch (e) {
+        debugPrint('⚠️ TO 생성 시 사업장 주소 조회 실패 ($businessId): $e');
+      }
 
       // 전체 필요 인원 (flex: 슬롯 수 × 1개 슬롯 기준, contract: 단일 값)
       final perSlotRequired = workDetails.fold<int>(0, (s, d) => s + d.requiredCount);
-      final totalRequired = type == 'flex'
+      final totalRequired = type == TOType.flex
           ? perSlotRequired * (dates?.length ?? 1)
           : perSlotRequired;
 
@@ -174,7 +209,7 @@ extension TOFirestore on FirestoreService {
       bool isPublished = publishMode == 'immediate';
 
       if (publishMode == 'scheduled' && publishDaysBefore != null && publishTime != null) {
-        final baseDate = type == 'flex'
+        final baseDate = type == TOType.flex
             ? (dates?.reduce((a, b) => a.isBefore(b) ? a : b) ?? DateTime.now())
             : (rangeStart ?? DateTime.now());
 
@@ -191,6 +226,14 @@ extension TOFirestore on FirestoreService {
         }
       }
 
+      // 미공개(draft) 처리
+      final isDraft = publishMode == 'draft';
+      final String toStatus = isDraft
+          ? TOStatus.draft
+          : isPublished
+              ? TOStatus.active
+              : TOStatus.scheduled;
+
       // TO 문서 생성
       final toData = TOModel(
         id: '',
@@ -204,24 +247,28 @@ extension TOFirestore on FirestoreService {
         groupTitle: (groupTitle?.isNotEmpty == true) ? groupTitle : null,
         description: description,
         workDetails: workDetails,
-        totalSlots: type == 'flex' ? (dates?.length ?? 0) : 0,
-        rangeStart: type == 'flex'
+        totalSlots: type == TOType.flex ? (dates?.length ?? 0) : 0,
+        rangeStart: type == TOType.flex
             ? dates?.reduce((a, b) => a.isBefore(b) ? a : b)
             : rangeStart,
-        rangeEnd: rangeEnd,
+        rangeEnd: type == TOType.flex
+            ? dates?.reduce((a, b) => a.isAfter(b) ? a : b) // flex: 마지막 날짜
+            : rangeEnd,
         workDays: workDays ?? const [],
         deadlineType: deadlineType,
         hoursBeforeStart: hoursBeforeStart,
         applicationDeadline: contractDeadline,
+        contractPeriodType: contractPeriodType,
+        postingDurationDays: postingDurationDays,
         totalRequired: totalRequired,
         publishMode: publishMode,
         publishAt: publishAt,
-        isPublished: isPublished,
+        isPublished: isPublished && !isDraft,
         publishDaysBefore: publishDaysBefore,
         publishTime: publishTime,
         creatorUID: creatorUID,
         createdAt: DateTime.now(),
-        status: isPublished ? TOStatus.active : TOStatus.scheduled,
+        status: toStatus,
       ).toMap()
         ..['createdAt'] = FieldValue.serverTimestamp()
         ..['statusUpdatedAt'] = FieldValue.serverTimestamp();
@@ -230,7 +277,7 @@ extension TOFirestore on FirestoreService {
       debugPrint('✅ [TO] 공고 생성: ${toDoc.id}');
 
       // flex: slots 생성 — 실패 시 TO 문서도 롤백 삭제
-      if (type == 'flex' && dates != null && dates.isNotEmpty) {
+      if (type == TOType.flex && dates != null && dates.isNotEmpty) {
         try {
           await _createSlots(
             toId: toDoc.id,
@@ -283,9 +330,10 @@ extension TOFirestore on FirestoreService {
       final apps = await getApplicationsByTOId(
         toId,
         businessId: businessId,
-        statuses: const ['PENDING', 'CONFIRMED'],
+        statuses: AppStatus.activeStates,
       );
-      final confirmed = apps.where((a) => a.status == 'CONFIRMED').length;
+      final confirmed = apps.where((a) =>
+          AppStatus.confirmedStatuses.contains(a.status)).length;
       return {
         'hasApplicants': apps.isNotEmpty,
         'confirmedCount': confirmed,
@@ -304,7 +352,8 @@ extension TOFirestore on FirestoreService {
         return false;
       }
 
-      final batch = _firestore.batch();
+      // Firestore WriteBatch 한도(500 ops) 초과 방지: 청크 단위 처리
+      final ops = <Future<void> Function(WriteBatch)>[];
 
       // 1. slots 서브컬렉션 삭제 (flex)
       if (to.isFlexType) {
@@ -312,11 +361,12 @@ extension TOFirestore on FirestoreService {
             .collection('tos').doc(toId)
             .collection('slots').get();
         for (final s in slotsSnap.docs) {
-          batch.delete(s.reference);
+          final ref = s.reference;
+          ops.add((b) async => b.delete(ref));
         }
       }
 
-      // 2. applications 알림 후 삭제 (businessId 필터로 보안 규칙 통과)
+      // 2. applications 알림 후 취소/삭제
       final appsSnap = await _firestore
           .collection('applications')
           .where('toId', isEqualTo: toId)
@@ -326,23 +376,42 @@ extension TOFirestore on FirestoreService {
       for (final doc in appsSnap.docs) {
         final data = doc.data();
         final status = data['status'] as String?;
-        if (status == 'PENDING' || status == 'CONFIRMED') {
+        if (AppStatus.activeStates.contains(status)) {
+          final ref = doc.reference;
+          ops.add((b) async => b.update(ref, {
+            'status': AppStatus.autoCanceled,
+            'canceledAt': FieldValue.serverTimestamp(),
+            'cancelReason': 'TO_DELETED',
+          }));
           _sendTOCanceledNotification(
             applicantUid: data['uid'] as String,
             businessName: to.businessName,
+            businessId: to.businessId,
             toTitle: to.title,
             status: status!,
           );
+        } else {
+          final ref = doc.reference;
+          ops.add((b) async => b.delete(ref));
         }
-        batch.delete(doc.reference);
       }
 
-      // 3. TO 문서 삭제
-      batch.delete(_firestore.collection('tos').doc(toId));
+      // 3. TO 문서 삭제는 마지막 청크에 포함
+      final toRef = _firestore.collection('tos').doc(toId);
+      ops.add((b) async => b.delete(toRef));
 
-      await batch.commit();
+      // 청크 단위(499 ops)로 나눠서 커밋
+      const chunkSize = 499;
+      for (var i = 0; i < ops.length; i += chunkSize) {
+        final chunk = ops.sublist(i, i + chunkSize > ops.length ? ops.length : i + chunkSize);
+        final batch = _firestore.batch();
+        for (final op in chunk) {
+          await op(batch);
+        }
+        await batch.commit();
+      }
+
       clearCache(toId: toId);
-
       ToastHelper.showSuccess('공고가 삭제되었습니다.');
       return true;
     } catch (e) {
@@ -394,7 +463,8 @@ extension TOFirestore on FirestoreService {
       final slots = await getSlots(toId);
       if (slots.isEmpty) return;
 
-      final batch = _firestore.batch();
+      var batch = _firestore.batch();
+      int count = 0;
 
       for (final slot in slots) {
         final slotRef = _firestore
@@ -460,9 +530,11 @@ extension TOFirestore on FirestoreService {
         };
 
         batch.update(slotRef, updateData);
+        count++;
+        if (count >= 499) { await batch.commit(); batch = _firestore.batch(); count = 0; }
       }
 
-      await batch.commit();
+      if (count > 0) await batch.commit();
       debugPrint('✅ [TO] 슬롯 ${slots.length}개 마감시간 갱신 완료');
     } catch (e) {
       debugPrint('❌ [TO] 슬롯 마감시간 갱신 실패: $e');
@@ -513,7 +585,8 @@ extension TOFirestore on FirestoreService {
     required String closedBy,
   }) async {
     if (slotIds.isEmpty) return;
-    final batch = _firestore.batch();
+    var batch = _firestore.batch();
+    int count = 0;
     for (final slotId in slotIds) {
       final ref = _firestore
           .collection('tos').doc(toId)
@@ -524,8 +597,10 @@ extension TOFirestore on FirestoreService {
         'closedAt': FieldValue.serverTimestamp(),
         'closedBy': closedBy,
       });
+      count++;
+      if (count >= 499) { await batch.commit(); batch = _firestore.batch(); count = 0; }
     }
-    await batch.commit();
+    if (count > 0) await batch.commit();
     debugPrint('✅ [Slot] ${slotIds.length}개 슬롯 일괄 마감 완료');
 
     await _syncTOCascadeStatus(toId);
@@ -538,7 +613,8 @@ extension TOFirestore on FirestoreService {
     required String reopenedBy,
   }) async {
     if (slotIds.isEmpty) return;
-    final batch = _firestore.batch();
+    var batch = _firestore.batch();
+    int count = 0;
     for (final slotId in slotIds) {
       final ref = _firestore
           .collection('tos').doc(toId)
@@ -551,8 +627,10 @@ extension TOFirestore on FirestoreService {
         'closedAt': FieldValue.delete(),
         'closedBy': FieldValue.delete(),
       });
+      count++;
+      if (count >= 499) { await batch.commit(); batch = _firestore.batch(); count = 0; }
     }
-    await batch.commit();
+    if (count > 0) await batch.commit();
     debugPrint('✅ [Slot] ${slotIds.length}개 슬롯 일괄 재오픈 완료');
 
     await _syncTOCascadeStatus(toId);
@@ -567,13 +645,45 @@ extension TOFirestore on FirestoreService {
     int removedPending = 0,
   }) async {
     if (slotIds.isEmpty) return;
-    final batch = _firestore.batch();
+
+    // 삭제 대상 슬롯에 연결된 PENDING 지원서 취소 처리
+    for (final slotId in slotIds) {
+      final pendingSnap = await _firestore
+          .collection('applications')
+          .where('toId', isEqualTo: toId)
+          .where('slotId', isEqualTo: slotId)
+          .where('status', isEqualTo: AppStatus.pending)
+          .get();
+      if (pendingSnap.docs.isEmpty) continue;
+      var cancelBatch = _firestore.batch();
+      int cancelCount = 0;
+      for (final doc in pendingSnap.docs) {
+        cancelBatch.update(doc.reference, {
+          'status': AppStatus.rejected,
+          'rejectedAt': FieldValue.serverTimestamp(),
+          'rejectReason': '공고 슬롯이 삭제되었습니다',
+        });
+        cancelCount++;
+        if (cancelCount >= 499) {
+          await cancelBatch.commit();
+          cancelBatch = _firestore.batch();
+          cancelCount = 0;
+        }
+      }
+      if (cancelCount > 0) await cancelBatch.commit();
+    }
+
+    var batch = _firestore.batch();
+    int count = 0;
     for (final slotId in slotIds) {
       final ref = _firestore
           .collection('tos').doc(toId)
           .collection('slots').doc(slotId);
       batch.delete(ref);
+      count++;
+      if (count >= 499) { await batch.commit(); batch = _firestore.batch(); count = 0; }
     }
+    // TO 카운터 업데이트는 별도 commit
     batch.update(_firestore.collection('tos').doc(toId), {
       'totalSlots': FieldValue.increment(-slotIds.length),
       if (removedRequired > 0) 'totalRequired': FieldValue.increment(-removedRequired),
@@ -582,6 +692,31 @@ extension TOFirestore on FirestoreService {
     });
     await batch.commit();
     debugPrint('✅ [Slot] ${slotIds.length}개 슬롯 일괄 삭제 완료');
+
+    // 남은 슬롯의 날짜 범위로 rangeStart/rangeEnd 재계산
+    final remaining = await getSlots(toId);
+    if (remaining.isNotEmpty) {
+      final minDate = remaining.map((s) => s.date).reduce((a, b) => a.isBefore(b) ? a : b);
+      final maxDate = remaining.map((s) => s.date).reduce((a, b) => a.isAfter(b) ? a : b);
+      await _firestore.collection('tos').doc(toId).update({
+        'rangeStart': Timestamp.fromDate(DateTime(minDate.year, minDate.month, minDate.day)),
+        'rangeEnd': Timestamp.fromDate(DateTime(maxDate.year, maxDate.month, maxDate.day)),
+      });
+      await _syncTOCascadeStatus(toId);
+    } else {
+      // 슬롯이 전부 삭제됨 → TO 자동 CLOSED + 총 카운터 초기화
+      await _firestore.collection('tos').doc(toId).update({
+        'status': TOStatus.closed,
+        'isPublished': false,
+        'closedAt': FieldValue.serverTimestamp(),
+        'totalSlots': 0,
+        'totalRequired': 0,
+        'totalConfirmed': 0,
+        'totalPending': 0,
+      });
+      clearCache(toId: toId);
+      debugPrint('✅ [TO] 모든 슬롯 삭제 → 자동 CLOSED + 카운터 초기화 ($toId)');
+    }
   }
 
   /// 새 날짜 슬롯 추가
@@ -613,11 +748,12 @@ extension TOFirestore on FirestoreService {
       'totalRequired': FieldValue.increment(slotRequired),
     };
 
-    // 마감/만료 상태였으면 새 슬롯 추가 시 ACTIVE로 복구
+    // 마감/만료 상태였으면 새 슬롯 추가 시 ACTIVE + 게시 복구
     if (TOStatus.closedStates.contains(to.status)) {
       toUpdates['status'] = TOStatus.active;
+      toUpdates['isPublished'] = true;
       toUpdates['statusUpdatedAt'] = FieldValue.serverTimestamp();
-      debugPrint('🔄 [TO] 상태 복구: ${to.status} → ACTIVE (새 슬롯 추가)');
+      debugPrint('🔄 [TO] 상태 복구: ${to.status} → ACTIVE + 재게시 (새 슬롯 추가)');
     }
 
     // 새 슬롯이 날짜 범위를 벗어나면 rangeStart/rangeEnd 갱신
@@ -660,7 +796,8 @@ extension TOFirestore on FirestoreService {
       final slots = await getSlots(toId);
       if (slots.isEmpty) return;
 
-      final batch = _firestore.batch();
+      var batch = _firestore.batch();
+      int count = 0;
 
       for (final slot in slots) {
         final slotRef = _firestore
@@ -683,9 +820,11 @@ extension TOFirestore on FirestoreService {
           // immediate 모드 → visibleFrom 제거
           batch.update(slotRef, {'visibleFrom': FieldValue.delete()});
         }
+        count++;
+        if (count >= 499) { await batch.commit(); batch = _firestore.batch(); count = 0; }
       }
 
-      await batch.commit();
+      if (count > 0) await batch.commit();
       debugPrint('✅ [TO] 슬롯 ${slots.length}개 visibleFrom 업데이트 완료');
     } catch (e) {
       debugPrint('❌ [TO] 슬롯 visibleFrom 업데이트 실패: $e');
@@ -714,24 +853,29 @@ extension TOFirestore on FirestoreService {
         if (!slotSnap.exists || !toSnap.exists) return;
 
         final slotData = slotSnap.data()!;
-        final newSlotConfirmed = (slotData['confirmedCount'] as int? ?? 0) + confirmedDelta;
-        final newSlotPending = (slotData['pendingCount'] as int? ?? 0) + pendingDelta;
+        final newSlotConfirmed = ((slotData['confirmedCount'] as num?)?.toInt() ?? 0) + confirmedDelta;
+        final newSlotPending = ((slotData['pendingCount'] as num?)?.toInt() ?? 0) + pendingDelta;
 
         // 슬롯 자체의 workDetails에서 requiredCount 합산 (TO 전체 합이 아님)
         final rawWorkDetails = slotData['workDetails'] as List? ?? [];
         final slotTotalRequired = rawWorkDetails.fold<int>(
-          0, (acc, d) => acc + ((d as Map<String, dynamic>)['requiredCount'] as int? ?? 0));
+          0, (acc, d) => acc + (((d as Map<String, dynamic>)['requiredCount'] as num?)?.toInt() ?? 0));
 
-        // 슬롯 상태 갱신
-        final slotStatus = slotTotalRequired > 0 && newSlotConfirmed >= slotTotalRequired
-            ? SlotStatus.full
-            : SlotStatus.open;
+        // 수동 마감 슬롯은 상태 변경 금지 (closedBy가 설정된 경우)
+        final isManualClosed = slotData['isManualClosed'] == true;
 
-        tx.update(slotRef, {
+        final Map<String, dynamic> slotUpdates = {
           'confirmedCount': newSlotConfirmed,
           'pendingCount': newSlotPending,
-          'status': slotStatus,
-        });
+        };
+
+        if (!isManualClosed) {
+          slotUpdates['status'] = slotTotalRequired > 0 && newSlotConfirmed >= slotTotalRequired
+              ? SlotStatus.full
+              : SlotStatus.open;
+        }
+
+        tx.update(slotRef, slotUpdates);
 
         // TO 집계 갱신
         tx.update(toRef, {
@@ -760,7 +904,8 @@ extension TOFirestore on FirestoreService {
     String? publishTime,
     String? slotTitle,
   }) async {
-    final batch = _firestore.batch();
+    var batch = _firestore.batch();
+    int count = 0;
     final now = DateTime.now();
 
     for (final date in dates) {
@@ -818,15 +963,22 @@ extension TOFirestore on FirestoreService {
         title: (slotTitle?.isNotEmpty == true) ? slotTitle : null,
         createdAt: now,
       ).toMap()..['createdAt'] = FieldValue.serverTimestamp());
+      count++;
+      if (count >= 499) {
+        await batch.commit();
+        batch = _firestore.batch();
+        count = 0;
+      }
     }
 
-    await batch.commit();
+    if (count > 0) await batch.commit();
     debugPrint('✅ [TO] 슬롯 ${dates.length}개 생성 완료');
   }
 
   Future<void> _sendTOCanceledNotification({
     required String applicantUid,
     required String businessName,
+    required String businessId,
     required String toTitle,
     required String status,
   }) async {
@@ -835,6 +987,7 @@ extension TOFirestore on FirestoreService {
         NotificationModel.createTOCanceled(
           userId: applicantUid,
           businessName: businessName,
+          businessId: businessId,
           toTitle: toTitle,
           workDate: DateTime.now(),
           status: status,
@@ -842,6 +995,38 @@ extension TOFirestore on FirestoreService {
       );
     } catch (e) {
       debugPrint('⚠️ TO 취소 알림 전송 실패: $e');
+    }
+  }
+
+  /// 슬롯 일괄 변경(마감/재오픈) 후 TO 상태를 동기화한다.
+  /// - 열린 슬롯이 없으면 TO를 자동 CLOSED
+  /// - 열린 슬롯이 생기고 TO가 CLOSED이면 ACTIVE로 복구
+  Future<void> _syncTOCascadeStatus(String toId) async {
+    try {
+      final slots = await getSlots(toId);
+      if (slots.isEmpty) return;
+
+      final toDoc = await _firestore.collection('tos').doc(toId).get();
+      if (!toDoc.exists) return;
+
+      final currentStatus = toDoc.data()?['status'] as String? ?? '';
+      final hasOpenSlot = slots.any((s) => s.status == SlotStatus.open);
+
+      if (!hasOpenSlot && TOStatus.openStates.contains(currentStatus)) {
+        await _firestore.collection('tos').doc(toId).update({
+          'status': TOStatus.closed,
+          'closedAt': FieldValue.serverTimestamp(),
+        });
+        debugPrint('✅ [TO] 모든 슬롯 마감 → 자동 CLOSED ($toId)');
+      } else if (hasOpenSlot && currentStatus == TOStatus.closed) {
+        await _firestore.collection('tos').doc(toId).update({
+          'status': TOStatus.active,
+          'closedAt': FieldValue.delete(),
+        });
+        debugPrint('✅ [TO] 슬롯 재오픈 → ACTIVE 복구 ($toId)');
+      }
+    } catch (e) {
+      debugPrint('⚠️ TO 상태 동기화 실패: $e');
     }
   }
 }

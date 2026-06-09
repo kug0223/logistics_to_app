@@ -1,10 +1,12 @@
 ﻿// lib/screens/business_admin/admin_review_list_screen.dart
 
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 // Utils
 import '../../utils/responsive_helper.dart';
+import '../../utils/format_helper.dart';
 import '../../theme/app_colors.dart';
 
 // Providers
@@ -13,22 +15,22 @@ import '../../providers/user_provider.dart';
 // Models
 import '../../models/core/monthly_review_model.dart';
 import '../../models/core/review_request_model.dart';
+import '../../models/core/user_model.dart';
 
 // Services
 import '../../services/monthly_review_service.dart';
 
 // Dialogs
 import '../../widgets/dialogs/monthly_review_dialog.dart';
+import '../../widgets/common/gradient_scaffold.dart';
+import '../../widgets/common/loading_widget.dart';
+import '../../widgets/common/app_search_bar.dart';
+import '../../widgets/common/app_tab_label.dart';
 
 /// 관리자용 리뷰 목록 화면
-/// 
-/// 기능:
-/// - 내가 작성한 리뷰 (지원자 평가)
-/// - 사업장이 받은 리뷰 (지원자 → 사업장)
-/// - 월별 필터링
 class AdminReviewListScreen extends StatefulWidget {
   final String? businessId;
-  
+
   const AdminReviewListScreen({
     super.key,
     this.businessId,
@@ -42,63 +44,122 @@ class _AdminReviewListScreenState extends State<AdminReviewListScreen>
     with SingleTickerProviderStateMixin {
   late TabController _tabController;
   final _reviewService = MonthlyReviewService();
-  
-  // 상태
-  bool _isLoading = true;
-  List<MonthlyReviewModel> _writtenReviews = [];
-  List<MonthlyReviewModel> _receivedReviews = [];
-  List<ReviewRequestModel> _pendingRequests = [];
 
-  // 필터
-  final int _selectedYear = DateTime.now().year;
+  bool _isLoading = true;
+
+  // 전량 원본 데이터 (DB 재쿼리 없이 메모리 필터 사용)
+  List<MonthlyReviewModel> _rawWritten = [];
+  List<MonthlyReviewModel> _rawReceived = [];
+  List<ReviewRequestModel> _rawPending = [];
+  Map<String, DateTime> _requestDeadlines = {};
+
+  // 필터 상태
+  int _selectedYear = DateTime.now().year;
   int _selectedMonth = 0; // 0 = 전체
+
+  // 데이터 있는 연도 목록 (자동 추출)
+  List<int> get _availableYears {
+    final years = <int>{};
+    for (final r in _rawWritten)  { years.add(r.reviewYear); }
+    for (final r in _rawReceived) { years.add(r.reviewYear); }
+    for (final r in _rawPending)  { years.add(r.reviewYear); }
+    if (years.isEmpty) years.add(DateTime.now().year);
+    return (years.toList()..sort()).reversed.toList();
+  }
+
+  // 선택된 연도에서 데이터 있는 월 목록 (건수 포함)
+  Map<int, int> get _availableMonths {
+    final map = <int, int>{};
+    for (final r in _rawWritten) {
+      if (r.reviewYear == _selectedYear) {
+        map[r.reviewMonth] = (map[r.reviewMonth] ?? 0) + 1;
+      }
+    }
+    for (final r in _rawReceived) {
+      if (r.reviewYear == _selectedYear) {
+        map[r.reviewMonth] = (map[r.reviewMonth] ?? 0) + 1;
+      }
+    }
+    for (final r in _rawPending) {
+      if (r.reviewYear == _selectedYear) {
+        map[r.reviewMonth] = (map[r.reviewMonth] ?? 0) + 1;
+      }
+    }
+    return map;
+  }
+
+  // 현재 필터 적용된 리스트
+  List<MonthlyReviewModel> get _writtenReviews => _rawWritten
+      .where((r) => r.reviewYear == _selectedYear &&
+          (_selectedMonth == 0 || r.reviewMonth == _selectedMonth))
+      .toList();
+
+  List<MonthlyReviewModel> get _receivedReviews => _rawReceived
+      .where((r) => r.reviewYear == _selectedYear &&
+          (_selectedMonth == 0 || r.reviewMonth == _selectedMonth))
+      .toList();
+
+  List<ReviewRequestModel> get _pendingRequests => _rawPending
+      .where((r) => r.reviewYear == _selectedYear &&
+          (_selectedMonth == 0 || r.reviewMonth == _selectedMonth))
+      .toList();
+
+  // 검색
+  final _searchCtrl = TextEditingController();
+  String _searchQuery = '';
 
   @override
   void initState() {
     super.initState();
     _tabController = TabController(length: 3, vsync: this);
+    _searchCtrl.addListener(() {
+      setState(() => _searchQuery = _searchCtrl.text.trim().toLowerCase());
+    });
     _loadReviews();
   }
 
   @override
   void dispose() {
     _tabController.dispose();
+    _searchCtrl.dispose();
     super.dispose();
   }
 
   Future<void> _loadReviews() async {
     setState(() => _isLoading = true);
-    
+
     final userProvider = context.read<UserProvider>();
     final user = userProvider.currentUser;
-    final businessId = widget.businessId ?? user?.businessId;
-    
+    final businessId = widget.businessId
+        ?? user?.businessId
+        ?? user?.managedBusinessIds.firstOrNull;
+
     if (businessId == null) {
       setState(() => _isLoading = false);
       return;
     }
-    
+
     try {
       final results = await Future.wait([
         _reviewService.getReviewsByBusiness(businessId: businessId, limit: 100),
         _reviewService.getPublishedReviewsForBusiness(businessId: businessId, limit: 100),
         _reviewService.getPendingRequestsForBusiness(businessId),
+        _reviewService.getAllNonPublishedRequestsForBusiness(businessId),
       ]);
 
-      _writtenReviews = results[0] as List<MonthlyReviewModel>;
-      _receivedReviews = results[1] as List<MonthlyReviewModel>;
-      _pendingRequests = results[2] as List<ReviewRequestModel>;
+      // raw 전량 저장 — 필터는 getter에서 처리
+      _rawWritten  = results[0] as List<MonthlyReviewModel>;
+      _rawReceived = results[1] as List<MonthlyReviewModel>;
+      _rawPending  = results[2] as List<ReviewRequestModel>;
 
-      if (_selectedMonth > 0) {
-        _writtenReviews = _writtenReviews
-            .where((r) => r.reviewYear == _selectedYear && r.reviewMonth == _selectedMonth)
-            .toList();
-        _receivedReviews = _receivedReviews
-            .where((r) => r.reviewYear == _selectedYear && r.reviewMonth == _selectedMonth)
-            .toList();
-        _pendingRequests = _pendingRequests
-            .where((r) => r.reviewYear == _selectedYear && r.reviewMonth == _selectedMonth)
-            .toList();
+      final allNonPublished = results[3] as List<ReviewRequestModel>;
+      _requestDeadlines = {for (final r in allNonPublished) r.id: r.deadline};
+
+      // 선택된 연도가 데이터에 없으면 최신 연도로 자동 이동
+      final years = _availableYears;
+      if (years.isNotEmpty && !years.contains(_selectedYear)) {
+        _selectedYear = years.first;
+        _selectedMonth = 0;
       }
     } catch (e) {
       debugPrint('❌ 리뷰 로드 실패: $e');
@@ -111,100 +172,190 @@ class _AdminReviewListScreenState extends State<AdminReviewListScreen>
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    
-    return Scaffold(
-      backgroundColor: AppColors.grey50,
-      appBar: AppBar(
-        title: Text(
-          '리뷰 관리',
-          style: ResponsiveHelper.subtitleStyle(context).copyWith(
-            fontWeight: FontWeight.bold,
-          ),
-        ),
-        backgroundColor: theme.primaryColor,
-        foregroundColor: Colors.white,
-        elevation: 0,
-        bottom: TabBar(
-          controller: _tabController,
-          indicatorColor: Colors.white,
-          indicatorWeight: 3,
-          labelColor: Colors.white,
-          unselectedLabelColor: Colors.white.withValues(alpha: 0.6),
-          tabs: [
-            Tab(
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Icon(Icons.edit_note, size: ResponsiveHelper.iconSize(context, 18)),
-                  SizedBox(width: ResponsiveHelper.spacing(context, 6)),
-                  Text('작성한 리뷰 (${_writtenReviews.length})'),
-                ],
-              ),
-            ),
-            Tab(
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Icon(Icons.inbox, size: ResponsiveHelper.iconSize(context, 18)),
-                  SizedBox(width: ResponsiveHelper.spacing(context, 6)),
-                  Text('받은 리뷰 (${_receivedReviews.length})'),
-                ],
-              ),
-            ),
-            Tab(
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Icon(Icons.pending_actions, size: ResponsiveHelper.iconSize(context, 18)),
-                  SizedBox(width: ResponsiveHelper.spacing(context, 6)),
-                  Text('미작성 (${_pendingRequests.length})'),
-                  if (_pendingRequests.isNotEmpty) ...[
-                    SizedBox(width: ResponsiveHelper.spacing(context, 4)),
-                    Container(
-                      width: 8,
-                      height: 8,
-                      decoration: const BoxDecoration(
-                        color: AppColors.error,
-                        shape: BoxShape.circle,
-                      ),
-                    ),
-                  ],
-                ],
-              ),
-            ),
-          ],
-        ),
-        actions: [
-          // 월 필터
-          PopupMenuButton<int>(
-            icon: Icon(Icons.filter_list, color: Colors.white),
-            tooltip: '월 필터',
-            onSelected: (month) {
-              setState(() => _selectedMonth = month);
-              _loadReviews();
-            },
-            itemBuilder: (context) => [
-              PopupMenuItem(value: 0, child: Text('전체')),
-              ...List.generate(12, (i) => PopupMenuItem(
-                value: i + 1,
-                child: Text('${i + 1}월'),
-              )),
-            ],
-          ),
-        ],
-      ),
+    final hasActiveFilter = _selectedMonth > 0;
+
+    return GradientScaffold(
+      title: hasActiveFilter
+          ? '리뷰 관리 · $_selectedYear년 $_selectedMonth월'
+          : '리뷰 관리',
       body: _isLoading
-          ? Center(child: CircularProgressIndicator())
-          : TabBarView(
-              controller: _tabController,
+          ? const LoadingWidget()
+          : Column(
               children: [
-                _buildReviewList(_writtenReviews, isWritten: true),
-                _buildReviewList(_receivedReviews, isWritten: false),
-                _buildPendingRequestList(),
+                // 탭 (흰 영역) — 균등 폭, 텍스트만
+                Container(
+                  color: Colors.white,
+                  child: TabBar(
+                    controller: _tabController,
+                    indicatorColor: theme.primaryColor,
+                    indicatorWeight: 3,
+                    labelColor: theme.primaryColor,
+                    unselectedLabelColor: AppColors.grey400,
+                    dividerColor: AppColors.grey100,
+                    labelStyle: ResponsiveHelper.smallStyle(context,
+                        fontWeight: FontWeight.w600),
+                    unselectedLabelStyle:
+                        ResponsiveHelper.smallStyle(context),
+                    tabs: [
+                      Tab(child: AppTabLabel(label: '작성',
+                          count: _writtenReviews.length, badgeColor: theme.primaryColor)),
+                      Tab(child: AppTabLabel(label: '받음',
+                          count: _receivedReviews.length, badgeColor: AppColors.info)),
+                      Tab(child: AppTabLabel(
+                          label: '미작성',
+                          count: _pendingRequests.length,
+                          badgeColor: AppColors.error,
+                          urgent: _pendingRequests.any((r) => !r.isDeadlinePassed))),
+                    ],
+                  ),
+                ),
+                // 검색바
+                Container(
+                  color: Colors.white,
+                  padding: EdgeInsets.fromLTRB(
+                    ResponsiveHelper.spacing(context, 12),
+                    0,
+                    ResponsiveHelper.spacing(context, 12),
+                    ResponsiveHelper.spacing(context, 8),
+                  ),
+                  child: AppSearchBar(
+                    controller: _searchCtrl,
+                    hintText: '근무자 이름으로 검색',
+                  ),
+                ),
+                _buildMonthFilter(),
+                Expanded(
+                  child: TabBarView(
+                    controller: _tabController,
+                    children: [
+                      _buildReviewList(_writtenReviews, isWritten: true),
+                      _buildReviewList(_receivedReviews, isWritten: false),
+                      _buildPendingRequestList(),
+                    ],
+                  ),
+                ),
               ],
             ),
     );
   }
+
+  // ─── 연도+월 필터 ────────────────────────────────────────────
+
+  Widget _buildMonthFilter() {
+    final years = _availableYears;
+    final months = _availableMonths; // {월: 건수}
+    final yearIdx = years.indexOf(_selectedYear);
+
+    return Container(
+      color: Colors.white,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const Divider(height: 1, thickness: 1, color: AppColors.grey100),
+
+          // ── 연도 네비게이션 (데이터가 1개 연도뿐이면 숨김)
+          if (years.length > 1)
+            Padding(
+              padding: EdgeInsets.symmetric(
+                horizontal: ResponsiveHelper.spacing(context, 16),
+                vertical: ResponsiveHelper.spacing(context, 6),
+              ),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  _YearNavButton(
+                    icon: Icons.chevron_left,
+                    enabled: yearIdx < years.length - 1,
+                    onTap: () => setState(() {
+                      _selectedYear = years[yearIdx + 1];
+                      _selectedMonth = 0;
+                    }),
+                  ),
+                  SizedBox(width: ResponsiveHelper.spacing(context, 16)),
+                  Text(
+                    '$_selectedYear년',
+                    style: ResponsiveHelper.bodyStyle(context)
+                        .copyWith(fontWeight: FontWeight.bold),
+                  ),
+                  SizedBox(width: ResponsiveHelper.spacing(context, 16)),
+                  _YearNavButton(
+                    icon: Icons.chevron_right,
+                    enabled: yearIdx > 0,
+                    onTap: () => setState(() {
+                      _selectedYear = years[yearIdx - 1];
+                      _selectedMonth = 0;
+                    }),
+                  ),
+                ],
+              ),
+            ),
+
+          // ── 월 칩: 데이터 있는 달만 + 건수 표시
+          SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            padding: EdgeInsets.symmetric(
+              horizontal: ResponsiveHelper.spacing(context, 16),
+              vertical: ResponsiveHelper.spacing(context, 8),
+            ),
+            child: Row(
+              children: [
+                _buildMonthChip(label: '전체', value: 0),
+                ...(() {
+                  final sorted = months.entries.toList()
+                    ..sort((a, b) => a.key.compareTo(b.key));
+                  return sorted.map((e) => Padding(
+                    padding: EdgeInsets.only(
+                        left: ResponsiveHelper.spacing(context, 6)),
+                    child: _buildMonthChip(
+                        label: '${e.key}월',
+                        value: e.key,
+                        count: e.value),
+                  ));
+                })(),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildMonthChip({
+    required String label,
+    required int value,
+    int? count,
+  }) {
+    final isSelected = _selectedMonth == value;
+    final theme = Theme.of(context);
+    // 월 칩 label: count 있으면 "5월 3" 형태로 표시
+    final chipLabel = count != null && count > 0
+        ? '$label  $count'
+        : label;
+    return FilterChip(
+      label: Text(chipLabel),
+      selected: isSelected,
+      onSelected: (_) => setState(() => _selectedMonth = value),
+      backgroundColor: Colors.white,
+      selectedColor: theme.primaryColor.withValues(alpha: 0.12),
+      side: BorderSide(
+        color: isSelected ? theme.primaryColor : AppColors.grey200,
+        width: isSelected ? 1.5 : 1,
+      ),
+      checkmarkColor: theme.primaryColor,
+      showCheckmark: false,
+      labelStyle: ResponsiveHelper.smallStyle(context).copyWith(
+        color: isSelected ? theme.primaryColor : AppColors.grey600,
+        fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+      ),
+      padding: EdgeInsets.symmetric(
+        horizontal: ResponsiveHelper.spacing(context, 6),
+        vertical: ResponsiveHelper.spacing(context, 2),
+      ),
+      materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+    );
+  }
+
+  // ─── 리뷰 목록 탭 ─────────────────────────────────────────────
 
   Widget _buildReviewList(List<MonthlyReviewModel> reviews, {required bool isWritten}) {
     if (reviews.isEmpty) {
@@ -213,7 +364,7 @@ class _AdminReviewListScreenState extends State<AdminReviewListScreen>
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
             Icon(
-              isWritten ? Icons.edit_off : Icons.inbox_outlined,
+              isWritten ? Icons.rate_review : Icons.reviews,
               size: ResponsiveHelper.iconSize(context, 64),
               color: AppColors.grey300,
             ),
@@ -222,217 +373,323 @@ class _AdminReviewListScreenState extends State<AdminReviewListScreen>
               isWritten ? '작성한 리뷰가 없습니다' : '받은 리뷰가 없습니다',
               style: ResponsiveHelper.bodyStyle(context, color: AppColors.grey500),
             ),
+            if (_selectedMonth > 0) ...[
+              SizedBox(height: ResponsiveHelper.spacing(context, 8)),
+              Text(
+                '$_selectedMonth월 필터 적용 중',
+                style: ResponsiveHelper.smallStyle(context, color: AppColors.grey400),
+              ),
+            ],
           ],
         ),
       );
     }
-    
+
+    // 검색 필터 적용
+    final filtered = _searchQuery.isEmpty
+        ? reviews
+        : reviews.where((r) {
+            final name = (isWritten
+                    ? (r.targetUserName ?? '')
+                    : r.reviewerName)
+                .toLowerCase();
+            return name.contains(_searchQuery);
+          }).toList();
+
+    if (filtered.isEmpty && _searchQuery.isNotEmpty) {
+      return Center(
+        child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
+          Icon(Icons.search_off_rounded,
+              size: ResponsiveHelper.iconSize(context, 48),
+              color: AppColors.grey300),
+          SizedBox(height: ResponsiveHelper.spacing(context, 12)),
+          Text('"$_searchQuery" 검색 결과 없음',
+              style: ResponsiveHelper.bodyStyle(context, color: AppColors.grey500)),
+        ]),
+      );
+    }
+
     return RefreshIndicator(
       onRefresh: _loadReviews,
       child: ListView.builder(
-        padding: ResponsiveHelper.cardPadding(context),
-        itemCount: reviews.length,
-        itemBuilder: (context, index) {
-          final review = reviews[index];
-          return _buildReviewCard(context, review, isWritten: isWritten);
-        },
+        padding: ResponsiveHelper.listPadding(context),
+        itemCount: filtered.length,
+        itemBuilder: (context, index) =>
+            _buildReviewCard(context, filtered[index], isWritten: isWritten),
       ),
     );
   }
 
-  Widget _buildReviewCard(BuildContext context, MonthlyReviewModel review, {required bool isWritten}) {
-    final theme = Theme.of(context);
-    
+  Widget _buildReviewCard(BuildContext context, MonthlyReviewModel review,
+      {required bool isWritten}) {
     return Container(
-      margin: EdgeInsets.only(bottom: ResponsiveHelper.spacing(context, 12)),
+      margin: EdgeInsets.only(bottom: ResponsiveHelper.spacing(context, 10)),
       decoration: BoxDecoration(
         color: Colors.white,
-        borderRadius: BorderRadius.circular(16),
+        borderRadius: BorderRadius.circular(12),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withValues(alpha: 0.04),
-            blurRadius: 8,
-            offset: Offset(0, 2),
+            color: Colors.black.withValues(alpha: 0.05),
+            blurRadius: 6,
+            offset: const Offset(0, 2),
           ),
         ],
       ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          // 헤더
-          Container(
-            padding: ResponsiveHelper.cardPadding(context),
-            decoration: BoxDecoration(
-              color: review.isPublished 
-                  ? theme.primaryColor.withValues(alpha: 0.05)
-                  : AppColors.warning.withValues(alpha: 0.1),
-              borderRadius: BorderRadius.only(
-                topLeft: Radius.circular(16),
-                topRight: Radius.circular(16),
-              ),
-            ),
-            child: Row(
-              children: [
-                // 대상 정보
-                Expanded(
-                  child: Column(
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(12),
+        child: Material(
+          color: Colors.transparent,
+          child: InkWell(
+            onTap: () => _showReviewDetail(review, isWritten: isWritten),
+            child: Padding(
+              padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 14)),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  // 헤더: 이름·사업장 + 상태 배지
+                  Row(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Row(
-                        children: [
-                          Icon(
-                            isWritten ? Icons.person : Icons.store,
-                            size: ResponsiveHelper.iconSize(context, 16),
-                            color: theme.primaryColor,
-                          ),
-                          SizedBox(width: ResponsiveHelper.spacing(context, 6)),
-                          Text(
-                            isWritten 
-                                ? (review.targetUserName ?? '지원자')
-                                : review.reviewerName,
-                            style: ResponsiveHelper.bodyStyle(context).copyWith(
-                              fontWeight: FontWeight.bold,
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Row(
+                              children: [
+                                Flexible(
+                                  child: Text(
+                                    isWritten
+                                        ? (review.targetUserName ?? '지원자')
+                                        : review.reviewerName,
+                                    style: ResponsiveHelper.bodyStyle(context)
+                                        .copyWith(fontWeight: FontWeight.bold),
+                                    overflow: TextOverflow.ellipsis,
+                                    maxLines: 1,
+                                  ),
+                                ),
+                                if (isWritten &&
+                                    (review.targetUserAge != null ||
+                                        review.targetUserGender != null)) ...[
+                                  SizedBox(width: ResponsiveHelper.spacing(context, 4)),
+                                  Text(
+                                    '(${[
+                                      if (review.targetUserAge != null)
+                                        '${review.targetUserAge}세',
+                                      if (review.targetUserGender != null)
+                                        review.targetUserGender!,
+                                    ].join(', ')})',
+                                    style: ResponsiveHelper.smallStyle(
+                                        context, color: AppColors.grey500),
+                                  ),
+                                ],
+                              ],
                             ),
+                            SizedBox(height: ResponsiveHelper.spacing(context, 2)),
+                            Text(
+                              '${review.businessName} · ${review.periodText}',
+                              style: ResponsiveHelper.smallStyle(
+                                  context, color: AppColors.grey500),
+                            ),
+                          ],
+                        ),
+                      ),
+                      SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+                      _buildStatusBadgeCompact(context, review),
+                    ],
+                  ),
+
+                  SizedBox(height: ResponsiveHelper.spacing(context, 10)),
+
+                  // 평점 + 재고용의사
+                  Row(
+                    children: [
+                      ...List.generate(
+                        5,
+                        (i) => Icon(
+                          i < review.rating
+                              ? Icons.star_rounded
+                              : Icons.star_border_rounded,
+                          size: ResponsiveHelper.iconSize(context, 18),
+                          color: AppColors.amber,
+                        ),
+                      ),
+                      SizedBox(width: ResponsiveHelper.spacing(context, 5)),
+                      Text(
+                        review.ratingText,
+                        style: ResponsiveHelper.smallStyle(context).copyWith(
+                            fontWeight: FontWeight.w600,
+                            color: AppColors.grey700),
+                      ),
+                      if (review.wouldRehire != null) ...[
+                        SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+                        _buildRehireBadge(context, review.wouldRehire!, isWritten),
+                      ],
+                    ],
+                  ),
+
+                  // 태그
+                  if (review.positiveTags.isNotEmpty ||
+                      review.improvementTags.isNotEmpty) ...[
+                    SizedBox(height: ResponsiveHelper.spacing(context, 8)),
+                    Wrap(
+                      spacing: ResponsiveHelper.spacing(context, 5),
+                      runSpacing: ResponsiveHelper.spacing(context, 5),
+                      children: [
+                        ...review.positiveTags
+                            .map((tag) => _buildTag(context, tag, isPositive: true)),
+                        ...review.improvementTags
+                            .map((tag) => _buildTag(context, tag, isPositive: false)),
+                      ],
+                    ),
+                  ],
+
+                  // 코멘트
+                  if (review.comment != null && review.comment!.isNotEmpty) ...[
+                    SizedBox(height: ResponsiveHelper.spacing(context, 8)),
+                    Text(
+                      '"${review.comment!}"',
+                      style: ResponsiveHelper.smallStyle(
+                          context, color: AppColors.grey600),
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ],
+
+                  // 사업장 답변 (받은 리뷰)
+                  if (!isWritten &&
+                      review.businessResponse != null &&
+                      review.businessResponse!.isNotEmpty) ...[
+                    SizedBox(height: ResponsiveHelper.spacing(context, 6)),
+                    Container(
+                      width: double.infinity,
+                      padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 8)),
+                      decoration: BoxDecoration(
+                        color: AppColors.info.withValues(alpha: 0.05),
+                        borderRadius: BorderRadius.circular(6),
+                        border:
+                            Border.all(color: AppColors.info.withValues(alpha: 0.2)),
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(
+                            children: [
+                              Icon(Icons.store,
+                                  size: ResponsiveHelper.iconSize(context, 11),
+                                  color: AppColors.info),
+                              SizedBox(width: ResponsiveHelper.spacing(context, 3)),
+                              Text(
+                                '사업장 답변',
+                                style: ResponsiveHelper.tinyStyle(context).copyWith(
+                                    color: AppColors.info,
+                                    fontWeight: FontWeight.bold),
+                              ),
+                            ],
+                          ),
+                          SizedBox(height: ResponsiveHelper.spacing(context, 3)),
+                          Text(
+                            review.businessResponse!,
+                            style: ResponsiveHelper.smallStyle(
+                                context, color: AppColors.grey700),
                           ),
                         ],
                       ),
-                      SizedBox(height: ResponsiveHelper.spacing(context, 4)),
+                    ),
+                  ],
+
+                  // 하단: 근무 통계(의미있는 경우만) + 작성일
+                  SizedBox(height: ResponsiveHelper.spacing(context, 8)),
+                  Row(
+                    children: [
+                      if (review.workDaysInMonth > 1 || review.lateDays > 0) ...[
+                        Icon(Icons.work_outline,
+                            size: ResponsiveHelper.iconSize(context, 12),
+                            color: AppColors.grey400),
+                        SizedBox(width: ResponsiveHelper.spacing(context, 3)),
+                        if (review.workDaysInMonth > 1)
+                          Text(
+                            '근무 ${review.workDaysInMonth}일',
+                            style: ResponsiveHelper.tinyStyle(
+                                context, color: AppColors.grey500),
+                          ),
+                        if (review.lateDays > 0)
+                          Text(
+                            '${review.workDaysInMonth > 1 ? ' · ' : ''}지각 ${review.lateDays}회',
+                            style: ResponsiveHelper.tinyStyle(
+                                context, color: AppColors.warning),
+                          ),
+                      ],
+                      const Spacer(),
                       Text(
-                        '${review.reviewYear}년 ${review.reviewMonth}월',
-                        style: ResponsiveHelper.smallStyle(context, color: AppColors.grey500),
+                        _formatDate(review.createdAt),
+                        style: ResponsiveHelper.tinyStyle(
+                            context, color: AppColors.grey400),
                       ),
                     ],
                   ),
-                ),
-                
-                // 공개 상태 배지
-                Container(
-                  padding: EdgeInsets.symmetric(
-                    horizontal: ResponsiveHelper.spacing(context, 10),
-                    vertical: ResponsiveHelper.spacing(context, 4),
-                  ),
-                  decoration: BoxDecoration(
-                    color: review.isPublished 
-                        ? AppColors.success.withValues(alpha: 0.15)
-                        : AppColors.warning.withValues(alpha: 0.15),
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  child: Text(
-                    review.isPublished ? '공개됨' : '대기중',
-                    style: ResponsiveHelper.tinyStyle(context).copyWith(
-                      color: review.isPublished ? AppColors.success : AppColors.warning,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-                ),
-              ],
+                ],
+              ),
             ),
           ),
-          
-          // 본문
-          Padding(
-            padding: ResponsiveHelper.cardPadding(context),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                // 평점
-                Row(
-                  children: [
-                    ...List.generate(5, (i) => Icon(
-                      i < review.rating ? Icons.star : Icons.star_border,
-                      size: ResponsiveHelper.iconSize(context, 20),
-                      color: AppColors.amber,
-                    )),
-                    SizedBox(width: ResponsiveHelper.spacing(context, 8)),
-                    Text(
-                      '${review.rating}.0',
-                      style: ResponsiveHelper.bodyStyle(context).copyWith(
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                    
-                    // 재고용/재근무 의사
-                    if (review.wouldRehire != null) ...[
-                      SizedBox(width: ResponsiveHelper.spacing(context, 16)),
-                      Icon(
-                        review.wouldRehire! ? Icons.thumb_up : Icons.thumb_down,
-                        size: ResponsiveHelper.iconSize(context, 16),
-                        color: review.wouldRehire! ? AppColors.success : AppColors.error,
-                      ),
-                      SizedBox(width: ResponsiveHelper.spacing(context, 4)),
-                      Text(
-                        isWritten 
-                            ? (review.wouldRehire! ? '재고용 희망' : '재고용 비희망')
-                            : (review.wouldRehire! ? '재근무 희망' : '재근무 비희망'),
-                        style: ResponsiveHelper.smallStyle(context, color: AppColors.grey600),
-                      ),
-                    ],
-                  ],
-                ),
-                
-                // 태그
-                if (review.positiveTags.isNotEmpty || review.improvementTags.isNotEmpty) ...[
-                  SizedBox(height: ResponsiveHelper.spacing(context, 12)),
-                  Wrap(
-                    spacing: ResponsiveHelper.spacing(context, 6),
-                    runSpacing: ResponsiveHelper.spacing(context, 6),
-                    children: [
-                      ...review.positiveTags.map((tag) => _buildTag(context, tag, isPositive: true)),
-                      ...review.improvementTags.map((tag) => _buildTag(context, tag, isPositive: false)),
-                    ],
-                  ),
-                ],
-                
-                // 코멘트
-                if (review.comment != null && review.comment!.isNotEmpty) ...[
-                  SizedBox(height: ResponsiveHelper.spacing(context, 12)),
-                  Container(
-                    padding: ResponsiveHelper.cardPadding(context),
-                    decoration: BoxDecoration(
-                      color: AppColors.grey50,
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                    child: Text(
-                      review.comment!,
-                      style: ResponsiveHelper.smallStyle(context, color: AppColors.grey700),
-                    ),
-                  ),
-                ],
-                
-                // 근무 정보
-                SizedBox(height: ResponsiveHelper.spacing(context, 12)),
-                Row(
-                  children: [
-                    Icon(
-                      Icons.work_outline,
-                      size: ResponsiveHelper.iconSize(context, 14),
-                      color: AppColors.grey400,
-                    ),
-                    SizedBox(width: ResponsiveHelper.spacing(context, 4)),
-                    Text(
-                      '근무 ${review.workDaysInMonth}일',
-                      style: ResponsiveHelper.tinyStyle(context, color: AppColors.grey500),
-                    ),
-                    if (review.normalAttendanceDays > 0) ...[
-                      Text(
-                        ' · 정상 ${review.normalAttendanceDays}일',
-                        style: ResponsiveHelper.tinyStyle(context, color: AppColors.grey500),
-                      ),
-                    ],
-                    if (review.lateDays > 0) ...[
-                      Text(
-                        ' · 지각 ${review.lateDays}회',
-                        style: ResponsiveHelper.tinyStyle(context, color: AppColors.warning),
-                      ),
-                    ],
-                    Spacer(),
-                    Text(
-                      _formatDate(review.createdAt),
-                      style: ResponsiveHelper.tinyStyle(context, color: AppColors.grey400),
-                    ),
-                  ],
-                ),
-              ],
+        ),
+      ),
+    );
+  }
+
+  /// 상태 배지 — 컴팩트 (툴팁으로 공개 예정일 표시)
+  Widget _buildStatusBadgeCompact(BuildContext context, MonthlyReviewModel review) {
+    final color = review.isPublished ? AppColors.success : AppColors.warning;
+    final badge = Container(
+      padding: EdgeInsets.symmetric(
+        horizontal: ResponsiveHelper.spacing(context, 9),
+        vertical: ResponsiveHelper.spacing(context, 4),
+      ),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(20),
+      ),
+      child: Text(
+        review.publishStatusText,
+        style: ResponsiveHelper.tinyStyle(context).copyWith(
+          color: color,
+          fontWeight: FontWeight.bold,
+        ),
+      ),
+    );
+    if (review.isPublished) return badge;
+    return Tooltip(
+      message: _deadlineSubtext(review.requestId),
+      child: badge,
+    );
+  }
+
+  Widget _buildRehireBadge(BuildContext context, bool wouldRehire, bool isWritten) {
+    final color = wouldRehire ? AppColors.success : AppColors.error;
+    return Container(
+      padding: EdgeInsets.symmetric(
+        horizontal: ResponsiveHelper.spacing(context, 7),
+        vertical: ResponsiveHelper.spacing(context, 2),
+      ),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.1),
+        borderRadius: BorderRadius.circular(6),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(
+            wouldRehire ? Icons.thumb_up_rounded : Icons.thumb_down_rounded,
+            size: ResponsiveHelper.iconSize(context, 11),
+            color: color,
+          ),
+          SizedBox(width: ResponsiveHelper.spacing(context, 3)),
+          Text(
+            isWritten
+                ? (wouldRehire ? '재고용' : '비고용')
+                : (wouldRehire ? '재근무' : '비희망'),
+            style: ResponsiveHelper.tinyStyle(context).copyWith(
+              color: color,
+              fontWeight: FontWeight.w600,
             ),
           ),
         ],
@@ -441,25 +698,141 @@ class _AdminReviewListScreenState extends State<AdminReviewListScreen>
   }
 
   Widget _buildTag(BuildContext context, String tag, {required bool isPositive}) {
+    final color = isPositive ? AppColors.success : AppColors.warning;
     return Container(
       padding: EdgeInsets.symmetric(
         horizontal: ResponsiveHelper.spacing(context, 8),
         vertical: ResponsiveHelper.spacing(context, 4),
       ),
       decoration: BoxDecoration(
-        color: isPositive 
-            ? AppColors.success.withValues(alpha: 0.1)
-            : AppColors.warning.withValues(alpha: 0.1),
+        color: color.withValues(alpha: 0.1),
         borderRadius: BorderRadius.circular(6),
       ),
       child: Text(
         tag,
-        style: ResponsiveHelper.tinyStyle(context).copyWith(
-          color: isPositive ? AppColors.success : AppColors.warning,
+        style: ResponsiveHelper.tinyStyle(context).copyWith(color: color),
+      ),
+    );
+  }
+
+  void _showReviewDetail(MonthlyReviewModel review, {required bool isWritten}) {
+    showModalBottomSheet(
+      context: context,
+      useSafeArea: true,
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (ctx) => DraggableScrollableSheet(
+        expand: false,
+        initialChildSize: 0.6,
+        maxChildSize: 0.9,
+        builder: (_, controller) => ListView(
+          controller: controller,
+          padding: ResponsiveHelper.listPadding(context),
+          children: [
+            Center(
+              child: Container(
+                width: 40, height: 4,
+                margin: EdgeInsets.only(bottom: ResponsiveHelper.spacing(context, 16)),
+                decoration: BoxDecoration(
+                  color: AppColors.grey300,
+                  borderRadius: BorderRadius.circular(2),
+                ),
+              ),
+            ),
+            // 이름 + 메타
+            Text(
+              isWritten ? (review.targetUserName ?? '지원자') : review.reviewerName,
+              style: ResponsiveHelper.titleStyle(context).copyWith(fontWeight: FontWeight.bold),
+            ),
+            SizedBox(height: ResponsiveHelper.spacing(context, 4)),
+            Text(
+              '${review.businessName} · ${review.periodText}',
+              style: ResponsiveHelper.smallStyle(context, color: AppColors.grey500),
+            ),
+            SizedBox(height: ResponsiveHelper.spacing(context, 16)),
+            // 평점 + 재고용
+            Row(
+              children: [
+                ...List.generate(5, (i) => Icon(
+                  i < review.rating ? Icons.star_rounded : Icons.star_border_rounded,
+                  size: ResponsiveHelper.iconSize(context, 20),
+                  color: AppColors.amber,
+                )),
+                SizedBox(width: ResponsiveHelper.spacing(context, 6)),
+                Text(review.ratingText,
+                    style: ResponsiveHelper.bodyStyle(context)
+                        .copyWith(fontWeight: FontWeight.w600)),
+                if (review.wouldRehire != null) ...[
+                  SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+                  _buildRehireBadge(context, review.wouldRehire!, isWritten),
+                ],
+              ],
+            ),
+            // 태그
+            if (review.positiveTags.isNotEmpty || review.improvementTags.isNotEmpty) ...[
+              SizedBox(height: ResponsiveHelper.spacing(context, 12)),
+              Wrap(
+                spacing: ResponsiveHelper.spacing(context, 6),
+                runSpacing: ResponsiveHelper.spacing(context, 6),
+                children: [
+                  ...review.positiveTags.map((t) => _buildTag(context, t, isPositive: true)),
+                  ...review.improvementTags.map((t) => _buildTag(context, t, isPositive: false)),
+                ],
+              ),
+            ],
+            // 코멘트 전체
+            if (review.comment != null && review.comment!.isNotEmpty) ...[
+              SizedBox(height: ResponsiveHelper.spacing(context, 16)),
+              Text('코멘트',
+                  style: ResponsiveHelper.smallStyle(context)
+                      .copyWith(fontWeight: FontWeight.bold, color: AppColors.grey600)),
+              SizedBox(height: ResponsiveHelper.spacing(context, 6)),
+              Container(
+                width: double.infinity,
+                padding: ResponsiveHelper.listPadding(context),
+                decoration: BoxDecoration(
+                  color: AppColors.grey100,
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Text(
+                  review.comment!,
+                  style: ResponsiveHelper.bodyStyle(context),
+                ),
+              ),
+            ],
+            // 사업장 답변
+            if (!isWritten &&
+                review.businessResponse != null &&
+                review.businessResponse!.isNotEmpty) ...[
+              SizedBox(height: ResponsiveHelper.spacing(context, 12)),
+              Text('사업장 답변',
+                  style: ResponsiveHelper.smallStyle(context)
+                      .copyWith(fontWeight: FontWeight.bold, color: AppColors.info)),
+              SizedBox(height: ResponsiveHelper.spacing(context, 6)),
+              Container(
+                width: double.infinity,
+                padding: ResponsiveHelper.listPadding(context),
+                decoration: BoxDecoration(
+                  color: AppColors.info.withValues(alpha: 0.06),
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: AppColors.info.withValues(alpha: 0.2)),
+                ),
+                child: Text(
+                  review.businessResponse!,
+                  style: ResponsiveHelper.bodyStyle(context),
+                ),
+              ),
+            ],
+            SizedBox(height: ResponsiveHelper.spacing(context, 24)),
+          ],
         ),
       ),
     );
   }
+
+  // ─── 미작성 탭 ────────────────────────────────────────────────
 
   Widget _buildPendingRequestList() {
     if (_pendingRequests.isEmpty) {
@@ -482,94 +855,180 @@ class _AdminReviewListScreenState extends State<AdminReviewListScreen>
       );
     }
 
+    final filteredPending = _searchQuery.isEmpty
+        ? _pendingRequests
+        : _pendingRequests.where((r) =>
+            r.workerName.toLowerCase().contains(_searchQuery)).toList();
+
+    final activePending = filteredPending.where((r) => !r.isDeadlinePassed).toList();
+    final expiredPending = filteredPending.where((r) => r.isDeadlinePassed).toList();
+
     return RefreshIndicator(
       onRefresh: _loadReviews,
-      child: ListView.builder(
-        padding: ResponsiveHelper.cardPadding(context),
-        itemCount: _pendingRequests.length,
-        itemBuilder: (context, index) =>
-            _buildPendingRequestCard(context, _pendingRequests[index]),
+      child: ListView(
+        padding: ResponsiveHelper.listPadding(context),
+        children: [
+          ...activePending.map((req) => _buildPendingRequestCard(context, req)),
+          if (expiredPending.isNotEmpty) ...[
+            if (activePending.isNotEmpty)
+              Padding(
+                padding: EdgeInsets.symmetric(
+                    vertical: ResponsiveHelper.spacing(context, 8)),
+                child: Row(
+                  children: [
+                    const Expanded(child: Divider()),
+                    Padding(
+                      padding: EdgeInsets.symmetric(
+                          horizontal: ResponsiveHelper.spacing(context, 8)),
+                      child: Text(
+                        '기한 만료',
+                        style: ResponsiveHelper.tinyStyle(
+                            context, color: AppColors.grey400),
+                      ),
+                    ),
+                    const Expanded(child: Divider()),
+                  ],
+                ),
+              ),
+            ...expiredPending.map(
+                (req) => _buildPendingRequestCard(context, req, isExpired: true)),
+          ],
+        ],
       ),
     );
   }
 
-  Widget _buildPendingRequestCard(BuildContext context, ReviewRequestModel req) {
+  Widget _buildPendingRequestCard(BuildContext context, ReviewRequestModel req,
+      {bool isExpired = false}) {
     final theme = Theme.of(context);
     final isDeadlineSoon =
         !req.isDeadlinePassed && req.deadline.difference(DateTime.now()).inDays <= 3;
 
-    return Container(
-      margin: EdgeInsets.only(bottom: ResponsiveHelper.spacing(context, 12)),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(
-          color: isDeadlineSoon ? AppColors.error.withValues(alpha: 0.4) : Colors.transparent,
-        ),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(alpha: 0.04),
-            blurRadius: 8,
-            offset: const Offset(0, 2),
+    return Opacity(
+      opacity: isExpired ? 0.5 : 1.0,
+      child: Container(
+        margin: EdgeInsets.only(bottom: ResponsiveHelper.spacing(context, 12)),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(
+            color: isDeadlineSoon
+                ? AppColors.error.withValues(alpha: 0.4)
+                : Colors.transparent,
           ),
-        ],
-      ),
-      child: Padding(
-        padding: ResponsiveHelper.cardPadding(context),
-        child: Row(
-          children: [
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    children: [
-                      Icon(Icons.person, size: ResponsiveHelper.iconSize(context, 16), color: theme.primaryColor),
-                      SizedBox(width: ResponsiveHelper.spacing(context, 6)),
-                      Text(
-                        req.workerName,
-                        style: ResponsiveHelper.bodyStyle(context).copyWith(fontWeight: FontWeight.bold),
-                      ),
-                    ],
-                  ),
-                  SizedBox(height: ResponsiveHelper.spacing(context, 4)),
-                  Text(
-                    req.periodText,
-                    style: ResponsiveHelper.smallStyle(context, color: AppColors.grey500),
-                  ),
-                  SizedBox(height: ResponsiveHelper.spacing(context, 4)),
-                  Text(
-                    req.isDeadlinePassed
-                        ? '기한 만료'
-                        : '마감 ${req.deadline.month}/${req.deadline.day}'
-                            '${isDeadlineSoon ? ' (임박!)' : ''}',
-                    style: ResponsiveHelper.tinyStyle(
-                      context,
-                      color: req.isDeadlinePassed
-                          ? AppColors.grey400
-                          : isDeadlineSoon
-                              ? AppColors.error
-                              : AppColors.grey500,
-                    ),
+          boxShadow: isExpired
+              ? []
+              : [
+                  BoxShadow(
+                    color: Colors.black.withValues(alpha: 0.04),
+                    blurRadius: 8,
+                    offset: const Offset(0, 2),
                   ),
                 ],
+        ),
+        child: Padding(
+          padding: ResponsiveHelper.listPadding(context),
+          child: Row(
+            children: [
+              CircleAvatar(
+                radius: ResponsiveHelper.iconSize(context, 20),
+                backgroundColor: isExpired
+                    ? AppColors.grey200
+                    : theme.primaryColor.withValues(alpha: 0.15),
+                child: req.workerName.isNotEmpty
+                    ? Text(
+                        req.workerName[0],
+                        style: ResponsiveHelper.bodyStyle(context).copyWith(
+                          fontWeight: FontWeight.bold,
+                          color: isExpired
+                              ? AppColors.grey400
+                              : theme.primaryColor,
+                        ),
+                      )
+                    : Icon(Icons.person,
+                        size: ResponsiveHelper.iconSize(context, 18),
+                        color: isExpired ? AppColors.grey400 : theme.primaryColor),
               ),
-            ),
-            if (!req.isDeadlinePassed)
-              ElevatedButton(
-                onPressed: () => _openReviewFromRequest(req),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: theme.primaryColor,
-                  foregroundColor: Colors.white,
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-                  padding: EdgeInsets.symmetric(
-                    horizontal: ResponsiveHelper.spacing(context, 16),
-                    vertical: ResponsiveHelper.spacing(context, 8),
+              SizedBox(width: ResponsiveHelper.spacing(context, 12)),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      req.workerName.isNotEmpty ? req.workerName : '이름 없음',
+                      style: ResponsiveHelper.bodyStyle(context).copyWith(
+                        fontWeight: FontWeight.bold,
+                        color: isExpired
+                            ? AppColors.grey500
+                            : req.workerName.isEmpty
+                                ? AppColors.grey400
+                                : null,
+                      ),
+                    ),
+                    SizedBox(height: ResponsiveHelper.spacing(context, 2)),
+                    Text(
+                      req.periodText,
+                      style: ResponsiveHelper.smallStyle(
+                          context, color: AppColors.grey500),
+                    ),
+                    SizedBox(height: ResponsiveHelper.spacing(context, 2)),
+                    Row(
+                      children: [
+                        Icon(
+                          isExpired
+                              ? Icons.event_busy
+                              : isDeadlineSoon
+                                  ? Icons.alarm
+                                  : Icons.schedule,
+                          size: ResponsiveHelper.iconSize(context, 12),
+                          color: isExpired
+                              ? AppColors.grey400
+                              : isDeadlineSoon
+                                  ? AppColors.error
+                                  : AppColors.grey500,
+                        ),
+                        SizedBox(width: ResponsiveHelper.spacing(context, 4)),
+                        Text(
+                          isExpired
+                              ? '기한 만료 (${_formatDate(req.deadline)})'
+                              : '마감 ${_formatDate(req.deadline)}'
+                                  '${isDeadlineSoon ? ' · 임박!' : ''}',
+                          style: ResponsiveHelper.tinyStyle(
+                            context,
+                            color: isExpired
+                                ? AppColors.grey400
+                                : isDeadlineSoon
+                                    ? AppColors.error
+                                    : AppColors.grey500,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+              if (!req.isDeadlinePassed)
+                ElevatedButton(
+                  onPressed: () => _openReviewFromRequest(req),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor:
+                        isDeadlineSoon ? AppColors.error : theme.primaryColor,
+                    foregroundColor: Colors.white,
+                    shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(10)),
+                    padding: EdgeInsets.symmetric(
+                      horizontal: ResponsiveHelper.spacing(context, 16),
+                      vertical: ResponsiveHelper.spacing(context, 8),
+                    ),
+                  ),
+                  child: Text(
+                    '작성',
+                    style: ResponsiveHelper.smallStyle(context,
+                        color: Colors.white),
                   ),
                 ),
-                child: Text('리뷰 작성', style: ResponsiveHelper.smallStyle(context, color: Colors.white)),
-              ),
-          ],
+            ],
+          ),
         ),
       ),
     );
@@ -580,6 +1039,44 @@ class _AdminReviewListScreenState extends State<AdminReviewListScreen>
     final reviewer = userProvider.currentUser;
     if (reviewer == null) return;
 
+    // worker 성별/나이 + 실제 근무일 수 병렬 조회
+    String? workerGender;
+    int? workerAge;
+    int workDaysInMonth = 0;
+
+    final yearMonthStr =
+        '${req.reviewYear}-${req.reviewMonth.toString().padLeft(2, '0')}';
+
+    try {
+      final results = await Future.wait([
+        FirebaseFirestore.instance.collection('users').doc(req.workerId).get(),
+        FirebaseFirestore.instance
+            .collection('attendance')
+            .where('userId', isEqualTo: req.workerId)
+            .where('businessId', isEqualTo: req.businessId)
+            .where('yearMonth', isEqualTo: yearMonthStr)
+            .where('wageStatus', whereIn: [
+              'confirmed',
+              'transferred',
+            ])
+            .get(),
+      ]);
+
+      final userSnap = results[0] as DocumentSnapshot<Map<String, dynamic>>;
+      if (userSnap.exists && userSnap.data() != null) {
+        final worker = UserModel.fromMap(userSnap.data()!, userSnap.id);
+        workerGender = worker.gender;
+        workerAge = worker.age;
+      }
+
+      final attSnap = results[1] as QuerySnapshot<Map<String, dynamic>>;
+      workDaysInMonth = attSnap.docs.length;
+    } catch (e) {
+      debugPrint('❌ 리뷰 요청 정보 로드 실패: $e');
+    }
+
+    if (!mounted) return;
+
     final result = await showMonthlyReviewDialog(
       context,
       reviewerId: reviewer.uid,
@@ -588,9 +1085,11 @@ class _AdminReviewListScreenState extends State<AdminReviewListScreen>
       businessName: req.businessName,
       targetUserId: req.workerId,
       targetUserName: req.workerName,
+      targetUserGender: workerGender,
+      targetUserAge: workerAge,
       reviewYear: req.reviewYear,
       reviewMonth: req.reviewMonth,
-      workDaysInMonth: 1,
+      workDaysInMonth: workDaysInMonth,
       requestId: req.id,
     );
 
@@ -599,7 +1098,46 @@ class _AdminReviewListScreenState extends State<AdminReviewListScreen>
     }
   }
 
-  String _formatDate(DateTime date) {
-    return '${date.month}/${date.day}';
+  String _deadlineSubtext(String? requestId) {
+    if (requestId == null) return '상대방 작성 후 공개';
+    final deadline = _requestDeadlines[requestId];
+    if (deadline == null) return '상대방 작성 후 공개';
+    return '상대방 미작성 시 ${deadline.month}/${deadline.day} 자동공개';
+  }
+
+  String _formatDate(DateTime date) => FormatHelper.formatDateDot(date);
+}
+
+// ─── 연도 네비게이션 버튼 ────────────────────────────────────────
+
+class _YearNavButton extends StatelessWidget {
+  final IconData icon;
+  final bool enabled;
+  final VoidCallback onTap;
+
+  const _YearNavButton({
+    required this.icon,
+    required this.enabled,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: enabled ? AppColors.grey100 : Colors.transparent,
+      borderRadius: BorderRadius.circular(8),
+      child: InkWell(
+        onTap: enabled ? onTap : null,
+        borderRadius: BorderRadius.circular(8),
+        child: Padding(
+          padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 6)),
+          child: Icon(
+            icon,
+            size: ResponsiveHelper.iconSize(context, 20),
+            color: enabled ? AppColors.grey600 : AppColors.grey300,
+          ),
+        ),
+      ),
+    );
   }
 }

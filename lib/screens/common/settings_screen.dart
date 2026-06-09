@@ -9,6 +9,7 @@ import 'package:package_info_plus/package_info_plus.dart';
 
 // Models
 import '../../models/core/user_model.dart';
+import '../../models/core/to_model.dart';
 
 // Providers
 import '../../providers/user_provider.dart';
@@ -1351,6 +1352,48 @@ class _SettingsScreenState extends State<SettingsScreen> {
               setModal(() => errorMsg = '비밀번호를 입력해주세요');
               return;
             }
+
+            // BUSINESS_ADMIN: 활성 TO/계약 사전 확인
+            final currentUser = userProvider.currentUser;
+            if (currentUser?.isBusinessAdmin == true &&
+                currentUser?.businessId != null) {
+              setModal(() { isLoading = true; errorMsg = null; });
+              final activeToSnap = await FirebaseFirestore.instance
+                  .collection('tos')
+                  .where('businessId', isEqualTo: currentUser!.businessId)
+                  .where('status', whereIn: [
+                    TOStatus.active, TOStatus.full, TOStatus.scheduled
+                  ])
+                  .limit(1)
+                  .get();
+              setModal(() => isLoading = false);
+              if (!ctx.mounted) return;
+
+              if (activeToSnap.docs.isNotEmpty) {
+                final proceed = await showDialog<bool>(
+                  context: ctx,
+                  builder: (dCtx) => AlertDialog(
+                    title: const Text('활성 공고 있음'),
+                    content: const Text(
+                      '현재 활성 공고가 있습니다.\n탈퇴하면 공고·계약·근무자 데이터가 모두 삭제됩니다.\n계속하시겠습니까?',
+                    ),
+                    actions: [
+                      TextButton(
+                        onPressed: () => Navigator.pop(dCtx, false),
+                        child: const Text('취소'),
+                      ),
+                      TextButton(
+                        onPressed: () => Navigator.pop(dCtx, true),
+                        style: TextButton.styleFrom(foregroundColor: Colors.red),
+                        child: const Text('탈퇴 진행'),
+                      ),
+                    ],
+                  ),
+                );
+                if (proceed != true || !ctx.mounted) return;
+              }
+            }
+
             setModal(() {
               isLoading = true;
               errorMsg = null;

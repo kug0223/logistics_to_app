@@ -686,6 +686,10 @@ extension ApplicationFirestore on FirestoreService {
       if (toId != null) {
         if (AppStatus.confirmedStatuses.contains(prevStatus)) {
           _decrementTOConfirmed(batch, toId, slotId, workType: selectedWorkType);
+          // confirmed → pending 롤백 시 pendingCount도 복원
+          if (status == AppStatus.pending) {
+            _incrementTOPending(batch, toId, slotId, delta: 1, workType: selectedWorkType);
+          }
         } else if (prevStatus == AppStatus.pending) {
           _incrementTOPending(batch, toId, slotId, delta: -1, workType: selectedWorkType);
         }
