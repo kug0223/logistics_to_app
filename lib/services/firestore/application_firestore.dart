@@ -107,6 +107,13 @@ extension ApplicationFirestore on FirestoreService {
 
   /// 내 지원 내역 조회 (사용자용)
   Future<List<ApplicationModel>> getMyApplications(String uid) async {
+    // TTL 캐시 — 1분 내 동일 uid 재조회 시 캐시 반환
+    final cached = _myApplicationsCache[uid];
+    final ts = _myApplicationsCacheTimestamps[uid];
+    if (cached != null && ts != null &&
+        DateTime.now().difference(ts) < FirestoreService._myApplicationsCacheTTL) {
+      return cached;
+    }
     try {
       final snap = await _firestore
           .collection('applications')
@@ -114,12 +121,52 @@ extension ApplicationFirestore on FirestoreService {
           .orderBy('appliedAt', descending: true)
           .limit(200)
           .get();
-      return snap.docs
+      final result = snap.docs
           .map((d) => ApplicationModel.fromFirestore(d))
           .toList();
+      _myApplicationsCache[uid] = result;
+      _myApplicationsCacheTimestamps[uid] = DateTime.now();
+      return result;
     } catch (e) {
       debugPrint('내 지원 내역 조회 실패: $e');
-      return [];
+      return cached ?? []; // 캐시 만료 후 실패 시 기존 캐시 반환
+    }
+  }
+
+  /// 내 지원 내역 페이지네이션 조회 (내 지원 화면 전용)
+  ///
+  /// [startAfter] cursor — null이면 첫 페이지
+  /// 반환: {items, lastDoc, hasMore}
+  Future<Map<String, dynamic>> getMyApplicationsPaged({
+    required String uid,
+    int pageSize = 20,
+    DocumentSnapshot? startAfter,
+    String? statusFilter, // null = 전체, 'active', 'inactive'
+  }) async {
+    try {
+      Query query = _firestore
+          .collection('applications')
+          .where('uid', isEqualTo: uid)
+          .orderBy('appliedAt', descending: true);
+
+      if (statusFilter == 'active') {
+        query = query.where('status', whereIn: AppStatus.activeStates);
+      } else if (statusFilter == 'inactive') {
+        query = query.where('status', whereIn: AppStatus.inactiveStates);
+      }
+
+      query = query.limit(pageSize);
+      if (startAfter != null) query = query.startAfterDocument(startAfter);
+
+      final snap = await query.get();
+      return {
+        'items': snap.docs.map((d) => ApplicationModel.fromFirestore(d)).toList(),
+        'lastDoc': snap.docs.isNotEmpty ? snap.docs.last : null,
+        'hasMore': snap.docs.length == pageSize,
+      };
+    } catch (e) {
+      debugPrint('지원 내역 페이지 조회 실패: $e');
+      return {'items': <ApplicationModel>[], 'lastDoc': null, 'hasMore': false};
     }
   }
 
@@ -137,6 +184,7 @@ extension ApplicationFirestore on FirestoreService {
     required DateTime workDate,
     required String uid,
     required String selectedWorkType,
+    String? workDetailId,
     required String startTime,
     required String endTime,
     required int wage,
@@ -149,6 +197,7 @@ extension ApplicationFirestore on FirestoreService {
     List<String>? workDays,
     DateTime? desiredStartDate,
   }) async {
+    NetworkChecker.instance.assertOnline('지원하려면 인터넷 연결이 필요합니다.');
     try {
       // ── 1. 사용자 서류 체크 ──
       final userDoc = await _firestore.collection('users').doc(uid).get();
@@ -170,6 +219,35 @@ extension ApplicationFirestore on FirestoreService {
         return false;
       }
 
+      // ── 1.1. 블랙리스트 체크 ──
+      if (userData['isBlacklisted'] == true) {
+        final reason = userData['blacklistReason'] as String? ?? '이용 정책 위반';
+        ToastHelper.showError('이용 제한된 계정입니다.\n사유: $reason\n고객센터에 문의해주세요.');
+        return false;
+      }
+
+      // ── 1.2. 이메일 인증 체크 ──
+      if (userData['isEmailVerified'] != true) {
+        ToastHelper.showError('이메일 인증이 필요합니다.\n설정 > 이메일 인증에서 완료해주세요.');
+        return false;
+      }
+
+      // ── 1.3. 신분증 인증 체크 (단기 공고 지원 시 필수) ──
+      // 장기공고(contract type)는 계약서 서명 시 신분증 확인하므로 여기서는 단기만 체크
+      if (userData['isIdVerified'] != true) {
+        ToastHelper.showError('신분증 인증 후 지원할 수 있습니다.\n설정 > 서류 관리에서 신분증을 등록해주세요.');
+        return false;
+      }
+
+      // ── 1.4. 제재 상태 체크 ──
+      final restrictedUntilTs = userData['restrictedUntil'] as Timestamp?;
+      if (restrictedUntilTs != null && restrictedUntilTs.toDate().isAfter(DateTime.now())) {
+        final restrictedDate = restrictedUntilTs.toDate().toLocal();
+        final remainDays = restrictedDate.difference(DateTime.now()).inDays + 1;
+        ToastHelper.showError('무단 결근 페널티로 $remainDays일 동안 지원이 제한됩니다.\n(해제일: ${restrictedDate.month}/${restrictedDate.day})');
+        return false;
+      }
+
       // ── 1.5. TO / 슬롯 상태 · 마감 · 정원 체크 ──
       final toDoc = await _firestore.collection('tos').doc(toId).get();
       if (!toDoc.exists) {
@@ -177,8 +255,18 @@ extension ApplicationFirestore on FirestoreService {
         return false;
       }
       final toData = toDoc.data()!;
+      if (toData['status'] == TOStatus.draft) {
+        ToastHelper.showError('비공개 공고에는 지원할 수 없습니다.');
+        return false;
+      }
       if (toData['isManualClosed'] == true || toData['status'] == TOStatus.closed) {
         ToastHelper.showError('마감된 공고입니다.');
+        return false;
+      }
+      // 게시 기간 만료 또는 지원 마감일 경과 체크 (contract 타입)
+      final toModel = TOModel.fromMap(toData, toId);
+      if (toModel.isPostingExpired || toModel.isDeadlinePassed) {
+        ToastHelper.showError('지원 마감된 공고입니다.');
         return false;
       }
 
@@ -214,11 +302,11 @@ extension ApplicationFirestore on FirestoreService {
           return false;
         }
 
-        final requiredCount = workDetailMap['requiredCount'] as int? ?? 0;
+        final requiredCount = (workDetailMap['requiredCount'] as num?)?.toInt() ?? 0;
 
         final rawCounts = slotData['workTypeCounts'] as Map<String, dynamic>?;
         final workTypeCount = rawCounts?[selectedWorkType] as Map<String, dynamic>?;
-        final confirmedCount = workTypeCount?['confirmedCount'] as int? ?? 0;
+        final confirmedCount = (workTypeCount?['confirmedCount'] as num?)?.toInt() ?? 0;
 
         if (requiredCount > 0 && confirmedCount >= requiredCount) {
           ToastHelper.showError('해당 업무의 모집 인원이 마감되었습니다.');
@@ -230,21 +318,37 @@ extension ApplicationFirestore on FirestoreService {
           ToastHelper.showError('지원 마감 시간이 지났습니다.');
           return false;
         }
-        final confirmedCount = toData['totalConfirmed'] as int? ?? 0;
-        final totalRequired = toData['totalRequired'] as int? ?? 0;
+        final confirmedCount = (toData['totalConfirmed'] as num?)?.toInt() ?? 0;
+        final totalRequired = (toData['totalRequired'] as num?)?.toInt() ?? 0;
         if (totalRequired > 0 && confirmedCount >= totalRequired) {
           ToastHelper.showError('모집 인원이 마감되었습니다.');
           return false;
         }
+        // 업무유형별 정원 초과 체크 (contract TO)
+        final rawWorkDetails = toData['workDetails'] as List<dynamic>? ?? [];
+        final workTypeConfirmed = ((toData['workTypeConfirmedCounts'] as Map<String, dynamic>? ?? {})[selectedWorkType] as num?)?.toInt() ?? 0;
+        for (final wd in rawWorkDetails.cast<Map<String, dynamic>>()) {
+          if (wd['workType'] == selectedWorkType) {
+            final workTypeRequired = (wd['requiredCount'] as num?)?.toInt() ?? 0;
+            if (workTypeRequired > 0 && workTypeConfirmed >= workTypeRequired) {
+              ToastHelper.showError('해당 업무의 모집 인원이 마감되었습니다.');
+              return false;
+            }
+            break;
+          }
+        }
       }
 
       // ── 2. 중복 지원 체크 ──
-      final dupQuery = await _firestore
+      Query<Map<String, dynamic>> dupQ = _firestore
           .collection('applications')
           .where('toId', isEqualTo: toId)
           .where('uid', isEqualTo: uid)
-          .where('selectedWorkType', isEqualTo: selectedWorkType)
-          .get();
+          .where('selectedWorkType', isEqualTo: selectedWorkType);
+      if (slotId != null) {
+        dupQ = dupQ.where('slotId', isEqualTo: slotId);
+      }
+      final dupQuery = await dupQ.get();
 
       DocumentSnapshot? activeApp;
       DocumentSnapshot? reactivatableApp;
@@ -258,12 +362,11 @@ extension ApplicationFirestore on FirestoreService {
         final isTermDone = ['APPROVED', 'AUTO_APPROVED']
             .contains(data['terminationStatus']);
         if (isResignDone || isTermDone) continue;
-        if (status == 'PENDING' || status == 'CONFIRMED') {
+        if (AppStatus.activeStates.contains(status)) {
           activeApp = doc;
           break;
         }
-        if (status == 'CANCELED' || status == 'REJECTED' ||
-            status == 'AUTO_CANCELED') {
+        if (AppStatus.inactiveStates.contains(status)) {
           reactivatableApp = doc;
         }
       }
@@ -274,33 +377,55 @@ extension ApplicationFirestore on FirestoreService {
       }
 
       // ── 3. 시간 충돌 체크 ──
-      final isContract = workDays != null && workDays.isNotEmpty;
+      final toType = toData['type'] as String? ?? TOType.flex;
+      final isContract = toType == TOType.contract || (workDays != null && workDays.isNotEmpty);
       final confirmedSnap = await _firestore
           .collection('applications')
           .where('uid', isEqualTo: uid)
-          .where('status', isEqualTo: 'CONFIRMED')
+          .where('status', whereIn: AppStatus.confirmedStatuses)
           .get();
       final allConfirmed = confirmedSnap.docs
           .map((d) => ApplicationModel.fromFirestore(d))
           .toList();
 
-      if (isContract && workEndDate != null) {
-        var current = desiredStartDate ?? workDate;
-        while (!current.isAfter(workEndDate)) {
-          if (workDays.contains(FormatHelper.weekday(current))) {
-            for (final s in allConfirmed) {
-              if (s.isWorkingOnDate(current) &&
-                  ApplicationModel.hasTimeOverlap(startTime, endTime, s.startTime, s.endTime)) {
-                ToastHelper.showError(
-                  '${current.month}/${current.day}에\n'
-                  '${s.startTime}~${s.endTime} (${s.businessName})\n'
-                  '확정된 근무가 있어 지원할 수 없습니다.',
-                );
-                return false;
-              }
-            }
+      if (isContract && workEndDate != null && workDays != null && workDays.isNotEmpty) {
+        // 장기 충돌 체크: 날짜 루프 대신 기존 확정 지원서 레벨 검사 O(confirmedApps)
+        final newStart = DateTime.fromMillisecondsSinceEpoch(
+            (desiredStartDate ?? workDate).millisecondsSinceEpoch);
+        final newStartOnly = DateTime(newStart.year, newStart.month, newStart.day);
+        final newEndOnly   = DateTime(workEndDate.year, workEndDate.month, workEndDate.day);
+
+        for (final s in allConfirmed) {
+          if (!ApplicationModel.hasTimeOverlap(startTime, endTime, s.startTime, s.endTime)) {
+            continue;
           }
-          current = current.add(const Duration(days: 1));
+          if (s.isLongTermApplication) {
+            final sEnd = s.actualResignDate ?? s.workEndDate;
+            if (sEnd == null) continue;
+            final sStartOnly = DateTime(s.workDate.year, s.workDate.month, s.workDate.day);
+            final sEndOnly   = DateTime(sEnd.year, sEnd.month, sEnd.day);
+            if (newEndOnly.isBefore(sStartOnly) || newStartOnly.isAfter(sEndOnly)) continue;
+            final sWorkDays = s.workDays ?? [];
+            if (!workDays.any((d) => sWorkDays.contains(d))) continue;
+            final conflictDay = workDays.firstWhere((d) => sWorkDays.contains(d));
+            ToastHelper.showError(
+              '매주 $conflictDay에\n'
+              '${s.startTime}~${s.endTime} (${s.businessName})\n'
+              '확정된 근무가 있어 지원할 수 없습니다.',
+            );
+            return false;
+          } else {
+            // 단기 확정 지원서
+            final sDate = DateTime(s.workDate.year, s.workDate.month, s.workDate.day);
+            if (sDate.isBefore(newStartOnly) || sDate.isAfter(newEndOnly)) continue;
+            if (!workDays.contains(FormatHelper.weekday(s.workDate))) continue;
+            ToastHelper.showError(
+              '${s.workDate.month}/${s.workDate.day}에\n'
+              '${s.startTime}~${s.endTime} (${s.businessName})\n'
+              '확정된 근무가 있어 지원할 수 없습니다.',
+            );
+            return false;
+          }
         }
       } else {
         for (final s in allConfirmed) {
@@ -321,7 +446,11 @@ extension ApplicationFirestore on FirestoreService {
       if (reactivatableApp != null) {
         batch.update(reactivatableApp.reference, {
           'status': 'PENDING',
+          'type': isContract ? AppType.longTerm : AppType.shortTerm,
           'appliedAt': FieldValue.serverTimestamp(),
+          // 재지원 날짜·슬롯 정보 갱신 (다른 날짜/슬롯으로 재지원 시 정합성 보장)
+          'workDate': Timestamp.fromDate(workDate),
+          if (slotId != null) 'slotId': slotId,
           'statusHistory': FieldValue.arrayUnion([{
             'status': 'PENDING',
             'at': Timestamp.now(),
@@ -335,6 +464,20 @@ extension ApplicationFirestore on FirestoreService {
           'rejectMessage': null,
           'confirmedAt': null,
           'confirmedBy': null,
+          // 이전 자동취소 충돌 정보 초기화
+          'conflictingAppId': null,
+          'conflictingBusiness': null,
+          'conflictingTime': null,
+          // 이전 퇴사/해지 이력 초기화
+          'resignStatus': null,
+          'resignRequestedAt': null,
+          'resignRequestDate': null,
+          'actualResignDate': null,
+          'terminationStatus': null,
+          'terminationRequestedAt': null,
+          'terminationEffectiveDate': null,
+          'terminationRejectReason': null,
+          if (workDetailId != null && workDetailId.isNotEmpty) 'workDetailId': workDetailId,
           if (desiredStartDate != null)
             'desiredStartDate': Timestamp.fromDate(desiredStartDate),
           if (workEndDate != null)
@@ -344,14 +487,19 @@ extension ApplicationFirestore on FirestoreService {
         _incrementTOPending(batch, toId, slotId, delta: 1, workType: selectedWorkType);
         await batch.commit();
         clearCache(toId: toId);
-        _sendNewApplicationNotification(
-          businessId: businessId,
-          applicantUid: uid,
-          workType: selectedWorkType,
-          workDate: workDate,
-          applicationId: reactivatableApp.id,
-          toId: toId,
-        );
+        invalidateMyApplicationsCache(uid);
+        try {
+          _sendNewApplicationNotification(
+            businessId: businessId,
+            applicantUid: uid,
+            workType: selectedWorkType,
+            workDate: workDate,
+            applicationId: reactivatableApp.id,
+            toId: toId,
+          );
+        } catch (notifErr) {
+          debugPrint('⚠️ 재지원 알림 전송 실패 (지원은 완료됨): $notifErr');
+        }
         debugPrint('✅ 재지원 완료: $toId');
         return true;
       }
@@ -365,6 +513,7 @@ extension ApplicationFirestore on FirestoreService {
         if (slotId != null) 'slotId': slotId,
         'toTitle': toTitle,
         'selectedWorkType': selectedWorkType,
+        if (workDetailId != null && workDetailId.isNotEmpty) 'workDetailId': workDetailId,
         'wage': wage,
         'wageType': wageType,
         'workTypeIcon': workTypeIcon,
@@ -374,6 +523,7 @@ extension ApplicationFirestore on FirestoreService {
         'startTime': startTime,
         'endTime': endTime,
         'status': 'PENDING',
+        'type': isContract ? 'long_term' : 'short',
         'appliedAt': FieldValue.serverTimestamp(),
         'statusHistory': [{
           'status': 'PENDING',
@@ -391,17 +541,78 @@ extension ApplicationFirestore on FirestoreService {
               : null,
         },
       });
+      // 최종 정원/마감 재검증 — TOCTOU 방지 (read-check 이후 상태가 변경됐을 수 있음)
+      if (slotId != null) {
+        final slotRef = _firestore.collection('tos').doc(toId).collection('slots').doc(slotId);
+        await _firestore.runTransaction((tx) async {
+          final snap = await tx.get(slotRef);
+          if (!snap.exists) throw Exception('해당 날짜 정보를 찾을 수 없습니다.');
+          final d = snap.data()!;
+          if (d['isManualClosed'] == true || d['status'] == SlotStatus.closed) {
+            throw Exception('방금 마감된 날짜입니다.');
+          }
+          final rawWD = d['workDetails'] as List<dynamic>? ?? [];
+          final wd = rawWD.cast<Map<String, dynamic>>()
+              .firstWhere((x) => x['workType'] == selectedWorkType, orElse: () => {});
+          final deadlineTs = wd['applicationDeadline'] as Timestamp?;
+          if (deadlineTs != null && deadlineTs.toDate().isBefore(DateTime.now())) {
+            throw Exception('방금 마감된 업무입니다.');
+          }
+          final req = (wd['requiredCount'] as num?)?.toInt() ?? 0;
+          final rawCounts = d['workTypeCounts'] as Map<String, dynamic>?;
+          final cnt = ((rawCounts?[selectedWorkType] as Map<String, dynamic>?)?['confirmedCount'] as num?)?.toInt() ?? 0;
+          if (req > 0 && cnt >= req) throw Exception('방금 마감된 업무입니다. (정원 초과)');
+        });
+      } else {
+        // Contract TO (슬롯 없음): TO 문서 기준 최종 정원·마감 재검증
+        final toRef = _firestore.collection('tos').doc(toId);
+        await _firestore.runTransaction((tx) async {
+          final snap = await tx.get(toRef);
+          if (!snap.exists) throw Exception('공고를 찾을 수 없습니다.');
+          final d = snap.data()!;
+          if (d['isManualClosed'] == true || d['status'] == TOStatus.closed) {
+            throw Exception('방금 마감된 공고입니다.');
+          }
+          final deadlineTs = d['applicationDeadline'] as Timestamp?;
+          if (deadlineTs != null && deadlineTs.toDate().isBefore(DateTime.now())) {
+            throw Exception('지원 마감 시간이 지났습니다.');
+          }
+          final confirmedCount = (d['totalConfirmed'] as num?)?.toInt() ?? 0;
+          final totalRequired = (d['totalRequired'] as num?)?.toInt() ?? 0;
+          if (totalRequired > 0 && confirmedCount >= totalRequired) {
+            throw Exception('방금 마감된 공고입니다. (정원 초과)');
+          }
+          final rawWorkDetails = d['workDetails'] as List<dynamic>? ?? [];
+          final confirmedCounts = d['workTypeConfirmedCounts'] as Map<String, dynamic>?;
+          final workTypeConfirmed = (confirmedCounts?[selectedWorkType] as num?)?.toInt() ?? 0;
+          for (final wd in rawWorkDetails.cast<Map<String, dynamic>>()) {
+            if (wd['workType'] == selectedWorkType) {
+              final workTypeRequired = (wd['requiredCount'] as num?)?.toInt() ?? 0;
+              if (workTypeRequired > 0 && workTypeConfirmed >= workTypeRequired) {
+                throw Exception('방금 마감된 업무입니다. (정원 초과)');
+              }
+              break;
+            }
+          }
+        });
+      }
+
       _incrementTOPending(batch, toId, slotId, delta: 1, workType: selectedWorkType);
       await batch.commit();
       clearCache(toId: toId);
-      _sendNewApplicationNotification(
-        businessId: businessId,
-        applicantUid: uid,
-        workType: selectedWorkType,
-        workDate: workDate,
-        applicationId: appRef.id,
-        toId: toId,
-      );
+      invalidateMyApplicationsCache(uid); // 내 지원 목록 캐시 무효화
+      try {
+        _sendNewApplicationNotification(
+          businessId: businessId,
+          applicantUid: uid,
+          workType: selectedWorkType,
+          workDate: workDate,
+          applicationId: appRef.id,
+          toId: toId,
+        );
+      } catch (notifErr) {
+        debugPrint('⚠️ 지원 알림 전송 실패 (지원은 완료됨): $notifErr');
+      }
       debugPrint('✅ 지원 완료: $toTitle / $selectedWorkType');
       return true;
     } catch (e) {
@@ -425,7 +636,7 @@ extension ApplicationFirestore on FirestoreService {
     String? message,
   }) async {
     try {
-      if (status == 'CONFIRMED') {
+      if (status == AppStatus.confirmed) {
         return await _confirmWithConflictCheck(
           applicationId: applicationId,
           confirmedBy: confirmedBy,
@@ -445,27 +656,37 @@ extension ApplicationFirestore on FirestoreService {
       final slotId = appData['slotId'] as String?;
       final selectedWorkType = appData['selectedWorkType'] as String?;
 
+      // 확정/계약 서명 상태는 거절로 전이 불가 (cancelConfirmedApplication() 사용)
+      if (status == AppStatus.rejected &&
+          (AppStatus.confirmedStatuses.contains(prevStatus) ||
+           prevStatus == AppStatus.contractPending)) {
+        ToastHelper.showError('확정된 지원서는 거절할 수 없습니다.\n취소 처리를 이용해주세요.');
+        return [];
+      }
+
       final updates = <String, dynamic>{'status': status};
-      if (status == 'REJECTED') {
+      if (status == AppStatus.rejected) {
         updates['rejectedAt'] = FieldValue.serverTimestamp();
         if (rejectedBy != null) updates['rejectedBy'] = rejectedBy;
         if (message != null) updates['rejectMessage'] = message;
-        updates['statusHistory'] = FieldValue.arrayUnion([{
+        final newEntry = {
           'status': 'REJECTED',
           'at': Timestamp.now(),
           'by': rejectedBy,
           'action': 'REJECT',
           if (message != null) 'reason': message,
-        }]);
+        };
+        final history = _appendHistory(appData, newEntry);
+        updates['statusHistory'] = history;
       }
 
       final batch = _firestore.batch();
       batch.update(appDoc.reference, updates);
 
       if (toId != null) {
-        if (prevStatus == 'CONFIRMED') {
+        if (AppStatus.confirmedStatuses.contains(prevStatus)) {
           _decrementTOConfirmed(batch, toId, slotId, workType: selectedWorkType);
-        } else if (prevStatus == 'PENDING') {
+        } else if (prevStatus == AppStatus.pending) {
           _incrementTOPending(batch, toId, slotId, delta: -1, workType: selectedWorkType);
         }
       }
@@ -475,21 +696,23 @@ extension ApplicationFirestore on FirestoreService {
 
       // 알림
       final applicantUid = appData['uid'] as String;
-      if (prevStatus == 'CONFIRMED') {
+      if (AppStatus.confirmedStatuses.contains(prevStatus)) {
         await createNotification(NotificationModel.createConfirmationCanceled(
           userId: applicantUid,
           businessName: appData['businessName'] as String,
+          businessId: appData['businessId'] as String? ?? '',
           workType: appData['selectedWorkType'] as String,
-          workDate: (appData['workDate'] as Timestamp).toDate(),
+          workDate: (appData['workDate'] as Timestamp?)?.toDate().toLocal() ?? DateTime.now(),
           applicationId: applicationId,
           cancelReason: message,
         ));
-      } else if (prevStatus == 'PENDING' && status == 'REJECTED') {
+      } else if (prevStatus == AppStatus.pending && status == AppStatus.rejected) {
         await createNotification(NotificationModel.createApplicationRejected(
           userId: applicantUid,
           businessName: appData['businessName'] as String,
+          businessId: appData['businessId'] as String? ?? '',
           workType: appData['selectedWorkType'] as String,
-          workDate: (appData['workDate'] as Timestamp).toDate(),
+          workDate: (appData['workDate'] as Timestamp?)?.toDate().toLocal() ?? DateTime.now(),
           applicationId: applicationId,
           rejectReason: message,
         ));
@@ -503,6 +726,7 @@ extension ApplicationFirestore on FirestoreService {
 
   /// 지원 취소 (사용자용 — PENDING 상태만)
   Future<bool> cancelApplication(String applicationId, String uid) async {
+    NetworkChecker.instance.assertOnline('지원 취소를 하려면 인터넷 연결이 필요합니다.');
     try {
       final appDoc = await _firestore
           .collection('applications')
@@ -517,9 +741,15 @@ extension ApplicationFirestore on FirestoreService {
         ToastHelper.showError('본인의 지원서만 취소할 수 있습니다.');
         return false;
       }
-      if (appData['status'] == 'CONFIRMED') {
+      final currentStatus = appData['status'] as String?;
+      if (AppStatus.confirmedStatuses.contains(currentStatus)) {
         ToastHelper.showError('확정된 TO는 취소할 수 없습니다.\n관리자에게 문의해주세요.');
         return false;
+      }
+      // REJECTED/AUTO_CANCELED 는 이미 비활성 — pendingCount 이중 감소 방지
+      if (AppStatus.inactiveStates.contains(currentStatus)) {
+        ToastHelper.showInfo('이미 취소된 지원서입니다.');
+        return true;
       }
 
       final toId = appData['toId'] as String?;
@@ -529,18 +759,19 @@ extension ApplicationFirestore on FirestoreService {
       batch.update(appDoc.reference, {
         'status': 'CANCELED',
         'canceledAt': FieldValue.serverTimestamp(),
-        'statusHistory': FieldValue.arrayUnion([{
+        'statusHistory': _appendHistory(appData, {
           'status': 'CANCELED',
           'at': Timestamp.now(),
           'by': uid,
           'action': 'CANCEL',
-        }]),
+        }),
       });
       if (toId != null) {
         _incrementTOPending(batch, toId, slotId, delta: -1, workType: selectedWorkType);
       }
       await batch.commit();
       if (toId != null) clearCache(toId: toId);
+      invalidateMyApplicationsCache(uid); // 내 지원 목록 캐시 무효화
 
       await _cleanupApplicationRelatedData(
         applicationId: applicationId,
@@ -551,7 +782,7 @@ extension ApplicationFirestore on FirestoreService {
           businessId: appData['businessId'] as String,
           applicantUid: uid,
           workType: appData['selectedWorkType'] as String? ?? '',
-          workDate: (appData['workDate'] as Timestamp).toDate(),
+          workDate: (appData['workDate'] as Timestamp?)?.toDate().toLocal() ?? DateTime.now(),
           applicationId: applicationId,
           toId: toId,
         );
@@ -572,6 +803,7 @@ extension ApplicationFirestore on FirestoreService {
     String? canceledBy,   // 관리자 UID (관리자가 취소할 때)
     String? cancelReason, // 관리자 취소 사유
   }) async {
+    NetworkChecker.instance.assertOnline('확정 취소를 하려면 인터넷 연결이 필요합니다.');
     try {
       final appDoc = await _firestore
           .collection('applications')
@@ -583,7 +815,7 @@ extension ApplicationFirestore on FirestoreService {
       }
       final appData = appDoc.data()!;
       final uid = appData['uid'] as String;
-      if (appData['status'] != 'CONFIRMED') {
+      if (!AppStatus.confirmedStatuses.contains(appData['status'])) {
         ToastHelper.showError('확정된 지원만 취소할 수 있습니다');
         return false;
       }
@@ -608,35 +840,30 @@ extension ApplicationFirestore on FirestoreService {
         'cancelReason': reason,
         if (isAdminCancel && cancelReason != null) 'cancelMessage': cancelReason,
         if (canceledBy != null) 'canceledBy': canceledBy,
-        'statusHistory': FieldValue.arrayUnion([{
+        'statusHistory': _appendHistory(appData, {
           'status': 'CANCELED',
           'at': Timestamp.now(),
           'by': canceledBy ?? uid,
           'action': action,
           'reason': cancelReason ?? reason,
-        }]),
+        }),
       });
-
-      if (applyNoShowPenalty) {
-        batch.update(_firestore.collection('users').doc(uid), {
-          'noShowCount': FieldValue.increment(1),
-        });
-        final userDoc = await _firestore.collection('users').doc(uid).get();
-        final currentNoShow = (userDoc.data()?['noShowCount'] ?? 0) as int;
-        if (currentNoShow >= 2) {
-          final restrictedUntil = DateTime.now().add(const Duration(days: 3));
-          batch.update(_firestore.collection('users').doc(uid), {
-            'restrictedUntil': Timestamp.fromDate(restrictedUntil),
-            'noShowCount': 0,
-          });
-        }
-      }
 
       if (toId != null) {
         _decrementTOConfirmed(batch, toId, slotId, workType: selectedWorkType);
       }
       await batch.commit();
       if (toId != null) clearCache(toId: toId);
+
+      // 노쇼 페널티: 배치 후 별도 트랜잭션으로 카운트 원자적 갱신
+      if (applyNoShowPenalty) {
+        await _applyNoShowPenaltyTransactional(uid);
+      }
+
+      // 취소 후 슬롯 상태('full'→'open') 재계산
+      if (toId != null && slotId != null) {
+        await _recalculateSlotStatus(toId, slotId);
+      }
 
       await _cleanupApplicationRelatedData(applicationId: applicationId, uid: uid);
 
@@ -645,8 +872,9 @@ extension ApplicationFirestore on FirestoreService {
         await createNotification(NotificationModel.createConfirmationCanceled(
           userId: uid,
           businessName: appData['businessName'] as String,
+          businessId: appData['businessId'] as String? ?? '',
           workType: appData['selectedWorkType'] as String,
-          workDate: (appData['workDate'] as Timestamp).toDate(),
+          workDate: (appData['workDate'] as Timestamp?)?.toDate().toLocal() ?? DateTime.now(),
           applicationId: applicationId,
           cancelReason: cancelReason,
         ));
@@ -680,12 +908,62 @@ extension ApplicationFirestore on FirestoreService {
       }
       final appData = appDoc.data()!;
       final currentWorkType = appData['selectedWorkType'] as String;
-      final currentWage = appData['wage'] as int;
+      final currentWage = (appData['wage'] as num?)?.toInt() ?? 0;
       final uid = appData['uid'] as String;
       final businessName = appData['businessName'] as String? ?? '';
-      final workDate = (appData['workDate'] as Timestamp).toDate();
+      final businessId = appData['businessId'] as String? ?? '';
+      final workDate = (appData['workDate'] as Timestamp).toDate().toLocal();
+      final toId = appData['toId'] as String?;
+      final slotId = appData['slotId'] as String?;
+      final currentStatus = appData['status'] as String? ?? '';
 
-      await _firestore.collection('applications').doc(applicationId).update({
+      if (currentWorkType == newWorkType) {
+        ToastHelper.showError('동일한 업무유형입니다.');
+        return false;
+      }
+
+      // 새 업무유형의 모집인원 초과 여부 경고 (차단하지 않음 — 관리자 의도 허용)
+      if (toId != null && slotId != null) {
+        final slotSnap = await _firestore
+            .collection('tos').doc(toId)
+            .collection('slots').doc(slotId).get();
+        if (slotSnap.exists) {
+          final slotData = slotSnap.data()!;
+          final workDetails = (slotData['workDetails'] as List? ?? [])
+              .cast<Map<String, dynamic>>();
+          final wd = workDetails.firstWhere(
+            (d) => d['workType'] == newWorkType, orElse: () => {});
+          final required = (wd['requiredCount'] as num?)?.toInt() ?? 0;
+          final counts = slotData['workTypeCounts'] as Map<String, dynamic>?;
+          final confirmed = (counts?[newWorkType]?['confirmedCount'] as num?)?.toInt() ?? 0;
+          if (required > 0 && confirmed >= required) {
+            ToastHelper.showWarning(
+              '[$newWorkType] 모집인원($required명)이 이미 찼습니다. 그래도 변경됩니다.');
+          }
+        }
+      } else if (toId != null && slotId == null) {
+        final toSnap = await _firestore.collection('tos').doc(toId).get();
+        if (toSnap.exists) {
+          final toData = toSnap.data()!;
+          final workDetails = (toData['workDetails'] as List? ?? [])
+              .cast<Map<String, dynamic>>();
+          final wd = workDetails.firstWhere(
+            (d) => d['workType'] == newWorkType, orElse: () => {});
+          final required = (wd['requiredCount'] as num?)?.toInt() ?? 0;
+          final confirmedCounts = toData['workTypeConfirmedCounts']
+              as Map<String, dynamic>?;
+          final confirmed = (confirmedCounts?[newWorkType] as num?)?.toInt() ?? 0;
+          if (required > 0 && confirmed >= required) {
+            ToastHelper.showWarning(
+              '[$newWorkType] 모집인원($required명)이 이미 찼습니다. 그래도 변경됩니다.');
+          }
+        }
+      }
+
+      final batch = _firestore.batch();
+
+      // 지원서 업데이트
+      batch.update(_firestore.collection('applications').doc(applicationId), {
         'selectedWorkType': newWorkType,
         'wage': newWage,
         'originalWorkType': appData['originalWorkType'] ?? currentWorkType,
@@ -694,9 +972,38 @@ extension ApplicationFirestore on FirestoreService {
         'changedBy': adminUID,
         if (newWorkDetailId != null) 'workDetailId': newWorkDetailId,
       });
+
+      // workTypeCounts 카운터 동기화 (슬롯 기반 단기TO)
+      if (toId != null && slotId != null) {
+        final slotRef = _firestore.collection('tos').doc(toId).collection('slots').doc(slotId);
+        if (AppStatus.confirmedStatuses.contains(currentStatus)) {
+          batch.update(slotRef, {
+            'workTypeCounts.$currentWorkType.confirmedCount': FieldValue.increment(-1),
+            'workTypeCounts.$newWorkType.confirmedCount': FieldValue.increment(1),
+          });
+        } else if (currentStatus == AppStatus.pending) {
+          batch.update(slotRef, {
+            'workTypeCounts.$currentWorkType.pendingCount': FieldValue.increment(-1),
+            'workTypeCounts.$newWorkType.pendingCount': FieldValue.increment(1),
+          });
+        }
+      }
+
+      // workTypeConfirmedCounts 카운터 동기화 (슬롯 없는 장기TO)
+      if (toId != null && slotId == null && AppStatus.confirmedStatuses.contains(currentStatus)) {
+        batch.update(_firestore.collection('tos').doc(toId), {
+          'workTypeConfirmedCounts.$currentWorkType': FieldValue.increment(-1),
+          'workTypeConfirmedCounts.$newWorkType': FieldValue.increment(1),
+        });
+      }
+
+      await batch.commit();
+      if (toId != null) clearCache(toId: toId);
+
       _sendWorkTypeChangedNotification(
         applicantUid: uid,
         businessName: businessName,
+        businessId: businessId,
         workDate: workDate,
         originalWorkType: currentWorkType,
         newWorkType: newWorkType,
@@ -732,7 +1039,8 @@ extension ApplicationFirestore on FirestoreService {
           confirmedBy: adminUID,
         );
         success++;
-      } catch (_) {
+      } catch (e) {
+        debugPrint('❌ 지원서 일괄 확정 실패 ($id): $e');
         failed++;
       }
     }
@@ -749,14 +1057,15 @@ extension ApplicationFirestore on FirestoreService {
     required String startTime,
     required String endTime,
     required String excludeId,
-    String status = 'PENDING',
+    List<String>? statuses,
     String? businessId,
   }) async {
     try {
+      final statusFilter = statuses ?? [AppStatus.pending, AppStatus.contractPending];
       var query = _firestore
           .collection('applications')
           .where('uid', isEqualTo: uid)
-          .where('status', isEqualTo: status);
+          .where('status', whereIn: statusFilter);
       if (businessId != null) {
         query = query.where('businessId', isEqualTo: businessId);
       }
@@ -786,7 +1095,7 @@ extension ApplicationFirestore on FirestoreService {
       final shortTermFuture = _firestore
           .collection('applications')
           .where('businessId', isEqualTo: businessId)
-          .where('status', isEqualTo: AppStatus.confirmed)
+          .where('status', whereIn: [AppStatus.confirmed, AppStatus.contractPending])
           .where('workDate', isGreaterThanOrEqualTo: Timestamp.fromDate(dateStart))
           .where('workDate', isLessThan: Timestamp.fromDate(dateEnd))
           .get();
@@ -794,7 +1103,7 @@ extension ApplicationFirestore on FirestoreService {
       final longTermFuture = _firestore
           .collection('applications')
           .where('businessId', isEqualTo: businessId)
-          .where('status', isEqualTo: AppStatus.confirmed)
+          .where('status', whereIn: [AppStatus.confirmed, AppStatus.contractPending])
           .where('workEndDate', isGreaterThanOrEqualTo: Timestamp.fromDate(dateStart))
           .get();
 
@@ -850,15 +1159,36 @@ extension ApplicationFirestore on FirestoreService {
     required DateTime workDate,
   }) async {
     try {
-      final snap = await _firestore
+      final dateStart = DateTime(workDate.year, workDate.month, workDate.day);
+      final dateEnd = dateStart.add(const Duration(days: 1));
+
+      // 단기: 정확한 날짜 필터로 Firestore 쿼리 최소화
+      final shortTermFuture = _firestore
           .collection('applications')
           .where('uid', isEqualTo: uid)
-          .where('status', isEqualTo: 'CONFIRMED')
+          .where('status', whereIn: AppStatus.confirmedStatuses)
+          .where('workDate', isGreaterThanOrEqualTo: Timestamp.fromDate(dateStart))
+          .where('workDate', isLessThan: Timestamp.fromDate(dateEnd))
           .get();
-      return snap.docs
+
+      // 장기: workEndDate >= 오늘인 것만 조회 (과거 종료된 계약 제외)
+      final longTermFuture = _firestore
+          .collection('applications')
+          .where('uid', isEqualTo: uid)
+          .where('status', whereIn: AppStatus.confirmedStatuses)
+          .where('workEndDate', isGreaterThanOrEqualTo: Timestamp.fromDate(dateStart))
+          .get();
+
+      final results = await Future.wait([shortTermFuture, longTermFuture]);
+      final shortTerm = results[0].docs.map((d) => ApplicationModel.fromFirestore(d)).toList();
+      final longTermCandidates = results[1].docs
           .map((d) => ApplicationModel.fromFirestore(d))
+          .where((a) => a.isLongTermApplication)
           .where((a) => a.isWorkingOnDate(workDate))
           .toList();
+
+      // 단기는 date가 정확히 맞으므로 isWorkingOnDate 재확인 불필요
+      return [...shortTerm, ...longTermCandidates];
     } catch (e) {
       debugPrint('❌ 확정 일정 조회 실패: $e');
       return [];
@@ -875,17 +1205,38 @@ extension ApplicationFirestore on FirestoreService {
     String? confirmedBy,
     String? message,
   }) async {
-    final appDoc = await _firestore
-        .collection('applications')
-        .doc(applicationId)
-        .get();
-    if (!appDoc.exists) throw Exception('지원서를 찾을 수 없습니다');
+    NetworkChecker.instance.assertOnline('지원자 확정을 하려면 인터넷 연결이 필요합니다.');
+    final appRef = _firestore.collection('applications').doc(applicationId);
 
+    // 트랜잭션으로 상태 체크 + CONTRACT_PENDING 선점 — 동시 확정 요청 방지
+    bool alreadyConfirmed = false;
+    await _firestore.runTransaction((tx) async {
+      final fresh = await tx.get(appRef);
+      if (!fresh.exists) throw Exception('지원서를 찾을 수 없습니다');
+      final status = fresh.data()?['status'] as String?;
+      if (AppStatus.confirmedStatuses.contains(status)) {
+        alreadyConfirmed = true;
+        return;
+      }
+      if (status == AppStatus.canceled) {
+        throw Exception('취소된 지원서는 확정할 수 없습니다');
+      }
+      if (status == AppStatus.autoCanceled) {
+        throw Exception('자동 취소된 지원서는 확정할 수 없습니다');
+      }
+      // 상태를 CONTRACT_PENDING으로 선점 → 두 번째 요청은 alreadyConfirmed=true 반환
+      tx.update(appRef, {
+        'status': 'CONTRACT_PENDING',
+        'confirmedAt': FieldValue.serverTimestamp(),
+        if (confirmedBy != null) 'confirmedBy': confirmedBy,
+      });
+    });
+    if (alreadyConfirmed) return [];
+
+    // 선점 후 최신 문서 재조회 (workDays, workEndDate 등 필요)
+    final appDoc = await appRef.get();
+    if (!appDoc.exists) throw Exception('지원서를 찾을 수 없습니다');
     final appData = appDoc.data()!;
-    if (appData['status'] == 'CONFIRMED') return [];
-    if (appData['status'] == 'CANCELED') {
-      throw Exception('취소된 지원서는 확정할 수 없습니다');
-    }
 
     final app = ApplicationModel.fromMap(appData, appDoc.id);
     final toId = appData['toId'] as String?;
@@ -893,19 +1244,78 @@ extension ApplicationFirestore on FirestoreService {
 
     if (toId == null) throw Exception('toId가 없는 지원서입니다');
 
-    // 충돌 지원서 탐색
+    // ── TO 로드 (계약기간 계산 + 충돌 탐색에 사용) ──
+    final toDoc = await _firestore.collection('tos').doc(toId).get();
+    final toModel = toDoc.exists ? TOModel.fromMap(toDoc.data()!, toDoc.id) : null;
+
+    // ── 장기공고 확정 시 workEndDate 자동 계산 ──
+    // (지원 시 workEndDate가 null인 경우: apply_dialog 경유 or preset period TO)
+    DateTime? computedWorkEndDate = app.workEndDate;
+    List<String>? computedWorkDays = app.workDays;
+    final isLongTermApp = app.applicationType == AppType.longTerm ||
+        (app.workDays != null && app.workDays!.isNotEmpty);
+    if (isLongTermApp && computedWorkEndDate == null && toModel != null) {
+      final startDate = app.desiredStartDate ?? app.workDate;
+      if (toModel.contractPeriodType != null && toModel.contractPeriodType != 'custom') {
+        computedWorkEndDate = toModel.computeContractEndDate(startDate);
+      } else if (toModel.rangeEnd != null) {
+        computedWorkEndDate = toModel.rangeEnd;
+      }
+    }
+    // workDays 미설정 시 TO에서 보완
+    if ((computedWorkDays == null || computedWorkDays.isEmpty) &&
+        toModel != null && toModel.workDays.isNotEmpty) {
+      computedWorkDays = toModel.workDays;
+    }
+
+    // ── 모집 인원 초과 여부 경고 (차단하지 않음 — 관리자 의도적 초과 확정 허용) ──
+    if (slotId != null) {
+      final slotSnap = await _firestore
+          .collection('tos').doc(toId)
+          .collection('slots').doc(slotId).get();
+      if (slotSnap.exists) {
+        final slotData = slotSnap.data()!;
+        final workType = app.selectedWorkType;
+        final workDetails = (slotData['workDetails'] as List? ?? [])
+            .cast<Map<String, dynamic>>();
+        final wd = workDetails.firstWhere(
+          (d) => d['workType'] == workType, orElse: () => {});
+        final required = (wd['requiredCount'] as num?)?.toInt() ?? 0;
+        final counts = slotData['workTypeCounts'] as Map<String, dynamic>?;
+        final confirmed = (counts?[workType]?['confirmedCount'] as num?)?.toInt() ?? 0;
+        if (required > 0 && confirmed >= required) {
+          ToastHelper.showWarning(
+            '[$workType] 모집인원($required명)이 이미 찼습니다. 초과 확정됩니다.');
+        }
+      }
+    } else if (toModel != null) {
+      // 장기 TO (슬롯 없음) — workTypeConfirmedCounts 확인
+      final workType = app.selectedWorkType;
+      final workDetails = (toModel.workDetails)
+          .where((d) => d.workType == workType);
+      if (workDetails.isNotEmpty) {
+        final required = workDetails.first.requiredCount;
+        final confirmedCounts = toDoc.data()?['workTypeConfirmedCounts']
+            as Map<String, dynamic>?;
+        final confirmed = (confirmedCounts?[workType] as num?)?.toInt() ?? 0;
+        if (required > 0 && confirmed >= required) {
+          ToastHelper.showWarning(
+            '[$workType] 모집인원($required명)이 이미 찼습니다. 초과 확정됩니다.');
+        }
+      }
+    }
+
+    // 충돌 지원서 탐색 (타사 포함 전체 검색)
     List<ApplicationModel> conflictingApps;
-    final isContract = app.workDays != null && app.workDays!.isNotEmpty;
-    if (isContract && app.workEndDate != null) {
+    if (isLongTermApp && computedWorkEndDate != null && computedWorkDays != null && computedWorkDays.isNotEmpty) {
       conflictingApps = await _findConflictingForLongTerm(
         uid: app.uid,
-        startDate: app.workDate,
-        endDate: app.workEndDate!,
-        workDays: app.workDays!,
+        startDate: app.desiredStartDate ?? app.workDate,
+        endDate: computedWorkEndDate,
+        workDays: computedWorkDays,
         startTime: app.startTime,
         endTime: app.endTime,
         excludeId: applicationId,
-        businessId: app.businessId,
       );
     } else {
       conflictingApps = await findConflictingApplications(
@@ -914,22 +1324,22 @@ extension ApplicationFirestore on FirestoreService {
         startTime: app.startTime,
         endTime: app.endTime,
         excludeId: applicationId,
-        status: 'PENDING',
-        businessId: app.businessId,
       );
     }
 
     final batch = _firestore.batch();
     final now = FieldValue.serverTimestamp();
 
-    // 확정 처리
+    // 확정 상태는 위 트랜잭션에서 이미 CONTRACT_PENDING으로 선점됨
+    // 배치에서는 추가 필드(확인 메시지·기간·요일·statusHistory)만 보완
     batch.update(appDoc.reference, {
-      'status': 'CONFIRMED',
-      'confirmedAt': now,
-      if (confirmedBy != null) 'confirmedBy': confirmedBy,
       if (message != null) 'confirmMessage': message,
+      if (computedWorkEndDate != null)
+        'workEndDate': Timestamp.fromDate(computedWorkEndDate),
+      if (computedWorkDays != null && (app.workDays == null || app.workDays!.isEmpty))
+        'workDays': computedWorkDays,
       'statusHistory': FieldValue.arrayUnion([{
-        'status': 'CONFIRMED',
+        'status': 'CONTRACT_PENDING',
         'at': Timestamp.now(),
         'by': confirmedBy,
         'action': 'CONFIRM',
@@ -965,6 +1375,11 @@ extension ApplicationFirestore on FirestoreService {
     await batch.commit();
     clearCache(toId: toId);
 
+    // 확정 후 슬롯 상태('open'↔'full') 재계산
+    if (slotId != null) {
+      await _recalculateSlotStatus(toId, slotId);
+    }
+
     // 충돌 지원서의 TO 통계 감소
     final Set<String> affectedTOIds = {};
     if (conflictingApps.isNotEmpty) {
@@ -973,8 +1388,15 @@ extension ApplicationFirestore on FirestoreService {
         final cToId = conflict.toId;
         final cSlotId = conflict.slotId;
         if (cToId != null && cToId.isNotEmpty) {
-          _incrementTOPending(statsBatch, cToId, cSlotId, delta: -1,
-              workType: conflict.selectedWorkType);
+          // CONTRACT_PENDING는 이미 확정인원으로 집계됨 → confirmedCount 감소
+          final isConfirmed = AppStatus.confirmedStatuses.contains(conflict.status);
+          if (isConfirmed) {
+            _decrementTOConfirmed(statsBatch, cToId, cSlotId,
+                workType: conflict.selectedWorkType);
+          } else {
+            _incrementTOPending(statsBatch, cToId, cSlotId, delta: -1,
+                workType: conflict.selectedWorkType);
+          }
           affectedTOIds.add(cToId);
           clearCache(toId: cToId);
         }
@@ -982,18 +1404,12 @@ extension ApplicationFirestore on FirestoreService {
       await statsBatch.commit();
     }
 
-    // 알림
-    await createNotification(NotificationModel.createApplicationConfirmed(
-      userId: app.uid,
-      businessName: app.businessName,
-      workType: app.selectedWorkType,
-      workDate: app.workDate,
-      applicationId: applicationId,
-    ));
+    // 알림 — 계약서 서명 요청 알림은 saveEmployerSignature()에서 발송됨
     for (final conflict in conflictingApps) {
       _sendApplicationAutoCanceledNotification(
         applicantUid: conflict.uid,
         businessName: conflict.businessName,
+        businessId: conflict.businessId,
         workType: conflict.selectedWorkType,
         workDate: conflict.workDate,
         applicationId: conflict.id,
@@ -1014,34 +1430,56 @@ extension ApplicationFirestore on FirestoreService {
     required String startTime,
     required String endTime,
     required String excludeId,
-    String? businessId,
   }) async {
     try {
-      var query = _firestore
+      // 타사 포함 전체 PENDING·CONTRACT_PENDING 조회 — businessId 필터 없음
+      // CONTRACT_PENDING도 포함: 이미 확정됐지만 서명 대기 중인 일정도 충돌 대상
+      final snap = await _firestore
           .collection('applications')
           .where('uid', isEqualTo: uid)
-          .where('status', isEqualTo: 'PENDING');
-      if (businessId != null) {
-        query = query.where('businessId', isEqualTo: businessId);
-      }
-      final snap = await query.get();
+          .where('status', whereIn: [AppStatus.pending, AppStatus.contractPending])
+          .get();
 
-      final conflicts = <ApplicationModel>{};
-      var current = startDate;
-      while (!current.isAfter(endDate)) {
-        if (workDays.contains(FormatHelper.weekday(current))) {
-          for (final doc in snap.docs) {
-            if (doc.id == excludeId) continue;
-            final a = ApplicationModel.fromFirestore(doc);
-            if (a.isWorkingOnDate(current) &&
-                ApplicationModel.hasTimeOverlap(startTime, endTime, a.startTime, a.endTime)) {
-              conflicts.add(a);
-            }
-          }
+      final startOnly = DateTime(startDate.year, startDate.month, startDate.day);
+      final endOnly   = DateTime(endDate.year,   endDate.month,   endDate.day);
+
+      final result = <ApplicationModel>[];
+
+      for (final doc in snap.docs) {
+        if (doc.id == excludeId) continue;
+        final a = ApplicationModel.fromFirestore(doc);
+
+        // 시간 겹침 먼저 확인 (빠른 탈락)
+        if (!ApplicationModel.hasTimeOverlap(startTime, endTime, a.startTime, a.endTime)) {
+          continue;
         }
-        current = current.add(const Duration(days: 1));
+
+        if (a.isLongTermApplication) {
+          // 장기 지원 — 근무 기간 + 요일 겹침 확인
+          final aEndDate = a.actualResignDate ?? a.workEndDate;
+          if (aEndDate == null) continue;
+          final aStart = DateTime(a.workDate.year, a.workDate.month, a.workDate.day);
+          final aEnd   = DateTime(aEndDate.year,   aEndDate.month,   aEndDate.day);
+
+          // 기간 겹침
+          if (endOnly.isBefore(aStart) || startOnly.isAfter(aEnd)) continue;
+
+          // 근무 요일 겹침
+          final aWorkDays = a.workDays ?? [];
+          if (aWorkDays.isEmpty) continue;
+          if (!workDays.any((d) => aWorkDays.contains(d))) continue;
+
+          result.add(a);
+        } else {
+          // 단기 지원 — 날짜가 새 계약 범위 내 + 해당 요일 포함
+          final aDate = DateTime(a.workDate.year, a.workDate.month, a.workDate.day);
+          if (aDate.isBefore(startOnly) || aDate.isAfter(endOnly)) continue;
+          if (!workDays.contains(FormatHelper.weekday(a.workDate))) continue;
+
+          result.add(a);
+        }
       }
-      return conflicts.toList();
+      return result;
     } catch (e) {
       debugPrint('❌ 장기공고 충돌 조회 실패: $e');
       return [];
@@ -1084,9 +1522,14 @@ extension ApplicationFirestore on FirestoreService {
     required int delta,
     String? workType,
   }) {
-    batch.update(_firestore.collection('tos').doc(toId), {
+    final toUpdate = <String, dynamic>{
       'totalConfirmed': FieldValue.increment(delta),
-    });
+    };
+    // contract TO: 업무유형별 확정인원 추적 (슬롯 없는 경우)
+    if (slotId == null && workType != null && workType.isNotEmpty) {
+      toUpdate['workTypeConfirmedCounts.$workType'] = FieldValue.increment(delta);
+    }
+    batch.update(_firestore.collection('tos').doc(toId), toUpdate);
     if (slotId != null) {
       final slotRef = _firestore
           .collection('tos')
@@ -1113,6 +1556,67 @@ extension ApplicationFirestore on FirestoreService {
       _incrementTOConfirmed(batch, toId, slotId, delta: -1, workType: workType);
 
   // ───────────────────────────────────────────────────────
+  // 노쇼 페널티 원자적 갱신
+  // ───────────────────────────────────────────────────────
+
+  /// 노쇼 카운트를 트랜잭션으로 원자적으로 증가시키고 3회 도달 시 제한 적용.
+  /// 배치 외부에서 호출해 동시 요청 시 카운트 중복 증가를 방지한다.
+  Future<void> _applyNoShowPenaltyTransactional(String uid) async {
+    try {
+      final userRef = _firestore.collection('users').doc(uid);
+      await _firestore.runTransaction((tx) async {
+        final snap = await tx.get(userRef);
+        final current = (snap.data()?['noShowCount'] as num?)?.toInt() ?? 0;
+        final next = current + 1;
+        if (next >= 3) {
+          final restrictedUntil =
+              DateTime.now().add(const Duration(days: 3));
+          tx.update(userRef, {
+            'noShowCount': 0,
+            'restrictedUntil': Timestamp.fromDate(restrictedUntil),
+          });
+          debugPrint('⚠️ 노쇼 3회 — 3일 이용 제한 적용: $uid');
+        } else {
+          tx.update(userRef, {'noShowCount': next});
+        }
+      });
+    } catch (e) {
+      debugPrint('❌ 노쇼 카운트 업데이트 실패: $e');
+    }
+  }
+
+  // ───────────────────────────────────────────────────────
+  // 슬롯 상태 재계산
+  // ───────────────────────────────────────────────────────
+
+  /// 확정 인원 변경 후 슬롯 status('open'↔'full') 재계산
+  /// CLOSED 슬롯은 건드리지 않음
+  Future<void> _recalculateSlotStatus(String toId, String slotId) async {
+    final slotRef = _firestore
+        .collection('tos').doc(toId)
+        .collection('slots').doc(slotId);
+    try {
+      await _firestore.runTransaction((tx) async {
+        final snap = await tx.get(slotRef);
+        if (!snap.exists) return;
+        final data = snap.data()!;
+        if (data['status'] == 'closed') return; // 마감 슬롯은 유지
+        final confirmed = (data['confirmedCount'] as num?)?.toInt() ?? 0;
+        final workDetails = data['workDetails'] as List? ?? [];
+        final totalRequired = workDetails.fold<int>(
+          0, (acc, d) => acc + (((d as Map<String, dynamic>)['requiredCount'] as num?)?.toInt() ?? 0));
+        if (totalRequired <= 0) return;
+        final newStatus = confirmed >= totalRequired ? 'full' : 'open';
+        if (data['status'] != newStatus) {
+          tx.update(slotRef, {'status': newStatus});
+        }
+      });
+    } catch (e) {
+      debugPrint('⚠️ 슬롯 상태 재계산 실패 ($slotId): $e');
+    }
+  }
+
+  // ───────────────────────────────────────────────────────
   // 연관 데이터 정리
   // ───────────────────────────────────────────────────────
 
@@ -1130,11 +1634,7 @@ extension ApplicationFirestore on FirestoreService {
           .where('status', isEqualTo: 'pending')
           .get();
       for (final doc in idCardRequests.docs) {
-        localBatch.update(doc.reference, {
-          'status': 'canceled',
-          'canceledAt': FieldValue.serverTimestamp(),
-          'cancelReason': 'APPLICATION_CANCELED',
-        });
+        localBatch.update(doc.reference, {'status': 'canceled'});
       }
       final scheduleRequests = await _firestore
           .collection('schedule_change_requests')
@@ -1142,11 +1642,7 @@ extension ApplicationFirestore on FirestoreService {
           .where('status', isEqualTo: 'PENDING')
           .get();
       for (final doc in scheduleRequests.docs) {
-        localBatch.update(doc.reference, {
-          'status': 'CANCELED',
-          'canceledAt': FieldValue.serverTimestamp(),
-          'cancelReason': 'APPLICATION_CANCELED',
-        });
+        localBatch.update(doc.reference, {'status': 'CANCELED'});
       }
       if (!useBatch) await localBatch.commit();
     } catch (e) {
@@ -1225,6 +1721,7 @@ extension ApplicationFirestore on FirestoreService {
   Future<void> _sendApplicationAutoCanceledNotification({
     required String applicantUid,
     required String businessName,
+    required String businessId,
     required String workType,
     required DateTime workDate,
     required String applicationId,
@@ -1235,6 +1732,7 @@ extension ApplicationFirestore on FirestoreService {
       await createNotification(NotificationModel.createApplicationAutoCanceled(
         userId: applicantUid,
         businessName: businessName,
+        businessId: businessId,
         workType: workType,
         workDate: workDate,
         applicationId: applicationId,
@@ -1249,6 +1747,7 @@ extension ApplicationFirestore on FirestoreService {
   Future<void> _sendWorkTypeChangedNotification({
     required String applicantUid,
     required String businessName,
+    required String businessId,
     required DateTime workDate,
     required String originalWorkType,
     required String newWorkType,
@@ -1259,6 +1758,7 @@ extension ApplicationFirestore on FirestoreService {
       await createNotification(NotificationModel.createWorkTypeChanged(
         userId: applicantUid,
         businessName: businessName,
+        businessId: businessId,
         workDate: workDate,
         originalWorkType: originalWorkType,
         newWorkType: newWorkType,
@@ -1268,5 +1768,63 @@ extension ApplicationFirestore on FirestoreService {
     } catch (e) {
       debugPrint('⚠️ 파트 변경 알림 전송 실패: $e');
     }
+  }
+
+  /// 특정 필드만 업데이트
+  Future<void> updateApplicationFields(
+    String applicationId,
+    Map<String, dynamic> fields,
+  ) async {
+    await _firestore.collection('applications').doc(applicationId).update(fields);
+  }
+
+  /// 계약 연장: 기존 Application 기반으로 새 Application 생성
+  Future<ApplicationModel> createRenewedApplication({
+    required ApplicationModel original,
+    required DateTime newStartDate,
+    required DateTime newEndDate,
+  }) async {
+    final ref = _firestore.collection('applications').doc();
+    final now = DateTime.now();
+    // copyWith으로 기본 필드 복사 후, null로 초기화해야 할 필드는
+    // map을 직접 수정 (copyWith null-coalescing 패턴 우회)
+    final base = original.copyWith(
+      workDate: newStartDate,
+      workEndDate: newEndDate,
+      confirmedAt: now,
+      appliedAt: now,
+      renewedFromApplicationId: original.id,
+    );
+    final data = base.toMap()
+      ..['status'] = AppStatus.contractPending   // 근무자 서명 완료 시 CONFIRMED로 전환
+      ..['renewalDecision'] = null
+      ..['renewalNotifiedAt'] = null
+      ..['desiredStartDate'] = null
+      ..['statusHistory'] = []
+      ..['resignStatus'] = null
+      ..['resignRequestedAt'] = null
+      ..['resignRequestDate'] = null
+      ..['actualResignDate'] = null
+      ..['terminationStatus'] = null
+      ..['terminationRequestedAt'] = null
+      ..['terminationEffectiveDate'] = null
+      ..['terminationRejectReason'] = null;
+    await ref.set(data);
+    return ApplicationModel.fromMap(data, ref.id);
+  }
+
+  /// statusHistory 배열에 새 항목 추가 후 최근 20개만 유지
+  /// arrayUnion 대신 사용 — 문서 크기 폭증 방지
+  List<Map<String, dynamic>> _appendHistory(
+    Map<String, dynamic> appData,
+    Map<String, dynamic> newEntry,
+  ) {
+    final raw = appData['statusHistory'] as List? ?? [];
+    final history = raw.map((e) => Map<String, dynamic>.from(e as Map)).toList();
+    history.add(newEntry);
+    if (history.length > 20) {
+      return history.sublist(history.length - 20);
+    }
+    return history;
   }
 }
