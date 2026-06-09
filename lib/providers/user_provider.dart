@@ -300,7 +300,7 @@ class UserProvider with ChangeNotifier {
             .collection('users')
             .doc(_currentUser!.uid)
             .get();
-        
+
         final data = doc.data();
         if (doc.exists && data != null) {
           _currentUser = UserModel.fromMap(data, doc.id);
@@ -309,6 +309,35 @@ class UserProvider with ChangeNotifier {
       } catch (e) {
         debugPrint('❌ 사용자 정보 새로고침 실패: $e');
       }
+    }
+  }
+
+  // TO 즐겨찾기
+  bool isFavoriteTo(String toId) =>
+      _currentUser?.favoriteToIds.contains(toId) ?? false;
+
+  Future<void> toggleFavoriteTo(String toId) async {
+    final user = _currentUser;
+    if (user == null) return;
+
+    final wasFav = user.favoriteToIds.contains(toId);
+    final updated = wasFav
+        ? (List<String>.from(user.favoriteToIds)..remove(toId))
+        : [...user.favoriteToIds, toId];
+
+    _currentUser = user.copyWith(favoriteToIds: updated);
+    notifyListeners();
+
+    try {
+      await FirebaseFirestore.instance.collection('users').doc(user.uid).update({
+        'favoriteToIds': wasFav
+            ? FieldValue.arrayRemove([toId])
+            : FieldValue.arrayUnion([toId]),
+      });
+    } catch (e) {
+      _currentUser = user;
+      notifyListeners();
+      debugPrint('❌ TO 즐겨찾기 토글 실패: $e');
     }
   }
 }

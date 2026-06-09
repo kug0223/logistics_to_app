@@ -1,41 +1,29 @@
-﻿import 'package:flutter/material.dart';
-// Models
+import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
 import '../../../models/core/to_model.dart';
 import '../../../models/core/work_detail_model.dart';
 import '../../../models/core/application_model.dart';
-
-// Services
-import '../../../services/firestore_service.dart';
-
-// Utils
+import '../../../models/core/slot_model.dart';
 import '../../../utils/responsive_helper.dart';
 import '../../../utils/format_helper.dart';
 import '../../../utils/navigation_helper.dart';
-import '../../../utils/toast_helper.dart';
-
-// Theme
 import '../../../theme/app_colors.dart';
-
-// Widgets
+import '../../../providers/user_provider.dart';
 import '../../work_type_icon.dart';
-
-// Screens
+import '../../common/tax_deduction_badge.dart';
+import '../../common/loading_widget.dart';
 import '../../../screens/common/job_posting_screen.dart';
 import '../../dialogs/apply/apply_work_dialog.dart';
 
-/// 지원자용 TO 카드 위젯
-/// 
-/// 디자인 원칙:
-/// - 접힌 상태: 핵심 정보만 (배지, 사업장, 제목, 지역, 날짜, 급여)
-/// - 펼친 상태: 업무 목록 + 상세보기/지원하기 버튼
-/// - 왼쪽 컬러바: 단기(파랑) / 장기(보라) 구분
+/// 지원자용 TO 카드
+///
+/// 접힌 상태: 급여·날짜+시간·위치·모집현황 한눈에
+/// 펼친 상태:
+///   - flex TO → 날짜별 슬롯 목록 (슬롯별 지원 버튼)
+///   - contract TO → 공고 설명 + 업무 목록
+///
+/// 카드 상호 비활성화: isAnyOtherExpanded=true 시 반투명 처리
 class UserTOCard extends StatefulWidget {
-  final TOModel to;
-  final bool isSelected;
-  final VoidCallback onTap;
-  final List<ApplicationModel> myApplications;
-  final VoidCallback onApplySuccess;
-
   const UserTOCard({
     super.key,
     required this.to,
@@ -43,307 +31,288 @@ class UserTOCard extends StatefulWidget {
     required this.onTap,
     required this.myApplications,
     required this.onApplySuccess,
+    required this.onFetchWorkDetails,
+    this.workDetails,
+    this.slots,
+    this.onFetchSlots,
+    this.isAnyOtherExpanded = false,
   });
+
+  final TOModel to;
+  final bool isSelected;
+  final VoidCallback onTap;
+  final List<ApplicationModel> myApplications;
+  final VoidCallback onApplySuccess;
+
+  // contract TO용
+  final List<WorkDetailModel>? workDetails;
+  final Future<void> Function(String toId) onFetchWorkDetails;
+
+  // flex TO용 슬롯
+  final List<SlotModel>? slots;
+  final Future<void> Function(String toId)? onFetchSlots;
+
+  // 다른 카드가 펼쳐진 상태 → 반투명 처리
+  final bool isAnyOtherExpanded;
 
   @override
   State<UserTOCard> createState() => _UserTOCardState();
 }
 
 class _UserTOCardState extends State<UserTOCard> {
-  final FirestoreService _firestoreService = FirestoreService();
-  List<WorkDetailModel> _workDetails = [];
-  bool _isLoadingWorkDetails = false;
+  bool _isFetching = false;
+  bool _isFetchingSlots = false;
+  bool _isApplyLoading = false;
 
-  // 날짜별 workDetails 캐시 (toId → workDetails)
-  final Map<String, List<WorkDetailModel>> _workDetailsCache = {};
+  // 빌드마다 재계산 방지 — myApplications/to 변경 시에만 갱신
+  late bool _cachedHasApplied;
+  late String _cachedTimeAgo;
+
+  List<WorkDetailModel> get _workDetails => widget.workDetails ?? const [];
+  bool get _showLoading => _isFetching && _workDetails.isEmpty;
+  bool get _showSlotsLoading => _isFetchingSlots && (widget.slots == null || widget.slots!.isEmpty);
+
+  @override
+  void initState() {
+    super.initState();
+    _cachedHasApplied = _computeHasApplied();
+    _cachedTimeAgo    = _computeTimeAgo();
+  }
+
+  bool _computeHasApplied() => widget.myApplications.any((app) {
+        if (AppStatus.inactiveStates.contains(app.status)) return false;
+        if (app.isLongTermApplication && app.isTerminationApproved) return false;
+        if (app.toId?.isNotEmpty == true) return app.toId == widget.to.id;
+        return _legacyMatch(app);
+      });
+
+  String _computeTimeAgo() {
+    final diff = DateTime.now().difference(widget.to.createdAt);
+    if (diff.inMinutes < 60) return '${diff.inMinutes}분 전';
+    if (diff.inHours < 24) return '${diff.inHours}시간 전';
+    return '${diff.inDays}일 전';
+  }
+
+  // ── 위젯 업데이트 ────────────────────────────────────
 
   @override
   void didUpdateWidget(UserTOCard oldWidget) {
     super.didUpdateWidget(oldWidget);
-
+    // 지원 목록 또는 TO가 바뀌면 캐시 갱신
+    // identical 비교 외 length도 확인 — 같은 List 객체에 항목이 추가/제거된 경우 포착
+    if (!identical(widget.myApplications, oldWidget.myApplications) ||
+        widget.myApplications.length != oldWidget.myApplications.length ||
+        widget.to.id != oldWidget.to.id) {
+      _cachedHasApplied = _computeHasApplied();
+    }
+    if (widget.to.createdAt != oldWidget.to.createdAt) {
+      _cachedTimeAgo = _computeTimeAgo();
+    }
     if (widget.isSelected && !oldWidget.isSelected) {
-      _loadWorkDetails();
+      if (widget.to.isFlexType) {
+        if (widget.slots == null) _fetchSlots();
+      } else {
+        if (widget.workDetails == null) _fetch();
+      }
     }
-
-    if (!widget.isSelected && oldWidget.isSelected) {
-      _workDetails = [];
+    // 부모 캐시에서 데이터가 들어옴 → 로딩 종료
+    if (widget.workDetails != null && oldWidget.workDetails == null && _isFetching) {
+      setState(() => _isFetching = false);
+    }
+    if (widget.slots != null && oldWidget.slots == null && _isFetchingSlots) {
+      setState(() => _isFetchingSlots = false);
     }
   }
 
-  /// 현재 업무 개수
-  int get _currentWorkCount {
-    // workDetails 로드됐으면 그거 사용
-    if (_workDetails.isNotEmpty) {
-      return _workDetails.length;
-    }
-    // 아니면 TOModel의 workDetailCount 사용
-    return widget.to.workDetailCount > 0 ? widget.to.workDetailCount : 1;
-  }
-  /// 업무 상세 로드
-  Future<void> _loadWorkDetails() async {
-    // 캐시에 있으면 바로 사용
-    if (_workDetailsCache.containsKey(widget.to.id)) {
-      setState(() {
-        _workDetails = _workDetailsCache[widget.to.id]!;
-      });
-      return;
-    }
-    
-    if (_workDetails.isNotEmpty) return;
-    
-    setState(() => _isLoadingWorkDetails = true);
-    
+  Future<void> _fetch() async {
+    if (_isFetching) return;
+    setState(() => _isFetching = true);
     try {
-      final workDetails = await _firestoreService.getWorkDetails(widget.to.id);
-      
-      if (mounted) {
-        // 캐시에 저장
-        _workDetailsCache[widget.to.id] = workDetails;
-        
-        setState(() {
-          _workDetails = workDetails;
-          _isLoadingWorkDetails = false;
-        });
-      }
-    } catch (e) {
-      debugPrint('❌ 업무 로드 실패: $e');
-      if (mounted) {
-        setState(() => _isLoadingWorkDetails = false);
-      }
+      await widget.onFetchWorkDetails(widget.to.id);
+    } finally {
+      if (mounted) setState(() => _isFetching = false);
     }
   }
 
-  //// 내가 해당 TO에 지원했는지 확인
-  bool get _hasAppliedToTO {
+  Future<void> _fetchSlots() async {
+    if (_isFetchingSlots || widget.onFetchSlots == null) return;
+    setState(() => _isFetchingSlots = true);
+    try {
+      await widget.onFetchSlots!(widget.to.id);
+    } finally {
+      if (mounted) setState(() => _isFetchingSlots = false);
+    }
+  }
+
+  // ── 지원 상태 ─────────────────────────────────────────
+
+  bool get _hasApplied => _cachedHasApplied;
+
+  bool _legacyMatch(ApplicationModel app) {
+    final to = widget.to;
+    if (app.businessId != to.businessId || app.toTitle != to.title) return false;
+    if (to.isLongTerm) return true;
+    return app.workDate.year == to.date.year &&
+        app.workDate.month == to.date.month &&
+        app.workDate.day == to.date.day;
+  }
+
+  bool _hasAppliedForSlot(SlotModel slot) {
+    final slotDate = DateTime(slot.date.year, slot.date.month, slot.date.day);
     return widget.myApplications.any((app) {
-      final isActive = app.status != 'CANCELED' &&
-                       app.status != 'REJECTED' &&
-                       app.status != 'AUTO_CANCELED';
-
-      if (!isActive) return false;
-
-      if (app.isLongTermApplication) {
-        if (app.resignStatus == 'APPROVED' || app.resignStatus == 'AUTO_APPROVED' ||
-            app.terminationStatus == 'APPROVED' || app.terminationStatus == 'AUTO_APPROVED') {
-          return false;
-        }
-      }
-
-      if (app.toId != null && app.toId!.isNotEmpty) {
-        return app.toId == widget.to.id;
-      }
-
-      final businessMatch = app.businessId == widget.to.businessId;
-      final titleMatch = app.toTitle == widget.to.title;
-
-      if (widget.to.isLongTerm) {
-        return businessMatch && titleMatch;
-      }
-
-      final dateMatch = app.workDate.year == widget.to.date.year &&
-                        app.workDate.month == widget.to.date.month &&
-                        app.workDate.day == widget.to.date.day;
-      return dateMatch && businessMatch && titleMatch;
+      if (AppStatus.inactiveStates.contains(app.status)) return false;
+      if (app.isLongTermApplication && app.isTerminationApproved) return false;
+      if (app.toId?.isNotEmpty == true && app.toId != widget.to.id) return false;
+      final appDate = DateTime(app.workDate.year, app.workDate.month, app.workDate.day);
+      return appDate == slotDate;
     });
   }
 
-  ApplicationModel? _getApplicationForWork(String workType, String startTime) {
-    final targetTO = widget.to;
-
+  ApplicationModel? _appForWork(WorkDetailModel work) {
     try {
-      return widget.myApplications.firstWhere(
-        (app) {
-          final workTypeMatch = app.selectedWorkType == workType;
-          final startTimeMatch = app.startTime == startTime;
-          final isActive = app.status != 'CANCELED' &&
-                           app.status != 'REJECTED' &&
-                           app.status != 'AUTO_CANCELED';
-
-          if (!workTypeMatch || !startTimeMatch || !isActive) return false;
-          
-          // 🔥 장기공고: 퇴사/해지 완료된 경우 미지원 취급
-          if (app.isLongTermApplication) {
-            if (app.resignStatus == 'APPROVED' || app.resignStatus == 'AUTO_APPROVED' ||
-                app.terminationStatus == 'APPROVED' || app.terminationStatus == 'AUTO_APPROVED') {
-              return false;
-            }
-          }
-          
-          // ✅ toId가 있으면 정확히 매칭 (신규 데이터)
-          if (app.toId != null && app.toId!.isNotEmpty) {
-            return app.toId == targetTO.id;
-          }
-          
-          // ✅ toId 없으면 기존 로직 (레거시 데이터 호환)
-          final dateMatch = app.workDate.year == targetTO.date.year &&
-                            app.workDate.month == targetTO.date.month &&
-                            app.workDate.day == targetTO.date.day;
-          final businessMatch = app.businessId == targetTO.businessId;
-          final titleMatch = app.toTitle == targetTO.title;
-          return dateMatch && businessMatch && titleMatch;
-        },
-      );
-    } catch (e) {
+      return widget.myApplications.firstWhere((app) {
+        if (app.selectedWorkType != work.workType || app.startTime != work.startTime) {
+          return false;
+        }
+        if (AppStatus.inactiveStates.contains(app.status)) return false;
+        if (app.isLongTermApplication && app.isTerminationApproved) return false;
+        if (app.toId?.isNotEmpty == true) return app.toId == widget.to.id;
+        return _legacyMatch(app);
+      });
+    } catch (_) {
       return null;
     }
   }
-  /// 급여 타입 라벨
-  String _getWageTypeLabel() {
-    // TOModel에서 직접 가져오기
-    if (widget.to.wageType != null) {
-      return FormatHelper.getWageTypeLabel(widget.to.wageType!);
-    }
-    // fallback: workDetails에서
-    if (_workDetails.isNotEmpty) {
-      return FormatHelper.getWageTypeLabel(_workDetails.first.wageType);
-    }
-    return '급여';
+
+  // ── 마감 임박 ─────────────────────────────────────────
+
+  bool get _isUrgent {
+    // contract TO: TO 레벨 applicationDeadline 기준
+    if (!widget.to.isFlexType) return widget.to.isDeadlineUrgent;
+    // flex TO: 로드된 슬롯 중 24시간 내 마감 슬롯 존재 여부
+    final slots = widget.slots;
+    if (slots == null) return false;
+    final now = DateTime.now();
+    return slots.any((s) {
+      if (s.isEffectivelyClosed) return false;
+      final dl = s.applicationDeadline;
+      if (dl == null) return false;
+      final diff = dl.difference(now);
+      return diff.inSeconds > 0 && diff.inHours <= 24;
+    });
   }
 
-  /// 급여 금액만 (타입 제외)
-  String _getWageAmount() {
-    // TOModel에서 직접 가져오기
-    if (widget.to.maxWage != null) {
-      if (widget.to.minWage == widget.to.maxWage) {
-        return FormatHelper.formatWage(widget.to.maxWage!);
-      }
-      return '~${FormatHelper.formatNumber(widget.to.maxWage!)}원';
+  // ── 표시 문자열 ───────────────────────────────────────
+
+  String get _dateText {
+    final to = widget.to;
+    if (to.isLongTerm && to.startDate != null && to.endDate != null) {
+      return '${FormatHelper.formatDateCompact(to.startDate!)} ~ '
+          '${FormatHelper.formatDateCompact(to.endDate!)}';
     }
-    
-    // fallback: workDetails에서
-    if (_workDetails.isNotEmpty) {
-      final wages = _workDetails.map((w) => w.wage).toList();
-      final minWage = wages.reduce((a, b) => a < b ? a : b);
-      final maxWage = wages.reduce((a, b) => a > b ? a : b);
-      
-      if (minWage == maxWage) {
-        return FormatHelper.formatWage(maxWage);
-      }
-      return '~${FormatHelper.formatNumber(maxWage)}원';
-    }
-    
-    return '-';
+    return FormatHelper.formatDateCompact(to.date);
   }
 
+  String get _wageLabel =>
+      widget.to.wageType != null
+          ? FormatHelper.getWageTypeLabel(widget.to.wageType!)
+          : '급여';
 
-  /// 지역 텍스트 (시/구 + 동)
-  String _getLocationText() {
-    return FormatHelper.formatLocation(
-      address: widget.to.businessAddress,
-      city: widget.to.businessCity,
-      district: widget.to.businessDistrict,
-    );
+  String get _wageAmount {
+    final to = widget.to;
+    if (to.maxWage == null) return '-';
+    if (to.minWage == to.maxWage) return FormatHelper.formatWage(to.maxWage!);
+    return '~${FormatHelper.formatNumber(to.maxWage!)}원';
   }
+
+  String get _location => FormatHelper.formatLocation(
+        address: widget.to.businessAddress,
+        city: widget.to.businessCity,
+        district: widget.to.businessDistrict,
+      );
+
+  String get _timeAgo => _cachedTimeAgo;
+
+  String? get _workHint {
+    final list = widget.to.workDetails;
+    if (list.isEmpty) return null;
+    if (list.length == 1) return list.first.workType;
+    return '${list.first.workType} 외 ${list.length - 1}개';
+  }
+
+  String? get _recruitText {
+    final req = widget.to.totalRequired;
+    if (req <= 0) return null;
+    return '${widget.to.totalConfirmed}/$req명';
+  }
+
+  // ── Build ──────────────────────────────────────────────
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final isLongTerm = widget.to.isLongTerm;
-    final barColor = isLongTerm ? AppColors.longTerm : AppColors.shortTerm;
-    
-    // ✅ 예약 공개 대기 중인지 확인
-    final isPendingPublish = widget.to.isPendingPublish;
-    
-    return Opacity(
-      opacity: isPendingPublish ? 0.6 : 1.0,
+    final to = widget.to;
+    final barColor = to.isLongTerm ? AppColors.longTerm : AppColors.shortTerm;
+
+    return AnimatedOpacity(
+      opacity: widget.isAnyOtherExpanded ? 0.5 : 1.0,
+      duration: const Duration(milliseconds: 200),
       child: Card(
-      margin: EdgeInsets.only(bottom: ResponsiveHelper.spacing(context, 12)),
-      elevation: widget.isSelected ? 4 : 1,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(12),
-        side: BorderSide(
-          color: widget.isSelected 
-              ? theme.primaryColor 
-              : AppColors.border,
-          width: widget.isSelected ? 2 : 1,
+        margin: EdgeInsets.only(bottom: ResponsiveHelper.spacing(context, 12)),
+        elevation: widget.isSelected ? 3 : 1,
+        shadowColor: Colors.black12,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(12),
+          side: BorderSide(
+            color: widget.isSelected ? theme.primaryColor : AppColors.border,
+            width: widget.isSelected ? 1.5 : 0.8,
+          ),
         ),
-      ),
-      clipBehavior: Clip.antiAlias,
-      child: Stack(
-        children: [
-          // 🎨 왼쪽 컬러바 (Stack으로 전체 높이 차지)
-          Positioned(
-            left: 0,
-            top: 0,
-            bottom: 0,
-            child: Container(
-              width: ResponsiveHelper.spacing(context, 6),
-              decoration: BoxDecoration(
+        clipBehavior: Clip.antiAlias,
+        child: Stack(
+          children: [
+            // 왼쪽 컬러바
+            Positioned(
+              left: 0, top: 0, bottom: 0,
+              child: Container(
+                width: ResponsiveHelper.spacing(context, 5),
                 color: barColor,
-                borderRadius: BorderRadius.only(
-                  topLeft: Radius.circular(12),
-                  bottomLeft: Radius.circular(12),
-                ),
               ),
             ),
-          ),
-          
-          // 본문 (컬러바 너비만큼 padding)
-          Padding(
-            padding: EdgeInsets.only(left: ResponsiveHelper.spacing(context, 6)),
-            child: InkWell(
-              onTap: widget.onTap,
-              child: Container(
-                decoration: BoxDecoration(
+            Padding(
+              padding: EdgeInsets.only(left: ResponsiveHelper.spacing(context, 5)),
+              child: InkWell(
+                onTap: widget.onTap,
+                child: Container(
                   color: widget.isSelected
-                      ? theme.primaryColor.withValues(alpha: 0.03)
+                      ? theme.primaryColor.withValues(alpha: 0.02)
                       : Colors.white,
-                ),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      // ═══════════════════════════════════════════════════
-                      // 접힌 상태 (항상 표시)
-                      // ═══════════════════════════════════════════════════
+                      // 접힌 영역
                       Padding(
-                        padding: ResponsiveHelper.cardPadding(context),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            // 1️⃣ 배지 + 위치
-                            _buildBadgeAndLocation(context),
-                            
-                            SizedBox(height: ResponsiveHelper.spacing(context, 8)),
-                            
-                            // 2️⃣ 제목 (2줄까지)
-                            _buildTitle(context),
-                            
-                            SizedBox(height: ResponsiveHelper.spacing(context, 8)),
-                            
-                            // 3️⃣ 날짜
-                            _buildDateRow(context),
-                            
-                            SizedBox(height: ResponsiveHelper.spacing(context, 6)),
-                            
-                            // 4️⃣ 사업장 + 등록시간
-                            _buildBusinessAndTime(context),
-                            
-                            SizedBox(height: ResponsiveHelper.spacing(context, 8)),
-                            
-                            // 5️⃣ 급여 + 업무 개수
-                            _buildWageAndWorkCount(context),
-                          ],
+                        padding: EdgeInsets.fromLTRB(
+                          ResponsiveHelper.spacing(context, 12),
+                          ResponsiveHelper.spacing(context, 12),
+                          ResponsiveHelper.spacing(context, 12),
+                          0,
                         ),
+                        child: _buildCollapsed(context, theme),
                       ),
-                      
-                      // 펼침 아이콘
-                      _buildExpandIcon(context),
-                      
-                      // ═══════════════════════════════════════════════════
-                      // 펼친 상태 (애니메이션 적용)
-                      // ═══════════════════════════════════════════════════
+                      // 펼치기 바
+                      _buildExpandBar(context),
+                      // 펼친 영역
                       AnimatedSize(
-                        duration: const Duration(milliseconds: 250),
+                        duration: const Duration(milliseconds: 220),
                         curve: Curves.easeOutCubic,
                         alignment: Alignment.topCenter,
                         clipBehavior: Clip.hardEdge,
                         child: widget.isSelected
-                            ? Column(
-                                children: [
-                                  Divider(height: 1, color: AppColors.border),
-                                  _buildExpandedContent(context),
-                                ],
-                              )
+                            ? Column(children: [
+                                Divider(height: 1, color: AppColors.grey100),
+                                _buildExpanded(context),
+                              ])
                             : const SizedBox.shrink(),
                       ),
                     ],
@@ -354,32 +323,54 @@ class _UserTOCardState extends State<UserTOCard> {
           ],
         ),
       ),
-    );    // ✅ Opacity 닫기
+    );
   }
 
-  /// 1️⃣ 배지 + 위치
-  Widget _buildBadgeAndLocation(BuildContext context) {
-    final theme = Theme.of(context);
-    final locationText = _getLocationText();
-    
+  // ── 접힌 상태 ──────────────────────────────────────────
+
+  Widget _buildCollapsed(BuildContext context, ThemeData theme) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _buildTopRow(context, theme),
+        SizedBox(height: ResponsiveHelper.spacing(context, 8)),
+        Text(
+          widget.to.title,
+          style: ResponsiveHelper.titleStyle(context).copyWith(
+            fontWeight: FontWeight.bold,
+            height: 1.3,
+          ),
+          maxLines: 2,
+          overflow: TextOverflow.ellipsis,
+        ),
+        SizedBox(height: ResponsiveHelper.spacing(context, 8)),
+        _buildDateTimeRow(context),
+        SizedBox(height: ResponsiveHelper.spacing(context, 5)),
+        _buildBusinessRow(context),
+        SizedBox(height: ResponsiveHelper.spacing(context, 10)),
+        Container(height: 1, color: AppColors.grey100),
+        SizedBox(height: ResponsiveHelper.spacing(context, 10)),
+        _buildWageRow(context),
+        SizedBox(height: ResponsiveHelper.spacing(context, 10)),
+        _buildActionRow(context, theme),
+        SizedBox(height: ResponsiveHelper.spacing(context, 12)),
+      ],
+    );
+  }
+
+  Widget _buildTopRow(BuildContext context, ThemeData theme) {
     return Row(
       children: [
-        // 단기/장기 배지
-        _buildJobTypeBadge(context),
-        
-        SizedBox(width: ResponsiveHelper.spacing(context, 10)),
-        
-        // 위치 (강조)
-        Icon(
-          Icons.location_on,
-          size: ResponsiveHelper.iconSize(context, 16),
-          color: theme.primaryColor,
-        ),
-        SizedBox(width: ResponsiveHelper.spacing(context, 4)),
+        _typeBadge(context),
+        SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+        Icon(Icons.location_on,
+            size: ResponsiveHelper.iconSize(context, 13),
+            color: theme.primaryColor),
+        SizedBox(width: ResponsiveHelper.spacing(context, 3)),
         Expanded(
           child: Text(
-            locationText.isNotEmpty ? locationText : '위치 미정',
-            style: ResponsiveHelper.subtitleStyle(context).copyWith(
+            _location.isNotEmpty ? _location : '위치 미정',
+            style: ResponsiveHelper.smallStyle(context).copyWith(
               fontWeight: FontWeight.w600,
               color: theme.primaryColor,
             ),
@@ -387,399 +378,538 @@ class _UserTOCardState extends State<UserTOCard> {
             overflow: TextOverflow.ellipsis,
           ),
         ),
-        
-        // 지원완료 배지 (지원했으면)
-        if (_hasAppliedToTO) ...[
-          SizedBox(width: ResponsiveHelper.spacing(context, 8)),
-          _buildAppliedBadge(context),
+        ..._statusBadgeWidgets(context),
+        SizedBox(width: ResponsiveHelper.spacing(context, 4)),
+        _buildFavoriteButton(context),
+      ],
+    );
+  }
+
+  Widget _buildFavoriteButton(BuildContext context) {
+    final userProvider = context.watch<UserProvider>();
+    final isFav = userProvider.isFavoriteTo(widget.to.id);
+    return GestureDetector(
+      onTap: () => context.read<UserProvider>().toggleFavoriteTo(widget.to.id),
+      behavior: HitTestBehavior.opaque,
+      child: Padding(
+        padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 2)),
+        child: Icon(
+          isFav ? Icons.favorite_rounded : Icons.favorite_border_rounded,
+          size: ResponsiveHelper.iconSize(context, 18),
+          color: isFav ? AppColors.error : AppColors.grey300,
+        ),
+      ),
+    );
+  }
+
+  List<Widget> _statusBadgeWidgets(BuildContext context) {
+    return [
+      if (_hasApplied) ...[
+        SizedBox(width: ResponsiveHelper.spacing(context, 6)),
+        _pill(context, '지원완료', AppColors.success, Colors.white),
+      ],
+      if (_isUrgent) ...[
+        SizedBox(width: ResponsiveHelper.spacing(context, 6)),
+        _pill(context, '마감임박', AppColors.warningDark, Colors.white),
+      ],
+    ];
+  }
+
+  Widget _buildDateTimeRow(BuildContext context) {
+    final timeRange = widget.to.timeRange;
+    final showTime = !timeRange.startsWith('--');
+
+    return Row(
+      children: [
+        Icon(Icons.calendar_today,
+            size: ResponsiveHelper.iconSize(context, 13),
+            color: AppColors.grey500),
+        SizedBox(width: ResponsiveHelper.spacing(context, 4)),
+        Text(
+          _dateText,
+          style: ResponsiveHelper.smallStyle(context,
+              color: AppColors.grey700, fontWeight: FontWeight.w500),
+        ),
+        if (showTime) ...[
+          _divider(context),
+          Icon(Icons.schedule,
+              size: ResponsiveHelper.iconSize(context, 13),
+              color: AppColors.grey500),
+          SizedBox(width: ResponsiveHelper.spacing(context, 3)),
+          Flexible(
+            child: Text(
+              timeRange,
+              style: ResponsiveHelper.smallStyle(context, color: AppColors.grey700),
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+        ],
+        if (widget.to.isLongTerm && widget.to.workDays.isNotEmpty) ...[
+          _divider(context),
+          Flexible(
+            child: Text(
+              widget.to.workDaysLabel,
+              style: ResponsiveHelper.smallStyle(context, color: AppColors.grey600),
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
         ],
       ],
     );
   }
-  /// 단기/장기 배지
-  Widget _buildJobTypeBadge(BuildContext context) {
-    final isLongTerm = widget.to.isLongTerm;
-    
-    return Container(
-      padding: EdgeInsets.symmetric(
-        horizontal: ResponsiveHelper.spacing(context, 10),
-        vertical: ResponsiveHelper.spacing(context, 4),
-      ),
-      decoration: BoxDecoration(
-        color: isLongTerm ? AppColors.longTermBg : AppColors.shortTermBg,
-        borderRadius: BorderRadius.circular(6),
-        border: Border.all(
-          color: isLongTerm ? AppColors.longTermLight : AppColors.shortTermLight,
-        ),
-      ),
-      child: Text(
-        isLongTerm ? '고정' : '단기',
-        style: ResponsiveHelper.smallStyle(
-          context,
-          color: isLongTerm ? AppColors.longTermDark : AppColors.shortTermDark,
-          fontWeight: FontWeight.bold,
-        ),
-      ),
-    );
-  }
 
-  /// 지원완료 배지
-  Widget _buildAppliedBadge(BuildContext context) {
-    return Container(
-      padding: EdgeInsets.symmetric(
-        horizontal: ResponsiveHelper.spacing(context, 8),
-        vertical: ResponsiveHelper.spacing(context, 3),
-      ),
-      decoration: BoxDecoration(
-        color: AppColors.successBg,
-        borderRadius: BorderRadius.circular(4),
-        border: Border.all(color: AppColors.successLight),
-      ),
-      child: Text(
-        '지원완료',
-        style: ResponsiveHelper.tinyStyle(
-          context,
-          color: AppColors.successDark,
-          fontWeight: FontWeight.bold,
-        ),
-      ),
-    );
-  }
-
-  /// 2️⃣ 제목 (2줄까지)
-  Widget _buildTitle(BuildContext context) {
-    return Text(
-      widget.to.title,
-      style: ResponsiveHelper.titleStyle(context).copyWith(
-        fontWeight: FontWeight.bold,
-        height: 1.3,
-      ),
-      maxLines: 2,
-      overflow: TextOverflow.ellipsis,
-    );
-  }
-
-  /// 3️⃣ 날짜
-  Widget _buildDateRow(BuildContext context) {
-    return Row(
-      children: [
-        Icon(
-          Icons.calendar_today,
-          size: ResponsiveHelper.iconSize(context, 16),
-          color: AppColors.grey600,
-        ),
-        SizedBox(width: ResponsiveHelper.spacing(context, 4)),
-        Expanded(
-          child: Text(
-            _getDateText(),
-            style: ResponsiveHelper.bodyStyle(context).copyWith(
-              fontWeight: FontWeight.w500,
-            ),
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-          ),
-        ),
-      ],
-    );
-  }
-  
-  /// 4️⃣ 사업장 + 등록시간
-  Widget _buildBusinessAndTime(BuildContext context) {
-    return Row(
-      children: [
-        Icon(
-          Icons.business_outlined,
-          size: ResponsiveHelper.iconSize(context, 14),
-          color: AppColors.grey500,
-        ),
-        SizedBox(width: ResponsiveHelper.spacing(context, 4)),
-        Expanded(
-          child: Text(
-            widget.to.businessName,
-            style: ResponsiveHelper.smallStyle(context, color: AppColors.grey600),
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-          ),
-        ),
-        // 등록시간 (우측)
-        Text(
-          _getTimeAgo(),
-          style: ResponsiveHelper.tinyStyle(context, color: AppColors.grey500),
-        ),
-      ],
-    );
-  }
-  
-  /// 등록시간 포맷 (몇 분/시간/일 전)
-  String _getTimeAgo() {
-    final createdAt = widget.to.createdAt;
-    final now = DateTime.now();
-    final diff = now.difference(createdAt);
-    
-    if (diff.inMinutes < 60) {
-      return '${diff.inMinutes}분전';
-    } else if (diff.inHours < 24) {
-      return '${diff.inHours}시간전';
-    } else {
-      return '${diff.inDays}일전';
-    }
-  }
-  
-  /// 날짜 텍스트 포맷
-  String _getDateText() {
-    final to = widget.to;
-    
-    // 장기 공고
-    if (to.isLongTerm && to.startDate != null && to.endDate != null) {
-      final start = FormatHelper.formatDateCompact(to.startDate!);
-      final end = FormatHelper.formatDateCompact(to.endDate!);
-      final workDaysLabel = to.workDays.isNotEmpty
-          ? ' · ${to.workDaysLabel}'
-          : '';
-      return '$start~$end$workDaysLabel';
-    }
-    
-    // 단일 TO
-    return FormatHelper.formatDateCompact(to.date);
-  }
-
-  /// 4️⃣ 급여 + 업무 개수 + 버튼
-  Widget _buildWageAndWorkCount(BuildContext context) {
-    return Row(
-      children: [
-        // 급여타입 배지
-        Container(
-          padding: EdgeInsets.symmetric(
-            horizontal: ResponsiveHelper.spacing(context, 6),
-            vertical: ResponsiveHelper.spacing(context, 2),
-          ),
-          decoration: BoxDecoration(
-            color: AppColors.successBg,
-            borderRadius: BorderRadius.circular(4),
-            border: Border.all(color: AppColors.successLight),
-          ),
-          child: Text(
-            _getWageTypeLabel(),
-            style: ResponsiveHelper.tinyStyle(
-              context,
-              color: AppColors.successDark,
-              fontWeight: FontWeight.bold,
+  Widget _buildBusinessRow(BuildContext context) => Row(
+        children: [
+          Icon(Icons.store_outlined,
+              size: ResponsiveHelper.iconSize(context, 13),
+              color: AppColors.grey400),
+          SizedBox(width: ResponsiveHelper.spacing(context, 4)),
+          Expanded(
+            child: Text(
+              widget.to.businessName,
+              style: ResponsiveHelper.smallStyle(context, color: AppColors.grey600),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
             ),
           ),
-        ),
+          Text(
+            _timeAgo,
+            style: ResponsiveHelper.tinyStyle(context, color: AppColors.grey400),
+          ),
+        ],
+      );
+
+  Widget _buildWageRow(BuildContext context) {
+    final hint = _workHint;
+    final recruit = _recruitText;
+    return Row(
+      children: [
+        _pill(context, _wageLabel, AppColors.successBg, AppColors.successDark,
+            border: AppColors.successLight),
         SizedBox(width: ResponsiveHelper.spacing(context, 6)),
-        // 금액
         Text(
-          _getWageAmount(),
+          _wageAmount,
           style: ResponsiveHelper.subtitleStyle(context).copyWith(
             color: AppColors.successDark,
             fontWeight: FontWeight.bold,
           ),
         ),
-        
-        if (_workDetails.isNotEmpty) ...[
-          SizedBox(width: ResponsiveHelper.spacing(context, 12)),
-          Icon(
-            Icons.work_outline,
-            size: ResponsiveHelper.iconSize(context, 16),
-            color: AppColors.grey600,
+        if (hint != null) ...[
+          _divider(context),
+          Expanded(
+            child: Text(
+              hint,
+              style: ResponsiveHelper.smallStyle(context, color: AppColors.grey500),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
           ),
-          SizedBox(width: ResponsiveHelper.spacing(context, 4)),
+        ] else
+          const Spacer(),
+        if (recruit != null) ...[
+          SizedBox(width: ResponsiveHelper.spacing(context, 6)),
+          Icon(Icons.people_outline,
+              size: ResponsiveHelper.iconSize(context, 13),
+              color: AppColors.grey500),
+          SizedBox(width: ResponsiveHelper.spacing(context, 3)),
           Text(
-            '$_currentWorkCount개',
-            style: ResponsiveHelper.bodyStyle(context, color: AppColors.grey700),
+            recruit,
+            style: ResponsiveHelper.tinyStyle(context, color: AppColors.grey600),
           ),
         ],
-        
-        const Spacer(),
-        
-        // 상세 버튼
-        _buildMiniButton(
-          context,
-          icon: Icons.info_outline,
-          label: '상세',
-          onTap: _goToJobPosting,
-          isPrimary: false,
-        ),
-        
-        SizedBox(width: ResponsiveHelper.spacing(context, 8)),
-        
-        // 지원 버튼
-        _buildMiniButton(
-          context,
-          icon: _hasAppliedToTO ? Icons.settings : Icons.send,
-          label: _hasAppliedToTO ? '지원관리' : '지원하기',
-          onTap: _openApplyDialog,
-          isPrimary: !_hasAppliedToTO,
-        ),
       ],
     );
   }
 
-  /// 미니 버튼
-  Widget _buildMiniButton(
-    BuildContext context, {
-    required IconData icon,
-    required String label,
-    required VoidCallback? onTap,
-    bool isPrimary = true,
-  }) {
+  Widget _buildActionRow(BuildContext context, ThemeData theme) {
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.end,
+      children: [
+        _actionBtn(context,
+            label: '상세보기',
+            icon: Icons.article_outlined,
+            onTap: _goToDetail,
+            primary: false),
+        SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+        _isApplyLoading
+            ? _loadingBtn(context, theme)
+            : _actionBtn(context,
+                label: _hasApplied ? '지원관리' : '지원하기',
+                icon: _hasApplied ? Icons.manage_accounts_outlined : Icons.send,
+                onTap: _openApplyDialog,
+                primary: !_hasApplied),
+      ],
+    );
+  }
+
+  Widget _buildExpandBar(BuildContext context) {
+    final label = widget.isSelected
+        ? '접기'
+        : widget.to.isFlexType
+            ? '날짜 선택'
+            : '업무 상세';
+
+    return Container(
+      color: AppColors.grey50,
+      padding: EdgeInsets.symmetric(
+          vertical: ResponsiveHelper.spacing(context, 5)),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Text(
+            label,
+            style: ResponsiveHelper.tinyStyle(context, color: AppColors.grey400),
+          ),
+          SizedBox(width: ResponsiveHelper.spacing(context, 3)),
+          Icon(
+            widget.isSelected
+                ? Icons.keyboard_arrow_up
+                : Icons.keyboard_arrow_down,
+            size: ResponsiveHelper.iconSize(context, 16),
+            color: AppColors.grey400,
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ── 펼친 상태 ──────────────────────────────────────────
+
+  Widget _buildExpanded(BuildContext context) {
+    final isPending = widget.to.isPendingPublish;
+
+    return Padding(
+      padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 12)),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          if (isPending) ...[
+            _pendingNotice(context),
+            SizedBox(height: ResponsiveHelper.spacing(context, 12)),
+          ],
+          if (widget.to.description?.isNotEmpty == true) ...[
+            _descriptionPreview(context),
+            SizedBox(height: ResponsiveHelper.spacing(context, 12)),
+          ],
+          // flex TO: 날짜-슬롯 목록 / contract TO: 업무 목록
+          if (widget.to.isFlexType)
+            _buildFlexSlotList(context)
+          else
+            Opacity(
+              opacity: isPending ? 0.4 : 1.0,
+              child: _buildWorkList(context),
+            ),
+        ],
+      ),
+    );
+  }
+
+  // ── flex TO 날짜-슬롯 목록 ─────────────────────────────
+
+  Widget _buildFlexSlotList(BuildContext context) {
+    if (_showSlotsLoading) {
+      return Padding(
+        padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 16)),
+        child: const LoadingWidget(),
+      );
+    }
+
+    // null = 아직 fetch 안 됨 / 빈 리스트 = fetch 완료 후 슬롯 없음
+    if (widget.slots == null) {
+      return Padding(
+        padding: EdgeInsets.symmetric(vertical: ResponsiveHelper.spacing(context, 8)),
+        child: Text(
+          '날짜 정보를 불러오는 중...',
+          style: ResponsiveHelper.smallStyle(context, color: AppColors.grey500),
+        ),
+      );
+    }
+    if (widget.slots!.isEmpty) {
+      return Padding(
+        padding: EdgeInsets.symmetric(vertical: ResponsiveHelper.spacing(context, 8)),
+        child: Text(
+          '등록된 날짜가 없습니다',
+          style: ResponsiveHelper.smallStyle(context, color: AppColors.grey400),
+        ),
+      );
+    }
+
+    final slots = widget.slots!;
+    final now = DateTime.now();
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Icon(Icons.calendar_month_outlined,
+                size: ResponsiveHelper.iconSize(context, 14),
+                color: AppColors.grey600),
+            SizedBox(width: ResponsiveHelper.spacing(context, 6)),
+            Text(
+              '날짜별 근무',
+              style: ResponsiveHelper.smallStyle(context,
+                  color: AppColors.grey700, fontWeight: FontWeight.w600),
+            ),
+            const Spacer(),
+            Text(
+              '${slots.length}개 날짜',
+              style: ResponsiveHelper.tinyStyle(context, color: AppColors.grey400),
+            ),
+          ],
+        ),
+        SizedBox(height: ResponsiveHelper.spacing(context, 10)),
+        ...slots.map((slot) => _buildSlotRow(context, slot, now)),
+      ],
+    );
+  }
+
+  Widget _buildSlotRow(BuildContext context, SlotModel slot, DateTime now) {
+    final isPending = slot.visibleFrom != null && slot.visibleFrom!.isAfter(now);
+    final isDatePast = slot.isDatePast;
+    final isManualClosed = slot.isClosed;
+    final isFull = slot.isFull;
+    // 모든 업무의 지원 마감시각이 경과한 경우 → 슬롯 마감 처리
+    final isAllDeadlineExpired = slot.workDetails.isNotEmpty &&
+        slot.workDetails.every((wd) => wd.isTimeExpired);
+    final isDisabled =
+        isPending || isDatePast || isManualClosed || isFull || isAllDeadlineExpired;
+
+    final hasApplied = _hasAppliedForSlot(slot);
+
+    // 상태 결정
+    String statusLabel;
+    Color statusBg;
+    Color statusFg;
+    if (hasApplied) {
+      statusLabel = '지원완료';
+      statusBg = AppColors.infoBg;
+      statusFg = AppColors.info;
+    } else if (isPending) {
+      statusLabel = '예약';
+      statusBg = AppColors.warningBg;
+      statusFg = AppColors.warningDark;
+    } else if (isFull) {
+      statusLabel = '충족';
+      statusBg = AppColors.grey100;
+      statusFg = AppColors.grey500;
+    } else if (isManualClosed || isDatePast || isAllDeadlineExpired) {
+      statusLabel = '마감';
+      statusBg = AppColors.grey100;
+      statusFg = AppColors.grey500;
+    } else {
+      statusLabel = '모집중';
+      statusBg = AppColors.successBg;
+      statusFg = AppColors.successDark;
+    }
+
+    // 업무 힌트 (슬롯 자체 workDetails 사용)
+    final workHint = slot.workDetails.isEmpty
+        ? null
+        : slot.workDetails.length == 1
+            ? slot.workDetails.first.workType
+            : '${slot.workDetails.first.workType} 외 ${slot.workDetails.length - 1}개';
+
+    final slotDate = slot.date;
+    final dateLabel = '${slotDate.month}월 ${slotDate.day}일';
+    final semanticDesc = isDisabled
+        ? '$dateLabel 슬롯, 마감됨'
+        : hasApplied
+            ? '$dateLabel 슬롯, 지원 완료, 상세 보기'
+            : '$dateLabel 슬롯, 지원 가능, 공고 상세 보기';
+
+    return Semantics(
+      label: semanticDesc,
+      button: !(isDisabled && !hasApplied),
+      enabled: !(isDisabled && !hasApplied),
+      child: GestureDetector(
+      // 마감된 슬롯은 상세 진입 불가 (지원완료 상태는 확인 가능하도록 허용)
+      onTap: (isDisabled && !hasApplied) ? null : () => _goToDetailForSlot(slot),
+      child: Opacity(
+      opacity: (isDisabled && !hasApplied) ? 0.55 : 1.0,
+      child: Container(
+        margin: EdgeInsets.only(bottom: ResponsiveHelper.spacing(context, 8)),
+        padding: EdgeInsets.symmetric(
+          horizontal: ResponsiveHelper.spacing(context, 10),
+          vertical: ResponsiveHelper.spacing(context, 9),
+        ),
+        decoration: BoxDecoration(
+          color: hasApplied
+              ? AppColors.infoBg
+              : isDisabled
+                  ? AppColors.grey50
+                  : Colors.white,
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(
+            color: hasApplied
+                ? AppColors.infoLight
+                : isDisabled
+                    ? AppColors.grey200
+                    : AppColors.grey300,
+          ),
+        ),
+        child: Row(
+          children: [
+            // 날짜 배지
+            Container(
+              padding: EdgeInsets.symmetric(
+                horizontal: ResponsiveHelper.spacing(context, 7),
+                vertical: ResponsiveHelper.spacing(context, 3),
+              ),
+              decoration: BoxDecoration(
+                color: AppColors.shortTermBg,
+                borderRadius: BorderRadius.circular(4),
+                border: Border.all(color: AppColors.shortTermLight),
+              ),
+              child: Text(
+                FormatHelper.formatDateCompact(slot.date),
+                style: ResponsiveHelper.tinyStyle(context,
+                    color: AppColors.shortTermDark,
+                    fontWeight: FontWeight.bold),
+              ),
+            ),
+            SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+            // 업무 힌트
+            Expanded(
+              child: workHint != null
+                  ? Text(
+                      workHint,
+                      style: ResponsiveHelper.smallStyle(context,
+                          color: AppColors.grey600),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    )
+                  : const SizedBox.shrink(),
+            ),
+            // 상태 칩
+            SizedBox(width: ResponsiveHelper.spacing(context, 6)),
+            _statusChip(context, statusLabel, statusBg, statusFg),
+            // 지원 버튼 (마감 아닐 때만)
+            if (!isDisabled) ...[
+              SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+              _slotApplyBtn(context, slot, hasApplied),
+            ],
+          ],
+        ),
+      ),
+    ), // Opacity
+    ), // GestureDetector
+    ); // Semantics
+  }
+
+  Widget _slotApplyBtn(BuildContext context, SlotModel slot, bool hasApplied) {
     final theme = Theme.of(context);
-    final isDisabled = onTap == null;
-    
     return InkWell(
-      onTap: onTap,
+      onTap: () => _openApplyDialogForSlot(slot),
       borderRadius: BorderRadius.circular(6),
       child: Container(
         padding: EdgeInsets.symmetric(
           horizontal: ResponsiveHelper.spacing(context, 10),
-          vertical: ResponsiveHelper.spacing(context, 6),
+          vertical: ResponsiveHelper.spacing(context, 5),
         ),
         decoration: BoxDecoration(
-          color: isDisabled 
-              ? AppColors.grey200
-              : isPrimary 
-                  ? theme.primaryColor 
-                  : AppColors.grey100,
+          color: hasApplied
+              ? Colors.transparent
+              : theme.primaryColor,
           borderRadius: BorderRadius.circular(6),
-          border: isPrimary || isDisabled
-              ? null 
-              : Border.all(color: AppColors.grey300),
+          border: hasApplied
+              ? Border.all(color: AppColors.info)
+              : null,
+        ),
+        child: Text(
+          hasApplied ? '지원관리' : '지원하기',
+          style: ResponsiveHelper.tinyStyle(context,
+              color: hasApplied ? AppColors.info : Colors.white,
+              fontWeight: FontWeight.bold),
+        ),
+      ),
+    );
+  }
+
+  Widget _statusChip(BuildContext context, String label, Color bg, Color fg) =>
+      ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 72),
+        child: Container(
+          padding: EdgeInsets.symmetric(
+            horizontal: ResponsiveHelper.spacing(context, 6),
+            vertical: ResponsiveHelper.spacing(context, 3),
+          ),
+          decoration: BoxDecoration(
+            color: bg,
+            borderRadius: BorderRadius.circular(4),
+          ),
+          child: Text(label,
+              style: ResponsiveHelper.tinyStyle(context,
+                  color: fg, fontWeight: FontWeight.bold),
+              overflow: TextOverflow.ellipsis,
+              maxLines: 1),
+        ),
+      );
+
+  // ── contract TO 업무 목록 ──────────────────────────────
+
+  Widget _pendingNotice(BuildContext context) => Container(
+        padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 12)),
+        decoration: BoxDecoration(
+          color: AppColors.warningBg,
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(color: AppColors.warningLight),
         ),
         child: Row(
-          mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(
-              icon,
-              size: ResponsiveHelper.iconSize(context, 14),
-              color: isDisabled
-                  ? AppColors.grey500
-                  : isPrimary 
-                      ? Colors.white 
-                      : AppColors.grey700,
-            ),
-            SizedBox(width: ResponsiveHelper.spacing(context, 4)),
-            Text(
-              label,
-              style: ResponsiveHelper.smallStyle(
-                context,
-                color: isDisabled
-                    ? AppColors.grey500
-                    : isPrimary 
-                        ? Colors.white 
-                        : AppColors.grey700,
-                fontWeight: FontWeight.w600,
+            Icon(Icons.schedule,
+                size: ResponsiveHelper.iconSize(context, 16),
+                color: AppColors.warningDark),
+            SizedBox(width: ResponsiveHelper.spacing(context, 10)),
+            Expanded(
+              child: Text(
+                widget.to.publishAtDisplay != null
+                    ? '${widget.to.publishAtDisplay}에 오픈됩니다'
+                    : '곧 오픈 예정입니다',
+                style: ResponsiveHelper.smallStyle(context,
+                    color: AppColors.warningDark, fontWeight: FontWeight.w600),
               ),
             ),
           ],
-        ),
-      ),
-    );
-  }
-
-  /// 펼침 아이콘
-  Widget _buildExpandIcon(BuildContext context) {
-    return Center(
-      child: Padding(
-        padding: EdgeInsets.only(
-          bottom: ResponsiveHelper.spacing(context, 8),
-        ),
-        child: Icon(
-          widget.isSelected 
-              ? Icons.keyboard_arrow_up 
-              : Icons.keyboard_arrow_down,
-          size: ResponsiveHelper.iconSize(context, 20),
-          color: AppColors.grey500,
-        ),
-      ),
-    );
-  }
-
-  /// 펼친 상태 컨텐츠
-  Widget _buildExpandedContent(BuildContext context) {
-    final isPendingPublish = widget.to.isPendingPublish;
-
-    return Padding(
-      padding: ResponsiveHelper.cardPadding(context),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          if (isPendingPublish) ...[
-            _buildPendingPublishNotice(context, widget.to),
-            SizedBox(height: ResponsiveHelper.spacing(context, 12)),
-          ],
-
-          Opacity(
-            opacity: isPendingPublish ? 0.4 : 1.0,
-            child: _buildWorkDetailsList(context),
-          ),
-        ],
-      ),
-    );
-  }
-  /// ✅ 예약 공개 대기 메시지
-  Widget _buildPendingPublishNotice(BuildContext context, TOModel to) {
-    final publishAt = to.publishAt;
-    final displayText = publishAt != null 
-        ? '${publishAt.month}/${publishAt.day} ${publishAt.hour.toString().padLeft(2, '0')}:${publishAt.minute.toString().padLeft(2, '0')}에 오픈됩니다'
-        : '곧 오픈 예정입니다';
-    
-    return Container(
-      padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 12)),
-      decoration: BoxDecoration(
-        color: AppColors.warningBg,
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: AppColors.warningLight),
-      ),
-      child: Row(
-        children: [
-          Icon(
-            Icons.schedule,
-            size: ResponsiveHelper.iconSize(context, 18),
-            color: AppColors.warningDark,
-          ),
-          SizedBox(width: ResponsiveHelper.spacing(context, 10)),
-          Expanded(
-            child: Text(
-              displayText,
-              style: ResponsiveHelper.bodyStyle(context, color: AppColors.warningDark).copyWith(
-                fontWeight: FontWeight.w600,
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  /// 업무 목록
-  Widget _buildWorkDetailsList(BuildContext context) {
-    // ✅ 로딩 중이어도 이전 데이터 있으면 그대로 표시 + 오버레이 로딩
-    if (_isLoadingWorkDetails && _workDetails.isEmpty) {
-      return Center(
-        child: Padding(
-          padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 16)),
-          child: SizedBox(
-            width: ResponsiveHelper.spacing(context, 24),
-            height: ResponsiveHelper.spacing(context, 24),
-            child: const CircularProgressIndicator(strokeWidth: 2),
-          ),
         ),
       );
-    }
 
+  Widget _descriptionPreview(BuildContext context) => Container(
+        width: double.infinity,
+        padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 10)),
+        decoration: BoxDecoration(
+          color: AppColors.grey50,
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(color: AppColors.grey200),
+        ),
+        child: Text(
+          widget.to.description!,
+          style: ResponsiveHelper.smallStyle(context, color: AppColors.grey600),
+          maxLines: 2,
+          overflow: TextOverflow.ellipsis,
+        ),
+      );
+
+  Widget _buildWorkList(BuildContext context) {
+    if (_showLoading) {
+      return Padding(
+        padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 16)),
+        child: const LoadingWidget(),
+      );
+    }
     if (_workDetails.isEmpty) {
-      return Text(
-        '업무 정보가 없습니다',
-        style: ResponsiveHelper.bodyStyle(context, color: AppColors.grey500),
+      return Padding(
+        padding: EdgeInsets.symmetric(
+            vertical: ResponsiveHelper.spacing(context, 8)),
+        child: Text('업무 목록을 불러오는 중...',
+            style: ResponsiveHelper.smallStyle(context, color: AppColors.grey500)),
       );
     }
 
-    final duplicateWorkTypes = _workDetails
+    final dups = _workDetails
         .map((w) => w.workType)
-        .fold<Map<String, int>>({}, (map, t) {
-          map[t] = (map[t] ?? 0) + 1;
-          return map;
+        .fold<Map<String, int>>({}, (m, t) {
+          m[t] = (m[t] ?? 0) + 1;
+          return m;
         })
         .entries
         .where((e) => e.value > 1)
@@ -787,267 +917,153 @@ class _UserTOCardState extends State<UserTOCard> {
         .toSet();
 
     return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: _workDetails.map((work) {
-        final application = _getApplicationForWork(work.workType, work.startTime);
-        final hasTimeAmbiguity = duplicateWorkTypes.contains(work.workType);
-        return _buildWorkDetailItem(context, work, application, hasTimeAmbiguity: hasTimeAmbiguity);
-      }).toList(),
+      children: _workDetails
+          .map((work) => _WorkItem(
+                work: work,
+                application: _appForWork(work),
+                to: widget.to,
+                showTimeLabel: dups.contains(work.workType),
+              ))
+          .toList(),
     );
   }
 
-  /// 업무 상세 아이템
-  Widget _buildWorkDetailItem(
-    BuildContext context,
-    WorkDetailModel work,
-    ApplicationModel? application, {
-    bool hasTimeAmbiguity = false,
-  }) {
-    final hasApplied = application != null && application.id.isNotEmpty;
-    final isConfirmed = application?.status == 'CONFIRMED';
-    
-    // ✅ 마감 여부 판단 (지원하지 않은 경우만 비활성화)
-    final isClosed = !hasApplied && (work.isClosed || work.isTimeExpired || work.isFull);
-    
-    return Opacity(
-      opacity: isClosed ? 0.5 : 1.0,
-      child: Container(
-        margin: EdgeInsets.only(bottom: ResponsiveHelper.spacing(context, 8)),
-        padding: ResponsiveHelper.cardPadding(context),
-        decoration: BoxDecoration(
-          color: isConfirmed 
-              ? AppColors.successBg 
-              : (hasApplied ? AppColors.infoBg : AppColors.grey100),
-          borderRadius: BorderRadius.circular(8),
-          border: Border.all(
-            color: isConfirmed 
-                ? AppColors.successLight 
-                : (hasApplied ? AppColors.infoLight : AppColors.grey300),
-          ),
-        ),
-      child: Row(
-        children: [
-          // 업무 아이콘
-          WorkTypeIcon.buildWithBackground(
-            iconString: work.workTypeIcon,
-            iconColor: work.workTypeColor,
-            backgroundColor: work.workTypeBackgroundColor,
-            containerSize: ResponsiveHelper.spacing(context, 36),
-            size: ResponsiveHelper.iconSize(context, 18),
-          ),
-          
-          SizedBox(width: ResponsiveHelper.spacing(context, 12)),
-          
-          // 업무 정보
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                // 업무명
-                Text(
-                  work.workType,
-                  style: ResponsiveHelper.subtitleStyle(context).copyWith(
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-                SizedBox(height: ResponsiveHelper.spacing(context, 2)),
-                // 시간 + 급여
-                Row(
-                  children: [
-                    if (hasTimeAmbiguity) ...[
-                      Container(
-                        padding: EdgeInsets.symmetric(
-                          horizontal: ResponsiveHelper.spacing(context, 6),
-                          vertical: ResponsiveHelper.spacing(context, 2),
-                        ),
-                        decoration: BoxDecoration(
-                          color: AppColors.infoBg,
-                          borderRadius: BorderRadius.circular(4),
-                          border: Border.all(color: AppColors.infoLight),
-                        ),
-                        child: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Icon(Icons.access_time,
-                                size: ResponsiveHelper.iconSize(context, 11),
-                                color: AppColors.info),
-                            SizedBox(width: ResponsiveHelper.spacing(context, 3)),
-                            Text(
-                              '${work.startTime}~${work.endTime}',
-                              style: ResponsiveHelper.tinyStyle(context,
-                                  color: AppColors.info,
-                                  fontWeight: FontWeight.bold),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ] else ...[
-                      Icon(
-                        Icons.access_time,
-                        size: ResponsiveHelper.iconSize(context, 12),
-                        color: AppColors.grey500,
-                      ),
-                      SizedBox(width: ResponsiveHelper.spacing(context, 3)),
-                      Text(
-                        '${work.startTime}~${work.endTime}',
-                        style: ResponsiveHelper.smallStyle(context, color: AppColors.grey600),
-                      ),
-                    ],
-                    SizedBox(width: ResponsiveHelper.spacing(context, 8)),
-                    // 급여타입 배지
-                    Container(
-                      padding: EdgeInsets.symmetric(
-                        horizontal: ResponsiveHelper.spacing(context, 6),
-                        vertical: ResponsiveHelper.spacing(context, 2),
-                      ),
-                      decoration: BoxDecoration(
-                        color: AppColors.successBg,
-                        borderRadius: BorderRadius.circular(4),
-                      ),
-                      child: Text(
-                        FormatHelper.getWageTypeLabel(work.wageType),
-                        style: ResponsiveHelper.tinyStyle(
-                          context,
-                          color: AppColors.successDark,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                    ),
-                    SizedBox(width: ResponsiveHelper.spacing(context, 4)),
-                    // 금액
-                    Text(
-                      FormatHelper.formatWage(work.wage),
-                      style: ResponsiveHelper.smallStyle(context).copyWith(
-                        color: AppColors.successDark,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                  ],
-                ),
-              ],
-            ),
-          ),
-          
-          // 상태 배지
-          _buildWorkStatusBadge(context, work, application),
-        ],
-      ),
-      ),  // ✅ Container 닫기
-    );    // ✅ Opacity 닫기
-  }
-  /// 업무 상태 배지
-  Widget _buildWorkStatusBadge(
-    BuildContext context, 
-    WorkDetailModel work, 
-    ApplicationModel? application,
-  ) {
-    // ✅ 확정/대기 구분
-    if (application != null) {
-      if (application.status == 'CONFIRMED') {
-        return _buildStatusChip(context, '확정', AppColors.success, Colors.white);
-      }
-      return _buildStatusChip(context, '대기중', AppColors.info, Colors.white);
-    }
-    
-    // ✅ 장기 공고: TO의 applicationDeadline 기준
-    if (widget.to.isLongTerm) {
-      if (widget.to.isManualClosed) {
-        return _buildStatusChip(context, '마감', AppColors.grey500, Colors.white);
-      }
-      if (widget.to.isDeadlinePassed) {
-        return _buildStatusChip(context, '마감', AppColors.grey500, Colors.white);
-      }
-      if (work.isFull) {
-        return _buildStatusChip(context, '마감', AppColors.grey500, Colors.white);
-      }
-      // 긴급모집
-      if (work.isEmergencyOpen) {
-        return _buildStatusChip(context, '긴급', AppColors.error, Colors.white);
-      }
-      return _buildStatusChip(context, '모집중', AppColors.successBg, AppColors.successDark);
-    }
-    
-    // ✅ 단기 공고: WorkDetail 기준
-    if (work.isClosed || work.isTimeExpired || work.isFull) {
-      return _buildStatusChip(context, '마감', AppColors.grey500, Colors.white);
-    }
-    
-    // 긴급모집
-    if (work.isEmergencyOpen) {
-      return _buildStatusChip(context, '긴급', AppColors.error, Colors.white);
-    }
-    
-    // 모집중
-    return _buildStatusChip(context, '모집중', AppColors.successBg, AppColors.successDark);
+  // ── 공통 소위젯 ───────────────────────────────────────
+
+  Widget _typeBadge(BuildContext context) {
+    final long = widget.to.isLongTerm;
+    return _pill(
+      context,
+      long ? '고정' : '단기',
+      long ? AppColors.longTermBg : AppColors.shortTermBg,
+      long ? AppColors.longTermDark : AppColors.shortTermDark,
+      border: long ? AppColors.longTermLight : AppColors.shortTermLight,
+    );
   }
 
-  Widget _buildStatusChip(
+  Widget _pill(
     BuildContext context,
     String label,
-    Color bgColor,
-    Color textColor,
-  ) {
-    return Container(
-      padding: EdgeInsets.symmetric(
-        horizontal: ResponsiveHelper.spacing(context, 8),
-        vertical: ResponsiveHelper.spacing(context, 4),
-      ),
-      decoration: BoxDecoration(
-        color: bgColor,
-        borderRadius: BorderRadius.circular(4),
-      ),
-      child: Text(
-        label,
-        style: ResponsiveHelper.tinyStyle(
-          context,
-          color: textColor,
-          fontWeight: FontWeight.bold,
+    Color bg,
+    Color text, {
+    Color? border,
+  }) =>
+      Container(
+        padding: EdgeInsets.symmetric(
+          horizontal: ResponsiveHelper.spacing(context, 7),
+          vertical: ResponsiveHelper.spacing(context, 3),
+        ),
+        decoration: BoxDecoration(
+          color: bg,
+          borderRadius: BorderRadius.circular(4),
+          border: border != null ? Border.all(color: border) : null,
+        ),
+        child: Text(
+          label,
+          style: ResponsiveHelper.tinyStyle(context,
+              color: text, fontWeight: FontWeight.bold),
+        ),
+      );
+
+  Widget _divider(BuildContext context) => Padding(
+        padding: EdgeInsets.symmetric(
+            horizontal: ResponsiveHelper.spacing(context, 7)),
+        child: Container(width: 1, height: 11, color: AppColors.grey200),
+      );
+
+  Widget _actionBtn(
+    BuildContext context, {
+    required String label,
+    required IconData icon,
+    required VoidCallback onTap,
+    bool primary = true,
+  }) {
+    final theme = Theme.of(context);
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(8),
+      child: Container(
+        padding: EdgeInsets.symmetric(
+          horizontal: ResponsiveHelper.spacing(context, 14),
+          vertical: ResponsiveHelper.spacing(context, 8),
+        ),
+        decoration: BoxDecoration(
+          color: primary ? theme.primaryColor : Colors.transparent,
+          borderRadius: BorderRadius.circular(8),
+          border: primary ? null : Border.all(color: AppColors.grey300),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icon,
+                size: ResponsiveHelper.iconSize(context, 13),
+                color: primary ? Colors.white : AppColors.grey700),
+            SizedBox(width: ResponsiveHelper.spacing(context, 5)),
+            Text(
+              label,
+              style: ResponsiveHelper.smallStyle(context,
+                  color: primary ? Colors.white : AppColors.grey700,
+                  fontWeight: FontWeight.w600),
+            ),
+          ],
         ),
       ),
     );
   }
-  
 
-  /// 상세보기 화면 이동
-  void _goToJobPosting() async {
-    List<WorkDetailModel> workDetailsToPass = _workDetails;
-
-    if (workDetailsToPass.isEmpty) {
-      if (!mounted) return;
-      showDialog(
-        context: context,
-        barrierDismissible: false,
-        builder: (_) => const Center(child: CircularProgressIndicator()),
+  Widget _loadingBtn(BuildContext context, ThemeData theme) => Container(
+        height: ResponsiveHelper.spacing(context, 34),
+        width: ResponsiveHelper.spacing(context, 84),
+        decoration: BoxDecoration(
+          color: theme.primaryColor,
+          borderRadius: BorderRadius.circular(8),
+        ),
+        child: const Center(
+          child: SizedBox(
+            width: 16, height: 16,
+            child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+          ),
+        ),
       );
 
-      try {
-        workDetailsToPass = await _firestoreService.getWorkDetails(widget.to.id);
-      } catch (e) {
-        if (mounted) Navigator.pop(context);
-        ToastHelper.showError('데이터를 불러오는데 실패했습니다');
-        return;
-      }
+  // ── Navigation ────────────────────────────────────────
 
-      if (mounted) Navigator.pop(context);
+  Future<void> _goToDetail() async {
+    // flex TO는 슬롯 데이터 기반이지만 상세 화면은 마스터 workDetails 사용
+    var details = _workDetails;
+    if (details.isEmpty && !widget.to.isFlexType) {
+      setState(() => _isApplyLoading = true);
+      await _fetch();
+      if (!mounted) return;
+      setState(() => _isApplyLoading = false);
+      details = _workDetails;
+      if (details.isEmpty) return;
+    } else if (details.isEmpty && widget.to.isFlexType) {
+      // flex TO: 마스터 TO workDetails (슬롯 없어도 이동 가능)
+      details = widget.to.workDetails;
     }
-
     if (!mounted) return;
-    NavigationHelper.push(
+    final result = await NavigationHelper.push<bool>(
       context,
-      destination: JobPostingScreen(
-        to: widget.to,
-        workDetails: workDetailsToPass,
-      ),
+      destination: JobPostingScreen(to: widget.to, workDetails: details),
     );
+    if (result == true && mounted) widget.onApplySuccess();
   }
 
-  /// 지원 다이얼로그 열기
-  void _openApplyDialog() async {
-    if (_workDetails.isEmpty) {
-      await _loadWorkDetails();
+  /// 하단 "지원하기" 버튼 — flex TO면 전체 슬롯 다이얼로그, contract TO면 단일 다이얼로그
+  Future<void> _openApplyDialog() async {
+    if (widget.to.isFlexType) {
+      await _openApplyDialogAllSlots();
+      return;
     }
-
-    if (_workDetails.isEmpty) return;
+    // contract / single-date TO
+    if (_workDetails.isEmpty) {
+      setState(() => _isApplyLoading = true);
+      await _fetch();
+      if (!mounted) return;
+      setState(() => _isApplyLoading = false);
+      if (_workDetails.isEmpty) return;
+    }
     if (!mounted) return;
 
     final result = await ApplyWorkDialog.show(
@@ -1055,12 +1071,253 @@ class _UserTOCardState extends State<UserTOCard> {
       to: widget.to,
       workDetails: _workDetails,
       businessName: widget.to.businessName,
+      myApplications: widget.myApplications,
     );
-
     if (result?.hasChanges == true && mounted) {
-      _workDetailsCache.clear();
       widget.onApplySuccess();
-      setState(() {});
     }
   }
+
+  /// flex TO: 모든 오픈 슬롯을 GroupTO 형식으로 다이얼로그 오픈
+  Future<void> _openApplyDialogAllSlots() async {
+    // 슬롯 미로드 시 먼저 fetch
+    if (widget.slots == null) {
+      setState(() => _isApplyLoading = true);
+      await _fetchSlots();
+      if (!mounted) return;
+      setState(() => _isApplyLoading = false);
+    }
+
+    final slots = widget.slots ?? [];
+    if (slots.isEmpty) return;
+
+    final now = DateTime.now();
+    final groupTOsByDate = <DateTime, TOModel>{};
+    final groupWorkDetailsByDate = <DateTime, List<WorkDetailData>>{};
+
+    for (final slot in slots) {
+      if (slot.isEffectivelyClosed) continue;
+      if (slot.visibleFrom != null && slot.visibleFrom!.isAfter(now)) continue;
+      // 모든 업무의 지원 마감이 경과한 슬롯 제외
+      if (slot.workDetails.isNotEmpty &&
+          slot.workDetails.every((wd) => wd.isTimeExpired)) { continue; }
+      final dateKey = DateTime(slot.date.year, slot.date.month, slot.date.day);
+      groupTOsByDate[dateKey] = widget.to.copyWith(rangeStart: slot.date);
+      // runtimeFull: 슬롯의 workTypeCounts 기반으로 업무별 정원 충족 여부 주입
+      groupWorkDetailsByDate[dateKey] = slot.workDetails.map((wd) =>
+          slot.isWorkTypeFull(wd.workType)
+              ? wd.copyWith(runtimeFull: true)
+              : wd).toList();
+    }
+
+    if (!mounted) return;
+    if (groupTOsByDate.isEmpty) return;
+
+    final result = await ApplyWorkDialog.show(
+      context: context,
+      to: widget.to,
+      workDetails: widget.to.workDetails,
+      groupTOsByDate: groupTOsByDate,
+      groupWorkDetailsByDate: groupWorkDetailsByDate,
+      businessName: widget.to.businessName,
+      myApplications: widget.myApplications,
+    );
+    if (result?.hasChanges == true && mounted) {
+      widget.onApplySuccess();
+    }
+  }
+
+  /// 슬롯 행 탭 → 해당 날짜 공고 상세 화면
+  Future<void> _goToDetailForSlot(SlotModel slot) async {
+    final slotTO = widget.to.copyWith(rangeStart: slot.date);
+    final required = slot.workDetails.fold(0, (sum, wd) => sum + wd.requiredCount);
+    final result = await NavigationHelper.push<bool>(
+      context,
+      destination: JobPostingScreen(
+        to: slotTO,
+        workDetails: slot.workDetails,
+        slotDate: slot.date,
+        slotTotalRequired: required,
+        slotConfirmedCount: slot.confirmedCount,
+        slotPendingCount: slot.pendingCount,
+      ),
+    );
+    // 공고 상세에서 지원한 경우 부모(AllTOListScreen) 지원 목록 갱신
+    if (result == true && mounted) widget.onApplySuccess();
+  }
+
+  /// 슬롯 행의 "지원하기" → 해당 날짜 단일 슬롯 다이얼로그
+  Future<void> _openApplyDialogForSlot(SlotModel slot) async {
+    if (!mounted) return;
+    final slotTO = widget.to.copyWith(rangeStart: slot.date);
+    final annotatedDetails = slot.workDetails.map((wd) =>
+        slot.isWorkTypeFull(wd.workType)
+            ? wd.copyWith(runtimeFull: true)
+            : wd).toList();
+    final result = await ApplyWorkDialog.show(
+      context: context,
+      to: slotTO,
+      workDetails: annotatedDetails,
+      businessName: widget.to.businessName,
+      myApplications: widget.myApplications,
+    );
+    if (result?.hasChanges == true && mounted) {
+      widget.onApplySuccess();
+    }
+  }
+}
+
+// ══════════════════════════════════════════════════════════
+// 업무 아이템 위젯 (contract TO 펼친 상태 전용)
+// ══════════════════════════════════════════════════════════
+
+class _WorkItem extends StatelessWidget {
+  const _WorkItem({
+    required this.work,
+    required this.application,
+    required this.to,
+    required this.showTimeLabel,
+  });
+
+  final WorkDetailModel work;
+  final ApplicationModel? application;
+  final TOModel to;
+  final bool showTimeLabel;
+
+  @override
+  Widget build(BuildContext context) {
+    final hasApplied = application != null && application!.id.isNotEmpty;
+    final isConfirmed = AppStatus.confirmedStatuses.contains(application?.status);
+    final isClosed = !hasApplied && (work.isClosed || work.isTimeExpired || work.isFull);
+
+    return Opacity(
+      opacity: isClosed ? 0.5 : 1.0,
+      child: Container(
+        margin: EdgeInsets.only(bottom: ResponsiveHelper.spacing(context, 8)),
+        padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 11)),
+        decoration: BoxDecoration(
+          color: isConfirmed
+              ? AppColors.successBg
+              : hasApplied
+                  ? AppColors.infoBg
+                  : AppColors.grey50,
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(
+            color: isConfirmed
+                ? AppColors.successLight
+                : hasApplied
+                    ? AppColors.infoLight
+                    : AppColors.grey200,
+          ),
+        ),
+        child: Row(
+          children: [
+            WorkTypeIcon.buildWithBackground(
+              iconString: work.workTypeIcon,
+              iconColor: work.workTypeColor,
+              backgroundColor: work.workTypeBackgroundColor,
+              containerSize: ResponsiveHelper.spacing(context, 36),
+              size: ResponsiveHelper.iconSize(context, 18),
+            ),
+            SizedBox(width: ResponsiveHelper.spacing(context, 10)),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(work.workType,
+                      style: ResponsiveHelper.bodyStyle(context)
+                          .copyWith(fontWeight: FontWeight.w600)),
+                  SizedBox(height: ResponsiveHelper.spacing(context, 3)),
+                  _infoRow(context),
+                ],
+              ),
+            ),
+            SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+            _statusBadge(context, hasApplied, isConfirmed),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _infoRow(BuildContext context) {
+    return Wrap(
+      spacing: ResponsiveHelper.spacing(context, 8),
+      runSpacing: ResponsiveHelper.spacing(context, 4),
+      crossAxisAlignment: WrapCrossAlignment.center,
+      children: [
+        if (showTimeLabel)
+          Container(
+            padding: EdgeInsets.symmetric(
+              horizontal: ResponsiveHelper.spacing(context, 5),
+              vertical: ResponsiveHelper.spacing(context, 2),
+            ),
+            decoration: BoxDecoration(
+              color: AppColors.infoBg,
+              borderRadius: BorderRadius.circular(4),
+            ),
+            child: Text('${work.startTime}~${work.endTime}',
+                style: ResponsiveHelper.tinyStyle(context,
+                    color: AppColors.info, fontWeight: FontWeight.bold)),
+          )
+        else
+          Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(Icons.access_time,
+                  size: ResponsiveHelper.iconSize(context, 12),
+                  color: AppColors.grey500),
+              SizedBox(width: ResponsiveHelper.spacing(context, 3)),
+              Text('${work.startTime}~${work.endTime}',
+                  style: ResponsiveHelper.tinyStyle(context, color: AppColors.grey600)),
+            ],
+          ),
+        Text(
+          FormatHelper.formatWage(work.wage),
+          style: ResponsiveHelper.smallStyle(context).copyWith(
+            color: AppColors.successDark,
+            fontWeight: FontWeight.bold,
+          ),
+        ),
+        TaxDeductionBadge.chip(taxDeductionType: work.taxDeductionType),
+      ],
+    );
+  }
+
+  Widget _statusBadge(BuildContext context, bool hasApplied, bool isConfirmed) {
+    if (hasApplied) {
+      return _chip(context,
+          isConfirmed ? '확정' : '대기중',
+          isConfirmed ? AppColors.success : AppColors.info,
+          Colors.white);
+    }
+    if (to.isLongTerm) {
+      if (to.isManualClosed || to.isDeadlinePassed) {
+        return _chip(context, '마감', AppColors.grey400, Colors.white);
+      }
+      if (work.isFull) return _chip(context, '마감', AppColors.grey400, Colors.white);
+      if (work.isEmergencyOpen) return _chip(context, '긴급', AppColors.error, Colors.white);
+      return _chip(context, '모집중', AppColors.successBg, AppColors.successDark);
+    }
+    if (work.isClosed || work.isTimeExpired || work.isFull) {
+      return _chip(context, '마감', AppColors.grey400, Colors.white);
+    }
+    if (work.isEmergencyOpen) return _chip(context, '긴급', AppColors.error, Colors.white);
+    return _chip(context, '모집중', AppColors.successBg, AppColors.successDark);
+  }
+
+  Widget _chip(BuildContext context, String label, Color bg, Color text) =>
+      Container(
+        padding: EdgeInsets.symmetric(
+          horizontal: ResponsiveHelper.spacing(context, 8),
+          vertical: ResponsiveHelper.spacing(context, 4),
+        ),
+        decoration: BoxDecoration(
+          color: bg,
+          borderRadius: BorderRadius.circular(4),
+        ),
+        child: Text(label,
+            style: ResponsiveHelper.tinyStyle(context,
+                color: text, fontWeight: FontWeight.bold)),
+      );
 }

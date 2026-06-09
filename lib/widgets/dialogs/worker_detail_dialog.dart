@@ -615,6 +615,65 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
               ),
             ],
           ),
+          if (user.reviewCount > 0) ...[
+            SizedBox(height: ResponsiveHelper.spacing(context, 8)),
+            _buildRehireRateBadge(context, user.rehireRate, user.reviewCount),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _buildRehireRateBadge(BuildContext context, double rate, int reviewCount) {
+    final pct = (rate * 100).round();
+    final Color color;
+    final Color bgColor;
+    final IconData icon;
+    if (rate >= 0.7) {
+      color = AppColors.successDark;
+      bgColor = AppColors.successBg;
+      icon = Icons.thumb_up_rounded;
+    } else if (rate >= 0.4) {
+      color = AppColors.warningDark;
+      bgColor = AppColors.warningBg;
+      icon = Icons.thumbs_up_down_rounded;
+    } else {
+      color = AppColors.errorDark;
+      bgColor = AppColors.errorBg;
+      icon = Icons.thumb_down_rounded;
+    }
+
+    return Container(
+      width: double.infinity,
+      padding: EdgeInsets.symmetric(
+        horizontal: ResponsiveHelper.spacing(context, 14),
+        vertical: ResponsiveHelper.spacing(context, 10),
+      ),
+      decoration: BoxDecoration(
+        color: bgColor,
+        borderRadius: BorderRadius.circular(10),
+      ),
+      child: Row(
+        children: [
+          Icon(icon, size: ResponsiveHelper.iconSize(context, 16), color: color),
+          SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+          Text(
+            '재고용 추천률',
+            style: ResponsiveHelper.smallStyle(context, color: color),
+          ),
+          const Spacer(),
+          Text(
+            '$pct%',
+            style: ResponsiveHelper.subtitleStyle(context).copyWith(
+              color: color,
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+          SizedBox(width: ResponsiveHelper.spacing(context, 4)),
+          Text(
+            '($reviewCount건)',
+            style: ResponsiveHelper.tinyStyle(context, color: color),
+          ),
         ],
       ),
     );
