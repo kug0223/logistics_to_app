@@ -38,6 +38,9 @@ class WageDetailDialog extends StatefulWidget {
   final bool nightIncluded;
   final int scheduledBreakMinutes;
   final int? baseHourlyWage; // 사업주가 업무상세에 입력한 통상시급
+  // TO 수정 후 최신 스케줄 시간 (미전달 시 app.startTime/endTime 폴백)
+  final String? effStart;
+  final String? effEnd;
 
   const WageDetailDialog({
     super.key,
@@ -51,6 +54,8 @@ class WageDetailDialog extends StatefulWidget {
     this.nightIncluded = false,
     this.scheduledBreakMinutes = 0,
     this.baseHourlyWage,
+    this.effStart,
+    this.effEnd,
   });
 
   static Future<WageDialogResult?> show({
@@ -65,6 +70,8 @@ class WageDetailDialog extends StatefulWidget {
     bool nightIncluded = false,
     int scheduledBreakMinutes = 0,
     int? baseHourlyWage,
+    String? effStart,
+    String? effEnd,
   }) {
     return showDialog<WageDialogResult>(
       context: context,
@@ -79,6 +86,8 @@ class WageDetailDialog extends StatefulWidget {
         nightIncluded: nightIncluded,
         scheduledBreakMinutes: scheduledBreakMinutes,
         baseHourlyWage: baseHourlyWage,
+        effStart: effStart,
+        effEnd: effEnd,
       ),
     );
   }
@@ -253,8 +262,8 @@ class _WageDetailDialogState extends State<WageDetailDialog> {
       wageType: _wage.wageType,
       baseWage: _wage.baseWage,
       workDate: widget.attendance.workDate,
-      scheduledStart: widget.app.startTime,
-      scheduledEnd: widget.app.endTime,
+      scheduledStart: widget.effStart ?? widget.app.startTime,
+      scheduledEnd: widget.effEnd ?? widget.app.endTime,
       actualStart: checkIn,
       actualEnd: checkOut,
       breakMinutes: newBreakMinutes,
@@ -623,7 +632,7 @@ class _WageDetailDialogState extends State<WageDetailDialog> {
                       style: ResponsiveHelper.tinyStyle(context,
                           color: AppColors.grey500)),
                   const Spacer(),
-                  Text('${widget.app.startTime} ~ ${widget.app.endTime}',
+                  Text('${widget.effStart ?? widget.app.startTime} ~ ${widget.effEnd ?? widget.app.endTime}',
                       style: ResponsiveHelper.smallStyle(context,
                           color: AppColors.grey700)),
                   if (contractNetTime.isNotEmpty) ...[

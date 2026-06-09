@@ -157,7 +157,9 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
     if (attendance?.checkIn == null || attendance?.checkOut == null) return false;
     final elapsed = WageCalculator.elapsedMinutes(attendance!.checkIn!, attendance.checkOut!);
     final schedBreak = _getScheduledBreakMinutes(app);
-    final scheduledElapsed = WageCalculator.elapsedMinutes(app.startTime, app.endTime);
+    final effStart = WorkDetailHelper.effectiveStart(app, widget.workDetailTimeMap);
+    final effEnd = WorkDetailHelper.effectiveEnd(app, widget.workDetailTimeMap);
+    final scheduledElapsed = WageCalculator.elapsedMinutes(effStart, effEnd);
     final scheduledWorkMins = (scheduledElapsed - schedBreak).clamp(0, 9999);
     final actualWorkMins = (elapsed - schedBreak).clamp(0, 9999);
     return actualWorkMins > scheduledWorkMins;
@@ -230,9 +232,9 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
       return attendance.wageDetail;
     }
     
-    // ✅ Application에 저장된 기본 정보 사용
-    final scheduledStart = app.startTime;
-    final scheduledEnd = app.endTime;
+    // 스케줄 시간: workDetailTimeMap 우선 (TO 수정 반영) → app 필드 폴백
+    final scheduledStart = WorkDetailHelper.effectiveStart(app, widget.workDetailTimeMap);
+    final scheduledEnd = WorkDetailHelper.effectiveEnd(app, widget.workDetailTimeMap);
     final baseWage = app.wage;
     
     // ✅ wageType, breakMinutes, nightAllowanceApplied, nightIncluded는 workDetailTimeMap에서 먼저 확인
@@ -778,6 +780,8 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
       nightIncluded: nightIncluded,
       scheduledBreakMinutes: schedBreak,
       baseHourlyWage: baseHourlyWage,
+      effStart: WorkDetailHelper.effectiveStart(app, widget.workDetailTimeMap),
+      effEnd: WorkDetailHelper.effectiveEnd(app, widget.workDetailTimeMap),
     );
     
     if (result == null) return;
