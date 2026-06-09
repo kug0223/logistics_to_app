@@ -206,7 +206,7 @@ class UserProvider with ChangeNotifier {
       );
 
       if (user != null) {
-        _currentUser = user;
+        await _loadUserData(user.uid);
         return true;
       }
       return false;

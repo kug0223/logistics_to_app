@@ -116,7 +116,9 @@ class ContractService {
     try {
       final ref = _db.collection('employment_contracts').doc(contract.id);
       if (contract.isNewUnsaved) {
-        await ref.set(updated.toMap());
+        final data = updated.toMap();
+        data['createdAt'] = FieldValue.serverTimestamp();
+        await ref.set(data);
       } else {
         await _db.runTransaction((tx) async {
           final snap = await tx.get(ref);

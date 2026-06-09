@@ -1,12 +1,18 @@
 ﻿// lib/screens/business_admin/dialogs/work_applicants_dialog.dart
 // 업무별 지원자 관리 다이얼로그 - 개선된 버전
 
+import 'dart:convert';
+
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
 import '../../../models/core/application_model.dart';
+import '../../../models/core/business_model.dart';
+import '../../../models/core/employment_contract_model.dart';
 import '../../../models/core/work_detail_model.dart';
 import '../../../models/core/user_model.dart';
+import '../../../services/contract_service.dart';
 import '../../../services/firestore_service.dart';
 import '../../../providers/user_provider.dart';
 import '../../../utils/loading_state_mixin.dart';
@@ -15,6 +21,7 @@ import '../../../utils/responsive_helper.dart';
 import '../../../utils/dialog_helper.dart';
 import '../../../widgets/work_type_icon.dart';
 import '../../../widgets/dialogs/worker_detail_dialog.dart';
+import '../../../widgets/dialogs/contract_template_selector_dialog.dart';
 import '../../../models/ui/admin_to_list_ui_models.dart';
 import '../../../theme/app_colors.dart';
 import '../../../widgets/common/app_checkbox.dart';
@@ -25,6 +32,8 @@ import '../../../utils/format_helper.dart';
 import '../../../utils/trust_score_helper.dart';
 import '../../../models/core/monthly_review_model.dart';
 import '../../../services/monthly_review_service.dart';
+import '../../../screens/contract/contract_sign_screen.dart' show ContractTemplateWidget;
+import '../../../widgets/common/loading_widget.dart';
 
 /// 다이얼로그 결과
 class WorkApplicantsDialogResult {
@@ -63,7 +72,7 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
   List<ApplicationModel> _allApplications = [];
 
   final Set<String> _selectedIds = {};
-  static final Set<String> _starredIds = <String>{};
+  final Set<String> _starredIds = <String>{};
   bool _selectAll = false;
   bool _isBatchMode = false;
   
@@ -101,13 +110,13 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
           widget.toItem.to.id,
           widget.toItem.slot!.id,
           businessId: widget.toItem.to.businessId,
-          statuses: const ['PENDING', 'CONFIRMED'],
+          statuses: const ['PENDING', 'CONTRACT_PENDING', 'CONFIRMED'],
         );
       } else {
         apps = await _firestoreService.getApplicationsByTOId(
           widget.toItem.to.id,
           businessId: widget.toItem.to.businessId,
-          statuses: const ['PENDING', 'CONFIRMED'],
+          statuses: const ['PENDING', 'CONTRACT_PENDING', 'CONFIRMED'],
         );
       }
 
@@ -131,14 +140,9 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
 
       // ✅ 1. 중복 제거된 UID 목록 추출
       final uniqueUids = filtered.map((app) => app.uid).toSet().toList();
-      
-      // ✅ 2. 사용자 정보 한 번만 병렬 조회
-      final userFutures = uniqueUids.map((uid) async {
-        final user = await _firestoreService.getUser(uid);
-        return MapEntry(uid, user);
-      });
-      final userEntries = await Future.wait(userFutures);
-      final userMap = Map.fromEntries(userEntries);
+
+      // ✅ 2. 사용자 정보 일괄 조회 (캐시 포함)
+      final userMap = await _firestoreService.getUsersBatch(uniqueUids);
       
       // ✅ 3. 결과 매핑 (추가 조회 없음)
       final applicantsWithUserInfo = filtered.map((app) {
@@ -160,7 +164,8 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
       final confirmedUserIds = applicantsWithUserInfo
           .where((item) {
             final app = item['application'] as ApplicationModel;
-            return item['user'] != null && app.status == AppStatus.confirmed;
+            return item['user'] != null &&
+                (app.status == AppStatus.confirmed || app.status == AppStatus.contractPending);
           })
           .map((item) => (item['user'] as UserModel).uid)
           .toList();
@@ -192,7 +197,10 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
       // ✅ 장기공고인 경우 확정자들의 출퇴근 기록 병렬 확인
       if (widget.toItem.to.isLongTerm) {
         final confirmedApps = applicantsWithUserInfo
-            .where((item) => (item['application'] as ApplicationModel).status == 'CONFIRMED')
+            .where((item) {
+              final s = (item['application'] as ApplicationModel).status;
+              return AppStatus.confirmedStatuses.contains(s);
+            })
             .map((item) => item['application'] as ApplicationModel)
             .toList();
         
@@ -217,7 +225,7 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
   /// 전체 선택/해제
   void _toggleSelectAll(bool? value) {
     final pendingApps = _applicants
-        .where((item) => (item['application'] as ApplicationModel).status == 'PENDING')
+        .where((item) => (item['application'] as ApplicationModel).status == AppStatus.pending)
         .map((item) => (item['application'] as ApplicationModel).id)
         .toList();
 
@@ -241,7 +249,7 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
       }
       
       final pendingCount = _applicants
-          .where((item) => (item['application'] as ApplicationModel).status == 'PENDING')
+          .where((item) => (item['application'] as ApplicationModel).status == AppStatus.pending)
           .length;
       _selectAll = _selectedIds.length == pendingCount && pendingCount > 0;
     });
@@ -253,9 +261,11 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
 
     // 상태별 분류
     final pending = _applicants.where((item) =>
-      (item['application'] as ApplicationModel).status == 'PENDING').toList();
-    final confirmed = _applicants.where((item) =>
-      (item['application'] as ApplicationModel).status == 'CONFIRMED').toList();
+      (item['application'] as ApplicationModel).status == AppStatus.pending).toList();
+    final confirmed = _applicants.where((item) {
+      final s = (item['application'] as ApplicationModel).status;
+      return AppStatus.confirmedStatuses.contains(s);
+    }).toList();
 
     return PopScope(
       canPop: false,
@@ -274,8 +284,7 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
         child: Container(
           constraints: BoxConstraints(
             maxWidth: 500,
-            minHeight: MediaQuery.of(context).size.height * 0.85,
-            maxHeight: MediaQuery.of(context).size.height * 0.85,
+            maxHeight: MediaQuery.sizeOf(context).height * 0.88,
           ),
           child: Column(
             mainAxisSize: MainAxisSize.max,
@@ -286,12 +295,7 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
                 _buildSelectAllRow(context, pending.length),
               Expanded(
                 child: isLoading
-                    ? Center(
-                        child: CircularProgressIndicator(
-                          color: theme.primaryColor,
-                          strokeWidth: 2,
-                        ),
-                      )
+                    ? const LoadingWidget()
                     : (pending.isEmpty && confirmed.isEmpty)
                         ? _buildEmptyState(context)
                         : _buildApplicantList(context, pending, confirmed),
@@ -559,9 +563,8 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
                 final requestableCount = _applicants.where((item) {
                   final app = item['application'] as ApplicationModel;
                   final user = item['user'] as UserModel?;
-                  if (app.status != AppStatus.confirmed || user == null) return false;
-                  final s = _idCardStatusMap[user.uid] ?? 'none';
-                  return s == 'none' || s == 'expired' || s == 'rejected';
+                  if ((app.status != AppStatus.confirmed && app.status != AppStatus.contractPending) || user == null) return false;
+                  return IdCardHelper.isRequestable(_idCardStatusMap[user.uid] ?? 'none');
                 }).length;
                 if (requestableCount == 0) return const SizedBox.shrink();
                 return _buildIdCardRequestSection(context, requestableCount);
@@ -671,10 +674,10 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
     for (final item in _applicants) {
       final app = item['application'] as ApplicationModel;
       final user = item['user'] as UserModel?;
-      if (app.status != AppStatus.confirmed || user == null) continue;
-      
+      if ((app.status != AppStatus.confirmed && app.status != AppStatus.contractPending) || user == null) continue;
+
       final status = _idCardStatusMap[user.uid] ?? 'none';
-      if (status == 'none' || status == 'expired' || status == 'rejected') {
+      if (IdCardHelper.isRequestable(status)) {
         _selectedIdCardUserIds.add(user.uid);
       }
     }
@@ -787,7 +790,7 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
       cardBg = Theme.of(context).primaryColor.withValues(alpha: 0.05);
       cardBorder = Theme.of(context).primaryColor;
     } else if (isStarred) {
-      cardBg = const Color(0xFFFFFDE7); // amber[50]
+      cardBg = AppColors.amber.withValues(alpha: 0.1); // amber[50] equivalent
       cardBorder = AppColors.amberLight;
     }
 
@@ -825,7 +828,7 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
                     child: _isIdCardSelectMode
                         ? Padding(
                             padding: EdgeInsets.only(right: ResponsiveHelper.spacing(context, 8)),
-                            child: (idCardStatus == 'none' || idCardStatus == 'expired' || idCardStatus == 'rejected')
+                            child: IdCardHelper.isRequestable(idCardStatus)
                                 ? AppCheckbox(
                                     value: _selectedIdCardUserIds.contains(user?.uid ?? ''),
                                     onTap: () => _toggleIdCardSelection(user?.uid ?? ''),
@@ -879,19 +882,29 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
                                 ),
                                 SizedBox(width: ResponsiveHelper.spacing(context, 5)),
                                 Flexible(
-                                  child: Text(
-                                    user?.name ?? '이름 없음',
-                                    style: ResponsiveHelper.bodyStyle(context).copyWith(fontWeight: FontWeight.w700),
-                                    overflow: TextOverflow.ellipsis,
+                                  child: Row(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      Flexible(
+                                        child: Text(
+                                          user?.name ?? '이름 없음',
+                                          style: ResponsiveHelper.bodyStyle(context).copyWith(fontWeight: FontWeight.w700),
+                                          overflow: TextOverflow.ellipsis,
+                                        ),
+                                      ),
+                                      if (user?.gender != null || user?.age != null) ...[
+                                        SizedBox(width: ResponsiveHelper.spacing(context, 4)),
+                                        Flexible(
+                                          child: Text(
+                                            '(${user?.gender ?? ''}${user?.age != null ? ' · ${user!.age}세' : ''})',
+                                            style: ResponsiveHelper.smallStyle(context, color: AppColors.grey500),
+                                            overflow: TextOverflow.ellipsis,
+                                          ),
+                                        ),
+                                      ],
+                                    ],
                                   ),
                                 ),
-                                if (user?.gender != null || user?.age != null) ...[
-                                  SizedBox(width: ResponsiveHelper.spacing(context, 4)),
-                                  Text(
-                                    '(${user?.gender ?? ''}${user?.age != null ? ' · ${user!.age}세' : ''})',
-                                    style: ResponsiveHelper.smallStyle(context, color: AppColors.grey500),
-                                  ),
-                                ],
                               ],
                             ),
                           ),
@@ -1240,15 +1253,15 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
     final user = item['user'] as UserModel?;
     final workDetails = widget.toItem.workDetails;
     
-    // 현재 파트 제외한 다른 파트 목록
-    final otherWorkDetails = workDetails.where((w) => w.workType != widget.work.workType).toList();
+    // 현재 파트 제외한 다른 파트 목록 (id 기반 비교 — workType 이름 중복 방지)
+    final otherWorkDetails = workDetails.where((w) => w.id != widget.work.id).toList();
     
     if (otherWorkDetails.isEmpty) {
       ToastHelper.showWarning('변경 가능한 다른 파트가 없습니다');
       return;
     }
 
-    final selectedWorkType = await showDialog<String>(
+    final selectedWorkId = await showDialog<String>(
       context: context,
       builder: (context) => StyledDialog(
         title: '파트변경',
@@ -1300,7 +1313,7 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
                       confirmText: '변경',
                     );
                     if (confirmed == true && context.mounted) {
-                      Navigator.pop(context, work.workType);
+                      Navigator.pop(context, work.id);
                     }
                   },
                   borderRadius: BorderRadius.circular(ResponsiveHelper.spacing(context, 12)),
@@ -1354,23 +1367,24 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
       ),
     );
 
-    if (selectedWorkType == null || !mounted) return;
+    if (selectedWorkId == null || !mounted) return;
 
     // 파트 변경 처리
     try {
       final userProvider = context.read<UserProvider>();
       final adminUID = userProvider.currentUser?.uid ?? '';
-      final selectedWork = otherWorkDetails.firstWhere((w) => w.workType == selectedWorkType);
+      final selectedWork = otherWorkDetails.firstWhere((w) => w.id == selectedWorkId);
 
       await _firestoreService.changeApplicationWorkType(
         applicationId: app.id,
-        newWorkType: selectedWorkType,
+        newWorkType: selectedWork.workType,
         newWage: selectedWork.wage,
         adminUID: adminUID,
-        newWorkDetailId: selectedWork.id,  // 🔥 workDetailId도 함께 업데이트
+        newWorkDetailId: selectedWork.id,
       );
-      ToastHelper.showSuccess('${user?.name ?? '지원자'}님의 파트가 $selectedWorkType(으)로 변경되었습니다');
+      ToastHelper.showSuccess('${user?.name ?? '지원자'}님의 파트가 ${selectedWork.workType}(으)로 변경되었습니다');
       await _loadApplicants();
+      if (!mounted) return;
       _updateLocalStats();
     } catch (e) {
       ToastHelper.showError('파트 변경에 실패했습니다');
@@ -1379,6 +1393,7 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
 
   /// 개별 승인
   Future<void> _approveApplication(Map<String, dynamic> item) async {
+    if (_isProcessing) return;
     final app = item['application'] as ApplicationModel;
     final user = item['user'] as UserModel?;
     final userProvider = context.read<UserProvider>();
@@ -1420,6 +1435,7 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
 
       ToastHelper.showSuccess('${user?.name ?? '지원자'}님이 승인되었습니다');
       await _loadApplicants();
+      if (!mounted) return;
       _updateLocalStats();
     } catch (e) {
       ToastHelper.showError('승인 처리 중 오류가 발생했습니다');
@@ -1428,6 +1444,7 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
 
   /// 개별 거절
   Future<void> _rejectApplication(Map<String, dynamic> item) async {
+    if (_isProcessing) return;
     final app = item['application'] as ApplicationModel;
     final user = item['user'] as UserModel?;
     final userProvider = context.read<UserProvider>();
@@ -1452,6 +1469,7 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
 
       ToastHelper.showSuccess('${user?.name ?? '지원자'}님이 거절되었습니다');
       await _loadApplicants();
+      if (!mounted) return;
       _updateLocalStats();
     } catch (e) {
       ToastHelper.showError('거절 처리 중 오류가 발생했습니다');
@@ -1460,6 +1478,7 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
 
   /// 확정취소 (단기)
   Future<void> _cancelConfirmation(Map<String, dynamic> item) async {
+    if (_isProcessing) return;
     final app = item['application'] as ApplicationModel;
     final user = item['user'] as UserModel?;
     final userProvider = context.read<UserProvider>();
@@ -1483,6 +1502,7 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
 
       ToastHelper.showSuccess('${user?.name ?? '근무자'}님의 확정이 취소되었습니다');
       await _loadApplicants();
+      if (!mounted) return;
       await _updateLocalStats();
     } catch (e) {
       ToastHelper.showError('확정 취소 중 오류가 발생했습니다');
@@ -1491,18 +1511,21 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
 
   /// 고정근무 관리 다이얼로그 열기 (장기)
   void _openFixedWorkerManagement() {
-    // pop 전에 navigator 참조를 캡처 — pop 이후 context는 트리에서 제거됨
-    final navigator = Navigator.of(context);
-    navigator.pop();
-
-    showDialog(
-      context: navigator.overlay!.context,
-      builder: (_) => FixedWorkerManagementDialog(
-        businessIds: [widget.toItem.to.businessId],
-        initialBusinessId: widget.toItem.to.businessId,
-        onChanged: widget.onChanged,
-      ),
-    );
+    final businessId = widget.toItem.to.businessId;
+    final onChanged = widget.onChanged;
+    // 루트 Navigator는 이 다이얼로그가 pop된 후에도 유효
+    final rootNav = Navigator.of(context, rootNavigator: true);
+    Navigator.of(context).pop();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      showDialog(
+        context: rootNav.context,
+        builder: (_) => FixedWorkerManagementDialog(
+          businessIds: [businessId],
+          initialBusinessId: businessId,
+          onChanged: onChanged,
+        ),
+      );
+    });
   }
 
   /// 지원자 상세 보기 - 공통 위젯 사용
@@ -1516,7 +1539,8 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
     }
 
     final isPending = app.status == AppStatus.pending;
-    final isConfirmed = app.status == AppStatus.confirmed;
+    final isConfirmed = app.status == AppStatus.confirmed ||
+        app.status == AppStatus.contractPending;
 
     final changed = await WorkerDetailDialog.show(
       context: context,
@@ -1535,7 +1559,7 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
 
     
     // 신분증 상태만 업데이트 (전체 새로고침 X)
-    if (changed != false && mounted) {
+    if (changed == true && mounted) {
       final userProvider = context.read<UserProvider>();
       final currentUserId = userProvider.currentUser?.uid ?? '';
       
@@ -1656,65 +1680,274 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
     );
   }
 
-  /// 일괄 승인
+  /// 일괄 승인 (계약서 생성 + 인감 날인 + 근무자 발송)
   Future<void> _batchApprove() async {
     if (_selectedIds.isEmpty || _isProcessing) return;
 
     // 인원 체크
     final stats = widget.toItem.workDetailStats?[widget.work.id];
-    final confirmed = stats?['confirmed'] ?? 0;
-    final remaining = widget.work.requiredCount - confirmed;
+    final confirmedCount = stats?['confirmed'] ?? 0;
+    final remaining = widget.work.requiredCount - confirmedCount;
 
     if (_selectedIds.length > remaining) {
-      ToastHelper.showWarning('필요 인원(${widget.work.requiredCount}명)을 초과합니다. 현재 $confirmed명 확정, $remaining명 추가 가능');
+      ToastHelper.showWarning('필요 인원(${widget.work.requiredCount}명)을 초과합니다. 현재 $confirmedCount명 확정, $remaining명 추가 가능');
       return;
     }
 
-    final userProvider = context.read<UserProvider>();
-    final confirm = await DialogHelper.showConfirm(
-      context,
-      title: '일괄 승인',
-      message: '선택한 ${_selectedIds.length}명을 승인하시겠습니까?',
-      confirmText: '승인',
-    );
+    // 1. 계약서 템플릿 선택
+    final businessId = widget.toItem.to.businessId;
+    final articles = await ContractTemplateSelectorDialog.show(context, businessId: businessId);
+    if (articles == null || !mounted) return;
 
-    if (confirm != true || !mounted) return;
-
+    // 2. 사업장 정보 + 인감 로드
     setState(() => _isProcessing = true);
+    late BusinessModel business;
+    late String sealBase64;
 
     try {
+      final b = await _firestoreService.getBusinessById(businessId);
+      if (b == null) {
+        ToastHelper.showError('사업장 정보를 불러올 수 없습니다');
+        return;
+      }
+      business = b;
+      final businessDoc = await FirebaseFirestore.instance
+          .collection('businesses')
+          .doc(businessId)
+          .get();
+      final seal = businessDoc.data()?['sealBase64'] as String?;
+      if (seal == null || seal.isEmpty) {
+        ToastHelper.showError('일괄 계약 발송에는 사업장 인감이 필요합니다.\n설정 > 사업장 설정에서 인감을 먼저 등록해주세요.');
+        return;
+      }
+      sealBase64 = seal;
+    } finally {
+      if (mounted) setState(() => _isProcessing = false);
+    }
+
+    if (!mounted) return;
+
+    // 3. 첫 번째 선택 지원자로 미리보기 계약서 생성
+    final firstItem = _applicants.firstWhere(
+      (item) => _selectedIds.contains((item['application'] as ApplicationModel).id),
+      orElse: () => <String, dynamic>{},
+    );
+    if (firstItem.isEmpty) return;
+
+    final firstApp = firstItem['application'] as ApplicationModel;
+    final firstUser = firstItem['user'] as UserModel?;
+    if (firstUser == null) {
+      ToastHelper.showError('지원자 정보를 불러올 수 없습니다');
+      return;
+    }
+
+    setState(() => _isProcessing = true);
+    late EmploymentContractModel previewContract;
+    try {
+      // buildPreviewContract: 번들 탐색 없이 항상 isNewUnsaved=true 반환 → Firestore 미저장
+      previewContract = await ContractService().buildPreviewContract(
+        application: firstApp,
+        business: business,
+        worker: firstUser,
+        workDetail: widget.work,
+        articles: articles,
+      );
+    } catch (e) {
+      ToastHelper.showError('계약서 미리보기 생성에 실패했습니다');
+      return;
+    } finally {
+      if (mounted) setState(() => _isProcessing = false);
+    }
+
+    if (!mounted) return;
+
+    // 4. 미리보기 다이얼로그
+    final confirmed = await _showBatchContractPreview(
+      contract: previewContract,
+      sealBase64: sealBase64,
+      count: _selectedIds.length,
+    );
+    if (confirmed != true || !mounted) return;
+
+    // 5. 일괄 처리
+    setState(() => _isProcessing = true);
+    try {
+      final userProvider = context.read<UserProvider>();
       final adminUID = userProvider.currentUser?.uid;
-      
-      for (final appId in _selectedIds) {
-        final affectedTOIds = await _firestoreService.updateApplicationStatus(
-          applicationId: appId,
-          status: AppStatus.confirmed,
-          confirmedBy: adminUID,
+      final sealBytes = base64Decode(sealBase64);
+
+      int successCount = 0;
+
+      for (final appId in _selectedIds.toList()) {
+        final item = _applicants.firstWhere(
+          (i) => (i['application'] as ApplicationModel).id == appId,
+          orElse: () => <String, dynamic>{},
         );
-        // 🔥 충돌로 취소된 TO ID 수집
-        if (affectedTOIds.isNotEmpty) {
-          _affectedOtherTOIds.addAll(affectedTOIds);
+        if (item.isEmpty) continue;
+
+        final app = item['application'] as ApplicationModel;
+        final user = item['user'] as UserModel?;
+        if (user == null) continue;
+
+        try {
+          // confirmed 호출 → _confirmWithConflictCheck 내부에서 CONTRACT_PENDING 설정 + 충돌 체크
+          final affectedTOIds = await _firestoreService.updateApplicationStatus(
+            applicationId: appId,
+            status: AppStatus.confirmed,
+            confirmedBy: adminUID,
+          );
+          if (affectedTOIds.isNotEmpty) {
+            _affectedOtherTOIds.addAll(affectedTOIds);
+          }
+
+          // 계약서 생성 + 인감 날인 → 근무자 발송
+          final contract = await ContractService().findOrCreateContract(
+            application: app,
+            business: business,
+            worker: user,
+            workDetail: widget.work,
+            articles: articles,
+          );
+          await ContractService().saveEmployerSignature(
+            contract: contract,
+            signatureBytes: sealBytes,
+          );
+          successCount++;
+        } catch (itemErr) {
+          debugPrint('❌ [$appId] 계약서 처리 실패 — 상태 롤백: $itemErr');
+          try {
+            await _firestoreService.updateApplicationStatus(
+              applicationId: appId,
+              status: AppStatus.pending,
+              confirmedBy: adminUID,
+            );
+          } catch (rollbackErr) {
+            debugPrint('⚠️ 롤백 실패 ($appId): $rollbackErr');
+          }
         }
       }
-      
-      if (_affectedOtherTOIds.isNotEmpty) {
-        debugPrint('⚠️ 일괄 승인 중 충돌로 ${_affectedOtherTOIds.length}개 TO 영향');
-      }
 
-      ToastHelper.showSuccess('${_selectedIds.length}명이 승인되었습니다');
+      if (successCount < _selectedIds.length) {
+        ToastHelper.showWarning(
+            '$successCount/${_selectedIds.length}명 계약서 발송 완료. 실패한 지원자는 다시 시도해주세요.');
+      } else {
+        ToastHelper.showSuccess('${_selectedIds.length}명에게 계약서가 발송되었습니다');
+      }
       _selectedIds.clear();
       await _loadApplicants();
       await _updateLocalStats();
 
-      // 🔥 충돌로 영향받은 다른 TO 캐시 무효화
       for (var toId in _affectedOtherTOIds) {
         _firestoreService.clearCache(toId: toId);
       }
     } catch (e) {
-      ToastHelper.showError('승인 처리 중 오류가 발생했습니다');
+      ToastHelper.showError('처리 중 오류가 발생했습니다');
+      debugPrint('❌ 일괄 계약 발송 실패: $e');
     } finally {
       if (mounted) setState(() => _isProcessing = false);
     }
+  }
+
+  /// 일괄 계약서 미리보기 다이얼로그
+  Future<bool?> _showBatchContractPreview({
+    required EmploymentContractModel contract,
+    required String sealBase64,
+    required int count,
+  }) {
+    return showDialog<bool>(
+      context: context,
+      barrierDismissible: true,
+      builder: (ctx) => Dialog(
+        insetPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 32),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        child: Column(
+          children: [
+            // 헤더
+            Container(
+              padding: const EdgeInsets.fromLTRB(20, 16, 12, 16),
+              decoration: BoxDecoration(
+                color: Theme.of(ctx).primaryColor,
+                borderRadius: const BorderRadius.vertical(top: Radius.circular(16)),
+              ),
+              child: Row(
+                children: [
+                  const Icon(Icons.description_outlined, color: Colors.white, size: 20),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Text(
+                      '근로계약서 미리보기',
+                      style: ResponsiveHelper.subtitleStyle(ctx).copyWith(color: Colors.white, fontWeight: FontWeight.bold),
+                    ),
+                  ),
+                  IconButton(
+                    onPressed: () => Navigator.pop(ctx, false),
+                    icon: const Icon(Icons.close, color: Colors.white, size: 20),
+                    padding: EdgeInsets.zero,
+                    constraints: const BoxConstraints(),
+                  ),
+                ],
+              ),
+            ),
+            // 안내 배너
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+              color: AppColors.info.withValues(alpha: 0.08),
+              child: Text(
+                '아래 조건으로 선택된 $count명에게 계약서가 발송됩니다.\n이름·생년월일 등 개인정보는 각 근무자별로 적용됩니다.',
+                style: ResponsiveHelper.smallStyle(ctx, color: AppColors.info),
+                textAlign: TextAlign.center,
+              ),
+            ),
+            // 계약서 본문
+            Expanded(
+              child: SingleChildScrollView(
+                padding: const EdgeInsets.all(16),
+                child: ContractTemplateWidget(
+                  snapshot: contract.snapshot,
+                  contractDate: contract.createdAt,
+                  slots: contract.slots,
+                  articles: contract.articles,
+                  employerSealBase64: sealBase64,
+                ),
+              ),
+            ),
+            // 하단 버튼
+            Container(
+              padding: const EdgeInsets.fromLTRB(16, 8, 16, 20),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withValues(alpha: 0.06),
+                    blurRadius: 8,
+                    offset: const Offset(0, -2),
+                  ),
+                ],
+              ),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: OutlinedButton(
+                      onPressed: () => Navigator.pop(ctx, false),
+                      child: const Text('취소'),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    flex: 2,
+                    child: ElevatedButton(
+                      onPressed: () => Navigator.pop(ctx, true),
+                      child: Text('$count명에게 발송'),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 
   /// 일괄 거절
@@ -1734,8 +1967,10 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
 
     try {
       final adminUID = userProvider.currentUser?.uid;
-      
-      for (final appId in _selectedIds) {
+      // 순회 중 컬렉션 변경을 방지하기 위해 복사본으로 순회
+      final idsToReject = List<String>.from(_selectedIds);
+
+      for (final appId in idsToReject) {
         await _firestoreService.updateApplicationStatus(
           applicationId: appId,
           status: AppStatus.rejected,
@@ -1744,7 +1979,7 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
         );
       }
 
-      ToastHelper.showSuccess('${_selectedIds.length}명이 거절되었습니다');
+      ToastHelper.showSuccess('${idsToReject.length}명이 거절되었습니다');
       _selectedIds.clear();
       await _loadApplicants();
       await _updateLocalStats();
@@ -1791,7 +2026,7 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
           }
           if (matches) {
             if (app.status == AppStatus.pending) pending++;
-            if (app.status == AppStatus.confirmed) confirmed++;
+            if (app.status == AppStatus.confirmed || app.status == AppStatus.contractPending) confirmed++;
           }
         }
 
@@ -1812,7 +2047,7 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
       for (final item in _applicants) {
         final app = item['application'] as ApplicationModel;
         if (app.status == AppStatus.pending) pending++;
-        if (app.status == AppStatus.confirmed) confirmed++;
+        if (app.status == AppStatus.confirmed || app.status == AppStatus.contractPending) confirmed++;
       }
 
       widget.toItem.workDetailStats ??= {};

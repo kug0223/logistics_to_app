@@ -2383,54 +2383,75 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
     int successCount = 0;
     int failCount = 0;
 
+    // 처리 대상 수집
+    final targets = <({AttendanceModel attendance, ApplicationModel app})>[];
     for (var app in _confirmedWorkers) {
       final attendance = _attendanceMap[app.id];
       if (attendance == null) continue;
       if (attendance.status == AttendanceModel.statusNoShow) continue;
       if (attendance.wageStatus != AttendanceModel.wageCalculated) continue;
+      targets.add((attendance: attendance, app: app));
+    }
 
-      try {
-        // paymentDueDate 계산 — wageDetail의 payScheduleType 기반
-        final wd = attendance.wageDetail;
+    // 단일 배치로 일괄 처리 (500개 초과 시 청크 분리)
+    try {
+      var batch = FirebaseFirestore.instance.batch();
+      int batchCount = 0;
+      final processedApps = <ApplicationModel>[];
+
+      for (final t in targets) {
+        final wd = t.attendance.wageDetail;
         final paymentDueDate = PaymentDueDateCalculator.calculate(
           payScheduleType: wd?.payScheduleType,
           payScheduleDay:  wd?.payScheduleDay,
-          workDate: attendance.workDate,
+          workDate: t.attendance.workDate,
         );
-
         final confirmedWageDetail = wd?.copyWith(
           confirmedBy: adminUid,
           confirmedAt: DateTime.now(),
         );
 
-        // 근태확정 + 근무일수 증가를 원자적으로 처리
-        final batch = FirebaseFirestore.instance.batch();
         batch.update(
-          FirebaseFirestore.instance.collection('attendance').doc(attendance.id),
+          FirebaseFirestore.instance.collection('attendance').doc(t.attendance.id),
           {
             'wageStatus': AttendanceModel.wageConfirmed,
             'finalConfirmedAt': FieldValue.serverTimestamp(),
             if (adminUid != null) 'confirmedBy': adminUid,
             if (confirmedWageDetail != null) 'wageDetail': confirmedWageDetail.toMap(),
-            // paymentDueDate: 지급 예정일 (null이면 저장 안 함 = 기존 데이터 호환)
             if (paymentDueDate != null)
               'paymentDueDate': Timestamp.fromDate(paymentDueDate),
           },
         );
         batch.update(
-          FirebaseFirestore.instance.collection('users').doc(app.uid),
+          FirebaseFirestore.instance.collection('users').doc(t.app.uid),
           {'totalWorkDays': FieldValue.increment(1)},
         );
-        await batch.commit();
+        batchCount += 2;
+        processedApps.add(t.app);
 
-        final trustService = TrustScoreService();
-        await trustService.onWorkComplete(app.uid, app.businessId);
-
-        successCount++;
-      } catch (e) {
-        debugPrint('❌ 마감 처리 실패 (${app.id}): $e');
-        failCount++;
+        if (batchCount >= 498) {
+          await batch.commit();
+          successCount += batchCount ~/ 2;
+          batch = FirebaseFirestore.instance.batch();
+          batchCount = 0;
+        }
       }
+      if (batchCount > 0) {
+        await batch.commit();
+        successCount += batchCount ~/ 2;
+      }
+
+      // 배치 성공 후 신뢰도 업데이트 (개별 실패 허용)
+      for (final app in processedApps) {
+        try {
+          await TrustScoreService().onWorkComplete(app.uid, app.businessId);
+        } catch (e) {
+          debugPrint('⚠️ 신뢰도 업데이트 실패 (${app.uid}): $e');
+        }
+      }
+    } catch (e) {
+      debugPrint('❌ 마감 처리 실패: $e');
+      failCount = targets.length - successCount;
     }
 
     if (!mounted) return;
@@ -2459,8 +2480,12 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
 
     final businessName = _businessNameMap[_selectedBusinessId] ?? '사업장';
 
-    // TO 수정 후 최신 nightIncluded 등이 반영되도록 항상 Firestore에서 재조회
-    _workDetailTimeMap = await _getWorkDetailTimes();
+    // 최신 출퇴근 기록·workDetail을 Firestore에서 재조회
+    final appIds = _confirmedWorkers.map((w) => w.id).toList();
+    final attendanceFuture = _getAttendanceRecords(appIds);
+    final workDetailFuture = _getWorkDetailTimes();
+    _attendanceMap = await attendanceFuture;
+    _workDetailTimeMap = await workDetailFuture;
     if (!mounted) return;
 
     final hasChanges = await showDialog<bool>(
@@ -2577,13 +2602,13 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
     final targetWorkers = workers ?? _confirmedWorkers;
     if (targetWorkers.isEmpty) return timeInfoMap;
 
-    // 고유한 (toId, slotId) 쌍 수집
-    final slotPairs = <String, String>{}; // toId → slotId
-    final toIds = <String>{};             // slotId 없는 경우 TO 폴백용
+    // 고유한 (toId, slotId) 쌍 수집 — 동일 toId에 여러 슬롯 가능하므로 Set으로 보관
+    final slotPairs = <String, Set<String>>{}; // toId → Set<slotId>
+    final toIds = <String>{};                  // slotId 없는 경우 TO 폴백용
     for (final app in targetWorkers) {
       if (app.toId == null || app.toId!.isEmpty) continue;
       if (app.slotId != null && app.slotId!.isNotEmpty) {
-        slotPairs[app.toId!] = app.slotId!;
+        slotPairs.putIfAbsent(app.toId!, () => {}).add(app.slotId!);
       } else {
         toIds.add(app.toId!);
       }
@@ -2619,11 +2644,12 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
     }
 
     try {
-      // 슬롯 문서 병렬 조회
-      final slotFutures = slotPairs.entries.map((e) => FirebaseFirestore.instance
-          .collection('tos').doc(e.key)
-          .collection('slots').doc(e.value)
-          .get());
+      // 슬롯 문서 병렬 조회 (toId당 여러 슬롯 가능)
+      final slotFutures = slotPairs.entries.expand((e) =>
+          e.value.map((slotId) => FirebaseFirestore.instance
+              .collection('tos').doc(e.key)
+              .collection('slots').doc(slotId)
+              .get()));
       final slotDocs = await Future.wait(slotFutures);
       for (final doc in slotDocs) {
         if (!doc.exists) continue;

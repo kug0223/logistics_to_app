@@ -10,6 +10,11 @@ import '../../models/core/user_model.dart';
 import '../../models/core/id_card_access_request_model.dart';
 import '../../models/core/review_model.dart';
 import '../../models/ui/admin_to_list_ui_models.dart';
+import '../../models/core/employment_contract_model.dart';
+import '../../models/core/work_detail_data.dart';
+import '../../screens/contract/contract_sign_screen.dart';
+import '../../services/contract_service.dart';
+import 'contract_template_selector_dialog.dart';
 import '../../services/firestore_service.dart';
 import '../../providers/user_provider.dart';
 import '../../utils/toast_helper.dart';
@@ -24,6 +29,7 @@ import 'monthly_review_dialog.dart';
 import '../../models/core/monthly_review_model.dart';
 import '../../models/core/review_request_model.dart';
 import '../../services/monthly_review_service.dart';
+import '../../widgets/common/loading_widget.dart';
 
 /// 공통 근무자/지원자 상세 다이얼로그
 /// 
@@ -95,6 +101,7 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
   IdCardAccessRequestModel? _idCardAccess;
   bool _hasAttendance = false;  // ✅ 출퇴근 기록 여부 (장기 확정자용)
   bool? _hasWrittenReview;     // 리뷰 작성 여부 (null=미확인)
+  EmploymentContractModel? _contract;
 
   @override
   void initState() {
@@ -144,14 +151,20 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
         (widget.isConfirmed && app != null && widget.businessId != null)
             ? _checkReviewWritten(app)
             : Future.value(null),
+
+        // 6: 계약서 (확정자 + application 있을 때)
+        (widget.isConfirmed && app != null)
+            ? ContractService().getByApplication(app.id)
+            : Future.value(null),
       ]);
 
       _businessHistory = results[0] as Map<String, dynamic>?;
       _recentReviews = results[1] as List<ReviewModel>;
       _idCardAccess = results[2] as IdCardAccessRequestModel?;
-      _hasAttendance = results[3] as bool;
+      _hasAttendance = (results[3] as bool?) ?? false;
       _workTime = results[4] as String?;
       _hasWrittenReview = results[5] as bool?;
+      _contract = results[6] as EmploymentContractModel?;
 
       if (mounted) setState(() => _isLoading = false);
     } catch (e) {
@@ -224,7 +237,7 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
       child: Container(
         constraints: BoxConstraints(
           maxWidth: 500,
-          maxHeight: MediaQuery.of(context).size.height * 0.85,
+          maxHeight: MediaQuery.sizeOf(context).height * 0.85,
         ),
         decoration: BoxDecoration(
           color: Colors.white,
@@ -246,12 +259,7 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
             // 내용
             Flexible(
               child: _isLoading
-                  ? Center(
-                      child: Padding(
-                        padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 40)),
-                        child: CircularProgressIndicator(),
-                      ),
-                    )
+                  ? const LoadingWidget()
                   : SingleChildScrollView(
                       padding: ResponsiveHelper.cardPadding(context),
                       child: Column(
@@ -261,6 +269,8 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
                           SizedBox(height: ResponsiveHelper.spacing(context, 20)),
                           if (widget.isConfirmed) ...[
                             _buildPaymentInfo(context),
+                            SizedBox(height: ResponsiveHelper.spacing(context, 20)),
+                            _buildContractStatusSection(context),
                             SizedBox(height: ResponsiveHelper.spacing(context, 20)),
                             _buildIdCardSection(context),
                             SizedBox(height: ResponsiveHelper.spacing(context, 20)),
@@ -372,7 +382,7 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
                     SizedBox(height: ResponsiveHelper.spacing(context, 4)),
                     Text(
                       '${widget.user.gender ?? ''} · ${widget.user.age ?? '-'}세',
-                      style: ResponsiveHelper.bodyStyle(context, color: Colors.white70),
+                      style: ResponsiveHelper.bodyStyle(context, color: Colors.white.withValues(alpha: 0.7)),
                     ),
                   ],
                 ),
@@ -407,7 +417,7 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
                     ),
                     Text(
                       '신뢰도',
-                      style: ResponsiveHelper.tinyStyle(context, color: Colors.white70),
+                      style: ResponsiveHelper.tinyStyle(context, color: Colors.white.withValues(alpha: 0.7)),
                     ),
                   ],
                 ),
@@ -813,6 +823,186 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
     );
   }
 
+  /// 근로계약서 섹션 (확정자만)
+  Widget _buildContractStatusSection(BuildContext context) {
+    return _buildSection(
+      context,
+      title: '근로계약서',
+      icon: Icons.description_outlined,
+      child: _buildContractContent(context),
+    );
+  }
+
+  Widget _buildContractContent(BuildContext context) {
+    final contract = _contract;
+
+    if (contract == null) {
+      final canCreate = widget.isConfirmed &&
+          widget.application != null &&
+          (widget.toItem != null ||
+              widget.application!.toId?.isNotEmpty == true);
+      return Column(
+        children: [
+          Container(
+            padding: ResponsiveHelper.cardPadding(context),
+            decoration: BoxDecoration(
+              color: AppColors.grey50,
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(color: AppColors.border),
+            ),
+            child: Row(
+              children: [
+                Icon(Icons.info_outline, color: AppColors.grey400, size: ResponsiveHelper.iconSize(context, 16)),
+                SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+                Text(
+                  '계약서가 없습니다',
+                  style: ResponsiveHelper.smallStyle(context, color: AppColors.grey500),
+                ),
+              ],
+            ),
+          ),
+          if (canCreate) ...[
+            SizedBox(height: ResponsiveHelper.spacing(context, 8)),
+            SizedBox(
+              width: double.infinity,
+              child: _buildDialogButton(
+                label: '계약서 작성하기',
+                icon: Icons.draw_outlined,
+                bgColor: Theme.of(context).primaryColor.withValues(alpha: 0.08),
+                textColor: Theme.of(context).primaryColor,
+                onTap: _createContractAndSign,
+              ),
+            ),
+          ],
+        ],
+      );
+    }
+
+    if (contract.status == ContractStatus.pendingEmployer) {
+      return SizedBox(
+        width: double.infinity,
+        child: _buildDialogButton(
+          label: '계약서 서명하기 (사업주)',
+          icon: Icons.draw,
+          bgColor: Theme.of(context).primaryColor.withValues(alpha: 0.08),
+          textColor: Theme.of(context).primaryColor,
+          onTap: () => _openExistingContractSign(contract),
+        ),
+      );
+    }
+
+    if (contract.status == ContractStatus.pendingWorker) {
+      return Container(
+        padding: ResponsiveHelper.cardPadding(context),
+        decoration: BoxDecoration(
+          color: AppColors.warningBg,
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(color: AppColors.warning.withValues(alpha: 0.3)),
+        ),
+        child: Row(
+          children: [
+            Icon(Icons.hourglass_top, color: AppColors.warning, size: ResponsiveHelper.iconSize(context, 20)),
+            SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    '근무자 서명 대기 중',
+                    style: ResponsiveHelper.bodyStyle(context).copyWith(
+                      fontWeight: FontWeight.bold,
+                      color: AppColors.warningDark,
+                    ),
+                  ),
+                  Text(
+                    '근무자에게 서명 요청 알림이 발송되었습니다',
+                    style: ResponsiveHelper.smallStyle(context, color: AppColors.warning),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
+    if (contract.status == ContractStatus.completed) {
+      return Container(
+        padding: ResponsiveHelper.cardPadding(context),
+        decoration: BoxDecoration(
+          color: AppColors.successBg,
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(color: AppColors.success.withValues(alpha: 0.3)),
+        ),
+        child: Row(
+          children: [
+            Icon(Icons.verified, color: AppColors.success, size: ResponsiveHelper.iconSize(context, 20)),
+            SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+            Text(
+              '계약서 서명 완료',
+              style: ResponsiveHelper.bodyStyle(context).copyWith(
+                fontWeight: FontWeight.bold,
+                color: AppColors.successDark,
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
+    // voided
+    return Container(
+      padding: ResponsiveHelper.cardPadding(context),
+      decoration: BoxDecoration(
+        color: AppColors.grey100,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: AppColors.grey300),
+      ),
+      child: Row(
+        children: [
+          Icon(Icons.cancel_outlined, color: AppColors.grey500, size: ResponsiveHelper.iconSize(context, 20)),
+          SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+          Text(
+            '계약 무효 처리됨',
+            style: ResponsiveHelper.bodyStyle(context, color: AppColors.grey500),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _openExistingContractSign(EmploymentContractModel contract) async {
+    var c = contract;
+
+    // 조항 없는 구 계약서 → 서명 전에 템플릿 선택 유도
+    if (c.articles.isEmpty) {
+      final businessId = widget.businessId ?? widget.toItem?.to.businessId;
+      if (businessId != null && mounted) {
+        final articles = await ContractTemplateSelectorDialog.show(
+          context,
+          businessId: businessId,
+        );
+        if (articles == null || !mounted) return; // 취소 → 중단
+        if (articles.isNotEmpty) {
+          await ContractService().updateArticles(
+            contractId: c.id,
+            articles: articles,
+          );
+          if (!mounted) return;
+          c = c.copyWith(articles: articles);
+        }
+      }
+    }
+
+    if (!mounted) return;
+    final nav = Navigator.of(context, rootNavigator: true);
+    Navigator.pop(context, _hasChanges);
+    widget.onStatusChanged?.call();
+    await nav.push(MaterialPageRoute(
+      builder: (_) => ContractSignScreen(contract: c, role: 'employer'),
+    ));
+  }
+
   /// 신분증 섹션 (확정자만)
   Widget _buildIdCardSection(BuildContext context) {
     return _buildSection(
@@ -882,9 +1072,7 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
                       child: CachedNetworkImage(
                         imageUrl: widget.user.idCardImageUrl!,
                         fit: BoxFit.contain,  // ✅ 잘리지 않게 전체 표시
-                        placeholder: (context, url) => const Center(
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        ),
+                        placeholder: (context, url) => const LoadingWidget(),
                         errorWidget: (context, url, error) => Center(
                           child: Icon(Icons.image_not_supported, color: AppColors.grey400),
                         ),
@@ -915,6 +1103,62 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
       );
     }
     
+    // 만료/거절 상태 — 재요청 가능
+    final access = _idCardAccess;
+    if (access != null &&
+        (access.status == IdCardAccessStatus.expired ||
+         (access.status == IdCardAccessStatus.approved && access.isExpired) ||
+         access.status == IdCardAccessStatus.rejected)) {
+      final isExpiredState = access.status != IdCardAccessStatus.rejected;
+      return Container(
+        width: double.infinity,
+        padding: ResponsiveHelper.cardPadding(context),
+        decoration: BoxDecoration(
+          color: isExpiredState ? AppColors.warningBg : AppColors.errorBg,
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(
+            color: (isExpiredState ? AppColors.warning : AppColors.error).withValues(alpha: 0.3),
+          ),
+        ),
+        child: Column(
+          children: [
+            Icon(
+              isExpiredState ? Icons.timer_off : Icons.block,
+              size: ResponsiveHelper.iconSize(context, 32),
+              color: isExpiredState ? AppColors.warningDark : AppColors.errorDark,
+            ),
+            SizedBox(height: ResponsiveHelper.spacing(context, 8)),
+            Text(
+              isExpiredState ? '열람 권한이 만료됐습니다' : '열람 요청이 거절됐습니다',
+              style: ResponsiveHelper.bodyStyle(context).copyWith(
+                fontWeight: FontWeight.bold,
+                color: isExpiredState ? AppColors.warningDark : AppColors.errorDark,
+              ),
+            ),
+            if (!isExpiredState && access.rejectionReason != null) ...[
+              SizedBox(height: ResponsiveHelper.spacing(context, 4)),
+              Text(
+                access.rejectionReason!,
+                style: ResponsiveHelper.smallStyle(context, color: AppColors.errorDark),
+                textAlign: TextAlign.center,
+              ),
+            ],
+            SizedBox(height: ResponsiveHelper.spacing(context, 12)),
+            SizedBox(
+              width: double.infinity,
+              child: _buildDialogButton(
+                label: '다시 요청하기',
+                icon: Icons.refresh,
+                bgColor: AppColors.infoBg,
+                textColor: AppColors.infoDark,
+                onTap: () => _showIdCardAccessRequestDialog(),
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
     // 요청중 상태
     if (_idCardAccess != null && _idCardAccess!.isPending) {
       return Container(
@@ -1278,14 +1522,119 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
       );
 
       if (mounted) {
-        Navigator.pop(context);
-        ToastHelper.showSuccess('$actionText 처리되었습니다');
-        widget.onStatusChanged?.call();
+        if (newStatus == AppStatus.confirmed) {
+          await _createContractAndSign();
+        } else {
+          Navigator.pop(context);
+          ToastHelper.showSuccess('$actionText 처리되었습니다');
+          widget.onStatusChanged?.call();
+        }
       }
     } catch (e) {
       debugPrint('❌ 상태 업데이트 실패: $e');
       if (mounted) {
         ToastHelper.showError('$actionText 처리 중 오류가 발생했습니다');
+      }
+    }
+  }
+
+  Future<void> _createContractAndSign() async {
+    final app = widget.application!;
+    final businessId = widget.businessId ?? widget.toItem?.to.businessId;
+
+    if (businessId == null) {
+      Navigator.pop(context);
+      ToastHelper.showSuccess('승인 처리되었습니다');
+      widget.onStatusChanged?.call();
+      return;
+    }
+
+    // 템플릿 선택 먼저 — 취소하면 계약 생성 중단
+    if (!mounted) return;
+    final articles = await ContractTemplateSelectorDialog.show(
+      context,
+      businessId: businessId,
+    );
+    if (articles == null || !mounted) return;
+
+    setState(() => _isLoading = true);
+
+    try {
+    // 해당 지원서에 맞는 WorkDetailData 찾기
+    // toItem이 없을 때는 app.toId로 Firestore에서 직접 조회
+    List<WorkDetailData> workDetails;
+    if (widget.toItem != null) {
+      workDetails = widget.toItem!.workDetails;
+      if (workDetails.isEmpty) {
+        workDetails = await _firestoreService.getWorkDetails(widget.toItem!.to.id);
+      }
+    } else {
+      final toId = app.toId ?? '';
+      workDetails = toId.isNotEmpty
+          ? await _firestoreService.getWorkDetails(toId)
+          : [];
+    }
+
+    if (!mounted) return;
+
+    if (workDetails.isEmpty) {
+      setState(() => _isLoading = false);
+      ToastHelper.showError('업무 정보를 불러올 수 없습니다');
+      return;
+    }
+
+    WorkDetailData workDetail;
+    if (app.workDetailId?.isNotEmpty == true) {
+      workDetail = workDetails.firstWhere(
+        (w) => w.id == app.workDetailId || w.legacyId == app.workDetailId,
+        orElse: () => workDetails.firstWhere(
+          (w) => w.workType == app.selectedWorkType,
+          orElse: () => workDetails.first,
+        ),
+      );
+    } else {
+      workDetail = workDetails.firstWhere(
+        (w) => w.workType == app.selectedWorkType,
+        orElse: () => workDetails.first,
+      );
+    }
+
+      final business = await _firestoreService.getBusinessById(businessId);
+      if (!mounted) return;
+
+      if (business == null) {
+        Navigator.pop(context);
+        ToastHelper.showSuccess('승인 처리되었습니다');
+        widget.onStatusChanged?.call();
+        return;
+      }
+
+      // findOrCreateContract: 기존 번들 계약서가 있으면 슬롯 추가,
+      // 없으면 신규 생성. 중복 방지 + 단기 번들링 처리.
+      final contract = await ContractService().findOrCreateContract(
+        application: app,
+        business: business,
+        worker: widget.user,
+        workDetail: workDetail,
+        articles: articles,
+      );
+
+      if (!mounted) return;
+
+      // 항상 서명 화면으로 이동 — 사업주가 계약서 내용 확인 후 직접 날인
+      final nav = Navigator.of(context, rootNavigator: true);
+      Navigator.pop(context);
+      widget.onStatusChanged?.call();
+      await nav.push(MaterialPageRoute(
+        builder: (_) => ContractSignScreen(contract: contract, role: 'employer'),
+      ));
+    } catch (e) {
+      debugPrint('❌ 계약서 생성 실패: $e');
+      if (mounted) {
+        setState(() => _isLoading = false);
+        Navigator.pop(context);
+        ToastHelper.showSuccess('승인 처리되었습니다');
+        widget.onStatusChanged?.call();
       }
     }
   }
@@ -1345,7 +1694,7 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
     }
   }
   
-  /// 단기 확정 취소
+  /// 확정 취소 (CONFIRMED / CONTRACT_PENDING 모두 처리)
   Future<void> _cancelConfirmation() async {
     if (widget.application == null) return;
 
@@ -1355,14 +1704,14 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
     if (cancelReason == null) return;
 
     try {
-      await _firestoreService.updateApplicationStatus(
-        applicationId: widget.application!.id,
-        status: AppStatus.canceled,
-        rejectedBy: adminUID,
-        message: cancelReason,
+      final success = await _firestoreService.cancelConfirmedApplication(
+        widget.application!.id,
+        applyNoShowPenalty: false,
+        canceledBy: adminUID,
+        cancelReason: cancelReason,
       );
 
-      if (mounted) {
+      if (mounted && success) {
         Navigator.pop(context, true);
         ToastHelper.showSuccess('확정이 취소되었습니다');
         widget.onStatusChanged?.call();
@@ -1395,10 +1744,12 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
         builder: (context, setDialogState) {
           return Dialog(
             shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+            insetPadding: const EdgeInsets.symmetric(horizontal: 24, vertical: 24),
             child: Container(
               width: double.maxFinite,
               constraints: const BoxConstraints(maxWidth: 400),
-              child: Column(
+              child: SingleChildScrollView(
+                child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   // 헤더
@@ -1432,7 +1783,7 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
                               ),
                               Text(
                                 '${widget.user.name}님',
-                                style: ResponsiveHelper.smallStyle(context, color: Colors.white70),
+                                style: ResponsiveHelper.smallStyle(context, color: Colors.white.withValues(alpha: 0.7)),
                               ),
                             ],
                           ),
@@ -1578,6 +1929,7 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
                   ),
                 ],
               ),
+              ),
             ),
           );
         },
@@ -1665,7 +2017,10 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
     );
 
     if (result == true) {
-      _hasChanges = true;
+      setState(() {
+        _hasChanges = true;
+        _hasWrittenReview = true;
+      });
       widget.onStatusChanged?.call();
     }
   }

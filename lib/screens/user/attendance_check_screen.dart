@@ -507,9 +507,14 @@ class _AttendanceCheckScreenState extends State<AttendanceCheckScreen>
       return null;
     }
 
-    if (!silent && mounted) DialogHelper.showLoading(context, message: loadingMsg);
-    final position = await LocationHelper.getCurrentPosition();
-    if (!silent && mounted) Navigator.pop(context);
+    bool loadingDialogShown = false;
+    if (!silent && mounted) {
+      DialogHelper.showLoading(context, message: loadingMsg);
+      loadingDialogShown = true;
+    }
+    final position = await LocationHelper.getCurrentPosition().whenComplete(() {
+      if (loadingDialogShown && mounted) Navigator.pop(context);
+    });
 
     if (position == null) {
       // LocationHelper.getCurrentPosition이 null 반환 = GPS 실패 또는 Mock GPS 감지
