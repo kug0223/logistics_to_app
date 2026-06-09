@@ -3,6 +3,7 @@ import 'package:crypto/crypto.dart';
 import 'package:flutter/foundation.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_storage/firebase_storage.dart';
 import '../models/core/user_model.dart';
 import '../utils/encryption_helper.dart';
 import '../utils/toast_helper.dart';
@@ -28,13 +29,13 @@ class AuthService {
           .get();
       
       if (userSnapshot.docs.isEmpty) {
-        ToastHelper.showError('존재하지 않는 아이디입니다.');
-        throw Exception('사용자를 찾을 수 없습니다');
+        // throw만 — 호출부 catch에서 toast 처리
+        throw Exception('존재하지 않는 아이디입니다.');
       }
       
       final userDoc = userSnapshot.docs.first;
       final userData = userDoc.data();
-      final email = userData['email'];
+      final email = userData['email'] as String?;
       
       if (email == null || email.isEmpty) {
         ToastHelper.showError('계정 정보에 이메일이 없습니다.');
@@ -55,13 +56,35 @@ class AuthService {
             .get();
 
         if (doc.exists) {
+          final data = doc.data() as Map<String, dynamic>;
+
+          // 블랙리스트 체크
+          if (data['isBlacklisted'] == true) {
+            final reason = data['blacklistReason'] as String? ?? '이용 정책 위반';
+            await _auth.signOut();
+            ToastHelper.showError('이용 제한된 계정입니다.\n사유: $reason\n고객센터에 문의해주세요.');
+            throw Exception('블랙리스트 사용자');
+          }
+
+          // 제재 기간 체크
+          final restrictedUntilTs = data['restrictedUntil'];
+          if (restrictedUntilTs is Timestamp) {
+            final restrictedDate = restrictedUntilTs.toDate().toLocal();
+            if (restrictedDate.isAfter(DateTime.now())) {
+              await _auth.signOut();
+              ToastHelper.showError(
+                '${restrictedDate.year}년 ${restrictedDate.month}월 ${restrictedDate.day}일까지 이용이 제한됩니다.\n자세한 내용은 고객센터에 문의하세요.');
+              throw Exception('이용 제한 사용자');
+            }
+          }
+
           // 4. 마지막 로그인 시간 업데이트
           await _firestore.collection('users').doc(result.user!.uid).update({
             'lastLoginAt': FieldValue.serverTimestamp(),
           });
 
           return UserModel.fromMap(
-            doc.data() as Map<String, dynamic>,
+            data,
             result.user!.uid,
           );
         } else {
@@ -133,6 +156,7 @@ class AuthService {
     // ✅ 사업자 정보 추가
     String? businessNumber,
     String? businessName,
+    String? ceoName,
     // ✅ 통장 정보 추가
     String? bankName,
     String? accountNumber,
@@ -173,16 +197,28 @@ class AuthService {
           // ✅ 사업자 정보 추가
           businessNumber: businessNumber,
           businessName: businessName,
+          ceoName: ceoName,
           // ✅ 통장 정보 추가
           bankName: bankName,
           accountNumber: accountNumber,
           accountHolder: name,  // 예금주는 본인 이름으로 자동 설정
         );
 
-        await _firestore
-            .collection('users')
-            .doc(result.user!.uid)
-            .set(newUser.toMap());
+        try {
+          await _firestore
+              .collection('users')
+              .doc(result.user!.uid)
+              .set(newUser.toMap());
+        } catch (firestoreError) {
+          // Firestore 저장 실패 시 Auth 계정 롤백 (고아 계정 방지)
+          try {
+            await result.user!.delete();
+          } catch (deleteError) {
+            debugPrint('⚠️ Auth 롤백 실패: $deleteError');
+          }
+          ToastHelper.showError('회원가입 중 오류가 발생했습니다.\n다시 시도해주세요.');
+          throw Exception('Firestore 저장 실패: $firestoreError');
+        }
 
         ToastHelper.showSuccess('회원가입이 완료되었습니다!');
         return newUser;
@@ -192,7 +228,10 @@ class AuthService {
       String message = '회원가입에 실패했습니다.';
       switch (e.code) {
         case 'email-already-in-use':
-          message = '이미 사용 중인 아이디입니다.';
+          // 가입 도중 앱 강제종료 시 Auth 계정만 생성된 고아 상태일 수 있음
+          // Firestore에 해당 uid의 users 문서가 없으면 고아 계정으로 안내
+          message = '이미 사용 중인 아이디입니다.\n'
+              '가입 도중 오류가 발생한 경우 로그인 후 설정에서 탈퇴 후 재가입해주세요.';
           break;
         case 'invalid-email':
           message = '유효하지 않은 이메일 형식입니다.';
@@ -355,10 +394,109 @@ class AuthService {
         }
       }
 
-      // 3. Firestore 사용자 문서 삭제
+      // 3. Storage 사용자 파일 삭제 (신분증, 통장 등)
+      try {
+        final storageRef = FirebaseStorage.instance.ref('users/${user.uid}');
+        final listResult = await storageRef.listAll();
+        for (final item in listResult.items) {
+          await item.delete();
+        }
+        for (final prefix in listResult.prefixes) {
+          final sub = await prefix.listAll();
+          for (final item in sub.items) {
+            await item.delete();
+          }
+        }
+      } catch (storageErr) {
+        debugPrint('⚠️ Storage 파일 삭제 실패 (계속 진행): $storageErr');
+      }
+
+      // 4. 연관 컬렉션 개인정보 정리 (개인정보보호법 — 탈퇴 시 삭제 의무)
+      // notifications: 본인 알림 전체 삭제 (페이지네이션)
+      try {
+        bool hasMoreNotifs = true;
+        while (hasMoreNotifs) {
+          final snap = await _firestore
+              .collection('notifications')
+              .where('userId', isEqualTo: user.uid)
+              .limit(200)
+              .get();
+          if (snap.docs.isEmpty) break;
+          hasMoreNotifs = snap.docs.length == 200;
+          final batch = _firestore.batch();
+          for (final doc in snap.docs) { batch.delete(doc.reference); }
+          await batch.commit();
+        }
+      } catch (_) {}
+
+      // worker_locations: 실시간 위치 전체 삭제 (페이지네이션)
+      try {
+        bool hasMoreLocs = true;
+        while (hasMoreLocs) {
+          final snap = await _firestore
+              .collection('worker_locations')
+              .where('userId', isEqualTo: user.uid)
+              .limit(100)
+              .get();
+          if (snap.docs.isEmpty) break;
+          hasMoreLocs = snap.docs.length == 100;
+          final batch = _firestore.batch();
+          for (final doc in snap.docs) { batch.delete(doc.reference); }
+          await batch.commit();
+        }
+      } catch (_) {}
+
+      // applications: 활성 지원서 AUTO_CANCELED 처리 전체 (페이지네이션, 이력은 보존 — 급여 처리용)
+      // CONFIRMED 포함: 탈퇴 시 orphan 방지 (BUG-ADMIN-72)
+      try {
+        bool hasMoreApps = true;
+        while (hasMoreApps) {
+          final snap = await _firestore
+              .collection('applications')
+              .where('uid', isEqualTo: user.uid)
+              .where('status', whereIn: ['PENDING', 'CONTRACT_PENDING', 'CONFIRMED'])
+              .limit(100)
+              .get();
+          if (snap.docs.isEmpty) break;
+          hasMoreApps = snap.docs.length == 100;
+          final batch = _firestore.batch();
+          final List<String> confirmedAppIds = [];
+          for (final doc in snap.docs) {
+            if (doc.data()['status'] == 'CONFIRMED') confirmedAppIds.add(doc.id);
+            batch.update(doc.reference, {
+              'status': 'CANCELED',
+              'canceledAt': FieldValue.serverTimestamp(),
+              'cancelReason': 'USER_DELETED',
+            });
+          }
+          await batch.commit();
+          // CONFIRMED 지원서의 scheduled 출근기록 → absent 처리
+          for (final appId in confirmedAppIds) {
+            try {
+              final attSnap = await _firestore
+                  .collection('attendance')
+                  .where('applicationId', isEqualTo: appId)
+                  .where('status', isEqualTo: 'scheduled')
+                  .get();
+              if (attSnap.docs.isEmpty) continue;
+              final attBatch = _firestore.batch();
+              for (final attDoc in attSnap.docs) {
+                attBatch.update(attDoc.reference, {
+                  'status': 'absent',
+                  'absentReason': 'USER_DELETED',
+                  'updatedAt': FieldValue.serverTimestamp(),
+                });
+              }
+              await attBatch.commit();
+            } catch (_) {}
+          }
+        }
+      } catch (_) {}
+
+      // 5. Firestore 사용자 문서 삭제
       await _firestore.collection('users').doc(user.uid).delete();
 
-      // 4. Firebase Auth 계정 삭제
+      // 6. Firebase Auth 계정 삭제
       await user.delete();
 
       return null; // 성공
@@ -453,11 +591,14 @@ class AuthService {
   }
   // 동일 전화번호 + 역할 중복 가입 체크
   // 같은 사람이 같은 역할로 이미 가입했는지 확인
-  Future<bool> checkDuplicateRegistration({
+  /// null = 네트워크 에러 (호출부에서 경고 표시 후 진행 결정)
+  /// true = 중복 존재 / false = 중복 없음
+  Future<bool?> checkDuplicateRegistration({
     required String phone,
     required UserRole role,
   }) async {
     try {
+      // 동일 역할 + 동일 전화번호 체크
       final snapshot = await _firestore
           .collection('users')
           .where('phone', isEqualTo: phone)
@@ -467,7 +608,24 @@ class AuthService {
       return snapshot.docs.isNotEmpty;
     } catch (e) {
       debugPrint('❌ 중복 가입 체크 실패: $e');
-      return false; // 에러 시 통과 허용 (서버 에러로 막지 않음)
+      return null;
+    }
+  }
+
+  /// 사업자등록번호 중복 가입 체크 — 동일 번호로 BUSINESS_ADMIN 이미 존재하면 true
+  Future<bool?> checkBusinessNumberDuplicate(String businessNumber) async {
+    try {
+      final clean = businessNumber.replaceAll('-', '');
+      final snapshot = await _firestore
+          .collection('users')
+          .where('businessNumber', isEqualTo: clean)
+          .where('role', isEqualTo: 'BUSINESS_ADMIN')
+          .limit(1)
+          .get();
+      return snapshot.docs.isNotEmpty;
+    } catch (e) {
+      debugPrint('❌ 사업자등록번호 중복 체크 실패: $e');
+      return null;
     }
   }
 
