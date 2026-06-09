@@ -1873,13 +1873,29 @@ async function sendWorkReminders(now: Timestamp): Promise<void> {
 
     console.log(`  📋 [리마인더] 대상: ${applicationsSnapshot.size}명`);
 
+    // 오늘(KST) 이미 발송된 workReminder 알림 userId 목록 조회 — 재시도 시 중복 방지
+    const todayKSTStart = new Date(nowKST);
+    todayKSTStart.setHours(0, 0, 0, 0);
+    const todayUTC = new Date(todayKSTStart.getTime() - KST_OFFSET_MS);
+    const alreadySentSnap = await db
+      .collection("notifications")
+      .where("type", "==", "workReminder")
+      .where("createdAt", ">=", Timestamp.fromDate(todayUTC))
+      .get();
+    const alreadySentUsers = new Set(alreadySentSnap.docs.map((d) => d.data().userId as string));
+
     let sentCount = 0;
-    // 중복 방지
+    // 단일 실행 내 같은 사용자 중복 방지
     const processedUsers = new Set<string>();
 
     for (const appDoc of applicationsSnapshot.docs) {
       const appData = appDoc.data();
       const userId = appData.uid as string;
+
+      // 오늘 이미 발송된 사용자 스킵 (스케줄러 재시도 멱등성)
+      if (alreadySentUsers.has(userId)) {
+        continue;
+      }
 
       // 같은 사용자에게 여러 근무가 있으면 한 번만 전송
       if (processedUsers.has(userId)) {
