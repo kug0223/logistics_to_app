@@ -607,7 +607,7 @@ export const onNotificationCreated = onDocumentCreated(
 
 export const masterScheduler = onSchedule(
   {
-    schedule: "*/30 * * * *",
+    schedule: "0 * * * *",
     timeZone: "Asia/Seoul",
     region: "asia-northeast3",
     maxInstances: 1,
@@ -624,7 +624,7 @@ export const masterScheduler = onSchedule(
     console.log(`🚀 [마스터 스케줄러] 시작: ${hour}시 ${minute}분`);
 
     // ═══════════════════════════════════════════════════════
-    // ✅ 매 10분마다 실행 — 각 함수 독립 try-catch (한 실패가 나머지 차단 방지)
+    // ✅ 매 시간 실행 — 각 함수 독립 try-catch (한 실패가 나머지 차단 방지)
     // ═══════════════════════════════════════════════════════
 
     // 1️⃣ 예약 공개 처리
@@ -756,15 +756,78 @@ async function createPendingReviewRequests(now: Timestamp): Promise<void> {
     const windowEnd = new Date(windowEndKST.getTime() - KST_OFFSET_MS);
     const windowStart = new Date(windowStartKST.getTime() - KST_OFFSET_MS);
 
-    const snap = await db
-      .collection("applications")
-      .where("status", "in", CONFIRMED_STATUSES)
-      .where("workDate", ">=", Timestamp.fromDate(windowStart))
-      .where("workDate", "<=", Timestamp.fromDate(windowEnd))
-      .get();
+    const [snap, longTermSnap] = await Promise.all([
+      db.collection("applications")
+        .where("status", "in", CONFIRMED_STATUSES)
+        .where("workDate", ">=", Timestamp.fromDate(windowStart))
+        .where("workDate", "<=", Timestamp.fromDate(windowEnd))
+        .get(),
+      db.collection("applications")
+        .where("status", "in", CONFIRMED_STATUSES)
+        .where("workEndDate", ">=", Timestamp.fromDate(windowStart))
+        .where("workEndDate", "<=", Timestamp.fromDate(windowEnd))
+        .get(),
+    ]);
+
+    const allDocs = [...snap.docs, ...longTermSnap.docs];
+    if (allDocs.length === 0) {
+      console.log("  ✅ [리뷰 요청] 처리할 지원서 없음");
+      return;
+    }
+
+    // ── 배치 사전 조회: users (applicantName 없는 경우) ──────────────────
+    const missingNameWorkerIds = new Set<string>();
+    for (const doc of allDocs) {
+      const data = doc.data();
+      if (!(data.applicantName as string | undefined) && data.uid) {
+        missingNameWorkerIds.add(data.uid as string);
+      }
+    }
+    const userNameMap = new Map<string, string>();
+    if (missingNameWorkerIds.size > 0) {
+      const workerIdList = [...missingNameWorkerIds];
+      // getAll은 최대 30개 제한 — 30개씩 청크 처리
+      for (let i = 0; i < workerIdList.length; i += 30) {
+        const chunk = workerIdList.slice(i, i + 30);
+        const refs = chunk.map((id) => db.collection("users").doc(id));
+        const docs = await db.getAll(...refs);
+        for (const d of docs) {
+          if (d.exists) userNameMap.set(d.id, (d.data() as any)?.name ?? "근무자");
+        }
+      }
+    }
+
+    // ── 배치 사전 조회: monthly_reviews ─────────────────────────────────
+    const reviewKeys = new Set<string>();
+    for (const doc of allDocs) {
+      const data = doc.data();
+      const workerId = data.uid as string;
+      const businessId = data.businessId as string;
+      if (!workerId || !businessId) continue;
+      // workDate 기반 키 (단기) 또는 workEndDate 기반 키 (장기) 모두 수집
+      const dateField = snap.docs.includes(doc) ? data.workDate : data.workEndDate;
+      if (!dateField) continue;
+      const dateKST = new Date((dateField as Timestamp).toDate().getTime() + KST_OFFSET_MS);
+      const y = dateKST.getUTCFullYear();
+      const m = dateKST.getUTCMonth() + 1;
+      reviewKeys.add(`${businessId}_${workerId}_${y}_${m}`);
+    }
+    const existingReviewSet = new Set<string>();
+    if (reviewKeys.size > 0) {
+      const reviewKeyList = [...reviewKeys];
+      for (let i = 0; i < reviewKeyList.length; i += 30) {
+        const chunk = reviewKeyList.slice(i, i + 30);
+        const refs = chunk.map((k) => db.collection("monthly_reviews").doc(k));
+        const docs = await db.getAll(...refs);
+        for (const d of docs) {
+          if (d.exists) existingReviewSet.add(d.id);
+        }
+      }
+    }
 
     let created = 0;
 
+    // ── 단기 지원서 처리 ─────────────────────────────────────────────────
     for (const doc of snap.docs) {
       const data = doc.data();
       const workerId = data.uid as string;
@@ -782,19 +845,10 @@ async function createPendingReviewRequests(now: Timestamp): Promise<void> {
       const deadline = new Date(workDate);
       deadline.setDate(deadline.getDate() + 14);
 
-      // 기존에 작성된 리뷰가 있으면 연동 (CF 배포 전 작성된 리뷰 소급 처리)
-      const reviewKey = `${businessId}_${workerId}_${year}_${month}`;
-      const existingReview = await db
-        .collection("monthly_reviews").doc(reviewKey).get();
-      const adminAlreadyReviewed = existingReview.exists;
-
-      // workerName: applicantName 없으면 users 컬렉션에서 보완
-      let workerName1 = (data.applicantName as string | undefined) ?? "";
-      if (!workerName1 && workerId) {
-        const userDoc1 = await db.collection("users").doc(workerId).get();
-        workerName1 = userDoc1.exists ? ((userDoc1.data() as any)?.name ?? "근무자") : "근무자";
-      }
-      if (!workerName1) workerName1 = "근무자";
+      const adminAlreadyReviewed = existingReviewSet.has(requestKey);
+      const workerName = (data.applicantName as string | undefined)
+        || userNameMap.get(workerId)
+        || "근무자";
 
       try {
         await requestRef.create({
@@ -802,13 +856,13 @@ async function createPendingReviewRequests(now: Timestamp): Promise<void> {
           businessId,
           businessName: data.businessName ?? "",
           workerId,
-          workerName: workerName1,
+          workerName,
           reviewYear: year,
           reviewMonth: month,
           deadline: Timestamp.fromDate(deadline),
           adminStatus: adminAlreadyReviewed ? "submitted" : "pending",
           workerStatus: "pending",
-          adminReviewId: adminAlreadyReviewed ? reviewKey : null,
+          adminReviewId: adminAlreadyReviewed ? requestKey : null,
           workerReviewId: null,
           isPublished: false,
           publishedAt: null,
@@ -818,7 +872,7 @@ async function createPendingReviewRequests(now: Timestamp): Promise<void> {
 
         if (!adminAlreadyReviewed) {
           await _sendReviewRequestNotification(
-            businessId, data.applicantName ?? "근무자",
+            businessId, workerName,
             requestKey, year, month, "admin"
           );
         }
@@ -832,13 +886,6 @@ async function createPendingReviewRequests(now: Timestamp): Promise<void> {
     }
 
     // ── 장기 근무자: workEndDate가 윈도우 내인 CONFIRMED/CONTRACT_PENDING 지원서 ──
-    const longTermSnap = await db
-      .collection("applications")
-      .where("status", "in", CONFIRMED_STATUSES)
-      .where("workEndDate", ">=", Timestamp.fromDate(windowStart))
-      .where("workEndDate", "<=", Timestamp.fromDate(windowEnd))
-      .get();
-
     for (const doc of longTermSnap.docs) {
       const data = doc.data();
       const workerId = data.uid as string;
@@ -856,18 +903,10 @@ async function createPendingReviewRequests(now: Timestamp): Promise<void> {
       const deadlineDate = new Date(endDate);
       deadlineDate.setDate(deadlineDate.getDate() + 14);
 
-      const reviewKey = `${businessId}_${workerId}_${endYear}_${endMonth}`;
-      const existingReview = await db
-        .collection("monthly_reviews").doc(reviewKey).get();
-      const adminAlreadyReviewed = existingReview.exists;
-
-      // workerName 보완
-      let workerName2 = (data.applicantName as string | undefined) ?? "";
-      if (!workerName2 && workerId) {
-        const userDoc2 = await db.collection("users").doc(workerId).get();
-        workerName2 = userDoc2.exists ? ((userDoc2.data() as any)?.name ?? "근무자") : "근무자";
-      }
-      if (!workerName2) workerName2 = "근무자";
+      const adminAlreadyReviewed = existingReviewSet.has(requestKey);
+      const workerName = (data.applicantName as string | undefined)
+        || userNameMap.get(workerId)
+        || "근무자";
 
       try {
         await requestRef.create({
@@ -875,13 +914,13 @@ async function createPendingReviewRequests(now: Timestamp): Promise<void> {
           businessId,
           businessName: data.businessName ?? "",
           workerId,
-          workerName: workerName2,
+          workerName,
           reviewYear: endYear,
           reviewMonth: endMonth,
           deadline: Timestamp.fromDate(deadlineDate),
           adminStatus: adminAlreadyReviewed ? "submitted" : "pending",
           workerStatus: "pending",
-          adminReviewId: adminAlreadyReviewed ? reviewKey : null,
+          adminReviewId: adminAlreadyReviewed ? requestKey : null,
           workerReviewId: null,
           isPublished: false,
           publishedAt: null,
@@ -890,7 +929,7 @@ async function createPendingReviewRequests(now: Timestamp): Promise<void> {
         created++;
         if (!adminAlreadyReviewed) {
           await _sendReviewRequestNotification(
-            businessId, workerName2,
+            businessId, workerName,
             requestKey, endYear, endMonth, "admin"
           );
         }

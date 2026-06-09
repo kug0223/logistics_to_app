@@ -155,11 +155,13 @@ extension NotificationFirestore on FirestoreService {
 
   /// 알림 스트림 (실시간)
   Stream<List<NotificationModel>> watchUserNotifications(String userId) {
+    final cutoff = DateTime.now().subtract(const Duration(days: 30));
     return _firestore
         .collection('notifications')
         .where('userId', isEqualTo: userId)
+        .where('createdAt', isGreaterThanOrEqualTo: Timestamp.fromDate(cutoff))
         .orderBy('createdAt', descending: true)
-        .limit(100)
+        .limit(30)
         .snapshots()
         .map((snapshot) => snapshot.docs
             .map((doc) => NotificationModel.fromFirestore(doc))
