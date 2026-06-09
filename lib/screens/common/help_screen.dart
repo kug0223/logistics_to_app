@@ -10,57 +10,18 @@ import '../../theme/app_colors.dart';
 import '../../utils/responsive_helper.dart';
 import '../../widgets/common/gradient_scaffold.dart';
 
-class HelpScreen extends StatefulWidget {
+class HelpScreen extends StatelessWidget {
   const HelpScreen({super.key});
 
   @override
-  State<HelpScreen> createState() => _HelpScreenState();
-}
-
-class _HelpScreenState extends State<HelpScreen>
-    with SingleTickerProviderStateMixin {
-  late final TabController _tabCtrl;
-
-  @override
-  void initState() {
-    super.initState();
+  Widget build(BuildContext context) {
     final role = context.read<UserProvider>().currentUser?.role;
     final isAdmin = role == UserRole.BUSINESS_ADMIN || role == UserRole.SUPER_ADMIN;
-    _tabCtrl = TabController(length: 2, vsync: this, initialIndex: isAdmin ? 1 : 0);
-  }
-
-  @override
-  void dispose() {
-    _tabCtrl.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
     final theme = Theme.of(context);
+
     return GradientScaffold(
       title: '도움말',
-      headerBottom: TabBar(
-        controller: _tabCtrl,
-        labelColor: Colors.white,
-        unselectedLabelColor: Colors.white.withValues(alpha: 0.6),
-        indicatorColor: Colors.white,
-        indicatorWeight: 2.5,
-        dividerColor: Colors.transparent,
-        labelStyle: ResponsiveHelper.bodyStyle(context)
-            .copyWith(fontWeight: FontWeight.w600),
-        tabs: const [
-          Tab(text: '근무자'),
-          Tab(text: '관리자'),
-        ],
-      ),
-      body: TabBarView(
-        controller: _tabCtrl,
-        children: [
-          _buildFaqList(context, theme, _userFaqs),
-          _buildFaqList(context, theme, _adminFaqs),
-        ],
-      ),
+      body: _buildFaqList(context, theme, isAdmin ? _adminFaqs : _userFaqs),
     );
   }
 

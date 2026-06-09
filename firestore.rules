@@ -83,10 +83,10 @@ service cloud.firestore {
                    (isBusinessAdmin() && resource.data.get('role', '') == 'USER')
                  );
 
-      // 쿼리(LIST): username 필터+limit 1 조건의 중복 체크(비로그인 허용), 관리자는 제한적 허용
-      // 비로그인 접근은 username 필터 필수로 임의 덤프 방지 (회원가입 중복 체크 지원)
-      // BUSINESS_ADMIN: 전체 덤프 방지를 위해 limit 30 이하로 제한 (getUsersBatch 청크 크기 수용)
-      allow list: if (request.query.limit <= 1 && 'username' in request.query.filters) ||
+      // 쿼리(LIST): 비로그인 limit=1 허용 (로그인·회원가입 username 조회용)
+      // request.query.filters 는 Firestore 규칙에서 동작하지 않으므로 limit 체크만 사용
+      // limit=1 제한으로 대량 덤프 방지 / BUSINESS_ADMIN: limit 30 이하 허용
+      allow list: if (!isLoggedIn() && request.query.limit <= 1) ||
                    (isLoggedIn() && isSuperAdmin()) ||
                    (isLoggedIn() && isBusinessAdmin() && request.query.limit <= 30);
 

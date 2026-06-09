@@ -1226,13 +1226,24 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   Widget _buildNotifPrefsCard(BuildContext context) {
     final theme = Theme.of(context);
-    final items = [
-      (UserModel.notifWorkReminder,     '근무 리마인더',   Icons.schedule_outlined),
-      (UserModel.notifApplicationUpdate,'지원 결과 알림',  Icons.check_circle_outline),
-      (UserModel.notifReviewAlert,      '리뷰 요청 알림',  Icons.rate_review_outlined),
-      (UserModel.notifContractAlert,    '계약 알림',       Icons.description_outlined),
-      (UserModel.notifWageAlert,        '임금 확정 알림',  Icons.payments_outlined),
-    ];
+    final role = context.read<UserProvider>().currentUser?.role;
+    final isAdmin = role == UserRole.BUSINESS_ADMIN || role == UserRole.SUPER_ADMIN;
+
+    // 역할에 맞는 알림 항목만 표시
+    // 근무 리마인더·지원 결과는 근무자 전용, 나머지는 공통
+    final items = isAdmin
+        ? [
+            (UserModel.notifReviewAlert,   '리뷰 요청 알림',  Icons.rate_review_outlined),
+            (UserModel.notifContractAlert, '계약 알림',       Icons.description_outlined),
+            (UserModel.notifWageAlert,     '임금 확정 알림',  Icons.payments_outlined),
+          ]
+        : [
+            (UserModel.notifWorkReminder,      '근무 리마인더',   Icons.schedule_outlined),
+            (UserModel.notifApplicationUpdate, '지원 결과 알림',  Icons.check_circle_outline),
+            (UserModel.notifReviewAlert,       '리뷰 요청 알림',  Icons.rate_review_outlined),
+            (UserModel.notifContractAlert,     '계약 알림',       Icons.description_outlined),
+            (UserModel.notifWageAlert,         '임금 확정 알림',  Icons.payments_outlined),
+          ];
     return Container(
       decoration: CommonWidgets.compactCardDecoration(),
       child: Column(

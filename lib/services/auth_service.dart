@@ -20,6 +20,9 @@ class AuthService {
 
   // 로그인 (아이디 기반)
   Future<UserModel?> signIn(String username, String password) async {
+    // 기존 세션 완전 정리 — 비밀번호 재설정 후 토큰이 무효화된 경우 stale 상태 방지
+    try { await _auth.signOut(); } catch (_) {}
+
     try {
       // 1. username으로 사용자 찾기
       final userSnapshot = await _firestore
@@ -122,13 +125,27 @@ class AuthService {
       ToastHelper.showError(message);
       throw Exception(message);
       
+    } on FirebaseException catch (e) {
+      // Firestore 예외 (FirebaseAuthException이 아닌 것) — 네트워크·권한·토큰 만료 등
+      debugPrint('❌ [signIn] FirebaseException: ${e.code} / ${e.message}');
+      String message;
+      if (e.code == 'permission-denied' || e.code == 'unauthenticated') {
+        message = '인증이 만료되었습니다. 다시 시도해주세요';
+      } else if (e.code == 'unavailable' || e.code == 'network-request-failed') {
+        message = '네트워크 연결을 확인해주세요';
+      } else {
+        message = '로그인 중 오류가 발생했습니다';
+      }
+      ToastHelper.showError(message);
+      throw Exception(message);
+
     } catch (e) {
-      // Firestore 조회 실패 등 다른 에러
+      // 그 외 예외 (Firestore 조회 실패, fromMap 파싱 오류 등)
+      debugPrint('❌ [signIn] 알 수 없는 오류: $e');
       if (e.toString().contains('사용자를 찾을 수 없습니다')) {
-        // 이미 처리됨
         rethrow;
       }
-      ToastHelper.showError('로그인 중 오류가 발생했습니다.');
+      ToastHelper.showError('로그인 중 오류가 발생했습니다');
       throw Exception('로그인 실패: $e');
     }
   }

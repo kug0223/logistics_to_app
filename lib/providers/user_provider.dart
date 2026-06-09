@@ -242,14 +242,20 @@ class UserProvider with ChangeNotifier {
       debugPrint('❌ 로그인 실패: $e');
       
       // 사용자 친화적인 에러 메시지
-      if (e.toString().contains('user-not-found')) {
-        _error = '등록되지 않은 이메일입니다';
-      } else if (e.toString().contains('wrong-password')) {
-        _error = '비밀번호가 올바르지 않습니다';
-      } else if (e.toString().contains('invalid-email')) {
+      final errStr = e.toString();
+      if (errStr.contains('invalid-credential') ||
+          errStr.contains('user-not-found') ||
+          errStr.contains('wrong-password')) {
+        _error = '아이디 또는 비밀번호가 올바르지 않습니다';
+      } else if (errStr.contains('invalid-email')) {
         _error = '유효하지 않은 이메일 형식입니다';
-      } else if (e.toString().contains('network-request-failed')) {
+      } else if (errStr.contains('network-request-failed') ||
+          errStr.contains('NETWORK_ERROR')) {
         _error = '네트워크 연결을 확인해주세요';
+      } else if (errStr.contains('too-many-requests')) {
+        _error = '로그인 시도가 너무 많습니다. 잠시 후 다시 시도해주세요';
+      } else if (errStr.contains('user-disabled')) {
+        _error = '비활성화된 계정입니다. 관리자에게 문의해주세요';
       }
       
       return false;
