@@ -2091,7 +2091,7 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
     AppMenuSheet.show(
       context: context,
       headerTitle: user?.name ?? '알 수 없음',
-      headerSubtitle: '${app.selectedWorkType}  ${app.startTime}~${app.endTime}',
+      headerSubtitle: '${app.selectedWorkType}  ${WorkDetailHelper.effectiveStart(app, _workDetailTimeMap)}~${WorkDetailHelper.effectiveEnd(app, _workDetailTimeMap)}',
       headerAvatarLetter: user?.name.isNotEmpty == true ? user!.name[0] : '?',
       headerAvatarColor: primaryColor,
       itemGroups: actionGroups,
@@ -3135,7 +3135,7 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
         }
 
         try {
-          final effectiveCheckIn  = newCheckIn  ?? attendance.checkIn  ?? app.startTime;
+          final effectiveCheckIn  = newCheckIn  ?? attendance.checkIn  ?? WorkDetailHelper.effectiveStart(app, _workDetailTimeMap);
           final effectiveCheckOut = newCheckOut ?? attendance.checkOut;
 
           // 시간 역전 검사 (출퇴근 모두 있을 때만)
@@ -3207,7 +3207,10 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
     if (groups.length <= 1) {
       // 단일 파트 → 기존 시트
       final scheduledTimes = _selectedIds
-          .map((id) => _confirmedWorkers.firstWhere((a) => a.id == id).startTime)
+          .map((id) {
+            final app = _confirmedWorkers.firstWhere((a) => a.id == id);
+            return WorkDetailHelper.effectiveStart(app, _workDetailTimeMap);
+          })
           .where((t) => t.isNotEmpty)
           .toSet()
           .toList();
@@ -3252,7 +3255,10 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
     if (groups.length <= 1) {
       // 단일 파트 → 기존 시트
       final scheduledTimes = checkedInIds
-          .map((id) => _confirmedWorkers.firstWhere((a) => a.id == id).endTime)
+          .map((id) {
+            final app = _confirmedWorkers.firstWhere((a) => a.id == id);
+            return WorkDetailHelper.effectiveEnd(app, _workDetailTimeMap);
+          })
           .where((t) => t.isNotEmpty)
           .toSet()
           .toList();
@@ -3284,9 +3290,10 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
     final Map<String, String> selectedTimes = {};
     for (final entry in groups.entries) {
       final firstApp = entry.value.first;
-      selectedTimes[entry.key] =
-          isCheckIn ? (firstApp.startTime.isNotEmpty ? firstApp.startTime : nowStr)
-                    : (firstApp.endTime.isNotEmpty ? firstApp.endTime : nowStr);
+      final effT = isCheckIn
+          ? WorkDetailHelper.effectiveStart(firstApp, _workDetailTimeMap)
+          : WorkDetailHelper.effectiveEnd(firstApp, _workDetailTimeMap);
+      selectedTimes[entry.key] = effT.isNotEmpty ? effT : nowStr;
     }
 
     final actionColor = isCheckIn ? AppColors.success : AppColors.purple;
@@ -3488,13 +3495,12 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
                                             context: ctx,
                                             title:
                                                 '${firstApp.selectedWorkType} $actionLabel 시간',
-                                            scheduledTimes: isCheckIn
-                                                ? (firstApp.startTime.isNotEmpty
-                                                    ? [firstApp.startTime]
-                                                    : null)
-                                                : (firstApp.endTime.isNotEmpty
-                                                    ? [firstApp.endTime]
-                                                    : null),
+                                            scheduledTimes: (() {
+                                              final t = isCheckIn
+                                                  ? WorkDetailHelper.effectiveStart(firstApp, _workDetailTimeMap)
+                                                  : WorkDetailHelper.effectiveEnd(firstApp, _workDetailTimeMap);
+                                              return t.isNotEmpty ? [t] : null;
+                                            })(),
                                             isCheckIn: isCheckIn,
                                           );
                                           if (t != null) {
@@ -3887,9 +3893,13 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
   double _calcWorkHoursCompat(String checkIn, String checkOut) =>
       AttendanceStatusHelper.workMinutes(checkIn, checkOut) / 60.0;
 
-  /// 출근/퇴근 시간으로 DB status 결정
+  /// 출근/퇴근 시간으로 DB status 결정 — effectiveStart/End 우선 적용
   String _deriveStatus(ApplicationModel app, String checkIn, String? checkOut) =>
-      AttendanceStatusHelper.deriveStatus(app, checkIn, checkOut);
+      AttendanceStatusHelper.deriveStatus(
+        app, checkIn, checkOut,
+        effStart: WorkDetailHelper.effectiveStart(app, _workDetailTimeMap),
+        effEnd:   WorkDetailHelper.effectiveEnd(app, _workDetailTimeMap),
+      );
 
   /// 일괄 출근 처리
   Future<void> _processBatchCheckIn(String time) async {
@@ -3960,7 +3970,7 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
         }
 
         try {
-          final checkIn = attendance.checkIn ?? app.startTime;
+          final checkIn = attendance.checkIn ?? WorkDetailHelper.effectiveStart(app, _workDetailTimeMap);
 
           // 시간 역전 검사
           if (!AttendanceStatusHelper.isValidWorkPeriod(checkIn, time)) {
@@ -4056,7 +4066,7 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
         if (attendance == null) continue;
 
         try {
-          final checkIn = attendance.checkIn ?? app.startTime;
+          final checkIn = attendance.checkIn ?? WorkDetailHelper.effectiveStart(app, _workDetailTimeMap);
 
           // 시간 역전 검사
           if (!AttendanceStatusHelper.isValidWorkPeriod(checkIn, time)) {
@@ -4132,7 +4142,7 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
     }
 
     try {
-      final checkIn = attendance.checkIn ?? app.startTime;
+      final checkIn = attendance.checkIn ?? WorkDetailHelper.effectiveStart(app, _workDetailTimeMap);
       final workHours = _calcWorkHoursCompat(checkIn, time);
       final newStatus = _deriveStatus(app, checkIn, time);
 

@@ -99,9 +99,15 @@ class AttendanceStatusHelper {
     String checkIn,
     String? checkOut, {
     bool isNextDayCheckIn = false,
+    String? effStart,
+    String? effEnd,
   }) {
-    final scheduledStart = app.startTime.isNotEmpty ? app.startTime : '09:00';
-    final scheduledEnd = app.endTime.isNotEmpty ? app.endTime : '18:00';
+    final scheduledStart = (effStart != null && effStart.isNotEmpty)
+        ? effStart
+        : (app.startTime.isNotEmpty ? app.startTime : '09:00');
+    final scheduledEnd = (effEnd != null && effEnd.isNotEmpty)
+        ? effEnd
+        : (app.endTime.isNotEmpty ? app.endTime : '18:00');
 
     if (checkOut != null &&
         isEarlyLeave(checkOut, scheduledEnd, checkIn: checkIn)) {
