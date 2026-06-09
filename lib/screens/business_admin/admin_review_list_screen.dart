@@ -125,6 +125,47 @@ class _AdminReviewListScreenState extends State<AdminReviewListScreen>
     super.dispose();
   }
 
+  Future<void> _showReplyDialog(MonthlyReviewModel review) async {
+    final ctrl = TextEditingController();
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('답변 작성'),
+        content: TextField(
+          controller: ctrl,
+          maxLines: 4,
+          maxLength: 500,
+          decoration: const InputDecoration(
+            hintText: '리뷰에 대한 답변을 작성해주세요',
+            border: OutlineInputBorder(),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('취소'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('등록'),
+          ),
+        ],
+      ),
+    );
+    final text = ctrl.text.trim();
+    ctrl.dispose();
+    if (confirmed != true || !mounted) return;
+    if (text.isEmpty) return;
+    final ok = await _reviewService.addBusinessResponse(
+      reviewId: review.id,
+      response: text,
+    );
+    if (!mounted) return;
+    if (ok) {
+      await _loadReviews();
+    }
+  }
+
   Future<void> _loadReviews() async {
     setState(() => _isLoading = true);
 
@@ -556,45 +597,65 @@ class _AdminReviewListScreenState extends State<AdminReviewListScreen>
                   ],
 
                   // 사업장 답변 (받은 리뷰)
-                  if (!isWritten &&
-                      review.businessResponse != null &&
-                      review.businessResponse!.isNotEmpty) ...[
-                    SizedBox(height: ResponsiveHelper.spacing(context, 6)),
-                    Container(
-                      width: double.infinity,
-                      padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 8)),
-                      decoration: BoxDecoration(
-                        color: AppColors.info.withValues(alpha: 0.05),
-                        borderRadius: BorderRadius.circular(6),
-                        border:
-                            Border.all(color: AppColors.info.withValues(alpha: 0.2)),
+                  if (!isWritten) ...[
+                    if (review.businessResponse != null &&
+                        review.businessResponse!.isNotEmpty) ...[
+                      SizedBox(height: ResponsiveHelper.spacing(context, 6)),
+                      Container(
+                        width: double.infinity,
+                        padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 8)),
+                        decoration: BoxDecoration(
+                          color: AppColors.info.withValues(alpha: 0.05),
+                          borderRadius: BorderRadius.circular(6),
+                          border:
+                              Border.all(color: AppColors.info.withValues(alpha: 0.2)),
+                        ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Row(
+                              children: [
+                                Icon(Icons.store,
+                                    size: ResponsiveHelper.iconSize(context, 11),
+                                    color: AppColors.info),
+                                SizedBox(width: ResponsiveHelper.spacing(context, 3)),
+                                Text(
+                                  '사업장 답변',
+                                  style: ResponsiveHelper.tinyStyle(context).copyWith(
+                                      color: AppColors.info,
+                                      fontWeight: FontWeight.bold),
+                                ),
+                              ],
+                            ),
+                            SizedBox(height: ResponsiveHelper.spacing(context, 3)),
+                            Text(
+                              review.businessResponse!,
+                              style: ResponsiveHelper.smallStyle(
+                                  context, color: AppColors.grey700),
+                            ),
+                          ],
+                        ),
                       ),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Row(
-                            children: [
-                              Icon(Icons.store,
-                                  size: ResponsiveHelper.iconSize(context, 11),
-                                  color: AppColors.info),
-                              SizedBox(width: ResponsiveHelper.spacing(context, 3)),
-                              Text(
-                                '사업장 답변',
-                                style: ResponsiveHelper.tinyStyle(context).copyWith(
-                                    color: AppColors.info,
-                                    fontWeight: FontWeight.bold),
-                              ),
-                            ],
+                    ] else ...[
+                      SizedBox(height: ResponsiveHelper.spacing(context, 4)),
+                      Align(
+                        alignment: Alignment.centerRight,
+                        child: TextButton.icon(
+                          onPressed: () => _showReplyDialog(review),
+                          icon: Icon(Icons.reply,
+                              size: ResponsiveHelper.iconSize(context, 14)),
+                          label: Text('답변하기',
+                              style: ResponsiveHelper.smallStyle(context)),
+                          style: TextButton.styleFrom(
+                            foregroundColor: AppColors.info,
+                            padding: EdgeInsets.symmetric(
+                              horizontal: ResponsiveHelper.spacing(context, 8),
+                              vertical: ResponsiveHelper.spacing(context, 4),
+                            ),
                           ),
-                          SizedBox(height: ResponsiveHelper.spacing(context, 3)),
-                          Text(
-                            review.businessResponse!,
-                            style: ResponsiveHelper.smallStyle(
-                                context, color: AppColors.grey700),
-                          ),
-                        ],
+                        ),
                       ),
-                    ),
+                    ],
                   ],
 
                   // 하단: 근무 통계(의미있는 경우만) + 작성일

@@ -1053,6 +1053,26 @@ class FirestoreService {
         'status': AppStatus.canceled,
       });
 
+      // 탈퇴일 이후 scheduled 출근기록 → absent 처리 (orphan 방지)
+      final scheduledAttendances = await _firestore
+          .collection('attendance')
+          .where('applicationId', isEqualTo: applicationId)
+          .where('status', isEqualTo: 'scheduled')
+          .get();
+      if (scheduledAttendances.docs.isNotEmpty) {
+        final cancelBatch = _firestore.batch();
+        for (final doc in scheduledAttendances.docs) {
+          final workDate = (doc.data()['workDate'] as Timestamp?)?.toDate();
+          if (workDate != null && !workDate.isBefore(actualResignDate)) {
+            cancelBatch.update(doc.reference, {
+              'status': AttendanceModel.statusAbsent,
+              'updatedAt': FieldValue.serverTimestamp(),
+            });
+          }
+        }
+        await cancelBatch.commit();
+      }
+
       // 근무자에게 알림
       if (app.uid.isNotEmpty) {
         final notification = NotificationModel.createResignApproved(
