@@ -83,10 +83,12 @@ service cloud.firestore {
                    (isBusinessAdmin() && resource.data.get('role', '') == 'USER')
                  );
 
-      // 쿼리(LIST): username 필터+limit 1 조건의 중복 체크(비로그인 허용), 관리자는 제한 없이
+      // 쿼리(LIST): username 필터+limit 1 조건의 중복 체크(비로그인 허용), 관리자는 제한적 허용
       // 비로그인 접근은 username 필터 필수로 임의 덤프 방지 (회원가입 중복 체크 지원)
+      // BUSINESS_ADMIN: 전체 덤프 방지를 위해 limit 30 이하로 제한 (getUsersBatch 청크 크기 수용)
       allow list: if (request.query.limit <= 1 && 'username' in request.query.filters) ||
-                   (isLoggedIn() && (isSuperAdmin() || isBusinessAdmin()));
+                   (isLoggedIn() && isSuperAdmin()) ||
+                   (isLoggedIn() && isBusinessAdmin() && request.query.limit <= 30);
 
       // 본인 문서 수정 (role·isBlacklisted·subAdminOf·신뢰도 관련 필드 변경 차단)
       // subAdminOf는 CF trigger 전용, trustScore/noShowCount/lateCount/totalWorkDays는 관리자 또는 CF 전용
@@ -187,7 +189,9 @@ service cloud.firestore {
                        (isAdminOf(request.resource.data.businessId) || isSuperAdmin());
 
       allow update: if isLoggedIn() &&
-                       (isAdminOf(resource.data.businessId) || isSuperAdmin());
+                       (isAdminOf(resource.data.businessId) ||
+                        isSubAdminOf(resource.data.businessId) ||
+                        isSuperAdmin());
 
       // 지원자: 지원/취소 시 totalPending 카운터만 수정 허용 (음수 방지)
       allow update: if isLoggedIn() && isUser() &&
@@ -203,6 +207,8 @@ service cloud.firestore {
         allow write: if isLoggedIn() &&
                         (isAdminOf(
                           get(/databases/$(database)/documents/tos/$(toId)).data.businessId
+                        ) || isSubAdminOf(
+                          get(/databases/$(database)/documents/tos/$(toId)).data.businessId
                         ) || isSuperAdmin());
       }
 
@@ -210,6 +216,8 @@ service cloud.firestore {
         allow read: if isLoggedIn();
         allow write: if isLoggedIn() &&
                         (isAdminOf(
+                          get(/databases/$(database)/documents/tos/$(toId)).data.businessId
+                        ) || isSubAdminOf(
                           get(/databases/$(database)/documents/tos/$(toId)).data.businessId
                         ) || isSuperAdmin());
         // 지원자: 지원/취소 시 pendingCount·workTypeCounts 카운터만 수정 허용
@@ -278,7 +286,8 @@ service cloud.firestore {
                        request.resource.data.diff(resource.data).affectedKeys()
                          .hasOnly(['resignStatus', 'resignRequestedAt', 'resignRequestDate']) &&
                        request.resource.data.resignStatus == null) ||
-                      (isAdminOf(resource.data.businessId) &&
+                      ((isAdminOf(resource.data.businessId) ||
+                        isSubAdminOf(resource.data.businessId)) &&
                        !request.resource.data.diff(resource.data).affectedKeys()
                          .hasAny(['uid', 'businessId', 'toId', 'workDetailId'])) ||
                       isSuperAdmin()
@@ -333,6 +342,7 @@ service cloud.firestore {
                          'workHours', 'status', 'updatedAt', 'originalCheckOut'
                        ])) ||
                       isAdminOf(resource.data.businessId) ||
+                      isSubAdminOf(resource.data.businessId) ||
                       isSuperAdmin()
                     );
 

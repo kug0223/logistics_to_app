@@ -10,6 +10,7 @@ import '../../../utils/responsive_helper.dart';
 import '../../../utils/dialog_helper.dart';
 import '../../../utils/loading_state_mixin.dart';
 import '../../../widgets/common/loading_button.dart';
+import '../../../widgets/common/loading_widget.dart';
 
 /// 퇴사 요청 관리 다이얼로그 (관리자용)
 class ResignRequestManagementDialog extends StatefulWidget {
@@ -46,11 +47,7 @@ class _ResignRequestManagementDialogState
     );
 
     final uniqueUids = applications.map((app) => app.uid).toSet().toList();
-    final userEntries = await Future.wait(uniqueUids.map((uid) async {
-      final user = await _firestoreService.getUser(uid);
-      return MapEntry(uid, user);
-    }));
-    final userMap = Map.fromEntries(userEntries);
+    final userMap = await _firestoreService.getUsersBatch(uniqueUids);
 
     final results = applications.map((app) {
       final user = userMap[app.uid];
@@ -61,8 +58,14 @@ class _ResignRequestManagementDialogState
       );
     }).toList();
 
-    results.sort((a, b) => b.application.resignRequestedAt!
-        .compareTo(a.application.resignRequestedAt!));
+    results.sort((a, b) {
+      final aDate = a.application.resignRequestedAt;
+      final bDate = b.application.resignRequestedAt;
+      if (aDate == null && bDate == null) return 0;
+      if (aDate == null) return 1;
+      if (bDate == null) return -1;
+      return bDate.compareTo(aDate);
+    });
 
     if (mounted) setState(() => _requests = results);
     debugPrint('✅ 퇴사 요청 ${results.length}건 로드 완료');
@@ -73,7 +76,10 @@ class _ResignRequestManagementDialogState
     return Dialog(
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
       child: Container(
-        constraints: const BoxConstraints(maxWidth: 600, maxHeight: 700),
+        constraints: BoxConstraints(
+          maxWidth: 600,
+          maxHeight: MediaQuery.sizeOf(context).height * 0.88,
+        ),
         child: Column(
           children: [
             // 헤더
@@ -108,7 +114,7 @@ class _ResignRequestManagementDialogState
             // 본문
             Expanded(
               child: isLoading
-                  ? const Center(child: CircularProgressIndicator())
+                  ? const LoadingWidget()
                   : _requests.isEmpty
                       ? _buildEmptyState()
                       : ListView.builder(
@@ -152,7 +158,9 @@ class _ResignRequestManagementDialogState
   /// 요청 카드
   Widget _buildRequestCard(_ResignRequestWithUser item) {
     final app = item.application;
-    final daysLeft = 3 - DateTime.now().difference(app.resignRequestedAt!).inDays;
+    final daysLeft = app.resignRequestedAt != null
+        ? 3 - DateTime.now().difference(app.resignRequestedAt!).inDays
+        : 0;
     final isUrgent = daysLeft <= 1;
 
     return Card(
@@ -308,7 +316,7 @@ class _ResignRequestManagementDialogState
                       ),
                       SizedBox(width: ResponsiveHelper.spacing(context, 8)),  // ⭐ 변경
                       Text(
-                        '요청일: ${DateFormat('M월 d일 HH:mm').format(app.resignRequestedAt!)}',
+                        '요청일: ${app.resignRequestedAt != null ? DateFormat('M월 d일 HH:mm').format(app.resignRequestedAt!) : '-'}',
                         style: ResponsiveHelper.smallStyle(  // ⭐ 변경
                           context,
                           color: AppColors.warning,

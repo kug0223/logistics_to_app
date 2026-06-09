@@ -3162,6 +3162,12 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
             updates['workHours'] = _calcWorkHoursCompat(effectiveCheckIn, effectiveCheckOut);
           }
 
+          // 시간 수정 시 1차 확정(calculated) 상태이면 미계산(pending)으로 리셋
+          if (attendance.wageStatus == AttendanceModel.wageCalculated) {
+            updates['wageStatus'] = AttendanceModel.wagePending;
+            updates['wageDetail'] = FieldValue.delete();
+          }
+
           await FirebaseFirestore.instance
               .collection('attendance')
               .doc(attendance.id)
@@ -4546,6 +4552,7 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
           .update({
         'finalWage': updatedWage.netWage,
         'wageDetail': updatedWage.toMap(),
+        'wageStatus': AttendanceModel.wageCalculated,
         'updatedAt': FieldValue.serverTimestamp(),
       });
       

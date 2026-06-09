@@ -586,7 +586,8 @@ extension TOFirestore on FirestoreService {
   }) async {
     if (slotIds.isEmpty) return;
 
-    // 마감 대상 슬롯의 PENDING 지원서 자동 취소
+    // 마감 대상 슬롯의 PENDING 지원서 자동 취소 + TO totalPending 카운터 감소
+    int totalCanceledPending = 0;
     for (final slotId in slotIds) {
       final pendingSnap = await _firestore
           .collection('applications')
@@ -604,6 +605,7 @@ extension TOFirestore on FirestoreService {
           'rejectReason': '공고 슬롯이 마감되었습니다',
         });
         cancelCount++;
+        totalCanceledPending++;
         if (cancelCount >= 499) {
           await cancelBatch.commit();
           cancelBatch = _firestore.batch();
@@ -611,6 +613,13 @@ extension TOFirestore on FirestoreService {
         }
       }
       if (cancelCount > 0) await cancelBatch.commit();
+    }
+
+    // PENDING 취소 건만큼 TO의 totalPending 카운터 감소
+    if (totalCanceledPending > 0) {
+      await _firestore.collection('tos').doc(toId).update({
+        'totalPending': FieldValue.increment(-totalCanceledPending),
+      });
     }
 
     var batch = _firestore.batch();

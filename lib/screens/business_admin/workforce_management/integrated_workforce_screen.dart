@@ -67,6 +67,17 @@ class _IntegratedWorkforceScreenState extends State<IntegratedWorkforceScreen>
         return;
       }
 
+      // SubAdmin인 경우 effectiveBusinessId로 직접 사용 (adminIds에 없으므로 getMyBusiness 결과 0건)
+      final effectiveBizId = userProvider.effectiveBusinessId;
+      if (userProvider.isSubAdmin && effectiveBizId != null) {
+        setState(() {
+          _allBusinessIds = [effectiveBizId];
+          _selectedBusinessId = effectiveBizId;
+        });
+        if (mounted) _controller.load(context);
+        return;
+      }
+
       final businesses = await _firestoreService.getMyBusiness(uid);
 
       if (!mounted) return;
@@ -93,7 +104,7 @@ class _IntegratedWorkforceScreenState extends State<IntegratedWorkforceScreen>
   Widget build(BuildContext context) {
     if (_selectedBusinessId == null) {
       return GradientScaffold(
-        title: '공고 관리',
+        title: '인력 관리',
         body: AppEmptyState(
           icon: Icons.business_center,
           title: '등록된 사업장이 없습니다',

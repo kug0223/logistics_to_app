@@ -1228,6 +1228,9 @@ extension ApplicationFirestore on FirestoreService {
       if (status == AppStatus.autoCanceled) {
         throw Exception('자동 취소된 지원서는 확정할 수 없습니다');
       }
+      if (status == AppStatus.rejected) {
+        throw Exception('거절된 지원서는 확정할 수 없습니다');
+      }
       // 상태를 CONTRACT_PENDING으로 선점 → 두 번째 요청은 alreadyConfirmed=true 반환
       tx.update(appRef, {
         'status': 'CONTRACT_PENDING',

@@ -1246,6 +1246,7 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
     UserModel? user, {
     required bool extend,
   }) async {
+    if (app.workEndDate == null) return;
     if (extend) {
       // 기존 계약 기간과 동일한 개월수로 종료일 자동 계산
       final originalStart = app.desiredStartDate ?? app.workDate;
