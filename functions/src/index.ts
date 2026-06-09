@@ -2,6 +2,7 @@ import {onSchedule} from "firebase-functions/v2/scheduler";
 import {
   onDocumentCreated,
   onDocumentUpdated,
+  onDocumentDeleted,
 } from "firebase-functions/v2/firestore";
 import {onCall, HttpsError} from "firebase-functions/v2/https";
 import {initializeApp} from "firebase-admin/app";
@@ -2735,5 +2736,102 @@ export const verifySmsCode = onCall(
       result = {valid: true};
     });
     return result;
+  }
+);
+
+// ═══════════════════════════════════════════════════════════
+// 🗑️ 사업장 삭제 시 연관 데이터 정리 (BUG-5)
+// ═══════════════════════════════════════════════════════════
+
+export const onBusinessDeleted = onDocumentDeleted(
+  {
+    document: "businesses/{businessId}",
+    region: "asia-northeast3",
+  },
+  async (event) => {
+    const businessId = event.params.businessId;
+    console.log(`사업장 삭제 cascade 시작: ${businessId}`);
+
+    async function deleteSubcollection(collPath: string) {
+      const snap = await db.collection(collPath).get();
+      const batches: FirebaseFirestore.WriteBatch[] = [];
+      let batch = db.batch();
+      let count = 0;
+      for (const doc of snap.docs) {
+        batch.delete(doc.ref);
+        count++;
+        if (count % 500 === 0) {
+          batches.push(batch);
+          batch = db.batch();
+        }
+      }
+      if (count % 500 !== 0) batches.push(batch);
+      await Promise.all(batches.map((b) => b.commit()));
+    }
+
+    // 서브컬렉션 삭제
+    await deleteSubcollection(`businesses/${businessId}/workTypes`);
+    await deleteSubcollection(`businesses/${businessId}/members`);
+
+    // 해당 사업장의 TO 목록
+    const tosSnap = await db
+      .collection("tos")
+      .where("businessId", "==", businessId)
+      .get();
+
+    if (!tosSnap.empty) {
+      const toIds = tosSnap.docs.map((d) => d.id);
+      const chunkSize = 30;
+
+      for (let i = 0; i < toIds.length; i += chunkSize) {
+        const chunk = toIds.slice(i, i + chunkSize);
+
+        // CONFIRMED 지원서 → CANCELED
+        const appsSnap = await db
+          .collection("applications")
+          .where("toId", "in", chunk)
+          .where("status", "in", ["CONFIRMED", "CONTRACT_PENDING"])
+          .get();
+
+        if (!appsSnap.empty) {
+          const appBatch = db.batch();
+          for (const doc of appsSnap.docs) {
+            appBatch.update(doc.ref, {
+              status: "CANCELED",
+              cancelReason: "BUSINESS_DELETED",
+              canceledAt: Timestamp.now(),
+            });
+          }
+          await appBatch.commit();
+
+          // scheduled attendance → absent
+          const appIds = appsSnap.docs.map((d) => d.id);
+          for (let j = 0; j < appIds.length; j += chunkSize) {
+            const appChunk = appIds.slice(j, j + chunkSize);
+            const attSnap = await db
+              .collection("attendance")
+              .where("applicationId", "in", appChunk)
+              .where("status", "==", "scheduled")
+              .get();
+            if (!attSnap.empty) {
+              const attBatch = db.batch();
+              for (const doc of attSnap.docs) {
+                attBatch.update(doc.ref, {status: "absent", updatedAt: Timestamp.now()});
+              }
+              await attBatch.commit();
+            }
+          }
+        }
+      }
+
+      // TO 문서 삭제
+      const tosBatch = db.batch();
+      for (const doc of tosSnap.docs) {
+        tosBatch.delete(doc.ref);
+      }
+      await tosBatch.commit();
+    }
+
+    console.log(`사업장 삭제 cascade 완료: ${businessId}`);
   }
 );

@@ -156,11 +156,20 @@ class _BusinessListScreenState extends State<BusinessListScreen> {
         }
       }
 
-      // 4. Firestore에서 삭제
-      await FirebaseFirestore.instance
-          .collection('businesses')
-          .doc(business.id)
-          .delete();
+      // 4. Firestore 서브컬렉션 삭제 (workTypes, members)
+      // onBusinessDeleted Cloud Function이 tos/applications/attendance를 추가 정리함
+      final bizRef = FirebaseFirestore.instance.collection('businesses').doc(business.id);
+      final workTypeDocs = await bizRef.collection('workTypes').get();
+      final memberDocs = await bizRef.collection('members').get();
+      final subBatch = FirebaseFirestore.instance.batch();
+      for (final doc in workTypeDocs.docs) { subBatch.delete(doc.reference); }
+      for (final doc in memberDocs.docs) { subBatch.delete(doc.reference); }
+      if (workTypeDocs.docs.isNotEmpty || memberDocs.docs.isNotEmpty) {
+        await subBatch.commit();
+      }
+
+      // 5. businesses 문서 삭제 (삭제 후 Cloud Function이 tos/applications 정리)
+      await bizRef.delete();
           
       if (!mounted) return;
       ToastHelper.showSuccess('사업장이 삭제되었습니다');
