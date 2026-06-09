@@ -104,10 +104,10 @@ class TrustScoreService {
             orElse: () => TrustRule(type: '', points: -1, description: ''));
     score += lateCount * lateRule.points; // 음수
     
-    // 5. 노쇼 감점 (누적 기반)
-    final noShowCount = userData['noShowCount'] ?? 0;
-    if (noShowCount > 0) {
-      score += settings.getNoshowPenalty(noShowCount);
+    // 5. 노쇼 감점 — onNoShow와 동일하게 매 회차 감점을 누적 합산
+    final noShowCount = ((userData['noShowCount'] ?? 0) as num).toInt();
+    for (int i = 1; i <= noShowCount; i++) {
+      score += settings.getNoshowPenalty(i);
     }
     
     // 범위 제한

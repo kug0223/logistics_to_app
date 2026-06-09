@@ -1,13 +1,14 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'insurance_rate_model.dart';
 
 /// 급여 상세 모델
 /// AttendanceModel에 임베디드되어 급여 계산 정보를 저장
 class WageDetailModel {
-  // ========== 기본 정보 ==========
+  // ── 기본 정보 ──
   final String wageType;           // 'hourly' | 'daily'
   final int baseWage;              // 시급/일급 단가
   
-  // ========== 시간 계산 (분 단위) ==========
+  // ── 시간 계산 (분 단위) ──
   final int scheduledMinutes;      // 예정 근무시간
   final int actualMinutes;         // 실제 근무시간 (출퇴근 기준)
   final int breakMinutes;          // 휴게시간
@@ -15,29 +16,55 @@ class WageDetailModel {
   final int overtimeMinutes;       // 연장근무 (시급제: 8시간 초과분 / 일급제: 예정시간 초과분)
   final int nightMinutes;          // 야간근무 (22:00~06:00)
   
-  // ========== 금액 계산 ==========
+  // ── 금액 계산 ──
   final int baseAmount;            // 기본급
   final int overtimeAmount;        // 연장수당
   final int nightAmount;           // 야간수당
   final int additionalAmount;      // 추가수당 (급구 인센티브 등)
-  final int deductionAmount;       // 추가공제 (안전화·식비 등 차감)
+  final int deductionAmount;       // 추가공제 (안전화·식비 등 수동 차감)
   final int weeklyHolidayAmount;   // 주휴수당 (주 15h 이상 개근 시)
-  final int totalAmount;           // 총액 (세전)
+  final int totalAmount;           // 세전 총액 (기본+연장+야간+추가수당+주휴-수동공제)
+
+  // ── 세금·보험 공제 ──
+  /// 공제 방식 — InsuranceRateModel 상수값
+  final String taxDeductionType;
+  /// 고용보험 공제액
+  final int employmentInsuranceDeduction;
+  /// 국민연금 공제액
+  final int nationalPensionDeduction;
+  /// 건강보험 공제액
+  final int healthInsuranceDeduction;
+  /// 장기요양보험 공제액 (건강보험료 × ltcRate)
+  final int ltcInsuranceDeduction;
+  /// 소득세·사업소득세 공제액 (지방소득세 포함)
+  final int incomeTaxDeduction;
+  /// 8일 소급 공제액 (8일차에만 기록, 1~7일분 누적)
+  final int retroactiveDeduction;
+  /// 실수령액 = totalAmount - 모든 세금·보험 공제
+  final int netWage;
   
-  // ========== 옵션 ==========
+  // ── 옵션 ──
   final bool nightAllowanceApplied; // 야간수당 별도 적용 여부
   final String? memo;              // 메모
   
-  // ========== 계산 기준 ==========
+  // ── 계산 기준 ──
   final int appliedMinimumWage;    // 적용된 최저시급 (계산 당시 기준)
+  final int appliedSupplementWage; // 연장·야간수당 기초 시급 (사업주 설정 우선, 없으면 통상임금 계산)
   
-  // ========== 1차 확정 (calculated) ==========
+  // ── 1차 확정 (calculated) ──
   final String? calculatedBy;      // 계산한 관리자 UID
   final DateTime? calculatedAt;    // 계산 시각
   
-  // ========== 최종 확정 (confirmed) ==========
+  // ── 최종 확정 (confirmed) ──
   final String? confirmedBy;       // 최종 확정한 관리자 UID
   final DateTime? confirmedAt;     // 최종 확정 시각
+
+  // ── 지급 일정 (paymentDueDate 계산용) ──
+  /// 급여 지급 유형 — WorkDetailData에서 복사 저장
+  /// 'same_day' | 'next_day' | 'weekly' | 'monthly'
+  final String? payScheduleType;
+  /// 지급 요일/날짜 — weekly: 1~7(월~일), monthly: 1~31
+  final int? payScheduleDay;
 
   WageDetailModel({
     required this.wageType,
@@ -57,34 +84,46 @@ class WageDetailModel {
     this.totalAmount = 0,
     this.nightAllowanceApplied = false,
     this.memo,
-    this.appliedMinimumWage = 10030,
+    this.appliedMinimumWage = 10320,
+    this.appliedSupplementWage = 0,
     this.calculatedBy,
     this.calculatedAt,
     this.confirmedBy,
     this.confirmedAt,
+    this.payScheduleType,
+    this.payScheduleDay,
+    this.taxDeductionType = InsuranceRateModel.typeNone,
+    this.employmentInsuranceDeduction = 0,
+    this.nationalPensionDeduction = 0,
+    this.healthInsuranceDeduction = 0,
+    this.ltcInsuranceDeduction = 0,
+    this.incomeTaxDeduction = 0,
+    this.retroactiveDeduction = 0,
+    this.netWage = 0,
   });
 
   /// Map → WageDetailModel
   factory WageDetailModel.fromMap(Map<String, dynamic> map) {
     return WageDetailModel(
       wageType: map['wageType'] ?? 'hourly',
-      baseWage: map['baseWage'] ?? 0,
-      scheduledMinutes: map['scheduledMinutes'] ?? 0,
-      actualMinutes: map['actualMinutes'] ?? 0,
-      breakMinutes: map['breakMinutes'] ?? 0,
-      workMinutes: map['workMinutes'] ?? 0,
-      overtimeMinutes: map['overtimeMinutes'] ?? 0,
-      nightMinutes: map['nightMinutes'] ?? 0,
-      baseAmount: map['baseAmount'] ?? 0,
-      overtimeAmount: map['overtimeAmount'] ?? 0,
-      nightAmount: map['nightAmount'] ?? 0,
-      additionalAmount: map['additionalAmount'] ?? 0,
-      deductionAmount: map['deductionAmount'] ?? 0,
-      weeklyHolidayAmount: map['weeklyHolidayAmount'] ?? 0,
-      totalAmount: map['totalAmount'] ?? 0,
+      baseWage: (map['baseWage'] as num?)?.toInt() ?? 0,
+      scheduledMinutes: (map['scheduledMinutes'] as num?)?.toInt() ?? 0,
+      actualMinutes: (map['actualMinutes'] as num?)?.toInt() ?? 0,
+      breakMinutes: (map['breakMinutes'] as num?)?.toInt() ?? 0,
+      workMinutes: (map['workMinutes'] as num?)?.toInt() ?? 0,
+      overtimeMinutes: (map['overtimeMinutes'] as num?)?.toInt() ?? 0,
+      nightMinutes: (map['nightMinutes'] as num?)?.toInt() ?? 0,
+      baseAmount: (map['baseAmount'] as num?)?.toInt() ?? 0,
+      overtimeAmount: (map['overtimeAmount'] as num?)?.toInt() ?? 0,
+      nightAmount: (map['nightAmount'] as num?)?.toInt() ?? 0,
+      additionalAmount: (map['additionalAmount'] as num?)?.toInt() ?? 0,
+      deductionAmount: (map['deductionAmount'] as num?)?.toInt() ?? 0,
+      weeklyHolidayAmount: (map['weeklyHolidayAmount'] as num?)?.toInt() ?? 0,
+      totalAmount: (map['totalAmount'] as num?)?.toInt() ?? 0,
       nightAllowanceApplied: map['nightAllowanceApplied'] ?? false,
       memo: map['memo'],
-      appliedMinimumWage: map['appliedMinimumWage'] ?? 10030,
+      appliedMinimumWage: (map['appliedMinimumWage'] as num?)?.toInt() ?? 10320,
+      appliedSupplementWage: (map['appliedSupplementWage'] as num?)?.toInt() ?? 0,
       calculatedBy: map['calculatedBy'],
       calculatedAt: map['calculatedAt'] != null
           ? (map['calculatedAt'] as Timestamp).toDate().toLocal()
@@ -93,6 +132,16 @@ class WageDetailModel {
       confirmedAt: map['confirmedAt'] != null
           ? (map['confirmedAt'] as Timestamp).toDate().toLocal()
           : null,
+      taxDeductionType: map['taxDeductionType'] as String? ?? InsuranceRateModel.typeNone,
+      employmentInsuranceDeduction: (map['employmentInsuranceDeduction'] as num?)?.toInt() ?? 0,
+      nationalPensionDeduction: (map['nationalPensionDeduction'] as num?)?.toInt() ?? 0,
+      healthInsuranceDeduction: (map['healthInsuranceDeduction'] as num?)?.toInt() ?? 0,
+      ltcInsuranceDeduction: (map['ltcInsuranceDeduction'] as num?)?.toInt() ?? 0,
+      incomeTaxDeduction: (map['incomeTaxDeduction'] as num?)?.toInt() ?? 0,
+      retroactiveDeduction: (map['retroactiveDeduction'] as num?)?.toInt() ?? 0,
+      netWage: (map['netWage'] as num?)?.toInt() ?? 0,
+      payScheduleType: map['payScheduleType'] as String?,
+      payScheduleDay:  (map['payScheduleDay'] as num?)?.toInt(),
     );
   }
 
@@ -117,14 +166,25 @@ class WageDetailModel {
       'nightAllowanceApplied': nightAllowanceApplied,
       'memo': memo,
       'appliedMinimumWage': appliedMinimumWage,
+      if (appliedSupplementWage != 0) 'appliedSupplementWage': appliedSupplementWage,
       'calculatedBy': calculatedBy,
       'calculatedAt': calculatedAt != null 
           ? Timestamp.fromDate(calculatedAt!) 
           : null,
       'confirmedBy': confirmedBy,
-      'confirmedAt': confirmedAt != null 
-          ? Timestamp.fromDate(confirmedAt!) 
+      'confirmedAt': confirmedAt != null
+          ? Timestamp.fromDate(confirmedAt!)
           : null,
+      'taxDeductionType': taxDeductionType,
+      if (employmentInsuranceDeduction != 0) 'employmentInsuranceDeduction': employmentInsuranceDeduction,
+      if (nationalPensionDeduction != 0) 'nationalPensionDeduction': nationalPensionDeduction,
+      if (healthInsuranceDeduction != 0) 'healthInsuranceDeduction': healthInsuranceDeduction,
+      if (ltcInsuranceDeduction != 0) 'ltcInsuranceDeduction': ltcInsuranceDeduction,
+      if (incomeTaxDeduction != 0) 'incomeTaxDeduction': incomeTaxDeduction,
+      if (retroactiveDeduction != 0) 'retroactiveDeduction': retroactiveDeduction,
+      'netWage': netWage,
+      if (payScheduleType != null) 'payScheduleType': payScheduleType,
+      if (payScheduleDay != null)  'payScheduleDay':  payScheduleDay,
     };
   }
 
@@ -148,10 +208,21 @@ class WageDetailModel {
     bool? nightAllowanceApplied,
     String? memo,
     int? appliedMinimumWage,
+    int? appliedSupplementWage,
     String? calculatedBy,
     DateTime? calculatedAt,
     String? confirmedBy,
     DateTime? confirmedAt,
+    String? payScheduleType,
+    int? payScheduleDay,
+    String? taxDeductionType,
+    int? employmentInsuranceDeduction,
+    int? nationalPensionDeduction,
+    int? healthInsuranceDeduction,
+    int? ltcInsuranceDeduction,
+    int? incomeTaxDeduction,
+    int? retroactiveDeduction,
+    int? netWage,
   }) {
     return WageDetailModel(
       wageType: wageType ?? this.wageType,
@@ -172,14 +243,25 @@ class WageDetailModel {
       nightAllowanceApplied: nightAllowanceApplied ?? this.nightAllowanceApplied,
       memo: memo ?? this.memo,
       appliedMinimumWage: appliedMinimumWage ?? this.appliedMinimumWage,
+      appliedSupplementWage: appliedSupplementWage ?? this.appliedSupplementWage,
       calculatedBy: calculatedBy ?? this.calculatedBy,
       calculatedAt: calculatedAt ?? this.calculatedAt,
       confirmedBy: confirmedBy ?? this.confirmedBy,
       confirmedAt: confirmedAt ?? this.confirmedAt,
+      payScheduleType: payScheduleType ?? this.payScheduleType,
+      payScheduleDay:  payScheduleDay  ?? this.payScheduleDay,
+      taxDeductionType: taxDeductionType ?? this.taxDeductionType,
+      employmentInsuranceDeduction: employmentInsuranceDeduction ?? this.employmentInsuranceDeduction,
+      nationalPensionDeduction: nationalPensionDeduction ?? this.nationalPensionDeduction,
+      healthInsuranceDeduction: healthInsuranceDeduction ?? this.healthInsuranceDeduction,
+      ltcInsuranceDeduction: ltcInsuranceDeduction ?? this.ltcInsuranceDeduction,
+      incomeTaxDeduction: incomeTaxDeduction ?? this.incomeTaxDeduction,
+      retroactiveDeduction: retroactiveDeduction ?? this.retroactiveDeduction,
+      netWage: netWage ?? this.netWage,
     );
   }
 
-  // ========== Getter ==========
+  // ── Getter ──
   
   /// 1차 확정 여부
   bool get isCalculated => calculatedAt != null;
@@ -208,6 +290,27 @@ class WageDetailModel {
     }
   }
   
+  /// 세금·보험 공제 합계
+  int get totalInsuranceDeduction =>
+      employmentInsuranceDeduction +
+      nationalPensionDeduction +
+      healthInsuranceDeduction +
+      ltcInsuranceDeduction +
+      incomeTaxDeduction +
+      retroactiveDeduction;
+
+  /// 포맷팅된 실수령액
+  String get formattedNetWage {
+    final n = isCalculated ? netWage : totalAmount - totalInsuranceDeduction;
+    return '${n.toString().replaceAllMapped(
+      RegExp(r'(\d{1,3})(?=(\d{3})+(?!\d))'),
+      (Match m) => '${m[1]},',
+    )}원';
+  }
+
+  /// 공제 방식 라벨
+  String get taxDeductionLabel => InsuranceRateModel.typeLabel(taxDeductionType);
+
   /// 포맷팅된 총액 (예: "59,045원")
   String get formattedTotal {
     return '${totalAmount.toString().replaceAllMapped(

@@ -195,7 +195,10 @@ class UserModel {
     if (averageRating >= 4.5) score += 2;
     if (averageRating <= 2.0 && reviewCount > 0) score -= 2;
     score -= lateCount;
-    score -= noShowCount * 3;
+    // 노쇼 누적 감점 (1회:-3, 2회:-5, 3회:-7, 4회+:-10)
+    for (int i = 1; i <= noShowCount; i++) {
+      score -= (i == 1 ? 3 : i == 2 ? 5 : i == 3 ? 7 : 10);
+    }
     
     return score.clamp(0, 100).toInt();
   }
