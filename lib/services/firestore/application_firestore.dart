@@ -1648,6 +1648,15 @@ extension ApplicationFirestore on FirestoreService {
       for (final doc in scheduleRequests.docs) {
         localBatch.update(doc.reference, {'status': 'CANCELED'});
       }
+      // 급여 미처리(pending) 출근 기록 무효화 (고아 기록 방지)
+      final attendanceRecords = await _firestore
+          .collection('attendance')
+          .where('applicationId', isEqualTo: applicationId)
+          .where('wageStatus', isEqualTo: 'pending')
+          .get();
+      for (final doc in attendanceRecords.docs) {
+        localBatch.update(doc.reference, {'canceledWithApplication': true});
+      }
       if (!useBatch) await localBatch.commit();
     } catch (e) {
       debugPrint('❌ 연관 데이터 정리 실패: $e');

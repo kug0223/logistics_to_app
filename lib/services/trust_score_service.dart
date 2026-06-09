@@ -42,8 +42,12 @@ class TrustScoreService {
         return (userData['trustScore'] as num).toInt();
       }
       
-      // 없으면 계산
-      return _computeScore(userData, settings);
+      // trustScore 미설정 구 계정 — 계산 후 Firestore에 저장해 이후 incremental 경로 단일화
+      final computed = _computeScore(userData, settings);
+      _firestore.collection('users').doc(userId).update({'trustScore': computed}).catchError((e) {
+        debugPrint('⚠️ [TrustScore] 구 계정 trustScore 저장 실패 ($userId): $e');
+      });
+      return computed;
     } catch (e) {
       debugPrint('❌ 신뢰도 계산 실패: $e');
       return 50; // 기본값
@@ -66,30 +70,31 @@ class TrustScoreService {
     final reviewCount = userData['reviewCount'] ?? 0;
     
     if (reviewCount > 0) {
-      // 좋은 평가 가산
+      // 좋은 평가 가산 — onReviewReceived와 동일하게 리뷰 수 × 점수로 누적 계산
       final goodReviewRule = settings.increaseRules
           .firstWhere((r) => r.type == 'good_review',
               orElse: () => TrustRule(type: '', points: 2, description: '', condition: 4.5));
       if (avgRating >= (goodReviewRule.condition ?? 4.5)) {
-        score += goodReviewRule.points;
+        score += goodReviewRule.points * (reviewCount as int);
       }
-      
-      // 낮은 평가 감점
+
+      // 낮은 평가 감점 — 동일하게 누적 계산
       final badReviewRule = settings.decreaseRules
           .firstWhere((r) => r.type == 'bad_review',
               orElse: () => TrustRule(type: '', points: -2, description: '', condition: 2.0));
       if (avgRating <= (badReviewRule.condition ?? 2.0)) {
-        score += badReviewRule.points; // 음수
+        score += badReviewRule.points * (reviewCount as int); // 음수 × 리뷰 수
       }
     }
     
-    // 3. 재고용 희망률 가산
+    // 3. 재고용 희망률 가산 — onReviewReceived와 동일하게 개별 리뷰 단위 누적
     final rehireRate = ((userData['rehireRate'] ?? 0) as num).toDouble();
-    if (rehireRate >= 0.8 && reviewCount >= 3) {
+    if (rehireRate > 0 && reviewCount >= 3) {
       final rehireRule = settings.increaseRules
           .firstWhere((r) => r.type == 'rehire_yes',
               orElse: () => TrustRule(type: '', points: 1, description: ''));
-      score += rehireRule.points;
+      final rehireYesCount = (rehireRate * (reviewCount as int)).round();
+      score += rehireRule.points * rehireYesCount;
     }
     
     // 4. 지각 감점
@@ -114,86 +119,108 @@ class TrustScoreService {
   // ═══════════════════════════════════════════════════════════
 
   /// 근무 완료 시 점수 업데이트
-  Future<void> onWorkComplete(String userId) async {
-    await _updateScore(userId, 'work_complete', isIncrease: true);
+  Future<void> onWorkComplete(String userId, String businessId) async {
+    await _updateScore(userId, 'work_complete', isIncrease: true, businessId: businessId);
+  }
+
+  /// 마감 취소 시 근무완료 점수 롤백
+  Future<void> onWorkCanceled(String userId, String businessId) async {
+    final settings = await _getSettings();
+    final rule = settings.increaseRules.firstWhere(
+      (r) => r.type == 'work_complete',
+      orElse: () => TrustRule(type: '', points: 1, description: ''),
+    );
+    if (rule.points != 0) {
+      await _applyScoreChange(userId, -rule.points, '마감 취소', businessId: businessId);
+    }
   }
 
   /// 지각 시 점수 업데이트
-  Future<void> onLate(String userId) async {
-    // 지각 횟수 증가
+  Future<void> onLate(String userId, String businessId) async {
     await _firestore.collection('users').doc(userId).update({
       'lateCount': FieldValue.increment(1),
     });
-    await _updateScore(userId, 'late', isIncrease: false);
+    await _updateScore(userId, 'late', isIncrease: false, businessId: businessId);
   }
 
   /// 노쇼 시 점수 업데이트
-  Future<void> onNoShow(String userId) async {
-    // 노쇼 횟수 증가
-    final userDoc = await _firestore.collection('users').doc(userId).get();
-    final currentNoShowCount = ((userDoc.data()?['noShowCount'] ?? 0) as num).toInt();
-    final newNoShowCount = currentNoShowCount + 1;
-    
+  Future<void> onNoShow(String userId, String businessId) async {
     await _firestore.collection('users').doc(userId).update({
-      'noShowCount': newNoShowCount,
+      'noShowCount': FieldValue.increment(1),
     });
-    
-    // 노쇼 횟수에 따른 감점
+
+    final userDoc = await _firestore.collection('users').doc(userId).get();
+    final newNoShowCount = ((userDoc.data()?['noShowCount'] ?? 1) as num).toInt();
+
     final settings = await _getSettings();
     final penalty = settings.getNoshowPenalty(newNoShowCount);
-    
-    await _applyScoreChange(userId, penalty, '노쇼 $newNoShowCount회');
+
+    await _applyScoreChange(userId, penalty, '노쇼 $newNoShowCount회', businessId: businessId);
+  }
+
+  /// 노쇼 해제 시 카운트 감소 + 감점 복원
+  Future<void> onNoShowCanceled(String userId, String businessId) async {
+    final userDoc = await _firestore.collection('users').doc(userId).get();
+    final currentNoShowCount = ((userDoc.data()?['noShowCount'] ?? 0) as num).toInt();
+
+    await _firestore.collection('users').doc(userId).update({
+      'noShowCount': FieldValue.increment(-1),
+      'updatedAt': FieldValue.serverTimestamp(),
+    });
+
+    final settings = await _getSettings();
+    final penalty = settings.getNoshowPenalty(currentNoShowCount);
+    if (penalty < 0) {
+      await _applyScoreChange(userId, -penalty, '노쇼 해제', businessId: businessId);
+    }
   }
 
   /// 리뷰 받음 시 점수 업데이트
-  Future<void> onReviewReceived(String userId, int rating, bool wouldRehire) async {
+  Future<void> onReviewReceived(String userId, double rating, bool wouldRehire, String businessId) async {
     final settings = await _getSettings();
-    
-    // 좋은 평가
+
     if (rating >= 4.5) {
       final rule = settings.increaseRules
           .firstWhere((r) => r.type == 'good_review',
               orElse: () => TrustRule(type: '', points: 2, description: ''));
-      await _applyScoreChange(userId, rule.points, '좋은 평가');
+      await _applyScoreChange(userId, rule.points, '좋은 평가', businessId: businessId);
     }
-    
-    // 낮은 평가
+
     if (rating <= 2.0) {
       final rule = settings.decreaseRules
           .firstWhere((r) => r.type == 'bad_review',
               orElse: () => TrustRule(type: '', points: -2, description: ''));
-      await _applyScoreChange(userId, rule.points, '낮은 평가');
+      await _applyScoreChange(userId, rule.points, '낮은 평가', businessId: businessId);
     }
-    
-    // 재고용 희망
+
     if (wouldRehire) {
       final rule = settings.increaseRules
           .firstWhere((r) => r.type == 'rehire_yes',
               orElse: () => TrustRule(type: '', points: 1, description: ''));
-      await _applyScoreChange(userId, rule.points, '재고용 희망');
+      await _applyScoreChange(userId, rule.points, '재고용 희망', businessId: businessId);
     }
   }
 
   /// 점수 변경 적용
-  Future<void> _applyScoreChange(String userId, int change, String reason) async {
+  Future<void> _applyScoreChange(String userId, int change, String reason, {required String businessId}) async {
     try {
       final settings = await _getSettings();
-      
+
       await _firestore.runTransaction((transaction) async {
         final userRef = _firestore.collection('users').doc(userId);
         final userDoc = await transaction.get(userRef);
-        
+
         if (!userDoc.exists) return;
-        
+
         final currentScore = userDoc.data()?['trustScore'] ?? settings.startScore;
         final newScore = (currentScore + change).clamp(0, settings.maxScore);
-        
+
         transaction.update(userRef, {'trustScore': newScore});
-        
-        // 점수 변동 기록
+
         final historyRef = _firestore.collection('trust_score_history').doc();
         transaction.set(historyRef, {
           'userId': userId,
+          'businessId': businessId,
           'previousScore': currentScore,
           'newScore': newScore,
           'change': change,
@@ -201,7 +228,7 @@ class TrustScoreService {
           'createdAt': FieldValue.serverTimestamp(),
         });
       });
-      
+
       debugPrint('✅ 신뢰도 변경: $userId, $change점 ($reason)');
     } catch (e) {
       debugPrint('❌ 신뢰도 변경 실패: $e');
@@ -209,17 +236,17 @@ class TrustScoreService {
   }
 
   /// 설정 기반 점수 업데이트
-  Future<void> _updateScore(String userId, String ruleType, {required bool isIncrease}) async {
+  Future<void> _updateScore(String userId, String ruleType, {required bool isIncrease, required String businessId}) async {
     final settings = await _getSettings();
-    
+
     final rules = isIncrease ? settings.increaseRules : settings.decreaseRules;
     final rule = rules.firstWhere(
       (r) => r.type == ruleType,
       orElse: () => TrustRule(type: '', points: 0, description: ''),
     );
-    
+
     if (rule.points != 0) {
-      await _applyScoreChange(userId, rule.points, rule.description);
+      await _applyScoreChange(userId, rule.points, rule.description, businessId: businessId);
     }
   }
 
@@ -227,7 +254,7 @@ class TrustScoreService {
   // 재시작 프로그램
   // ═══════════════════════════════════════════════════════════
 
-  /// 재시작 프로그램 신청 가능 여부
+  /// 재시작 프로그램 신청 가능 여부 (쿨타임 체크 — 클라이언트 표시용)
   Future<({bool canRestart, String? reason, int? daysRemaining})> canApplyRestart(String userId) async {
     try {
       final settings = await _getSettings();
@@ -238,7 +265,7 @@ class TrustScoreService {
       }
       
       final userData = userDoc.data()!;
-      final lastRestartAt = (userData['lastRestartAt'] as Timestamp?)?.toDate();
+      final lastRestartAt = (userData['lastRestartAt'] as Timestamp?)?.toDate().toLocal();
       
       if (lastRestartAt != null) {
         final cooldownEnd = lastRestartAt.add(Duration(days: settings.restartProgram.cooldownDays));
@@ -256,47 +283,6 @@ class TrustScoreService {
     } catch (e) {
       debugPrint('❌ 재시작 가능 여부 확인 실패: $e');
       return (canRestart: false, reason: '확인 중 오류가 발생했습니다.', daysRemaining: null);
-    }
-  }
-
-  /// 재시작 프로그램 적용
-  Future<bool> applyRestartProgram(String userId) async {
-    try {
-      final canRestart = await canApplyRestart(userId);
-      if (!canRestart.canRestart) {
-        debugPrint('⚠️ 재시작 불가: ${canRestart.reason}');
-        return false;
-      }
-      
-      final settings = await _getSettings();
-      final userDoc = await _firestore.collection('users').doc(userId).get();
-      final userData = userDoc.data()!;
-      
-      final currentNoShow = userData['noShowCount'] ?? 0;
-      final currentLate = userData['lateCount'] ?? 0;
-      
-      await _firestore.collection('users').doc(userId).update({
-        'trustScore': settings.restartProgram.resetScore,
-        'noShowCount': (currentNoShow - settings.restartProgram.noshowReduction).clamp(0, 999),
-        'lateCount': (currentLate - settings.restartProgram.lateReduction).clamp(0, 999),
-        'lastRestartAt': FieldValue.serverTimestamp(),
-      });
-      
-      // 재시작 기록
-      await _firestore.collection('restart_program_history').add({
-        'userId': userId,
-        'previousScore': userData['trustScore'] ?? settings.startScore,
-        'newScore': settings.restartProgram.resetScore,
-        'noshowReduced': settings.restartProgram.noshowReduction,
-        'lateReduced': settings.restartProgram.lateReduction,
-        'createdAt': FieldValue.serverTimestamp(),
-      });
-      
-      debugPrint('✅ 재시작 프로그램 적용 완료: $userId');
-      return true;
-    } catch (e) {
-      debugPrint('❌ 재시작 프로그램 적용 실패: $e');
-      return false;
     }
   }
 
@@ -331,7 +317,7 @@ class TrustScoreService {
           'newScore': data['newScore'],
           'change': data['change'],
           'reason': data['reason'],
-          'createdAt': (data['createdAt'] as Timestamp?)?.toDate(),
+          'createdAt': (data['createdAt'] as Timestamp?)?.toDate().toLocal(),
         };
       }).toList();
     } catch (e) {

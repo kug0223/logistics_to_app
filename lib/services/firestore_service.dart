@@ -19,8 +19,10 @@ import '../models/core/review_model.dart';
 import '../models/core/id_card_access_request_model.dart';
 import '../models/core/notification_model.dart';
 import '../models/core/worker_location_model.dart';
+import '../models/core/to_filter_state.dart';
 import '../utils/week_helper.dart';
 import '../utils/wage_calculator.dart';
+import '../utils/network_checker.dart';
 
 // ═══════════════════════════════════════════════════════════
 // Part 파일 선언
@@ -57,14 +59,16 @@ class FirestoreService {
   // ═══════════════════════════════════════════════════════════
   // 캐시 변수들
   // ═══════════════════════════════════════════════════════════
-  final Map<String, List<ApplicationModel>> _applicationCache = {};
+
+  // 내 전체 지원 목록 캐시 (uid → List<ApplicationModel>)
+  final Map<String, List<ApplicationModel>> _myApplicationsCache = {};
+  final Map<String, DateTime> _myApplicationsCacheTimestamps = {};
+  static const Duration _myApplicationsCacheTTL = Duration(minutes: 1);
 
   // 사용자 정보 캐시
   final Map<String, UserModel> _userCache = {};
   final Map<String, DateTime> _userCacheTimestamps = {};
-  final Duration _userCacheValidDuration = const Duration(hours: 1);
-
-  final Map<String, DateTime> _cacheTimestamps = {};
+  static const Duration _userCacheTTL = Duration(hours: 1);
 
   // ═══════════════════════════════════════════════════════════
   // 캐시 관리
@@ -72,22 +76,57 @@ class FirestoreService {
   
   /// 캐시 초기화 (TO 수정/삭제 시 호출)
   void clearCache({String? toId}) {
-    if (toId != null) {
-      _applicationCache.remove(toId);
-      _cacheTimestamps.remove('application_$toId');
-    } else {
-      _applicationCache.clear();
-      _cacheTimestamps.clear();
+    // toId 기준 캐시는 application_firestore.dart에서 직접 관리
+    if (toId == null) {
       _userCache.clear();
       _userCacheTimestamps.clear();
     }
   }
 
+  /// 내 지원 목록 캐시 무효화 (지원·취소·확정 후 호출)
+  void invalidateMyApplicationsCache(String uid) {
+    _myApplicationsCache.remove(uid);
+    _myApplicationsCacheTimestamps.remove(uid);
+  }
+
   // ═══════════════════════════════════════════════════════════
   // 헬퍼 메서드들
   // ═══════════════════════════════════════════════════════════
-  
-  
+
+  /// UID 목록으로 사용자 일괄 조회 (1시간 캐시, 30개씩 청크)
+  Future<Map<String, UserModel>> getUsersBatch(List<String> uids) async {
+    if (uids.isEmpty) return {};
+
+    final result = <String, UserModel>{};
+    final uncached = <String>[];
+    final now = DateTime.now();
+
+    for (final uid in uids.toSet()) {
+      final cached = _userCache[uid];
+      final ts = _userCacheTimestamps[uid];
+      if (cached != null && ts != null && now.difference(ts) < _userCacheTTL) {
+        result[uid] = cached;
+      } else {
+        uncached.add(uid);
+      }
+    }
+
+    for (int i = 0; i < uncached.length; i += 30) {
+      final chunk = uncached.skip(i).take(30).toList();
+      final snap = await _firestore
+          .collection('users')
+          .where(FieldPath.documentId, whereIn: chunk)
+          .get();
+      for (final doc in snap.docs) {
+        final user = UserModel.fromMap(doc.data(), doc.id);
+        _userCache[doc.id] = user;
+        _userCacheTimestamps[doc.id] = now;
+        result[doc.id] = user;
+      }
+    }
+
+    return result;
+  }
 
   // ═══════════════════════════════════════════════════════════
   // TO 마감 관리
@@ -114,14 +153,50 @@ class FirestoreService {
 
   /// TO 시간만료 자동 마감 (isManualClosed: false — 재오픈 버튼 미표시)
   Future<void> markTOAsExpired(String toId) async {
-    await _firestore.collection('tos').doc(toId).update({
-      'status': TOStatus.closed,
-      'isManualClosed': false,
-      'closedAt': FieldValue.serverTimestamp(),
-      'statusUpdatedAt': FieldValue.serverTimestamp(),
-      'closedBy': FieldValue.delete(), // cascade 재오픈 허용 (직접 마감 아님)
-    });
-    clearCache(toId: toId);
+    try {
+      await _firestore.collection('tos').doc(toId).update({
+        'status': TOStatus.closed,
+        'isManualClosed': false,
+        'closedAt': FieldValue.serverTimestamp(),
+        'statusUpdatedAt': FieldValue.serverTimestamp(),
+        'closedBy': FieldValue.delete(),
+      });
+      clearCache(toId: toId);
+    } catch (e) {
+      debugPrint('❌ markTOAsExpired 실패 ($toId): $e');
+    }
+  }
+
+  /// TO 통계 재계산 (슈퍼어드민 전용)
+  ///
+  /// Firestore 콘솔 직접 수정이나 과거 race condition으로 드리프트된 경우
+  /// totalConfirmed / totalPending 을 실제 지원서 수 기준으로 재동기화.
+  Future<void> reconcileTOStats(String toId) async {
+    try {
+      // 실제 CONFIRMED/PENDING 지원서 수 집계
+      final confirmedSnap = await _firestore
+          .collection('applications')
+          .where('toId', isEqualTo: toId)
+          .where('status', whereIn: AppStatus.confirmedStatuses)
+          .get();
+      final pendingSnap = await _firestore
+          .collection('applications')
+          .where('toId', isEqualTo: toId)
+          .where('status', isEqualTo: AppStatus.pending)
+          .get();
+
+      final confirmedCount = confirmedSnap.docs.length;
+      final pendingCount = pendingSnap.docs.length;
+
+      await _firestore.collection('tos').doc(toId).update({
+        'totalConfirmed': confirmedCount,
+        'totalPending': pendingCount,
+      });
+      clearCache(toId: toId);
+      debugPrint('✅ TO 통계 재계산 완료: confirmed=$confirmedCount pending=$pendingCount ($toId)');
+    } catch (e) {
+      debugPrint('❌ TO 통계 재계산 실패: $e');
+    }
   }
 
   /// TO 재오픈 (마감 취소)
@@ -163,15 +238,25 @@ class FirestoreService {
       int totalPending = 0;
       int totalConfirmed = 0;
       for (final doc in appsSnap.docs) {
-        final status = doc.data()['status'];
-        if (status == 'PENDING') totalPending++;
-        if (status == 'CONFIRMED') totalConfirmed++;
+        final status = doc.data()['status'] as String?;
+        if (status == AppStatus.pending) totalPending++;
+        // CONTRACT_PENDING도 확정 인원으로 집계
+        if (AppStatus.confirmedStatuses.contains(status)) totalConfirmed++;
       }
 
-      await _firestore.collection('tos').doc(toId).update({
+      // totalRequired 초과 확정 시 TO status → full, 미만이면 active 복구
+      final toUpdate = <String, dynamic>{
         'totalPending': totalPending,
         'totalConfirmed': totalConfirmed,
-      });
+      };
+      final notClosed = to.status != TOStatus.closed &&
+          to.status != TOStatus.expired;
+      if (notClosed) {
+        final shouldBeFull = to.totalRequired > 0 && totalConfirmed >= to.totalRequired;
+        toUpdate['status'] = shouldBeFull ? TOStatus.full : TOStatus.active;
+      }
+
+      await _firestore.collection('tos').doc(toId).update(toUpdate);
 
       // flex TO: 슬롯별 통계도 재계산
       if (to.isFlexType) {
@@ -181,10 +266,10 @@ class FirestoreService {
           final data = doc.data();
           final status = data['status'] as String?;
           final sid = data['slotId'] as String?;
-          if (sid == null || (status != 'PENDING' && status != 'CONFIRMED')) continue;
+          if (sid == null || !AppStatus.activeStates.contains(status)) continue;
           slotStats[sid] ??= {'pending': 0, 'confirmed': 0};
-          if (status == 'PENDING') slotStats[sid]!['pending'] = slotStats[sid]!['pending']! + 1;
-          if (status == 'CONFIRMED') slotStats[sid]!['confirmed'] = slotStats[sid]!['confirmed']! + 1;
+          if (status == AppStatus.pending) slotStats[sid]!['pending'] = slotStats[sid]!['pending']! + 1;
+          if (AppStatus.confirmedStatuses.contains(status)) slotStats[sid]!['confirmed'] = slotStats[sid]!['confirmed']! + 1;
         }
 
         // 슬롯 전체 조회 후 일괄 업데이트
@@ -192,15 +277,22 @@ class FirestoreService {
             .collection('tos').doc(toId)
             .collection('slots').get();
         if (slotsSnap.docs.isNotEmpty) {
-          final batch = _firestore.batch();
+          var batch = _firestore.batch();
+          int batchCount = 0;
           for (final slotDoc in slotsSnap.docs) {
             final stats = slotStats[slotDoc.id] ?? {'pending': 0, 'confirmed': 0};
             batch.update(slotDoc.reference, {
               'pendingCount': stats['pending'],
               'confirmedCount': stats['confirmed'],
             });
+            batchCount++;
+            if (batchCount >= 499) {
+              await batch.commit();
+              batch = _firestore.batch();
+              batchCount = 0;
+            }
           }
-          await batch.commit();
+          if (batchCount > 0) await batch.commit();
         }
       }
 
@@ -260,7 +352,7 @@ class FirestoreService {
             ? wdId
             : '${app.selectedWorkType}_${app.startTime}_${app.endTime}';
         workStats[key] ??= {'confirmed': 0, 'pending': 0};
-        if (app.status == 'CONFIRMED') {
+        if (AppStatus.confirmedStatuses.contains(app.status)) {
           workStats[key]!['confirmed'] = (workStats[key]!['confirmed'] ?? 0) + 1;
         } else {
           workStats[key]!['pending'] = (workStats[key]!['pending'] ?? 0) + 1;
@@ -283,11 +375,31 @@ class FirestoreService {
       // 사업장 목록이 빈 리스트면 조회 대상 없음
       if (businessIds != null && businessIds.isEmpty) return [];
 
+      // businessIds > 30 이면 청크 분할 (Firestore whereIn 30개 제한)
+      if (businessIds != null && businessIds.length > 30) {
+        final allItems = <TOGroupItem>[];
+        for (int i = 0; i < businessIds.length; i += 30) {
+          final chunk = businessIds.skip(i).take(30).toList();
+          Query chunkQuery = _firestore.collection('tos').orderBy('createdAt', descending: true)
+              .where('businessId', whereIn: chunk);
+          if (activeOnly) {
+            chunkQuery = chunkQuery.where('status', whereIn: TOStatus.openStates);
+          } else if (closedOnly) {
+            chunkQuery = chunkQuery.where('status', whereIn: TOStatus.closedStates);
+          }
+          final chunkSnap = await chunkQuery.get();
+          allItems.addAll(chunkSnap.docs.map(
+            (d) => TOGroupItem(singleTO: TOModel.fromMap(d.data() as Map<String, dynamic>, d.id))));
+        }
+        allItems.sort((a, b) => b.singleTO.createdAt.compareTo(a.singleTO.createdAt));
+        return allItems;
+      }
+
       Query query = _firestore.collection('tos').orderBy('createdAt', descending: true);
       if (businessIds != null && businessIds.length == 1) {
         query = query.where('businessId', isEqualTo: businessIds.first);
       } else if (businessIds != null && businessIds.length > 1) {
-        query = query.where('businessId', whereIn: businessIds.take(10).toList());
+        query = query.where('businessId', whereIn: businessIds.toList());
       }
       if (activeOnly) {
         query = query.where('status', whereIn: TOStatus.openStates);
@@ -347,7 +459,7 @@ class FirestoreService {
             .collection('slots')
             .get();
         final dates = snap.docs
-            .map((d) => (d.data()['date'] as Timestamp?)?.toDate())
+            .map((d) => (d.data()['date'] as Timestamp?)?.toDate().toLocal())
             .whereType<DateTime>()
             .toList();
         return MapEntry(toId, dates);
@@ -442,6 +554,7 @@ class FirestoreService {
       workDate: workDate,
       uid: uid,
       selectedWorkType: selectedWorkType,
+      workDetailId: workDetailId,
       startTime: startTime ?? '',
       endTime: endTime ?? '',
       wage: wage,
@@ -565,9 +678,10 @@ class FirestoreService {
       if (slotData['closedBy'] != null) return;
 
       // 날짜 경과 슬롯 — 상태 변경 불필요 (TO 레벨에서 날짜 기반으로 처리)
+      // toDate()는 UTC 기준 DateTime → toLocal()로 KST 변환 후 비교
       final dateTs = slotData['date'] as Timestamp?;
       if (dateTs != null) {
-        final sd = dateTs.toDate();
+        final sd = dateTs.toDate().toLocal();
         final now = DateTime.now();
         if (DateTime(sd.year, sd.month, sd.day)
             .isBefore(DateTime(now.year, now.month, now.day))) { return; }
@@ -636,7 +750,7 @@ class FirestoreService {
         if (status == SlotStatus.closed || status == SlotStatus.full) return true;
         final dateTs = data['date'] as Timestamp?;
         if (dateTs != null) {
-          final sd = dateTs.toDate();
+          final sd = dateTs.toDate().toLocal();
           if (DateTime(sd.year, sd.month, sd.day).isBefore(todayMidnight)) return true;
         }
         return false;
@@ -680,18 +794,57 @@ class FirestoreService {
     return result != null;
   }
 
-  /// 출근 기록 확인 — attendance_firestore에서 처리, 여기서는 false 반환
-  Future<bool> hasAttendanceRecord(String applicationId) async => false;
+  /// 해당 지원서에 출근 기록이 1개 이상 있는지 확인
+  Future<bool> hasAttendanceRecord(String applicationId) async {
+    try {
+      final snap = await _firestore
+          .collection('attendance')
+          .where('applicationId', isEqualTo: applicationId)
+          .limit(1)
+          .get();
+      return snap.docs.isNotEmpty;
+    } catch (e) {
+      debugPrint('⚠️ hasAttendanceRecord 조회 실패 ($applicationId): $e');
+      return false;
+    }
+  }
 
-  /// 구 자동 만료 — no-op
-  Future<void> autoExpirePendingApplications(String uid) async {}
+  /// workDate가 지난 PENDING 지원서를 AUTO_CANCELED로 일괄 처리
+  Future<void> autoExpirePendingApplications(String uid) async {
+    try {
+      final today = DateTime.now();
+      final todayStart = DateTime(today.year, today.month, today.day);
+
+      final snapshot = await _firestore
+          .collection('applications')
+          .where('uid', isEqualTo: uid)
+          .where('status', isEqualTo: AppStatus.pending)
+          .where('workDate', isLessThan: Timestamp.fromDate(todayStart))
+          .get();
+
+      if (snapshot.docs.isEmpty) return;
+
+      final batch = _firestore.batch();
+      for (final doc in snapshot.docs) {
+        batch.update(doc.reference, {
+          'status': AppStatus.autoCanceled,
+          'canceledAt': FieldValue.serverTimestamp(),
+          'cancelReason': 'AUTO_EXPIRED',
+        });
+      }
+      await batch.commit();
+      debugPrint('✅ 만료 PENDING 지원서 ${snapshot.docs.length}개 자동 취소');
+    } catch (e) {
+      debugPrint('❌ 자동 만료 처리 실패: $e');
+    }
+  }
 
   /// 마이그레이션 메서드 — 완료됨, no-op
   Future<Map<String, dynamic>> migrateApplicationWorkDetailIds() async =>
       {'migrated': 0, 'skipped': 0, 'failed': 0};
   Future<int> migrateAllGroupMasterStats() async => 0;
 
-  /// 퇴사/해지 관련 메서드 스텁 — Phase 5에서 구현 예정
+  /// 계약해지 요청 (관리자 → 근무자)
   Future<bool> requestTermination({
     required String applicationId,
     String? toId,
@@ -699,52 +852,276 @@ class FirestoreService {
     String? businessId,
     String? reason,
     String? requestedByUid,
-  }) async => false;
+  }) async {
+    try {
+      final appDoc = await _firestore.collection('applications').doc(applicationId).get();
+      if (!appDoc.exists) return false;
+      final app = ApplicationModel.fromMap(appDoc.data()!, appDoc.id);
 
-  Future<bool> cancelTerminationRequest(String applicationId) async => false;
+      final workerUid = uid ?? app.uid;
+      final bId = businessId ?? app.businessId;
+      final terminationDate = app.workEndDate ?? DateTime.now().add(const Duration(days: 30));
 
-  Future<bool> approveTermination(String applicationId, {String? adminUID}) async => false;
+      await _firestore.collection('applications').doc(applicationId).update({
+        'terminationStatus': AppStatus.pending,
+        'terminationRequestedAt': FieldValue.serverTimestamp(),
+        'terminationReason': reason,
+        'terminationRequestedByUid': requestedByUid,
+        'terminationEffectiveDate': Timestamp.fromDate(terminationDate),
+      });
 
+      String businessName = '';
+      if (bId.isNotEmpty) {
+        final bizDoc = await _firestore.collection('businesses').doc(bId).get();
+        businessName = bizDoc.data()?['name'] as String? ?? '';
+      }
+
+      if (workerUid.isNotEmpty) {
+        final notification = NotificationModel.createTerminationRequested(
+          userId: workerUid,
+          businessName: businessName,
+          businessId: bId,
+          terminationDate: terminationDate,
+          applicationId: applicationId,
+          reason: reason,
+        );
+        await createNotification(notification);
+      }
+
+      debugPrint('✅ 계약해지 요청 전송: $applicationId → $workerUid');
+      return true;
+    } catch (e) {
+      debugPrint('❌ requestTermination 실패: $e');
+      return false;
+    }
+  }
+
+  /// 계약해지 요청 취소
+  Future<bool> cancelTerminationRequest(String applicationId) async {
+    try {
+      await _firestore.collection('applications').doc(applicationId).update({
+        'terminationStatus': null,
+        'terminationRequestedAt': null,
+        'terminationReason': null,
+        'terminationRequestedByUid': null,
+        'terminationEffectiveDate': null,
+      });
+      debugPrint('✅ 계약해지 요청 취소: $applicationId');
+      return true;
+    } catch (e) {
+      debugPrint('❌ cancelTerminationRequest 실패: $e');
+      return false;
+    }
+  }
+
+  /// 계약해지 승인 (근무자 → 관리자 요청 수락)
+  Future<bool> approveTermination(String applicationId, {String? adminUID}) async {
+    try {
+      final appDoc = await _firestore.collection('applications').doc(applicationId).get();
+      if (!appDoc.exists) return false;
+      final app = ApplicationModel.fromMap(appDoc.data()!, appDoc.id);
+
+      final effectiveDate = app.terminationEffectiveDate ?? DateTime.now();
+
+      await _firestore.collection('applications').doc(applicationId).update({
+        'terminationStatus': AppStatus.approved,
+        'terminationRespondedAt': FieldValue.serverTimestamp(),
+        'actualResignDate': Timestamp.fromDate(effectiveDate),
+        'status': AppStatus.canceled,
+      });
+
+      final requestedByUid = adminUID ?? app.terminationRequestedByUid;
+      if (requestedByUid != null && requestedByUid.isNotEmpty) {
+        final notification = NotificationModel.createTerminationApproved(
+          userId: requestedByUid,
+          businessName: app.businessName,
+          businessId: app.businessId,
+          applicationId: applicationId,
+          actualResignDate: effectiveDate,
+        );
+        await createNotification(notification);
+      }
+
+      debugPrint('✅ 계약해지 승인: $applicationId');
+      return true;
+    } catch (e) {
+      debugPrint('❌ approveTermination 실패: $e');
+      return false;
+    }
+  }
+
+  /// 계약해지 거절 (근무자 → 관리자 요청 거절)
   Future<bool> rejectTermination({
     required String applicationId,
     String? adminUID,
     String? rejectReason,
-  }) async => false;
+  }) async {
+    try {
+      await _firestore.collection('applications').doc(applicationId).update({
+        'terminationStatus': AppStatus.rejected,
+        'terminationRespondedAt': FieldValue.serverTimestamp(),
+        'terminationRejectReason': rejectReason,
+      });
+      debugPrint('✅ 계약해지 거절: $applicationId');
+      return true;
+    } catch (e) {
+      debugPrint('❌ rejectTermination 실패: $e');
+      return false;
+    }
+  }
 
+  /// 퇴사 요청 (근무자 → 관리자)
   Future<bool> requestResignation({
     required String applicationId,
     String? toId,
     String? uid,
     String? reason,
     DateTime? resignDate,
-  }) async => false;
+  }) async {
+    try {
+      final appDoc = await _firestore.collection('applications').doc(applicationId).get();
+      if (!appDoc.exists) return false;
+      final app = ApplicationModel.fromMap(appDoc.data()!, appDoc.id);
 
-  Future<bool> cancelResignRequest(String applicationId) async => false;
+      final effectiveResignDate = resignDate ?? app.workEndDate ?? DateTime.now();
 
+      await _firestore.collection('applications').doc(applicationId).update({
+        'resignStatus': AppStatus.pending,
+        'resignRequestedAt': FieldValue.serverTimestamp(),
+        'resignRequestDate': Timestamp.fromDate(effectiveResignDate),
+      });
+
+      // 관리자에게 알림
+      final bizDoc = await _firestore.collection('businesses').doc(app.businessId).get();
+      final ownerId = bizDoc.data()?['ownerId'] as String?;
+      final workerName = uid != null
+          ? (await getUser(uid))?.name ?? '근무자'
+          : '근무자';
+
+      if (ownerId != null && ownerId.isNotEmpty) {
+        final notification = NotificationModel.createResignRequested(
+          userId: ownerId,
+          workerName: workerName,
+          businessName: app.businessName,
+          resignDate: effectiveResignDate,
+          applicationId: applicationId,
+        );
+        await createNotification(notification);
+      }
+
+      debugPrint('✅ 퇴사 요청 전송: $applicationId');
+      return true;
+    } catch (e) {
+      debugPrint('❌ requestResignation 실패: $e');
+      return false;
+    }
+  }
+
+  /// 퇴사 요청 취소 (근무자)
+  Future<bool> cancelResignRequest(String applicationId) async {
+    try {
+      await _firestore.collection('applications').doc(applicationId).update({
+        'resignStatus': null,
+        'resignRequestedAt': null,
+        'resignRequestDate': null,
+      });
+      debugPrint('✅ 퇴사 요청 취소: $applicationId');
+      return true;
+    } catch (e) {
+      debugPrint('❌ cancelResignRequest 실패: $e');
+      return false;
+    }
+  }
+
+  /// 퇴사 승인 (관리자)
   Future<bool> approveResignation({
     required String applicationId,
     required String adminUID,
-  }) async => false;
+  }) async {
+    try {
+      final appDoc = await _firestore.collection('applications').doc(applicationId).get();
+      if (!appDoc.exists) return false;
+      final app = ApplicationModel.fromMap(appDoc.data()!, appDoc.id);
 
+      final actualResignDate = app.resignRequestDate ?? DateTime.now();
+
+      await _firestore.collection('applications').doc(applicationId).update({
+        'resignStatus': AppStatus.approved,
+        'resignApprovedAt': FieldValue.serverTimestamp(),
+        'resignApprovedBy': adminUID,
+        'actualResignDate': Timestamp.fromDate(actualResignDate),
+        'status': AppStatus.canceled,
+      });
+
+      // 근무자에게 알림
+      if (app.uid.isNotEmpty) {
+        final notification = NotificationModel.createResignApproved(
+          userId: app.uid,
+          businessName: app.businessName,
+          businessId: app.businessId,
+          actualResignDate: actualResignDate,
+          applicationId: applicationId,
+        );
+        await createNotification(notification);
+      }
+
+      debugPrint('✅ 퇴사 승인: $applicationId');
+      return true;
+    } catch (e) {
+      debugPrint('❌ approveResignation 실패: $e');
+      return false;
+    }
+  }
+
+  /// 퇴사 거절 (관리자)
   Future<bool> rejectResignation({
     required String applicationId,
     String? adminUID,
     String? rejectReason,
-  }) async => false;
-
-  /// applyForTO 스텁 — applyToTO 대체 래퍼 (Phase 6에서 구현 예정)
-  Future<void> applyForTO({
-    required String toId,
-    required String workDetailId,
-    required String workType,
-    required String uid,
-    DateTime? desiredStartDate,
   }) async {
-    debugPrint('⚠️ applyForTO: stub — Phase 6에서 applyToTO로 대체 예정');
+    try {
+      final appDoc = await _firestore.collection('applications').doc(applicationId).get();
+      if (!appDoc.exists) return false;
+      final app = ApplicationModel.fromMap(appDoc.data()!, appDoc.id);
+
+      await _firestore.collection('applications').doc(applicationId).update({
+        'resignStatus': AppStatus.rejected,
+        'resignApprovedAt': FieldValue.serverTimestamp(),
+        'resignApprovedBy': adminUID,
+        'resignRejectReason': rejectReason,
+      });
+
+      // 근무자에게 알림
+      if (app.uid.isNotEmpty) {
+        final notification = NotificationModel.createResignRejected(
+          userId: app.uid,
+          businessName: app.businessName,
+          businessId: app.businessId,
+          applicationId: applicationId,
+          rejectReason: rejectReason,
+        );
+        await createNotification(notification);
+      }
+
+      debugPrint('✅ 퇴사 거절: $applicationId');
+      return true;
+    } catch (e) {
+      debugPrint('❌ rejectResignation 실패: $e');
+      return false;
+    }
   }
 
-  /// 퇴사 신청 목록 조회 스텁
-  Future<List<ApplicationModel>> getResignRequests(String businessId) async => [];
+  /// 퇴사 신청 목록 조회 (resignStatus == PENDING)
+  Future<List<ApplicationModel>> getResignRequests(String businessId) async {
+    final snap = await _firestore
+        .collection('applications')
+        .where('businessId', isEqualTo: businessId)
+        .where('resignStatus', isEqualTo: AppStatus.pending)
+        .orderBy('resignRequestedAt', descending: true)
+        .limit(200)
+        .get();
+    return snap.docs.map((d) => ApplicationModel.fromFirestore(d)).toList();
+  }
 
   // ═══════════════════════════════════════════════════════════
   // 우리 사업장 근무 이력 (복합 조회)
@@ -762,7 +1139,7 @@ class FirestoreService {
           .collection('applications')
           .where('uid', isEqualTo: userId)
           .where('businessId', isEqualTo: businessId)
-          .where('status', isEqualTo: 'CONFIRMED')
+          .where('status', whereIn: AppStatus.confirmedStatuses)
           .orderBy('workDate', descending: true)
           .get();
       
