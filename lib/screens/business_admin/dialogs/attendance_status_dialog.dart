@@ -220,18 +220,17 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
     });
 
     try {
-      // ✅ 1단계: 독립적인 쿼리들 병렬 실행
+      // ✅ 1단계: 근무자 목록과 업무유형 정보 병렬 로드
       final step1Results = await Future.wait([
         _getConfirmedWorkersForDate(),  // [0] 확정 근무자
         _getWorkTypeInfo(),              // [1] 업무유형 정보
-        _getWorkDetailTimes(),           // [2] WorkDetail 시간 정보
       ]);
-      
+
       final confirmedWorkers = step1Results[0] as List<ApplicationModel>;
       final workTypeMap = step1Results[1] as Map<String, BusinessWorkTypeModel>;
-      final workDetailTimeMap = step1Results[2] as Map<String, dynamic>;
-      
+
       // ✅ 2단계: 근무자 기반 쿼리들 병렬 실행
+      // _getWorkDetailTimes()는 confirmedWorkers의 toId/slotId가 필요하므로 1단계 완료 후 실행
       final uids = confirmedWorkers.map((app) => app.uid).toSet().toList();
       final appIds = confirmedWorkers.map((app) => app.id).toList();
 
@@ -239,11 +238,13 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
         _getAttendanceRecords(appIds),                              // [0] 출근 기록
         _firestoreService.getUsersBatch(uids),                       // [1] 사용자 정보
         _firestoreService.getLocationsForApplications(appIds),       // [2] 위치 정보
+        _getWorkDetailTimes(confirmedWorkers),                        // [3] WorkDetail 시간 정보 (근무자 목록 전달)
       ]);
 
       final attendanceMap = step2Results[0] as Map<String, AttendanceModel>;
       final userMap = step2Results[1] as Map<String, UserModel>;
       final locationMap = step2Results[2] as Map<String, WorkerLocationModel>;
+      final workDetailTimeMap = step2Results[3] as Map<String, dynamic>;
 
       if (!mounted) return;
       setState(() {
