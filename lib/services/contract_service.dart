@@ -450,7 +450,9 @@ class ContractService {
     final contract = EmploymentContractModel.fromFirestore(contractDoc);
 
     // 연결된 application들 취소 처리 (확정 상태인 것만)
+    // 하나라도 실패하면 계약서 상태 변경을 중단해 부분 무효화 방지
     final firestoreService = FirestoreService();
+    final List<String> failedIds = [];
     for (final appId in contract.applicationIds) {
       try {
         await firestoreService.cancelConfirmedApplication(
@@ -460,7 +462,11 @@ class ContractService {
         );
       } catch (e) {
         debugPrint('⚠️ voidContract: application 취소 실패 ($appId): $e');
+        failedIds.add(appId);
       }
+    }
+    if (failedIds.isNotEmpty) {
+      throw Exception('${failedIds.length}개 지원서 취소 실패로 계약서 무효화가 중단되었습니다');
     }
 
     await _db.collection('employment_contracts').doc(contractId).update({

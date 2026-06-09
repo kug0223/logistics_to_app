@@ -27,10 +27,12 @@ import '../../utils/navigation_helper.dart';
 import 'business_detail_screen.dart';
 import 'business_form_screen.dart';
 import 'to_management/create_to_screen.dart';
-import '../common/settings_screen.dart';
-import '../../widgets/dialogs/styled_dialog.dart';
 import '../../widgets/common/app_menu_sheet.dart';
+import 'to_prerequisites_helper.dart';
 import '../../theme/app_colors.dart';
+import '../../widgets/common/gradient_scaffold.dart';
+import '../../widgets/common/app_empty_state.dart';
+import '../../widgets/common/loading_widget.dart';
 
 /// 📋 내 사업장 관리 화면 (관리자 전용)
 class BusinessListScreen extends StatefulWidget {
@@ -44,6 +46,7 @@ class _BusinessListScreenState extends State<BusinessListScreen> {
   final FirestoreService _firestoreService = FirestoreService();
   List<BusinessModel> _businesses = [];
   bool _isLoading = true;
+  bool _isDeleting = false;
 
   @override
   void initState() {
@@ -59,12 +62,23 @@ class _BusinessListScreenState extends State<BusinessListScreen> {
       final userProvider = context.read<UserProvider>();
       final ownerId = userProvider.currentUser?.uid;
 
-      if (ownerId == null) return;
+      if (ownerId == null) {
+        setState(() => _isLoading = false);
+        return;
+      }
 
       List<BusinessModel> businesses;
-      
-      businesses = await _firestoreService.getMyBusiness(ownerId);
 
+      // SubAdmin은 adminIds에 없으므로 effectiveBusinessId로 직접 조회
+      final effectiveBizId = userProvider.effectiveBusinessId;
+      if (userProvider.isSubAdmin && effectiveBizId != null) {
+        final biz = await _firestoreService.getBusinessById(effectiveBizId);
+        businesses = biz != null ? [biz] : [];
+      } else {
+        businesses = await _firestoreService.getMyBusiness(ownerId);
+      }
+
+      if (!mounted) return;
       setState(() {
         _businesses = businesses;
         _isLoading = false;
@@ -72,12 +86,13 @@ class _BusinessListScreenState extends State<BusinessListScreen> {
     } catch (e) {
       debugPrint('❌ 사업장 로드 실패: $e');
       ToastHelper.showError('사업장 목록을 불러오는데 실패했습니다');
-      setState(() => _isLoading = false);
+      if (mounted) setState(() => _isLoading = false);
     }
   }
 
   /// 사업장 삭제
   Future<void> _deleteBusiness(BusinessModel business) async {
+    if (_isDeleting) return;
     final confirmed = await DialogHelper.showDangerConfirm(
       context,
       title: '사업장 삭제',
@@ -86,11 +101,13 @@ class _BusinessListScreenState extends State<BusinessListScreen> {
     );
 
     if (confirmed != true) return;
+    if (!mounted) return;
+    setState(() => _isDeleting = true);
 
     try {
       final storage = FirebaseStorage.instance;
       
-      // ✅ 1. 대표 이미지 삭제
+      // 1. 대표 이미지 삭제
       if (business.mainImageUrl != null) {
         try {
           await storage.refFromURL(business.mainImageUrl!).delete();
@@ -100,7 +117,7 @@ class _BusinessListScreenState extends State<BusinessListScreen> {
         }
       }
       
-      // ✅ 2. 추가 이미지들 삭제
+      // 2. 추가 이미지들 삭제
       if (business.imageUrls != null) {
         for (var url in business.imageUrls!) {
           try {
@@ -112,7 +129,7 @@ class _BusinessListScreenState extends State<BusinessListScreen> {
         }
       }
       
-      // ✅ 3. 업무유형들의 이미지도 삭제
+      // 3. 업무유형 이미지 삭제
       final workTypesSnapshot = await FirebaseFirestore.instance
           .collection('businesses')
           .doc(business.id)
@@ -139,17 +156,20 @@ class _BusinessListScreenState extends State<BusinessListScreen> {
         }
       }
 
-      // ✅ 4. Firestore에서 삭제
+      // 4. Firestore에서 삭제
       await FirebaseFirestore.instance
           .collection('businesses')
           .doc(business.id)
           .delete();
           
+      if (!mounted) return;
       ToastHelper.showSuccess('사업장이 삭제되었습니다');
       _loadBusinesses();
     } catch (e) {
       debugPrint('❌ 사업장 삭제 실패: $e');
-      ToastHelper.showError('사업장 삭제에 실패했습니다');
+      if (mounted) ToastHelper.showError('사업장 삭제에 실패했습니다');
+    } finally {
+      if (mounted) setState(() => _isDeleting = false);
     }
   }
 
@@ -157,22 +177,19 @@ class _BusinessListScreenState extends State<BusinessListScreen> {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
 
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('내 사업장 관리'),
-        actions: [
-          // 새 사업장 추가 버튼
-          IconButton(
-            icon: Icon(
-              Icons.add_circle_outline,
-              size: ResponsiveHelper.iconSize(context, 28),
-            ),
-            onPressed: _navigateToBusinessForm, // ✅ 변경
-          ),
-        ],
-      ),
+    return GradientScaffold(
+      title: '내 사업장 관리',
+      actions: [
+        IconButton(
+          icon: Icon(Icons.add_circle_outline,
+              color: Colors.white,
+              size: ResponsiveHelper.iconSize(context, 28)),
+          tooltip: '사업장 추가',
+          onPressed: _navigateToBusinessForm,
+        ),
+      ],
       body: _isLoading
-          ? const Center(child: CircularProgressIndicator())
+          ? const LoadingWidget()
           : _businesses.isEmpty
               ? _buildEmptyState(context)
               : _buildBusinessList(context, theme),
@@ -181,37 +198,15 @@ class _BusinessListScreenState extends State<BusinessListScreen> {
 
   /// 빈 상태
   Widget _buildEmptyState(BuildContext context) {
-    return Center(
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Icon(
-            Icons.business_outlined,
-            size: ResponsiveHelper.iconSize(context, 80),
-            color: AppColors.grey400,
-          ),
-          SizedBox(height: ResponsiveHelper.spacing(context, 24)),
-          Text(
-            '등록된 사업장이 없습니다',
-            style: ResponsiveHelper.titleStyle(context).copyWith(
-              color: AppColors.grey600,
-            ),
-          ),
-          SizedBox(height: ResponsiveHelper.spacing(context, 12)),
-          Text(
-            '사업장을 등록하고 TO를 관리해보세요',
-            style: ResponsiveHelper.bodyStyle(context).copyWith(
-              color: AppColors.grey500,
-            ),
-          ),
-          SizedBox(height: ResponsiveHelper.spacing(context, 32)),
-          CommonWidgets.primaryButton(
-            context: context,
-            text: '사업장 등록하기',
-            icon: Icons.add_business,
-            onPressed: _navigateToBusinessForm, // ✅ 변경
-          ),
-        ],
+    return AppEmptyState(
+      icon: Icons.business_outlined,
+      title: '등록된 사업장이 없습니다',
+      subtitle: '사업장을 등록하고 TO를 관리해보세요',
+      action: CommonWidgets.primaryButton(
+        context: context,
+        text: '사업장 등록하기',
+        icon: Icons.add_business,
+        onPressed: _navigateToBusinessForm,
       ),
     );
   }
@@ -219,7 +214,7 @@ class _BusinessListScreenState extends State<BusinessListScreen> {
   /// 사업장 리스트
   Widget _buildBusinessList(BuildContext context, ThemeData theme) {
     return ListView.builder(
-      padding: ResponsiveHelper.cardPadding(context),
+      padding: ResponsiveHelper.listPadding(context),
       itemCount: _businesses.length + 1, // +1 for "새 사업장 추가" 버튼
       itemBuilder: (context, index) {
         if (index == _businesses.length) {
@@ -233,7 +228,7 @@ class _BusinessListScreenState extends State<BusinessListScreen> {
     );
   }
 
-  /// ✨ 사업장 카드 (간단 버전)
+  /// 사업장 카드
   Widget _buildBusinessCard(
     BuildContext context,
     ThemeData theme,
@@ -246,7 +241,6 @@ class _BusinessListScreenState extends State<BusinessListScreen> {
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(16),
-        // ⭐ 그림자 강화
         boxShadow: [
           BoxShadow(
             color: Colors.black.withValues(alpha: 0.08),
@@ -260,7 +254,7 @@ class _BusinessListScreenState extends State<BusinessListScreen> {
             offset: const Offset(0, 2),
           ),
         ],
-        // ⭐ 승인 대기중일 때 테두리 추가
+        // 승인 대기 시 테두리
         border: business.isApproved 
             ? null 
             : Border.all(
@@ -280,7 +274,7 @@ class _BusinessListScreenState extends State<BusinessListScreen> {
         },
         borderRadius: BorderRadius.circular(16),
         child: Padding(
-          padding: ResponsiveHelper.cardPadding(context),
+          padding: ResponsiveHelper.listPadding(context),
           child: Row(
             children: [
               // 이미지
@@ -307,7 +301,7 @@ class _BusinessListScreenState extends State<BusinessListScreen> {
                           ),
                         ),
                         SizedBox(width: ResponsiveHelper.spacing(context, 8)),
-                        // ⭐ 승인 상태 배지
+                        // 승인 상태 배지
                         Container(
                           padding: EdgeInsets.symmetric(
                             horizontal: ResponsiveHelper.spacing(context, 8),
@@ -412,10 +406,13 @@ class _BusinessListScreenState extends State<BusinessListScreen> {
             color: AppColors.amberDark,
           ),
           SizedBox(width: ResponsiveHelper.spacing(context, 2)),
-          Text(
-            business.rating!.toStringAsFixed(1),
-            style: ResponsiveHelper.smallStyle(context).copyWith(
-              fontWeight: FontWeight.bold,
+          Flexible(
+            child: Text(
+              business.rating!.toStringAsFixed(1),
+              overflow: TextOverflow.ellipsis,
+              style: ResponsiveHelper.smallStyle(context).copyWith(
+                fontWeight: FontWeight.bold,
+              ),
             ),
           ),
           SizedBox(width: ResponsiveHelper.spacing(context, 8)),
@@ -428,13 +425,16 @@ class _BusinessListScreenState extends State<BusinessListScreen> {
         ],
         
         // 주차
-        Text(
-          business.parkingAvailable ? '주차O' : '주차X',
-          style: ResponsiveHelper.smallStyle(context).copyWith(
-            color: business.parkingAvailable ? AppColors.successDark : AppColors.grey500,
+        Flexible(
+          child: Text(
+            business.parkingAvailable ? '주차O' : '주차X',
+            overflow: TextOverflow.ellipsis,
+            style: ResponsiveHelper.smallStyle(context).copyWith(
+              color: business.parkingAvailable ? AppColors.successDark : AppColors.grey500,
+            ),
           ),
         ),
-        
+
         SizedBox(width: ResponsiveHelper.spacing(context, 8)),
         Container(
           width: 1,
@@ -442,16 +442,19 @@ class _BusinessListScreenState extends State<BusinessListScreen> {
           color: AppColors.grey300,
         ),
         SizedBox(width: ResponsiveHelper.spacing(context, 8)),
-        
+
         // 식사
-        Text(
-          business.mealsProvided != null && business.mealsProvided!.isNotEmpty
-              ? '식사O' 
-              : '식사X',
-          style: ResponsiveHelper.smallStyle(context).copyWith(
-            color: business.mealsProvided != null && business.mealsProvided!.isNotEmpty
-                ? AppColors.successDark 
-                : AppColors.grey500,
+        Flexible(
+          child: Text(
+            business.mealsProvided != null && business.mealsProvided!.isNotEmpty
+                ? '식사O'
+                : '식사X',
+            overflow: TextOverflow.ellipsis,
+            style: ResponsiveHelper.smallStyle(context).copyWith(
+              color: business.mealsProvided != null && business.mealsProvided!.isNotEmpty
+                  ? AppColors.successDark
+                  : AppColors.grey500,
+            ),
           ),
         ),
       ],
@@ -526,48 +529,14 @@ class _BusinessListScreenState extends State<BusinessListScreen> {
   Future<void> _handleCreateTO(BuildContext context, BusinessModel business) async {
     final user = Provider.of<UserProvider>(context, listen: false).currentUser;
     if (user != null) {
-      final missing = <String>[];
-      if (!user.isEmailVerified) missing.add('이메일 인증');
-      if (user.businessLicenseImageUrl == null) missing.add('사업자등록증 등록');
-
-      if (missing.isNotEmpty) {
-        if (!context.mounted) return;
-        final goToSettings = await showDialog<bool>(
-          context: context,
-          builder: (ctx) => StyledDialog(
-            title: '공고 등록 불가',
-            subtitle: '다음 항목을 먼저 완료해주세요',
-            icon: Icons.block_outlined,
-            headerColor: AppColors.error,
-            content: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                ...missing.map(
-                  (item) => Padding(
-                    padding: const EdgeInsets.only(bottom: 8),
-                    child: StyledDialogInfoCard.error(item),
-                  ),
-                ),
-                const SizedBox(height: 4),
-                StyledDialogInfoCard.info('설정 화면에서 완료 후 다시 시도해주세요.'),
-              ],
-            ),
-            actions: [
-              StyledDialogButton.cancel(
-                onPressed: () => Navigator.pop(ctx, false),
-              ),
-              StyledDialogButton.primary(
-                text: '설정으로 이동',
-                onPressed: () => Navigator.pop(ctx, true),
-              ),
-            ],
-          ),
-        );
-        if (goToSettings == true && context.mounted) {
-          Navigator.push(context, MaterialPageRoute(builder: (_) => const SettingsScreen()));
-        }
-        return;
-      }
+      if (!context.mounted) return;
+      final canProceed = await checkTOPrerequisites(
+        context,
+        hasApprovedBusiness: true,
+        isEmailVerified: user.isEmailVerified,
+        hasLicense: user.businessLicenseImageUrl != null,
+      );
+      if (!canProceed) return;
     }
     if (!context.mounted) return;
     await NavigationHelper.push<bool>(

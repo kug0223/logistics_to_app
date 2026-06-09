@@ -11,6 +11,7 @@ import '../../../models/work_detail_input.dart';
 
 // Services & Providers
 import '../../../services/firestore_service.dart';
+import '../../../services/analytics_service.dart';
 import '../../../providers/user_provider.dart';
 
 // Utils
@@ -23,12 +24,14 @@ import '../../../utils/dialog_helper.dart';
 import '../../../theme/app_colors.dart';
 
 // Widgets
-import '../../../widgets/pickers/create&edit_work_detail_dialog.dart';
+import '../../../widgets/pickers/create_edit_work_detail_dialog.dart';
 import '../../../widgets/dialogs/styled_dialog.dart';
 
 // 공통 위젯
 import 'widgets/to_widgets.dart';
 import '../../../widgets/app_select_field.dart';
+import '../../../widgets/common/gradient_scaffold.dart';
+import '../../../widgets/common/loading_widget.dart';
 
 class AdminCreateTOScreen extends StatefulWidget {
   const AdminCreateTOScreen({super.key});
@@ -47,6 +50,7 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
   // 로딩 상태
   bool _isLoading = true;
   bool _isCreating = false;
+  bool _hasChanges = false; // 미저장 변경 감지용
 
   // 사업장 관련
   List<BusinessModel> _myBusinesses = [];
@@ -54,7 +58,7 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
   List<BusinessWorkTypeModel> _businessWorkTypes = [];
 
   // TO 설정 — 'flex' 단기 / 'contract' 장기
-  String _selectedJobType = 'flex';
+  String _selectedJobType = TOType.flex;
 
   // 날짜 선택 (flex용)
   final List<DateTime> _selectedDates = [];
@@ -63,6 +67,8 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
   final List<String> _selectedWeekdays = [];
   DateTime? _rangeStart;
   DateTime? _rangeEnd;
+  String? _contractPeriodType; // '15days' | '1month' | '3months' | '6months' | '1year' | 'custom'
+  int? _postingDurationDays = 7; // 기본 7일
 
   // 지원 마감
   int _hoursBeforeStart = 2;
@@ -87,6 +93,12 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
   void initState() {
     super.initState();
     _loadMyBusinesses();
+    // 제목 입력 시 _hasChanges 활성화
+    _titleController.addListener(() {
+      if (_titleController.text.isNotEmpty && !_hasChanges) {
+        setState(() => _hasChanges = true);
+      }
+    });
   }
 
   @override
@@ -110,12 +122,22 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
 
       if (uid == null) {
         ToastHelper.showError('로그인 정보를 찾을 수 없습니다');
+        if (mounted) setState(() => _isLoading = false);
         return;
       }
 
-      final allBusinesses = await _firestoreService.getMyBusiness(uid);
+      // SubAdmin은 adminIds에 없으므로 effectiveBusinessId로 직접 조회
+      final effectiveBizId = userProvider.effectiveBusinessId;
+      final List<BusinessModel> allBusinesses;
+      if (userProvider.isSubAdmin && effectiveBizId != null) {
+        final biz = await _firestoreService.getBusinessById(effectiveBizId);
+        allBusinesses = biz != null ? [biz] : [];
+      } else {
+        allBusinesses = await _firestoreService.getMyBusiness(uid);
+      }
       final approvedBusinesses = allBusinesses.where((b) => b.isApproved).toList();
 
+      if (!mounted) return;
       setState(() {
         _myBusinesses = approvedBusinesses;
         if (_myBusinesses.isNotEmpty) {
@@ -125,14 +147,21 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
         _isLoading = false;
       });
 
-      if (allBusinesses.isNotEmpty && approvedBusinesses.isEmpty) {
-        ToastHelper.showWarning('승인된 사업장이 없습니다\n관리자 승인 후 공고를 등록할 수 있습니다');
-      } else if (approvedBusinesses.isEmpty) {
-        ToastHelper.showInfo('등록된 사업장이 없습니다');
+      if (approvedBusinesses.isEmpty) {
+        final msg = allBusinesses.isNotEmpty
+            ? '승인된 사업장이 없습니다.\n관리자 승인 후 공고를 등록할 수 있습니다.'
+            : '사업장을 먼저 등록해야 합니다.';
+        ToastHelper.showWarning(msg);
+        // 사전 조건 미충족 시 화면에서 자동 복귀
+        if (mounted) {
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (mounted) Navigator.of(context).pop();
+          });
+        }
       }
     } catch (e) {
       debugPrint('❌ 사업장 로드 실패: $e');
-      setState(() => _isLoading = false);
+      if (mounted) setState(() => _isLoading = false);
       ToastHelper.showError('사업장 정보를 불러올 수 없습니다');
     }
   }
@@ -141,6 +170,7 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
     if (_selectedBusiness == null) return;
     try {
       final workTypes = await _firestoreService.getBusinessWorkTypes(_selectedBusiness!.id);
+      if (!mounted) return;
       setState(() => _businessWorkTypes = workTypes);
     } catch (e) {
       debugPrint('❌ 업무 유형 로드 실패: $e');
@@ -161,9 +191,10 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
     DialogHelper.showLoading(context, message: '공고 목록 불러오는 중...');
 
     try {
-      final allTOs = await _firestoreService.getTOsByBusiness(_selectedBusiness!.id);
-      allTOs.sort((a, b) => b.createdAt.compareTo(a.createdAt));
-      _recentTOsForLoad = allTOs.take(30).toList();
+      _recentTOsForLoad = await _firestoreService.getTOsByBusiness(
+        _selectedBusiness!.id,
+        limit: 30,
+      );
     } catch (e) {
       debugPrint('❌ TO 목록 로드 실패: $e');
       if (mounted) Navigator.pop(context);
@@ -201,6 +232,15 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
           requiredCount: work.requiredCount,
           startTime: work.startTime,
           endTime: work.endTime,
+          shiftType: work.shiftType,
+          nightAllowanceApplied: work.nightAllowanceApplied,
+          nightIncluded: work.nightIncluded,
+          breakMinutes: work.breakMinutes,
+          baseHourlyWage: work.baseHourlyWage,
+          payScheduleType: work.payScheduleType,
+          payScheduleDay: work.payScheduleDay,
+          payScheduleTime: work.payScheduleTime,
+          taxDeductionType: work.taxDeductionType,
         ));
       }
     });
@@ -411,12 +451,13 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
         ToastHelper.showWarning('동일한 업무·시간대가 이미 추가되어 있습니다');
         return;
       }
-      setState(() => _workDetails.add(result));
+      setState(() { _workDetails.add(result); _hasChanges = true; });
     }
   }
 
   Future<void> _editWorkDetail(int index) async {
     final detail = _workDetails[index];
+    if (!detail.isValid) return;
 
     final tempData = WorkDetailData(
       workType: detail.workType!,
@@ -433,6 +474,10 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
       nightIncluded: detail.nightIncluded,
       breakMinutes: detail.breakMinutes,
       baseHourlyWage: detail.baseHourlyWage,
+      payScheduleType: detail.payScheduleType,
+      payScheduleDay: detail.payScheduleDay,
+      payScheduleTime: detail.payScheduleTime,
+      description: detail.description,
     );
 
     final result = await WorkDetailDialog.showEditDialog(
@@ -459,6 +504,11 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
           nightIncluded: result['nightIncluded'] ?? false,
           breakMinutes: result['breakMinutes'] ?? 0,
           baseHourlyWage: result['baseHourlyWage'],
+          payScheduleType: result['payScheduleType'],
+          payScheduleDay: result['payScheduleDay'],
+          payScheduleTime: result['payScheduleTime'],
+          taxDeductionType: result['taxDeductionType'] ?? detail.taxDeductionType,
+          description: result['description'],
         );
       });
     }
@@ -503,11 +553,14 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
 
   void _onJobTypeChanged(String newType) {
     setState(() {
+      _hasChanges = true;
       _selectedJobType = newType;
       _selectedDates.clear();
       _selectedWeekdays.clear();
       _rangeStart = null;
       _rangeEnd = null;
+      _contractPeriodType = null;
+      _postingDurationDays = 7;
       _fixedDeadline = null;
       _publishMode = 'immediate';
       _publishDaysBefore = 1;
@@ -522,6 +575,13 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
   /// 날짜 하나가 이미 마감시간 지났는지 확인
   bool _isSlotExpired(DateTime date) {
     final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    final dateOnly = DateTime(date.year, date.month, date.day);
+
+    // 어제 이전 날짜는 무조건 만료
+    if (dateOnly.isBefore(today)) return true;
+
+    // 오늘 날짜: 업무별 마감시각 확인
     if (!DateUtils.isSameDay(date, now)) return false;
     if (_workDetails.isEmpty) return false;
     return _workDetails.every((w) {
@@ -529,9 +589,11 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
       if (start == null) return false;
       final parts = start.split(':');
       if (parts.length != 2) return false;
+      final h = int.tryParse(parts[0]);
+      final m = int.tryParse(parts[1]);
+      if (h == null || m == null) return false;
       final deadline = DateTime(
-        date.year, date.month, date.day,
-        int.parse(parts[0]), int.parse(parts[1]),
+        date.year, date.month, date.day, h, m,
       ).subtract(Duration(hours: _hoursBeforeStart));
       return now.isAfter(deadline);
     });
@@ -551,22 +613,47 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
       return;
     }
 
-    if (_selectedJobType == 'flex') {
+    if (_selectedJobType == TOType.flex) {
       if (_selectedDates.isEmpty) {
         ToastHelper.showError('날짜를 선택해주세요');
         return;
       }
+      // 과거 날짜 포함 여부 경고 — _someSlotExpired 조건과 독립적으로 항상 표시
+      final today = DateTime.now();
+      final todayOnly = DateTime(today.year, today.month, today.day);
+      final hasPastDate = _selectedDates.any((d) =>
+          DateTime(d.year, d.month, d.day).isBefore(todayOnly));
+      if (hasPastDate && !_allSlotsExpired) {
+        ToastHelper.showWarning('과거 날짜가 포함되어 있습니다. 해당 날짜는 즉시 마감됩니다');
+      }
     } else {
-      if (_rangeStart == null || _rangeEnd == null) {
-        ToastHelper.showError('계약 기간을 설정해주세요');
+      if (_contractPeriodType == null) {
+        ToastHelper.showError('계약 기간을 선택해주세요');
         return;
+      }
+      if (_contractPeriodType == 'custom' && (_rangeStart == null || _rangeEnd == null)) {
+        ToastHelper.showError('계약 시작일과 종료일을 설정해주세요');
+        return;
+      }
+      if (_contractPeriodType == 'custom' &&
+          _rangeStart != null && _rangeEnd != null &&
+          _rangeStart!.isAfter(_rangeEnd!)) {
+        ToastHelper.showError('계약 시작일이 종료일보다 이후일 수 없습니다');
+        return;
+      }
+      if (_contractPeriodType == 'custom' && _rangeEnd != null) {
+        final todayOnly = DateTime(DateTime.now().year, DateTime.now().month, DateTime.now().day);
+        if (_rangeEnd!.isBefore(todayOnly)) {
+          ToastHelper.showWarning('계약 종료일이 과거 날짜입니다. 즉시 마감 처리됩니다');
+        }
       }
       if (_selectedWeekdays.isEmpty) {
         ToastHelper.showError('근무 요일을 선택해주세요');
         return;
       }
+      // contract 타입은 지원 마감일 필수
       if (_fixedDeadline == null) {
-        ToastHelper.showError('지원 마감 시간을 설정해주세요');
+        ToastHelper.showError('지원 마감일을 설정해주세요');
         return;
       }
     }
@@ -581,8 +668,18 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
       return;
     }
 
+    if (_workDetails.any((w) => (w.wage ?? 0) <= 0)) {
+      ToastHelper.showError('급여는 0원보다 커야 합니다');
+      return;
+    }
+
+    if (_workDetails.any((w) => (w.requiredCount ?? 0) <= 0)) {
+      ToastHelper.showError('필요 인원은 1명 이상이어야 합니다');
+      return;
+    }
+
     // flex 당일 슬롯 마감 경과 처리
-    if (_selectedJobType == 'flex') {
+    if (_selectedJobType == TOType.flex) {
       if (_allSlotsExpired) {
         // 전체 날짜 만료 → 강한 경고 (팝업)
         final proceed = await DialogHelper.showConfirm(
@@ -625,6 +722,16 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
                 requiredCount: e.value.requiredCount!,
                 startTime: e.value.startTime!,
                 endTime: e.value.endTime!,
+                shiftType: e.value.shiftType,
+                nightAllowanceApplied: e.value.nightAllowanceApplied,
+                nightIncluded: e.value.nightIncluded,
+                breakMinutes: e.value.breakMinutes,
+                baseHourlyWage: e.value.baseHourlyWage,
+                payScheduleType: e.value.payScheduleType,
+                payScheduleDay: e.value.payScheduleDay,
+                payScheduleTime: e.value.payScheduleTime,
+                taxDeductionType: e.value.taxDeductionType,
+                description: e.value.description,
                 order: e.key,
               ))
           .toList();
@@ -641,28 +748,40 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
         workDetails: workDetailList,
         creatorUID: uid,
         // flex 전용
-        dates: _selectedJobType == 'flex' ? _selectedDates : null,
-        deadlineType: _selectedJobType == 'flex' ? 'HOURS_BEFORE' : 'FIXED_TIME',
+        dates: _selectedJobType == TOType.flex ? _selectedDates : null,
+        deadlineType: _selectedJobType == TOType.flex ? 'HOURS_BEFORE' : 'FIXED_TIME',
         hoursBeforeStart: _hoursBeforeStart,
         // contract 전용
-        rangeStart: _selectedJobType == 'contract' ? _rangeStart : null,
-        rangeEnd: _selectedJobType == 'contract' ? _rangeEnd : null,
-        workDays: _selectedJobType == 'contract' ? _selectedWeekdays : null,
+        // 비-custom 계약기간은 rangeStart가 null일 수 있음 → 오늘로 기본값 (시간 제거)
+        rangeStart: _selectedJobType == TOType.contract
+            ? () {
+                final d = _rangeStart ?? DateTime.now();
+                return DateTime(d.year, d.month, d.day);
+              }()
+            : null,
+        rangeEnd: _selectedJobType == TOType.contract && _contractPeriodType == 'custom' ? _rangeEnd : null,
+        workDays: _selectedJobType == TOType.contract ? _selectedWeekdays : null,
         contractDeadline:
-            _selectedJobType == 'contract' ? _fixedDeadline?.toUtc() : null,
-        // 예약 공개
+            _selectedJobType == TOType.contract ? _fixedDeadline?.toUtc() : null,
+        contractPeriodType: _selectedJobType == TOType.contract ? _contractPeriodType : null,
+        postingDurationDays: _postingDurationDays, // flex·contract 모두 저장
+        // 공개 설정 (draft = 미공개 저장, scheduled = 예약공개, immediate = 즉시공개)
         publishMode: _publishMode,
         publishDaysBefore: _publishMode == 'scheduled' ? _publishDaysBefore : null,
         publishTime: _publishMode == 'scheduled' ? _publishTime : null,
       );
 
       if (toId != null && mounted) {
-        final label = _selectedJobType == 'contract'
-            ? '고정 근무 공고가 등록되었습니다'
-            : _selectedDates.length > 1
-                ? '${_selectedDates.length}일 공고가 등록되었습니다'
-                : '공고가 등록되었습니다';
+        final isDraft = _publishMode == 'draft';
+        final label = isDraft
+            ? '미공개로 저장되었습니다 (나중에 직접 공개하세요)'
+            : _selectedJobType == TOType.contract
+                ? '고정 근무 공고가 등록되었습니다'
+                : _selectedDates.length > 1
+                    ? '${_selectedDates.length}일 공고가 등록되었습니다'
+                    : '공고가 등록되었습니다';
         ToastHelper.showSuccess(label);
+        AnalyticsService.logTOCreate(toType: _selectedJobType);
         NavigationHelper.popWithChange(context);
       }
     } catch (e) {
@@ -680,9 +799,9 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
   @override
   Widget build(BuildContext context) {
     if (_isLoading) {
-      return Scaffold(
-        appBar: AppBar(title: const Text('공고 등록')),
-        body: const Center(child: CircularProgressIndicator()),
+      return GradientScaffold(
+        title: '공고 등록',
+        body: const LoadingWidget(),
       );
     }
 
@@ -690,24 +809,34 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
       return _buildEmptyBusinessState();
     }
 
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('공고 등록'),
+    return PopScope(
+      canPop: !_isCreating && !_hasChanges,
+      onPopInvokedWithResult: (didPop, _) async {
+        if (didPop || !_hasChanges) return;
+        final leave = await DialogHelper.showConfirm(
+          context,
+          title: '입력 중인 내용이 있습니다',
+          message: '공고 등록을 취소하시겠습니까?\n입력한 내용이 모두 사라집니다.',
+          confirmText: '나가기',
+          cancelText: '계속 작성',
+        );
+        if (leave && context.mounted) Navigator.pop(context);
+      },
+      child: GradientScaffold(
+        title: '공고 등록',
         actions: [
           IconButton(
             icon: Icon(Icons.file_copy_outlined,
+                color: Colors.white,
                 size: ResponsiveHelper.iconSize(context, 24)),
             onPressed: _selectedBusiness != null ? _showLoadFromExistingDialog : null,
             tooltip: '기존 공고 불러오기',
           ),
         ],
-      ),
-      body: Container(
-        color: AppColors.grey50,
-        child: Form(
+        body: Form(
           key: _formKey,
           child: ListView(
-            padding: ResponsiveHelper.cardPadding(context),
+            padding: ResponsiveHelper.listPadding(context),
             children: [
               _buildBusinessSelector(),
               SizedBox(height: ResponsiveHelper.spacing(context, 16)),
@@ -733,13 +862,14 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
               ),
               SizedBox(height: ResponsiveHelper.spacing(context, 16)),
 
+              // 마감 설정: flex = 시간기준(HOURS_BEFORE), contract = 날짜지정(FIXED_TIME)
               TODeadlineSection(
-                isLongTerm: _selectedJobType == 'contract',
+                isLongTerm: _selectedJobType == TOType.contract,
                 hoursBeforeStart: _hoursBeforeStart,
                 onHoursChanged: (h) => setState(() => _hoursBeforeStart = h),
                 fixedDeadline: _fixedDeadline,
                 onFixedDeadlineChanged: (dt) => setState(() => _fixedDeadline = dt),
-                rangeStartDate: _rangeStart,
+                rangeStartDate: _selectedJobType == TOType.contract ? _rangeStart : null,
               ),
               SizedBox(height: ResponsiveHelper.spacing(context, 16)),
 
@@ -750,10 +880,12 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
                 onDaysBeforeChanged: (d) => setState(() => _publishDaysBefore = d),
                 publishTime: _publishTime,
                 onTimeChanged: (t) => setState(() => _publishTime = t),
-                previewDates: _selectedJobType == 'contract'
+                previewDates: _selectedJobType == TOType.contract
                     ? (_rangeStart != null ? [_rangeStart!] : [])
                     : _selectedDates,
-                isLongTerm: _selectedJobType == 'contract',
+                isLongTerm: _selectedJobType == TOType.contract,
+                postingDurationDays: _postingDurationDays,
+                onPostingDurationChanged: (d) => setState(() => _postingDurationDays = d),
               ),
               SizedBox(height: ResponsiveHelper.spacing(context, 16)),
 
@@ -761,7 +893,7 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
               SizedBox(height: ResponsiveHelper.spacing(context, 24)),
 
               TOActionButton.create(
-                onPressed: _createTO,
+                onPressed: _isCreating ? null : _createTO,
                 isLoading: _isCreating,
               ),
               SizedBox(height: ResponsiveHelper.spacing(context, 40)),
@@ -769,12 +901,12 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
           ),
         ),
       ),
-    );
+    );     // PopScope
   }
 
   Widget _buildEmptyBusinessState() {
-    return Scaffold(
-      appBar: AppBar(title: const Text('공고 등록')),
+    return GradientScaffold(
+      title: '공고 등록',
       body: Center(
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
@@ -837,12 +969,12 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
             children: [
               Expanded(
                 child: _buildJobTypeChip(
-                    label: '단기 근무', value: 'flex', icon: Icons.today),
+                    label: '단기 근무', value: TOType.flex, icon: Icons.today),
               ),
               SizedBox(width: ResponsiveHelper.spacing(context, 12)),
               Expanded(
                 child: _buildJobTypeChip(
-                    label: '고정 근무', value: 'contract', icon: Icons.event_note),
+                    label: '고정 근무', value: TOType.contract, icon: Icons.event_note),
               ),
             ],
           ),
@@ -882,11 +1014,15 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
                 color: isSelected ? Colors.white : AppColors.grey700,
                 size: ResponsiveHelper.iconSize(context, 20)),
             SizedBox(width: ResponsiveHelper.spacing(context, 8)),
-            Text(label,
-                style: ResponsiveHelper.subtitleStyle(context).copyWith(
-                  color: isSelected ? Colors.white : AppColors.grey700,
-                  fontWeight: FontWeight.bold,
-                )),
+            Flexible(
+              child: Text(label,
+                  style: ResponsiveHelper.subtitleStyle(context).copyWith(
+                    color: isSelected ? Colors.white : AppColors.grey700,
+                    fontWeight: FontWeight.bold,
+                  ),
+                  overflow: TextOverflow.ellipsis,
+                  maxLines: 1),
+            ),
           ],
         ),
       ),
@@ -943,16 +1079,21 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
 
   Widget _buildDateSelector() {
     return TODateSelector(
-      isLongTerm: _selectedJobType == 'contract',
+      isLongTerm: _selectedJobType == TOType.contract,
       selectedDates: _selectedDates,
       onDateToggle: _onDateToggle,
       onClearAll: _clearAllDates,
       rangeStart: _rangeStart,
       rangeEnd: _rangeEnd,
       selectedWeekdays: _selectedWeekdays,
-      onRangeStartChanged: (date) => setState(() => _rangeStart = date),
+      onRangeStartChanged: (date) => setState(() => _rangeStart = date.year == 0 ? null : date),
       onRangeEndChanged: (date) => setState(() => _rangeEnd = date),
       onWeekdayToggle: _onWeekdayToggle,
+      contractPeriodType: _contractPeriodType,
+      onContractPeriodTypeChanged: (type) => setState(() {
+        _contractPeriodType = type;
+        if (type != 'custom') _rangeEnd = null;
+      }),
     );
   }
 }

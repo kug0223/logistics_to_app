@@ -2,9 +2,11 @@
 import 'package:url_launcher/url_launcher.dart';
 import 'package:flutter/services.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:provider/provider.dart';
 
 // Models
 import '../../models/core/business_model.dart';
+import '../../providers/user_provider.dart';
 
 // Utils
 import '../../utils/responsive_helper.dart';
@@ -21,6 +23,7 @@ import '../../widgets/maps/full_map_dialog.dart';
 import 'business_form_screen.dart';
 import '../../utils/navigation_helper.dart';
 import '../../theme/app_colors.dart';
+import '../../widgets/common/gradient_scaffold.dart';
 
 
 /// 🏢 사업장 상세 화면
@@ -47,7 +50,7 @@ class _BusinessDetailScreenState extends State<BusinessDetailScreen> {
     _currentBusiness = widget.business;
   }
 
-  // ✅ Firestore에서 최신 데이터 다시 가져오기
+  // Firestore에서 최신 데이터 다시 가져오기
   Future<void> _reloadBusiness() async {
     try {
       debugPrint('🔄 사업장 데이터 재조회 시작: ${_currentBusiness.id}');
@@ -57,9 +60,10 @@ class _BusinessDetailScreenState extends State<BusinessDetailScreen> {
           .doc(_currentBusiness.id)
           .get(const GetOptions(source: Source.server));
       
-      if (doc.exists && mounted) {
+      final docData = doc.data();
+      if (doc.exists && docData != null && mounted) {
         setState(() {
-          _currentBusiness = BusinessModel.fromMap(doc.data()!, doc.id);
+          _currentBusiness = BusinessModel.fromMap(docData, doc.id);
           _hasChanges = true;  // 변경 발생 표시
         });
         debugPrint('✅ 사업장 데이터 업데이트 완료!');
@@ -84,34 +88,25 @@ class _BusinessDetailScreenState extends State<BusinessDetailScreen> {
           // business_list_screen에서 무조건 _loadBusinesses() 호출하는 방식 유지
         }
       },
-      child: Scaffold(
-        appBar: AppBar(
-          leading: IconButton(
-            icon: const Icon(Icons.arrow_back),
-            onPressed: () => NavigationHelper.pop(context, changed: _hasChanges),
-          ),
-          title: Text(_currentBusiness.name),
-          actions: [
-            // 수정 버튼
+      child: GradientScaffold(
+        title: _currentBusiness.name,
+        onBack: () => NavigationHelper.pop(context, changed: _hasChanges),
+        actions: [
+          if (!context.read<UserProvider>().isSubAdmin)
             IconButton(
-              icon: const Icon(Icons.edit_outlined),
+              icon: const Icon(Icons.edit_outlined, color: Colors.white),
               onPressed: () async {
                 await NavigationHelper.push<bool>(
                   context,
-                  destination: BusinessFormScreen(
-                    business: _currentBusiness,
-                  ),
+                  destination: BusinessFormScreen(business: _currentBusiness),
                   onReturn: (result) async {
-                    if (result == true && mounted) {
-                      await _reloadBusiness();
-                    }
+                    if (result == true && mounted) await _reloadBusiness();
                   },
                 );
               },
             ),
-          ],
-        ),
-          body: SingleChildScrollView(
+        ],
+        body: SingleChildScrollView(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
@@ -119,7 +114,7 @@ class _BusinessDetailScreenState extends State<BusinessDetailScreen> {
                 _buildImageSlider(context),
 
                 Padding(
-                  padding: ResponsiveHelper.cardPadding(context),
+                  padding: ResponsiveHelper.listPadding(context),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
@@ -187,14 +182,16 @@ class _BusinessDetailScreenState extends State<BusinessDetailScreen> {
 
     if (images.isEmpty) {
       // 이미지가 없을 때
-      return Container(
-        height: 250,
-        color: AppColors.grey200,
-        child: Center(
-          child: Icon(
-            Icons.business,
-            size: ResponsiveHelper.iconSize(context, 80),
-            color: AppColors.grey400,
+      return ConstrainedBox(
+        constraints: const BoxConstraints(maxHeight: 250),
+        child: Container(
+          color: AppColors.grey200,
+          child: Center(
+            child: Icon(
+              Icons.business,
+              size: ResponsiveHelper.iconSize(context, 80),
+              color: AppColors.grey400,
+            ),
           ),
         ),
       );
@@ -203,20 +200,22 @@ class _BusinessDetailScreenState extends State<BusinessDetailScreen> {
     return Stack(
       children: [
         // 이미지
-        SizedBox(
-          height: 250,
-          child: PageView.builder(
-            itemCount: images.length,
-            onPageChanged: (index) {
-              setState(() => _currentImageIndex = index);
-            },
-            itemBuilder: (context, index) {
-              return ImageHelper.buildCachedImage(
-                images[index],
-                fit: BoxFit.cover,
-                height: 250,
-              );
-            },
+        ConstrainedBox(
+          constraints: const BoxConstraints(maxHeight: 250),
+          child: SizedBox(
+            child: PageView.builder(
+              itemCount: images.length,
+              onPageChanged: (index) {
+                setState(() => _currentImageIndex = index);
+              },
+              itemBuilder: (context, index) {
+                return ImageHelper.buildCachedImage(
+                  images[index],
+                  fit: BoxFit.cover,
+                  height: 250,
+                );
+              },
+            ),
           ),
         ),
 
@@ -344,7 +343,7 @@ class _BusinessDetailScreenState extends State<BusinessDetailScreen> {
         SizedBox(height: ResponsiveHelper.spacing(context, 12)),
         Container(
           decoration: CommonWidgets.cardDecoration(),
-          padding: ResponsiveHelper.cardPadding(context),
+          padding: ResponsiveHelper.listPadding(context),
           child: Column(
             children: [
               _buildInfoRow(context, '업종', _currentBusiness.category),
@@ -358,7 +357,7 @@ class _BusinessDetailScreenState extends State<BusinessDetailScreen> {
                 '사업자번호',
                 _currentBusiness.formattedBusinessNumber,
               ),
-              // ✅ 상호명 추가 (사업자번호 바로 밑)
+              // 상호명 (사업자번호 바로 밑)
               if (_currentBusiness.companyName != null && _currentBusiness.companyName!.isNotEmpty) ...[
                 Divider(height: ResponsiveHelper.spacing(context, 24)),
                 _buildInfoRow(context, '상호명', _currentBusiness.companyName!),
@@ -399,7 +398,7 @@ class _BusinessDetailScreenState extends State<BusinessDetailScreen> {
         SizedBox(height: ResponsiveHelper.spacing(context, 12)),
         Container(
           decoration: CommonWidgets.cardDecoration(),
-          padding: ResponsiveHelper.cardPadding(context),
+          padding: ResponsiveHelper.listPadding(context),
           child: Column(
             children: [
               // 주차
@@ -418,8 +417,8 @@ class _BusinessDetailScreenState extends State<BusinessDetailScreen> {
                   context,
                   Icons.restaurant,
                   '식사 제공',
-                  _currentBusiness.mealsProvided!.join(', '),  // ⭐ List를 문자열로 조합
-                  true,  // ⭐ 항목이 있으면 무조건 true
+                  _currentBusiness.mealsProvided!.join(', '),
+                  true,
                 ),
               ],
 
@@ -506,7 +505,7 @@ class _BusinessDetailScreenState extends State<BusinessDetailScreen> {
         SizedBox(height: ResponsiveHelper.spacing(context, 12)),
         Container(
           decoration: CommonWidgets.cardDecoration(),
-          padding: ResponsiveHelper.cardPadding(context),
+          padding: ResponsiveHelper.listPadding(context),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
@@ -617,7 +616,7 @@ class _BusinessDetailScreenState extends State<BusinessDetailScreen> {
                 ),
               ],
 
-              // ✨ 지도 미리보기 (NEW!)
+              // 지도 미리보기
               if (_currentBusiness.latitude != null && _currentBusiness.longitude != null) ...[
                 SizedBox(height: ResponsiveHelper.spacing(context, 16)),
                 GestureDetector(
@@ -679,7 +678,7 @@ class _BusinessDetailScreenState extends State<BusinessDetailScreen> {
         Container(
           width: double.infinity,
           decoration: CommonWidgets.cardDecoration(),
-          padding: ResponsiveHelper.cardPadding(context),
+          padding: ResponsiveHelper.listPadding(context),
           child: Text(
             _currentBusiness.detailedDescription!,
             style: ResponsiveHelper.bodyStyle(context),

@@ -58,6 +58,24 @@ class _WorkTypeManagementScreenState extends State<WorkTypeManagementScreen> {
         return;
       }
 
+      // SubAdmin은 adminIds에 없으므로 effectiveBusinessId로 직접 조회
+      final effectiveBizId = userProvider.effectiveBusinessId;
+      if (userProvider.isSubAdmin && effectiveBizId != null) {
+        final biz = await _firestoreService.getBusinessById(effectiveBizId);
+        if (!mounted) return;
+        setState(() {
+          _myBusinesses = biz != null ? [biz] : [];
+          if (_myBusinesses.isNotEmpty) {
+            _selectedBusiness = _myBusinesses.first;
+            _loadWorkTypes();
+          } else {
+            _isLoading = false;
+          }
+          _isLoadingBusinesses = false;
+        });
+        return;
+      }
+
       final businesses = await _firestoreService.getMyBusiness(uid);
 
       if (!mounted) return;
