@@ -550,6 +550,8 @@ extension TOFirestore on FirestoreService {
     DateTime? applicationDeadline,
     String? title,
     int? oldTotalRequired,
+    DateTime? visibleFrom,
+    bool clearVisibleFrom = false,
   }) async {
     final slotRef = _firestore
         .collection('tos').doc(toId)
@@ -564,6 +566,8 @@ extension TOFirestore on FirestoreService {
           : FieldValue.delete(),
       if (title != null && title.isNotEmpty) 'title': title
       else 'title': FieldValue.delete(),
+      if (clearVisibleFrom) 'visibleFrom': FieldValue.delete()
+      else if (visibleFrom != null) 'visibleFrom': Timestamp.fromDate(visibleFrom.toUtc()),
     });
 
     // 요구인원 변경 시 마스터 TO의 totalRequired 동기화
@@ -763,6 +767,7 @@ extension TOFirestore on FirestoreService {
     required List<WorkDetailData> workDetails,
     int? hoursBeforeStart,
     String? title,
+    DateTime? visibleFrom,
   }) async {
     await _createSlots(
       toId: to.id,
@@ -775,6 +780,7 @@ extension TOFirestore on FirestoreService {
       publishDaysBefore: to.publishDaysBefore,
       publishTime: to.publishTime,
       slotTitle: title,
+      overrideVisibleFrom: visibleFrom,
     );
 
     final slotRequired = workDetails.fold<int>(0, (s, d) => s + d.requiredCount);
@@ -940,6 +946,7 @@ extension TOFirestore on FirestoreService {
     int? publishDaysBefore,
     String? publishTime,
     String? slotTitle,
+    DateTime? overrideVisibleFrom,
   }) async {
     var batch = _firestore.batch();
     int count = 0;
@@ -972,9 +979,10 @@ extension TOFirestore on FirestoreService {
           .fold<DateTime?>(null, (earliest, dt) =>
               earliest == null || dt.isBefore(earliest) ? dt : earliest);
 
-      // 슬롯 공개 시각 (각 슬롯 날짜 기준 N일 전 publishTime)
-      DateTime? visibleFrom;
-      if (publishMode == 'scheduled' &&
+      // 슬롯 공개 시각: override가 있으면 우선 사용, 없으면 TO 설정 기준 계산
+      DateTime? visibleFrom = overrideVisibleFrom?.toUtc();
+      if (visibleFrom == null &&
+          publishMode == 'scheduled' &&
           publishDaysBefore != null &&
           publishTime != null) {
         final parts = publishTime.split(':');

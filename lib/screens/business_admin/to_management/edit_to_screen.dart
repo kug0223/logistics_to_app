@@ -88,6 +88,21 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
     _publishDaysBefore = widget.to.publishDaysBefore ?? 1;
     _publishTime = widget.to.publishTime ?? '14:00';
     _postingDurationDays = widget.to.postingDurationDays;
+
+    // 슬롯 모드: 슬롯의 visibleFrom 기반으로 공개 설정 초기화
+    if (widget.isSlotMode) {
+      final slot = widget.slot;
+      if (slot?.visibleFrom != null) {
+        _publishMode = 'scheduled';
+        final vf = slot!.visibleFrom!;
+        final diff = slot.date.difference(DateTime(vf.year, vf.month, vf.day)).inDays;
+        _publishDaysBefore = diff.clamp(1, 14);
+        _publishTime = '${vf.hour.toString().padLeft(2, '0')}:${vf.minute.toString().padLeft(2, '0')}';
+      } else {
+        // draft면 즉시공개로, 아니면 TO 설정 유지
+        if (widget.to.publishMode == 'draft') _publishMode = 'immediate';
+      }
+    }
     _titleController.addListener(_markChanged);
     _descriptionController.addListener(_markChanged);
     _loadData();
@@ -395,13 +410,20 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
       }).toList();
 
       // 슬롯 레벨 마감 = 가장 이른 업무 마감
-      // applicationDeadline이 null인 항목 제외 후 최솟값 계산
       final deadlines = updatedWorkDetails
           .map((d) => d.applicationDeadline)
           .whereType<DateTime>()
           .toList();
       if (deadlines.isNotEmpty) {
         slotDeadline = deadlines.reduce((a, b) => a.isBefore(b) ? a : b);
+      }
+
+      // 슬롯 visibleFrom 계산
+      final (visibleFrom, clearVisibleFrom) = _calcSlotVisibleFrom(slot.date);
+
+      // TO가 미공개면 자동 전환
+      if (widget.to.publishMode == 'draft') {
+        await _applyTODraftTransition(visibleFrom);
       }
 
       await _firestoreService.updateSlotFull(
@@ -411,6 +433,8 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
         applicationDeadline: slotDeadline,
         title: _slotTitleController.text.trim(),
         oldTotalRequired: slot.totalRequired,
+        visibleFrom: visibleFrom,
+        clearVisibleFrom: clearVisibleFrom,
       );
 
       _firestoreService.clearCache(toId: widget.to.id);
@@ -471,35 +495,21 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
 
   Future<void> _saveNewSlotChanges() async {
     try {
+      // TO 미공개면 자동 전환
+      if (widget.to.publishMode == 'draft') {
+        final (visibleFrom, _) = _calcSlotVisibleFrom(widget.newSlotDate!);
+        await _applyTODraftTransition(visibleFrom);
+      }
+
+      final (newSlotVisibleFrom, _) = _calcSlotVisibleFrom(widget.newSlotDate!);
       await _firestoreService.addSlot(
         to: widget.to,
         date: widget.newSlotDate!,
         workDetails: _workDetails,
         hoursBeforeStart: _hoursBeforeStart,
         title: _slotTitleController.text.trim(),
+        visibleFrom: newSlotVisibleFrom,
       );
-
-      // 공개 설정이 변경됐으면 TO 문서 + 전체 슬롯(새 슬롯 포함) 동기화
-      final publishSettingsChanged =
-          _publishMode != widget.to.publishMode ||
-          _publishDaysBefore != (widget.to.publishDaysBefore ?? 1) ||
-          _publishTime != (widget.to.publishTime ?? '14:00');
-
-      if (publishSettingsChanged) {
-        await _firestoreService.updateTOPublishSettings(
-          toId: widget.to.id,
-          publishMode: _publishMode,
-          publishDaysBefore:
-              _publishMode == 'scheduled' ? _publishDaysBefore : null,
-          publishTime: _publishMode == 'scheduled' ? _publishTime : null,
-        );
-        await _firestoreService.updateSlotsPublishSettings(
-          toId: widget.to.id,
-          publishMode: _publishMode,
-          publishDaysBefore: _publishDaysBefore,
-          publishTime: _publishTime,
-        );
-      }
 
       _firestoreService.clearCache(toId: widget.to.id);
       ToastHelper.showSuccess(
@@ -517,10 +527,19 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
     try {
       final slots = widget.batchSlots!;
 
+      // TO 미공개면 자동 전환 (가장 이른 visibleFrom 기준)
+      if (widget.to.publishMode == 'draft') {
+        final earliestVisibleFrom = slots
+            .map((s) => _calcSlotVisibleFrom(s.date).$1)
+            .whereType<DateTime>()
+            .fold<DateTime?>(null, (e, vf) => e == null || vf.isBefore(e) ? vf : e);
+        final anyImmediate = slots.any((s) => _calcSlotVisibleFrom(s.date).$1 == null);
+        await _applyTODraftTransition(anyImmediate ? null : earliestVisibleFrom);
+      }
+
       int successCount = 0;
       final failedSlots = <String>[];
       for (final slot in slots) {
-        // 슬롯 날짜 기준으로 각 업무의 applicationDeadline 재계산
         final updatedWorkDetails = _workDetails.map((work) {
           final parts = work.startTime.split(':');
           if (parts.length != 2) return work;
@@ -531,7 +550,6 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
           return work.copyWith(applicationDeadline: deadline);
         }).toList();
 
-        // 슬롯 레벨 마감 = 가장 이른 업무 마감
         DateTime? slotDeadline;
         if (updatedWorkDetails.isNotEmpty) {
           slotDeadline = updatedWorkDetails
@@ -541,6 +559,8 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
                   earliest == null || dt.isBefore(earliest) ? dt : earliest);
         }
 
+        final (visibleFrom, clearVisibleFrom) = _calcSlotVisibleFrom(slot.date);
+
         try {
           await _firestoreService.updateSlotFull(
             toId: widget.to.id,
@@ -548,6 +568,8 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
             workDetails: updatedWorkDetails,
             applicationDeadline: slotDeadline,
             oldTotalRequired: slot.totalRequired,
+            visibleFrom: visibleFrom,
+            clearVisibleFrom: clearVisibleFrom,
           );
           successCount++;
         } catch (e) {
@@ -769,6 +791,31 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
                 SizedBox(height: ResponsiveHelper.spacing(context, 24)),
               ],
 
+              // 슬롯 모드: 개별/일괄 슬롯 공개 설정
+              if (widget.isSlotMode) ...[
+                if (widget.to.publishMode == 'draft')
+                  _buildDraftWarningBanner(context),
+                if (widget.to.publishMode == 'draft')
+                  SizedBox(height: ResponsiveHelper.spacing(context, 12)),
+                TOPublishSection(
+                  slotMode: true,
+                  publishMode: _publishMode,
+                  onPublishModeChanged: (m) => setState(() => _publishMode = m),
+                  publishDaysBefore: _publishDaysBefore,
+                  onDaysBeforeChanged: (d) =>
+                      setState(() => _publishDaysBefore = d),
+                  publishTime: _publishTime,
+                  onTimeChanged: (t) => setState(() => _publishTime = t),
+                  previewDates: widget.isBatchMode
+                      ? widget.batchSlots!.map((s) => s.date).toList()
+                      : widget.isNewSlot
+                          ? [widget.newSlotDate!]
+                          : (widget.slot != null ? [widget.slot!.date] : []),
+                  isLongTerm: false,
+                ),
+                SizedBox(height: ResponsiveHelper.spacing(context, 24)),
+              ],
+
               TOActionButton.save(
                 onPressed: _isSaving ? null : _saveChanges,
                 isLoading: _isSaving,
@@ -886,6 +933,71 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
             '선택한 모든 날짜에 동일하게 적용됩니다.\n$dateLabels',
             style: ResponsiveHelper.smallStyle(context,
                 color: AppColors.warningDark),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// 슬롯 날짜 기준으로 visibleFrom 계산. (visibleFrom, clearVisibleFrom) 반환
+  (DateTime?, bool) _calcSlotVisibleFrom(DateTime slotDate) {
+    if (_publishMode != 'scheduled') return (null, true);
+    final parts = _publishTime.split(':');
+    var vf = DateTime(
+      slotDate.year, slotDate.month, slotDate.day,
+      int.parse(parts[0]), int.parse(parts[1]),
+    ).subtract(Duration(days: _publishDaysBefore));
+    if (vf.isBefore(DateTime.now())) {
+      ToastHelper.showInfo('공개 예정 시간이 지나 즉시 공개로 전환됩니다');
+      return (null, true);
+    }
+    return (vf, false);
+  }
+
+  /// TO가 draft일 때 공개 설정에 따라 자동 전환
+  Future<void> _applyTODraftTransition(DateTime? visibleFrom) async {
+    if (visibleFrom == null) {
+      await _firestoreService.updateTO(widget.to.id, {
+        'isPublished': true,
+        'publishMode': 'immediate',
+        'status': TOStatus.active,
+        'statusUpdatedAt': FieldValue.serverTimestamp(),
+      });
+      ToastHelper.showInfo('미공개 공고가 즉시 공개로 전환되었습니다');
+    } else {
+      final m = visibleFrom.month;
+      final d = visibleFrom.day;
+      final h = visibleFrom.hour.toString().padLeft(2, '0');
+      final min = visibleFrom.minute.toString().padLeft(2, '0');
+      await _firestoreService.updateTO(widget.to.id, {
+        'publishMode': 'scheduled',
+        'publishAt': Timestamp.fromDate(visibleFrom.toUtc()),
+        'isPublished': false,
+        'status': TOStatus.draft,
+      });
+      ToastHelper.showInfo('미공개 → 예약공개 전환 ($m/$d $h:$min 공개 예정)');
+    }
+  }
+
+  Widget _buildDraftWarningBanner(BuildContext context) {
+    return Container(
+      padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 12)),
+      decoration: BoxDecoration(
+        color: AppColors.warningBg,
+        borderRadius: BorderRadius.circular(ResponsiveHelper.spacing(context, 10)),
+        border: Border.all(color: AppColors.warningLight),
+      ),
+      child: Row(
+        children: [
+          Icon(Icons.visibility_off_outlined,
+              size: ResponsiveHelper.iconSize(context, 16),
+              color: AppColors.warningDark),
+          SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+          Expanded(
+            child: Text(
+              '현재 공고가 미공개 상태입니다. 공개 설정 시 자동으로 전환됩니다.',
+              style: ResponsiveHelper.smallStyle(context, color: AppColors.warningDark),
+            ),
           ),
         ],
       ),

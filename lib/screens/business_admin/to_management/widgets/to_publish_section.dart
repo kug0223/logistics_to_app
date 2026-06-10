@@ -27,6 +27,9 @@ class TOPublishSection extends StatelessWidget {
   /// 장기 근무 여부
   final bool isLongTerm;
 
+  /// 슬롯 수정 모드: true면 '미공개 저장' 옵션 숨김
+  final bool slotMode;
+
   /// 게시 기간 (일수): 1, 2, 3, 5, 7
   final int? postingDurationDays;
   final void Function(int? days)? onPostingDurationChanged;
@@ -41,6 +44,7 @@ class TOPublishSection extends StatelessWidget {
     required this.onTimeChanged,
     this.previewDates = const [],
     this.isLongTerm = false,
+    this.slotMode = false,
     this.postingDurationDays,
     this.onPostingDurationChanged,
   });
@@ -86,15 +90,16 @@ class TOPublishSection extends StatelessWidget {
 
           SizedBox(height: ResponsiveHelper.spacing(context, 12)),
 
-          // 미공개(초안) 옵션
-          _buildRadioOption(
-            context,
-            theme,
-            value: 'draft',
-            title: '미공개 저장',
-            subtitle: '지원자에게 노출되지 않음 · 나중에 직접 공개',
-            icon: Icons.visibility_off_outlined,
-          ),
+          // 미공개(초안) 옵션 — 슬롯 수정 모드에선 숨김
+          if (!slotMode)
+            _buildRadioOption(
+              context,
+              theme,
+              value: 'draft',
+              title: '미공개 저장',
+              subtitle: '지원자에게 노출되지 않음 · 나중에 직접 공개',
+              icon: Icons.visibility_off_outlined,
+            ),
 
           // 예약 설정 상세 (예약 모드일 때만)
           if (publishMode == 'scheduled') ...[
