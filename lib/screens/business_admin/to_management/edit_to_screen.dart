@@ -73,6 +73,8 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
   int _publishDaysBefore = 1;
   String _publishTime = '14:00';
   int? _postingDurationDays;
+  // 슬롯 모드에서 draft TO의 공개 설정을 실제로 변경했는지 추적
+  bool _slotPublishChanged = false;
 
   @override
   void initState() {
@@ -421,8 +423,8 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
       // 슬롯 visibleFrom 계산
       final (visibleFrom, clearVisibleFrom) = _calcSlotVisibleFrom(slot.date);
 
-      // TO가 미공개면 자동 전환
-      if (widget.to.publishMode == 'draft') {
+      // 공개 설정을 명시적으로 변경했을 때만 draft TO 자동 전환
+      if (_slotPublishChanged && widget.to.publishMode == 'draft') {
         await _applyTODraftTransition(visibleFrom);
       }
 
@@ -495,13 +497,12 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
 
   Future<void> _saveNewSlotChanges() async {
     try {
-      // TO 미공개면 자동 전환
-      if (widget.to.publishMode == 'draft') {
-        final (visibleFrom, _) = _calcSlotVisibleFrom(widget.newSlotDate!);
-        await _applyTODraftTransition(visibleFrom);
-      }
-
       final (newSlotVisibleFrom, _) = _calcSlotVisibleFrom(widget.newSlotDate!);
+
+      // 공개 설정을 명시적으로 변경했을 때만 draft TO 자동 전환
+      if (_slotPublishChanged && widget.to.publishMode == 'draft') {
+        await _applyTODraftTransition(newSlotVisibleFrom);
+      }
       await _firestoreService.addSlot(
         to: widget.to,
         date: widget.newSlotDate!,
@@ -527,13 +528,13 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
     try {
       final slots = widget.batchSlots!;
 
-      // TO 미공개면 자동 전환 (가장 이른 visibleFrom 기준)
-      if (widget.to.publishMode == 'draft') {
-        final earliestVisibleFrom = slots
-            .map((s) => _calcSlotVisibleFrom(s.date).$1)
+      // 공개 설정을 명시적으로 변경했을 때만 draft TO 자동 전환 (이중 호출 방지를 위해 결과 캐싱)
+      if (_slotPublishChanged && widget.to.publishMode == 'draft') {
+        final visibleFroms = slots.map((s) => _calcSlotVisibleFrom(s.date).$1).toList();
+        final anyImmediate = visibleFroms.any((vf) => vf == null);
+        final earliestVisibleFrom = visibleFroms
             .whereType<DateTime>()
             .fold<DateTime?>(null, (e, vf) => e == null || vf.isBefore(e) ? vf : e);
-        final anyImmediate = slots.any((s) => _calcSlotVisibleFrom(s.date).$1 == null);
         await _applyTODraftTransition(anyImmediate ? null : earliestVisibleFrom);
       }
 
@@ -800,12 +801,20 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
                 TOPublishSection(
                   slotMode: true,
                   publishMode: _publishMode,
-                  onPublishModeChanged: (m) => setState(() => _publishMode = m),
+                  onPublishModeChanged: (m) => setState(() {
+                    _publishMode = m;
+                    _slotPublishChanged = true;
+                  }),
                   publishDaysBefore: _publishDaysBefore,
-                  onDaysBeforeChanged: (d) =>
-                      setState(() => _publishDaysBefore = d),
+                  onDaysBeforeChanged: (d) => setState(() {
+                    _publishDaysBefore = d;
+                    _slotPublishChanged = true;
+                  }),
                   publishTime: _publishTime,
-                  onTimeChanged: (t) => setState(() => _publishTime = t),
+                  onTimeChanged: (t) => setState(() {
+                    _publishTime = t;
+                    _slotPublishChanged = true;
+                  }),
                   previewDates: widget.isBatchMode
                       ? widget.batchSlots!.map((s) => s.date).toList()
                       : widget.isNewSlot
@@ -973,7 +982,8 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
         'publishMode': 'scheduled',
         'publishAt': Timestamp.fromDate(visibleFrom.toUtc()),
         'isPublished': false,
-        'status': TOStatus.draft,
+        'status': TOStatus.scheduled,
+        'statusUpdatedAt': FieldValue.serverTimestamp(),
       });
       ToastHelper.showInfo('미공개 → 예약공개 전환 ($m/$d $h:$min 공개 예정)');
     }
