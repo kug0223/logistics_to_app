@@ -1,5 +1,4 @@
 ﻿import 'package:flutter/material.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 import '../../utils/responsive_helper.dart';
 import '../../theme/app_colors.dart';
 
@@ -181,10 +180,7 @@ class _OnboardingScreenState extends State<OnboardingScreen>
     }
   }
 
-  Future<void> _completeOnboarding() async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setBool('onboarding_completed', true);
-    if (!mounted) return;
+  void _completeOnboarding() {
     widget.onComplete();
   }
 
@@ -498,14 +494,4 @@ class _Feature {
   final Color color;
 
   const _Feature(this.icon, this.label, this.color);
-}
-
-Future<bool> isOnboardingCompleted() async {
-  final prefs = await SharedPreferences.getInstance();
-  return prefs.getBool('onboarding_completed') ?? false;
-}
-
-Future<void> resetOnboarding() async {
-  final prefs = await SharedPreferences.getInstance();
-  await prefs.remove('onboarding_completed');
 }

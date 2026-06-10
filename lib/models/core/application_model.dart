@@ -85,6 +85,9 @@ class ApplicationModel {
   /// 지원 유형: 'long_term' (장기/고정) | 'short' (단기)
   final String? applicationType;
 
+  /// 관리자 관심표시 여부
+  final bool isStarred;
+
   ApplicationModel({
     required this.id,
     required this.businessId,
@@ -153,7 +156,7 @@ class ApplicationModel {
     // 🔥 상태 변경 이력
     this.statusHistory,
     this.applicationType,
-
+    this.isStarred = false,
   });
 
   /// Firestore 문서를 ApplicationModel로 변환
@@ -271,6 +274,7 @@ class ApplicationModel {
               .toList()
           : null,
       applicationType: data['type'] as String?,
+      isStarred: data['isStarred'] as bool? ?? false,
     );
   }
   
@@ -352,6 +356,7 @@ class ApplicationModel {
       // 🔥 상태 변경 이력 (Timestamp 변환)
       'statusHistory': statusHistory,
       'type': applicationType,
+      'isStarred': isStarred,
     };
   }
 
@@ -448,6 +453,7 @@ class ApplicationModel {
     // 🔥 상태 변경 이력
     List<Map<String, dynamic>>? statusHistory,
     String? applicationType,
+    bool? isStarred,
   }) {
     return ApplicationModel(
       id: id ?? this.id,
@@ -514,6 +520,7 @@ class ApplicationModel {
       // 🔥 상태 변경 이력
       statusHistory: statusHistory ?? this.statusHistory,
       applicationType: applicationType ?? this.applicationType,
+      isStarred: isStarred ?? this.isStarred,
     );
   }
 

@@ -384,8 +384,10 @@ service cloud.firestore {
     match /monthly_reviews/{reviewId} {
 
       // get: 본인(작성자/수신자), 해당 사업장 관리자, 공개 리뷰
+      // resource == null: 문서 미존재 시 존재 여부 확인 허용 (리뷰 작성 여부 체크)
       allow get: if isLoggedIn() && (
         isSuperAdmin() ||
+        resource == null ||
         resource.data.reviewerId == request.auth.uid ||
         resource.data.targetUserId == request.auth.uid ||
         isAdminOf(resource.data.businessId) ||

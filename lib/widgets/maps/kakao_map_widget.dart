@@ -64,7 +64,7 @@ class _KakaoMapWidgetState extends State<KakaoMapWidget> {
           },
         ),
       )
-      ..loadHtmlString(_buildMapHtml());
+      ..loadHtmlString(_buildMapHtml(), baseUrl: 'https://localhost');
   }
 
   /// 🗺️ 카카오맵 HTML 생성
@@ -221,57 +221,11 @@ class _KakaoMapWidgetState extends State<KakaoMapWidget> {
                           color: theme.textTheme.bodySmall?.color,
                         ),
                       ),
-                      SizedBox(height: ResponsiveHelper.spacing(context, 8)),
-                      Text(
-                        '시뮬레이터에서는 시간이 걸릴 수 있습니다',
-                        style: ResponsiveHelper.smallStyle(context).copyWith(
-                          color: theme.textTheme.bodySmall?.color?.withValues(alpha: 0.7),
-                        ),
-                        textAlign: TextAlign.center,
-                      ),
                     ],
                   ),
                 ),
               ),
             
-            // 🆕 지도 대체 UI (실제 기기 권장)
-            Positioned(
-              bottom: ResponsiveHelper.spacing(context, 8),
-              left: ResponsiveHelper.spacing(context, 8),
-              child: Container(
-                padding: EdgeInsets.symmetric(
-                  horizontal: ResponsiveHelper.spacing(context, 8),
-                  vertical: ResponsiveHelper.spacing(context, 4),
-                ),
-                decoration: BoxDecoration(
-                  color: Colors.white.withValues(alpha: 0.9),
-                  borderRadius: BorderRadius.circular(8),
-                  boxShadow: [
-                    BoxShadow(
-                      color: Colors.black.withValues(alpha: 0.1),
-                      blurRadius: 4,
-                    ),
-                  ],
-                ),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Icon(
-                      Icons.info_outline,
-                      size: ResponsiveHelper.iconSize(context, 14),
-                      color: theme.primaryColor,
-                    ),
-                    SizedBox(width: ResponsiveHelper.spacing(context, 4)),
-                    Text(
-                      '실제 기기에서 더 빠릅니다',
-                      style: ResponsiveHelper.tinyStyle(context).copyWith(
-                        color: theme.textTheme.bodySmall?.color,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
           ],
         ),
       ),

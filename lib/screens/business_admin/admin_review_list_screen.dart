@@ -52,6 +52,8 @@ class _AdminReviewListScreenState extends State<AdminReviewListScreen>
   List<MonthlyReviewModel> _rawReceived = [];
   List<ReviewRequestModel> _rawPending = [];
   Map<String, DateTime> _requestDeadlines = {};
+  // workerName 이 비어있는 경우 users 컬렉션에서 보완 조회한 이름 캐시
+  Map<String, String> _resolvedWorkerNames = {};
 
   // 필터 상태
   int _selectedYear = DateTime.now().year;
@@ -195,6 +197,25 @@ class _AdminReviewListScreenState extends State<AdminReviewListScreen>
 
       final allNonPublished = results[3] as List<ReviewRequestModel>;
       _requestDeadlines = {for (final r in allNonPublished) r.id: r.deadline};
+
+      // workerName 누락 항목 보완 조회 (CF가 applicantName/user 조회 실패한 경우)
+      final missingNameIds = _rawPending
+          .where((r) => r.workerName.isEmpty && r.workerId.isNotEmpty)
+          .map((r) => r.workerId)
+          .toSet();
+      if (missingNameIds.isNotEmpty) {
+        final resolvedMap = <String, String>{};
+        await Future.wait(missingNameIds.map((uid) async {
+          try {
+            final doc = await FirebaseFirestore.instance.collection('users').doc(uid).get();
+            final name = doc.data()?['name'] as String? ?? '';
+            resolvedMap[uid] = name.isNotEmpty ? name : '근무자';
+          } catch (_) {
+            resolvedMap[uid] = '근무자';
+          }
+        }));
+        _resolvedWorkerNames = resolvedMap;
+      }
 
       // 선택된 연도가 데이터에 없으면 최신 연도로 자동 이동
       final years = _availableYears;
@@ -918,8 +939,12 @@ class _AdminReviewListScreenState extends State<AdminReviewListScreen>
 
     final filteredPending = _searchQuery.isEmpty
         ? _pendingRequests
-        : _pendingRequests.where((r) =>
-            r.workerName.toLowerCase().contains(_searchQuery)).toList();
+        : _pendingRequests.where((r) {
+            final name = r.workerName.isNotEmpty
+                ? r.workerName
+                : (_resolvedWorkerNames[r.workerId] ?? '');
+            return name.toLowerCase().contains(_searchQuery);
+          }).toList();
 
     final activePending = filteredPending.where((r) => !r.isDeadlinePassed).toList();
     final expiredPending = filteredPending.where((r) => r.isDeadlinePassed).toList();
@@ -964,6 +989,9 @@ class _AdminReviewListScreenState extends State<AdminReviewListScreen>
     final theme = Theme.of(context);
     final isDeadlineSoon =
         !req.isDeadlinePassed && req.deadline.difference(DateTime.now()).inDays <= 3;
+    final displayName = req.workerName.isNotEmpty
+        ? req.workerName
+        : (_resolvedWorkerNames[req.workerId] ?? '근무자');
 
     return Opacity(
       opacity: isExpired ? 0.5 : 1.0,
@@ -996,9 +1024,9 @@ class _AdminReviewListScreenState extends State<AdminReviewListScreen>
                 backgroundColor: isExpired
                     ? AppColors.grey200
                     : theme.primaryColor.withValues(alpha: 0.15),
-                child: req.workerName.isNotEmpty
+                child: displayName.isNotEmpty
                     ? Text(
-                        req.workerName[0],
+                        displayName[0],
                         style: ResponsiveHelper.bodyStyle(context).copyWith(
                           fontWeight: FontWeight.bold,
                           color: isExpired
@@ -1016,14 +1044,10 @@ class _AdminReviewListScreenState extends State<AdminReviewListScreen>
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      req.workerName.isNotEmpty ? req.workerName : '이름 없음',
+                      displayName,
                       style: ResponsiveHelper.bodyStyle(context).copyWith(
                         fontWeight: FontWeight.bold,
-                        color: isExpired
-                            ? AppColors.grey500
-                            : req.workerName.isEmpty
-                                ? AppColors.grey400
-                                : null,
+                        color: isExpired ? AppColors.grey500 : null,
                       ),
                     ),
                     SizedBox(height: ResponsiveHelper.spacing(context, 2)),

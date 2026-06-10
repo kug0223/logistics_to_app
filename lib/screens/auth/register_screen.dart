@@ -18,10 +18,12 @@ import '../../utils/document_upload_helper.dart';
 import '../../utils/toast_helper.dart';
 import '../business_admin/business_form_screen.dart';
 
+import 'package:firebase_auth/firebase_auth.dart' show FirebaseAuthException;
 import 'package:flutter/foundation.dart' show kIsWeb;
 import '../../theme/app_colors.dart';
 import '../../widgets/app_select_field.dart';
 import '../../widgets/common/common_widgets.dart';
+import '../../widgets/pickers/date_picker_bottom_sheet.dart';
 
 /// 개선된 회원가입 화면 - 자동 스크롤 + 여백 최적화 + Storage 업로드
 class RegisterScreen extends StatefulWidget {
@@ -387,18 +389,18 @@ class _RegisterScreenState extends State<RegisterScreen> {
 
     try {
       if (_currentStep == 0) {
-        if (_validateStep1()) {
+        if (_validateStep2()) {
           setState(() => _currentStep = 1);
+          _scrollToTop();
+        }
+      } else if (_currentStep == 1) {
+        if (_validateStep1()) {
+          setState(() => _currentStep = 2);
           _scrollToTop();
         } else {
           setState(() {
             _autovalidateMode = AutovalidateMode.onUserInteraction;
           });
-        }
-      } else if (_currentStep == 1) {
-        if (_validateStep2()) {
-          setState(() => _currentStep = 2);
-          _scrollToTop();
         }
       } else if (_currentStep == 2) {
         _handleRoleSelection();
@@ -450,35 +452,6 @@ class _RegisterScreenState extends State<RegisterScreen> {
         ToastHelper.showWarning('유효하지 않은 사업자등록번호입니다. 다시 확인해주세요.');
         return;
       }
-      // 이미 등록된 사업자등록번호 중복 체크
-      final isDuplicate = await AuthService().checkBusinessNumberDuplicate(bizNum);
-      if (!mounted) return;
-      if (isDuplicate == true) {
-        ToastHelper.showError('이미 등록된 사업자등록번호입니다.\n다른 번호를 사용하거나 로그인해주세요.');
-        return;
-      }
-    }
-
-    // 동일 전화번호 + 역할 중복 가입 체크
-    final phone = _phoneController.text.trim();
-    final isDuplicate = await AuthService().checkDuplicateRegistration(
-      phone: phone,
-      role: _selectedRole!,
-    );
-
-    if (!mounted) return;
-
-    if (isDuplicate == null) {
-      // 네트워크 에러 — 경고만 표시하고 진행 (차단하지 않음)
-      ToastHelper.showWarning('중복 계정 확인에 실패했습니다. 계속 진행합니다.');
-    } else if (isDuplicate) {
-      final roleLabel =
-          _selectedRole == UserRole.USER ? '지원자' : '사업장 관리자';
-      ToastHelper.showError(
-        '이미 $roleLabel 계정이 존재합니다.\n'
-        '다른 역할로 가입하거나 기존 계정으로 로그인해주세요.',
-      );
-      return;
     }
 
     if (_selectedRole == UserRole.USER) {
@@ -896,18 +869,18 @@ class _RegisterScreenState extends State<RegisterScreen> {
       _phoneCodeController.clear();
       _phoneVerifyStatus.value = const _PhoneVerifyStatus(isSent: true);
       ToastHelper.showSuccess('인증번호가 발송되었습니다');
-    } on Exception catch (e) {
-      final str = e.toString();
-      final String msg;
-      if (str.contains('resource-exhausted')) {
-        msg = str.contains('초과')
-            ? '인증번호 발송 횟수를 초과했습니다. 잠시 후 다시 시도해주세요'
-            : '1분 후 다시 시도해주세요';
-      } else {
-        msg = '발송에 실패했습니다. 다시 시도해주세요';
-      }
+    } on FirebaseAuthException catch (e) {
+      final String msg = switch (e.code) {
+        'too-many-requests'    => '잠시 후 다시 시도해주세요',
+        'invalid-phone-number' => '올바른 휴대폰 번호를 입력해주세요',
+        'quota-exceeded'       => '인증번호 발송 횟수를 초과했습니다. 잠시 후 다시 시도해주세요',
+        _                      => '발송에 실패했습니다. 다시 시도해주세요',
+      };
       _phoneVerifyStatus.value = _PhoneVerifyStatus(error: msg);
       ToastHelper.showError(msg);
+    } on Exception {
+      _phoneVerifyStatus.value = const _PhoneVerifyStatus(error: '발송에 실패했습니다. 다시 시도해주세요');
+      ToastHelper.showError('발송에 실패했습니다. 다시 시도해주세요');
     }
   }
 
@@ -919,6 +892,23 @@ class _RegisterScreenState extends State<RegisterScreen> {
     try {
       final result = await _phoneSvc.verifyCode(_phoneController.text.trim(), code);
       if (result.valid) {
+        // 역할이 이미 선택된 상태이므로 role+phone 중복 가입 체크
+        if (_selectedRole != null) {
+          final isDuplicate = await AuthService().checkDuplicateRegistration(
+            phone: _phoneController.text.trim(),
+            role: _selectedRole!,
+          );
+          if (!mounted) return;
+          if (isDuplicate == true) {
+            final roleLabel = _selectedRole == UserRole.USER ? '지원자' : '사업장 관리자';
+            _phoneVerifyStatus.value = _PhoneVerifyStatus(
+              isSent: true,
+              error: '$roleLabel 계정에 이미 등록된 번호입니다. 로그인해주세요.',
+            );
+            ToastHelper.showError('$roleLabel 계정에 이미 등록된 번호입니다.');
+            return;
+          }
+        }
         _phoneVerifyStatus.value = const _PhoneVerifyStatus(isVerified: true);
         ToastHelper.showSuccess('휴대폰 인증이 완료되었습니다');
       } else {
@@ -1241,9 +1231,9 @@ class _RegisterScreenState extends State<RegisterScreen> {
           SizedBox(height: ResponsiveHelper.spacing(context, 2)),
           Text(
             _currentStep == 0
-                ? '기본 정보 입력'
+                ? '이용 방법 선택'
                 : _currentStep == 1
-                    ? '이용 방법 선택'
+                    ? '기본 정보 입력'
                     : '추가 정보 (선택)',
             style: ResponsiveHelper.bodyStyle(context).copyWith(
               color: Colors.white.withValues(alpha: 0.75),
@@ -1283,9 +1273,9 @@ class _RegisterScreenState extends State<RegisterScreen> {
   Widget _buildCurrentStep() {
     switch (_currentStep) {
       case 0:
-        return _buildStep1BasicInfo();
-      case 1:
         return _buildStep2RoleSelection();
+      case 1:
+        return _buildStep1BasicInfo();
       case 2:
         if (_selectedRole == UserRole.USER) {
           return _buildStep3UserDocuments();
@@ -1632,12 +1622,14 @@ class _RegisterScreenState extends State<RegisterScreen> {
                   const SizedBox(height: 8),
                   GestureDetector(
                     onTap: () async {
-                      final picked = await showDatePicker(
+                      final picked = await DatePickerBottomSheet.show(
                         context: context,
-                        initialDate: DateTime(DateTime.now().year - 20),
-                        firstDate: DateTime(1900),
-                        lastDate: DateTime.now(),
-                        helpText: '생년월일 선택',
+                        initialDate: _passportBirthDate ?? DateTime(DateTime.now().year - 20),
+                        title: '생년월일 선택',
+                        subtitle: '만 18세 이상만 가입 가능합니다',
+                        minDate: DateTime(1900),
+                        maxDate: DateTime.now(),
+                        allowPastDates: true,
                       );
                       if (picked != null) setState(() => _passportBirthDate = picked);
                     },
@@ -1900,9 +1892,10 @@ class _RegisterScreenState extends State<RegisterScreen> {
                 ),
 
                 // ── SMS 인증 영역 (전화번호 필드 아래, 인증 상태만 재빌드)
-                ValueListenableBuilder<_PhoneVerifyStatus>(
-                  valueListenable: _phoneVerifyStatus,
-                  builder: (context, status, _) {
+                ListenableBuilder(
+                  listenable: Listenable.merge([_phoneVerifyStatus, _phoneController]),
+                  builder: (context, _) {
+                    final status = _phoneVerifyStatus.value;
                     final phone = _phoneController.text.trim();
                     final theme = Theme.of(context);
 
@@ -2262,24 +2255,36 @@ class _RegisterScreenState extends State<RegisterScreen> {
         const Divider(),
         SizedBox(height: ResponsiveHelper.spacing(context, 4)),
 
-        // 전체 동의 — 미열람 항목이 있으면 toast로 안내
+        // 전체 동의 — 미열람 항목이 있으면 순차 열람 후 전체 동의
         InkWell(
-          onTap: () {
+          onTap: () async {
             final newVal = !agreedToAll;
             if (newVal) {
-              // 동의 방향일 때 미열람 항목 체크
-              final unviewed = items
-                  .where((t) => !_viewedTermIds.contains(t.id))
+              // 현재 미동의 항목 전부 뷰어 표시 (열람 이력 무관)
+              final unagreed = items
+                  .where((t) => _consentMap[t.id] != true)
                   .toList();
-              if (unviewed.isNotEmpty) {
-                ToastHelper.showWarning(
-                    '각 약관의 "보기 *"를 눌러 내용을 먼저 확인해주세요');
-                return;
+              final refusedIds = <String>{};
+              for (final item in unagreed) {
+                if (!mounted) return;
+                await _showTermsDetail(item);
+                if (_consentNotifier.value[item.id] != true) {
+                  refusedIds.add(item.id);
+                }
               }
+              if (!mounted) return;
+              // 거절하지 않은 항목만 true로 설정
+              final updated = Map<String, bool>.from(_consentNotifier.value);
+              for (final t in items) {
+                if (!refusedIds.contains(t.id)) updated[t.id] = true;
+              }
+              _consentNotifier.value = updated;
+            } else {
+              if (!mounted) return;
+              final updated = Map<String, bool>.from(_consentNotifier.value);
+              for (final t in items) { updated[t.id] = false; }
+              _consentNotifier.value = updated;
             }
-            final updated = Map<String, bool>.from(_consentNotifier.value);
-            for (final t in items) { updated[t.id] = newVal; }
-            _consentNotifier.value = updated;
           },
           borderRadius: BorderRadius.circular(8),
           child: Padding(
@@ -3183,17 +3188,17 @@ class _RegisterScreenState extends State<RegisterScreen> {
                   ),
                   const SizedBox(height: 2),
                   Text(
-                    description,
+                    isUploaded ? '완료 · 탭하여 다시 등록' : description,
                     style: ResponsiveHelper.smallStyle(
                       context,
-                      color: AppColors.grey600,
+                      color: isUploaded ? color : AppColors.grey600,
                     ),
                   ),
                 ],
               ),
             ),
             Icon(
-              Icons.camera_alt,
+              isUploaded ? Icons.refresh : Icons.camera_alt,
               color: color,
               size: 18,
             ),

@@ -194,7 +194,11 @@ class AdminStatsService {
     final docs = await Future.wait(
       businessIds.map((id) async {
         try {
-          return await _db.collection('businesses').doc(id).get();
+          return await _db
+              .collection('businesses')
+              .doc(id)
+              .get()
+              .timeout(const Duration(seconds: 15));
         } catch (e) {
           debugPrint('⚠️ 사업장 조회 실패 ($id): $e');
           return null;
@@ -217,6 +221,23 @@ class AdminStatsService {
   // ── Level 1: 연간 통계 ───────────────────────────────────────
 
   Future<AnnualStatsData> getAnnualStats({
+    required List<String> businessIds,
+    String? filterBusinessId,
+    required int year,
+  }) async {
+    try {
+      return await _getAnnualStatsInternal(
+        businessIds: businessIds,
+        filterBusinessId: filterBusinessId,
+        year: year,
+      ).timeout(const Duration(seconds: 30));
+    } catch (e, st) {
+      debugPrint('❌ getAnnualStats 실패: $e\n$st');
+      return _emptyAnnual(year, filterBusinessId);
+    }
+  }
+
+  Future<AnnualStatsData> _getAnnualStatsInternal({
     required List<String> businessIds,
     String? filterBusinessId,
     required int year,
@@ -453,7 +474,8 @@ class AdminStatsService {
             .where('workDate',
                 isGreaterThanOrEqualTo: Timestamp.fromDate(start))
             .where('workDate', isLessThan: Timestamp.fromDate(end))
-            .get();
+            .get()
+            .timeout(const Duration(seconds: 20));
         return snap.docs.map(AttendanceModel.fromFirestore).toList();
       } catch (e) {
         debugPrint('❌ 근태 조회 실패 ($id): $e');
@@ -472,7 +494,8 @@ class AdminStatsService {
             .where('businessId', isEqualTo: id)
             .where('reviewYear', isEqualTo: year)
             .where('reviewType', isEqualTo: 'ADMIN_TO_USER')
-            .get();
+            .get()
+            .timeout(const Duration(seconds: 20));
         return snap.docs.map(MonthlyReviewModel.fromFirestore).toList();
       } catch (e) {
         debugPrint('⚠️ 연간 리뷰 조회 실패 ($id): $e');
@@ -492,7 +515,8 @@ class AdminStatsService {
             .where('reviewYear', isEqualTo: year)
             .where('reviewMonth', isEqualTo: month)
             .where('reviewType', isEqualTo: 'ADMIN_TO_USER')
-            .get();
+            .get()
+            .timeout(const Duration(seconds: 20));
         return snap.docs.map(MonthlyReviewModel.fromFirestore).toList();
       } catch (e) {
         debugPrint('⚠️ 월간 리뷰 조회 실패 ($id): $e');
@@ -511,7 +535,9 @@ class AdminStatsService {
         final snap = await _db
             .collection('users')
             .where(FieldPath.documentId, whereIn: chunk)
-            .get();
+            .limit(chunk.length)
+            .get()
+            .timeout(const Duration(seconds: 15));
         for (final doc in snap.docs) {
           map[doc.id] = doc.data()['name'] as String? ?? '알 수 없음';
         }
@@ -531,7 +557,9 @@ class AdminStatsService {
         final snap = await _db
             .collection('users')
             .where(FieldPath.documentId, whereIn: chunk)
-            .get();
+            .limit(chunk.length)
+            .get()
+            .timeout(const Duration(seconds: 15));
         for (final doc in snap.docs) {
           final d = doc.data();
           map[doc.id] = UserInfo(

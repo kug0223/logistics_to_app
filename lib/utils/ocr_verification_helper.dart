@@ -396,8 +396,7 @@ class OcrVerificationHelper {
       if (expectedCeoName != null && extractedName != null) {
         final cleanedExtracted = _cleanText(extractedName);
         final cleanedExpected = _cleanText(expectedCeoName);
-        isValidName = cleanedExtracted.contains(cleanedExpected) || 
-                      cleanedExpected.contains(cleanedExtracted);
+        isValidName = cleanedExtracted == cleanedExpected;
         debugPrint('📄 [사업자등록증 OCR] 이름 비교: $cleanedExtracted vs $cleanedExpected → $isValidName');
       }
       

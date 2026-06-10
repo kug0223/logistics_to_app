@@ -214,10 +214,17 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
         }
       }
 
+      // isStarred 필드에서 관심표시 복원
+      final starredFromFirestore = filtered
+          .where((app) => app.isStarred)
+          .map((app) => app.id)
+          .toSet();
+
       setState(() {
         _applicants = applicantsWithUserInfo;
         _idCardStatusMap = idCardStatusMap;
         _allApplications = apps; // 통계 계산용 캐시
+        _starredIds.addAll(starredFromFirestore);
       });
   }, errorTag: '지원자 목록 로드');
 
@@ -911,13 +918,20 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
                           SizedBox(width: ResponsiveHelper.spacing(context, 8)),
                           if (isPending)
                             GestureDetector(
-                              onTap: () => setState(() {
-                                if (_starredIds.contains(app.id)) {
-                                  _starredIds.remove(app.id);
-                                } else {
-                                  _starredIds.add(app.id);
-                                }
-                              }),
+                              onTap: () {
+                                final nowStarred = !_starredIds.contains(app.id);
+                                setState(() {
+                                  if (nowStarred) {
+                                    _starredIds.add(app.id);
+                                  } else {
+                                    _starredIds.remove(app.id);
+                                  }
+                                });
+                                _firestoreService.updateApplicationFields(
+                                  app.id,
+                                  {'isStarred': nowStarred},
+                                );
+                              },
                               behavior: HitTestBehavior.opaque,
                               child: Padding(
                                 padding: EdgeInsets.only(

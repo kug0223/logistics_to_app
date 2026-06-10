@@ -53,38 +53,44 @@ class AppBatchActionBar extends StatelessWidget {
       ),
       child: Row(
         children: [
-          TextButton(
-            onPressed: onSelectAll,
-            style: TextButton.styleFrom(
-                padding: EdgeInsets.zero,
-                minimumSize: const Size(40, 32)),
-            child: Text('전체선택',
-                style: ResponsiveHelper.smallStyle(context,
-                    color: AppColors.info)),
-          ),
-          const SizedBox(width: 4),
-          TextButton(
-            onPressed: onDeselectAll,
-            style: TextButton.styleFrom(
-                padding: EdgeInsets.zero,
-                minimumSize: const Size(40, 32)),
-            child: Text('해제',
-                style: ResponsiveHelper.smallStyle(context,
-                    color: AppColors.info)),
-          ),
-          if (selectedCount > 0 && selectedAmount > 0) ...[
-            const SizedBox(width: 8),
-            Flexible(
-              child: Text(
-                FormatHelper.formatWage(selectedAmount),
-                style: ResponsiveHelper.smallStyle(context,
-                    color: AppColors.infoDark,
-                    fontWeight: FontWeight.w600),
-                overflow: TextOverflow.ellipsis,
-              ),
+          Expanded(
+            child: Row(
+              children: [
+                TextButton(
+                  onPressed: onSelectAll,
+                  style: TextButton.styleFrom(
+                      padding: EdgeInsets.zero,
+                      minimumSize: const Size(40, 32)),
+                  child: Text('전체선택',
+                      style: ResponsiveHelper.smallStyle(context,
+                          color: AppColors.info)),
+                ),
+                const SizedBox(width: 4),
+                TextButton(
+                  onPressed: onDeselectAll,
+                  style: TextButton.styleFrom(
+                      padding: EdgeInsets.zero,
+                      minimumSize: const Size(40, 32)),
+                  child: Text('해제',
+                      style: ResponsiveHelper.smallStyle(context,
+                          color: AppColors.info)),
+                ),
+                if (selectedCount > 0 && selectedAmount > 0) ...[
+                  const SizedBox(width: 8),
+                  Flexible(
+                    child: Text(
+                      FormatHelper.formatWage(selectedAmount),
+                      style: ResponsiveHelper.smallStyle(context,
+                          color: AppColors.infoDark,
+                          fontWeight: FontWeight.w600),
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                ],
+              ],
             ),
-          ],
-          const Spacer(),
+          ),
+          const SizedBox(width: 8),
           ElevatedButton.icon(
             onPressed: onAction,
             icon: Icon(actionIcon,

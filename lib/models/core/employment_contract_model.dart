@@ -239,11 +239,11 @@ class ContractSnapshot {
 
   static const _weekdayLabels = ['', '월', '화', '수', '목', '금', '토', '일'];
 
-  /// payScheduleType → 지급 방식 라벨 (당일 지급 / 익일 지급 / 주급 / 월급)
+  /// payScheduleType → 지급 방식 라벨 (당일 / 익일 / 주급 / 월급)
   String get payScheduleTypeLabel {
     switch (payScheduleType) {
-      case 'same_day': return '당일 지급';
-      case 'next_day': return '익일 지급';
+      case 'same_day': return '당일';
+      case 'next_day': return '익일';
       case 'weekly':   return '주급';
       case 'monthly':  return '월급';
       default:         return '';
@@ -254,8 +254,8 @@ class ContractSnapshot {
   String get payScheduleLabel {
     final timeStr = payScheduleTime != null ? ' $payScheduleTime' : '';
     switch (payScheduleType) {
-      case 'same_day':  return '당일 지급$timeStr';
-      case 'next_day':  return '익일 지급$timeStr';
+      case 'same_day':  return '당일$timeStr';
+      case 'next_day':  return '익일$timeStr';
       case 'weekly':
         final day = _weekdayLabels[payScheduleDay?.clamp(1, 7) ?? 1];
         return '매주 $day요일$timeStr';

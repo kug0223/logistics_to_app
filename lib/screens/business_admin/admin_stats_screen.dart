@@ -47,11 +47,15 @@ class _AdminStatsScreenState extends State<AdminStatsScreen> {
   }
 
   Future<void> _init() async {
-    final bizOptions =
-        await _service.getBusinessOptions(widget.businessIds);
-    if (!mounted) return;
-    setState(() => _businesses = bizOptions);
-    await _loadStats();
+    try {
+      final bizOptions =
+          await _service.getBusinessOptions(widget.businessIds);
+      if (!mounted) return;
+      setState(() => _businesses = bizOptions);
+    } catch (e) {
+      debugPrint('⚠️ 사업장 목록 로드 실패: $e');
+    }
+    if (mounted) await _loadStats();
   }
 
   Future<void> _loadStats() async {
@@ -156,7 +160,7 @@ class _AdminStatsScreenState extends State<AdminStatsScreen> {
       title: '통계',
       headerContent: _buildHeader(theme),
       body: _isLoading
-          ? const LoadingWidget()
+          ? const LoadingWidget(message: '통계 불러오는 중...')
           : RefreshIndicator(
               onRefresh: _loadStats,
               child: _buildContent(),
@@ -270,6 +274,29 @@ class _AdminStatsScreenState extends State<AdminStatsScreen> {
     return ListView(
       padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 16)),
       children: [
+        // 데이터 없음 안내
+        if (!hasAnyData) ...[
+          Container(
+            padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 16)),
+            decoration: BoxDecoration(
+              color: AppColors.grey100,
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Row(
+              children: [
+                Icon(Icons.info_outline,
+                    color: AppColors.grey500,
+                    size: ResponsiveHelper.iconSize(context, 18)),
+                SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+                Text('$_selectedYear년 근태 데이터가 없습니다',
+                    style: ResponsiveHelper.smallStyle(context,
+                        color: AppColors.grey600)),
+              ],
+            ),
+          ),
+          SizedBox(height: ResponsiveHelper.spacing(context, 14)),
+        ],
+
         // KPI
         _buildKpiSection(data),
         SizedBox(height: ResponsiveHelper.spacing(context, 14)),
@@ -372,43 +399,45 @@ class _AdminStatsScreenState extends State<AdminStatsScreen> {
                 color: Colors.black.withValues(alpha: 0.05),
                 blurRadius: 10, offset: const Offset(0, 2))],
           ),
-          child: Row(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-              Expanded(child: _StatCell(
-                label: '근무 건수',
-                value: '${data.totalWorkCount}건',
-                valueColor: AppColors.grey900,
-                delta: hasPrevCount ? data.workCountDeltaPct : null,
-              )),
-              _VLine(),
-              Expanded(child: _StatCell(
-                label: '출근율',
-                value: data.attendanceRate == 0
-                    ? '-' : '${data.attendanceRate.toStringAsFixed(1)}%',
-                valueColor: AppColors.success,
-                delta: hasPrevAtt
-                    ? data.attendanceRate - data.prevYearAttendanceRate
-                    : null,
-              )),
-              _VLine(),
-              Expanded(child: _StatCell(
-                label: '노쇼율',
-                value: data.noShowRate == 0
-                    ? '-' : '${data.noShowRate.toStringAsFixed(1)}%',
-                valueColor: data.noShowRate > 0 ? AppColors.error : AppColors.grey400,
-                delta: hasPrevNoShow
-                    ? -(data.noShowRate - data.prevYearNoShowRate)
-                    : null,
-              )),
-              _VLine(),
-              Expanded(child: _StatCell(
-                label: '재고용률',
-                value: data.rehireRate == 0
-                    ? '-' : '${data.rehireRate.toStringAsFixed(0)}%',
-                valueColor: AppColors.amber,
-                subValue: data.avgRating > 0
-                    ? '★ ${data.avgRating.toStringAsFixed(1)}' : null,
-              )),
-          ]),
+          child: IntrinsicHeight(
+            child: Row(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+                Expanded(child: _StatCell(
+                  label: '근무 건수',
+                  value: '${data.totalWorkCount}건',
+                  valueColor: AppColors.grey900,
+                  delta: hasPrevCount ? data.workCountDeltaPct : null,
+                )),
+                _VLine(),
+                Expanded(child: _StatCell(
+                  label: '출근율',
+                  value: data.attendanceRate == 0
+                      ? '-' : '${data.attendanceRate.toStringAsFixed(1)}%',
+                  valueColor: AppColors.success,
+                  delta: hasPrevAtt
+                      ? data.attendanceRate - data.prevYearAttendanceRate
+                      : null,
+                )),
+                _VLine(),
+                Expanded(child: _StatCell(
+                  label: '노쇼율',
+                  value: data.noShowRate == 0
+                      ? '-' : '${data.noShowRate.toStringAsFixed(1)}%',
+                  valueColor: data.noShowRate > 0 ? AppColors.error : AppColors.grey400,
+                  delta: hasPrevNoShow
+                      ? -(data.noShowRate - data.prevYearNoShowRate)
+                      : null,
+                )),
+                _VLine(),
+                Expanded(child: _StatCell(
+                  label: '재고용률',
+                  value: data.rehireRate == 0
+                      ? '-' : '${data.rehireRate.toStringAsFixed(0)}%',
+                  valueColor: AppColors.amber,
+                  subValue: data.avgRating > 0
+                      ? '★ ${data.avgRating.toStringAsFixed(1)}' : null,
+                )),
+            ]),
+          ),
         ),
       ],
     );

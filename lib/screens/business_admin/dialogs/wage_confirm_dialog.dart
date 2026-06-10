@@ -228,8 +228,17 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
     }
 
     // 이미 계산된 급여가 있으면 그것 사용 (calculated 상태), 강제 재계산 시 제외
+    // 단, 미확정 급여는 TO 수정으로 effective 스케줄 시간이 달라진 경우 캐시 무효화 → 재계산
     if (!forceRecalculate && attendance.wageDetail != null) {
-      return attendance.wageDetail;
+      // 1차 확정된 급여는 TO 수정과 무관하게 보존
+      if (attendance.wageDetail!.isCalculated) return attendance.wageDetail;
+      // 미확정: TO 수정으로 스케줄 시간이 변경된 경우 캐시 무효화
+      final effStart = WorkDetailHelper.effectiveStart(app, widget.workDetailTimeMap);
+      final effEnd = WorkDetailHelper.effectiveEnd(app, widget.workDetailTimeMap);
+      if (effStart == app.startTime && effEnd == app.endTime) {
+        return attendance.wageDetail;
+      }
+      debugPrint('⚠️ TO 수정 감지(미확정): ${app.startTime}→$effStart, ${app.endTime}→$effEnd → 재계산');
     }
     
     // 스케줄 시간: workDetailTimeMap 우선 (TO 수정 반영) → app 필드 폴백

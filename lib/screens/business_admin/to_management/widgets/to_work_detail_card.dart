@@ -145,8 +145,8 @@ class TOWorkDetailCard extends StatelessWidget {
     if (type == null) return '';
     final t = time != null ? ' $time' : '';
     switch (type) {
-      case 'same_day': return '당일 지급$t';
-      case 'next_day': return '익일 지급$t';
+      case 'same_day': return '당일$t';
+      case 'next_day': return '익일$t';
       case 'weekly':
         final d = _weekdayLabels[day?.clamp(1, 7) ?? 1];
         return '매주 $d요일$t';

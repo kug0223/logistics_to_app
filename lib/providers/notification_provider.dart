@@ -9,6 +9,7 @@ class NotificationProvider with ChangeNotifier {
   
   List<NotificationModel> _notifications = [];
   bool _isLoading = false;
+  bool _hasError = false;
   bool _disposed = false;
   String? _userId;
 
@@ -19,6 +20,7 @@ class NotificationProvider with ChangeNotifier {
   List<NotificationModel> get notifications => _notifications;
   int get unreadCount => _notifications.where((n) => !n.isRead).length;
   bool get isLoading => _isLoading;
+  bool get hasError => _hasError;
   bool get hasUnread => _notifications.any((n) => !n.isRead);
   String? get userId => _userId;
   
@@ -34,6 +36,13 @@ class NotificationProvider with ChangeNotifier {
     _startListening();
   }
   
+  /// 스트림 에러 후 재시도
+  void retry() {
+    if (_userId == null || _disposed) return;
+    _hasError = false;
+    _startListening();
+  }
+
   /// 로그아웃 시 정리
   void clearUser() {
     if (_disposed) return;
@@ -64,12 +73,14 @@ class NotificationProvider with ChangeNotifier {
             if (_disposed) return;
             _notifications = notifications;
             _isLoading = false;
+            _hasError = false;
             notifyListeners();
           },
           onError: (e) {
             if (_disposed) return;
             debugPrint('❌ 알림 스트림 에러: $e');
             _isLoading = false;
+            _hasError = true;
             notifyListeners();
           },
         );

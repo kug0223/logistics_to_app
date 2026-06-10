@@ -881,7 +881,15 @@ async function createPendingReviewRequests(now: Timestamp): Promise<void> {
           requestKey, year, month, "worker"
         );
       } catch {
-        // 이미 존재 — 무시
+        // 이미 존재 — workerName 누락인 경우만 보완 (구버전 CF가 workerName 없이 생성한 문서)
+        try {
+          const existing = await requestRef.get();
+          if (existing.exists && !existing.data()?.workerName) {
+            await requestRef.update({ workerName });
+          }
+        } catch {
+          // 무시
+        }
       }
     }
 
@@ -938,7 +946,15 @@ async function createPendingReviewRequests(now: Timestamp): Promise<void> {
           requestKey, endYear, endMonth, "worker"
         );
       } catch {
-        // 이미 존재 — 무시
+        // 이미 존재 — workerName 누락인 경우만 보완 (구버전 CF가 workerName 없이 생성한 문서)
+        try {
+          const existing = await requestRef.get();
+          if (existing.exists && !existing.data()?.workerName) {
+            await requestRef.update({ workerName });
+          }
+        } catch {
+          // 무시
+        }
       }
     }
 
@@ -2387,27 +2403,32 @@ async function processContractRenewalChecks(now: Timestamp): Promise<void> {
         (bizDoc.data()?.adminIds as string[] ?? []) :
         [];
 
-      // 관리자 전원에게 알림
-      for (const adminId of adminIds) {
-        await db.collection("notifications").add({
-          userId: adminId,
-          type: "contractExpiringReminder",
-          title: "계약 만료 임박",
-          body: `${workerName}님의 계약이 ` +
-            `${expiryDateKST.getUTCMonth() + 1}/${expiryDateKST.getUTCDate()}에 ` +
-            "만료됩니다. 연장 또는 종료를 선택해 주세요.",
-          data: {
-            applicationId: doc.id,
-            expiryDate: new Date(expiryDateKST.getTime() - KST_OFFSET_MS).toISOString(),
-            screen: "contractRenewal",
-          },
-          isRead: false,
-          createdAt: now,
-        });
-      }
+      // 트랜잭션으로 중복 발송 방지
+      await db.runTransaction(async (tx) => {
+        const snap = await tx.get(doc.ref);
+        if (snap.data()?.renewalNotifiedAt) return; // 이미 발송됨
 
-      // renewalNotifiedAt 기록
-      await doc.ref.update({renewalNotifiedAt: now});
+        // 관리자 전원에게 알림
+        for (const adminId of adminIds) {
+          const notifRef = db.collection("notifications").doc();
+          tx.set(notifRef, {
+            userId: adminId,
+            type: "contractExpiringReminder",
+            title: "계약 만료 임박",
+            body: `${workerName}님의 계약이 ` +
+              `${expiryDateKST.getUTCMonth() + 1}/${expiryDateKST.getUTCDate()}에 ` +
+              "만료됩니다. 연장 또는 종료를 선택해 주세요.",
+            data: {
+              applicationId: doc.id,
+              expiryDate: new Date(expiryDateKST.getTime() - KST_OFFSET_MS).toISOString(),
+              screen: "contractRenewal",
+            },
+            isRead: false,
+            createdAt: now,
+          });
+        }
+        tx.update(doc.ref, {renewalNotifiedAt: now});
+      });
       d15Count++;
     }
 
@@ -2426,11 +2447,23 @@ async function processContractRenewalChecks(now: Timestamp): Promise<void> {
       if (app.renewalDecision) continue; // 이미 결정됨
 
       const oldEndDate = (app.workEndDate as Timestamp).toDate();
-      // 새 계약: 다음날 시작, 31일 후 종료
+      const origWorkDate = (app.workDate as Timestamp).toDate();
+
+      // Flutter와 동일한 개월 수 기반 계산
+      const contractMonths =
+        (oldEndDate.getFullYear() - origWorkDate.getFullYear()) * 12 +
+        (oldEndDate.getMonth() - origWorkDate.getMonth());
+      const renewalMonths = contractMonths > 0 ? contractMonths : 1;
+
+      // 새 계약 시작: 다음날
       const newStartDate = new Date(oldEndDate);
       newStartDate.setDate(newStartDate.getDate() + 1);
-      const newEndDate = new Date(newStartDate);
-      newEndDate.setDate(newEndDate.getDate() + 30);
+
+      // 새 계약 종료: 기존 종료일 기준 renewalMonths 개월 후 (같은 날짜, 월말 clamp)
+      const rawEndYear = oldEndDate.getFullYear() + Math.floor((oldEndDate.getMonth() + renewalMonths) / 12);
+      const rawEndMonthZero = (oldEndDate.getMonth() + renewalMonths) % 12; // 0-based
+      const lastDayOfMonth = new Date(rawEndYear, rawEndMonthZero + 1, 0).getDate();
+      const newEndDate = new Date(rawEndYear, rawEndMonthZero, Math.min(oldEndDate.getDate(), lastDayOfMonth));
 
       // 새 Application 생성 + 기존 Application 갱신 — 원자적 배치
       const newAppRef = db.collection("applications").doc();
@@ -2479,6 +2512,143 @@ async function processContractRenewalChecks(now: Timestamp): Promise<void> {
     }
 
     console.log(`  ✅ [D-0 자동연장] ${d0Count}건 처리`);
+
+    // ── D-0 종료 결정 완료 알림 ──────────────────────────────
+    // renewalDecision='TERMINATE' + 어제 만료된 계약 → 근무자에게 종료 완료 알림
+    let terminateD0Count = 0;
+    const d0TerminateSnap = await db.collection("applications")
+      .where("status", "in", CONFIRMED_STATUSES)
+      .where("renewalDecision", "==", "TERMINATE")
+      .where("workEndDate", ">=", d0Start)
+      .where("workEndDate", "<", d0End)
+      .get();
+
+    for (const doc of d0TerminateSnap.docs) {
+      const app = doc.data();
+      if (!app.workDays || app.workDays.length === 0) continue;
+      // 이미 종료 알림 보낸 경우 스킵 (terminationNotifiedAt 필드로 중복 방지)
+      if (app.terminationCompletionNotifiedAt) continue;
+
+      await db.collection("notifications").add({
+        userId: app.uid,
+        type: "contractTerminating",
+        title: "계약 종료 완료",
+        body: `${app.businessName} 계약이 종료되었습니다. 이용해 주셔서 감사합니다.`,
+        data: {applicationId: doc.id, screen: "mySchedule"},
+        isRead: false,
+        createdAt: now,
+      });
+      await doc.ref.update({terminationCompletionNotifiedAt: now});
+      terminateD0Count++;
+    }
+    console.log(`  ✅ [D-0 종료알림] ${terminateD0Count}건 처리`);
+
+    // ── D+3 퇴사 요청 자동 승인 ──────────────────────────────
+    const threeDaysAgo = new Date(todayKST.getTime() - 3 * 24 * 60 * 60 * 1000);
+    const threeDaysAgoUTC = Timestamp.fromDate(
+      new Date(threeDaysAgo.getTime() - KST_OFFSET_MS)
+    );
+
+    let autoResignCount = 0;
+    const pendingResignSnap = await db.collection("applications")
+      .where("resignStatus", "==", "PENDING")
+      .where("resignRequestedAt", "<=", threeDaysAgoUTC)
+      .get();
+
+    for (const doc of pendingResignSnap.docs) {
+      const app = doc.data();
+
+      // actualResignDate: 근무자가 희망한 날짜 or 요청일+1일
+      let actualResignDate: Date;
+      if (app.resignRequestDate) {
+        actualResignDate = (app.resignRequestDate as Timestamp).toDate();
+      } else {
+        actualResignDate = new Date(
+          (app.resignRequestedAt as Timestamp).toDate().getTime() + 24 * 60 * 60 * 1000
+        );
+      }
+
+      await db.runTransaction(async (tx) => {
+        const snap = await tx.get(doc.ref);
+        if (snap.data()?.resignStatus !== "PENDING") return; // 이미 처리됨
+        tx.update(doc.ref, {
+          resignStatus: "AUTO_APPROVED",
+          resignApprovedAt: now,
+          actualResignDate: Timestamp.fromDate(actualResignDate),
+        });
+      });
+
+      // 근무자에게 자동 승인 알림
+      await db.collection("notifications").add({
+        userId: app.uid,
+        type: "resignApproved",
+        title: "퇴사 요청 자동 승인",
+        body: `${app.businessName} 퇴사 요청이 자동 승인되었습니다.`,
+        data: {applicationId: doc.id, screen: "mySchedule"},
+        isRead: false,
+        createdAt: now,
+      });
+
+      // 관리자에게도 알림
+      const bizDoc = await db.collection("businesses").doc(app.businessId).get();
+      const adminIds: string[] = bizDoc.exists ?
+        (bizDoc.data()?.adminIds as string[] ?? []) : [];
+      for (const adminId of adminIds) {
+        await db.collection("notifications").add({
+          userId: adminId,
+          type: "resignApproved",
+          title: "퇴사 요청 자동 승인됨",
+          body: `${app.applicantName ?? "근무자"}님의 퇴사 요청이 자동 승인되었습니다.`,
+          data: {applicationId: doc.id, screen: "fixedWorker"},
+          isRead: false,
+          createdAt: now,
+        });
+      }
+
+      autoResignCount++;
+    }
+    console.log(`  ✅ [D+3 퇴사 자동승인] ${autoResignCount}건 처리`);
+
+    // ── D+3 계약해지 요청 자동 승인 ──────────────────────────
+    let autoTerminationCount = 0;
+    const pendingTerminationSnap = await db.collection("applications")
+      .where("terminationStatus", "==", "PENDING")
+      .where("terminationRequestedAt", "<=", threeDaysAgoUTC)
+      .get();
+
+    for (const doc of pendingTerminationSnap.docs) {
+      const app = doc.data();
+
+      // effectiveDate: 요청일+1일 (근무자 응답 없으면 바로 다음날 효력)
+      const effectiveDate = new Date(
+        (app.terminationRequestedAt as Timestamp).toDate().getTime() + 24 * 60 * 60 * 1000
+      );
+
+      await db.runTransaction(async (tx) => {
+        const snap = await tx.get(doc.ref);
+        if (snap.data()?.terminationStatus !== "PENDING") return;
+        tx.update(doc.ref, {
+          terminationStatus: "AUTO_APPROVED",
+          terminationRespondedAt: now,
+          terminationEffectiveDate: Timestamp.fromDate(effectiveDate),
+        });
+      });
+
+      // 근무자에게 자동 승인 알림
+      await db.collection("notifications").add({
+        userId: app.uid,
+        type: "terminationApproved",
+        title: "계약해지 자동 승인",
+        body: `${app.businessName} 계약해지 요청이 자동 승인되었습니다.`,
+        data: {applicationId: doc.id, screen: "mySchedule"},
+        isRead: false,
+        createdAt: now,
+      });
+
+      autoTerminationCount++;
+    }
+    console.log(`  ✅ [D+3 계약해지 자동승인] ${autoTerminationCount}건 처리`);
+
   } catch (error) {
     console.error("❌ [계약 연장 처리] 오류:", error);
   }

@@ -17,6 +17,7 @@ import '../../models/core/to_model.dart';
 import '../../models/core/work_detail_model.dart';
 import '../../models/ui/admin_to_list_ui_models.dart';
 import '../business_admin/dialogs/work_applicants_dialog.dart';
+import '../business_admin/dialogs/fixed_worker_management_dialog.dart';
 import '../../services/contract_service.dart';
 import '../../services/member_service.dart';
 import '../../theme/app_colors.dart';
@@ -49,10 +50,16 @@ class NotificationScreen extends StatelessWidget {
       ],
       body: Consumer<NotificationProvider>(
         builder: (context, provider, _) {
+          if (provider.isLoading) {
+            return const LoadingWidget(message: '알림 불러오는 중...');
+          }
+          if (provider.hasError) {
+            return _buildErrorState(context, provider);
+          }
           if (provider.notifications.isEmpty) {
             return _buildEmptyState(context);
           }
-          
+
           return RefreshIndicator(
             onRefresh: () async {
               // 스트림 기반이라 별도 새로고침 불필요
@@ -88,6 +95,20 @@ class NotificationScreen extends StatelessWidget {
     return const AppEmptyState(
       icon: Icons.notifications_none,
       title: '알림이 없습니다',
+    );
+  }
+
+  Widget _buildErrorState(BuildContext context, NotificationProvider provider) {
+    return AppEmptyState(
+      icon: Icons.cloud_off_outlined,
+      iconColor: Colors.orange,
+      title: '알림을 불러오지 못했습니다',
+      subtitle: '네트워크 상태를 확인하고 다시 시도해주세요',
+      action: TextButton.icon(
+        onPressed: provider.retry,
+        icon: const Icon(Icons.refresh),
+        label: const Text('다시 시도'),
+      ),
     );
   }
   
@@ -163,11 +184,24 @@ class NotificationScreen extends StatelessWidget {
         break;
 
       case NotificationType.contractExpiringReminder:
-        // 관리자 → 고정근무 관리 화면 (연장/종료 선택)
-        Navigator.push(
-          context,
-          MaterialPageRoute(builder: (_) => const IntegratedWorkforceScreen()),
-        );
+        {
+          // 관리자 → 고정근무 관리 다이얼로그 (연장/종료 선택)
+          final businessId = userProvider.effectiveBusinessId;
+          if (businessId != null) {
+            showDialog(
+              context: context,
+              builder: (_) => FixedWorkerManagementDialog(
+                initialBusinessId: businessId,
+                onChanged: () {},
+              ),
+            );
+          } else {
+            Navigator.push(
+              context,
+              MaterialPageRoute(builder: (_) => const IntegratedWorkforceScreen()),
+            );
+          }
+        }
         break;
 
       case NotificationType.contractRenewed:

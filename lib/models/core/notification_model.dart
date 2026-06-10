@@ -92,7 +92,7 @@ class NotificationModel {
       body: map['body'] ?? '',
       data: map['data'],
       isRead: map['isRead'] ?? false,
-      createdAt: (map['createdAt'] as Timestamp?)?.toDate().toLocal() ?? (throw ArgumentError('Missing required field: createdAt')),
+      createdAt: (map['createdAt'] as Timestamp?)?.toDate().toLocal() ?? DateTime.now(),
       readAt: (map['readAt'] as Timestamp?)?.toDate().toLocal(),
     );
   }

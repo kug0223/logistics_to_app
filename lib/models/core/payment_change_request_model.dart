@@ -61,8 +61,8 @@ class PaymentChangeRequestModel {
   // ── 정적 라벨 헬퍼 ──────────────────────────────────────────
   static String scheduleTypeLabel(String type) {
     switch (type) {
-      case 'same_day': return '당일 지급';
-      case 'next_day': return '익일 지급';
+      case 'same_day': return '당일';
+      case 'next_day': return '익일';
       case 'weekly':   return '주급';
       case 'monthly':  return '월급';
       default:         return type;

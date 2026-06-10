@@ -259,8 +259,8 @@ class WorkDetailData {
     if (payScheduleType == null) return '';
     final timeStr = payScheduleTime != null ? ' $payScheduleTime' : '';
     switch (payScheduleType) {
-      case 'same_day':  return '당일 지급$timeStr';
-      case 'next_day':  return '익일 지급$timeStr';
+      case 'same_day':  return '당일$timeStr';
+      case 'next_day':  return '익일$timeStr';
       case 'weekly':
         final day = _weekdayLabels[payScheduleDay?.clamp(1, 7) ?? 1];
         return '매주 $day요일$timeStr';
@@ -273,11 +273,10 @@ class WorkDetailData {
   }
 
   /// 정산 주기 레이블만 — 임금 타입과 함께 한 줄 표시용
-  /// 예: '당일 지급', '익일 지급', '주급 정산', '월급 정산'
   String get payScheduleTypeLabel {
     switch (payScheduleType) {
-      case 'same_day': return '당일 지급';
-      case 'next_day': return '익일 지급';
+      case 'same_day': return '당일';
+      case 'next_day': return '익일';
       case 'weekly':   return '주급 정산';
       case 'monthly':  return '월급 정산';
       default: return '';
