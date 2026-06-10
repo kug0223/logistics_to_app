@@ -2,7 +2,7 @@ import '../models/core/slot_model.dart';
 import '../models/core/to_model.dart';
 import '../models/ui/admin_to_list_ui_models.dart';
 
-enum SlotDisplayStatus { draft, closed, scheduled, full, recruiting }
+enum SlotDisplayStatus { draft, closed, scheduled, recruiting }
 
 /// 슬롯/TO 상태 표시 계산 — 단일 진실 소스
 ///
@@ -29,9 +29,7 @@ class SlotStatusUtil {
     }
     // 4. TO 레벨 예약 공개 대기
     if (to.isPendingPublish) return SlotDisplayStatus.scheduled;
-    // 5. 충족
-    if (slot.isFull) return SlotDisplayStatus.full;
-    // 6. 모집중
+    // 5. 모집중
     return SlotDisplayStatus.recruiting;
   }
 

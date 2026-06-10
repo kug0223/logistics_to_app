@@ -207,14 +207,14 @@ class SlotModel {
 
   /// 수동마감·CF마감·인원충족·날짜경과·지원마감 중 하나라도 해당하면 true (UI 상태 표시용)
   ///
-  /// workDetails가 있으면 모든 업무의 applicationDeadline이 경과한 경우도 포함.
+  /// workDetails가 있으면 모든 업무가 수동마감됐거나 applicationDeadline이 경과한 경우 포함.
   /// workDetails가 없는 구 데이터는 슬롯 레벨 isDeadlinePassed로 폴백.
   bool get isEffectivelyClosed =>
       isClosed ||
       isFull ||
       isDatePast ||
       (workDetails.isNotEmpty
-          ? workDetails.every((wd) => wd.isTimeExpired)
+          ? workDetails.every((wd) => wd.isClosed || wd.isTimeExpired)
           : isDeadlinePassed);
 
   bool get isDeadlinePassed {

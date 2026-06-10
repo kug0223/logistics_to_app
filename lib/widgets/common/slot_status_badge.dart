@@ -51,14 +51,6 @@ class SlotStatusBadge extends StatelessWidget {
           color: AppColors.scheduledDark,
           bgColor: AppColors.scheduledBg,
         );
-      case SlotDisplayStatus.full:
-        return _badge(
-          context,
-          icon: Icons.check_circle_outline,
-          label: '충족',
-          color: AppColors.successDark,
-          bgColor: AppColors.successBg,
-        );
       case SlotDisplayStatus.recruiting:
         return _badge(
           context,
