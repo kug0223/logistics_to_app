@@ -8,6 +8,7 @@ import '../../../models/core/work_detail_data.dart';
 
 // Helper
 import '../../../utils/toast_helper.dart';
+import '../../../utils/slot_status_util.dart';
 
 // Services
 import '../../../services/firestore_service.dart';
@@ -20,6 +21,7 @@ import '../../../utils/format_helper.dart';
 // Widgets
 import '../../../theme/app_colors.dart';
 import '../../common/loading_widget.dart';
+import '../../common/slot_status_badge.dart';
 
 // Screens
 import '../../../screens/business_admin/to_management/edit_to_screen.dart';
@@ -798,182 +800,20 @@ class _TOGroupCardState extends State<TOGroupCard> {
     );
   }
 
-  /// ✨ 상태 배지 (마감/예약/모집중) - targetTOs 기준
   Widget _buildStatusBadge(BuildContext context, {
     required bool allClosed,
     required List<TOItem> targetTOs,
   }) {
-    // 1. 마감됨
-    if (allClosed) {
-      return _buildClosedBadge(context);
-    }
-    
-    // ✅ targetTOs가 비어있으면 groupItem에서 상태 판단 (contract TO)
-    if (targetTOs.isEmpty) {
-      if (widget.groupItem.masterTO.status == TOStatus.draft) {
-        return _buildDraftBadge(context);
-      }
-      if (widget.groupItem.isPendingPublish) {
-        return _buildScheduledBadge(context, widget.groupItem.publishAt);
-      }
-      return _buildRecruitingBadge(context);
-    }
-    
-    // 2. 공개된 TO가 있으면 — 슬롯 visibleFrom 기준으로 예약/모집중 판단
-    final now = DateTime.now();
-    final hasPublished = targetTOs.any((toItem) => toItem.to.isPublished);
-    if (hasPublished) {
-      final publishedTOs = targetTOs.where((ti) => ti.to.isPublished);
-      // 공개된 슬롯이 모두 미래 visibleFrom이면 → 예약
-      final allSlotScheduled = publishedTOs.every((ti) =>
-          ti.slot?.visibleFrom != null && ti.slot!.visibleFrom!.isAfter(now));
-      if (allSlotScheduled) {
-        final earliest = publishedTOs
-            .map((ti) => ti.slot?.visibleFrom)
-            .whereType<DateTime>()
-            .fold<DateTime?>(null, (e, vf) => e == null || vf.isBefore(e) ? vf : e);
-        return _buildScheduledBadge(context, earliest);
-      }
-      return _buildRecruitingBadge(context);
-    }
-
-    // 3. 예약 (TO 레벨 예약 공개 대기)
-    final pendingTO = targetTOs.where((toItem) => toItem.to.isPendingPublish).firstOrNull;
-    if (pendingTO != null) {
-      return _buildScheduledBadge(context, pendingTO.to.publishAt);
-    }
-
-    // 4. 미공개 (모두 미공개 저장 상태)
-    return _buildDraftBadge(context);
-  }
-
-  /// ✨ 예약 배지 (오픈 예정)
-  Widget _buildScheduledBadge(BuildContext context, DateTime? publishAt) {
-    final displayText = publishAt != null
-        ? '${FormatHelper.formatDateTime(publishAt)} 오픈'
-        : '예약';
-    
-    return Container(
-      padding: EdgeInsets.symmetric(
-        horizontal: ResponsiveHelper.spacing(context, 8),
-        vertical: ResponsiveHelper.spacing(context, 4),
-      ),
-      decoration: BoxDecoration(
-        color: AppColors.scheduledBg,
-        borderRadius: BorderRadius.circular(12),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(
-            Icons.schedule,
-            size: ResponsiveHelper.iconSize(context, 12),
-            color: AppColors.scheduledDark,
-          ),
-          SizedBox(width: ResponsiveHelper.spacing(context, 4)),
-          Text(
-            displayText,
-            style: ResponsiveHelper.smallStyle(
-              context,
-              color: AppColors.scheduledDark,
-            ),
-          ),
-        ],
-      ),
+    final status = SlotStatusUtil.groupStatus(
+      allClosed: allClosed,
+      masterTO: widget.groupItem.masterTO,
+      targetTOs: targetTOs,
     );
-  }
-
-  /// ✨ 모집중 배지
-  Widget _buildRecruitingBadge(BuildContext context) {
-    return Container(
-      padding: EdgeInsets.symmetric(
-        horizontal: ResponsiveHelper.spacing(context, 8),
-        vertical: ResponsiveHelper.spacing(context, 4),
-      ),
-      decoration: BoxDecoration(
-        color: AppColors.successBg,
-        borderRadius: BorderRadius.circular(12),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(
-            Icons.campaign,
-            size: ResponsiveHelper.iconSize(context, 12),
-            color: AppColors.successDark,
-          ),
-          SizedBox(width: ResponsiveHelper.spacing(context, 4)),
-          Text(
-            '모집중',
-            style: ResponsiveHelper.smallStyle(
-              context,
-              color: AppColors.successDark,
-            ),
-          ),
-        ],
-      ),
+    final scheduledAt = SlotStatusUtil.groupScheduledAt(
+      masterTO: widget.groupItem.masterTO,
+      targetTOs: targetTOs,
     );
-  }
-
-  /// ✨ 미공개 배지
-  Widget _buildDraftBadge(BuildContext context) {
-    return Container(
-      padding: EdgeInsets.symmetric(
-        horizontal: ResponsiveHelper.spacing(context, 8),
-        vertical: ResponsiveHelper.spacing(context, 4),
-      ),
-      decoration: BoxDecoration(
-        color: AppColors.grey100,
-        borderRadius: BorderRadius.circular(12),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(
-            Icons.visibility_off_outlined,
-            size: ResponsiveHelper.iconSize(context, 12),
-            color: AppColors.grey500,
-          ),
-          SizedBox(width: ResponsiveHelper.spacing(context, 4)),
-          Text(
-            '미공개',
-            style: ResponsiveHelper.smallStyle(context, color: AppColors.grey500),
-          ),
-        ],
-      ),
-    );
-  }
-
-  /// ✨ 마감 배지 (간소화)
-  Widget _buildClosedBadge(BuildContext context) {
-    return Container(
-      padding: EdgeInsets.symmetric(
-        horizontal: ResponsiveHelper.spacing(context, 8),
-        vertical: ResponsiveHelper.spacing(context, 4),
-      ),
-      decoration: BoxDecoration(
-        color: AppColors.grey100,
-        borderRadius: BorderRadius.circular(12),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(
-            Icons.lock,
-            size: ResponsiveHelper.iconSize(context, 12),
-            color: AppColors.grey600,
-          ),
-          SizedBox(width: ResponsiveHelper.spacing(context, 4)),
-          Text(
-            '마감',
-            style: ResponsiveHelper.smallStyle(
-              context,
-              color: AppColors.grey600,
-            ),
-          ),
-        ],
-      ),
-    );
+    return SlotStatusBadge(status: status, scheduledAt: scheduledAt);
   }
 
   Widget _buildUrgentBadge(BuildContext context) {

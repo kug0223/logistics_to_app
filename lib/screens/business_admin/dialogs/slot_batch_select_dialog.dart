@@ -6,8 +6,10 @@ import '../../../services/firestore_service.dart';
 import '../../../utils/responsive_helper.dart';
 import '../../../widgets/dialogs/styled_dialog.dart';
 import '../../../theme/app_colors.dart';
+import '../../../utils/slot_status_util.dart';
 import '../../../widgets/common/app_checkbox.dart';
 import '../../../widgets/common/loading_widget.dart';
+import '../../../widgets/common/slot_status_badge.dart';
 
 /// 배치 작업용 날짜(슬롯) 다중선택 다이얼로그
 class SlotBatchSelectDialog extends StatefulWidget {
@@ -222,8 +224,6 @@ class _SlotBatchSelectDialogState extends State<SlotBatchSelectDialog> {
 
   Widget _buildSlotTile(SlotModel slot) {
     final isSelected = _selectedIds.contains(slot.id);
-    final isFull = slot.confirmedCount >= slot.totalRequired &&
-        slot.totalRequired > 0;
 
     return Material(
       color: Colors.transparent,
@@ -283,7 +283,11 @@ class _SlotBatchSelectDialogState extends State<SlotBatchSelectDialog> {
                 ),
               ),
               // 상태 배지
-              _buildStatusBadge(slot, isFull),
+              SlotStatusBadge(
+                status: SlotStatusUtil.slotStatus(slot, widget.to),
+                scheduledAt: SlotStatusUtil.slotScheduledAt(slot, widget.to),
+                compact: true,
+              ),
             ],
           ),
         ),
@@ -291,55 +295,4 @@ class _SlotBatchSelectDialogState extends State<SlotBatchSelectDialog> {
     );
   }
 
-  Widget _buildStatusBadge(SlotModel slot, bool isFull) {
-    Color color;
-    Color bgColor;
-    String label;
-    IconData icon;
-
-    if (slot.isEffectivelyClosed) {
-      color = AppColors.grey600;
-      bgColor = AppColors.grey100;
-      label = '마감';
-      icon = Icons.lock;
-    } else if (!widget.to.isPublished) {
-      color = AppColors.grey500;
-      bgColor = AppColors.grey100;
-      label = '미공개';
-      icon = Icons.visibility_off_outlined;
-    } else if (isFull) {
-      color = AppColors.successDark;
-      bgColor = AppColors.successBg;
-      label = '충족';
-      icon = Icons.check_circle_outline;
-    } else {
-      color = AppColors.successDark;
-      bgColor = AppColors.successBg;
-      label = '모집중';
-      icon = Icons.campaign;
-    }
-
-    return Container(
-      padding: EdgeInsets.symmetric(
-        horizontal: ResponsiveHelper.spacing(context, 8),
-        vertical: ResponsiveHelper.spacing(context, 3),
-      ),
-      decoration: BoxDecoration(
-        color: bgColor,
-        borderRadius: BorderRadius.circular(6),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(icon, size: ResponsiveHelper.iconSize(context, 9), color: color),
-          SizedBox(width: ResponsiveHelper.spacing(context, 3)),
-          Text(
-            label,
-            style: ResponsiveHelper.tinyStyle(context, color: color)
-                .copyWith(fontWeight: FontWeight.w600),
-          ),
-        ],
-      ),
-    );
-  }
 }

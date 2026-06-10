@@ -3,8 +3,6 @@
 // Models
 import '../../../models/ui/admin_to_list_ui_models.dart';
 import '../../../models/core/work_detail_data.dart';
-import '../../../models/core/to_model.dart' show TOStatus;
-
 // Widgets
 import '../../common/app_menu_sheet.dart';
 
@@ -19,12 +17,14 @@ import '../../../utils/responsive_helper.dart';
 import '../../../utils/navigation_helper.dart';
 import '../../../utils/format_helper.dart';
 import '../../../utils/close_state_utils.dart';
+import '../../../utils/slot_status_util.dart';
 
 // Theme
 import '../../../theme/app_colors.dart';
 
 // Common Widgets
 import '../../common/loading_widget.dart';
+import '../../common/slot_status_badge.dart';
 
 // Screens
 import '../../../screens/business_admin/to_management/edit_to_screen.dart';
@@ -447,152 +447,19 @@ class _TOItemCardState extends State<TOItemCard> {
       ],
     );
   }
-  /// ✨ 상태 배지 (마감/예약/모집중)
+  /// ✨ 상태 배지
   Widget _buildStatusBadge(BuildContext context, {required bool allClosed}) {
-    final to = widget.toItem.to;
-
-    // 0. 미공개(초안)
-    if (to.status == TOStatus.draft) {
-      return Container(
-        padding: EdgeInsets.symmetric(
-          horizontal: ResponsiveHelper.spacing(context, 6),
-          vertical: ResponsiveHelper.spacing(context, 3),
-        ),
-        decoration: BoxDecoration(
-          color: AppColors.grey200,
-          borderRadius: BorderRadius.circular(6),
-        ),
-        child: Row(mainAxisSize: MainAxisSize.min, children: [
-          Icon(Icons.visibility_off_outlined,
-              size: ResponsiveHelper.iconSize(context, 10),
-              color: AppColors.grey500),
-          SizedBox(width: ResponsiveHelper.spacing(context, 2)),
-          Text('미공개',
-              style: ResponsiveHelper.tinyStyle(context,
-                  color: AppColors.grey500)),
-        ]),
-      );
-    }
-
-    // 1. 마감됨
-    if (allClosed) {
-      return _buildClosedBadge(context);
-    }
-
-    // 2. 슬롯 개별 예약 공개 대기 (visibleFrom이 미래)
     final slot = widget.toItem.slot;
-    final now = DateTime.now();
-    if (slot?.visibleFrom != null && slot!.visibleFrom!.isAfter(now)) {
-      return _buildScheduledBadge(context, slot.visibleFrom);
-    }
-
-    // 3. TO 레벨 예약 공개 대기
-    if (to.isPendingPublish) {
-      return _buildScheduledBadge(context, to.publishAt);
-    }
-
-    // 4. 모집중
-    return _buildRecruitingBadge(context);
-  }
-
-  /// ✨ 예약 배지 (오픈 예정)
-  Widget _buildScheduledBadge(BuildContext context, DateTime? publishAt) {
-    final displayText = publishAt != null
-        ? '${FormatHelper.formatDateTime(publishAt)} 오픈'
-        : '예약';
-    
-    return Container(
-      padding: EdgeInsets.symmetric(
-        horizontal: ResponsiveHelper.spacing(context, 6),
-        vertical: ResponsiveHelper.spacing(context, 3),
-      ),
-      decoration: BoxDecoration(
-        color: AppColors.scheduledBg,
-        borderRadius: BorderRadius.circular(6),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(
-            Icons.schedule,
-            size: ResponsiveHelper.iconSize(context, 10),
-            color: AppColors.scheduledDark,
-          ),
-          SizedBox(width: ResponsiveHelper.spacing(context, 2)),
-          Text(
-            displayText,
-            style: ResponsiveHelper.tinyStyle(
-              context,
-              color: AppColors.scheduledDark,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  /// ✨ 모집중 배지
-  Widget _buildRecruitingBadge(BuildContext context) {
-    return Container(
-      padding: EdgeInsets.symmetric(
-        horizontal: ResponsiveHelper.spacing(context, 6),
-        vertical: ResponsiveHelper.spacing(context, 3),
-      ),
-      decoration: BoxDecoration(
-        color: AppColors.successBg,
-        borderRadius: BorderRadius.circular(6),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(
-            Icons.campaign,
-            size: ResponsiveHelper.iconSize(context, 10),
-            color: AppColors.successDark,
-          ),
-          SizedBox(width: ResponsiveHelper.spacing(context, 2)),
-          Text(
-            '모집중',
-            style: ResponsiveHelper.tinyStyle(
-              context,
-              color: AppColors.successDark,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  /// ✨ 마감 배지 (간소화)
-  Widget _buildClosedBadge(BuildContext context) {
-    return Container(
-      padding: EdgeInsets.symmetric(
-        horizontal: ResponsiveHelper.spacing(context, 6),
-        vertical: ResponsiveHelper.spacing(context, 3),
-      ),
-      decoration: BoxDecoration(
-        color: AppColors.grey100,
-        borderRadius: BorderRadius.circular(6),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(
-            Icons.lock,
-            size: ResponsiveHelper.iconSize(context, 10),
-            color: AppColors.grey600,
-          ),
-          SizedBox(width: ResponsiveHelper.spacing(context, 2)),
-          Text(
-            '마감',
-            style: ResponsiveHelper.tinyStyle(
-              context,
-              color: AppColors.grey600,
-            ),
-          ),
-        ],
-      ),
-    );
+    final to = widget.toItem.to;
+    final status = allClosed
+        ? SlotDisplayStatus.closed
+        : slot != null
+            ? SlotStatusUtil.slotStatus(slot, to)
+            : (to.isClosed ? SlotDisplayStatus.closed : SlotDisplayStatus.recruiting);
+    final scheduledAt = slot != null
+        ? SlotStatusUtil.slotScheduledAt(slot, to)
+        : to.publishAt;
+    return SlotStatusBadge(status: status, scheduledAt: scheduledAt, compact: true);
   }
 
   /// 팝업 메뉴
