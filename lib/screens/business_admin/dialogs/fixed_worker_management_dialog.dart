@@ -1123,7 +1123,23 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
     final color = isExtend ? AppColors.success : AppColors.error;
     final bgColor = isExtend ? AppColors.successBg : AppColors.errorBg;
     final icon = isExtend ? Icons.autorenew : Icons.stop_circle_outlined;
-    final label = isExtend ? '다음 계약 연장됨' : '계약 종료 예정';
+
+    // 연장됨: 다음 계약 기간 계산 (processRenewal과 동일 공식)
+    String label;
+    if (isExtend && app.workEndDate != null) {
+      final originalStart = app.desiredStartDate ?? app.workDate;
+      final contractMonths = (app.workEndDate!.year - originalStart.year) * 12
+          + (app.workEndDate!.month - originalStart.month);
+      final renewalMonths = contractMonths > 0 ? contractMonths : 1;
+      final newStart = app.workEndDate!.add(const Duration(days: 1));
+      final rawEndYear = app.workEndDate!.year + ((app.workEndDate!.month + renewalMonths - 1) ~/ 12);
+      final rawEndMonth = (app.workEndDate!.month + renewalMonths - 1) % 12 + 1;
+      final lastDay = DateTime(rawEndYear, rawEndMonth + 1, 0).day;
+      final newEnd = DateTime(rawEndYear, rawEndMonth, app.workEndDate!.day.clamp(1, lastDay));
+      label = '다음 계약 ${newStart.month}/${newStart.day} ~ ${newEnd.month}/${newEnd.day}';
+    } else {
+      label = isExtend ? '다음 계약 연장됨' : '계약 종료 예정';
+    }
 
     return Container(
       margin: EdgeInsets.only(bottom: ResponsiveHelper.spacing(context, 8)),
