@@ -108,7 +108,7 @@ class TOPublishSection extends StatelessWidget {
             ],
           ],
 
-          if (onPostingDurationChanged != null) ...[
+          if (isLongTerm && onPostingDurationChanged != null) ...[
             SizedBox(height: ResponsiveHelper.spacing(context, 16)),
             Divider(color: AppColors.grey200),
             SizedBox(height: ResponsiveHelper.spacing(context, 16)),
