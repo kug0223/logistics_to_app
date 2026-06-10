@@ -43,7 +43,7 @@ class TOModel {
   final DateTime? applicationDeadline; // contract: 공고 마감일
   /// 계약 기간 유형: '15days' | '1month' | '3months' | '6months' | '1year' | 'custom'
   final String? contractPeriodType;
-  /// 게시 기간 (일수): null=무기한, 7, 14, 30, 60
+  /// 게시 기간 (일수): 1, 2, 3, 5, 7
   final int? postingDurationDays;
 
   // ── 인원 집계 ─────────────────────────────────────

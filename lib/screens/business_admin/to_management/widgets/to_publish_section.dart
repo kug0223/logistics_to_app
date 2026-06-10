@@ -27,7 +27,7 @@ class TOPublishSection extends StatelessWidget {
   /// 장기 근무 여부
   final bool isLongTerm;
 
-  /// 게시 기간 (일수): null=무기한, 7, 14, 30, 60
+  /// 게시 기간 (일수): 1, 2, 3, 5, 7
   final int? postingDurationDays;
   final void Function(int? days)? onPostingDurationChanged;
 
@@ -363,10 +363,11 @@ class TOPublishSection extends StatelessWidget {
   }
 
   static const _durationOptions = [
+    (1, '1일'),
+    (2, '2일'),
+    (3, '3일'),
+    (5, '5일'),
     (7, '7일'),
-    (14, '14일'),
-    (30, '30일'),
-    (60, '60일'),
   ];
 
   Widget _buildPostingDurationSection(BuildContext context, ThemeData theme) {
@@ -387,17 +388,10 @@ class TOPublishSection extends StatelessWidget {
           spacing: ResponsiveHelper.spacing(context, 8),
           runSpacing: ResponsiveHelper.spacing(context, 8),
           children: [
-            // 무기한 칩 (선택된 기간 재탭 시 null로 초기화)
-            _buildDurationChip(
-              context, theme, '무기한',
-              postingDurationDays == null,
-              () => onPostingDurationChanged?.call(null),
-            ),
             ..._durationOptions.map(((int, String) opt) {
               final (days, label) = opt;
               final isSelected = postingDurationDays == days;
               return _buildDurationChip(context, theme, label, isSelected, () {
-                // 이미 선택된 칩 재탭 → 무기한(null)으로 해제
                 onPostingDurationChanged?.call(isSelected ? null : days);
               });
             }),
