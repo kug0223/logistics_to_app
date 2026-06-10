@@ -1,4 +1,5 @@
-﻿import 'package:flutter/material.dart';
+﻿import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:flutter/material.dart';
 
 // Models
 import '../../../models/core/to_model.dart';
@@ -1007,10 +1008,21 @@ class _TOGroupCardState extends State<TOGroupCard> {
     final isContract = widget.groupItem.masterTO.isContractType;
     final isClosed = widget.groupItem.isClosed;
     final isManualClosed = widget.groupItem.isManualClosed;
+    final isDraft = !widget.groupItem.masterTO.isPublished;
 
     AppMenuSheet.show(
       context: context,
       itemGroups: [
+        // 공개하기 (미공개 상태일 때만)
+        if (isDraft && !isClosed)
+          [
+            AppMenuSheetItem(
+              icon: Icons.visibility,
+              label: '공개하기',
+              color: AppColors.success,
+              onTap: () => _handleSingleTOMenuAction(context, 'publish'),
+            ),
+          ],
         // 공고 상세보기 (contract 전용)
         if (isContract)
           [
@@ -1506,6 +1518,21 @@ class _TOGroupCardState extends State<TOGroupCard> {
           widget.onChanged();
         } catch (e) {
           ToastHelper.showError('삭제 처리에 실패했습니다');
+        }
+        break;
+
+      case 'publish':
+        try {
+          await widget.firestoreService.updateTO(masterTO.id, {
+            'isPublished': true,
+            'publishMode': 'immediate',
+            'status': TOStatus.active,
+            'statusUpdatedAt': FieldValue.serverTimestamp(),
+          });
+          widget.onChanged();
+          ToastHelper.showSuccess('공고가 공개되었습니다');
+        } catch (e) {
+          ToastHelper.showError('공개 처리에 실패했습니다');
         }
         break;
 

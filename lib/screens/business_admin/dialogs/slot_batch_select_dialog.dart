@@ -302,6 +302,11 @@ class _SlotBatchSelectDialogState extends State<SlotBatchSelectDialog> {
       bgColor = AppColors.grey100;
       label = '마감';
       icon = Icons.lock;
+    } else if (!widget.to.isPublished) {
+      color = AppColors.grey500;
+      bgColor = AppColors.grey100;
+      label = '미공개';
+      icon = Icons.visibility_off_outlined;
     } else if (isFull) {
       color = AppColors.successDark;
       bgColor = AppColors.successBg;
