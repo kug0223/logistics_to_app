@@ -816,15 +816,20 @@ class _TOGroupCardState extends State<TOGroupCard> {
       return _buildRecruitingBadge(context);
     }
     
-    // 2. 모집중 (하나라도 공개된 TO가 있으면)
-    final hasRecruiting = targetTOs.any((toItem) => !toItem.to.isPendingPublish);
-    if (hasRecruiting) {
+    // 2. 모집중 (하나라도 실제 공개된 TO가 있으면)
+    final hasPublished = targetTOs.any((toItem) => toItem.to.isPublished);
+    if (hasPublished) {
       return _buildRecruitingBadge(context);
     }
-    
-    // 3. 예약 (모두 예약 상태일 때만)
-    final scheduledTO = targetTOs.first;  // ✅ 위에서 isEmpty 체크했으므로 안전
-    return _buildScheduledBadge(context, scheduledTO.to.publishAt);
+
+    // 3. 예약 (예약 공개 대기 중인 TO가 있으면)
+    final pendingTO = targetTOs.where((toItem) => toItem.to.isPendingPublish).firstOrNull;
+    if (pendingTO != null) {
+      return _buildScheduledBadge(context, pendingTO.to.publishAt);
+    }
+
+    // 4. 미공개 (모두 미공개 저장 상태)
+    return _buildDraftBadge(context);
   }
 
   /// ✨ 예약 배지 (오픈 예정)
@@ -889,6 +894,35 @@ class _TOGroupCardState extends State<TOGroupCard> {
               context,
               color: AppColors.successDark,
             ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// ✨ 미공개 배지
+  Widget _buildDraftBadge(BuildContext context) {
+    return Container(
+      padding: EdgeInsets.symmetric(
+        horizontal: ResponsiveHelper.spacing(context, 8),
+        vertical: ResponsiveHelper.spacing(context, 4),
+      ),
+      decoration: BoxDecoration(
+        color: AppColors.grey100,
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(
+            Icons.visibility_off_outlined,
+            size: ResponsiveHelper.iconSize(context, 12),
+            color: AppColors.grey500,
+          ),
+          SizedBox(width: ResponsiveHelper.spacing(context, 4)),
+          Text(
+            '미공개',
+            style: ResponsiveHelper.smallStyle(context, color: AppColors.grey500),
           ),
         ],
       ),
