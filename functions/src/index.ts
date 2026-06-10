@@ -2482,10 +2482,16 @@ async function processContractRenewalChecks(now: Timestamp): Promise<void> {
         resignStatus: null,
         resignRequestedAt: null,
         resignRequestDate: null,
+        resignApprovedAt: null,
+        resignApprovedBy: null,
+        resignRejectReason: null,
         actualResignDate: null,
         terminationStatus: null,
         terminationRequestedAt: null,
+        terminationReason: null,
         terminationEffectiveDate: null,
+        terminationRequestedByUid: null,
+        terminationRespondedAt: null,
         terminationRejectReason: null,
       });
       // 기존 Application 갱신 — 배치 실패 시 둘 다 미커밋 → 중복 연장 방지
