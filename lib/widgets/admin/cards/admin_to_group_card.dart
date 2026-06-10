@@ -808,21 +808,36 @@ class _TOGroupCardState extends State<TOGroupCard> {
       return _buildClosedBadge(context);
     }
     
-    // ✅ targetTOs가 비어있으면 groupItem에서 상태 판단
+    // ✅ targetTOs가 비어있으면 groupItem에서 상태 판단 (contract TO)
     if (targetTOs.isEmpty) {
+      if (widget.groupItem.masterTO.status == TOStatus.draft) {
+        return _buildDraftBadge(context);
+      }
       if (widget.groupItem.isPendingPublish) {
         return _buildScheduledBadge(context, widget.groupItem.publishAt);
       }
       return _buildRecruitingBadge(context);
     }
     
-    // 2. 모집중 (하나라도 실제 공개된 TO가 있으면)
+    // 2. 공개된 TO가 있으면 — 슬롯 visibleFrom 기준으로 예약/모집중 판단
+    final now = DateTime.now();
     final hasPublished = targetTOs.any((toItem) => toItem.to.isPublished);
     if (hasPublished) {
+      final publishedTOs = targetTOs.where((ti) => ti.to.isPublished);
+      // 공개된 슬롯이 모두 미래 visibleFrom이면 → 예약
+      final allSlotScheduled = publishedTOs.every((ti) =>
+          ti.slot?.visibleFrom != null && ti.slot!.visibleFrom!.isAfter(now));
+      if (allSlotScheduled) {
+        final earliest = publishedTOs
+            .map((ti) => ti.slot?.visibleFrom)
+            .whereType<DateTime>()
+            .fold<DateTime?>(null, (e, vf) => e == null || vf.isBefore(e) ? vf : e);
+        return _buildScheduledBadge(context, earliest);
+      }
       return _buildRecruitingBadge(context);
     }
 
-    // 3. 예약 (예약 공개 대기 중인 TO가 있으면)
+    // 3. 예약 (TO 레벨 예약 공개 대기)
     final pendingTO = targetTOs.where((toItem) => toItem.to.isPendingPublish).firstOrNull;
     if (pendingTO != null) {
       return _buildScheduledBadge(context, pendingTO.to.publishAt);

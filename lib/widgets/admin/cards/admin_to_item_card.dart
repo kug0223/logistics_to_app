@@ -97,14 +97,16 @@ class _TOItemCardState extends State<TOItemCard> {
     final (:confirmed, :pending, :required) = widget.toItem.resolveStats();
     final isFull = widget.toItem.resolvedIsFull;
     
-    // 전체 마감 여부 — CloseStateUtils로 통일 판단
-    final allClosed = CloseStateUtils.isToItemClosed(
-      widget.toItem,
-      widget.groupItem.masterTO,
-      DateTime.now(),
-      localConfirmed: confirmed,
-      localRequired: required,
-    );
+    // 전체 마감 여부 — contract TO(slot=null)는 TO 레벨 isClosed 직접 사용
+    final allClosed = widget.toItem.slot == null
+        ? widget.toItem.to.isClosed
+        : CloseStateUtils.isToItemClosed(
+            widget.toItem,
+            widget.groupItem.masterTO,
+            DateTime.now(),
+            localConfirmed: confirmed,
+            localRequired: required,
+          );
     // 상태별 컬러 (장기/단기 구분)
     Color statusColor;
     if (allClosed) {
@@ -477,12 +479,19 @@ class _TOItemCardState extends State<TOItemCard> {
       return _buildClosedBadge(context);
     }
 
-    // 2. 예약 공개 대기
+    // 2. 슬롯 개별 예약 공개 대기 (visibleFrom이 미래)
+    final slot = widget.toItem.slot;
+    final now = DateTime.now();
+    if (slot?.visibleFrom != null && slot!.visibleFrom!.isAfter(now)) {
+      return _buildScheduledBadge(context, slot.visibleFrom);
+    }
+
+    // 3. TO 레벨 예약 공개 대기
     if (to.isPendingPublish) {
       return _buildScheduledBadge(context, to.publishAt);
     }
 
-    // 3. 모집중
+    // 4. 모집중
     return _buildRecruitingBadge(context);
   }
 
