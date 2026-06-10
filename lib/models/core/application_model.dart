@@ -562,8 +562,7 @@ class ApplicationModel {
     if (workDays == null || workDays!.isEmpty) return null;
     
     final count = workDays!.length;
-    final daysStr = workDays!.join(',');
-    
+
     // 연속된 요일인지 확인 (월~금)
     final weekDays = ['월', '화', '수', '목', '금', '토', '일'];
     final indices = workDays!.map((day) => weekDays.indexOf(day)).toList()..sort();
@@ -577,10 +576,10 @@ class ApplicationModel {
     }
     
     if (isContinuous && count > 1) {
-      // 정렬된 indices 기준 시작~끝 요일 표시 (원본 배열 순서 의존 방지)
       return '주 $count일 (${weekDays[indices.first]}~${weekDays[indices.last]})';
     } else {
-      return '주 $count일 ($daysStr)';
+      final sortedDays = indices.map((i) => weekDays[i]).join(',');
+      return '주 $count일 ($sortedDays)';
     }
   }
   // ⭐ 특정 날짜가 휴무일인지 확인

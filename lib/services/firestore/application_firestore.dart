@@ -669,15 +669,22 @@ extension ApplicationFirestore on FirestoreService {
         updates['rejectedAt'] = FieldValue.serverTimestamp();
         if (rejectedBy != null) updates['rejectedBy'] = rejectedBy;
         if (message != null) updates['rejectMessage'] = message;
-        final newEntry = {
+        updates['statusHistory'] = _appendHistory(appData, {
           'status': 'REJECTED',
           'at': Timestamp.now(),
           'by': rejectedBy,
           'action': 'REJECT',
           if (message != null) 'reason': message,
-        };
-        final history = _appendHistory(appData, newEntry);
-        updates['statusHistory'] = history;
+        });
+      } else if (status == AppStatus.pending &&
+          AppStatus.confirmedStatuses.contains(prevStatus)) {
+        // confirmed → pending 롤백 이력 기록
+        updates['statusHistory'] = _appendHistory(appData, {
+          'status': 'PENDING',
+          'at': Timestamp.now(),
+          'by': confirmedBy,
+          'action': 'CONFIRM_ROLLBACK',
+        });
       }
 
       final batch = _firestore.batch();

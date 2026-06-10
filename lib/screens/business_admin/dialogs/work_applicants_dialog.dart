@@ -1050,15 +1050,17 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
                         Row(
                           mainAxisAlignment: MainAxisAlignment.end,
                           children: [
-                            _buildActionButton(
-                              context,
-                              label: '파트변경',
-                              icon: Icons.swap_horiz,
-                              bgColor: AppColors.infoBg,
-                              textColor: AppColors.info,
-                              onTap: () => _showChangeWorkPartDialog(item),
-                            ),
-                            SizedBox(width: ResponsiveHelper.spacing(context, 12)),
+                            if (widget.toItem.workDetails.length > 1) ...[
+                              _buildActionButton(
+                                context,
+                                label: '파트변경',
+                                icon: Icons.swap_horiz,
+                                bgColor: AppColors.infoBg,
+                                textColor: AppColors.info,
+                                onTap: () => _showChangeWorkPartDialog(item),
+                              ),
+                              SizedBox(width: ResponsiveHelper.spacing(context, 12)),
+                            ],
                             if (widget.toItem.to.isLongTerm && (_hasAttendanceMap[app.id] ?? false))
                               _buildActionButton(
                                 context,
@@ -1087,15 +1089,17 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
                         Row(
                           mainAxisAlignment: MainAxisAlignment.end,
                           children: [
-                            _buildActionButton(
-                              context,
-                              label: '파트변경',
-                              icon: Icons.swap_horiz,
-                              bgColor: AppColors.infoBg,
-                              textColor: AppColors.info,
-                              onTap: () => _showChangeWorkPartDialog(item),
-                            ),
-                            SizedBox(width: ResponsiveHelper.spacing(context, 12)),
+                            if (widget.toItem.workDetails.length > 1) ...[
+                              _buildActionButton(
+                                context,
+                                label: '파트변경',
+                                icon: Icons.swap_horiz,
+                                bgColor: AppColors.infoBg,
+                                textColor: AppColors.info,
+                                onTap: () => _showChangeWorkPartDialog(item),
+                              ),
+                              SizedBox(width: ResponsiveHelper.spacing(context, 12)),
+                            ],
                             _buildActionButton(
                               context,
                               label: '거절',

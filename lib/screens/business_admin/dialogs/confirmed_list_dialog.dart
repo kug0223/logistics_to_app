@@ -1026,7 +1026,12 @@ class _ConfirmedListDialogWidgetState extends State<_ConfirmedListDialogWidget>
         _selectedCancelAppIds.clear();
         _hasChanges = true;
       });
-      ToastHelper.showSuccess('$successCount명의 확정이 취소되었습니다');
+      final failCount = targetIds.length - successCount;
+      if (failCount > 0) {
+        ToastHelper.showWarning('$successCount명 취소 완료, $failCount명 실패');
+      } else {
+        ToastHelper.showSuccess('$successCount명의 확정이 취소되었습니다');
+      }
       widget.onLocalStatsChanged?.call();
     }
   }
