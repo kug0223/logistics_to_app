@@ -2382,9 +2382,10 @@ async function processContractRenewalChecks(now: Timestamp): Promise<void> {
 
     for (const doc of d15Snap.docs) {
       const app = doc.data();
-      // 장기(workDays 있음) + 아직 알림 안 보낸 경우만
+      // 장기(workDays 있음) + 이미 결정/발송 안 된 경우만
       if (!app.workDays || app.workDays.length === 0) continue;
-      if (app.renewalNotifiedAt) continue;
+      if (app.renewalDecision) continue;   // 이미 연장/종료 결정됨 → 알림 불필요
+      if (app.renewalNotifiedAt) continue; // 이미 알림 발송됨
 
       const expiryDateKST = new Date((app.workEndDate as Timestamp).toDate().getTime() + KST_OFFSET_MS);
 
