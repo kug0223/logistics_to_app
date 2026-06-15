@@ -37,6 +37,8 @@ import '../../../services/firestore_service.dart';
 
 // Providers
 import '../../../providers/user_provider.dart';
+import '../../../utils/payment_due_date_calculator.dart';
+import '../../../services/trust_score_service.dart';
 
 /// 급여 확정 다이얼로그
 class WageConfirmDialog extends StatefulWidget {
@@ -48,6 +50,7 @@ class WageConfirmDialog extends StatefulWidget {
   final Map<String, UserModel> userMap;
   final Map<String, dynamic> workDetailTimeMap;
   final VoidCallback? onConfirmed;
+  final VoidCallback? onClose;
 
   const WageConfirmDialog({
     super.key,
@@ -59,6 +62,7 @@ class WageConfirmDialog extends StatefulWidget {
     required this.userMap,
     required this.workDetailTimeMap,
     this.onConfirmed,
+    this.onClose,
   });
 
   @override
@@ -130,12 +134,12 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
       // 미확정·확정내역: adminConfirmed 된 인원만
       if (attendance.adminConfirmed != true) continue;
 
-      // 확정내역: wageConfirmed(급여확정)만
-      if (attendance.wageStatus == AttendanceModel.wageConfirmed) {
+      // 확정내역: wageCalculated(급여확정) + wageConfirmed(마감완료)
+      if (attendance.wageStatus == AttendanceModel.wageCalculated ||
+          attendance.wageStatus == AttendanceModel.wageConfirmed) {
         _calculatedWorkers.add(app);
-      // 미확정: wagePending + wageCalculated(검토중)
-      } else if (attendance.wageStatus == AttendanceModel.wageCalculated ||
-                 attendance.wageStatus == AttendanceModel.wagePending) {
+      // 미확정: wagePending만
+      } else if (attendance.wageStatus == AttendanceModel.wagePending) {
         _pendingWorkers.add(app);
       }
     }
@@ -583,6 +587,8 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
           _pendingWorkers.removeWhere((app) => confirmedIds.contains(app.id));
           _pendingSelectedIds.clear();
         });
+        // 확정내역 탭으로 자동 이동
+        _tabController.animateTo(1);
       }
       
       if (failCount > 0) {
@@ -1052,6 +1058,107 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
     } finally {
       if (mounted) setState(() => _isProcessing = false);
     }
+  }
+
+  /// 선택된 wageCalculated 항목 → wageConfirmed 마감 처리
+  Future<void> _closeWages() async {
+    // 선택된 항목 중 wageCalculated 상태인 것만 처리
+    final targetIds = _calculatedSelectedIds.where((id) {
+      final att = widget.attendanceMap[id];
+      return att?.wageStatus == AttendanceModel.wageCalculated;
+    }).toList();
+
+    if (targetIds.isEmpty) {
+      ToastHelper.showWarning('마감할 항목이 없습니다 (이미 마감됐거나 선택 없음)');
+      return;
+    }
+
+    final confirmed = await DialogHelper.showConfirm(
+      context,
+      title: '마감',
+      message: '선택한 ${targetIds.length}명을 마감하시겠습니까?\n마감 후에는 급여 취소가 불가합니다.',
+      confirmText: '마감',
+    );
+    if (confirmed != true || !mounted) return;
+
+    final adminUid = Provider.of<UserProvider>(context, listen: false).currentUser?.uid;
+    setState(() => _isProcessing = true);
+
+    int successCount = 0;
+    int failCount = 0;
+    try {
+      var batch = FirebaseFirestore.instance.batch();
+      int batchCount = 0;
+      final processedApps = <ApplicationModel>[];
+
+      for (final appId in targetIds) {
+        final attendance = widget.attendanceMap[appId];
+        if (attendance == null) { failCount++; continue; }
+        final app = _calculatedWorkers.firstWhere((a) => a.id == appId, orElse: () => throw StateError(''));
+
+        final wd = attendance.wageDetail ?? _calculatedWages[appId];
+        final paymentDueDate = PaymentDueDateCalculator.calculate(
+          payScheduleType: wd?.payScheduleType,
+          payScheduleDay:  wd?.payScheduleDay,
+          workDate: attendance.workDate,
+        );
+        final confirmedWageDetail = wd?.copyWith(
+          confirmedBy: adminUid,
+          confirmedAt: DateTime.now(),
+        );
+
+        batch.update(
+          FirebaseFirestore.instance.collection('attendance').doc(attendance.id),
+          {
+            'wageStatus': AttendanceModel.wageConfirmed,
+            'finalConfirmedAt': FieldValue.serverTimestamp(),
+            if (adminUid != null) 'confirmedBy': adminUid,
+            if (confirmedWageDetail != null) 'wageDetail': confirmedWageDetail.toMap(),
+            if (paymentDueDate != null) 'paymentDueDate': Timestamp.fromDate(paymentDueDate),
+          },
+        );
+        batch.update(
+          FirebaseFirestore.instance.collection('users').doc(app.uid),
+          {'totalWorkDays': FieldValue.increment(1)},
+        );
+        batchCount += 2;
+        processedApps.add(app);
+
+        if (batchCount >= 498) {
+          await batch.commit();
+          successCount += batchCount ~/ 2;
+          batch = FirebaseFirestore.instance.batch();
+          batchCount = 0;
+        }
+      }
+      if (batchCount > 0) {
+        await batch.commit();
+        successCount += batchCount ~/ 2;
+      }
+
+      // 신뢰도 업데이트
+      for (final app in processedApps) {
+        try {
+          await TrustScoreService().onWorkComplete(app.uid, app.businessId);
+        } catch (e) {
+          debugPrint('⚠️ 신뢰도 업데이트 실패 (${app.uid}): $e');
+        }
+      }
+    } catch (e) {
+      debugPrint('❌ 마감 처리 실패: $e');
+      failCount = targetIds.length - successCount;
+    }
+
+    if (!mounted) return;
+    _hasChanges = true;
+    widget.onClose?.call();
+
+    if (failCount == 0) {
+      ToastHelper.showSuccess('$successCount명 마감 완료');
+    } else {
+      ToastHelper.showWarning('$successCount명 완료, $failCount명 실패');
+    }
+    setState(() => _isProcessing = false);
   }
 
   // ═══════════════════════════════════════════════════════════
@@ -1892,6 +1999,51 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
               ),
             ),
           
+          // 전체 일괄 마감 버튼 (확정내역 탭 — wageCalculated 항목 있을 때)
+          if (!isPending) ...[
+            Builder(builder: (context) {
+              final closableCount = _calculatedWorkers.where((app) {
+                final att = widget.attendanceMap[app.id];
+                return att?.wageStatus == AttendanceModel.wageCalculated;
+              }).length;
+              if (closableCount == 0) return const SizedBox.shrink();
+              return Padding(
+                padding: EdgeInsets.only(bottom: ResponsiveHelper.spacing(context, 8)),
+                child: SizedBox(
+                  width: double.infinity,
+                  child: OutlinedButton.icon(
+                    onPressed: _isProcessing ? null : () {
+                      setState(() {
+                        _calculatedSelectedIds
+                          ..clear()
+                          ..addAll(_calculatedWorkers
+                            .where((app) => widget.attendanceMap[app.id]?.wageStatus == AttendanceModel.wageCalculated)
+                            .map((app) => app.id));
+                      });
+                      _closeWages();
+                    },
+                    icon: Icon(Icons.lock_outline, size: ResponsiveHelper.iconSize(context, 18), color: AppColors.success),
+                    label: Text(
+                      '전체 일괄 마감 ($closableCount명)',
+                      style: ResponsiveHelper.bodyStyle(context).copyWith(
+                        color: AppColors.success,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: AppColors.success,
+                      side: BorderSide(color: AppColors.success.withValues(alpha: 0.6)),
+                      padding: EdgeInsets.symmetric(vertical: ResponsiveHelper.spacing(context, 12)),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(ResponsiveHelper.spacing(context, 12)),
+                      ),
+                    ),
+                  ),
+                ),
+              );
+            }),
+          ],
+
           // 전체 일괄 확정 버튼 (미확정 탭에만)
           if (isPending && _pendingWorkers.isNotEmpty)
             Padding(
@@ -1952,24 +2104,23 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
                 ),
               ),
               SizedBox(width: ResponsiveHelper.spacing(context, 12)),
-              // 급여확정 탭: 확정 취소만
-              if (!isPending)
+              // 확정내역 탭: 확정 취소 + 마감하기
+              if (!isPending) ...[
                 Expanded(
-                  flex: 2,
                   child: ElevatedButton.icon(
                     onPressed: (hasSelection && !_isProcessing) ? _cancelSelectedWages : null,
                     icon: _isProcessing
                         ? SizedBox(
-                            width: ResponsiveHelper.spacing(context, 18),
-                            height: ResponsiveHelper.spacing(context, 18),
+                            width: ResponsiveHelper.spacing(context, 16),
+                            height: ResponsiveHelper.spacing(context, 16),
                             child: CircularProgressIndicator(
                               strokeWidth: ResponsiveHelper.spacing(context, 2),
                               color: Colors.white,
                             ),
                           )
-                        : Icon(Icons.undo, size: ResponsiveHelper.iconSize(context, 20)),
+                        : Icon(Icons.undo, size: ResponsiveHelper.iconSize(context, 18)),
                     label: Text(
-                      _isProcessing ? '처리 중...' : '확정 취소 (${_calculatedSelectedIds.length}명)',
+                      '취소',
                       style: ResponsiveHelper.bodyStyle(context).copyWith(
                         color: Colors.white,
                         fontWeight: FontWeight.w600,
@@ -1987,6 +2138,46 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
                     ),
                   ),
                 ),
+                SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+                Expanded(
+                  flex: 2,
+                  child: Builder(builder: (context) {
+                    final closableSelected = _calculatedSelectedIds.where((id) =>
+                      widget.attendanceMap[id]?.wageStatus == AttendanceModel.wageCalculated
+                    ).length;
+                    return ElevatedButton.icon(
+                      onPressed: (closableSelected > 0 && !_isProcessing) ? _closeWages : null,
+                      icon: _isProcessing
+                          ? SizedBox(
+                              width: ResponsiveHelper.spacing(context, 18),
+                              height: ResponsiveHelper.spacing(context, 18),
+                              child: CircularProgressIndicator(
+                                strokeWidth: ResponsiveHelper.spacing(context, 2),
+                                color: Colors.white,
+                              ),
+                            )
+                          : Icon(Icons.lock_outline, size: ResponsiveHelper.iconSize(context, 20)),
+                      label: Text(
+                        _isProcessing ? '처리 중...' : '마감 ($closableSelected명)',
+                        style: ResponsiveHelper.bodyStyle(context).copyWith(
+                          color: Colors.white,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: closableSelected > 0 ? AppColors.success : theme.disabledColor,
+                        foregroundColor: Colors.white,
+                        padding: EdgeInsets.symmetric(
+                          vertical: ResponsiveHelper.spacing(context, 14),
+                        ),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(ResponsiveHelper.spacing(context, 12)),
+                        ),
+                      ),
+                    );
+                  }),
+                ),
+              ],
               // 미확정 탭: 급여 확정
               if (isPending)
               Expanded(

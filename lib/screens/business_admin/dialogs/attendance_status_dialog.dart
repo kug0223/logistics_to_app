@@ -2701,7 +2701,9 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
         userMap: _userMap,
         workDetailTimeMap: _workDetailTimeMap,
         onConfirmed: () {
-          // 급여 확정 시 데이터 새로고침
+          _loadData();
+        },
+        onClose: () {
           _loadData();
         },
       ),
