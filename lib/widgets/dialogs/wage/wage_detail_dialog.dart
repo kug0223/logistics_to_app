@@ -1,5 +1,7 @@
 // lib/widgets/dialogs/wage/wage_detail_dialog.dart
 
+import 'dart:math';
+
 import 'package:flutter/material.dart';
 
 import '../../../models/core/application_model.dart';
@@ -404,6 +406,15 @@ class _WageDetailDialogState extends State<WageDetailDialog> {
   }
 
   bool get _isEditable => widget.mode != WageDialogMode.confirmed;
+
+  /// 조출수당 금액 (저장된 earlyArrivalAmount 우선, 구형 레코드는 비율 fallback)
+  int _effectiveEarlyArrivalAmount(int earlyMins) {
+    if (_wage.earlyArrivalAmount > 0) return _wage.earlyArrivalAmount;
+    if (_wage.overtimeMinutes > 0 && earlyMins > 0) {
+      return (_wage.overtimeAmount * earlyMins / _wage.overtimeMinutes).round();
+    }
+    return 0;
+  }
 
   /// 연장·야간수당 기초 시급 — 사업주 설정값 우선
   int get _supplementWage {
@@ -832,14 +843,9 @@ class _WageDetailDialogState extends State<WageDetailDialog> {
         : null;
 
     // 조출/연장 분리
-    // earlyArrivalAmount가 저장된 레코드면 직접 사용, 구형 레코드는 비율 fallback
     final earlyMins = _wage.earlyArrivalMinutes;
     final regularMins = _wage.overtimeMinutes - earlyMins;
-    final earlyArrivalAmount = _wage.earlyArrivalAmount > 0
-        ? _wage.earlyArrivalAmount
-        : (_wage.overtimeMinutes > 0
-            ? (_wage.overtimeAmount * earlyMins / _wage.overtimeMinutes).round()
-            : 0);
+    final earlyArrivalAmount = _effectiveEarlyArrivalAmount(earlyMins);
     final regularOvertimeAmount = _wage.overtimeAmount - earlyArrivalAmount;
 
     // 일급제 미근무 공제: 원래 일급과 실제 기본급의 차이
@@ -1196,30 +1202,56 @@ class _WageDetailDialogState extends State<WageDetailDialog> {
           '기본급 = ${FormatHelper.formatWage(_wage.baseWage)}/h × $regularH = ${FormatHelper.formatWage(_wage.baseAmount)}');
     }
 
-    // ── 조출/연장수당 ──
+    // ── 조출/연장수당 (근로기준법 제56조: 1일 8h 초과분만 1.5배) ──
     if (_wage.overtimeAmount > 0) {
       final wageStr = FormatHelper.formatWage(supplementWage);
       final fEarlyMins = _wage.earlyArrivalMinutes;
       final fRegularMins = _wage.overtimeMinutes - fEarlyMins;
-      // earlyArrivalAmount가 저장된 레코드면 직접, 구형은 비율 fallback
-      final fEarlyAmt = _wage.earlyArrivalAmount > 0
-          ? _wage.earlyArrivalAmount
-          : (_wage.overtimeMinutes > 0
-              ? (_wage.overtimeAmount * fEarlyMins / _wage.overtimeMinutes).round()
-              : 0);
+      final fEarlyAmt = _effectiveEarlyArrivalAmount(fEarlyMins);
       final fRegularAmt = _wage.overtimeAmount - fEarlyAmt;
 
-      if (fEarlyMins > 0 && fEarlyAmt > 0) {
-        final h = FormatHelper.formatCompactHours(fEarlyMins);
-        if (!isDaily) {
-          lines.add('조출수당 = $wageStr/h × $h × 1.5 = ${FormatHelper.formatWage(fEarlyAmt)}');
-        } else {
-          lines.add('조출수당 = $wageStr/h × $h × 1.0 = ${FormatHelper.formatWage(fEarlyAmt)}');
+      if (!isDaily) {
+        // 시급제: overtimeMinutes는 이미 8h 초과분 → 모두 1.5배
+        if (fEarlyMins > 0 && fEarlyAmt > 0) {
+          lines.add('조출수당 = $wageStr/h × ${FormatHelper.formatCompactHours(fEarlyMins)} × 1.5 = ${FormatHelper.formatWage(fEarlyAmt)}');
         }
-      }
-      if (fRegularMins > 0 && fRegularAmt > 0) {
-        final h = FormatHelper.formatCompactHours(fRegularMins);
-        lines.add('연장수당 = $wageStr/h × $h × 1.5 = ${FormatHelper.formatWage(fRegularAmt)}');
+        if (fRegularMins > 0 && fRegularAmt > 0) {
+          lines.add('연장수당 = $wageStr/h × ${FormatHelper.formatCompactHours(fRegularMins)} × 1.5 = ${FormatHelper.formatWage(fRegularAmt)}');
+        }
+      } else {
+        // 일급제: 8h 초과 여부로 배율 분기
+        final over8 = (_wage.workMinutes - WageCalculator.standardWorkMinutes).clamp(0, _wage.overtimeMinutes);
+        final within8 = _wage.overtimeMinutes - over8;
+
+        // 조출 공식
+        if (fEarlyMins > 0 && fEarlyAmt > 0) {
+          final earlyIn8 = min(fEarlyMins, within8);
+          final h = FormatHelper.formatCompactHours(fEarlyMins);
+          if (earlyIn8 >= fEarlyMins) {
+            lines.add('조출수당 = $wageStr/h × $h × 1.0 = ${FormatHelper.formatWage(fEarlyAmt)}');
+          } else {
+            lines.add('조출수당 ($h) = ${FormatHelper.formatWage(fEarlyAmt)}');
+          }
+        }
+
+        // 연장 공식
+        if (fRegularMins > 0 && fRegularAmt > 0) {
+          final earlyIn8 = min(fEarlyMins, within8);
+          final regularIn8 = (within8 - earlyIn8).clamp(0, fRegularMins).toInt();
+          final regularOver8 = fRegularMins - regularIn8;
+
+          if (regularOver8 <= 0) {
+            lines.add('연장수당 = $wageStr/h × ${FormatHelper.formatCompactHours(fRegularMins)} × 1.0 = ${FormatHelper.formatWage(fRegularAmt)}');
+          } else if (regularIn8 <= 0) {
+            lines.add('연장수당 = $wageStr/h × ${FormatHelper.formatCompactHours(fRegularMins)} × 1.5 = ${FormatHelper.formatWage(fRegularAmt)}');
+          } else {
+            // 8h 이내분 1배 + 초과분 1.5배 분리
+            final aw = (regularIn8 * supplementWage / 60).round();
+            final ao = (regularOver8 * supplementWage * 1.5 / 60).round();
+            lines.add('연장수당 (8h이내 ${FormatHelper.formatCompactHours(regularIn8)}) = $wageStr/h × 1.0 = ${FormatHelper.formatWage(aw)}');
+            lines.add('연장수당 (8h초과 ${FormatHelper.formatCompactHours(regularOver8)}) = $wageStr/h × 1.5 = ${FormatHelper.formatWage(ao)}');
+          }
+        }
       }
     }
 

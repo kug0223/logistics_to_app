@@ -342,16 +342,32 @@ class WageCalculator {
       baseAmount = (dailyWage * workMinutes / scheduledWorkMinutes).round();
     }
 
-    // 조출수당: 계약 시작 이전 근무 × 기초시급 × 1.0
-    // 연장수당: 계약 종료 이후 근무 × 기초시급 × 1.5
+    // 연장수당: 총 근무 8시간 이하면 1배, 8시간 초과분만 1.5배 (근로기준법 제56조)
+    // 조출도 연장의 일종으로 동일 기준 적용
     // scheduledWorkMinutes==0이면 일급 전액이 이미 baseAmount — 연장수당 중복 방지
     int earlyArrivalAmt = 0;
     int overtimeAmount = 0;
     if (overtimeMinutes > 0 && scheduledWorkMinutes > 0) {
-      earlyArrivalAmt = (earlyArrivalMinutes * supplementWage / 60).round();
-      final pureOvertimeMins = (overtimeMinutes - earlyArrivalMinutes).clamp(0, 9999);
-      final regularOvertimeAmt = (pureOvertimeMins * supplementWage * overtimeRate / 60).round();
-      overtimeAmount = earlyArrivalAmt + regularOvertimeAmt;
+      if (workMinutes <= standardWorkMinutes) {
+        // 총 근무 8시간 이하: 연장분 전체 1배
+        overtimeAmount = (overtimeMinutes * supplementWage / 60).round();
+        // 조출도 8h 이내이므로 1배
+        earlyArrivalAmt = (earlyArrivalMinutes * supplementWage / 60).round();
+      } else {
+        // 총 근무 8시간 초과: 8시간 초과분만 1.5배
+        final over8Hours = workMinutes - standardWorkMinutes;
+        final within8Hours = (overtimeMinutes - over8Hours).clamp(0, overtimeMinutes);
+
+        final amount1x = (within8Hours * supplementWage / 60).round();
+        final amount15x = (over8Hours.clamp(0, overtimeMinutes) * supplementWage * overtimeRate / 60).round();
+        overtimeAmount = amount1x + amount15x;
+
+        // 조출이 within8Hours 내이면 1배, 8h 초과에 걸치면 해당 부분 1.5배
+        final earlyIn8h = min(earlyArrivalMinutes, within8Hours);
+        final earlyOver8h = (earlyArrivalMinutes - earlyIn8h).clamp(0, 9999);
+        earlyArrivalAmt = (earlyIn8h * supplementWage / 60).round() +
+            (earlyOver8h * supplementWage * overtimeRate / 60).round();
+      }
     }
 
     // 야간수당: 야간시간 × 기초시급 × 0.5
