@@ -97,6 +97,12 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
   final Set<String> _selectedIds = {};
   bool _selectAll = false;
 
+  // 탭 / 검색
+  int _currentTabIndex = 0;
+  String _nameFilter = '';
+  bool _showSearch = false;
+  final TextEditingController _searchController = TextEditingController();
+
   // 파트별 정렬 모드: 0=상태순, 1=배지순, 2=이름순
   final Map<String, int> _groupSortMode = {};
 
@@ -172,6 +178,12 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
     _selectedBusinessId = widget.initialBusinessId ??
         (widget.businessIds.isNotEmpty ? widget.businessIds.first : null);
     _initializeData();
+  }
+
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
   }
 
   /// 초기 데이터 로드 (병렬)
@@ -657,9 +669,10 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
 
 
 
-  /// 통계 계산
-  Map<String, int> _calculateStats() {
-    int total = _confirmedWorkers.length;
+  /// 통계 계산 — [workers]를 지정하면 해당 목록만 집계 (탭별 통계)
+  Map<String, int> _calculateStats({List<ApplicationModel>? workers}) {
+    final list = workers ?? _confirmedWorkers;
+    int total = list.length;
     int checkedIn = 0;
     int checkedOut = 0;
     int late = 0;
@@ -668,7 +681,7 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
     int missedCheckout = 0;
     int noShow = 0;
 
-    for (var app in _confirmedWorkers) {
+    for (var app in list) {
       final statusMap = _getAttendanceStatus(app);
       final s = statusMap['status'] as String;
       final attendance = _attendanceMap[app.id];
@@ -922,10 +935,14 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
                   labelPadding: const EdgeInsets.symmetric(horizontal: 6),
                   labelStyle: ResponsiveHelper.smallStyle(context, fontWeight: FontWeight.bold),
                   unselectedLabelStyle: ResponsiveHelper.smallStyle(context),
-                  onTap: (_) {
+                  onTap: (index) {
                     setState(() {
+                      _currentTabIndex = index;
                       _selectedIds.clear();
                       _selectAll = false;
+                      _showSearch = false;
+                      _nameFilter = '';
+                      _searchController.clear();
                     });
                   },
                   tabs: [
@@ -936,7 +953,7 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
                   ],
                 ),
                 SizedBox(height: ResponsiveHelper.spacing(context, 8)),
-                _buildCompactStats(theme),
+                _buildCompactStats(theme, [needsReview, normal, adminConfirmedWorkers, done][_currentTabIndex]),
                 SizedBox(height: ResponsiveHelper.spacing(context, 8)),
                 _buildBatchActionBar(theme),
                 SizedBox(height: ResponsiveHelper.spacing(context, 8)),
@@ -981,58 +998,47 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
     );
   }
 
-  /// 통계 컴팩트 스트립 — 한 줄로 핵심 수치만 표시
-  Widget _buildCompactStats(ThemeData theme) {
-    final stats = _calculateStats();
-
-    // 주요 4개 + 이상 발생 시 보조 통계 추가
-    final secondaryStats = <_StatChip>[];
-    if ((stats['earlyArrival'] ?? 0) > 0) {
-      secondaryStats.add(_StatChip('조출', stats['earlyArrival']!, AppColors.success));
-    }
-    if (stats['late']! > 0) {
-      secondaryStats.add(_StatChip('지각', stats['late']!, AppColors.warningDark));
-    }
-    if (stats['earlyLeave']! > 0) {
-      secondaryStats.add(_StatChip('조퇴', stats['earlyLeave']!, AppColors.amber));
-    }
-    if (stats['missedCheckout']! > 0) {
-      secondaryStats.add(_StatChip('미퇴근', stats['missedCheckout']!, AppColors.error));
-    }
+  /// 통계 컴팩트 스트립 — 현재 탭 기준 수치만 표시
+  Widget _buildCompactStats(ThemeData theme, List<ApplicationModel> tabWorkers) {
+    final stats = _calculateStats(workers: tabWorkers);
+    final badges = <_StatChip>[];
+    if ((stats['earlyArrival'] ?? 0) > 0) badges.add(_StatChip('조출', stats['earlyArrival']!, AppColors.success));
+    if (stats['late']! > 0)              badges.add(_StatChip('지각', stats['late']!, AppColors.warningDark));
+    if (stats['earlyLeave']! > 0)        badges.add(_StatChip('조퇴', stats['earlyLeave']!, AppColors.amber));
+    if (stats['missedCheckout']! > 0)    badges.add(_StatChip('미퇴근', stats['missedCheckout']!, AppColors.error));
 
     return Container(
       padding: EdgeInsets.symmetric(
-        horizontal: ResponsiveHelper.spacing(context, 12),
-        vertical: ResponsiveHelper.spacing(context, 8),
+        horizontal: ResponsiveHelper.spacing(context, 10),
+        vertical: ResponsiveHelper.spacing(context, 6),
       ),
       decoration: BoxDecoration(
-        color: theme.primaryColor.withValues(alpha: 0.06),
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: theme.primaryColor.withValues(alpha: 0.15)),
+        color: theme.primaryColor.withValues(alpha: 0.05),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: theme.primaryColor.withValues(alpha: 0.12)),
       ),
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          // 주요 통계 — 한 줄
+          // 주요 4개 — Expanded로 균등 분배 (오버플로우 방지)
           Row(
-            mainAxisAlignment: MainAxisAlignment.spaceAround,
             children: [
-              _buildCompactStatItem('확정', stats['total']!, AppColors.info),
-              _buildCompactStatItem('출근', stats['checkedIn']!, AppColors.success),
-              _buildCompactStatItem('미출근', stats['notCheckedIn']!, AppColors.warning),
-              _buildCompactStatItem('노쇼', stats['noShow']!, AppColors.error),
+              Expanded(child: _buildStatCell('확정',   stats['total']!,        AppColors.info)),
+              _buildStatDivider(),
+              Expanded(child: _buildStatCell('출근',   stats['checkedIn']!,    AppColors.success)),
+              _buildStatDivider(),
+              Expanded(child: _buildStatCell('미출근', stats['notCheckedIn']!, AppColors.warning)),
+              _buildStatDivider(),
+              Expanded(child: _buildStatCell('노쇼',   stats['noShow']!,       AppColors.error)),
             ],
           ),
-          // 보조 통계 — 이상 발생 시만 한 줄 추가
-          if (secondaryStats.isNotEmpty) ...[
-            SizedBox(height: ResponsiveHelper.spacing(context, 4)),
-            Divider(height: 1, color: theme.primaryColor.withValues(alpha: 0.1)),
+          // 보조 통계 — 이상 있을 때만 두 번째 줄
+          if (badges.isNotEmpty) ...[
             SizedBox(height: ResponsiveHelper.spacing(context, 4)),
             Wrap(
-              spacing: ResponsiveHelper.spacing(context, 16),
-              runSpacing: ResponsiveHelper.spacing(context, 2),
-              alignment: WrapAlignment.center,
-              children: secondaryStats.map((c) => _buildMiniStat(c.label, c.count, c.color)).toList(),
+              spacing: ResponsiveHelper.spacing(context, 10),
+              runSpacing: 0,
+              children: badges.map((b) => _buildMiniDot(b)).toList(),
             ),
           ],
         ],
@@ -1040,68 +1046,69 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
     );
   }
 
-  Widget _buildCompactStatItem(String label, int count, Color color) {
+  Widget _buildStatCell(String label, int count, Color color) {
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
         Text(
           '$count명',
-          style: ResponsiveHelper.bodyStyle(context).copyWith(
+          style: ResponsiveHelper.smallStyle(context).copyWith(
             fontWeight: FontWeight.bold,
             color: color,
           ),
         ),
-        Text(
-          label,
-          style: ResponsiveHelper.tinyStyle(context, color: AppColors.grey500),
-        ),
+        Text(label, style: ResponsiveHelper.tinyStyle(context, color: AppColors.grey500)),
       ],
     );
   }
 
-  /// 미니 통계
-  Widget _buildMiniStat(String label, int count, Color color) {
+  Widget _buildStatDivider() => Container(
+    width: 1, height: 24, color: AppColors.grey200,
+    margin: EdgeInsets.symmetric(horizontal: ResponsiveHelper.spacing(context, 4)),
+  );
+
+  Widget _buildMiniDot(_StatChip c) {
     return Row(
+      mainAxisSize: MainAxisSize.min,
       children: [
-        Container(
-          width: 8,
-          height: 8,
-          decoration: BoxDecoration(
-            color: color,
-            shape: BoxShape.circle,
-          ),
-        ),
-        SizedBox(width: ResponsiveHelper.spacing(context, 6)),
-        Text(
-          '$label: $count명',
-          style: ResponsiveHelper.smallStyle(context, color: AppColors.grey700),
-        ),
+        Container(width: 6, height: 6, decoration: BoxDecoration(color: c.color, shape: BoxShape.circle)),
+        const SizedBox(width: 3),
+        Text('${c.label} ${c.count}명', style: ResponsiveHelper.tinyStyle(context, color: AppColors.grey600)),
       ],
     );
   }
 
   /// 일괄 처리 액션 바
   Widget _buildBatchActionBar(ThemeData theme) {
-    // 선택된 직원들의 상태별 실제 처리 가능 인원 계산
-    int checkInCount = 0;   // 미출근(pending) → 출근 가능
-    int adjustCount = 0;    // 출근 기록 있음 → 시간조정 가능
-    int checkOutCount = 0;  // 출근 완료 → 퇴근 가능
+    int checkInCount = 0;
+    int adjustCount = 0;
+    int checkOutCount = 0;
+    int resetCount = 0;
 
     for (final id in _selectedIds) {
       final app = _confirmedWorkers.firstWhere((a) => a.id == id);
       final s = _getAttendanceStatus(app)['status'] as String;
+      final att = _attendanceMap[app.id];
       if (s == 'pending') {
         checkInCount++;
       } else {
         adjustCount++;
-        if (s == 'checkin' || s == 'late' || s == 'missed_checkout') {
-          checkOutCount++;
-        }
+        if (s == 'checkin' || s == 'late' || s == 'missed_checkout') checkOutCount++;
       }
+      if (att?.checkIn != null) resetCount++;
     }
 
+    // 탭별 조건부 칩
+    final tabWorkers = _workersByTab(_currentTabIndex);
+    final noShowTargets = _currentTabIndex == 0
+        ? tabWorkers.where((a) => _getAttendanceStatus(a)['status'] == 'pending').toList()
+        : <ApplicationModel>[];
+    final cancelNoShowTargets = _currentTabIndex == 3
+        ? tabWorkers.where((a) => _attendanceMap[a.id]?.status == AttendanceModel.statusNoShow).toList()
+        : <ApplicationModel>[];
+
     return Container(
-      padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 12)),
+      padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 10)),
       decoration: BoxDecoration(
         color: AppColors.grey100,
         borderRadius: BorderRadius.circular(12),
@@ -1110,84 +1117,134 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // Row 1: 전체 선택 + 스마트 선택 칩
+          // Row 1: 전체 선택 + 조건부 칩 + 검색
           Row(
             children: [
-              AppCheckbox(
-                value: _selectAll,
+              GestureDetector(
+                behavior: HitTestBehavior.opaque,
                 onTap: () => _toggleSelectAll(!_selectAll),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    AppCheckbox(value: _selectAll, onTap: () => _toggleSelectAll(!_selectAll)),
+                    SizedBox(width: ResponsiveHelper.spacing(context, 6)),
+                    Text('전체', style: ResponsiveHelper.smallStyle(context)),
+                    if (_selectedIds.isNotEmpty) ...[
+                      SizedBox(width: ResponsiveHelper.spacing(context, 4)),
+                      Container(
+                        padding: EdgeInsets.symmetric(
+                          horizontal: ResponsiveHelper.spacing(context, 6),
+                          vertical: ResponsiveHelper.spacing(context, 2),
+                        ),
+                        decoration: BoxDecoration(
+                          color: theme.primaryColor.withValues(alpha: 0.1),
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: Text('${_selectedIds.length}',
+                            style: ResponsiveHelper.tinyStyle(context, color: theme.primaryColor, fontWeight: FontWeight.bold)),
+                      ),
+                    ],
+                  ],
+                ),
               ),
-              SizedBox(width: ResponsiveHelper.spacing(context, 8)),
-              Text('전체', style: ResponsiveHelper.bodyStyle(context)),
-              if (_selectedIds.isNotEmpty) ...[
-                SizedBox(width: ResponsiveHelper.spacing(context, 6)),
-                Container(
-                  padding: EdgeInsets.symmetric(
-                    horizontal: ResponsiveHelper.spacing(context, 8),
-                    vertical: ResponsiveHelper.spacing(context, 3),
-                  ),
-                  decoration: BoxDecoration(
-                    color: theme.primaryColor.withValues(alpha: 0.1),
-                    borderRadius: BorderRadius.circular(10),
-                  ),
-                  child: Text(
-                    '${_selectedIds.length}명',
-                    style: ResponsiveHelper.smallStyle(context, color: theme.primaryColor),
+              const Spacer(),
+              // 노쇼 칩 (검토 탭)
+              if (noShowTargets.isNotEmpty)
+                _buildActionChip(
+                  label: '노쇼 (${noShowTargets.length})',
+                  color: AppColors.error,
+                  onTap: () => _showBatchNoShowDialog(noShowTargets),
+                ),
+              // 노쇼취소 칩 (완료 탭)
+              if (cancelNoShowTargets.isNotEmpty)
+                _buildActionChip(
+                  label: '노쇼취소 (${cancelNoShowTargets.length})',
+                  color: AppColors.info,
+                  onTap: () => _showBatchCancelNoShowDialog(cancelNoShowTargets),
+                ),
+              SizedBox(width: ResponsiveHelper.spacing(context, 6)),
+              // 이름 검색 돋보기
+              InkWell(
+                onTap: () => setState(() {
+                  _showSearch = !_showSearch;
+                  if (!_showSearch) { _nameFilter = ''; _searchController.clear(); }
+                }),
+                borderRadius: BorderRadius.circular(6),
+                child: Padding(
+                  padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 4)),
+                  child: Icon(
+                    _showSearch ? Icons.search_off : Icons.search,
+                    size: ResponsiveHelper.iconSize(context, 18),
+                    color: _showSearch ? theme.primaryColor : AppColors.grey500,
                   ),
                 ),
-              ],
-              const Spacer(),
-              // 스마트 선택: 미출근만
-              _buildSmartSelectChip(
-                label: '미출근만',
-                onTap: () => _selectByStatus(['pending']),
-              ),
-              SizedBox(width: ResponsiveHelper.spacing(context, 6)),
-              // 스마트 선택: 출근완료만
-              _buildSmartSelectChip(
-                label: '출근만',
-                onTap: () => _selectByStatus(['checkin', 'late', 'missed_checkout']),
               ),
             ],
           ),
 
-          SizedBox(height: ResponsiveHelper.spacing(context, 10)),
+          // 검색 필드 (토글)
+          if (_showSearch) ...[
+            SizedBox(height: ResponsiveHelper.spacing(context, 6)),
+            TextField(
+              controller: _searchController,
+              autofocus: true,
+              style: ResponsiveHelper.smallStyle(context),
+              decoration: InputDecoration(
+                hintText: '이름 검색',
+                hintStyle: ResponsiveHelper.tinyStyle(context, color: AppColors.grey400),
+                isDense: true,
+                contentPadding: EdgeInsets.symmetric(
+                  horizontal: ResponsiveHelper.spacing(context, 10),
+                  vertical: ResponsiveHelper.spacing(context, 7),
+                ),
+                border: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: BorderSide(color: AppColors.border)),
+                focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: BorderSide(color: theme.primaryColor)),
+                filled: true,
+                fillColor: Colors.white,
+                suffixIcon: _nameFilter.isNotEmpty
+                    ? IconButton(
+                        icon: Icon(Icons.clear, size: 16, color: AppColors.grey400),
+                        onPressed: () => setState(() { _nameFilter = ''; _searchController.clear(); }),
+                      )
+                    : null,
+              ),
+              onChanged: (v) => setState(() => _nameFilter = v.trim()),
+            ),
+          ],
 
-          // Row 2: 일괄 액션 버튼 — 실제 처리 가능 인원 표시
+          SizedBox(height: ResponsiveHelper.spacing(context, 8)),
+
+          // Row 2: 출근 / 조정 / 퇴근 / 리셋 — 4개 버튼
           Row(
             children: [
-              Expanded(
-                child: _buildActionButton(
-                  icon: Icons.login,
-                  label: '출근',
-                  color: AppColors.success,
-                  count: checkInCount,
-                  onPressed: checkInCount > 0 ? () => _showBatchCheckInDialog() : null,
-                ),
-              ),
-              SizedBox(width: ResponsiveHelper.spacing(context, 6)),
-              Expanded(
-                child: _buildActionButton(
-                  icon: Icons.tune,
-                  label: '시간조정',
-                  color: AppColors.info,
-                  count: adjustCount,
-                  onPressed: adjustCount > 0 ? () => _showBatchAdjustTimeDialog() : null,
-                ),
-              ),
-              SizedBox(width: ResponsiveHelper.spacing(context, 6)),
-              Expanded(
-                child: _buildActionButton(
-                  icon: Icons.logout,
-                  label: '퇴근',
-                  color: AppColors.purple,
-                  count: checkOutCount,
-                  onPressed: checkOutCount > 0 ? () => _showBatchCheckOutDialog() : null,
-                ),
-              ),
+              Expanded(child: _buildActionButton(icon: Icons.login,    label: '출근', color: AppColors.success, count: checkInCount,  onPressed: checkInCount > 0  ? _showBatchCheckInDialog  : null)),
+              SizedBox(width: ResponsiveHelper.spacing(context, 5)),
+              Expanded(child: _buildActionButton(icon: Icons.tune,     label: '조정', color: AppColors.info,    count: adjustCount,   onPressed: adjustCount > 0   ? _showBatchAdjustTimeDialog : null)),
+              SizedBox(width: ResponsiveHelper.spacing(context, 5)),
+              Expanded(child: _buildActionButton(icon: Icons.logout,   label: '퇴근', color: AppColors.purple,  count: checkOutCount, onPressed: checkOutCount > 0 ? _showBatchCheckOutDialog : null)),
+              SizedBox(width: ResponsiveHelper.spacing(context, 5)),
+              Expanded(child: _buildActionButton(icon: Icons.refresh,  label: '리셋', color: AppColors.grey600, count: resetCount,    onPressed: resetCount > 0    ? _showBatchResetDialog   : null)),
             ],
           ),
         ],
+      ),
+    );
+  }
+
+  Widget _buildActionChip({required String label, required Color color, required VoidCallback onTap}) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        padding: EdgeInsets.symmetric(
+          horizontal: ResponsiveHelper.spacing(context, 8),
+          vertical: ResponsiveHelper.spacing(context, 4),
+        ),
+        decoration: BoxDecoration(
+          color: color.withValues(alpha: 0.1),
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(color: color.withValues(alpha: 0.3)),
+        ),
+        child: Text(label, style: ResponsiveHelper.tinyStyle(context, color: color, fontWeight: FontWeight.bold)),
       ),
     );
   }
@@ -1251,15 +1308,23 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
     );
   }
 
+  /// 시간 문자열 정규화 — HH:mm 앞 5자리만 사용 (HH:mm:ss 형식 차이 제거)
+  String _normalizeTimeKey(String t) {
+    final s = t.trim();
+    return s.length >= 5 ? s.substring(0, 5) : s;
+  }
+
   /// 업무별 그룹
   Widget _buildWorkTypeGroups(ThemeData theme, {List<ApplicationModel>? workers}) {
     // ✅ workType + 시간 조합으로 그룹화 (장기/단기 합침)
     final Map<String, List<ApplicationModel>> workTypeGroups = {};
 
     for (var app in workers ?? _confirmedWorkers) {
-      // 항상 workType + startTime + endTime 조합으로 그룹화
-      final groupKey = '${app.selectedWorkType}_${app.startTime}_${app.endTime}';
-      
+      // 시간 형식 정규화: trim + HH:mm 앞 5자리만 사용 (HH:mm vs HH:mm:ss 차이 제거)
+      final normStart = _normalizeTimeKey(app.startTime);
+      final normEnd   = _normalizeTimeKey(app.endTime);
+      final groupKey  = '${app.selectedWorkType.trim()}_${normStart}_$normEnd';
+
       workTypeGroups.putIfAbsent(groupKey, () => []);
       workTypeGroups[groupKey]!.add(app);
     }
@@ -1477,27 +1542,62 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
                         ],
                       ),
                     ),
-                    // 출근현황 + 정렬 토글 — 세로로 쌓아 텍스트 공간 확보
+                    // 출근현황 + 전체확인/취소 칩 + 정렬 토글
                     Column(
                       crossAxisAlignment: CrossAxisAlignment.end,
                       children: [
-                        // 출근 현황 배지
-                        Container(
-                          padding: EdgeInsets.symmetric(
-                            horizontal: ResponsiveHelper.spacing(context, 10),
-                            vertical: ResponsiveHelper.spacing(context, 5),
-                          ),
-                          decoration: BoxDecoration(
-                            color: attendBadgeColor.withValues(alpha: 0.15),
-                            borderRadius: BorderRadius.circular(20),
-                            border: Border.all(color: attendBadgeColor.withValues(alpha: 0.4)),
-                          ),
-                          child: Text(
-                            '출근 $checkedInCount/${workers.length - noShowCount}',
-                            style: ResponsiveHelper.tinyStyle(context, color: attendBadgeColor)
-                                .copyWith(fontWeight: FontWeight.bold),
-                          ),
-                        ),
+                        // 출근 현황 배지 + 그룹 일괄 처리 칩
+                        Builder(builder: (ctx) {
+                          // 확인 가능: 출퇴근 완료 + !adminConfirmed + !noshow
+                          final confirmable = workers.where((a) {
+                            final att = _attendanceMap[a.id];
+                            return att?.checkIn != null && att?.checkOut != null &&
+                                att?.adminConfirmed != true &&
+                                att?.status != AttendanceModel.statusNoShow;
+                          }).toList();
+                          // 취소 가능: adminConfirmed 상태인 근무자
+                          final cancellable = workers.where((a) {
+                            return _attendanceMap[a.id]?.adminConfirmed == true;
+                          }).toList();
+                          return Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              // 출근 현황 배지
+                              Container(
+                                padding: EdgeInsets.symmetric(
+                                  horizontal: ResponsiveHelper.spacing(context, 10),
+                                  vertical: ResponsiveHelper.spacing(context, 5),
+                                ),
+                                decoration: BoxDecoration(
+                                  color: attendBadgeColor.withValues(alpha: 0.15),
+                                  borderRadius: BorderRadius.circular(20),
+                                  border: Border.all(color: attendBadgeColor.withValues(alpha: 0.4)),
+                                ),
+                                child: Text(
+                                  '출근 $checkedInCount/${workers.length - noShowCount}',
+                                  style: ResponsiveHelper.tinyStyle(context, color: attendBadgeColor)
+                                      .copyWith(fontWeight: FontWeight.bold),
+                                ),
+                              ),
+                              if (confirmable.isNotEmpty) ...[
+                                SizedBox(width: ResponsiveHelper.spacing(context, 6)),
+                                _buildGroupChip(
+                                  '전체확인 ${confirmable.length}',
+                                  AppColors.success,
+                                  () => _batchGroupConfirm(confirmable),
+                                ),
+                              ],
+                              if (cancellable.isNotEmpty) ...[
+                                SizedBox(width: ResponsiveHelper.spacing(context, 6)),
+                                _buildGroupChip(
+                                  '전체취소 ${cancellable.length}',
+                                  AppColors.warning,
+                                  () => _batchGroupCancelConfirm(cancellable),
+                                ),
+                              ],
+                            ],
+                          );
+                        }),
                         SizedBox(height: ResponsiveHelper.spacing(context, 6)),
                         // 정렬 토글 버튼 (탭마다 순환: 상태순→배지순→이름순)
                         Builder(builder: (ctx) {
@@ -2083,6 +2183,111 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
       debugPrint('❌ 확인 취소 실패: $e');
       if (!mounted) return;
       ToastHelper.showError('확인 취소 실패');
+    }
+  }
+
+  Widget _buildGroupChip(String label, Color color, VoidCallback onTap) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        padding: EdgeInsets.symmetric(
+          horizontal: ResponsiveHelper.spacing(context, 8),
+          vertical: ResponsiveHelper.spacing(context, 4),
+        ),
+        decoration: BoxDecoration(
+          color: color.withValues(alpha: 0.12),
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(color: color.withValues(alpha: 0.4)),
+        ),
+        child: Text(
+          label,
+          style: ResponsiveHelper.tinyStyle(context, color: color)
+              .copyWith(fontWeight: FontWeight.bold),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _batchGroupConfirm(List<ApplicationModel> confirmable) async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('그룹 전체 확인'),
+        content: Text('${confirmable.length}명을 일괄 확인 처리합니까?'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('취소')),
+          ElevatedButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('확인')),
+        ],
+      ),
+    );
+    if (ok != true || !mounted) return;
+    try {
+      final batch = FirebaseFirestore.instance.batch();
+      for (final a in confirmable) {
+        final att = _attendanceMap[a.id];
+        if (att == null) continue;
+        batch.update(
+          FirebaseFirestore.instance.collection('attendance').doc(att.id),
+          {'adminConfirmed': true, 'updatedAt': FieldValue.serverTimestamp()},
+        );
+      }
+      await batch.commit();
+      if (!mounted) return;
+      setState(() {
+        for (final a in confirmable) {
+          final att = _attendanceMap[a.id];
+          if (att != null) _attendanceMap[a.id] = att.copyWith(adminConfirmed: true);
+          _selectedIds.remove(a.id);
+        }
+        _hasChanges = true;
+      });
+    } catch (e) {
+      debugPrint('❌ 그룹 전체 확인 실패: $e');
+      if (!mounted) return;
+      ToastHelper.showError('그룹 전체 확인 실패');
+    }
+  }
+
+  Future<void> _batchGroupCancelConfirm(List<ApplicationModel> cancellable) async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('그룹 전체 취소'),
+        content: Text('${cancellable.length}명의 확인을 일괄 취소합니까?'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('취소')),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(backgroundColor: AppColors.warning),
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('취소 처리'),
+          ),
+        ],
+      ),
+    );
+    if (ok != true || !mounted) return;
+    try {
+      final batch = FirebaseFirestore.instance.batch();
+      for (final a in cancellable) {
+        final att = _attendanceMap[a.id];
+        if (att == null) continue;
+        batch.update(
+          FirebaseFirestore.instance.collection('attendance').doc(att.id),
+          {'adminConfirmed': false, 'updatedAt': FieldValue.serverTimestamp()},
+        );
+      }
+      await batch.commit();
+      if (!mounted) return;
+      setState(() {
+        for (final a in cancellable) {
+          final att = _attendanceMap[a.id];
+          if (att != null) _attendanceMap[a.id] = att.copyWith(adminConfirmed: false);
+        }
+        _hasChanges = true;
+      });
+    } catch (e) {
+      debugPrint('❌ 그룹 전체 취소 실패: $e');
+      if (!mounted) return;
+      ToastHelper.showError('그룹 전체 확인 취소 실패');
     }
   }
 
@@ -2725,42 +2930,144 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
   }
 
   /// 상태 기반 스마트 선택
-  void _selectByStatus(List<String> statuses) {
-    setState(() {
-      _selectedIds.clear();
-      for (final app in _confirmedWorkers) {
-        final s = _getAttendanceStatus(app)['status'] as String;
-        if (statuses.contains(s)) {
-          _selectedIds.add(app.id);
-        }
+  // ─── 배치 노쇼 처리 ───────────────────────────────────────────
+
+  Future<void> _showBatchNoShowDialog(List<ApplicationModel> targets) async {
+    final names = targets.map((a) => _getDisplayName(a.uid)).join(', ');
+    final confirmed = await DialogHelper.showDangerConfirm(
+      context,
+      title: '일괄 노쇼 처리',
+      message: '미출근 ${targets.length}명을 노쇼 처리합니다.\n노쇼 이력이 기록됩니다.\n\n$names',
+      confirmText: '노쇼 처리',
+    );
+    if (!confirmed || !mounted) return;
+
+    final batch = FirebaseFirestore.instance.batch();
+    final now = FieldValue.serverTimestamp();
+    for (final app in targets) {
+      final att = _attendanceMap[app.id];
+      if (att == null) continue;
+      batch.update(
+        FirebaseFirestore.instance.collection('attendance').doc(att.id),
+        {'status': AttendanceModel.statusNoShow, 'updatedAt': now},
+      );
+    }
+    try {
+      await batch.commit();
+      for (final app in targets) {
+        await TrustScoreService().onNoShow(app.uid, app.businessId);
       }
-      final total = _confirmedWorkers.where((a) =>
-          (_getAttendanceStatus(a)['status'] as String) != 'noshow').length;
-      _selectAll = _selectedIds.length >= total;
-    });
+      if (!mounted) return;
+      setState(() {
+        for (final app in targets) {
+          final att = _attendanceMap[app.id];
+          if (att != null) _attendanceMap[app.id] = att.copyWith(status: AttendanceModel.statusNoShow);
+        }
+        _selectedIds.clear();
+        _hasChanges = true;
+      });
+      ToastHelper.showSuccess('노쇼 처리 완료 (${targets.length}명)');
+    } catch (e) {
+      debugPrint('❌ 배치 노쇼 실패: $e');
+      if (!mounted) return;
+      ToastHelper.showError('노쇼 처리 실패');
+    }
   }
 
-  /// 스마트 선택 칩 위젯
-  Widget _buildSmartSelectChip({required String label, required VoidCallback onTap}) {
-    return GestureDetector(
-      onTap: onTap,
-      child: Container(
-        padding: EdgeInsets.symmetric(
-          horizontal: ResponsiveHelper.spacing(context, 10),
-          vertical: ResponsiveHelper.spacing(context, 5),
-        ),
-        decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(20),
-          border: Border.all(color: AppColors.border),
-        ),
-        child: Text(
-          label,
-          style: ResponsiveHelper.tinyStyle(context, color: AppColors.grey700)
-              .copyWith(fontWeight: FontWeight.w600),
-        ),
-      ),
+  Future<void> _showBatchCancelNoShowDialog(List<ApplicationModel> targets) async {
+    final names = targets.map((a) => _getDisplayName(a.uid)).join(', ');
+    final confirmed = await DialogHelper.showConfirm(
+      context,
+      title: '노쇼 취소',
+      message: '${targets.length}명의 노쇼를 취소합니다.\n\n$names',
+      confirmText: '취소 확인',
     );
+    if (!confirmed || !mounted) return;
+
+    final batch = FirebaseFirestore.instance.batch();
+    final now = FieldValue.serverTimestamp();
+    for (final app in targets) {
+      final att = _attendanceMap[app.id];
+      if (att == null) continue;
+      batch.update(
+        FirebaseFirestore.instance.collection('attendance').doc(att.id),
+        {'status': FieldValue.delete(), 'updatedAt': now},
+      );
+    }
+    try {
+      await batch.commit();
+      for (final app in targets) {
+        await TrustScoreService().onNoShowCanceled(app.uid, app.businessId);
+      }
+      if (!mounted) return;
+      setState(() {
+        for (final app in targets) {
+          final att = _attendanceMap[app.id];
+          if (att != null) _attendanceMap[app.id] = att.copyWith(status: null);
+        }
+        _selectedIds.clear();
+        _hasChanges = true;
+      });
+      ToastHelper.showSuccess('노쇼 취소 완료 (${targets.length}명)');
+    } catch (e) {
+      debugPrint('❌ 노쇼 취소 실패: $e');
+      if (!mounted) return;
+      ToastHelper.showError('노쇼 취소 실패');
+    }
+  }
+
+  // ─── 배치 리셋 ───────────────────────────────────────────────
+
+  Future<void> _showBatchResetDialog() async {
+    final targets = _selectedIds
+        .map((id) => _confirmedWorkers.firstWhere((a) => a.id == id))
+        .where((app) => _attendanceMap[app.id]?.checkIn != null)
+        .toList();
+    if (targets.isEmpty) return;
+
+    final names = targets.map((a) => _getDisplayName(a.uid)).join(', ');
+    final confirmed = await DialogHelper.showDangerConfirm(
+      context,
+      title: '출퇴근 기록 리셋',
+      message: '${targets.length}명의 출퇴근 기록을 초기화합니다.\n출근·퇴근 시간이 모두 삭제됩니다.\n\n$names',
+      confirmText: '리셋',
+    );
+    if (!confirmed || !mounted) return;
+
+    final batch = FirebaseFirestore.instance.batch();
+    final now = FieldValue.serverTimestamp();
+    for (final app in targets) {
+      final att = _attendanceMap[app.id];
+      if (att == null) continue;
+      batch.update(
+        FirebaseFirestore.instance.collection('attendance').doc(att.id),
+        {
+          'checkIn': FieldValue.delete(),
+          'checkOut': FieldValue.delete(),
+          'status': FieldValue.delete(),
+          'updatedAt': now,
+        },
+      );
+    }
+    try {
+      await batch.commit();
+      if (!mounted) return;
+      setState(() {
+        for (final app in targets) {
+          final att = _attendanceMap[app.id];
+          if (att != null) {
+            _attendanceMap[app.id] = att.copyWith(checkIn: null, checkOut: null, status: null);
+          }
+        }
+        _selectedIds.clear();
+        _hasChanges = true;
+      });
+      ToastHelper.showSuccess('리셋 완료 (${targets.length}명)');
+    } catch (e) {
+      debugPrint('❌ 리셋 실패: $e');
+      if (!mounted) return;
+      ToastHelper.showError('리셋 실패');
+    }
   }
 
   /// 개별 선택/해제
