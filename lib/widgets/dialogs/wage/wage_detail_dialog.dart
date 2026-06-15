@@ -1228,8 +1228,13 @@ class _WageDetailDialogState extends State<WageDetailDialog> {
           final earlyIn8 = min(fEarlyMins, within8);
           final h = FormatHelper.formatCompactHours(fEarlyMins);
           if (earlyIn8 >= fEarlyMins) {
+            // 조출 전체 8h 이내 → 1.0배
             lines.add('조출수당 = $wageStr/h × $h × 1.0 = ${FormatHelper.formatWage(fEarlyAmt)}');
+          } else if (earlyIn8 <= 0) {
+            // 조출 전체 8h 초과 → 1.5배
+            lines.add('조출수당 = $wageStr/h × $h × 1.5 = ${FormatHelper.formatWage(fEarlyAmt)}');
           } else {
+            // 조출이 8h 이내/초과 혼합 → 금액만
             lines.add('조출수당 ($h) = ${FormatHelper.formatWage(fEarlyAmt)}');
           }
         }
