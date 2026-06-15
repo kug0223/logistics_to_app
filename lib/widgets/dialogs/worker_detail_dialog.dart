@@ -227,7 +227,7 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
       ),
       insetPadding: EdgeInsets.symmetric(
         horizontal: ResponsiveHelper.spacing(context, 16),
-        vertical: ResponsiveHelper.spacing(context, 24),
+        vertical: AppDialogSize.insetV,
       ),
       child: Container(
         constraints: BoxConstraints(

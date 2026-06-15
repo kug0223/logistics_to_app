@@ -471,7 +471,7 @@ class _WageDetailDialogState extends State<WageDetailDialog> {
       ),
       insetPadding: EdgeInsets.symmetric(
         horizontal: ResponsiveHelper.spacing(context, 16),
-        vertical: ResponsiveHelper.spacing(context, 24),
+        vertical: AppDialogSize.insetV,
       ),
       child: ConstrainedBox(
         constraints: BoxConstraints(maxHeight: MediaQuery.sizeOf(context).height * AppDialogSize.maxHeightRatio),

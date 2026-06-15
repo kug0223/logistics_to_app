@@ -133,7 +133,7 @@ class _MyRequestsDialogState extends State<MyRequestsDialog> {
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
       insetPadding: EdgeInsets.symmetric(
         horizontal: ResponsiveHelper.spacing(context, 16),
-        vertical: ResponsiveHelper.spacing(context, 24),
+        vertical: AppDialogSize.insetV,
       ),
       child: ConstrainedBox(
         constraints: BoxConstraints(
