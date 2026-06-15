@@ -13,8 +13,6 @@
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:intl/intl.dart';
-import 'package:provider/provider.dart';
-
 // Models
 import '../../../models/core/application_model.dart';
 import '../../../models/core/attendance_model.dart';
@@ -35,7 +33,6 @@ import '../../../utils/format_helper.dart';
 import '../../../utils/attendance_badge_helper.dart';
 import '../../../utils/attendance_status_helper.dart';
 import '../../../utils/work_detail_helper.dart';
-import '../../../utils/payment_due_date_calculator.dart';
 import '../../../theme/app_colors.dart';
 import '../../../widgets/common/app_checkbox.dart';
 import '../../../widgets/common/app_tab_label.dart';
@@ -51,7 +48,6 @@ import '../../../widgets/pickers/attendance_quick_time_sheet.dart';
 import '../../../utils/attendance_list_pdf.dart';
 // Dialogs
 import 'wage_confirm_dialog.dart';
-import '../../../providers/user_provider.dart';
 import '../../../widgets/dialogs/styled_dialog.dart';
 import '../../../widgets/app_select_field.dart';
 
@@ -137,18 +133,6 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
   /// 전체 처리 완료 여부 (마감 가능)
   bool get _isAllProcessed => _confirmedWorkers.isNotEmpty && _processedCount == _confirmedWorkers.length;
 
-  /// 마감 가능 여부 (calculated 인원이 1명이라도 있으면 마감 가능)
-  bool get _canClose {
-    for (var app in _confirmedWorkers) {
-      final attendance = _attendanceMap[app.id];
-      if (attendance == null) continue;
-      if (attendance.wageStatus == AttendanceModel.wageCalculated) {
-        return true;
-      }
-    }
-    return false;
-  }
-
   /// 선택된 최종확정 근무자 목록 (마감취소 대상)
   List<ApplicationModel> get _selectedFinalConfirmedApps {
     return _confirmedWorkers.where((app) {
@@ -156,21 +140,6 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
       final attendance = _attendanceMap[app.id];
       return attendance?.wageStatus == AttendanceModel.wageConfirmed;
     }).toList();
-  }
-
-  /// 마감 완료 여부 (모두 confirmed 또는 noshow)
-  bool get _isAllClosed {
-    if (_confirmedWorkers.isEmpty) return false;
-    for (var app in _confirmedWorkers) {
-      final attendance = _attendanceMap[app.id];
-      if (attendance == null) return false;
-      
-      // noshow가 아니고 confirmed도 아니면 마감 미완료
-      if (attendance.status != AttendanceModel.statusNoShow && attendance.wageStatus != AttendanceModel.wageConfirmed) {
-        return false;
-      }
-    }
-    return true;
   }
 
   @override
@@ -1366,7 +1335,7 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
       children: sortedEntries.map((entry) {
         final firstApp = entry.value.first;
         return Padding(
-          padding: EdgeInsets.only(bottom: ResponsiveHelper.spacing(context, 16)),
+          padding: EdgeInsets.only(bottom: ResponsiveHelper.spacing(context, 12)),
           child: _buildWorkTypeSection(
             theme,
             firstApp.selectedWorkType,
@@ -1509,7 +1478,10 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
                 });
               },
               child: Container(
-                padding: ResponsiveHelper.cardPadding(context),
+                padding: EdgeInsets.symmetric(
+                  horizontal: ResponsiveHelper.spacing(context, 12),
+                  vertical: ResponsiveHelper.spacing(context, 10),
+                ),
                 decoration: BoxDecoration(
                   color: theme.primaryColor.withValues(alpha: 0.05),
                   borderRadius: const BorderRadius.only(
@@ -1524,7 +1496,7 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
                     SizedBox(width: ResponsiveHelper.spacing(context, 10)),
                     // 업무유형 아이콘
                     Container(
-                      padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 8)),
+                      padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 6)),
                       decoration: BoxDecoration(
                         color: bgColor,
                         borderRadius: BorderRadius.circular(10),
@@ -1673,7 +1645,7 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
 
           // 근무자 목록
           Padding(
-            padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 12)),
+            padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 8)),
             child: Column(
               children: sortedWorkers.map((app) => _buildWorkerCard(app)).toList(),
             ),
@@ -1714,7 +1686,7 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
     final overdueCheckout = _isMissedCheckout(app);
 
     return Container(
-      margin: EdgeInsets.only(bottom: ResponsiveHelper.spacing(context, 8)),
+      margin: EdgeInsets.only(bottom: ResponsiveHelper.spacing(context, 6)),
       decoration: BoxDecoration(
         color: isSelected
             ? theme.primaryColor.withValues(alpha: 0.08)
@@ -1762,7 +1734,10 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
           },
           borderRadius: BorderRadius.circular(12),
           child: Padding(
-            padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 12)),
+            padding: EdgeInsets.symmetric(
+              horizontal: ResponsiveHelper.spacing(context, 12),
+              vertical: ResponsiveHelper.spacing(context, 8),
+            ),
             child: Row(
               crossAxisAlignment: CrossAxisAlignment.center,
               children: [
@@ -1771,7 +1746,7 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
                   onTap: () => _toggleSelection(app.id),
                   behavior: HitTestBehavior.opaque,
                   child: Padding(
-                    padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 4)),
+                    padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 2)),
                     child: AppCheckbox(value: isSelected),
                   ),
                 ),
@@ -2370,49 +2345,24 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
 
           SizedBox(width: ResponsiveHelper.spacing(context, 12)),
 
-          // 마감 버튼
+          // 급여관리 버튼
           Expanded(
-            child: _isAllClosed
-                ? OutlinedButton.icon(
-                    onPressed: null,
-                    icon: Icon(
-                      Icons.check_circle,
-                      size: ResponsiveHelper.iconSize(context, 18),
-                      color: AppColors.success,
-                    ),
-                    label: Text(
-                      '마감완료',
-                      style: ResponsiveHelper.bodyStyle(context, color: AppColors.success),
-                    ),
-                    style: OutlinedButton.styleFrom(
-                      side: BorderSide(color: AppColors.success),
-                      padding: EdgeInsets.symmetric(
-                        vertical: ResponsiveHelper.spacing(context, 12),
-                      ),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                    ),
-                  )
-                : ElevatedButton.icon(
-                    onPressed: _canClose ? _showFinalCloseDialog : null,
-                    icon: Icon(
-                      Icons.lock_outline,
-                      size: ResponsiveHelper.iconSize(context, 18),
-                    ),
-                    label: const Text('마감'),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor:
-                          _canClose ? AppColors.success : AppColors.grey300,
-                      foregroundColor: Colors.white,
-                      padding: EdgeInsets.symmetric(
-                        vertical: ResponsiveHelper.spacing(context, 12),
-                      ),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                    ),
-                  ),
+            child: ElevatedButton.icon(
+              onPressed: _confirmedWorkers.isNotEmpty ? _showWageConfirmDialog : null,
+              icon: Icon(Icons.payments, size: ResponsiveHelper.iconSize(context, 18)),
+              label: const Text('급여관리'),
+              style: ElevatedButton.styleFrom(
+                backgroundColor:
+                    _confirmedWorkers.isNotEmpty ? Theme.of(context).primaryColor : AppColors.grey300,
+                foregroundColor: Colors.white,
+                padding: EdgeInsets.symmetric(
+                  vertical: ResponsiveHelper.spacing(context, 12),
+                ),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
+              ),
+            ),
           ),
             ],
           ),
@@ -2421,10 +2371,10 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
     );
   }
 
-  /// 처리현황 + 마감 버튼 Row
+  /// 처리현황 Row
   Widget _buildProgressRow(ThemeData theme) {
     final isAllProcessed = _isAllProcessed;
-    
+
     return Row(
       children: [
         Icon(
@@ -2446,226 +2396,8 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
         ),
         if (isAllProcessed)
           Text(' ✓', style: ResponsiveHelper.bodyStyle(context, color: AppColors.success)),
-          const Spacer(),
-          SizedBox(
-            height: ResponsiveHelper.spacing(context, 36),
-            child: ElevatedButton.icon(
-              onPressed: _confirmedWorkers.isNotEmpty ? _showWageConfirmDialog : null,
-              icon: Icon(Icons.payments, size: ResponsiveHelper.iconSize(context, 16)),
-              label: Text(
-                '급여관리',
-                style: ResponsiveHelper.smallStyle(context, color: Colors.white).copyWith(
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-              style: ElevatedButton.styleFrom(
-                backgroundColor: _confirmedWorkers.isNotEmpty ? theme.primaryColor : AppColors.grey300,
-              foregroundColor: Colors.white,
-              padding: EdgeInsets.symmetric(
-                horizontal: ResponsiveHelper.spacing(context, 16),
-              ),
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(8),
-              ),
-            ),
-          ),
-        ),
       ],
     );
-  }
-
-  /// 마감 확인 다이얼로그
-  Future<void> _showFinalCloseDialog() async {
-    if (_isLoading) return;
-    int calculatedCount = 0;
-    int alreadyConfirmedCount = 0;
-    int noshowCount = 0;
-    for (var app in _confirmedWorkers) {
-      final attendance = _attendanceMap[app.id];
-      if (attendance?.status == AttendanceModel.statusNoShow) {
-        noshowCount++;
-      } else if (attendance?.wageStatus == AttendanceModel.wageCalculated) {
-        calculatedCount++;
-      } else if (attendance?.wageStatus == AttendanceModel.wageConfirmed) {
-        alreadyConfirmedCount++;
-      }
-    }
-
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (dialogContext) => StyledDialog(
-        title: '당일명단 마감',
-        icon: Icons.lock_outline,
-        headerColor: AppColors.success,
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              '마감 처리하시겠습니까?',
-              style: ResponsiveHelper.bodyStyle(context),
-            ),
-            SizedBox(height: ResponsiveHelper.spacing(context, 16)),
-            Container(
-              padding: ResponsiveHelper.cardPadding(context),
-              decoration: BoxDecoration(
-                color: AppColors.grey100,
-                borderRadius: BorderRadius.circular(8),
-              ),
-              child: Column(
-                children: [
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      Text('급여확정 → 최종확정', style: ResponsiveHelper.smallStyle(context)),
-                      Text('$calculatedCount명',
-                          style: ResponsiveHelper.bodyStyle(context)
-                              .copyWith(fontWeight: FontWeight.bold)),
-                    ],
-                  ),
-                  if (alreadyConfirmedCount > 0) ...[
-                    SizedBox(height: ResponsiveHelper.spacing(context, 4)),
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        Text('이미 최종확정',
-                            style: ResponsiveHelper.smallStyle(context,
-                                color: AppColors.grey500)),
-                        Text('$alreadyConfirmedCount명',
-                            style: ResponsiveHelper.smallStyle(context,
-                                color: AppColors.grey500)),
-                      ],
-                    ),
-                  ],
-                  if (noshowCount > 0) ...[
-                    SizedBox(height: ResponsiveHelper.spacing(context, 4)),
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        Text('노쇼',
-                            style: ResponsiveHelper.smallStyle(context,
-                                color: AppColors.error)),
-                        Text('$noshowCount명',
-                            style: ResponsiveHelper.bodyStyle(context,
-                                color: AppColors.error)),
-                      ],
-                    ),
-                  ],
-                ],
-              ),
-            ),
-            SizedBox(height: ResponsiveHelper.spacing(context, 12)),
-            Text(
-              '※ 마감 후 지원자에게 급여내역이 표시됩니다.',
-              style: ResponsiveHelper.smallStyle(context, color: AppColors.grey600),
-            ),
-          ],
-        ),
-        actions: [
-          StyledDialogButton.cancel(
-            onPressed: () => Navigator.pop(dialogContext, false),
-          ),
-          StyledDialogButton.primary(
-            text: '마감하기',
-            onPressed: () => Navigator.pop(dialogContext, true),
-          ),
-        ],
-      ),
-    );
-    
-    if (confirmed == true) {
-      await _processFinalClose();
-    }
-  }
-
-  /// 마감 처리 실행
-  Future<void> _processFinalClose() async {
-    final adminUid = Provider.of<UserProvider>(context, listen: false).currentUser?.uid;
-
-    int successCount = 0;
-    int failCount = 0;
-
-    // 처리 대상 수집
-    final targets = <({AttendanceModel attendance, ApplicationModel app})>[];
-    for (var app in _confirmedWorkers) {
-      final attendance = _attendanceMap[app.id];
-      if (attendance == null) continue;
-      if (attendance.status == AttendanceModel.statusNoShow) continue;
-      if (attendance.wageStatus != AttendanceModel.wageCalculated) continue;
-      targets.add((attendance: attendance, app: app));
-    }
-
-    // 단일 배치로 일괄 처리 (500개 초과 시 청크 분리)
-    try {
-      var batch = FirebaseFirestore.instance.batch();
-      int batchCount = 0;
-      final processedApps = <ApplicationModel>[];
-
-      for (final t in targets) {
-        final wd = t.attendance.wageDetail;
-        final paymentDueDate = PaymentDueDateCalculator.calculate(
-          payScheduleType: wd?.payScheduleType,
-          payScheduleDay:  wd?.payScheduleDay,
-          workDate: t.attendance.workDate,
-        );
-        final confirmedWageDetail = wd?.copyWith(
-          confirmedBy: adminUid,
-          confirmedAt: DateTime.now(),
-        );
-
-        batch.update(
-          FirebaseFirestore.instance.collection('attendance').doc(t.attendance.id),
-          {
-            'wageStatus': AttendanceModel.wageConfirmed,
-            'finalConfirmedAt': FieldValue.serverTimestamp(),
-            if (adminUid != null) 'confirmedBy': adminUid,
-            if (confirmedWageDetail != null) 'wageDetail': confirmedWageDetail.toMap(),
-            if (paymentDueDate != null)
-              'paymentDueDate': Timestamp.fromDate(paymentDueDate),
-          },
-        );
-        batch.update(
-          FirebaseFirestore.instance.collection('users').doc(t.app.uid),
-          {'totalWorkDays': FieldValue.increment(1)},
-        );
-        batchCount += 2;
-        processedApps.add(t.app);
-
-        if (batchCount >= 498) {
-          await batch.commit();
-          successCount += batchCount ~/ 2;
-          batch = FirebaseFirestore.instance.batch();
-          batchCount = 0;
-        }
-      }
-      if (batchCount > 0) {
-        await batch.commit();
-        successCount += batchCount ~/ 2;
-      }
-
-      // 배치 성공 후 신뢰도 업데이트 (개별 실패 허용)
-      for (final app in processedApps) {
-        try {
-          await TrustScoreService().onWorkComplete(app.uid, app.businessId);
-        } catch (e) {
-          debugPrint('⚠️ 신뢰도 업데이트 실패 (${app.uid}): $e');
-        }
-      }
-    } catch (e) {
-      debugPrint('❌ 마감 처리 실패: $e');
-      failCount = targets.length - successCount;
-    }
-
-    if (!mounted) return;
-
-    _hasChanges = true;
-    await _loadData();
-
-    if (failCount == 0) {
-      ToastHelper.showSuccess('$successCount명 최종확정 완료');
-    } else {
-      ToastHelper.showWarning('$successCount명 완료, $failCount명 실패');
-    }
   }
 
   /// 급여 확정 다이얼로그 열기

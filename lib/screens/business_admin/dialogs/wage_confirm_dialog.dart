@@ -84,6 +84,7 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
   // 선택 상태 (탭별로 분리)
   final Set<String> _pendingSelectedIds = {};
   final Set<String> _calculatedSelectedIds = {};
+  final Set<String> _transferredSelectedIds = {};
   
   // 계산된 급여 정보 캐시
   final Map<String, WageDetailModel> _calculatedWages = {};
@@ -125,8 +126,9 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
       // 퇴근 완료된 근무자만
       if (attendance.checkOut == null) continue;
 
-      // 마감내역(transferred): adminConfirmed 관계없이 표시
-      if (attendance.wageStatus == AttendanceModel.wageTransferred) {
+      // 마감내역(wageConfirmed, wageTransferred): adminConfirmed 관계없이 항상 표시
+      if (attendance.wageStatus == AttendanceModel.wageConfirmed ||
+          attendance.wageStatus == AttendanceModel.wageTransferred) {
         _transferredWorkers.add(app);
         continue;
       }
@@ -134,12 +136,8 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
       // 미확정·확정내역: adminConfirmed 된 인원만
       if (attendance.adminConfirmed != true) continue;
 
-      // 마감내역: wageConfirmed(마감완료) + wageTransferred(이체완료)
-      if (attendance.wageStatus == AttendanceModel.wageConfirmed ||
-          attendance.wageStatus == AttendanceModel.wageTransferred) {
-        _transferredWorkers.add(app);
       // 확정내역: wageCalculated(급여확정)
-      } else if (attendance.wageStatus == AttendanceModel.wageCalculated) {
+      if (attendance.wageStatus == AttendanceModel.wageCalculated) {
         _calculatedWorkers.add(app);
       // 미확정: wagePending만
       } else if (attendance.wageStatus == AttendanceModel.wagePending) {
@@ -1175,6 +1173,84 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
     _tabController.animateTo(2);
   }
 
+  /// 선택된 wageConfirmed 항목 → wageCalculated 마감 취소 처리
+  Future<void> _reverseCloseWages() async {
+    final targetIds = _transferredSelectedIds.where((id) {
+      final att = widget.attendanceMap[id];
+      return att?.wageStatus == AttendanceModel.wageConfirmed;
+    }).toList();
+
+    if (targetIds.isEmpty) {
+      ToastHelper.showWarning('취소할 항목이 없습니다 (이미 송금 완료된 항목은 취소 불가)');
+      return;
+    }
+
+    final confirmed = await DialogHelper.showConfirm(
+      context,
+      title: '마감 취소',
+      message: '선택한 ${targetIds.length}명을 확정내역으로 되돌리시겠습니까?',
+      confirmText: '마감 취소',
+    );
+    if (confirmed != true || !mounted) return;
+
+    setState(() => _isProcessing = true);
+
+    int successCount = 0;
+    int failCount = 0;
+    try {
+      var batch = FirebaseFirestore.instance.batch();
+      int batchCount = 0;
+
+      for (final appId in targetIds) {
+        final attendance = widget.attendanceMap[appId];
+        if (attendance == null) { failCount++; continue; }
+
+        batch.update(
+          FirebaseFirestore.instance.collection('attendance').doc(attendance.id),
+          {
+            'wageStatus': AttendanceModel.wageCalculated,
+            'finalConfirmedAt': FieldValue.delete(),
+          },
+        );
+        batchCount++;
+
+        if (batchCount >= 499) {
+          await batch.commit();
+          successCount += batchCount;
+          batch = FirebaseFirestore.instance.batch();
+          batchCount = 0;
+        }
+      }
+      if (batchCount > 0) {
+        await batch.commit();
+        successCount += batchCount;
+      }
+    } catch (e) {
+      debugPrint('❌ 마감 취소 실패: $e');
+      failCount = targetIds.length - successCount;
+    }
+
+    if (!mounted) return;
+    _hasChanges = true;
+    widget.onClose?.call();
+
+    final processed = targetIds.toSet();
+    setState(() {
+      final moved = _transferredWorkers.where((a) => processed.contains(a.id)).toList();
+      _transferredWorkers.removeWhere((a) => processed.contains(a.id));
+      _calculatedWorkers.addAll(moved);
+      _transferredSelectedIds.removeAll(processed);
+      _isProcessing = false;
+    });
+
+    if (failCount == 0) {
+      ToastHelper.showSuccess('$successCount명 마감 취소 완료');
+    } else {
+      ToastHelper.showWarning('$successCount명 완료, $failCount명 실패');
+    }
+    _tabController.animateTo(1);
+  }
+
   // ═══════════════════════════════════════════════════════════
   // 합계 계산
   // ═══════════════════════════════════════════════════════════
@@ -1431,29 +1507,57 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
     );
   }
 
-  /// 마감내역 탭 (transferred — 읽기전용)
+  /// 마감내역 탭 (wageConfirmed = 최종확정, wageTransferred = 송금완료)
   Widget _buildTransferredTab(BuildContext context, ThemeData theme) {
     if (_transferredWorkers.isEmpty) {
       return const AppEmptyState(
         icon: Icons.done_all,
         title: '마감된 내역이 없습니다',
-        subtitle: '송금 완료된 급여가 여기에 표시됩니다',
+        subtitle: '마감 완료된 급여가 여기에 표시됩니다',
       );
     }
 
+    final confirmedIds = _transferredWorkers
+        .where((a) => widget.attendanceMap[a.id]?.wageStatus == AttendanceModel.wageConfirmed)
+        .map((a) => a.id)
+        .toSet();
+    final confirmedCount = confirmedIds.length;
+    final transferredCount = _transferredWorkers.length - confirmedCount;
+    final isAllSelected = confirmedIds.isNotEmpty &&
+        _transferredSelectedIds.containsAll(confirmedIds);
+
     return Column(
       children: [
-        // 읽기전용 안내 바
+        // 안내 바: 최종확정 N명 / 송금완료 N명 + 전체선택
         Container(
           padding: ResponsiveHelper.symmetricPadding(context, horizontal: 16, vertical: 10),
           color: AppColors.grey50,
           child: Row(
             children: [
-              Icon(Icons.lock_outline, size: 14, color: AppColors.grey500),
-              SizedBox(width: ResponsiveHelper.spacing(context, 6)),
-              Text(
-                '송금 완료된 내역입니다 · 총 ${_transferredWorkers.length}명',
-                style: ResponsiveHelper.smallStyle(context, color: AppColors.grey500),
+              if (confirmedCount > 0) ...[
+                AppCheckbox(
+                  value: isAllSelected,
+                  activeColor: AppColors.warning,
+                  onTap: () {
+                    setState(() {
+                      if (isAllSelected) {
+                        _transferredSelectedIds.removeAll(confirmedIds);
+                      } else {
+                        _transferredSelectedIds.addAll(confirmedIds);
+                      }
+                    });
+                  },
+                ),
+                SizedBox(width: ResponsiveHelper.spacing(context, 6)),
+              ],
+              Expanded(
+                child: Text(
+                  [
+                    if (confirmedCount > 0) '최종확정 $confirmedCount명',
+                    if (transferredCount > 0) '송금완료 $transferredCount명',
+                  ].join(' · '),
+                  style: ResponsiveHelper.smallStyle(context, color: AppColors.grey500),
+                ),
               ),
             ],
           ),
@@ -1474,138 +1578,205 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
               final netWage = wage != null
                   ? FormatHelper.formatWage(wage.effectiveNetWage)
                   : '계산 정보 없음';
+              final isTransferred =
+                  attendance?.wageStatus == AttendanceModel.wageTransferred;
+              final isConfirmed =
+                  attendance?.wageStatus == AttendanceModel.wageConfirmed;
+              final isSelected = _transferredSelectedIds.contains(app.id);
 
-              return Container(
-                margin: EdgeInsets.only(bottom: ResponsiveHelper.spacing(context, 10)),
-                decoration: BoxDecoration(
-                  color: Colors.white,
-                  borderRadius: BorderRadius.circular(14),
-                  border: Border.all(color: AppColors.grey200),
-                  boxShadow: [
-                    BoxShadow(
-                      color: Colors.black.withValues(alpha: 0.04),
-                      blurRadius: 6,
-                      offset: const Offset(0, 2),
+              return GestureDetector(
+                onTap: () => _showWageDetailDialog(app, isCalculated: true),
+                child: Container(
+                  margin: EdgeInsets.only(bottom: ResponsiveHelper.spacing(context, 10)),
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(14),
+                    border: Border.all(
+                      color: isSelected ? AppColors.warning : AppColors.grey200,
+                      width: isSelected ? 1.5 : 1,
                     ),
-                  ],
-                ),
-                child: Padding(
-                  padding: ResponsiveHelper.cardPadding(context),
-                  child: Row(
-                    children: [
-                      // 좌측: 이름 + 파트 + 시간
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Row(
-                              children: [
-                                Flexible(
-                                  child: Text(
-                                    name,
-                                    style: ResponsiveHelper.bodyStyle(context)
-                                        .copyWith(fontWeight: FontWeight.bold),
-                                    overflow: TextOverflow.ellipsis,
-                                  ),
-                                ),
-                                SizedBox(width: ResponsiveHelper.spacing(context, 6)),
-                                Container(
-                                  padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
-                                  decoration: BoxDecoration(
-                                    color: AppColors.grey100,
-                                    borderRadius: BorderRadius.circular(6),
-                                  ),
-                                  child: Text(
-                                    app.selectedWorkType,
-                                    style: ResponsiveHelper.tinyStyle(context).copyWith(
-                                      color: AppColors.grey600,
-                                      fontWeight: FontWeight.w600,
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withValues(alpha: 0.04),
+                        blurRadius: 6,
+                        offset: const Offset(0, 2),
+                      ),
+                    ],
+                  ),
+                  child: Padding(
+                    padding: ResponsiveHelper.cardPadding(context),
+                    child: Row(
+                      children: [
+                        // 체크박스 (wageConfirmed만)
+                        if (isConfirmed) ...[
+                          AppCheckbox(
+                            value: isSelected,
+                            activeColor: AppColors.warning,
+                            onTap: () {
+                              setState(() {
+                                if (isSelected) {
+                                  _transferredSelectedIds.remove(app.id);
+                                } else {
+                                  _transferredSelectedIds.add(app.id);
+                                }
+                              });
+                            },
+                          ),
+                          SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+                        ],
+                        // 좌측: 이름 + 파트 + 시간
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Row(
+                                children: [
+                                  Flexible(
+                                    child: Text(
+                                      name,
+                                      style: ResponsiveHelper.bodyStyle(context)
+                                          .copyWith(fontWeight: FontWeight.bold),
+                                      overflow: TextOverflow.ellipsis,
                                     ),
-                                    overflow: TextOverflow.ellipsis,
-                                    maxLines: 1,
                                   ),
+                                  SizedBox(width: ResponsiveHelper.spacing(context, 6)),
+                                  Container(
+                                    padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+                                    decoration: BoxDecoration(
+                                      color: AppColors.grey100,
+                                      borderRadius: BorderRadius.circular(6),
+                                    ),
+                                    child: Text(
+                                      app.selectedWorkType,
+                                      style: ResponsiveHelper.tinyStyle(context).copyWith(
+                                        color: AppColors.grey600,
+                                        fontWeight: FontWeight.w600,
+                                      ),
+                                      overflow: TextOverflow.ellipsis,
+                                      maxLines: 1,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                              SizedBox(height: ResponsiveHelper.spacing(context, 5)),
+                              Row(
+                                children: [
+                                  Icon(Icons.schedule_outlined, size: 13, color: AppColors.grey400),
+                                  SizedBox(width: ResponsiveHelper.spacing(context, 3)),
+                                  Flexible(
+                                    child: Text(
+                                      '$workTime (${workHours}h)',
+                                      style: ResponsiveHelper.smallStyle(context, color: AppColors.grey500),
+                                      overflow: TextOverflow.ellipsis,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ],
+                          ),
+                        ),
+                        SizedBox(width: ResponsiveHelper.spacing(context, 12)),
+                        // 우측: 배지 + 금액
+                        Column(
+                          crossAxisAlignment: CrossAxisAlignment.end,
+                          children: [
+                            Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
+                              decoration: BoxDecoration(
+                                color: (isTransferred ? AppColors.info : AppColors.success)
+                                    .withValues(alpha: 0.12),
+                                borderRadius: BorderRadius.circular(6),
+                              ),
+                              child: Text(
+                                isTransferred ? '송금완료' : '최종확정',
+                                style: ResponsiveHelper.tinyStyle(context).copyWith(
+                                  color: isTransferred ? AppColors.info : AppColors.success,
+                                  fontWeight: FontWeight.bold,
                                 ),
-                              ],
+                              ),
                             ),
-                            SizedBox(height: ResponsiveHelper.spacing(context, 5)),
-                            Row(
-                              children: [
-                                Icon(Icons.schedule_outlined, size: 13, color: AppColors.grey400),
-                                SizedBox(width: ResponsiveHelper.spacing(context, 3)),
-                                Flexible(
-                                  child: Text(
-                                    '$workTime (${workHours}h)',
-                                    style: ResponsiveHelper.smallStyle(context, color: AppColors.grey500),
-                                    overflow: TextOverflow.ellipsis,
-                                  ),
-                                ),
-                              ],
+                            SizedBox(height: ResponsiveHelper.spacing(context, 6)),
+                            Text(
+                              netWage,
+                              style: ResponsiveHelper.subtitleStyle(context).copyWith(
+                                fontWeight: FontWeight.bold,
+                                color: AppColors.grey700,
+                              ),
                             ),
                           ],
                         ),
-                      ),
-                      SizedBox(width: ResponsiveHelper.spacing(context, 12)),
-                      // 우측: 배지 + 금액
-                      Column(
-                        crossAxisAlignment: CrossAxisAlignment.end,
-                        children: [
-                          Container(
-                            padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
-                            decoration: BoxDecoration(
-                              color: AppColors.info.withValues(alpha: 0.12),
-                              borderRadius: BorderRadius.circular(6),
-                            ),
-                            child: Text(
-                              '송금완료',
-                              style: ResponsiveHelper.tinyStyle(context).copyWith(
-                                color: AppColors.info,
-                                fontWeight: FontWeight.bold,
-                              ),
-                            ),
-                          ),
-                          SizedBox(height: ResponsiveHelper.spacing(context, 6)),
-                          Text(
-                            netWage,
-                            style: ResponsiveHelper.subtitleStyle(context).copyWith(
-                              fontWeight: FontWeight.bold,
-                              color: AppColors.grey700,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ],
+                      ],
+                    ),
                   ),
                 ),
               );
             },
           ),
         ),
-        // 하단: 닫기 버튼만 표시 (마감내역은 액션 없음)
+        // 하단 버튼
         Container(
           padding: ResponsiveHelper.cardPadding(context),
           decoration: BoxDecoration(
             color: theme.scaffoldBackgroundColor,
             border: Border(top: BorderSide(color: theme.dividerColor)),
           ),
-          child: SizedBox(
-            width: double.infinity,
-            child: OutlinedButton(
-              onPressed: () => Navigator.pop(context, _hasChanges),
-              style: OutlinedButton.styleFrom(
-                foregroundColor: AppColors.grey600,
-                side: BorderSide(color: theme.dividerColor),
-                padding: EdgeInsets.symmetric(
-                  vertical: ResponsiveHelper.spacing(context, 14),
-                ),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(ResponsiveHelper.spacing(context, 12)),
+          child: Row(
+            children: [
+              Expanded(
+                child: OutlinedButton(
+                  onPressed: () => Navigator.pop(context, _hasChanges),
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: AppColors.grey600,
+                    side: BorderSide(color: theme.dividerColor),
+                    padding: EdgeInsets.symmetric(
+                      vertical: ResponsiveHelper.spacing(context, 14),
+                    ),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(ResponsiveHelper.spacing(context, 12)),
+                    ),
+                  ),
+                  child: Text(
+                    '닫기',
+                    style: ResponsiveHelper.bodyStyle(context),
+                  ),
                 ),
               ),
-              child: Text(
-                '닫기',
-                style: ResponsiveHelper.bodyStyle(context),
-              ),
-            ),
+              if (_transferredSelectedIds.isNotEmpty) ...[
+                SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+                Expanded(
+                  child: ElevatedButton.icon(
+                    onPressed: _isProcessing ? null : _reverseCloseWages,
+                    icon: _isProcessing
+                        ? SizedBox(
+                            width: ResponsiveHelper.spacing(context, 18),
+                            height: ResponsiveHelper.spacing(context, 18),
+                            child: const CircularProgressIndicator(
+                              strokeWidth: 2,
+                              color: Colors.white,
+                            ),
+                          )
+                        : Icon(Icons.undo,
+                            size: ResponsiveHelper.iconSize(context, 18),
+                            color: Colors.white),
+                    label: Text(
+                      '마감 취소 (${_transferredSelectedIds.length}명)',
+                      style: ResponsiveHelper.bodyStyle(context)
+                          .copyWith(color: Colors.white, fontWeight: FontWeight.bold),
+                    ),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: AppColors.warning,
+                      foregroundColor: Colors.white,
+                      padding: EdgeInsets.symmetric(
+                        vertical: ResponsiveHelper.spacing(context, 14),
+                      ),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(ResponsiveHelper.spacing(context, 12)),
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ],
           ),
         ),
       ],
