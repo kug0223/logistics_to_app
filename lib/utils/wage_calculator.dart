@@ -206,6 +206,7 @@ class WageCalculator {
     // 4. 금액 계산
     int baseAmount = 0;
     int overtimeAmount = 0;
+    int earlyArrivalAmt = 0;
     int nightAmount = 0;
     
     if (wageType == 'hourly') {
@@ -229,6 +230,7 @@ class WageCalculator {
         workMinutes: workMinutes,
         scheduledBreakMinutes: schedBreak,
         overtimeMinutes: overtimeMinutes,
+        earlyArrivalMinutes: earlyArrivalMinutes,
         nightMinutes: nightMinutes,
         nightAllowanceApplied: nightAllowanceApplied,
         minimumWage: minimumWage,
@@ -237,6 +239,7 @@ class WageCalculator {
       baseAmount = result['baseAmount']!;
       overtimeAmount = result['overtimeAmount']!;
       nightAmount = result['nightAmount']!;
+      earlyArrivalAmt = result['earlyArrivalAmount'] ?? 0;
     }
     
     // additionalAmount는 추가 공제에 음수 입력이 가능하지만 UI에서 검증하지 않으므로,
@@ -255,6 +258,7 @@ class WageCalculator {
       nightMinutes: nightMinutes,
       baseAmount: baseAmount,
       overtimeAmount: overtimeAmount,
+      earlyArrivalAmount: earlyArrivalAmt,
       nightAmount: nightAmount,
       additionalAmount: additionalAmount,
       totalAmount: totalAmount,
@@ -313,6 +317,7 @@ class WageCalculator {
     required int workMinutes,
     required int scheduledBreakMinutes,
     required int overtimeMinutes,
+    required int earlyArrivalMinutes,
     required int nightMinutes,
     required bool nightAllowanceApplied,
     required int minimumWage,
@@ -337,23 +342,16 @@ class WageCalculator {
       baseAmount = (dailyWage * workMinutes / scheduledWorkMinutes).round();
     }
 
-    // 연장수당: 총 근무 8시간 이하면 1배, 8시간 초과분만 1.5배
+    // 조출수당: 계약 시작 이전 근무 × 기초시급 × 1.0
+    // 연장수당: 계약 종료 이후 근무 × 기초시급 × 1.5
     // scheduledWorkMinutes==0이면 일급 전액이 이미 baseAmount — 연장수당 중복 방지
+    int earlyArrivalAmt = 0;
     int overtimeAmount = 0;
     if (overtimeMinutes > 0 && scheduledWorkMinutes > 0) {
-      if (workMinutes <= standardWorkMinutes) {
-        // 총 근무 8시간 이하: 연장분 전체 1배
-        overtimeAmount = (overtimeMinutes * supplementWage / 60).round();
-      } else {
-        // 총 근무 8시간 초과: 8시간 초과분만 1.5배
-        final over8Hours = workMinutes - standardWorkMinutes;
-        final within8Hours = (overtimeMinutes - over8Hours).clamp(0, overtimeMinutes);
-
-        final amount1x = (within8Hours * supplementWage / 60).round();
-        final amount15x = (over8Hours.clamp(0, overtimeMinutes) * supplementWage * overtimeRate / 60).round();
-
-        overtimeAmount = amount1x + amount15x;
-      }
+      earlyArrivalAmt = (earlyArrivalMinutes * supplementWage / 60).round();
+      final pureOvertimeMins = (overtimeMinutes - earlyArrivalMinutes).clamp(0, 9999);
+      final regularOvertimeAmt = (pureOvertimeMins * supplementWage * overtimeRate / 60).round();
+      overtimeAmount = earlyArrivalAmt + regularOvertimeAmt;
     }
 
     // 야간수당: 야간시간 × 기초시급 × 0.5
@@ -365,6 +363,7 @@ class WageCalculator {
     return {
       'baseAmount': baseAmount,
       'overtimeAmount': overtimeAmount,
+      'earlyArrivalAmount': earlyArrivalAmt,
       'nightAmount': nightAmount,
     };
   }

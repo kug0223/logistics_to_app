@@ -19,7 +19,8 @@ class WageDetailModel {
   
   // ── 금액 계산 ──
   final int baseAmount;            // 기본급
-  final int overtimeAmount;        // 연장수당
+  final int overtimeAmount;        // 연장수당 (조출수당 포함 합계)
+  final int earlyArrivalAmount;    // 조출수당 (overtimeAmount 중 조출분 — 일급제만, 시급제는 0)
   final int nightAmount;           // 야간수당
   final int additionalAmount;      // 추가수당 (급구 인센티브 등)
   final int deductionAmount;       // 추가공제 (안전화·식비 등 수동 차감)
@@ -79,6 +80,7 @@ class WageDetailModel {
     this.nightMinutes = 0,
     this.baseAmount = 0,
     this.overtimeAmount = 0,
+    this.earlyArrivalAmount = 0,
     this.nightAmount = 0,
     this.additionalAmount = 0,
     this.deductionAmount = 0,
@@ -118,6 +120,7 @@ class WageDetailModel {
       nightMinutes: (map['nightMinutes'] as num?)?.toInt() ?? 0,
       baseAmount: (map['baseAmount'] as num?)?.toInt() ?? 0,
       overtimeAmount: (map['overtimeAmount'] as num?)?.toInt() ?? 0,
+      earlyArrivalAmount: (map['earlyArrivalAmount'] as num?)?.toInt() ?? 0,
       nightAmount: (map['nightAmount'] as num?)?.toInt() ?? 0,
       additionalAmount: (map['additionalAmount'] as num?)?.toInt() ?? 0,
       deductionAmount: (map['deductionAmount'] as num?)?.toInt() ?? 0,
@@ -162,6 +165,7 @@ class WageDetailModel {
       'nightMinutes': nightMinutes,
       'baseAmount': baseAmount,
       'overtimeAmount': overtimeAmount,
+      if (earlyArrivalAmount != 0) 'earlyArrivalAmount': earlyArrivalAmount,
       'nightAmount': nightAmount,
       'additionalAmount': additionalAmount,
       'deductionAmount': deductionAmount,
@@ -205,6 +209,7 @@ class WageDetailModel {
     int? nightMinutes,
     int? baseAmount,
     int? overtimeAmount,
+    int? earlyArrivalAmount,
     int? nightAmount,
     int? additionalAmount,
     int? deductionAmount,
@@ -241,6 +246,7 @@ class WageDetailModel {
       nightMinutes: nightMinutes ?? this.nightMinutes,
       baseAmount: baseAmount ?? this.baseAmount,
       overtimeAmount: overtimeAmount ?? this.overtimeAmount,
+      earlyArrivalAmount: earlyArrivalAmount ?? this.earlyArrivalAmount,
       nightAmount: nightAmount ?? this.nightAmount,
       additionalAmount: additionalAmount ?? this.additionalAmount,
       deductionAmount: deductionAmount ?? this.deductionAmount,

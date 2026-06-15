@@ -832,11 +832,14 @@ class _WageDetailDialogState extends State<WageDetailDialog> {
         : null;
 
     // 조출/연장 분리
+    // earlyArrivalAmount가 저장된 레코드면 직접 사용, 구형 레코드는 비율 fallback
     final earlyMins = _wage.earlyArrivalMinutes;
     final regularMins = _wage.overtimeMinutes - earlyMins;
-    final earlyArrivalAmount = _wage.overtimeMinutes > 0
-        ? (_wage.overtimeAmount * earlyMins / _wage.overtimeMinutes).round()
-        : 0;
+    final earlyArrivalAmount = _wage.earlyArrivalAmount > 0
+        ? _wage.earlyArrivalAmount
+        : (_wage.overtimeMinutes > 0
+            ? (_wage.overtimeAmount * earlyMins / _wage.overtimeMinutes).round()
+            : 0);
     final regularOvertimeAmount = _wage.overtimeAmount - earlyArrivalAmount;
 
     // 일급제 미근무 공제: 원래 일급과 실제 기본급의 차이
@@ -1198,42 +1201,26 @@ class _WageDetailDialogState extends State<WageDetailDialog> {
       final wageStr = FormatHelper.formatWage(supplementWage);
       final fEarlyMins = _wage.earlyArrivalMinutes;
       final fRegularMins = _wage.overtimeMinutes - fEarlyMins;
-      final fEarlyAmt = _wage.overtimeMinutes > 0
-          ? (_wage.overtimeAmount * fEarlyMins / _wage.overtimeMinutes).round()
-          : 0;
+      // earlyArrivalAmount가 저장된 레코드면 직접, 구형은 비율 fallback
+      final fEarlyAmt = _wage.earlyArrivalAmount > 0
+          ? _wage.earlyArrivalAmount
+          : (_wage.overtimeMinutes > 0
+              ? (_wage.overtimeAmount * fEarlyMins / _wage.overtimeMinutes).round()
+              : 0);
       final fRegularAmt = _wage.overtimeAmount - fEarlyAmt;
 
-      // 단일 타입일 때 rate 포함 공식, 혼합일 때 금액만 표시
-      void addLine(String label, int mins, int amount) {
-        if (mins <= 0 || amount <= 0) return;
-        final h = FormatHelper.formatCompactHours(mins);
-        final amtStr = FormatHelper.formatWage(amount);
-        if (fEarlyMins > 0 && fRegularMins > 0) {
-          // 혼합: 정확한 rate 분리가 복잡하므로 금액만 표시
-          lines.add('$label ($h) = $amtStr');
-        } else if (!isDaily) {
-          lines.add('$label = $wageStr/h × $h × 1.5 = $amtStr');
-        } else if (_wage.workMinutes <= WageCalculator.standardWorkMinutes) {
-          lines.add('$label = $wageStr/h × $h × 1.0 = $amtStr');
+      if (fEarlyMins > 0 && fEarlyAmt > 0) {
+        final h = FormatHelper.formatCompactHours(fEarlyMins);
+        if (!isDaily) {
+          lines.add('조출수당 = $wageStr/h × $h × 1.5 = ${FormatHelper.formatWage(fEarlyAmt)}');
         } else {
-          final over8 = (_wage.workMinutes - WageCalculator.standardWorkMinutes)
-              .clamp(0, mins);
-          final within8 = (mins - over8).clamp(0, mins);
-          if (within8 > 0) {
-            final hw = FormatHelper.formatCompactHours(within8);
-            final aw = (within8 * supplementWage / 60).round();
-            lines.add('$label (8h내) = $wageStr/h × $hw × 1.0 = ${FormatHelper.formatWage(aw)}');
-          }
-          if (over8 > 0) {
-            final ho = FormatHelper.formatCompactHours(over8);
-            final ao = (over8 * supplementWage * 1.5 / 60).round();
-            lines.add('$label (8h초과) = $wageStr/h × $ho × 1.5 = ${FormatHelper.formatWage(ao)}');
-          }
+          lines.add('조출수당 = $wageStr/h × $h × 1.0 = ${FormatHelper.formatWage(fEarlyAmt)}');
         }
       }
-
-      addLine('조출수당', fEarlyMins, fEarlyAmt);
-      addLine('연장수당', fRegularMins, fRegularAmt);
+      if (fRegularMins > 0 && fRegularAmt > 0) {
+        final h = FormatHelper.formatCompactHours(fRegularMins);
+        lines.add('연장수당 = $wageStr/h × $h × 1.5 = ${FormatHelper.formatWage(fRegularAmt)}');
+      }
     }
 
     // ── 야간수당 ──
