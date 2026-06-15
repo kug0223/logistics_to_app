@@ -134,9 +134,12 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
       // 미확정·확정내역: adminConfirmed 된 인원만
       if (attendance.adminConfirmed != true) continue;
 
-      // 확정내역: wageCalculated(급여확정) + wageConfirmed(마감완료)
-      if (attendance.wageStatus == AttendanceModel.wageCalculated ||
-          attendance.wageStatus == AttendanceModel.wageConfirmed) {
+      // 마감내역: wageConfirmed(마감완료) + wageTransferred(이체완료)
+      if (attendance.wageStatus == AttendanceModel.wageConfirmed ||
+          attendance.wageStatus == AttendanceModel.wageTransferred) {
+        _transferredWorkers.add(app);
+      // 확정내역: wageCalculated(급여확정)
+      } else if (attendance.wageStatus == AttendanceModel.wageCalculated) {
         _calculatedWorkers.add(app);
       // 미확정: wagePending만
       } else if (attendance.wageStatus == AttendanceModel.wagePending) {
@@ -1153,12 +1156,23 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
     _hasChanges = true;
     widget.onClose?.call();
 
+    // UI 상태 업데이트: 처리된 항목을 확정내역 → 마감내역으로 이동
+    setState(() {
+      final processed = targetIds.toSet();
+      final moved = _calculatedWorkers.where((a) => processed.contains(a.id)).toList();
+      _calculatedWorkers.removeWhere((a) => processed.contains(a.id));
+      _transferredWorkers.addAll(moved);
+      _calculatedSelectedIds.removeAll(processed);
+      _isProcessing = false;
+    });
+
     if (failCount == 0) {
       ToastHelper.showSuccess('$successCount명 마감 완료');
     } else {
       ToastHelper.showWarning('$successCount명 완료, $failCount명 실패');
     }
-    setState(() => _isProcessing = false);
+    // 마감내역 탭으로 자동 이동
+    _tabController.animateTo(2);
   }
 
   // ═══════════════════════════════════════════════════════════

@@ -14,15 +14,27 @@ import '../models/core/insurance_rate_model.dart';
 class WorkDetailHelper {
   /// workDetailTimeMap 에서 해당 지원자의 캐시를 조회
   ///
-  /// TO 마스터(workType 단독 키)가 항상 최신값이므로 먼저 조회한다.
-  /// workDetailId 복합키는 TO 마스터 키가 없을 때의 폴백이다.
-  /// (TO 수정 후 슬롯 복합키는 구시간 그대로이므로 마스터를 우선해야 헤더 시간이 갱신됨)
+  /// 우선순위:
+  /// 1. workType_startTime_endTime 복합키 (app.startTime/endTime 기반) — 가장 정확
+  /// 2. workDetailId 복합키 (슬롯 ID 기반 레거시)
+  /// 3. selectedWorkType 단독 키 — 같은 workType 이름의 다른 시간대 업무가 있을 때 오반환 위험
   static Map<String, dynamic>? resolve(
     ApplicationModel app,
     Map<String, dynamic> timeMap,
   ) {
-    final raw = timeMap[app.selectedWorkType]
-        ?? (app.workDetailId != null ? timeMap[app.workDetailId] : null);
+    // 1. startTime/endTime 복합키 우선 (동일 workType 다중 시간대 오반환 방지)
+    if (app.startTime.isNotEmpty) {
+      final compositeKey = '${app.selectedWorkType}_${app.startTime}_${app.endTime}';
+      final byComposite = timeMap[compositeKey];
+      if (byComposite is Map<String, dynamic>) return byComposite;
+    }
+    // 2. workDetailId 복합키
+    if (app.workDetailId != null && app.workDetailId!.isNotEmpty) {
+      final byId = timeMap[app.workDetailId];
+      if (byId is Map<String, dynamic>) return byId;
+    }
+    // 3. workType 단독 키 폴백
+    final raw = timeMap[app.selectedWorkType];
     return raw is Map<String, dynamic> ? raw : null;
   }
 
