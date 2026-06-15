@@ -121,13 +121,21 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
       // 퇴근 완료된 근무자만
       if (attendance.checkOut == null) continue;
 
-      // 상태별 분류
+      // 마감내역(transferred): adminConfirmed 관계없이 표시
       if (attendance.wageStatus == AttendanceModel.wageTransferred) {
         _transferredWorkers.add(app);
-      } else if (attendance.wageStatus == AttendanceModel.wageCalculated ||
-                 attendance.wageStatus == AttendanceModel.wageConfirmed) {
+        continue;
+      }
+
+      // 미확정·확정내역: adminConfirmed 된 인원만
+      if (attendance.adminConfirmed != true) continue;
+
+      // 확정내역: wageConfirmed(급여확정)만
+      if (attendance.wageStatus == AttendanceModel.wageConfirmed) {
         _calculatedWorkers.add(app);
-      } else if (attendance.wageStatus == AttendanceModel.wagePending) {
+      // 미확정: wagePending + wageCalculated(검토중)
+      } else if (attendance.wageStatus == AttendanceModel.wageCalculated ||
+                 attendance.wageStatus == AttendanceModel.wagePending) {
         _pendingWorkers.add(app);
       }
     }

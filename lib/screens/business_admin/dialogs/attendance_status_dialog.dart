@@ -1198,7 +1198,7 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
             TextField(
               controller: _searchController,
               autofocus: true,
-              style: ResponsiveHelper.smallStyle(context),
+              style: ResponsiveHelper.tinyStyle(context),
               decoration: InputDecoration(
                 hintText: '이름 검색',
                 hintStyle: ResponsiveHelper.tinyStyle(context, color: AppColors.grey400),
@@ -1208,13 +1208,18 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
                   vertical: ResponsiveHelper.spacing(context, 7),
                 ),
                 border: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: BorderSide(color: AppColors.border)),
+                enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: BorderSide(color: AppColors.border)),
                 focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: BorderSide(color: theme.primaryColor)),
                 filled: true,
                 fillColor: Colors.white,
+                suffixIconConstraints: const BoxConstraints(minWidth: 28, minHeight: 28),
                 suffixIcon: _nameFilter.isNotEmpty
-                    ? IconButton(
-                        icon: Icon(Icons.clear, size: 16, color: AppColors.grey400),
-                        onPressed: () => setState(() { _nameFilter = ''; _searchController.clear(); }),
+                    ? GestureDetector(
+                        onTap: () => setState(() { _nameFilter = ''; _searchController.clear(); }),
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 6),
+                          child: Icon(Icons.clear, size: ResponsiveHelper.iconSize(context, 14), color: AppColors.grey400),
+                        ),
                       )
                     : null,
               ),
