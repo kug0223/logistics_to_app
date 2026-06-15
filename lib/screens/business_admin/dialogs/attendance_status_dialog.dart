@@ -1129,21 +1129,31 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
                     AppCheckbox(value: _selectAll, onTap: () => _toggleSelectAll(!_selectAll)),
                     SizedBox(width: ResponsiveHelper.spacing(context, 6)),
                     Text('전체', style: ResponsiveHelper.smallStyle(context)),
-                    if (_selectedIds.isNotEmpty) ...[
-                      SizedBox(width: ResponsiveHelper.spacing(context, 4)),
-                      Container(
-                        padding: EdgeInsets.symmetric(
-                          horizontal: ResponsiveHelper.spacing(context, 6),
-                          vertical: ResponsiveHelper.spacing(context, 2),
-                        ),
-                        decoration: BoxDecoration(
-                          color: theme.primaryColor.withValues(alpha: 0.1),
-                          borderRadius: BorderRadius.circular(8),
-                        ),
-                        child: Text('${_selectedIds.length}',
-                            style: ResponsiveHelper.tinyStyle(context, color: theme.primaryColor, fontWeight: FontWeight.bold)),
-                      ),
-                    ],
+                    Builder(builder: (ctx) {
+                      // 현재 탭 workers 중 선택된 수만 표시
+                      final tabSelectedCount = tabWorkers
+                          .where((a) => _selectedIds.contains(a.id))
+                          .length;
+                      if (tabSelectedCount == 0) return const SizedBox.shrink();
+                      return Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          SizedBox(width: ResponsiveHelper.spacing(context, 4)),
+                          Container(
+                            padding: EdgeInsets.symmetric(
+                              horizontal: ResponsiveHelper.spacing(context, 6),
+                              vertical: ResponsiveHelper.spacing(context, 2),
+                            ),
+                            decoration: BoxDecoration(
+                              color: theme.primaryColor.withValues(alpha: 0.1),
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                            child: Text('$tabSelectedCount',
+                                style: ResponsiveHelper.tinyStyle(context, color: theme.primaryColor, fontWeight: FontWeight.bold)),
+                          ),
+                        ],
+                      );
+                    }),
                   ],
                 ),
               ),
@@ -1320,9 +1330,11 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
     final Map<String, List<ApplicationModel>> workTypeGroups = {};
 
     for (var app in workers ?? _confirmedWorkers) {
-      // 시간 형식 정규화: trim + HH:mm 앞 5자리만 사용 (HH:mm vs HH:mm:ss 차이 제거)
-      final normStart = _normalizeTimeKey(app.startTime);
-      final normEnd   = _normalizeTimeKey(app.endTime);
+      // effectiveStart/End(TO 기준 시간)로 그룹화 — app.startTime은 TO별로 달라질 수 있음
+      final effStart = WorkDetailHelper.effectiveStart(app, _workDetailTimeMap);
+      final effEnd   = WorkDetailHelper.effectiveEnd(app, _workDetailTimeMap);
+      final normStart = _normalizeTimeKey(effStart.isNotEmpty ? effStart : app.startTime);
+      final normEnd   = _normalizeTimeKey(effEnd.isNotEmpty ? effEnd : app.endTime);
       final groupKey  = '${app.selectedWorkType.trim()}_${normStart}_$normEnd';
 
       workTypeGroups.putIfAbsent(groupKey, () => []);
@@ -2209,18 +2221,15 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
   }
 
   Future<void> _batchGroupConfirm(List<ApplicationModel> confirmable) async {
-    final ok = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('그룹 전체 확인'),
-        content: Text('${confirmable.length}명을 일괄 확인 처리합니까?'),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('취소')),
-          ElevatedButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('확인')),
-        ],
-      ),
+    final ok = await DialogHelper.showConfirm(
+      context,
+      title: '그룹 전체 확인',
+      message: '${confirmable.length}명을 일괄 확인 처리합니까?',
+      confirmText: '확인',
+      icon: Icons.check_circle_outline,
+      confirmColor: AppColors.success,
     );
-    if (ok != true || !mounted) return;
+    if (!ok || !mounted) return;
     try {
       final batch = FirebaseFirestore.instance.batch();
       for (final a in confirmable) {
@@ -2249,22 +2258,15 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
   }
 
   Future<void> _batchGroupCancelConfirm(List<ApplicationModel> cancellable) async {
-    final ok = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('그룹 전체 취소'),
-        content: Text('${cancellable.length}명의 확인을 일괄 취소합니까?'),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('취소')),
-          ElevatedButton(
-            style: ElevatedButton.styleFrom(backgroundColor: AppColors.warning),
-            onPressed: () => Navigator.pop(ctx, true),
-            child: const Text('취소 처리'),
-          ),
-        ],
-      ),
+    final ok = await DialogHelper.showConfirm(
+      context,
+      title: '그룹 전체 취소',
+      message: '${cancellable.length}명의 확인을 일괄 취소합니까?',
+      confirmText: '취소 처리',
+      icon: Icons.undo_outlined,
+      confirmColor: AppColors.warning,
     );
-    if (ok != true || !mounted) return;
+    if (!ok || !mounted) return;
     try {
       final batch = FirebaseFirestore.instance.batch();
       for (final a in cancellable) {
@@ -2910,14 +2912,13 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
   // 선택 관련 메서드
   // ═══════════════════════════════════════════════════════════
 
-  /// 전체 선택/해제
+  /// 전체 선택/해제 — 현재 탭 인원만 대상
   void _toggleSelectAll(bool value) {
     setState(() {
       _selectAll = value;
       if (value) {
-        // 노쇼가 아닌 인원만 선택
         _selectedIds.clear();
-        for (var app in _confirmedWorkers) {
+        for (var app in _workersByTab(_currentTabIndex)) {
           final status = _getAttendanceStatus(app);
           if (status['status'] != 'noshow') {
             _selectedIds.add(app.id);
