@@ -3,6 +3,7 @@ import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:cached_network_image/cached_network_image.dart';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 
@@ -48,6 +49,8 @@ class _ContractSignScreenState extends State<ContractSignScreen> {
   String? _savedSignatureBase64;
   // 사업주 인감 (base64)
   String? _businessSealBase64;
+  // 날인 방식: 'stamp'(도장) | 'signature'(서명)
+  String _businessSealType = 'stamp';
   // 대표자 이름 (snapshot.ownerName이 비어있을 때 Firestore에서 조회)
   String? _resolvedOwnerName;
   // TO 타입 기반 isLongTerm override (구 계약서 데이터 보정)
@@ -59,6 +62,10 @@ class _ContractSignScreenState extends State<ContractSignScreen> {
       _toIsContract == true || widget.contract.snapshot.isLongTerm;
   bool get _hasSavedSignature => _savedSignatureBase64 != null && _savedSignatureBase64!.isNotEmpty;
   bool get _hasSeal => _businessSealBase64 != null && _businessSealBase64!.isNotEmpty;
+  // 현재 역할이 서명해야 할 차례인지 — false면 이미 서명했거나 대기 순서가 아님
+  bool get _needsMySignature => isEmployer
+      ? widget.contract.needsEmployerSignature
+      : widget.contract.needsWorkerSignature;
 
   @override
   void initState() {
@@ -70,12 +77,12 @@ class _ContractSignScreenState extends State<ContractSignScreen> {
         // 사업주: 사업자 인감 로드 (내부에서 TO 타입도 확인)
         await _loadBusinessSeal();
       } else {
-        // 근무자: 사전 등록 서명 로드 + TO 타입 확인
+        // 근무자: 사전 등록 서명 로드 + 사업주 인감 로드 + TO 타입 확인
         final user = context.read<UserProvider>().currentUser;
         if (user?.signatureBase64 != null) {
           if (mounted) setState(() => _savedSignatureBase64 = user!.signatureBase64);
         }
-        await _checkTOType();
+        await _loadBusinessSeal(); // 근로자 화면에도 사업주 인감 표시
       }
       // 스크롤이 불필요한 경우 자동 해제
       if (mounted && !_hasReadAll &&
@@ -95,6 +102,7 @@ class _ContractSignScreenState extends State<ContractSignScreen> {
       final data = doc.data();
       if (!mounted || data == null) return;
       final sealBase64 = data['sealBase64'] as String?;
+      final sealType = data['sealType'] as String? ?? 'stamp';
       String? ownerName;
       // snapshot에 ownerName이 없으면 business 문서에서 조회, 그래도 없으면 ownerId로 users 조회
       if (widget.contract.snapshot.ownerName.isEmpty) {
@@ -124,6 +132,7 @@ class _ContractSignScreenState extends State<ContractSignScreen> {
         if (sealBase64 != null && sealBase64.isNotEmpty) {
           _businessSealBase64 = sealBase64;
         }
+        _businessSealType = sealType;
         if (ownerName != null && ownerName.trim().isNotEmpty) {
           _resolvedOwnerName = ownerName.trim();
         }
@@ -389,7 +398,10 @@ class _ContractSignScreenState extends State<ContractSignScreen> {
         }
       }
     } catch (e) {
-      if (mounted) ToastHelper.showError('서명 저장에 실패했습니다');
+      if (mounted) {
+        final msg = e.toString().replaceFirst('Exception: ', '');
+        ToastHelper.showError(msg.isNotEmpty ? msg : '서명 저장에 실패했습니다');
+      }
     } finally {
       if (mounted) setState(() => _isSigning = false);
     }
@@ -417,7 +429,11 @@ class _ContractSignScreenState extends State<ContractSignScreen> {
                 contractDate: widget.contract.createdAt,
                 slots: widget.contract.slots,
                 articles: widget.contract.articles,
+                // 서명 시점 고정 URL 우선 — 인감/서명 변경 후에도 계약서가 불변
+                employerSignatureUrl: widget.contract.employerSignatureUrl,
                 employerSealBase64: _businessSealBase64,
+                employerSealType: _businessSealType,
+                workerSignatureUrl: widget.contract.workerSignatureUrl,
                 ownerNameOverride: _resolvedOwnerName,
                 isLongTermOverride: _effectiveIsLongTerm,
               ),
@@ -447,9 +463,15 @@ class _ContractSignScreenState extends State<ContractSignScreen> {
           SizedBox(width: ResponsiveHelper.spacing(context, 8)),
           Expanded(
             child: Text(
-              isEmployer
-                  ? '내용을 검토 후 서명하면 근무자에게 발송됩니다.'
-                  : '내용을 끝까지 확인하신 후 서명해주세요.',
+              _needsMySignature
+                  ? (isEmployer
+                      ? '내용을 검토 후 서명하면 근무자에게 발송됩니다.'
+                      : '내용을 끝까지 확인하신 후 서명해주세요.')
+                  : (widget.contract.isCompleted
+                      ? '쌍방 서명이 완료된 계약서입니다.'
+                      : isEmployer
+                          ? '서명 완료 — 근무자의 서명을 기다리고 있습니다.'
+                          : '서명 완료 — 계약이 확정됩니다.'),
               style: ResponsiveHelper.smallStyle(context,
                   color: theme.primaryColor),
             ),
@@ -482,8 +504,8 @@ class _ContractSignScreenState extends State<ContractSignScreen> {
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          // 동의 체크박스
-          GestureDetector(
+          // 동의 체크박스 — 서명이 필요한 경우에만 표시
+          if (_needsMySignature) GestureDetector(
             onTap: _hasReadAll
                 ? () => setState(() => _agreed = !_agreed)
                 : null,
@@ -509,7 +531,7 @@ class _ContractSignScreenState extends State<ContractSignScreen> {
               ],
             ),
           ),
-          if (!_hasReadAll)
+          if (_needsMySignature && !_hasReadAll)
             Padding(
               padding: EdgeInsets.only(
                   left: ResponsiveHelper.spacing(context, 32),
@@ -526,43 +548,73 @@ class _ContractSignScreenState extends State<ContractSignScreen> {
 
           SizedBox(height: ResponsiveHelper.spacing(context, 14)),
 
-          // 서명 버튼
-          SizedBox(
-            width: double.infinity,
-            child: ElevatedButton.icon(
-              onPressed:
-                  (_agreed && !_isSigning) ? _sign : null,
-              icon: _isSigning
-                  ? const SizedBox(
-                      width: 18,
-                      height: 18,
-                      child: CircularProgressIndicator(
-                          strokeWidth: 2, color: Colors.white),
-                    )
-                  : Icon(isEmployer
-                      ? Icons.verified_outlined
-                      : (_hasSavedSignature
-                          ? Icons.check_circle_outline
-                          : Icons.draw_outlined)),
-              label: Text(_isSigning
-                  ? '처리 중...'
-                  : isEmployer
-                      ? '인감 날인 → 근무자에게 발송'
-                      : '서명 완료 → 계약 확정'),
-              style: ElevatedButton.styleFrom(
-                backgroundColor: theme.primaryColor,
-                disabledBackgroundColor: AppColors.grey200,
-                padding: EdgeInsets.symmetric(
-                    vertical: ResponsiveHelper.spacing(context, 16)),
-                shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(14)),
-                elevation: 0,
-                textStyle: ResponsiveHelper.bodyStyle(context)
-                    .copyWith(fontWeight: FontWeight.bold),
-                foregroundColor: Colors.white,
+          // 서명 버튼 또는 완료 표시
+          if (_needsMySignature)
+            SizedBox(
+              width: double.infinity,
+              child: ElevatedButton.icon(
+                onPressed: (_agreed && !_isSigning) ? _sign : null,
+                icon: _isSigning
+                    ? const SizedBox(
+                        width: 18,
+                        height: 18,
+                        child: CircularProgressIndicator(
+                            strokeWidth: 2, color: Colors.white),
+                      )
+                    : Icon(isEmployer
+                        ? Icons.verified_outlined
+                        : (_hasSavedSignature
+                            ? Icons.check_circle_outline
+                            : Icons.draw_outlined)),
+                label: Text(_isSigning
+                    ? '처리 중...'
+                    : isEmployer
+                        ? '인감 날인 → 근무자에게 발송'
+                        : '서명 완료 → 계약 확정'),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: theme.primaryColor,
+                  disabledBackgroundColor: AppColors.grey200,
+                  padding: EdgeInsets.symmetric(
+                      vertical: ResponsiveHelper.spacing(context, 16)),
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(14)),
+                  elevation: 0,
+                  textStyle: ResponsiveHelper.bodyStyle(context)
+                      .copyWith(fontWeight: FontWeight.bold),
+                  foregroundColor: Colors.white,
+                ),
+              ),
+            )
+          else
+            Container(
+              width: double.infinity,
+              padding: EdgeInsets.symmetric(
+                  vertical: ResponsiveHelper.spacing(context, 14)),
+              decoration: BoxDecoration(
+                color: AppColors.successBg,
+                borderRadius: BorderRadius.circular(14),
+              ),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(Icons.check_circle_rounded,
+                      color: AppColors.successDark,
+                      size: ResponsiveHelper.iconSize(context, 20)),
+                  SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+                  Text(
+                    widget.contract.isCompleted
+                        ? '쌍방 서명이 완료된 계약서입니다'
+                        : isEmployer
+                            ? '서명 완료 — 근무자 서명 대기 중'
+                            : '서명 완료 — 계약이 확정됩니다',
+                    style: ResponsiveHelper.bodyStyle(context).copyWith(
+                      color: AppColors.successDark,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ],
               ),
             ),
-          ),
         ],
       ),
       ),  // Container
@@ -577,7 +629,14 @@ class ContractTemplateWidget extends StatelessWidget {
   final DateTime contractDate;
   final List<ContractSlot> slots;
   final List<ContractArticle> articles;
+  /// 서명 시점에 Storage에 저장된 사업주 서명 URL — 있으면 base64보다 우선 (불변 보장)
+  final String? employerSignatureUrl;
+  /// 미서명 상태의 사업주 인감 미리보기용 base64
   final String? employerSealBase64;
+  /// 날인 방식: 'stamp'(도장) | 'signature'(서명)
+  final String employerSealType;
+  /// 서명 시점에 Storage에 저장된 근로자 서명 URL
+  final String? workerSignatureUrl;
   final String? ownerNameOverride;
   /// 구 계약서 isLongTerm 오류 보정용 override
   final bool? isLongTermOverride;
@@ -588,7 +647,10 @@ class ContractTemplateWidget extends StatelessWidget {
     required this.contractDate,
     this.slots = const [],
     this.articles = const [],
+    this.employerSignatureUrl,
     this.employerSealBase64,
+    this.employerSealType = 'stamp',
+    this.workerSignatureUrl,
     this.ownerNameOverride,
     this.isLongTermOverride,
   });
@@ -724,8 +786,9 @@ class ContractTemplateWidget extends StatelessWidget {
                 child: _SignBlock(
                   label: '사업주 (갑)',
                   name: _ownerName,
+                  imageUrl: employerSignatureUrl,
                   imageBase64: employerSealBase64,
-                  stampLabel: '(인감)',
+                  stampLabel: employerSealType == 'signature' ? '(서명)' : '(인감)',
                 ),
               ),
               SizedBox(width: ResponsiveHelper.spacing(context, 16)),
@@ -733,6 +796,7 @@ class ContractTemplateWidget extends StatelessWidget {
                 child: _SignBlock(
                   label: '근로자 (을)',
                   name: snapshot.workerName,
+                  imageUrl: workerSignatureUrl,
                   stampLabel: '(서명)',
                 ),
               ),
@@ -884,18 +948,25 @@ class _SlotsTable extends StatelessWidget {
 class _SignBlock extends StatelessWidget {
   final String label;
   final String name;
+  /// 서명 시점에 Storage에 저장된 URL — 있으면 base64보다 우선 표시 (불변 보장)
+  final String? imageUrl;
+  /// 미서명 상태의 미리보기용 base64 — imageUrl이 없을 때만 사용
   final String? imageBase64;
   final String stampLabel;
 
   const _SignBlock({
     required this.label,
     required this.name,
+    this.imageUrl,
     this.imageBase64,
     this.stampLabel = '(서명)',
   });
 
   @override
   Widget build(BuildContext context) {
+    final hasUrl = imageUrl != null && imageUrl!.isNotEmpty;
+    final hasBase64 = imageBase64 != null && imageBase64!.isNotEmpty;
+
     return Container(
       padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 14)),
       decoration: BoxDecoration(
@@ -908,16 +979,21 @@ class _SignBlock extends StatelessWidget {
               style: ResponsiveHelper.smallStyle(context,
                   color: AppColors.grey500)),
           SizedBox(height: ResponsiveHelper.spacing(context, 8)),
-          if (imageBase64 != null && imageBase64!.isNotEmpty)
-            SizedBox(
-              height: 48,
-              child: Image.memory(
-                base64Decode(imageBase64!),
-                fit: BoxFit.contain,
-              ),
-            )
-          else
-            SizedBox(height: 48),
+          SizedBox(
+            height: 48,
+            child: hasUrl
+                // 서명 시점 고정 이미지 (Storage URL, 캐시 적용)
+                ? CachedNetworkImage(
+                    imageUrl: imageUrl!,
+                    fit: BoxFit.contain,
+                    placeholder: (_, __) => const SizedBox.shrink(),
+                    errorWidget: (_, __, ___) => const SizedBox.shrink(),
+                  )
+                : hasBase64
+                    // 미서명 상태 미리보기 (base64)
+                    ? Image.memory(base64Decode(imageBase64!), fit: BoxFit.contain)
+                    : const SizedBox.shrink(),
+          ),
           const Divider(color: AppColors.grey400),
           Text(name,
               style: ResponsiveHelper.smallStyle(context)

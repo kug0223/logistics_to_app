@@ -53,6 +53,7 @@ class TimePickerBottomSheet extends StatefulWidget {
   }) {
     return showModalBottomSheet<TimeOfDay>(
       context: context,
+      useSafeArea: true,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
       builder: (context) => TimePickerBottomSheet(
@@ -631,6 +632,7 @@ class DateTimePickerBottomSheet extends StatefulWidget {
   }) {
     return showModalBottomSheet<DateTime>(
       context: context,
+      useSafeArea: true,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
       builder: (context) => DateTimePickerBottomSheet(

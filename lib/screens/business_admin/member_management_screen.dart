@@ -106,6 +106,7 @@ class _MemberManagementScreenState extends State<MemberManagementScreen> {
     final theme = Theme.of(context);
     return GradientScaffold(
       title: '멤버 관리',
+      onRefresh: _load,
       floatingActionButton: FloatingActionButton.extended(
         onPressed: _invite,
         backgroundColor: theme.primaryColor,
@@ -387,11 +388,13 @@ class _InviteDialogState extends State<_InviteDialog> {
     final theme = Theme.of(context);
     final canSend = _found != null && _permissions.hasAnyPermission && !_sending;
 
-    return Dialog(
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
-      clipBehavior: Clip.antiAlias,
-      insetPadding: const EdgeInsets.symmetric(horizontal: 24, vertical: 40),
-      child: SingleChildScrollView(
+    return PopScope(
+      canPop: !_sending,
+      child: Dialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+        clipBehavior: Clip.antiAlias,
+        insetPadding: const EdgeInsets.symmetric(horizontal: 24, vertical: 40),
+        child: SingleChildScrollView(
         child: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -676,7 +679,8 @@ class _InviteDialogState extends State<_InviteDialog> {
           ],
         ),
       ),
-    );
+    ),   // Dialog
+    );   // PopScope
   }
 }
 

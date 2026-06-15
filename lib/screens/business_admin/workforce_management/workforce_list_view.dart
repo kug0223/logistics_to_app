@@ -223,7 +223,7 @@ class _WorkforceListViewState extends State<WorkforceListView> {
     final theme = Theme.of(context);
 
     return Container(
-      padding: ResponsiveHelper.cardPadding(context),
+      padding: ResponsiveHelper.symmetricPadding(context, horizontal: 12, vertical: 8),
       child: Row(
         children: [
           Expanded(
@@ -281,7 +281,7 @@ class _WorkforceListViewState extends State<WorkforceListView> {
       },
       child: Container(
         padding: EdgeInsets.symmetric(
-          vertical: ResponsiveHelper.spacing(context, 12),
+          vertical: ResponsiveHelper.spacing(context, 9),
         ),
         decoration: BoxDecoration(
           gradient: isSelected
@@ -425,8 +425,11 @@ class _WorkforceListViewState extends State<WorkforceListView> {
         .toList()
       ..sort();
 
-    showDialog(
+    showModalBottomSheet(
       context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      useSafeArea: true,
       builder: (context) => FilterDialog(
         selectedBusiness: _selectedBusiness,
         selectedDateRange: _selectedDateRange,
@@ -481,7 +484,7 @@ class _WorkforceListViewState extends State<WorkforceListView> {
           return RepaintBoundary(
             child: Padding(
               padding: EdgeInsets.only(
-                bottom: ResponsiveHelper.spacing(context, 16),
+                bottom: ResponsiveHelper.spacing(context, 10),
               ),
               child: TOGroupCard(
                 groupItem: groupItem,

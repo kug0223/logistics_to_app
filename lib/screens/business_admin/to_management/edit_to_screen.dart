@@ -291,8 +291,12 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
         }
       }
 
-      final totalRequired =
+      // flex TO는 슬롯 수 × 슬롯당 요구인원; contract TO는 슬롯 1개 구조이므로 합산만
+      final perSlotRequired =
           _workDetails.fold<int>(0, (s, d) => s + d.requiredCount);
+      final numSlots =
+          widget.to.isContractType ? 1 : (widget.to.totalSlots > 0 ? widget.to.totalSlots : 1);
+      final totalRequired = perSlotRequired * numSlots;
 
       // isManualClosed가 아닌 isClosed 기준 — CF 자동마감(isManualClosed=false) 포함
       final wasClosed = widget.to.isClosed;

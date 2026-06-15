@@ -8,6 +8,7 @@
 // - CSV 내보내기 (은행 일괄이체용)
 // - 변경 요청 / 중간정산 요청 탭
 
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
@@ -31,8 +32,9 @@ import '../../../widgets/common/app_search_bar.dart';
 import '../../../widgets/common/app_tab_label.dart';
 // app_summary_header 대신 _DashboardSummaryHeader 로 대체
 import '../../../widgets/common/app_batch_action_bar.dart';
+import '../../../widgets/common/app_filter_chip.dart';
 
-enum _PendingFilter { all, overdue, today }
+enum _PendingFilter { all, overdue, today, noAccount }
 
 class PayrollPaymentDashboardScreen extends StatefulWidget {
   final String businessId;
@@ -85,8 +87,19 @@ class _PayrollPaymentDashboardScreenState
   int _pendingWorkerCount = 0;
   int _transferredWorkerCount = 0;
 
+  // 페이지네이션 (급여 기록 — 미이체 / 이체완료)
+  DocumentSnapshot? _lastDocPending;
+  DocumentSnapshot? _lastDocTransferred;
+  bool _hasMorePending = false;
+  bool _hasMoreTransferred = false;
+  bool _isLoadingMorePending = false;
+  bool _isLoadingMoreTransferred = false;
+
   // 사용자 계좌 정보 캐시 (uid → bankInfo)
   final Map<String, Map<String, String>> _userBankCache = {};
+
+  // 마지막 이체 메모 (다음 호출 시 자동 채움)
+  String _lastTransferNote = '';
 
   @override
   void initState() {
@@ -119,7 +132,13 @@ class _PayrollPaymentDashboardScreenState
   // ── 데이터 로드 ────────────────────────────────────────────
   Future<void> _load() async {
     if (!mounted) return;
-    setState(() => _isLoading = true);
+    setState(() {
+      _isLoading = true;
+      _lastDocPending = null;
+      _lastDocTransferred = null;
+      _hasMorePending = false;
+      _hasMoreTransferred = false;
+    });
 
     try {
       final results = await Future.wait([
@@ -137,13 +156,13 @@ class _PayrollPaymentDashboardScreenState
 
       if (!mounted) return;
 
-      final pending     = results[0] as List<AttendanceModel>;
-      final transferred = results[1] as List<AttendanceModel>;
+      final pendingPage     = results[0] as PayrollPage<AttendanceModel>;
+      final transferredPage = results[1] as PayrollPage<AttendanceModel>;
 
       // 계좌 정보 캐시 로딩 (미이체 + 이체완료 모두)
       final uids = {
-        ...pending.map((r) => r.userId),
-        ...transferred.map((r) => r.userId),
+        ...pendingPage.records.map((r) => r.userId),
+        ...transferredPage.records.map((r) => r.userId),
       };
       await _loadBankInfo(uids);
 
@@ -151,14 +170,14 @@ class _PayrollPaymentDashboardScreenState
       // (근무자+지급일) 그룹 카운트 캐시 (탭 라벨용 — 빌드마다 재계산 방지)
       final pendingGrouped     = <String, bool>{};
       final transferredGrouped = <String, bool>{};
-      for (final r in pending) {
+      for (final r in pendingPage.records) {
         final due = r.paymentDueDate;
         final duePart = due != null
             ? '${due.year}-${due.month.toString().padLeft(2, '0')}-${due.day.toString().padLeft(2, '0')}'
             : 'no_date';
         pendingGrouped['${r.userId}::$duePart'] = true;
       }
-      for (final r in transferred) {
+      for (final r in transferredPage.records) {
         final due = r.paymentDueDate;
         final duePart = due != null
             ? '${due.year}-${due.month.toString().padLeft(2, '0')}-${due.day.toString().padLeft(2, '0')}'
@@ -168,20 +187,95 @@ class _PayrollPaymentDashboardScreenState
 
       if (mounted) {
         setState(() {
-          _pendingRecords          = pending;
-          _transferredRecords      = transferred;
-          _pendingWorkerCount      = pendingGrouped.length;
-          _transferredWorkerCount  = transferredGrouped.length;
-          _changeRequests          = results[2] as List<PaymentChangeRequestModel>;
-          _settlementRequests      = results[3] as List<InterimSettlementRequestModel>;
+          _pendingRecords         = pendingPage.records;
+          _transferredRecords     = transferredPage.records;
+          _pendingWorkerCount     = pendingGrouped.length;
+          _transferredWorkerCount = transferredGrouped.length;
+          _changeRequests         = results[2] as List<PaymentChangeRequestModel>;
+          _settlementRequests     = results[3] as List<InterimSettlementRequestModel>;
+          _lastDocPending         = pendingPage.cursor;
+          _lastDocTransferred     = transferredPage.cursor;
+          _hasMorePending         = pendingPage.hasMore;
+          _hasMoreTransferred     = transferredPage.hasMore;
           _selectedIds.clear();
-          _batchMode    = false;
+          _batchMode = false;
         });
       }
     } catch (e) {
       debugPrint('❌ 급여 대시보드 로드 실패: $e');
     } finally {
       if (mounted) setState(() => _isLoading = false);
+    }
+  }
+
+  // ── 추가 페이지 로드 ───────────────────────────────────────
+  Future<void> _loadMorePending() async {
+    if (_isLoadingMorePending || !_hasMorePending) return;
+    setState(() => _isLoadingMorePending = true);
+    try {
+      final page = await _payService.getPayrollRecords(
+        businessId: widget.businessId,
+        year: widget.year,
+        month: widget.month,
+        wageStatus: AttendanceModel.wageConfirmed,
+        cursor: _lastDocPending,
+      );
+      await _loadBankInfo(page.records.map((r) => r.userId).toSet());
+      if (!mounted) return;
+      setState(() {
+        _pendingRecords = [..._pendingRecords, ...page.records];
+        _hasMorePending = page.hasMore;
+        _lastDocPending = page.cursor;
+        final grouped = <String, bool>{};
+        for (final r in _pendingRecords) {
+          final due = r.paymentDueDate;
+          final duePart = due != null
+              ? '${due.year}-${due.month.toString().padLeft(2, '0')}-${due.day.toString().padLeft(2, '0')}'
+              : 'no_date';
+          grouped['${r.userId}::$duePart'] = true;
+        }
+        _pendingWorkerCount = grouped.length;
+      });
+    } catch (e) {
+      debugPrint('❌ 미이체 추가 로드 실패: $e');
+      if (mounted) ToastHelper.showError('추가 데이터 로드에 실패했습니다');
+    } finally {
+      if (mounted) setState(() => _isLoadingMorePending = false);
+    }
+  }
+
+  Future<void> _loadMoreTransferred() async {
+    if (_isLoadingMoreTransferred || !_hasMoreTransferred) return;
+    setState(() => _isLoadingMoreTransferred = true);
+    try {
+      final page = await _payService.getPayrollRecords(
+        businessId: widget.businessId,
+        year: widget.year,
+        month: widget.month,
+        wageStatus: AttendanceModel.wageTransferred,
+        cursor: _lastDocTransferred,
+      );
+      await _loadBankInfo(page.records.map((r) => r.userId).toSet());
+      if (!mounted) return;
+      setState(() {
+        _transferredRecords = [..._transferredRecords, ...page.records];
+        _hasMoreTransferred = page.hasMore;
+        _lastDocTransferred = page.cursor;
+        final grouped = <String, bool>{};
+        for (final r in _transferredRecords) {
+          final due = r.paymentDueDate;
+          final duePart = due != null
+              ? '${due.year}-${due.month.toString().padLeft(2, '0')}-${due.day.toString().padLeft(2, '0')}'
+              : 'no_date';
+          grouped['${r.userId}::$duePart'] = true;
+        }
+        _transferredWorkerCount = grouped.length;
+      });
+    } catch (e) {
+      debugPrint('❌ 이체완료 추가 로드 실패: $e');
+      if (mounted) ToastHelper.showError('추가 데이터 로드에 실패했습니다');
+    } finally {
+      if (mounted) setState(() => _isLoadingMoreTransferred = false);
     }
   }
 
@@ -309,7 +403,7 @@ class _PayrollPaymentDashboardScreenState
   int _sumNet(List<AttendanceModel> recs) => recs.fold(0, (acc, r) {
     final wd = r.wageDetail;
     if (wd == null) return acc;
-    return acc + (wd.netWage > 0 ? wd.netWage : wd.totalAmount - wd.totalInsuranceDeduction);
+    return acc + wd.effectiveNetWage;
   });
 
   // ── 통계 ─────────────────────────────────────────────────
@@ -415,7 +509,7 @@ class _PayrollPaymentDashboardScreenState
   }
 
   Future<String?> _showTransferNoteDialog() async {
-    final ctrl = TextEditingController();
+    final ctrl = TextEditingController(text: _lastTransferNote);
     final primaryColor = Theme.of(context).primaryColor;
 
     final note = await showDialog<String>(
@@ -487,7 +581,9 @@ class _PayrollPaymentDashboardScreenState
                       onSubmitted: (v) => Navigator.pop(ctx, v.trim()),
                       style: ResponsiveHelper.bodyStyle(ctx),
                       decoration: InputDecoration(
-                        hintText: '이체 번호, 참고사항 등 자유롭게 입력',
+                        hintText: _lastTransferNote.isNotEmpty
+                            ? '이전: $_lastTransferNote'
+                            : '이체 번호, 참고사항 등 자유롭게 입력',
                         hintStyle: ResponsiveHelper.smallStyle(ctx, color: AppColors.grey400),
                         border: InputBorder.none,
                         contentPadding: const EdgeInsets.all(14),
@@ -527,7 +623,9 @@ class _PayrollPaymentDashboardScreenState
     );
 
     ctrl.dispose();
-    return (note == null || note.isEmpty) ? null : note;
+    final result = (note == null || note.isEmpty) ? null : note;
+    if (result != null) _lastTransferNote = result;
+    return result;
   }
 
   // ── 엑셀 내보내기 → 공통 헬퍼 위임 ─────────────────────────
@@ -676,13 +774,7 @@ class _PayrollPaymentDashboardScreenState
     final theme = Theme.of(context);
     return GradientScaffold(
       title: '급여 지급 현황 · ${widget.month}월',
-      actions: [
-        IconButton(
-          icon: const Icon(Icons.refresh, color: Colors.white),
-          onPressed: _load,
-          tooltip: '새로고침',
-        ),
-      ],
+      onRefresh: _load,
       body: _isLoading
           ? const LoadingWidget(message: '급여 현황 불러오는 중...')
           : Column(
@@ -767,15 +859,22 @@ class _PayrollPaymentDashboardScreenState
     // 퀵필터 적용
     final entries = allEntries.where((e) {
       switch (_pendingFilter) {
-        case _PendingFilter.overdue: return _groupIsOverdue(e.value);
-        case _PendingFilter.today:  return _groupIsDueToday(e.value);
-        case _PendingFilter.all:    return true;
+        case _PendingFilter.overdue:   return _groupIsOverdue(e.value);
+        case _PendingFilter.today:     return _groupIsDueToday(e.value);
+        case _PendingFilter.noAccount:
+          final uid = _uidFromKey(e.key);
+          return _userBankCache[uid]?['bankName'] == null;
+        case _PendingFilter.all:       return true;
       }
     }).toList();
 
-    final overdueTotal = allEntries.where((e) => _groupIsOverdue(e.value)).length;
-    final todayTotal   = allEntries.where((e) => _groupIsDueToday(e.value)).length;
-    final allIds       = allEntries.expand((e) => e.value.map((r) => r.id)).toSet();
+    final overdueTotal    = allEntries.where((e) => _groupIsOverdue(e.value)).length;
+    final todayTotal      = allEntries.where((e) => _groupIsDueToday(e.value)).length;
+    final noAccountTotal  = allEntries.where((e) {
+      final uid = _uidFromKey(e.key);
+      return _userBankCache[uid]?['bankName'] == null;
+    }).length;
+    final allIds          = allEntries.expand((e) => e.value.map((r) => r.id)).toSet();
 
     return Column(
       children: [
@@ -800,28 +899,36 @@ class _PayrollPaymentDashboardScreenState
           child: Row(
             children: [
               // 퀵필터 칩
-              _FilterChip(
+              AppFilterChip(
                 label: '전체',
                 count: allEntries.length,
-                active: _pendingFilter == _PendingFilter.all,
+                isSelected: _pendingFilter == _PendingFilter.all,
                 color: AppColors.grey600,
                 onTap: () => setState(() => _pendingFilter = _PendingFilter.all),
               ),
               const SizedBox(width: 6),
-              _FilterChip(
+              AppFilterChip(
                 label: '연체',
                 count: overdueTotal,
-                active: _pendingFilter == _PendingFilter.overdue,
+                isSelected: _pendingFilter == _PendingFilter.overdue,
                 color: AppColors.error,
                 onTap: () => setState(() => _pendingFilter = _PendingFilter.overdue),
               ),
               const SizedBox(width: 6),
-              _FilterChip(
+              AppFilterChip(
                 label: '오늘마감',
                 count: todayTotal,
-                active: _pendingFilter == _PendingFilter.today,
+                isSelected: _pendingFilter == _PendingFilter.today,
                 color: AppColors.warning,
                 onTap: () => setState(() => _pendingFilter = _PendingFilter.today),
+              ),
+              const SizedBox(width: 6),
+              AppFilterChip(
+                label: '계좌없음',
+                count: noAccountTotal,
+                isSelected: _pendingFilter == _PendingFilter.noAccount,
+                color: AppColors.grey600,
+                onTap: () => setState(() => _pendingFilter = _PendingFilter.noAccount),
               ),
               const Spacer(),
               // 일괄선택 토글 버튼
@@ -866,17 +973,24 @@ class _PayrollPaymentDashboardScreenState
             onRefresh: _load,
             child: entries.isEmpty
                 ? _buildEmptyState(
-                    _pendingFilter == _PendingFilter.overdue
-                        ? '연체 건이 없습니다'
-                        : _pendingFilter == _PendingFilter.today
-                            ? '오늘 마감 건이 없습니다'
-                            : '미이체 내역이 없습니다',
+                    switch (_pendingFilter) {
+                      _PendingFilter.overdue   => '연체 건이 없습니다',
+                      _PendingFilter.today     => '오늘 마감 건이 없습니다',
+                      _PendingFilter.noAccount => '계좌 정보 없는 근무자가 없습니다',
+                      _PendingFilter.all       => '미이체 내역이 없습니다',
+                    },
                     '',
                   )
                 : ListView.builder(
                     padding: ResponsiveHelper.listPadding(context),
-                    itemCount: entries.length,
+                    itemCount: entries.length + (_hasMorePending ? 1 : 0),
                     itemBuilder: (ctx, i) {
+                      if (i == entries.length) {
+                        return _buildLoadMoreButton(
+                          isLoading: _isLoadingMorePending,
+                          onTap: _loadMorePending,
+                        );
+                      }
                       final groupKey = entries[i].key;
                       final uid      = _uidFromKey(groupKey);
                       final recs     = entries[i].value;
@@ -890,6 +1004,7 @@ class _PayrollPaymentDashboardScreenState
                       final dueDate    = _dueDateFromKey(groupKey) ?? _earliestDue(recs);
                       final overdueCnt = _overdueCount(recs);
                       final schLabel   = _scheduleLabel(recs);
+                      final daysUntilDue = dueDate?.difference(_today).inDays;
 
                       return _WorkerPayCard(
                         workerName:   bank?['name'] ?? uid,
@@ -907,6 +1022,7 @@ class _PayrollPaymentDashboardScreenState
                         dueDate:      dueDate,
                         overdueCount: overdueCnt,
                         scheduleLabel: schLabel,
+                        daysUntilDue: daysUntilDue,
                         onSelect: _batchMode ? () {
                           setState(() {
                             if (allSelected) {
@@ -925,6 +1041,33 @@ class _PayrollPaymentDashboardScreenState
           ),
         ),
       ],
+    );
+  }
+
+  // ── "더 불러오기" 버튼 ────────────────────────────────────
+  Widget _buildLoadMoreButton({
+    required bool isLoading,
+    required VoidCallback onTap,
+  }) {
+    return Padding(
+      padding: EdgeInsets.symmetric(
+          vertical: ResponsiveHelper.spacing(context, 16)),
+      child: Center(
+        child: isLoading
+            ? const SizedBox(
+                width: 24,
+                height: 24,
+                child: CircularProgressIndicator(strokeWidth: 2))
+            : OutlinedButton.icon(
+                onPressed: onTap,
+                icon: const Icon(Icons.expand_more, size: 18),
+                label: const Text('더 불러오기'),
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: AppColors.grey600,
+                  side: const BorderSide(color: AppColors.grey200),
+                ),
+              ),
+      ),
     );
   }
 
@@ -969,6 +1112,11 @@ class _PayrollPaymentDashboardScreenState
             isTransferred: true,
           );
         }),
+        if (_hasMoreTransferred)
+          _buildLoadMoreButton(
+            isLoading: _isLoadingMoreTransferred,
+            onTap: _loadMoreTransferred,
+          ),
       ],
     );
   }
@@ -1020,68 +1168,6 @@ class _PayrollPaymentDashboardScreenState
   }
 }
 
-// ─── 퀵필터 칩 ───────────────────────────────────────────────────
-
-class _FilterChip extends StatelessWidget {
-  final String label;
-  final int count;
-  final bool active;
-  final Color color;
-  final VoidCallback onTap;
-
-  const _FilterChip({
-    required this.label,
-    required this.count,
-    required this.active,
-    required this.color,
-    required this.onTap,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return GestureDetector(
-      onTap: onTap,
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 150),
-        padding: EdgeInsets.symmetric(horizontal: ResponsiveHelper.spacing(context, 10), vertical: ResponsiveHelper.spacing(context, 4)),
-        decoration: BoxDecoration(
-          color: active ? color.withValues(alpha: 0.12) : AppColors.grey100,
-          borderRadius: BorderRadius.circular(20),
-          border: Border.all(
-            color: active ? color : AppColors.grey200,
-            width: active ? 1.5 : 1,
-          ),
-        ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Text(
-              label,
-              style: ResponsiveHelper.smallStyle(context,
-                fontWeight: active ? FontWeight.w700 : FontWeight.normal,
-                color: active ? color : AppColors.grey500,
-              ),
-            ),
-            if (count > 0) ...[
-              const SizedBox(width: 4),
-              Container(
-                padding: EdgeInsets.symmetric(horizontal: ResponsiveHelper.spacing(context, 5), vertical: ResponsiveHelper.spacing(context, 1)),
-                decoration: BoxDecoration(
-                  color: active ? color : AppColors.grey300,
-                  borderRadius: BorderRadius.circular(10),
-                ),
-                child: Text(
-                  '$count',
-                  style: ResponsiveHelper.tinyStyle(context, color: Colors.white, fontWeight: FontWeight.bold),
-                ),
-              ),
-            ],
-          ],
-        ),
-      ),
-    );
-  }
-}
 
 // ─── 근무자별 급여 카드 ───────────────────────────────────────────
 
@@ -1100,6 +1186,7 @@ class _WorkerPayCard extends StatelessWidget {
   final DateTime? dueDate;
   final int overdueCount;
   final String? scheduleLabel;
+  final int? daysUntilDue;   // 양수=남은 일수, 0=오늘, 음수=연체
   final VoidCallback? onSelect;
   final VoidCallback? onMarkTransferred;
 
@@ -1117,6 +1204,7 @@ class _WorkerPayCard extends StatelessWidget {
     this.dueDate,
     this.overdueCount = 0,
     this.scheduleLabel,
+    this.daysUntilDue,
     this.onSelect,
     this.onMarkTransferred,
   });
@@ -1211,6 +1299,7 @@ class _WorkerPayCard extends StatelessWidget {
                                       isOverdue: isOverdue,
                                       isDueToday: isDueToday,
                                       scheduleLabel: scheduleLabel,
+                                      daysUntilDue: daysUntilDue,
                                     ),
                                   ),
                                 ] else if (dueDate == null) ...[
@@ -1577,12 +1666,14 @@ class _DueDateChip extends StatelessWidget {
   final bool isOverdue;
   final bool isDueToday;
   final String? scheduleLabel;
+  final int? daysUntilDue;
 
   const _DueDateChip({
     required this.dueDate,
     required this.isOverdue,
     required this.isDueToday,
     this.scheduleLabel,
+    this.daysUntilDue,
   });
 
   @override
@@ -1591,21 +1682,34 @@ class _DueDateChip extends StatelessWidget {
     final shortDate =
         '${dueDate.month}.${dueDate.day.toString().padLeft(2, '0')}';
 
+    final bool isDue1 = !isOverdue && !isDueToday && daysUntilDue == 1;
+    final bool isDue2 = !isOverdue && !isDueToday && daysUntilDue == 2;
+
     final Color chipColor = isOverdue
         ? AppColors.error
         : isDueToday
             ? AppColors.warning
-            : AppColors.grey500;
+            : isDue1
+                ? AppColors.warningMedium
+                : isDue2
+                    ? AppColors.warningSoft
+                    : AppColors.grey500;
 
     final String dateText = isOverdue
         ? '$shortDate 초과'
         : isDueToday
             ? '오늘 지급'
-            : shortDate;
+            : isDue1
+                ? 'D-1  $shortDate'
+                : isDue2
+                    ? 'D-2  $shortDate'
+                    : shortDate;
 
     final String chipText = scheduleLabel != null
         ? '$scheduleLabel · $dateText'
         : dateText;
+
+    final bool isUrgent = isOverdue || isDueToday || isDue1 || isDue2;
 
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
@@ -1614,7 +1718,7 @@ class _DueDateChip extends StatelessWidget {
         borderRadius: BorderRadius.circular(4),
       ),
       child: Row(mainAxisSize: MainAxisSize.min, children: [
-        if (isOverdue || isDueToday)
+        if (isUrgent)
           Padding(
             padding: const EdgeInsets.only(right: 2),
             child: Icon(
@@ -1630,7 +1734,7 @@ class _DueDateChip extends StatelessWidget {
             chipText,
             style: ResponsiveHelper.tinyStyle(context,
                 color: chipColor,
-                fontWeight: isOverdue || isDueToday
+                fontWeight: isUrgent
                     ? FontWeight.w700
                     : FontWeight.normal),
             overflow: TextOverflow.ellipsis,

@@ -106,70 +106,54 @@ class _BusinessListScreenState extends State<BusinessListScreen> {
 
     try {
       final storage = FirebaseStorage.instance;
-      
-      // 1. 대표 이미지 삭제
+      final bizRef = FirebaseFirestore.instance.collection('businesses').doc(business.id);
+
+      // 1. Storage URL 미리 수집 (Firestore 삭제 전에 읽어야 함)
+      final workTypesSnapshot = await bizRef.collection('workTypes').get();
+
+      // 2. Firestore 먼저 삭제 — 실패 시 Storage는 건드리지 않아 일관성 유지
+      // onBusinessDeleted Cloud Function이 tos/applications/attendance를 추가 정리함
+      final memberDocs = await bizRef.collection('members').get();
+      final subBatch = FirebaseFirestore.instance.batch();
+      for (final doc in workTypesSnapshot.docs) { subBatch.delete(doc.reference); }
+      for (final doc in memberDocs.docs) { subBatch.delete(doc.reference); }
+      if (workTypesSnapshot.docs.isNotEmpty || memberDocs.docs.isNotEmpty) {
+        await subBatch.commit();
+      }
+      await bizRef.delete();
+
+      // 3. Firestore 삭제 성공 후 Storage 정리 (실패해도 고아 파일만 남음)
       if (business.mainImageUrl != null) {
         try {
           await storage.refFromURL(business.mainImageUrl!).delete();
-          debugPrint('✅ 대표 이미지 삭제');
         } catch (e) {
           debugPrint('⚠️ 대표 이미지 삭제 실패: $e');
         }
       }
-      
-      // 2. 추가 이미지들 삭제
-      if (business.imageUrls != null) {
-        for (var url in business.imageUrls!) {
-          try {
-            await storage.refFromURL(url).delete();
-            debugPrint('✅ 추가 이미지 삭제');
-          } catch (e) {
-            debugPrint('⚠️ 추가 이미지 삭제 실패: $e');
-          }
+      for (var url in business.imageUrls ?? []) {
+        try {
+          await storage.refFromURL(url).delete();
+        } catch (e) {
+          debugPrint('⚠️ 추가 이미지 삭제 실패: $e');
         }
       }
-      
-      // 3. 업무유형 이미지 삭제
-      final workTypesSnapshot = await FirebaseFirestore.instance
-          .collection('businesses')
-          .doc(business.id)
-          .collection('workTypes')
-          .get();
-      
       for (var doc in workTypesSnapshot.docs) {
         final data = doc.data();
         if (data['thumbnailUrl'] != null) {
           try {
-            await storage.refFromURL(data['thumbnailUrl']).delete();
+            await storage.refFromURL(data['thumbnailUrl'] as String).delete();
           } catch (e) {
             debugPrint('⚠️ 업무유형 썸네일 삭제 실패: $e');
           }
         }
-        if (data['images'] != null) {
-          for (var url in List<String>.from(data['images'])) {
-            try {
-              await storage.refFromURL(url).delete();
-            } catch (e) {
-              debugPrint('⚠️ 업무유형 이미지 삭제 실패: $e');
-            }
+        for (var url in List<String>.from(data['images'] ?? [])) {
+          try {
+            await storage.refFromURL(url).delete();
+          } catch (e) {
+            debugPrint('⚠️ 업무유형 이미지 삭제 실패: $e');
           }
         }
       }
-
-      // 4. Firestore 서브컬렉션 삭제 (workTypes, members)
-      // onBusinessDeleted Cloud Function이 tos/applications/attendance를 추가 정리함
-      final bizRef = FirebaseFirestore.instance.collection('businesses').doc(business.id);
-      final workTypeDocs = await bizRef.collection('workTypes').get();
-      final memberDocs = await bizRef.collection('members').get();
-      final subBatch = FirebaseFirestore.instance.batch();
-      for (final doc in workTypeDocs.docs) { subBatch.delete(doc.reference); }
-      for (final doc in memberDocs.docs) { subBatch.delete(doc.reference); }
-      if (workTypeDocs.docs.isNotEmpty || memberDocs.docs.isNotEmpty) {
-        await subBatch.commit();
-      }
-
-      // 5. businesses 문서 삭제 (삭제 후 Cloud Function이 tos/applications 정리)
-      await bizRef.delete();
           
       if (!mounted) return;
       ToastHelper.showSuccess('사업장이 삭제되었습니다');
@@ -185,23 +169,27 @@ class _BusinessListScreenState extends State<BusinessListScreen> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final userProvider = context.read<UserProvider>();
+    final isSubAdmin = userProvider.isSubAdmin;
 
     return GradientScaffold(
       title: '내 사업장 관리',
+      onRefresh: () => _loadBusinesses(forceServer: true),
       actions: [
-        IconButton(
-          icon: Icon(Icons.add_circle_outline,
-              color: Colors.white,
-              size: ResponsiveHelper.iconSize(context, 28)),
-          tooltip: '사업장 추가',
-          onPressed: _navigateToBusinessForm,
-        ),
+        if (!isSubAdmin)
+          IconButton(
+            icon: Icon(Icons.add_circle_outline,
+                color: Colors.white,
+                size: ResponsiveHelper.iconSize(context, 28)),
+            tooltip: '사업장 추가',
+            onPressed: _navigateToBusinessForm,
+          ),
       ],
       body: _isLoading
           ? const LoadingWidget()
           : _businesses.isEmpty
               ? _buildEmptyState(context)
-              : _buildBusinessList(context, theme),
+              : _buildBusinessList(context, theme, isSubAdmin),
     );
   }
 
@@ -221,13 +209,14 @@ class _BusinessListScreenState extends State<BusinessListScreen> {
   }
 
   /// 사업장 리스트
-  Widget _buildBusinessList(BuildContext context, ThemeData theme) {
+  Widget _buildBusinessList(BuildContext context, ThemeData theme, bool isSubAdmin) {
+    // SubAdmin은 사업장 추가 버튼 불필요
+    final itemCount = isSubAdmin ? _businesses.length : _businesses.length + 1;
     return ListView.builder(
       padding: ResponsiveHelper.listPadding(context),
-      itemCount: _businesses.length + 1, // +1 for "새 사업장 추가" 버튼
+      itemCount: itemCount,
       itemBuilder: (context, index) {
         if (index == _businesses.length) {
-          // 마지막: 새 사업장 추가 버튼
           return _buildAddButton(context, theme);
         }
 
@@ -484,10 +473,14 @@ class _BusinessListScreenState extends State<BusinessListScreen> {
   }
 
   void _showMoreMenuSheet(BuildContext context, ThemeData theme, BusinessModel business) {
+    final userProvider = context.read<UserProvider>();
+    final isSubAdmin = userProvider.isSubAdmin;
+    final canManageTo = !isSubAdmin || userProvider.can((p) => p.canManageTo);
+
     AppMenuSheet.show(
       context: context,
       itemGroups: [
-        if (business.isApproved)
+        if (business.isApproved && canManageTo)
           [
             AppMenuSheetItem(
               icon: Icons.add_circle_outline,
@@ -509,28 +502,30 @@ class _BusinessListScreenState extends State<BusinessListScreen> {
               },
             ),
           ),
-          AppMenuSheetItem(
-            icon: Icons.edit,
-            label: '수정',
-            color: AppColors.warning,
-            onTap: () => NavigationHelper.push<bool>(
-              context,
-              destination: BusinessFormScreen(business: business),
-              onReturn: (result) {
-                if (result == true) _loadBusinesses(forceServer: true);
-              },
+          if (!isSubAdmin)
+            AppMenuSheetItem(
+              icon: Icons.edit,
+              label: '수정',
+              color: AppColors.warning,
+              onTap: () => NavigationHelper.push<bool>(
+                context,
+                destination: BusinessFormScreen(business: business),
+                onReturn: (result) {
+                  if (result == true) _loadBusinesses(forceServer: true);
+                },
+              ),
             ),
-          ),
         ],
-        [
-          AppMenuSheetItem(
-            icon: Icons.delete,
-            label: '삭제',
-            color: AppColors.error,
-            isDanger: true,
-            onTap: () => _deleteBusiness(business),
-          ),
-        ],
+        if (!isSubAdmin)
+          [
+            AppMenuSheetItem(
+              icon: Icons.delete,
+              label: '삭제',
+              color: AppColors.error,
+              isDanger: true,
+              onTap: () => _deleteBusiness(business),
+            ),
+          ],
       ],
     );
   }

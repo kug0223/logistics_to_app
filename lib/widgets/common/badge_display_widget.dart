@@ -153,6 +153,8 @@ class BadgeDisplayWidget extends StatelessWidget {
         return AppColors.amber;
       case BadgeType.attendance:
         return AppColors.success;
+      case BadgeType.experience:
+        return AppColors.purple;
       case BadgeType.specialty:
         return AppColors.info;
     }
@@ -261,6 +263,8 @@ class BadgeDetailDialog extends StatelessWidget {
         return '신뢰도 배지';
       case BadgeType.attendance:
         return '근태 배지';
+      case BadgeType.experience:
+        return '경험 배지';
       case BadgeType.specialty:
         return '전문 배지';
     }
@@ -272,6 +276,8 @@ class BadgeDetailDialog extends StatelessWidget {
         return AppColors.amber;
       case BadgeType.attendance:
         return AppColors.success;
+      case BadgeType.experience:
+        return AppColors.purple;
       case BadgeType.specialty:
         return AppColors.info;
     }
@@ -318,11 +324,15 @@ class AllBadgesDialog extends StatelessWidget {
     final specialtyBadges = badges.where((b) => b.type == BadgeType.specialty).toList();
 
     return Dialog(
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-      child: Container(
+      backgroundColor: Colors.white,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+      insetPadding: EdgeInsets.symmetric(
+        horizontal: ResponsiveHelper.spacing(context, 16),
+        vertical: ResponsiveHelper.spacing(context, 24),
+      ),
+      child: ConstrainedBox(
         constraints: BoxConstraints(
-          maxWidth: 400,
-          maxHeight: MediaQuery.sizeOf(context).height * 0.7,
+          maxHeight: MediaQuery.sizeOf(context).height * 0.92,
         ),
         child: Column(
           mainAxisSize: MainAxisSize.min,

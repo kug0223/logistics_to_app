@@ -177,13 +177,17 @@ class _BusinessReviewDialogState extends State<BusinessReviewDialog> {
     // 🆕 첫 리뷰 작성 툴팁은 관리자 리뷰에서만 표시 (지원자 리뷰는 별도)
     
     return Dialog(
+      backgroundColor: Colors.white,
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(24),
       ),
-      child: Container(
+      insetPadding: EdgeInsets.symmetric(
+        horizontal: ResponsiveHelper.spacing(context, 16),
+        vertical: ResponsiveHelper.spacing(context, 24),
+      ),
+      child: ConstrainedBox(
         constraints: BoxConstraints(
-          maxWidth: 500,
-          maxHeight: MediaQuery.sizeOf(context).height * 0.9,
+          maxHeight: MediaQuery.sizeOf(context).height * 0.92,
         ),
         child: Column(
           mainAxisSize: MainAxisSize.min,
@@ -727,7 +731,10 @@ class _BusinessReviewDialogState extends State<BusinessReviewDialog> {
                   ? const SizedBox(
                       width: 20,
                       height: 20,
-                      child: LoadingWidget(color: Colors.white),
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        color: Colors.white,
+                      ),
                     )
                   : Text('리뷰 작성'),
             ),

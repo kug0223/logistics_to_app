@@ -62,6 +62,7 @@ class AppSelectField<T> extends StatelessWidget {
     final theme = Theme.of(context);
     final result = await showModalBottomSheet<T>(
       context: context,
+      useSafeArea: true,
       isScrollControlled: true,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
@@ -336,10 +337,7 @@ class _AppSelectSheetState<T> extends State<_AppSelectSheet<T>> {
                   ),
           ),
 
-          // 하단 safe area
-          SizedBox(
-            height: MediaQuery.of(context).viewPadding.bottom + 8,
-          ),
+          const SizedBox(height: 8),
         ],
       ),
     );

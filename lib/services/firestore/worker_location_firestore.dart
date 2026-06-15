@@ -124,9 +124,11 @@ extension WorkerLocationFirestore on FirestoreService {
   }
 
   /// applicationId 목록으로 위치 일괄 조회 (당일 명단 로드 시)
+  /// [크로스-사업장 방지] businessId 필터 필수 — 보안 규칙에서 isAdminOf(businessId) 강제
   Future<Map<String, WorkerLocationModel>> getLocationsForApplications(
-    List<String> applicationIds,
-  ) async {
+    List<String> applicationIds, {
+    required String businessId,
+  }) async {
     if (applicationIds.isEmpty) return {};
     try {
       // Firestore whereIn 최대 30개 제한 처리
@@ -138,6 +140,7 @@ extension WorkerLocationFirestore on FirestoreService {
         );
         final snap = await _firestore
             .collection(_workerLocationCol)
+            .where('businessId', isEqualTo: businessId)
             .where(FieldPath.documentId, whereIn: chunk)
             .get();
         for (final doc in snap.docs) {

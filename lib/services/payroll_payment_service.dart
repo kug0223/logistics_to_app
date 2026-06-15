@@ -19,6 +19,16 @@ import '../models/core/payment_change_request_model.dart';
 import '../models/core/interim_settlement_request_model.dart';
 import '../utils/format_helper.dart';
 
+/// 커서 기반 페이지네이션 결과
+class PayrollPage<T> {
+  final List<T> records;
+  /// 다음 페이지 시작 커서 — null이면 마지막 페이지
+  final DocumentSnapshot? cursor;
+  final bool hasMore;
+
+  PayrollPage({required this.records, this.cursor, required this.hasMore});
+}
+
 class PayrollPaymentService {
   static final PayrollPaymentService _instance =
       PayrollPaymentService._internal();
@@ -37,17 +47,30 @@ class PayrollPaymentService {
     required String processedBy,
     String? transferNote,
   }) async {
-    await _db.collection('attendance').doc(attendanceId).update({
-      'wageStatus':    AttendanceModel.wageTransferred,
-      'transferDate':  FieldValue.serverTimestamp(),
-      if (transferNote != null && transferNote.isNotEmpty)
-        'transferNote': transferNote,
-      'transferredBy': processedBy,
-      'updatedAt':     FieldValue.serverTimestamp(),
+    final attRef = _db.collection('attendance').doc(attendanceId);
+    await _db.runTransaction((tx) async {
+      final snap = await tx.get(attRef);
+      final currentStatus = snap.data()?['wageStatus'] as String?;
+      if (currentStatus != AttendanceModel.wageConfirmed) {
+        throw Exception('확정된 급여만 이체 처리할 수 있습니다. (현재 상태: $currentStatus)');
+      }
+      tx.update(attRef, {
+        'wageStatus':    AttendanceModel.wageTransferred,
+        'transferDate':  FieldValue.serverTimestamp(),
+        if (transferNote != null && transferNote.isNotEmpty)
+          'transferNote': transferNote,
+        'transferredBy': processedBy,
+        'updatedAt':     FieldValue.serverTimestamp(),
+      });
     });
   }
 
   /// 일괄 이체 완료 처리 (최대 500건, 초과 시 분할)
+  // 450건 단위 WriteBatch로 처리하므로, N번째 batch 성공 후 N+1번째 실패 시
+  // 앞서 처리된 건만 transferred 상태가 되는 부분 성공이 발생할 수 있다.
+  // Firestore는 다중 batch 간 원자성을 보장하지 않으며, 월간 450건 초과 사업장은
+  // 극히 드무므로 현재 규모에서는 허용된 트레이드오프다.
+  // 재시도 시: 이미 transferred된 건은 동일 상태로 덮어쓰여 멱등하게 처리된다.
   Future<void> markTransferredBatch({
     required List<String> attendanceIds,
     required String processedBy,
@@ -90,12 +113,17 @@ class PayrollPaymentService {
   // 급여 지급 현황 조회
   // ══════════════════════════════════════════════════════════
 
-  /// 특정 사업장 + 월의 확정/이체 출근기록 조회
-  Future<List<AttendanceModel>> getPayrollRecords({
+  /// 특정 사업장 + 월의 확정/이체 출근기록 조회 (커서 페이지네이션)
+  /// - [cursor]: 직전 페이지의 마지막 문서 (최초 조회 시 null)
+  /// - [pageSize]: 페이지당 레코드 수 (기본 200)
+  /// - 반환된 [PayrollPage.hasMore]=true 이면 cursor를 넘겨 다음 페이지 조회 가능
+  Future<PayrollPage<AttendanceModel>> getPayrollRecords({
     required String businessId,
     required int year,
     required int month,
-    String? wageStatus, // null = 전체 (confirmed + transferred)
+    String? wageStatus,
+    int pageSize = 200,
+    DocumentSnapshot? cursor,
   }) async {
     try {
       final monthStart = DateTime(year, month, 1);
@@ -111,17 +139,26 @@ class PayrollPaymentService {
       if (wageStatus != null) {
         query = query.where('wageStatus', isEqualTo: wageStatus);
       } else {
-        // 확정 + 이체 모두 조회
         query = query.where('wageStatus',
             whereIn: [AttendanceModel.wageConfirmed, AttendanceModel.wageTransferred]);
       }
 
-      // 월 단위 최대 2,000건 제한 (사업장 1곳 기준 충분)
-      final snap = await query.orderBy('workDate').limit(2000).get();
-      return snap.docs.map(AttendanceModel.fromFirestore).toList();
+      query = query.orderBy('workDate');
+      if (cursor != null) query = query.startAfterDocument(cursor);
+
+      // pageSize+1 건 조회하여 다음 페이지 존재 여부 확인 (실제 반환은 pageSize건)
+      final snap = await query.limit(pageSize + 1).get();
+      final hasMore = snap.docs.length > pageSize;
+      final docs = hasMore ? snap.docs.take(pageSize).toList() : snap.docs;
+
+      return PayrollPage(
+        records: docs.map(AttendanceModel.fromFirestore).toList(),
+        cursor: docs.isNotEmpty ? docs.last : null,
+        hasMore: hasMore,
+      );
     } catch (e) {
       debugPrint('❌ 급여 현황 조회 실패: $e');
-      return [];
+      return PayrollPage(records: [], hasMore: false);
     }
   }
 
@@ -209,24 +246,41 @@ class PayrollPaymentService {
     return ref.id;
   }
 
-  /// 사업장의 미처리 변경 요청 목록
+  /// 사업장의 미처리 변경 요청 전체 조회 (내부 커서 페이지네이션으로 한도 제거)
   Future<List<PaymentChangeRequestModel>> getPendingChangeRequests(
       String businessId) async {
+    final results = <PaymentChangeRequestModel>[];
+    DocumentSnapshot? cursor;
+    bool hasMore = true;
+    while (hasMore) {
+      final page = await _fetchChangeRequestPage(businessId, cursor: cursor);
+      results.addAll(page.records);
+      hasMore = page.hasMore;
+      cursor = page.cursor;
+    }
+    return results;
+  }
+
+  Future<PayrollPage<PaymentChangeRequestModel>> _fetchChangeRequestPage(
+      String businessId, {DocumentSnapshot? cursor, int pageSize = 30}) async {
     try {
-      final snap = await _db
+      Query query = _db
           .collection('payment_change_requests')
           .where('businessId', isEqualTo: businessId)
-          .where('status',
-              isEqualTo: PaymentChangeRequestModel.statusPending)
-          .orderBy('createdAt', descending: true)
-          .limit(50)
-          .get();
-      return snap.docs
-          .map(PaymentChangeRequestModel.fromFirestore)
-          .toList();
+          .where('status', isEqualTo: PaymentChangeRequestModel.statusPending)
+          .orderBy('createdAt', descending: true);
+      if (cursor != null) query = query.startAfterDocument(cursor);
+      final snap = await query.limit(pageSize + 1).get();
+      final hasMore = snap.docs.length > pageSize;
+      final docs = hasMore ? snap.docs.take(pageSize).toList() : snap.docs;
+      return PayrollPage(
+        records: docs.map(PaymentChangeRequestModel.fromFirestore).toList(),
+        cursor: docs.isNotEmpty ? docs.last : null,
+        hasMore: hasMore,
+      );
     } catch (e) {
       debugPrint('❌ 변경 요청 조회 실패: $e');
-      return [];
+      return PayrollPage(records: [], hasMore: false);
     }
   }
 
@@ -272,27 +326,44 @@ class PayrollPaymentService {
     return ref.id;
   }
 
-  /// 사업장의 미처리 중간정산 요청 목록
+  /// 사업장의 미처리 중간정산 요청 전체 조회 (내부 커서 페이지네이션으로 한도 제거)
   Future<List<InterimSettlementRequestModel>> getPendingSettlementRequests(
       String businessId) async {
+    final results = <InterimSettlementRequestModel>[];
+    DocumentSnapshot? cursor;
+    bool hasMore = true;
+    while (hasMore) {
+      final page = await _fetchSettlementRequestPage(businessId, cursor: cursor);
+      results.addAll(page.records);
+      hasMore = page.hasMore;
+      cursor = page.cursor;
+    }
+    return results;
+  }
+
+  Future<PayrollPage<InterimSettlementRequestModel>> _fetchSettlementRequestPage(
+      String businessId, {DocumentSnapshot? cursor, int pageSize = 30}) async {
     try {
-      final snap = await _db
+      Query query = _db
           .collection('interim_settlement_requests')
           .where('businessId', isEqualTo: businessId)
-          .where('status',
-              whereIn: [
-                InterimSettlementRequestModel.statusPending,
-                InterimSettlementRequestModel.statusApproved,
-              ])
-          .orderBy('createdAt', descending: true)
-          .limit(50)
-          .get();
-      return snap.docs
-          .map(InterimSettlementRequestModel.fromFirestore)
-          .toList();
+          .where('status', whereIn: [
+            InterimSettlementRequestModel.statusPending,
+            InterimSettlementRequestModel.statusApproved,
+          ])
+          .orderBy('createdAt', descending: true);
+      if (cursor != null) query = query.startAfterDocument(cursor);
+      final snap = await query.limit(pageSize + 1).get();
+      final hasMore = snap.docs.length > pageSize;
+      final docs = hasMore ? snap.docs.take(pageSize).toList() : snap.docs;
+      return PayrollPage(
+        records: docs.map(InterimSettlementRequestModel.fromFirestore).toList(),
+        cursor: docs.isNotEmpty ? docs.last : null,
+        hasMore: hasMore,
+      );
     } catch (e) {
       debugPrint('❌ 중간정산 요청 조회 실패: $e');
-      return [];
+      return PayrollPage(records: [], hasMore: false);
     }
   }
 
@@ -302,15 +373,32 @@ class PayrollPaymentService {
     required String processedBy,
     String? transferNote,
   }) async {
-    // 1. 출근기록 이체 처리 먼저 — attendance 성공 후 요청 상태 변경
+    // [087] 멱등성 보호 — 이미 처리된 요청 이중 처리 방지
+    final reqSnap = await _db
+        .collection('interim_settlement_requests')
+        .doc(req.id)
+        .get(const GetOptions(source: Source.server));
+    if (reqSnap.data()?['status'] == InterimSettlementRequestModel.statusProcessed) {
+      // [D-002] silent return 대신 exception throw — 호출자가 성공으로 오인하는 버그 수정
+      throw Exception('이미 처리된 중간정산 요청입니다. 중복 처리가 차단되었습니다.');
+    }
+
+    if (req.attendanceIds.isEmpty) {
+      throw Exception('중간정산 요청에 출근기록이 없습니다. 처리할 항목이 없습니다.');
+    }
+
+    // 1단계: 출근기록 이체 처리 먼저 — attendance 성공 후 요청 상태 변경
     // (역순 시 실패 모드: attendance=미이체인데 status=processed → 미지급 상태 숨김)
+    // ⚠️ 원자성 없음: 1단계 성공 + 2단계 실패 시 attendance=transferred, status=pending 불일치 발생.
+    // 단, markTransferredBatch는 멱등(이미 transferred인 건을 덮어써도 안전)하므로,
+    // 재시도 시 1단계가 재실행되어도 중복 이체 없이 2단계까지 정상 완료된다.
     await markTransferredBatch(
       attendanceIds: req.attendanceIds,
       processedBy: processedBy,
       transferNote: transferNote ?? '중간정산 처리',
     );
 
-    // 2. 요청 상태 변경 (출근기록 이체 완료 후)
+    // 2단계: 요청 상태 변경 (출근기록 이체 완료 후)
     await _db
         .collection('interim_settlement_requests')
         .doc(req.id)
@@ -378,12 +466,16 @@ List<TransferRow> buildTransferRows(
     final uid = entry.key;
     final recs = entry.value;
     final bank = userBankInfo[uid];
-    if (bank == null) continue;
+    if (bank == null) {
+      // [D-001] 은행정보 누락 — 해당 근무자 급여가 이체 목록에서 제외됨
+      debugPrint('⚠️ [이체] 은행정보 없음 — uid: $uid, 해당 급여 ${recs.length}건 이체 목록 제외');
+      continue;
+    }
 
     final totalNet = recs.fold<int>(0, (acc, r) {
       final wd = r.wageDetail;
       if (wd == null) return acc;
-      return acc + (wd.netWage > 0 ? wd.netWage : wd.totalAmount - wd.totalInsuranceDeduction);
+      return acc + wd.effectiveNetWage;
     });
 
     if (totalNet <= 0) continue;

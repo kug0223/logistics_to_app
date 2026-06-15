@@ -1,4 +1,4 @@
-﻿import 'package:flutter/material.dart';
+import 'package:flutter/material.dart';
 import '../../utils/responsive_helper.dart';
 import '../../theme/app_colors.dart';
 
@@ -26,7 +26,7 @@ class IconPickerDialog {
     String? initialSearchText,
   }) async {
     final theme = Theme.of(context);
-    return await showDialog<IconItem>(
+    return showDialog<IconItem>(
       context: context,
       builder: (context) => _IconPickerWidget(
         theme: theme,

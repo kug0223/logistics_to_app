@@ -1,4 +1,4 @@
-﻿import 'package:flutter/cupertino.dart';
+import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../../models/core/business_work_type_model.dart';
@@ -43,18 +43,22 @@ class WorkDetailDialog {
     final baseHourlyWageController = TextEditingController();
     final descriptionController = TextEditingController();
 
-    return await showDialog<WorkDetailInput>(
+    return showDialog<WorkDetailInput>(
       context: context,
       builder: (context) => StatefulBuilder(
         builder: (context, setDialogState) {
           return Dialog(
+            backgroundColor: Colors.white,
             shape: RoundedRectangleBorder(
               borderRadius: BorderRadius.circular(24),
             ),
-            child: Container(
+            insetPadding: EdgeInsets.symmetric(
+              horizontal: ResponsiveHelper.spacing(context, 16),
+              vertical: ResponsiveHelper.spacing(context, 24),
+            ),
+            child: ConstrainedBox(
               constraints: BoxConstraints(
-                maxWidth: 500,
-                maxHeight: MediaQuery.sizeOf(context).height * 0.85,
+                maxHeight: MediaQuery.sizeOf(context).height * 0.92,
               ),
               child: Column(
                 mainAxisSize: MainAxisSize.min,
@@ -267,18 +271,22 @@ class WorkDetailDialog {
       text: work.description ?? '',
     );
 
-    return await showDialog<Map<String, dynamic>>(
+    return showDialog<Map<String, dynamic>>(
       context: context,
       builder: (context) => StatefulBuilder(
         builder: (context, setDialogState) {
           return Dialog(
+            backgroundColor: Colors.white,
             shape: RoundedRectangleBorder(
               borderRadius: BorderRadius.circular(24),
             ),
-            child: Container(
+            insetPadding: EdgeInsets.symmetric(
+              horizontal: ResponsiveHelper.spacing(context, 16),
+              vertical: ResponsiveHelper.spacing(context, 24),
+            ),
+            child: ConstrainedBox(
               constraints: BoxConstraints(
-                maxWidth: 500,
-                maxHeight: MediaQuery.sizeOf(context).height * 0.85,
+                maxHeight: MediaQuery.sizeOf(context).height * 0.92,
               ),
               child: Column(
                 mainAxisSize: MainAxisSize.min,
@@ -1324,8 +1332,9 @@ class WorkDetailDialog {
     }
     String selectedTime = times[initialIndex];
 
-    return await showModalBottomSheet<String>(
+    return showModalBottomSheet<String>(
       context: context,
+      useSafeArea: true,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
       ),
@@ -2562,8 +2571,9 @@ class WorkDetailDialog {
     if (initialIndex < 0) initialIndex = 0;
     int selected = items[initialIndex];
 
-    return await showModalBottomSheet<int>(
+    return showModalBottomSheet<int>(
       context: context,
+      useSafeArea: true,
       shape: const RoundedRectangleBorder(
           borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
       builder: (ctx) => SafeArea(

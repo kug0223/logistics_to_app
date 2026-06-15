@@ -84,22 +84,25 @@ class TrustSettingsModel {
   }) : restartProgram = restartProgram ?? RestartProgramSettings();
 
   /// 기본 설정
+  ///
+  /// 노쇼 패널티는 TrustScoreHelper 공식(누진: 1회=-5, 2회=-8, 3회+=-10)과 일치시킨다.
   factory TrustSettingsModel.defaults() {
     return TrustSettingsModel(
-      startScore: 50,
+      startScore: 60,
       maxScore: 100,
       increaseRules: [
         TrustRule(type: 'work_complete', points: 1, description: '근무 완료 (1일)'),
-        TrustRule(type: 'good_review', points: 2, description: '좋은 평가', condition: 4.5),
-        TrustRule(type: 'rehire_yes', points: 1, description: '재고용 희망'),
+        TrustRule(type: 'good_review',   points: 2, description: '좋은 평가', condition: 4.5),
+        TrustRule(type: 'rehire_yes',    points: 1, description: '재고용 희망'),
       ],
       decreaseRules: [
-        TrustRule(type: 'late', points: -1, description: '지각'),
-        TrustRule(type: 'noshow_1', points: -3, description: '노쇼 1회'),
-        TrustRule(type: 'noshow_2', points: -5, description: '노쇼 2회'),
-        TrustRule(type: 'noshow_3', points: -7, description: '노쇼 3회'),
-        TrustRule(type: 'noshow_4plus', points: -10, description: '노쇼 4회+'),
-        TrustRule(type: 'bad_review', points: -2, description: '낮은 평가', condition: 2.0),
+        TrustRule(type: 'late',          points: -1,  description: '지각 (1~2회)'),
+        TrustRule(type: 'late_repeat',   points: -2,  description: '지각 (3~5회)'),
+        TrustRule(type: 'late_chronic',  points: -3,  description: '지각 (6회+)'),
+        TrustRule(type: 'noshow_1',      points: -5,  description: '노쇼 1회'),
+        TrustRule(type: 'noshow_2',      points: -8,  description: '노쇼 2회 누진'),
+        TrustRule(type: 'noshow_3plus',  points: -10, description: '노쇼 3회+ 누진'),
+        TrustRule(type: 'bad_review',    points: -2,  description: '낮은 평가', condition: 2.0),
       ],
       restartProgram: RestartProgramSettings(),
     );
@@ -137,24 +140,25 @@ class TrustSettingsModel {
     };
   }
 
-  /// 노쇼 횟수별 감점 조회
+  /// 노쇼 누적 횟수별 증분 감점 조회 (1회=-5, 2회=-8, 3회+=-10).
+  ///
+  /// TrustScoreHelper 공식의 누진 계산과 동일한 값을 반환한다.
   int getNoshowPenalty(int noshowCount) {
     switch (noshowCount) {
       case 1:
         return decreaseRules
-            .firstWhere((r) => r.type == 'noshow_1', orElse: () => TrustRule(type: '', points: -3, description: ''))
+            .firstWhere((r) => r.type == 'noshow_1',
+                orElse: () => TrustRule(type: '', points: -5, description: ''))
             .points;
       case 2:
         return decreaseRules
-            .firstWhere((r) => r.type == 'noshow_2', orElse: () => TrustRule(type: '', points: -5, description: ''))
-            .points;
-      case 3:
-        return decreaseRules
-            .firstWhere((r) => r.type == 'noshow_3', orElse: () => TrustRule(type: '', points: -7, description: ''))
+            .firstWhere((r) => r.type == 'noshow_2',
+                orElse: () => TrustRule(type: '', points: -8, description: ''))
             .points;
       default:
         return decreaseRules
-            .firstWhere((r) => r.type == 'noshow_4plus', orElse: () => TrustRule(type: '', points: -10, description: ''))
+            .firstWhere((r) => r.type == 'noshow_3plus',
+                orElse: () => TrustRule(type: '', points: -10, description: ''))
             .points;
     }
   }
@@ -256,12 +260,19 @@ enum BadgeConditionType {
 
 /// 배지 유형
 enum BadgeType {
-  trustScore,   // 신뢰도 기반
+  trustScore,   // 신뢰도 기반 (레벨 배지)
   attendance,   // 근태 기반
+  experience,   // 경험 기반 (총 근무량)
   specialty,    // 업종 전문
 }
 
 /// 배지 모델
+///
+/// [conditionValue] : 주 조건값 (점수·일수·횟수 등 conditionType에 따라 해석).
+/// [minWorkDaysRequired] : 추가 최소 근무일수 조건 (null = 없음).
+/// [maxNoShowAllowed] : 최대 허용 노쇼 횟수 (null = 무제한).
+/// [minRatingRequired] : 최소 평균 평점 조건 (null = 없음).
+/// [benefit] : 배지 보유 시 혜택 설명 (앱 내 표시용).
 class BadgeModel {
   final String id;
   final String name;
@@ -269,10 +280,16 @@ class BadgeModel {
   final BadgeType type;
   final BadgeConditionType conditionType;
   final int conditionValue;
-  final String? workType;  // specialty 배지인 경우
+  final String? workType;            // specialty 배지 업종 코드
   final bool isActive;
   final int order;
   final DateTime createdAt;
+
+  // 복합 조건 (선택적 — null이면 해당 조건 미적용)
+  final int? minWorkDaysRequired;    // 추가 최소 근무일수
+  final int? maxNoShowAllowed;       // 최대 허용 노쇼 횟수
+  final double? minRatingRequired;  // 최소 평균 평점
+  final String? benefit;             // 혜택 설명
 
   BadgeModel({
     required this.id,
@@ -285,6 +302,10 @@ class BadgeModel {
     this.isActive = true,
     this.order = 0,
     required this.createdAt,
+    this.minWorkDaysRequired,
+    this.maxNoShowAllowed,
+    this.minRatingRequired,
+    this.benefit,
   });
 
   factory BadgeModel.fromMap(Map<String, dynamic> map, String id) {
@@ -306,6 +327,10 @@ class BadgeModel {
       order: map['order'] ?? 0,
       createdAt: (map['createdAt'] as Timestamp?)?.toDate().toLocal() ??
           (throw ArgumentError('BadgeModel: createdAt is required')),
+      minWorkDaysRequired: map['minWorkDaysRequired'],
+      maxNoShowAllowed: map['maxNoShowAllowed'],
+      minRatingRequired: (map['minRatingRequired'] as num?)?.toDouble(),
+      benefit: map['benefit'],
     );
   }
 
@@ -320,14 +345,18 @@ class BadgeModel {
       'isActive': isActive,
       'order': order,
       'createdAt': Timestamp.fromDate(createdAt),
+      if (minWorkDaysRequired != null) 'minWorkDaysRequired': minWorkDaysRequired,
+      if (maxNoShowAllowed != null)    'maxNoShowAllowed': maxNoShowAllowed,
+      if (minRatingRequired != null)   'minRatingRequired': minRatingRequired,
+      if (benefit != null)             'benefit': benefit,
     };
   }
 
-  /// 기본 배지 목록
+  /// 기본 배지 목록 (Firestore 비어 있을 때 초기화용)
   static List<BadgeModel> defaultBadges() {
     final now = DateTime.now();
     return [
-      // 신뢰도 배지
+      // ── 레벨 배지 (신뢰도 + 복합 조건) ───────────────────────
       BadgeModel(
         id: 'badge_bronze',
         name: '브론즈',
@@ -335,6 +364,8 @@ class BadgeModel {
         type: BadgeType.trustScore,
         conditionType: BadgeConditionType.minScore,
         conditionValue: 60,
+        minWorkDaysRequired: 5,
+        benefit: '지원자 목록에 브론즈 표시',
         order: 1,
         createdAt: now,
       ),
@@ -344,7 +375,10 @@ class BadgeModel {
         icon: '🥈',
         type: BadgeType.trustScore,
         conditionType: BadgeConditionType.minScore,
-        conditionValue: 75,
+        conditionValue: 70,
+        minWorkDaysRequired: 20,
+        maxNoShowAllowed: 1,
+        benefit: '관리자 지원자 목록 실버 강조 표시',
         order: 2,
         createdAt: now,
       ),
@@ -354,7 +388,10 @@ class BadgeModel {
         icon: '🥇',
         type: BadgeType.trustScore,
         conditionType: BadgeConditionType.minScore,
-        conditionValue: 90,
+        conditionValue: 85,
+        minWorkDaysRequired: 50,
+        maxNoShowAllowed: 0,
+        benefit: '골드 강조 표시 + 자동확정 TO 지원 가능',
         order: 3,
         createdAt: now,
       ),
@@ -365,18 +402,59 @@ class BadgeModel {
         type: BadgeType.trustScore,
         conditionType: BadgeConditionType.minScore,
         conditionValue: 95,
+        minWorkDaysRequired: 100,
+        maxNoShowAllowed: 0,
+        minRatingRequired: 4.5,
+        benefit: '다이아 강조 표시 + 우선 배정 기능',
         order: 4,
         createdAt: now,
       ),
-      // 근태 배지
+
+      // ── 경험 배지 (총 근무량) ───────────────────────────────────
+      BadgeModel(
+        id: 'badge_veteran',
+        name: '베테랑',
+        icon: '⭐',
+        type: BadgeType.experience,
+        conditionType: BadgeConditionType.workDays,
+        conditionValue: 100,
+        benefit: '100일 이상 근무 경력 인증',
+        order: 8,
+        createdAt: now,
+      ),
+      BadgeModel(
+        id: 'badge_master',
+        name: '마스터',
+        icon: '👑',
+        type: BadgeType.experience,
+        conditionType: BadgeConditionType.workDays,
+        conditionValue: 200,
+        benefit: '200일 이상 장기 우수 근무자',
+        order: 9,
+        createdAt: now,
+      ),
+
+      // ── 근태 배지 ────────────────────────────────────────────────
+      BadgeModel(
+        id: 'badge_streak',
+        name: '연속 출근',
+        icon: '🔥',
+        type: BadgeType.attendance,
+        conditionType: BadgeConditionType.consecutive,
+        conditionValue: 15,        // 지각 없이 15회 연속
+        benefit: '연속 성실 근무 인증',
+        order: 10,
+        createdAt: now,
+      ),
       BadgeModel(
         id: 'badge_time_master',
         name: '시간의 달인',
         icon: '⏰',
         type: BadgeType.attendance,
         conditionType: BadgeConditionType.consecutive,
-        conditionValue: 50,
-        order: 10,
+        conditionValue: 30,        // 지각률 0% 달성 30회
+        benefit: '정시 출근 전문가 인증',
+        order: 11,
         createdAt: now,
       ),
       BadgeModel(
@@ -385,29 +463,22 @@ class BadgeModel {
         icon: '🎯',
         type: BadgeType.attendance,
         conditionType: BadgeConditionType.monthlyPerfect,
-        conditionValue: 3,
-        order: 11,
-        createdAt: now,
-      ),
-      BadgeModel(
-        id: 'badge_streak',
-        name: '연속 출근',
-        icon: '🔥',
-        type: BadgeType.attendance,
-        conditionType: BadgeConditionType.consecutive,
-        conditionValue: 30,
+        conditionValue: 1,         // 한 달 등록 TO 전부 출근 (기존 3개월→1개월)
+        benefit: '월간 100% 출근 달성',
         order: 12,
         createdAt: now,
       ),
-      // 업종 전문 배지
+
+      // ── 업종 전문 배지 (조건 50일→30일 완화) ──────────────────
       BadgeModel(
         id: 'badge_picking_expert',
         name: '피킹 전문가',
         icon: '📦',
         type: BadgeType.specialty,
         conditionType: BadgeConditionType.workDays,
-        conditionValue: 50,
+        conditionValue: 30,
         workType: 'PICK',
+        benefit: '피킹 업무 전문 인증',
         order: 20,
         createdAt: now,
       ),
@@ -417,8 +488,9 @@ class BadgeModel {
         icon: '🏋️',
         type: BadgeType.specialty,
         conditionType: BadgeConditionType.workDays,
-        conditionValue: 50,
+        conditionValue: 30,
         workType: 'LOAD',
+        benefit: '상하차 업무 전문 인증',
         order: 21,
         createdAt: now,
       ),
@@ -428,8 +500,9 @@ class BadgeModel {
         icon: '🔍',
         type: BadgeType.specialty,
         conditionType: BadgeConditionType.workDays,
-        conditionValue: 50,
+        conditionValue: 30,
         workType: 'INSPECT',
+        benefit: '검수 업무 전문 인증',
         order: 22,
         createdAt: now,
       ),

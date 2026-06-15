@@ -447,7 +447,13 @@ class _TOItemCardState extends State<TOItemCard> {
       ],
     );
   }
-  /// ✨ 상태 배지
+  /// 슬롯 단위 상태 배지
+  ///
+  /// - allClosed=true → closed (CloseStateUtils 판단 결과를 호출자가 전달)
+  /// - slot != null (flex TO) → SlotStatusUtil.slotStatus 위임
+  /// - slot == null (contract TO, allClosed=false):
+  ///     allClosed 계산이 이미 to.isClosed를 사용했으므로 여기서 to.isClosed=true 진입은
+  ///     이론상 불가 — defensive 체크로만 유지
   Widget _buildStatusBadge(BuildContext context, {required bool allClosed}) {
     final slot = widget.toItem.slot;
     final to = widget.toItem.to;
@@ -455,7 +461,11 @@ class _TOItemCardState extends State<TOItemCard> {
         ? SlotDisplayStatus.closed
         : slot != null
             ? SlotStatusUtil.slotStatus(slot, to)
-            : (to.isClosed ? SlotDisplayStatus.closed : SlotDisplayStatus.recruiting);
+            : (to.isClosed
+              ? SlotDisplayStatus.closed
+              : to.isPendingPublish
+                  ? SlotDisplayStatus.scheduled
+                  : SlotDisplayStatus.recruiting);
     final scheduledAt = slot != null
         ? SlotStatusUtil.slotScheduledAt(slot, to)
         : to.publishAt;

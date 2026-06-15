@@ -34,6 +34,9 @@ class CloseStateUtils {
     // 슬롯 없음 → 판단 불가 → 열림 처리
     if (slot == null) return false;
 
+    // 0. TO 레벨 수동마감 — CF 슬롯 갱신 전(최대 30분)에도 즉시 마감 반영
+    if (masterTO.isManualClosed) return true;
+
     // 1. 날짜 경과
     if (DateTime(slot.date.year, slot.date.month, slot.date.day).isBefore(today)) return true;
 

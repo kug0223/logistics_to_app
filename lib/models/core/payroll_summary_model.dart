@@ -38,6 +38,8 @@ class PayrollSummaryModel {
   final int totalPayout;
   final int confirmedCount;
   final int workerCount;
+  final int pendingCount;         // 미확정 (wagePending/wageCalculated)
+  final int notTransferredCount;  // 미이체 (wageConfirmed)
   final Map<String, PayrollWorkerSummary> workers;
   final DateTime updatedAt;
 
@@ -50,6 +52,8 @@ class PayrollSummaryModel {
     required this.totalPayout,
     required this.confirmedCount,
     required this.workerCount,
+    this.pendingCount = 0,
+    this.notTransferredCount = 0,
     required this.workers,
     required this.updatedAt,
   });
@@ -77,6 +81,8 @@ class PayrollSummaryModel {
       totalPayout: (data['totalPayout'] as num?)?.toInt() ?? 0,
       confirmedCount: (data['confirmedCount'] as num?)?.toInt() ?? 0,
       workerCount: (data['workerCount'] as num?)?.toInt() ?? 0,
+      pendingCount: (data['pendingCount'] as num?)?.toInt() ?? 0,
+      notTransferredCount: (data['notTransferredCount'] as num?)?.toInt() ?? 0,
       workers: workers,
       updatedAt: updatedAt,
     );

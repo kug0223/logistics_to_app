@@ -9,6 +9,7 @@ import '../../theme/app_colors.dart';
 import '../../widgets/dialogs/styled_dialog.dart';
 import '../../widgets/common/gradient_scaffold.dart';
 import '../../widgets/common/loading_widget.dart';
+import '../../widgets/common/app_tab_label.dart';
 
 /// 리뷰 태그 관리 화면
 class ReviewTagsSettingsScreen extends StatefulWidget {
@@ -165,11 +166,13 @@ class _ReviewTagsSettingsScreenState extends State<ReviewTagsSettingsScreen>
       headerBottom: TabBar(
         controller: _tabController,
         indicatorColor: Colors.white,
+        indicatorWeight: 2.5,
         labelColor: Colors.white,
         unselectedLabelColor: Colors.white.withValues(alpha: 0.6),
+        dividerColor: Colors.transparent,
         tabs: const [
-          Tab(text: '지원자 평가'),
-          Tab(text: '사업장 평가'),
+          Tab(child: AppTabLabel(label: '지원자 평가')),
+          Tab(child: AppTabLabel(label: '사업장 평가')),
         ],
       ),
       body: _isLoading

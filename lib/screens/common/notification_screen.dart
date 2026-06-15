@@ -1,8 +1,9 @@
-﻿import 'package:flutter/material.dart';
+import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../providers/notification_provider.dart';
 import '../../models/core/notification_model.dart';
 import '../../widgets/common/notification_card.dart';
+import '../../widgets/common/app_tab_label.dart';
 import '../../utils/responsive_helper.dart';
 import '../../utils/toast_helper.dart';
 import '../../providers/user_provider.dart';
@@ -25,76 +26,154 @@ import '../../widgets/common/gradient_scaffold.dart';
 import '../../widgets/common/app_empty_state.dart';
 import '../../widgets/common/loading_widget.dart';
 
-/// 알림 목록 화면
-class NotificationScreen extends StatelessWidget {
+/// 알림 목록 화면 (전체 / 미읽음 탭)
+class NotificationScreen extends StatefulWidget {
   const NotificationScreen({super.key});
 
   @override
-  Widget build(BuildContext context) {
-    return GradientScaffold(
-      title: '알림',
-      actions: [
-        Consumer<NotificationProvider>(
-          builder: (context, provider, _) {
-            if (provider.notifications.isEmpty) return const SizedBox.shrink();
-            return TextButton(
-              onPressed: () async {
-                await provider.markAllAsRead();
-                ToastHelper.showSuccess('모든 알림을 읽음 처리했습니다');
-              },
-              child: Text('모두 읽음',
-                  style: ResponsiveHelper.smallStyle(context, color: Colors.white)),
-            );
-          },
-        ),
-      ],
-      body: Consumer<NotificationProvider>(
-        builder: (context, provider, _) {
-          if (provider.isLoading) {
-            return const LoadingWidget(message: '알림 불러오는 중...');
-          }
-          if (provider.hasError) {
-            return _buildErrorState(context, provider);
-          }
-          if (provider.notifications.isEmpty) {
-            return _buildEmptyState(context);
-          }
+  State<NotificationScreen> createState() => _NotificationScreenState();
+}
 
-          return RefreshIndicator(
-            onRefresh: () async {
-              // 스트림 기반이라 별도 새로고침 불필요
-              await Future.delayed(const Duration(milliseconds: 500));
-            },
-            child: ListView.builder(
-              itemCount: provider.notifications.length,
-              padding: ResponsiveHelper.listPadding(context),
-              itemBuilder: (context, index) {
-                final notification = provider.notifications[index];
-                
-                return NotificationCard(
-                  notification: notification,
-                  onTap: () => _handleNotificationTap(context, notification, provider),
-                  onDismiss: () async {
-                    final success = await provider.deleteNotification(notification.id);
-                    if (success) {
-                      ToastHelper.showSuccess('알림이 삭제되었습니다');
-                    } else {
-                      ToastHelper.showError('알림 삭제에 실패했습니다');
-                    }
-                  },
-                );
-              },
+class _NotificationScreenState extends State<NotificationScreen> {
+  bool _isHandlingTap = false;
+
+  @override
+  Widget build(BuildContext context) {
+    return Consumer<NotificationProvider>(
+      builder: (context, provider, _) {
+        final unreadList = provider.notifications.where((n) => !n.isRead).toList();
+
+        return DefaultTabController(
+          length: 2,
+          child: GradientScaffold(
+            title: '알림',
+            showNotificationBell: false,
+            headerBottom: TabBar(
+              labelColor: Colors.white,
+              unselectedLabelColor: Colors.white60,
+              indicatorColor: Colors.white,
+              indicatorWeight: 2.5,
+              dividerColor: Colors.transparent,
+              tabs: [
+                Tab(
+                  child: AppTabLabel(
+                    label: '전체',
+                    count: provider.notifications.length,
+                    badgeColor: Colors.white,
+                  ),
+                ),
+                Tab(
+                  child: AppTabLabel(
+                    label: '미읽음',
+                    count: provider.unreadCount,
+                    badgeColor: AppColors.error,
+                    urgent: provider.hasUnread,
+                  ),
+                ),
+              ],
             ),
+            actions: [
+              if (provider.hasUnread)
+                TextButton(
+                  onPressed: () async {
+                    await provider.markAllAsRead();
+                    ToastHelper.showSuccess('모든 알림을 읽음 처리했습니다');
+                  },
+                  child: Text(
+                    '모두 읽음',
+                    style: ResponsiveHelper.smallStyle(context, color: Colors.white),
+                  ),
+                ),
+            ],
+            body: _buildBody(context, provider, unreadList),
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildBody(
+    BuildContext context,
+    NotificationProvider provider,
+    List<NotificationModel> unreadList,
+  ) {
+    if (provider.isLoading) {
+      return const LoadingWidget(message: '알림 불러오는 중...');
+    }
+    if (provider.hasError) {
+      return _buildErrorState(context, provider);
+    }
+
+    return TabBarView(
+      children: [
+        _buildList(
+          context, provider, provider.notifications,
+          hasMore: provider.hasMore,
+          isLoadingMore: provider.isLoadingMore,
+          onLoadMore: provider.loadMore,
+        ),
+        _buildList(context, provider, unreadList, emptyMessage: '미읽음 알림이 없습니다'),
+      ],
+    );
+  }
+
+  Widget _buildList(
+    BuildContext context,
+    NotificationProvider provider,
+    List<NotificationModel> notifications, {
+    String emptyMessage = '알림이 없습니다',
+    bool hasMore = false,
+    bool isLoadingMore = false,
+    VoidCallback? onLoadMore,
+  }) {
+    if (notifications.isEmpty) {
+      return AppEmptyState(
+        icon: Icons.notifications_none,
+        title: emptyMessage,
+      );
+    }
+
+    return RefreshIndicator(
+      onRefresh: () async {
+        // 에러 상태인 경우 스트림 재연결, 정상 상태에서는 Firestore 스트림이 자동 갱신
+        provider.retry();
+        await Future.delayed(const Duration(milliseconds: 300));
+      },
+      child: ListView.builder(
+        itemCount: notifications.length + (hasMore ? 1 : 0),
+        padding: ResponsiveHelper.listPadding(context),
+        itemBuilder: (context, index) {
+          if (hasMore && index == notifications.length) {
+            return Padding(
+              padding: EdgeInsets.symmetric(
+                vertical: ResponsiveHelper.spacing(context, 12),
+              ),
+              child: Center(
+                child: isLoadingMore
+                    ? const CircularProgressIndicator()
+                    : TextButton.icon(
+                        onPressed: onLoadMore,
+                        icon: const Icon(Icons.expand_more),
+                        label: const Text('이전 알림 더 보기'),
+                      ),
+              ),
+            );
+          }
+          final notification = notifications[index];
+          return NotificationCard(
+            notification: notification,
+            onTap: () => _handleNotificationTap(context, notification, provider),
+            onDismiss: () async {
+              final success = await provider.deleteNotification(notification.id);
+              if (success) {
+                ToastHelper.showSuccess('알림이 삭제되었습니다');
+              } else {
+                ToastHelper.showError('알림 삭제에 실패했습니다');
+              }
+            },
           );
         },
       ),
-    );
-  }
-  
-  Widget _buildEmptyState(BuildContext context) {
-    return const AppEmptyState(
-      icon: Icons.notifications_none,
-      title: '알림이 없습니다',
     );
   }
 
@@ -111,23 +190,28 @@ class NotificationScreen extends StatelessWidget {
       ),
     );
   }
-  
- void _handleNotificationTap(
+
+  Future<void> _handleNotificationTap(
     BuildContext context,
     NotificationModel notification,
     NotificationProvider provider,
   ) async {
+    if (_isHandlingTap) return;
+    _isHandlingTap = true;
     // 1. 읽음 처리 (실패해도 네비게이션은 계속)
     try {
       await provider.markAsRead(notification.id);
     } catch (_) {}
 
-    if (!context.mounted) return;
+    if (!context.mounted) {
+      _isHandlingTap = false;
+      return;
+    }
 
     // 2. 알림 타입에 따른 화면 이동
     final userProvider = context.read<UserProvider>();
     final isUser = userProvider.isUser;
-    
+
     switch (notification.type) {
       // ═══════════════════════════════════════════════════════════
       // 지원 관련 알림
@@ -135,47 +219,39 @@ class NotificationScreen extends StatelessWidget {
       case NotificationType.applicationConfirmed:
       case NotificationType.applicationRejected:
       case NotificationType.confirmationCanceled:
-        // 지원자 → 내 지원 내역
         Navigator.push(
           context,
           MaterialPageRoute(builder: (_) => const MyApplicationsScreen()),
         );
         break;
-        
+
       case NotificationType.newApplication:
       case NotificationType.applicationCanceled:
-        // 관리자 → 해당 업무의 지원자 관리 다이얼로그
         await _openWorkApplicantsFromNotification(context, notification);
         break;
-        
+
       // ═══════════════════════════════════════════════════════════
       // 스케줄 변경 관련 알림
       // ═══════════════════════════════════════════════════════════
       case NotificationType.scheduleChangeRequested:
         if (isUser) {
-          // 지원자가 받은 경우 → 내 스케줄 화면
-          Navigator.push(
-            context,
-            MaterialPageRoute(builder: (_) => const MyScheduleScreen()),
-          );
+          _showMyRequestsDialog(context, userProvider.currentUser?.uid);
         } else {
-          // 관리자가 받은 경우 → 인력 관리 화면
           Navigator.push(
             context,
             MaterialPageRoute(builder: (_) => const IntegratedWorkforceScreen()),
           );
         }
         break;
-        
+
       case NotificationType.scheduleChangeApproved:
       case NotificationType.scheduleChangeRejected:
-        // 지원자 → 내 스케줄 화면
         Navigator.push(
           context,
           MaterialPageRoute(builder: (_) => const MyScheduleScreen()),
         );
         break;
-        
+
       // ═══════════════════════════════════════════════════════════
       // 근로계약서 서명 요청
       // ═══════════════════════════════════════════════════════════
@@ -185,7 +261,6 @@ class NotificationScreen extends StatelessWidget {
 
       case NotificationType.contractExpiringReminder:
         {
-          // 관리자 → 고정근무 관리 다이얼로그 (연장/종료 선택)
           final businessId = userProvider.effectiveBusinessId;
           if (businessId != null) {
             showDialog(
@@ -206,7 +281,6 @@ class NotificationScreen extends StatelessWidget {
 
       case NotificationType.contractRenewed:
       case NotificationType.contractTerminating:
-        // 근무자 → 내 스케줄 화면
         Navigator.push(
           context,
           MaterialPageRoute(builder: (_) => const MyScheduleScreen()),
@@ -214,27 +288,28 @@ class NotificationScreen extends StatelessWidget {
         break;
 
       // ═══════════════════════════════════════════════════════════
-      // 계약해지 관련 알림
+      // 계약해지 / 퇴사 관련 알림
       // ═══════════════════════════════════════════════════════════
       case NotificationType.terminationRequested:
-        // 지원자 → 내 스케줄 화면
-        Navigator.push(
-          context,
-          MaterialPageRoute(builder: (_) => const MyScheduleScreen()),
-        );
+        if (isUser) {
+          _showMyRequestsDialog(context, userProvider.currentUser?.uid);
+        } else {
+          Navigator.push(
+            context,
+            MaterialPageRoute(builder: (_) => const IntegratedWorkforceScreen()),
+          );
+        }
         break;
-        
+
       case NotificationType.terminationApproved:
       case NotificationType.resignApproved:
       case NotificationType.resignRejected:
         if (isUser) {
-          // 근무자 → 내 스케줄 화면
           Navigator.push(
             context,
             MaterialPageRoute(builder: (_) => const MyScheduleScreen()),
           );
         } else {
-          // 관리자 → 인력 관리 화면
           Navigator.push(
             context,
             MaterialPageRoute(builder: (_) => const IntegratedWorkforceScreen()),
@@ -243,7 +318,6 @@ class NotificationScreen extends StatelessWidget {
         break;
 
       case NotificationType.resignRequested:
-        // 관리자 → 퇴사 요청 관리 화면
         Navigator.push(
           context,
           MaterialPageRoute(builder: (_) => const IntegratedWorkforceScreen()),
@@ -254,22 +328,24 @@ class NotificationScreen extends StatelessWidget {
       // 신분증 열람 관련 알림
       // ═══════════════════════════════════════════════════════════
       case NotificationType.idCardAccessRequested:
-        // 신분증 소유자(지원자)에게 오는 알림 → 내 요청 다이얼로그에서 확인
         _showMyRequestsDialog(context, userProvider.currentUser?.uid);
         break;
+
       case NotificationType.idCardAccessApproved:
       case NotificationType.idCardAccessRejected:
       case NotificationType.idCardAccessExpiringSoon:
-        // 요청자(관리자)에게 오는 알림 → 인력 관리 화면, 사용자면 내 요청 다이얼로그
         if (isUser) {
           _showMyRequestsDialog(context, userProvider.currentUser?.uid);
         } else {
-          Navigator.push(context, MaterialPageRoute(builder: (_) => const IntegratedWorkforceScreen()));
+          Navigator.push(
+            context,
+            MaterialPageRoute(builder: (_) => const IntegratedWorkforceScreen()),
+          );
         }
         break;
-        
+
       // ═══════════════════════════════════════════════════════════
-      // 기타 알림 (향후 구현)
+      // 근무 관련 알림
       // ═══════════════════════════════════════════════════════════
       case NotificationType.workReminder:
       case NotificationType.workCanceled:
@@ -278,7 +354,7 @@ class NotificationScreen extends StatelessWidget {
           MaterialPageRoute(builder: (_) => const MyScheduleScreen()),
         );
         break;
-        
+
       // ═══════════════════════════════════════════════════════════
       // 멤버 초대 관련 알림
       // ═══════════════════════════════════════════════════════════
@@ -288,18 +364,19 @@ class NotificationScreen extends StatelessWidget {
 
       case NotificationType.memberInvitationAccepted:
       case NotificationType.memberInvitationRejected:
-        // 수락/거절 알림 확인 — 별도 네비게이션 없음
         break;
 
+      // ═══════════════════════════════════════════════════════════
+      // 급여 관련 알림
+      // ═══════════════════════════════════════════════════════════
       case NotificationType.wageConfirmed:
       case NotificationType.wageCancelConfirmed:
-        if (isUser) {
-          Navigator.push(
-            context,
-            MaterialPageRoute(builder: (_) => const MyApplicationsScreen()),
-          );
-        }
+        Navigator.push(
+          context,
+          MaterialPageRoute(builder: (_) => const MyApplicationsScreen()),
+        );
         break;
+
       case NotificationType.reviewReceived:
       case NotificationType.systemNotice:
       case NotificationType.other:
@@ -311,8 +388,9 @@ class NotificationScreen extends StatelessWidget {
         }
         break;
     }
+    if (mounted) _isHandlingTap = false;
   }
-  
+
   /// 알림에서 계약서 서명 화면 열기 (근무자용)
   Future<void> _openContractSignFromNotification(
     BuildContext context,
@@ -334,12 +412,15 @@ class NotificationScreen extends StatelessWidget {
     );
 
     try {
+      final currentUser = context.read<UserProvider>().currentUser;
+      // USER 컨텍스트 — 보안 규칙 workerId == auth.uid 필터 사용 (businessId 불필요)
       final contract = await ContractService().getByApplication(
         notification.data?['applicationId'] as String? ?? '',
+        workerId: currentUser?.uid,
       );
 
       if (!context.mounted) return;
-      Navigator.pop(context); // 로딩 닫기
+      Navigator.pop(context);
 
       if (contract == null) {
         ToastHelper.showError('계약서를 찾을 수 없습니다');
@@ -369,7 +450,7 @@ class NotificationScreen extends StatelessWidget {
       ToastHelper.showError('사용자 정보를 찾을 수 없습니다');
       return;
     }
-    
+
     showDialog(
       context: context,
       builder: (_) => MyRequestsDialog(
@@ -378,6 +459,7 @@ class NotificationScreen extends StatelessWidget {
       ),
     );
   }
+
   /// 하위 관리자 초대 수락/거절 처리
   Future<void> _handleMemberInvitation(
     BuildContext context,
@@ -465,7 +547,7 @@ class NotificationScreen extends StatelessWidget {
         Navigator.pop(context);
         await context.read<UserProvider>().refreshUserData();
         if (!context.mounted) return;
-        ToastHelper.showSuccess('초대를 수락했습니다. 관리자 모드를 사용할 수 있어요!');
+        ToastHelper.showSuccess('초대를 수락했습니다. 잠시 후 관리자 모드를 사용할 수 있어요!');
       } else {
         await MemberService().rejectInvitation(invitation);
         if (!context.mounted) return;
@@ -496,7 +578,6 @@ class NotificationScreen extends StatelessWidget {
     final toId = data['toId'] as String?;
     final workDetailId = data['workDetailId'] as String?;
 
-    // 데이터 없으면 기존처럼 인력관리 화면으로
     if (toId == null || toId.isEmpty || workDetailId == null || workDetailId.isEmpty) {
       Navigator.push(
         context,
@@ -505,7 +586,6 @@ class NotificationScreen extends StatelessWidget {
       return;
     }
 
-    // 로딩 표시
     showDialog(
       context: context,
       barrierDismissible: false,
@@ -513,15 +593,11 @@ class NotificationScreen extends StatelessWidget {
     );
 
     try {
-      // 1. TO 조회
-      final toDoc = await FirebaseFirestore.instance
-          .collection('tos')
-          .doc(toId)
-          .get();
-      
+      final toDoc = await FirebaseFirestore.instance.collection('tos').doc(toId).get();
+
       if (!toDoc.exists) {
         if (!context.mounted) return;
-        Navigator.pop(context); // 로딩 닫기
+        Navigator.pop(context);
         ToastHelper.showError('공고를 찾을 수 없습니다');
         Navigator.push(
           context,
@@ -540,7 +616,6 @@ class NotificationScreen extends StatelessWidget {
       }
       final to = TOModel.fromMap(toData, toId);
 
-      // 2. WorkDetail 조회
       final workDetailDoc = await FirebaseFirestore.instance
           .collection('tos')
           .doc(toId)
@@ -550,7 +625,7 @@ class NotificationScreen extends StatelessWidget {
 
       if (!workDetailDoc.exists) {
         if (!context.mounted) return;
-        Navigator.pop(context); // 로딩 닫기
+        Navigator.pop(context);
         ToastHelper.showError('업무 정보를 찾을 수 없습니다');
         Navigator.push(
           context,
@@ -569,7 +644,6 @@ class NotificationScreen extends StatelessWidget {
       }
       final workDetail = WorkDetailModel.fromMap(workDetailData, workDetailId);
 
-      // 3. TOItem 생성
       final toItem = TOItem(
         to: to,
         workDetails: [workDetail],
@@ -580,9 +654,8 @@ class NotificationScreen extends StatelessWidget {
       );
 
       if (!context.mounted) return;
-      Navigator.pop(context); // 로딩 닫기
+      Navigator.pop(context);
 
-      // 4. 다이얼로그 열기
       showDialog(
         context: context,
         builder: (_) => WorkApplicantsDialog(
@@ -593,7 +666,7 @@ class NotificationScreen extends StatelessWidget {
       );
     } catch (e) {
       if (!context.mounted) return;
-      Navigator.pop(context); // 로딩 닫기
+      Navigator.pop(context);
       debugPrint('❌ 알림 네비게이션 실패: $e');
       ToastHelper.showError('데이터를 불러오는데 실패했습니다');
       Navigator.push(

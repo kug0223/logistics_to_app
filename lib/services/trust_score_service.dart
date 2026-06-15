@@ -3,6 +3,7 @@
 import 'package:flutter/foundation.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import '../models/settings/trust_settings_model.dart';
+import '../utils/trust_score_helper.dart';
 
 /// 신뢰도 점수 서비스
 /// 
@@ -54,64 +55,20 @@ class TrustScoreService {
     }
   }
 
-  /// 점수 계산 로직
+  /// 점수 계산 로직 — 단일 공식 원칙
+  ///
+  /// [TrustScoreHelper.calculateFromData]에 위임해 폴백(오프라인) 경로와
+  /// 저장 경로의 공식이 항상 일치하도록 보장한다.
+  /// [settings]는 시그니처 호환을 위해 유지하되 공식에는 사용하지 않는다.
   int _computeScore(Map<String, dynamic> userData, TrustSettingsModel settings) {
-    int score = settings.startScore;
-    
-    // 1. 근무 완료 가산 (+1점/일)
-    final int totalWorkDays = ((userData['totalWorkDays'] ?? 0) as num).toInt();
-    final workCompleteRule = settings.increaseRules
-        .firstWhere((r) => r.type == 'work_complete', 
-            orElse: () => TrustRule(type: '', points: 1, description: ''));
-    score += totalWorkDays * workCompleteRule.points;
-    
-    // 2. 평균 평점 기반 가감
-    final avgRating = ((userData['averageRating'] ?? 0) as num).toDouble();
-    final reviewCount = userData['reviewCount'] ?? 0;
-    
-    if (reviewCount > 0) {
-      // 좋은 평가 가산 — onReviewReceived와 동일하게 리뷰 수 × 점수로 누적 계산
-      final goodReviewRule = settings.increaseRules
-          .firstWhere((r) => r.type == 'good_review',
-              orElse: () => TrustRule(type: '', points: 2, description: '', condition: 4.5));
-      if (avgRating >= (goodReviewRule.condition ?? 4.5)) {
-        score += goodReviewRule.points * (reviewCount as int);
-      }
-
-      // 낮은 평가 감점 — 동일하게 누적 계산
-      final badReviewRule = settings.decreaseRules
-          .firstWhere((r) => r.type == 'bad_review',
-              orElse: () => TrustRule(type: '', points: -2, description: '', condition: 2.0));
-      if (avgRating <= (badReviewRule.condition ?? 2.0)) {
-        score += badReviewRule.points * (reviewCount as int); // 음수 × 리뷰 수
-      }
-    }
-    
-    // 3. 재고용 희망률 가산 — onReviewReceived와 동일하게 개별 리뷰 단위 누적
-    final rehireRate = ((userData['rehireRate'] ?? 0) as num).toDouble();
-    if (rehireRate > 0 && reviewCount >= 3) {
-      final rehireRule = settings.increaseRules
-          .firstWhere((r) => r.type == 'rehire_yes',
-              orElse: () => TrustRule(type: '', points: 1, description: ''));
-      final rehireYesCount = (rehireRate * (reviewCount as int)).round();
-      score += rehireRule.points * rehireYesCount;
-    }
-    
-    // 4. 지각 감점
-    final int lateCount = ((userData['lateCount'] ?? 0) as num).toInt();
-    final lateRule = settings.decreaseRules
-        .firstWhere((r) => r.type == 'late',
-            orElse: () => TrustRule(type: '', points: -1, description: ''));
-    score += lateCount * lateRule.points; // 음수
-    
-    // 5. 노쇼 감점 — onNoShow와 동일하게 매 회차 감점을 누적 합산
-    final noShowCount = ((userData['noShowCount'] ?? 0) as num).toInt();
-    for (int i = 1; i <= noShowCount; i++) {
-      score += settings.getNoshowPenalty(i);
-    }
-    
-    // 범위 제한
-    return score.clamp(0, settings.maxScore);
+    return TrustScoreHelper.calculateFromData(
+      totalWorkDays: ((userData['totalWorkDays'] ?? 0) as num).toInt(),
+      averageRating: ((userData['averageRating'] ?? 0) as num).toDouble(),
+      reviewCount: ((userData['reviewCount'] ?? 0) as num).toInt(),
+      rehireRate: ((userData['rehireRate'] ?? 0) as num).toDouble(),
+      noShowCount: ((userData['noShowCount'] ?? 0) as num).toInt(),
+      lateCount: ((userData['lateCount'] ?? 0) as num).toInt(),
+    );
   }
 
   // ═══════════════════════════════════════════════════════════
@@ -145,12 +102,16 @@ class TrustScoreService {
 
   /// 노쇼 시 점수 업데이트
   Future<void> onNoShow(String userId, String businessId) async {
-    await _firestore.collection('users').doc(userId).update({
-      'noShowCount': FieldValue.increment(1),
+    // [E-001] increment 후 즉시 get하면 Firestore 반영 전 old 값을 읽을 수 있음
+    // 트랜잭션으로 increment + read를 원자적으로 처리
+    int newNoShowCount = 1;
+    final userRef = _firestore.collection('users').doc(userId);
+    await _firestore.runTransaction((tx) async {
+      final snap = await tx.get(userRef);
+      final current = ((snap.data()?['noShowCount'] ?? 0) as num).toInt();
+      newNoShowCount = current + 1;
+      tx.update(userRef, {'noShowCount': newNoShowCount});
     });
-
-    final userDoc = await _firestore.collection('users').doc(userId).get();
-    final newNoShowCount = ((userDoc.data()?['noShowCount'] ?? 1) as num).toInt();
 
     final settings = await _getSettings();
     final penalty = settings.getNoshowPenalty(newNoShowCount);
@@ -160,12 +121,17 @@ class TrustScoreService {
 
   /// 노쇼 해제 시 카운트 감소 + 감점 복원
   Future<void> onNoShowCanceled(String userId, String businessId) async {
-    final userDoc = await _firestore.collection('users').doc(userId).get();
-    final currentNoShowCount = ((userDoc.data()?['noShowCount'] ?? 0) as num).toInt();
-
-    await _firestore.collection('users').doc(userId).update({
-      'noShowCount': FieldValue.increment(-1),
-      'updatedAt': FieldValue.serverTimestamp(),
+    // [I-001] onNoShow()와 동일하게 트랜잭션으로 원자화 (TOCTOU 방지)
+    int currentNoShowCount = 1;
+    final userRef = _firestore.collection('users').doc(userId);
+    await _firestore.runTransaction((tx) async {
+      final snap = await tx.get(userRef);
+      currentNoShowCount = ((snap.data()?['noShowCount'] ?? 0) as num).toInt();
+      final newCount = (currentNoShowCount - 1).clamp(0, 9999);
+      tx.update(userRef, {
+        'noShowCount': newCount,
+        'updatedAt': FieldValue.serverTimestamp(),
+      });
     });
 
     final settings = await _getSettings();
@@ -300,11 +266,22 @@ class TrustScoreService {
   }
 
   /// 점수 변동 내역 조회
-  Future<List<Map<String, dynamic>>> getScoreHistory(String userId, {int limit = 20}) async {
+  ///
+  /// [businessId] 관리자 컨텍스트에서 필수 — 보안 규칙상 소속 사업장 businessId 필터 필요.
+  /// isSuperAdmin이 아닌 한 businessId 없이 호출 시 Firestore 권한 오류 발생.
+  Future<List<Map<String, dynamic>>> getScoreHistory(
+    String userId, {
+    String? businessId,
+    int limit = 20,
+  }) async {
     try {
-      final snapshot = await _firestore
+      Query<Map<String, dynamic>> q = _firestore
           .collection('trust_score_history')
-          .where('userId', isEqualTo: userId)
+          .where('userId', isEqualTo: userId);
+      if (businessId != null && businessId.isNotEmpty) {
+        q = q.where('businessId', isEqualTo: businessId);
+      }
+      final snapshot = await q
           .orderBy('createdAt', descending: true)
           .limit(limit)
           .get();

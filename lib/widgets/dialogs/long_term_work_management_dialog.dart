@@ -40,8 +40,14 @@ class _LongTermWorkManagementDialogState
         .toList();
 
     return Dialog(
-      child: Container(
-        constraints: BoxConstraints(maxWidth: 500, maxHeight: MediaQuery.sizeOf(context).height * 0.9),
+      backgroundColor: Colors.white,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+      insetPadding: EdgeInsets.symmetric(
+        horizontal: ResponsiveHelper.spacing(context, 16),
+        vertical: ResponsiveHelper.spacing(context, 24),
+      ),
+      child: ConstrainedBox(
+        constraints: BoxConstraints(maxHeight: MediaQuery.sizeOf(context).height * 0.92),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [

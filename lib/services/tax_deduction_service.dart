@@ -223,7 +223,7 @@ class TaxDeductionService {
           .where('userId', isEqualTo: userId)
           .where('businessId', isEqualTo: businessId)
           .where('yearMonth', isEqualTo: yearMonth)
-          .where('wageStatus', whereIn: ['calculated', 'confirmed']);
+          .where('wageStatus', whereIn: ['calculated', 'confirmed', 'transferred']);
 
       final snapshot = await query.get();
       var count = snapshot.docs.length;

@@ -1,4 +1,4 @@
-﻿import 'package:flutter/material.dart';
+import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:flutter/services.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -792,7 +792,7 @@ class _BusinessDetailScreenState extends State<BusinessDetailScreen> {
   }
 
   /// 전화 걸기
-  void _callPhone(String phone) async {
+  Future<void> _callPhone(String phone) async {
     final uri = Uri.parse('tel:$phone');
     if (await canLaunchUrl(uri)) {
       await launchUrl(uri);

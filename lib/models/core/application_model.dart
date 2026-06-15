@@ -546,12 +546,20 @@ class ApplicationModel {
   }
   
   /// 근무 기간 표시 (예: "11/1~11/30")
-  /// 🔥 희망 시작일/퇴사일 우선 적용
+  ///
+  /// effectiveStart 결정 방식은 isWorkingOnDate·isScheduledOnDate와 동일하게 맞춤.
+  /// 불일치하면 캘린더에 표시되는 기간과 카드에 표시되는 기간이 달라져 혼란을 줄 수 있음.
   String get workPeriodDisplay {
     final effectiveEnd = actualResignDate ?? workEndDate;
     if (effectiveEnd == null) return '';
-    
-    final effectiveStart = desiredStartDate ?? workDate;
+
+    // desiredStartDate가 없고 확정일(confirmedAt)이 workDate보다 늦으면
+    // 실제 근무 시작은 confirmedAt 당일 — workDate부터 표시하면 미근무 기간이 포함됨
+    DateTime effectiveStart = desiredStartDate ?? workDate;
+    if (confirmedAt != null && desiredStartDate == null) {
+      final confirmedDay = DateTime(confirmedAt!.year, confirmedAt!.month, confirmedAt!.day);
+      if (confirmedDay.isAfter(effectiveStart)) effectiveStart = confirmedDay;
+    }
     final startStr = '${effectiveStart.month}/${effectiveStart.day}';
     final endStr = '${effectiveEnd.month}/${effectiveEnd.day}';
     return '$startStr~$endStr';
@@ -595,12 +603,26 @@ class ApplicationModel {
   }
 
   // ─────────────────────────────────────────────────────────
+  // ─────────────────────────────────────────────────────────
   // 스케줄 판단 (단일 진실의 원천)
+  //
+  // [검증 이력]
+  // · effectiveStart 결정 규칙: desiredStartDate ?? workDate
+  //   confirmedAt > workDate이고 desiredStartDate=null이면 confirmedAt 당일로 보정.
+  //   desiredStartDate가 있으면 확정일 보정 비활성 — 사용자 지정 시작일 우선.
+  // · endDate = actualResignDate ?? workEndDate
+  //   workEndDate=null이면 false/0 — "기간 미정" 계약은 전 시스템 일관성 있게 미지원 처리.
+  // · isWorkingOnDate vs isScheduledOnDate 차이:
+  //   isWorkingOnDate: 충돌 판단용 — 휴무일=false (근무 없음)
+  //   isScheduledOnDate: 캘린더 표시용 — 휴무일=true (표시는 하되 회색 처리)
+  // · 이 두 함수와 _workDaysInMonth·workPeriodDisplay의 effectiveStart 로직이 동일해야 함.
+  //   세 곳 중 한 곳 변경 시 나머지도 반드시 함께 수정할 것.
   // ─────────────────────────────────────────────────────────
 
   /// 충돌 판단용: 해당 날짜에 이 지원이 근무 중인지 확인
   /// - 휴무일(leaveDates) → false (근무 없음)
   /// - 추가 근무일(extraWorkDates) → true (요일 무관)
+  /// - workEndDate=null → false (isScheduledOnDate와 동일)
   bool isWorkingOnDate(DateTime targetDate) {
     if (!isLongTermApplication) {
       return _isSameDay(workDate, targetDate);
@@ -628,9 +650,10 @@ class ApplicationModel {
   }
 
   /// 캘린더 표시용: 해당 날짜에 이 지원이 일정으로 표시되어야 하는지 확인
-  /// - 미확정 장기공고 → 지원일에만 표시
-  /// - 퇴사/계약해지 완료 → false
-  /// - 휴무일도 true (캘린더에 휴무 상태로 표시)
+  /// - 미확정 장기공고 → 지원일(workDate)에만 표시
+  /// - 퇴사/계약해지 완료(isTerminationApproved) → false
+  /// - 휴무일도 true (캘린더에 표시, UI에서 회색 처리)
+  /// - workEndDate=null → false (isWorkingOnDate와 동일)
   bool isScheduledOnDate(DateTime targetDate) {
     if (!isLongTermApplication) {
       return _isSameDay(workDate, targetDate);

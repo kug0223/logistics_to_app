@@ -68,6 +68,7 @@ class DatePickerBottomSheet extends StatefulWidget {
   }) {
     return showModalBottomSheet<DateTime>(
       context: context,
+      useSafeArea: true,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
       builder: (context) => DatePickerBottomSheet(
@@ -370,6 +371,7 @@ class DateRangePickerBottomSheet extends StatefulWidget {
   }) {
     return showModalBottomSheet<DateTimeRange>(
       context: context,
+      useSafeArea: true,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
       builder: (context) => DateRangePickerBottomSheet(

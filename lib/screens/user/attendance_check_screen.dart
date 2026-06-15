@@ -1,4 +1,4 @@
-﻿import 'dart:async';
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:intl/intl.dart';
@@ -14,7 +14,6 @@ import '../../utils/location_helper.dart';
 import '../../utils/toast_helper.dart';
 import '../../utils/dialog_helper.dart';
 import '../../utils/responsive_helper.dart';
-import '../../utils/format_helper.dart';
 import '../../theme/app_colors.dart';
 import '../../widgets/common/loading_widget.dart';
 import '../../widgets/common/gradient_scaffold.dart';
@@ -97,6 +96,8 @@ class _AttendanceCheckScreenState extends State<AttendanceCheckScreen>
 
       final today = DateTime.now();
       final todayStart = DateTime(today.year, today.month, today.day);
+      // [C-001] yesterday를 루프 밖으로 — 퇴근 완료 필터에서도 사용
+      final yesterday = todayStart.subtract(const Duration(days: 1));
       final todayWorks = <ApplicationModel>[];
 
       for (final app in allApplications) {
@@ -106,7 +107,6 @@ class _AttendanceCheckScreenState extends State<AttendanceCheckScreen>
 
         if (!isReallyLongTerm) {
           // 어제 시작한 야간 근무(자정 이후 퇴근 대기)도 포함
-          final yesterday = todayStart.subtract(const Duration(days: 1));
           if (DateUtils.isSameDay(app.workDate, todayStart) ||
               DateUtils.isSameDay(app.workDate, yesterday)) {
             todayWorks.add(app);
@@ -114,27 +114,8 @@ class _AttendanceCheckScreenState extends State<AttendanceCheckScreen>
           continue;
         }
 
-        if (app.workEndDate == null) continue;
-
-        final effectiveStartDate = app.desiredStartDate ?? app.workDate;
-        final startDateOnly = DateTime(
-          effectiveStartDate.year,
-          effectiveStartDate.month,
-          effectiveStartDate.day,
-        );
-        final endDateOnly = DateTime(
-          app.workEndDate!.year,
-          app.workEndDate!.month,
-          app.workEndDate!.day,
-        );
-
-        if (todayStart.isBefore(startDateOnly) || todayStart.isAfter(endDateOnly)) {
-          continue;
-        }
-
-        final todayWeekday = FormatHelper.weekday(today);
-
-        if (app.workDays!.contains(todayWeekday)) {
+        // isWorkingOnDate: actualResignDate·leaveDates·extraWorkDates·workDays 모두 반영
+        if (app.isWorkingOnDate(todayStart)) {
           todayWorks.add(app);
         }
       }
@@ -150,14 +131,28 @@ class _AttendanceCheckScreenState extends State<AttendanceCheckScreen>
         }),
       );
 
+      // [C-001] 어제 날짜 출근 기록이 퇴근 완료인 항목은 오늘 화면에서 제외 (stale 방지)
+      // work.workDate 대신 att.workDate 기준으로 어제를 판단:
+      //   - 단기: att.workDate = work.workDate (실제 근무일) → 동일하게 동작
+      //   - 장기: work.workDate = 계약 시작일(고정값)이라 isSameDay(work.workDate, yesterday) 항상 false
+      //           → att.workDate = checkIn 시점 오늘 날짜로 기록 → 어제 기록을 정확히 식별 가능
+      final visibleWorks = todayWorks.where((work) {
+        final att = _attendanceMap[work.id];
+        if (att == null) return true;
+        if (att.checkOut != null && DateUtils.isSameDay(att.workDate, yesterday)) {
+          return false; // 어제 퇴근 완료 → 오늘 화면에서 숨김
+        }
+        return true;
+      }).toList();
+
       if (mounted) {
         setState(() {
-          _todayWorks = todayWorks;
+          _todayWorks = visibleWorks;
           _isLoading = false;
         });
       }
 
-      debugPrint('✅ 오늘 근무: ${todayWorks.length}개');
+      debugPrint('✅ 오늘 근무: ${visibleWorks.length}개 (전체 후보: ${todayWorks.length}개)');
       _checkAndStartTracking();
     } catch (e) {
       debugPrint('❌ 오늘 근무 조회 실패: $e');
@@ -428,12 +423,18 @@ class _AttendanceCheckScreenState extends State<AttendanceCheckScreen>
       }
 
       // 3. Firestore 출근 기록 저장 (비콘 방식은 lat/lng null — 불필요)
+      // 단기 근무: work.workDate 사용 — 야간 근무 자정 이후 체크인 시 docId가 다음 날로 밀리는 것 방지 [060]
+      // 장기 근무: 오늘 날짜 사용 — work.workDate는 계약 시작일(고정값)이라 날짜별 docId 분리 불가
+      final isReallyLongTerm = work.workDays != null && work.workDays!.isNotEmpty;
+      final attendanceWorkDate = isReallyLongTerm
+          ? DateTime(DateTime.now().year, DateTime.now().month, DateTime.now().day)
+          : work.workDate;
       final attendanceId = await _firestoreService.checkIn(
         applicationId: work.id,
         userId: uid,
         businessId: work.businessId,
         businessName: work.businessName,
-        workDate: DateTime.now(),
+        workDate: attendanceWorkDate,
         workType: work.selectedWorkType,
         latitude: lat,
         longitude: lng,
@@ -445,6 +446,7 @@ class _AttendanceCheckScreenState extends State<AttendanceCheckScreen>
         ToastHelper.showSuccess('출근이 완료되었습니다!');
         AnalyticsService.logCheckIn(method: usedMethod);
         if (_locationTrackingActive) await _firestoreService.stopWorkerTracking(work.id);
+        if (!mounted) return;
         await _loadTodayWorks();
         _checkAndStartTracking();
       }
@@ -672,8 +674,22 @@ class _AttendanceCheckScreenState extends State<AttendanceCheckScreen>
         final ok = await _verifyByBeacon(business);
         if (!ok) return;
         usedMethod = 'beacon';
+      } else if (type == 'both') {
+        // GPS + 비콘 병행: 출근과 동일하게 GPS 먼저, 실패 시 비콘 폴백
+        final gpsResult = await _verifyByGPS(business, silent: true);
+        if (gpsResult != null && gpsResult.$1) {
+          lat = gpsResult.$2; lng = gpsResult.$3;
+          usedMethod = 'gps';
+        } else {
+          if (mounted) ToastHelper.showInfo('GPS 확인 불가 — 비콘으로 재시도합니다.');
+          await Future.delayed(const Duration(milliseconds: 600));
+          if (!mounted) return;
+          final beaconOk = await _verifyByBeacon(business);
+          if (!beaconOk) return;
+          usedMethod = 'beacon';
+        }
       } else {
-        // GPS 또는 both: GPS 반경 확인 후 퇴근 처리
+        // GPS 전용: 반경 확인 후 퇴근 처리
         final result = await _verifyByGPS(business, loadingMsg: 'GPS 확인 중...');
         if (result == null) return;
         final (ok, resultLat, resultLng) = result;
@@ -713,15 +729,7 @@ class _AttendanceCheckScreenState extends State<AttendanceCheckScreen>
   Widget build(BuildContext context) {
     return GradientScaffold(
       title: '출퇴근 체크',
-      actions: [
-        IconButton(
-          icon: Icon(Icons.refresh,
-              color: Colors.white,
-              size: ResponsiveHelper.iconSize(context, 24)),
-          tooltip: '새로고침',
-          onPressed: _loadTodayWorks,
-        ),
-      ],
+      onRefresh: _loadTodayWorks,
       body: _isLoading
           ? const LoadingWidget(message: '근무 정보를 불러오는 중...')
           : _todayWorks.isEmpty
@@ -962,7 +970,7 @@ class _AttendanceCheckScreenState extends State<AttendanceCheckScreen>
                 icon: Icons.login,
                 expand: true,
                 isLoading: _isProcessing,
-                onPressed: () async => await _checkIn(work),
+                onPressed: () async => _checkIn(work),
               )
             else if (!hasCheckedOut)
               LoadingButton(
@@ -971,7 +979,7 @@ class _AttendanceCheckScreenState extends State<AttendanceCheckScreen>
                 expand: true,
                 backgroundColor: AppColors.warningDark,
                 isLoading: _isProcessing,
-                onPressed: () async => await _checkOut(work, attendance!),
+                onPressed: () async => _checkOut(work, attendance!),
               )
             else
               Container(

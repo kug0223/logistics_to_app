@@ -11,7 +11,7 @@ class CacheManager {
     String collection,
     String docId,
   ) async {
-    return await _firestore
+    return _firestore
         .collection(collection)
         .doc(docId)
         .get(const GetOptions(source: Source.server));
@@ -21,7 +21,7 @@ class CacheManager {
   static Future<QuerySnapshot<Map<String, dynamic>>> getCollection(
     String collection,
   ) async {
-    return await _firestore
+    return _firestore
         .collection(collection)
         .get(const GetOptions(source: Source.server));
   }
@@ -32,7 +32,7 @@ class CacheManager {
     required String field,
     required dynamic isEqualTo,
   }) async {
-    return await _firestore
+    return _firestore
         .collection(collection)
         .where(field, isEqualTo: isEqualTo)
         .get(const GetOptions(source: Source.server));
@@ -44,7 +44,7 @@ class CacheManager {
     String parentDocId,
     String subCollection,
   ) async {
-    return await _firestore
+    return _firestore
         .collection(parentCollection)
         .doc(parentDocId)
         .collection(subCollection)

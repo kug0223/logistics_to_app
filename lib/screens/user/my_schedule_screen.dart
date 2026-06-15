@@ -11,10 +11,8 @@ import '../../utils/format_helper.dart';
 import '../../widgets/common/loading_widget.dart';
 import '../../widgets/calendar/schedule_calendar.dart';
 import '../../widgets/calendar/schedule_card.dart';
-import 'dialogs/my_requests_dialog.dart';
-import '../../models/core/id_card_access_request_model.dart';
 import '../../models/core/attendance_model.dart';
-import '../../models/core/schedule_change_request_model.dart';
+import '../../widgets/common/gradient_scaffold.dart';
 import 'all_to_list_screen.dart';
 import '../../theme/app_colors.dart';
 import '../../screens/payroll/payslip_period_helper.dart';
@@ -43,11 +41,6 @@ class _MyScheduleScreenState extends State<MyScheduleScreen> {
 
   // 날짜별 인덱스 캐시 (getEventsForDay O(n) → O(1))
   Map<String, List<ApplicationModel>> _dateIndex = {};
-
-  // 알림 배지용
-  List<IdCardAccessRequestModel> _pendingIdCardRequests = [];
-  List<ApplicationModel> _pendingTerminations = [];
-  List<ScheduleChangeRequestModel> _pendingScheduleRequests = [];
 
   // 출근 기록 — Map으로 O(1) 조회
   // key: "${applicationId}_${yyyy}-${M}-${d}"
@@ -98,22 +91,16 @@ class _MyScheduleScreenState extends State<MyScheduleScreen> {
 
       final results = await Future.wait([
         _firestoreService.getMyApplications(uid),
-        _firestoreService.getPendingIdCardRequestsForUser(uid),
-        _firestoreService.getMyTerminationRequests(uid),
         _firestoreService.getMyMonthlyAttendances(
           userId: uid,
           year: _focusedDay.year,
           month: _focusedDay.month,
         ),
-        _firestoreService.getMyScheduleChangeRequests(uid),
       ]);
 
       if (!mounted) return;
-      _applications        = results[0] as List<ApplicationModel>;
-      _pendingIdCardRequests = results[1] as List<IdCardAccessRequestModel>;
-      _pendingTerminations = results[2] as List<ApplicationModel>;
-      _attendanceMap       = _buildAttendanceMap(results[3] as List<AttendanceModel>);
-      _pendingScheduleRequests = results[4] as List<ScheduleChangeRequestModel>;
+      _applications  = results[0] as List<ApplicationModel>;
+      _attendanceMap = _buildAttendanceMap(results[1] as List<AttendanceModel>);
       _recomputeStats(); // 데이터 확정 후 1회 계산
       setState(() => _isLoading = false);
     } catch (e) {
@@ -146,6 +133,13 @@ class _MyScheduleScreenState extends State<MyScheduleScreen> {
   }
 
   /// attendance 리스트 → Map 변환 (applicationId + 날짜 복합키)
+  ///
+  /// 키 포맷: '${applicationId}_${year}-${month}-${day}' (월·일 미패딩)
+  /// 동일 applicationId + 날짜가 중복이면 나중 항목이 덮어쓰지만,
+  /// docId = '${applicationId}_yyyyMMdd'이므로 Firestore에서 중복 방지됨.
+  ///
+  /// ⚠️ CalendarHelper.getActualWorkDays의 uniqueDates 키 포맷('year-month-day' 미패딩)과
+  ///    스케줄 목록 조회 키 포맷이 이 포맷과 일치해야 함 — 변경 시 세 곳 동시 수정 필요.
   Map<String, AttendanceModel> _buildAttendanceMap(List<AttendanceModel> list) {
     final map = <String, AttendanceModel>{};
     for (final att in list) {
@@ -155,149 +149,16 @@ class _MyScheduleScreenState extends State<MyScheduleScreen> {
     return map;
   }
 
-  // ─── 알림 ────────────────────────────────────────────────────
-
-  int get _pendingRequestCount =>
-      _pendingScheduleRequests.where((r) => r.isPending && r.isAdminRequest).length +
-      _pendingIdCardRequests.length +
-      _pendingTerminations.length;
-
-  Future<void> _showMyRequestsDialog() async {
-    final uid = context.read<UserProvider>().currentUser?.uid;
-    if (uid == null) {
-      ToastHelper.showError('사용자 정보를 찾을 수 없습니다');
-      return;
-    }
-    if (!mounted) return;
-    await showDialog(
-      context: context,
-      builder: (_) => MyRequestsDialog(
-        applicantUid: uid,
-        onChanged: () {
-          if (mounted) setState(() {});
-          _loadApplications();
-        },
-      ),
-    );
-  }
-
   // ─── Build ───────────────────────────────────────────────────
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    return Scaffold(
-      body: Container(
-        decoration: BoxDecoration(
-          gradient: LinearGradient(
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
-            colors: [
-              theme.primaryColor,
-              theme.primaryColor.withValues(alpha: 0.85),
-            ],
-          ),
-        ),
-        child: SafeArea(
-          child: Column(
-            children: [
-              _buildHeader(theme),
-              Expanded(
-                child: Container(
-                  clipBehavior: Clip.hardEdge,
-                  decoration: BoxDecoration(
-                    color: AppColors.grey50,
-                    borderRadius: const BorderRadius.only(
-                      topLeft: Radius.circular(32),
-                      topRight: Radius.circular(32),
-                    ),
-                  ),
-                  child: _isLoading
-                      ? const LoadingWidget(message: '일정을 불러오는 중...')
-                      : _buildContent(),
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  // ─── 헤더 (알림 벨만 남김) ───────────────────────────────────
-
-  Widget _buildHeader(ThemeData theme) {
-    return Padding(
-      padding: EdgeInsets.symmetric(
-        horizontal: ResponsiveHelper.spacing(context, 20),
-        vertical: ResponsiveHelper.spacing(context, 16),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              IconButton(
-                icon: const Icon(Icons.arrow_back, color: Colors.white),
-                onPressed: () => Navigator.pop(context),
-                padding: EdgeInsets.zero,
-                constraints: const BoxConstraints(),
-              ),
-              SizedBox(width: ResponsiveHelper.spacing(context, 12)),
-              Expanded(
-                child: Text(
-                  '내 스케줄',
-                  style: ResponsiveHelper.titleStyle(context).copyWith(
-                    color: Colors.white,
-                    fontSize: ResponsiveHelper.titleStyle(context).fontSize! * 1.3,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-              ),
-              // 알림 벨 (배지 포함)
-              _buildNotificationBell(),
-            ],
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildNotificationBell() {
-    return Stack(
-      children: [
-        Container(
-          decoration: BoxDecoration(
-            color: Colors.white.withValues(alpha: 0.2),
-            shape: BoxShape.circle,
-          ),
-          child: IconButton(
-            icon: const Icon(Icons.notifications_outlined, color: Colors.white),
-            onPressed: _showMyRequestsDialog,
-            tooltip: '알림',
-          ),
-        ),
-        if (_pendingRequestCount > 0)
-          Positioned(
-            right: 8,
-            top: 8,
-            child: Container(
-              padding: const EdgeInsets.all(3),
-              decoration: const BoxDecoration(
-                color: AppColors.error,
-                shape: BoxShape.circle,
-              ),
-              constraints: const BoxConstraints(minWidth: 16, minHeight: 16),
-              child: Text(
-                '$_pendingRequestCount',
-                style: ResponsiveHelper.tinyStyle(context,
-                    color: Colors.white,
-                    fontWeight: FontWeight.bold),
-                textAlign: TextAlign.center,
-              ),
-            ),
-          ),
-      ],
+    return GradientScaffold(
+      title: '내 스케줄',
+      onRefresh: _loadApplications,
+      body: _isLoading
+          ? const LoadingWidget(message: '일정을 불러오는 중...')
+          : _buildContent(),
     );
   }
 
@@ -458,13 +319,12 @@ class _MyScheduleScreenState extends State<MyScheduleScreen> {
       child: Column(
         children: [
           Row(
-            mainAxisAlignment: MainAxisAlignment.spaceEvenly,
             children: [
-              Expanded(child: _statItem(Icons.schedule, '대기', '$pendingCount건', AppColors.warning)),
+              Expanded(child: Center(child: _statItem(Icons.schedule, '대기', '$pendingCount건', AppColors.warning))),
               _vDivider(),
-              Expanded(child: _statItem(Icons.check_circle, '확정', '$confirmedCount일', AppColors.success)),
+              Expanded(child: Center(child: _statItem(Icons.check_circle, '확정', '$confirmedCount일', AppColors.success))),
               _vDivider(),
-              Expanded(child: _statItem(Icons.directions_run, '실근무', '$actualDays일', AppColors.teal)),
+              Expanded(child: Center(child: _statItem(Icons.directions_run, '실근무', '$actualDays일', AppColors.teal))),
             ],
           ),
           Padding(
@@ -473,14 +333,13 @@ class _MyScheduleScreenState extends State<MyScheduleScreen> {
             child: const Divider(height: 1, color: AppColors.grey200),
           ),
           Row(
-            mainAxisAlignment: MainAxisAlignment.spaceEvenly,
             children: [
-              Expanded(child: _statItem(Icons.payments, '예상수입(세전)',
-                  '${NumberFormat('#,###').format(totalIncome)}원', AppColors.info)),
+              Expanded(child: Center(child: _statItem(Icons.payments, '예상수입(세전)',
+                  '${NumberFormat('#,###').format(totalIncome)}원', AppColors.info))),
               _vDivider(),
-              Expanded(child: _statItem(Icons.paid, '확정수입',
+              Expanded(child: Center(child: _statItem(Icons.paid, '확정수입',
                   '${NumberFormat('#,###').format(confirmedIncome)}원',
-                  AppColors.success)),
+                  AppColors.success))),
             ],
           ),
           if (_confirmedWageRecords.isNotEmpty) ...[

@@ -368,7 +368,7 @@ class PayslipPdfBuilder {
       rows.add(_payRow(
         '추가수당',
         _fmtWon(wd.additionalAmount),
-        '',
+        wd.memo ?? '',
         ts,
       ));
     }
@@ -378,7 +378,7 @@ class PayslipPdfBuilder {
       rows.add(_payRow(
         '▼ 공제 (식대·안전화 등)',
         '-${_fmtWon(wd.deductionAmount)}',
-        '',
+        wd.memo ?? '',
         ts,
         isDeduction: true,
       ));
@@ -436,7 +436,7 @@ class PayslipPdfBuilder {
 
     if (wd.nationalPensionDeduction > 0) {
       rows.add(_payRow('국민연금', _fmtWon(wd.nationalPensionDeduction),
-          '근로자 부담분 (4.5%)', ts,
+          '근로자 부담분', ts,
           isDeduction: true));
     }
     if (wd.healthInsuranceDeduction > 0) {
@@ -446,12 +446,12 @@ class PayslipPdfBuilder {
     }
     if (wd.ltcInsuranceDeduction > 0) {
       rows.add(_payRow('장기요양보험', _fmtWon(wd.ltcInsuranceDeduction),
-          '건강보험료의 12.95%', ts,
+          '건강보험료 기준', ts,
           isDeduction: true));
     }
     if (wd.employmentInsuranceDeduction > 0) {
       rows.add(_payRow('고용보험', _fmtWon(wd.employmentInsuranceDeduction),
-          '근로자 부담분 (0.9%)', ts,
+          '근로자 부담분', ts,
           isDeduction: true));
     }
     if (wd.incomeTaxDeduction > 0) {
@@ -502,9 +502,7 @@ class PayslipPdfBuilder {
     Function ts,
     PdfColor primary,
   ) {
-    final net = wd.netWage > 0
-        ? wd.netWage
-        : wd.totalAmount - wd.totalInsuranceDeduction;
+    final net = wd.effectiveNetWage;
 
     return pw.Container(
       padding: const pw.EdgeInsets.symmetric(horizontal: 16, vertical: 12),
@@ -670,6 +668,12 @@ class PayslipPdfBuilder {
             pw.SizedBox(height: 12),
           ],
           _aggNetWageBox(data, ts, primary),
+
+          if (data.hasMemos) ...[
+            pw.SizedBox(height: 12),
+            _aggMemoSection(data, ts, primary, grey),
+          ],
+
           pw.SizedBox(height: 14),
           _aggLegalNote(ts, grey),
         ],
@@ -937,11 +941,44 @@ class PayslipPdfBuilder {
     );
   }
 
+  // ─── 1페이지: 특이사항 섹션 ──────────────────────────────────
+
+  static pw.Widget _aggMemoSection(
+      AggregatedPayslipData d, Function ts, PdfColor primary, PdfColor grey) {
+    final amber = PdfColor.fromHex('#F59E0B');
+    final amberBg = PdfColor.fromHex('#FFFBEB');
+    final amberBorder = PdfColor.fromHex('#FCD34D');
+
+    final lines = d.memoRecords.map((r) {
+      final dateStr = '${r.workDate.month}/${r.workDate.day}';
+      return '$dateStr  —  ${r.memo}';
+    }).join('\n');
+
+    return pw.Column(
+      crossAxisAlignment: pw.CrossAxisAlignment.start,
+      children: [
+        pw.Text('■  특이사항', style: ts(9.0, bold: true, color: amber)),
+        pw.SizedBox(height: 4),
+        pw.Container(
+          width: double.infinity,
+          padding: const pw.EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+          decoration: pw.BoxDecoration(
+            color: amberBg,
+            border: pw.Border.all(color: amberBorder, width: 0.5),
+            borderRadius: const pw.BorderRadius.all(pw.Radius.circular(4)),
+          ),
+          child: pw.Text(lines, style: ts(8.0)),
+        ),
+      ],
+    );
+  }
+
   // ─── 2페이지: 일별 상세 테이블 ────────────────────────────────
 
   static pw.Widget _aggDailyTable(
       AggregatedPayslipData d, Function ts, PdfColor primary, PdfColor grey) {
     final rows = <pw.TableRow>[];
+    final hasMemos = d.hasMemos;
 
     // 헤더
     rows.add(pw.TableRow(
@@ -954,6 +991,7 @@ class PayslipPdfBuilder {
         _cell('연장', ts, bold: true, color: primary),
         _cell('야간', ts, bold: true, color: primary),
         _cell('실수령', ts, bold: true, color: primary, align: pw.Alignment.centerRight),
+        if (hasMemos) _cell('특이사항', ts, bold: true, color: primary),
       ],
     ));
 
@@ -967,6 +1005,7 @@ class PayslipPdfBuilder {
         _cell(_fmtMin(r.overtimeMinutes), ts),
         _cell(_fmtMin(r.nightMinutes), ts),
         _cell(_fmtWon(r.netWage), ts, align: pw.Alignment.centerRight),
+        if (hasMemos) _cell(r.memo ?? '', ts, color: grey),
       ]));
     }
 
@@ -981,20 +1020,32 @@ class PayslipPdfBuilder {
         _cell(_fmtMin(d.totalOvertimeMinutes), ts, bold: true),
         _cell(_fmtMin(d.totalNightMinutes), ts, bold: true),
         _cell(_fmtWon(d.totalNetWage), ts, bold: true, align: pw.Alignment.centerRight),
+        if (hasMemos) _cell('', ts),
       ],
     ));
 
     return pw.Table(
       border: pw.TableBorder.all(color: PdfColor.fromHex('#E0E0E0'), width: 0.5),
-      columnWidths: const {
-        0: pw.FixedColumnWidth(40),
-        1: pw.FixedColumnWidth(45),
-        2: pw.FixedColumnWidth(45),
-        3: pw.FixedColumnWidth(50),
-        4: pw.FixedColumnWidth(40),
-        5: pw.FixedColumnWidth(40),
-        6: pw.FlexColumnWidth(1),
-      },
+      columnWidths: hasMemos
+          ? const {
+              0: pw.FixedColumnWidth(35),
+              1: pw.FixedColumnWidth(40),
+              2: pw.FixedColumnWidth(40),
+              3: pw.FixedColumnWidth(45),
+              4: pw.FixedColumnWidth(35),
+              5: pw.FixedColumnWidth(35),
+              6: pw.FlexColumnWidth(1),
+              7: pw.FlexColumnWidth(2),
+            }
+          : const {
+              0: pw.FixedColumnWidth(40),
+              1: pw.FixedColumnWidth(45),
+              2: pw.FixedColumnWidth(45),
+              3: pw.FixedColumnWidth(50),
+              4: pw.FixedColumnWidth(40),
+              5: pw.FixedColumnWidth(40),
+              6: pw.FlexColumnWidth(1),
+            },
       children: rows,
     );
   }

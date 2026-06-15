@@ -163,6 +163,8 @@ class _UserTOCardState extends State<UserTOCard> {
       if (AppStatus.inactiveStates.contains(app.status)) return false;
       if (app.isLongTermApplication && app.isTerminationApproved) return false;
       if (app.toId?.isNotEmpty == true && app.toId != widget.to.id) return false;
+      // slotId가 있으면 정확히 슬롯 단위로 매칭, 없으면 날짜 폴백 (레거시 지원서)
+      if (app.slotId?.isNotEmpty == true) return app.slotId == slot.id;
       final appDate = DateTime(app.workDate.year, app.workDate.month, app.workDate.day);
       return appDate == slotDate;
     });
@@ -304,15 +306,22 @@ class _UserTOCardState extends State<UserTOCard> {
                       _buildExpandBar(context),
                       // 펼친 영역
                       AnimatedSize(
-                        duration: const Duration(milliseconds: 220),
-                        curve: Curves.easeOutCubic,
+                        duration: const Duration(milliseconds: 280),
+                        curve: Curves.easeInOutCubic,
                         alignment: Alignment.topCenter,
-                        clipBehavior: Clip.hardEdge,
+                        clipBehavior: Clip.antiAlias,
                         child: widget.isSelected
-                            ? Column(children: [
-                                Divider(height: 1, color: AppColors.grey100),
-                                _buildExpanded(context),
-                              ])
+                            ? TweenAnimationBuilder<double>(
+                                tween: Tween(begin: 0.0, end: 1.0),
+                                duration: const Duration(milliseconds: 180),
+                                curve: Curves.easeIn,
+                                builder: (context, opacity, child) =>
+                                    Opacity(opacity: opacity, child: child!),
+                                child: Column(children: [
+                                  Divider(height: 1, color: AppColors.grey100),
+                                  _buildExpanded(context),
+                                ]),
+                              )
                             : const SizedBox.shrink(),
                       ),
                     ],
@@ -669,18 +678,16 @@ class _UserTOCardState extends State<UserTOCard> {
 
   Widget _buildSlotRow(BuildContext context, SlotModel slot, DateTime now) {
     final isPending = slot.visibleFrom != null && slot.visibleFrom!.isAfter(now);
-    final isDatePast = slot.isDatePast;
-    final isManualClosed = slot.isClosed;
-    final isFull = slot.isFull;
-    // 모든 업무의 지원 마감시각이 경과한 경우 → 슬롯 마감 처리
-    final isAllDeadlineExpired = slot.workDetails.isNotEmpty &&
-        slot.workDetails.every((wd) => wd.isTimeExpired);
-    final isDisabled =
-        isPending || isDatePast || isManualClosed || isFull || isAllDeadlineExpired;
+    // 모델 단일 진실 소스 사용 — wd.isClosed(수동마감) + slot.applicationDeadline 모두 포함
+    final isEffectivelyClosed = slot.isEffectivelyClosed;
+    final isDisabled = isPending || isEffectivelyClosed;
 
     final hasApplied = _hasAppliedForSlot(slot);
 
-    // 상태 결정
+    // 배지 우선순위: 지원완료 > 예약(visibleFrom 미래) > 충족 > 마감 > 모집중
+    // isFull을 isEffectivelyClosed보다 먼저 체크: slot.isFull은 isEffectivelyClosed에
+    // 포함되지만 '충족'과 '마감'을 구분 표시하기 위해 별도 처리.
+    // TO 레벨 isManualClosed는 all_to_list_screen 필터에서 이미 제외되므로 여기서 불필요.
     String statusLabel;
     Color statusBg;
     Color statusFg;
@@ -692,11 +699,11 @@ class _UserTOCardState extends State<UserTOCard> {
       statusLabel = '예약';
       statusBg = AppColors.warningBg;
       statusFg = AppColors.warningDark;
-    } else if (isFull) {
+    } else if (slot.isFull) {
       statusLabel = '충족';
       statusBg = AppColors.grey100;
       statusFg = AppColors.grey500;
-    } else if (isManualClosed || isDatePast || isAllDeadlineExpired) {
+    } else if (isEffectivelyClosed) {
       statusLabel = '마감';
       statusBg = AppColors.grey100;
       statusFg = AppColors.grey500;
@@ -1098,6 +1105,7 @@ class _UserTOCardState extends State<UserTOCard> {
     final now = DateTime.now();
     final groupTOsByDate = <DateTime, TOModel>{};
     final groupWorkDetailsByDate = <DateTime, List<WorkDetailData>>{};
+    final groupSlotIdsByDate = <DateTime, String>{};
 
     for (final slot in slots) {
       if (slot.isEffectivelyClosed) continue;
@@ -1112,6 +1120,7 @@ class _UserTOCardState extends State<UserTOCard> {
           slot.isWorkTypeFull(wd.workType)
               ? wd.copyWith(runtimeFull: true)
               : wd).toList();
+      groupSlotIdsByDate[dateKey] = slot.id;
     }
 
     if (!mounted) return;
@@ -1123,6 +1132,7 @@ class _UserTOCardState extends State<UserTOCard> {
       workDetails: widget.to.workDetails,
       groupTOsByDate: groupTOsByDate,
       groupWorkDetailsByDate: groupWorkDetailsByDate,
+      groupSlotIdsByDate: groupSlotIdsByDate,
       businessName: widget.to.businessName,
       myApplications: widget.myApplications,
     );
@@ -1162,6 +1172,7 @@ class _UserTOCardState extends State<UserTOCard> {
       context: context,
       to: slotTO,
       workDetails: annotatedDetails,
+      slotId: slot.id,
       businessName: widget.to.businessName,
       myApplications: widget.myApplications,
     );
@@ -1230,7 +1241,9 @@ class _WorkItem extends StatelessWidget {
                 children: [
                   Text(work.workType,
                       style: ResponsiveHelper.bodyStyle(context)
-                          .copyWith(fontWeight: FontWeight.w600)),
+                          .copyWith(fontWeight: FontWeight.w600),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis),
                   SizedBox(height: ResponsiveHelper.spacing(context, 3)),
                   _infoRow(context),
                 ],
@@ -1288,6 +1301,8 @@ class _WorkItem extends StatelessWidget {
     );
   }
 
+  // _WorkItem은 _buildWorkList 전용 — contract TO (!isFlexType) 에서만 호출됨.
+  // contract TO는 isLongTerm=true이므로 아래 !isLongTerm 분기는 단기 단일날짜 레거시 TO 대응용.
   Widget _statusBadge(BuildContext context, bool hasApplied, bool isConfirmed) {
     if (hasApplied) {
       return _chip(context,
@@ -1296,6 +1311,7 @@ class _WorkItem extends StatelessWidget {
           Colors.white);
     }
     if (to.isLongTerm) {
+      // contract TO: TO 레벨 마감(수동/게시만료) → 업무별 마감 순으로 판단
       if (to.isManualClosed || to.isDeadlinePassed) {
         return _chip(context, '마감', AppColors.grey400, Colors.white);
       }
@@ -1303,6 +1319,7 @@ class _WorkItem extends StatelessWidget {
       if (work.isEmergencyOpen) return _chip(context, '긴급', AppColors.error, Colors.white);
       return _chip(context, '모집중', AppColors.successBg, AppColors.successDark);
     }
+    // 단기 단일날짜 레거시 TO: 업무 레벨 상태만 체크
     if (work.isClosed || work.isTimeExpired || work.isFull) {
       return _chip(context, '마감', AppColors.grey400, Colors.white);
     }

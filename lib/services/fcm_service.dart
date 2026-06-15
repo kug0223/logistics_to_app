@@ -1,9 +1,12 @@
 ﻿import 'dart:async';
+import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import '../screens/common/notification_screen.dart';
+import '../screens/user/my_schedule_screen.dart';
+import '../screens/user/user_contracts_screen.dart';
 
 /// FCM 푸시 알림 서비스
 class FCMService {
@@ -18,10 +21,28 @@ class FCMService {
   String? _currentUserId;
   bool _isInitialized = false;
   bool _isInitializing = false; // 중복 초기화 방지 플래그
+  String? _pendingUserId;       // [118] 초기화 진행 중 계정 전환 요청 대기
   StreamSubscription? _tokenRefreshSub;
   StreamSubscription? _onMessageSub;
   StreamSubscription? _onMessageOpenedAppSub;
   
+  /// 관리자 데이터 갱신 콜백 (포그라운드 지원/취소 알림 수신 시 호출)
+  final Set<VoidCallback> _adminRefreshCallbacks = {};
+
+  void addAdminRefreshListener(VoidCallback callback) {
+    _adminRefreshCallbacks.add(callback);
+  }
+
+  void removeAdminRefreshListener(VoidCallback callback) {
+    _adminRefreshCallbacks.remove(callback);
+  }
+
+  void _notifyAdminRefresh() {
+    for (final cb in _adminRefreshCallbacks) {
+      cb();
+    }
+  }
+
   /// 전역 Navigator Key (main.dart에서 설정)
   GlobalKey<NavigatorState>? _navigatorKey;
   
@@ -37,9 +58,16 @@ class FCMService {
       return;
     }
     if (_isInitializing) {
-      debugPrint('ℹ️ FCM 초기화 진행 중 — 중복 호출 무시');
+      if (_currentUserId != userId) {
+        // [118] 다른 사용자로 전환 요청 — 현재 초기화 완료 후 재초기화
+        _pendingUserId = userId;
+        debugPrint('ℹ️ FCM 초기화 진행 중 — 계정 전환($userId) 대기 등록');
+      } else {
+        debugPrint('ℹ️ FCM 초기화 진행 중 — 중복 호출 무시');
+      }
       return;
     }
+    _pendingUserId = null;
     _isInitializing = true;
 
     try {
@@ -84,6 +112,13 @@ class FCMService {
       _currentUserId = null;
     } finally {
       _isInitializing = false;
+      // [118] 초기화 중 계정 전환 요청이 있었으면 재초기화
+      final pending = _pendingUserId;
+      _pendingUserId = null;
+      if (pending != null && pending != _currentUserId) {
+        debugPrint('🔄 FCM 계정 전환 재초기화: $pending');
+        await initialize(pending);
+      }
     }
   }
 
@@ -182,8 +217,15 @@ class FCMService {
       _showLocalNotification(
         title: title,
         body: body,
-        payload: message.data.toString(),
+        payload: jsonEncode(message.data),
       );
+    }
+
+    // 지원/취소 알림 수신 시 관리자 화면 자동 갱신
+    const adminRefreshTypes = {'newApplication', 'applicationCanceled'};
+    final type = message.data['type'] as String? ?? '';
+    if (adminRefreshTypes.contains(type)) {
+      _notifyAdminRefresh();
     }
   }
 
@@ -225,6 +267,14 @@ class FCMService {
   /// 알림 탭 처리
   void _onNotificationTap(NotificationResponse response) {
     debugPrint('🔔 알림 탭: ${response.payload}');
+    final payload = response.payload;
+    if (payload != null && payload.isNotEmpty) {
+      try {
+        final data = Map<String, dynamic>.from(jsonDecode(payload) as Map);
+        _navigateByPayload(data);
+        return;
+      } catch (_) {}
+    }
     _navigateToNotificationScreen();
   }
 
@@ -235,15 +285,24 @@ class FCMService {
   }
 
   /// FCM data payload 기반 딥링크 라우팅
-  ///
-  /// NotificationScreen 진입 후 _handleNotificationTap에서 type별 세부 화면 이동 처리
   void _navigateByPayload(Map<String, dynamic> data) {
     if (_navigatorKey?.currentState == null) return;
-    // 향후 type별 직접 라우팅 확장 지점
-    // 예: type == 'CONTRACT_SIGN' → ContractSignScreen
-    //     type == 'ATTENDANCE'   → AttendanceCheckScreen
-    // 현재는 알림 목록 화면으로 이동 (NotificationScreen 내 탭으로 세부 이동)
-    _navigateToNotificationScreen();
+    final screen = data['screen'] as String?;
+    switch (screen) {
+      case 'contractSign':
+        _navigatorKey!.currentState!.push(
+          MaterialPageRoute(builder: (_) => const UserContractsScreen()),
+        );
+        break;
+      case 'contractRenewal':
+      case 'mySchedule':
+        _navigatorKey!.currentState!.push(
+          MaterialPageRoute(builder: (_) => const MyScheduleScreen()),
+        );
+        break;
+      default:
+        _navigateToNotificationScreen();
+    }
   }
   
   /// Navigator 준비될 때까지 최대 5초 대기 후 알림 화면 이동 (앱 종료 상태 복귀 처리)
@@ -281,32 +340,33 @@ class FCMService {
 
   /// 로그아웃 시 토큰 삭제
   Future<void> clearToken() async {
-    if (_currentUserId == null) return;
-
     try {
-      final currentToken = await _messaging.getToken();
-      final updates = <String, dynamic>{'fcmToken': FieldValue.delete()};
-      if (currentToken != null) {
-        // 현재 디바이스 토큰만 배열에서 제거 — 다른 디바이스 토큰은 유지
-        updates['fcmTokens'] = FieldValue.arrayRemove([currentToken]);
+      if (_currentUserId != null) {
+        final currentToken = await _messaging.getToken();
+        final updates = <String, dynamic>{'fcmToken': FieldValue.delete()};
+        if (currentToken != null) {
+          // 현재 디바이스 토큰만 배열에서 제거 — 다른 디바이스 토큰은 유지
+          updates['fcmTokens'] = FieldValue.arrayRemove([currentToken]);
+        }
+        await FirebaseFirestore.instance
+            .collection('users')
+            .doc(_currentUserId)
+            .update(updates);
+        debugPrint('✅ FCM 토큰 삭제 완료');
       }
-      await FirebaseFirestore.instance
-          .collection('users')
-          .doc(_currentUserId)
-          .update(updates);
-      debugPrint('✅ FCM 토큰 삭제 완료');
     } catch (e) {
       debugPrint('❌ FCM 토큰 삭제 실패: $e');
+    } finally {
+      // _currentUserId null 여부와 무관하게 구독은 항상 취소
+      _tokenRefreshSub?.cancel();
+      _tokenRefreshSub = null;
+      _onMessageSub?.cancel();
+      _onMessageSub = null;
+      _onMessageOpenedAppSub?.cancel();
+      _onMessageOpenedAppSub = null;
+      _currentUserId = null;
+      _isInitialized = false;
+      _isInitializing = false;
     }
-
-    _tokenRefreshSub?.cancel();
-    _tokenRefreshSub = null;
-    _onMessageSub?.cancel();
-    _onMessageSub = null;
-    _onMessageOpenedAppSub?.cancel();
-    _onMessageOpenedAppSub = null;
-    _currentUserId = null;
-    _isInitialized = false;
-    _isInitializing = false;
   }
 }

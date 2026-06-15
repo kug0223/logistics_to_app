@@ -1,28 +1,51 @@
-# This file configures the analyzer, which statically analyzes Dart code to
-# check for errors, warnings, and lints.
-#
-# The issues identified by the analyzer are surfaced in the UI of Dart-enabled
-# IDEs (https://dart.dev/tools#ides-and-editors). The analyzer can also be
-# invoked from the command line by running `flutter analyze`.
-
-# The following line activates a set of recommended lints for Flutter apps,
-# packages, and plugins designed to encourage good coding practices.
 include: package:flutter_lints/flutter.yaml
 
-linter:
-  # The lint rules applied to this project can be customized in the
-  # section below to disable rules from the `package:flutter_lints/flutter.yaml`
-  # included above or to enable additional rules. A list of all available lints
-  # and their documentation is published at https://dart.dev/lints.
-  #
-  # Instead of disabling a lint rule for the entire project in the
-  # section below, it can also be suppressed for a single line of code
-  # or a specific dart file by using the `// ignore: name_of_lint` and
-  # `// ignore_for_file: name_of_lint` syntax on the line or in the file
-  # producing the lint.
-  rules:
-    # avoid_print: false  # Uncomment to disable the `avoid_print` rule
-    # prefer_single_quotes: true  # Uncomment to enable the `prefer_single_quotes` rule
+analyzer:
+  errors:
+    # mounted 체크 누락을 warning → error로 격상 (async gap 후 context 사용 차단)
+    use_build_context_synchronously: error
+    # Future.wait 결과를 구체 타입으로 캐스트할 때 false-positive 발생 — ignore
+    unnecessary_cast: ignore
 
-# Additional information about this file can be found at
-# https://dart.dev/guides/language/analysis-options
+  exclude:
+    - '**/*.g.dart'
+    - '**/*.freezed.dart'
+    - 'test/**'
+
+linter:
+  rules:
+    # ── 기존 false-positive 억제 ─────────────────────────────
+    # Firestore 상태값/역할 상수는 프로젝트 전반에서 UPPER_CASE 사용 관례
+    constant_identifier_names: false
+
+
+    # Business_form_screen.dart 파일명 대문자 관례 (변경 시 전체 import 수정 필요)
+    file_names: false
+
+    # pubspec.yaml 패키지명 ALfit — Android 설정 연동으로 변경 불가
+    package_names: false
+
+    # ── 비동기 안전성 ─────────────────────────────────────────
+    # unawaited_futures: 기존 코드 전체에서 의도적 미await(UI 이벤트 핸들러 패턴)이 광범위.
+    # 새 코드에서 실수 방지는 use_build_context_synchronously: error 로 보완.
+    unawaited_futures: false
+
+    # async void는 호출자가 에러를 catch 불가 — async 이벤트 핸들러 제외 시 위험
+    avoid_void_async: true
+
+    # ── 리소스 관리 ───────────────────────────────────────────
+    # StreamSubscription.cancel() 누락 방지 (메모리 누수)
+    cancel_subscriptions: true
+
+    # Sink.close() 누락 방지
+    close_sinks: true
+
+    # ── 코드 품질 ─────────────────────────────────────────────
+    # print() 사용 금지 — debugPrint() 또는 logger 사용
+    avoid_print: true
+
+    # 결과가 사용되지 않는 단독 구문 방지 (실수로 메서드 호출만 하고 결과 버림)
+    unnecessary_statements: true
+
+    # 불필요한 await 제거 (non-Future에 await 사용)
+    unnecessary_await_in_return: true

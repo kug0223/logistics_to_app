@@ -124,10 +124,7 @@ class _PayslipViewScreenState extends State<PayslipViewScreen> {
           workerName: _workerName,
           businessName: widget.attendance.businessName,
           workDate: widget.attendance.workDate,
-          netWage: data.wageDetail.netWage > 0
-              ? data.wageDetail.netWage
-              : data.wageDetail.totalAmount -
-                  data.wageDetail.totalInsuranceDeduction,
+          netWage: data.wageDetail.effectiveNetWage,
         ),
 
         // PDF 핀치줌 뷰어 (직접 핀치로 확대/축소)

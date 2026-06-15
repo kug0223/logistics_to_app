@@ -132,6 +132,8 @@ class _PayrollOverviewScreenState extends State<PayrollOverviewScreen> {
     final theme = Theme.of(context);
     return GradientScaffold(
       title: '급여 관리',
+      showNotificationBell: true,
+      onRefresh: () => _loadYear(_selectedYear),
       headerContent: _buildYearSelector(theme),
       body: Column(
         children: [
@@ -301,6 +303,21 @@ class _PayrollOverviewScreenState extends State<PayrollOverviewScreen> {
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
               ),
+              if (summary.pendingCount > 0 || summary.notTransferredCount > 0)
+                Text(
+                  [
+                    if (summary.pendingCount > 0) '미확정 ${summary.pendingCount}',
+                    if (summary.notTransferredCount > 0) '미이체 ${summary.notTransferredCount}',
+                  ].join(' · '),
+                  style: ResponsiveHelper.tinyStyle(context).copyWith(
+                    color: summary.pendingCount > 0
+                        ? AppColors.warningDark
+                        : AppColors.error,
+                    fontWeight: FontWeight.w600,
+                  ),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
             ],
           ],
         ),
@@ -312,6 +329,8 @@ class _PayrollOverviewScreenState extends State<PayrollOverviewScreen> {
 // ─────────────────────────────────────────────────────────────────────────────
 // 월별 근무자 목록 화면
 // ─────────────────────────────────────────────────────────────────────────────
+
+enum _SortOrder { amountDesc, amountAsc, nameAsc, workDaysDesc }
 
 class PayrollMonthScreen extends StatefulWidget {
   final PayrollSummaryModel summary;
@@ -325,9 +344,22 @@ class PayrollMonthScreen extends StatefulWidget {
 class _PayrollMonthScreenState extends State<PayrollMonthScreen> {
   final _searchCtrl = TextEditingController();
   String _searchQuery = '';
+  _SortOrder _sortOrder = _SortOrder.amountDesc;
 
   List<PayrollWorkerSummary> get _filteredWorkers {
-    final workers = widget.summary.sortedWorkers;
+    final workers = List<PayrollWorkerSummary>.of(widget.summary.workers.values);
+
+    switch (_sortOrder) {
+      case _SortOrder.amountDesc:
+        workers.sort((a, b) => b.totalPayout.compareTo(a.totalPayout));
+      case _SortOrder.amountAsc:
+        workers.sort((a, b) => a.totalPayout.compareTo(b.totalPayout));
+      case _SortOrder.nameAsc:
+        workers.sort((a, b) => a.name.compareTo(b.name));
+      case _SortOrder.workDaysDesc:
+        workers.sort((a, b) => b.workDays.compareTo(a.workDays));
+    }
+
     if (_searchQuery.isEmpty) return workers;
     final q = _searchQuery.toLowerCase();
     return workers.where((w) => w.name.toLowerCase().contains(q)).toList();
@@ -388,10 +420,38 @@ class _PayrollMonthScreenState extends State<PayrollMonthScreen> {
       body: Column(
         children: [
           _buildSummaryHeader(context, theme),
-          // 검색 바
-          AppSearchBar(
-            controller: _searchCtrl,
-            hintText: '근무자 이름으로 검색',
+          // 검색 바 + 정렬 버튼
+          Row(
+            children: [
+              Expanded(
+                child: AppSearchBar(
+                  controller: _searchCtrl,
+                  hintText: '근무자 이름으로 검색',
+                  padding: EdgeInsets.fromLTRB(
+                    ResponsiveHelper.spacing(context, 16),
+                    ResponsiveHelper.spacing(context, 8),
+                    0,
+                    ResponsiveHelper.spacing(context, 8),
+                  ),
+                ),
+              ),
+              PopupMenuButton<_SortOrder>(
+                initialValue: _sortOrder,
+                onSelected: (order) => setState(() => _sortOrder = order),
+                icon: Icon(
+                  Icons.sort,
+                  color: _sortOrder == _SortOrder.amountDesc
+                      ? AppColors.grey400
+                      : theme.primaryColor,
+                ),
+                itemBuilder: (ctx) => [
+                  _sortMenuItem(ctx, _SortOrder.amountDesc, '지급액 높은순', Icons.arrow_downward),
+                  _sortMenuItem(ctx, _SortOrder.amountAsc,  '지급액 낮은순', Icons.arrow_upward),
+                  _sortMenuItem(ctx, _SortOrder.nameAsc,    '이름순',        Icons.sort_by_alpha),
+                  _sortMenuItem(ctx, _SortOrder.workDaysDesc, '근무일수 많은순', Icons.calendar_today),
+                ],
+              ),
+            ],
           ),
           Expanded(
             child: filtered.isEmpty
@@ -413,6 +473,33 @@ class _PayrollMonthScreenState extends State<PayrollMonthScreen> {
                         _buildWorkerTile(context, theme, filtered[i]),
                   ),
           ),
+        ],
+      ),
+    );
+  }
+
+  PopupMenuItem<_SortOrder> _sortMenuItem(
+    BuildContext ctx,
+    _SortOrder value,
+    String label,
+    IconData icon,
+  ) {
+    final isSelected = _sortOrder == value;
+    final color = isSelected ? Theme.of(ctx).primaryColor : AppColors.grey700;
+    return PopupMenuItem<_SortOrder>(
+      value: value,
+      child: Row(
+        children: [
+          Icon(icon, size: 16, color: color),
+          const SizedBox(width: 10),
+          Text(label,
+              style: ResponsiveHelper.smallStyle(ctx,
+                  color: color,
+                  fontWeight: isSelected ? FontWeight.w700 : FontWeight.normal)),
+          if (isSelected) ...[
+            const Spacer(),
+            Icon(Icons.check, size: 14, color: color),
+          ],
         ],
       ),
     );
@@ -537,6 +624,8 @@ class _PayrollMonthScreenState extends State<PayrollMonthScreen> {
                     style: ResponsiveHelper.bodyStyle(context).copyWith(
                       fontWeight: FontWeight.w600,
                     ),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
                   ),
                   SizedBox(height: ResponsiveHelper.spacing(context, 2)),
                   Text(

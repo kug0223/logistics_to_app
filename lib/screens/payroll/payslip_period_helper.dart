@@ -285,10 +285,7 @@ class AggregatedPayslipData {
       totalIncomeTax:          sumInt((r) => wd(r).incomeTaxDeduction),
       totalRetroactiveDeduction:sumInt((r) => wd(r).retroactiveDeduction),
       totalInsuranceDeduction: sumInt((r) => wd(r).totalInsuranceDeduction),
-      totalNetWage:            sumInt((r) {
-        final w = wd(r);
-        return w.netWage > 0 ? w.netWage : w.totalAmount - w.totalInsuranceDeduction;
-      }),
+      totalNetWage:            sumInt((r) => wd(r).effectiveNetWage),
       taxDeductionTypeLabel: valid.isNotEmpty
           ? (valid.first.wageDetail!.taxDeductionLabel)
           : '세금 없음',
@@ -315,6 +312,12 @@ class AggregatedPayslipData {
   }
 
   bool get hasDeductions => totalInsuranceDeduction > 0;
+
+  /// 메모가 있는 일별 레코드 목록 (특이사항 섹션용)
+  List<DailyRecord> get memoRecords =>
+      dailyRecords.where((r) => r.memo != null && r.memo!.isNotEmpty).toList();
+
+  bool get hasMemos => memoRecords.isNotEmpty;
 }
 
 /// 일별 상세 행 (PDF 2페이지 테이블용)
@@ -327,6 +330,7 @@ class DailyRecord {
   final int nightMinutes;
   final int netWage;
   final String status;
+  final String? memo;
 
   const DailyRecord({
     required this.workDate,
@@ -337,13 +341,12 @@ class DailyRecord {
     required this.nightMinutes,
     required this.netWage,
     required this.status,
+    this.memo,
   });
 
   factory DailyRecord.fromAttendance(AttendanceModel a) {
     final wd = a.wageDetail;
-    final net = wd != null
-        ? (wd.netWage > 0 ? wd.netWage : wd.totalAmount - wd.totalInsuranceDeduction)
-        : 0;
+    final net = wd?.effectiveNetWage ?? 0;
     return DailyRecord(
       workDate: a.workDate,
       checkIn: a.checkIn,
@@ -353,6 +356,7 @@ class DailyRecord {
       nightMinutes: wd?.nightMinutes ?? 0,
       netWage: net,
       status: a.status,
+      memo: wd?.memo,
     );
   }
 }

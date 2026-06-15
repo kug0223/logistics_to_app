@@ -4,6 +4,21 @@ import 'package:flutter/material.dart';
 import '../../utils/responsive_helper.dart';
 import '../../theme/app_colors.dart';
 
+/// 앱 전체 다이얼로그 크기 표준
+///
+/// 모든 커스텀 Dialog 위젯에서 이 값을 사용해 크기를 통일한다.
+/// StyledDialog, WageConfirmDialog, AttendanceStatusDialog 등 동일 적용.
+class AppDialogSize {
+  /// Dialog 좌우 여백
+  static const double insetH = 16.0;
+  /// Dialog 상하 여백
+  static const double insetV = 24.0;
+  /// 화면 높이 대비 최대 높이 비율
+  static const double maxHeightRatio = 0.92;
+  /// 모서리 반경
+  static const double borderRadius = 24.0;
+}
+
 /// ✨ 세련된 다이얼로그 위젯
 /// 
 /// 역할별 테마에 맞는 그라데이션 헤더와 통일된 디자인 제공
@@ -75,10 +90,10 @@ class StyledDialog extends StatelessWidget {
     required this.content,
     this.actions,
     this.showCloseButton = false,
-    this.maxWidth = 500,
-    this.maxHeightRatio = 0.8,
+    this.maxWidth,
+    this.maxHeightRatio = 0.92,
     this.fillHeight = false,
-    this.insetPadding = const EdgeInsets.symmetric(horizontal: 40, vertical: 24),
+    this.insetPadding = const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
   });
 
   @override
@@ -89,13 +104,14 @@ class StyledDialog extends StatelessWidget {
     final screenH = MediaQuery.sizeOf(context).height;
 
     return Dialog(
+      backgroundColor: Colors.white,
       insetPadding: insetPadding,
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(24),
       ),
       child: Container(
         constraints: BoxConstraints(
-          maxWidth: maxWidth ?? 500,
+          maxWidth: maxWidth ?? double.infinity,
           minHeight: fillHeight ? screenH * maxHeightRatio : 0,
           maxHeight: screenH * maxHeightRatio,
         ),
@@ -186,8 +202,6 @@ class StyledDialog extends StatelessWidget {
               tooltip: '닫기',
               onPressed: () => Navigator.pop(context),
               icon: Icon(Icons.close, color: AppColors.surface),
-              padding: EdgeInsets.zero,
-              constraints: const BoxConstraints(),
             ),
         ],
       ),

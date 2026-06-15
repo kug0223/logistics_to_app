@@ -37,6 +37,7 @@ class AttendanceQuickTimeSheet extends StatefulWidget {
   }) {
     return showModalBottomSheet<String>(
       context: context,
+      useSafeArea: true,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
       builder: (context) => AttendanceQuickTimeSheet(

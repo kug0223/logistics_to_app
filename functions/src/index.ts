@@ -440,7 +440,8 @@ export const onMemberInvitationAccepted = onDocumentUpdated(
     if (before.status !== "pending" || after.status !== "accepted") return;
 
     const targetUid = after.targetUid as string | undefined;
-    const businessId = after.businessId as string | undefined;
+    // [SEC-001] before.businessId 사용 — after는 수신자가 변조했을 수 있음
+    const businessId = before.businessId as string | undefined;
     if (!targetUid || !businessId) {
       console.error("⚠️ [초대수락 트리거] targetUid 또는 businessId 누락", after);
       return;
@@ -526,9 +527,14 @@ export const onNotificationCreated = onDocumentCreated(
         }
       }
 
-      const fcmToken = userData?.fcmToken as string | undefined;
+      // fcmTokens 배열 우선, 없으면 단일 fcmToken으로 폴백 (하위 호환)
+      const tokenArray = userData?.fcmTokens as string[] | undefined;
+      const singleToken = userData?.fcmToken as string | undefined;
+      const fcmTokens: string[] = tokenArray && tokenArray.length > 0
+        ? tokenArray
+        : (singleToken ? [singleToken] : []);
 
-      if (!fcmToken) {
+      if (fcmTokens.length === 0) {
         console.log(`⚠️ [알림 트리거] FCM 토큰 없음: ${userId}`);
         return;
       }
@@ -551,47 +557,57 @@ export const onNotificationCreated = onDocumentCreated(
         }
       }
 
-      // FCM 메시지 전송
-      await admin.messaging().send({
-        token: fcmToken,
-        notification: {
-          title: title,
-          body: body || "",
-        },
-        data: fcmData,
-        android: {
-          priority: "high",
-          notification: {
-            channelId: "alfit_notifications",
-            sound: "default",
-          },
-        },
-        apns: {
-          payload: {
-            aps: {
-              sound: "default",
-              badge: 1,
+      // 멀티 디바이스: 토큰 배열 순회 발송
+      let successCount = 0;
+      for (const token of fcmTokens) {
+        try {
+          await admin.messaging().send({
+            token: token,
+            notification: {
+              title: title,
+              body: body || "",
             },
-          },
-        },
-      });
-
-      console.log(`✅ [알림 트리거] FCM 발송 완료: ${userId}`);
-    } catch (error: unknown) {
-      const errorMessage = error instanceof Error ? error.message : "";
-
-      // 토큰 만료 시 삭제
-      if (
-        errorMessage.includes("not-registered") ||
-        errorMessage.includes("invalid-registration-token")
-      ) {
-        console.log(`⚠️ [알림 트리거] 만료 토큰 삭제: ${userId}`);
-        await db.collection("users").doc(userId).update({
-          fcmToken: admin.firestore.FieldValue.delete(),
-        });
-      } else {
-        console.error(`❌ [알림 트리거] FCM 실패 (${userId}):`, error);
+            data: fcmData,
+            android: {
+              priority: "high",
+              notification: {
+                channelId: "alfit_notifications",
+                sound: "default",
+              },
+            },
+            apns: {
+              payload: {
+                aps: {
+                  sound: "default",
+                  badge: 1,
+                },
+              },
+            },
+          });
+          successCount++;
+        } catch (tokenError: unknown) {
+          const errMsg = tokenError instanceof Error ? tokenError.message : "";
+          if (
+            errMsg.includes("not-registered") ||
+            errMsg.includes("invalid-registration-token")
+          ) {
+            // 만료 토큰: fcmToken 단일 필드 + fcmTokens 배열 양쪽 정리
+            console.log(`⚠️ [알림 트리거] 만료 토큰 정리: ${userId}, token=...${token.slice(-6)}`);
+            await db.collection("users").doc(userId).update({
+              fcmToken: admin.firestore.FieldValue.delete(),
+              fcmTokens: admin.firestore.FieldValue.arrayRemove(token),
+            });
+          } else {
+            console.error(`❌ [알림 트리거] FCM 실패 (${userId}):`, tokenError);
+          }
+        }
       }
+
+      if (successCount > 0) {
+        console.log(`✅ [알림 트리거] FCM 발송 완료: ${userId} (${successCount}/${fcmTokens.length}디바이스)`);
+      }
+    } catch (error: unknown) {
+      console.error(`❌ [알림 트리거] 예외 (${userId}):`, error);
     }
   }
 );
@@ -599,7 +615,7 @@ export const onNotificationCreated = onDocumentCreated(
 // ═══════════════════════════════════════════════════════════
 
 // ═══════════════════════════════════════════════════════════
-// 🔥 통합 마스터 스케줄러 (10분마다 실행)
+// 🔥 통합 마스터 스케줄러 (매 시간 정각 실행)
 // ═══════════════════════════════════════════════════════════
 // - Cloud Scheduler 1개만 사용 (비용 최적화)
 // - 시간대별로 필요한 작업 분기 처리
@@ -715,7 +731,7 @@ async function processMissedCheckouts(now: Timestamp): Promise<void> {
   let count = 0;
   for (const doc of snap.docs) {
     const data = doc.data();
-    if (data.status === "NO_SHOW" || data.status === "missed_checkout") continue;
+    if (data.status === "NO_SHOW" || data.status === "missed_checkout" || data.canceledWithApplication === true) continue;
     batch.update(doc.ref, {
       status: "missed_checkout",  // 관리자 확인 필요 상태
       updatedAt: now,
@@ -1515,6 +1531,7 @@ async function processScheduledPublish(now: Timestamp): Promise<void> {
   let batch = db.batch();
   let batchCount = 0;
   const affectedGroupIds = new Set<string>();
+  const publishedTOIds: string[] = [];
   let processedCount = 0;
 
   for (const doc of snapshot.docs) {
@@ -1535,6 +1552,7 @@ async function processScheduledPublish(now: Timestamp): Promise<void> {
     console.log(`    → ${doc.id} 공개 처리`);
     processedCount++;
     batchCount++;
+    publishedTOIds.push(doc.id);
 
     if (data.groupId) {
       affectedGroupIds.add(data.groupId);
@@ -1550,6 +1568,34 @@ async function processScheduledPublish(now: Timestamp): Promise<void> {
   if (batchCount > 0) await batch.commit();
   const skipped = snapshot.size - processedCount;
   console.log(`  ✅ [예약공개] ${processedCount}개 TO 공개 완료! (건너뜀: ${skipped}개)`);
+
+  // [008] 공개된 TO의 슬롯 중 visibleFrom이 이미 지난 것은 삭제 — 즉시 노출
+  // (publishMode 변경이나 조기 게시로 visibleFrom이 과거 일자에 남아있는 경우 대응)
+  for (const toId of publishedTOIds) {
+    try {
+      const slotsSnap = await db
+        .collection("tos").doc(toId)
+        .collection("slots").get();
+      if (slotsSnap.empty) continue;
+      let slotBatch = db.batch();
+      let slotCount = 0;
+      for (const slot of slotsSnap.docs) {
+        const vf = slot.data().visibleFrom as Timestamp | undefined;
+        if (vf && vf.toMillis() <= now.toMillis()) {
+          slotBatch.update(slot.ref, { visibleFrom: admin.firestore.FieldValue.delete() });
+          slotCount++;
+          if (slotCount >= 499) {
+            await slotBatch.commit();
+            slotBatch = db.batch();
+            slotCount = 0;
+          }
+        }
+      }
+      if (slotCount > 0) await slotBatch.commit();
+    } catch (e) {
+      console.error(`  ⚠️ [예약공개] ${toId} 슬롯 visibleFrom 정리 실패:`, e);
+    }
+  }
 
   // 그룹 마스터 상태 동기화
   for (const groupId of affectedGroupIds) {
@@ -2007,16 +2053,21 @@ async function sendWorkReminders(now: Timestamp): Promise<void> {
         if (notifPrefs?.["workReminder"] === false) {
           console.log(`    ⚠️ 근무 리마인더 FCM 스킵 (수신 차단): ${userId}`);
         } else {
-          const fcmToken = userData?.fcmToken as string | undefined;
-          await sendFCMToUser(
-            userId,
-            {
-              title: "내일 근무 알림 📅",
-              body: fcmBody,
-              data: { type: "workReminder", applicationId: jobs[0].id },
-            },
-            fcmToken ?? null
-          );
+          // [G-001] fcmTokens 배열 우선 사용, 없으면 레거시 fcmToken 단일 필드 폴백
+          const tokens: string[] =
+            (userData?.fcmTokens as string[] | undefined)?.filter(Boolean) ??
+            (userData?.fcmToken ? [userData.fcmToken as string] : []);
+          const fcmPayload = {
+            title: "내일 근무 알림 📅",
+            body: fcmBody,
+            data: { type: "workReminder", applicationId: jobs[0].id },
+          };
+          for (const token of tokens) {
+            await sendFCMToUser(userId, fcmPayload, token);
+          }
+          if (tokens.length === 0) {
+            console.log(`    ⚠️ FCM 토큰 없음 (리마인더 스킵): ${userId}`);
+          }
         }
 
         sentCount++;
@@ -2106,18 +2157,26 @@ function _getNotifCategory(type: string): string | null {
   const map: Record<string, string> = {
     workReminder:              "workReminder",
     newApplication:            "applicationUpdate",
-    applicationApproved:       "applicationUpdate",
+    applicationConfirmed:      "applicationUpdate",   // 수정: applicationApproved → applicationConfirmed
     applicationRejected:       "applicationUpdate",
     applicationCanceled:       "applicationUpdate",
+    confirmationCanceled:      "applicationUpdate",   // 추가: 확정 취소
     applicationCanceledAdmin:  "applicationUpdate",
     autoApplicationCanceled:   "applicationUpdate",
     REVIEW_REQUEST:            "reviewAlert",
     reviewAvailable:           "reviewAlert",
+    reviewReceived:            "reviewAlert",          // 추가
     contractSignRequested:     "contractAlert",
     contractExpiringReminder:  "contractAlert",
     contractRenewed:           "contractAlert",
     contractTerminating:       "contractAlert",
+    terminationRequested:      "contractAlert",        // 추가
+    terminationApproved:       "contractAlert",        // 추가
+    resignRequested:           "contractAlert",        // 추가
+    resignApproved:            "contractAlert",        // 추가
+    resignRejected:            "contractAlert",        // 추가
     wageConfirmed:             "wageAlert",
+    wageCancelConfirmed:       "wageAlert",            // 추가
     attendanceWageChanged:     "wageAlert",
   };
   return map[type] ?? null;
@@ -2139,8 +2198,8 @@ async function sendFCMToUser(
   payload: FCMPayload,
   existingToken?: string | null
 ): Promise<void> {
+  let fcmToken: string | undefined;  // catch 블록에서도 접근 가능하도록 try 밖 선언
   try {
-    let fcmToken: string | undefined;
     if (existingToken !== undefined) {
       fcmToken = existingToken ?? undefined;
     } else {
@@ -2188,10 +2247,14 @@ async function sendFCMToUser(
       errorMessage.includes("not-registered") ||
       errorMessage.includes("invalid-registration-token")
     ) {
-      console.log(`    ⚠️ 만료된 FCM 토큰 삭제: ${userId}`);
-      await db.collection("users").doc(userId).update({
+      console.log(`    ⚠️ 만료된 FCM 토큰 정리: ${userId}`);
+      const updates: Record<string, unknown> = {
         fcmToken: admin.firestore.FieldValue.delete(),
-      });
+      };
+      if (fcmToken) {
+        updates.fcmTokens = admin.firestore.FieldValue.arrayRemove(fcmToken);
+      }
+      await db.collection("users").doc(userId).update(updates);
     } else {
       console.log(`    ⚠️ FCM 전송 실패 (${userId}):`, error);
     }
@@ -3020,6 +3083,49 @@ export const onBusinessDeleted = onDocumentDeleted(
     await deleteSubcollection(`businesses/${businessId}/workTypes`);
     await deleteSubcollection(`businesses/${businessId}/members`);
 
+    // [BB-001] 수락된 멤버의 subAdminOf 초기화 + 초대 문서 삭제
+    const acceptedInviteSnap = await db
+      .collection("member_invitations")
+      .where("businessId", "==", businessId)
+      .where("status", "==", "accepted")
+      .get();
+    if (!acceptedInviteSnap.empty) {
+      let userBatch = db.batch();
+      let userCount = 0;
+      for (const doc of acceptedInviteSnap.docs) {
+        const targetUid = doc.data().targetUid as string | undefined;
+        if (targetUid) {
+          userBatch.update(db.collection("users").doc(targetUid), {
+            subAdminOf: admin.firestore.FieldValue.delete(),
+          });
+          userCount++;
+          if (userCount % 500 === 0) {
+            await userBatch.commit();
+            userBatch = db.batch();
+          }
+        }
+      }
+      if (userCount % 500 !== 0) await userBatch.commit();
+    }
+    // [BB-002] member_invitations 전체 삭제 (pending 포함)
+    const allInviteSnap = await db
+      .collection("member_invitations")
+      .where("businessId", "==", businessId)
+      .get();
+    if (!allInviteSnap.empty) {
+      let invBatch = db.batch();
+      let invCount = 0;
+      for (const doc of allInviteSnap.docs) {
+        invBatch.delete(doc.ref);
+        invCount++;
+        if (invCount % 500 === 0) {
+          await invBatch.commit();
+          invBatch = db.batch();
+        }
+      }
+      if (invCount % 500 !== 0) await invBatch.commit();
+    }
+
     // 해당 사업장의 TO 목록
     const tosSnap = await db
       .collection("tos")
@@ -3071,12 +3177,18 @@ export const onBusinessDeleted = onDocumentDeleted(
         }
       }
 
-      // TO 문서 삭제
-      const tosBatch = db.batch();
+      // TO 문서 삭제 (500건 분할)
+      let tosBatch = db.batch();
+      let tosCount = 0;
       for (const doc of tosSnap.docs) {
         tosBatch.delete(doc.ref);
+        tosCount++;
+        if (tosCount % 500 === 0) {
+          await tosBatch.commit();
+          tosBatch = db.batch();
+        }
       }
-      await tosBatch.commit();
+      if (tosCount % 500 !== 0) await tosBatch.commit();
     }
 
     console.log(`사업장 삭제 cascade 완료: ${businessId}`);

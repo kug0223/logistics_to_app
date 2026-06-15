@@ -45,8 +45,12 @@ class ContractService {
         toId: toId,
         workDetailId: workDetailId,
         workerId: worker.uid,
+        businessId: business.id,
       );
-      if (existing != null && existing.status != ContractStatus.voided) {
+      // [K-001] pendingEmployer 상태에서만 슬롯 추가 허용
+      // — pendingWorker 이상(사업주 서명 완료)은 슬롯 추가 불가: 서명 무결성 보호
+      if (existing != null &&
+          existing.status == ContractStatus.pendingEmployer) {
         return _addSlot(existing, application, workDetail);
       }
     }
@@ -112,13 +116,22 @@ class ContractService {
       updatedAt: now,
     );
 
-    // Firestore 저장 — 동시 서명 방지를 위해 트랜잭션으로 현재 상태 검증
+    // Firestore 저장 — 동시 서명·중복 생성 방지를 위해 항상 트랜잭션 사용
     try {
       final ref = _db.collection('employment_contracts').doc(contract.id);
+      final employerHash = sha256.convert(signatureBytes).toString();
       if (contract.isNewUnsaved) {
+        // 신규 계약서: 동시 이중 제출 시 문서 중복 생성 방지
         final data = updated.toMap();
         data['createdAt'] = FieldValue.serverTimestamp();
-        await ref.set(data);
+        await _db.runTransaction((tx) async {
+          final snap = await tx.get(ref);
+          if (snap.exists) {
+            throw Exception('이미 계약서가 생성되었습니다');
+          }
+          data['employerSignatureHash'] = employerHash;
+          tx.set(ref, data);
+        });
       } else {
         await _db.runTransaction((tx) async {
           final snap = await tx.get(ref);
@@ -132,7 +145,6 @@ class ContractService {
             }
           }
           // SHA-256 해시로 서명 무결성 기록
-          final employerHash = sha256.convert(signatureBytes).toString();
           tx.update(ref, {
             'status': updated.status.value,
             'employerSignatureUrl': url,
@@ -148,7 +160,10 @@ class ContractService {
         await _storage.ref()
             .child('contracts/${contract.id}/signature_employer.png')
             .delete();
-      } catch (_) {}
+      } catch (cleanupErr) {
+        // [K-004] 서명 파일 삭제 실패 — 고아 파일 가능성, 수동 확인 필요
+        debugPrint('⚠️ [K-004] 사업주 서명 파일 삭제 실패 (고아 파일 주의) — ${contract.id}: $cleanupErr');
+      }
       rethrow;
     }
 
@@ -238,16 +253,21 @@ class ContractService {
           'updatedAt': nowTs,
         });
         // 계약서 + application 상태를 하나의 트랜잭션으로 원자적 처리
+        // CONTRACT_PENDING 상태인 경우에만 업데이트 — 이미 CONFIRMED이면 rules 위반 방지
         for (final appId in contract.applicationIds) {
-          tx.update(_db.collection('applications').doc(appId), {
-            'status': 'CONFIRMED',
-            'statusHistory': FieldValue.arrayUnion([{
+          final appRef = _db.collection('applications').doc(appId);
+          final appSnap = await tx.get(appRef);
+          if (appSnap.data()?['status'] == 'CONTRACT_PENDING') {
+            tx.update(appRef, {
               'status': 'CONFIRMED',
-              'at': nowTs,
-              'by': 'SYSTEM',
-              'action': 'CONTRACT_SIGNED',
-            }]),
-          });
+              'statusHistory': FieldValue.arrayUnion([{
+                'status': 'CONFIRMED',
+                'at': nowTs,
+                'by': 'SYSTEM',
+                'action': 'CONTRACT_SIGNED',
+              }]),
+            });
+          }
         }
       });
     } catch (e) {
@@ -298,6 +318,10 @@ class ContractService {
   }
 
   /// 기존 계약서에 템플릿 조항 적용 (articles가 비어있던 구 계약서용)
+  ///
+  /// ⚠️ 계약서 상태(completed/voided 포함) 무관하게 articles를 덮어씀 (E-075).
+  /// 의도된 레거시 보정 용도이므로 상태 체크를 넣지 않음.
+  /// 일반 수정 경로로 재사용할 경우 completed 상태 보호 로직 추가 필요.
   Future<void> updateArticles({
     required String contractId,
     required List<ContractArticle> articles,
@@ -313,25 +337,43 @@ class ContractService {
   // ── 조회 ─────────────────────────────────────────────────────
 
   /// applicationId로 계약서 조회 (하위 호환 + 슬롯 포함 검색)
+  ///
+  /// 보안 규칙상 아래 중 하나를 반드시 전달해야 함:
+  ///   [workerId] USER 컨텍스트 — 본인 uid (근무자가 자신의 계약서 조회)
+  ///   [businessId] 관리자 컨텍스트 — 소속 사업장 id (관리자가 계약서 조회)
   Future<EmploymentContractModel?> getByApplication(
-      String applicationId) async {
+    String applicationId, {
+    String? workerId,
+    String? businessId,
+  }) async {
+    // assert 대신 throw — assert는 릴리스 빌드에서 무시되어 Firestore 보안 규칙 오류로 이어질 수 있음 (E-043)
+    if (workerId == null && businessId == null) {
+      throw ArgumentError('getByApplication: workerId 또는 businessId 중 하나는 필수입니다');
+    }
     try {
-      // 1) 기본 applicationId 매칭
-      final snap = await _db
+      // 1) 기본 applicationId 매칭 (+ 소유권 앵커 필터)
+      Query<Map<String, dynamic>> q = _db
           .collection('employment_contracts')
-          .where('applicationId', isEqualTo: applicationId)
-          .orderBy('createdAt', descending: true)
-          .limit(1)
-          .get();
+          .where('applicationId', isEqualTo: applicationId);
+      if (businessId != null) {
+        q = q.where('businessId', isEqualTo: businessId);
+      } else if (workerId != null) {
+        q = q.where('workerId', isEqualTo: workerId);
+      }
+      final snap = await q.orderBy('createdAt', descending: true).limit(1).get();
       if (snap.docs.isNotEmpty) {
         return EmploymentContractModel.fromFirestore(snap.docs.first);
       }
       // 2) applicationIds 배열에 포함된 경우 (단기 번들 슬롯)
-      final slotSnap = await _db
+      Query<Map<String, dynamic>> slotQ = _db
           .collection('employment_contracts')
-          .where('applicationIds', arrayContains: applicationId)
-          .limit(1)
-          .get();
+          .where('applicationIds', arrayContains: applicationId);
+      if (businessId != null) {
+        slotQ = slotQ.where('businessId', isEqualTo: businessId);
+      } else if (workerId != null) {
+        slotQ = slotQ.where('workerId', isEqualTo: workerId);
+      }
+      final slotSnap = await slotQ.limit(1).get();
       if (slotSnap.docs.isNotEmpty) {
         return EmploymentContractModel.fromFirestore(slotSnap.docs.first);
       }
@@ -365,13 +407,16 @@ class ContractService {
       if (statusFilter != null) {
         q = q.where('status', isEqualTo: statusFilter.value);
       }
-      q = q.orderBy('createdAt', descending: true).limit(pageSize);
+      // pageSize+1로 쿼리해 hasMore 정확도 보장 — 마지막 페이지에서 빈 호출 없앰 (E-047)
+      q = q.orderBy('createdAt', descending: true).limit(pageSize + 1);
       if (startAfter != null) q = q.startAfterDocument(startAfter);
       final snap = await q.get();
+      final hasMore = snap.docs.length > pageSize;
+      final docs = hasMore ? snap.docs.sublist(0, pageSize) : snap.docs;
       return (
-        items: snap.docs.map(EmploymentContractModel.fromFirestore).toList(),
-        lastDoc: snap.docs.isNotEmpty ? snap.docs.last : null,
-        hasMore: snap.docs.length == pageSize,
+        items: docs.map(EmploymentContractModel.fromFirestore).toList(),
+        lastDoc: docs.isNotEmpty ? docs.last : null,
+        hasMore: hasMore,
       );
     } catch (e) {
       debugPrint('❌ 근무자 계약서 조회 실패: $e');
@@ -380,12 +425,15 @@ class ContractService {
   }
 
   /// 근무자 uid로 계약서 목록 조회 (하위 호환 - 내부 캐시용)
+  ///
+  /// 신규 사용 시 getByWorkerPaged() 를 사용할 것.
   Future<List<EmploymentContractModel>> getByWorker(String workerId) async {
     try {
       final snap = await _db
           .collection('employment_contracts')
           .where('workerId', isEqualTo: workerId)
           .orderBy('createdAt', descending: true)
+          .limit(200) // 근무자당 계약서 상한 — 초과 시 getByWorkerPaged() 사용
           .get();
       return snap.docs.map(EmploymentContractModel.fromFirestore).toList();
     } catch (e) {
@@ -409,13 +457,16 @@ class ContractService {
       if (statusFilter != null) {
         q = q.where('status', isEqualTo: statusFilter.value);
       }
-      q = q.orderBy('createdAt', descending: true).limit(pageSize);
+      // pageSize+1로 쿼리해 hasMore 정확도 보장 — 마지막 페이지에서 빈 호출 없앰 (E-047)
+      q = q.orderBy('createdAt', descending: true).limit(pageSize + 1);
       if (startAfter != null) q = q.startAfterDocument(startAfter);
       final snap = await q.get();
+      final hasMore = snap.docs.length > pageSize;
+      final docs = hasMore ? snap.docs.sublist(0, pageSize) : snap.docs;
       return (
-        items: snap.docs.map(EmploymentContractModel.fromFirestore).toList(),
-        lastDoc: snap.docs.isNotEmpty ? snap.docs.last : null,
-        hasMore: snap.docs.length == pageSize,
+        items: docs.map(EmploymentContractModel.fromFirestore).toList(),
+        lastDoc: docs.isNotEmpty ? docs.last : null,
+        hasMore: hasMore,
       );
     } catch (e) {
       debugPrint('❌ 사업장 계약서 조회 실패: $e');
@@ -424,6 +475,8 @@ class ContractService {
   }
 
   /// 사업장 계약서 목록 조회 (하위 호환)
+  ///
+  /// 호출자 없음. 신규 사용 시 getByBusinessPaged() 사용할 것.
   Future<List<EmploymentContractModel>> getByBusiness(
       String businessId) async {
     try {
@@ -431,6 +484,7 @@ class ContractService {
           .collection('employment_contracts')
           .where('businessId', isEqualTo: businessId)
           .orderBy('createdAt', descending: true)
+          .limit(200) // 대량 읽기 방지 상한
           .get();
       return snap.docs.map(EmploymentContractModel.fromFirestore).toList();
     } catch (e) {
@@ -449,42 +503,63 @@ class ContractService {
 
     final contract = EmploymentContractModel.fromFirestore(contractDoc);
 
+    // 이미 voided 상태면 조기 반환 — 재호출 시 이미 취소된 지원서를 재취소 시도해
+    // failedIds가 발생하고 오해의 소지 있는 에러 토스트가 뜨는 버그 방지 (BUG-E-01)
+    if (contract.status == ContractStatus.voided) return;
+
     // 연결된 application들 취소 처리 (확정 상태인 것만)
     // 하나라도 실패하면 계약서 상태 변경을 중단해 부분 무효화 방지
     final firestoreService = FirestoreService();
     final List<String> failedIds = [];
     for (final appId in contract.applicationIds) {
       try {
-        await firestoreService.cancelConfirmedApplication(
+        // [B-003] false 반환도 실패로 간주 — cancelConfirmedApplication은 내부 오류를
+        // exception 대신 false로 반환하므로 반환값을 명시적으로 체크해야 함
+        final ok = await firestoreService.cancelConfirmedApplication(
           appId,
           canceledBy: null,
           cancelReason: '계약서가 무효화되었습니다',
         );
+        if (!ok) {
+          debugPrint('⚠️ voidContract: application 취소 실패 ($appId): false 반환');
+          failedIds.add(appId);
+        }
       } catch (e) {
         debugPrint('⚠️ voidContract: application 취소 실패 ($appId): $e');
         failedIds.add(appId);
       }
     }
-    if (failedIds.isNotEmpty) {
-      throw Exception('${failedIds.length}개 지원서 취소 실패로 계약서 무효화가 중단되었습니다');
-    }
-
+    // [088] 부분 실패 시에도 계약서는 voided로 업데이트 — 반투명 상태 방지
+    // 실패한 지원서는 voidFailedAppIds로 기록하여 관리자가 수동 확인 가능
     await _db.collection('employment_contracts').doc(contractId).update({
       'status': ContractStatus.voided.value,
       'updatedAt': Timestamp.fromDate(DateTime.now()),
+      if (failedIds.isNotEmpty) 'voidFailedAppIds': failedIds,
     });
+
+    if (failedIds.isNotEmpty) {
+      throw Exception(
+        '계약서가 무효화되었으나 ${failedIds.length}개 지원서 취소에 실패했습니다.\n'
+        '해당 지원서를 직접 확인해주세요: ${failedIds.join(', ')}');
+    }
   }
 
   // ── 내부: 번들 탐색 ──────────────────────────────────────────
 
+  /// 단기 번들 계약서 탐색 (toId + workDetailId + workerId 조합으로 기존 번들 찾기)
+  ///
+  /// [businessId] 보안 규칙상 필수 — `isAdminOf(businessId)` 검증을 위해 반드시 전달.
+  /// businessId 없이 호출하면 Firestore 권한 오류 발생 (크로스-사업장 방지 규칙).
   Future<EmploymentContractModel?> _findBundle({
     required String toId,
     required String workDetailId,
     required String workerId,
+    required String businessId,
   }) async {
     try {
       final snap = await _db
           .collection('employment_contracts')
+          .where('businessId', isEqualTo: businessId)
           .where('toId', isEqualTo: toId)
           .where('workDetailId', isEqualTo: workDetailId)
           .where('workerId', isEqualTo: workerId)
@@ -524,6 +599,12 @@ class ContractService {
       final snap = await tx.get(contractRef);
       if (!snap.exists) throw Exception('계약서를 찾을 수 없습니다: ${contract.id}');
       final current = EmploymentContractModel.fromFirestore(snap);
+
+      // 멱등성 보호 — 동일 applicationId가 이미 등록된 경우 슬롯 중복 추가 방지
+      // (이중 확정 또는 동시 호출 시 발생 가능)
+      if (current.applicationIds.contains(application.id)) {
+        return current;
+      }
 
       final updatedSlots = [...current.slots, newSlot];
       final updatedIds = [...current.applicationIds, application.id];
@@ -722,6 +803,7 @@ class ContractService {
 
   // ── PDF 로컬 저장 (공유용) ────────────────────────────────────
 
+  // 반환된 File은 호출자가 사용 후 delete() 책임
   Future<File> savePdfLocally({
     required String contractId,
     required Uint8List bytes,

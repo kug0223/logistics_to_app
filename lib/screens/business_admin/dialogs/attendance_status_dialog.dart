@@ -20,7 +20,6 @@ import '../../../models/core/application_model.dart';
 import '../../../models/core/attendance_model.dart';
 import '../../../models/core/user_model.dart';
 import '../../../models/core/business_work_type_model.dart';
-import '../../../models/core/wage_detail_model.dart';
 import '../../../models/core/worker_location_model.dart';
 import '../../../models/core/notification_model.dart';
 
@@ -39,7 +38,7 @@ import '../../../utils/work_detail_helper.dart';
 import '../../../utils/payment_due_date_calculator.dart';
 import '../../../theme/app_colors.dart';
 import '../../../widgets/common/app_checkbox.dart';
-import '../../../widgets/common/app_menu_sheet.dart';
+import '../../../widgets/common/app_tab_label.dart';
 
 // Widgets
 import '../../../widgets/common/loading_widget.dart';
@@ -47,7 +46,6 @@ import '../../../widgets/dialogs/worker_detail_dialog.dart';
 import '../../../widgets/work_type_icon.dart';
 import '../../../widgets/pickers/time_picker_bottom_sheet.dart';
 import '../../../widgets/pickers/attendance_quick_time_sheet.dart';
-import '../../../widgets/dialogs/wage/wage_detail_dialog.dart';
 
 // PDF
 import '../../../utils/attendance_list_pdf.dart';
@@ -237,7 +235,7 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
       final step2Results = await Future.wait([
         _getAttendanceRecords(appIds),                              // [0] 출근 기록
         _firestoreService.getUsersBatch(uids),                       // [1] 사용자 정보
-        _firestoreService.getLocationsForApplications(appIds),       // [2] 위치 정보
+        _firestoreService.getLocationsForApplications(appIds, businessId: _selectedBusinessId ?? ''),       // [2] 위치 정보
         _getWorkDetailTimes(confirmedWorkers),                        // [3] WorkDetail 시간 정보 (근무자 목록 전달)
       ]);
 
@@ -633,6 +631,30 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
     return '${parts[0]}:${parts[1]}';
   }
 
+  /// 탭별 근로자 분류
+  /// 0=검토(이슈·미출근), 1=정상, 2=확인(adminConfirmed), 3=완료(급여확정·노쇼)
+  List<ApplicationModel> _workersByTab(int tabIndex) {
+    const reviewStatuses = {'late', 'missed_checkout', 'early_leave'};
+    const doneUiStatuses = {'transferred', 'final_confirmed', 'wage_confirmed', 'noshow'};
+    return _confirmedWorkers.where((app) {
+      final s = _getAttendanceStatus(app)['status'] as String;
+      final attendance = _attendanceMap[app.id];
+      final isDone = doneUiStatuses.contains(s) ||
+                     attendance?.wageStatus == AttendanceModel.wageCalculated ||
+                     attendance?.wageStatus == AttendanceModel.wageConfirmed ||
+                     attendance?.wageStatus == AttendanceModel.wageTransferred ||
+                     attendance?.status == AttendanceModel.statusNoShow;
+      final isAdminConfirmed = attendance?.adminConfirmed == true;
+      switch (tabIndex) {
+        case 0: return (reviewStatuses.contains(s) || s == 'pending') && !isDone && !isAdminConfirmed;
+        case 1: return !reviewStatuses.contains(s) && s != 'pending' && !isDone && !isAdminConfirmed;
+        case 2: return isAdminConfirmed && !isDone;
+        case 3: return isDone;
+        default: return true;
+      }
+    }).toList();
+  }
+
 
 
   /// 통계 계산
@@ -718,24 +740,17 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
         }
       },
       child: Dialog(
+        backgroundColor: Colors.white,
         shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(ResponsiveHelper.spacing(context, 24)),
+          borderRadius: BorderRadius.circular(AppDialogSize.borderRadius),
         ),
-        child: Container(
-          width: MediaQuery.sizeOf(context).width * 0.95,
+        insetPadding: EdgeInsets.symmetric(
+          horizontal: AppDialogSize.insetH,
+          vertical: AppDialogSize.insetV,
+        ),
+        child: ConstrainedBox(
           constraints: BoxConstraints(
-            maxHeight: MediaQuery.sizeOf(context).height * 0.9,
-          ),
-          decoration: BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.circular(ResponsiveHelper.spacing(context, 24)),
-            boxShadow: [
-              BoxShadow(
-                color: Colors.black.withValues(alpha: 0.1),
-                blurRadius: 30,
-                offset: const Offset(0, 10),
-              ),
-            ],
+            maxHeight: MediaQuery.sizeOf(context).height * AppDialogSize.maxHeightRatio,
           ),
           child: Column(
             mainAxisSize: MainAxisSize.min,
@@ -885,33 +900,84 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
   /// 메인 콘텐츠
   Widget _buildContent(ThemeData theme) {
     final padding = ResponsiveHelper.cardPadding(context);
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        // 통계 + 액션바 — 스크롤 영역 밖 고정 (항상 보임)
-        Padding(
-          padding: EdgeInsets.fromLTRB(
-              padding.left, ResponsiveHelper.spacing(context, 8),
-              padding.right, 0),
-          child: Column(
-            children: [
-              _buildCompactStats(theme),
-              SizedBox(height: ResponsiveHelper.spacing(context, 8)),
-              _buildBatchActionBar(theme),
-              SizedBox(height: ResponsiveHelper.spacing(context, 8)),
-            ],
-          ),
-        ),
+    final needsReview = _workersByTab(0);
+    final normal = _workersByTab(1);
+    final adminConfirmedWorkers = _workersByTab(2);
+    final done = _workersByTab(3);
 
-        // 업무별 그룹만 스크롤
-        Flexible(
-          child: SingleChildScrollView(
+    return DefaultTabController(
+      length: 4,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          // 탭 바 + 통계 + 액션바 — 스크롤 영역 밖 고정
+          Padding(
             padding: EdgeInsets.fromLTRB(
-                padding.left, 0, padding.right, padding.bottom),
-            child: _buildWorkTypeGroups(theme),
+                padding.left, ResponsiveHelper.spacing(context, 6),
+                padding.right, 0),
+            child: Column(
+              children: [
+                // 탭 바
+                TabBar(
+                  labelPadding: const EdgeInsets.symmetric(horizontal: 6),
+                  labelStyle: ResponsiveHelper.smallStyle(context, fontWeight: FontWeight.bold),
+                  unselectedLabelStyle: ResponsiveHelper.smallStyle(context),
+                  onTap: (_) {
+                    setState(() {
+                      _selectedIds.clear();
+                      _selectAll = false;
+                    });
+                  },
+                  tabs: [
+                    Tab(child: AppTabLabel(label: '검토', count: needsReview.length, urgent: needsReview.isNotEmpty)),
+                    Tab(child: AppTabLabel(label: '정상', count: normal.length)),
+                    Tab(child: AppTabLabel(label: '확인', count: adminConfirmedWorkers.length, badgeColor: AppColors.info)),
+                    Tab(child: AppTabLabel(label: '완료', count: done.length, badgeColor: AppColors.grey500)),
+                  ],
+                ),
+                SizedBox(height: ResponsiveHelper.spacing(context, 8)),
+                _buildCompactStats(theme),
+                SizedBox(height: ResponsiveHelper.spacing(context, 8)),
+                _buildBatchActionBar(theme),
+                SizedBox(height: ResponsiveHelper.spacing(context, 8)),
+              ],
+            ),
+          ),
+
+          // 탭별 콘텐츠 — 스크롤
+          Flexible(
+            child: TabBarView(
+              physics: const NeverScrollableScrollPhysics(),
+              children: [
+                _buildTabContent(theme, needsReview, padding),
+                _buildTabContent(theme, normal, padding),
+                _buildTabContent(theme, adminConfirmedWorkers, padding),
+                _buildTabContent(theme, done, padding),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// 탭 라벨 위젯 (카운트 배지 포함)
+  /// 탭별 콘텐츠 (빈 상태 또는 업무 그룹 목록)
+  Widget _buildTabContent(ThemeData theme, List<ApplicationModel> tabWorkers, EdgeInsets padding) {
+    if (tabWorkers.isEmpty) {
+      return Center(
+        child: Padding(
+          padding: const EdgeInsets.all(32),
+          child: Text(
+            '해당 근무자가 없습니다',
+            style: ResponsiveHelper.bodyStyle(context, color: AppColors.grey500),
           ),
         ),
-      ],
+      );
+    }
+    return SingleChildScrollView(
+      padding: EdgeInsets.fromLTRB(padding.left, 0, padding.right, padding.bottom),
+      child: _buildWorkTypeGroups(theme, workers: tabWorkers),
     );
   }
 
@@ -1186,11 +1252,11 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
   }
 
   /// 업무별 그룹
-  Widget _buildWorkTypeGroups(ThemeData theme) {
+  Widget _buildWorkTypeGroups(ThemeData theme, {List<ApplicationModel>? workers}) {
     // ✅ workType + 시간 조합으로 그룹화 (장기/단기 합침)
     final Map<String, List<ApplicationModel>> workTypeGroups = {};
 
-    for (var app in _confirmedWorkers) {
+    for (var app in workers ?? _confirmedWorkers) {
       // 항상 workType + startTime + endTime 조합으로 그룹화
       final groupKey = '${app.selectedWorkType}_${app.startTime}_${app.endTime}';
       
@@ -1557,16 +1623,42 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
       child: Material(
         color: Colors.transparent,
         child: InkWell(
-          onTap: () => _toggleSelection(app.id),
+          onTap: () {
+            final user = _userMap[app.uid];
+            if (user != null) {
+              final statusInfo = _getAttendanceStatus(app);
+              WorkerDetailDialog.show(
+                context: context,
+                user: user,
+                application: app,
+                businessId: _selectedBusinessId,
+                isConfirmed: true,
+                showApprovalButtons: false,
+                attendanceStatus: statusInfo['status'] as String,
+                onStatusChanged: () {
+                  _hasChanges = true;
+                  _loadData();
+                },
+              );
+            }
+          },
           borderRadius: BorderRadius.circular(12),
           child: Padding(
             padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 12)),
             child: Row(
+              crossAxisAlignment: CrossAxisAlignment.center,
               children: [
-                // 체크박스 (행 InkWell이 탭 처리)
-                AppCheckbox(value: isSelected),
+                // 체크박스 — GestureDetector로 격리하여 카드 탭과 분리
+                GestureDetector(
+                  onTap: () => _toggleSelection(app.id),
+                  behavior: HitTestBehavior.opaque,
+                  child: Padding(
+                    padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 4)),
+                    child: AppCheckbox(value: isSelected),
+                  ),
+                ),
 
-                SizedBox(width: ResponsiveHelper.spacing(context, 12)),
+                SizedBox(width: ResponsiveHelper.spacing(context, 8)),
 
                 // 정보
                 Expanded(
@@ -1715,8 +1807,8 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
                   ),
                 ),
 
-                // 더보기 메뉴
-                _buildMoreMenu(app, statusInfo),
+                // 확인/취소 버튼
+                _buildConfirmButton(app),
               ],
             ),
           ),
@@ -1921,181 +2013,77 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
     );
   }
 
-  /// 더보기 버튼 → 바텀시트 실행
-  Widget _buildMoreMenu(ApplicationModel app, Map<String, dynamic> statusInfo) {
+  /// 확인/취소 버튼
+  /// - 완료 탭(isDone): 숨김
+  /// - 확인 탭(adminConfirmed): ✕ 버튼
+  /// - 그 외 + 출퇴근 둘 다 있음: ✓ 버튼
+  Widget _buildConfirmButton(ApplicationModel app) {
+    final attendance = _attendanceMap[app.id];
+    final isDone = attendance?.wageStatus == AttendanceModel.wageCalculated ||
+                   attendance?.wageStatus == AttendanceModel.wageConfirmed ||
+                   attendance?.wageStatus == AttendanceModel.wageTransferred ||
+                   attendance?.status == AttendanceModel.statusNoShow;
+    if (isDone) return const SizedBox.shrink();
+    final isAdminConfirmed = attendance?.adminConfirmed == true;
+    if (isAdminConfirmed) {
+      return IconButton(
+        onPressed: () => _unconfirmWorker(app),
+        icon: Icon(Icons.close, color: AppColors.error, size: ResponsiveHelper.iconSize(context, 22)),
+        padding: EdgeInsets.zero,
+        constraints: const BoxConstraints(),
+        visualDensity: VisualDensity.compact,
+      );
+    }
+    final canConfirm = attendance?.checkIn != null && attendance?.checkOut != null;
+    if (!canConfirm) return const SizedBox.shrink();
     return IconButton(
-      icon: Icon(
-        Icons.more_vert,
-        color: AppColors.grey400,
-        size: ResponsiveHelper.iconSize(context, 20),
-      ),
+      onPressed: () => _confirmWorker(app),
+      icon: Icon(Icons.check_circle_outline, color: AppColors.success, size: ResponsiveHelper.iconSize(context, 22)),
       padding: EdgeInsets.zero,
-      constraints: BoxConstraints(
-        minWidth: ResponsiveHelper.spacing(context, 36),
-        minHeight: ResponsiveHelper.spacing(context, 36),
-      ),
-      onPressed: () => _showMoreMenuSheet(app, statusInfo),
+      constraints: const BoxConstraints(),
+      visualDensity: VisualDensity.compact,
     );
   }
 
-  /// 더보기 바텀시트 — AppMenuSheet 공통 컴포넌트 사용
-  void _showMoreMenuSheet(ApplicationModel app, Map<String, dynamic> statusInfo) {
-    final status = statusInfo['status'] as String;
-    final user = _userMap[app.uid];
-    final primaryColor = Theme.of(context).primaryColor;
-
-    // 상태별 액션 그룹 구성
-    final List<List<AppMenuSheetItem>> actionGroups = [];
-
-    // 그룹 1: 상세보기 (항상)
-    actionGroups.add([
-      AppMenuSheetItem(
-        icon: Icons.person_outline,
-        label: '상세보기',
-        color: primaryColor,
-        onTap: () {
-          if (user != null) {
-            WorkerDetailDialog.show(
-              context: context,
-              user: user,
-              application: app,
-              businessId: _selectedBusinessId,
-              isConfirmed: true,
-              showApprovalButtons: false,
-              attendanceStatus: status,
-              onStatusChanged: () {
-                _hasChanges = true;
-                _loadData();
-              },
-            );
-          }
-        },
-      ),
-    ]);
-
-    // 그룹 2: 상태별 주요 액션
-    if (status == 'pending') {
-      actionGroups.add([
-        AppMenuSheetItem(
-          icon: Icons.login,
-          label: '출근 처리',
-          color: AppColors.success,
-          onTap: () => _showCheckInDialog(app),
-        ),
-      ]);
-      // 그룹 3: 위험 액션 (노쇼) - 별도 구분선
-      actionGroups.add([
-        AppMenuSheetItem(
-          icon: Icons.person_off_outlined,
-          label: '노쇼 처리',
-          color: AppColors.error,
-          isDanger: true,
-          onTap: () => _markNoShow(app),
-        ),
-      ]);
-    } else if (status == 'checkin' || status == 'late' || status == 'missed_checkout') {
-      actionGroups.add([
-        AppMenuSheetItem(
-          icon: Icons.logout,
-          label: status == 'missed_checkout' ? '퇴근 수동 입력' : '퇴근 처리',
-          color: AppColors.purple,
-          onTap: () => _showCheckOutDialog(app),
-        ),
-        AppMenuSheetItem(
-          icon: Icons.schedule_outlined,
-          label: '시간 수정',
-          color: AppColors.info,
-          onTap: () => _showEditTimeDialog(app),
-        ),
-      ]);
-      actionGroups.add([
-        AppMenuSheetItem(
-          icon: Icons.restart_alt,
-          label: '출퇴근 초기화',
-          color: AppColors.error,
-          isDanger: true,
-          onTap: () => _resetAttendance(app),
-        ),
-      ]);
-    } else if (status == 'checkout' || status == 'early_leave') {
-      actionGroups.add([
-        AppMenuSheetItem(
-          icon: Icons.schedule_outlined,
-          label: '시간 수정',
-          color: AppColors.info,
-          onTap: () => _showEditTimeDialog(app),
-        ),
-      ]);
-      actionGroups.add([
-        AppMenuSheetItem(
-          icon: Icons.restart_alt,
-          label: '출퇴근 초기화',
-          color: AppColors.error,
-          isDanger: true,
-          onTap: () => _resetAttendance(app),
-        ),
-      ]);
-    } else if (status == 'wage_confirmed') {
-      actionGroups.add([
-        AppMenuSheetItem(
-          icon: Icons.edit_outlined,
-          label: '급여 수정',
-          color: AppColors.warning,
-          onTap: () => _showEditWageDialog(app),
-        ),
-      ]);
-      actionGroups.add([
-        AppMenuSheetItem(
-          icon: Icons.undo,
-          label: '급여 취소',
-          color: AppColors.error,
-          isDanger: true,
-          onTap: () => _processCancelWage(app),
-        ),
-      ]);
-    } else if (status == 'final_confirmed') {
-      actionGroups.add([
-        AppMenuSheetItem(
-          icon: Icons.receipt_long_outlined,
-          label: '급여 상세',
-          color: AppColors.success,
-          onTap: () => _showViewWageDialog(app),
-        ),
-        AppMenuSheetItem(
-          icon: Icons.edit_outlined,
-          label: '급여 수정',
-          color: AppColors.warning,
-          onTap: () => _showEditWageDialog(app),
-        ),
-      ]);
-      actionGroups.add([
-        AppMenuSheetItem(
-          icon: Icons.lock_open_outlined,
-          label: '마감 취소',
-          color: AppColors.error,
-          isDanger: true,
-          onTap: () => _processCancelFinal(app),
-        ),
-      ]);
-    } else if (status == 'noshow') {
-      actionGroups.add([
-        AppMenuSheetItem(
-          icon: Icons.refresh,
-          label: '노쇼 해제',
-          color: AppColors.info,
-          onTap: () => _cancelNoShow(app),
-        ),
-      ]);
+  Future<void> _confirmWorker(ApplicationModel app) async {
+    final attendance = _attendanceMap[app.id];
+    if (attendance == null) return;
+    try {
+      await FirebaseFirestore.instance
+          .collection('attendance')
+          .doc(attendance.id)
+          .update({'adminConfirmed': true, 'updatedAt': FieldValue.serverTimestamp()});
+      if (!mounted) return;
+      setState(() {
+        _attendanceMap[app.id] = attendance.copyWith(adminConfirmed: true);
+        _selectedIds.remove(app.id);
+        _hasChanges = true;
+      });
+    } catch (e) {
+      debugPrint('❌ 확인 처리 실패: $e');
+      if (!mounted) return;
+      ToastHelper.showError('확인 처리 실패');
     }
+  }
 
-    AppMenuSheet.show(
-      context: context,
-      headerTitle: user?.name ?? '알 수 없음',
-      headerSubtitle: '${app.selectedWorkType}  ${WorkDetailHelper.effectiveStart(app, _workDetailTimeMap)}~${WorkDetailHelper.effectiveEnd(app, _workDetailTimeMap)}',
-      headerAvatarLetter: user?.name.isNotEmpty == true ? user!.name[0] : '?',
-      headerAvatarColor: primaryColor,
-      itemGroups: actionGroups,
-    );
+  Future<void> _unconfirmWorker(ApplicationModel app) async {
+    final attendance = _attendanceMap[app.id];
+    if (attendance == null) return;
+    try {
+      await FirebaseFirestore.instance
+          .collection('attendance')
+          .doc(attendance.id)
+          .update({'adminConfirmed': false, 'updatedAt': FieldValue.serverTimestamp()});
+      if (!mounted) return;
+      setState(() {
+        _attendanceMap[app.id] = attendance.copyWith(adminConfirmed: false);
+        _hasChanges = true;
+      });
+    } catch (e) {
+      debugPrint('❌ 확인 취소 실패: $e');
+      if (!mounted) return;
+      ToastHelper.showError('확인 취소 실패');
+    }
   }
 
   /// 하단 버튼 바
@@ -3587,303 +3575,6 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
     );
   }
 
-  /// 개별 출근 다이얼로그
-  Future<void> _showCheckInDialog(ApplicationModel app) async {
-    final userName = _getDisplayName(app.uid);
-
-    final time = await AttendanceQuickTimeSheet.show(
-      context: context,
-      title: '$userName 출근',
-      scheduledTimes: [WorkDetailHelper.effectiveStart(app, _workDetailTimeMap)],
-      isCheckIn: true,
-    );
-
-    if (time != null) {
-      await _processCheckIn(app, time);
-    }
-  }
-
-  /// 개별 퇴근 다이얼로그
-  Future<void> _showCheckOutDialog(ApplicationModel app) async {
-    final userName = _getDisplayName(app.uid);
-
-    final time = await AttendanceQuickTimeSheet.show(
-      context: context,
-      title: '$userName 퇴근',
-      scheduledTimes: [WorkDetailHelper.effectiveEnd(app, _workDetailTimeMap)],
-      isCheckIn: false,
-    );
-
-    if (time != null) {
-      await _processCheckOut(app, time);
-    }
-  }
-
-  /// 시간 수정 다이얼로그
-  Future<void> _showEditTimeDialog(ApplicationModel app) async {
-    final attendance = _attendanceMap[app.id];
-    if (attendance == null) return;
-
-    final theme = Theme.of(context);
-    final userName = _getDisplayName(app.uid);
-    String? newCheckIn = attendance.checkIn;
-    String? newCheckOut = attendance.checkOut;
-
-    final result = await showDialog<bool>(
-      context: context,
-      builder: (dialogContext) => StatefulBuilder(
-        builder: (context, setDialogState) => Dialog(
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
-          child: Container(
-            width: 320,
-            padding: ResponsiveHelper.cardPadding(context),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                // 헤더
-                Container(
-                  padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 12)),
-                  decoration: BoxDecoration(
-                    color: AppColors.info.withValues(alpha: 0.1),
-                    borderRadius: BorderRadius.circular(16),
-                  ),
-                  child: Icon(
-                    Icons.edit_outlined,
-                    color: AppColors.info,
-                    size: ResponsiveHelper.iconSize(context, 32),
-                  ),
-                ),
-                
-                SizedBox(height: ResponsiveHelper.spacing(context, 12)),
-                
-                Text(
-                  '시간 수정',
-                  style: ResponsiveHelper.subtitleStyle(context).copyWith(
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-                
-                Text(
-                  userName,
-                  style: ResponsiveHelper.smallStyle(context, color: AppColors.grey600),
-                ),
-                
-                SizedBox(height: ResponsiveHelper.spacing(context, 20)),
-                
-                // 출근 시간
-                _buildTimeEditRow(
-                  icon: Icons.login,
-                  iconColor: AppColors.success,
-                  iconBgColor: AppColors.successBg,
-                  label: '출근 시간',
-                  value: newCheckIn,
-                  onTap: () async {
-                    final time = await _showTimePickerDialog(
-                      title: '출근 시간 수정',
-                      initialTime: newCheckIn,
-                    );
-                    if (time != null) {
-                      setDialogState(() => newCheckIn = time);
-                    }
-                  },
-                  onDelete: newCheckIn != null
-                      ? () => setDialogState(() {
-                          newCheckIn = null;
-                          newCheckOut = null; // 출근 삭제 시 퇴근도 함께 삭제
-                        })
-                      : null,
-                ),
-                
-                SizedBox(height: ResponsiveHelper.spacing(context, 12)),
-                
-                // 퇴근 시간
-                _buildTimeEditRow(
-                  icon: Icons.logout,
-                  iconColor: AppColors.purple,
-                  iconBgColor: AppColors.purpleBg,
-                  label: '퇴근 시간',
-                  value: newCheckOut,
-                  onTap: newCheckIn != null // 출근 있을 때만 퇴근 수정 가능
-                      ? () async {
-                          final time = await _showTimePickerDialog(
-                            title: '퇴근 시간 수정',
-                            initialTime: newCheckOut,
-                          );
-                          if (time != null) {
-                            setDialogState(() => newCheckOut = time);
-                          }
-                        }
-                      : () {
-                          ToastHelper.showWarning('출근 시간을 먼저 입력해주세요');
-                        },
-                  onDelete: newCheckOut != null
-                      ? () => setDialogState(() => newCheckOut = null)
-                      : null,
-                ),
-                
-                // 둘 다 삭제되면 안내 메시지
-                if (newCheckIn == null) ...[
-                  SizedBox(height: ResponsiveHelper.spacing(context, 12)),
-                  Container(
-                    padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 12)),
-                    decoration: BoxDecoration(
-                      color: AppColors.warningBg,
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                    child: Row(
-                      children: [
-                        Icon(
-                          Icons.info_outline,
-                          color: AppColors.warning,
-                          size: ResponsiveHelper.iconSize(context, 18),
-                        ),
-                        SizedBox(width: ResponsiveHelper.spacing(context, 8)),
-                        Expanded(
-                          child: Text(
-                            '저장 시 미출근 상태로 변경됩니다',
-                            style: ResponsiveHelper.smallStyle(context, color: AppColors.warningDark),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ],
-                
-                SizedBox(height: ResponsiveHelper.spacing(context, 24)),
-                
-                // 버튼
-                Row(
-                  children: [
-                    Expanded(
-                      child: OutlinedButton(
-                        onPressed: () => Navigator.pop(dialogContext, false),
-                        style: OutlinedButton.styleFrom(
-                          padding: EdgeInsets.symmetric(
-                            vertical: ResponsiveHelper.spacing(context, 14),
-                          ),
-                          side: BorderSide(color: AppColors.grey300),
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(12),
-                          ),
-                        ),
-                        child: Text(
-                          '취소',
-                          style: ResponsiveHelper.bodyStyle(context, color: AppColors.grey600),
-                        ),
-                      ),
-                    ),
-                    SizedBox(width: ResponsiveHelper.spacing(context, 12)),
-                    Expanded(
-                      child: ElevatedButton(
-                        onPressed: () => Navigator.pop(dialogContext, true),
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: theme.primaryColor,
-                          foregroundColor: Colors.white,
-                          padding: EdgeInsets.symmetric(
-                            vertical: ResponsiveHelper.spacing(context, 14),
-                          ),
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(12),
-                          ),
-                        ),
-                        child: Text(
-                          '저장',
-                          style: ResponsiveHelper.bodyStyle(context, color: Colors.white).copyWith(
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ],
-            ),
-          ),
-        ),
-      ),
-    );
-
-    if (result == true && (newCheckIn != attendance.checkIn || newCheckOut != attendance.checkOut)) {
-      await _updateAttendanceTime(app, newCheckIn, newCheckOut);
-    }
-  }
-
-  /// 시간 편집 행 위젯
-  Widget _buildTimeEditRow({
-    required IconData icon,
-    required Color iconColor,
-    required Color iconBgColor,
-    required String label,
-    String? value,
-    required VoidCallback onTap,
-    VoidCallback? onDelete,
-  }) {
-    return Container(
-      padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 12)),
-      decoration: BoxDecoration(
-        color: AppColors.grey100,
-        borderRadius: BorderRadius.circular(12),
-      ),
-      child: Row(
-        children: [
-          Container(
-            padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 8)),
-            decoration: BoxDecoration(
-              color: iconBgColor,
-              borderRadius: BorderRadius.circular(8),
-            ),
-            child: Icon(icon, color: iconColor, size: ResponsiveHelper.iconSize(context, 20)),
-          ),
-          SizedBox(width: ResponsiveHelper.spacing(context, 12)),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  label,
-                  style: ResponsiveHelper.smallStyle(context, color: AppColors.grey600),
-                ),
-                Text(
-                  value ?? '-',
-                  style: ResponsiveHelper.bodyStyle(context).copyWith(
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-              ],
-            ),
-          ),
-          if (onDelete != null)
-            IconButton(
-              icon: Icon(Icons.close, color: AppColors.error, size: ResponsiveHelper.iconSize(context, 20)),
-              onPressed: onDelete,
-              constraints: BoxConstraints(),
-              padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 4)),
-            ),
-          SizedBox(width: ResponsiveHelper.spacing(context, 4)),
-          Material(
-            color: Colors.white,
-            borderRadius: BorderRadius.circular(8),
-            child: InkWell(
-              onTap: onTap,
-              borderRadius: BorderRadius.circular(8),
-              child: Padding(
-                padding: EdgeInsets.symmetric(
-                  horizontal: ResponsiveHelper.spacing(context, 12),
-                  vertical: ResponsiveHelper.spacing(context, 8),
-                ),
-                child: Text(
-                  '변경',
-                  style: ResponsiveHelper.smallStyle(context, color: iconColor).copyWith(
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
 
   // ═══════════════════════════════════════════════════════════
   // 출퇴근 처리 로직
@@ -4107,192 +3798,10 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
     }
   }
 
-  /// 개별 출근 처리
-  Future<void> _processCheckIn(ApplicationModel app, String time) async {
 
 
-    try {
-      await _createOrUpdateAttendance(app: app, checkIn: time);
-      
-      // 지각 여부 체크 및 신뢰도 반영 (WorkDetail 오버라이드 반영)
-      final expectedStartTime = WorkDetailHelper.effectiveStart(app, _workDetailTimeMap);
-      if (AttendanceStatusHelper.isLate(time, expectedStartTime)) {
-        final trustService = TrustScoreService();
-        await trustService.onLate(app.uid, app.businessId);
-        ToastHelper.showWarning('지각 처리 완료 (신뢰도 -1)');
-      } else {
-        ToastHelper.showSuccess('출근 처리 완료');
-      }
-      
-      await _loadData();
-    } catch (e) {
-      debugPrint('❌ 출근 처리 실패: $e');
-      ToastHelper.showError('출근 처리 실패');
-    } finally {
-
-    }
-  }
-
-  /// 개별 퇴근 처리
-  Future<void> _processCheckOut(ApplicationModel app, String time) async {
-    final attendance = _attendanceMap[app.id];
-    if (attendance == null) {
-      ToastHelper.showError('출근 기록이 없습니다');
-      return;
-    }
-
-    try {
-      final checkIn = attendance.checkIn ?? WorkDetailHelper.effectiveStart(app, _workDetailTimeMap);
-      final workHours = _calcWorkHoursCompat(checkIn, time);
-      final newStatus = _deriveStatus(app, checkIn, time);
-
-      await FirebaseFirestore.instance
-          .collection('attendance')
-          .doc(attendance.id)
-          .update({
-        'checkOut': time,
-        'checkOutMethod': 'manual',
-        'checkOutTime': FieldValue.serverTimestamp(),
-        'workHours': workHours,
-        'status': newStatus,
-        'updatedAt': FieldValue.serverTimestamp(),
-      });
-
-      ToastHelper.showSuccess('퇴근 처리 완료');
-      await _loadData();
-    } catch (e) {
-      debugPrint('❌ 퇴근 처리 실패: $e');
-      ToastHelper.showError('퇴근 처리 실패');
-    }
-  }
-
-  /// 시간 수정 (출근·퇴근 재계산 포함)
-  Future<void> _updateAttendanceTime(ApplicationModel app, String? checkIn, String? checkOut) async {
-    try {
-      final attendance = _attendanceMap[app.id];
-      if (attendance == null) return;
-
-      // 이체완료 건은 수정 불가
-      if (attendance.wageStatus == AttendanceModel.wageTransferred) {
-        ToastHelper.showError('이체 완료된 급여는 수정할 수 없습니다');
-        return;
-      }
-
-      // 출퇴근 시간 역전 검사
-      final effIn  = checkIn  ?? attendance.checkIn;
-      final effOut = checkOut ?? attendance.checkOut;
-      if (effIn != null && effOut != null &&
-          !AttendanceStatusHelper.isValidWorkPeriod(effIn, effOut)) {
-        ToastHelper.showError('퇴근 시간이 출근 시간보다 앞서거나 16시간을 초과합니다');
-        return;
-      }
-
-      // 둘 다 null → checkIn/checkOut 필드 초기화 (update, 삭제 대신)
-      // BUSINESS_ADMIN은 delete 권한이 없으므로 update로 필드를 지워 미출근 상태로 되돌림
-      if (checkIn == null && checkOut == null) {
-        await FirebaseFirestore.instance
-            .collection('attendance')
-            .doc(attendance.id)
-            .update({
-          'checkIn': FieldValue.delete(),
-          'checkInMethod': FieldValue.delete(),
-          'checkInTime': FieldValue.delete(),
-          'checkOut': FieldValue.delete(),
-          'checkOutMethod': FieldValue.delete(),
-          'checkOutTime': FieldValue.delete(),
-          'workHours': FieldValue.delete(),
-          'status': 'present',
-          'isModified': true,
-          'updatedAt': FieldValue.serverTimestamp(),
-        });
-        ToastHelper.showSuccess('미출근 상태로 변경되었습니다');
-        await _loadData();
-        return;
-      }
-
-      final effectiveCheckIn  = checkIn  ?? attendance.checkIn;
-      final effectiveCheckOut = checkOut ?? attendance.checkOut;
-
-      final Map<String, dynamic> updates = {
-        'isModified': true,
-        'modifiedAt': FieldValue.serverTimestamp(),
-        'updatedAt': FieldValue.serverTimestamp(),
-      };
-
-      // 최초 수정 시 근무자 원본 기록 보존 (이후 수정에서는 변경 안 함)
-      // attendance.checkIn이 null이면 보존할 원본이 없으므로 skip
-      if (checkIn != null &&
-          attendance.originalCheckIn == null &&
-          attendance.checkIn != null) {
-        updates['originalCheckIn'] = attendance.checkIn;
-      }
-      if (checkOut != null &&
-          attendance.originalCheckOut == null &&
-          attendance.checkOut != null) {
-        updates['originalCheckOut'] = attendance.checkOut;
-      }
-
-      if (checkIn != null) {
-        updates['checkIn'] = checkIn;
-        updates['checkInMethod'] = 'manual';
-      }
-
-      if (checkOut != null) {
-        updates['checkOut'] = checkOut;
-        updates['checkOutMethod'] = 'manual';
-      } else if (attendance.checkOut != null && checkOut == null) {
-        updates['checkOut'] = FieldValue.delete();
-        updates['checkOutMethod'] = FieldValue.delete();
-        updates['checkOutTime'] = FieldValue.delete();
-      }
-
-      // status 재계산
-      if (effectiveCheckIn != null) {
-        updates['status'] = _deriveStatus(app, effectiveCheckIn, effectiveCheckOut);
-      }
-
-      // workHours 재계산
-      if (effectiveCheckIn != null && effectiveCheckOut != null) {
-        updates['workHours'] = _calcWorkHoursCompat(effectiveCheckIn, effectiveCheckOut);
-      }
-
-      // 시간 수정 시 확정된 급여를 초기화 — 재계산 필요
-      const resetableStatuses = [AttendanceModel.wageConfirmed, AttendanceModel.wageCalculated];
-      if (resetableStatuses.contains(attendance.wageStatus)) {
-        updates['wageStatus'] = AttendanceModel.wagePending;
-        updates['finalWage'] = FieldValue.delete();
-        updates['wageDetail'] = FieldValue.delete();
-      }
-
-      await FirebaseFirestore.instance
-          .collection('attendance')
-          .doc(attendance.id)
-          .update(updates);
-
-      final wasConfirmed = resetableStatuses.contains(attendance.wageStatus);
-      ToastHelper.showSuccess(wasConfirmed
-          ? '시간이 수정되었습니다. 급여를 다시 계산해주세요.'
-          : '시간이 수정되었습니다');
-      await _loadData();
-    } catch (e) {
-      debugPrint('❌ 시간 수정 실패: $e');
-      ToastHelper.showError('시간 수정 실패');
-    }
-  }
 
 
-  /// 출퇴근 초기화 — 출퇴근 기록 삭제 후 미출근 상태로 되돌림
-  Future<void> _resetAttendance(ApplicationModel app) async {
-    final user = _userMap[app.uid];
-    final confirmed = await DialogHelper.showDangerConfirm(
-      context,
-      title: '출퇴근 초기화',
-      message: '${user?.name ?? ''}의 출퇴근 기록을 삭제하고\n미출근 상태로 변경합니다.',
-      confirmText: '초기화',
-    );
-    if (!confirmed) return;
-    await _updateAttendanceTime(app, null, null);
-  }
 
   /// Attendance 생성 또는 업데이트 (출근 처리)
   Future<void> _createOrUpdateAttendance({
@@ -4339,329 +3848,10 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
   // 노쇼 처리
   // ═══════════════════════════════════════════════════════════
 
-  /// 노쇼 처리
-  Future<void> _markNoShow(ApplicationModel app) async {
-    // 노쇼(패널티) vs 취소(패널티 없음) 선택
-    final choice = await showModalBottomSheet<String>(
-      context: context,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-      ),
-      builder: (ctx) => SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(24, 20, 24, 16),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text('미출근 처리', style: Theme.of(ctx).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold)),
-              const SizedBox(height: 6),
-              Text('${_getDisplayName(app.uid)}님의 미출근 처리 방식을 선택하세요.',
-                  style: Theme.of(ctx).textTheme.bodySmall?.copyWith(color: AppColors.grey500)),
-              const SizedBox(height: 16),
-              ListTile(
-                contentPadding: EdgeInsets.zero,
-                leading: const CircleAvatar(backgroundColor: AppColors.error, radius: 18,
-                    child: Icon(Icons.person_off_outlined, color: Colors.white, size: 18)),
-                title: Text('노쇼 처리', style: ResponsiveHelper.bodyStyle(ctx).copyWith(fontWeight: FontWeight.w600)),
-                subtitle: const Text('신뢰도 감점 · 노쇼 이력 기록'),
-                onTap: () => Navigator.pop(ctx, 'noshow'),
-              ),
-              const Divider(height: 8),
-              ListTile(
-                contentPadding: EdgeInsets.zero,
-                leading: const CircleAvatar(backgroundColor: AppColors.info, radius: 18,
-                    child: Icon(Icons.cancel_outlined, color: Colors.white, size: 18)),
-                title: Text('취소 처리 (패널티 없음)', style: ResponsiveHelper.bodyStyle(ctx).copyWith(fontWeight: FontWeight.w600)),
-                subtitle: const Text('불가피한 사정 등 패널티 없이 확정 취소'),
-                onTap: () => Navigator.pop(ctx, 'cancel'),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-
-    if (choice == null || !mounted) return;
-
-    if (choice == 'cancel') {
-      await _cancelConfirmedNoPenalty(app);
-      return;
-    }
-
-    // 노쇼 처리 확인
-    final confirmed = await DialogHelper.showDangerConfirm(
-      context,
-      title: '노쇼 처리',
-      message: '${_getDisplayName(app.uid)}님을 노쇼로 처리하시겠습니까?\n\n이 기록은 해당 근무자의 이력에 남습니다.',
-      confirmText: '노쇼 처리',
-    );
-
-    if (!confirmed) return;
 
 
 
-    // 1단계: attendance 기록 (핵심 — 실패 시 전체 중단)
-    try {
-      final existingAttendance = _attendanceMap[app.id];
-      if (existingAttendance != null) {
-        await FirebaseFirestore.instance
-            .collection('attendance')
-            .doc(existingAttendance.id)
-            .update({
-          'status': AttendanceModel.statusNoShow,
-          'updatedAt': FieldValue.serverTimestamp(),
-        });
-      } else {
-        await FirebaseFirestore.instance.collection('attendance').add({
-          'applicationId': app.id,
-          'userId': app.uid,
-          'businessId': app.businessId,
-          'businessName': app.businessName,
-          'workDate': Timestamp.fromDate(widget.date),
-          'workType': app.selectedWorkType,
-          'status': AttendanceModel.statusNoShow,
-          'isModified': false,
-          'modifyRequested': false,
-          'wageStatus': AttendanceModel.wagePending,
-          'createdAt': FieldValue.serverTimestamp(),
-          'updatedAt': FieldValue.serverTimestamp(),
-        });
-      }
-    } catch (e) {
-      debugPrint('❌ 노쇼 처리 실패: $e');
-      ToastHelper.showError('노쇼 처리 실패');
-      return;
-    }
 
-    // 2단계: 신뢰도 업데이트 (부가 — 실패해도 노쇼 처리는 완료된 것으로 처리)
-    try {
-      final trustService = TrustScoreService();
-      await trustService.onNoShow(app.uid, app.businessId);
-    } catch (e) {
-      debugPrint('⚠️ 노쇼 신뢰도 업데이트 실패 (무시): $e');
-    }
-
-    ToastHelper.showSuccess('노쇼 처리 완료');
-    await _loadData();
-  }
-
-  /// 노쇼 해제 (+ 선택적으로 바로 출근 처리)
-  Future<void> _cancelNoShow(ApplicationModel app) async {
-    final name = _getDisplayName(app.uid);
-    final confirmed = await DialogHelper.showConfirm(
-      context,
-      title: '노쇼 해제',
-      message: '$name님의 노쇼를 해제하시겠습니까?\n\n해제 후 출근 처리를 이어서 할 수 있습니다.',
-      confirmText: '해제',
-    );
-
-    if (!confirmed) return;
-
-    // 1단계: attendance 상태 복원 (핵심)
-    try {
-      final attendance = _attendanceMap[app.id];
-      if (attendance != null) {
-        // checkIn이 없으면 노쇼 전 상태인 'scheduled'로 복원, 있으면 'present'로 복원
-        final restoredStatus = attendance.checkIn != null ? 'present' : 'scheduled';
-        await FirebaseFirestore.instance
-            .collection('attendance')
-            .doc(attendance.id)
-            .update({
-          'status': restoredStatus,
-          'updatedAt': FieldValue.serverTimestamp(),
-        });
-      }
-    } catch (e) {
-      debugPrint('❌ 노쇼 해제 실패: $e');
-      ToastHelper.showError('노쇼 해제 실패');
-      return;
-    }
-
-    // 2단계: 신뢰도 복원 (부가)
-    try {
-      final trustService = TrustScoreService();
-      await trustService.onNoShowCanceled(app.uid, app.businessId);
-    } catch (e) {
-      debugPrint('⚠️ 노쇼 해제 신뢰도 업데이트 실패 (무시): $e');
-    }
-
-    ToastHelper.showSuccess('노쇼 해제 완료');
-    await _loadData();
-
-    // 해제 후 바로 출근 처리 여부 확인
-    if (!mounted) return;
-    final doCheckIn = await DialogHelper.showConfirm(
-      context,
-      title: '출근 처리',
-      message: '$name님의 출근 시간을 바로 입력하시겠습니까?',
-      confirmText: '출근 처리',
-    );
-    if (doCheckIn) _showCheckInDialog(app);
-  }
-  /// 패널티 없는 확정 취소 (불가피한 사정 등)
-  Future<void> _cancelConfirmedNoPenalty(ApplicationModel app) async {
-    final adminUid = Provider.of<UserProvider>(context, listen: false).currentUser?.uid;
-    final name = _getDisplayName(app.uid);
-
-    final confirmed = await DialogHelper.showConfirm(
-      context,
-      title: '취소 처리 (패널티 없음)',
-      message: '$name님의 확정을 패널티 없이 취소하시겠습니까?\n\n신뢰도 감점 없이 확정이 취소됩니다.',
-      confirmText: '취소 처리',
-    );
-    if (!confirmed || !mounted) return;
-
-    final firestoreService = FirestoreService();
-    final success = await firestoreService.cancelConfirmedApplication(
-      app.id,
-      applyNoShowPenalty: false,
-      canceledBy: adminUid,
-      cancelReason: 'ADMIN_CANCELED_NO_PENALTY',
-    );
-
-    if (success && mounted) {
-      ToastHelper.showSuccess('패널티 없이 취소 처리되었습니다');
-      await _loadData();
-    }
-  }
-
-  /// 급여 수정 다이얼로그
-  Future<void> _showEditWageDialog(ApplicationModel app) async {
-    final attendance = _attendanceMap[app.id];
-    final user = _userMap[app.uid];
-    if (attendance == null || attendance.wageDetail == null) {
-      ToastHelper.showWarning('급여 정보가 없습니다');
-      return;
-    }
-
-    final detail = WorkDetailHelper.resolve(app, _workDetailTimeMap);
-    final shiftType = WorkDetailHelper.shiftType(detail);
-    final nightIncluded = WorkDetailHelper.nightIncluded(detail);
-    final schedBreak = WorkDetailHelper.breakMinutes(detail);
-    final baseHourlyWage = WorkDetailHelper.baseHourlyWage(detail);
-    final result = await WageDetailDialog.show(
-      context: context,
-      app: app,
-      user: user,
-      attendance: attendance,
-      wage: attendance.wageDetail!,
-      mode: WageDialogMode.editOnly,
-      businessName: _businessNameMap[app.businessId],
-      shiftType: shiftType,
-      nightIncluded: nightIncluded,
-      scheduledBreakMinutes: schedBreak,
-      baseHourlyWage: baseHourlyWage,
-    );
-    
-    if (result != null && result.action == 'update') {
-      await _processWageUpdate(app, attendance, result.wage);
-    }
-  }
-
-  /// 급여 업데이트 처리
-  Future<void> _processWageUpdate(ApplicationModel app, AttendanceModel attendance, WageDetailModel wage) async {
-
-    
-    try {
-      final userProvider = Provider.of<UserProvider>(context, listen: false);
-      final adminUid = userProvider.currentUser?.uid;
-      final user = _userMap[app.uid];
-      
-      final updatedWage = wage.copyWith(
-        calculatedBy: adminUid,
-        calculatedAt: DateTime.now(),
-      );
-      
-      await FirebaseFirestore.instance
-          .collection('attendance')
-          .doc(attendance.id)
-          .update({
-        'finalWage': updatedWage.netWage,
-        'wageDetail': updatedWage.toMap(),
-        'wageStatus': AttendanceModel.wageCalculated,
-        'updatedAt': FieldValue.serverTimestamp(),
-      });
-      
-      _hasChanges = true;
-      ToastHelper.showSuccess('${user?.name ?? '근무자'} 급여 수정 완료');
-      await _loadData();
-    } catch (e) {
-      debugPrint('❌ 급여 수정 실패: $e');
-      ToastHelper.showError('급여 수정에 실패했습니다');
-    } finally {
-
-    }
-  }
-
-
-  /// 급여 취소 처리 (calculated → pending)
-  Future<void> _processCancelWage(ApplicationModel app) async {
-    final attendance = _attendanceMap[app.id];
-    final user = _userMap[app.uid];
-    if (attendance == null) return;
-    
-    final confirmed = await DialogHelper.showConfirm(
-      context,
-      title: '급여 확정 취소',
-      message: '${user?.name ?? '근무자'}의 급여 확정을 취소하시겠습니까?\n\n미확정 상태로 되돌아갑니다.',
-      confirmText: '취소하기',
-    );
-    
-    if (!confirmed) return;
-    
-
-    
-    try {
-      await FirebaseFirestore.instance
-          .collection('attendance')
-          .doc(attendance.id)
-          .update({
-        'wageStatus': 'pending',
-        'finalWage': FieldValue.delete(),
-        'wageDetail': FieldValue.delete(),
-        'updatedAt': FieldValue.serverTimestamp(),
-      });
-      
-      _hasChanges = true;
-      ToastHelper.showSuccess('${user?.name ?? '근무자'} 급여 확정 취소');
-      await _loadData();
-    } catch (e) {
-      debugPrint('❌ 급여 취소 실패: $e');
-      ToastHelper.showError('급여 취소에 실패했습니다');
-    } finally {
-
-    }
-  }
-
-  /// 급여 상세 보기 (읽기 전용)
-  Future<void> _showViewWageDialog(ApplicationModel app) async {
-    final attendance = _attendanceMap[app.id];
-    final user = _userMap[app.uid];
-    if (attendance == null || attendance.wageDetail == null) {
-      ToastHelper.showWarning('급여 정보가 없습니다');
-      return;
-    }
-
-    final detail = WorkDetailHelper.resolve(app, _workDetailTimeMap);
-    final shiftType = WorkDetailHelper.shiftType(detail);
-    final nightIncluded = WorkDetailHelper.nightIncluded(detail);
-    final schedBreak2 = WorkDetailHelper.breakMinutes(detail);
-    final baseHourlyWage2 = WorkDetailHelper.baseHourlyWage(detail);
-    await WageDetailDialog.show(
-      context: context,
-      app: app,
-      user: user,
-      attendance: attendance,
-      wage: attendance.wageDetail!,
-      mode: WageDialogMode.confirmed,
-      businessName: _businessNameMap[app.businessId],
-      shiftType: shiftType,
-      nightIncluded: nightIncluded,
-      scheduledBreakMinutes: schedBreak2,
-      baseHourlyWage: baseHourlyWage2,
-    );
-  }
   /// 일괄 마감 취소 (선택된 최종확정 근무자 전체)
   Future<void> _batchCancelFinal() async {
     final targets = _selectedFinalConfirmedApps;
@@ -4727,72 +3917,6 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
     await _loadData();
   }
 
-  /// 마감 취소 처리 (confirmed → calculated)
-  Future<void> _processCancelFinal(ApplicationModel app) async {
-    final attendance = _attendanceMap[app.id];
-    final user = _userMap[app.uid];
-    if (attendance == null) return;
-    
-    final confirmed = await DialogHelper.showConfirm(
-      context,
-      title: '마감 취소',
-      message: '${user?.name ?? '근무자'}의 마감을 취소하시겠습니까?\n\n급여확정 상태로 되돌아가며, 지원자에게 급여가 숨겨집니다.',
-      confirmText: '마감 취소',
-    );
-    
-    if (!confirmed) return;
-    
-
-    
-    try {
-      // wageDetail에서 confirmedBy, confirmedAt 제거
-      final wageDetail = attendance.wageDetail?.copyWith(
-        confirmedBy: null,
-        confirmedAt: null,
-      );
-
-      await FirebaseFirestore.instance
-          .collection('attendance')
-          .doc(attendance.id)
-          .update({
-        'wageStatus': AttendanceModel.wageCalculated,
-        'wageDetail': wageDetail?.toMap(),
-        'finalConfirmedAt': FieldValue.delete(),
-        'updatedAt': FieldValue.serverTimestamp(),
-      });
-
-      // 마감 시 증가했던 신뢰도·근무일수 롤백
-      final trustService = TrustScoreService();
-      await trustService.onWorkCanceled(app.uid, app.businessId);
-      await FirebaseFirestore.instance
-          .collection('users')
-          .doc(app.uid)
-          .update({
-        'totalWorkDays': FieldValue.increment(-1),
-      });
-
-      // 지원자에게 급여 수정 중 알림 발송
-      final businessName = _businessNameMap[app.businessId] ?? '';
-      await _firestoreService.createNotification(
-        NotificationModel.createWageCancelConfirmed(
-          userId: app.uid,
-          businessName: businessName,
-          businessId: app.businessId,
-          workDate: app.workDate,
-          attendanceId: attendance.id,
-        ),
-      );
-
-      _hasChanges = true;
-      ToastHelper.showSuccess('${user?.name ?? '근무자'} 마감 취소 완료');
-      await _loadData();
-    } catch (e) {
-      debugPrint('❌ 마감 취소 실패: $e');
-      ToastHelper.showError('마감 취소에 실패했습니다');
-    } finally {
-
-    }
-  }
 
 }
 

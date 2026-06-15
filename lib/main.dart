@@ -185,30 +185,36 @@ class AuthWrapper extends StatefulWidget {
 class _AuthWrapperState extends State<AuthWrapper> {
   bool? _isOnboardingCompleted;
   bool _emailBannerShown = false;
+  bool _checkingOnboarding = false;
 
   @override
   void initState() {
     super.initState();
-    // postFrameCallback: 위젯 트리가 완전히 준비된 후 context.read 안전 호출
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) _checkOnboarding();
-    });
+    // initState 시점엔 currentUser가 아직 null일 수 있어 roleKey='unknown'으로
+    // 잘못된 prefs 키를 읽게 됨. isLoggedIn=true 확인 후 build()에서 호출.
   }
 
   Future<void> _checkOnboarding() async {
-    final user = context.read<UserProvider>().currentUser;
-    final roleKey = user?.roleString ?? 'unknown';
-    final prefs = await SharedPreferences.getInstance();
-    final completed = prefs.getBool('onboarding_completed_$roleKey') ?? false;
-    if (mounted) setState(() => _isOnboardingCompleted = completed);
+    if (_checkingOnboarding) return;
+    _checkingOnboarding = true;
+    try {
+      final user = context.read<UserProvider>().currentUser;
+      final roleKey = user?.roleString ?? 'unknown';
+      final prefs = await SharedPreferences.getInstance();
+      final completed = prefs.getBool('onboarding_completed_$roleKey') ?? false;
+      if (mounted) setState(() => _isOnboardingCompleted = completed);
+    } finally {
+      _checkingOnboarding = false;
+    }
   }
 
   Future<void> _completeOnboarding() async {
+    // await 전 즉시 설정 — notifyListeners() rebuild 시 OnboardingScreen 재표시 방지
+    if (mounted) setState(() => _isOnboardingCompleted = true);
     final user = context.read<UserProvider>().currentUser;
     final roleKey = user?.roleString ?? 'unknown';
     final prefs = await SharedPreferences.getInstance();
     await prefs.setBool('onboarding_completed_$roleKey', true);
-    if (mounted) setState(() => _isOnboardingCompleted = true);
   }
 
   @override
@@ -241,10 +247,15 @@ class _AuthWrapperState extends State<AuthWrapper> {
         // 🚫 로그인 안됨
         if (!userProvider.isLoggedIn) {
           if (kDebugMode) debugPrint('🚫 로그인되지 않음 → LoginScreen');
-          // 로그아웃 시 온보딩 상태 리셋 (다음 로그인 때 다시 체크)
+          // 로그아웃 시 온보딩 상태·가드 리셋 (다음 로그인 때 다시 체크)
           if (_isOnboardingCompleted != null) {
             WidgetsBinding.instance.addPostFrameCallback((_) {
-              if (mounted) setState(() => _isOnboardingCompleted = null);
+              if (mounted) {
+                setState(() {
+                  _isOnboardingCompleted = null;
+                  _checkingOnboarding = false;
+                });
+              }
             });
           }
           return const LoginScreen();
@@ -280,9 +291,12 @@ class _AuthWrapperState extends State<AuthWrapper> {
         if (kDebugMode) debugPrint('📚 _isOnboardingCompleted = $_isOnboardingCompleted');
         if (_isOnboardingCompleted == null) {
           // 로그아웃 후 재로그인 시 SharedPreferences 재확인
-          WidgetsBinding.instance.addPostFrameCallback((_) {
-            if (mounted) _checkOnboarding();
-          });
+          // _checkingOnboarding 가드: notifyListeners() 중복 발화 시 중복 스케줄 방지
+          if (!_checkingOnboarding) {
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              if (mounted) _checkOnboarding();
+            });
+          }
           return const Scaffold(
             body: Center(child: CircularProgressIndicator()),
           );

@@ -295,7 +295,8 @@ class ContractSnapshot {
   String get workDaysText => workDays?.join(', ') ?? '-';
 
   String get workTimeText {
-    final workMins = _timeDiff(startTime, endTime) - breakMinutes;
+    final rawMins = _timeDiff(startTime, endTime) - breakMinutes;
+    final workMins = rawMins < 0 ? 0 : rawMins;
     final h = workMins / 60.0;
     final hStr = h == h.toInt()
         ? '${h.toInt()}h'

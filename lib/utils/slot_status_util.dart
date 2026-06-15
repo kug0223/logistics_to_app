@@ -21,7 +21,8 @@ class SlotStatusUtil {
       return SlotDisplayStatus.draft;
     }
     // 2. 마감 (날짜경과 / 수동마감 / 인원충족 / 업무마감)
-    if (slot.isEffectivelyClosed) return SlotDisplayStatus.closed;
+    // to.isManualClosed: CF 슬롯 갱신 전에도 TO 레벨 수동마감 즉시 반영
+    if (to.isManualClosed || slot.isEffectivelyClosed) return SlotDisplayStatus.closed;
     // 3. 슬롯 레벨 예약 공개 대기
     final now = DateTime.now();
     if (slot.visibleFrom != null && slot.visibleFrom!.isAfter(now)) {

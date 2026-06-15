@@ -71,7 +71,7 @@ class _PayrollWorkerDetailScreenState extends State<PayrollWorkerDetailScreen> {
           .where('workDate', isGreaterThanOrEqualTo: Timestamp.fromDate(monthStart))
           .where('workDate', isLessThan: Timestamp.fromDate(monthEnd))
           .orderBy('workDate')
-          .limit(500)
+          .limit(500) // 한 달 근무 레코드는 최대 수십 건, 500은 실질적 상한
           .get();
 
       final records = snap.docs
@@ -93,19 +93,19 @@ class _PayrollWorkerDetailScreenState extends State<PayrollWorkerDetailScreen> {
   int _transferredAmount = 0; // 송금 완료 금액
   int _pendingAmount     = 0; // 미송금 금액 (확정됐지만 아직 미이체)
 
+  int _netOf(AttendanceModel r) => r.wageDetail?.effectiveNetWage ?? 0;
+
   void _computeTotals(List<AttendanceModel> records) {
-    _totalPayout = records.fold(
-        0, (acc, r) => acc + (r.wageDetail?.netWage ?? 0));
-    _totalWorkMinutes = records.fold(
-        0, (acc, r) => acc + (r.wageDetail?.workMinutes ?? 0));
+    _totalPayout      = records.fold(0, (acc, r) => acc + _netOf(r));
+    _totalWorkMinutes = records.fold(0, (acc, r) => acc + (r.wageDetail?.workMinutes ?? 0));
     _transferredAmount = records
         .where((r) => r.wageStatus == AttendanceModel.wageTransferred)
-        .fold(0, (acc, r) => acc + (r.wageDetail?.netWage ?? 0));
+        .fold(0, (acc, r) => acc + _netOf(r));
     // 미송금 = 쿼리에 포함된 레코드 중 아직 이체되지 않은 것 (wageConfirmed 상태)
     // ※ wageCalculated는 쿼리 자체에서 제외되므로 여기 포함되지 않음
     _pendingAmount = records
         .where((r) => r.wageStatus != AttendanceModel.wageTransferred)
-        .fold(0, (acc, r) => acc + (r.wageDetail?.netWage ?? 0));
+        .fold(0, (acc, r) => acc + _netOf(r));
   }
 
   @override
@@ -113,6 +113,7 @@ class _PayrollWorkerDetailScreenState extends State<PayrollWorkerDetailScreen> {
     final theme = Theme.of(context);
     return GradientScaffold(
       title: '${widget.workerName} · ${widget.month}월',
+      onRefresh: _loadRecords,
       actions: [
         if (_records.isNotEmpty)
           PopupMenuButton<String>(
@@ -491,10 +492,7 @@ class _PayrollWorkerDetailScreenState extends State<PayrollWorkerDetailScreen> {
     }
 
     // 전체 금액 합산
-    int totalNet = settleableRecords.fold(0, (acc, r) {
-      final wd = r.wageDetail!;
-      return acc + (wd.netWage > 0 ? wd.netWage : wd.totalAmount - wd.totalInsuranceDeduction);
-    });
+    int totalNet = settleableRecords.fold(0, (acc, r) => acc + _netOf(r));
 
     final ok = await DialogHelper.showConfirm(
       ctx,
@@ -556,6 +554,8 @@ class _PayrollWorkerDetailScreenState extends State<PayrollWorkerDetailScreen> {
         transferNote: '중간정산 이체',
       );
 
+      // [D-003] async gap 후 mounted 체크
+      if (!mounted) return;
       ToastHelper.showSuccess('중간정산이 처리되었습니다');
       _loadRecords();
     } catch (e) {

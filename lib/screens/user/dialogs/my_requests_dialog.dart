@@ -128,15 +128,19 @@ class _MyRequestsDialogState extends State<MyRequestsDialog> {
   @override
   Widget build(BuildContext context) {
     return Dialog(
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-      child: Container(
-        width: MediaQuery.sizeOf(context).width * 0.92,
+      backgroundColor: Colors.white,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+      insetPadding: EdgeInsets.symmetric(
+        horizontal: ResponsiveHelper.spacing(context, 16),
+        vertical: ResponsiveHelper.spacing(context, 24),
+      ),
+      child: ConstrainedBox(
         constraints: BoxConstraints(
-          maxWidth: 500,
-          maxHeight: MediaQuery.sizeOf(context).height * 0.85,
+          maxHeight: MediaQuery.sizeOf(context).height * 0.92,
         ),
-        padding: ResponsiveHelper.listPadding(context),
-        child: Column(
+        child: Padding(
+          padding: ResponsiveHelper.listPadding(context),
+          child: Column(
           children: [
             // 헤더
             Row(
@@ -193,6 +197,7 @@ class _MyRequestsDialogState extends State<MyRequestsDialog> {
           ],
         ),
       ),
+    ),
     );
   }
 

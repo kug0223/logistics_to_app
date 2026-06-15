@@ -11,6 +11,7 @@ import '../../widgets/dialogs/styled_dialog.dart';
 import '../../widgets/app_select_field.dart';
 import '../../widgets/common/gradient_scaffold.dart';
 import '../../widgets/common/loading_widget.dart';
+import '../../utils/loading_state_mixin.dart';
 
 /// 배지 관리 화면
 class BadgeSettingsScreen extends StatefulWidget {
@@ -20,10 +21,9 @@ class BadgeSettingsScreen extends StatefulWidget {
   State<BadgeSettingsScreen> createState() => _BadgeSettingsScreenState();
 }
 
-class _BadgeSettingsScreenState extends State<BadgeSettingsScreen> {
+class _BadgeSettingsScreenState extends State<BadgeSettingsScreen>
+    with LoadingStateMixin {
   final _firestore = FirebaseFirestore.instance;
-  
-  bool _isLoading = true;
   List<BadgeModel> _badges = [];
 
   @override
@@ -56,9 +56,7 @@ class _BadgeSettingsScreenState extends State<BadgeSettingsScreen> {
       debugPrint('❌ 배지 로드 실패: $e');
       _badges = BadgeModel.defaultBadges();
     } finally {
-      if (mounted) {
-        setState(() => _isLoading = false);
-      }
+      if (mounted) setLoading(false);
     }
   }
 
@@ -179,7 +177,7 @@ class _BadgeSettingsScreenState extends State<BadgeSettingsScreen> {
         icon: const Icon(Icons.add),
         label: const Text('배지 추가'),
       ),
-      body: _isLoading
+      body: isLoading
           ? const LoadingWidget()
           : ListView(
               padding: ResponsiveHelper.cardPadding(context),
@@ -403,19 +401,28 @@ class _BadgeSettingsScreenState extends State<BadgeSettingsScreen> {
   }
 
   String _getConditionText(BadgeModel badge) {
-    switch (badge.conditionType) {
-      case BadgeConditionType.minScore:
-        return '신뢰도 ${badge.conditionValue}점 이상';
-      case BadgeConditionType.workDays:
-        if (badge.workType != null) {
-          return '${badge.workType} ${badge.conditionValue}일 이상';
-        }
-        return '총 근무 ${badge.conditionValue}일 이상';
-      case BadgeConditionType.consecutive:
-        return '${badge.conditionValue}일 연속 무지각';
-      case BadgeConditionType.monthlyPerfect:
-        return '월간 100% 출근 ${badge.conditionValue}회';
-    }
+    // 주 조건 텍스트
+    final primary = switch (badge.conditionType) {
+      BadgeConditionType.minScore     => '신뢰도 ${badge.conditionValue}점 이상',
+      BadgeConditionType.workDays     => badge.workType != null
+          ? '${badge.workType} ${badge.conditionValue}일 이상'
+          : '총 근무 ${badge.conditionValue}일 이상',
+      BadgeConditionType.consecutive  => '${badge.conditionValue}회 연속 무지각',
+      BadgeConditionType.monthlyPerfect => '월간 100% 출근 ${badge.conditionValue}개월',
+    };
+
+    // 복합 조건 추가 텍스트
+    final extras = <String>[
+      if (badge.minWorkDaysRequired != null)
+        '근무 ${badge.minWorkDaysRequired}일 이상',
+      if (badge.maxNoShowAllowed != null)
+        badge.maxNoShowAllowed == 0 ? '노쇼 없음' : '노쇼 ${badge.maxNoShowAllowed}회 이하',
+      if (badge.minRatingRequired != null)
+        '평점 ${badge.minRatingRequired!.toStringAsFixed(1)}점 이상',
+    ];
+
+    if (extras.isEmpty) return primary;
+    return '$primary\n+ ${extras.join(' · ')}';
   }
 }
 
@@ -612,6 +619,8 @@ class _BadgeEditDialogState extends State<_BadgeEditDialog> {
         return '신뢰도 배지';
       case BadgeType.attendance:
         return '근태 배지';
+      case BadgeType.experience:
+        return '경험 배지';
       case BadgeType.specialty:
         return '전문 배지';
     }

@@ -19,6 +19,7 @@ class ContractTemplateSelectorDialog {
   }) {
     return showModalBottomSheet<List<ContractArticle>?>(
       context: context,
+      useSafeArea: true,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
       builder: (_) => _SelectorSheet(businessId: businessId),

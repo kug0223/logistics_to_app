@@ -152,9 +152,9 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
             ? _checkReviewWritten(app)
             : Future.value(null),
 
-        // 6: 계약서 (확정자 + application 있을 때)
+        // 6: 계약서 (확정자 + application 있을 때) — 관리자 컨텍스트이므로 businessId 전달
         (widget.isConfirmed && app != null)
-            ? ContractService().getByApplication(app.id)
+            ? ContractService().getByApplication(app.id, businessId: app.businessId)
             : Future.value(null),
       ]);
 
@@ -224,10 +224,13 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(24),
       ),
+      insetPadding: EdgeInsets.symmetric(
+        horizontal: ResponsiveHelper.spacing(context, 16),
+        vertical: ResponsiveHelper.spacing(context, 24),
+      ),
       child: Container(
         constraints: BoxConstraints(
-          maxWidth: 500,
-          maxHeight: MediaQuery.sizeOf(context).height * 0.85,
+          maxHeight: MediaQuery.sizeOf(context).height * 0.92,
         ),
         decoration: BoxDecoration(
           color: Colors.white,

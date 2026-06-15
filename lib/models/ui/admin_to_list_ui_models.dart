@@ -48,6 +48,11 @@ class TOGroupItem {
   String get status => singleTO.status;
   /// Firestore 상태 + 날짜 경과를 함께 고려한 실질적 마감 여부.
   /// 마지막 슬롯(또는 계약 종료일)이 오늘 이하면 마감 탭으로 분류.
+  ///
+  /// 슬롯 로드 여부에 따라 판단 경로가 다름:
+  ///   - flex + 슬롯 로드됨 → CloseStateUtils.isToItemClosed (isManualClosed 포함)
+  ///   - flex + 슬롯 미로드 → singleTO.isClosed (isManualClosed 포함) + 마지막 날짜 폴백
+  ///   - contract → singleTO.isClosed (게시만료 포함) + rangeEnd 폴백
   bool get isClosed {
     final now = DateTime.now();
     final todayDay = DateTime(now.year, now.month, now.day);

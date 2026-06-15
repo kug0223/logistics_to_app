@@ -30,7 +30,7 @@ extension AttendanceFirestore on FirestoreService {
       debugPrint('   workDate: $workDate');
 
       // 0. 사용자 제재 상태 확인
-      final userDoc = await _firestore.collection('users').doc(userId).get();
+      final userDoc = await _firestore.collection('users').doc(userId).get(const GetOptions(source: Source.server));
       if (userDoc.exists) {
         final restrictedUntil = userDoc.data()?['restrictedUntil'];
         DateTime? restrictedDate;
@@ -47,10 +47,34 @@ extension AttendanceFirestore on FirestoreService {
       final appDoc = await _firestore
           .collection('applications')
           .doc(applicationId)
-          .get();
+          .get(const GetOptions(source: Source.server));
 
       if (!appDoc.exists) {
         throw Exception('지원서를 찾을 수 없습니다.');
+      }
+
+      // 소유자 검증: applicationId가 userId 본인 것인지 확인 (타인 지원서로 출근 위변조 방지)
+      final appUserId = appDoc.data()?['uid'] as String?;
+      if (appUserId != userId) {
+        throw Exception('본인의 지원서만 출근 체크가 가능합니다.');
+      }
+
+      // 사업장 교차 검증: 지원서의 businessId와 파라미터 businessId가 일치하는지 확인
+      final appBusinessId = appDoc.data()?['businessId'] as String?;
+      if (appBusinessId != businessId) {
+        throw Exception('지원서와 사업장 정보가 일치하지 않습니다.');
+      }
+
+      // 장기 근무자 휴무일(leaveDates) 체크 — 승인된 휴무일에는 출근 불가
+      final appModel = ApplicationModel.fromFirestore(appDoc);
+      if (appModel.isLeaveDateOn(workDate)) {
+        throw Exception('오늘은 승인된 휴무일입니다. 출근 체크가 불가합니다.');
+      }
+
+      // 실제 퇴사일(actualResignDate) 체크 — 퇴사 처리 완료 후에는 출근 불가
+      if (appModel.actualResignDate != null &&
+          !workDate.isBefore(appModel.actualResignDate!)) {
+        throw Exception('퇴사 처리가 완료된 근무입니다.');
       }
 
       final appStatus = appDoc.data()?['status'] as String?;
@@ -62,6 +86,9 @@ extension AttendanceFirestore on FirestoreService {
       }
 
       // 2. 결정적 문서 ID — applicationId + 날짜 조합으로 중복 방지
+      // workDate는 호출자(attendance_check_screen._checkIn)가 근무 유형에 맞게 전달:
+      //   - 단기: work.workDate(예정 근무일) — 야간 자정 이후 체크인 시 docId가 다음 날로 밀리지 않도록
+      //   - 장기: DateTime.now()(오늘 날짜) — work.workDate=계약 시작일(고정)이라 날짜별 docId 분리 불가
       final todayStart = DateTime(workDate.year, workDate.month, workDate.day);
       final dateStr = '${todayStart.year}${todayStart.month.toString().padLeft(2,'0')}${todayStart.day.toString().padLeft(2,'0')}';
       final attendanceDocId = '${applicationId}_$dateStr';
@@ -84,7 +111,7 @@ extension AttendanceFirestore on FirestoreService {
       // 4. 트랜잭션으로 원자적 체크 + 생성 (동시 요청 시 중복 출근 방지)
       await _firestore.runTransaction((tx) async {
         final existing = await tx.get(docRef);
-        if (existing.exists && (existing.data()?['checkIn'] as String?)?.isNotEmpty == true) {
+        if (existing.exists && ((existing.data()?['checkIn'] as String?) ?? '').isNotEmpty) {
           debugPrint('⚠️ 이미 출근 완료');
           throw Exception('오늘 이미 출근하셨습니다.');
         }
@@ -181,6 +208,12 @@ extension AttendanceFirestore on FirestoreService {
 
 
   /// 오늘 내 출근 기록 조회
+  ///
+  /// docId는 `${applicationId}_yyyyMMdd`로 결정적이므로 오늘·어제 순으로 직접 조회.
+  /// workDate 범위 쿼리 대신 docId 직접 조회를 사용해야 하는 이유:
+  ///   - 단기 야간 근무: workDate = 어제(근무 시작일) → 어제 docId로 퇴근 전까지 유지
+  ///   - 장기 근무: checkIn 시 workDate = 오늘 날짜 (시작일 아님) → 오늘 docId
+  ///   - 범위 쿼리는 workDate 값에 의존하므로 두 케이스를 limit(1)로 함께 처리할 때 비결정적
   Future<AttendanceModel?> getTodayAttendance({
     required String userId,
     required String applicationId,
@@ -188,24 +221,20 @@ extension AttendanceFirestore on FirestoreService {
     try {
       final today = DateTime.now();
       final todayStart = DateTime(today.year, today.month, today.day);
-      final todayEnd = todayStart.add(const Duration(days: 1));
-      // 야간 단기 근무(전날 출근 후 자정 이후 퇴근)를 위해 어제부터 조회
-      final yesterdayStart = todayStart.subtract(const Duration(days: 1));
 
-      final snapshot = await _firestore
-          .collection('attendance')
-          .where('userId', isEqualTo: userId)
-          .where('applicationId', isEqualTo: applicationId)
-          .where('workDate', isGreaterThanOrEqualTo: Timestamp.fromDate(yesterdayStart))
-          .where('workDate', isLessThan: Timestamp.fromDate(todayEnd))
-          .limit(1)
-          .get();
-      
-      if (snapshot.docs.isEmpty) {
-        return null;
+      String dateStr(DateTime d) =>
+          '${d.year}${d.month.toString().padLeft(2, '0')}${d.day.toString().padLeft(2, '0')}';
+
+      for (final date in [todayStart, todayStart.subtract(const Duration(days: 1))]) {
+        final docId = '${applicationId}_${dateStr(date)}';
+        final doc = await _firestore.collection('attendance').doc(docId).get();
+        if (!doc.exists) continue;
+        final att = AttendanceModel.fromFirestore(doc);
+        // 소유자 검증 (타인 applicationId 조회 방지)
+        if (att.userId != userId) continue;
+        return att;
       }
-      
-      return AttendanceModel.fromFirestore(snapshot.docs.first);
+      return null;
     } catch (e) {
       debugPrint('❌ 오늘 출근 기록 조회 실패: $e');
       return null;
@@ -232,12 +261,12 @@ extension AttendanceFirestore on FirestoreService {
           .where('workDate', isLessThan: Timestamp.fromDate(todayEnd))
           .orderBy('workDate', descending: false)
           .orderBy('checkInTime', descending: false)
-          .get();
-      
+          .get(const GetOptions(source: Source.server));
+
       final attendances = snapshot.docs
           .map((doc) => AttendanceModel.fromFirestore(doc))
           .toList();
-      
+
       debugPrint('✅ 오늘 출근 현황: ${attendances.length}명');
       return attendances;
     } catch (e) {
@@ -262,42 +291,26 @@ extension AttendanceFirestore on FirestoreService {
           .where('businessId', isEqualTo: businessId)
           .where('status', whereIn: AppStatus.confirmedStatuses)
           .where('workDate', isEqualTo: Timestamp.fromDate(todayStart))
-          .get();
-      
+          .get(const GetOptions(source: Source.server));
+
       final shortTerm = shortTermSnapshot.docs
           .map((doc) => ApplicationModel.fromFirestore(doc))
           .toList();
-      
+
       debugPrint('   단기 근무자: ${shortTerm.length}명');
-      
+
       // 2. 오늘 근무하는 장기 근무자 (CONTRACT_PENDING 포함)
       final longTermSnapshot = await _firestore
           .collection('applications')
           .where('businessId', isEqualTo: businessId)
           .where('status', whereIn: AppStatus.confirmedStatuses)
           .where('type', isEqualTo: AppType.longTerm)
-          .get();
+          .get(const GetOptions(source: Source.server));
       
       final longTerm = longTermSnapshot.docs
           .map((doc) => ApplicationModel.fromFirestore(doc))
-          .where((app) {
-            // 오늘이 근무일인지 확인
-            if (app.workEndDate == null) return false;
-            
-            final isInRange = !todayStart.isBefore(app.workDate) && 
-                             !todayStart.isAfter(app.workEndDate!);
-            
-            if (!isInRange) return false;
-            
-            // 근무 요일 확인
-            if (app.workDays == null || app.workDays!.isEmpty) {
-              return true; // 매일 근무
-            }
-            
-            final todayWeekday = FormatHelper.weekday(today);
-            
-            return app.workDays!.contains(todayWeekday);
-          })
+          // isWorkingOnDate: actualResignDate·leaveDates·extraWorkDates·workDays 모두 반영
+          .where((app) => app.isWorkingOnDate(todayStart))
           .toList();
       
       debugPrint('   장기 근무자: ${longTerm.length}명');
@@ -326,8 +339,8 @@ extension AttendanceFirestore on FirestoreService {
           .where('businessId', isEqualTo: businessId)
           .where('workDate', isGreaterThanOrEqualTo: Timestamp.fromDate(dateStart))
           .where('workDate', isLessThan: Timestamp.fromDate(dateEnd))
-          .get();
-      
+          .get(const GetOptions(source: Source.server));
+
       return snapshot.docs
           .map((doc) => AttendanceModel.fromFirestore(doc))
           .toList();
@@ -420,7 +433,7 @@ extension AttendanceFirestore on FirestoreService {
           .where('businessId', isEqualTo: businessId)
           .where('status', isEqualTo: 'PENDING')
           .orderBy('requestedAt', descending: true)
-          .get();
+          .get(const GetOptions(source: Source.server));
 
       return snapshot.docs
           .map((doc) => ScheduleChangeRequestModel.fromMap(doc.data(), doc.id))
@@ -438,7 +451,7 @@ extension AttendanceFirestore on FirestoreService {
           .collection('schedule_change_requests')
           .where('businessId', isEqualTo: businessId)
           .orderBy('requestedAt', descending: true)
-          .get();
+          .get(const GetOptions(source: Source.server));
 
       return snapshot.docs
           .map((doc) => ScheduleChangeRequestModel.fromMap(doc.data(), doc.id))
@@ -468,6 +481,10 @@ extension AttendanceFirestore on FirestoreService {
   }
 
   /// 특정 날짜의 대기중인 스케줄 변경 요청 조회 (다중 사업장)
+  ///
+  /// whereIn은 보안 규칙 request.query.filters.businessId를 채우지 못해
+  /// isAdminOf 검증 실패 → PERMISSION_DENIED 발생.
+  /// 사업장별 개별 isEqualTo 쿼리로 분리하여 보안 규칙 충족.
   Future<List<ScheduleChangeRequestModel>> getScheduleChangeRequestsForDate({
     required DateTime date,
     required List<String> businessIds,
@@ -475,16 +492,12 @@ extension AttendanceFirestore on FirestoreService {
     if (businessIds.isEmpty) return [];
     try {
       final results = <ScheduleChangeRequestModel>[];
-      for (int i = 0; i < businessIds.length; i += 10) {
-        final batch = businessIds.sublist(
-          i,
-          i + 10 < businessIds.length ? i + 10 : businessIds.length,
-        );
+      for (final businessId in businessIds) {
         final snap = await _firestore
             .collection('schedule_change_requests')
-            .where('businessId', whereIn: batch)
+            .where('businessId', isEqualTo: businessId)
             .where('status', isEqualTo: 'PENDING')
-            .get();
+            .get(const GetOptions(source: Source.server));
         results.addAll(
           snap.docs
               .map((d) => ScheduleChangeRequestModel.fromMap(d.data(), d.id))
@@ -502,6 +515,15 @@ extension AttendanceFirestore on FirestoreService {
   }
 
   /// 스케줄 변경 요청 승인
+  ///
+  /// 타입별 Application 배열 필드 업데이트 (트랜잭션 내 원자 처리):
+  ///   · LEAVE / NO_WORK → leaveDates 추가: isLeaveDateOn=true → 당일 명단·출근 차단
+  ///   · EXTRA_WORK      → extraWorkDates 추가: isExtraWorkDateOn=true → 비근무 요일 출근 허용
+  ///   · CANCEL_LEAVE    → leaveDates 제거 [B1 수정]: 미제거 시 isLeaveDateOn=true 유지 → 출근 불가 상태 고착
+  ///   · CANCEL_EXTRA    → extraWorkDates 제거 [B2 수정]: 미제거 시 isExtraWorkDateOn=true 유지 → 당일 명단 잔류
+  ///
+  /// ⚠️ CANCEL_LEAVE/CANCEL_EXTRA 분기를 수정할 때 removeWhere 누락 금지.
+  ///    누락 시 근무자가 출근 불가 상태에 빠지거나 비근무일에 명단에 표시되는 문제 재발.
   Future<bool> approveScheduleChangeRequest({
     required String requestId,
     required String approverUid,
@@ -527,41 +549,56 @@ extension AttendanceFirestore on FirestoreService {
           'respondedAt': FieldValue.serverTimestamp(),
         });
 
-        // Application leaveDates / extraWorkDates 원자적 업데이트
+        // ── Application leaveDates / extraWorkDates 원자적 업데이트 ──────────────
+        // 요청 타입별로 Application 문서의 배열 필드를 트랜잭션 내에서 갱신.
+        // 트랜잭션 외부에서 별도 업데이트하면 요청 상태(APPROVED)와 배열 변경 사이에
+        // 타이밍 불일치가 생길 수 있으므로 반드시 같은 tx 안에서 처리.
         final appRef = _firestore.collection('applications').doc(request!.applicationId);
         final appSnapshot = await tx.get(appRef);
         if (appSnapshot.exists) {
           final appData = appSnapshot.data()!;
 
+          bool sameDay(DateTime d) =>
+              d.year == request!.targetDate.year &&
+              d.month == request!.targetDate.month &&
+              d.day == request!.targetDate.day;
+
+          List<DateTime> parseDates(String field) =>
+              appData[field] != null
+                  ? (appData[field] as List)
+                      .map((e) => (e as Timestamp).toDate().toLocal())
+                      .toList()
+                  : [];
+
           if (request!.isLeaveRequest || request!.isNoWorkRequest) {
-            List<DateTime> leaveDates = [];
-            if (appData['leaveDates'] != null) {
-              leaveDates = (appData['leaveDates'] as List)
-                  .map((e) => (e as Timestamp).toDate().toLocal())
-                  .toList();
-            }
-            if (!leaveDates.any((d) =>
-                d.year == request!.targetDate.year &&
-                d.month == request!.targetDate.month &&
-                d.day == request!.targetDate.day)) {
-              leaveDates.add(request!.targetDate);
-            }
+            // 휴무·미출근 승인: leaveDates에 날짜 추가
+            // → isLeaveDateOn(date)=true → isWorkingOnDate=false → 당일 명단·출근 체크 차단
+            final leaveDates = parseDates('leaveDates');
+            if (!leaveDates.any(sameDay)) leaveDates.add(request!.targetDate);
             tx.update(appRef, {
               'leaveDates': leaveDates.map((e) => Timestamp.fromDate(e)).toList(),
             });
           } else if (request!.isExtraWorkRequest) {
-            List<DateTime> extraWorkDates = [];
-            if (appData['extraWorkDates'] != null) {
-              extraWorkDates = (appData['extraWorkDates'] as List)
-                  .map((e) => (e as Timestamp).toDate().toLocal())
-                  .toList();
-            }
-            if (!extraWorkDates.any((d) =>
-                d.year == request!.targetDate.year &&
-                d.month == request!.targetDate.month &&
-                d.day == request!.targetDate.day)) {
-              extraWorkDates.add(request!.targetDate);
-            }
+            // 추가근무 승인: extraWorkDates에 날짜 추가
+            // → isExtraWorkDateOn(date)=true → isWorkingOnDate=true → 비근무 요일에도 출근 가능
+            final extraWorkDates = parseDates('extraWorkDates');
+            if (!extraWorkDates.any(sameDay)) extraWorkDates.add(request!.targetDate);
+            tx.update(appRef, {
+              'extraWorkDates': extraWorkDates.map((e) => Timestamp.fromDate(e)).toList(),
+            });
+          } else if (request!.requestType == RequestType.CANCEL_LEAVE) {
+            // 휴무 취소 승인: leaveDates에서 해당 날짜 제거
+            // 제거하지 않으면 isLeaveDateOn=true가 유지돼 checkIn 서비스에서
+            // "오늘은 승인된 휴무일" 예외가 발생해 근무자가 출근 불가 상태에 빠짐
+            final leaveDates = parseDates('leaveDates')..removeWhere(sameDay);
+            tx.update(appRef, {
+              'leaveDates': leaveDates.map((e) => Timestamp.fromDate(e)).toList(),
+            });
+          } else if (request!.requestType == RequestType.CANCEL_EXTRA) {
+            // 추가근무 취소 승인: extraWorkDates에서 해당 날짜 제거
+            // 제거하지 않으면 isExtraWorkDateOn=true가 유지돼 당일 명단에 계속 포함되고
+            // 해당 날짜 isWorkingOnDate=true 상태가 유지됨
+            final extraWorkDates = parseDates('extraWorkDates')..removeWhere(sameDay);
             tx.update(appRef, {
               'extraWorkDates': extraWorkDates.map((e) => Timestamp.fromDate(e)).toList(),
             });
@@ -652,7 +689,7 @@ extension AttendanceFirestore on FirestoreService {
   }) async {
     try {
       // 사업장 관리자 UID 조회
-      final businessDoc = await _firestore.collection('businesses').doc(businessId).get();
+      final businessDoc = await _firestore.collection('businesses').doc(businessId).get(const GetOptions(source: Source.server));
       if (!businessDoc.exists) return;
       
       final adminUid = businessDoc.data()?['ownerId'] as String?;
@@ -686,7 +723,7 @@ extension AttendanceFirestore on FirestoreService {
   }) async {
     try {
       // 사업장 이름 조회
-      final businessDoc = await _firestore.collection('businesses').doc(businessId).get();
+      final businessDoc = await _firestore.collection('businesses').doc(businessId).get(const GetOptions(source: Source.server));
       final businessName = businessDoc.data()?['name'] as String? ?? '';
       
       await createNotification(
@@ -717,7 +754,7 @@ extension AttendanceFirestore on FirestoreService {
   }) async {
     try {
       // 사업장 이름 조회
-      final businessDoc = await _firestore.collection('businesses').doc(businessId).get();
+      final businessDoc = await _firestore.collection('businesses').doc(businessId).get(const GetOptions(source: Source.server));
       final businessName = businessDoc.data()?['name'] as String? ?? '';
       
       await createNotification(
@@ -749,7 +786,7 @@ extension AttendanceFirestore on FirestoreService {
       final requestDoc = await _firestore
           .collection('schedule_change_requests')
           .doc(requestId)
-          .get();
+          .get(const GetOptions(source: Source.server));
 
       if (!requestDoc.exists) {
         debugPrint('❌ 요청을 찾을 수 없음');
@@ -758,6 +795,13 @@ extension AttendanceFirestore on FirestoreService {
 
       final request = ScheduleChangeRequestModel.fromMap(requestDoc.data()!, requestId);
 
+      // 취소 가능 상태: PENDING(미처리) 또는 APPROVED(적용 취소)
+      // REJECTED/CANCELED 요청은 재취소 불가 — 상태 이력 왜곡 방지
+      if (!request.isPending && !request.isApproved) {
+        debugPrint('⚠️ 취소 불가 상태: ${request.status}');
+        return false;
+      }
+
       // 2. 승인된 요청이면 ApplicationModel에서도 제거 (batch로 원자화)
       final batch = _firestore.batch();
 
@@ -765,7 +809,7 @@ extension AttendanceFirestore on FirestoreService {
         final appSnapshot = await _firestore
             .collection('applications')
             .doc(request.applicationId)
-            .get();
+            .get(const GetOptions(source: Source.server));
 
         if (appSnapshot.exists) {
           final appData = appSnapshot.data()!;
@@ -840,7 +884,7 @@ extension AttendanceFirestore on FirestoreService {
           .where('businessId', isEqualTo: businessId)
           .where('workDate', isGreaterThanOrEqualTo: Timestamp.fromDate(start))
           .where('workDate', isLessThan: Timestamp.fromDate(end))
-          .get();
+          .get(const GetOptions(source: Source.server));
       final map = <String, List<AttendanceModel>>{};
       for (final doc in snapshot.docs) {
         final att = AttendanceModel.fromFirestore(doc);
@@ -898,7 +942,7 @@ extension AttendanceFirestore on FirestoreService {
           .collection('schedule_change_requests')
           .where('businessId', isEqualTo: businessId)
           .where('status', isEqualTo: 'PENDING')
-          .get();
+          .get(const GetOptions(source: Source.server));
 
       return snapshot.docs.length;
     } catch (e) {

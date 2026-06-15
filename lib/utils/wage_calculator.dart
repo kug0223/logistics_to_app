@@ -171,6 +171,16 @@ class WageCalculator {
       final scheduledWorkMinutes = (scheduledMinutes - schedBreak).clamp(0, 9999);
       overtimeMinutes = (workMinutes - scheduledWorkMinutes).clamp(0, 9999);
     }
+
+    // 조출 분 계산 (예정 시작보다 일찍 출근한 분) — overtimeMinutes 이하로 제한
+    final schedStartMin = _parseTime(scheduledStart) ?? 0;
+    final actualStartMin = _parseTime(actualStart) ?? 0;
+    // 자정 넘김 보정: actualStart가 scheduledStart보다 수치상 크면 전날로 해석
+    final adjustedActualStart = actualStartMin > schedStartMin
+        ? actualStartMin - 24 * 60
+        : actualStartMin;
+    final rawEarlyArrivalMinutes = (schedStartMin - adjustedActualStart).clamp(0, 9999);
+    final earlyArrivalMinutes = rawEarlyArrivalMinutes.clamp(0, overtimeMinutes);
     
     // 3. 야간근무 계산 (휴게는 주간 구간 먼저 소진 — 야간 시간대 공제 최소화)
     int nightMinutes = 0;
@@ -229,6 +239,8 @@ class WageCalculator {
       nightAmount = result['nightAmount']!;
     }
     
+    // additionalAmount는 추가 공제에 음수 입력이 가능하지만 UI에서 검증하지 않으므로,
+    // 극단적인 음수 입력 시 totalAmount가 음수가 될 수 있다. 호출 측에서 범위를 보장해야 한다.
     final totalAmount = baseAmount + overtimeAmount + nightAmount + additionalAmount;
     
     return WageDetailModel(
@@ -239,6 +251,7 @@ class WageCalculator {
       breakMinutes: breakMinutes,
       workMinutes: workMinutes,
       overtimeMinutes: overtimeMinutes,
+      earlyArrivalMinutes: earlyArrivalMinutes,
       nightMinutes: nightMinutes,
       baseAmount: baseAmount,
       overtimeAmount: overtimeAmount,
@@ -454,7 +467,13 @@ class WageCalculator {
   // 주휴수당 계산
   // ============================================================
 
-  /// 주휴수당 계산
+  /// 주휴수당 참고 금액 계산 (자동 적용 없음)
+  ///
+  /// ⚠️ 설계 방침: 주휴수당은 급여 계산에 자동 포함되지 않음.
+  /// 주휴수당의 인정 범위·지급 방식은 계약 형태·근무 일정에 따라 복잡하며,
+  /// 이미 시급/일급에 포함해 계약한 경우도 많으므로 사업주가 직접 판단해
+  /// additionalAmount로 수동 적용하도록 설계함.
+  /// 이 메서드는 참고값(사업주 안내용) 계산 전용.
   ///
   /// [ordinaryHourlyWage]: 통상시급 (WageDetailModel.appliedMinimumWage 기준)
   /// [weeklyWorkMinutes]: 해당 주 총 근무 분 (조건 확인용)

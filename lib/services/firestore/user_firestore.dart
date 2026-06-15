@@ -61,6 +61,7 @@ extension UserFirestore on FirestoreService {
   }
 
   Future<void> updateUserDocument(String uid, Map<String, dynamic> data) async {
+    NetworkChecker.instance.assertOnline('프로필 수정을 하려면 인터넷 연결이 필요합니다.');
     try {
       await _firestore.collection('users').doc(uid).update(data);
       

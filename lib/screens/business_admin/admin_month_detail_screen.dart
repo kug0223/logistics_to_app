@@ -179,6 +179,7 @@ class _AdminMonthDetailScreenState extends State<AdminMonthDetailScreen> {
       await file.writeAsBytes(bytes);
 
       await Share.shareXFiles([XFile(file.path)], subject: fileName);
+      await file.delete();
     } catch (e) {
       debugPrint('❌ 엑셀 내보내기 실패: $e');
       if (mounted) {
@@ -221,6 +222,7 @@ class _AdminMonthDetailScreenState extends State<AdminMonthDetailScreen> {
       title: bizName != null
           ? '${widget.year}년 ${widget.month}월 · $bizName'
           : '${widget.year}년 ${widget.month}월',
+      onRefresh: _loadData,
       actions: [
         if (_isExporting)
           const Padding(

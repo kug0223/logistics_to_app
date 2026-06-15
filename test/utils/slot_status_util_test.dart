@@ -414,8 +414,8 @@ void main() {
       });
 
       test('G2. TO status=CLOSED + isPublished=true + slot open → recruiting (slot 기준)', () {
-        // TO 레벨 마감이 slot 상태에 직접 영향 없음
-        final closedTO = _to(status: TOStatus.closed, isManualClosed: true);
+        // TO status=CLOSED이지만 isManualClosed=false → slot 기준으로 판단 → recruiting
+        final closedTO = _to(status: TOStatus.closed, isManualClosed: false);
         final result = SlotStatusUtil.slotStatus(_slot(), closedTO);
         expect(result, SlotDisplayStatus.recruiting);
       });

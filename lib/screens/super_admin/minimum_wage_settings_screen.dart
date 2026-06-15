@@ -165,7 +165,7 @@ class _MinimumWageSettingsScreenState extends State<MinimumWageSettingsScreen> {
     );
   }
 
-  void _confirmDelete(int year) async {
+  Future<void> _confirmDelete(int year) async {
     final ok = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(

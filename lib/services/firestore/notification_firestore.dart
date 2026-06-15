@@ -4,6 +4,13 @@
 // 알림/리뷰/신분증 관리 (Notification & Review Management)
 // ═══════════════════════════════════════════════════════════
 
+/// 알림 커서 기반 페이지네이션 결과
+class NotificationPage {
+  final List<NotificationModel> records;
+  final bool hasMore;
+  const NotificationPage({required this.records, required this.hasMore});
+}
+
 extension NotificationFirestore on FirestoreService {
   // ═══════════════════════════════════════════════════════════
   // 알림 관리 (Notification Management)
@@ -129,11 +136,12 @@ extension NotificationFirestore on FirestoreService {
   Future<int> deleteOldNotifications(String userId) async {
     try {
       final cutoffDate = DateTime.now().subtract(const Duration(days: 30));
-      
+
       final snapshot = await _firestore
           .collection('notifications')
           .where('userId', isEqualTo: userId)
           .where('createdAt', isLessThan: Timestamp.fromDate(cutoffDate))
+          .limit(500) // 1회 호출당 최대 500건 처리 — 메모리 보호
           .get();
       
       const chunkSize = 500;
@@ -153,7 +161,10 @@ extension NotificationFirestore on FirestoreService {
     }
   }
 
-  /// 알림 스트림 (실시간)
+  /// 알림 스트림 (실시간) — limit(31)로 hasMore 감지
+  ///
+  /// 31건 수신 시 NotificationProvider가 30건만 표시하고 _hasMore=true 설정.
+  /// 31건 미만이면 _hasMore=false — 더 이상 오래된 알림 없음.
   Stream<List<NotificationModel>> watchUserNotifications(String userId) {
     final cutoff = DateTime.now().subtract(const Duration(days: 30));
     return _firestore
@@ -161,11 +172,37 @@ extension NotificationFirestore on FirestoreService {
         .where('userId', isEqualTo: userId)
         .where('createdAt', isGreaterThanOrEqualTo: Timestamp.fromDate(cutoff))
         .orderBy('createdAt', descending: true)
-        .limit(30)
+        .limit(31)
         .snapshots()
         .map((snapshot) => snapshot.docs
             .map((doc) => NotificationModel.fromFirestore(doc))
             .toList());
+  }
+
+  /// 스트림 범위 이전 알림 페이지 조회 — NotificationProvider.loadMore() 전용
+  Future<NotificationPage> getOlderNotificationsPaged({
+    required String userId,
+    required DateTime before,
+    int pageSize = 30,
+  }) async {
+    try {
+      final snap = await _firestore
+          .collection('notifications')
+          .where('userId', isEqualTo: userId)
+          .where('createdAt', isLessThan: Timestamp.fromDate(before))
+          .orderBy('createdAt', descending: true)
+          .limit(pageSize + 1)
+          .get();
+      final hasMore = snap.docs.length > pageSize;
+      final docs = hasMore ? snap.docs.sublist(0, pageSize) : snap.docs;
+      return NotificationPage(
+        records: docs.map(NotificationModel.fromFirestore).toList(),
+        hasMore: hasMore,
+      );
+    } catch (e) {
+      debugPrint('❌ 이전 알림 조회 실패: $e');
+      return const NotificationPage(records: [], hasMore: false);
+    }
   }
 
   /// 읽지 않은 알림 개수 — NotificationProvider.unreadCount에서 파생 (별도 쿼리 불필요)

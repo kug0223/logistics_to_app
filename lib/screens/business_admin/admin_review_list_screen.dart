@@ -26,6 +26,7 @@ import '../../widgets/common/gradient_scaffold.dart';
 import '../../widgets/common/loading_widget.dart';
 import '../../widgets/common/app_search_bar.dart';
 import '../../widgets/common/app_tab_label.dart';
+import '../../widgets/common/app_filter_chip.dart';
 
 /// 관리자용 리뷰 목록 화면
 class AdminReviewListScreen extends StatefulWidget {
@@ -54,6 +55,15 @@ class _AdminReviewListScreenState extends State<AdminReviewListScreen>
   Map<String, DateTime> _requestDeadlines = {};
   // workerName 이 비어있는 경우 users 컬렉션에서 보완 조회한 이름 캐시
   Map<String, String> _resolvedWorkerNames = {};
+
+  // 페이지네이션 상태
+  DocumentSnapshot? _cursorWritten;
+  DocumentSnapshot? _cursorReceived;
+  bool _hasMoreWritten = false;
+  bool _hasMoreReceived = false;
+  bool _isLoadingMoreWritten = false;
+  bool _isLoadingMoreReceived = false;
+  String? _cachedBusinessId;
 
   // 필터 상태
   int _selectedYear = DateTime.now().year;
@@ -170,6 +180,10 @@ class _AdminReviewListScreenState extends State<AdminReviewListScreen>
 
   Future<void> _loadReviews() async {
     setState(() => _isLoading = true);
+    _cursorWritten = null;
+    _cursorReceived = null;
+    _hasMoreWritten = false;
+    _hasMoreReceived = false;
 
     final userProvider = context.read<UserProvider>();
     final user = userProvider.currentUser;
@@ -182,18 +196,27 @@ class _AdminReviewListScreenState extends State<AdminReviewListScreen>
       return;
     }
 
+    _cachedBusinessId = businessId;
+
     try {
       final results = await Future.wait([
-        _reviewService.getReviewsByBusiness(businessId: businessId, limit: 100),
-        _reviewService.getPublishedReviewsForBusiness(businessId: businessId, limit: 100),
+        _reviewService.getReviewsByBusinessPaged(businessId: businessId),
+        _reviewService.getPublishedReviewsForBusinessPaged(businessId: businessId),
         _reviewService.getPendingRequestsForBusiness(businessId),
         _reviewService.getAllNonPublishedRequestsForBusiness(businessId),
       ]);
 
+      final writtenPage = results[0] as ReviewPage<MonthlyReviewModel>;
+      final receivedPage = results[1] as ReviewPage<MonthlyReviewModel>;
+
       // raw 전량 저장 — 필터는 getter에서 처리
-      _rawWritten  = results[0] as List<MonthlyReviewModel>;
-      _rawReceived = results[1] as List<MonthlyReviewModel>;
+      _rawWritten  = writtenPage.records;
+      _rawReceived = receivedPage.records;
       _rawPending  = results[2] as List<ReviewRequestModel>;
+      _cursorWritten = writtenPage.cursor;
+      _cursorReceived = receivedPage.cursor;
+      _hasMoreWritten = writtenPage.hasMore;
+      _hasMoreReceived = receivedPage.hasMore;
 
       final allNonPublished = results[3] as List<ReviewRequestModel>;
       _requestDeadlines = {for (final r in allNonPublished) r.id: r.deadline};
@@ -231,6 +254,48 @@ class _AdminReviewListScreenState extends State<AdminReviewListScreen>
     setState(() => _isLoading = false);
   }
 
+  Future<void> _loadMoreWritten() async {
+    final businessId = _cachedBusinessId;
+    if (businessId == null || !_hasMoreWritten || _isLoadingMoreWritten) return;
+    setState(() => _isLoadingMoreWritten = true);
+    try {
+      final page = await _reviewService.getReviewsByBusinessPaged(
+        businessId: businessId,
+        startAfter: _cursorWritten,
+      );
+      if (!mounted) return;
+      setState(() {
+        _rawWritten = [..._rawWritten, ...page.records];
+        _cursorWritten = page.cursor;
+        _hasMoreWritten = page.hasMore;
+        _isLoadingMoreWritten = false;
+      });
+    } catch (_) {
+      if (mounted) setState(() => _isLoadingMoreWritten = false);
+    }
+  }
+
+  Future<void> _loadMoreReceived() async {
+    final businessId = _cachedBusinessId;
+    if (businessId == null || !_hasMoreReceived || _isLoadingMoreReceived) return;
+    setState(() => _isLoadingMoreReceived = true);
+    try {
+      final page = await _reviewService.getPublishedReviewsForBusinessPaged(
+        businessId: businessId,
+        startAfter: _cursorReceived,
+      );
+      if (!mounted) return;
+      setState(() {
+        _rawReceived = [..._rawReceived, ...page.records];
+        _cursorReceived = page.cursor;
+        _hasMoreReceived = page.hasMore;
+        _isLoadingMoreReceived = false;
+      });
+    } catch (_) {
+      if (mounted) setState(() => _isLoadingMoreReceived = false);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -240,6 +305,7 @@ class _AdminReviewListScreenState extends State<AdminReviewListScreen>
       title: hasActiveFilter
           ? '리뷰 관리 · $_selectedYear년 $_selectedMonth월'
           : '리뷰 관리',
+      onRefresh: _loadReviews,
       body: _isLoading
           ? const LoadingWidget()
           : Column(
@@ -290,8 +356,20 @@ class _AdminReviewListScreenState extends State<AdminReviewListScreen>
                   child: TabBarView(
                     controller: _tabController,
                     children: [
-                      _buildReviewList(_writtenReviews, isWritten: true),
-                      _buildReviewList(_receivedReviews, isWritten: false),
+                      _buildReviewList(
+                        _writtenReviews,
+                        isWritten: true,
+                        hasMore: _hasMoreWritten,
+                        isLoadingMore: _isLoadingMoreWritten,
+                        onLoadMore: _loadMoreWritten,
+                      ),
+                      _buildReviewList(
+                        _receivedReviews,
+                        isWritten: false,
+                        hasMore: _hasMoreReceived,
+                        isLoadingMore: _isLoadingMoreReceived,
+                        onLoadMore: _loadMoreReceived,
+                      ),
                       _buildPendingRequestList(),
                     ],
                   ),
@@ -388,38 +466,26 @@ class _AdminReviewListScreenState extends State<AdminReviewListScreen>
     int? count,
   }) {
     final isSelected = _selectedMonth == value;
-    final theme = Theme.of(context);
     // 월 칩 label: count 있으면 "5월 3" 형태로 표시
     final chipLabel = count != null && count > 0
         ? '$label  $count'
         : label;
-    return FilterChip(
-      label: Text(chipLabel),
-      selected: isSelected,
-      onSelected: (_) => setState(() => _selectedMonth = value),
-      backgroundColor: Colors.white,
-      selectedColor: theme.primaryColor.withValues(alpha: 0.12),
-      side: BorderSide(
-        color: isSelected ? theme.primaryColor : AppColors.grey200,
-        width: isSelected ? 1.5 : 1,
-      ),
-      checkmarkColor: theme.primaryColor,
-      showCheckmark: false,
-      labelStyle: ResponsiveHelper.smallStyle(context).copyWith(
-        color: isSelected ? theme.primaryColor : AppColors.grey600,
-        fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
-      ),
-      padding: EdgeInsets.symmetric(
-        horizontal: ResponsiveHelper.spacing(context, 6),
-        vertical: ResponsiveHelper.spacing(context, 2),
-      ),
-      materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+    return AppFilterChip(
+      label: chipLabel,
+      isSelected: isSelected,
+      onTap: () => setState(() => _selectedMonth = value),
     );
   }
 
   // ─── 리뷰 목록 탭 ─────────────────────────────────────────────
 
-  Widget _buildReviewList(List<MonthlyReviewModel> reviews, {required bool isWritten}) {
+  Widget _buildReviewList(
+    List<MonthlyReviewModel> reviews, {
+    required bool isWritten,
+    bool hasMore = false,
+    bool isLoadingMore = false,
+    VoidCallback? onLoadMore,
+  }) {
     if (reviews.isEmpty) {
       return Center(
         child: Column(
@@ -475,9 +541,27 @@ class _AdminReviewListScreenState extends State<AdminReviewListScreen>
       onRefresh: _loadReviews,
       child: ListView.builder(
         padding: ResponsiveHelper.listPadding(context),
-        itemCount: filtered.length,
-        itemBuilder: (context, index) =>
-            _buildReviewCard(context, filtered[index], isWritten: isWritten),
+        itemCount: filtered.length + (hasMore ? 1 : 0),
+        itemBuilder: (context, index) {
+          if (hasMore && index == filtered.length) {
+            return Padding(
+              padding: EdgeInsets.only(
+                top: ResponsiveHelper.spacing(context, 4),
+                bottom: ResponsiveHelper.spacing(context, 16),
+              ),
+              child: Center(
+                child: isLoadingMore
+                    ? const CircularProgressIndicator()
+                    : TextButton.icon(
+                        onPressed: onLoadMore,
+                        icon: const Icon(Icons.expand_more),
+                        label: const Text('더 보기'),
+                      ),
+              ),
+            );
+          }
+          return _buildReviewCard(context, filtered[index], isWritten: isWritten);
+        },
       ),
     );
   }

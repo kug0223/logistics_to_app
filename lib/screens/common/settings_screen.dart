@@ -1,4 +1,4 @@
-﻿import 'dart:convert';
+import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
@@ -32,6 +32,7 @@ import '../business_admin/admin_review_list_screen.dart';
 import '../business_admin/work_type_management_screen.dart';
 import 'document_management_screen.dart';
 import 'help_screen.dart';
+import '../user/my_reviews_screen.dart';
 import 'profile_edit_screen.dart';
 import '../business_admin/business_list_screen.dart';
 import '../super_admin/all_businesses_screen.dart';
@@ -70,6 +71,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   bool _isNotifPrefsLoading = false;
   String _appVersion = '';
   String? _businessSealBase64;
+  String _sealType = 'stamp';
   String? _resolvedBusinessId;
 
   @override
@@ -111,10 +113,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
           .doc(businessId)
           .get();
       final seal = doc.data()?['sealBase64'] as String?;
+      final sealType = doc.data()?['sealType'] as String? ?? 'stamp';
       if (mounted) {
         setState(() {
           _resolvedBusinessId = businessId;
           _businessSealBase64 = seal;
+          _sealType = sealType;
         });
       }
     } catch (e) {
@@ -277,6 +281,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 onTap: () => NavigationHelper.push<bool>(context,
                     destination: const DocumentManagementScreen()),
               ),
+              _SettingsItem(
+                icon: Icons.star_rounded,
+                iconColor: AppColors.warning,
+                title: '내 평가 확인',
+                onTap: () => Navigator.push(context,
+                    MaterialPageRoute(builder: (_) => const MyReviewsScreen())),
+              ),
             ]),
             SizedBox(height: ResponsiveHelper.spacing(context, 8)),
             _buildSignatureCard(context, user),
@@ -421,7 +432,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
               icon: Icons.settings_applications_outlined,
               iconColor: AppColors.grey600,
               title: '시스템 알림 설정',
-              onTap: () async => await openAppSettings(),
+              onTap: () async => openAppSettings(),
             ),
           ]),
           SizedBox(height: ResponsiveHelper.spacing(context, 20)),
@@ -1591,7 +1602,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 
   /// 🔄 Application 마이그레이션 실행
-  void _runApplicationMigration(BuildContext context) async {
+  Future<void> _runApplicationMigration(BuildContext context) async {
     // 확인 다이얼로그
     final confirmed = await DialogHelper.showConfirm(
       context,
@@ -1794,10 +1805,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
     }
   }
 
-  // ── 사업자 인감 등록 카드 ─────────────────────────────────────
+  // ── 사업자 날인 등록 카드 (도장 이미지 / 직접 서명 선택) ────────────────
 
   Widget _buildSealCard(BuildContext context, UserModel? user) {
     final hasSeal = _businessSealBase64 != null && _businessSealBase64!.isNotEmpty;
+    final isStamp = _sealType == 'stamp';
 
     return Container(
       decoration: CommonWidgets.compactCardDecoration(),
@@ -1809,6 +1821,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
+            // 헤더
             Row(children: [
               Container(
                 width: ResponsiveHelper.spacing(context, 34),
@@ -1826,11 +1839,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text('사업자 인감',
+                    Text('사업주 날인',
                         style: ResponsiveHelper.bodyStyle(context)
                             .copyWith(fontWeight: FontWeight.w600)),
                     Text(
-                      hasSeal ? '등록됨 · 계약서 날인 시 자동 사용' : '미등록 · 계약서 사업주란에 날인됩니다',
+                      hasSeal
+                          ? '등록됨 · 계약서 서명 시 자동 사용'
+                          : '미등록 · 계약서 사업주란에 사용됩니다',
                       style: ResponsiveHelper.tinyStyle(context,
                           color: AppColors.grey500),
                     ),
@@ -1838,11 +1853,41 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 ),
               ),
             ]),
+
+            SizedBox(height: ResponsiveHelper.spacing(context, 12)),
+
+            // 도장/서명 방식 선택 탭
+            Container(
+              decoration: BoxDecoration(
+                color: AppColors.grey100,
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Row(children: [
+                _SealTypeTab(
+                  label: '도장 이미지',
+                  icon: Icons.image_outlined,
+                  selected: isStamp,
+                  onTap: () {
+                    if (!isStamp) setState(() => _sealType = 'stamp');
+                  },
+                ),
+                _SealTypeTab(
+                  label: '직접 서명',
+                  icon: Icons.draw_outlined,
+                  selected: !isStamp,
+                  onTap: () {
+                    if (isStamp) setState(() => _sealType = 'signature');
+                  },
+                ),
+              ]),
+            ),
+
+            // 등록된 이미지 미리보기
             if (hasSeal) ...[
               SizedBox(height: ResponsiveHelper.spacing(context, 10)),
               Container(
                 width: double.infinity,
-                height: 60,
+                height: 70,
                 decoration: BoxDecoration(
                   border: Border.all(color: AppColors.grey200),
                   borderRadius: BorderRadius.circular(8),
@@ -1857,12 +1902,20 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 ),
               ),
             ],
+
             SizedBox(height: ResponsiveHelper.spacing(context, 10)),
+
+            // 등록/변경/삭제 버튼
             Row(children: [
               Expanded(
                 child: OutlinedButton.icon(
-                  onPressed: () => _registerSeal(context, user),
-                  icon: const Icon(Icons.upload_outlined, size: 14),
+                  onPressed: isStamp
+                      ? () => _registerSeal(context, user)
+                      : () => _registerBusinessSignature(context, user),
+                  icon: Icon(
+                    isStamp ? Icons.upload_outlined : Icons.draw_outlined,
+                    size: 14,
+                  ),
                   label: Text(hasSeal ? '변경' : '등록',
                       style: ResponsiveHelper.smallStyle(context)),
                   style: OutlinedButton.styleFrom(
@@ -1950,20 +2003,52 @@ class _SettingsScreenState extends State<SettingsScreen> {
       await FirebaseFirestore.instance
           .collection('businesses')
           .doc(businessId)
-          .update({'sealBase64': b64});
-      if (mounted) setState(() => _businessSealBase64 = b64);
-      if (mounted) ToastHelper.showSuccess('인감이 등록되었습니다');
+          .update({'sealBase64': b64, 'sealType': 'stamp'});
+      if (mounted) {
+        setState(() {
+          _businessSealBase64 = b64;
+          _sealType = 'stamp';
+        });
+        ToastHelper.showSuccess('도장이 등록되었습니다');
+      }
     } catch (e) {
-      if (mounted) ToastHelper.showError('인감 등록에 실패했습니다');
+      if (mounted) ToastHelper.showError('도장 등록에 실패했습니다');
+    }
+  }
+
+  Future<void> _registerBusinessSignature(BuildContext context, UserModel? user) async {
+    final businessId = _resolvedBusinessId ?? user?.businessId;
+    if (businessId == null) {
+      ToastHelper.showWarning('사업장 정보를 찾을 수 없습니다');
+      return;
+    }
+
+    final bytes = await showSignaturePad(context, title: '사업주 서명');
+    if (bytes == null || !mounted) return;
+
+    try {
+      final b64 = base64Encode(bytes);
+      await FirebaseFirestore.instance
+          .collection('businesses')
+          .doc(businessId)
+          .update({'sealBase64': b64, 'sealType': 'signature'});
+      if (mounted) {
+        setState(() {
+          _businessSealBase64 = b64;
+          _sealType = 'signature';
+        });
+        ToastHelper.showSuccess('서명이 등록되었습니다');
+      }
+    } catch (e) {
+      if (mounted) ToastHelper.showError('서명 등록에 실패했습니다');
     }
   }
 
   Future<void> _deleteSeal(BuildContext context, UserModel? user) async {
-
     final confirm = await DialogHelper.showConfirm(
       context,
-      title: '인감 삭제',
-      message: '등록된 인감을 삭제하시겠습니까?',
+      title: '날인 삭제',
+      message: '등록된 날인을 삭제하시겠습니까?',
       confirmText: '삭제',
       confirmColor: AppColors.error,
     );
@@ -1979,11 +2064,16 @@ class _SettingsScreenState extends State<SettingsScreen> {
       await FirebaseFirestore.instance
           .collection('businesses')
           .doc(businessId)
-          .update({'sealBase64': null});
-      if (mounted) setState(() => _businessSealBase64 = null);
-      if (mounted) ToastHelper.showSuccess('인감이 삭제되었습니다');
+          .update({'sealBase64': null, 'sealType': 'stamp'});
+      if (mounted) {
+        setState(() {
+          _businessSealBase64 = null;
+          _sealType = 'stamp';
+        });
+        ToastHelper.showSuccess('날인이 삭제되었습니다');
+      }
     } catch (e) {
-      if (mounted) ToastHelper.showError('인감 삭제에 실패했습니다');
+      if (mounted) ToastHelper.showError('날인 삭제에 실패했습니다');
     }
   }
 }
@@ -2001,4 +2091,69 @@ class _SettingsItem {
     required this.title,
     required this.onTap,
   });
+}
+
+// ── 날인 방식 선택 탭 버튼 ──────────────────────────────────────────
+class _SealTypeTab extends StatelessWidget {
+  final String label;
+  final IconData icon;
+  final bool selected;
+  final VoidCallback onTap;
+
+  const _SealTypeTab({
+    required this.label,
+    required this.icon,
+    required this.selected,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Expanded(
+      child: GestureDetector(
+        onTap: onTap,
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 150),
+          margin: const EdgeInsets.all(3),
+          padding: EdgeInsets.symmetric(
+            vertical: ResponsiveHelper.spacing(context, 8),
+          ),
+          decoration: BoxDecoration(
+            color: selected ? Colors.white : Colors.transparent,
+            borderRadius: BorderRadius.circular(6),
+            boxShadow: selected
+                ? [
+                    BoxShadow(
+                      color: Colors.black.withValues(alpha: 0.06),
+                      blurRadius: 4,
+                      offset: const Offset(0, 1),
+                    )
+                  ]
+                : null,
+          ),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(
+                icon,
+                size: ResponsiveHelper.iconSize(context, 14),
+                color: selected ? AppColors.warningDark : AppColors.grey500,
+              ),
+              SizedBox(width: ResponsiveHelper.spacing(context, 4)),
+              Text(
+                label,
+                style: ResponsiveHelper.smallStyle(
+                  context,
+                  color: selected ? AppColors.warningDark : AppColors.grey500,
+                ).copyWith(
+                  fontWeight:
+                      selected ? FontWeight.w600 : FontWeight.normal,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
 }

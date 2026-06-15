@@ -1,4 +1,4 @@
-﻿import 'package:ALfit/screens/common/document_management_screen.dart';
+import 'package:ALfit/screens/common/document_management_screen.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -1967,6 +1967,6 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
   Future<String?> _uploadImage(File imageFile, String type) async {
     final timestamp = DateTime.now().millisecondsSinceEpoch;
     final fileName = '${type}_$timestamp.jpg';
-    return await _storageService.uploadImage(imageFile.path, 'businesses/$fileName');
+    return _storageService.uploadImage(imageFile.path, 'businesses/$fileName');
   }
 }

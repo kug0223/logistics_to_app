@@ -217,13 +217,17 @@ class _MonthlyReviewDialogState extends State<MonthlyReviewDialog> {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     return Dialog(
+      backgroundColor: Colors.white,
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(24),
       ),
-      child: Container(
+      insetPadding: EdgeInsets.symmetric(
+        horizontal: ResponsiveHelper.spacing(context, 16),
+        vertical: ResponsiveHelper.spacing(context, 24),
+      ),
+      child: ConstrainedBox(
         constraints: BoxConstraints(
-          maxWidth: 500,
-          maxHeight: MediaQuery.sizeOf(context).height * 0.9,
+          maxHeight: MediaQuery.sizeOf(context).height * 0.92,
         ),
         child: Column(
           mainAxisSize: MainAxisSize.min,
@@ -821,7 +825,10 @@ class _MonthlyReviewDialogState extends State<MonthlyReviewDialog> {
                   ? SizedBox(
                       height: ResponsiveHelper.iconSize(context, 20),
                       width: ResponsiveHelper.iconSize(context, 20),
-                      child: LoadingWidget(color: Colors.white),
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        color: Colors.white,
+                      ),
                     )
                   : Text(
                       '리뷰 작성',
@@ -859,11 +866,15 @@ class _MonthlyReviewViewDialog extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     return Dialog(
+      backgroundColor: Colors.white,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
-      child: Container(
+      insetPadding: EdgeInsets.symmetric(
+        horizontal: ResponsiveHelper.spacing(context, 16),
+        vertical: ResponsiveHelper.spacing(context, 24),
+      ),
+      child: ConstrainedBox(
         constraints: BoxConstraints(
-          maxWidth: 500,
-          maxHeight: MediaQuery.sizeOf(context).height * 0.85,
+          maxHeight: MediaQuery.sizeOf(context).height * 0.92,
         ),
         child: Column(
           mainAxisSize: MainAxisSize.min,

@@ -29,6 +29,7 @@
     String? comment,
     bool wouldRehire = true,
   }) async {
+    NetworkChecker.instance.assertOnline('리뷰 작성을 하려면 인터넷 연결이 필요합니다.');
     try {
       debugPrint('📝 [createReview] 리뷰 작성 시작');
       
@@ -81,6 +82,9 @@
   }
 
   /// 사용자 리뷰 통계 업데이트
+  ///
+  /// ⚠️ G-055: isPublished=true 리뷰만 통계에 반영 — 신규 리뷰는 CF 공개 전까지 통계 미반영.
+  /// 의도된 설계: CF가 publish 후 통계를 재계산하는 방식으로 운영.
   Future<void> _updateUserReviewStats(String userId) async {
     try {
       final reviews = await _firestore

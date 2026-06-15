@@ -5,6 +5,15 @@ import '../utils/format_helper.dart';
 import '../models/core/monthly_review_model.dart';
 import '../models/core/review_request_model.dart';
 import '../models/settings/trust_settings_model.dart';
+import '../utils/network_checker.dart';
+
+/// 리뷰 커서 기반 페이지네이션 결과
+class ReviewPage<T> {
+  final List<T> records;
+  final DocumentSnapshot? cursor;
+  final bool hasMore;
+  const ReviewPage({required this.records, this.cursor, required this.hasMore});
+}
 
 /// 월별 리뷰 서비스 (재설계 v2)
 ///
@@ -63,6 +72,7 @@ class MonthlyReviewService {
           .where('businessId', isEqualTo: businessId)
           .where('adminStatus', isEqualTo: 'pending')
           .where('isPublished', isEqualTo: false)
+          .limit(200)
           .get();
       return snap.docs.map(ReviewRequestModel.fromFirestore).toList();
     } catch (e) {
@@ -118,6 +128,7 @@ class MonthlyReviewService {
     String? comment,
     String? requestId,
   }) async {
+    NetworkChecker.instance.assertOnline('리뷰 작성을 하려면 인터넷 연결이 필요합니다.');
     try {
       // 작성 기한 검증 (H-3): 해당 월 마지막 날 + 14일 이내
       if (!_isWithinReviewWindow(reviewYear, reviewMonth)) {
@@ -157,7 +168,8 @@ class MonthlyReviewService {
         createdAt: DateTime.now(),
       );
 
-      // 트랜잭션으로 중복 제출 방지 (동시 요청에서도 안전)
+      // 트랜잭션으로 중복 제출 방지 + review_requests 원자 갱신 (BUG-G-01)
+      // review_requests를 트랜잭션 밖에서 업데이트하면 CF 공개 트리거 미발동 가능
       final docRef = _db.collection('monthly_reviews').doc(reviewKey);
       await _db.runTransaction((tx) async {
         final existing = await tx.get(docRef);
@@ -165,15 +177,14 @@ class MonthlyReviewService {
           throw FirebaseException(plugin: 'firestore', code: 'already-exists');
         }
         tx.set(docRef, review.toMap());
+        if (requestId != null) {
+          final requestRef = _db.collection('review_requests').doc(requestId);
+          tx.set(requestRef, {
+            'adminStatus': 'submitted',
+            'adminReviewId': reviewKey,
+          }, SetOptions(merge: true));
+        }
       });
-
-      // review_requests 업데이트 (문서 없는 경우에도 merge로 처리)
-      if (requestId != null) {
-        await _db.collection('review_requests').doc(requestId).set({
-          'adminStatus': 'submitted',
-          'adminReviewId': reviewKey,
-        }, SetOptions(merge: true));
-      }
 
       debugPrint('✅ 리뷰 작성 완료: $reviewKey');
       return (reviewId: reviewKey, error: null);
@@ -207,6 +218,7 @@ class MonthlyReviewService {
     String? comment,
     String? requestId,
   }) async {
+    NetworkChecker.instance.assertOnline('리뷰 작성을 하려면 인터넷 연결이 필요합니다.');
     try {
       if (!_isWithinReviewWindow(reviewYear, reviewMonth)) {
         return (reviewId: null, error: '리뷰 작성 기한(근무 완료 후 14일)이 지났습니다.');
@@ -239,17 +251,23 @@ class MonthlyReviewService {
         createdAt: DateTime.now(),
       );
 
+      // 트랜잭션으로 중복 제출 방지 + review_requests 원자 갱신 (BUG-G-02)
+      // reviewerId 미저장(익명) 특성상 중복 감지가 어려우므로 반드시 트랜잭션 사용
       final docRef = _db.collection('monthly_reviews').doc(reviewKey);
-      final batch = _db.batch();
-      batch.set(docRef, review.toMap());
-      if (requestId != null) {
-        final requestRef = _db.collection('review_requests').doc(requestId);
-        batch.set(requestRef, {
-          'workerStatus': 'submitted',
-          'workerReviewId': reviewKey,
-        }, SetOptions(merge: true));
-      }
-      await batch.commit();
+      await _db.runTransaction((tx) async {
+        final existing = await tx.get(docRef);
+        if (existing.exists) {
+          throw FirebaseException(plugin: 'firestore', code: 'already-exists');
+        }
+        tx.set(docRef, review.toMap());
+        if (requestId != null) {
+          final requestRef = _db.collection('review_requests').doc(requestId);
+          tx.set(requestRef, {
+            'workerStatus': 'submitted',
+            'workerReviewId': reviewKey,
+          }, SetOptions(merge: true));
+        }
+      });
 
       debugPrint('✅ 사업장 리뷰 작성 완료: $reviewKey');
       return (reviewId: reviewKey, error: null);
@@ -266,6 +284,9 @@ class MonthlyReviewService {
   }
 
   /// 사업장 답변 달기 (USER_TO_BUSINESS 리뷰)
+  ///
+  /// ⚠️ G-072: 기존 답변 덮어쓰기 가능 — 존재 여부 체크 없음.
+  /// UI에서 businessResponse == null 일 때만 "답변하기" 버튼 표시하므로 실제 발생 가능성 낮음.
   Future<bool> addBusinessResponse({
     required String reviewId,
     required String response,
@@ -287,6 +308,8 @@ class MonthlyReviewService {
   // ═══════════════════════════════════════════════════════════
 
   /// 사업장이 작성한 리뷰 (관리자 → 지원자)
+  ///
+  /// ⚠️ G-020: UI에서 limit(100) 호출 — 100건 초과 시 오래된 리뷰 누락. 향후 페이지네이션 필요.
   Future<List<MonthlyReviewModel>> getReviewsByBusiness({
     required String businessId,
     int limit = 50,
@@ -390,17 +413,18 @@ class MonthlyReviewService {
           .where('workDate',
               isGreaterThanOrEqualTo: Timestamp.fromDate(monthStart))
           .where('workDate',
-              isLessThanOrEqualTo: Timestamp.fromDate(monthEnd))
+              isLessThan: Timestamp.fromDate(monthEnd))
           .get();
 
       // 장기: workEndDate가 해당 월 이후 (계약이 해당 월에 걸침, CONTRACT_PENDING 포함)
+      // ⚠️ G-045: limit(500) — 초대형 사업장에서 월 500명 초과 시 일부 누락. 현실적 위험 낮음.
       final longTermFuture = _db
           .collection('applications')
           .where('businessId', isEqualTo: businessId)
           .where('status', whereIn: [AppStatus.confirmed, AppStatus.contractPending])
           .where('workEndDate',
               isGreaterThanOrEqualTo: Timestamp.fromDate(monthStart))
-          .limit(500)  // 과다 조회 방지 (대형 사업장도 월 500명 초과 없음)
+          .limit(500)
           .get();
 
       // 해당 월 기존 리뷰 일괄 조회 (N+1 제거)
@@ -427,8 +451,13 @@ class MonthlyReviewService {
 
       final Map<String, Map<String, dynamic>> workerMap = {};
 
-      // 단기 근무자 집계
+      // [F-001] 장기 지원서 ID 집합 — shortTermDocs 쿼리가 workDate 기준이라
+      // 당월 시작하는 장기 지원서도 잡힘. 중복 집계 방지를 위해 먼저 처리 후 단기에서 제외
+      final longTermDocIds = longTermDocs.map((d) => d.id).toSet();
+
+      // 단기 근무자 집계 (장기 지원서 제외)
       for (final doc in shortTermDocs) {
+        if (longTermDocIds.contains(doc.id)) continue; // 장기 지원서 중복 방지
         final data = doc.data();
         final uid = data['uid'] as String? ?? '';
         if (uid.isEmpty || reviewedUserIds.contains(uid)) continue;
@@ -517,6 +546,9 @@ class MonthlyReviewService {
 
   /// 해당 년월의 리뷰 작성 가능 여부
   /// 해당 월 마지막 날 + 14일 이내만 허용
+  ///
+  /// ⚠️ G-013: 기기 클라이언트 시간 기준 — 기기 시간 조작 시 기한 우회 가능.
+  /// UX 제어 목적으로 의도된 설계. 엄격한 강제가 필요하면 CF에서 serverTimestamp 재검증 필요.
   bool _isWithinReviewWindow(int year, int month) {
     final monthEnd = DateTime(year, month + 1, 0); // 해당 월 마지막 날
     final deadline = monthEnd.add(const Duration(days: _reviewWindowDays));
@@ -676,6 +708,96 @@ class MonthlyReviewService {
     } catch (e) {
       debugPrint('❌ 신뢰도 규칙 조회 실패: $e');
       return TrustSettingsModel.defaults();
+    }
+  }
+
+  // ═══════════════════════════════════════════════════════════
+  // 커서 기반 페이지네이션 (pageSize+1 패턴으로 hasMore 정확도 보장)
+  // ═══════════════════════════════════════════════════════════
+
+  /// 사업장이 작성한 리뷰 (ADMIN_TO_USER) — 페이지네이션
+  Future<ReviewPage<MonthlyReviewModel>> getReviewsByBusinessPaged({
+    required String businessId,
+    DocumentSnapshot? startAfter,
+    int pageSize = 50,
+  }) async {
+    try {
+      Query<Map<String, dynamic>> q = _db
+          .collection('monthly_reviews')
+          .where('businessId', isEqualTo: businessId)
+          .where('reviewType', isEqualTo: ReviewType.ADMIN_TO_USER.name)
+          .orderBy('createdAt', descending: true)
+          .limit(pageSize + 1);
+      if (startAfter != null) q = q.startAfterDocument(startAfter);
+      final snap = await q.get();
+      final hasMore = snap.docs.length > pageSize;
+      final docs = hasMore ? snap.docs.sublist(0, pageSize) : snap.docs;
+      return ReviewPage(
+        records: docs.map(MonthlyReviewModel.fromFirestore).toList(),
+        cursor: docs.isNotEmpty ? docs.last : null,
+        hasMore: hasMore,
+      );
+    } catch (e) {
+      debugPrint('❌ 사업장 작성 리뷰 페이지 조회 실패: $e');
+      return const ReviewPage(records: [], cursor: null, hasMore: false);
+    }
+  }
+
+  /// 사업장이 받은 공개 리뷰 (USER_TO_BUSINESS) — 페이지네이션
+  Future<ReviewPage<MonthlyReviewModel>> getPublishedReviewsForBusinessPaged({
+    required String businessId,
+    DocumentSnapshot? startAfter,
+    int pageSize = 50,
+  }) async {
+    try {
+      Query<Map<String, dynamic>> q = _db
+          .collection('monthly_reviews')
+          .where('businessId', isEqualTo: businessId)
+          .where('reviewType', isEqualTo: ReviewType.USER_TO_BUSINESS.name)
+          .where('isPublished', isEqualTo: true)
+          .orderBy('createdAt', descending: true)
+          .limit(pageSize + 1);
+      if (startAfter != null) q = q.startAfterDocument(startAfter);
+      final snap = await q.get();
+      final hasMore = snap.docs.length > pageSize;
+      final docs = hasMore ? snap.docs.sublist(0, pageSize) : snap.docs;
+      return ReviewPage(
+        records: docs.map(MonthlyReviewModel.fromFirestore).toList(),
+        cursor: docs.isNotEmpty ? docs.last : null,
+        hasMore: hasMore,
+      );
+    } catch (e) {
+      debugPrint('❌ 사업장 받은 리뷰 페이지 조회 실패: $e');
+      return const ReviewPage(records: [], cursor: null, hasMore: false);
+    }
+  }
+
+  /// 근무자가 받은 공개 리뷰 (ADMIN_TO_USER) — 페이지네이션
+  Future<ReviewPage<MonthlyReviewModel>> getPublishedReviewsForUserPaged({
+    required String targetUserId,
+    DocumentSnapshot? startAfter,
+    int pageSize = 30,
+  }) async {
+    try {
+      Query<Map<String, dynamic>> q = _db
+          .collection('monthly_reviews')
+          .where('targetUserId', isEqualTo: targetUserId)
+          .where('reviewType', isEqualTo: ReviewType.ADMIN_TO_USER.name)
+          .where('isPublished', isEqualTo: true)
+          .orderBy('createdAt', descending: true)
+          .limit(pageSize + 1);
+      if (startAfter != null) q = q.startAfterDocument(startAfter);
+      final snap = await q.get();
+      final hasMore = snap.docs.length > pageSize;
+      final docs = hasMore ? snap.docs.sublist(0, pageSize) : snap.docs;
+      return ReviewPage(
+        records: docs.map(MonthlyReviewModel.fromFirestore).toList(),
+        cursor: docs.isNotEmpty ? docs.last : null,
+        hasMore: hasMore,
+      );
+    } catch (e) {
+      debugPrint('❌ 근무자 리뷰 페이지 조회 실패: $e');
+      return const ReviewPage(records: [], cursor: null, hasMore: false);
     }
   }
 }

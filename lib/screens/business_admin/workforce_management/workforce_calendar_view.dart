@@ -1,4 +1,4 @@
-﻿import 'package:flutter/material.dart';
+import 'package:flutter/material.dart';
 import '../../../widgets/calendar/app_calendar.dart';
 import 'package:provider/provider.dart';
 // Models
@@ -430,7 +430,7 @@ class _WorkforceCalendarViewState extends State<WorkforceCalendarView> {
     );
   }
 
-  void _openFixedWorkerManagement() async {
+  Future<void> _openFixedWorkerManagement() async {
     try {
       final businesses = await _getAdminBusinesses();
       if (businesses.isEmpty) {
@@ -453,7 +453,7 @@ class _WorkforceCalendarViewState extends State<WorkforceCalendarView> {
     }
   }
 
-  void _openCloseManagement() async {
+  Future<void> _openCloseManagement() async {
     final businesses = await _getAdminBusinesses();
     if (!mounted) return;
     if (businesses.isEmpty) {

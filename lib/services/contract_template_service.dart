@@ -11,10 +11,12 @@ class ContractTemplateService {
       .doc(businessId)
       .collection('contract_templates');
 
-  Future<List<ContractTemplateModel>> getTemplates(String businessId) async {
+  Future<List<ContractTemplateModel>> getTemplates(String businessId,
+      {int limit = 100}) async {
     try {
       final snap = await _col(businessId)
           .orderBy('createdAt', descending: false)
+          .limit(limit)
           .get();
       return snap.docs
           .map((d) => ContractTemplateModel.fromFirestore(d))

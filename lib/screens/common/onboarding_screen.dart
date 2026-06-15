@@ -77,8 +77,8 @@ class _OnboardingScreenState extends State<OnboardingScreen>
       description: '임금명세서를 앱에서 바로 확인하고\n성실한 출근으로 신뢰도를 쌓으세요.',
       features: [
         _Feature(Icons.receipt_long_outlined, '임금명세서 앱에서 확인·저장', AppColors.warningDarkest),
-        _Feature(Icons.check_circle_rounded, '정상 출근 +1점', AppColors.success),
-        _Feature(Icons.cancel_rounded, '노쇼 -3점 (채용 기회 감소)', AppColors.error),
+        _Feature(Icons.check_circle_rounded, '성실 근무 · 좋은 평가 → 신뢰도 UP', AppColors.success),
+        _Feature(Icons.cancel_rounded, '노쇼 시 -5~-10점 + 이용 제한', AppColors.error),
       ],
     ),
   ];

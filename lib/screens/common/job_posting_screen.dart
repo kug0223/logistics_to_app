@@ -1,4 +1,4 @@
-﻿import 'package:flutter/material.dart';
+import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
@@ -1893,7 +1893,7 @@ class _JobPostingScreenState extends State<JobPostingScreen> {
     );
   }
 
-  void _callPhone(String phone) async {
+  Future<void> _callPhone(String phone) async {
     final url = 'tel:$phone';
     try {
       await launchUrl(Uri.parse(url));
@@ -1914,6 +1914,7 @@ class _JobPostingScreenState extends State<JobPostingScreen> {
           to: slotTO,
           workDetails: _slot!.workDetails,
           businessName: _to!.businessName,
+          slotId: _slot!.id,
           myApplications: _myApplications,
         );
         if (result?.hasChanges == true && mounted) Navigator.pop(context, true);
@@ -1922,6 +1923,7 @@ class _JobPostingScreenState extends State<JobPostingScreen> {
         final now = DateTime.now();
         final Map<DateTime, TOModel> groupTOsByDate = {};
         final Map<DateTime, List<WorkDetailModel>> groupWorkDetailsByDate = {};
+        final Map<DateTime, String> groupSlotIdsByDate = {};
 
         for (final slot in _allSlots) {
           if (slot.isEffectivelyClosed) continue;
@@ -1934,6 +1936,7 @@ class _JobPostingScreenState extends State<JobPostingScreen> {
               slot.isWorkTypeFull(wd.workType)
                   ? wd.copyWith(runtimeFull: true)
                   : wd).toList();
+          groupSlotIdsByDate[key] = slot.id;
         }
 
         if (groupTOsByDate.isEmpty) {
@@ -1949,6 +1952,7 @@ class _JobPostingScreenState extends State<JobPostingScreen> {
           businessName: _to!.businessName,
           groupTOsByDate: groupTOsByDate,
           groupWorkDetailsByDate: groupWorkDetailsByDate,
+          groupSlotIdsByDate: groupSlotIdsByDate,
           myApplications: _myApplications,
         );
         if (result?.hasChanges == true && mounted) Navigator.pop(context, true);

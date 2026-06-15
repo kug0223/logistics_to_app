@@ -19,6 +19,8 @@ import '../../services/algolia_service.dart';
 import '../../widgets/pickers/date_picker_bottom_sheet.dart';
 import '../../widgets/common/app_empty_state.dart';
 import '../../widgets/common/app_search_bar.dart';
+import '../../widgets/common/app_filter_chip.dart';
+import '../../widgets/common/gradient_scaffold.dart';
 
 /// 전체 TO 목록 화면 (지원자용)
 class AllTOListScreen extends StatefulWidget {
@@ -252,6 +254,9 @@ class _AllTOListScreenState extends State<AllTOListScreen> {
         : null;
 
     final result = _allTOList.where((to) {
+      // ── 0. 수동 마감 체크 — CF status 갱신 전(최대 30분) 즉시 반영
+      if (to.isManualClosed) return false;
+
       // ── 1. 만료 체크 ─────────────────────────────────────
       if (!to.isLongTerm) {
         if (to.rangeEnd == null) return false; // 구 데이터: 날짜 미상 → 표시 제외
@@ -396,63 +401,11 @@ class _AllTOListScreenState extends State<AllTOListScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-
-    return Scaffold(
-      body: Container(
-        decoration: BoxDecoration(
-          gradient: LinearGradient(
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
-            colors: [
-              theme.primaryColor,
-              theme.primaryColor.withValues(alpha: 0.85),
-            ],
-          ),
-        ),
-        child: SafeArea(
-          child: Column(
-            children: [
-              // ── 파란 헤더 영역
-              Padding(
-                padding: EdgeInsets.fromLTRB(
-                  ResponsiveHelper.spacing(context, 4),
-                  ResponsiveHelper.spacing(context, 8),
-                  ResponsiveHelper.spacing(context, 16),
-                  ResponsiveHelper.spacing(context, 16),
-                ),
-                child: Row(
-                  children: [
-                    IconButton(
-                      icon: const Icon(Icons.arrow_back, color: Colors.white),
-                      onPressed: () => Navigator.pop(context),
-                    ),
-                    Expanded(
-                      child: Text(
-                        '공고 찾기',
-                        style: ResponsiveHelper.titleStyle(context).copyWith(
-                          color: Colors.white,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-
-              // ── 흰 콘텐츠 영역 (상단 32px 곡선)
-              Expanded(
-                child: Container(
-                  clipBehavior: Clip.hardEdge,
-                  decoration: BoxDecoration(
-                    color: AppColors.grey50,
-                    borderRadius: const BorderRadius.only(
-                      topLeft: Radius.circular(32),
-                      topRight: Radius.circular(32),
-                    ),
-                  ),
-                  child: Column(
-                    children: [
+    return GradientScaffold(
+      title: '공고 찾기',
+      onRefresh: _loadAllTOs,
+      body: Column(
+        children: [
                       // 검색바 + 필터 — 스크롤되지 않는 고정 영역 (흰 배경)
                       Container(
                         color: Colors.white,
@@ -491,9 +444,10 @@ class _AllTOListScreenState extends State<AllTOListScreen> {
                                       ResponsiveHelper.spacing(context, 16),
                                 ),
                                 children: [
-                                  _FilterChip(
+                                  AppFilterChip(
                                     label: '♥ 즐겨찾기',
-                                    isActive: _filter.showFavoritesOnly,
+                                    isSelected: _filter.showFavoritesOnly,
+                                    solid: true,
                                     onTap: () => _onFilterChanged(_filter.copyWith(
                                         showFavoritesOnly: !_filter.showFavoritesOnly)),
                                     onClear: _filter.showFavoritesOnly
@@ -503,13 +457,14 @@ class _AllTOListScreenState extends State<AllTOListScreen> {
                                   ),
                                   SizedBox(
                                       width: ResponsiveHelper.spacing(context, 8)),
-                                  _FilterChip(
+                                  AppFilterChip(
                                     label: _filter.city != null
                                         ? (_filter.district != null
                                             ? '${_filter.city} ${_filter.district}'
                                             : _filter.city!)
                                         : '전체지역',
-                                    isActive: _filter.city != null,
+                                    isSelected: _filter.city != null,
+                                    solid: true,
                                     onTap: _showRegionPicker,
                                     onClear: _filter.city != null
                                         ? () => _onFilterChanged(
@@ -519,13 +474,14 @@ class _AllTOListScreenState extends State<AllTOListScreen> {
                                   SizedBox(
                                       width:
                                           ResponsiveHelper.spacing(context, 8)),
-                                  _FilterChip(
+                                  AppFilterChip(
                                     label: _filter.type == 'flex'
                                         ? '단기'
                                         : _filter.type == 'contract'
                                             ? '장기'
                                             : '전체유형',
-                                    isActive: _filter.type != null,
+                                    isSelected: _filter.type != null,
+                                    solid: true,
                                     onTap: _showTypeFilter,
                                     onClear: _filter.type != null
                                         ? () => _onFilterChanged(_filter
@@ -535,11 +491,12 @@ class _AllTOListScreenState extends State<AllTOListScreen> {
                                   SizedBox(
                                       width:
                                           ResponsiveHelper.spacing(context, 8)),
-                                  _FilterChip(
+                                  AppFilterChip(
                                     label: _filter.dateRange != null
                                         ? '${_formatDate(_filter.dateRange!.start)}~${_formatDate(_filter.dateRange!.end)}'
                                         : '날짜',
-                                    isActive: _filter.dateRange != null,
+                                    isSelected: _filter.dateRange != null,
+                                    solid: true,
                                     onTap: _showDateRangePicker,
                                     onClear: _filter.dateRange != null
                                         ? () => _onFilterChanged(_filter
@@ -549,11 +506,12 @@ class _AllTOListScreenState extends State<AllTOListScreen> {
                                   SizedBox(
                                       width:
                                           ResponsiveHelper.spacing(context, 8)),
-                                  _FilterChip(
+                                  AppFilterChip(
                                     label: _filter.sortBy == 'date'
                                         ? '마감임박순'
                                         : '최신순',
-                                    isActive: _filter.sortBy == 'date',
+                                    isSelected: _filter.sortBy == 'date',
+                                    solid: true,
                                     onTap: _showSortSheet,
                                   ),
                                 ],
@@ -621,13 +579,7 @@ class _AllTOListScreenState extends State<AllTOListScreen> {
                       ),
                     ],
                   ),
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
+      );
   }
 
   String _formatDate(DateTime dt) => '${dt.month}/${dt.day}';
@@ -660,71 +612,6 @@ class _AllTOListScreenState extends State<AllTOListScreen> {
               onPressed: _loadAllTOs,
               child: const Text('새로고침'),
             ),
-    );
-  }
-}
-
-// ── 필터 칩 위젯 ──────────────────────────────────────────────
-
-class _FilterChip extends StatelessWidget {
-  const _FilterChip({
-    required this.label,
-    required this.isActive,
-    required this.onTap,
-    this.onClear,
-  });
-
-  final String label;
-  final bool isActive;
-  final VoidCallback onTap;
-  final VoidCallback? onClear;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final color = isActive ? Colors.white : AppColors.grey500;
-    final bgColor = isActive ? theme.primaryColor : Theme.of(context).cardColor;
-
-    return GestureDetector(
-      onTap: onTap,
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 150),
-        padding: EdgeInsets.symmetric(
-          horizontal: ResponsiveHelper.spacing(context, onClear != null ? 10 : 12),
-          vertical: ResponsiveHelper.spacing(context, 6),
-        ),
-        decoration: BoxDecoration(
-          color: bgColor,
-          borderRadius: BorderRadius.circular(20),
-          border: Border.all(color: isActive ? theme.primaryColor : AppColors.grey300),
-        ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Text(
-              label,
-              style: ResponsiveHelper.smallStyle(context).copyWith(
-                color: color,
-                fontWeight: isActive ? FontWeight.bold : FontWeight.normal,
-              ),
-            ),
-            if (onClear != null) ...[
-              SizedBox(width: ResponsiveHelper.spacing(context, 4)),
-              Semantics(
-                button: true,
-                label: '필터 삭제',
-                child: GestureDetector(
-                  onTap: onClear,
-                  child: Icon(Icons.close, size: ResponsiveHelper.iconSize(context, 14), color: color),
-                ),
-              ),
-            ] else ...[
-              SizedBox(width: ResponsiveHelper.spacing(context, 4)),
-              Icon(Icons.keyboard_arrow_down, size: ResponsiveHelper.iconSize(context, 16), color: color),
-            ],
-          ],
-        ),
-      ),
     );
   }
 }

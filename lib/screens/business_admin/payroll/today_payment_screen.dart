@@ -19,6 +19,7 @@ import '../../../widgets/common/loading_widget.dart';
 import '../../../widgets/common/gradient_scaffold.dart';
 import '../../../widgets/common/app_empty_state.dart';
 import '../../../widgets/common/app_batch_action_bar.dart';
+import '../../../widgets/common/app_filter_chip.dart';
 
 // 로컬 퀵필터
 enum _QuickFilter { all, overdue, today }
@@ -145,7 +146,7 @@ class _TodayPaymentScreenState extends State<TodayPaymentScreen> {
   int get _totalAmount => _records.fold(0, (s, r) {
         final wd = r.wageDetail;
         if (wd == null) return s;
-        return s + (wd.netWage > 0 ? wd.netWage : wd.totalAmount);
+        return s + wd.effectiveNetWage;
       });
 
   int get _selectedAmount => _records
@@ -153,7 +154,7 @@ class _TodayPaymentScreenState extends State<TodayPaymentScreen> {
       .fold(0, (s, r) {
         final wd = r.wageDetail;
         if (wd == null) return s;
-        return s + (wd.netWage > 0 ? wd.netWage : wd.totalAmount);
+        return s + wd.effectiveNetWage;
       });
 
   int get _overdueCount =>
@@ -313,9 +314,7 @@ class _TodayPaymentScreenState extends State<TodayPaymentScreen> {
     }
     final name = _nameCache[record.userId] ?? record.userId;
     final wd   = record.wageDetail;
-    final net  = wd != null
-        ? (wd.netWage > 0 ? wd.netWage : wd.totalAmount)
-        : 0;
+    final net  = wd?.effectiveNetWage ?? 0;
 
     final ok = await DialogHelper.showConfirm(
       context,
@@ -408,13 +407,7 @@ class _TodayPaymentScreenState extends State<TodayPaymentScreen> {
 
     return GradientScaffold(
       title: title,
-      actions: [
-        IconButton(
-          icon: const Icon(Icons.refresh, color: Colors.white),
-          tooltip: '새로고침',
-          onPressed: _load,
-        ),
-      ],
+      onRefresh: _load,
       body: _isLoading
           ? const LoadingWidget()
           : _records.isEmpty
@@ -562,10 +555,10 @@ class _TodayPaymentScreenState extends State<TodayPaymentScreen> {
       padding: const EdgeInsets.fromLTRB(12, 6, 12, 6),
       child: Row(
         children: [
-          _QuickFilterChip(
+          AppFilterChip(
             label: '전체',
             count: _records.length,
-            active: _quickFilter == _QuickFilter.all,
+            isSelected: _quickFilter == _QuickFilter.all,
             onTap: () => setState(() {
               _quickFilter = _QuickFilter.all;
               _selectedIds.clear();
@@ -573,11 +566,11 @@ class _TodayPaymentScreenState extends State<TodayPaymentScreen> {
           ),
           const SizedBox(width: 6),
           if (_overdueCount > 0)
-            _QuickFilterChip(
+            AppFilterChip(
               label: '연체',
               count: _overdueCount,
-              active: _quickFilter == _QuickFilter.overdue,
-              activeColor: AppColors.error,
+              isSelected: _quickFilter == _QuickFilter.overdue,
+              color: AppColors.error,
               onTap: () => setState(() {
                 _quickFilter = _QuickFilter.overdue;
                 _selectedIds.clear();
@@ -585,11 +578,11 @@ class _TodayPaymentScreenState extends State<TodayPaymentScreen> {
             ),
           if (_overdueCount > 0) const SizedBox(width: 6),
           if (_todayCount > 0)
-            _QuickFilterChip(
+            AppFilterChip(
               label: '오늘마감',
               count: _todayCount,
-              active: _quickFilter == _QuickFilter.today,
-              activeColor: AppColors.warning,
+              isSelected: _quickFilter == _QuickFilter.today,
+              color: AppColors.warning,
               onTap: () => setState(() {
                 _quickFilter = _QuickFilter.today;
                 _selectedIds.clear();
@@ -679,65 +672,6 @@ class _TodayPaymentScreenState extends State<TodayPaymentScreen> {
   }
 }
 
-// ── 퀵필터 칩 ────────────────────────────────────────────────
-
-class _QuickFilterChip extends StatelessWidget {
-  final String label;
-  final int count;
-  final bool active;
-  final Color activeColor;
-  final VoidCallback onTap;
-
-  const _QuickFilterChip({
-    required this.label,
-    required this.count,
-    required this.active,
-    required this.onTap,
-    this.activeColor = AppColors.info,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return GestureDetector(
-      onTap: onTap,
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 150),
-        padding:
-            const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-        decoration: BoxDecoration(
-          color: active
-              ? activeColor.withValues(alpha: 0.12)
-              : AppColors.grey100,
-          borderRadius: BorderRadius.circular(20),
-          border: Border.all(
-              color: active ? activeColor : AppColors.grey200,
-              width: active ? 1.5 : 1),
-        ),
-        child: Row(mainAxisSize: MainAxisSize.min, children: [
-          Text(label,
-              style: ResponsiveHelper.smallStyle(context,
-                  color: active ? activeColor : AppColors.grey500,
-                  fontWeight: active ? FontWeight.w700 : FontWeight.normal)),
-          if (count > 0) ...[
-            const SizedBox(width: 4),
-            Container(
-              padding: const EdgeInsets.symmetric(
-                  horizontal: 5, vertical: 1),
-              decoration: BoxDecoration(
-                  color: active ? activeColor : AppColors.grey300,
-                  borderRadius: BorderRadius.circular(10)),
-              child: Text('$count',
-                  style: ResponsiveHelper.tinyStyle(context,
-                      color: Colors.white,
-                      fontWeight: FontWeight.bold)),
-            ),
-          ],
-        ]),
-      ),
-    );
-  }
-}
-
 // ── 지급유형 그룹 섹션 ────────────────────────────────────────
 
 class _GroupSection extends StatelessWidget {
@@ -780,7 +714,7 @@ class _GroupSection extends StatelessWidget {
     final groupAmount = items.fold<int>(0, (s, r) {
       final wd = r.wageDetail;
       if (wd == null) return s;
-      return s + (wd.netWage > 0 ? wd.netWage : wd.totalAmount);
+      return s + wd.effectiveNetWage;
     });
 
     return Column(
@@ -855,9 +789,7 @@ class _PaymentCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final wd    = record.wageDetail;
-    final net   = wd != null
-        ? (wd.netWage > 0 ? wd.netWage : wd.totalAmount)
-        : 0;
+    final net   = wd?.effectiveNetWage ?? 0;
     final due   = record.paymentDueDate;
 
     // 상태 색상

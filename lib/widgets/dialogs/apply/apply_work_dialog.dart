@@ -56,7 +56,13 @@ class ApplyWorkDialog extends StatefulWidget {
   
   /// 그룹 TO인 경우 날짜별 업무 상세 맵
   final Map<DateTime, List<WorkDetailModel>>? groupWorkDetailsByDate;
-  
+
+  /// 단일 슬롯 지원 시 슬롯 ID (flex TO)
+  final String? slotId;
+
+  /// 다중 슬롯 지원 시 날짜별 슬롯 ID 맵
+  final Map<DateTime, String>? groupSlotIdsByDate;
+
   /// 사업장명
   final String businessName;
 
@@ -69,6 +75,8 @@ class ApplyWorkDialog extends StatefulWidget {
     required this.workDetails,
     this.groupTOsByDate,
     this.groupWorkDetailsByDate,
+    this.slotId,
+    this.groupSlotIdsByDate,
     required this.businessName,
     this.myApplications,
   });
@@ -80,6 +88,8 @@ class ApplyWorkDialog extends StatefulWidget {
     required List<WorkDetailModel> workDetails,
     Map<DateTime, TOModel>? groupTOsByDate,
     Map<DateTime, List<WorkDetailModel>>? groupWorkDetailsByDate,
+    String? slotId,
+    Map<DateTime, String>? groupSlotIdsByDate,
     required String businessName,
     List<ApplicationModel>? myApplications,
   }) {
@@ -93,6 +103,8 @@ class ApplyWorkDialog extends StatefulWidget {
         workDetails: workDetails,
         groupTOsByDate: groupTOsByDate,
         groupWorkDetailsByDate: groupWorkDetailsByDate,
+        slotId: slotId,
+        groupSlotIdsByDate: groupSlotIdsByDate,
         businessName: businessName,
         myApplications: myApplications,
       ),
@@ -344,34 +356,13 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
       );
 
       // 🔥 FIX: 장기공고는 TO 시작일을 고정 키로 사용 (desiredStartDate와 무관하게)
-      final dateKey = _isLongTerm 
+      final dateKey = _isLongTerm
           ? DateTime(widget.mainTO.date.year, widget.mainTO.date.month, widget.mainTO.date.day)
           : DateTime(date.year, date.month, date.day);
-      // 🔥 퇴사/해지 완료된 장기공고 필터링
-      final activeApplications = applications.where((app) {
-        if (app.isLongTermApplication) {
-          // ✅ PENDING/CONFIRMED 상태면 무조건 활성 (재지원 케이스 포함)
-          if (app.status == AppStatus.pending || AppStatus.confirmedStatuses.contains(app.status)) {
-            return true;
-          }
-          if (app.isTerminationApproved) return false;
-        }
-        return true;
-      }).toList();
-      
-      _applicationsByDate[dateKey] = {
-        for (final app in activeApplications)
-          _makeWorkKey(app.selectedWorkType, app.startTime, app.endTime): app
-      };
-      
-      // 🔍 디버그: 저장된 workKey 확인
-      debugPrint('🔍 [_loadDateApplications] dateKey: $dateKey');
-      debugPrint('   activeApplications: ${activeApplications.length}개');
-      for (final app in activeApplications) {
-        final wk = _makeWorkKey(app.selectedWorkType, app.startTime, app.endTime);
-        debugPrint('   workKey: "$wk" → status: ${app.status}');
-      }
-      
+
+      // 날짜/슬롯 필터 + 활성 상태 필터를 통합 처리해 캐시에 저장
+      _applicationsByDate[dateKey] = _buildActiveDateCache(applications, dateKey);
+
       // ✅ 장기공고: 확정된 application의 출퇴근 기록 확인
       if (_isLongTerm) {
         for (final app in applications.where((a) => AppStatus.confirmedStatuses.contains(a.status))) {
@@ -380,15 +371,13 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
             _hasAttendanceIds.add(app.id);
           }
         }
-        
-        // activeApplications = 필터링 후
-        final activeApp = activeApplications.where((a) =>
-          a.status == AppStatus.pending || AppStatus.confirmedStatuses.contains(a.status)
-        ).firstOrNull;
-        
+
+        final activeApp = _applicationsByDate[dateKey]?.values
+            .where((a) => a.status == AppStatus.pending || AppStatus.confirmedStatuses.contains(a.status))
+            .firstOrNull;
+
         if (activeApp != null && mounted) {
           setState(() {
-            // desiredStartDate가 있으면 사용, 없으면 workDate 사용 (기존 데이터 호환)
             _desiredStartDate = activeApp.desiredStartDate ?? activeApp.workDate;
           });
         }
@@ -2247,6 +2236,60 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
     return '${workType}_${startTime}_$endTime';
   }
 
+  /// 날짜/슬롯 기준으로 지원서를 필터링한다.
+  /// 그룹 TO는 같은 toId를 여러 날짜가 공유하므로, 다른 날짜의 지원서가
+  /// 현재 dateKey 캐시에 섞여드는 것을 방지하기 위해 사용한다.
+  List<ApplicationModel> _filterApplicationsByDateOrSlot(
+      List<ApplicationModel> apps, DateTime dateKey) {
+    // 슬롯 ID 결정: 그룹 TO는 날짜별 슬롯, 단일 flex TO는 widget.slotId
+    final String? expectedSlotId;
+    if (_isGroupTO) {
+      expectedSlotId = widget.groupSlotIdsByDate?[dateKey];
+    } else {
+      expectedSlotId = widget.slotId;
+    }
+
+    if (expectedSlotId != null) {
+      // slotId 기준 필터 (가장 정확)
+      final bySlot = apps.where((a) => a.slotId == expectedSlotId).toList();
+      if (bySlot.isNotEmpty) return bySlot;
+      // slotId 미부여 기존 데이터 호환: workDate 기준으로 fallback
+    }
+
+    // workDate 기준 필터 (비 flex TO 또는 slotId 없는 기존 데이터)
+    return apps.where((a) {
+      final d = DateTime(a.workDate.year, a.workDate.month, a.workDate.day);
+      return d == dateKey;
+    }).toList();
+  }
+
+  /// Firestore에서 받아온 지원서 목록을 _applicationsByDate에 저장할 형태로 변환한다.
+  ///
+  /// - 단기/그룹: _filterApplicationsByDateOrSlot으로 해당 날짜/슬롯의 지원서만 추출
+  /// - 장기공고: 날짜 필터 없이 전체 사용 (dateKey = TO 시작일 고정)
+  /// - 공통: 퇴사/해지 완료된 장기공고 지원서 제거
+  Map<String, ApplicationModel> _buildActiveDateCache(
+      List<ApplicationModel> applications, DateTime dateKey) {
+    final scoped = _isLongTerm
+        ? applications
+        : _filterApplicationsByDateOrSlot(applications, dateKey);
+
+    final active = scoped.where((app) {
+      if (app.isLongTermApplication) {
+        if (app.status == AppStatus.pending || AppStatus.confirmedStatuses.contains(app.status)) {
+          return true;
+        }
+        if (app.isTerminationApproved) return false;
+      }
+      return true;
+    }).toList();
+
+    return {
+      for (final app in active)
+        _makeWorkKey(app.selectedWorkType, app.startTime, app.endTime): app
+    };
+  }
+
   // ═══════════════════════════════════════════════════════════
   // 액션 메서드
   // ═══════════════════════════════════════════════════════════
@@ -2320,6 +2363,11 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
 
     setState(() => _loadingWorkIds.add(loadingKey));
 
+    // slotId: 단일 슬롯이면 widget.slotId, 다중 슬롯이면 날짜 맵에서 조회
+    final resolvedSlotId = widget.slotId ?? (date == null
+        ? null
+        : widget.groupSlotIdsByDate?[DateTime(date.year, date.month, date.day)]);
+
     try {
       final success = await _firestoreService.applyToTOWithWorkType(
         uid: _currentUserId!,
@@ -2340,6 +2388,7 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
         workDays: to.workDays,
         type: to.type,
         toId: to.id,
+        slotId: resolvedSlotId,
         desiredStartDate: _isLongTerm ? _desiredStartDate : null,
       );
       if (!success) throw Exception('지원 처리에 실패했습니다');
@@ -2502,14 +2551,18 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
 
     try {
       TOModel? to;
-      final dateKey = DateTime(date.year, date.month, date.day);
-      
+      // 장기공고는 _loadDateApplications와 동일한 고정 키 사용
+      // (_desiredStartDate ≠ mainTO.date인 경우 getter들이 stale 데이터를 보는 불일치 방지)
+      final dateKey = _isLongTerm
+          ? DateTime(widget.mainTO.date.year, widget.mainTO.date.month, widget.mainTO.date.day)
+          : DateTime(date.year, date.month, date.day);
+
       if (_isGroupTO) {
         to = widget.groupTOsByDate?[dateKey];
       } else {
         to = widget.mainTO;
       }
-      
+
       if (to == null) return;
 
       final applications = await _firestoreService.getApplicationsForTO(
@@ -2519,15 +2572,7 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
 
       if (mounted) {
         setState(() {
-          // ✅ PENDING, CONFIRMED만 유지 (CANCELED, REJECTED, AUTO_CANCELED 제외)
-          final activeApps = applications.where((app) =>
-            app.status == AppStatus.pending || AppStatus.confirmedStatuses.contains(app.status)
-          ).toList();
-          
-          _applicationsByDate[dateKey] = {
-            for (final app in activeApps)
-              _makeWorkKey(app.selectedWorkType, app.startTime, app.endTime): app
-          };
+          _applicationsByDate[dateKey] = _buildActiveDateCache(applications, dateKey);
         });
       }
     } catch (e) {

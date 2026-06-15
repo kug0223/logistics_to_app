@@ -1,5 +1,6 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import '../../utils/encryption_helper.dart';
+import '../../utils/trust_score_helper.dart';
 
 // 사용자 권한 enum
 enum UserRole {
@@ -187,23 +188,13 @@ class UserModel {
     return calculatedAge;
   }
 
-  /// 신뢰도 점수 (0~100)
-  /// 저장된 값 우선, 없으면 계산
+  /// 신뢰도 점수 (0~100).
+  ///
+  /// 저장된 값([storedTrustScore]) 우선.
+  /// 없으면 [TrustScoreHelper.calculate]로 폴백 — 단일 공식 원칙.
   int get trustScore {
     if (storedTrustScore != null) return storedTrustScore!;
-    if (totalWorkDays == 0) return 50;  // 신규는 50점 시작
-    
-    int score = 50;
-    score += totalWorkDays;  // 근무 완료 +1점/일
-    if (averageRating >= 4.5) score += 2;
-    if (averageRating <= 2.0 && reviewCount > 0) score -= 2;
-    score -= lateCount;
-    // 노쇼 누적 감점 (1회:-3, 2회:-5, 3회:-7, 4회+:-10)
-    for (int i = 1; i <= noShowCount; i++) {
-      score -= (i == 1 ? 3 : i == 2 ? 5 : i == 3 ? 7 : 10);
-    }
-    
-    return score.clamp(0, 100).toInt();
+    return TrustScoreHelper.calculate(this);
   }
   
   /// 신뢰도 등급

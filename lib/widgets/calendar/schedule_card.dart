@@ -1,4 +1,4 @@
-﻿import 'package:flutter/material.dart';
+import 'package:flutter/material.dart';
 import '../../models/core/application_model.dart';
 import '../../models/core/attendance_model.dart';
 import '../../utils/dialog_helper.dart';
@@ -536,7 +536,7 @@ class ScheduleCard extends StatelessWidget {
     }
   }
   /// 사업장 리뷰 다이얼로그
-  void _showBusinessReviewDialog(BuildContext context) async {
+  Future<void> _showBusinessReviewDialog(BuildContext context) async {
     final workDate = application.workDate;
     final userProvider = context.read<UserProvider>();
     final currentUser = userProvider.currentUser;

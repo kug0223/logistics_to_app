@@ -130,10 +130,10 @@ class _TrustRulesSettingsScreenState extends State<TrustRulesSettingsScreen> {
         );
       }).toList();
       
-      // 감소 규칙 업데이트 (음수로 저장)
+      // 감소 규칙 업데이트 (음수로 저장 — .abs()로 음수 입력 방어)
       final updatedDecreaseRules = _settings!.decreaseRules.map((rule) {
         final controller = _ruleControllers[rule.type];
-        final newPoints = int.tryParse(controller?.text ?? '') ?? rule.points.abs();
+        final newPoints = (int.tryParse(controller?.text ?? '') ?? rule.points.abs()).abs();
         return TrustRule(
           type: rule.type,
           points: -newPoints, // 음수로 저장
@@ -173,17 +173,36 @@ class _TrustRulesSettingsScreenState extends State<TrustRulesSettingsScreen> {
     try {
       final startScore = int.parse(_startScoreController.text);
       final maxScore = int.parse(_maxScoreController.text);
-      
+      final resetScore = int.parse(_restartScoreController.text);
+      final cooldownDays = int.parse(_cooldownDaysController.text);
+      final noshowReduction = int.parse(_noshowReductionController.text);
+      final lateReduction = int.parse(_lateReductionController.text);
+
       if (startScore < 0 || startScore > 100) {
         ToastHelper.showError('시작 점수는 0~100 사이여야 합니다');
         return false;
       }
-      
+
       if (maxScore < startScore || maxScore > 100) {
         ToastHelper.showError('최대 점수는 시작 점수 이상 100 이하여야 합니다');
         return false;
       }
-      
+
+      if (resetScore < 0 || resetScore > 100) {
+        ToastHelper.showError('재시작 리셋 점수는 0~100 사이여야 합니다');
+        return false;
+      }
+
+      if (cooldownDays < 1) {
+        ToastHelper.showError('쿨다운 기간은 1일 이상이어야 합니다');
+        return false;
+      }
+
+      if (noshowReduction < 0 || lateReduction < 0) {
+        ToastHelper.showError('감면 횟수는 0 이상이어야 합니다');
+        return false;
+      }
+
       return true;
     } catch (e) {
       ToastHelper.showError('숫자만 입력해주세요');

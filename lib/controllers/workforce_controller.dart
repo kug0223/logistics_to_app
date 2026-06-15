@@ -41,8 +41,14 @@ class WorkforceController extends ChangeNotifier {
         _items = [];
         return;
       }
-      final List<String>? businessIds =
-          user.isSuperAdmin ? null : user.managedBusinessIds;
+      final List<String>? businessIds;
+      if (user.isSuperAdmin) {
+        businessIds = null;
+      } else if (user.isSubAdmin && user.subAdminOf != null) {
+        businessIds = [user.subAdminOf!];
+      } else {
+        businessIds = user.managedBusinessIds;
+      }
 
       if (businessIds != null && businessIds.isEmpty) {
         _items = [];
@@ -54,7 +60,6 @@ class WorkforceController extends ChangeNotifier {
         closedOnly: false,
         businessIds: businessIds,
       );
-
       // flex TO 슬롯 날짜 일괄 로드 (캘린더 날짜 필터링용)
       final flexIds =
           _items.where((g) => g.masterTO.isFlexType).map((g) => g.id).toList();
@@ -115,6 +120,9 @@ class WorkforceController extends ChangeNotifier {
   }
 
   /// 모든 슬롯이 시간만료 + TO가 ACTIVE 상태인 경우 자동 cascade close
+  ///
+  /// ⚠️ F-074: markTOAsExpired 실패 시 Firestore 미갱신 — 낙관적 갱신 설계 (fire-and-forget).
+  /// UI는 로컬 isClosed 기준으로 이미 닫힘 처리하므로 사용자 체감 영향 없음. 다음 reload 시 재시도됨.
   void _maybeCascadeCloseExpiredTO(TOGroupItem group, List<TOItem> toItems) {
     final to = group.masterTO;
     if (to.isClosed) return; // 이미 닫힘

@@ -23,6 +23,7 @@ import '../../utils/format_helper.dart';
 import '../../theme/app_colors.dart';
 import '../../widgets/common/gradient_scaffold.dart';
 import '../../widgets/common/app_empty_state.dart';
+import '../../widgets/common/app_filter_chip.dart';
 
 /// 내 지원 내역 화면 (리팩토링 버전)
 class MyApplicationsScreen extends StatefulWidget {
@@ -231,12 +232,7 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
   Widget build(BuildContext context) {
     return GradientScaffold(
       title: '내 지원 내역',
-      actions: [
-        IconButton(
-          icon: const Icon(Icons.refresh, color: Colors.white),
-          onPressed: _loadApplications,
-        ),
-      ],
+      onRefresh: _loadApplications,
       body: Column(
         children: [
           _buildFilterSection(),
@@ -275,9 +271,14 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
   Widget _buildFilterSection() {
     return Container(
       padding: EdgeInsets.symmetric(
-        vertical: ResponsiveHelper.spacing(context, 12),
+        vertical: ResponsiveHelper.spacing(context, 10),
       ),
-      color: AppColors.grey100,
+      decoration: BoxDecoration(
+        color: Colors.white,
+        border: Border(
+          bottom: BorderSide(color: AppColors.grey200, width: 1),
+        ),
+      ),
       child: ScrollConfiguration(
         behavior: ScrollConfiguration.of(context).copyWith(
           dragDevices: {PointerDeviceKind.touch, PointerDeviceKind.mouse},
@@ -306,17 +307,10 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
   }
 
   Widget _buildFilterChip(String label, String value, IconData icon, Color color) {
-    final isSelected = _selectedFilter == value;
-
-    return FilterChip(
-      avatar: Icon(
-        icon,
-        size: ResponsiveHelper.iconSize(context, 16),
-        color: isSelected ? color : AppColors.grey500,
-      ),
-      label: Text(label),
-      selected: isSelected,
-      onSelected: (_) {
+    return AppFilterChip(
+      label: label,
+      isSelected: _selectedFilter == value,
+      onTap: () {
         setState(() => _selectedFilter = value);
         WidgetsBinding.instance.addPostFrameCallback((_) {
           if (mounted && _filteredApplications.isEmpty && _hasMore && !_isLoadingMore) {
@@ -324,22 +318,8 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
           }
         });
       },
-      backgroundColor: Colors.white,
-      selectedColor: color.withValues(alpha: 0.15),
-      side: BorderSide(
-        color: isSelected ? color : AppColors.grey300,
-        width: isSelected ? 1.5 : 1,
-      ),
-      checkmarkColor: color,
-      labelStyle: ResponsiveHelper.smallStyle(context).copyWith(
-        color: isSelected ? color : AppColors.grey700,
-        fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
-      ),
-      padding: EdgeInsets.symmetric(
-        horizontal: ResponsiveHelper.spacing(context, 6),
-        vertical: ResponsiveHelper.spacing(context, 4),
-      ),
-      materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+      color: color,
+      leadingIcon: icon,
     );
   }
 
@@ -367,13 +347,16 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
     // TO가 삭제된 경우 간소화 카드 표시
     if (to == null) {
       return Container(
-        margin: EdgeInsets.only(bottom: ResponsiveHelper.spacing(context, 12)),
+        margin: EdgeInsets.only(bottom: ResponsiveHelper.spacing(context, 8)),
         decoration: BoxDecoration(
           color: AppColors.grey50,
-          borderRadius: BorderRadius.circular(16),
+          borderRadius: BorderRadius.circular(14),
           border: Border.all(color: AppColors.grey200),
         ),
-        padding: ResponsiveHelper.listPadding(context),
+        padding: EdgeInsets.symmetric(
+          horizontal: ResponsiveHelper.spacing(context, 14),
+          vertical: ResponsiveHelper.spacing(context, 10),
+        ),
         child: Row(children: [
           Icon(Icons.info_outline, color: AppColors.grey400,
               size: ResponsiveHelper.iconSize(context, 18)),
@@ -393,19 +376,19 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
     }
 
     return Container(
-      margin: EdgeInsets.only(bottom: ResponsiveHelper.spacing(context, 12)),
+      margin: EdgeInsets.only(bottom: ResponsiveHelper.spacing(context, 8)),
       decoration: BoxDecoration(
         color: Colors.white,
-        borderRadius: BorderRadius.circular(16),
+        borderRadius: BorderRadius.circular(14),
         border: Border.all(
           color: statusInfo.color.withValues(alpha: 0.3),
           width: 1,
         ),
         boxShadow: [
           BoxShadow(
-            color: AppColors.grey300.withValues(alpha: 0.5),
-            blurRadius: 4,
-            offset: const Offset(0, 2),
+            color: AppColors.grey300.withValues(alpha: 0.4),
+            blurRadius: 3,
+            offset: const Offset(0, 1),
           ),
         ],
       ),
@@ -421,17 +404,20 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
               ),
             ),
           ),
-          borderRadius: BorderRadius.circular(16),
+          borderRadius: BorderRadius.circular(14),
           child: Padding(
-            padding: ResponsiveHelper.listPadding(context),
+            padding: EdgeInsets.symmetric(
+              horizontal: ResponsiveHelper.spacing(context, 14),
+              vertical: ResponsiveHelper.spacing(context, 10),
+            ),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 // 1줄: 사업장명 + 상태 배지
                 _buildCardHeader(app, to, statusInfo),
-                
-                SizedBox(height: ResponsiveHelper.spacing(context, 8)),
-                
+
+                SizedBox(height: ResponsiveHelper.spacing(context, 4)),
+
                 // 2줄: TO 제목
                 Text(
                   to.title,
@@ -441,19 +427,19 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                 ),
-                
-                SizedBox(height: ResponsiveHelper.spacing(context, 10)),
-                
+
+                SizedBox(height: ResponsiveHelper.spacing(context, 6)),
+
                 // 3줄: 근무일 · 근무시간
                 _buildDateTimeRow(app, to),
-                
-                SizedBox(height: ResponsiveHelper.spacing(context, 6)),
-                
+
+                SizedBox(height: ResponsiveHelper.spacing(context, 4)),
+
                 // 4줄: 업무유형 · 급여
                 _buildWorkWageRow(app),
-                
+
                 // 지원일
-                SizedBox(height: ResponsiveHelper.spacing(context, 8)),
+                SizedBox(height: ResponsiveHelper.spacing(context, 4)),
                 Text(
                   '지원일: ${DateFormat('yyyy.MM.dd HH:mm').format(app.appliedAt)}',
                   style: ResponsiveHelper.tinyStyle(context, color: AppColors.grey500),

@@ -66,6 +66,9 @@ class BusinessModel {
   /// 사업자 인감/도장 이미지 (base64, 계약서 자동 날인용)
   final String? sealBase64;
 
+  /// 날인 방식: 'stamp'(도장 이미지 업로드) | 'signature'(직접 서명)
+  final String sealType;
+
   BusinessModel({
     required this.id,
     required this.businessNumber,
@@ -114,6 +117,7 @@ class BusinessModel {
     this.ownerName,
     this.wagePaymentDay,
     this.sealBase64,
+    this.sealType = 'stamp',
   }) : adminIds = (adminIds != null && adminIds.isNotEmpty)
            ? adminIds
            : [ownerId];
@@ -180,6 +184,7 @@ class BusinessModel {
       ownerName: map['ownerName'],
       wagePaymentDay: (map['wagePaymentDay'] as num?)?.toInt(),
       sealBase64: map['sealBase64'],
+      sealType: map['sealType'] as String? ?? 'stamp',
     );
   }
   factory BusinessModel.fromFirestore(DocumentSnapshot doc) {
@@ -239,6 +244,7 @@ class BusinessModel {
       'ownerName': ownerName,
       'wagePaymentDay': wagePaymentDay,
       'sealBase64': sealBase64,
+      'sealType': sealType,
     };
   }
   String get formattedBusinessNumber {
@@ -288,6 +294,7 @@ class BusinessModel {
     int? wagePaymentDay,
     String? sealBase64,
     bool clearSeal = false,
+    String? sealType,
     String? attendanceType,
     int? gpsRadius,
     String? beaconUUID,
@@ -333,6 +340,7 @@ class BusinessModel {
       ownerName: ownerName ?? this.ownerName,
       wagePaymentDay: wagePaymentDay ?? this.wagePaymentDay,
       sealBase64: clearSeal ? null : (sealBase64 ?? this.sealBase64),
+      sealType: sealType ?? this.sealType,
       attendanceType: attendanceType ?? this.attendanceType,
       gpsRadius: gpsRadius ?? this.gpsRadius,
       beaconUUID: clearBeaconUUID ? null : (beaconUUID ?? this.beaconUUID),

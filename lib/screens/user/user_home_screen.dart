@@ -10,7 +10,6 @@ import 'all_to_list_screen.dart';
 import 'my_schedule_screen.dart';
 import 'attendance_check_screen.dart';
 import 'my_applications_screen.dart';
-import 'my_reviews_screen.dart';
 import 'user_contracts_screen.dart';
 import '../common/settings_screen.dart';
 import '../common/notification_screen.dart';
@@ -257,13 +256,6 @@ class _UserHomeScreenState extends State<UserHomeScreen> {
                                   color: AppColors.infoDark,
                                   onTap: () => Navigator.push(context,
                                       MaterialPageRoute(builder: (_) => const UserContractsScreen()))),
-                              _buildMenuCard(context,
-                                  icon: Icons.star_rounded,
-                                  title: '내 평가 확인',
-                                  subtitle: '사업장의 근무 평가',
-                                  color: AppColors.warning,
-                                  onTap: () => Navigator.push(context,
-                                      MaterialPageRoute(builder: (_) => const MyReviewsScreen()))),
                               _buildMenuCard(context,
                                   icon: Icons.settings_outlined,
                                   title: '설정',

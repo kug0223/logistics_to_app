@@ -1,4 +1,4 @@
-﻿import 'package:flutter/material.dart';
+import 'package:flutter/material.dart';
 
 // Models
 import '../../../models/core/to_model.dart';
@@ -183,7 +183,7 @@ class _TOGroupCardState extends State<TOGroupCard> {
 
     final cardContent = Container(
       margin: EdgeInsets.only(
-        bottom: ResponsiveHelper.spacing(context, 12),
+        bottom: ResponsiveHelper.spacing(context, 4),
       ),
       child: Stack(
         children: [
@@ -219,7 +219,7 @@ class _TOGroupCardState extends State<TOGroupCard> {
                   bottomRight: Radius.circular(widget.isExpanded ? 0 : 16),
                 ),
                 child: Padding(
-                  padding: ResponsiveHelper.cardPadding(context),
+                  padding: ResponsiveHelper.symmetricPadding(context, horizontal: 12, vertical: 10),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
@@ -322,7 +322,7 @@ class _TOGroupCardState extends State<TOGroupCard> {
                         ],
                       ),
                       
-                      SizedBox(height: ResponsiveHelper.spacing(context, 6)),
+                      SizedBox(height: ResponsiveHelper.spacing(context, 4)),
 
                       // ✨ 둘째 줄: 제목 (크게 강조!)
                       Text(
@@ -336,8 +336,8 @@ class _TOGroupCardState extends State<TOGroupCard> {
                         overflow: TextOverflow.ellipsis,
                       ),
 
-                      SizedBox(height: ResponsiveHelper.spacing(context, 8)),
-                      
+                      SizedBox(height: ResponsiveHelper.spacing(context, 6)),
+
                       // ✨ 셋째 줄: 날짜 + 인원현황 (핵심 정보만!)
                       Row(
                         children: [
@@ -381,7 +381,7 @@ class _TOGroupCardState extends State<TOGroupCard> {
                       // 고정 공고 계약 기간
                       if (masterTO.isLongTerm && masterTO.contractPeriodLabel.isNotEmpty) ...[
                         Padding(
-                          padding: EdgeInsets.only(top: ResponsiveHelper.spacing(context, 6)),
+                          padding: EdgeInsets.only(top: ResponsiveHelper.spacing(context, 4)),
                           child: Row(
                             children: [
                               Icon(
@@ -409,7 +409,7 @@ class _TOGroupCardState extends State<TOGroupCard> {
                           if (expiry == null) return const SizedBox.shrink(); // 무기한
                           final isPast = masterTO.isPostingExpired;
                           return Padding(
-                            padding: EdgeInsets.only(top: ResponsiveHelper.spacing(context, 8)),
+                            padding: EdgeInsets.only(top: ResponsiveHelper.spacing(context, 6)),
                             child: Row(
                               children: [
                                 Icon(
@@ -447,7 +447,7 @@ class _TOGroupCardState extends State<TOGroupCard> {
                                   : '지원마감 ${FormatHelper.formatTime(deadline)}';
                           return Padding(
                             padding: EdgeInsets.only(
-                              top: ResponsiveHelper.spacing(context, 8),
+                              top: ResponsiveHelper.spacing(context, 6),
                             ),
                             child: Row(
                               children: [
@@ -475,11 +475,11 @@ class _TOGroupCardState extends State<TOGroupCard> {
                       ],
                       
                       // ✨ 상태 표시 (마감/예약/모집중) - targetTOs 기준
-                      SizedBox(height: ResponsiveHelper.spacing(context, 6)),
+                      SizedBox(height: ResponsiveHelper.spacing(context, 4)),
                       _buildStatusBadge(context, allClosed: allClosed, targetTOs: targetTOs),
 
                       // 펼침 힌트
-                      SizedBox(height: ResponsiveHelper.spacing(context, 4)),
+                      SizedBox(height: ResponsiveHelper.spacing(context, 2)),
                       Center(
                         child: Icon(
                           widget.isExpanded 
@@ -494,204 +494,40 @@ class _TOGroupCardState extends State<TOGroupCard> {
                 ),
               ),
               
-              // 펼쳐진 경우: flex 다중 슬롯 목록 (리스트 모드 전용)
+              // 펼쳐진 영역 — 단일 AnimatedSize로 통합 (두 개 교체 시 발생하는 뚝뚝 제거)
               AnimatedSize(
-                duration: const Duration(milliseconds: 250),
-                curve: Curves.easeOutCubic,
+                duration: const Duration(milliseconds: 300),
+                curve: Curves.easeInOutCubic,
                 alignment: Alignment.topCenter,
-                clipBehavior: Clip.hardEdge,
-                child: widget.displayMode == TOCardDisplayMode.list &&
-                        widget.isExpanded && !widget.groupItem.isLongTerm && widget.groupItem.groupTOs.length > 1
-                    ? Column(
-                        children: [
-                          Divider(height: 1, color: AppColors.grey200),
-                          Container(
-                            decoration: BoxDecoration(
-                              color: AppColors.grey50,
-                              borderRadius: BorderRadius.only(
-                                bottomLeft: Radius.circular(16),
-                                bottomRight: Radius.circular(16),
+                clipBehavior: Clip.antiAlias,
+                child: widget.isExpanded
+                    ? TweenAnimationBuilder<double>(
+                        key: ValueKey(widget.isExpanded),
+                        tween: Tween(begin: 0.0, end: 1.0),
+                        duration: const Duration(milliseconds: 200),
+                        curve: Curves.easeIn,
+                        builder: (context, opacity, child) =>
+                            Opacity(opacity: opacity, child: child!),
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Divider(height: 1, color: AppColors.grey200),
+                            Container(
+                              decoration: BoxDecoration(
+                                color: AppColors.grey50,
+                                borderRadius: const BorderRadius.only(
+                                  bottomLeft: Radius.circular(16),
+                                  bottomRight: Radius.circular(16),
+                                ),
+                              ),
+                              child: Padding(
+                                padding: ResponsiveHelper.symmetricPadding(
+                                    context, horizontal: 12, vertical: 10),
+                                child: _buildExpandedBodyContent(context, theme),
                               ),
                             ),
-                            child: Padding(
-                              padding: ResponsiveHelper.cardPadding(context),
-                              child: widget.isGroupLoading
-                                  // ✨ 로딩 중 스피너
-                                  ? Padding(
-                                      padding: EdgeInsets.all(
-                                        ResponsiveHelper.spacing(context, 24),
-                                      ),
-                                      child: const LoadingWidget(message: '불러오는 중...'),
-                                    )
-                                  // ✨ 로드 완료 - TO 목록 표시
-                                  : Builder(builder: (context) {
-                                      final filteredTOs = _getFilteredGroupTOs();
-                                      final anyExpanded = filteredTOs.any((ti) =>
-                                          widget.expandedTOs.contains(ti.slot?.id ?? ti.to.id));
-                                      return Column(
-                                        children: filteredTOs.map((toItem) {
-                                          final itemKey = toItem.slot?.id ?? toItem.to.id;
-                                          final isThisExpanded = widget.expandedTOs.contains(itemKey);
-                                          return AnimatedOpacity(
-                                            opacity: anyExpanded && !isThisExpanded ? 0.45 : 1.0,
-                                            duration: const Duration(milliseconds: 200),
-                                            child: TOItemCard(
-                                              toItem: toItem,
-                                              groupItem: widget.groupItem,
-                                              firestoreService: widget.firestoreService,
-                                              dialogs: widget.dialogs,
-                                              onChanged: widget.onChanged,
-                                              isExpanded: isThisExpanded,
-                                              onToggleExpand: () => widget.onToggleTOExpand(itemKey),
-                                              isLoading: widget.loadingTOs.contains(itemKey),
-                                              onLocalStatsChanged: () => setState(() {}),
-                                              onAffectedTOsChanged: widget.onAffectedTOsChanged,
-                                            ),
-                                          );
-                                        }).toList(),
-                                      );
-                                    }),
-                            ),
-                          ),
-                        ],
-                      )
-                    : const SizedBox.shrink(),
-              ),
-              
-              // 펼쳐진 경우: 단건 슬롯 or 장기 TO 업무 상세 (캘린더 모드 포함)
-              AnimatedSize(
-                duration: const Duration(milliseconds: 250),
-                curve: Curves.easeOutCubic,
-                alignment: Alignment.topCenter,
-                clipBehavior: Clip.hardEdge,
-                child: widget.isExpanded && (widget.groupItem.isLongTerm ||
-                        widget.groupItem.groupTOs.length <= 1 ||
-                        widget.displayMode == TOCardDisplayMode.calendar)
-                    ? Column(
-                        children: [
-                          Divider(height: 1, color: AppColors.grey200),
-                          Container(
-                            padding: ResponsiveHelper.cardPadding(context),
-                            decoration: BoxDecoration(
-                              color: AppColors.grey50,
-                              borderRadius: BorderRadius.only(
-                                bottomLeft: Radius.circular(16),
-                                bottomRight: Radius.circular(16),
-                              ),
-                            ),
-                            child: _isSingleTOLoading()
-                                // ✨ 로딩 중 스피너
-                                ? Padding(
-                                    padding: EdgeInsets.all(
-                                      ResponsiveHelper.spacing(context, 24),
-                                    ),
-                                    child: const LoadingWidget(message: '업무 정보 불러오는 중...'),
-                                  )
-                                // ✨ 로드 완료 - 업무 상세 표시
-                                : Column(
-                                    crossAxisAlignment: CrossAxisAlignment.start,
-                                    children: [
-                                      // 단기 단일슬롯: 슬롯 날짜 + 개별 제목 (있는 경우)
-                                      if (!widget.groupItem.isLongTerm &&
-                                          widget.groupItem.groupTOs.isNotEmpty) ...[
-                                        Builder(builder: (context) {
-                                          final toItem = widget.groupItem.groupTOs.first;
-                                          final slot = toItem.slot;
-                                          final slotTitle = slot?.title;
-                                          if (slotTitle == null || slotTitle.isEmpty) {
-                                            return const SizedBox.shrink();
-                                          }
-                                          return Padding(
-                                            padding: EdgeInsets.only(
-                                              bottom: ResponsiveHelper.spacing(context, 12),
-                                            ),
-                                            child: Container(
-                                              padding: EdgeInsets.symmetric(
-                                                horizontal: ResponsiveHelper.spacing(context, 10),
-                                                vertical: ResponsiveHelper.spacing(context, 8),
-                                              ),
-                                              decoration: BoxDecoration(
-                                                color: Colors.white,
-                                                borderRadius: BorderRadius.circular(10),
-                                                border: Border.all(color: AppColors.grey200),
-                                              ),
-                                              child: Row(
-                                                children: [
-                                                  Container(
-                                                    padding: EdgeInsets.symmetric(
-                                                      horizontal: ResponsiveHelper.spacing(context, 8),
-                                                      vertical: ResponsiveHelper.spacing(context, 4),
-                                                    ),
-                                                    decoration: BoxDecoration(
-                                                      color: theme.primaryColor.withValues(alpha: 0.1),
-                                                      borderRadius: BorderRadius.circular(6),
-                                                    ),
-                                                    child: Text(
-                                                      FormatHelper.formatDate(slot!.date),
-                                                      style: ResponsiveHelper.smallStyle(
-                                                        context,
-                                                        color: theme.primaryColor,
-                                                      ).copyWith(fontWeight: FontWeight.bold),
-                                                    ),
-                                                  ),
-                                                  SizedBox(width: ResponsiveHelper.spacing(context, 10)),
-                                                  Expanded(
-                                                    child: Text(
-                                                      slotTitle,
-                                                      style: ResponsiveHelper.bodyStyle(context).copyWith(
-                                                        fontWeight: FontWeight.w600,
-                                                        color: AppColors.textPrimary,
-                                                      ),
-                                                      maxLines: 1,
-                                                      overflow: TextOverflow.ellipsis,
-                                                    ),
-                                                  ),
-                                                ],
-                                              ),
-                                            ),
-                                          );
-                                        }),
-                                      ],
-                                      // 업무 상세 헤더
-                                      Row(
-                                        children: [
-                                          Icon(
-                                            Icons.assignment,
-                                            size: ResponsiveHelper.iconSize(context, 16),
-                                            color: theme.primaryColor,
-                                          ),
-                                          SizedBox(width: ResponsiveHelper.spacing(context, 6)),
-                                          Text(
-                                            '업무 상세',
-                                            style: ResponsiveHelper.subtitleStyle(context).copyWith(
-                                              fontWeight: FontWeight.bold,
-                                            ),
-                                          ),
-                                        ],
-                                      ),
-                                      SizedBox(height: ResponsiveHelper.spacing(context, 12)),
-
-                                      // 업무 목록 (단건 TO: singleTO.workDetails 사용)
-                                      ..._getSingleTOWorkDetails().map((work) {
-                                        final stats = _getSingleTOStats(work.id);
-                                        final confirmed = stats?['confirmed'] ?? 0;
-                                        final pending = stats?['pending'] ?? 0;
-
-                                        return WorkDetailRow(
-                                          work: work,
-                                          confirmedCount: confirmed,
-                                          pendingCount: pending,
-                                          toItem: _getSingleTOItem(),
-                                          firestoreService: widget.firestoreService,
-                                          onChanged: widget.onChanged,
-                                          onLocalStatsChanged: () => setState(() {}),
-                                          onAffectedTOsChanged: widget.onAffectedTOsChanged,  // 🔥 추가
-                                        );
-                                      }),
-                                    ],
-                                  ),
-                          ),
-                        ],
+                          ],
+                        ),
                       )
                     : const SizedBox.shrink(),
               ),
@@ -728,6 +564,149 @@ class _TOGroupCardState extends State<TOGroupCard> {
         alignment: Alignment.topCenter,
         child: cardContent,
       ),
+    );
+  }
+
+  // ═══════════════════════════════════════════════════════════════
+  // 펼침 영역 콘텐츠 (통합)
+  // ═══════════════════════════════════════════════════════════════
+
+  Widget _buildExpandedBodyContent(BuildContext context, ThemeData theme) {
+    // 로딩 중
+    if (widget.isGroupLoading || _isSingleTOLoading()) {
+      return Padding(
+        padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 24)),
+        child: const LoadingWidget(message: '불러오는 중...'),
+      );
+    }
+
+    // 다중 슬롯 flex TO (리스트 모드)
+    final isMultiSlot = widget.displayMode == TOCardDisplayMode.list &&
+        !widget.groupItem.isLongTerm &&
+        widget.groupItem.groupTOs.length > 1;
+
+    if (isMultiSlot) {
+      final filteredTOs = _getFilteredGroupTOs();
+      final anyExpanded = filteredTOs.any(
+          (ti) => widget.expandedTOs.contains(ti.slot?.id ?? ti.to.id));
+      return Column(
+        children: filteredTOs.map((toItem) {
+          final itemKey = toItem.slot?.id ?? toItem.to.id;
+          final isThisExpanded = widget.expandedTOs.contains(itemKey);
+          return AnimatedOpacity(
+            opacity: anyExpanded && !isThisExpanded ? 0.45 : 1.0,
+            duration: const Duration(milliseconds: 200),
+            child: TOItemCard(
+              toItem: toItem,
+              groupItem: widget.groupItem,
+              firestoreService: widget.firestoreService,
+              dialogs: widget.dialogs,
+              onChanged: widget.onChanged,
+              isExpanded: isThisExpanded,
+              onToggleExpand: () => widget.onToggleTOExpand(itemKey),
+              isLoading: widget.loadingTOs.contains(itemKey),
+              onLocalStatsChanged: () => setState(() {}),
+              onAffectedTOsChanged: widget.onAffectedTOsChanged,
+            ),
+          );
+        }).toList(),
+      );
+    }
+
+    // 단건 슬롯 / 장기 / 캘린더 — 업무 상세
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        // 단기 단일슬롯: 슬롯 개별 제목 (있는 경우)
+        if (!widget.groupItem.isLongTerm &&
+            widget.groupItem.groupTOs.isNotEmpty)
+          Builder(builder: (context) {
+            final toItem = widget.groupItem.groupTOs.first;
+            final slotTitle = toItem.slot?.title;
+            if (slotTitle == null || slotTitle.isEmpty) {
+              return const SizedBox.shrink();
+            }
+            return Padding(
+              padding: EdgeInsets.only(
+                  bottom: ResponsiveHelper.spacing(context, 12)),
+              child: Container(
+                padding: EdgeInsets.symmetric(
+                  horizontal: ResponsiveHelper.spacing(context, 10),
+                  vertical: ResponsiveHelper.spacing(context, 8),
+                ),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(color: AppColors.grey200),
+                ),
+                child: Row(
+                  children: [
+                    Container(
+                      padding: EdgeInsets.symmetric(
+                        horizontal: ResponsiveHelper.spacing(context, 8),
+                        vertical: ResponsiveHelper.spacing(context, 4),
+                      ),
+                      decoration: BoxDecoration(
+                        color: theme.primaryColor.withValues(alpha: 0.1),
+                        borderRadius: BorderRadius.circular(6),
+                      ),
+                      child: Text(
+                        FormatHelper.formatDate(toItem.slot!.date),
+                        style: ResponsiveHelper.smallStyle(
+                          context,
+                          color: theme.primaryColor,
+                        ).copyWith(fontWeight: FontWeight.bold),
+                      ),
+                    ),
+                    SizedBox(width: ResponsiveHelper.spacing(context, 10)),
+                    Expanded(
+                      child: Text(
+                        slotTitle,
+                        style: ResponsiveHelper.bodyStyle(context).copyWith(
+                          fontWeight: FontWeight.w600,
+                          color: AppColors.textPrimary,
+                        ),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            );
+          }),
+        // 업무 상세 헤더
+        Row(
+          children: [
+            Icon(
+              Icons.assignment,
+              size: ResponsiveHelper.iconSize(context, 16),
+              color: theme.primaryColor,
+            ),
+            SizedBox(width: ResponsiveHelper.spacing(context, 6)),
+            Text(
+              '업무 상세',
+              style: ResponsiveHelper.subtitleStyle(context)
+                  .copyWith(fontWeight: FontWeight.bold),
+            ),
+          ],
+        ),
+        SizedBox(height: ResponsiveHelper.spacing(context, 12)),
+        // 업무 목록
+        ..._getSingleTOWorkDetails().map((work) {
+          final stats = _getSingleTOStats(work.id);
+          return WorkDetailRow(
+            work: work,
+            confirmedCount: stats?['confirmed'] ?? 0,
+            pendingCount: stats?['pending'] ?? 0,
+            toItem: _getSingleTOItem(),
+            firestoreService: widget.firestoreService,
+            onChanged: widget.onChanged,
+            onLocalStatsChanged: () => setState(() {}),
+            onAffectedTOsChanged: widget.onAffectedTOsChanged,
+          );
+        }),
+      ],
     );
   }
 
@@ -800,6 +779,12 @@ class _TOGroupCardState extends State<TOGroupCard> {
     );
   }
 
+  /// 그룹 카드 상태 배지
+  ///
+  /// allClosed 계산 책임은 호출자에 있음:
+  ///   - 슬롯 미로드: groupItem.isClosed (TOGroupItem getter — isManualClosed 포함)
+  ///   - 슬롯 로드됨: CloseStateUtils.isToItemClosed 전체 판단
+  /// 상태 분류 자체는 SlotStatusUtil.groupStatus에 위임.
   Widget _buildStatusBadge(BuildContext context, {
     required bool allClosed,
     required List<TOItem> targetTOs,
@@ -1345,9 +1330,6 @@ class _TOGroupCardState extends State<TOGroupCard> {
           await widget.firestoreService.batchDeleteSlots(
             toId: masterTO.id,
             slotIds: deleteSlots.map((s) => s.id).toList(),
-            removedRequired: deleteSlots.fold<int>(0, (s, slot) => s + slot.totalRequired),
-            removedConfirmed: deleteSlots.fold<int>(0, (s, slot) => s + slot.confirmedCount),
-            removedPending: deleteSlots.fold<int>(0, (s, slot) => s + slot.pendingCount),
           );
           if (!mounted) return;
           if (deletesAll) {
@@ -1537,8 +1519,9 @@ class _TOGroupCardState extends State<TOGroupCard> {
     if (slots.isEmpty) return null;
     if (slots.length == 1) return slots.first;
 
-    return await showModalBottomSheet<TOItem>(
+    return showModalBottomSheet<TOItem>(
       context: context,
+      useSafeArea: true,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
       ),

@@ -50,7 +50,7 @@ class NavigationHelper {
     required Widget destination,
     TO? result,
   }) async {
-    return await Navigator.pushReplacement<T, TO>(
+    return Navigator.pushReplacement<T, TO>(
       context,
       MaterialPageRoute(builder: (context) => destination),
       result: result,
@@ -62,7 +62,7 @@ class NavigationHelper {
     BuildContext context, {
     required Widget destination,
   }) async {
-    return await Navigator.pushAndRemoveUntil<T>(
+    return Navigator.pushAndRemoveUntil<T>(
       context,
       MaterialPageRoute(builder: (context) => destination),
       (route) => false,

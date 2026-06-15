@@ -7,7 +7,6 @@ import '../../../../utils/responsive_helper.dart';
 import '../../../../utils/format_helper.dart';
 import '../../../../theme/app_colors.dart';
 import '../../work_type_icon.dart';
-import '../../common/loading_widget.dart';
 import '../../common/tax_deduction_badge.dart';
 
 /// 업무 지원 상태
@@ -410,7 +409,10 @@ class WorkSelectionCard extends StatelessWidget {
       return SizedBox(
         width: ResponsiveHelper.spacing(context, 20),
         height: ResponsiveHelper.spacing(context, 20),
-        child: LoadingWidget(color: theme.primaryColor),
+        child: CircularProgressIndicator(
+          strokeWidth: 2,
+          color: theme.primaryColor,
+        ),
       );
     }
 

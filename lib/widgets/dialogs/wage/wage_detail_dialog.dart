@@ -152,6 +152,7 @@ class _WageDetailDialogState extends State<WageDetailDialog> {
 
     showModalBottomSheet<void>(
       context: context,
+      useSafeArea: true,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
       ),
@@ -449,15 +450,19 @@ class _WageDetailDialogState extends State<WageDetailDialog> {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final name = widget.user?.name ?? '이름 없음';
-    final screenWidth = MediaQuery.sizeOf(context).width;
+
 
     return Dialog(
+      backgroundColor: Colors.white,
       shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(ResponsiveHelper.spacing(context, 20)),
+        borderRadius: BorderRadius.circular(24),
       ),
-      child: Container(
-        width: screenWidth * 0.9,
-        constraints: BoxConstraints(maxWidth: screenWidth * 0.95),
+      insetPadding: EdgeInsets.symmetric(
+        horizontal: ResponsiveHelper.spacing(context, 16),
+        vertical: ResponsiveHelper.spacing(context, 24),
+      ),
+      child: ConstrainedBox(
+        constraints: BoxConstraints(maxHeight: MediaQuery.sizeOf(context).height * 0.92),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
@@ -533,8 +538,6 @@ class _WageDetailDialogState extends State<WageDetailDialog> {
             onPressed: () => Navigator.pop(context),
             icon: Icon(Icons.close, color: Colors.white,
                 size: ResponsiveHelper.iconSize(context, 24)),
-            padding: EdgeInsets.zero,
-            constraints: const BoxConstraints(),
           ),
         ],
       ),
@@ -551,9 +554,6 @@ class _WageDetailDialogState extends State<WageDetailDialog> {
     final workTimeStr = FormatHelper.formatCompactHours(_wage.workMinutes);
     final breakTimeStr = _wage.breakMinutes > 0
         ? FormatHelper.formatCompactHours(_wage.breakMinutes)
-        : null;
-    final overtimeStr = _wage.overtimeMinutes > 0
-        ? FormatHelper.formatCompactHours(_wage.overtimeMinutes)
         : null;
     final nightStr = _wage.nightMinutes > 0
         ? FormatHelper.formatCompactHours(_wage.nightMinutes)
@@ -787,11 +787,26 @@ class _WageDetailDialogState extends State<WageDetailDialog> {
                     AppColors.errorDark, AppColors.errorBg),
               ),
             ],
-            if (overtimeStr != null) ...[
+            // 조출/연장 분리: 둘 다 있으면 각각, 하나만 있으면 해당 라벨
+            if (_wage.earlyArrivalMinutes > 0) ...[
               SizedBox(width: ResponsiveHelper.spacing(context, 8)),
               Expanded(
-                child: _buildTimeStatBox(context, '연장', overtimeStr,
-                    AppColors.warningDark, AppColors.warningBg),
+                child: _buildTimeStatBox(
+                  context, '조출',
+                  FormatHelper.formatCompactHours(_wage.earlyArrivalMinutes),
+                  AppColors.warningDark, AppColors.warningBg,
+                ),
+              ),
+            ],
+            if (_wage.overtimeMinutes - _wage.earlyArrivalMinutes > 0) ...[
+              SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+              Expanded(
+                child: _buildTimeStatBox(
+                  context, '연장',
+                  FormatHelper.formatCompactHours(
+                      _wage.overtimeMinutes - _wage.earlyArrivalMinutes),
+                  AppColors.warningDark, AppColors.warningBg,
+                ),
               ),
             ],
             if (nightStr != null) ...[
@@ -812,12 +827,17 @@ class _WageDetailDialogState extends State<WageDetailDialog> {
   Widget _buildWageSection(BuildContext context) {
     final isDaily = _wage.wageType == 'daily';
     final workStr = FormatHelper.formatCompactHours(_wage.workMinutes);
-    final overtimeStr = _wage.overtimeMinutes > 0
-        ? FormatHelper.formatCompactHours(_wage.overtimeMinutes)
-        : null;
     final nightStr = _wage.nightMinutes > 0
         ? FormatHelper.formatCompactHours(_wage.nightMinutes)
         : null;
+
+    // 조출/연장 분리
+    final earlyMins = _wage.earlyArrivalMinutes;
+    final regularMins = _wage.overtimeMinutes - earlyMins;
+    final earlyArrivalAmount = _wage.overtimeMinutes > 0
+        ? (_wage.overtimeAmount * earlyMins / _wage.overtimeMinutes).round()
+        : 0;
+    final regularOvertimeAmount = _wage.overtimeAmount - earlyArrivalAmount;
 
     // 일급제 미근무 공제: 원래 일급과 실제 기본급의 차이
     final absenceDeduction = isDaily
@@ -906,13 +926,24 @@ class _WageDetailDialogState extends State<WageDetailDialog> {
                   isDeduction: true,
                 ),
               ],
-              if (_wage.overtimeAmount > 0) ...[
+              if (earlyMins > 0) ...[
+                Divider(height: 1, color: AppColors.grey100),
+                _buildWageLineItem(
+                  context,
+                  label: '조출수당',
+                  subLabel: FormatHelper.formatCompactHours(earlyMins),
+                  amount: earlyArrivalAmount,
+                  color: AppColors.warningDark,
+                  icon: Icons.trending_up,
+                ),
+              ],
+              if (regularMins > 0) ...[
                 Divider(height: 1, color: AppColors.grey100),
                 _buildWageLineItem(
                   context,
                   label: '연장수당',
-                  subLabel: overtimeStr,
-                  amount: _wage.overtimeAmount,
+                  subLabel: FormatHelper.formatCompactHours(regularMins),
+                  amount: regularOvertimeAmount,
                   color: AppColors.warningDark,
                   icon: Icons.trending_up,
                 ),
@@ -1162,31 +1193,47 @@ class _WageDetailDialogState extends State<WageDetailDialog> {
           '기본급 = ${FormatHelper.formatWage(_wage.baseWage)}/h × $regularH = ${FormatHelper.formatWage(_wage.baseAmount)}');
     }
 
-    // ── 연장수당 ──
+    // ── 조출/연장수당 ──
     if (_wage.overtimeAmount > 0) {
       final wageStr = FormatHelper.formatWage(supplementWage);
-      if (!isDaily) {
-        // 시급제: 항상 ×1.5
-        final h = FormatHelper.formatCompactHours(_wage.overtimeMinutes);
-        lines.add('연장수당 = $wageStr/h × $h × 1.5 = ${FormatHelper.formatWage(_wage.overtimeAmount)}');
-      } else if (_wage.workMinutes <= WageCalculator.standardWorkMinutes) {
-        // 일급제, 총 근무 8h 이하: ×1.0
-        final h = FormatHelper.formatCompactHours(_wage.overtimeMinutes);
-        lines.add('연장수당 = $wageStr/h × $h × 1.0 = ${FormatHelper.formatWage(_wage.overtimeAmount)}');
-      } else {
-        // 일급제, 총 근무 8h 초과: 구간 분리
-        final over8 = (_wage.workMinutes - WageCalculator.standardWorkMinutes)
-            .clamp(0, _wage.overtimeMinutes);
-        final within8 = (_wage.overtimeMinutes - over8).clamp(0, _wage.overtimeMinutes);
-        if (within8 > 0) {
-          final h = FormatHelper.formatCompactHours(within8);
-          final amt = (within8 * supplementWage / 60).round();
-          lines.add('연장수당 (8h내) = $wageStr/h × $h × 1.0 = ${FormatHelper.formatWage(amt)}');
+      final fEarlyMins = _wage.earlyArrivalMinutes;
+      final fRegularMins = _wage.overtimeMinutes - fEarlyMins;
+      final fEarlyAmt = _wage.overtimeMinutes > 0
+          ? (_wage.overtimeAmount * fEarlyMins / _wage.overtimeMinutes).round()
+          : 0;
+      final fRegularAmt = _wage.overtimeAmount - fEarlyAmt;
+
+      // 단일 타입일 때 rate 포함 공식, 혼합일 때 금액만 표시
+      void addLine(String label, int mins, int amount) {
+        if (mins <= 0 || amount <= 0) return;
+        final h = FormatHelper.formatCompactHours(mins);
+        final amtStr = FormatHelper.formatWage(amount);
+        if (fEarlyMins > 0 && fRegularMins > 0) {
+          // 혼합: 정확한 rate 분리가 복잡하므로 금액만 표시
+          lines.add('$label ($h) = $amtStr');
+        } else if (!isDaily) {
+          lines.add('$label = $wageStr/h × $h × 1.5 = $amtStr');
+        } else if (_wage.workMinutes <= WageCalculator.standardWorkMinutes) {
+          lines.add('$label = $wageStr/h × $h × 1.0 = $amtStr');
+        } else {
+          final over8 = (_wage.workMinutes - WageCalculator.standardWorkMinutes)
+              .clamp(0, mins);
+          final within8 = (mins - over8).clamp(0, mins);
+          if (within8 > 0) {
+            final hw = FormatHelper.formatCompactHours(within8);
+            final aw = (within8 * supplementWage / 60).round();
+            lines.add('$label (8h내) = $wageStr/h × $hw × 1.0 = ${FormatHelper.formatWage(aw)}');
+          }
+          if (over8 > 0) {
+            final ho = FormatHelper.formatCompactHours(over8);
+            final ao = (over8 * supplementWage * 1.5 / 60).round();
+            lines.add('$label (8h초과) = $wageStr/h × $ho × 1.5 = ${FormatHelper.formatWage(ao)}');
+          }
         }
-        final h8 = FormatHelper.formatCompactHours(over8);
-        final amt8 = (over8 * supplementWage * 1.5 / 60).round();
-        lines.add('연장수당 (8h초과) = $wageStr/h × $h8 × 1.5 = ${FormatHelper.formatWage(amt8)}');
       }
+
+      addLine('조출수당', fEarlyMins, fEarlyAmt);
+      addLine('연장수당', fRegularMins, fRegularAmt);
     }
 
     // ── 야간수당 ──

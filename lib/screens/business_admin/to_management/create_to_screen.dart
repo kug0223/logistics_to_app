@@ -94,11 +94,13 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
     super.initState();
     _loadMyBusinesses();
     // 제목 입력 시 _hasChanges 활성화
-    _titleController.addListener(() {
-      if (_titleController.text.isNotEmpty && !_hasChanges) {
-        setState(() => _hasChanges = true);
-      }
-    });
+    for (final ctrl in [_titleController, _groupTitleController, _descriptionController]) {
+      ctrl.addListener(() {
+        if (ctrl.text.isNotEmpty && !_hasChanges) {
+          setState(() => _hasChanges = true);
+        }
+      });
+    }
   }
 
   @override
@@ -531,6 +533,7 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
         _selectedDates.add(normalized);
         _selectedDates.sort();
       }
+      _hasChanges = true;
     });
   }
 
@@ -548,6 +551,7 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
       } else {
         _selectedWeekdays.add(day);
       }
+      _hasChanges = true;
     });
   }
 
@@ -656,6 +660,10 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
         ToastHelper.showError('지원 마감일을 설정해주세요');
         return;
       }
+      final todayStart = DateTime(DateTime.now().year, DateTime.now().month, DateTime.now().day);
+      if (_fixedDeadline!.isBefore(todayStart)) {
+        ToastHelper.showWarning('지원 마감일이 과거 날짜입니다. 등록 즉시 마감 상태가 됩니다');
+      }
     }
 
     if (_workDetails.isEmpty) {
@@ -673,8 +681,18 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
       return;
     }
 
+    if (_workDetails.any((w) => (w.wage ?? 0) > 50000000)) {
+      ToastHelper.showError('급여는 5,000만원 이하여야 합니다');
+      return;
+    }
+
     if (_workDetails.any((w) => (w.requiredCount ?? 0) <= 0)) {
       ToastHelper.showError('필요 인원은 1명 이상이어야 합니다');
+      return;
+    }
+
+    if (_workDetails.any((w) => (w.requiredCount ?? 0) > 10000)) {
+      ToastHelper.showError('필요 인원은 10,000명 이하여야 합니다');
       return;
     }
 
@@ -948,6 +966,7 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
             setState(() {
               _selectedBusiness = value;
               _workDetails.clear();
+              _hasChanges = true;
             });
             _loadWorkTypes();
           }
@@ -1086,12 +1105,13 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
       rangeStart: _rangeStart,
       rangeEnd: _rangeEnd,
       selectedWeekdays: _selectedWeekdays,
-      onRangeStartChanged: (date) => setState(() => _rangeStart = date.year == 0 ? null : date),
-      onRangeEndChanged: (date) => setState(() => _rangeEnd = date),
+      onRangeStartChanged: (date) => setState(() { _rangeStart = date.year == 0 ? null : date; _hasChanges = true; }),
+      onRangeEndChanged: (date) => setState(() { _rangeEnd = date; _hasChanges = true; }),
       onWeekdayToggle: _onWeekdayToggle,
       contractPeriodType: _contractPeriodType,
       onContractPeriodTypeChanged: (type) => setState(() {
         _contractPeriodType = type;
+        _hasChanges = true;
         if (type != 'custom') _rangeEnd = null;
       }),
     );

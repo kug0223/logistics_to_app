@@ -244,9 +244,9 @@ void main() {
       expect(to.isClosed, isTrue);
     });
 
-    test('isManualClosed=true 이지만 status=active → isClosed=false (status가 진실 소스)', () {
-      // isManualClosed는 메타데이터일 뿐, status로만 판단
-      // 이 상태는 정상 flow에서 발생하지 않지만 방어적 확인
+    test('isManualClosed=true, status=active → isClosed=true (CF 갱신 전 즉시 반영)', () {
+      // isManualClosed는 CF 갱신 전(최대 30분)에도 즉시 반영됨.
+      // status가 아직 active여도 isManualClosed=true면 isClosed=true로 처리.
       final to = TOModel(
         id: 'to1',
         businessId: 'biz1',
@@ -254,8 +254,8 @@ void main() {
         type: 'flex',
         title: '테스트',
         creatorUID: 'uid1',
-        status: TOStatus.active, // active
-        isManualClosed: true,    // 과거 버그로 잘못 설정됐을 경우
+        status: TOStatus.active, // CF가 아직 갱신하지 않은 상태
+        isManualClosed: true,    // 관리자가 수동 마감 → 즉시 반영
         deadlineType: 'NONE',
         workDetails: const [],
         totalRequired: 0,
@@ -266,7 +266,7 @@ void main() {
         createdAt: DateTime(2025),
         statusUpdatedAt: DateTime(2025),
       );
-      expect(to.isClosed, isFalse);
+      expect(to.isClosed, isTrue);
     });
   });
 

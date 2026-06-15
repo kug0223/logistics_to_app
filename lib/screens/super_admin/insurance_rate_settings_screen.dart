@@ -90,7 +90,7 @@ class _InsuranceRateSettingsScreenState
     }
   }
 
-  void _addYear() async {
+  Future<void> _addYear() async {
     final newYear = await _showYearPickerDialog();
     if (newYear == null) return;
     if (!mounted) return;

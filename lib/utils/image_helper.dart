@@ -1,4 +1,4 @@
-﻿// lib/utils/image_helper.dart
+// lib/utils/image_helper.dart
 
 import 'dart:io';
 import 'dart:typed_data';
@@ -64,7 +64,7 @@ class ImageHelper {
     // 웹에서는 갤러리만 가능
     if (kIsWeb) return ImageSource.gallery;
 
-    return await showDialog<ImageSource>(
+    return showDialog<ImageSource>(
       context: context,
       builder: (context) => AlertDialog(
         shape: RoundedRectangleBorder(
@@ -119,8 +119,9 @@ class ImageHelper {
   static Future<ImageSource?> showImageSourceBottomSheet(BuildContext context) async {
     if (kIsWeb) return ImageSource.gallery;
 
-    return await showModalBottomSheet<ImageSource>(
+    return showModalBottomSheet<ImageSource>(
       context: context,
+      useSafeArea: true,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
       ),
@@ -363,7 +364,7 @@ class ImageHelper {
         return file;
       }
 
-      // 임시 파일로 저장
+      // 임시 파일로 저장 — 반환된 File은 호출자가 업로드 후 delete() 책임
       final tempDir = await getTemporaryDirectory();
       final timestamp = DateTime.now().millisecondsSinceEpoch;
       final compressedFile = File('${tempDir.path}/compressed_$timestamp.jpg');
@@ -423,7 +424,7 @@ class ImageHelper {
 
     if (file == null) return null;
     
-    return await compressImage(file, type: type);
+    return compressImage(file, type: type);
   }
 
   /// 🖼️ 다중 이미지 선택 + 자동 압축 (추천!)
@@ -444,7 +445,7 @@ class ImageHelper {
 
     if (files.isEmpty) return [];
     
-    return await compressImages(files, type: type);
+    return compressImages(files, type: type);
   }
 
   // ==================== 이미지 정보 ====================

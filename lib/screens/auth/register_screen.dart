@@ -954,7 +954,8 @@ class _RegisterScreenState extends State<RegisterScreen> {
             onPressed: () =>
                 _phoneVerifyStatus.value = const _PhoneVerifyStatus(),
             style: TextButton.styleFrom(
-                padding: EdgeInsets.zero, minimumSize: Size.zero,
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+                minimumSize: Size.zero,
                 tapTargetSize: MaterialTapTargetSize.shrinkWrap),
             child: Text('재인증',
                 style: ResponsiveHelper.tinyStyle(context,
@@ -1038,7 +1039,8 @@ class _RegisterScreenState extends State<RegisterScreen> {
         TextButton(
           onPressed: status.isSending ? null : _sendPhoneCode,
           style: TextButton.styleFrom(
-              padding: EdgeInsets.zero, minimumSize: Size.zero,
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+              minimumSize: Size.zero,
               tapTargetSize: MaterialTapTargetSize.shrinkWrap),
           child: Text('인증번호 재발송',
               style: ResponsiveHelper.tinyStyle(context,

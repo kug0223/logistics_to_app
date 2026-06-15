@@ -67,66 +67,83 @@ class _FilterDialogState extends State<FilterDialog> {
   Widget build(BuildContext context) {
     final primary = Theme.of(context).primaryColor;
 
-    return Dialog(
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-      insetPadding: const EdgeInsets.symmetric(horizontal: 24, vertical: 40),
-      child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 400),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            _buildHeader(context, primary),
-            Flexible(
-              child: SingleChildScrollView(
-                padding: EdgeInsets.fromLTRB(
-                  ResponsiveHelper.spacing(context, 20),
-                  ResponsiveHelper.spacing(context, 18),
-                  ResponsiveHelper.spacing(context, 20),
-                  ResponsiveHelper.spacing(context, 4),
-                ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    if (widget.businessNames.length > 1) ...[
-                      _buildSection(
-                        context,
-                        label: '사업장',
-                        icon: Icons.business_outlined,
-                        child: _buildBusinessChips(context, primary),
-                      ),
-                      _buildDivider(),
-                    ],
-                    if (widget.showTOTypeFilter) ...[
-                      _buildSection(
-                        context,
-                        label: '공고 유형',
-                        icon: Icons.category_outlined,
-                        child: _buildTOTypeChips(context, primary),
-                      ),
-                      _buildDivider(),
-                    ],
-                    if (widget.showPublishStatusFilter) ...[
-                      _buildSection(
-                        context,
-                        label: '공개 상태',
-                        icon: Icons.visibility_outlined,
-                        child: _buildPublishStatusChips(context, primary),
-                      ),
-                      _buildDivider(),
-                    ],
+    return Container(
+      decoration: const BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      constraints: BoxConstraints(
+        maxHeight: MediaQuery.sizeOf(context).height * 0.85,
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          _buildDragHandle(),
+          _buildHeader(context, primary),
+          Flexible(
+            child: SingleChildScrollView(
+              padding: EdgeInsets.fromLTRB(
+                ResponsiveHelper.spacing(context, 16),
+                ResponsiveHelper.spacing(context, 14),
+                ResponsiveHelper.spacing(context, 16),
+                ResponsiveHelper.spacing(context, 4),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  if (widget.businessNames.length > 1) ...[
                     _buildSection(
                       context,
-                      label: '날짜',
-                      icon: Icons.calendar_today_outlined,
-                      child: _buildDateChips(context, primary),
+                      label: '사업장',
+                      icon: Icons.business_outlined,
+                      child: _buildBusinessChips(context, primary),
                     ),
-                    SizedBox(height: ResponsiveHelper.spacing(context, 16)),
+                    _buildDivider(),
                   ],
-                ),
+                  if (widget.showTOTypeFilter) ...[
+                    _buildSection(
+                      context,
+                      label: '공고 유형',
+                      icon: Icons.category_outlined,
+                      child: _buildTOTypeChips(context, primary),
+                    ),
+                    _buildDivider(),
+                  ],
+                  if (widget.showPublishStatusFilter) ...[
+                    _buildSection(
+                      context,
+                      label: '공개 상태',
+                      icon: Icons.visibility_outlined,
+                      child: _buildPublishStatusChips(context, primary),
+                    ),
+                    _buildDivider(),
+                  ],
+                  _buildSection(
+                    context,
+                    label: '날짜',
+                    icon: Icons.calendar_today_outlined,
+                    child: _buildDateChips(context, primary),
+                  ),
+                  SizedBox(height: ResponsiveHelper.spacing(context, 16)),
+                ],
               ),
             ),
-            _buildBottomBar(context, primary),
-          ],
+          ),
+          _buildBottomBar(context, primary),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildDragHandle() {
+    return Padding(
+      padding: const EdgeInsets.only(top: 10, bottom: 2),
+      child: Container(
+        width: 36,
+        height: 4,
+        decoration: BoxDecoration(
+          color: AppColors.grey300,
+          borderRadius: BorderRadius.circular(2),
         ),
       ),
     );
@@ -137,50 +154,41 @@ class _FilterDialogState extends State<FilterDialog> {
   Widget _buildHeader(BuildContext context, Color primary) {
     return Container(
       padding: EdgeInsets.fromLTRB(
-        ResponsiveHelper.spacing(context, 20),
         ResponsiveHelper.spacing(context, 16),
+        ResponsiveHelper.spacing(context, 14),
         ResponsiveHelper.spacing(context, 8),
-        ResponsiveHelper.spacing(context, 16),
+        ResponsiveHelper.spacing(context, 14),
       ),
-      decoration: BoxDecoration(
-        gradient: LinearGradient(
-          colors: [primary, primary.withValues(alpha: 0.82)],
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-        ),
-        borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
+      decoration: const BoxDecoration(
+        color: Colors.white,
+        border: Border(bottom: BorderSide(color: AppColors.grey100)),
       ),
       child: Row(
         children: [
-          Container(
-            padding: const EdgeInsets.all(8),
-            decoration: BoxDecoration(
-              color: Colors.white.withValues(alpha: 0.2),
-              shape: BoxShape.circle,
-            ),
-            child: Icon(Icons.tune, color: Colors.white, size: ResponsiveHelper.iconSize(context, 18)),
-          ),
-          const SizedBox(width: 12),
+          Icon(Icons.tune, size: ResponsiveHelper.iconSize(context, 18), color: primary),
+          SizedBox(width: ResponsiveHelper.spacing(context, 8)),
           Text(
             '필터',
             style: ResponsiveHelper.subtitleStyle(context).copyWith(
-              color: Colors.white,
               fontWeight: FontWeight.bold,
+              color: AppColors.textPrimary,
             ),
           ),
           if (_activeCount > 0) ...[
-            const SizedBox(width: 8),
+            SizedBox(width: ResponsiveHelper.spacing(context, 6)),
             Container(
-              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+              padding: EdgeInsets.symmetric(
+                horizontal: ResponsiveHelper.spacing(context, 7),
+                vertical: ResponsiveHelper.spacing(context, 2),
+              ),
               decoration: BoxDecoration(
-                color: Colors.white.withValues(alpha: 0.25),
-                borderRadius: BorderRadius.circular(12),
+                color: primary.withValues(alpha: 0.1),
+                borderRadius: BorderRadius.circular(10),
               ),
               child: Text(
-                '$_activeCount개 적용',
-                style: ResponsiveHelper.tinyStyle(context, color: Colors.white).copyWith(
-                  fontWeight: FontWeight.bold,
-                ),
+                '$_activeCount',
+                style: ResponsiveHelper.tinyStyle(context, color: primary)
+                    .copyWith(fontWeight: FontWeight.bold),
               ),
             ),
           ],
@@ -188,19 +196,20 @@ class _FilterDialogState extends State<FilterDialog> {
           TextButton(
             onPressed: _resetFilters,
             style: TextButton.styleFrom(
-              foregroundColor: Colors.white70,
+              foregroundColor: AppColors.grey500,
               padding: const EdgeInsets.symmetric(horizontal: 6),
               minimumSize: const Size(0, 36),
             ),
             child: Text(
               '초기화',
-              style: ResponsiveHelper.smallStyle(context, color: Colors.white70),
+              style: ResponsiveHelper.smallStyle(context, color: AppColors.grey500),
             ),
           ),
           IconButton(
             tooltip: '닫기',
             onPressed: () => Navigator.pop(context),
-            icon: const Icon(Icons.close, color: Colors.white54, size: 20),
+            icon: const Icon(Icons.close, size: 20),
+            color: AppColors.grey400,
             padding: EdgeInsets.zero,
             constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
           ),
@@ -233,7 +242,7 @@ class _FilterDialogState extends State<FilterDialog> {
             ),
           ],
         ),
-        SizedBox(height: ResponsiveHelper.spacing(context, 10)),
+        SizedBox(height: ResponsiveHelper.spacing(context, 8)),
         child,
       ],
     );
@@ -241,7 +250,7 @@ class _FilterDialogState extends State<FilterDialog> {
 
   Widget _buildDivider() {
     return Container(
-      margin: const EdgeInsets.symmetric(vertical: 16),
+      margin: const EdgeInsets.symmetric(vertical: 12),
       height: 1,
       color: AppColors.grey100,
     );
@@ -414,8 +423,8 @@ class _FilterDialogState extends State<FilterDialog> {
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 150),
         padding: EdgeInsets.symmetric(
-          horizontal: ResponsiveHelper.spacing(context, 12),
-          vertical: ResponsiveHelper.spacing(context, 7),
+          horizontal: ResponsiveHelper.spacing(context, 10),
+          vertical: ResponsiveHelper.spacing(context, 5),
         ),
         decoration: BoxDecoration(
           color: isSelected ? primary.withValues(alpha: 0.1) : Colors.transparent,
@@ -450,15 +459,16 @@ class _FilterDialogState extends State<FilterDialog> {
   // ─── Bottom Bar ───────────────────────────────────────────
 
   Widget _buildBottomBar(BuildContext context, Color primary) {
+    final navBarHeight = MediaQuery.of(context).viewPadding.bottom;
     return Container(
       padding: EdgeInsets.fromLTRB(
-        ResponsiveHelper.spacing(context, 20),
-        ResponsiveHelper.spacing(context, 12),
-        ResponsiveHelper.spacing(context, 20),
         ResponsiveHelper.spacing(context, 16),
+        ResponsiveHelper.spacing(context, 10),
+        ResponsiveHelper.spacing(context, 16),
+        ResponsiveHelper.spacing(context, 14) + navBarHeight,
       ),
       decoration: const BoxDecoration(
-        border: Border(top: BorderSide(color: AppColors.grey200)),
+        border: Border(top: BorderSide(color: AppColors.grey100)),
       ),
       child: Row(
         children: [

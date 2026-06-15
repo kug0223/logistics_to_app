@@ -1,4 +1,4 @@
-﻿import 'package:flutter/material.dart';
+import 'package:flutter/material.dart';
 import '../../theme/app_colors.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../../models/core/business_model.dart';
@@ -287,7 +287,7 @@ class FullMapDialog extends StatelessWidget {
   }
 
   /// 길찾기
-  void _openDirections(BuildContext context) async {
+  Future<void> _openDirections(BuildContext context) async {
     final lat = business.latitude;
     final lng = business.longitude;
     if (lat == null || lng == null) {

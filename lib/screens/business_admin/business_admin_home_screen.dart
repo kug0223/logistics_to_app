@@ -1,5 +1,7 @@
-﻿import 'package:flutter/material.dart';
+﻿import 'package:flutter/foundation.dart' show kDebugMode;
+import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 
 // Providers
 import '../../providers/user_provider.dart';
@@ -28,6 +30,8 @@ import 'payroll/payroll_overview_screen.dart';
 import '../../services/payroll_payment_service.dart';
 import 'to_prerequisites_helper.dart';
 import '../../theme/app_colors.dart';
+import '../../utils/test_data_helper.dart';
+import '../../widgets/dialogs/styled_dialog.dart';
 
 /// 공고 등록 전 필수 요건 체크 — 미충족 시 안내 다이얼로그 후 설정 화면으로 이동
 /// 모든 요건을 충족하면 true 반환
@@ -46,6 +50,7 @@ class BusinessAdminHomeScreen extends StatefulWidget {
 class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen> {
   final _firestoreService = FirestoreService();
   bool? _hasApprovedBusiness; // null = 미조회, false = 미승인, true = 승인됨
+  bool _isNavigating = false;
 
   @override
   void initState() {
@@ -82,7 +87,17 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen> {
     }
   }
 
-  void _requireApprovedBusiness(BuildContext context, VoidCallback proceed) {
+  Future<void> _safeNavigate(Future<void> Function() action) async {
+    if (_isNavigating) return;
+    setState(() => _isNavigating = true);
+    try {
+      await action();
+    } finally {
+      if (mounted) setState(() => _isNavigating = false);
+    }
+  }
+
+  Future<void> _requireApprovedBusiness(BuildContext context, Future<void> Function() proceed) async {
     if (_hasApprovedBusiness == null) {
       ToastHelper.showWarning('사업장 정보를 불러오는 중입니다. 잠시 후 다시 시도해주세요.');
       return;
@@ -91,7 +106,7 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen> {
       ToastHelper.showWarning('승인된 사업장이 있어야 이용할 수 있습니다.\n사업장 승인 후 다시 시도해주세요.');
       return;
     }
-    proceed();
+    await proceed();
   }
 
   @override
@@ -233,6 +248,26 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen> {
                                   ),
                                   SizedBox(width: ResponsiveHelper.spacing(context, 8)),
                                 ],
+                                // 더미 데이터 (디버그 전용)
+                                if (kDebugMode) ...[
+                                  Material(
+                                    color: Colors.white.withValues(alpha: 0.2),
+                                    borderRadius: BorderRadius.circular(12),
+                                    child: InkWell(
+                                      onTap: _showDummyDataDialog,
+                                      borderRadius: BorderRadius.circular(12),
+                                      child: Padding(
+                                        padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 8)),
+                                        child: Icon(
+                                          Icons.science,
+                                          color: Colors.white,
+                                          size: ResponsiveHelper.iconSize(context, 24),
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                  SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+                                ],
                                 // 알림 버튼
                                 NotificationBadge(
                                   child: Material(
@@ -349,7 +384,7 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen> {
                                 title: '공고 등록',
                                 subtitle: '새 공고 작성',
                                 color: theme.primaryColor,
-                                onTap: () async {
+                                onTap: () => _safeNavigate(() async {
                                   final user = userProvider.currentUser;
                                   if (user == null) return;
 
@@ -377,7 +412,7 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen> {
                                       }
                                     },
                                   );
-                                },
+                                }),
                               ),
 
                             // 2. 공고 관리: BUSINESS_ADMIN 항상 / SUB_ADMIN은 canManageTo OR canManageWorkers
@@ -390,31 +425,29 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen> {
                                 title: '공고 관리',
                                 subtitle: '지원자 · 공고 현황',
                                 color: theme.primaryColor,
-                                onTap: () => _requireApprovedBusiness(context, () {
-                                  Navigator.push(
+                                onTap: () => _safeNavigate(() => _requireApprovedBusiness(context, () async {
+                                  await Navigator.push(
                                     context,
                                     MaterialPageRoute(
                                       builder: (context) => const IntegratedWorkforceScreen(),
                                     ),
                                   );
-                                }),
+                                })),
                               ),
 
                             // 3. 급여 관리: 오늘 지급 배지 포함
                             if (!isSubAdmin || userProvider.can((p) => p.canManageWage))
                               _TodayPaymentBadgeCard(
                                 businessId: userProvider.effectiveBusinessId,
-                                onTap: (reload) async {
-                                  _requireApprovedBusiness(context, () async {
-                                    await Navigator.push(
-                                      context,
-                                      MaterialPageRoute(
-                                        builder: (_) => const PayrollOverviewScreen(),
-                                      ),
-                                    );
-                                    reload();
-                                  });
-                                },
+                                onTap: (reload) => _safeNavigate(() => _requireApprovedBusiness(context, () async {
+                                  await Navigator.push(
+                                    context,
+                                    MaterialPageRoute(
+                                      builder: (_) => const PayrollOverviewScreen(),
+                                    ),
+                                  );
+                                  reload();
+                                })),
                               ),
 
                             // 4. 계약서 관리: BUSINESS_ADMIN 항상 / SUB_ADMIN은 canManageContract
@@ -425,7 +458,7 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen> {
                                 title: '계약서 관리',
                                 subtitle: '계약서 현황·서명',
                                 color: theme.primaryColor,
-                                onTap: () => _requireApprovedBusiness(context, () async {
+                                onTap: () => _safeNavigate(() => _requireApprovedBusiness(context, () async {
                                   var bizId = userProvider.effectiveBusinessId;
                                   if (bizId == null) {
                                     final uid = userProvider.currentUser?.uid;
@@ -439,7 +472,7 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen> {
                                     return;
                                   }
                                   if (!context.mounted) return;
-                                  Navigator.push(
+                                  await Navigator.push(
                                     context,
                                     MaterialPageRoute(
                                       builder: (_) => AdminContractManagementScreen(
@@ -447,7 +480,7 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen> {
                                       ),
                                     ),
                                   );
-                                }),  // _requireApprovedBusiness 닫힘
+                                })),
                               ),
 
                             // 5. 통계: BUSINESS_ADMIN 항상 / SUB_ADMIN은 canManageWage
@@ -458,7 +491,7 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen> {
                                 title: '통계',
                                 subtitle: '근태 · 급여 · 리뷰',
                                 color: theme.primaryColor,
-                                onTap: () => pushAdminStatsScreen(context),
+                                onTap: () => _safeNavigate(() async { pushAdminStatsScreen(context); }),
                               ),
 
                             // 6. 설정: 항상 표시
@@ -468,14 +501,14 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen> {
                               title: '설정',
                               subtitle: '앱 설정',
                               color: AppColors.grey600,
-                              onTap: () {
-                                Navigator.push(
+                              onTap: () => _safeNavigate(() async {
+                                await Navigator.push(
                                   context,
                                   MaterialPageRoute(
                                     builder: (context) => const SettingsScreen(),
                                   ),
                                 );
-                              },
+                              }),
                             ),
 
                           ],
@@ -559,6 +592,106 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen> {
         ),
       ),
     );
+  }
+
+  Future<void> _showDummyDataDialog() async {
+    final businessId = context.read<UserProvider>().effectiveBusinessId;
+    if (businessId == null) {
+      ToastHelper.showError('사업장이 선택되지 않았습니다.');
+      return;
+    }
+
+    showDialog(
+      context: context,
+      builder: (ctx) => StyledDialog(
+        title: '테스트 데이터 관리',
+        icon: Icons.science,
+        headerColor: AppColors.warning,
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              leading: const Icon(Icons.group_add),
+              title: const Text('TO에 지원자 추가'),
+              subtitle: const Text('공고 선택 → 확정/대기 인원 생성'),
+              onTap: () async {
+                Navigator.pop(ctx);
+                await _createDummyApplicationsFlow(businessId);
+              },
+            ),
+            const Divider(height: 1),
+            ListTile(
+              leading: const Icon(Icons.delete_forever, color: AppColors.error),
+              title: const Text('더미 데이터 전체 삭제',
+                  style: TextStyle(color: AppColors.error)),
+              onTap: () async {
+                Navigator.pop(ctx);
+                final ok = await DialogHelper.showDangerConfirm(
+                  context,
+                  title: '더미 데이터 삭제',
+                  message: '모든 더미 데이터를 삭제합니다.',
+                  confirmText: '삭제',
+                );
+                if (ok && mounted) {
+                  await TestDataHelper.clearAllDummyData();
+                  if (mounted) ToastHelper.showSuccess('더미 데이터 삭제 완료');
+                }
+              },
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('닫기'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _createDummyApplicationsFlow(String businessId) async {
+    final snap = await FirebaseFirestore.instance
+        .collection('tos')
+        .where('businessId', isEqualTo: businessId)
+        .where('status', whereIn: ['active', 'full'])
+        .limit(50)
+        .get();
+
+    if (snap.docs.isEmpty) {
+      ToastHelper.showWarning('등록된 공고가 없습니다. 먼저 공고를 생성하세요.');
+      return;
+    }
+
+    final options = snap.docs
+        .map((d) => MapEntry(d.id, d.data()['title'] as String? ?? d.id))
+        .toList();
+
+    if (!mounted) return;
+
+    final selectedId = await showModalBottomSheet<String>(
+      context: context,
+      useSafeArea: true,
+      builder: (_) => ListView(
+        shrinkWrap: true,
+        children: options
+            .map((e) => ListTile(
+                  title: Text(e.value),
+                  onTap: () => Navigator.pop(context, e.key),
+                ))
+            .toList(),
+      ),
+    );
+
+    if (selectedId == null || !mounted) return;
+
+    await TestDataHelper.createDummyApplications(
+      toId: selectedId,
+      pendingCount: 2,
+      confirmedCount: 3,
+    );
+
+    if (mounted) ToastHelper.showSuccess('더미 지원자 생성 완료');
   }
 }
 

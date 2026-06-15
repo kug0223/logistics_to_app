@@ -1,3 +1,4 @@
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
@@ -7,6 +8,7 @@ import '../../services/monthly_review_service.dart';
 import '../../theme/app_colors.dart';
 import '../../utils/responsive_helper.dart';
 import '../../widgets/common/app_empty_state.dart';
+import '../../widgets/common/gradient_scaffold.dart';
 import '../../widgets/common/loading_widget.dart';
 
 class MyReviewsScreen extends StatefulWidget {
@@ -24,6 +26,10 @@ class _MyReviewsScreenState extends State<MyReviewsScreen> {
   bool _isLoading = true;
   String? _loadError;
 
+  DocumentSnapshot? _cursor;
+  bool _hasMore = false;
+  bool _isLoadingMore = false;
+
   @override
   void initState() {
     super.initState();
@@ -33,19 +39,20 @@ class _MyReviewsScreenState extends State<MyReviewsScreen> {
   Future<void> _loadReviews() async {
     final uid = context.read<UserProvider>().currentUser?.uid;
     if (uid == null) return;
-    setState(() { _isLoading = true; _loadError = null; });
+    setState(() { _isLoading = true; _loadError = null; _cursor = null; _hasMore = false; });
     try {
-      final reviews = await _reviewService.getPublishedReviewsForUser(
+      final page = await _reviewService.getPublishedReviewsForUserPaged(
         targetUserId: uid,
-        limit: 50,
       );
-      final avg = reviews.isEmpty
+      final avg = page.records.isEmpty
           ? 0.0
-          : reviews.map((r) => r.rating).reduce((a, b) => a + b) / reviews.length;
+          : page.records.map((r) => r.rating).reduce((a, b) => a + b) / page.records.length;
       if (mounted) {
         setState(() {
-          _reviews = reviews;
+          _reviews = page.records;
           _avgRating = avg;
+          _cursor = page.cursor;
+          _hasMore = page.hasMore;
           _isLoading = false;
         });
       }
@@ -54,24 +61,37 @@ class _MyReviewsScreenState extends State<MyReviewsScreen> {
     }
   }
 
+  Future<void> _loadMore() async {
+    final uid = context.read<UserProvider>().currentUser?.uid;
+    if (uid == null || !_hasMore || _isLoadingMore) return;
+    setState(() => _isLoadingMore = true);
+    try {
+      final page = await _reviewService.getPublishedReviewsForUserPaged(
+        targetUserId: uid,
+        startAfter: _cursor,
+      );
+      if (!mounted) return;
+      final allReviews = [..._reviews, ...page.records];
+      final avg = allReviews.isEmpty
+          ? 0.0
+          : allReviews.map((r) => r.rating).reduce((a, b) => a + b) / allReviews.length;
+      setState(() {
+        _reviews = allReviews;
+        _avgRating = avg;
+        _cursor = page.cursor;
+        _hasMore = page.hasMore;
+        _isLoadingMore = false;
+      });
+    } catch (_) {
+      if (mounted) setState(() => _isLoadingMore = false);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('내 근무 평가'),
-        centerTitle: true,
-        backgroundColor: theme.primaryColor,
-        foregroundColor: Colors.white,
-        elevation: 0,
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.refresh_outlined),
-            onPressed: _loadReviews,
-            tooltip: '새로고침',
-          ),
-        ],
-      ),
+    return GradientScaffold(
+      title: '내 근무 평가',
+      onRefresh: _loadReviews,
       body: _isLoading
           ? const LoadingWidget()
           : _loadError != null
@@ -109,6 +129,24 @@ class _MyReviewsScreenState extends State<MyReviewsScreen> {
                             delegate: SliverChildBuilderDelegate(
                               (ctx, i) => _ReviewCard(review: _reviews[i]),
                               childCount: _reviews.length,
+                            ),
+                          ),
+                        ),
+                      if (_hasMore)
+                        SliverToBoxAdapter(
+                          child: Padding(
+                            padding: EdgeInsets.only(
+                              top: ResponsiveHelper.spacing(context, 4),
+                              bottom: ResponsiveHelper.spacing(context, 24),
+                            ),
+                            child: Center(
+                              child: _isLoadingMore
+                                  ? const CircularProgressIndicator()
+                                  : TextButton.icon(
+                                      onPressed: _loadMore,
+                                      icon: const Icon(Icons.expand_more),
+                                      label: const Text('더 보기'),
+                                    ),
                             ),
                           ),
                         ),

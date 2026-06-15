@@ -95,6 +95,7 @@ class _DocumentManagementScreenState extends State<DocumentManagementScreen> {
     return GradientScaffold(
       title: '내 서류 관리',
       onBack: () => NavigationHelper.pop(context, changed: _hasChanges),
+      onRefresh: _loadUserDocuments,
       body: _isLoading
           ? const Center(child: CircularProgressIndicator())
           : ListView(

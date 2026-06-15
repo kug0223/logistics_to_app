@@ -1,4 +1,4 @@
-﻿// lib/screens/business_admin/dialogs/schedule_request_management_dialog.dart
+// lib/screens/business_admin/dialogs/schedule_request_management_dialog.dart
 
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
@@ -96,11 +96,15 @@ class _ScheduleRequestManagementDialogState
   @override
   Widget build(BuildContext context) {
     return Dialog(
+      backgroundColor: Colors.white,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
-      child: Container(
+      insetPadding: EdgeInsets.symmetric(
+        horizontal: ResponsiveHelper.spacing(context, 16),
+        vertical: ResponsiveHelper.spacing(context, 24),
+      ),
+      child: ConstrainedBox(
         constraints: BoxConstraints(
-          maxWidth: 600,
-          maxHeight: MediaQuery.sizeOf(context).height * 0.88,
+          maxHeight: MediaQuery.sizeOf(context).height * 0.92,
         ),
         child: Column(
           children: [
@@ -453,7 +457,7 @@ class _ScheduleRequestManagementDialogState
                       icon: Icons.cancel,
                       borderColor: AppColors.error,
                       foregroundColor: AppColors.error,
-                      onPressed: () async => await _handleReject(item),
+                      onPressed: () async => _handleReject(item),
                     ),
                   ),
                   SizedBox(width: ResponsiveHelper.spacing(context, 12)),
@@ -461,7 +465,7 @@ class _ScheduleRequestManagementDialogState
                     child: LoadingButton.success(
                       text: '승인',
                       icon: Icons.check_circle,
-                      onPressed: () async => await _handleApprove(item),
+                      onPressed: () async => _handleApprove(item),
                     ),
                   ),
                 ],

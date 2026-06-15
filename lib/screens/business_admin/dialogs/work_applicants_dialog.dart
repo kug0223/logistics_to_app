@@ -1,7 +1,8 @@
-﻿// lib/screens/business_admin/dialogs/work_applicants_dialog.dart
+// lib/screens/business_admin/dialogs/work_applicants_dialog.dart
 // 업무별 지원자 관리 다이얼로그 - 개선된 버전
 
 import 'dart:convert';
+import 'dart:math' show min;
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
@@ -30,6 +31,8 @@ import '../../../utils/id_card_helper.dart';
 import 'fixed_worker_management_dialog.dart';
 import '../../../utils/format_helper.dart';
 import '../../../utils/trust_score_helper.dart';
+import '../../../utils/week_helper.dart';
+import '../../../models/core/attendance_model.dart';
 import '../../../models/core/monthly_review_model.dart';
 import '../../../services/monthly_review_service.dart';
 import '../../../screens/contract/contract_sign_screen.dart' show ContractTemplateWidget;
@@ -91,6 +94,8 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
   final Set<String> _affectedOtherTOIds = {};
   // 리뷰 작성 여부 (uid → true=작성완료)
   final Map<String, bool> _reviewWrittenMap = {};
+  // 이번 주 근무 횟수 (uid → 근무 횟수)
+  final Map<String, int> _weeklyWorkCountMap = {};
 
   @override
   void initState() {
@@ -214,6 +219,30 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
         }
       }
 
+      // 이번 주 근무 횟수 조회 (기준 주: 슬롯 날짜 or 오늘)
+      final refDate = widget.toItem.slot?.date ?? DateTime.now();
+      final ws = WeekHelper.weekStart(refDate);
+      final we = WeekHelper.weekEnd(refDate);
+      final weeklyMap = await _firestoreService.getWeeklyAttendanceByBusiness(
+        businessId: widget.toItem.to.businessId,
+        weekStart: ws,
+        weekEnd: we,
+      );
+      // 모든 지원자 uid를 0으로 초기화 → 기록 없는 지원자도 "주0회" 배지 표시
+      final weeklyCountMap = <String, int>{
+        for (final uid in uniqueUids) uid: 0,
+      };
+      for (final entry in weeklyMap.entries) {
+        // "근무한 날" 기준: 실제 출근 기록(checkIn)이 있고 결근·노쇼가 아닌 날
+        // present + late + early_leave 모두 포함 (조퇴도 출근한 날)
+        weeklyCountMap[entry.key] = entry.value
+            .where((a) =>
+                a.checkIn != null &&
+                a.status != AttendanceModel.statusAbsent &&
+                a.status != AttendanceModel.statusNoShow)
+            .length;
+      }
+
       // isStarred 필드에서 관심표시 복원
       final starredFromFirestore = filtered
           .where((app) => app.isStarred)
@@ -225,6 +254,9 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
         _idCardStatusMap = idCardStatusMap;
         _allApplications = apps; // 통계 계산용 캐시
         _starredIds.addAll(starredFromFirestore);
+        _weeklyWorkCountMap
+          ..clear()           // 재로딩 시 stale 데이터 제거
+          ..addAll(weeklyCountMap);
       });
   }, errorTag: '지원자 목록 로드');
 
@@ -285,13 +317,17 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
         }
       },
       child: Dialog(
+        backgroundColor: Colors.white,
         shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(ResponsiveHelper.spacing(context, 24)),
+          borderRadius: BorderRadius.circular(24),
         ),
-        child: Container(
+        insetPadding: EdgeInsets.symmetric(
+          horizontal: ResponsiveHelper.spacing(context, 16),
+          vertical: ResponsiveHelper.spacing(context, 24),
+        ),
+        child: ConstrainedBox(
           constraints: BoxConstraints(
-            maxWidth: 500,
-            maxHeight: MediaQuery.sizeOf(context).height * 0.88,
+            maxHeight: MediaQuery.sizeOf(context).height * 0.92,
           ),
           child: Column(
             mainAxisSize: MainAxisSize.max,
@@ -369,8 +405,6 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
               affectedTOIds: _affectedOtherTOIds,
             )),
             icon: Icon(Icons.close, color: Colors.white),
-            padding: EdgeInsets.zero,
-            constraints: BoxConstraints(),
           ),
         ],
       ),
@@ -535,15 +569,24 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
     );
   }
 
-  /// 지원자 목록
+  /// 지원자 목록: 별표시 먼저 → 주간 근무 적은 순 → 이름순
   List<Map<String, dynamic>> _sortedPending(List<Map<String, dynamic>> pending) {
     final sorted = List<Map<String, dynamic>>.from(pending);
     sorted.sort((a, b) {
-      final aId = (a['application'] as ApplicationModel).id;
-      final bId = (b['application'] as ApplicationModel).id;
-      final aStarred = _starredIds.contains(aId) ? 0 : 1;
-      final bStarred = _starredIds.contains(bId) ? 0 : 1;
-      return aStarred.compareTo(bStarred);
+      final aApp = a['application'] as ApplicationModel;
+      final bApp = b['application'] as ApplicationModel;
+      final aUser = a['user'] as UserModel?;
+      final bUser = b['user'] as UserModel?;
+
+      final aStarred = _starredIds.contains(aApp.id) ? 0 : 1;
+      final bStarred = _starredIds.contains(bApp.id) ? 0 : 1;
+      if (aStarred != bStarred) return aStarred.compareTo(bStarred);
+
+      final aCount = _weeklyWorkCountMap[aUser?.uid ?? ''] ?? 0;
+      final bCount = _weeklyWorkCountMap[bUser?.uid ?? ''] ?? 0;
+      if (aCount != bCount) return aCount.compareTo(bCount);
+
+      return (aUser?.name ?? '').compareTo(bUser?.name ?? '');
     });
     return sorted;
   }
@@ -787,6 +830,8 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
     final app = item['application'] as ApplicationModel;
     final user = item['user'] as UserModel?;
     final idCardStatus = _idCardStatusMap[user?.uid ?? ''] ?? 'none';
+    // null = 로딩 전 / int = 로딩 완료 (0포함) → Wrap 조건부 포함으로 간격 오염 방지
+    final weeklyCount = _weeklyWorkCountMap[user?.uid ?? ''];
     final isSelected = _selectedIds.contains(app.id);
     final isStarred = isPending && _starredIds.contains(app.id);
     final trustScore = TrustScoreHelper.calculate(user);
@@ -974,23 +1019,30 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
                       ),
                       SizedBox(height: ResponsiveHelper.spacing(context, 4)),
 
-                      // 3줄: 신뢰도 + 평점 + 신분증(확정자)
-                      Row(
+                      // 3줄: 신뢰도 + 이번 주 근무 + 평점 + 신분증(확정자)
+                      // Wrap 사용: 좁은 화면에서 배지가 다음 줄로 자동 이동
+                      Wrap(
+                        spacing: ResponsiveHelper.spacing(context, 6),
+                        runSpacing: ResponsiveHelper.spacing(context, 4),
+                        crossAxisAlignment: WrapCrossAlignment.center,
                         children: [
                           _buildTrustBadge(context, trustScore),
-                          if (user != null && user.averageRating > 0) ...[
-                            SizedBox(width: ResponsiveHelper.spacing(context, 6)),
-                            Icon(Icons.star, size: ResponsiveHelper.iconSize(context, 12), color: AppColors.amber),
-                            SizedBox(width: ResponsiveHelper.spacing(context, 2)),
-                            Text(
-                              user.averageRating.toStringAsFixed(1),
-                              style: ResponsiveHelper.smallStyle(context, color: AppColors.grey600),
+                          if (weeklyCount != null)
+                            _buildWeeklyCountBadge(context, weeklyCount),
+                          if (user != null && user.averageRating > 0)
+                            Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Icon(Icons.star, size: ResponsiveHelper.iconSize(context, 12), color: AppColors.amber),
+                                SizedBox(width: ResponsiveHelper.spacing(context, 2)),
+                                Text(
+                                  user.averageRating.toStringAsFixed(1),
+                                  style: ResponsiveHelper.smallStyle(context, color: AppColors.grey600),
+                                ),
+                              ],
                             ),
-                          ],
-                          if (!isPending) ...[
-                            SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+                          if (!isPending)
                             IdCardHelper.buildStatusBadge(context, idCardStatus),
-                          ],
                         ],
                       ),
 
@@ -1241,6 +1293,59 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
           SizedBox(width: ResponsiveHelper.spacing(context, 3)),
           Text(
             '신뢰$score',
+            style: ResponsiveHelper.tinyStyle(context, color: color).copyWith(
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// 이번 주 근무 횟수 배지
+  /// null = 데이터 미로드, 0 = 이번 주 미근무
+  /// 색상: 0회=회색(여유), 1~2회=초록, 3~4회=파랑, 5+회=주황(다른 지원자 기회 고려)
+  Widget _buildWeeklyCountBadge(BuildContext context, int? count) {
+    if (count == null) return const SizedBox.shrink();
+
+    final Color color;
+    final Color bgColor;
+    final IconData icon;
+
+    if (count == 0) {
+      color = AppColors.grey500;
+      bgColor = AppColors.grey100;
+      icon = Icons.calendar_today_outlined;
+    } else if (count <= 2) {
+      color = AppColors.successDark;
+      bgColor = AppColors.successBg;
+      icon = Icons.calendar_today;
+    } else if (count <= 4) {
+      color = AppColors.infoDark;
+      bgColor = AppColors.infoBg;
+      icon = Icons.calendar_today;
+    } else {
+      color = AppColors.warningDark;
+      bgColor = AppColors.warningBg;
+      icon = Icons.calendar_today;
+    }
+
+    return Container(
+      padding: EdgeInsets.symmetric(
+        horizontal: ResponsiveHelper.spacing(context, 6),
+        vertical: ResponsiveHelper.spacing(context, 2),
+      ),
+      decoration: BoxDecoration(
+        color: bgColor,
+        borderRadius: BorderRadius.circular(ResponsiveHelper.spacing(context, 8)),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: ResponsiveHelper.iconSize(context, 10), color: color),
+          SizedBox(width: ResponsiveHelper.spacing(context, 3)),
+          Text(
+            '주$count회',
             style: ResponsiveHelper.tinyStyle(context, color: color).copyWith(
               fontWeight: FontWeight.w600,
             ),
@@ -1547,7 +1652,7 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
   }
 
   /// 지원자 상세 보기 - 공통 위젯 사용
-  void _showApplicantDetail(Map<String, dynamic> item) async{
+  Future<void> _showApplicantDetail(Map<String, dynamic> item) async{
     final app = item['application'] as ApplicationModel;
     final user = item['user'] as UserModel?;
     
@@ -1721,6 +1826,7 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
     setState(() => _isProcessing = true);
     late BusinessModel business;
     late String sealBase64;
+    String sealType = 'stamp';
 
     try {
       final b = await _firestoreService.getBusinessById(businessId);
@@ -1735,10 +1841,11 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
           .get();
       final seal = businessDoc.data()?['sealBase64'] as String?;
       if (seal == null || seal.isEmpty) {
-        ToastHelper.showError('일괄 계약 발송에는 사업장 인감이 필요합니다.\n설정 > 사업장 설정에서 인감을 먼저 등록해주세요.');
+        ToastHelper.showError('일괄 계약 발송에는 사업장 날인이 필요합니다.\n설정 > 사업장 설정에서 도장 또는 서명을 먼저 등록해주세요.');
         return;
       }
       sealBase64 = seal;
+      sealType = businessDoc.data()?['sealType'] as String? ?? 'stamp';
     } finally {
       if (mounted) setState(() => _isProcessing = false);
     }
@@ -1783,6 +1890,7 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
     final confirmed = await _showBatchContractPreview(
       contract: previewContract,
       sealBase64: sealBase64,
+      sealType: sealType,
       count: _selectedIds.length,
     );
     if (confirmed != true || !mounted) return;
@@ -1794,21 +1902,22 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
       final adminUID = userProvider.currentUser?.uid;
       final sealBytes = base64Decode(sealBase64);
 
-      int successCount = 0;
-
+      // 처리 대상 목록 수집
+      final toProcess = <Map<String, dynamic>>[];
       for (final appId in _selectedIds.toList()) {
         final item = _applicants.firstWhere(
           (i) => (i['application'] as ApplicationModel).id == appId,
           orElse: () => <String, dynamic>{},
         );
-        if (item.isEmpty) continue;
+        if (item.isNotEmpty && item['user'] != null) toProcess.add(item);
+      }
 
+      // 단건 처리 함수 (성공 여부 반환)
+      Future<bool> processOne(Map<String, dynamic> item) async {
         final app = item['application'] as ApplicationModel;
-        final user = item['user'] as UserModel?;
-        if (user == null) continue;
-
+        final user = item['user'] as UserModel;
+        final appId = app.id;
         try {
-          // confirmed 호출 → _confirmWithConflictCheck 내부에서 CONTRACT_PENDING 설정 + 충돌 체크
           final affectedTOIds = await _firestoreService.updateApplicationStatus(
             applicationId: appId,
             status: AppStatus.confirmed,
@@ -1817,8 +1926,6 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
           if (affectedTOIds.isNotEmpty) {
             _affectedOtherTOIds.addAll(affectedTOIds);
           }
-
-          // 계약서 생성 + 인감 날인 → 근무자 발송
           final contract = await ContractService().findOrCreateContract(
             application: app,
             business: business,
@@ -1830,7 +1937,7 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
             contract: contract,
             signatureBytes: sealBytes,
           );
-          successCount++;
+          return true;
         } catch (itemErr) {
           debugPrint('❌ [$appId] 계약서 처리 실패 — 상태 롤백: $itemErr');
           try {
@@ -1842,7 +1949,17 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
           } catch (rollbackErr) {
             debugPrint('⚠️ 롤백 실패 ($appId): $rollbackErr');
           }
+          return false;
         }
+      }
+
+      // 5개씩 배치 병렬 처리 (Firebase rate limit 고려)
+      const batchSize = 5;
+      int successCount = 0;
+      for (var i = 0; i < toProcess.length; i += batchSize) {
+        final batch = toProcess.sublist(i, min(i + batchSize, toProcess.length));
+        final results = await Future.wait(batch.map(processOne));
+        successCount += results.where((r) => r).length;
       }
 
       if (successCount < _selectedIds.length) {
@@ -1870,6 +1987,7 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
   Future<bool?> _showBatchContractPreview({
     required EmploymentContractModel contract,
     required String sealBase64,
+    String sealType = 'stamp',
     required int count,
   }) {
     return showDialog<bool>(
@@ -1900,8 +2018,6 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
                   IconButton(
                     onPressed: () => Navigator.pop(ctx, false),
                     icon: const Icon(Icons.close, color: Colors.white, size: 20),
-                    padding: EdgeInsets.zero,
-                    constraints: const BoxConstraints(),
                   ),
                 ],
               ),
@@ -1926,7 +2042,10 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
                   contractDate: contract.createdAt,
                   slots: contract.slots,
                   articles: contract.articles,
+                  employerSignatureUrl: contract.employerSignatureUrl,
                   employerSealBase64: sealBase64,
+                  employerSealType: sealType,
+                  workerSignatureUrl: contract.workerSignatureUrl,
                 ),
               ),
             ),

@@ -19,6 +19,7 @@ import '../../screens/contract/contract_sign_screen.dart';
 import '../../widgets/common/loading_widget.dart';
 import '../../widgets/common/gradient_scaffold.dart';
 import '../../widgets/common/app_empty_state.dart';
+import '../../widgets/common/app_tab_label.dart';
 
 class UserContractsScreen extends StatefulWidget {
   const UserContractsScreen({super.key});
@@ -139,55 +140,42 @@ class _UserContractsScreenState extends State<UserContractsScreen>
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
     return GradientScaffold(
       title: '내 계약서',
-      body: Column(
-        children: [
-          // TabBar — 흰 콘텐츠 영역 최상단 (파란 헤더와 분리)
-          Container(
-            color: Colors.white,
-            child: TabBar(
-              controller: _tabCtrl,
-              isScrollable: true,
-              tabAlignment: TabAlignment.start,
-              labelColor: theme.primaryColor,
-              unselectedLabelColor: AppColors.grey400,
-              indicatorColor: theme.primaryColor,
-              indicatorWeight: 2.5,
-              dividerColor: AppColors.grey100,
-              labelStyle: ResponsiveHelper.smallStyle(context)
-                  .copyWith(fontWeight: FontWeight.w600),
-              tabs: _tabLabels.map((l) => Tab(text: l)).toList(),
-            ),
-          ),
-          // 콘텐츠
-          Expanded(
-            child: _isLoading
-                ? const LoadingWidget(message: '계약서 목록을 불러오는 중...')
-                : RefreshIndicator(
-                    onRefresh: _refresh,
-                    child: _items.isEmpty
-                        ? _buildEmpty(context)
-                        : ListView.builder(
-                            controller: _scrollCtrl,
-                            padding: ResponsiveHelper.listPadding(context),
-                            itemCount:
-                                _items.length + (_isLoadingMore ? 1 : 0),
-                            itemBuilder: (ctx, i) {
-                              if (i == _items.length) {
-                                return const LoadingWidget();
-                              }
-                              return _UserContractCard(
-                                contract: _items[i],
-                                onTap: () => _openContract(_items[i]),
-                              );
-                            },
-                          ),
-                  ),
-          ),
-        ],
+      showNotificationBell: true,
+      onRefresh: _refresh,
+      headerBottom: TabBar(
+        controller: _tabCtrl,
+        isScrollable: true,
+        tabAlignment: TabAlignment.start,
+        labelColor: Colors.white,
+        unselectedLabelColor: Colors.white.withValues(alpha: 0.6),
+        indicatorColor: Colors.white,
+        indicatorWeight: 2.5,
+        dividerColor: Colors.transparent,
+        tabs: _tabLabels.map((l) => Tab(child: AppTabLabel(label: l))).toList(),
       ),
+      body: _isLoading
+          ? const LoadingWidget(message: '계약서 목록을 불러오는 중...')
+          : RefreshIndicator(
+              onRefresh: _refresh,
+              child: _items.isEmpty
+                  ? _buildEmpty(context)
+                  : ListView.builder(
+                      controller: _scrollCtrl,
+                      padding: ResponsiveHelper.listPadding(context),
+                      itemCount: _items.length + (_isLoadingMore ? 1 : 0),
+                      itemBuilder: (ctx, i) {
+                        if (i == _items.length) {
+                          return const LoadingWidget();
+                        }
+                        return _UserContractCard(
+                          contract: _items[i],
+                          onTap: () => _openContract(_items[i]),
+                        );
+                      },
+                    ),
+            ),
     );
   }
 

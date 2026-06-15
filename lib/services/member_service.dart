@@ -58,18 +58,25 @@ class MemberService {
     return doc.exists;
   }
 
-  /// 이미 pending 초대가 있는지 확인
+  /// 이미 유효한 pending 초대가 있는지 확인 (30일 이내 발송된 것만)
   Future<bool> hasPendingInvitation(String businessId, String targetUid) async {
+    final expiry = Timestamp.fromDate(
+      DateTime.now().subtract(const Duration(days: 30)),
+    );
     final snap = await _invitations
         .where('businessId', isEqualTo: businessId)
         .where('targetUid', isEqualTo: targetUid)
         .where('status', isEqualTo: 'pending')
+        .where('createdAt', isGreaterThan: expiry)
         .limit(1)
         .get();
     return snap.docs.isNotEmpty;
   }
 
   /// 초대 발송
+  ///
+  /// ⚠️ TOCTOU 경쟁조건 (F-020): isAlreadyMember + hasPendingInvitation 확인 후 실제 발송 사이에
+  /// 다른 클라이언트가 동시 초대를 발송할 수 있음. 관리자 단독 운영 환경에서는 발생 확률 극히 낮음.
   Future<void> sendInvitation({
     required String businessId,
     required String businessName,
@@ -116,6 +123,9 @@ class MemberService {
 
   /// 초대 수락 → members 서브컬렉션에 추가
   /// user.subAdminOf 설정은 onMemberInvitationAccepted CF trigger가 담당 (BUG-33C-33 fix)
+  ///
+  /// ⚠️ F-032: 동시 이중 수락 시 알림 2건 중복 발생 가능(데이터 무결성 문제 없음).
+  /// ⚠️ F-035: status 체크 없어 거절/취소 상태 초대도 수락 가능 — UI에서 pending만 노출하므로 발생 확률 낮음.
   Future<void> acceptInvitation(MemberInvitationModel invitation) async {
     final batch = _db.batch();
     final now = DateTime.now();
@@ -188,6 +198,7 @@ class MemberService {
           .where('targetUid', isEqualTo: uid)
           .where('status', isEqualTo: 'pending')
           .orderBy('createdAt', descending: true)
+          .limit(50)
           .get();
       return snap.docs.map(MemberInvitationModel.fromFirestore).toList();
     } catch (e) {
@@ -215,6 +226,7 @@ class MemberService {
     try {
       final snap = await _members(businessId)
           .orderBy('addedAt', descending: false)
+          .limit(200)
           .get();
       return snap.docs.map(BusinessMemberModel.fromFirestore).toList();
     } catch (e) {
@@ -239,6 +251,8 @@ class MemberService {
   }
 
   /// 멤버 권한 업데이트
+  ///
+  /// ⚠️ F-042: 멤버 문서가 없으면 Firestore update() throw — 호출부(UI)에서 try/catch로 보호됨.
   Future<void> updatePermissions({
     required String businessId,
     required String uid,
@@ -254,11 +268,18 @@ class MemberService {
     required String businessId,
     required String uid,
   }) async {
-    final batch = _db.batch();
-    batch.delete(_members(businessId).doc(uid));
-    batch.update(_db.collection('users').doc(uid), {
-      'subAdminOf': FieldValue.delete(),
+    final memberRef = _members(businessId).doc(uid);
+    final userRef = _db.collection('users').doc(uid);
+
+    // 트랜잭션으로 subAdminOf 현재 값 확인 후 일치 시에만 삭제 (BUG-F-01)
+    // 사용자가 다른 사업장의 서브어드민인 경우 무조건 삭제하면 타 사업장 권한을 잃음
+    await _db.runTransaction((tx) async {
+      final userSnap = await tx.get(userRef);
+      tx.delete(memberRef);
+      final currentSubAdminOf = userSnap.data()?['subAdminOf'] as String?;
+      if (currentSubAdminOf == businessId) {
+        tx.update(userRef, {'subAdminOf': FieldValue.delete()});
+      }
     });
-    await batch.commit();
   }
 }

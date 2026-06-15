@@ -7,6 +7,7 @@ import '../../utils/toast_helper.dart';
 import '../../utils/responsive_helper.dart';
 import '../../widgets/common/app_empty_state.dart';
 import '../../widgets/common/gradient_scaffold.dart';
+import '../../utils/loading_state_mixin.dart';
 
 /// 모든 사용자 조회 화면 (최고관리자 전용)
 class AllUsersScreen extends StatefulWidget {
@@ -16,9 +17,9 @@ class AllUsersScreen extends StatefulWidget {
   State<AllUsersScreen> createState() => _AllUsersScreenState();
 }
 
-class _AllUsersScreenState extends State<AllUsersScreen> {
+class _AllUsersScreenState extends State<AllUsersScreen>
+    with LoadingStateMixin {
   List<UserModel> _users = [];
-  bool _isLoading = true;
   String _roleFilter = 'ALL';
   String _searchQuery = '';
   final _searchController = TextEditingController();
@@ -46,7 +47,7 @@ class _AllUsersScreenState extends State<AllUsersScreen> {
   }
 
   Future<void> _loadAllUsers() async {
-    setState(() => _isLoading = true);
+    setLoading(true);
     try {
       final snap = await FirebaseFirestore.instance
           .collection('users')
@@ -59,12 +60,12 @@ class _AllUsersScreenState extends State<AllUsersScreen> {
         _users = snap.docs
             .map((d) => UserModel.fromMap(d.data(), d.id))
             .toList();
-        _isLoading = false;
       });
+      setLoading(false);
     } catch (e) {
       if (!mounted) return;
       ToastHelper.showError('사용자 목록 불러오기 실패: $e');
-      setState(() => _isLoading = false);
+      setLoading(false);
     }
   }
 
@@ -90,19 +91,13 @@ class _AllUsersScreenState extends State<AllUsersScreen> {
   Widget build(BuildContext context) {
     return GradientScaffold(
       title: '전체 사용자 관리 (${_users.length}명)',
-      actions: [
-        IconButton(
-          icon: const Icon(Icons.refresh, color: Colors.white),
-          onPressed: _loadAllUsers,
-          tooltip: '새로고침',
-        ),
-      ],
+      onRefresh: _loadAllUsers,
       body: Column(
         children: [
           _buildSearchBar(),
           _buildRoleFilter(),
           Expanded(
-            child: _isLoading
+            child: isLoading
                 ? const LoadingWidget(message: '사용자 목록을 불러오는 중...')
                 : _filtered.isEmpty
                     ? _buildEmptyState()

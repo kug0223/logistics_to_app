@@ -12,8 +12,8 @@ extension BusinessFirestore on FirestoreService {
   /// 사업장 ID로 조회
   Future<BusinessModel?> getBusinessById(String businessId) async {
     try {
-      final doc = await _firestore.collection('businesses').doc(businessId).get();
-      
+      final doc = await _firestore.collection('businesses').doc(businessId).get(const GetOptions(source: Source.server));
+
       if (!doc.exists) {
         debugPrint('⚠️ 사업장을 찾을 수 없습니다: $businessId');
         return null;
@@ -76,6 +76,7 @@ extension BusinessFirestore on FirestoreService {
 
   /// 사업장 생성
   Future<String?> createBusiness(BusinessModel business) async {
+    NetworkChecker.instance.assertOnline('사업장 등록을 하려면 인터넷 연결이 필요합니다.');
     try {
       DocumentReference docRef = await _firestore
           .collection('businesses')
@@ -133,6 +134,7 @@ extension BusinessFirestore on FirestoreService {
 
   /// 업무 유형 생성
   Future<String?> createWorkType(WorkTypeModel workType) async {
+    NetworkChecker.instance.assertOnline('업무 유형 등록을 하려면 인터넷 연결이 필요합니다.');
     try {
       final docRef = await _firestore.collection('work_types').add(workType.toMap());
       
@@ -147,6 +149,7 @@ extension BusinessFirestore on FirestoreService {
 
   /// 업무 유형 수정
   Future<bool> updateWorkType(String workTypeId, WorkTypeModel workType) async {
+    NetworkChecker.instance.assertOnline('업무 유형 수정을 하려면 인터넷 연결이 필요합니다.');
     try {
       await _firestore.collection('work_types').doc(workTypeId).update(
         workType.copyWith(updatedAt: DateTime.now()).toMap(),
@@ -163,6 +166,7 @@ extension BusinessFirestore on FirestoreService {
 
   /// 업무 유형 삭제 (소프트 삭제)
   Future<bool> deleteWorkType(String workTypeId) async {
+    NetworkChecker.instance.assertOnline('업무 유형 삭제를 하려면 인터넷 연결이 필요합니다.');
     try {
       await _firestore.collection('work_types').doc(workTypeId).update({
         'isActive': false,
@@ -216,6 +220,7 @@ extension BusinessFirestore on FirestoreService {
     String wageType = 'hourly',
     int? displayOrder,
   }) async {
+    NetworkChecker.instance.assertOnline('업무 유형 추가를 하려면 인터넷 연결이 필요합니다.');
     try {
       debugPrint('🔍 [FirestoreService] 업무 유형 추가...');
 
@@ -263,6 +268,7 @@ extension BusinessFirestore on FirestoreService {
     int? displayOrder,
     bool showToast = true,
   }) async {
+    NetworkChecker.instance.assertOnline('업무 유형 수정을 하려면 인터넷 연결이 필요합니다.');
     try {
       debugPrint('🔍 [FirestoreService] 업무 유형 수정...');
 
@@ -309,6 +315,7 @@ extension BusinessFirestore on FirestoreService {
     required String businessId,
     required String workTypeId,
   }) async {
+    NetworkChecker.instance.assertOnline('업무 유형 삭제를 하려면 인터넷 연결이 필요합니다.');
     try {
       debugPrint('🔍 [FirestoreService] 업무 유형 삭제...');
 
@@ -370,6 +377,7 @@ extension BusinessFirestore on FirestoreService {
     required String businessId,
     required List<String> workTypeIds,
   }) async {
+    NetworkChecker.instance.assertOnline('순서 변경을 하려면 인터넷 연결이 필요합니다.');
     try {
       debugPrint('🔍 [FirestoreService] 업무 유형 순서 변경...');
 
@@ -411,7 +419,7 @@ extension BusinessFirestore on FirestoreService {
           .where('businessId', isEqualTo: businessId)
           .where('status', whereIn: TOStatus.openStates)
           .limit(100)
-          .get();
+          .get(const GetOptions(source: Source.server));
       return snapshot.docs
           .map((doc) => TOModel.fromMap(doc.data(), doc.id))
           .toList();
@@ -429,7 +437,7 @@ extension BusinessFirestore on FirestoreService {
           .where('businessId', isEqualTo: businessId)
           .where('status', whereIn: TOStatus.closedStates)
           .limit(100)
-          .get();
+          .get(const GetOptions(source: Source.server));
       return snapshot.docs
           .map((doc) => TOModel.fromMap(doc.data(), doc.id))
           .toList();

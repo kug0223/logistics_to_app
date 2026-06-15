@@ -9,6 +9,7 @@ import '../../utils/responsive_helper.dart';  // ⭐ 추가
 import '../../utils/format_helper.dart';
 import '../../widgets/common/app_empty_state.dart';
 import '../../widgets/common/gradient_scaffold.dart';
+import '../../utils/loading_state_mixin.dart';
 
 
 /// ✅ 모든 사업장 조회 화면 (최고관리자 전용)
@@ -20,9 +21,9 @@ class AllBusinessesScreen extends StatefulWidget {
   State<AllBusinessesScreen> createState() => _AllBusinessesScreenState();
 }
 
-class _AllBusinessesScreenState extends State<AllBusinessesScreen> {
+class _AllBusinessesScreenState extends State<AllBusinessesScreen>
+    with LoadingStateMixin {
   List<_BusinessWithOwner> _businesses = [];
-  bool _isLoading = true;
 
   @override
   void initState() {
@@ -32,10 +33,7 @@ class _AllBusinessesScreenState extends State<AllBusinessesScreen> {
 
   /// 모든 사업장 로드 (소유자 정보 포함)
   Future<void> _loadAllBusinesses() async {
-    setState(() {
-      _isLoading = true;
-    });
-
+    setLoading(true);
     try {
       debugPrint('🔍 [SUPER_ADMIN] 모든 사업장 조회 시작...');
       
@@ -61,7 +59,7 @@ class _AllBusinessesScreenState extends State<AllBusinessesScreen> {
               .get();
           if (ownerDoc.exists) {
             final data = ownerDoc.data()!;
-            return (name: data['name'] as String? ?? '알 수 없음', email: data['email'] as String? ?? '');
+            return (name: data['name'] as String? ?? '알 수 없음', email: data['userEmail'] as String? ?? '');
           }
         } catch (e) {
           debugPrint('⚠️ 소유자 정보 조회 실패: $e');
@@ -80,19 +78,15 @@ class _AllBusinessesScreenState extends State<AllBusinessesScreen> {
       });
 
       if (!mounted) return;
-      setState(() {
-        _businesses = businessesWithOwner;
-        _isLoading = false;
-      });
+      setState(() => _businesses = businessesWithOwner);
+      setLoading(false);
 
       debugPrint('✅ [SUPER_ADMIN] 사업장 로드 완료: ${_businesses.length}개');
     } catch (e) {
       debugPrint('❌ [SUPER_ADMIN] 사업장 로드 실패: $e');
       if (!mounted) return;
       ToastHelper.showError('사업장 목록을 불러오는데 실패했습니다: $e');
-      setState(() {
-        _isLoading = false;
-      });
+      setLoading(false);
     }
   }
 
@@ -100,14 +94,8 @@ class _AllBusinessesScreenState extends State<AllBusinessesScreen> {
   Widget build(BuildContext context) {
     return GradientScaffold(
       title: '전체 사업장 관리',
-      actions: [
-        IconButton(
-          icon: const Icon(Icons.refresh, color: Colors.white),
-          onPressed: _loadAllBusinesses,
-          tooltip: '새로고침',
-        ),
-      ],
-      body: _isLoading
+      onRefresh: _loadAllBusinesses,
+      body: isLoading
           ? const LoadingWidget(message: '사업장 목록을 불러오는 중...')
           : _businesses.isEmpty
               ? _buildEmptyState()
@@ -162,6 +150,8 @@ class _AllBusinessesScreenState extends State<AllBusinessesScreen> {
                   child: Text(
                     business.name,
                     style: ResponsiveHelper.titleStyle(context),  // ⭐ 변경
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
                   ),
                 ),
                 // ⭐ 변경: StyledBadge 사용

@@ -119,6 +119,7 @@ class PayrollExcelHelper {
                 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')],
         subject: filename,
       );
+      await file.delete();
     } catch (e) {
       if (context.mounted) ToastHelper.showError('엑셀 내보내기에 실패했습니다');
     }

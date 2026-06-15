@@ -79,6 +79,8 @@ class NotificationCard extends StatelessWidget {
                               context,
                               fontWeight: isUnread ? FontWeight.bold : FontWeight.normal,
                             ),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
                           ),
                         ),
                         Text(
@@ -165,7 +167,7 @@ class NotificationCard extends StatelessWidget {
       case NotificationType.wageConfirmed:
         return Icons.payments;
       case NotificationType.wageCancelConfirmed:
-        return Icons.payments;
+        return Icons.edit_note;
       case NotificationType.idCardAccessRequested:
         return Icons.badge;
       case NotificationType.idCardAccessApproved:
@@ -177,9 +179,9 @@ class NotificationCard extends StatelessWidget {
       case NotificationType.memberInvitationReceived:
         return Icons.group_add;
       case NotificationType.memberInvitationAccepted:
-        return Icons.group;
+        return Icons.how_to_reg;
       case NotificationType.memberInvitationRejected:
-        return Icons.group_remove;
+        return Icons.person_remove;
       case NotificationType.systemNotice:
         return Icons.campaign;
       case NotificationType.other:
@@ -230,8 +232,10 @@ class NotificationCard extends StatelessWidget {
         return AppColors.success;
       case NotificationType.memberInvitationRejected:
         return AppColors.grey500;
+      case NotificationType.systemNotice:
+        return AppColors.info;
       case NotificationType.applicationCanceled:
-      default:
+      case NotificationType.other:
         return AppColors.grey500;
     }
   }

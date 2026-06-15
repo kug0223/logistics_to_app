@@ -72,6 +72,10 @@ class AttendanceModel {
   /// 월별 근무일수 집계용 인덱스 필드 ('yyyy-MM')
   final String? yearMonth;
 
+  // ========== 관리자 확인 (당일명단 워크플로) ==========
+  /// 관리자가 출퇴근 확인 완료 처리 — true면 '확인' 탭으로 이동
+  final bool adminConfirmed;
+
   // ========== 지급 예정일 (오늘 처리할 송금 기능) ==========
   /// 급여 확정 시 payScheduleType 기반으로 자동 계산된 지급 예정일
   /// null = 기존 데이터 (수동 처리)
@@ -125,6 +129,7 @@ class AttendanceModel {
     this.finalWage,
     this.wageDetail,
     this.yearMonth,
+    this.adminConfirmed = false,
     this.paymentDueDate,
     // 송금 관련
     this.transferDate,
@@ -193,6 +198,7 @@ class AttendanceModel {
           ? WageDetailModel.fromMap(map['wageDetail'] as Map<String, dynamic>)
           : null,
       yearMonth: map['yearMonth'] as String?,
+      adminConfirmed: map['adminConfirmed'] ?? false,
       paymentDueDate: (map['paymentDueDate'] as Timestamp?)?.toDate().toLocal(),
       // 송금 관련
       transferDate: (map['transferDate'] as Timestamp?)?.toDate().toLocal(),
@@ -249,6 +255,7 @@ class AttendanceModel {
       'finalWage': finalWage,
       'wageDetail': wageDetail?.toMap(),
       if (yearMonth != null) 'yearMonth': yearMonth,
+      if (adminConfirmed) 'adminConfirmed': adminConfirmed,
       if (paymentDueDate != null)
         'paymentDueDate': Timestamp.fromDate(paymentDueDate!),
       // 송금 관련
@@ -378,6 +385,7 @@ class AttendanceModel {
     int? finalWage,
     WageDetailModel? wageDetail,
     String? yearMonth,
+    bool? adminConfirmed,
     DateTime? paymentDueDate,
     // 송금 관련
     DateTime? transferDate,
@@ -421,6 +429,7 @@ class AttendanceModel {
       finalWage: finalWage ?? this.finalWage,
       wageDetail: wageDetail ?? this.wageDetail,
       yearMonth: yearMonth ?? this.yearMonth,
+      adminConfirmed: adminConfirmed ?? this.adminConfirmed,
       paymentDueDate: paymentDueDate ?? this.paymentDueDate,
       // 송금 관련
       transferDate: transferDate ?? this.transferDate,

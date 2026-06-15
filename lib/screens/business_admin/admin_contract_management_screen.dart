@@ -13,6 +13,7 @@ import '../../widgets/common/loading_widget.dart';
 import '../../widgets/common/gradient_scaffold.dart';
 import '../../widgets/common/app_empty_state.dart';
 import '../../widgets/common/app_search_bar.dart';
+import '../../widgets/common/app_tab_label.dart';
 
 class AdminContractManagementScreen extends StatefulWidget {
   final String businessId;
@@ -182,30 +183,24 @@ class _AdminContractManagementScreenState
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
     return GradientScaffold(
       title: '계약서 관리',
+      onRefresh: _refresh,
+      headerBottom: TabBar(
+        controller: _tabCtrl,
+        isScrollable: true,
+        tabAlignment: TabAlignment.start,
+        labelColor: Colors.white,
+        unselectedLabelColor: Colors.white.withValues(alpha: 0.6),
+        indicatorColor: Colors.white,
+        indicatorWeight: 2.5,
+        dividerColor: Colors.transparent,
+        tabs: _tabLabels.map((l) => Tab(child: AppTabLabel(label: l))).toList(),
+      ),
       body: _isLoading
           ? const LoadingWidget(message: '계약서 목록을 불러오는 중...')
           : Column(
               children: [
-                // 탭 + 검색 (흰 영역)
-                Container(
-                  color: Colors.white,
-                  child: TabBar(
-                    controller: _tabCtrl,
-                    isScrollable: true,
-                    tabAlignment: TabAlignment.start,
-                    labelColor: theme.primaryColor,
-                    unselectedLabelColor: AppColors.grey400,
-                    indicatorColor: theme.primaryColor,
-                    indicatorWeight: 2.5,
-                    dividerColor: AppColors.grey100,
-                    labelStyle: ResponsiveHelper.smallStyle(context)
-                        .copyWith(fontWeight: FontWeight.w600),
-                    tabs: _tabLabels.map((l) => Tab(text: l)).toList(),
-                  ),
-                ),
                 // 검색 바
                 AppSearchBar(
                   controller: _searchCtrl,
@@ -245,8 +240,7 @@ class _AdminContractManagementScreenState
                               return _ContractCard(
                                 contract: item,
                                 onTap: () => _openContract(item),
-                                onVoid: item.status ==
-                                        ContractStatus.completed
+                                onVoid: item.status != ContractStatus.voided
                                     ? () => _voidContract(item)
                                     : null,
                               );
@@ -409,9 +403,9 @@ class _ContractCard extends StatelessWidget {
                 // 서명 진행 인디케이터
                 _SignProgressBar(contract: contract),
 
-                // 무효화 버튼 (완료 상태에서만)
+                // 무효화 버튼 (voided 제외 모든 상태)
                 if (onVoid != null &&
-                    contract.status == ContractStatus.completed) ...[
+                    contract.status != ContractStatus.voided) ...[
                   SizedBox(height: ResponsiveHelper.spacing(context, 8)),
                   Align(
                     alignment: Alignment.centerRight,

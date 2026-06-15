@@ -130,7 +130,10 @@ class _RestartProgramDialogState extends State<RestartProgramDialog> {
                       ? const SizedBox(
                           width: 20,
                           height: 20,
-                          child: LoadingWidget(color: Colors.white),
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            color: Colors.white,
+                          ),
                         )
                       : Text('신청하기'),
                 ),

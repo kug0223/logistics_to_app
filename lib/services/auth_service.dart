@@ -75,8 +75,13 @@ class AuthService {
             final restrictedDate = restrictedUntilTs.toDate().toLocal();
             if (restrictedDate.isAfter(DateTime.now())) {
               await _auth.signOut();
-              ToastHelper.showError(
-                '${restrictedDate.year}년 ${restrictedDate.month}월 ${restrictedDate.day}일까지 이용이 제한됩니다.\n자세한 내용은 고객센터에 문의하세요.');
+              // 9999년이면 사실상 영구 제한
+              final isPermanent = restrictedDate.year >= 9999;
+              final message = isPermanent
+                  ? '노쇼 누적으로 서비스 이용이 영구 제한되었습니다.\n해제를 원하시면 고객센터에 문의해 주세요.'
+                  : '노쇼로 인해 ${restrictedDate.year}년 ${restrictedDate.month}월 ${restrictedDate.day}일까지 이용이 제한됩니다.\n'
+                    '(노쇼 1회=3일 · 2회=7일 · 3회=30일 제한)\n고객센터: 문의하기 메뉴 이용';
+              ToastHelper.showError(message);
               throw Exception('이용 제한 사용자');
             }
           }
@@ -444,7 +449,10 @@ class AuthService {
           for (final doc in snap.docs) { batch.delete(doc.reference); }
           await batch.commit();
         }
-      } catch (_) {}
+      } catch (e) {
+        // [J-003] notifications 삭제 실패 — 계정 삭제는 계속 진행
+        debugPrint('⚠️ 계정 삭제: notifications 삭제 실패 (계속 진행): $e');
+      }
 
       // worker_locations: 실시간 위치 전체 삭제 (페이지네이션)
       try {
@@ -461,7 +469,9 @@ class AuthService {
           for (final doc in snap.docs) { batch.delete(doc.reference); }
           await batch.commit();
         }
-      } catch (_) {}
+      } catch (e) {
+        debugPrint('⚠️ 계정 삭제: worker_locations 삭제 실패 (계속 진행): $e');
+      }
 
       // applications: 활성 지원서 AUTO_CANCELED 처리 전체 (페이지네이션, 이력은 보존 — 급여 처리용)
       // CONFIRMED 포함: 탈퇴 시 orphan 방지 (BUG-ADMIN-72)

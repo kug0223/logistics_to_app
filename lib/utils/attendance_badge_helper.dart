@@ -64,10 +64,22 @@ class AttendanceBadgeHelper {
 
     final isEarlyLeave = AttendanceStatusHelper.isEarlyLeave(
         checkOut, effEnd, checkIn: checkIn);
-    final isOvertime = wageDetail != null
-        ? wageDetail.overtimeMinutes > 0
-        : AttendanceStatusHelper.isOvertime(checkOut, effEnd,
-            checkIn: checkIn, graceMinutes: graceMinutes);
+
+    // wageDetail이 있으면 earlyArrivalMinutes로 정확히 분리
+    // - isEarlyArrival: 조출 시간이 있음
+    // - isOvertime: 연장 시간(조출 제외)이 있음
+    // → 둘 다 true이면 조출+연장 배지 모두 표시
+    final bool effectiveIsEarlyArrival;
+    final bool isOvertime;
+    if (wageDetail != null) {
+      effectiveIsEarlyArrival = wageDetail.earlyArrivalMinutes > 0;
+      isOvertime = (wageDetail.overtimeMinutes - wageDetail.earlyArrivalMinutes) > 0;
+    } else {
+      effectiveIsEarlyArrival = isEarlyArrival;
+      isOvertime = AttendanceStatusHelper.isOvertime(checkOut, effEnd,
+          checkIn: checkIn, graceMinutes: graceMinutes);
+    }
+
     final isNight = wageDetail != null
         ? wageDetail.nightAllowanceApplied && wageDetail.nightMinutes > 0
         : (isOvertime &&
@@ -79,7 +91,7 @@ class AttendanceBadgeHelper {
       isEarlyLeave: isEarlyLeave,
       isOvertime: isOvertime,
       isNight: isNight,
-      isEarlyArrival: isEarlyArrival,
+      isEarlyArrival: effectiveIsEarlyArrival,
     );
   }
 }

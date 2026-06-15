@@ -121,7 +121,7 @@ class _CloseManagementDialogState extends State<CloseManagementDialog>
           .where('businessId', isEqualTo: businessId)
           .where('status', whereIn: AppStatus.confirmedStatuses)
           .where('workDate', isGreaterThanOrEqualTo: Timestamp.fromDate(monthStart))
-          .where('workDate', isLessThanOrEqualTo: Timestamp.fromDate(monthEnd))
+          .where('workDate', isLessThan: Timestamp.fromDate(monthEnd))
           .get();
 
       debugPrint('  [단기] businessId=$businessId → ${shortTermSnapshot.docs.length}건');
@@ -226,16 +226,20 @@ class _CloseManagementDialogState extends State<CloseManagementDialog>
         int totalConfirmed = apps.length;
         int closedCount = 0;
         int noshowCount = 0;
+        int wagePendingCount = 0;
+        int noAttendanceCount = 0;
 
         for (final app in apps) {
           final att = attendanceByKey['${app.id}_$dateKey'];
-          if (att != null) {
-            if (att.status == AttendanceModel.statusNoShow) {
-              noshowCount++;
-              closedCount++; // 노쇼도 마감 처리된 것으로 간주
-            } else if (att.wageStatus == AttendanceModel.wageConfirmed) {
-              closedCount++;
-            }
+          if (att == null) {
+            noAttendanceCount++;
+          } else if (att.status == AttendanceModel.statusNoShow) {
+            noshowCount++;
+            closedCount++;
+          } else if (att.wageStatus == AttendanceModel.wageConfirmed) {
+            closedCount++;
+          } else {
+            wagePendingCount++;
           }
         }
 
@@ -249,6 +253,8 @@ class _CloseManagementDialogState extends State<CloseManagementDialog>
           totalConfirmed: totalConfirmed,
           closedCount: closedCount,
           noshowCount: noshowCount,
+          wagePendingCount: wagePendingCount,
+          noAttendanceCount: noAttendanceCount,
           statusType: statusType,
         ));
       }
@@ -769,14 +775,28 @@ class _CloseManagementDialogState extends State<CloseManagementDialog>
   Widget _buildStatusBadge(DateCloseStatus status) {
     final isClosed = status.statusType == CloseStatusType.closed;
     final unclosedCount = status.totalConfirmed - status.closedCount;
-    
-    final bgColor = isClosed 
-        ? AppColors.success.withValues(alpha: 0.1) 
+
+    final bgColor = isClosed
+        ? AppColors.success.withValues(alpha: 0.1)
         : AppColors.error.withValues(alpha: 0.1);
     final textColor = isClosed ? AppColors.success : AppColors.error;
     final icon = isClosed ? Icons.lock : Icons.lock_open;
-    final text = isClosed ? '마감완료' : '미마감 $unclosedCount명';
-    
+
+    // 미마감 이유 분류 문자열 구성
+    String text;
+    if (isClosed) {
+      text = '마감완료';
+    } else {
+      final reasons = <String>[];
+      if (status.wagePendingCount > 0) reasons.add('급여${status.wagePendingCount}');
+      if (status.noAttendanceCount > 0) reasons.add('미출근${status.noAttendanceCount}');
+      if (reasons.isEmpty) {
+        text = '미마감 $unclosedCount명';
+      } else {
+        text = '미마감 $unclosedCount명 (${reasons.join(' + ')})';
+      }
+    }
+
     return Container(
       padding: EdgeInsets.symmetric(
         horizontal: ResponsiveHelper.spacing(context, 10),
@@ -869,16 +889,20 @@ enum CloseStatusType {
 /// 날짜별 마감 상태
 class DateCloseStatus {
   final DateTime date;
-  final int totalConfirmed;   // 확정 인원
-  final int closedCount;      // 마감된 인원 (confirmed + noshow)
-  final int noshowCount;      // 노쇼 인원
+  final int totalConfirmed;     // 확정 인원
+  final int closedCount;        // 마감된 인원 (confirmed + noshow)
+  final int noshowCount;        // 노쇼 인원
+  final int wagePendingCount;   // 급여 미확정 인원 (출퇴근 완료 but 급여 미확정)
+  final int noAttendanceCount;  // 출퇴근 기록 없는 인원
   final CloseStatusType statusType;
-  
+
   DateCloseStatus({
     required this.date,
     required this.totalConfirmed,
     required this.closedCount,
     required this.noshowCount,
+    this.wagePendingCount = 0,
+    this.noAttendanceCount = 0,
     required this.statusType,
   });
 }

@@ -1,4 +1,4 @@
-﻿import 'package:flutter/material.dart';
+import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import '../../../models/core/application_model.dart';
@@ -95,7 +95,7 @@ class ApplyDialog {
     );
 
     if (confirmed == true && context.mounted) {
-      return await _applyToWork(
+      return _applyToWork(
         context: context,
         work: work,
         to: to,
@@ -145,7 +145,10 @@ class ApplyDialog {
 
       final firestoreService = FirestoreService();
 
-      // 중복 지원 체크 (직접 쿼리) - ⭐ workDetailId 기준으로 변경
+      // [S-01] 중복 지원 경합 분석:
+      // 이 체크(1차)와 applyToTOWithWorkType 호출 사이에 짧은 gap이 있으나,
+      // applyToTO 내부에서 Source.server 기반 2차 중복 체크(application_firestore.dart:351)를
+      // 수행하므로 서버 측 방어가 이중으로 존재함. 추가 Firestore Rules 불필요.
       final snapshot = await FirebaseFirestore.instance
           .collection('applications')
           .where('uid', isEqualTo: uid)

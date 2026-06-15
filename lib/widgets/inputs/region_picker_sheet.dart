@@ -42,6 +42,7 @@ class RegionPickerSheet extends StatefulWidget {
     return showModalBottomSheet<RegionResult>(
       context: context,
       isScrollControlled: true,
+      useSafeArea: true,
       backgroundColor: Colors.transparent,
       builder: (_) => RegionPickerSheet(
         cities: cities,

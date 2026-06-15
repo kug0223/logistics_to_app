@@ -79,6 +79,7 @@ class _AdminStatsScreenState extends State<AdminStatsScreen> {
   void _showBizPicker() {
     showModalBottomSheet(
       context: context,
+      useSafeArea: true,
       shape: const RoundedRectangleBorder(
           borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
       builder: (ctx) => SafeArea(
@@ -158,6 +159,8 @@ class _AdminStatsScreenState extends State<AdminStatsScreen> {
     final theme = Theme.of(context);
     return GradientScaffold(
       title: '통계',
+      showNotificationBell: true,
+      onRefresh: _loadStats,
       headerContent: _buildHeader(theme),
       body: _isLoading
           ? const LoadingWidget(message: '통계 불러오는 중...')
@@ -753,7 +756,7 @@ class _AdminStatsScreenState extends State<AdminStatsScreen> {
     if (wage == 0) return '-';
     if (wage >= 100000000) return '${(wage / 100000000).toStringAsFixed(1)}억';
     if (wage >= 10000000) return '${(wage / 10000000).toStringAsFixed(1)}천만';
-    if (wage >= 1000000) return '${(wage / 10000).toStringAsFixed(0)}만';
+    if (wage >= 1000000) return '${wage ~/ 10000}만';
     return '${wage ~/ 1000}천';
   }
 }

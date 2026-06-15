@@ -226,7 +226,10 @@ class _WorkTypeManagementScreenState extends State<WorkTypeManagementScreen> {
   Future<void> _confirmDelete(BusinessWorkTypeModel workType) async {
     if (_selectedBusiness == null) return;
 
-    // 이 업무 유형을 사용하는 활성 TO가 있는지 사전 확인
+    // [P-01] whereIn 30개 제한 분석:
+    // whereIn 대상이 status 값 3개(active/full/scheduled)로 고정 — 제한 미해당.
+    // 업무유형 ID가 아닌 status를 기준으로 조회 후 workType 이름 매칭은 in-memory 처리.
+    // 향후 업무유형 수가 늘어도 이 쿼리 구조상 whereIn 제한 이슈 발생하지 않음.
     final activeTOSnap = await FirebaseFirestore.instance
         .collection('tos')
         .where('businessId', isEqualTo: _selectedBusiness!.id)
@@ -266,12 +269,17 @@ class _WorkTypeManagementScreenState extends State<WorkTypeManagementScreen> {
       context: context,
       builder: (context) {
         return Dialog(
+          backgroundColor: Colors.white,
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(24),
           ),
-          child: Container(
+          insetPadding: EdgeInsets.symmetric(
+            horizontal: ResponsiveHelper.spacing(context, 16),
+            vertical: ResponsiveHelper.spacing(context, 24),
+          ),
+          child: ConstrainedBox(
             constraints: BoxConstraints(
-              maxWidth: 400,
+              maxHeight: MediaQuery.sizeOf(context).height * 0.92,
             ),
             child: SingleChildScrollView(
               child: Column(
@@ -494,6 +502,7 @@ class _WorkTypeManagementScreenState extends State<WorkTypeManagementScreen> {
   Widget build(BuildContext context) {
     return GradientScaffold(
       title: '업무 유형 관리',
+      onRefresh: _loadWorkTypes,
       actions: [
         IconButton(
           icon: const Icon(Icons.add_circle_outline, color: Colors.white),
@@ -745,8 +754,6 @@ class _WorkTypeManagementScreenState extends State<WorkTypeManagementScreen> {
                                   size: ResponsiveHelper.iconSize(context, 20)),
                               onPressed: () => _showWorkTypeMenuSheet(
                                   context, theme, workType, index, isFirst, isLast),
-                              padding: EdgeInsets.zero,
-                              constraints: const BoxConstraints(),
                               tooltip: '더보기',
                             ),
                           ],

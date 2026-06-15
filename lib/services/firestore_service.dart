@@ -117,7 +117,7 @@ class FirestoreService {
           .collection('users')
           .where(FieldPath.documentId, whereIn: chunk)
           .limit(chunk.length) // 보안규칙 request.query.limit <= 30 충족
-          .get();
+          .get(const GetOptions(source: Source.server));
       for (final doc in snap.docs) {
         final user = UserModel.fromMap(doc.data(), doc.id);
         _userCache[doc.id] = user;
@@ -179,12 +179,12 @@ class FirestoreService {
           .collection('applications')
           .where('toId', isEqualTo: toId)
           .where('status', whereIn: AppStatus.confirmedStatuses)
-          .get();
+          .get(const GetOptions(source: Source.server));
       final pendingSnap = await _firestore
           .collection('applications')
           .where('toId', isEqualTo: toId)
           .where('status', isEqualTo: AppStatus.pending)
-          .get();
+          .get(const GetOptions(source: Source.server));
 
       final confirmedCount = confirmedSnap.docs.length;
       final pendingCount = pendingSnap.docs.length;
@@ -234,7 +234,7 @@ class FirestoreService {
           .collection('applications')
           .where('toId', isEqualTo: toId)
           .where('businessId', isEqualTo: to.businessId)
-          .get();
+          .get(const GetOptions(source: Source.server));
 
       int totalPending = 0;
       int totalConfirmed = 0;
@@ -276,7 +276,7 @@ class FirestoreService {
         // 슬롯 전체 조회 후 일괄 업데이트
         final slotsSnap = await _firestore
             .collection('tos').doc(toId)
-            .collection('slots').get();
+            .collection('slots').get(const GetOptions(source: Source.server));
         if (slotsSnap.docs.isNotEmpty) {
           var batch = _firestore.batch();
           int batchCount = 0;
@@ -340,7 +340,7 @@ class FirestoreService {
       final allApps = await getApplicationsByTOId(
         to.id,
         businessId: to.businessId,
-        statuses: const ['PENDING', 'CONFIRMED'],
+        statuses: const ['PENDING', 'CONFIRMED', 'CONTRACT_PENDING'],
       );
       final apps = slotId != null
           ? allApps.where((a) => a.slotId == slotId).toList()
@@ -388,7 +388,7 @@ class FirestoreService {
           } else if (closedOnly) {
             chunkQuery = chunkQuery.where('status', whereIn: TOStatus.closedStates);
           }
-          final chunkSnap = await chunkQuery.get();
+          final chunkSnap = await chunkQuery.get(const GetOptions(source: Source.server));
           allItems.addAll(chunkSnap.docs.map(
             (d) => TOGroupItem(singleTO: TOModel.fromMap(d.data() as Map<String, dynamic>, d.id))));
         }
@@ -407,7 +407,7 @@ class FirestoreService {
       } else if (closedOnly) {
         query = query.where('status', whereIn: TOStatus.closedStates);
       }
-      final snap = await query.get();
+      final snap = await query.get(const GetOptions(source: Source.server));
       return snap.docs
           .map((d) => TOGroupItem(singleTO: TOModel.fromMap(d.data() as Map<String, dynamic>, d.id)))
           .toList();
@@ -426,7 +426,7 @@ class FirestoreService {
           .doc(toId)
           .collection('slots')
           .orderBy('date')
-          .get();
+          .get(const GetOptions(source: Source.server));
       if (snap.docs.isEmpty) return [];
 
       final model = masterTO ?? await getTO(toId);
@@ -500,13 +500,12 @@ class FirestoreService {
   }
 
   /// 구 getApplicationsForTO — getApplicationsByTOId 위임
+  /// uid 전달 시 Firestore 쿼리에 직접 포함 (보안 규칙 `uid == auth.uid` 필터 충족)
   Future<List<ApplicationModel>> getApplicationsForTO({
     required String toId,
     String? uid,
   }) async {
-    final apps = await getApplicationsByTOId(toId);
-    if (uid != null) return apps.where((a) => a.uid == uid).toList();
-    return apps;
+    return getApplicationsByTOId(toId, uid: uid);
   }
 
   /// 구 getTOByApplication — application의 toId로 TO 조회
@@ -582,7 +581,7 @@ class FirestoreService {
           ? _firestore.collection('tos').doc(toId).collection('slots').doc(slotId)
           : _firestore.collection('tos').doc(toId);
 
-      final snap = await docRef.get();
+      final snap = await docRef.get(const GetOptions(source: Source.server));
       if (!snap.exists) return null;
 
       final raw = (snap.data() as Map<String, dynamic>)['workDetails'] as List? ?? [];
@@ -855,7 +854,7 @@ class FirestoreService {
     String? requestedByUid,
   }) async {
     try {
-      final appDoc = await _firestore.collection('applications').doc(applicationId).get();
+      final appDoc = await _firestore.collection('applications').doc(applicationId).get(const GetOptions(source: Source.server));
       if (!appDoc.exists) return false;
       final app = ApplicationModel.fromMap(appDoc.data()!, appDoc.id);
 
@@ -873,7 +872,7 @@ class FirestoreService {
 
       String businessName = '';
       if (bId.isNotEmpty) {
-        final bizDoc = await _firestore.collection('businesses').doc(bId).get();
+        final bizDoc = await _firestore.collection('businesses').doc(bId).get(const GetOptions(source: Source.server));
         businessName = bizDoc.data()?['name'] as String? ?? '';
       }
 
@@ -918,7 +917,7 @@ class FirestoreService {
   /// 계약해지 승인 (근무자 → 관리자 요청 수락)
   Future<bool> approveTermination(String applicationId, {String? adminUID}) async {
     try {
-      final appDoc = await _firestore.collection('applications').doc(applicationId).get();
+      final appDoc = await _firestore.collection('applications').doc(applicationId).get(const GetOptions(source: Source.server));
       if (!appDoc.exists) return false;
       final app = ApplicationModel.fromMap(appDoc.data()!, appDoc.id);
 
@@ -980,7 +979,7 @@ class FirestoreService {
     DateTime? resignDate,
   }) async {
     try {
-      final appDoc = await _firestore.collection('applications').doc(applicationId).get();
+      final appDoc = await _firestore.collection('applications').doc(applicationId).get(const GetOptions(source: Source.server));
       if (!appDoc.exists) return false;
       final app = ApplicationModel.fromMap(appDoc.data()!, appDoc.id);
 
@@ -993,7 +992,7 @@ class FirestoreService {
       });
 
       // 관리자에게 알림
-      final bizDoc = await _firestore.collection('businesses').doc(app.businessId).get();
+      final bizDoc = await _firestore.collection('businesses').doc(app.businessId).get(const GetOptions(source: Source.server));
       final ownerId = bizDoc.data()?['ownerId'] as String?;
       final workerName = uid != null
           ? (await getUser(uid))?.name ?? '근무자'
@@ -1040,7 +1039,7 @@ class FirestoreService {
     required String adminUID,
   }) async {
     try {
-      final appDoc = await _firestore.collection('applications').doc(applicationId).get();
+      final appDoc = await _firestore.collection('applications').doc(applicationId).get(const GetOptions(source: Source.server));
       if (!appDoc.exists) return false;
       final app = ApplicationModel.fromMap(appDoc.data()!, appDoc.id);
 
@@ -1059,7 +1058,7 @@ class FirestoreService {
           .collection('attendance')
           .where('applicationId', isEqualTo: applicationId)
           .where('status', isEqualTo: 'scheduled')
-          .get();
+          .get(const GetOptions(source: Source.server));
       if (scheduledAttendances.docs.isNotEmpty) {
         final cancelBatch = _firestore.batch();
         for (final doc in scheduledAttendances.docs) {
@@ -1101,7 +1100,7 @@ class FirestoreService {
     String? rejectReason,
   }) async {
     try {
-      final appDoc = await _firestore.collection('applications').doc(applicationId).get();
+      final appDoc = await _firestore.collection('applications').doc(applicationId).get(const GetOptions(source: Source.server));
       if (!appDoc.exists) return false;
       final app = ApplicationModel.fromMap(appDoc.data()!, appDoc.id);
 
@@ -1140,7 +1139,7 @@ class FirestoreService {
         .where('resignStatus', isEqualTo: AppStatus.pending)
         .orderBy('resignRequestedAt', descending: true)
         .limit(200)
-        .get();
+        .get(const GetOptions(source: Source.server));
     return snap.docs.map((d) => ApplicationModel.fromFirestore(d)).toList();
   }
 
@@ -1162,7 +1161,7 @@ class FirestoreService {
           .where('businessId', isEqualTo: businessId)
           .where('status', whereIn: AppStatus.confirmedStatuses)
           .orderBy('workDate', descending: true)
-          .get();
+          .get(const GetOptions(source: Source.server));
       
       if (snapshot.docs.isEmpty) {
         return {
@@ -1184,7 +1183,7 @@ class FirestoreService {
           .where('businessId', isEqualTo: businessId)
           .orderBy('createdAt', descending: true)
           .limit(5)
-          .get();
+          .get(const GetOptions(source: Source.server));
       
       final reviews = reviewSnapshot.docs
           .map((doc) => ReviewModel.fromFirestore(doc))

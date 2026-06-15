@@ -7,6 +7,8 @@
 import 'package:flutter/material.dart';
 import '../../theme/app_colors.dart';
 import '../../utils/responsive_helper.dart';
+import '../../screens/common/notification_screen.dart';
+import 'notification_badge.dart';
 
 class GradientScaffold extends StatelessWidget {
   final String title;
@@ -21,9 +23,13 @@ class GradientScaffold extends StatelessWidget {
 
   /// 뒤로가기 버튼 콜백 — null이면 Navigator.pop() 기본 동작
   final VoidCallback? onBack;
+  /// 우상단 새로고침 버튼 콜백 — null이면 버튼 미표시
+  final VoidCallback? onRefresh;
   /// FloatingActionButton (선택)
   final Widget? floatingActionButton;
   final FloatingActionButtonLocation? floatingActionButtonLocation;
+  /// 우상단 알림 벨 아이콘 표시 여부 (기본 true)
+  final bool showNotificationBell;
 
   const GradientScaffold({
     super.key,
@@ -34,8 +40,10 @@ class GradientScaffold extends StatelessWidget {
     this.headerBottom,
     this.contentColor = AppColors.grey50,
     this.onBack,
+    this.onRefresh,
     this.floatingActionButton,
     this.floatingActionButtonLocation,
+    this.showNotificationBell = true,
   });
 
   @override
@@ -85,6 +93,11 @@ class GradientScaffold extends StatelessWidget {
                         ),
                       ),
                     ),
+                    if (showNotificationBell) _buildNotificationBell(context),
+                    if (onRefresh != null) ...[
+                      SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+                      _buildRefreshButton(context),
+                    ],
                     if (actions != null) ...actions!,
                   ],
                 ),
@@ -99,7 +112,7 @@ class GradientScaffold extends StatelessWidget {
               // ── 곡선 콘텐츠 영역
               Expanded(
                 child: Container(
-                  clipBehavior: Clip.hardEdge,
+                  clipBehavior: Clip.antiAlias,
                   decoration: BoxDecoration(
                     color: contentColor,
                     borderRadius: const BorderRadius.only(
@@ -111,6 +124,53 @@ class GradientScaffold extends StatelessWidget {
                 ),
               ),
             ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildRefreshButton(BuildContext context) {
+    return Material(
+      color: Colors.white.withValues(alpha: 0.2),
+      borderRadius: BorderRadius.circular(12),
+      child: Semantics(
+        label: '새로고침',
+        button: true,
+        child: InkWell(
+          onTap: onRefresh,
+          borderRadius: BorderRadius.circular(12),
+          child: Padding(
+            padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 8)),
+            child: Icon(Icons.refresh,
+                color: Colors.white,
+                size: ResponsiveHelper.iconSize(context, 24)),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildNotificationBell(BuildContext context) {
+    return NotificationBadge(
+      child: Material(
+        color: Colors.white.withValues(alpha: 0.2),
+        borderRadius: BorderRadius.circular(12),
+        child: Semantics(
+          label: '알림',
+          button: true,
+          child: InkWell(
+            onTap: () => Navigator.push(
+              context,
+              MaterialPageRoute(builder: (_) => const NotificationScreen()),
+            ),
+            borderRadius: BorderRadius.circular(12),
+            child: Padding(
+              padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 8)),
+              child: Icon(Icons.notifications_outlined,
+                  color: Colors.white,
+                  size: ResponsiveHelper.iconSize(context, 24)),
+            ),
           ),
         ),
       ),

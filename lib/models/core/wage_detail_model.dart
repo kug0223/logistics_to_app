@@ -13,7 +13,8 @@ class WageDetailModel {
   final int actualMinutes;         // 실제 근무시간 (출퇴근 기준)
   final int breakMinutes;          // 휴게시간
   final int workMinutes;           // 실 근무시간 (actual - break)
-  final int overtimeMinutes;       // 연장근무 (시급제: 8시간 초과분 / 일급제: 예정시간 초과분)
+  final int overtimeMinutes;       // 연장근무 총합 (조출 + 연장, 시급제: 8h 초과 / 일급제: 예정 초과)
+  final int earlyArrivalMinutes;   // 그 중 조출분 (예정 시작 전 근무) — 0이면 순수 연장만
   final int nightMinutes;          // 야간근무 (22:00~06:00)
   
   // ── 금액 계산 ──
@@ -74,6 +75,7 @@ class WageDetailModel {
     this.breakMinutes = 0,
     this.workMinutes = 0,
     this.overtimeMinutes = 0,
+    this.earlyArrivalMinutes = 0,
     this.nightMinutes = 0,
     this.baseAmount = 0,
     this.overtimeAmount = 0,
@@ -112,6 +114,7 @@ class WageDetailModel {
       breakMinutes: (map['breakMinutes'] as num?)?.toInt() ?? 0,
       workMinutes: (map['workMinutes'] as num?)?.toInt() ?? 0,
       overtimeMinutes: (map['overtimeMinutes'] as num?)?.toInt() ?? 0,
+      earlyArrivalMinutes: (map['earlyArrivalMinutes'] as num?)?.toInt() ?? 0,
       nightMinutes: (map['nightMinutes'] as num?)?.toInt() ?? 0,
       baseAmount: (map['baseAmount'] as num?)?.toInt() ?? 0,
       overtimeAmount: (map['overtimeAmount'] as num?)?.toInt() ?? 0,
@@ -155,6 +158,7 @@ class WageDetailModel {
       'breakMinutes': breakMinutes,
       'workMinutes': workMinutes,
       'overtimeMinutes': overtimeMinutes,
+      if (earlyArrivalMinutes != 0) 'earlyArrivalMinutes': earlyArrivalMinutes,
       'nightMinutes': nightMinutes,
       'baseAmount': baseAmount,
       'overtimeAmount': overtimeAmount,
@@ -197,6 +201,7 @@ class WageDetailModel {
     int? breakMinutes,
     int? workMinutes,
     int? overtimeMinutes,
+    int? earlyArrivalMinutes,
     int? nightMinutes,
     int? baseAmount,
     int? overtimeAmount,
@@ -232,6 +237,7 @@ class WageDetailModel {
       breakMinutes: breakMinutes ?? this.breakMinutes,
       workMinutes: workMinutes ?? this.workMinutes,
       overtimeMinutes: overtimeMinutes ?? this.overtimeMinutes,
+      earlyArrivalMinutes: earlyArrivalMinutes ?? this.earlyArrivalMinutes,
       nightMinutes: nightMinutes ?? this.nightMinutes,
       baseAmount: baseAmount ?? this.baseAmount,
       overtimeAmount: overtimeAmount ?? this.overtimeAmount,
@@ -299,9 +305,13 @@ class WageDetailModel {
       incomeTaxDeduction +
       retroactiveDeduction;
 
+  /// 실수령액 (미확정 시 총액에서 공제액 차감)
+  int get effectiveNetWage =>
+      isCalculated ? netWage : totalAmount - totalInsuranceDeduction;
+
   /// 포맷팅된 실수령액
   String get formattedNetWage {
-    final n = isCalculated ? netWage : totalAmount - totalInsuranceDeduction;
+    final n = effectiveNetWage;
     return '${n.toString().replaceAllMapped(
       RegExp(r'(\d{1,3})(?=(\d{3})+(?!\d))'),
       (Match m) => '${m[1]},',

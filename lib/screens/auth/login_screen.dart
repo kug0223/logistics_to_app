@@ -743,7 +743,7 @@ class _LoginScreenState extends State<LoginScreen> {
             ),
             child: Text(
               '로그인',
-              style: ResponsiveHelper.subtitleStyle(context).copyWith(fontWeight: FontWeight.w600),
+              style: ResponsiveHelper.subtitleStyle(context, color: Colors.white).copyWith(fontWeight: FontWeight.w600),
             ),
           ),
 
