@@ -95,9 +95,10 @@ class _AttendanceQuickTimeSheetState extends State<AttendanceQuickTimeSheet> {
 
   void _adjustMinutes(int delta) {
     setState(() {
-      final total = (_hour * 60 + _minute + delta).clamp(0, 23 * 60 + 50);
+      // 24시간 순환 — 23:50 + 10분 = 00:00, 00:00 - 10분 = 23:50
+      final total = ((_hour * 60 + _minute + delta) % (24 * 60) + 24 * 60) % (24 * 60);
       _hour = total ~/ 60;
-      _minute = total % 60;
+      _minute = (total % 60) ~/ 10 * 10; // 10분 단위 유지
     });
   }
 
@@ -117,8 +118,6 @@ class _AttendanceQuickTimeSheetState extends State<AttendanceQuickTimeSheet> {
     final actionLabel = isCheckIn ? '출근' : '퇴근';
     final actionIcon = isCheckIn ? Icons.login : Icons.logout;
     final actionColor = isCheckIn ? AppColors.success : AppColors.purple;
-    final canDecrease = _hour * 60 + _minute > 0;
-    final canIncrease = _hour * 60 + _minute < 23 * 60 + 50;
 
     return Container(
       decoration: const BoxDecoration(
@@ -264,7 +263,7 @@ class _AttendanceQuickTimeSheetState extends State<AttendanceQuickTimeSheet> {
                         child: Material(
                           color: Colors.transparent,
                           child: InkWell(
-                            onTap: canDecrease ? () => _adjustMinutes(-10) : null,
+                            onTap: () => _adjustMinutes(-10),
                             borderRadius: const BorderRadius.horizontal(
                                 left: Radius.circular(12)),
                             child: Padding(
@@ -275,17 +274,13 @@ class _AttendanceQuickTimeSheetState extends State<AttendanceQuickTimeSheet> {
                                 children: [
                                   Icon(Icons.remove,
                                       size: ResponsiveHelper.iconSize(context, 16),
-                                      color: canDecrease
-                                          ? AppColors.grey700
-                                          : AppColors.grey300),
+                                      color: AppColors.grey700),
                                   SizedBox(
                                       width: ResponsiveHelper.spacing(context, 4)),
                                   Text(
                                     '10분',
                                     style: ResponsiveHelper.smallStyle(context,
-                                            color: canDecrease
-                                                ? AppColors.grey700
-                                                : AppColors.grey300)
+                                            color: AppColors.grey700)
                                         .copyWith(fontWeight: FontWeight.w600),
                                   ),
                                 ],
@@ -322,7 +317,7 @@ class _AttendanceQuickTimeSheetState extends State<AttendanceQuickTimeSheet> {
                         child: Material(
                           color: Colors.transparent,
                           child: InkWell(
-                            onTap: canIncrease ? () => _adjustMinutes(10) : null,
+                            onTap: () => _adjustMinutes(10),
                             borderRadius: const BorderRadius.horizontal(
                                 right: Radius.circular(12)),
                             child: Padding(
@@ -334,18 +329,14 @@ class _AttendanceQuickTimeSheetState extends State<AttendanceQuickTimeSheet> {
                                   Text(
                                     '10분',
                                     style: ResponsiveHelper.smallStyle(context,
-                                            color: canIncrease
-                                                ? AppColors.grey700
-                                                : AppColors.grey300)
+                                            color: AppColors.grey700)
                                         .copyWith(fontWeight: FontWeight.w600),
                                   ),
                                   SizedBox(
                                       width: ResponsiveHelper.spacing(context, 4)),
                                   Icon(Icons.add,
                                       size: ResponsiveHelper.iconSize(context, 16),
-                                      color: canIncrease
-                                          ? AppColors.grey700
-                                          : AppColors.grey300),
+                                      color: AppColors.grey700),
                                 ],
                               ),
                             ),

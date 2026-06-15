@@ -87,6 +87,7 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
   Map<String, BusinessWorkTypeModel> _workTypeMap = {};  // 업무유형 정보
   Map<String, dynamic> _workDetailTimeMap = {};  // 업무별 근무시간 (WorkDetail)
   Map<String, WorkerLocationModel> _locationMap = {};  // 근로자 위치
+  Map<String, ApplicationModel> _workerIdMap = {};   // id → worker (O(1) 조회용)
   
   // UI 상태
   bool _isLoading = true;
@@ -259,6 +260,7 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
       if (!mounted) return;
       setState(() {
         _confirmedWorkers = confirmedWorkers;
+        _workerIdMap = {for (final a in confirmedWorkers) a.id: a};
         _attendanceMap = attendanceMap;
         _userMap = userMap;
         _workTypeMap = workTypeMap;
@@ -1086,7 +1088,7 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
     int resetCount = 0;
 
     for (final id in _selectedIds) {
-      final app = _confirmedWorkers.firstWhere((a) => a.id == id);
+      final app = _workerIdMap[id]!;
       final s = _getAttendanceStatus(app)['status'] as String;
       final att = _attendanceMap[app.id];
       if (s == 'pending') {
@@ -3025,7 +3027,7 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
 
   Future<void> _showBatchResetDialog() async {
     final targets = _selectedIds
-        .map((id) => _confirmedWorkers.firstWhere((a) => a.id == id))
+        .map((id) => _workerIdMap[id]!)
         .where((app) => _attendanceMap[app.id]?.checkIn != null)
         .toList();
     if (targets.isEmpty) return;
@@ -3133,7 +3135,7 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
 
     // 선택된 인원 중 출근 기록이 있는 인원만 대상
     final targets = _selectedIds
-        .map((id) => _confirmedWorkers.firstWhere((a) => a.id == id))
+        .map((id) => _workerIdMap[id]!)
         .where((app) {
           final s = _getAttendanceStatus(app)['status'] as String;
           return s != 'pending' && s != 'noshow' && s != 'final_confirmed';
@@ -3499,7 +3501,7 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
     // 파트별 그룹화
     final Map<String, List<ApplicationModel>> groups = {};
     for (final id in _selectedIds) {
-      final app = _confirmedWorkers.firstWhere((a) => a.id == id);
+      final app = _workerIdMap[id]!;
       final key = '${app.selectedWorkType}_${app.startTime}_${app.endTime}';
       groups.putIfAbsent(key, () => []).add(app);
     }
@@ -3508,7 +3510,7 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
       // 단일 파트 → 기존 시트
       final scheduledTimes = _selectedIds
           .map((id) {
-            final app = _confirmedWorkers.firstWhere((a) => a.id == id);
+            final app = _workerIdMap[id]!;
             return WorkDetailHelper.effectiveStart(app, _workDetailTimeMap);
           })
           .where((t) => t.isNotEmpty)
@@ -3534,7 +3536,7 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
 
     // 출근했으나 퇴근 미처리 인원만 필터 (checkin / late / missed_checkout)
     final checkedInIds = _selectedIds.where((id) {
-      final app = _confirmedWorkers.firstWhere((a) => a.id == id);
+      final app = _workerIdMap[id]!;
       final s = _getAttendanceStatus(app)['status'] as String;
       return s == 'checkin' || s == 'late' || s == 'missed_checkout';
     }).toList();
@@ -3547,7 +3549,7 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
     // 파트별 그룹화 (퇴근 가능 인원 기준)
     final Map<String, List<ApplicationModel>> groups = {};
     for (final id in checkedInIds) {
-      final app = _confirmedWorkers.firstWhere((a) => a.id == id);
+      final app = _workerIdMap[id]!;
       final key = '${app.selectedWorkType}_${app.startTime}_${app.endTime}';
       groups.putIfAbsent(key, () => []).add(app);
     }
@@ -3556,7 +3558,7 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
       // 단일 파트 → 기존 시트
       final scheduledTimes = checkedInIds
           .map((id) {
-            final app = _confirmedWorkers.firstWhere((a) => a.id == id);
+            final app = _workerIdMap[id]!;
             return WorkDetailHelper.effectiveEnd(app, _workDetailTimeMap);
           })
           .where((t) => t.isNotEmpty)
