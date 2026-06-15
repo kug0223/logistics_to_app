@@ -1799,18 +1799,21 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
       }
     }
     if (wage.overtimeAmount > 0) {
-      final earlyMins = wage.earlyArrivalMinutes;
-      final regularMins = wage.overtimeMinutes - earlyMins;
-      if (earlyMins > 0 && regularMins > 0) {
-        // 조출 + 연장 둘 다 있는 경우 금액 비율 분리
-        final earlyAmt = (wage.overtimeAmount * earlyMins / wage.overtimeMinutes).round();
-        final regularAmt = wage.overtimeAmount - earlyAmt;
+      // earlyArrivalAmount: WageDetailModel에 저장된 실제 조출수당 (8h 기준 계산)
+      // 구형 레코드(earlyArrivalAmount==0)는 비율 fallback
+      final earlyMins = wage.earlyArrivalMinutes.clamp(0, wage.overtimeMinutes);
+      int earlyAmt = wage.earlyArrivalAmount;
+      if (earlyAmt == 0 && earlyMins > 0 && wage.overtimeMinutes > 0) {
+        earlyAmt = (wage.overtimeAmount * earlyMins / wage.overtimeMinutes).round();
+      }
+      final regularAmt = wage.overtimeAmount - earlyAmt;
+      if (earlyAmt > 0 && regularAmt > 0) {
         parts.add('+조출 ${FormatHelper.formatWage(earlyAmt)}');
         parts.add('+연장 ${FormatHelper.formatWage(regularAmt)}');
+      } else if (earlyAmt > 0) {
+        parts.add('+조출 ${FormatHelper.formatWage(earlyAmt)}');
       } else {
-        parts.add(earlyMins > 0
-            ? '+조출 ${FormatHelper.formatWage(wage.overtimeAmount)}'
-            : '+연장 ${FormatHelper.formatWage(wage.overtimeAmount)}');
+        parts.add('+연장 ${FormatHelper.formatWage(wage.overtimeAmount)}');
       }
     }
     if (wage.nightAmount > 0) {
