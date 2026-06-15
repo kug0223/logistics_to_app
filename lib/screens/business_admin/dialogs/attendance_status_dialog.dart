@@ -953,7 +953,7 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
                   ],
                 ),
                 SizedBox(height: ResponsiveHelper.spacing(context, 8)),
-                _buildCompactStats(theme, [needsReview, normal, adminConfirmedWorkers, done][_currentTabIndex]),
+                _buildCompactStats(theme, _confirmedWorkers),
                 SizedBox(height: ResponsiveHelper.spacing(context, 8)),
                 _buildBatchActionBar(theme),
                 SizedBox(height: ResponsiveHelper.spacing(context, 8)),
@@ -1330,11 +1330,10 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
     final Map<String, List<ApplicationModel>> workTypeGroups = {};
 
     for (var app in workers ?? _confirmedWorkers) {
-      // effectiveStart/End(TO 기준 시간)로 그룹화 — app.startTime은 TO별로 달라질 수 있음
-      final effStart = WorkDetailHelper.effectiveStart(app, _workDetailTimeMap);
-      final effEnd   = WorkDetailHelper.effectiveEnd(app, _workDetailTimeMap);
-      final normStart = _normalizeTimeKey(effStart.isNotEmpty ? effStart : app.startTime);
-      final normEnd   = _normalizeTimeKey(effEnd.isNotEmpty ? effEnd : app.endTime);
+      // app.startTime/endTime으로 그룹화 — effectiveStart는 workType 단위 캐시라
+      // 같은 workType의 다른 시간대 TO가 섞이므로 사용하지 않음
+      final normStart = _normalizeTimeKey(app.startTime);
+      final normEnd   = _normalizeTimeKey(app.endTime);
       final groupKey  = '${app.selectedWorkType.trim()}_${normStart}_$normEnd';
 
       workTypeGroups.putIfAbsent(groupKey, () => []);
@@ -1366,8 +1365,8 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
             firstApp.selectedWorkType,
             entry.value,
             groupKey: entry.key,
-            startTime: WorkDetailHelper.effectiveStart(firstApp, _workDetailTimeMap),
-            endTime: WorkDetailHelper.effectiveEnd(firstApp, _workDetailTimeMap),
+            startTime: _normalizeTimeKey(firstApp.startTime),
+            endTime: _normalizeTimeKey(firstApp.endTime),
           ),
         );
       }).toList(),
