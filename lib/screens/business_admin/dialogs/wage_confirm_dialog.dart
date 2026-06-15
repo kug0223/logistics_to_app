@@ -690,7 +690,7 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
         insetPadding: const EdgeInsets.symmetric(horizontal: 24, vertical: 24),
         contentPadding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
         constraints: BoxConstraints(
-          maxHeight: MediaQuery.of(ctx).size.height * 0.8,
+          maxHeight: MediaQuery.of(ctx).size.height * AppDialogSize.subSheetHeightRatio,
         ),
         title: Row(
           children: [

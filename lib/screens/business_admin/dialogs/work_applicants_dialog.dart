@@ -327,7 +327,7 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
         ),
         child: ConstrainedBox(
           constraints: BoxConstraints(
-            maxHeight: MediaQuery.sizeOf(context).height * 0.92,
+            maxHeight: MediaQuery.sizeOf(context).height * AppDialogSize.maxHeightRatio,
           ),
           child: Column(
             mainAxisSize: MainAxisSize.max,

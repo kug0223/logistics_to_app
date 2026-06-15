@@ -27,6 +27,7 @@ import '../../../screens/common/job_posting_screen.dart';
 import '../../../services/tooltip_service.dart';
 import '../../../services/analytics_service.dart';
 import '../../../widgets/common/loading_widget.dart';
+import '../styled_dialog.dart';
 
 /// 지원 다이얼로그 결과
 class ApplyDialogResult {
@@ -550,8 +551,8 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
     final theme = Theme.of(context);
     final mediaQuery = MediaQuery.of(context);
     
-    // 다이얼로그 높이 계산 (화면의 90%)
-    final dialogHeight = mediaQuery.size.height * 0.9;
+    // 다이얼로그 높이 계산
+    final dialogHeight = mediaQuery.size.height * AppDialogSize.maxHeightRatio;
 
     // ⭐ PopScope 추가: 외부 탭으로 닫아도 변경 여부 반환
     return PopScope(

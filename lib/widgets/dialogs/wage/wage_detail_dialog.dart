@@ -15,6 +15,7 @@ import '../../../utils/dialog_helper.dart';
 import '../../../utils/format_helper.dart';
 import '../../../utils/wage_calculator.dart';
 import '../../../theme/app_colors.dart';
+import '../styled_dialog.dart';
 
 enum WageDialogMode {
   pending,
@@ -473,7 +474,7 @@ class _WageDetailDialogState extends State<WageDetailDialog> {
         vertical: ResponsiveHelper.spacing(context, 24),
       ),
       child: ConstrainedBox(
-        constraints: BoxConstraints(maxHeight: MediaQuery.sizeOf(context).height * 0.92),
+        constraints: BoxConstraints(maxHeight: MediaQuery.sizeOf(context).height * AppDialogSize.maxHeightRatio),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [

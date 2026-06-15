@@ -8,6 +8,7 @@ import '../../utils/dialog_helper.dart';
 import '../../utils/format_helper.dart';
 import '../../utils/responsive_helper.dart';  // ⭐ 추가
 import '../pickers/date_picker_bottom_sheet.dart';
+import 'styled_dialog.dart';
 
 /// 고정근무 관리 다이얼로그
 class LongTermWorkManagementDialog extends StatefulWidget {
@@ -47,7 +48,7 @@ class _LongTermWorkManagementDialogState
         vertical: ResponsiveHelper.spacing(context, 24),
       ),
       child: ConstrainedBox(
-        constraints: BoxConstraints(maxHeight: MediaQuery.sizeOf(context).height * 0.92),
+        constraints: BoxConstraints(maxHeight: MediaQuery.sizeOf(context).height * AppDialogSize.maxHeightRatio),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [

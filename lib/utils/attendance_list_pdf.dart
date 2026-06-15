@@ -17,6 +17,7 @@ import '../models/core/application_model.dart';
 import '../models/core/user_model.dart';
 import '../theme/app_colors.dart';
 import '../widgets/common/loading_widget.dart';
+import '../widgets/dialogs/styled_dialog.dart';
 import 'format_helper.dart';
 import 'responsive_helper.dart';
 
@@ -795,7 +796,7 @@ class _PreviewBottomSheetWithBytesState
 
   @override
   Widget build(BuildContext context) {
-    final maxH = MediaQuery.sizeOf(context).height * 0.92;
+    final maxH = MediaQuery.sizeOf(context).height * AppDialogSize.maxHeightRatio;
     return ConstrainedBox(
       constraints: BoxConstraints(maxHeight: maxH),
       child: Container(

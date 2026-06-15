@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import '../../utils/responsive_helper.dart';
 import '../../theme/app_colors.dart';
+import '../dialogs/styled_dialog.dart';
 
 /// 🎨 세련된 아이콘 아이템 클래스
 class IconItem {
@@ -697,7 +698,7 @@ class _IconPickerWidgetState extends State<_IconPickerWidget> {
       child: Container(
         constraints: BoxConstraints(
           maxWidth: 600,
-          maxHeight: MediaQuery.sizeOf(context).height * 0.9,
+          maxHeight: MediaQuery.sizeOf(context).height * AppDialogSize.maxHeightRatio,
         ),
         child: Column(
           mainAxisSize: MainAxisSize.min,

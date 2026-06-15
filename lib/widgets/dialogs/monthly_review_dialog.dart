@@ -227,7 +227,7 @@ class _MonthlyReviewDialogState extends State<MonthlyReviewDialog> {
       ),
       child: ConstrainedBox(
         constraints: BoxConstraints(
-          maxHeight: MediaQuery.sizeOf(context).height * 0.92,
+          maxHeight: MediaQuery.sizeOf(context).height * AppDialogSize.maxHeightRatio,
         ),
         child: Column(
           mainAxisSize: MainAxisSize.min,
@@ -874,7 +874,7 @@ class _MonthlyReviewViewDialog extends StatelessWidget {
       ),
       child: ConstrainedBox(
         constraints: BoxConstraints(
-          maxHeight: MediaQuery.sizeOf(context).height * 0.92,
+          maxHeight: MediaQuery.sizeOf(context).height * AppDialogSize.maxHeightRatio,
         ),
         child: Column(
           mainAxisSize: MainAxisSize.min,

@@ -11,6 +11,7 @@ import '../../../utils/dialog_helper.dart';
 import '../../../utils/loading_state_mixin.dart';
 import '../../../widgets/common/loading_button.dart';
 import '../../../widgets/common/loading_widget.dart';
+import '../../../widgets/dialogs/styled_dialog.dart';
 
 /// 퇴사 요청 관리 다이얼로그 (관리자용)
 class ResignRequestManagementDialog extends StatefulWidget {
@@ -82,7 +83,7 @@ class _ResignRequestManagementDialogState
       ),
       child: ConstrainedBox(
         constraints: BoxConstraints(
-          maxHeight: MediaQuery.sizeOf(context).height * 0.92,
+          maxHeight: MediaQuery.sizeOf(context).height * AppDialogSize.maxHeightRatio,
         ),
         child: Column(
           children: [

@@ -12,6 +12,7 @@ import 'contract_template_preview_screen.dart';
 import '../../widgets/common/gradient_scaffold.dart';
 import '../../widgets/common/app_empty_state.dart';
 import '../../widgets/common/loading_widget.dart';
+import '../../widgets/dialogs/styled_dialog.dart';
 
 class ContractTemplateListScreen extends StatefulWidget {
   final String businessId;
@@ -176,7 +177,7 @@ class _TypeSelectorSheet extends StatelessWidget {
   Widget build(BuildContext context) {
     return ConstrainedBox(
       constraints: BoxConstraints(
-        maxHeight: MediaQuery.sizeOf(context).height * 0.92,
+        maxHeight: MediaQuery.sizeOf(context).height * AppDialogSize.maxHeightRatio,
       ),
       child: Container(
       decoration: const BoxDecoration(

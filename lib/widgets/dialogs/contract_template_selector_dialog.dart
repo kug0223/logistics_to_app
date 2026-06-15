@@ -5,6 +5,7 @@ import '../../services/contract_template_service.dart';
 import '../../theme/app_colors.dart';
 import '../../utils/responsive_helper.dart';
 import '../common/loading_widget.dart';
+import 'styled_dialog.dart';
 
 /// 계약서 작성 시 템플릿 선택 바텀시트
 ///
@@ -64,7 +65,7 @@ class _SelectorSheetState extends State<_SelectorSheet> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final maxH = MediaQuery.sizeOf(context).height * 0.8;
+    final maxH = MediaQuery.sizeOf(context).height * AppDialogSize.subSheetHeightRatio;
 
     return Container(
       constraints: BoxConstraints(maxHeight: maxH),

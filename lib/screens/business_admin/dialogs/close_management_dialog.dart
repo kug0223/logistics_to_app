@@ -23,6 +23,7 @@ import '../../../theme/app_colors.dart';
 
 // Widgets
 import '../../../widgets/common/loading_widget.dart';
+import '../../../widgets/dialogs/styled_dialog.dart';
 
 // Dialogs
 import 'attendance_status_dialog.dart';
@@ -369,7 +370,7 @@ class _CloseManagementDialogState extends State<CloseManagementDialog>
           vertical: ResponsiveHelper.spacing(context, 24),
         ),
         child: ConstrainedBox(
-          constraints: BoxConstraints(maxHeight: MediaQuery.sizeOf(context).height * 0.92),
+          constraints: BoxConstraints(maxHeight: MediaQuery.sizeOf(context).height * AppDialogSize.maxHeightRatio),
           child: Column(
             children: [
               // 헤더

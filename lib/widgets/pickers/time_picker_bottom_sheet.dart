@@ -3,6 +3,7 @@ import 'package:intl/intl.dart';
 import '../../utils/format_helper.dart';
 import '../../utils/responsive_helper.dart';
 import '../../theme/app_colors.dart';
+import '../dialogs/styled_dialog.dart';
 import '../calendar/carrot_style_calendar.dart';
 
 /// ⏰ 시간 선택 바텀시트 (휠 피커)
@@ -690,7 +691,7 @@ class _DateTimePickerBottomSheetState extends State<DateTimePickerBottomSheet> {
     
     return Container(
       constraints: BoxConstraints(
-        maxHeight: MediaQuery.sizeOf(context).height * 0.85,
+        maxHeight: MediaQuery.sizeOf(context).height * AppDialogSize.subSheetHeightRatio,
       ),
       decoration: BoxDecoration(
         color: AppColors.surface,

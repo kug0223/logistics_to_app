@@ -104,7 +104,7 @@ class _ScheduleRequestManagementDialogState
       ),
       child: ConstrainedBox(
         constraints: BoxConstraints(
-          maxHeight: MediaQuery.sizeOf(context).height * 0.92,
+          maxHeight: MediaQuery.sizeOf(context).height * AppDialogSize.maxHeightRatio,
         ),
         child: Column(
           children: [

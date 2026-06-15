@@ -1,6 +1,7 @@
 ﻿import 'package:flutter/material.dart';
 import '../../theme/app_colors.dart';
 import '../../utils/responsive_helper.dart';
+import '../dialogs/styled_dialog.dart';
 
 // ─────────────────────────────────────────────────────────
 // AppMenuSheetItem — 바텀시트 메뉴 항목 하나를 정의
@@ -99,7 +100,7 @@ class _AppMenuSheetContent extends StatelessWidget {
   Widget build(BuildContext context) {
     final hasHeader = headerTitle != null || headerSubtitle != null;
 
-    final maxHeight = MediaQuery.sizeOf(context).height * 0.85;
+    final maxHeight = MediaQuery.sizeOf(context).height * AppDialogSize.subSheetHeightRatio;
 
     return Container(
       decoration: const BoxDecoration(

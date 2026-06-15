@@ -11,6 +11,7 @@ import '../work_type_icon.dart';
 import '../../utils/format_helper.dart';
 import '../../models/core/work_detail_data.dart';
 import '../../theme/app_colors.dart';
+import '../dialogs/styled_dialog.dart';
 import '../../utils/wage_calculator.dart';
 import '../app_select_field.dart';
 
@@ -58,7 +59,7 @@ class WorkDetailDialog {
             ),
             child: ConstrainedBox(
               constraints: BoxConstraints(
-                maxHeight: MediaQuery.sizeOf(context).height * 0.92,
+                maxHeight: MediaQuery.sizeOf(context).height * AppDialogSize.maxHeightRatio,
               ),
               child: Column(
                 mainAxisSize: MainAxisSize.min,
@@ -286,7 +287,7 @@ class WorkDetailDialog {
             ),
             child: ConstrainedBox(
               constraints: BoxConstraints(
-                maxHeight: MediaQuery.sizeOf(context).height * 0.92,
+                maxHeight: MediaQuery.sizeOf(context).height * AppDialogSize.maxHeightRatio,
               ),
               child: Column(
                 mainAxisSize: MainAxisSize.min,

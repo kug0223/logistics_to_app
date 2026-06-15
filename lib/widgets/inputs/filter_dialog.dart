@@ -4,6 +4,7 @@ import '../../models/core/to_model.dart';
 import '../../theme/app_colors.dart';
 import '../../utils/responsive_helper.dart';
 import '../pickers/date_picker_bottom_sheet.dart';
+import '../dialogs/styled_dialog.dart';
 
 class FilterDialog extends StatefulWidget {
   final String? selectedBusiness;
@@ -73,7 +74,7 @@ class _FilterDialogState extends State<FilterDialog> {
         borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
       ),
       constraints: BoxConstraints(
-        maxHeight: MediaQuery.sizeOf(context).height * 0.85,
+        maxHeight: MediaQuery.sizeOf(context).height * AppDialogSize.subSheetHeightRatio,
       ),
       child: Column(
         mainAxisSize: MainAxisSize.min,

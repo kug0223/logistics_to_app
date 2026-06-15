@@ -3612,7 +3612,7 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
             shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
             child: ConstrainedBox(
               constraints: BoxConstraints(
-                maxHeight: MediaQuery.of(ctx).size.height * 0.8,
+                maxHeight: MediaQuery.of(ctx).size.height * AppDialogSize.subSheetHeightRatio,
                 maxWidth: 420,
               ),
               child: Column(

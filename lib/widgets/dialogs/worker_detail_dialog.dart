@@ -26,6 +26,7 @@ import '../../utils/id_card_helper.dart';
 import '../../screens/business_admin/dialogs/fixed_worker_management_dialog.dart';
 import '../../utils/image_helper.dart';
 import 'monthly_review_dialog.dart';
+import 'styled_dialog.dart';
 import '../../models/core/monthly_review_model.dart';
 import '../../models/core/review_request_model.dart';
 import '../../services/monthly_review_service.dart';
@@ -230,7 +231,7 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
       ),
       child: Container(
         constraints: BoxConstraints(
-          maxHeight: MediaQuery.sizeOf(context).height * 0.92,
+          maxHeight: MediaQuery.sizeOf(context).height * AppDialogSize.maxHeightRatio,
         ),
         decoration: BoxDecoration(
           color: Colors.white,

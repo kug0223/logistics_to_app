@@ -11,6 +11,7 @@ import '../../../utils/toast_helper.dart';
 import '../../../utils/responsive_helper.dart';
 import '../../../utils/format_helper.dart';
 import '../../../widgets/common/loading_widget.dart';
+import '../../../widgets/dialogs/styled_dialog.dart';
 import '../../../theme/app_colors.dart';
 
 /// 통합 알림 아이템 타입
@@ -136,7 +137,7 @@ class _MyRequestsDialogState extends State<MyRequestsDialog> {
       ),
       child: ConstrainedBox(
         constraints: BoxConstraints(
-          maxHeight: MediaQuery.sizeOf(context).height * 0.92,
+          maxHeight: MediaQuery.sizeOf(context).height * AppDialogSize.maxHeightRatio,
         ),
         child: Padding(
           padding: ResponsiveHelper.listPadding(context),

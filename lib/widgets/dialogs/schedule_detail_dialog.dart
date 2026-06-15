@@ -11,6 +11,7 @@ import '../../utils/responsive_helper.dart';
 import '../../utils/format_helper.dart';
 import '../../utils/image_helper.dart';
 import '../../theme/app_colors.dart';
+import 'styled_dialog.dart';
 import '../../widgets/common/common_widgets.dart';
 import '../../widgets/common/loading_widget.dart';
 import '../../widgets/common/tax_deduction_badge.dart';
@@ -113,7 +114,7 @@ class _ScheduleDetailDialogState extends State<ScheduleDetailDialog> {
     final theme = Theme.of(context);
     return Container(
       constraints: BoxConstraints(
-        maxHeight: MediaQuery.sizeOf(context).height * 0.88,
+        maxHeight: MediaQuery.sizeOf(context).height * AppDialogSize.maxHeightRatio,
       ),
       decoration: const BoxDecoration(
         color: AppColors.grey50,

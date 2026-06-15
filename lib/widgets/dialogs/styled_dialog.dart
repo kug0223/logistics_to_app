@@ -12,11 +12,13 @@ class AppDialogSize {
   /// Dialog 좌우 여백
   static const double insetH = 16.0;
   /// Dialog 상하 여백
-  static const double insetV = 24.0;
+  static const double insetV = 8.0;
   /// 화면 높이 대비 최대 높이 비율
-  static const double maxHeightRatio = 0.92;
+  static const double maxHeightRatio = 0.95;
   /// 모서리 반경
   static const double borderRadius = 24.0;
+  /// 내부 서브시트 최대 높이 비율 (다이얼로그 내 중첩 시트용)
+  static const double subSheetHeightRatio = 0.85;
 }
 
 /// ✨ 세련된 다이얼로그 위젯
