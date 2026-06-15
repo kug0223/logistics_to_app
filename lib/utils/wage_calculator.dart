@@ -172,15 +172,15 @@ class WageCalculator {
       overtimeMinutes = (workMinutes - scheduledWorkMinutes).clamp(0, 9999);
     }
 
-    // 조출 분 계산 (예정 시작보다 일찍 출근한 분) — overtimeMinutes 이하로 제한
+    // 조출 분 계산 (예정 시작보다 일찍 출근한 분)
+    // earlyArrivalMinutes: 실제 조출 시간 (시간 표시용 — 수당 계산 시 내부에서 clamp)
     final schedStartMin = _parseTime(scheduledStart) ?? 0;
     final actualStartMin = _parseTime(actualStart) ?? 0;
     // 자정 넘김 보정: actualStart가 scheduledStart보다 수치상 크면 전날로 해석
     final adjustedActualStart = actualStartMin > schedStartMin
         ? actualStartMin - 24 * 60
         : actualStartMin;
-    final rawEarlyArrivalMinutes = (schedStartMin - adjustedActualStart).clamp(0, 9999);
-    final earlyArrivalMinutes = rawEarlyArrivalMinutes.clamp(0, overtimeMinutes);
+    final earlyArrivalMinutes = (schedStartMin - adjustedActualStart).clamp(0, 9999);
     
     // 3. 야간근무 계산 (휴게는 주간 구간 먼저 소진 — 야간 시간대 공제 최소화)
     int nightMinutes = 0;
@@ -345,14 +345,15 @@ class WageCalculator {
     // 연장수당: 총 근무 8시간 이하면 1배, 8시간 초과분만 1.5배 (근로기준법 제56조)
     // 조출도 연장의 일종으로 동일 기준 적용
     // scheduledWorkMinutes==0이면 일급 전액이 이미 baseAmount — 연장수당 중복 방지
+    // earlyArrivalMinutes는 실제 조출 시간(raw), 수당 계산 시 overtimeMinutes와 min 처리
+    final effectiveEarlyMins = min(earlyArrivalMinutes, overtimeMinutes);
     int earlyArrivalAmt = 0;
     int overtimeAmount = 0;
     if (overtimeMinutes > 0 && scheduledWorkMinutes > 0) {
       if (workMinutes <= standardWorkMinutes) {
         // 총 근무 8시간 이하: 연장분 전체 1배
         overtimeAmount = (overtimeMinutes * supplementWage / 60).round();
-        // 조출도 8h 이내이므로 1배
-        earlyArrivalAmt = (earlyArrivalMinutes * supplementWage / 60).round();
+        earlyArrivalAmt = (effectiveEarlyMins * supplementWage / 60).round();
       } else {
         // 총 근무 8시간 초과: 8시간 초과분만 1.5배
         final over8Hours = workMinutes - standardWorkMinutes;
@@ -363,8 +364,8 @@ class WageCalculator {
         overtimeAmount = amount1x + amount15x;
 
         // 조출이 within8Hours 내이면 1배, 8h 초과에 걸치면 해당 부분 1.5배
-        final earlyIn8h = min(earlyArrivalMinutes, within8Hours);
-        final earlyOver8h = (earlyArrivalMinutes - earlyIn8h).clamp(0, 9999);
+        final earlyIn8h = min(effectiveEarlyMins, within8Hours);
+        final earlyOver8h = (effectiveEarlyMins - earlyIn8h).clamp(0, 9999);
         earlyArrivalAmt = (earlyIn8h * supplementWage / 60).round() +
             (earlyOver8h * supplementWage * overtimeRate / 60).round();
       }

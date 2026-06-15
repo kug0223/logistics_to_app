@@ -935,7 +935,7 @@ class _WageDetailDialogState extends State<WageDetailDialog> {
                   isDeduction: true,
                 ),
               ],
-              if (earlyMins > 0) ...[
+              if (earlyArrivalAmount > 0) ...[
                 Divider(height: 1, color: AppColors.grey100),
                 _buildWageLineItem(
                   context,
