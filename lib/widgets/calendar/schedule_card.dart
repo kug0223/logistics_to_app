@@ -285,7 +285,7 @@ class ScheduleCard extends StatelessWidget {
     }
 
     final primaryColor = Theme.of(context).primaryColor;
-    final isWageConfirmed = attendance?.wageStatus == 'confirmed';
+    final isWageConfirmed = attendance?.isWageConfirmed == true || attendance?.isWageTransferred == true;
     final hasCheckedIn = attendance?.checkIn != null;
     final isNoShow = attendance?.status == 'NO_SHOW';
     final hasWorked = hasCheckedIn || isWageConfirmed;
@@ -1171,10 +1171,10 @@ class ScheduleCard extends StatelessWidget {
       );
     }
     
-    // 4. 급여 최종 확정
-    if (attendance!.wageStatus == 'confirmed') {
+    // 4. 급여 최종 확정 (confirmed = 정산완료, transferred = 송금완료)
+    if (attendance!.isWageConfirmed || attendance!.isWageTransferred) {
       return _StatusInfo(
-        text: '정산완료',
+        text: attendance!.isWageTransferred ? '송금완료' : '정산완료',
         color: AppColors.info,
         icon: Icons.verified,
       );
@@ -1219,8 +1219,9 @@ class ScheduleCard extends StatelessWidget {
 
   /// ✅ 급여 표시 (wageType 포함) - 모든 상태 통일
   String _getWageDisplay() {
-    // 1. 정산완료면 확정 급여 + wageType 표시
-    if (attendance?.wageStatus == 'confirmed' && attendance?.finalWage != null) {
+    // 1. 정산완료/송금완료면 확정 급여 + wageType 표시
+    if ((attendance?.isWageConfirmed == true || attendance?.isWageTransferred == true) &&
+        attendance?.finalWage != null) {
       final wageTypeLabel = attendance!.wageDetail?.wageTypeLabel ?? '';
       return '${FormatHelper.formatWage(attendance!.finalWage!)}${wageTypeLabel.isNotEmpty ? ' ($wageTypeLabel)' : ''}';
     }

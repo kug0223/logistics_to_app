@@ -1050,8 +1050,8 @@ class NotificationModel {
       id: '',
       userId: userId,
       type: NotificationType.wageCancelConfirmed,
-      title: '급여 수정 중',
-      body: '$businessName ${workDate.month}/${workDate.day} 근무 급여가 수정 중입니다. 잠시 후 다시 확인해주세요.',
+      title: '급여 확정 취소',
+      body: '$businessName ${workDate.month}/${workDate.day} 근무 급여 확정이 취소되었습니다. 급여 조정 후 다시 안내드릴 예정입니다.',
       data: {
         'attendanceId': attendanceId,
         'businessId': businessId,
