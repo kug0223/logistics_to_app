@@ -425,8 +425,9 @@ class _NotificationScreenState extends State<NotificationScreen> {
     BuildContext context,
     NotificationModel notification,
   ) async {
-    final contractId = notification.data?['contractId'] as String?;
-    if (contractId == null || contractId.isEmpty) {
+    // applicationId로 null 체크 — 실제 Firestore 조회 키와 동일하게 맞춤
+    final applicationId = notification.data?['applicationId'] as String?;
+    if (applicationId == null || applicationId.isEmpty) {
       Navigator.push(
         context,
         MaterialPageRoute(builder: (_) => const MyApplicationsScreen()),
@@ -444,7 +445,7 @@ class _NotificationScreenState extends State<NotificationScreen> {
       final currentUser = context.read<UserProvider>().currentUser;
       // USER 컨텍스트 — 보안 규칙 workerId == auth.uid 필터 사용 (businessId 불필요)
       final contract = await ContractService().getByApplication(
-        notification.data?['applicationId'] as String? ?? '',
+        applicationId,
         workerId: currentUser?.uid,
       );
 

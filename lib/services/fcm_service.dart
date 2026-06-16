@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import '../screens/business_admin/workforce_management/integrated_workforce_screen.dart';
 import '../screens/common/notification_screen.dart';
 import '../screens/contract/contract_sign_screen.dart';
 import '../screens/user/my_schedule_screen.dart';
@@ -296,6 +297,12 @@ class FCMService {
       case 'contractSign':
         _navigateToContractSign(data); // fire-and-forget: 내부에서 await 처리
         break;
+      // 근무자 서명 완료 알림 — 관리자 전용, 인력 관리 화면으로 직접 이동
+      case 'contractSigned':
+        _navigatorKey!.currentState!.push(
+          MaterialPageRoute(builder: (_) => const IntegratedWorkforceScreen()),
+        );
+        break;
       case 'userContracts': // contractVoided 알림 딥링크 (H-34)
         _navigatorKey!.currentState!.push(
           MaterialPageRoute(builder: (_) => const UserContractsScreen()),
@@ -426,6 +433,7 @@ class FCMService {
       _currentUserId = null;
       _isInitialized = false;
       _isInitializing = false;
+      _notificationScreenVisible = false; // 로그아웃 시 리셋 — 재로그인 후 알림 화면 진입 가능하도록
     }
   }
 }

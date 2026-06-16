@@ -238,7 +238,10 @@ class ContractService {
         await _storage.ref()
             .child('contracts/${contract.id}/signature_worker.png')
             .delete();
-      } catch (_) {}
+      } catch (cleanupErr) {
+        // [K-005] 서명 이미지 삭제 실패 — 고아 파일 가능성, 수동 확인 필요
+        debugPrint('⚠️ [K-005] 근무자 서명 이미지 삭제 실패 (고아 파일 주의) — ${contract.id}: $cleanupErr');
+      }
       rethrow;
     }
 
@@ -310,7 +313,12 @@ class ContractService {
         'contracts/${contract.id}/signature_worker.png',
         'contracts/${contract.id}/contract.pdf',
       ]) {
-        try { await _storage.ref().child(path).delete(); } catch (_) {}
+        try {
+          await _storage.ref().child(path).delete();
+        } catch (cleanupErr) {
+          // [K-006] Firestore 실패 후 Storage 롤백 실패 — 고아 파일 가능성, 수동 확인 필요
+          debugPrint('⚠️ [K-006] 근무자 서명/PDF 삭제 실패 (고아 파일 주의) — $path: $cleanupErr');
+        }
       }
       rethrow;
     }
@@ -332,9 +340,11 @@ class ContractService {
             applicationId: contract.applicationId,
           ),
         );
+      } else {
+        debugPrint('⚠️ contractSigned: ownerId 없음 — businessId: ${contract.businessId}');
       }
     } catch (e) {
-      debugPrint('계약 서명 완료 알림 발송 실패: $e');
+      debugPrint('⚠️ contractSigned 알림 발송 실패 (비치명적): $e');
     }
 
     return updated;
