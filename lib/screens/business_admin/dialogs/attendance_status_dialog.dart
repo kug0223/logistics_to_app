@@ -4111,6 +4111,7 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
           'updatedAt': now,
         },
       );
+      // [SEC-02] totalWorkDays 클라이언트 write — wage_confirm_dialog 동일 이슈
       batch.update(
         FirebaseFirestore.instance.collection('users').doc(app.uid),
         {'totalWorkDays': FieldValue.increment(-1)},

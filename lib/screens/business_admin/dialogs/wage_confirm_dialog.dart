@@ -1205,8 +1205,11 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
               if (confirmedWageDetail != null) 'wageDetail': confirmedWageDetail.toMap(),
               if (paymentDueDate != null) 'paymentDueDate': Timestamp.fromDate(paymentDueDate),
             });
-            // totalWorkDays: FieldValue.increment는 원자적이나, alreadyClosed 경로에서는
-            // 업데이트하지 않아야 하므로 트랜잭션 내부에서 조건부 처리
+            // [SEC-02] totalWorkDays를 관리자 클라이언트에서 직접 write.
+            // 이상적으로는 Cloud Functions에서 wageStatus 변경 이벤트로 자동 갱신하는 것이 안전.
+            // 현재는 관리자 권한 보안 규칙으로 완화. 규모 확장 시 Cloud Functions 이관 권장.
+            // FieldValue.increment는 원자적이나, alreadyClosed 경로에서는 업데이트하지 않아야
+            // 하므로 트랜잭션 내부에서 조건부 처리
             tx.update(userRef, {'totalWorkDays': FieldValue.increment(1)});
           });
 
@@ -1327,7 +1330,7 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
             'paymentDueDate': FieldValue.delete(),
           },
         );
-        // _closeWages에서 increment(1)했으므로 취소 시 되돌림
+        // _closeWages에서 increment(1)했으므로 취소 시 되돌림 [SEC-02 동일 이슈]
         batch.update(
           FirebaseFirestore.instance.collection('users').doc(app.uid),
           {'totalWorkDays': FieldValue.increment(-1)},

@@ -6,7 +6,7 @@ import '../models/settings/trust_settings_model.dart';
 import '../utils/trust_score_helper.dart';
 
 /// 신뢰도 점수 서비스
-/// 
+///
 /// 정책:
 /// - 시작 점수: 50점
 /// - 상한선: 100점
@@ -16,6 +16,13 @@ import '../utils/trust_score_helper.dart';
 /// - 지각: -1점
 /// - 노쇼: -3~10점 (누적)
 /// - 낮은 평가 (2.0↓): -2점
+///
+/// ⚠️ [SEC-01] 아키텍처 이슈:
+/// trustScore 필드를 클라이언트(관리자 세션)에서 직접 Firestore에 write한다.
+/// 악의적인 관리자가 규칙을 우회하거나, 보안 규칙 미비 시 근무자가 자신의 점수를 조작할 수 있다.
+/// 이상적인 구조: Cloud Functions에서 이벤트 기반으로 자동 갱신.
+/// 현재 규모에서는 Firestore 보안 규칙으로 auth.uid == userId 이외의 write를
+/// 관리자 권한으로만 허용하여 완화. 규모 확장 시 Cloud Functions 이관 권장.
 class TrustScoreService {
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
   
