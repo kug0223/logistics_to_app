@@ -1311,6 +1311,10 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
 
     int successCount = 0;
     int failCount = 0;
+    // [W-4] batch가 청크 단위(498 ops)로 커밋되므로 중간 실패 시 커밋된 appId만 추적
+    // TrustScore 롤백과 알림은 실제 batch에 포함된 항목에만 적용해야 데이터 불일치 방지
+    final List<String> pendingBatchIds = [];
+    final List<String> committedAppIds = [];
     try {
       var batch = FirebaseFirestore.instance.batch();
       int batchCount = 0;
@@ -1341,10 +1345,13 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
           FirebaseFirestore.instance.collection('users').doc(app.uid),
           {'totalWorkDays': FieldValue.increment(-1)},
         );
+        pendingBatchIds.add(appId); // [W-4] 이 청크에 포함된 appId 추적
         batchCount += 2;
 
         if (batchCount >= 498) {
           await batch.commit();
+          committedAppIds.addAll(pendingBatchIds); // [W-4] 커밋 성공 시에만 확정
+          pendingBatchIds.clear();
           successCount += batchCount ~/ 2;
           batch = FirebaseFirestore.instance.batch();
           batchCount = 0;
@@ -1352,11 +1359,13 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
       }
       if (batchCount > 0) {
         await batch.commit();
+        committedAppIds.addAll(pendingBatchIds); // [W-4] 마지막 청크 커밋 성공
         successCount += batchCount ~/ 2;
       }
 
-      // 신뢰도 롤백 — 마감 취소 = 근무완료 점수 롤백
-      for (final appId in targetIds) {
+      // [W-4] TrustScore 롤백 — batch 커밋이 확인된 항목에만 적용
+      // targetIds 전체에 적용하면 중간 batch 실패 시 커밋 안 된 항목도 롤백되는 불일치 발생
+      for (final appId in committedAppIds) {
         final app = _transferredWorkers.where((a) => a.id == appId).firstOrNull;
         if (app == null) continue;
         try {
@@ -1366,8 +1375,8 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
         }
       }
 
-      // 마감 취소 알림 발송 (batch 성공 후)
-      for (final appId in targetIds) {
+      // 마감 취소 알림 발송 — 커밋 성공 항목에만 발송
+      for (final appId in committedAppIds) {
         final attendance = widget.attendanceMap[appId];
         if (attendance == null) continue;
         final app = _transferredWorkers.where((a) => a.id == appId).firstOrNull;
