@@ -53,9 +53,9 @@ class AttendanceBadgeHelper {
     final checkInMins = AttendanceStatusHelper.timeToMinutes(checkIn);
     final isNextDay = effStartMins >= 20 * 60 && checkInMins < 6 * 60;
     final isLate = AttendanceStatusHelper.isLate(checkIn, effStart, isNextDay: isNextDay);
-    // 야간 시프트 조출: adjusted actual(+1440)이 scheduled보다 30분+ 이른지
+    // isNextDay=true(자정 이후 체크인)이면 effStart보다 반드시 늦으므로 조출 불가
     final isEarlyArrival = isNextDay
-        ? (effStartMins - (checkInMins + 1440) >= 30)
+        ? false
         : AttendanceStatusHelper.isEarlyArrival(checkIn, effStart);
 
     // 조퇴·연장·심야: checkOut 없으면 판단 불가

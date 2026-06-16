@@ -317,7 +317,7 @@ class _PayrollWorkerDetailScreenState extends State<PayrollWorkerDetailScreen> {
     final wage = record.wageDetail;
     final workDate = record.workDate;
     final dateStr = '${workDate.month}/${workDate.day} (${_weekday(workDate.weekday)})';
-    final netWage = wage?.netWage ?? 0;
+    final netWage = wage?.effectiveNetWage ?? 0;
 
     return GestureDetector(
       onTap: () => _openWageDetail(context, record),

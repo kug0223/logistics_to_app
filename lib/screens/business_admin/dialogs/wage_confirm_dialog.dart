@@ -679,7 +679,7 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
       return total;
     } catch (e) {
       debugPrint('⚠️ 이전 세전 총액 조회 실패: $e');
-      return 0;
+      rethrow; // 0으로 폴백하면 소급 계산이 오계산됨 — 상위에서 급여 계산 실패로 처리
     }
   }
 
@@ -818,7 +818,11 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
       return;
     }
 
-    final mode = isCalculated ? WageDialogMode.calculated : WageDialogMode.pending;
+    // wageTransferred는 송금 완료 → 편집 불가(confirmed 모드)
+    final isTransferred = attendance.wageStatus == AttendanceModel.wageTransferred;
+    final mode = isTransferred
+        ? WageDialogMode.confirmed
+        : (isCalculated ? WageDialogMode.calculated : WageDialogMode.pending);
 
     final detail = WorkDetailHelper.resolve(app, widget.workDetailTimeMap);
     final shiftType = WorkDetailHelper.shiftType(detail);
@@ -881,10 +885,46 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
         }
       }
 
+      // payScheduleType 조회 (_confirmWages와 동일한 경로)
+      final detail = WorkDetailHelper.resolve(app, widget.workDetailTimeMap);
+      String? payScheduleType = detail?['payScheduleType'] as String?;
+      int?    payScheduleDay  = (detail?['payScheduleDay'] as num?)?.toInt();
+
+      if (payScheduleType == null && app.toId != null) {
+        try {
+          List<dynamic> rawWd = [];
+          if (app.slotId != null && app.slotId!.isNotEmpty) {
+            final slotDoc = await FirebaseFirestore.instance
+                .collection('tos').doc(app.toId)
+                .collection('slots').doc(app.slotId).get();
+            rawWd = slotDoc.data()?['workDetails'] as List<dynamic>? ?? [];
+          }
+          if (rawWd.isEmpty) {
+            final toDoc = await FirebaseFirestore.instance
+                .collection('tos').doc(app.toId).get();
+            rawWd = toDoc.data()?['workDetails'] as List<dynamic>? ?? [];
+          }
+          for (var wd in rawWd) {
+            final wdMap = Map<String, dynamic>.from(wd as Map);
+            final wdType = wdMap['workType'] as String? ?? '';
+            if (wdType == app.selectedWorkType ||
+                '${wdType}_${wdMap['startTime'] ?? ''}_${wdMap['endTime'] ?? ''}' == app.workDetailId) {
+              payScheduleType = wdMap['payScheduleType'] as String?;
+              payScheduleDay  = (wdMap['payScheduleDay'] as num?)?.toInt();
+              break;
+            }
+          }
+        } catch (e) {
+          debugPrint('⚠️ payScheduleType 조회 실패: $e');
+        }
+      }
+
       final yearMonth = _toYearMonth(attendance.workDate);
       final calculatedWage = finalWage.copyWith(
         calculatedBy: adminUid,
         calculatedAt: DateTime.now(),
+        payScheduleType: payScheduleType ?? finalWage.payScheduleType,
+        payScheduleDay:  payScheduleDay  ?? finalWage.payScheduleDay,
       );
 
       final attRef = FirebaseFirestore.instance
@@ -1252,6 +1292,13 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
       _calculatedWorkers.addAll(moved);
       _transferredSelectedIds.removeAll(processed);
       _isProcessing = false;
+      // attendanceMap 로컬 상태 갱신 — 마감 취소 후 재마감 시 wageCalculated로 인식하도록
+      for (final id in processed) {
+        final att = widget.attendanceMap[id];
+        if (att != null) {
+          widget.attendanceMap[id] = att.copyWith(wageStatus: AttendanceModel.wageCalculated);
+        }
+      }
     });
 
     if (failCount == 0) {

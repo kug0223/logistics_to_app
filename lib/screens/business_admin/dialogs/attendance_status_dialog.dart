@@ -122,8 +122,9 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
       else if (attendance.wageStatus == AttendanceModel.wageCalculated) {
         count++;
       }
-      // 최종확정 (confirmed) - 이미 마감됨
-      else if (attendance.wageStatus == AttendanceModel.wageConfirmed) {
+      // 최종확정 (confirmed) / 송금완료 (transferred) - 이미 마감됨
+      else if (attendance.wageStatus == AttendanceModel.wageConfirmed ||
+          attendance.wageStatus == AttendanceModel.wageTransferred) {
         count++;
       }
     }
@@ -197,6 +198,8 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
       _isLoading = true;
       _selectedIds.clear();
       _selectAll = false;
+      _nameFilter = '';
+      _searchController.clear();
     });
 
     try {
@@ -2671,13 +2674,20 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
   // 선택 관련 메서드
   // ═══════════════════════════════════════════════════════════
 
-  /// 전체 선택/해제 — 현재 탭 인원만 대상
+  /// 전체 선택/해제 — 검색 필터가 활성화된 경우 화면에 보이는 인원만 대상
   void _toggleSelectAll(bool value) {
     setState(() {
       _selectAll = value;
       if (value) {
         _selectedIds.clear();
-        for (var app in _workersByTab(_currentTabIndex)) {
+        final tabWorkers = _workersByTab(_currentTabIndex);
+        final visibleWorkers = _nameFilter.isEmpty
+            ? tabWorkers
+            : tabWorkers.where((app) {
+                final name = _userMap[app.uid]?.name ?? '';
+                return name.contains(_nameFilter);
+              }).toList();
+        for (var app in visibleWorkers) {
           final status = _getAttendanceStatus(app);
           if (status['status'] != 'noshow') {
             _selectedIds.add(app.id);
@@ -2715,6 +2725,8 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
     try {
       await batch.commit();
       for (final app in targets) {
+        if (_attendanceMap[app.id] == null) continue; // batch에서 스킵된 경우 신뢰도도 스킵
+        if (!mounted) return;
         await TrustScoreService().onNoShow(app.uid, app.businessId);
       }
       if (!mounted) return;
@@ -2757,6 +2769,8 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
     try {
       await batch.commit();
       for (final app in targets) {
+        if (_attendanceMap[app.id] == null) continue; // batch에서 스킵된 경우 신뢰도도 스킵
+        if (!mounted) return;
         await TrustScoreService().onNoShowCanceled(app.uid, app.businessId);
       }
       if (!mounted) return;
@@ -3937,6 +3951,7 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
 
     int successCount = 0;
     for (final app in targets) {
+      if (!mounted) break;
       final attendance = _attendanceMap[app.id];
       if (attendance == null) continue;
       try {
