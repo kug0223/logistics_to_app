@@ -12,6 +12,10 @@ import '../models/core/application_model.dart';
 import '../models/core/insurance_rate_model.dart';
 
 class WorkDetailHelper {
+  /// 'HH:mm:ss' → 'HH:mm' 정규화 (레거시 Firestore 데이터 대응)
+  static String _normalizeTime(String t) =>
+      t.length >= 5 ? t.substring(0, 5) : t;
+
   /// workDetailTimeMap 에서 해당 지원자의 캐시를 조회
   ///
   /// 우선순위:
@@ -24,7 +28,8 @@ class WorkDetailHelper {
   ) {
     // 1. startTime/endTime 복합키 우선 (동일 workType 다중 시간대 오반환 방지)
     if (app.startTime.isNotEmpty) {
-      final compositeKey = '${app.selectedWorkType}_${app.startTime}_${app.endTime}';
+      final compositeKey =
+          '${app.selectedWorkType}_${_normalizeTime(app.startTime)}_${_normalizeTime(app.endTime)}';
       final byComposite = timeMap[compositeKey];
       if (byComposite is Map<String, dynamic>) return byComposite;
     }

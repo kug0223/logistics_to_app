@@ -170,20 +170,10 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
   // 데이터 로드
   // ═══════════════════════════════════════════════════════════
 
-  /// 사업장명 조회
+  /// 사업장명 조회 (30개 초과 청크 처리)
   Future<void> _loadBusinessNames() async {
     try {
-      final snapshot = await FirebaseFirestore.instance
-          .collection('businesses')
-          .where(FieldPath.documentId, whereIn: widget.businessIds)
-          .get();
-
-      final Map<String, String> nameMap = {};
-      for (var doc in snapshot.docs) {
-        final data = doc.data();
-        nameMap[doc.id] = data['name'] ?? 'Unknown';
-      }
-
+      final nameMap = await _firestoreService.getBusinessNames(widget.businessIds);
       if (!mounted) return;
       setState(() {
         _businessNameMap = nameMap;
@@ -2476,12 +2466,9 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
         attendanceMap: _attendanceMap,
         userMap: _userMap,
         workDetailTimeMap: _workDetailTimeMap,
-        onConfirmed: () {
-          _loadData();
-        },
-        onClose: () {
-          _loadData();
-        },
+        // onConfirmed/onClose에서 _loadData() 미호출
+        // — 다이얼로그 열려 있는 동안은 부모 화면이 보이지 않으므로 갱신 불필요
+        // — 다이얼로그 닫힌 후 hasChanges 반환값으로 아래에서 1회만 호출
       ),
     );
 
@@ -2598,8 +2585,11 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
       for (var wd in raw) {
         final data = Map<String, dynamic>.from(wd as Map);
         final workType = data['workType'] as String? ?? '';
-        final startTime = data['startTime'] as String? ?? '';
-        final endTime = data['endTime'] as String? ?? '';
+        // 'HH:mm:ss' → 'HH:mm' 정규화 (레거시 데이터 대응)
+        final rawStart = data['startTime'] as String? ?? '';
+        final rawEnd = data['endTime'] as String? ?? '';
+        final startTime = rawStart.length >= 5 ? rawStart.substring(0, 5) : rawStart;
+        final endTime = rawEnd.length >= 5 ? rawEnd.substring(0, 5) : rawEnd;
         if (workType.isEmpty) continue;
         final compositeKey = '${workType}_${startTime}_$endTime';
         final entry = {
