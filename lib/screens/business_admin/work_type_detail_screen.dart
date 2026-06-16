@@ -464,6 +464,7 @@ class _WorkTypeDetailScreenState extends State<WorkTypeDetailScreen> {
                 ),
               ),
               maxLines: 4,
+              maxLength: 500,
             ),
           ] else if (_currentWorkType.description?.isNotEmpty == true) ...[
             Container(
@@ -701,6 +702,7 @@ class _WorkTypeDetailScreenState extends State<WorkTypeDetailScreen> {
               ),
             ),
             maxLines: 3,
+            maxLength: 500,
           ),
         ],
       );
@@ -767,6 +769,7 @@ class _WorkTypeDetailScreenState extends State<WorkTypeDetailScreen> {
                 ),
               ),
               maxLines: 3,
+              maxLength: 300,
             ),
           )
         else

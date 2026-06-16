@@ -295,12 +295,13 @@ class FCMService {
           MaterialPageRoute(builder: (_) => const UserContractsScreen()),
         );
         break;
-      case 'contractRenewal':
-      case 'mySchedule':
+      case 'mySchedule': // contractRenewed·contractTerminating — 근무자 전용 알림
         _navigatorKey!.currentState!.push(
           MaterialPageRoute(builder: (_) => const MyScheduleScreen()),
         );
         break;
+      // 'contractRenewal'(contractExpiringReminder)은 관리자 전용이나 FCM에서 isUser 구분 불가.
+      // 알림 화면으로 이동 → 사용자가 알림을 탭하면 notification_screen에서 올바른 화면으로 분기한다.
       default:
         _navigateToNotificationScreen();
     }

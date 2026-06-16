@@ -37,6 +37,7 @@ class TODescriptionSection extends StatelessWidget {
           TextFormField(
             controller: controller,
             maxLines: maxLines,
+            maxLength: 500,
             style: ResponsiveHelper.bodyStyle(context),
             decoration: InputDecoration(
               hintText: hintText ?? '추가 안내사항을 입력하세요',

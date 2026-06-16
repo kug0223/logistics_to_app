@@ -121,6 +121,10 @@ class _AddWorkTypeSheetState extends State<AddWorkTypeSheet> {
   void _submit() {
     final name = _nameCtrl.text.trim();
     if (name.isEmpty) return;
+    if (name.length > 50) {
+      // maxLength 초과는 UI에서 이미 차단되지만 방어적으로 추가
+      return;
+    }
 
     final iconStr = _selectedIcon != null
         ? 'material:${_selectedIcon!.icon.codePoint}'
@@ -245,6 +249,7 @@ class _AddWorkTypeSheetState extends State<AddWorkTypeSheet> {
               controller: _nameCtrl,
               autofocus: !_isEdit,
               textAlign: TextAlign.center,
+              maxLength: 50,
               style: ResponsiveHelper.bodyStyle(context, color: Colors.white)
                   .copyWith(fontWeight: FontWeight.w600),
               decoration: InputDecoration(
@@ -254,6 +259,7 @@ class _AddWorkTypeSheetState extends State<AddWorkTypeSheet> {
                 border: InputBorder.none,
                 enabledBorder: InputBorder.none,
                 focusedBorder: InputBorder.none,
+                counterText: '', // 글자수 카운터 숨김 (디자인 유지)
                 isDense: true,
                 contentPadding: EdgeInsets.zero,
               ),
