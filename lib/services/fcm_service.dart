@@ -5,8 +5,10 @@ import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import '../screens/common/notification_screen.dart';
+import '../screens/contract/contract_sign_screen.dart';
 import '../screens/user/my_schedule_screen.dart';
 import '../screens/user/user_contracts_screen.dart';
+import 'contract_service.dart';
 
 /// FCM 푸시 알림 서비스
 class FCMService {
@@ -289,11 +291,10 @@ class FCMService {
     if (_navigatorKey?.currentState == null) return;
     final screen = data['screen'] as String?;
     switch (screen) {
-      // [특이사항] contractSign(계약서 서명 요청) 백그라운드 탭 → UserContractsScreen으로 이동.
-      // notification_screen에서 같은 알림 탭 시 → ContractSignScreen(직접 서명) 경로와 불일치.
-      // 의도: 백그라운드 탭은 스택 보존을 위해 계약서 목록을 경유; 알림목록 탭은 직접 이동.
-      // UX 개선 시 'contractSign'을 별도 case로 분리해 ContractSignScreen으로 직접 연결 가능.
+      // 계약서 서명 요청 — contractId로 계약서 직접 로드 후 서명 화면 이동 (B안: 최단 경로)
       case 'contractSign':
+        _navigateToContractSign(data); // fire-and-forget: 내부에서 await 처리
+        break;
       case 'userContracts': // contractVoided 알림 딥링크 (H-34)
         _navigatorKey!.currentState!.push(
           MaterialPageRoute(builder: (_) => const UserContractsScreen()),
@@ -308,6 +309,41 @@ class FCMService {
       // 알림 화면으로 이동 → 사용자가 알림을 탭하면 notification_screen에서 올바른 화면으로 분기한다.
       default:
         _navigateToNotificationScreen();
+    }
+  }
+
+  /// 계약서 서명 화면 직접 이동 — contractId로 Firestore 조회 후 ContractSignScreen 푸시.
+  /// 조회 실패 시 UserContractsScreen으로 폴백해 사용자가 목록에서 재진입 가능.
+  Future<void> _navigateToContractSign(Map<String, dynamic> data) async {
+    final applicationId = data['applicationId'] as String?;
+    if (applicationId == null || applicationId.isEmpty || _currentUserId == null) {
+      _navigatorKey?.currentState?.push(
+        MaterialPageRoute(builder: (_) => const UserContractsScreen()),
+      );
+      return;
+    }
+    try {
+      final contract = await ContractService().getByApplication(
+        applicationId,
+        workerId: _currentUserId,
+      );
+      if (_navigatorKey?.currentState == null) return;
+      if (contract == null) {
+        _navigatorKey!.currentState!.push(
+          MaterialPageRoute(builder: (_) => const UserContractsScreen()),
+        );
+        return;
+      }
+      _navigatorKey!.currentState!.push(
+        MaterialPageRoute(
+          builder: (_) => ContractSignScreen(contract: contract, role: 'worker'),
+        ),
+      );
+    } catch (e) {
+      debugPrint('❌ FCM contractSign 계약서 로드 실패: $e');
+      _navigatorKey?.currentState?.push(
+        MaterialPageRoute(builder: (_) => const UserContractsScreen()),
+      );
     }
   }
   
