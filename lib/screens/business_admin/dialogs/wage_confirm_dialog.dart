@@ -284,7 +284,9 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
     final baseWage = app.wage;
     
     // ✅ wageType, breakMinutes, nightAllowanceApplied, nightIncluded는 workDetailTimeMap에서 먼저 확인
-    String wageType = 'hourly';
+    // [W-5] 초기값: app.wageType 우선 — TO 없이 직접 채용된 경우에도 application에 저장된 wageType 사용
+    // 'hourly' 하드코딩 폴백이면 daily 근무자 급여 계산 오류 발생
+    String wageType = app.wageType ?? 'hourly';
     int breakMinutes = 0;
     bool nightAllowanceApplied = true;
     bool nightIncluded = false;
@@ -359,7 +361,7 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
       }
     } else {
       // toId=null인 지원서(TO 없이 직접 채용된 경우)는 WorkDetail 조회를 건너뛰고,
-      // wageType='hourly', breakMinutes=0 기본값으로 계산된다. 이는 의도된 폴백 동작이다.
+      // wageType은 app.wageType 초기값(위에서 설정), breakMinutes=0 기본값으로 계산된다.
       debugPrint('⚠️ WorkDetail 조회 불가: toId=${app.toId}, workDetailId=${app.workDetailId}');
     }
 
