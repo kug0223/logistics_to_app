@@ -26,6 +26,7 @@ enum NotificationType {
   
   // 계약 관련
   contractSignRequested,    // 계약서 서명 요청됨 (근무자에게)
+  contractSigned,           // 근무자 서명 완료됨 (관리자에게)
   contractVoided,           // 계약서 무효화됨 (근무자에게) — H-34
   contractExpiringReminder, // 계약 만료 D-15 알림 (관리자에게)
   contractRenewed,          // 계약 연장 확정됨 (근무자에게)
@@ -175,6 +176,8 @@ class NotificationModel {
       // 계약 관련
       case NotificationType.contractSignRequested:
         return 'draw';
+      case NotificationType.contractSigned:
+        return 'task_alt';
       case NotificationType.contractVoided:
         return 'block';
       case NotificationType.contractExpiringReminder:
@@ -265,6 +268,7 @@ class NotificationModel {
       case 'scheduleChangeRejected': return NotificationType.scheduleChangeRejected;
       // 계약 관련
       case 'contractSignRequested': return NotificationType.contractSignRequested;
+      case 'contractSigned': return NotificationType.contractSigned;
       case 'contractVoided': return NotificationType.contractVoided;
       case 'contractExpiringReminder': return NotificationType.contractExpiringReminder;
       case 'contractRenewed': return NotificationType.contractRenewed;
@@ -313,6 +317,7 @@ class NotificationModel {
       case NotificationType.scheduleChangeRejected: return 'scheduleChangeRejected';
       // 계약 관련
       case NotificationType.contractSignRequested: return 'contractSignRequested';
+      case NotificationType.contractSigned: return 'contractSigned';
       case NotificationType.contractVoided: return 'contractVoided';
       case NotificationType.contractExpiringReminder: return 'contractExpiringReminder';
       case NotificationType.contractRenewed: return 'contractRenewed';
@@ -717,6 +722,31 @@ class NotificationModel {
         'applicationId': applicationId,
         'businessId': businessId,
         'screen': 'contractSign',
+      },
+      createdAt: DateTime.now(),
+    );
+  }
+
+  /// 계약서 서명 완료 알림 생성 (관리자에게)
+  /// 근무자가 서명을 완료하면 사업장 오너에게 발송.
+  static NotificationModel createContractSigned({
+    required String userId,
+    required String workerName,
+    required String businessId,
+    required String contractId,
+    required String applicationId,
+  }) {
+    return NotificationModel(
+      id: '',
+      userId: userId,
+      type: NotificationType.contractSigned,
+      title: '계약서 서명 완료',
+      body: '$workerName님이 근로계약서 서명을 완료했습니다.',
+      data: {
+        'contractId': contractId,
+        'applicationId': applicationId,
+        'businessId': businessId,
+        'screen': 'contractSigned',
       },
       createdAt: DateTime.now(),
     );

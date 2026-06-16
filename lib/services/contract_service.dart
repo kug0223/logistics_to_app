@@ -315,27 +315,26 @@ class ContractService {
       rethrow;
     }
 
-    // 근무자에게 계약 완료 알림
-    // [특이사항] applicationConfirmed 알림이 두 번 발송된다:
-    //   1차) application_firestore.dart — CONTRACT_PENDING 진입 시(관리자 승인)
-    //   2차) 여기(contract_service) — 근무자 서명 완료 시
-    // 근무자 입장에서는 동일 내용의 '지원 확정' 알림이 중복으로 보일 수 있다.
-    // 2차 발송 타입을 contractSigned 등 별도 타입으로 분리하면 UX가 개선된다(현재 미구현).
+    // [알림 흐름]
+    // 1차) 근무자 지원 → 관리자에게 newApplication 알림 (application_firestore.dart)
+    // 2차) 관리자 확정 + 계약서 발송 → 근무자에게 contractSignRequested 알림 (saveEmployerSignature)
+    // 3차) 근무자 서명 완료 → 관리자(오너)에게 contractSigned 알림 (여기)
     try {
-      await _firestoreService.createNotification(
-        NotificationModel.createApplicationConfirmed(
-          userId: contract.workerId,
-          businessName: contract.snapshot.businessName,
-          businessId: contract.businessId,
-          workType: contract.snapshot.workType,
-          workDate: contract.snapshot.contractStart != null
-              ? DateTime.parse(contract.snapshot.contractStart!)
-              : DateTime.now(),
-          applicationId: contract.applicationId,
-        ),
-      );
+      final bizSnap = await _db.collection('businesses').doc(contract.businessId).get();
+      final ownerId = bizSnap.data()?['ownerId'] as String?;
+      if (ownerId != null) {
+        await _firestoreService.createNotification(
+          NotificationModel.createContractSigned(
+            userId: ownerId,
+            workerName: contract.snapshot.workerName,
+            businessId: contract.businessId,
+            contractId: contract.id,
+            applicationId: contract.applicationId,
+          ),
+        );
+      }
     } catch (e) {
-      debugPrint('계약 완료 알림 발송 실패: $e');
+      debugPrint('계약 서명 완료 알림 발송 실패: $e');
     }
 
     return updated;

@@ -260,6 +260,14 @@ class _NotificationScreenState extends State<NotificationScreen> {
         await _openContractSignFromNotification(context, notification);
         break;
 
+      // 근무자 서명 완료 — 관리자에게 발송, 지원자 관리 화면으로 이동
+      case NotificationType.contractSigned:
+        Navigator.push(
+          context,
+          MaterialPageRoute(builder: (_) => const IntegratedWorkforceScreen()),
+        );
+        break;
+
       // 계약서 무효화 알림 — 근무자의 계약서 목록 화면으로 이동 (H-34)
       case NotificationType.contractVoided:
         Navigator.push(
