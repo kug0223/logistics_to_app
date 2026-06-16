@@ -321,9 +321,10 @@ class AdminStatsService {
     final prevNoShowRate = prevYearAtt.isEmpty ? 0.0 : prevNoShowCount / prevYearAtt.length * 100;
 
     // 업무별 인건비 (workType별 finalWage 합산, 상위 5개)
+    // isPaid(confirmed + transferred)만 집계 — totalWage와 동일 기준 적용
     final wageTypeMap = <String, int>{};
     for (final r in thisYearAtt) {
-      if (r.workType.isNotEmpty) {
+      if (r.workType.isNotEmpty && isPaid(r)) {
         wageTypeMap[r.workType] = (wageTypeMap[r.workType] ?? 0) + (r.finalWage ?? 0);
       }
     }
