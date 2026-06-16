@@ -391,9 +391,12 @@ class _NotificationScreenState extends State<NotificationScreen> {
         break;
 
       // ═══════════════════════════════════════════════════════════
-      // 급여 관련 알림 — MyScheduleScreen으로 이동
-      // (MyApplicationsScreen은 지원 내역 목록이며 급여 확인과 무관)
-      // 급여 알림은 근무자(isUser)에게만 발송되므로 isUser 분기 불필요 — 의도된 설계.
+      // 급여 관련 알림 — MyScheduleScreen으로 이동 [의도된 설계]
+      //
+      // · MyScheduleScreen 내 "급여" 탭에서 해당 근무 내역과 확정 금액을 확인할 수 있음
+      // · 별도 급여 전용 화면 없이 MyScheduleScreen이 급여 확인 진입점 역할을 함
+      // · 급여 관련 알림(wageConfirmed·wageCancelConfirmed·retroactiveDeductionAlert)은
+      //   모두 근무자(isUser)에게만 발송되므로 isUser 분기 없이 단일 경로로 처리
       // ═══════════════════════════════════════════════════════════
       case NotificationType.wageConfirmed:
       case NotificationType.wageCancelConfirmed:
