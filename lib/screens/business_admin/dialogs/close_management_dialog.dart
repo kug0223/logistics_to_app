@@ -156,16 +156,23 @@ class _CloseManagementDialogState extends State<CloseManagementDialog>
         debugPrint('    장기 app: id=${app.id}, workDate=${app.workDate}, workDays=${app.workDays}');
 
         final endDate = app.actualResignDate ?? app.workEndDate;
-        // 종료일 없는 장기 지원서는 영구 활성으로 잘못 집계되는 것 방지
-        if (endDate == null) continue;
+        // [E01 Bug 수정] 종료일 없는 오픈엔드 장기 근로자도 포함해야 한다.
+        // attendance_status_dialog.dart의 _getConfirmedWorkersForDate()와 동일한 로직:
+        //   - 퇴사 승인 완료(isTerminationApproved) 근무자만 제외
+        //   - 그 외는 시작일 이후 날짜 전체를 활성으로 간주
+        // 두 화면 사이 불일치가 있으면 당일명단에는 표시되지만 마감관리에서 누락되는 버그 발생.
+        if (endDate == null && app.isTerminationApproved) continue;
         final effectiveStartDate = app.desiredStartDate ?? app.workDate;
         final startDateOnly = DateTime(effectiveStartDate.year, effectiveStartDate.month, effectiveStartDate.day);
 
         for (int d = 1; d <= daysInMonth; d++) {
           final date = DateTime(_currentMonth.year, _currentMonth.month, d);
           if (date.isBefore(startDateOnly)) continue;
-          final endDateOnly = DateTime(endDate.year, endDate.month, endDate.day);
-          if (date.isAfter(endDateOnly)) continue;
+          // 종료일이 있는 경우에만 종료일 이후 날짜 skip
+          if (endDate != null) {
+            final endDateOnly = DateTime(endDate.year, endDate.month, endDate.day);
+            if (date.isAfter(endDateOnly)) continue;
+          }
           // 휴무일 체크
           if (app.leaveDates != null && app.leaveDates!.any((ld) =>
               ld.year == date.year && ld.month == date.month && ld.day == date.day)) {

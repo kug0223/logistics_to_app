@@ -136,7 +136,13 @@ class _WageDetailDialogState extends State<WageDetailDialog> {
         additionalAmount: additional,
         deductionAmount: deduction,
         totalAmount: newTotal,
-        // 보험 공제액은 기본급 기준으로 이미 확정됐으므로 그대로 유지
+        // 보험 공제액은 기본급 기준으로 이미 확정됐으므로 그대로 유지.
+        // ✅ 의도된 netWage 직접 할당:
+        //   이 다이얼로그는 isCalculated=true(calculatedAt != null) 상태에서 편집한다.
+        //   effectiveNetWage 게터는 isCalculated=true이면 netWage를 반환하므로,
+        //   추가수당/수동공제 변경 시 UI 미리보기를 즉시 동기화하려면
+        //   copyWith(netWage: ...)로 직접 갱신해야 한다.
+        //   최종 저장(_onAction) 시점에도 이 값이 Firestore에 기록된다.
         netWage: newTotal - _wage.totalInsuranceDeduction,
         memo: _memoController.text.trim().isNotEmpty
             ? _memoController.text.trim()
@@ -292,6 +298,12 @@ class _WageDetailDialogState extends State<WageDetailDialog> {
         ltcInsuranceDeduction: _wage.ltcInsuranceDeduction,
         incomeTaxDeduction: _wage.incomeTaxDeduction,
         retroactiveDeduction: _wage.retroactiveDeduction,
+        // ✅ 의도된 netWage 직접 할당 (_updateWage()와 동일한 이유):
+        //   휴게시간 변경 후 재계산된 recalculated는 isCalculated=false (calculatedAt=null)
+        //   이므로 효과적으로는 totalAmount - totalInsuranceDeduction을 반환하겠지만,
+        //   calculatedAt을 아래에서 유지하므로 effectiveNetWage가 netWage를 참조한다.
+        //   따라서 recalculated.copyWith(calculatedAt: ...) 후 netWage를 명시적으로
+        //   갱신해야 UI 미리보기가 정확하다.
         netWage: recalculated.totalAmount - currentDeduction -
             _wage.totalInsuranceDeduction,
         // 계산 타임스탬프 유지

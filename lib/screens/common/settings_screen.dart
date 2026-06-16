@@ -1309,6 +1309,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
           onTap: () async {
             final themeProvider = context.read<ThemeProvider>();
             final confirmed = await DialogHelper.showLogoutConfirm(context);
+            // async gap 이후 mounted 체크 (CLAUDE.md 비동기 안전성 규칙)
+            if (!mounted) return;
             if (confirmed) {
               themeProvider.reset();
               await userProvider.signOut();
@@ -1434,6 +1436,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
             } else {
               Navigator.pop(ctx);
               if (context.mounted) context.read<ThemeProvider>().reset();
+              // signOut()은 notifyListeners()로 라우팅 처리 — setState/context 미사용
+              // 따라서 이후 mounted 체크 불필요 (의도된 설계)
               await userProvider.signOut();
             }
           }

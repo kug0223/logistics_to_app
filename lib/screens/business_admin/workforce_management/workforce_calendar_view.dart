@@ -703,6 +703,8 @@ class _WorkforceCalendarViewState extends State<WorkforceCalendarView> {
   }
 
   Future<void> _loadGroupDetailsForDay(DateTime day) async {
+    // async 진입 전 context를 미리 캡처 — Future.wait 완료 후 context 접근 방지
+    if (!mounted) return;
     final controller = context.read<WorkforceController>();
     final dayGroupItems = _getGroupItemsForDay(day);
 
@@ -711,6 +713,7 @@ class _WorkforceCalendarViewState extends State<WorkforceCalendarView> {
           .where((g) => !g.isLongTerm && !g.isGroupDetailLoaded)
           .map((g) => controller.loadGroupDetails(context, g)),
     );
+    // Future.wait 완료 후 위젯이 unmount됐을 수 있으므로 이후 setState·context 사용 시 mounted 체크 필요
   }
 
   Future<void> _showAttendancePopup() async {

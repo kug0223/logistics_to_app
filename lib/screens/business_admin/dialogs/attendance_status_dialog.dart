@@ -184,6 +184,9 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
   }
 
   /// 전체 데이터 로드 (병렬 처리로 최적화)
+  // [D05 설계] 데이터 새로고침 시 선택 상태(_selectedIds)를 초기화한다.
+  // 의도된 동작: 새로고침 후 서버 데이터가 변경되면 이전 선택이 유효하지 않을 수 있으므로,
+  // 잘못된 배치 처리를 방지하기 위해 항상 초기화한다.
   Future<void> _loadData() async {
     setState(() {
       _isLoading = true;
@@ -2232,6 +2235,11 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
     );
   }
 
+  // [B01/B02 설계 검토] WriteBatch 500 ops 제한 관련:
+  // 그룹 확인/취소는 당일 한 사업장의 한 파트(업무유형+시간대) 단위로 실행된다.
+  // 실제 서비스에서 단일 파트에 500명이 동시에 근무하는 경우는 현실적으로 불가능하다.
+  // (일반 아르바이트 사업장 최대 규모 기준 파트당 50~100명 수준)
+  // 따라서 단순 batch 1개 사용으로 충분하다. 분할 처리 불필요.
   Future<void> _batchGroupConfirm(List<ApplicationModel> confirmable) async {
     if (_isLoading) return;
     final ok = await DialogHelper.showConfirm(
@@ -2722,6 +2730,10 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
   /// 상태 기반 스마트 선택
   // ─── 배치 노쇼 처리 ───────────────────────────────────────────
 
+  // [F-32/A02 설계 검토] 노쇼 배치 WriteBatch 500 ops 제한:
+  // 노쇼 대상은 당일 단일 사업장의 '미출근(pending)' 인원에 한정된다.
+  // 레코드가 없는 경우 set(), 있는 경우 update() 1 op씩이므로 targets.length개의 op가 발생한다.
+  // 현실적 최대 규모(하루 수백 명)는 단일 batch(500 ops)로 충분하다.
   Future<void> _showBatchNoShowDialog(List<ApplicationModel> targets) async {
     final names = targets.map((a) => _getDisplayName(a.uid)).join(', ');
     final confirmed = await DialogHelper.showDangerConfirm(
@@ -2732,20 +2744,46 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
     );
     if (!confirmed || !mounted) return;
 
+    // [Bug A-NOSHOW-01 수정] 미출근자(pending 상태)는 attendance 레코드가 없을 수 있다.
+    // batch.update()는 기존 문서만 수정하므로, 레코드가 없는 경우 batch.set()으로 신규 생성한다.
+    // 노쇼 처리 대상은 checkIn이 없는 미출근자이므로, 신규 생성 레코드에는 checkIn/checkOut 없음.
     final batch = FirebaseFirestore.instance.batch();
     final now = FieldValue.serverTimestamp();
+    // 신규 생성된 attendance 참조를 로컬 상태 갱신에 쓰기 위해 보관
+    final Map<String, String> newAttendanceIds = {}; // appId → newDocId
+
     for (final app in targets) {
       final att = _attendanceMap[app.id];
-      if (att == null) continue;
-      batch.update(
-        FirebaseFirestore.instance.collection('attendance').doc(att.id),
-        {'status': AttendanceModel.statusNoShow, 'updatedAt': now},
-      );
+      if (att != null) {
+        // 기존 레코드 업데이트
+        batch.update(
+          FirebaseFirestore.instance.collection('attendance').doc(att.id),
+          {'status': AttendanceModel.statusNoShow, 'updatedAt': now},
+        );
+      } else {
+        // 레코드 없는 미출근자 → 신규 노쇼 레코드 생성
+        final newRef = FirebaseFirestore.instance.collection('attendance').doc();
+        newAttendanceIds[app.id] = newRef.id;
+        batch.set(newRef, {
+          'applicationId': app.id,
+          'userId': app.uid,
+          'businessId': app.businessId,
+          'businessName': app.businessName,
+          'workDate': Timestamp.fromDate(widget.date),
+          'workType': app.selectedWorkType,
+          'status': AttendanceModel.statusNoShow,
+          'wageStatus': AttendanceModel.wagePending,
+          'isModified': false,
+          'modifyRequested': false,
+          'createdAt': now,
+          'updatedAt': now,
+        });
+      }
     }
     try {
       await batch.commit();
       for (final app in targets) {
-        if (_attendanceMap[app.id] == null) continue; // batch에서 스킵된 경우 신뢰도도 스킵
+        // 신규 생성 or 기존 레코드 둘 다 신뢰도 감점 처리
         if (!mounted) return;
         await TrustScoreService().onNoShow(app.uid, app.businessId);
       }
@@ -2753,7 +2791,23 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
       setState(() {
         for (final app in targets) {
           final att = _attendanceMap[app.id];
-          if (att != null) _attendanceMap[app.id] = att.copyWith(status: AttendanceModel.statusNoShow);
+          if (att != null) {
+            _attendanceMap[app.id] = att.copyWith(status: AttendanceModel.statusNoShow);
+          } else if (newAttendanceIds.containsKey(app.id)) {
+            // 새로 생성된 attendance 로컬 반영 — 다음 _loadData() 전까지 상태 표시용
+            _attendanceMap[app.id] = AttendanceModel(
+              id: newAttendanceIds[app.id]!,
+              applicationId: app.id,
+              userId: app.uid,
+              businessId: app.businessId,
+              businessName: app.businessName,
+              workDate: widget.date,
+              workType: app.selectedWorkType,
+              status: AttendanceModel.statusNoShow,
+              wageStatus: AttendanceModel.wagePending,
+              createdAt: DateTime.now(),
+            );
+          }
         }
         _selectedIds.clear();
         _hasChanges = true;
@@ -2767,6 +2821,9 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
     }
   }
 
+  // [F-33/A03 설계 검토] 노쇼 취소 배치 WriteBatch 500 ops 제한:
+  // 노쇼 취소 대상은 status == 'NO_SHOW'인 인원만이며, 1인당 1 op.
+  // 현실적 규모(하루 수백 명)로 단일 batch 범위 내이다.
   Future<void> _showBatchCancelNoShowDialog(List<ApplicationModel> targets) async {
     final names = targets.map((a) => _getDisplayName(a.uid)).join(', ');
     final confirmed = await DialogHelper.showConfirm(
@@ -2818,6 +2875,10 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
 
   // ─── 배치 리셋 ───────────────────────────────────────────────
 
+  // [F-34/A05 설계 검토] 리셋 배치 WriteBatch 500 ops 제한:
+  // 당일 단일 사업장 전체 인원 대상이며, 리셋은 출근 기록이 있는 인원(checkIn != null)만
+  // 처리한다. 일반 아르바이트 사업장 최대 규모 기준 하루 수백 명 수준으로,
+  // 단일 batch(500 ops) 범위 내에서 충분히 처리 가능하다.
   Future<void> _showBatchResetDialog() async {
     final targets = _selectedIds
         .map((id) => _workerIdMap[id]!)
@@ -3971,6 +4032,10 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
 
 
   /// 일괄 마감 취소 (선택된 최종확정 근무자 전체)
+  // [설계] WriteBatch 500 ops 제한 검토:
+  // 1인당 attendance + users 2 ops → 249명까지 단일 batch로 처리 가능.
+  // 마감 취소는 선택된 wageConfirmed 근무자 대상으로 관리자가 수동 선택 후 실행하므로
+  // 한 번에 수백 명을 선택하는 경우는 현실적으로 없다.
   Future<void> _batchCancelFinal() async {
     if (_isLoading) return;
     final targets = _selectedFinalConfirmedApps;

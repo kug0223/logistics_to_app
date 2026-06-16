@@ -125,8 +125,18 @@ class MemberService {
   /// user.subAdminOf 설정은 onMemberInvitationAccepted CF trigger가 담당 (BUG-33C-33 fix)
   ///
   /// ⚠️ F-032: 동시 이중 수락 시 알림 2건 중복 발생 가능(데이터 무결성 문제 없음).
-  /// ⚠️ F-035: status 체크 없어 거절/취소 상태 초대도 수락 가능 — UI에서 pending만 노출하므로 발생 확률 낮음.
   Future<void> acceptInvitation(MemberInvitationModel invitation) async {
+    // [D05-FIX] 만료/거절/취소 상태 초대 수락 방어 (F-035).
+    // UI에서 pending만 노출하지만 딥링크·직접 호출 경로 방어를 위해 서버 검증 추가.
+    if (!invitation.isPending) {
+      throw Exception('이미 처리된 초대입니다.');
+    }
+    // 30일 만료 체크 (hasPendingInvitation과 동일 기준)
+    final expiryDate = invitation.createdAt.add(const Duration(days: 30));
+    if (DateTime.now().isAfter(expiryDate)) {
+      throw Exception('초대 유효기간(30일)이 만료되었습니다.');
+    }
+
     final batch = _db.batch();
     final now = DateTime.now();
 

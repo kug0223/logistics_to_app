@@ -95,6 +95,8 @@ class _WorkforceListViewState extends State<WorkforceListView> {
     setState(() {
       _expandedGroups.clear();
       _expandedTOs.clear();
+      // 마감됨 탭 페이지네이션 리셋 — 재로드 시 처음 페이지부터 표시
+      _closedDisplayCount = _closedPageSize;
     });
     context.read<WorkforceController>().reload(context);
   }

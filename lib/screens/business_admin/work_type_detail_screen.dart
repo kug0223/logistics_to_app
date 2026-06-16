@@ -843,21 +843,19 @@ class _WorkTypeDetailScreenState extends State<WorkTypeDetailScreen> {
   }
 
   /// 변경사항 저장
+  ///
+  /// CLAUDE.md 삭제 순서 규칙: Storage 삭제 전 Firestore를 먼저 업데이트한다.
+  /// Firestore 업데이트 실패 시 Storage는 건드리지 않아 broken URL 잔류를 방지한다.
   Future<void> _saveChanges() async {
     setState(() => _isLoading = true);
 
     try {
-      // 1. 삭제할 이미지 처리
-      for (var url in _imagesToDelete) {
-        await _storageService.deleteImageByUrl(url);
-      }
-
-      // 2. 새 이미지 업로드
+      // 1. 새 이미지 업로드 (Firestore 업데이트 전)
       String? thumbnailUrl = _currentWorkType.thumbnailUrl;
       if (_imagesToDelete.contains(thumbnailUrl)) {
         thumbnailUrl = null;
       }
-      
+
       if (_newThumbnail != null) {
         thumbnailUrl = await _uploadImage(_newThumbnail!, 'thumbnail');
       }
@@ -880,23 +878,24 @@ class _WorkTypeDetailScreenState extends State<WorkTypeDetailScreen> {
         thumbnailUrl = imageUrls.removeAt(0);  // 첫 번째 이미지를 꺼내서 대표로
       }
 
-      // 3. Firestore 업데이트
+      // 2. Firestore 업데이트 (삭제 이전에 반드시 선행)
+      // 이유: Firestore 실패 시 Storage는 건드리지 않아야 broken URL이 남지 않음
       final updateData = {
-        'oneLineIntro': _oneLineIntroController.text.trim().isEmpty 
-            ? null 
+        'oneLineIntro': _oneLineIntroController.text.trim().isEmpty
+            ? null
             : _oneLineIntroController.text.trim(),
-        'description': _descriptionController.text.trim().isEmpty 
-            ? null 
+        'description': _descriptionController.text.trim().isEmpty
+            ? null
             : _descriptionController.text.trim(),
         'workEnvironment': _selectedWorkEnvironment,
-        'requirements': _requirementsController.text.trim().isEmpty 
-            ? null 
+        'requirements': _requirementsController.text.trim().isEmpty
+            ? null
             : _requirementsController.text.trim(),
-        'duties': _dutiesController.text.trim().isEmpty 
-            ? null 
+        'duties': _dutiesController.text.trim().isEmpty
+            ? null
             : _dutiesController.text.trim(),
-        'precautions': _precautionsController.text.trim().isEmpty 
-            ? null 
+        'precautions': _precautionsController.text.trim().isEmpty
+            ? null
             : _precautionsController.text.trim(),
         'thumbnailUrl': thumbnailUrl,
         'images': imageUrls.isEmpty ? null : imageUrls,
@@ -908,6 +907,18 @@ class _WorkTypeDetailScreenState extends State<WorkTypeDetailScreen> {
           .collection('workTypes')
           .doc(_currentWorkType.id)
           .update(updateData);
+
+      // 3. Firestore 성공 후에만 Storage에서 구 이미지 삭제
+      // 이유: Firestore 실패 시 Storage 삭제를 했다면 broken URL이 Firestore에 남음
+      for (var url in _imagesToDelete) {
+        try {
+          await _storageService.deleteImageByUrl(url);
+        } catch (e) {
+          // Storage 삭제 실패는 orphan 파일로 남을 수 있으나
+          // Firestore는 이미 업데이트 완료 — 기능에 영향 없음
+          debugPrint('⚠️ Storage 구 이미지 삭제 실패 (orphan): $e');
+        }
+      }
 
       // 4. 로컬 상태 업데이트
       if (!mounted) return;

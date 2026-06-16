@@ -1218,8 +1218,12 @@ extension ApplicationFirestore on FirestoreService {
 
       final results = await Future.wait([shortTermFuture, longTermFuture]);
 
+      // [B01-FIX] 단기 쿼리 결과에 type 필터가 없어 장기 지원서(type=long_term)가
+      // workDate == 오늘인 경우 shortTermApps에도 포함될 수 있는 중복 버그 수정.
+      // isLongTermApplication getter로 클라이언트 필터링하여 단기만 남긴다.
       final shortTermApps = results[0].docs
           .map((doc) => ApplicationModel.fromFirestore(doc))
+          .where((app) => !app.isLongTermApplication)
           .toList();
 
       final longTermCandidates = results[1].docs

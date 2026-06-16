@@ -104,8 +104,9 @@ class _IntegratedWorkforceScreenState extends State<IntegratedWorkforceScreen>
   @override
   Widget build(BuildContext context) {
     if (_selectedBusinessId == null) {
+      // 빈 상태(사업장 미등록)에도 메인 화면과 동일한 '공고 관리' 타이틀 유지
       return GradientScaffold(
-        title: '인력 관리',
+        title: '공고 관리',
         body: AppEmptyState(
           icon: Icons.business_center,
           title: '등록된 사업장이 없습니다',

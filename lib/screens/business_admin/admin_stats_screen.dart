@@ -82,56 +82,55 @@ class _AdminStatsScreenState extends State<AdminStatsScreen> {
       useSafeArea: true,
       shape: const RoundedRectangleBorder(
           borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
-      builder: (ctx) => SafeArea(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Container(
-              margin: const EdgeInsets.only(top: 12, bottom: 4),
-              width: 36, height: 4,
-              decoration: BoxDecoration(
-                  color: AppColors.grey300,
-                  borderRadius: BorderRadius.circular(2)),
-            ),
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
-              child: Row(children: [
-                Text('사업장 선택',
-                    style: const TextStyle(
-                        fontWeight: FontWeight.bold, fontSize: 16)),
-              ]),
-            ),
-            // 전체
-            ListTile(
-              leading: Icon(
-                  _filterBusinessId == null
-                      ? Icons.radio_button_checked
-                      : Icons.radio_button_unchecked,
-                  color: Theme.of(context).primaryColor),
-              title: const Text('전체 사업장'),
-              onTap: () {
-                setState(() => _filterBusinessId = null);
-                Navigator.pop(ctx);
-                _loadStats();
-              },
-            ),
-            // 개별 사업장
-            ..._businesses.map((b) => ListTile(
-                  leading: Icon(
-                      _filterBusinessId == b.id
-                          ? Icons.radio_button_checked
-                          : Icons.radio_button_unchecked,
-                      color: Theme.of(context).primaryColor),
-                  title: Text(b.name),
-                  onTap: () {
-                    setState(() => _filterBusinessId = b.id);
-                    Navigator.pop(ctx);
-                    _loadStats();
-                  },
-                )),
-            const SizedBox(height: 8),
-          ],
-        ),
+      // useSafeArea: true로 하단 safe area 처리 — 내부 SafeArea 중복 제거
+      builder: (ctx) => Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Container(
+            margin: const EdgeInsets.only(top: 12, bottom: 4),
+            width: 36, height: 4,
+            decoration: BoxDecoration(
+                color: AppColors.grey300,
+                borderRadius: BorderRadius.circular(2)),
+          ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
+            child: Row(children: [
+              Text('사업장 선택',
+                  style: const TextStyle(
+                      fontWeight: FontWeight.bold, fontSize: 16)),
+            ]),
+          ),
+          // 전체
+          ListTile(
+            leading: Icon(
+                _filterBusinessId == null
+                    ? Icons.radio_button_checked
+                    : Icons.radio_button_unchecked,
+                color: Theme.of(context).primaryColor),
+            title: const Text('전체 사업장'),
+            onTap: () {
+              setState(() => _filterBusinessId = null);
+              Navigator.pop(ctx);
+              _loadStats();
+            },
+          ),
+          // 개별 사업장
+          ..._businesses.map((b) => ListTile(
+                leading: Icon(
+                    _filterBusinessId == b.id
+                        ? Icons.radio_button_checked
+                        : Icons.radio_button_unchecked,
+                    color: Theme.of(context).primaryColor),
+                title: Text(b.name),
+                onTap: () {
+                  setState(() => _filterBusinessId = b.id);
+                  Navigator.pop(ctx);
+                  _loadStats();
+                },
+              )),
+          const SizedBox(height: 8),
+        ],
       ),
     );
   }

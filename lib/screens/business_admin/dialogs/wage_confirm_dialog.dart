@@ -638,6 +638,11 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
       );
     } else if (prevDays + 1 > 8) {
       // 9일 이상: 4대보험 풀 공제 (소급 없음, 소득세 미포함 — 연말정산으로 처리)
+      // ✅ 의도된 netWage 직접 할당 (중간 단계):
+      //   baseWage는 applyDeduction()에 넘기기 위한 임시 모델이다.
+      //   applyDeduction(typeFourInsuranceFixed)가 4대보험 계산 후
+      //   netWage를 최종 덮어쓰므로 여기서의 netWage: wage.totalAmount는
+      //   의미있는 최종값이 아니라 이전 공제액을 0으로 리셋하는 중간값이다.
       final baseWage = wage.copyWith(
         taxDeductionType: InsuranceRateModel.typeNone,
         employmentInsuranceDeduction: 0,
@@ -1090,7 +1095,8 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
       message: '선택한 $count명의 급여 확정을 취소하시겠습니까?\n미확정 상태로 되돌아갑니다.',
       confirmText: '취소',
     );
-    if (!confirmed) return;
+    // [C26 Bug 수정] async gap 후 mounted 체크 추가
+    if (!confirmed || !mounted) return;
 
     setState(() => _isProcessing = true);
     try {

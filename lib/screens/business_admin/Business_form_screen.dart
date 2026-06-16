@@ -1827,18 +1827,14 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
         }
       }
 
-      // 삭제할 이미지 처리 (병렬)
-      if (_imagesToDelete.isNotEmpty) {
-        await _storageService.deleteMultipleByUrls(_imagesToDelete);
-      }
+      // CLAUDE.md 삭제 순서 규칙:
+      // Storage 삭제는 Firestore 업데이트 성공 후에만 수행한다.
+      // 이 시점에서는 새 이미지 업로드만 먼저 진행한다.
 
       // 이미지 업로드
       final newlyUploadedUrls = <String>[];
       String? mainImageUrl = _mainImageUrl;
       if (_mainImage != null) {
-        if (_isEditMode && widget.business?.mainImageUrl != null && !_imagesToDelete.contains(widget.business!.mainImageUrl)) {
-          await _storageService.deleteImageByUrl(widget.business!.mainImageUrl!);
-        }
         mainImageUrl = await _uploadImage(_mainImage!, 'main');
         if (mainImageUrl != null) newlyUploadedUrls.add(mainImageUrl);
         if (!mounted) {
@@ -1907,6 +1903,27 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
             .collection('businesses')
             .doc(widget.business!.id)
             .update(businessData);
+
+        // Firestore 업데이트 성공 후에만 구 이미지 Storage 삭제 수행
+        // (CLAUDE.md: Firestore 실패 시 Storage 삭제 안 해야 broken URL 방지)
+        if (_imagesToDelete.isNotEmpty) {
+          try {
+            await _storageService.deleteMultipleByUrls(_imagesToDelete);
+          } catch (e) {
+            // Storage 삭제 실패는 orphan 파일로 남을 수 있으나 기능에 영향 없음
+            debugPrint('⚠️ Storage 구 이미지 삭제 실패 (orphan): $e');
+          }
+        }
+        // 교체된 대표 이미지 구 버전도 Firestore 성공 후 삭제
+        if (_mainImage != null &&
+            widget.business?.mainImageUrl != null &&
+            !_imagesToDelete.contains(widget.business!.mainImageUrl)) {
+          try {
+            await _storageService.deleteImageByUrl(widget.business!.mainImageUrl!);
+          } catch (e) {
+            debugPrint('⚠️ Storage 대표 이미지 구 버전 삭제 실패: $e');
+          }
+        }
 
         // managedBusinessIds 누락 시 보정
         await FirebaseFirestore.instance

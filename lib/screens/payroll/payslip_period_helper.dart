@@ -328,6 +328,11 @@ class DailyRecord {
   final int workMinutes;
   final int overtimeMinutes;
   final int nightMinutes;
+  /// ✅ 의도된 netWage 필드명:
+  ///   WageDetailModel.netWage와 이름이 같지만 별개 클래스의 필드다.
+  ///   fromAttendance()에서 wageDetail.effectiveNetWage로 채우므로
+  ///   미확정 레코드도 totalAmount - totalInsuranceDeduction으로 올바르게 계산된다.
+  ///   이 필드를 직접 참조해도 effectiveNetWage 규칙 위반이 아니다.
   final int netWage;
   final String status;
   final String? memo;

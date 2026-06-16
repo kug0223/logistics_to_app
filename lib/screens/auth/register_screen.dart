@@ -388,6 +388,11 @@ class _RegisterScreenState extends State<RegisterScreen> {
     _isStepTransitioning = true;
 
     try {
+      // 단계 내부 번호(_currentStep)와 UI 표시 레이블이 다름:
+      //   Step 0 → 화면: "이용 방법 선택" (_buildStep2RoleSelection)
+      //   Step 1 → 화면: "기본 정보 입력"  (_buildStep1BasicInfo)
+      //   Step 2 → 화면: "추가 정보"       (_buildStep3 Documents)
+      // 역할 선택을 맨 앞에 배치해 맞춤형 폼 안내가 가능하도록 순서를 의도적으로 역전함.
       if (_currentStep == 0) {
         if (_validateStep2()) {
           setState(() => _currentStep = 1);

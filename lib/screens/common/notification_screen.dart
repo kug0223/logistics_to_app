@@ -564,7 +564,11 @@ class _NotificationScreenState extends State<NotificationScreen> {
     } catch (e) {
       if (!context.mounted) return;
       Navigator.pop(context);
-      ToastHelper.showError('초대 처리 중 오류가 발생했습니다');
+      // [D05] 만료·이미처리된 초대는 Exception 메시지를 그대로 표시 (acceptInvitation 참고)
+      final message = e is Exception
+          ? e.toString().replaceFirst('Exception: ', '')
+          : '초대 처리 중 오류가 발생했습니다';
+      ToastHelper.showError(message);
     }
   }
 
