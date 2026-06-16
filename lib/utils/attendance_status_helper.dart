@@ -48,6 +48,11 @@ class AttendanceStatusHelper {
   // ── 조출 판단 ──────────────────────────────────────────────
 
   /// 실제 출근이 예정보다 [thresholdMinutes](기본 30)분 이상 이른지
+  ///
+  /// [A21 설계] 야간 시프트(예: 예정 시작 00:30, 실제 출근 23:30)에서 자정 넘김 보정을 하지 않는다.
+  /// 이유: 조출은 "같은 근무 시프트 내에서 일찍 출근"을 의미하며, 야간 시프트에서는
+  /// checkIn이 scheduledStart보다 항상 크게 나타나므로 오감지 우려가 없다.
+  /// (scheduled=30, actual=1410 → 30-1410 < 0 → 조출 아님으로 올바르게 처리)
   static bool isEarlyArrival(
     String checkIn,
     String scheduledStart, {

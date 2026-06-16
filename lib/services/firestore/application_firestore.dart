@@ -115,6 +115,14 @@ extension ApplicationFirestore on FirestoreService {
   }
 
   /// 내 지원 내역 조회 (사용자용)
+  ///
+  /// [E02 캐시 Stampede 설계]
+  /// 동시에 두 요청이 캐시 미스 → 둘 다 Firestore 조회 → 마지막 write가 캐시에 저장됨.
+  /// Dart는 단일 스레드(isolate)이므로 await 사이에는 동시 실행이 없어
+  /// 캐시 미스 감지와 Firestore 조회 사이의 race는 실질적으로 발생하지 않는다.
+  /// (동일 이벤트 루프 틱 내의 동기 구간은 항상 원자적)
+  /// 단, 동시 네트워크 요청이 겹치면 Firestore를 2회 조회할 수 있으나
+  /// 결과는 동일하므로 last-write-wins는 안전하다 — 의도된 설계.
   Future<List<ApplicationModel>> getMyApplications(String uid) async {
     // TTL 캐시 — 1분 내 동일 uid 재조회 시 캐시 반환
     final cached = _myApplicationsCache[uid];
@@ -350,7 +358,15 @@ extension ApplicationFirestore on FirestoreService {
 
       // ── 2. 중복 지원 체크 (서버 방어 2차선) ──
       // apply_dialog.dart의 1차 체크 후 이곳에서 Source.server로 재확인.
-      // Firestore Rules 레벨 중복 방어는 없으나 이 2중 체크로 충분히 방어됨. (S-01 분석 완료)
+      //
+      // [A02 동시성 한계] 더블클릭/동시 두 세션에 의한 중복 지원:
+      // 이 dupQ.get과 이후 batch.commit 사이(async gap)에 동일 사용자가
+      // 동일 슬롯에 중복 지원을 실행하면 두 지원서가 동시에 생성될 수 있다 (TOCTOU).
+      // 완전한 방어는 (toId_uid_slotId_workType) 복합 ID로 doc을 set하거나
+      // Firestore Security Rules에서 'allow create: if !existingActiveApplication' 조건을 추가해야 한다.
+      // 현재는 1) UI 버튼 disabled 처리(1차), 2) Source.server 재조회(2차),
+      // 3) 정원 초과 시 TOCTOU 방어 트랜잭션(3차)으로 실용적 수준에서 방어한다.
+      // 중복 지원서가 생겨도 관리자 확정 시 충돌 체크가 있으므로 실사용 피해는 제한적.
       Query<Map<String, dynamic>> dupQ = _firestore
           .collection('applications')
           .where('toId', isEqualTo: toId)
@@ -841,25 +857,52 @@ extension ApplicationFirestore on FirestoreService {
       final toId = appData['toId'] as String?;
       final slotId = appData['slotId'] as String?;
       final selectedWorkType = appData['selectedWorkType'] as String?;
-      final batch = _firestore.batch();
-      batch.update(appDoc.reference, {
-        'status': 'CANCELED',
-        'canceledAt': FieldValue.serverTimestamp(),
-        // [CANCEL-FIX] 취소 주체를 명시해 관리자(ADMIN_CANCELED)/사용자(USER_CANCELED)를 구분.
-        // 이전 코드는 cancelReason을 저장하지 않아 분쟁 발생 시 취소 경위 추적이 불가능했다.
-        'cancelReason': 'USER_CANCELED',
-        'statusHistory': _appendHistory(appData, {
+
+      // [A03-FIX] TOCTOU 방지: 조회(get) 이후 배치 커밋 사이에 관리자가 지원자를
+      // 확정(CONTRACT_PENDING/CONFIRMED)할 수 있다. 트랜잭션으로 서버 상태를 재확인해
+      // 확정된 지원서를 사용자가 취소하는 것을 원자적으로 막는다.
+      await _firestore.runTransaction((tx) async {
+        final fresh = await tx.get(appDoc.reference);
+        final freshStatus = fresh.data()?['status'] as String?;
+        if (AppStatus.confirmedStatuses.contains(freshStatus)) {
+          throw Exception('확정된 TO는 취소할 수 없습니다.');
+        }
+        if (AppStatus.inactiveStates.contains(freshStatus)) {
+          // 이미 취소됨 — 멱등 처리
+          return;
+        }
+        tx.update(appDoc.reference, {
           'status': 'CANCELED',
-          'at': Timestamp.now(),
-          'by': uid,
-          'action': 'CANCEL',
-          'reason': 'USER_CANCELED',
-        }),
+          'canceledAt': FieldValue.serverTimestamp(),
+          // [CANCEL-FIX] 취소 주체를 명시해 관리자(ADMIN_CANCELED)/사용자(USER_CANCELED)를 구분.
+          // 이전 코드는 cancelReason을 저장하지 않아 분쟁 발생 시 취소 경위 추적이 불가능했다.
+          'cancelReason': 'USER_CANCELED',
+          'statusHistory': _appendHistory(appData, {
+            'status': 'CANCELED',
+            'at': Timestamp.now(),
+            'by': uid,
+            'action': 'CANCEL',
+            'reason': 'USER_CANCELED',
+          }),
+        });
+        if (toId != null) {
+          // 트랜잭션 내에서는 WriteBatch를 사용할 수 없으므로 직접 update 사용.
+          // totalPending은 FieldValue.increment로 원자 처리 — 별도 race 없음.
+          tx.update(_firestore.collection('tos').doc(toId), {
+            'totalPending': FieldValue.increment(-1),
+          });
+          if (slotId != null) {
+            tx.update(
+              _firestore.collection('tos').doc(toId).collection('slots').doc(slotId),
+              {
+                'pendingCount': FieldValue.increment(-1),
+                if (selectedWorkType != null)
+                  'workTypeCounts.$selectedWorkType.pendingCount': FieldValue.increment(-1),
+              },
+            );
+          }
+        }
       });
-      if (toId != null) {
-        _incrementTOPending(batch, toId, slotId, delta: -1, workType: selectedWorkType);
-      }
-      await batch.commit();
       if (toId != null) clearCache(toId: toId);
       invalidateMyApplicationsCache(uid); // 내 지원 목록 캐시 무효화
 
@@ -1251,6 +1294,17 @@ extension ApplicationFirestore on FirestoreService {
 
         if (dateStart.isBefore(startOnly) || dateStart.isAfter(endOnly)) continue;
 
+        // [F02-FIX] extraWorkDates 우선 처리 — 비정규 요일 추가 근무일이면
+        // workDays에 해당 요일이 없어도 당일명단에 포함되어야 한다.
+        // isWorkingOnDate getter와 동일한 우선순위(extra → leave → workDays)를 유지한다.
+        final isExtraWork = app.extraWorkDates != null &&
+            app.extraWorkDates!.any((d) =>
+                d.year == dateStart.year && d.month == dateStart.month && d.day == dateStart.day);
+        if (isExtraWork) {
+          result.add(app);
+          continue;
+        }
+
         if (app.leaveDates != null && app.leaveDates!.isNotEmpty) {
           final isLeave = app.leaveDates!.any((d) =>
               d.year == dateStart.year && d.month == dateStart.month && d.day == dateStart.day);
@@ -1293,7 +1347,14 @@ extension ApplicationFirestore on FirestoreService {
           .get();
 
       final results = await Future.wait([shortTermFuture, longTermFuture]);
-      final shortTerm = results[0].docs.map((d) => ApplicationModel.fromFirestore(d)).toList();
+
+      // [B01-FIX 동일 패턴] 단기 쿼리 결과에 장기 지원서(type=long_term)가 섞일 수 있음.
+      // workDate가 동일한 날짜인 장기 지원서가 shortTerm에 포함되면 longTermCandidates와 중복 발생.
+      // getConfirmedWorkersByDateAndBusiness와 동일하게 !isLongTermApplication으로 필터링.
+      final shortTerm = results[0].docs
+          .map((d) => ApplicationModel.fromFirestore(d))
+          .where((a) => !a.isLongTermApplication)
+          .toList();
       final longTermCandidates = results[1].docs
           .map((d) => ApplicationModel.fromFirestore(d))
           .where((a) => a.isLongTermApplication)
@@ -1699,6 +1760,12 @@ extension ApplicationFirestore on FirestoreService {
   }
 
   /// TO.totalConfirmed 및 Slot.confirmedCount 변경
+  ///
+  /// [F01/F02/F03 동시성 설계]
+  /// FieldValue.increment()는 Firestore 서버 측 원자 연산이다.
+  /// 두 관리자가 동시에 다른 지원자를 확정해도 각 increment가 독립적으로 적용되므로
+  /// confirmedCount가 정확히 2 증가한다 — 클라이언트 계산(read-modify-write)이 아니므로
+  /// race condition이 발생하지 않는다. 의도된 올바른 설계.
   void _incrementTOConfirmed(
     WriteBatch batch,
     String toId,

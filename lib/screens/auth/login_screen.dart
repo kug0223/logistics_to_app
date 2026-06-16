@@ -676,7 +676,7 @@ class _LoginScreenState extends State<LoginScreen> {
             controller: _passwordController,
             focusNode: _passwordFocus,
             label: '비밀번호',
-            hint: '6자 이상 입력',
+            hint: '8자 이상, 영문·숫자·특수문자 포함',
             icon: Icons.lock_outline,
             obscureText: _obscurePassword,
             textInputAction: TextInputAction.done,

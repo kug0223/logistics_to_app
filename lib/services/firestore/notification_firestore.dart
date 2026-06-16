@@ -17,6 +17,15 @@ extension NotificationFirestore on FirestoreService {
   // ═══════════════════════════════════════════════════════════
 
   /// 알림 생성
+  ///
+  /// [D01 동시성 설계] 알림 중복 발송 가능성:
+  /// `add()`는 매번 새 document를 생성하므로, 호출 측이 실수로 두 번 호출하면
+  /// 동일 내용의 알림 2개가 저장된다. 현재 각 이벤트 핸들러(확정, 취소 등)에서
+  /// 단 1회만 호출하도록 설계되어 있으므로 실질적 중복 위험은 없다.
+  /// 완전한 방어가 필요하다면 (userId + type + referenceId) 복합 키로 upsert 전환 필요.
+  ///
+  /// [D02 읽음 처리 동시성] markNotificationAsRead는 트랜잭션 없이 update.
+  /// isRead: true 덮어쓰기는 멱등(idempotent)이므로 동시 요청도 안전하다 — 의도된 설계.
   Future<String?> createNotification(NotificationModel notification) async {
     try {
       final docRef = await _firestore.collection('notifications').add(

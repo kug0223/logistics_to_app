@@ -27,6 +27,21 @@ class ContractService {
   /// 확정 시 호출. 동일 (toId + workDetailId + workerId) 계약서가 있으면
   /// 슬롯 추가, 없으면 새 계약서 생성.
   /// 장기 근무는 기존처럼 단일 계약서 생성.
+  ///
+  /// [C01 동시성 설계]
+  /// 두 관리자가 동시에 같은 근무자에게 계약서를 생성하는 경우:
+  /// - 단기: _findBundle이 둘 다 null을 반환 → _createNew가 둘 다 isNewUnsaved:true 객체 반환.
+  ///   이후 saveEmployerSignature에서 각자 다른 doc ref로 트랜잭션 set을 실행하므로
+  ///   중복 계약서 2개가 생성될 수 있다 (TOCTOU).
+  ///   방어책: saveEmployerSignature 진입 전 applicationId 기준으로 재조회하여 이미 존재하면
+  ///   기존 계약에 슬롯 추가로 전환. 이 재조회-생성 사이도 race 가능하나, 실제로
+  ///   두 관리자가 밀리초 단위로 동일 지원서에 계약서를 생성하는 빈도는 매우 낮으므로
+  ///   last-write-wins 허용(의도된 설계). 중복 발생 시 UI에서 경고 표시.
+  ///
+  /// - 장기: 계약서가 근무자당 1개여야 하는 동일 문제. 마찬가지로 빈도 낮아 허용.
+  ///
+  /// 완전한 방어를 위해서는 Cloud Functions에서 트랜잭션으로 처리해야 하나,
+  /// 현재 클라이언트 단계에서는 위 설계 수준으로 충분하다고 판단.
   Future<EmploymentContractModel> findOrCreateContract({
     required ApplicationModel application,
     required BusinessModel business,
@@ -236,7 +251,14 @@ class ContractService {
       updatedAt: workerNow,
     );
 
-    // Firestore 배치 커밋 — 실패 시 서명+PDF 롤백
+    // [C04 동시성 방어] 계약서 무효화(voided)와 근무자 서명의 race condition:
+    // 트랜잭션 내에서 currentStatus를 재확인하여 voided이면 예외 발생 → 서명 실패.
+    // Storage에 업로드된 서명+PDF는 아래 catch에서 즉시 삭제하여 고아 파일 방지.
+    //
+    // [C02] 사업주와 근무자가 동시에 서명 시도:
+    // saveEmployerSignature: employerSignatureUrl 존재 여부 체크 후 set/update.
+    // saveWorkerSignature: workerSignatureUrl 존재 여부 체크 — 둘 다 트랜잭션으로 원자 처리.
+    // 중복 서명 시 두 번째 트랜잭션은 예외 발생 → 안전.
     try {
       final nowTs = Timestamp.fromDate(workerNow);
       // 동시 서명 방지 + application 상태 원자적 업데이트

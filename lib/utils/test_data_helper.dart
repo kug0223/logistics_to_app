@@ -506,7 +506,9 @@ class TestDataHelper {
       // 오늘 근무 대상 필터링
       final todayWorkers = confirmedSnapshot.docs.where((doc) {
         final data = doc.data();
-        final workDate = (data['workDate'] as Timestamp).toDate();
+        // [B11 수정] toLocal() 필수: Firestore Timestamp.toDate()는 UTC 기준 반환.
+        // toLocal() 없이 year/month/day 비교 시 KST(+9) 경계일(자정 전후)에서 1일 오차 발생.
+        final workDate = (data['workDate'] as Timestamp).toDate().toLocal();
         final isLongTerm = data['type'] == AppType.longTerm;
 
         if (!isLongTerm) {
@@ -520,10 +522,11 @@ class TestDataHelper {
         final workEndDate = data['workEndDate'] as Timestamp?;
         if (workEndDate == null) return false;
 
-        final endDate = workEndDate.toDate();
+        // [B11 수정] toLocal() 필수 — KST 경계일 안전
+        final endDate = workEndDate.toDate().toLocal();
         final desiredStartTs = data['desiredStartDate'] as Timestamp?;
         final effectiveStart = desiredStartTs != null
-            ? DateTime(desiredStartTs.toDate().year, desiredStartTs.toDate().month, desiredStartTs.toDate().day)
+            ? DateTime(desiredStartTs.toDate().toLocal().year, desiredStartTs.toDate().toLocal().month, desiredStartTs.toDate().toLocal().day)
             : DateTime(workDate.year, workDate.month, workDate.day);
 
         if (dateStart.isBefore(effectiveStart) || dateStart.isAfter(endDate)) {

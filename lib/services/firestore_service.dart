@@ -48,6 +48,42 @@ class BatchResult {
   bool get hasFailures => failed > 0;
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+// 동시성 설계 요약 (동시성 감사 2026-06-16 기준)
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// ✅ 트랜잭션으로 보호되는 경쟁 조건:
+//   A01/A05  지원자 확정 시 CONTRACT_PENDING 선점 (_confirmWithConflictCheck)
+//            → 두 번째 확정 요청은 alreadyConfirmed=true로 조기 반환
+//   A03      사용자 지원 취소 시 확정 상태 재확인 트랜잭션 (cancelApplication)
+//            → 조회-취소 사이 관리자 확정을 원자적으로 차단 [A03-FIX]
+//   A05      슬롯 마감 후 확정 시도 → CONTRACT_PENDING 롤백 처리
+//   B01      급여 마감 시 wageStatus 서버 재확인 트랜잭션 (_closeWages)
+//            → 동시 마감 감지 시 skip, totalWorkDays 이중 증가 방지 [B01-FIX]
+//   B02      시간 수정 시 wageConfirmed/wageTransferred 상태 트랜잭션 재확인
+//            → 마감된 급여를 pending으로 덮어쓰는 것 방지 [B02-FIX]
+//   B05      _isProcessing 플래그로 단일 세션 중복 클릭 방어 (wage_confirm_dialog)
+//   C02      사업주/근무자 동시 서명 → 각 트랜잭션에서 서명 URL 존재 여부 체크
+//   C04      계약서 무효화 + 근무자 서명 race → 트랜잭션 내 voided 상태 재확인
+//   C06      슬롯 추가 시 applicationId 멱등성 보호 (_addSlot 트랜잭션)
+//   F01/F02  confirmedCount 동시 증감 → FieldValue.increment() 원자 연산 사용
+//   노쇼 카운트 원자 갱신 → _applyNoShowPenaltyTransactional 트랜잭션
+//   출근/퇴근 중복 방지 → attendanceDocId 결정적 ID + 트랜잭션 set
+//
+// ⚠️ 의도된 last-write-wins (실사용 충돌 빈도 낮아 허용):
+//   A02      더블클릭 중복 지원 — dupQ.get과 batch.set 사이 TOCTOU
+//            (UI disabled + 2중 서버 체크로 실용적 방어, Rules 레벨 방어 미구현)
+//   A04      두 관리자가 동일 지원자 동시 확정 → CONTRACT_PENDING 선점으로 방어됨
+//   B03/B04  급여 수정/취소 트랜잭션 없음 — 단일 관리자 흐름이 일반적, 충돌 빈도 낮음
+//   C01      동시 계약서 생성 → isNewUnsaved:true로 각자 다른 doc에 set
+//            중복 발생 가능하나 saveEmployerSignature 트랜잭션 전까지 저장 안 됨
+//   B16      8일 소급 계산 중 동시 마감 → prevDays 오차 가능 (best effort)
+//   D01      알림 중복 발송 → 호출 측 1회 보장 설계, Rules 중복 방어 없음
+//   D02      읽음 처리 동시 요청 → isRead:true 덮어쓰기는 멱등하여 안전
+//   E01/E02  캐시 stampede → Dart 단일 스레드로 실질 race 없음, 중복 조회는 안전
+//   A16~A25  optimistic update → 낙관적 잠금 미사용, 실패 시 UI 리프레시로 복구
+// ═══════════════════════════════════════════════════════════════════════════
+
 class FirestoreService {
   // 싱글톤: 앱 전체에서 인스턴스 하나만 사용 → 캐시 공유, Firestore 읽기 절감
   static final FirestoreService _instance = FirestoreService._internal();

@@ -1,4 +1,5 @@
 ﻿import 'dart:async';
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:flutter/services.dart';
@@ -700,6 +701,15 @@ class _RegisterScreenState extends State<RegisterScreen> {
               uploadedUrls.add(results[i]!);
             }
           }
+          // TMP-01: 업로드된 임시 압축 파일 삭제 (성공/실패 무관)
+          for (final path in [_idCardImagePath, _bankbookImagePath, _businessLicenseImagePath]) {
+            if (path != null) {
+              try {
+                final f = File(path);
+                if (await f.exists()) await f.delete();
+              } catch (_) {}
+            }
+          }
           if (updates.isNotEmpty && mounted) {
             try {
               await _firestoreService.updateUserDocument(uid, updates);
@@ -815,6 +825,15 @@ class _RegisterScreenState extends State<RegisterScreen> {
             if (results[i] != null) {
               fileUpdates[uploadRefs2[i]] = results[i];
               uploadedUrls2.add(results[i]!);
+            }
+          }
+          // TMP-01: 업로드된 임시 압축 파일 삭제 (성공/실패 무관)
+          for (final path in [_idCardImagePath, _bankbookImagePath, _businessLicenseImagePath]) {
+            if (path != null) {
+              try {
+                final f = File(path);
+                if (await f.exists()) await f.delete();
+              } catch (_) {}
             }
           }
           if (fileUpdates.isNotEmpty && mounted) {
@@ -1323,7 +1342,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
             decoration: CommonWidgets.compactCardDecoration(),
             child: Column(
               children: [
-                // 이름
+                // 이름 — 최대 50자 (A03: DB 필드 용량 및 UI 표시 한계)
                 CommonWidgets.textField(
                   context: context,
                   controller: _nameController,
@@ -1333,9 +1352,11 @@ class _RegisterScreenState extends State<RegisterScreen> {
                   focusNode: _nameFocus,
                   textInputAction: TextInputAction.next,
                   onFieldSubmitted: (_) => _usernameFocus.requestFocus(),
+                  inputFormatters: [LengthLimitingTextInputFormatter(50)],
                   validator: (value) {
                     if (value == null || value.trim().isEmpty) return '이름을 입력해주세요';
                     if (value.trim().length < 2) return '이름은 2글자 이상 입력해주세요';
+                    if (value.trim().length > 50) return '이름은 50자 이하로 입력해주세요';
                     if (!RegExp(r'^[가-힣a-zA-Z\s]+$').hasMatch(value.trim())) {
                       return '이름은 한글 또는 영문만 입력해주세요';
                     }

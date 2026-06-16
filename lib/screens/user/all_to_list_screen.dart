@@ -34,6 +34,9 @@ class _AllTOListScreenState extends State<AllTOListScreen> {
   final FirestoreService _firestoreService = FirestoreService();
   final ScrollController _scrollController = ScrollController();
   final TextEditingController _searchController = TextEditingController();
+  // [C05] 최근 검색어 저장 미구현:
+  //   현재 검색어는 메모리에만 유지되며 앱 재시작 시 초기화됨.
+  //   향후 SharedPreferences에 최근 검색어(최대 10개) 저장 후 검색 창 포커스 시 표시 예정.
 
   // 필터 상태
   TOFilterState _filter = const TOFilterState();

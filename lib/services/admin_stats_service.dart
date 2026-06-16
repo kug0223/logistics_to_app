@@ -476,6 +476,11 @@ class AdminStatsService {
 
   // ── 내부 쿼리 ────────────────────────────────────────────────
 
+  // [D01 설계] limit() 없이 전체 조회: 관리자 통계 화면에서 연간/월별 집계를 위해
+  // 기간 내 모든 출근 기록이 필요하다. 사업장당 연간 최대 수천 건 수준으로 예상되므로
+  // 현재 규모에서는 허용된 트레이드오프다. 대규모 사업장(수만 건 이상)이 생기면
+  // 서버사이드 집계(Cloud Functions + 집계 문서)로 전환을 고려해야 한다.
+  // 20초 타임아웃으로 무한 대기 방지.
   Future<List<AttendanceModel>> _queryAttendance(
       List<String> ids, DateTime start, DateTime end) async {
     final results = await Future.wait(ids.map((id) async {

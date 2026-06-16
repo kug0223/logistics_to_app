@@ -955,8 +955,15 @@ class _WorkTypeDetailScreenState extends State<WorkTypeDetailScreen> {
       final timestamp = DateTime.now().millisecondsSinceEpoch;
       final fileName = 'workType_${_currentWorkType.id}_${type}_$timestamp.jpg';
       final storagePath = 'businesses/${_currentWorkType.businessId}/workTypes/$fileName';
-      
-      return await _storageService.uploadImage(imageFile.path, storagePath);
+
+      final url = await _storageService.uploadImage(imageFile.path, storagePath);
+      // TMP-01: pickAndCompressImage()가 생성한 임시 압축 파일은 업로드 후 즉시 삭제
+      try {
+        if (await imageFile.exists()) await imageFile.delete();
+      } catch (_) {
+        debugPrint('⚠️ 임시 이미지 파일 삭제 실패 (무시 가능)');
+      }
+      return url;
     } catch (e) {
       debugPrint('❌ 이미지 업로드 실패: $e');
       return null;

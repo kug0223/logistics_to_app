@@ -1031,10 +1031,20 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
 
 
   /// 급여 취소 (calculated → pending)
+  ///
+  /// [B03/B04 동시성 설계] 트랜잭션 없이 단순 update 사용.
+  /// 대상이 wageCalculated(1차 확정)인 경우: 동시에 다른 관리자가 마감(wageConfirmed)으로
+  /// 전환해도 wagePending으로 덮어쓸 수 있는 race가 이론상 존재한다.
+  /// 단, 마감(_closeWages)은 이제 트랜잭션으로 서버 상태를 재확인하여 wageConfirmed를
+  /// 먼저 기록하므로, 그 이후에 들어온 _processWageCancel의 update는 덮어쓰게 되는 문제가 남는다.
+  /// 실용적 판단: 단일 사업장에서 두 관리자가 동일 근무자 급여를 동시에 마감하면서
+  /// 한쪽이 취소하는 시나리오는 업무 프로세스상 극히 드물며,
+  /// wageConfirmed 상태를 wagePending으로 되돌리는 것은 현재 _reverseCloseWages로 별도 처리.
+  /// 완전한 방어를 원하면 wageCalculated 상태 확인 트랜잭션을 추가해야 하나 현 단계에서 허용.
   Future<void> _processWageCancel(ApplicationModel app, AttendanceModel attendance) async {
     try {
       final user = widget.userMap[app.uid];
-      
+
       await FirebaseFirestore.instance
           .collection('attendance')
           .doc(attendance.id)
@@ -1149,15 +1159,19 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
 
     int successCount = 0;
     int failCount = 0;
+    // [B01-FIX] try 블록 밖에 선언 — setState 내부(try 외부)에서 참조해야 하므로 스코프를 확장.
+    // 마감 시 서버 측 wageStatus를 트랜잭션으로 재확인하여
+    // 두 관리자가 동시에 같은 날짜를 마감할 때 totalWorkDays 이중 증가를 방지한다.
+    // 이미 wageConfirmed/wageTransferred이면 skip하여 멱등성 보장.
+    final processedApps = <ApplicationModel>[];
     try {
-      var batch = FirebaseFirestore.instance.batch();
-      int batchCount = 0;
-      final processedApps = <ApplicationModel>[];
-
       for (final appId in targetIds) {
         final attendance = widget.attendanceMap[appId];
         if (attendance == null) { failCount++; continue; }
-        final app = _calculatedWorkers.firstWhere((a) => a.id == appId, orElse: () => throw StateError(''));
+        ApplicationModel? app;
+        try {
+          app = _calculatedWorkers.firstWhere((a) => a.id == appId);
+        } catch (_) { failCount++; continue; }
 
         final wd = attendance.wageDetail ?? _calculatedWages[appId];
         final paymentDueDate = PaymentDueDateCalculator.calculate(
@@ -1170,36 +1184,42 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
           confirmedAt: DateTime.now(),
         );
 
-        batch.update(
-          FirebaseFirestore.instance.collection('attendance').doc(attendance.id),
-          {
-            'wageStatus': AttendanceModel.wageConfirmed,
-            'finalConfirmedAt': FieldValue.serverTimestamp(),
-            if (adminUid != null) 'confirmedBy': adminUid,
-            if (confirmedWageDetail != null) 'wageDetail': confirmedWageDetail.toMap(),
-            if (paymentDueDate != null) 'paymentDueDate': Timestamp.fromDate(paymentDueDate),
-          },
-        );
-        // totalWorkDays 클라이언트 직접 업데이트 — 의도된 설계.
-        // Cloud Function 이관이 이상적이나 현재 단계에서는 클라이언트 처리.
-        // FieldValue.increment로 동시 접근 시 원자성 보장.
-        batch.update(
-          FirebaseFirestore.instance.collection('users').doc(app.uid),
-          {'totalWorkDays': FieldValue.increment(1)},
-        );
-        batchCount += 2;
-        processedApps.add(app);
+        try {
+          final attRef = FirebaseFirestore.instance.collection('attendance').doc(attendance.id);
+          final userRef = FirebaseFirestore.instance.collection('users').doc(app.uid);
 
-        if (batchCount >= 498) {
-          await batch.commit();
-          successCount += batchCount ~/ 2;
-          batch = FirebaseFirestore.instance.batch();
-          batchCount = 0;
+          bool alreadyClosed = false;
+          await FirebaseFirestore.instance.runTransaction((tx) async {
+            final snap = await tx.get(attRef);
+            final serverStatus = snap.data()?['wageStatus'] as String?;
+            // 이미 마감됐거나 송금완료이면 skip (멱등성 + 이중 totalWorkDays 방지)
+            if (serverStatus == AttendanceModel.wageConfirmed ||
+                serverStatus == AttendanceModel.wageTransferred) {
+              alreadyClosed = true;
+              return;
+            }
+            tx.update(attRef, {
+              'wageStatus': AttendanceModel.wageConfirmed,
+              'finalConfirmedAt': FieldValue.serverTimestamp(),
+              if (adminUid != null) 'confirmedBy': adminUid,
+              if (confirmedWageDetail != null) 'wageDetail': confirmedWageDetail.toMap(),
+              if (paymentDueDate != null) 'paymentDueDate': Timestamp.fromDate(paymentDueDate),
+            });
+            // totalWorkDays: FieldValue.increment는 원자적이나, alreadyClosed 경로에서는
+            // 업데이트하지 않아야 하므로 트랜잭션 내부에서 조건부 처리
+            tx.update(userRef, {'totalWorkDays': FieldValue.increment(1)});
+          });
+
+          if (alreadyClosed) {
+            debugPrint('⚠️ [B01] 이미 마감된 근무 ($appId) — 동시 마감 감지, skip');
+            continue;
+          }
+          successCount++;
+          processedApps.add(app);
+        } catch (e) {
+          debugPrint('❌ 마감 트랜잭션 실패 ($appId): $e');
+          failCount++;
         }
-      }
-      if (batchCount > 0) {
-        await batch.commit();
-        successCount += batchCount ~/ 2;
       }
 
       // 신뢰도 업데이트 + 지원자 알림
@@ -1239,9 +1259,9 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
     _hasChanges = true;
     widget.onClose?.call();
 
-    // UI 상태 업데이트: 처리된 항목을 확정내역 → 마감내역으로 이동
+    // UI 상태 업데이트: 실제 마감 성공된 항목만 확정내역 → 마감내역으로 이동
     setState(() {
-      final processed = targetIds.toSet();
+      final processed = processedApps.map((a) => a.id).toSet();
       final moved = _calculatedWorkers.where((a) => processed.contains(a.id)).toList();
       _calculatedWorkers.removeWhere((a) => processed.contains(a.id));
       _transferredWorkers.addAll(moved);

@@ -106,12 +106,16 @@ class _CloseManagementDialogState extends State<CloseManagementDialog>
 
     // 해당 월의 시작/끝 날짜
     final monthStart = DateTime(_currentMonth.year, _currentMonth.month, 1);
-    final monthEnd = DateTime(_currentMonth.year, _currentMonth.month + 1, 0, 23, 59, 59);
-    final daysInMonth = monthEnd.day;
+    // [A06 수정] isLessThan 상한에는 다음 달 1일 자정을 사용해야 함.
+    // 23:59:59를 isLessThan에 쓰면 그 초에 정확히 저장된 문서가 제외된다.
+    // DateTime(year, month+1, 1)은 Dart가 13월을 자동 정규화하므로 12월도 안전.
+    final monthEndExclusive = DateTime(_currentMonth.year, _currentMonth.month + 1, 1);
+    // 날짜 그리드 렌더링·출력용 말일 계산 — Firestore 쿼리에는 사용하지 않음
+    final daysInMonth = DateTime(_currentMonth.year, _currentMonth.month + 1, 0).day;
 
     debugPrint('🔍 [마감관리] 조회 시작 ${DateFormat('yyyy-MM').format(_currentMonth)} '
         '| businessIds: ${widget.businessIds}');
-    debugPrint('   monthStart=$monthStart, monthEnd=$monthEnd');
+    debugPrint('   monthStart=$monthStart, monthEndExclusive=$monthEndExclusive');
 
     for (final businessId in widget.businessIds) {
       final List<DateCloseStatus> dateStatuses = [];
@@ -122,7 +126,7 @@ class _CloseManagementDialogState extends State<CloseManagementDialog>
           .where('businessId', isEqualTo: businessId)
           .where('status', whereIn: AppStatus.confirmedStatuses)
           .where('workDate', isGreaterThanOrEqualTo: Timestamp.fromDate(monthStart))
-          .where('workDate', isLessThan: Timestamp.fromDate(monthEnd))
+          .where('workDate', isLessThan: Timestamp.fromDate(monthEndExclusive))
           .get();
 
       debugPrint('  [단기] businessId=$businessId → ${shortTermSnapshot.docs.length}건');
@@ -215,8 +219,8 @@ class _CloseManagementDialogState extends State<CloseManagementDialog>
               .get();
           for (final doc in snap.docs) {
             final att = AttendanceModel.fromFirestore(doc);
-            // 코드에서 월 범위 필터링
-            if (att.workDate.isBefore(monthStart) || att.workDate.isAfter(monthEnd)) {
+            // 코드에서 월 범위 필터링 (monthEndExclusive의 하루 전 = 말일 23:59:59.999 이하)
+            if (att.workDate.isBefore(monthStart) || !att.workDate.isBefore(monthEndExclusive)) {
               continue;
             }
             final dateKey = DateFormat('yyyy-MM-dd').format(att.workDate);

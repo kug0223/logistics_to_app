@@ -235,7 +235,16 @@ class TaxDeductionService {
   /// 월별 근무일수 조회 (8일 소급 판단용)
   ///
   /// [userId], [businessId], [yearMonth] ('yyyy-MM') 기준
-  /// wageStatus가 'pending'이 아닌(= 이미 확정 처리된) attendance 수를 반환
+  /// wageStatus가 'pending'이 아닌(= 이미 확정 처리된) attendance 수를 반환.
+  ///
+  /// [B16 동시성 한계] 두 관리자가 같은 근무자의 서로 다른 날짜를 동시에 급여 확정할 때:
+  /// A가 7번째 날짜를 확정하는 도중, B가 8번째 날짜를 확정하면서
+  /// getMonthlyWorkDays를 호출하면 A의 wageStatus 변경이 아직 반영 안 된 상태에서
+  /// prevDays=6으로 읽혀 B가 8일차임을 못 알아볼 수 있다 (소급 공제 누락).
+  ///
+  /// 반대로 A의 확정이 B보다 먼저 커밋되고 B가 조회하면 prevDays=7 → 8일차 정확히 감지.
+  /// Firestore는 eventual consistency이므로 완전한 방어는 Cloud Functions에서
+  /// 트랜잭션 단위로 처리해야 한다. 현재는 클라이언트 최선 노력(best effort) 수준 허용.
   static Future<int> getMonthlyWorkDays({
     required String userId,
     required String businessId,

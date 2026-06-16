@@ -501,8 +501,10 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
             label: '사업장명 (정식 명칭)',
             hint: '예: OOO사업장',
             icon: Icons.business,
+            // D01: 빈 문자열(공백 포함) 저장 방어 — trim() 후 검사
             validator: (value) {
-              if (value == null || value.isEmpty) return '사업장명을 입력하세요';
+              if (value == null || value.trim().isEmpty) return '사업장명을 입력하세요';
+              if (value.trim().length > 100) return '사업장명은 100자 이하로 입력해주세요';
               return null;
             },
           ),
@@ -552,8 +554,10 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
             label: '상호명 (법적 회사명)',
             hint: '예: (주)홍길동물류',
             icon: Icons.store,
+            // D01: 공백만 입력 시 저장 방어
             validator: (value) {
-              if (value == null || value.isEmpty) return '상호명을 입력하세요';
+              if (value == null || value.trim().isEmpty) return '상호명을 입력하세요';
+              if (value.trim().length > 100) return '상호명은 100자 이하로 입력해주세요';
               return null;
             },
           ),
@@ -1984,6 +1988,14 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
   Future<String?> _uploadImage(File imageFile, String type) async {
     final timestamp = DateTime.now().millisecondsSinceEpoch;
     final fileName = '${type}_$timestamp.jpg';
-    return _storageService.uploadImage(imageFile.path, 'businesses/$fileName');
+    final url = await _storageService.uploadImage(imageFile.path, 'businesses/$fileName');
+    // TMP-01: pickAndCompressImage()가 반환한 임시 파일(compressed_xxx.jpg)은
+    // 업로드 후 반드시 삭제해야 한다. 업로드 성공/실패 무관하게 정리.
+    try {
+      if (await imageFile.exists()) await imageFile.delete();
+    } catch (_) {
+      debugPrint('⚠️ 임시 이미지 파일 삭제 실패 (무시 가능)');
+    }
+    return url;
   }
 }

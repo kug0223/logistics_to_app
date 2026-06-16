@@ -345,6 +345,12 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
   }
 
   /// 출근 기록 조회
+  ///
+  /// [C01 설계] applicationIds를 받지만 whereIn 필터로 사용하지 않는다.
+  /// 대신 businessId + workDate 범위 쿼리로 당일 사업장 전체 출근 기록을 한 번에 가져온다.
+  /// 이유: whereIn은 최대 30개 제한이 있어 N+1 문제를 유발할 수 있고,
+  ///       당일 한 사업장의 출근 기록은 수십~수백 건 수준으로 단일 쿼리가 더 효율적이다.
+  ///       applicationIds는 결과가 빈 경우 조기 반환을 위한 가드 조건으로만 사용된다.
   Future<Map<String, AttendanceModel>> _getAttendanceRecords(
     List<String> applicationIds,
   ) async {
@@ -3321,16 +3327,32 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
             updates['workHours'] = _calcWorkHoursCompat(effectiveCheckIn, effectiveCheckOut);
           }
 
-          // 시간 수정 시 1차 확정(calculated) 상태이면 미계산(pending)으로 리셋
+          // [B02-FIX] 시간 수정 시 1차 확정(calculated) 상태이면 미계산(pending)으로 리셋.
+          // 트랜잭션으로 서버 측 wageStatus를 재확인하여 동시에 다른 관리자가
+          // wageConfirmed/wageTransferred로 전환한 경우 pending 덮어쓰기를 방지한다.
           if (attendance.wageStatus == AttendanceModel.wageCalculated) {
             updates['wageStatus'] = AttendanceModel.wagePending;
             updates['wageDetail'] = FieldValue.delete();
+            updates['yearMonth'] = FieldValue.delete();
+            final attRef = FirebaseFirestore.instance
+                .collection('attendance')
+                .doc(attendance.id);
+            await FirebaseFirestore.instance.runTransaction((tx) async {
+              final snap = await tx.get(attRef);
+              final serverStatus = snap.data()?['wageStatus'] as String?;
+              // 이미 마감(wageConfirmed) 또는 송금완료(wageTransferred)이면 리셋 불가
+              if (serverStatus == AttendanceModel.wageConfirmed ||
+                  serverStatus == AttendanceModel.wageTransferred) {
+                throw Exception('이미 마감된 급여입니다. 시간 수정 전 마감을 취소해주세요.');
+              }
+              tx.update(attRef, updates);
+            });
+          } else {
+            await FirebaseFirestore.instance
+                .collection('attendance')
+                .doc(attendance.id)
+                .update(updates);
           }
-
-          await FirebaseFirestore.instance
-              .collection('attendance')
-              .doc(attendance.id)
-              .update(updates);
           successCount++;
         } catch (e) {
           debugPrint('❌ 출결 시간 일괄 조정 실패 (${attendance.id}): $e');

@@ -408,7 +408,11 @@ class MonthlyReviewService {
   }) async {
     try {
       final monthStart = DateTime(year, month, 1);
-      final monthEnd = DateTime(year, month + 1, 0, 23, 59, 59);
+      // [A06 수정] isLessThan 패턴: 말일 23:59:59가 아닌 다음 달 1일 자정을 사용.
+      // Timestamp 비교는 초 단위이므로 DateTime(y, m+1, 0, 23, 59, 59)를 isLessThan에 쓰면
+      // 말일 23:59:59 정확히 일치하는 문서가 제외된다.
+      // DateTime(year, month+1, 1)는 Dart가 13월을 자동 정규화(1월로 변환)하므로 12월도 안전.
+      final monthEndExclusive = DateTime(year, month + 1, 1);
 
       // 단기: workDate가 해당 월인 확정 지원서 (CONTRACT_PENDING 포함)
       final shortTermFuture = _db
@@ -418,7 +422,7 @@ class MonthlyReviewService {
           .where('workDate',
               isGreaterThanOrEqualTo: Timestamp.fromDate(monthStart))
           .where('workDate',
-              isLessThan: Timestamp.fromDate(monthEnd))
+              isLessThan: Timestamp.fromDate(monthEndExclusive))
           .get();
 
       // 장기: workEndDate가 해당 월 이후 (계약이 해당 월에 걸침, CONTRACT_PENDING 포함)
@@ -555,8 +559,12 @@ class MonthlyReviewService {
   /// ⚠️ G-013: 기기 클라이언트 시간 기준 — 기기 시간 조작 시 기한 우회 가능.
   /// UX 제어 목적으로 의도된 설계. 엄격한 강제가 필요하면 CF에서 serverTimestamp 재검증 필요.
   bool _isWithinReviewWindow(int year, int month) {
-    final monthEnd = DateTime(year, month + 1, 0); // 해당 월 마지막 날
-    final deadline = monthEnd.add(const Duration(days: _reviewWindowDays));
+    // 해당 월 마지막 날 + 14일의 '끝'(= 다음 날 자정)을 deadline으로 사용.
+    // DateTime(year, month+1, 0)은 말일 00:00:00이므로 그대로 +14일 하면
+    // 14일 당일 자정이 deadline이 되어 14일 하루 전체가 기한 초과로 처리됨(BUG).
+    // +15일(다음 날 자정)을 사용하면 말일 기준 정확히 14일 23:59:59까지 허용.
+    final monthEnd = DateTime(year, month + 1, 0); // 해당 월 마지막 날 00:00:00
+    final deadline = monthEnd.add(const Duration(days: _reviewWindowDays + 1));
     return DateTime.now().isBefore(deadline);
   }
 
