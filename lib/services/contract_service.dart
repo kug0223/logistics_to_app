@@ -95,6 +95,9 @@ class ContractService {
     required EmploymentContractModel contract,
     required Uint8List signatureBytes,
   }) async {
+    if (contract.status == ContractStatus.voided) {
+      throw Exception('무효 처리된 계약서에는 서명할 수 없습니다');
+    }
     if (contract.status == ContractStatus.completed) {
       throw Exception('이미 완료된 계약서입니다');
     }
@@ -137,6 +140,9 @@ class ContractService {
           final snap = await tx.get(ref);
           if (snap.exists) {
             final currentStatus = snap.data()?['status'] as String?;
+            if (currentStatus == ContractStatus.voided.value) {
+              throw Exception('무효 처리된 계약서에는 서명할 수 없습니다');
+            }
             if (currentStatus == ContractStatus.completed.value) {
               throw Exception('이미 완료된 계약서입니다');
             }
@@ -191,6 +197,9 @@ class ContractService {
     required Uint8List signatureBytes,
     required Uint8List pdfBytes,
   }) async {
+    if (contract.status == ContractStatus.voided) {
+      throw Exception('무효 처리된 계약서에는 서명할 수 없습니다');
+    }
     if (contract.status == ContractStatus.completed) {
       throw Exception('이미 완료된 계약서입니다');
     }
@@ -237,6 +246,9 @@ class ContractService {
         final snap = await tx.get(contractRef);
         if (snap.exists) {
           final currentStatus = snap.data()?['status'] as String?;
+          if (currentStatus == ContractStatus.voided.value) {
+            throw Exception('무효 처리된 계약서에는 서명할 수 없습니다');
+          }
           if (currentStatus == ContractStatus.completed.value) {
             throw Exception('이미 완료된 계약서입니다');
           }

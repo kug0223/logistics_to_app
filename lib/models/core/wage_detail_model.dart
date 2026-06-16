@@ -312,8 +312,9 @@ class WageDetailModel {
       retroactiveDeduction;
 
   /// 실수령액 (미확정 시 총액에서 공제액 차감)
+  /// clamp(0): 8일차 소급 공제가 당일 세전 급여를 초과해도 음수가 되지 않도록 보호
   int get effectiveNetWage =>
-      isCalculated ? netWage : totalAmount - totalInsuranceDeduction;
+      (isCalculated ? netWage : totalAmount - totalInsuranceDeduction).clamp(0, 999999999);
 
   /// 포맷팅된 실수령액
   String get formattedNetWage {

@@ -637,7 +637,7 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
         workYear: attendance.workDate.year,
       );
     } else if (prevDays + 1 > 8) {
-      // 9일 이상: 4대보험 풀 공제 (소급 없음)
+      // 9일 이상: 4대보험 풀 공제 (소급 없음, 소득세 미포함 — 연말정산으로 처리)
       final baseWage = wage.copyWith(
         taxDeductionType: InsuranceRateModel.typeNone,
         employmentInsuranceDeduction: 0,
@@ -1174,6 +1174,9 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
             if (paymentDueDate != null) 'paymentDueDate': Timestamp.fromDate(paymentDueDate),
           },
         );
+        // totalWorkDays 클라이언트 직접 업데이트 — 의도된 설계.
+        // Cloud Function 이관이 이상적이나 현재 단계에서는 클라이언트 처리.
+        // FieldValue.increment로 동시 접근 시 원자성 보장.
         batch.update(
           FirebaseFirestore.instance.collection('users').doc(app.uid),
           {'totalWorkDays': FieldValue.increment(1)},
@@ -1202,13 +1205,16 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
         }
         final att = widget.attendanceMap[app.id];
         if (att != null) {
+          // att.finalWage는 다이얼로그 오픈 시점 스냅샷이므로 0일 수 있음.
+          // 방금 계산한 _calculatedWages 값을 우선 사용하고, 없으면 att.finalWage로 fallback.
+          final wageAmount = _calculatedWages[app.id]?.effectiveNetWage ?? att.finalWage ?? 0;
           _firestoreService.createNotification(
             NotificationModel.createWageConfirmed(
               userId: app.uid,
               businessName: widget.businessName,
               businessId: widget.businessId,
               workDate: att.workDate,
-              totalWage: att.finalWage ?? 0,
+              totalWage: wageAmount,
               attendanceId: att.id,
             ),
           );
@@ -1287,6 +1293,9 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
           {
             'wageStatus': AttendanceModel.wageCalculated,
             'finalConfirmedAt': FieldValue.delete(),
+            // wageDetail 내 confirm 정보도 삭제 — 재마감 시 이전 확정자 정보 잔류 방지
+            'wageDetail.confirmedBy': FieldValue.delete(),
+            'wageDetail.confirmedAt': FieldValue.delete(),
           },
         );
         // _closeWages에서 increment(1)했으므로 취소 시 되돌림

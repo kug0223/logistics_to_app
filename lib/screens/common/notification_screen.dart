@@ -364,6 +364,11 @@ class _NotificationScreenState extends State<NotificationScreen> {
 
       case NotificationType.memberInvitationAccepted:
       case NotificationType.memberInvitationRejected:
+        // 초대 수락/거절 결과는 통합 인력 관리 화면에서 확인 — 의도된 설계.
+        Navigator.push(
+          context,
+          MaterialPageRoute(builder: (_) => const IntegratedWorkforceScreen()),
+        );
         break;
 
       // ═══════════════════════════════════════════════════════════

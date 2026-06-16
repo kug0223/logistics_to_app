@@ -126,6 +126,9 @@ class TaxDeductionService {
   }
 
   // ── 4대보험 고정 공제 ─────────────────────────────────────────
+  // 소득세(incomeTax)를 포함하지 않는다 — 의도된 설계.
+  // four_insurance_fixed 대상(9일 이상 장기 일용직)은 연말정산으로 소득세를 정산하므로
+  // 매 근무일마다 원천징수하지 않는다.
 
   static WageDetailModel _applyFourInsurance(
     WageDetailModel base,

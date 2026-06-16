@@ -957,11 +957,29 @@ class FirestoreService {
     String? rejectReason,
   }) async {
     try {
+      final appDoc = await _firestore.collection('applications').doc(applicationId)
+          .get(const GetOptions(source: Source.server));
+      if (!appDoc.exists) return false;
+      final appData = appDoc.data()!;
+
       await _firestore.collection('applications').doc(applicationId).update({
         'terminationStatus': AppStatus.rejected,
         'terminationRespondedAt': FieldValue.serverTimestamp(),
         'terminationRejectReason': rejectReason,
       });
+
+      // 계약해지 거절 알림 — 지원자에게 발송 (BUG-04 수정)
+      final workerUid = appData['uid'] as String?;
+      if (workerUid != null) {
+        await createNotification(NotificationModel.createResignRejected(
+          userId: workerUid,
+          businessName: appData['businessName'] as String? ?? '',
+          businessId: appData['businessId'] as String? ?? '',
+          applicationId: applicationId,
+          rejectReason: rejectReason,
+        ));
+      }
+
       debugPrint('✅ 계약해지 거절: $applicationId');
       return true;
     } catch (e) {

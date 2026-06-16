@@ -3277,6 +3277,7 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
         }
       }
 
+      if (!mounted) return;
       if (successCount > 0) ToastHelper.showSuccess('$successCount명 시간 조정 완료');
       if (failCount > 0) ToastHelper.showWarning('$failCount명 처리 실패');
 
@@ -3284,6 +3285,7 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
       await _loadData();
     } catch (e) {
       debugPrint('❌ 일괄 시간 조정 실패: $e');
+      if (!mounted) return;
       ToastHelper.showError('일괄 시간 조정 실패');
     }
   }
@@ -3734,6 +3736,7 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
         }
       }
 
+      if (!mounted) return;
       if (successCount > 0) {
         ToastHelper.showSuccess('$successCount명 출근 처리 완료');
         _hasChanges = true;
@@ -3745,6 +3748,7 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
       await _loadData();
     } catch (e) {
       debugPrint('❌ 일괄 출근 처리 실패: $e');
+      if (!mounted) return;
       ToastHelper.showError('일괄 출근 처리 실패');
     } finally {
 
@@ -3797,6 +3801,7 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
         }
       }
 
+      if (!mounted) return;
       if (successCount > 0) {
         ToastHelper.showSuccess('$successCount명 퇴근 처리 완료');
         _hasChanges = true;
@@ -3806,6 +3811,7 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
       await _loadData();
     } catch (e) {
       debugPrint('❌ 일괄 퇴근 처리 실패: $e');
+      if (!mounted) return;
       ToastHelper.showError('일괄 퇴근 처리 실패');
     }
   }
@@ -3837,6 +3843,7 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
         }
       }
 
+      if (!mounted) return;
       if (successCount > 0) ToastHelper.showSuccess('$successCount명 출근 처리 완료');
       if (failCount > 0) ToastHelper.showWarning('$failCount명 처리 실패');
 
@@ -3844,6 +3851,7 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
       await _loadData();
     } catch (e) {
       debugPrint('❌ 파트별 일괄 출근 처리 실패: $e');
+      if (!mounted) return;
       ToastHelper.showError('일괄 출근 처리 실패');
     }
   }
@@ -3893,6 +3901,7 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
         }
       }
 
+      if (!mounted) return;
       if (successCount > 0) {
         ToastHelper.showSuccess('$successCount명 퇴근 처리 완료');
         _hasChanges = true;
@@ -3902,6 +3911,7 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
       await _loadData();
     } catch (e) {
       debugPrint('❌ 파트별 일괄 퇴근 처리 실패: $e');
+      if (!mounted) return;
       ToastHelper.showError('일괄 퇴근 처리 실패');
     }
   }
