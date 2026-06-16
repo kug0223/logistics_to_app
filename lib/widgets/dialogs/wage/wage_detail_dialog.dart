@@ -572,7 +572,8 @@ class _WageDetailDialogState extends State<WageDetailDialog> {
         : null;
 
     // 미근무 시간: (계약 순근무 - 실근무), 일급제에서 조퇴/지각 시 발생
-    final scheduledNetMins = (_wage.scheduledMinutes - _wage.breakMinutes).clamp(0, 9999);
+    // scheduledBreakMinutes(예정 휴게) 기준 — breakMinutes는 실제 휴게로 달라질 수 있음
+    final scheduledNetMins = (_wage.scheduledMinutes - widget.scheduledBreakMinutes).clamp(0, 9999);
     final unworkedMins = (scheduledNetMins - _wage.workMinutes).clamp(0, scheduledNetMins);
     final unworkedStr = (unworkedMins > 0 && _wage.wageType == 'daily')
         ? FormatHelper.formatCompactHours(unworkedMins)

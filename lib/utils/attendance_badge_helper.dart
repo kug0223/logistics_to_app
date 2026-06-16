@@ -48,8 +48,15 @@ class AttendanceBadgeHelper {
     if (checkIn == null) return AttendanceFlags.none;
 
     // 지각: checkIn만 있으면 판단 가능 (아직 퇴근 안 한 상태에서도 표시)
-    final isLate = AttendanceStatusHelper.isLate(checkIn, effStart);
-    final isEarlyArrival = AttendanceStatusHelper.isEarlyArrival(checkIn, effStart);
+    // 야간 시프트(effStart >= 20:00, checkIn < 06:00): 자정 넘김 보정 필요
+    final effStartMins = AttendanceStatusHelper.timeToMinutes(effStart);
+    final checkInMins = AttendanceStatusHelper.timeToMinutes(checkIn);
+    final isNextDay = effStartMins >= 20 * 60 && checkInMins < 6 * 60;
+    final isLate = AttendanceStatusHelper.isLate(checkIn, effStart, isNextDay: isNextDay);
+    // 야간 시프트 조출: adjusted actual(+1440)이 scheduled보다 30분+ 이른지
+    final isEarlyArrival = isNextDay
+        ? (effStartMins - (checkInMins + 1440) >= 30)
+        : AttendanceStatusHelper.isEarlyArrival(checkIn, effStart);
 
     // 조퇴·연장·심야: checkOut 없으면 판단 불가
     if (checkOut == null) {

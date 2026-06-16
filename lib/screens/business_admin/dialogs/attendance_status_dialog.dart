@@ -1308,7 +1308,15 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
     // ✅ workType + 시간 조합으로 그룹화 (장기/단기 합침)
     final Map<String, List<ApplicationModel>> workTypeGroups = {};
 
-    for (var app in workers ?? _confirmedWorkers) {
+    final sourceWorkers = workers ?? _confirmedWorkers;
+    final filteredSource = _nameFilter.isEmpty
+        ? sourceWorkers
+        : sourceWorkers.where((app) {
+            final name = _userMap[app.uid]?.name ?? '';
+            return name.contains(_nameFilter);
+          }).toList();
+
+    for (var app in filteredSource) {
       // app.startTime/endTime으로 그룹화 — effectiveStart는 workType 단위 캐시라
       // 같은 workType의 다른 시간대 TO가 섞이므로 사용하지 않음
       final normStart = _normalizeTimeKey(app.startTime);
@@ -2205,6 +2213,7 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
   }
 
   Future<void> _batchGroupConfirm(List<ApplicationModel> confirmable) async {
+    if (_isLoading) return;
     final ok = await DialogHelper.showConfirm(
       context,
       title: '그룹 전체 확인',
@@ -2214,6 +2223,7 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
       confirmColor: AppColors.success,
     );
     if (!ok || !mounted) return;
+    setState(() => _isLoading = true);
     try {
       final batch = FirebaseFirestore.instance.batch();
       for (final a in confirmable) {
@@ -2232,16 +2242,19 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
           if (att != null) _attendanceMap[a.id] = att.copyWith(adminConfirmed: true);
           _selectedIds.remove(a.id);
         }
+        _isLoading = false;
         _hasChanges = true;
       });
     } catch (e) {
       debugPrint('❌ 그룹 전체 확인 실패: $e');
       if (!mounted) return;
+      setState(() => _isLoading = false);
       ToastHelper.showError('그룹 전체 확인 실패');
     }
   }
 
   Future<void> _batchGroupCancelConfirm(List<ApplicationModel> cancellable) async {
+    if (_isLoading) return;
     final ok = await DialogHelper.showConfirm(
       context,
       title: '그룹 전체 취소',
@@ -2251,6 +2264,7 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
       confirmColor: AppColors.warning,
     );
     if (!ok || !mounted) return;
+    setState(() => _isLoading = true);
     try {
       final batch = FirebaseFirestore.instance.batch();
       for (final a in cancellable) {
@@ -2268,11 +2282,13 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
           final att = _attendanceMap[a.id];
           if (att != null) _attendanceMap[a.id] = att.copyWith(adminConfirmed: false);
         }
+        _isLoading = false;
         _hasChanges = true;
       });
     } catch (e) {
       debugPrint('❌ 그룹 전체 취소 실패: $e');
       if (!mounted) return;
+      setState(() => _isLoading = false);
       ToastHelper.showError('그룹 전체 확인 취소 실패');
     }
   }
