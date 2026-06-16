@@ -436,7 +436,10 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
 
     // 퇴근 완료
     if (attendance?.checkOut != null) {
-      final timeText = '${_trimSeconds(attendance!.checkIn!)} ~ ${_trimSeconds(attendance.checkOut!)}';
+      final checkInDisplay = attendance!.checkIn != null
+          ? _trimSeconds(attendance.checkIn!)
+          : '-';
+      final timeText = '$checkInDisplay ~ ${_trimSeconds(attendance.checkOut!)}';
 
       // 조퇴 판단 — 출근 시간 기준으로 익일 자정 넘김 보정
       final isEarly = AttendanceStatusHelper.isEarlyLeave(
@@ -3956,6 +3959,7 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
       }
     }
 
+    if (!mounted) return;
     _hasChanges = true;
     if (successCount > 0) {
       ToastHelper.showSuccess('$successCount명 마감취소 완료');

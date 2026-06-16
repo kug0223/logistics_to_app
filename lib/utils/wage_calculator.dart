@@ -176,11 +176,10 @@ class WageCalculator {
     // earlyArrivalMinutes: 실제 조출 시간 (시간 표시용 — 수당 계산 시 내부에서 clamp)
     final schedStartMin = _parseTime(scheduledStart) ?? 0;
     final actualStartMin = _parseTime(actualStart) ?? 0;
-    // 자정 넘김 보정: actualStart가 scheduledStart보다 수치상 크면 전날로 해석
-    final adjustedActualStart = actualStartMin > schedStartMin
-        ? actualStartMin - 24 * 60
-        : actualStartMin;
-    final earlyArrivalMinutes = (schedStartMin - adjustedActualStart).clamp(0, 9999);
+    // 단순 비교: 예정보다 이르면 조출, 늦으면(지각) 0
+    // 이전 "자정 넘김 보정" 로직은 예정 22~23시에 지각한 경우
+    // adjustedActualStart가 음수가 되어 조출 24시간으로 오계산되는 버그가 있었음
+    final earlyArrivalMinutes = (schedStartMin - actualStartMin).clamp(0, 9999);
     
     // 3. 야간근무 계산 (휴게는 주간 구간 먼저 소진 — 야간 시간대 공제 최소화)
     int nightMinutes = 0;

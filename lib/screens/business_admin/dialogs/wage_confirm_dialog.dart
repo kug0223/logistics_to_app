@@ -119,7 +119,9 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
     _calculatedWorkers = [];
     _transferredWorkers = [];
 
+    final seenIds = <String>{};
     for (var app in widget.workers) {
+      if (!seenIds.add(app.id)) continue; // 중복 entry 방어
       final attendance = widget.attendanceMap[app.id];
       if (attendance == null) continue;
 
@@ -1204,6 +1206,10 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
       for (final appId in targetIds) {
         final attendance = widget.attendanceMap[appId];
         if (attendance == null) { failCount++; continue; }
+        final app = _transferredWorkers.firstWhere(
+          (a) => a.id == appId,
+          orElse: () => throw StateError('app not found: $appId'),
+        );
 
         batch.update(
           FirebaseFirestore.instance.collection('attendance').doc(attendance.id),
@@ -1212,18 +1218,23 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
             'finalConfirmedAt': FieldValue.delete(),
           },
         );
-        batchCount++;
+        // _closeWages에서 increment(1)했으므로 취소 시 되돌림
+        batch.update(
+          FirebaseFirestore.instance.collection('users').doc(app.uid),
+          {'totalWorkDays': FieldValue.increment(-1)},
+        );
+        batchCount += 2;
 
-        if (batchCount >= 499) {
+        if (batchCount >= 498) {
           await batch.commit();
-          successCount += batchCount;
+          successCount += batchCount ~/ 2;
           batch = FirebaseFirestore.instance.batch();
           batchCount = 0;
         }
       }
       if (batchCount > 0) {
         await batch.commit();
-        successCount += batchCount;
+        successCount += batchCount ~/ 2;
       }
     } catch (e) {
       debugPrint('❌ 마감 취소 실패: $e');
@@ -1258,7 +1269,7 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
   int _getSelectedTotal(Set<String> selectedIds) {
     int total = 0;
     for (var appId in selectedIds) {
-      total += _calculatedWages[appId]?.netWage ?? 0;
+      total += _calculatedWages[appId]?.effectiveNetWage ?? 0;
     }
     return total;
   }
