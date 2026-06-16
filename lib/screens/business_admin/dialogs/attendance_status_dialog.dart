@@ -852,21 +852,22 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
 
           SizedBox(height: ResponsiveHelper.spacing(context, 16)),
 
-          // 사업장 선택
-          AppSelectField<String>(
-            value: _selectedBusinessId,
-            hintText: '사업장을 선택하세요',
-            sheetTitle: '사업장 선택',
-            items: widget.businessIds,
-            labelOf: (id) => _businessNameMap[id] ?? id,
-            prefixIcon: Icons.business,
-            onChanged: (value) {
-              if (value != null && value != _selectedBusinessId) {
-                setState(() => _selectedBusinessId = value);
-                _loadData();
-              }
-            },
-          ),
+          // 사업장 선택 (2개 이상일 때만 표시)
+          if (widget.businessIds.length > 1)
+            AppSelectField<String>(
+              value: _selectedBusinessId,
+              hintText: '사업장을 선택하세요',
+              sheetTitle: '사업장 선택',
+              items: widget.businessIds,
+              labelOf: (id) => _businessNameMap[id] ?? id,
+              prefixIcon: Icons.business,
+              onChanged: (value) {
+                if (value != null && value != _selectedBusinessId) {
+                  setState(() => _selectedBusinessId = value);
+                  _loadData();
+                }
+              },
+            ),
         ],
       ),
     );

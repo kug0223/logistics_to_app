@@ -168,6 +168,8 @@ class NotificationCard extends StatelessWidget {
         return Icons.payments;
       case NotificationType.wageCancelConfirmed:
         return Icons.edit_note;
+      case NotificationType.retroactiveDeductionAlert:
+        return Icons.warning_amber;
       case NotificationType.idCardAccessRequested:
         return Icons.badge;
       case NotificationType.idCardAccessApproved:
@@ -220,6 +222,8 @@ class NotificationCard extends StatelessWidget {
       case NotificationType.wageConfirmed:
         return AppColors.success;
       case NotificationType.wageCancelConfirmed:
+        return AppColors.warning;
+      case NotificationType.retroactiveDeductionAlert:
         return AppColors.warning;
       case NotificationType.reviewReceived:
         return AppColors.amber;

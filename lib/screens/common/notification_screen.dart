@@ -371,6 +371,7 @@ class _NotificationScreenState extends State<NotificationScreen> {
       // ═══════════════════════════════════════════════════════════
       case NotificationType.wageConfirmed:
       case NotificationType.wageCancelConfirmed:
+      case NotificationType.retroactiveDeductionAlert:
         Navigator.push(
           context,
           MaterialPageRoute(builder: (_) => const MyApplicationsScreen()),

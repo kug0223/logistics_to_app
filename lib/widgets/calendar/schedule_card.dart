@@ -1180,10 +1180,10 @@ class ScheduleCard extends StatelessWidget {
       );
     }
     
-    // 5. 급여 검토중
+    // 5. 급여 계산 완료 — 관리자 마감 대기
     if (attendance!.wageStatus == 'calculated') {
       return _StatusInfo(
-        text: '검토중',
+        text: '정산 대기',
         color: AppColors.warning,
         icon: Icons.hourglass_bottom,
       );

@@ -562,7 +562,7 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
                 workDate: attendance.workDate,
                 retroactiveAmount: calculatedWage.retroactiveDeduction,
                 grossWage: calculatedWage.totalAmount,
-                netWage: calculatedWage.netWage,
+                netWage: calculatedWage.effectiveNetWage,
                 attendanceId: attendance.id,
               ),
             );
@@ -881,7 +881,7 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
               name: user?.name ?? '근무자',
               retroactive: finalWage.retroactiveDeduction,
               gross: finalWage.totalAmount,
-              net: finalWage.netWage,
+              net: finalWage.effectiveNetWage,
             ),
           ]);
           if (!confirmed || !mounted) return;
@@ -943,7 +943,7 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
         }
         tx.update(attRef, {
           'wageStatus': 'calculated',
-          'finalWage': calculatedWage.netWage,
+          'finalWage': calculatedWage.effectiveNetWage,
           'wageDetail': calculatedWage.toMap(),
           'yearMonth': yearMonth,
           'updatedAt': FieldValue.serverTimestamp(),
@@ -959,7 +959,7 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
             workDate: attendance.workDate,
             retroactiveAmount: calculatedWage.retroactiveDeduction,
             grossWage: calculatedWage.totalAmount,
-            netWage: calculatedWage.netWage,
+            netWage: calculatedWage.effectiveNetWage,
             attendanceId: attendance.id,
           ),
         );
@@ -967,7 +967,7 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
 
       _hasChanges = true;
       widget.onConfirmed?.call();
-      
+
       if (mounted) {
         setState(() {
           _calculatedWages[app.id] = calculatedWage;
@@ -1003,7 +1003,7 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
           .collection('attendance')
           .doc(attendance.id)
           .update({
-        'finalWage': updatedWage.netWage,
+        'finalWage': updatedWage.effectiveNetWage,
         'wageDetail': updatedWage.toMap(),
         'updatedAt': FieldValue.serverTimestamp(),
       });
@@ -1182,12 +1182,25 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
         successCount += batchCount ~/ 2;
       }
 
-      // 신뢰도 업데이트
+      // 신뢰도 업데이트 + 지원자 알림
       for (final app in processedApps) {
         try {
           await TrustScoreService().onWorkComplete(app.uid, app.businessId);
         } catch (e) {
           debugPrint('⚠️ 신뢰도 업데이트 실패 (${app.uid}): $e');
+        }
+        final att = widget.attendanceMap[app.id];
+        if (att != null) {
+          _firestoreService.createNotification(
+            NotificationModel.createWageConfirmed(
+              userId: app.uid,
+              businessName: widget.businessName,
+              businessId: widget.businessId,
+              workDate: att.workDate,
+              totalWage: att.finalWage ?? 0,
+              attendanceId: att.id,
+            ),
+          );
         }
       }
     } catch (e) {
@@ -1278,6 +1291,23 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
       if (batchCount > 0) {
         await batch.commit();
         successCount += batchCount ~/ 2;
+      }
+
+      // 마감 취소 알림 발송 (batch 성공 후)
+      for (final appId in targetIds) {
+        final attendance = widget.attendanceMap[appId];
+        if (attendance == null) continue;
+        final app = _transferredWorkers.where((a) => a.id == appId).firstOrNull;
+        if (app == null) continue;
+        _firestoreService.createNotification(
+          NotificationModel.createWageCancelConfirmed(
+            userId: app.uid,
+            businessName: widget.businessName,
+            businessId: widget.businessId,
+            workDate: attendance.workDate,
+            attendanceId: attendance.id,
+          ),
+        );
       }
     } catch (e) {
       debugPrint('❌ 마감 취소 실패: $e');

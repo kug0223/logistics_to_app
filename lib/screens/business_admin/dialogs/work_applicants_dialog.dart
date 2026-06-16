@@ -249,6 +249,7 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
           .map((app) => app.id)
           .toSet();
 
+      if (!mounted) return;
       setState(() {
         _applicants = applicantsWithUserInfo;
         _idCardStatusMap = idCardStatusMap;

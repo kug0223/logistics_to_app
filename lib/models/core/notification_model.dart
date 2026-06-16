@@ -36,8 +36,9 @@ enum NotificationType {
   resignRejected,           // 퇴사 거절됨 (관리자→근무자)
   
   // 급여 관련
-  wageConfirmed,           // 급여 정산 완료
-  wageCancelConfirmed,     // 급여 마감 취소 (수정 중)
+  wageConfirmed,              // 급여 정산 완료
+  wageCancelConfirmed,        // 급여 마감 취소
+  retroactiveDeductionAlert,  // 4대보험 소급 공제 안내
   
   // 리뷰 관련
   reviewReceived,          // 리뷰 받음
@@ -195,6 +196,8 @@ class NotificationModel {
         return 'payments';
       case NotificationType.wageCancelConfirmed:
         return 'payments';
+      case NotificationType.retroactiveDeductionAlert:
+        return 'warning_amber';
       // 리뷰
       case NotificationType.reviewReceived:
         return 'star';
@@ -271,6 +274,7 @@ class NotificationModel {
       // 급여 관련
       case 'wageConfirmed': return NotificationType.wageConfirmed;
       case 'wageCancelConfirmed': return NotificationType.wageCancelConfirmed;
+      case 'retroactiveDeductionAlert': return NotificationType.retroactiveDeductionAlert;
       // 리뷰
       case 'reviewReceived': return NotificationType.reviewReceived;
       // 신분증
@@ -317,6 +321,7 @@ class NotificationModel {
       // 급여 관련
       case NotificationType.wageConfirmed: return 'wageConfirmed';
       case NotificationType.wageCancelConfirmed: return 'wageCancelConfirmed';
+      case NotificationType.retroactiveDeductionAlert: return 'retroactiveDeductionAlert';
       // 리뷰
       case NotificationType.reviewReceived: return 'reviewReceived';
       // 신분증
@@ -930,10 +935,10 @@ class NotificationModel {
     return NotificationModel(
       id: '',
       userId: userId,
-      type: NotificationType.wageConfirmed,
+      type: NotificationType.retroactiveDeductionAlert,
       title: '4대보험 소급 공제 안내',
-      body: '$businessName ${workDate.month}/${workDate.day} 근무는 이번 달 8번째 근무일로, '
-          '1~7일분 4대보험 $retroFormatted원이 소급 공제됩니다.\n실수령액: $netFormatted원',
+      body: '$businessName ${workDate.month}/${workDate.day} 근무 포함 이번 달 근무 횟수가 8회를 넘어 '
+          '4대보험이 첫 근무부터 적용됩니다. 이전 근무분 보험료 $retroFormatted원이 이번 급여에서 함께 공제됩니다.\n실수령액: $netFormatted원',
       data: {
         'attendanceId': attendanceId,
         'businessId': businessId,

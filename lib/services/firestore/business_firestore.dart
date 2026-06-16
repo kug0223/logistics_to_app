@@ -329,9 +329,17 @@ extension BusinessFirestore on FirestoreService {
       
       if (doc.exists) {
         final data = doc.data()!;
+
+        // ✅ 2. Firestore 소프트 삭제 먼저 (실패 시 Storage는 건드리지 않음)
+        await _firestore
+            .collection('businesses')
+            .doc(businessId)
+            .collection('workTypes')
+            .doc(workTypeId)
+            .update({'isActive': false});
+
+        // ✅ 3. Firestore 성공 후 Storage 정리 (실패해도 문서는 이미 비활성화됨)
         final storage = FirebaseStorage.instance;
-        
-        // ✅ 2. 썸네일 이미지 삭제
         if (data['thumbnailUrl'] != null) {
           try {
             await storage.refFromURL(data['thumbnailUrl']).delete();
@@ -340,8 +348,6 @@ extension BusinessFirestore on FirestoreService {
             debugPrint('⚠️ 썸네일 삭제 실패: $e');
           }
         }
-        
-        // ✅ 3. 추가 이미지들 삭제
         if (data['images'] != null) {
           for (var url in List<String>.from(data['images'])) {
             try {
@@ -352,9 +358,10 @@ extension BusinessFirestore on FirestoreService {
             }
           }
         }
+        return true;
       }
 
-      // ✅ 4. Firestore 소프트 삭제
+      // 문서 없는 경우에도 성공으로 처리
       await _firestore
           .collection('businesses')
           .doc(businessId)

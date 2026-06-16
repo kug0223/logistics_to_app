@@ -491,23 +491,22 @@ extension AttendanceFirestore on FirestoreService {
   }) async {
     if (businessIds.isEmpty) return [];
     try {
-      final results = <ScheduleChangeRequestModel>[];
-      for (final businessId in businessIds) {
-        final snap = await _firestore
+      // 사업장별 개별 쿼리를 병렬로 실행 (whereIn은 보안 규칙 위반으로 사용 불가)
+      final snaps = await Future.wait(
+        businessIds.map((businessId) => _firestore
             .collection('schedule_change_requests')
             .where('businessId', isEqualTo: businessId)
             .where('status', isEqualTo: 'PENDING')
-            .get(const GetOptions(source: Source.server));
-        results.addAll(
-          snap.docs
+            .get(const GetOptions(source: Source.server))),
+      );
+      return snaps
+          .expand((snap) => snap.docs
               .map((d) => ScheduleChangeRequestModel.fromMap(d.data(), d.id))
               .where((r) =>
                   r.targetDate.year == date.year &&
                   r.targetDate.month == date.month &&
-                  r.targetDate.day == date.day),
-        );
-      }
-      return results;
+                  r.targetDate.day == date.day))
+          .toList();
     } catch (e) {
       debugPrint('❌ 날짜별 스케줄 변경 요청 조회 실패: $e');
       return [];
