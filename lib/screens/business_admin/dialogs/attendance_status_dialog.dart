@@ -3944,7 +3944,9 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
       Map<String, String> groupTimes, List<String> targetIds) async {
     try {
       int successCount = 0;
-      int failCount = 0;
+      // [W-3] 실패 이유를 이름과 함께 수집 — 단순 failCount만 표시하면 관리자가 원인 파악 불가
+      // 시간 역전과 16시간 초과(야간 장시간 근무 업종)를 구분하여 개별 안내
+      final List<String> failMessages = [];
 
       for (final appId in targetIds) {
         final app = _confirmedWorkers.firstWhere((a) => a.id == appId);
@@ -3957,10 +3959,16 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
 
         try {
           final checkIn = attendance.checkIn ?? WorkDetailHelper.effectiveStart(app, _workDetailTimeMap);
+          final workerName = _userMap[app.uid]?.name ?? '근무자';
 
-          // 시간 역전 검사
-          if (!AttendanceStatusHelper.isValidWorkPeriod(checkIn, time)) {
-            failCount++;
+          // [W-3] 실패 이유 구분 — workMinutes로 직접 계산하여 시간 역전 vs 16시간 초과 구별
+          final minutes = AttendanceStatusHelper.workMinutes(checkIn, time);
+          if (minutes <= 0) {
+            failMessages.add('$workerName: 퇴근 시간이 출근 시간보다 앞서 있습니다');
+            continue;
+          }
+          if (minutes > 16 * 60) {
+            failMessages.add('$workerName: 16시간 초과 (${minutes ~/ 60}시간 ${minutes % 60}분)');
             continue;
           }
 
@@ -3980,7 +3988,8 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
           });
           successCount++;
         } catch (e) {
-          failCount++;
+          final workerName = _userMap[app.uid]?.name ?? '근무자';
+          failMessages.add('$workerName: 처리 오류');
         }
       }
 
@@ -3989,7 +3998,9 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
         ToastHelper.showSuccess('$successCount명 퇴근 처리 완료');
         _hasChanges = true;
       }
-      if (failCount > 0) ToastHelper.showWarning('$failCount명 처리 실패');
+      if (failMessages.isNotEmpty) {
+        ToastHelper.showWarning('${failMessages.length}명 처리 실패\n${failMessages.join('\n')}');
+      }
 
       await _loadData();
     } catch (e) {
