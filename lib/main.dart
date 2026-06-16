@@ -108,6 +108,9 @@ void main() async {
 
     debugPrint('✅ Firebase 초기화 완료');
   } catch (e) {
+    // Firebase 초기화 실패 시에도 앱을 계속 실행한다.
+    // Firestore persistenceEnabled=true 로 오프라인 캐시에서 부분 기능 제공 가능하며,
+    // SplashScreen → AuthWrapper가 로딩 상태를 표시하므로 사용자 UX는 유지된다.
     debugPrint('❌ Firebase 초기화 에러: $e');
   }
   // ✅ PDF 한글 폰트 백그라운드 프리로드 (await 없이 - 병렬 실행)
@@ -258,6 +261,11 @@ class _AuthWrapperState extends State<AuthWrapper> {
               }
             });
           }
+          // 토큰 만료·자동 로그아웃 경로에서도 테마가 이전 역할로 남아있지 않도록
+          // addPostFrameCallback으로 빌드 완료 후 리셋 (빌드 중 notifyListeners 방지)
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (mounted) context.read<ThemeProvider>().reset();
+          });
           return const LoginScreen();
         }
 

@@ -290,6 +290,7 @@ class FCMService {
     final screen = data['screen'] as String?;
     switch (screen) {
       case 'contractSign':
+      case 'userContracts': // contractVoided 알림 딥링크 (H-34)
         _navigatorKey!.currentState!.push(
           MaterialPageRoute(builder: (_) => const UserContractsScreen()),
         );

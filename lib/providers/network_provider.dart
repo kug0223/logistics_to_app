@@ -18,8 +18,16 @@ class NetworkProvider extends ChangeNotifier {
   Future<void> _init() async {
     // 앱 시작 시 현재 상태 확인
     final results = await _connectivity.checkConnectivity();
-    _isOnline = _hasConnection(results);
-    NetworkChecker.instance.update(_isOnline); // 서비스 레이어와 동기화
+    final initialOnline = _hasConnection(results);
+    // 기본값(true)과 실제 상태가 다를 경우에만 갱신 + 알림
+    // (오프라인으로 시작하면 NetworkBanner가 즉시 표시되어야 함)
+    if (initialOnline != _isOnline) {
+      _isOnline = initialOnline;
+      NetworkChecker.instance.update(_isOnline);
+      if (!_disposed) notifyListeners();
+    } else {
+      NetworkChecker.instance.update(_isOnline); // 서비스 레이어와 동기화
+    }
 
     // 이후 변화 감지
     _subscription = _connectivity

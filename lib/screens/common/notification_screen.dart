@@ -10,6 +10,7 @@ import '../../providers/user_provider.dart';
 // 네비게이션 대상 화면들
 import '../user/my_applications_screen.dart';
 import '../user/my_schedule_screen.dart';
+import '../user/user_contracts_screen.dart';
 import '../user/dialogs/my_requests_dialog.dart';
 import '../business_admin/workforce_management/integrated_workforce_screen.dart';
 import '../contract/contract_sign_screen.dart';
@@ -198,21 +199,21 @@ class _NotificationScreenState extends State<NotificationScreen> {
   ) async {
     if (_isHandlingTap) return;
     _isHandlingTap = true;
-    // 1. 읽음 처리 (실패해도 네비게이션은 계속)
+    // try/finally로 예외 발생 시에도 플래그를 반드시 해제한다.
+    // 예외 없이 정상 완료해도 마지막에 해제되므로 중복 탭 방어가 유지된다.
     try {
-      await provider.markAsRead(notification.id);
-    } catch (_) {}
+      // 1. 읽음 처리 (실패해도 네비게이션은 계속)
+      try {
+        await provider.markAsRead(notification.id);
+      } catch (_) {}
 
-    if (!context.mounted) {
-      _isHandlingTap = false;
-      return;
-    }
+      if (!context.mounted) return;
 
-    // 2. 알림 타입에 따른 화면 이동
-    final userProvider = context.read<UserProvider>();
-    final isUser = userProvider.isUser;
+      // 2. 알림 타입에 따른 화면 이동
+      final userProvider = context.read<UserProvider>();
+      final isUser = userProvider.isUser;
 
-    switch (notification.type) {
+      switch (notification.type) {
       // ═══════════════════════════════════════════════════════════
       // 지원 관련 알림
       // ═══════════════════════════════════════════════════════════
@@ -259,6 +260,14 @@ class _NotificationScreenState extends State<NotificationScreen> {
         await _openContractSignFromNotification(context, notification);
         break;
 
+      // 계약서 무효화 알림 — 근무자의 계약서 목록 화면으로 이동 (H-34)
+      case NotificationType.contractVoided:
+        Navigator.push(
+          context,
+          MaterialPageRoute(builder: (_) => const UserContractsScreen()),
+        );
+        break;
+
       case NotificationType.contractExpiringReminder:
         {
           final businessId = userProvider.effectiveBusinessId;
@@ -281,6 +290,7 @@ class _NotificationScreenState extends State<NotificationScreen> {
 
       case NotificationType.contractRenewed:
       case NotificationType.contractTerminating:
+        // 계약 연장·종료 통보는 근무자(isUser)에게만 발송되므로 isUser 분기 불필요 — 의도된 설계.
         Navigator.push(
           context,
           MaterialPageRoute(builder: (_) => const MyScheduleScreen()),
@@ -374,6 +384,7 @@ class _NotificationScreenState extends State<NotificationScreen> {
       // ═══════════════════════════════════════════════════════════
       // 급여 관련 알림 — MyScheduleScreen으로 이동
       // (MyApplicationsScreen은 지원 내역 목록이며 급여 확인과 무관)
+      // 급여 알림은 근무자(isUser)에게만 발송되므로 isUser 분기 불필요 — 의도된 설계.
       // ═══════════════════════════════════════════════════════════
       case NotificationType.wageConfirmed:
       case NotificationType.wageCancelConfirmed:
@@ -395,7 +406,10 @@ class _NotificationScreenState extends State<NotificationScreen> {
         }
         break;
     }
-    if (mounted) _isHandlingTap = false;
+    } finally {
+      // 예외·정상 완료 모두 플래그 해제 — 이후 탭이 다시 동작하도록 보장
+      if (mounted) _isHandlingTap = false;
+    }
   }
 
   /// 알림에서 계약서 서명 화면 열기 (근무자용)

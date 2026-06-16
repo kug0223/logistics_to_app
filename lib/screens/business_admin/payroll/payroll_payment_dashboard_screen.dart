@@ -658,10 +658,13 @@ class _PayrollPaymentDashboardScreenState
     try {
       await _payService.approveInterimSettlement(
         req: req, processedBy: _uid, transferNote: note);
-      ToastHelper.showSuccess('중간정산이 처리되었습니다');
-      _load();
+      // [D-BUG-01] async gap 후 mounted 체크
+      if (mounted) {
+        ToastHelper.showSuccess('중간정산이 처리되었습니다');
+        _load();
+      }
     } catch (e) {
-      ToastHelper.showError('처리에 실패했습니다');
+      if (mounted) ToastHelper.showError('처리에 실패했습니다');
     } finally {
       if (mounted) setState(() => _isTransferring = false);
     }
@@ -694,10 +697,13 @@ class _PayrollPaymentDashboardScreenState
     try {
       await _payService.rejectInterimSettlement(
         requestId: req.id, processedBy: _uid, rejectReason: reason);
-      ToastHelper.showSuccess('거절 처리되었습니다');
-      _load();
+      // [D-BUG-02] async gap 후 mounted 체크
+      if (mounted) {
+        ToastHelper.showSuccess('거절 처리되었습니다');
+        _load();
+      }
     } catch (e) {
-      ToastHelper.showError('처리에 실패했습니다');
+      if (mounted) ToastHelper.showError('처리에 실패했습니다');
     } finally {
       if (mounted) setState(() => _isTransferring = false);
     }
@@ -720,10 +726,13 @@ class _PayrollPaymentDashboardScreenState
     try {
       await _payService.approveChangeRequest(
           requestId: req.id, processedBy: _uid);
-      ToastHelper.showSuccess('변경 요청이 승인되었습니다');
-      _load();
+      // [D-BUG-03] async gap 후 mounted 체크
+      if (mounted) {
+        ToastHelper.showSuccess('변경 요청이 승인되었습니다');
+        _load();
+      }
     } catch (e) {
-      ToastHelper.showError('처리에 실패했습니다');
+      if (mounted) ToastHelper.showError('처리에 실패했습니다');
     } finally {
       if (mounted) setState(() => _isTransferring = false);
     }
@@ -756,10 +765,13 @@ class _PayrollPaymentDashboardScreenState
     try {
       await _payService.rejectChangeRequest(
         requestId: req.id, processedBy: _uid, rejectReason: reason);
-      ToastHelper.showSuccess('거절 처리되었습니다');
-      _load();
+      // [D-BUG-04] async gap 후 mounted 체크
+      if (mounted) {
+        ToastHelper.showSuccess('거절 처리되었습니다');
+        _load();
+      }
     } catch (e) {
-      ToastHelper.showError('처리에 실패했습니다');
+      if (mounted) ToastHelper.showError('처리에 실패했습니다');
     } finally {
       if (mounted) setState(() => _isTransferring = false);
     }

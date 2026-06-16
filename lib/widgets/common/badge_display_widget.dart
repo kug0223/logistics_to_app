@@ -318,8 +318,9 @@ class AllBadgesDialog extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    // 타입별 그룹화
+    // 타입별 그룹화 — experience 배지(베테랑·마스터)도 포함해야 한다. (BUG-B01)
     final trustBadges = badges.where((b) => b.type == BadgeType.trustScore).toList();
+    final experienceBadges = badges.where((b) => b.type == BadgeType.experience).toList();
     final attendanceBadges = badges.where((b) => b.type == BadgeType.attendance).toList();
     final specialtyBadges = badges.where((b) => b.type == BadgeType.specialty).toList();
 
@@ -342,7 +343,7 @@ class AllBadgesDialog extends StatelessWidget {
               padding: ResponsiveHelper.cardPadding(context),
               decoration: BoxDecoration(
                 color: Theme.of(context).primaryColor,
-                borderRadius: BorderRadius.only(
+                borderRadius: const BorderRadius.only(
                   topLeft: Radius.circular(20),
                   topRight: Radius.circular(20),
                 ),
@@ -362,15 +363,15 @@ class AllBadgesDialog extends StatelessWidget {
                       fontWeight: FontWeight.bold,
                     ),
                   ),
-                  Spacer(),
+                  const Spacer(),
                   IconButton(
                     onPressed: () => Navigator.pop(context),
-                    icon: Icon(Icons.close, color: Colors.white),
+                    icon: const Icon(Icons.close, color: Colors.white),
                   ),
                 ],
               ),
             ),
-            
+
             // 내용
             Flexible(
               child: SingleChildScrollView(
@@ -380,6 +381,10 @@ class AllBadgesDialog extends StatelessWidget {
                   children: [
                     if (trustBadges.isNotEmpty) ...[
                       _buildSection(context, '🏆 신뢰도 배지', trustBadges),
+                      SizedBox(height: ResponsiveHelper.spacing(context, 16)),
+                    ],
+                    if (experienceBadges.isNotEmpty) ...[
+                      _buildSection(context, '⭐ 경험 배지', experienceBadges),
                       SizedBox(height: ResponsiveHelper.spacing(context, 16)),
                     ],
                     if (attendanceBadges.isNotEmpty) ...[

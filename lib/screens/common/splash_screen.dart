@@ -105,10 +105,12 @@ class _SplashScreenState extends State<SplashScreen>
           ),
           TextButton(
             onPressed: () async {
-              Navigator.pop(ctx);
+              // rawUrl은 Navigator.pop() 이전에 ctx에서 읽어야 한다.
+              // pop 이후 ctx는 unmounted 상태가 되므로 Theme.of(ctx) 호출 순서 주의.
               final rawUrl = Theme.of(ctx).platform == TargetPlatform.iOS
                   ? FirebaseRemoteConfig.instance.getString('update_url_ios')
                   : FirebaseRemoteConfig.instance.getString('update_url_android');
+              Navigator.pop(ctx);
               if (rawUrl.isEmpty) return;
               final url = Uri.parse(rawUrl);
               if (await canLaunchUrl(url)) await launchUrl(url, mode: LaunchMode.externalApplication);

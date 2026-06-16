@@ -439,7 +439,9 @@ class TOModel {
 
   // ── 인원 ─────────────────────────────────────────
 
-  int get availableSlots => totalRequired - totalConfirmed;
+  /// 남은 모집 인원 — 확정 초과 시(데이터 불일치 등) 0으로 클램핑
+  /// (totalConfirmed가 totalRequired를 초과하더라도 음수 노출 방지 — A09)
+  int get availableSlots => (totalRequired - totalConfirmed).clamp(0, totalRequired);
 
   // ── 마감 상태 (contract용) ────────────────────────
 

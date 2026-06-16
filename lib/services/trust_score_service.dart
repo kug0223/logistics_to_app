@@ -279,6 +279,9 @@ class TrustScoreService {
   ///
   /// [businessId] 관리자 컨텍스트에서 필수 — 보안 규칙상 소속 사업장 businessId 필터 필요.
   /// isSuperAdmin이 아닌 한 businessId 없이 호출 시 Firestore 권한 오류 발생.
+  ///
+  /// ⚠️ 미완성 기능 (B03): 서비스 메서드는 구현됐으나 UI 진입점이 없음.
+  /// 향후 설정 화면 → "신뢰도 변동 내역 보기"로 연결 예정.
   Future<List<Map<String, dynamic>>> getScoreHistory(
     String userId, {
     String? businessId,

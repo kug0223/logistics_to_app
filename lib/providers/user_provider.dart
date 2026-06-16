@@ -83,12 +83,16 @@ class UserProvider with ChangeNotifier {
 
   // 초기화 - Firebase Auth 상태 리스닝
   void initialize() {
+    // 앱 재시작 시 Firebase Auth가 토큰을 복원하는 동안 isLoading=true 유지.
+    // 이렇게 해야 AuthWrapper가 "isLoggedIn=false" 를 먼저 보여주는 flash를 방지할 수 있다.
+    _isLoading = true;
     _authSubscription = _authService.authStateChanges.listen((User? firebaseUser) async {
       if (_disposed) return;
       if (firebaseUser != null) {
         await _loadUserData(firebaseUser.uid);
       } else {
         _currentUser = null;
+        _isLoading = false;
         notifyListeners();
       }
     }, onError: (error) {
@@ -104,8 +108,15 @@ class UserProvider with ChangeNotifier {
 
   // 사용자 데이터 로드
   Future<void> _loadUserData(String uid) async {
+    // signIn/signUp 경로는 호출 전에 이미 _isLoading=true를 설정하지만,
+    // initialize() 의 Auth 스트림 경로는 여기서 설정한다.
+    if (!_isLoading) {
+      _isLoading = true;
+      notifyListeners();
+    }
     try {
       _currentUser = await _authService.getUserData(uid);
+      if (_disposed) return; // dispose 후 결과를 반영하지 않음
 
       if (_currentUser != null) {
         // 알림 Provider 초기화
@@ -113,6 +124,7 @@ class UserProvider with ChangeNotifier {
 
         // FCM 푸시 알림 초기화
         await FCMService().initialize(_currentUser!.uid);
+        if (_disposed) return;
 
         // 하위 관리자이면 권한 로드
         if (_currentUser!.isSubAdmin && _currentUser!.subAdminOf != null) {
@@ -120,24 +132,28 @@ class UserProvider with ChangeNotifier {
             _currentUser!.subAdminOf!,
             uid,
           );
+          if (_disposed) return;
         } else {
           _memberPermissions = null;
           _isAdminMode = false;
         }
       }
 
+      _isLoading = false;
       notifyListeners();
     } catch (e) {
+      if (_disposed) return;
       debugPrint('❌ 사용자 데이터 로드 실패: $e');
       _error = e.toString();
-      
-      if (e.toString().contains('invalid-user-token') || 
+      _isLoading = false;
+
+      if (e.toString().contains('invalid-user-token') ||
           e.toString().contains('user-token-expired') ||
           e.toString().contains('user-not-found')) {
         debugPrint('🔄 유효하지 않은 토큰 - 자동 로그아웃');
         await signOut();
       }
-      
+
       notifyListeners();
     }
   }

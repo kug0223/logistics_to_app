@@ -26,6 +26,7 @@ enum NotificationType {
   
   // 계약 관련
   contractSignRequested,    // 계약서 서명 요청됨 (근무자에게)
+  contractVoided,           // 계약서 무효화됨 (근무자에게) — H-34
   contractExpiringReminder, // 계약 만료 D-15 알림 (관리자에게)
   contractRenewed,          // 계약 연장 확정됨 (근무자에게)
   contractTerminating,      // 계약 종료 통보됨 (근무자에게)
@@ -174,6 +175,8 @@ class NotificationModel {
       // 계약 관련
       case NotificationType.contractSignRequested:
         return 'draw';
+      case NotificationType.contractVoided:
+        return 'block';
       case NotificationType.contractExpiringReminder:
         return 'event_note';
       case NotificationType.contractRenewed:
@@ -262,6 +265,7 @@ class NotificationModel {
       case 'scheduleChangeRejected': return NotificationType.scheduleChangeRejected;
       // 계약 관련
       case 'contractSignRequested': return NotificationType.contractSignRequested;
+      case 'contractVoided': return NotificationType.contractVoided;
       case 'contractExpiringReminder': return NotificationType.contractExpiringReminder;
       case 'contractRenewed': return NotificationType.contractRenewed;
       case 'contractTerminating': return NotificationType.contractTerminating;
@@ -309,6 +313,7 @@ class NotificationModel {
       case NotificationType.scheduleChangeRejected: return 'scheduleChangeRejected';
       // 계약 관련
       case NotificationType.contractSignRequested: return 'contractSignRequested';
+      case NotificationType.contractVoided: return 'contractVoided';
       case NotificationType.contractExpiringReminder: return 'contractExpiringReminder';
       case NotificationType.contractRenewed: return 'contractRenewed';
       case NotificationType.contractTerminating: return 'contractTerminating';
@@ -712,6 +717,29 @@ class NotificationModel {
         'applicationId': applicationId,
         'businessId': businessId,
         'screen': 'contractSign',
+      },
+      createdAt: DateTime.now(),
+    );
+  }
+
+  /// 계약서 무효화 알림 생성 (근무자에게) — H-34
+  /// voidContract() 호출 시 근무자에게 발송해 계약서가 무효화됐음을 알린다.
+  static NotificationModel createContractVoided({
+    required String userId,
+    required String businessName,
+    required String businessId,
+    required String contractId,
+  }) {
+    return NotificationModel(
+      id: '',
+      userId: userId,
+      type: NotificationType.contractVoided,
+      title: '계약서 무효 처리',
+      body: '$businessName의 근로계약서가 무효 처리되었습니다. 계약서 목록을 확인해 주세요.',
+      data: {
+        'contractId': contractId,
+        'businessId': businessId,
+        'screen': 'userContracts',
       },
       createdAt: DateTime.now(),
     );

@@ -44,6 +44,9 @@ class _MyReviewsScreenState extends State<MyReviewsScreen> {
       final page = await _reviewService.getPublishedReviewsForUserPaged(
         targetUserId: uid,
       );
+      // 평균 점수를 첫 페이지(최대 30건)만으로 계산한다.
+      // hasMore=true이면 전체 평균과 다를 수 있으나, 정확한 값은 users.averageRating에 있다.
+      // 대부분의 근무자는 리뷰 수가 30건 미만이므로 실용적으로 허용된 트레이드오프이다.
       final avg = page.records.isEmpty
           ? 0.0
           : page.records.map((r) => r.rating).reduce((a, b) => a + b) / page.records.length;

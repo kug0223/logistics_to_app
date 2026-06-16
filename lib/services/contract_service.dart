@@ -549,6 +549,21 @@ class ContractService {
       if (failedIds.isNotEmpty) 'voidFailedAppIds': failedIds,
     });
 
+    // [H-34] 계약서 무효화 알림 — 근무자에게 발송
+    // 계약서가 voided 처리된 이후 알림 발송 (Firestore 갱신 완료 보장)
+    try {
+      await _firestoreService.createNotification(
+        NotificationModel.createContractVoided(
+          userId: contract.workerId,
+          businessName: contract.snapshot.businessName,
+          businessId: contract.businessId,
+          contractId: contractId,
+        ),
+      );
+    } catch (e) {
+      debugPrint('⚠️ [H-34] 계약서 무효화 알림 발송 실패 (비치명적): $e');
+    }
+
     if (failedIds.isNotEmpty) {
       throw Exception(
         '계약서가 무효화되었으나 ${failedIds.length}개 지원서 취소에 실패했습니다.\n'
