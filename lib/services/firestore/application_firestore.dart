@@ -1184,11 +1184,28 @@ extension ApplicationFirestore on FirestoreService {
 
       // [C-2] 계약서 workType/wage/wageType 동기화 — 당사자 협의 후 변경이므로 기존 계약서 직접 수정
       if (contractDoc != null) {
-        batch.update(contractDoc.reference, {
+        final contractData = contractDoc.data()!;
+        final Map<String, dynamic> contractUpdate = {
           'workType': newWorkType,
           'wage': newWage,
           if (newWageType != null) 'wageType': newWageType,
-        });
+        };
+
+        // 단기 번들 슬롯: ContractSlot.applicationId 기준으로 해당 슬롯만 wage/wageType 업데이트
+        final rawSlots = contractData['slots'] as List? ?? [];
+        if (rawSlots.isNotEmpty) {
+          final updatedSlots = rawSlots.map((s) {
+            final slot = Map<String, dynamic>.from(s as Map);
+            if (slot['applicationId'] == applicationId) {
+              slot['wage'] = newWage;
+              if (newWageType != null) slot['wageType'] = newWageType;
+            }
+            return slot;
+          }).toList();
+          contractUpdate['slots'] = updatedSlots;
+        }
+
+        batch.update(contractDoc.reference, contractUpdate);
       }
 
       // [C-1] 확정된 급여 → wagePending 초기화 (파트변경으로 wage/wageType 변경되므로 재계산 필요)
@@ -1216,9 +1233,7 @@ extension ApplicationFirestore on FirestoreService {
         applicationId: applicationId,
       );
 
-      final resetCount = calculatedAttSnap.docs.length;
-      final extraMsg = resetCount > 0 ? '\n확정 급여 $resetCount건이 미확정 처리되었습니다.' : '';
-      ToastHelper.showSuccess('업무유형이 변경되었습니다.$extraMsg');
+      // Toast는 호출부(work_applicants_dialog)에서 표시 — 중복 방지
       return true;
     } catch (e) {
       debugPrint('❌ 업무유형 변경 실패: $e');

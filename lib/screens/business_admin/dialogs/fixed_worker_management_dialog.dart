@@ -243,15 +243,16 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
       });
 
       // [B-3] 특정 근무자 uid가 지정된 경우 해당 근무자 이름으로 자동 검색
-      if (widget.initialWorkerUid != null && results.isNotEmpty) {
-        final target = results.firstWhere(
+      // uid 매칭 실패 시(목록에 없는 경우) 검색창을 채우지 않음 — 엉뚱한 사람 포커스 방지
+      if (widget.initialWorkerUid != null && results.isNotEmpty && mounted) {
+        final matches = results.where(
           (item) => item.application.uid == widget.initialWorkerUid,
-          orElse: () => results.first,
-        );
-        final name = target.user?.name ?? '';
-        if (name.isNotEmpty && mounted) {
-          _searchController.text = name;
-          setState(() => _searchQuery = name);
+        ).toList();
+        if (matches.isNotEmpty) {
+          final name = matches.first.user?.name ?? '';
+          if (name.isNotEmpty) {
+            _searchController.text = name;
+          }
         }
       }
   }, errorTag: '고정근무자 로드', errorMessage: '고정근무자 목록을 불러올 수 없습니다');

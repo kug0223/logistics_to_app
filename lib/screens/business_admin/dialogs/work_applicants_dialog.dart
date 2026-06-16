@@ -1534,7 +1534,10 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
         newWorkTypeColor: selectedWork.workTypeColor,
         newWorkTypeBackgroundColor: selectedWork.workTypeBackgroundColor,
       );
-      ToastHelper.showSuccess('${user?.name ?? '지원자'}님의 파트가 ${selectedWork.workType}(으)로 변경되었습니다');
+      final resetMsg = confirmedWageCount > 0
+          ? '\n확정 급여 $confirmedWageCount건이 미확정 처리되었습니다.'
+          : '';
+      ToastHelper.showSuccess('${user?.name ?? '지원자'}님의 파트가 ${selectedWork.workType}(으)로 변경되었습니다$resetMsg');
       await _loadApplicants();
       if (!mounted) return;
       _updateLocalStats();
