@@ -601,6 +601,13 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
             hint: '02-1234-5678',
             icon: Icons.phone,
             keyboardType: TextInputType.phone,
+            validator: (v) {
+              if (v != null && v.isNotEmpty &&
+                  !RegExp(r'^[\d\-\+\(\)\s]+$').hasMatch(v)) {
+                return '숫자, 하이픈(-), 공백만 입력 가능합니다';
+              }
+              return null;
+            },
           ),
 
           SizedBox(height: ResponsiveHelper.spacing(context, 32)),

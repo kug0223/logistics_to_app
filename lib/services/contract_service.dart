@@ -316,6 +316,11 @@ class ContractService {
     }
 
     // 근무자에게 계약 완료 알림
+    // [특이사항] applicationConfirmed 알림이 두 번 발송된다:
+    //   1차) application_firestore.dart — CONTRACT_PENDING 진입 시(관리자 승인)
+    //   2차) 여기(contract_service) — 근무자 서명 완료 시
+    // 근무자 입장에서는 동일 내용의 '지원 확정' 알림이 중복으로 보일 수 있다.
+    // 2차 발송 타입을 contractSigned 등 별도 타입으로 분리하면 UX가 개선된다(현재 미구현).
     try {
       await _firestoreService.createNotification(
         NotificationModel.createApplicationConfirmed(

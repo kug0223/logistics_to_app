@@ -216,6 +216,14 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
       return;
     }
 
+    // contract 타입 지원 마감일 과거 날짜 경고 (create_to_screen과 동일)
+    if (widget.to.isContractType && _fixedDeadline != null) {
+      final todayStart = DateTime(DateTime.now().year, DateTime.now().month, DateTime.now().day);
+      if (_fixedDeadline!.isBefore(todayStart)) {
+        ToastHelper.showWarning('지원 마감일이 과거 날짜입니다. 저장 시 즉시 마감 상태가 됩니다');
+      }
+    }
+
     setState(() { _isSaving = true; _hasChanges = false; });
 
     try {
@@ -301,6 +309,10 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
       // isManualClosed가 아닌 isClosed 기준 — CF 자동마감(isManualClosed=false) 포함
       final wasClosed = widget.to.isClosed;
 
+      // [특이사항] workDetails(임금 포함)를 통째로 덮어씀 → 이미 확정된 지원자가 있어도
+      // 슬롯의 wage 수정이 가능하다. CLAUDE.md "시급/일급 TO 레벨에서 고정" 원칙은
+      // application 스냅샷(지원 시점 복사)으로 보호되나, 슬롯 기준 wage 재조회가 일어날 경우
+      // 불일치 발생 가능. 확정 지원자가 있을 때 wage 변경 시 경고 UI 추가 권장(미구현).
       final updates = <String, dynamic>{
         'title': _titleController.text.trim(),
         'description': _descriptionController.text.trim(),

@@ -4010,9 +4010,9 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
   /// collection.add() 는 랜덤 ID를 생성하므로 두 개의 attendance 도큐먼트가 만들어진다.
   /// attendance_firestore.dart의 정규 체크인 경로와 동일하게
   /// '{applicationId}_{yyyyMMdd}' 결정적 ID + set(SetOptions(merge: true)) 로 변경한다.
-  /// merge: true 이면 이미 존재하는 필드를 덮어쓰지 않으면서 새 필드만 추가하므로
-  /// 동시 실행 시 마지막 write 가 checkIn 필드를 정상적으로 기록하고
-  /// 중복 도큐먼트는 생성되지 않는다 (멱등 set).
+  /// merge: true 이면 제공된 필드를 upsert하고 명시하지 않은 필드는 보존한다.
+  /// 동시 실행 시 마지막 write 가 우선(last-write-wins)이므로 중복 문서는 없으나
+  /// 두 관리자가 다른 시간을 입력한 경우 하나는 유실된다 (허용된 트레이드오프).
   Future<void> _createOrUpdateAttendance({
     required ApplicationModel app,
     required String checkIn,

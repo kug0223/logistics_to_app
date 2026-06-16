@@ -869,15 +869,22 @@ class FirestoreService {
 
       if (snapshot.docs.isEmpty) return;
 
-      final batch = _firestore.batch();
+      var batch = _firestore.batch();
+      int batchCount = 0;
       for (final doc in snapshot.docs) {
         batch.update(doc.reference, {
           'status': AppStatus.autoCanceled,
           'canceledAt': FieldValue.serverTimestamp(),
           'cancelReason': 'AUTO_EXPIRED',
         });
+        batchCount++;
+        if (batchCount >= 499) {
+          await batch.commit();
+          batch = _firestore.batch();
+          batchCount = 0;
+        }
       }
-      await batch.commit();
+      if (batchCount > 0) await batch.commit();
       debugPrint('✅ 만료 PENDING 지원서 ${snapshot.docs.length}개 자동 취소');
     } catch (e) {
       debugPrint('❌ 자동 만료 처리 실패: $e');
@@ -1157,7 +1164,8 @@ class FirestoreService {
           .where('status', isEqualTo: 'scheduled')
           .get(const GetOptions(source: Source.server));
       if (scheduledAttendances.docs.isNotEmpty) {
-        final cancelBatch = _firestore.batch();
+        var cancelBatch = _firestore.batch();
+        int cancelBatchCount = 0;
         for (final doc in scheduledAttendances.docs) {
           final workDate = (doc.data()['workDate'] as Timestamp?)?.toDate();
           if (workDate != null && !workDate.isBefore(actualResignDate)) {
@@ -1165,9 +1173,15 @@ class FirestoreService {
               'status': AttendanceModel.statusAbsent,
               'updatedAt': FieldValue.serverTimestamp(),
             });
+            cancelBatchCount++;
+            if (cancelBatchCount >= 499) {
+              await cancelBatch.commit();
+              cancelBatch = _firestore.batch();
+              cancelBatchCount = 0;
+            }
           }
         }
-        await cancelBatch.commit();
+        if (cancelBatchCount > 0) await cancelBatch.commit();
       }
 
       // 근무자에게 알림

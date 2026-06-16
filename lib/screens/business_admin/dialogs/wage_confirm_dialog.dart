@@ -1198,6 +1198,11 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
               alreadyClosed = true;
               return;
             }
+            // [race condition] 마감 직전 다른 관리자가 취소해 pending으로 돌아간 경우 차단
+            if (serverStatus != AttendanceModel.wageCalculated) {
+              alreadyClosed = true;
+              return;
+            }
             tx.update(attRef, {
               'wageStatus': AttendanceModel.wageConfirmed,
               'finalConfirmedAt': FieldValue.serverTimestamp(),
@@ -1347,6 +1352,17 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
       if (batchCount > 0) {
         await batch.commit();
         successCount += batchCount ~/ 2;
+      }
+
+      // 신뢰도 롤백 — 마감 취소 = 근무완료 점수 롤백
+      for (final appId in targetIds) {
+        final app = _transferredWorkers.where((a) => a.id == appId).firstOrNull;
+        if (app == null) continue;
+        try {
+          await TrustScoreService().onWorkCanceled(app.uid, app.businessId);
+        } catch (e) {
+          debugPrint('⚠️ 신뢰도 롤백 실패 (${app.uid}): $e');
+        }
       }
 
       // 마감 취소 알림 발송 (batch 성공 후)

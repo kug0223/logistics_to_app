@@ -289,6 +289,10 @@ class FCMService {
     if (_navigatorKey?.currentState == null) return;
     final screen = data['screen'] as String?;
     switch (screen) {
+      // [특이사항] contractSign(계약서 서명 요청) 백그라운드 탭 → UserContractsScreen으로 이동.
+      // notification_screen에서 같은 알림 탭 시 → ContractSignScreen(직접 서명) 경로와 불일치.
+      // 의도: 백그라운드 탭은 스택 보존을 위해 계약서 목록을 경유; 알림목록 탭은 직접 이동.
+      // UX 개선 시 'contractSign'을 별도 case로 분리해 ContractSignScreen으로 직접 연결 가능.
       case 'contractSign':
       case 'userContracts': // contractVoided 알림 딥링크 (H-34)
         _navigatorKey!.currentState!.push(
@@ -333,12 +337,16 @@ class FCMService {
   }
 
   /// 알림 화면으로 이동
+  ///
+  /// [특이사항] push()를 사용하므로 중복 방지 없음. 백그라운드 알림을 빠르게 두 번 탭하거나
+  /// 포그라운드 로컬 알림을 연속 탭하면 NotificationScreen이 두 개 스택에 쌓인다.
+  /// 발생 빈도가 낮아 현재는 허용. 방어가 필요하면 Navigator 스택을 검사해 중복 push를 차단.
   void _navigateToNotificationScreen() {
     if (_navigatorKey?.currentState == null) {
       debugPrint('⚠️ Navigator가 아직 준비되지 않음');
       return;
     }
-    
+
     _navigatorKey!.currentState!.push(
       MaterialPageRoute(builder: (_) => const NotificationScreen()),
     );
