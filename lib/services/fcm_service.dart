@@ -22,8 +22,9 @@ class FCMService {
 
   String? _currentUserId;
   bool _isInitialized = false;
-  bool _isInitializing = false; // 중복 초기화 방지 플래그
-  String? _pendingUserId;       // [118] 초기화 진행 중 계정 전환 요청 대기
+  bool _isInitializing = false;        // 중복 초기화 방지 플래그
+  String? _pendingUserId;              // [118] 초기화 진행 중 계정 전환 요청 대기
+  bool _notificationScreenVisible = false; // 알림 화면 중복 스택 방지 플래그
   StreamSubscription? _tokenRefreshSub;
   StreamSubscription? _onMessageSub;
   StreamSubscription? _onMessageOpenedAppSub;
@@ -372,20 +373,20 @@ class FCMService {
     debugPrint('⚠️ Navigator 준비 타임아웃 — 알림 화면 이동 생략');
   }
 
-  /// 알림 화면으로 이동
-  ///
-  /// [특이사항] push()를 사용하므로 중복 방지 없음. 백그라운드 알림을 빠르게 두 번 탭하거나
-  /// 포그라운드 로컬 알림을 연속 탭하면 NotificationScreen이 두 개 스택에 쌓인다.
-  /// 발생 빈도가 낮아 현재는 허용. 방어가 필요하면 Navigator 스택을 검사해 중복 push를 차단.
+  /// 알림 화면으로 이동 — 이미 열려있으면 중복 push 차단
   void _navigateToNotificationScreen() {
     if (_navigatorKey?.currentState == null) {
       debugPrint('⚠️ Navigator가 아직 준비되지 않음');
       return;
     }
+    if (_notificationScreenVisible) return;
 
+    _notificationScreenVisible = true;
     _navigatorKey!.currentState!.push(
       MaterialPageRoute(builder: (_) => const NotificationScreen()),
-    );
+    ).then((_) {
+      _notificationScreenVisible = false;
+    });
   }
 
   /// 근무지 이탈 경고 로컬 알림 (출퇴근 화면 전용)
