@@ -53,6 +53,8 @@ class FixedWorkerManagementDialog extends StatefulWidget {
   final String? initialBusinessId;  // 초기 선택 사업장
   final VoidCallback onChanged;
   final DateTime? focusDate;        // 날짜 모드 (캘린더에서 날짜 선택 후 열 때)
+  // [B-3] 특정 근무자 uid → 로드 후 해당 근무자로 자동 검색 포커스
+  final String? initialWorkerUid;
 
   const FixedWorkerManagementDialog({
     super.key,
@@ -60,6 +62,7 @@ class FixedWorkerManagementDialog extends StatefulWidget {
     this.initialBusinessId,
     required this.onChanged,
     this.focusDate,
+    this.initialWorkerUid,
   });
 
   @override
@@ -238,6 +241,19 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
       setState(() {
         _fixedWorkers = results;
       });
+
+      // [B-3] 특정 근무자 uid가 지정된 경우 해당 근무자 이름으로 자동 검색
+      if (widget.initialWorkerUid != null && results.isNotEmpty) {
+        final target = results.firstWhere(
+          (item) => item.application.uid == widget.initialWorkerUid,
+          orElse: () => results.first,
+        );
+        final name = target.user?.name ?? '';
+        if (name.isNotEmpty && mounted) {
+          _searchController.text = name;
+          setState(() => _searchQuery = name);
+        }
+      }
   }, errorTag: '고정근무자 로드', errorMessage: '고정근무자 목록을 불러올 수 없습니다');
 
   @override
@@ -1699,6 +1715,9 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
         borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
       ),
       builder: (context) {
+        // [오탐 주의] useSafeArea: true(1696줄)가 이미 하단 홈버튼 영역을 처리함
+        // 내부 SafeArea는 이중 처리이나 Flutter이 중복 패딩을 자동 방지하므로 기능적 문제 없음
+        // 제거 시 스크롤 콘텐츠가 SafeArea 없이 렌더링될 수 있어 의도적으로 유지
         return SafeArea(
           child: SingleChildScrollView(
             child: Padding(

@@ -1042,6 +1042,11 @@ extension ApplicationFirestore on FirestoreService {
     required int newWage,
     required String adminUID,
     String? newWorkDetailId,
+    // [B-1] 파트변경 시 wageType·아이콘·색상도 함께 업데이트 — 미전달 시 급여 계산 오류 유발
+    String? newWageType,
+    String? newWorkTypeIcon,
+    String? newWorkTypeColor,
+    String? newWorkTypeBackgroundColor,
   }) async {
     try {
       final appDoc = await _firestore
@@ -1117,6 +1122,10 @@ extension ApplicationFirestore on FirestoreService {
         'changedAt': FieldValue.serverTimestamp(),
         'changedBy': adminUID,
         if (newWorkDetailId != null) 'workDetailId': newWorkDetailId,
+        if (newWageType != null) 'wageType': newWageType,
+        if (newWorkTypeIcon != null) 'workTypeIcon': newWorkTypeIcon,
+        if (newWorkTypeColor != null) 'workTypeColor': newWorkTypeColor,
+        if (newWorkTypeBackgroundColor != null) 'workTypeBackgroundColor': newWorkTypeBackgroundColor,
       });
 
       // workTypeCounts 카운터 동기화 (슬롯 기반 단기TO)

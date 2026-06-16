@@ -20,111 +20,22 @@ class ApplyDialog {
     required TOModel to,
     required VoidCallback onSuccess,
   }) async {
-    final confirmed = await showDialog<bool>(
+    final result = await showDialog<_ApplyResult>(
       context: context,
-      builder: (dialogContext) => AlertDialog(
-        title: const Text('지원하기'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              '다음 업무에 지원하시겠습니까?',
-              style: ResponsiveHelper.bodyStyle(dialogContext,
-                  color: AppColors.grey700),
-            ),
-            const SizedBox(height: 16),
-            Container(
-              padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(
-                color: AppColors.grey100,
-                borderRadius: BorderRadius.circular(8),
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    children: [
-                      // ✅ 공통 위젯 사용
-                      WorkTypeIcon.buildWithBackground(
-                        iconString: work.workTypeIcon,
-                        iconColor: work.workTypeColor,
-                        backgroundColor: work.workTypeBackgroundColor,
-                        size: 18,
-                        containerSize: 36,
-                      ),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: Text(
-                          work.workType,
-                          style: ResponsiveHelper.bodyStyle(dialogContext)
-                              .copyWith(fontWeight: FontWeight.bold),
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 8),
-                  _buildInfoText(
-                    context: dialogContext,
-                    icon: Icons.access_time,
-                    text: '${work.startTime} ~ ${work.endTime}',
-                  ),
-                  const SizedBox(height: 4),
-                  _buildInfoText(
-                    context: dialogContext,
-                    icon: Icons.attach_money,
-                    text: FormatHelper.formatWage(work.wage),
-                    color: AppColors.successDark,
-                  ),
-                ],
-              ),
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(dialogContext, false),
-            child: const Text('취소'),
-          ),
-          ElevatedButton(
-            onPressed: () => Navigator.pop(dialogContext, true),
-            child: const Text('지원하기'),
-          ),
-        ],
-      ),
+      builder: (dialogContext) => _ApplyDialogContent(work: work, to: to),
     );
 
-    if (confirmed == true && context.mounted) {
+    if (result?.confirmed == true && context.mounted) {
       return _applyToWork(
         context: context,
         work: work,
         to: to,
         onSuccess: onSuccess,
+        desiredStartDate: result?.desiredStartDate,
       );
     }
 
     return false;
-  }
-
-  static Widget _buildInfoText({
-    required BuildContext context,
-    required IconData icon,
-    required String text,
-    Color? color,
-  }) {
-    return Row(
-      children: [
-        Icon(icon,
-            size: ResponsiveHelper.iconSize(context, 14),
-            color: color ?? AppColors.grey600),
-        const SizedBox(width: 6),
-        Text(
-          text,
-          style: ResponsiveHelper.smallStyle(context,
-              color: color ?? AppColors.grey700),
-        ),
-      ],
-    );
   }
 
   /// 실제 지원 처리
@@ -133,6 +44,7 @@ class ApplyDialog {
     required WorkDetailModel work,
     required TOModel to,
     required VoidCallback onSuccess,
+    DateTime? desiredStartDate,
   }) async {
     try {
       final userProvider = Provider.of<UserProvider>(context, listen: false);
@@ -166,15 +78,13 @@ class ApplyDialog {
           .get();
 
       if (snapshot.docs.isNotEmpty) {
-        // ⭐ Phase 2: 취소된 지원인지 확인
         final docData = snapshot.docs.first.data();
         final status = docData['status'];
-        
+
         debugPrint('🔍 apply_dialog 중복 체크: status = $status');
-        
+
         if (AppStatus.inactiveStates.contains(status)) {
           debugPrint('✅ 취소된 지원 → 재지원 허용');
-          // 계속 진행
         } else {
           debugPrint('❌ 유효한 지원 존재 (status: $status) → 차단');
           ToastHelper.showWarning('이미 지원한 업무입니다.');
@@ -182,7 +92,6 @@ class ApplyDialog {
         }
       }
 
-      // 지원서 생성
       final success = await firestoreService.applyToTOWithWorkType(
         uid: uid,
         businessId: to.businessId,
@@ -192,17 +101,16 @@ class ApplyDialog {
         selectedWorkType: work.workType,
         workDetailId: work.id,
         wage: work.wage,
-        // 🔥 업무 상세 정보 추가
         wageType: work.wageType,
         workTypeIcon: work.workTypeIcon,
         workTypeColor: work.workTypeColor,
         workTypeBackgroundColor: work.workTypeBackgroundColor,
         startTime: work.startTime,
         endTime: work.endTime,
-        // ⭐ Phase 1: 장기 공고 정보 추가
         workEndDate: to.endDate,
         workDays: to.workDays,
         type: to.isLongTerm ? 'long_term' : 'short',
+        desiredStartDate: desiredStartDate,
       );
 
       if (success) {
@@ -220,5 +128,221 @@ class ApplyDialog {
       ToastHelper.showError('지원 중 오류가 발생했습니다.');
       return false;
     }
+  }
+}
+
+class _ApplyResult {
+  final bool confirmed;
+  final DateTime? desiredStartDate;
+  _ApplyResult({required this.confirmed, this.desiredStartDate});
+}
+
+/// 지원 다이얼로그 콘텐츠 — 장기 공고 시 희망 시작일 필수 입력 포함
+class _ApplyDialogContent extends StatefulWidget {
+  final WorkDetailModel work;
+  final TOModel to;
+
+  const _ApplyDialogContent({required this.work, required this.to});
+
+  @override
+  State<_ApplyDialogContent> createState() => _ApplyDialogContentState();
+}
+
+class _ApplyDialogContentState extends State<_ApplyDialogContent> {
+  DateTime? _desiredStartDate;
+
+  bool get _canSubmit =>
+      !widget.to.isLongTerm || _desiredStartDate != null;
+
+  Future<void> _pickStartDate() async {
+    final today = DateTime.now();
+    final rangeStart = widget.to.rangeStart;
+    final rangeEnd = widget.to.endDate;
+
+    // 선택 가능 최소: 오늘 or 공고 시작일 중 더 늦은 날
+    final firstDate = (rangeStart != null && rangeStart.isAfter(today))
+        ? rangeStart
+        : today;
+    // 선택 가능 최대: 공고 종료일 or 1년 후
+    final lastDate = rangeEnd ?? DateTime(today.year + 1, today.month, today.day);
+
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: _desiredStartDate ?? firstDate,
+      firstDate: firstDate,
+      lastDate: lastDate,
+      helpText: '희망 근무 시작일 선택',
+      confirmText: '선택',
+      cancelText: '취소',
+    );
+
+    if (picked != null && mounted) {
+      setState(() => _desiredStartDate = picked);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final work = widget.work;
+    final to = widget.to;
+
+    return AlertDialog(
+      title: const Text('지원하기'),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            '다음 업무에 지원하시겠습니까?',
+            style: ResponsiveHelper.bodyStyle(context,
+                color: AppColors.grey700),
+          ),
+          const SizedBox(height: 16),
+          Container(
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: AppColors.grey100,
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    WorkTypeIcon.buildWithBackground(
+                      iconString: work.workTypeIcon,
+                      iconColor: work.workTypeColor,
+                      backgroundColor: work.workTypeBackgroundColor,
+                      size: 18,
+                      containerSize: 36,
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Text(
+                        work.workType,
+                        style: ResponsiveHelper.bodyStyle(context)
+                            .copyWith(fontWeight: FontWeight.bold),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 8),
+                _buildInfoRow(
+                  icon: Icons.access_time,
+                  text: '${work.startTime} ~ ${work.endTime}',
+                ),
+                const SizedBox(height: 4),
+                _buildInfoRow(
+                  icon: Icons.attach_money,
+                  text: FormatHelper.formatWage(work.wage),
+                  color: AppColors.successDark,
+                ),
+              ],
+            ),
+          ),
+
+          // [B-4] 장기 공고: 희망 시작일 필수 입력
+          if (to.isLongTerm) ...[
+            const SizedBox(height: 16),
+            Text(
+              '희망 근무 시작일 *',
+              style: ResponsiveHelper.smallStyle(context,
+                  color: AppColors.grey700),
+            ),
+            const SizedBox(height: 6),
+            InkWell(
+              onTap: _pickStartDate,
+              borderRadius: BorderRadius.circular(8),
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                decoration: BoxDecoration(
+                  border: Border.all(
+                    color: _desiredStartDate == null
+                        ? AppColors.error
+                        : AppColors.grey300,
+                  ),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Row(
+                  children: [
+                    Icon(
+                      Icons.calendar_today,
+                      size: ResponsiveHelper.iconSize(context, 16),
+                      color: _desiredStartDate == null
+                          ? AppColors.error
+                          : AppColors.grey600,
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        _desiredStartDate != null
+                            ? FormatHelper.formatDate(_desiredStartDate!)
+                            : '날짜를 선택해주세요',
+                        style: ResponsiveHelper.bodyStyle(context,
+                            color: _desiredStartDate == null
+                                ? AppColors.error
+                                : AppColors.grey800),
+                      ),
+                    ),
+                    Icon(
+                      Icons.chevron_right,
+                      size: ResponsiveHelper.iconSize(context, 16),
+                      color: AppColors.grey400,
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            if (_desiredStartDate == null)
+              Padding(
+                padding: const EdgeInsets.only(top: 4),
+                child: Text(
+                  '장기 근무 지원 시 희망 시작일을 반드시 선택해야 합니다',
+                  style: ResponsiveHelper.smallStyle(context,
+                      color: AppColors.error),
+                ),
+              ),
+          ],
+        ],
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context, _ApplyResult(confirmed: false)),
+          child: const Text('취소'),
+        ),
+        ElevatedButton(
+          onPressed: _canSubmit
+              ? () => Navigator.pop(
+                    context,
+                    _ApplyResult(
+                      confirmed: true,
+                      desiredStartDate: _desiredStartDate,
+                    ),
+                  )
+              : null,
+          child: const Text('지원하기'),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildInfoRow({
+    required IconData icon,
+    required String text,
+    Color? color,
+  }) {
+    return Row(
+      children: [
+        Icon(icon,
+            size: ResponsiveHelper.iconSize(context, 14),
+            color: color ?? AppColors.grey600),
+        const SizedBox(width: 6),
+        Text(
+          text,
+          style: ResponsiveHelper.smallStyle(context,
+              color: color ?? AppColors.grey700),
+        ),
+      ],
+    );
   }
 }

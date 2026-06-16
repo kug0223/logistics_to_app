@@ -1114,14 +1114,17 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
                               ),
                               SizedBox(width: ResponsiveHelper.spacing(context, 12)),
                             ],
-                            if (widget.toItem.to.isLongTerm && (_hasAttendanceMap[app.id] ?? false))
+                            // [B-2] 장기근무자는 첫 출근 전에도 고정근무 관리 가능
+                            // 이전: hasAttendanceRecord가 true일 때만 표시 → 첫 출근 전 스케줄 조정 불가
+                            if (widget.toItem.to.isLongTerm)
                               _buildActionButton(
                                 context,
                                 label: '고정근무 관리',
                                 icon: Icons.settings,
                                 bgColor: AppColors.longTermBg,
                                 textColor: AppColors.longTermDark,
-                                onTap: _openFixedWorkerManagement,
+                                // [B-3] item 전달 → 해당 근무자 uid로 자동 포커스
+                                onTap: () => _openFixedWorkerManagement(item),
                               )
                             else
                               _buildActionButton(
@@ -1505,6 +1508,10 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
         newWage: selectedWork.wage,
         adminUID: adminUID,
         newWorkDetailId: selectedWork.id,
+        newWageType: selectedWork.wageType,
+        newWorkTypeIcon: selectedWork.workTypeIcon,
+        newWorkTypeColor: selectedWork.workTypeColor,
+        newWorkTypeBackgroundColor: selectedWork.workTypeBackgroundColor,
       );
       ToastHelper.showSuccess('${user?.name ?? '지원자'}님의 파트가 ${selectedWork.workType}(으)로 변경되었습니다');
       await _loadApplicants();
@@ -1634,7 +1641,9 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
   }
 
   /// 고정근무 관리 다이얼로그 열기 (장기)
-  void _openFixedWorkerManagement() {
+  // [B-3] item 파라미터 추가 → 해당 근무자 uid 전달로 자동 포커스
+  void _openFixedWorkerManagement(Map<String, dynamic> item) {
+    final app = item['application'] as ApplicationModel;
     final businessId = widget.toItem.to.businessId;
     final onChanged = widget.onChanged;
     // 루트 Navigator는 이 다이얼로그가 pop된 후에도 유효
@@ -1647,6 +1656,7 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
           businessIds: [businessId],
           initialBusinessId: businessId,
           onChanged: onChanged,
+          initialWorkerUid: app.uid,
         ),
       );
     });
