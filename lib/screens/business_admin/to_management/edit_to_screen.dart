@@ -7,6 +7,7 @@ import '../../../models/core/to_model.dart';
 import '../../../models/core/slot_model.dart';
 import '../../../models/core/work_detail_data.dart';
 import '../../../models/core/business_work_type_model.dart';
+import '../../../models/core/application_model.dart';
 
 // Services & Providers
 import '../../../services/firestore_service.dart';
@@ -222,6 +223,13 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
       if (_fixedDeadline!.isBefore(todayStart)) {
         ToastHelper.showWarning('지원 마감일이 과거 날짜입니다. 저장 시 즉시 마감 상태가 됩니다');
       }
+    }
+
+    // [WAGE-GUARD] TO 전체 수정 시 확정 근무자 존재하면 경고 (슬롯/draft 제외)
+    if (!widget.isSlotMode && _publishMode != 'draft') {
+      final proceed = await _showWageGuardWarning();
+      if (!mounted) return;
+      if (!proceed) return;
     }
 
     setState(() { _isSaving = true; _hasChanges = false; });
@@ -502,6 +510,49 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
           ),
           StyledDialogButton.primary(
             text: '등록',
+            backgroundColor: AppColors.warning,
+            onPressed: () => Navigator.pop(ctx, true),
+          ),
+        ],
+      ),
+    );
+    return result == true;
+  }
+
+  // [WAGE-GUARD] TO workDetails 변경 전 미확정 근무자 경고 다이얼로그
+  // wageType·breakMinutes·야간설정은 저장 시점 TO값 재참조 — 확정 전 근무자 급여에 영향
+  Future<bool> _showWageGuardWarning() async {
+    try {
+      final snap = await FirebaseFirestore.instance
+          .collection('applications')
+          .where('toId', isEqualTo: widget.to.id)
+          .where('status', whereIn: AppStatus.confirmedStatuses)
+          .limit(1)
+          .get();
+      if (snap.docs.isEmpty) return true; // 미확정 근무자 없음 — 경고 불필요
+    } catch (e) {
+      debugPrint('⚠️ WAGE-GUARD 쿼리 실패 (진행 허용): $e');
+      return true; // 조회 실패 시 강제 차단 금지
+    }
+
+    if (!mounted) return false;
+    final result = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => StyledDialog(
+        title: '급여 계산 조건 변경',
+        subtitle: '이 공고에 확정된 근무자가 있습니다',
+        icon: Icons.warning_amber_rounded,
+        headerColor: AppColors.warning,
+        content: Text(
+          '급여 유형·휴게시간·야간 설정을 변경하면\n미확정 급여 계산에 영향을 줄 수 있습니다.\n\n계속 저장하시겠습니까?',
+          style: ResponsiveHelper.bodyStyle(context, color: AppColors.grey700),
+        ),
+        actions: [
+          StyledDialogButton.cancel(
+            onPressed: () => Navigator.pop(ctx, false),
+          ),
+          StyledDialogButton.primary(
+            text: '계속 저장',
             backgroundColor: AppColors.warning,
             onPressed: () => Navigator.pop(ctx, true),
           ),
