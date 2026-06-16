@@ -1111,6 +1111,36 @@ extension ApplicationFirestore on FirestoreService {
         }
       }
 
+      // [C-1] 확정된 급여 attendance 조회 — 파트변경 시 wagePending으로 초기화
+      // wageTransferred(송금완료)는 이미 지급된 건이므로 초기화 제외
+      final calculatedAttSnap = await _firestore
+          .collection('attendance')
+          .where('applicationId', isEqualTo: applicationId)
+          .where('wageStatus', whereIn: [
+            AttendanceModel.wageCalculated,
+            AttendanceModel.wageConfirmed,
+          ])
+          .get(const GetOptions(source: Source.server));
+
+      // [C-2] 계약서 조회 — 배치 커밋 전 미리 조회하여 원자적 업데이트 보장
+      // applicationId 직접 매칭(장기) → applicationIds 배열(단기 번들) 순서로 탐색
+      DocumentSnapshot<Map<String, dynamic>>? contractDoc;
+      final contractQ1 = await _firestore
+          .collection('employment_contracts')
+          .where('applicationId', isEqualTo: applicationId)
+          .limit(1)
+          .get(const GetOptions(source: Source.server));
+      if (contractQ1.docs.isNotEmpty) {
+        contractDoc = contractQ1.docs.first;
+      } else {
+        final contractQ2 = await _firestore
+            .collection('employment_contracts')
+            .where('applicationIds', arrayContains: applicationId)
+            .limit(1)
+            .get(const GetOptions(source: Source.server));
+        if (contractQ2.docs.isNotEmpty) contractDoc = contractQ2.docs.first;
+      }
+
       final batch = _firestore.batch();
 
       // 지원서 업데이트
@@ -1152,6 +1182,26 @@ extension ApplicationFirestore on FirestoreService {
         });
       }
 
+      // [C-2] 계약서 workType/wage/wageType 동기화 — 당사자 협의 후 변경이므로 기존 계약서 직접 수정
+      if (contractDoc != null) {
+        batch.update(contractDoc.reference, {
+          'workType': newWorkType,
+          'wage': newWage,
+          if (newWageType != null) 'wageType': newWageType,
+        });
+      }
+
+      // [C-1] 확정된 급여 → wagePending 초기화 (파트변경으로 wage/wageType 변경되므로 재계산 필요)
+      for (final attDoc in calculatedAttSnap.docs) {
+        batch.update(attDoc.reference, {
+          'wageStatus': AttendanceModel.wagePending,
+          'finalWage': FieldValue.delete(),
+          'wageDetail': FieldValue.delete(),
+          'yearMonth': FieldValue.delete(),
+          'updatedAt': FieldValue.serverTimestamp(),
+        });
+      }
+
       await batch.commit();
       if (toId != null) clearCache(toId: toId);
 
@@ -1165,7 +1215,10 @@ extension ApplicationFirestore on FirestoreService {
         newWage: newWage,
         applicationId: applicationId,
       );
-      ToastHelper.showSuccess('업무유형이 변경되었습니다.');
+
+      final resetCount = calculatedAttSnap.docs.length;
+      final extraMsg = resetCount > 0 ? '\n확정 급여 $resetCount건이 미확정 처리되었습니다.' : '';
+      ToastHelper.showSuccess('업무유형이 변경되었습니다.$extraMsg');
       return true;
     } catch (e) {
       debugPrint('❌ 업무유형 변경 실패: $e');

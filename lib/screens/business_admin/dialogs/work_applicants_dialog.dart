@@ -1388,6 +1388,27 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
       return;
     }
 
+    // [C-1] 파트변경 전 확정된 급여 건 체크 — 있으면 미확정 처리됨을 사전 경고
+    final calculatedAttSnap = await FirebaseFirestore.instance
+        .collection('attendance')
+        .where('applicationId', isEqualTo: app.id)
+        .where('wageStatus', whereIn: ['calculated', 'confirmed'])
+        .count()
+        .get();
+    final confirmedWageCount = calculatedAttSnap.count ?? 0;
+    if (!mounted) return;
+
+    if (confirmedWageCount > 0) {
+      final proceed = await DialogHelper.showConfirm(
+        context,
+        title: '급여 확정 초기화 안내',
+        message: '이 근무자의 확정된 급여 $confirmedWageCount건이 있습니다.\n파트변경 시 해당 급여가 미확정 처리됩니다.\n계속하시겠습니까?',
+        confirmText: '계속',
+        cancelText: '취소',
+      );
+      if (proceed != true || !mounted) return;
+    }
+
     final selectedWorkId = await showDialog<String>(
       context: context,
       builder: (context) => StyledDialog(

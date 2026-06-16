@@ -7,11 +7,12 @@ enum NotificationType {
   // 지원 관련 (지원자용)
   applicationConfirmed,    // 지원 확정됨
   applicationRejected,     // 지원 거절됨
-  
+  workTypeChanged,         // 파트(업무유형) 변경됨
+
   // 지원 관련 (관리자용)
   newApplication,          // 새 지원서 접수
   applicationCanceled,     // 지원자가 지원 취소
-  
+
   // 확정 취소
   confirmationCanceled,    // 확정 취소됨 (관리자가 취소)
   
@@ -153,6 +154,8 @@ class NotificationModel {
       // 지원 관련
       case NotificationType.applicationConfirmed:
         return 'check_circle';
+      case NotificationType.workTypeChanged:
+        return 'swap_horiz';
       case NotificationType.applicationRejected:
         return 'cancel';
       case NotificationType.newApplication:
@@ -255,6 +258,7 @@ class NotificationModel {
     switch (value) {
       // 지원 관련
       case 'applicationConfirmed': return NotificationType.applicationConfirmed;
+      case 'workTypeChanged': return NotificationType.workTypeChanged;
       case 'applicationRejected': return NotificationType.applicationRejected;
       case 'newApplication': return NotificationType.newApplication;
       case 'applicationCanceled': return NotificationType.applicationCanceled;
@@ -304,6 +308,7 @@ class NotificationModel {
     switch (type) {
       // 지원 관련
       case NotificationType.applicationConfirmed: return 'applicationConfirmed';
+      case NotificationType.workTypeChanged: return 'workTypeChanged';
       case NotificationType.applicationRejected: return 'applicationRejected';
       case NotificationType.newApplication: return 'newApplication';
       case NotificationType.applicationCanceled: return 'applicationCanceled';
@@ -959,7 +964,7 @@ class NotificationModel {
     return NotificationModel(
       id: '',
       userId: userId,
-      type: NotificationType.applicationConfirmed,  // 기존 타입 재사용
+      type: NotificationType.workTypeChanged,
       title: '파트 변경',
       body: '$businessName에서 귀하의 파트가 변경되었습니다.\n$originalWorkType → $newWorkType ($formattedWage원)\n근무일: ${workDate.month}/${workDate.day}',
       data: {

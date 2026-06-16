@@ -227,6 +227,14 @@ class _NotificationScreenState extends State<NotificationScreen> {
         );
         break;
 
+      // 파트변경 알림 — 근무자에게만 발송, 내 지원내역에서 변경된 파트 확인 가능
+      case NotificationType.workTypeChanged:
+        Navigator.push(
+          context,
+          MaterialPageRoute(builder: (_) => const MyApplicationsScreen()),
+        );
+        break;
+
       case NotificationType.newApplication:
       case NotificationType.applicationCanceled:
         await _openWorkApplicantsFromNotification(context, notification);
