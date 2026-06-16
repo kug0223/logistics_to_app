@@ -383,7 +383,8 @@ class _MyScheduleScreenState extends State<MyScheduleScreen> {
     return _attendanceMap.values.where((a) =>
       a.workDate.year  == year  &&
       a.workDate.month == month &&
-      a.wageStatus == AttendanceModel.wageConfirmed &&
+      (a.wageStatus == AttendanceModel.wageConfirmed ||
+       a.wageStatus == AttendanceModel.wageTransferred) &&
       a.wageDetail != null,
     ).toList();
   }

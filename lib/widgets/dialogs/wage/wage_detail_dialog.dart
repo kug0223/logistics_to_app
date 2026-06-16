@@ -307,7 +307,7 @@ class _WageDetailDialogState extends State<WageDetailDialog> {
     final hasDeductions = _wage.taxDeductionType != InsuranceRateModel.typeNone &&
         _wage.totalInsuranceDeduction > 0;
     final grossText = FormatHelper.formatWage(_wage.totalAmount);
-    final netText = FormatHelper.formatWage(_wage.netWage);
+    final netText = FormatHelper.formatWage(_wage.effectiveNetWage);
 
     String confirmTitle, confirmMessage, confirmText;
     bool isDanger = false;
@@ -856,7 +856,7 @@ class _WageDetailDialogState extends State<WageDetailDialog> {
         : 0;
     final absenceDeductionStr = absenceDeduction > 0
         ? FormatHelper.formatCompactHours(
-            (_wage.scheduledMinutes - _wage.breakMinutes - _wage.workMinutes)
+            (_wage.scheduledMinutes - widget.scheduledBreakMinutes - _wage.workMinutes)
                 .clamp(0, _wage.scheduledMinutes))
         : null;
 
@@ -1157,7 +1157,7 @@ class _WageDetailDialogState extends State<WageDetailDialog> {
               const Spacer(),
               Text(
                 FormatHelper.formatWage(
-                    hasDeductions ? _wage.netWage : _wage.totalAmount),
+                    hasDeductions ? _wage.effectiveNetWage : _wage.totalAmount),
                 style: ResponsiveHelper.titleStyle(context).copyWith(
                   fontWeight: FontWeight.bold,
                   color: _headerColor,

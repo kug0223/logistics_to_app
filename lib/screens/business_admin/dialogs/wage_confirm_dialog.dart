@@ -453,7 +453,7 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
               name: user?.name ?? '근무자',
               retroactive: e.value.retroactiveDeduction,
               gross: e.value.totalAmount,
-              net: e.value.netWage,
+              net: e.value.effectiveNetWage,
             );
           }).toList(),
         );
@@ -542,7 +542,7 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
             }
             tx.update(attRef, {
               'wageStatus': AttendanceModel.wageCalculated,
-              'finalWage': calculatedWage.netWage,
+              'finalWage': calculatedWage.effectiveNetWage,
               'wageDetail': calculatedWage.toMap(),
               'yearMonth': yearMonth,
               'updatedAt': FieldValue.serverTimestamp(),

@@ -271,7 +271,10 @@ class AdminStatsService {
     final monthlyTrends = List.generate(12, (i) {
       final m = i + 1;
       final records = trendMap[m]!;
-      final wage = records.fold<int>(0, (acc, r) => acc + (r.finalWage ?? 0));
+      final wage = records.fold<int>(0, (acc, r) =>
+          acc + ((r.wageStatus == AttendanceModel.wageConfirmed ||
+              r.wageStatus == AttendanceModel.wageTransferred)
+              ? (r.finalWage ?? 0) : 0));
       final workerIds = records.map((r) => r.userId).toSet().length;
       return MonthlyTrend(
         year: year,
@@ -283,10 +286,13 @@ class AdminStatsService {
     });
 
     // 연간 KPI
+    bool isPaid(AttendanceModel r) =>
+        r.wageStatus == AttendanceModel.wageConfirmed ||
+        r.wageStatus == AttendanceModel.wageTransferred;
     final totalWage =
-        thisYearAtt.fold<int>(0, (acc, r) => acc + (r.finalWage ?? 0));
+        thisYearAtt.fold<int>(0, (acc, r) => acc + (isPaid(r) ? (r.finalWage ?? 0) : 0));
     final prevYearWage =
-        prevYearAtt.fold<int>(0, (acc, r) => acc + (r.finalWage ?? 0));
+        prevYearAtt.fold<int>(0, (acc, r) => acc + (isPaid(r) ? (r.finalWage ?? 0) : 0));
     final workerIds = thisYearAtt.map((r) => r.userId).toSet().length;
 
     // 출근율
@@ -398,7 +404,10 @@ class AdminStatsService {
           default:
             absent++;
         }
-        wage += r.finalWage ?? 0;
+        if (r.wageStatus == AttendanceModel.wageConfirmed ||
+            r.wageStatus == AttendanceModel.wageTransferred) {
+          wage += r.finalWage ?? 0;
+        }
       }
       return WorkerMonthSummary(
         userId: e.key,
@@ -424,7 +433,10 @@ class AdminStatsService {
         default:
           ta++;
       }
-      tw += a.finalWage ?? 0;
+      if (a.wageStatus == AttendanceModel.wageConfirmed ||
+          a.wageStatus == AttendanceModel.wageTransferred) {
+        tw += a.finalWage ?? 0;
+      }
     }
 
     // 리뷰 집계

@@ -317,6 +317,8 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
         if (dateStart.isBefore(startDateOnly)) {
           continue;
         }
+        // 퇴사/계약해지 승인 완료 근무자 제외
+        if (app.isTerminationApproved) continue;
       }
 
       // 🔥 휴무일 체크 - 휴무일이면 제외
@@ -826,7 +828,7 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
                 color: Colors.white.withValues(alpha: 0.2),
                 borderRadius: BorderRadius.circular(12),
                 child: InkWell(
-                  onTap: () => Navigator.pop(context),
+                  onTap: () => Navigator.pop(context, _hasChanges),
                   borderRadius: BorderRadius.circular(12),
                   child: Padding(
                     padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 8)),
@@ -2424,6 +2426,7 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
 
   /// 급여 확정 다이얼로그 열기
   Future<void> _showWageConfirmDialog() async {
+    if (_isLoading) return;
     if (_confirmedWorkers.isEmpty) {
       ToastHelper.showWarning('급여 확정할 인원이 없습니다');
       return;
