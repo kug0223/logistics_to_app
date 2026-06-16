@@ -367,14 +367,15 @@ class _NotificationScreenState extends State<NotificationScreen> {
         break;
 
       // ═══════════════════════════════════════════════════════════
-      // 급여 관련 알림
+      // 급여 관련 알림 — MyScheduleScreen으로 이동
+      // (MyApplicationsScreen은 지원 내역 목록이며 급여 확인과 무관)
       // ═══════════════════════════════════════════════════════════
       case NotificationType.wageConfirmed:
       case NotificationType.wageCancelConfirmed:
       case NotificationType.retroactiveDeductionAlert:
         Navigator.push(
           context,
-          MaterialPageRoute(builder: (_) => const MyApplicationsScreen()),
+          MaterialPageRoute(builder: (_) => const MyScheduleScreen()),
         );
         break;
 

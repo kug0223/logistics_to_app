@@ -2162,6 +2162,11 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
     );
   }
 
+  // adminConfirmed는 관리자 내부 워크플로 전용 필드다.
+  // 지원자 앱(schedule_card)은 wageStatus/checkIn/checkOut/status 기준으로만 상태를 표시하며
+  // adminConfirmed를 참조하지 않는다 — 의도된 설계.
+  // 알림도 발송하지 않는다: 1차 확인은 관리자 정산 준비 단계이고,
+  // 지원자에게는 최종 마감(wageConfirmed) 시점에만 급여 알림이 전송된다.
   Future<void> _confirmWorker(ApplicationModel app) async {
     final attendance = _attendanceMap[app.id];
     if (attendance == null) return;
@@ -2775,6 +2780,10 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
     for (final app in targets) {
       final att = _attendanceMap[app.id];
       if (att == null) continue;
+      // status 필드를 명시적으로 삭제한다.
+      // AttendanceModel.fromMap()에서 status가 없으면 'absent'로 폴백하는데,
+      // 이는 의도된 동작: 노쇼 취소 후 지원자가 실제로 출근했는지 여부는
+      // checkIn/checkOut 필드로 별도 판단하며, status 필드는 NO_SHOW 표시 용도로만 사용.
       batch.update(
         FirebaseFirestore.instance.collection('attendance').doc(att.id),
         {'status': FieldValue.delete(), 'updatedAt': now},

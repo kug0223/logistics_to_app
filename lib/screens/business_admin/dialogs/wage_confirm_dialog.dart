@@ -1045,7 +1045,18 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
       
       _hasChanges = true;
       widget.onConfirmed?.call();
-      
+
+      // 급여 확정 취소 알림 발송 (calculated→pending: 지원자에게 재조정 안내)
+      _firestoreService.createNotification(
+        NotificationModel.createWageCancelConfirmed(
+          userId: app.uid,
+          businessName: widget.businessName,
+          businessId: widget.businessId,
+          workDate: attendance.workDate,
+          attendanceId: attendance.id,
+        ),
+      );
+
       // 급여 재계산 (근무자별 추가 공제 유지, 재계산만)
       final extra = _workerExtraBreakMinutes[app.id] ?? 0;
       final newWage = await _calculateWageForWorker(app, extraBreakMinutes: extra);

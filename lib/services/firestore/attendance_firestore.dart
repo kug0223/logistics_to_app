@@ -451,6 +451,7 @@ extension AttendanceFirestore on FirestoreService {
           .collection('schedule_change_requests')
           .where('businessId', isEqualTo: businessId)
           .orderBy('requestedAt', descending: true)
+          .limit(500)
           .get(const GetOptions(source: Source.server));
 
       return snapshot.docs
