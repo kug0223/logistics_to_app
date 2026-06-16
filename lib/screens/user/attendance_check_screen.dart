@@ -643,7 +643,8 @@ class _AttendanceCheckScreenState extends State<AttendanceCheckScreen>
       message: '퇴근 처리하시겠습니까?',
       confirmText: '퇴근',
     );
-    if (!confirmed) return;
+    // [U-1] showConfirm await 후 mounted 체크 — 다이얼로그 열린 채 화면 팝 시 setState crash 방지
+    if (!confirmed || !mounted) return;
 
     setState(() => _isProcessing = true);
 
