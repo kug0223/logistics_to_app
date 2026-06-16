@@ -112,18 +112,29 @@ class _MyScheduleScreenState extends State<MyScheduleScreen> {
     }
   }
 
+  /// 월 이동 시 호출 — 출근 기록 + 지원 내역 모두 갱신
+  ///
+  /// [B03] 이전 코드는 _loadMonthlyAttendances에서 출근 기록만 재조회하고
+  /// _applications(getMyApplications)는 재조회하지 않았다.
+  /// TTL 캐시(1분)가 있어 서버 부담이 거의 없고, 장기 지원서는 월별로
+  /// isScheduledOnDate 판단이 달라지므로 _applications도 함께 갱신해야
+  /// 통계·캘린더 인덱스가 올바르게 갱신된다.
   Future<void> _loadMonthlyAttendances(DateTime focusedDay) async {
     final uid = context.read<UserProvider>().currentUser?.uid;
     if (uid == null) return;
     try {
-      final list = await _firestoreService.getMyMonthlyAttendances(
-        userId: uid,
-        year: focusedDay.year,
-        month: focusedDay.month,
-      );
+      final results = await Future.wait([
+        _firestoreService.getMyApplications(uid),
+        _firestoreService.getMyMonthlyAttendances(
+          userId: uid,
+          year: focusedDay.year,
+          month: focusedDay.month,
+        ),
+      ]);
       if (mounted) {
         setState(() {
-          _attendanceMap = _buildAttendanceMap(list);
+          _applications  = results[0] as List<ApplicationModel>;
+          _attendanceMap = _buildAttendanceMap(results[1] as List<AttendanceModel>);
           _recomputeStats();
         });
       }

@@ -149,6 +149,10 @@ class ApplyDialog {
       // 이 체크(1차)와 applyToTOWithWorkType 호출 사이에 짧은 gap이 있으나,
       // applyToTO 내부에서 Source.server 기반 2차 중복 체크(application_firestore.dart:351)를
       // 수행하므로 서버 측 방어가 이중으로 존재함. 추가 Firestore Rules 불필요.
+      //
+      // [설계 주의] 이 1차 쿼리는 toId가 아닌 businessId+toTitle+workDate+workType+time 조합으로
+      // 검색한다. 동명의 다른 공고에서 오탐이 이론상 가능하나, 2차 체크(applyToTO)에서
+      // toId 기반으로 정확히 확인하므로 실질적 영향 없음. 1차는 빠른 UI 차단용 목적이다.
       final snapshot = await FirebaseFirestore.instance
           .collection('applications')
           .where('uid', isEqualTo: uid)

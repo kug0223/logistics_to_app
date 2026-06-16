@@ -37,6 +37,12 @@ class PayrollExcelHelper {
     final uidList = records.map((r) => r.userId).toSet().toList();
 
     // 개별 실패가 전체 내보내기를 중단하지 않도록 각 요청을 독립적으로 처리
+    //
+    // ⚠️ D11 설계 방침: Future.wait로 uidList 전체를 동시 조회한다.
+    // 1000명 이상 사업장에서 동시 Firestore 읽기가 폭발할 수 있으나,
+    // Firestore SDK는 내부 연결 풀을 사용하므로 실제 TCP 연결은 제한된다.
+    // 현실적으로 이체 목록은 사업장당 월 수십~수백 명 수준이므로 허용된 트레이드오프.
+    // 500명 이상 사업장이 발생하면 청크(예: 50건씩) 순차 처리로 개선 필요.
     final users = await Future.wait(
       uidList.map((uid) async {
         try {

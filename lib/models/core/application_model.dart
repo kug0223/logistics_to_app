@@ -36,7 +36,7 @@ class ApplicationModel {
   final DateTime? changedAt; // 업무유형 변경 시각
   final String? changedBy; // 업무유형 변경한 관리자 UID
   
-  final String status; // PENDING, CONFIRMED, REJECTED, CANCELED
+  final String status; // PENDING, CONTRACT_PENDING, CONFIRMED, REJECTED, CANCELED, AUTO_CANCELED
   final DateTime appliedAt; // 지원 시각
   final DateTime? confirmedAt; // 확정 시각 (null 가능)
   final String? confirmedBy; // 확정한 사람 (SYSTEM 또는 관리자 UID)

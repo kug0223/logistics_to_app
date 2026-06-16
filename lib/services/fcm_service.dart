@@ -306,6 +306,18 @@ class FCMService {
   }
   
   /// Navigator 준비될 때까지 최대 5초 대기 후 알림 화면 이동 (앱 종료 상태 복귀 처리)
+  ///
+  /// ⚠️ E06 설계 방침: 앱 종료 상태에서 알림 탭 시 payload의 screen 필드를 무시하고
+  /// 무조건 알림 목록 화면으로 이동한다.
+  ///
+  /// 이유: 앱 종료 → 재시작 시 Navigator 스택이 비어 있으므로 initialMessage.data를 즉시
+  /// 읽어도 HomeScreen 등 부모 스크린이 쌓이기 전에 푸시하면 '뒤로가기' 시 빈 화면이 된다.
+  /// 알림 화면은 알림 목록을 표시하고, 사용자가 개별 알림을 탭하면 해당 화면으로 이동하는
+  /// 간접 딥링크 방식으로 UX를 처리한다. 직접 딥링크가 필요하면 앱 부팅 완료 후
+  /// WidgetsBinding.instance.addPostFrameCallback을 사용해 스택 구성 후 이동해야 한다.
+  ///
+  /// 백그라운드 탭(_handleMessageOpenedApp)은 스택이 살아있으므로 _navigateByPayload로
+  /// 직접 딥링크가 가능하다.
   Future<void> _navigateWhenReady() async {
     const maxWait = 50;  // 100ms × 50 = 5초
     for (var i = 0; i < maxWait; i++) {

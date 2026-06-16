@@ -8,6 +8,20 @@ import 'work_detail_data.dart';
 /// type: 'contract' 장기 계약직. 날짜 슬롯 없이 공고 단위로 지원자 관리.
 ///
 /// workDetails: 배열 필드로 TO 문서에 직접 저장 (별도 서브컬렉션 없음).
+///
+/// ─── 미구현 필터 (향후 추가 예정) ───────────────────────────────────
+/// 아래 조건은 현재 TOModel/지원 로직에 없음 — 구현 시 이 파일 + applyToTO 수정 필요:
+///
+/// [A08] targetGender: 공고 지원 가능 성별 제한 (예: '남성만', '여성만', '무관')
+///   → UserModel.gender와 비교하는 지원 검증 로직 필요
+///
+/// [A09] minAge / maxAge: 공고 지원 가능 나이 범위 제한
+///   → UserModel에서 생년월일 → 나이 계산 후 비교 필요
+///
+/// [A10] requiredDocuments: 지원에 필요한 서류 목록 (예: ['주민등록증', '통장사본'])
+///   → application_firestore.applyToTO 단계에서 UserModel.uploadedDocs 비교 필요
+///   → 현재는 hasValidIdDocument(신분증 인증) + documentStatus(서류 완비) 일괄 체크만 수행
+/// ──────────────────────────────────────────────────────────────────
 class TOModel {
   final String id;
 

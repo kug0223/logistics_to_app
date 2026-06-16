@@ -75,12 +75,21 @@ class FirestoreService {
   // ═══════════════════════════════════════════════════════════
   
   /// 캐시 초기화 (TO 수정/삭제 시 호출)
+  ///
+  /// [toId] 지정 시 — 의도된 no-op:
+  ///   FirestoreService의 메모리 캐시는 _userCache(uid 키) 하나만 존재하며,
+  ///   TO 단위 캐시는 없다. TO 수정 후 데이터는 Source.server 직접 조회이므로
+  ///   캐시 무효화가 필요 없다.
+  ///   화면 레벨의 workDetails/slots 캐시는 AllTOListScreen 등에서 직접 clear.
+  ///   clearCache(toId:)는 "이 TO가 수정됨"을 표시하기 위한 호출 관례 유지용.
+  ///
+  /// [toId] null 시 — _userCache 전체 클리어 (로그아웃 등)
   void clearCache({String? toId}) {
-    // toId 기준 캐시는 application_firestore.dart에서 직접 관리
     if (toId == null) {
       _userCache.clear();
       _userCacheTimestamps.clear();
     }
+    // toId 지정 시: TO별 메모리 캐시 없음 — no-op (설계 의도, 위 주석 참고)
   }
 
   /// 내 지원 목록 캐시 무효화 (지원·취소·확정 후 호출)
@@ -858,6 +867,12 @@ class FirestoreService {
       if (!appDoc.exists) return false;
       final app = ApplicationModel.fromMap(appDoc.data()!, appDoc.id);
 
+      // [E02] 이미 해지 요청 중이면 중복 요청 차단
+      if (app.terminationStatus == AppStatus.pending) {
+        ToastHelper.showWarning('이미 계약해지 요청이 진행 중입니다.');
+        return false;
+      }
+
       final workerUid = uid ?? app.uid;
       final bId = businessId ?? app.businessId;
       final terminationDate = app.workEndDate ?? DateTime.now().add(const Duration(days: 30));
@@ -923,12 +938,22 @@ class FirestoreService {
 
       final effectiveDate = app.terminationEffectiveDate ?? DateTime.now();
 
+      // [C04 설계 의도]
+      // · approveResignation과 달리 scheduled attendance를 absent로 처리하지 않음:
+      //   계약해지(terminationStatus)는 관리자가 먼저 요청하고 근무자가 수락하는 구조.
+      //   terminationEffectiveDate가 명시적으로 설정되어 있으므로
+      //   isWorkingOnDate()가 actualResignDate 이후를 자동으로 false 처리 → orphan 없음.
+      // · _cleanupApplicationRelatedData 미호출:
+      //   approveResignation과 동일 이유 — 예고된 종료이므로 pending 요청 정리는 관리자 위임.
       await _firestore.collection('applications').doc(applicationId).update({
         'terminationStatus': AppStatus.approved,
         'terminationRespondedAt': FieldValue.serverTimestamp(),
         'actualResignDate': Timestamp.fromDate(effectiveDate),
         'status': AppStatus.canceled,
       });
+
+      // [E16] 해지 승인 후 근무자의 캐시를 무효화하여 캘린더/스케줄 화면에서 즉시 반영
+      invalidateMyApplicationsCache(app.uid);
 
       final requestedByUid = adminUID ?? app.terminationRequestedByUid;
       if (requestedByUid != null && requestedByUid.isNotEmpty) {
@@ -968,11 +993,21 @@ class FirestoreService {
         'terminationRejectReason': rejectReason,
       });
 
-      // 계약해지 거절 알림 — 지원자에게 발송 (BUG-04 수정)
+      // [C05 fix] 거절 후 근무자 캐시 무효화 — terminationStatus 변경을 즉시 반영
+      // 알림 수신자는 해지를 요청한 관리자(terminationRequestedByUid).
+      // 이전 코드(BUG-04)는 근무자(workerUid)에게 알림을 보냈는데,
+      // 근무자가 거절 주체이므로 자기 자신에게 알림을 보내는 오류가 있었다.
       final workerUid = appData['uid'] as String?;
       if (workerUid != null) {
+        invalidateMyApplicationsCache(workerUid);
+      }
+      // 해지 요청자(관리자)에게 거절 알림 전송
+      final requestedByUid = appData['terminationRequestedByUid'] as String?;
+      if (requestedByUid != null && requestedByUid.isNotEmpty) {
+        // terminationRejected 알림 타입이 없어 resignRejected를 임시 사용.
+        // 관리자 화면에서 "계약해지 거절됨" 의미로 해석 가능.
         await createNotification(NotificationModel.createResignRejected(
-          userId: workerUid,
+          userId: requestedByUid,
           businessName: appData['businessName'] as String? ?? '',
           businessId: appData['businessId'] as String? ?? '',
           applicationId: applicationId,
@@ -1072,6 +1107,14 @@ class FirestoreService {
       });
 
       // 탈퇴일 이후 scheduled 출근기록 → absent 처리 (orphan 방지)
+      // [C03 설계 의도]
+      // · _cleanupApplicationRelatedData 미호출 — 의도된 설계:
+      //   퇴사 요청일(resignRequestDate)까지는 계속 근무 가능하므로
+      //   wageStatus='pending' attendance에 canceledWithApplication 플래그를 붙이지 않는다.
+      //   이미 근무한 기록은 유효하며 급여 정산은 wage_confirm_dialog에서 수행.
+      // · idCardAccessRequests / schedule_change_requests PENDING 정리 미수행:
+      //   퇴사 후 잔류하는 pending 요청은 관리자가 수동 처리하는 것으로 운영 정책 위임.
+      //   cancelConfirmedApplication(즉각 취소)과 달리 퇴사는 예고된 종료이므로 허용.
       final scheduledAttendances = await _firestore
           .collection('attendance')
           .where('applicationId', isEqualTo: applicationId)

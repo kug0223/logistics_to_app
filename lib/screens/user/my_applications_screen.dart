@@ -218,10 +218,12 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
 
     if (!confirmed) return;
 
+    // cancelApplication 내부에서 이미 상태에 맞는 토스트(showSuccess/showInfo/showError)를
+    // 표시하므로, 여기서는 추가 메시지 없이 화면 갱신만 수행한다.
+    // (REJECTED·이미취소 상태에서 success=true가 반환될 때 중복 토스트 방지)
     final success = await _firestoreService.cancelApplication(applicationId, uid);
     if (!mounted) return;
     if (success) {
-      ToastHelper.showSuccess('지원이 취소되었습니다.');
       _loadApplications();
     } else {
       ToastHelper.showError('취소에 실패했습니다.');
@@ -450,6 +452,9 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
                   _buildAutoCanceledInfo(app),
 
                 // 대기 중인 경우 취소 버튼
+                // [A08/A09 설계] CONTRACT_PENDING·CONFIRMED 상태에서는 취소 버튼 미표시.
+                // cancelApplication()에서 confirmedStatuses 포함 시 에러 반환하므로 서버도 차단됨.
+                // 계약 서명 대기/완료 후 취소는 관리자에게 문의해야 한다(의도된 설계).
                 if (app.status == AppStatus.pending)
                   _buildCancelButton(app),
 

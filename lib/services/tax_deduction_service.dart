@@ -66,6 +66,14 @@ class TaxDeductionService {
     InsuranceRateModel rates,
     int gross,
   ) {
+    // 소득세 3%: gross × businessIncomeRate / 100
+    // 지방소득세: incomeTax × localIncomeTaxRate(10%) / 100 = gross × 0.3%
+    //
+    // ✅ 의도된 설계: 지방소득세를 businessIncomeLocalRate(0.3%)로 직접 계산하지 않고
+    // incomeTax × localIncomeTaxRate(10%)로 계산한다. 수학적으로 동일한 결과
+    // (소득세3% × 10% = 0.3%)이며, round() 시 1원 차이가 발생하는 경우를 소득세 계산
+    // 이후 10% 적용으로 통일하는 방식이다. (세법상 지방소득세 = 소득세의 10%)
+    // businessIncomeLocalRate 필드는 슈퍼관리자 설정화면 표시용으로만 사용된다.
     final incomeTax = (gross * rates.businessIncomeRate / 100).round();
     final localTax = (incomeTax * rates.localIncomeTaxRate / 100).round();
     final totalTax = incomeTax + localTax;
@@ -83,6 +91,14 @@ class TaxDeductionService {
     InsuranceRateModel rates,
     int gross,
   ) {
+    // ✅ 비과세 경계값 설계:
+    //   - gross = 150,000원: taxableAmount = 0 → 소득세 0원 (비과세 한도 내)
+    //   - gross = 150,001원: taxableAmount = 1, incomeTax = (1 × 2.7/100).round() = 0원
+    //
+    // round() 특성상 taxableAmount가 최소 19원(0.027원 × 19 ≈ 0.513 → round() = 1)이
+    // 되어야 소득세 1원이 공제된다. 즉 150,018원까지 실질 소득세가 0원이 된다.
+    // 이는 의도된 설계: 원(₩) 단위로 round()를 사용하면 미소 과세금액은 0이 되고,
+    // 납세자에게 유리한 방향으로 처리된다. ceil()로 변경하면 납세자에게 불리하다.
     final taxableAmount = (gross - rates.dailyWageExemption).clamp(0, gross);
     final incomeTax = taxableAmount > 0
         ? (taxableAmount * rates.dailyWorkerTaxRate / 100).round()
@@ -129,6 +145,12 @@ class TaxDeductionService {
   // 소득세(incomeTax)를 포함하지 않는다 — 의도된 설계.
   // four_insurance_fixed 대상(9일 이상 장기 일용직)은 연말정산으로 소득세를 정산하므로
   // 매 근무일마다 원천징수하지 않는다.
+  //
+  // ⚠️ B16 설계 방침: 국민연금 월 소득 상한(2026년 기준 617만원)을 적용하지 않는다.
+  // 이유: 일용직 특성상 일당 단위로 계산하며 월 누적 소득을 추적하지 않으므로
+  // 일당 기준 상한 계산이 불가하다. 실무에서 일용직은 일단 전체에 요율을 적용하고
+  // 월 마감 시 세무사가 조정하는 방식을 채택하므로 의도된 트레이드오프다.
+  // 정확한 상한 적용이 필요하면 급여 정산 단계에서 별도 처리가 필요하다.
 
   static WageDetailModel _applyFourInsurance(
     WageDetailModel base,

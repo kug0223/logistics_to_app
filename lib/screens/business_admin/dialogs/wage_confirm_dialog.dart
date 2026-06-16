@@ -1296,6 +1296,9 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
             // wageDetail 내 confirm 정보도 삭제 — 재마감 시 이전 확정자 정보 잔류 방지
             'wageDetail.confirmedBy': FieldValue.delete(),
             'wageDetail.confirmedAt': FieldValue.delete(),
+            // [B02 fix] 마감 취소 시 paymentDueDate도 삭제.
+            // 잔류하면 재마감 시 기존 날짜가 그대로 남아 지급 예정일이 오표시됨.
+            'paymentDueDate': FieldValue.delete(),
           },
         );
         // _closeWages에서 increment(1)했으므로 취소 시 되돌림

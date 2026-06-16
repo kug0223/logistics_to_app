@@ -376,6 +376,8 @@ class _MyRequestsDialogState extends State<MyRequestsDialog> {
 
   Widget _buildTerminationCard(ApplicationModel app) {
     final requestedAt = app.terminationRequestedAt;
+    // [설계] inDays는 floor 처리라 실제 남은 시간보다 최대 23h 59m 일찍 0이 될 수 있음.
+    // UI 표시 목적이므로 허용 범위 — 실제 자동승인은 서버(Cloud Function)에서 처리함.
     final daysLeft = requestedAt != null
         ? 3 - DateTime.now().difference(requestedAt).inDays
         : 0;
