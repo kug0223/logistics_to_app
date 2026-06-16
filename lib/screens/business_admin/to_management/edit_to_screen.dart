@@ -225,8 +225,9 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
       }
     }
 
-    // [WAGE-GUARD] TO 전체 수정 시 확정 근무자 존재하면 경고 (슬롯/draft 제외)
-    if (!widget.isSlotMode && _publishMode != 'draft') {
+    // [WAGE-GUARD] 새 슬롯 추가·draft 저장 제외 모든 수정 경로에서 확정 근무자 경고
+    // isNewSlot만 제외 — 기존 슬롯 수정(단건/배치)도 workDetails 변경이므로 경고 대상
+    if (!widget.isNewSlot && _publishMode != 'draft') {
       final proceed = await _showWageGuardWarning();
       if (!mounted) return;
       if (!proceed) return;
@@ -671,6 +672,7 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
     );
     if (result != null) {
       setState(() {
+        _hasChanges = true; // [B-4] workDetails 변경 감지
         _workDetails.add(WorkDetailData(
           workType: result.workType!,
           workTypeIcon: result.workTypeIcon,
@@ -707,6 +709,7 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
       final index = _workDetails.indexOf(work);
       if (index != -1) {
         setState(() {
+          _hasChanges = true; // [B-4] workDetails 변경 감지
           _workDetails[index] = _workDetails[index].copyWith(
             workType: result['workType'],
             workTypeIcon: result['workTypeIcon'],
@@ -742,7 +745,7 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
   Future<void> _deleteWork(WorkDetailData work) async {
     final confirmed = await _showDeleteConfirmDialog(work);
     if (confirmed == true) {
-      setState(() => _workDetails.remove(work));
+      setState(() { _hasChanges = true; _workDetails.remove(work); }); // [B-4] workDetails 변경 감지
       ToastHelper.showInfo('업무가 삭제되었습니다 (저장 버튼을 눌러주세요)');
     }
   }

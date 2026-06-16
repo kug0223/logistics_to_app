@@ -1041,7 +1041,8 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
   /// 한쪽이 취소하는 시나리오는 업무 프로세스상 극히 드물며,
   /// wageConfirmed 상태를 wagePending으로 되돌리는 것은 현재 _reverseCloseWages로 별도 처리.
   /// 완전한 방어를 원하면 wageCalculated 상태 확인 트랜잭션을 추가해야 하나 현 단계에서 허용.
-  Future<void> _processWageCancel(ApplicationModel app, AttendanceModel attendance) async {
+  // [B-8] showToast: 개별 취소 시 true, 일괄 취소(_cancelSelectedWages) 시 false — 중복 토스트 방지
+  Future<void> _processWageCancel(ApplicationModel app, AttendanceModel attendance, {bool showToast = true}) async {
     try {
       final user = widget.userMap[app.uid];
 
@@ -1087,7 +1088,7 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
         });
       }
       
-      ToastHelper.showSuccess('${user?.name ?? '근무자'} 급여 확정 취소');
+      if (showToast) ToastHelper.showSuccess('${user?.name ?? '근무자'} 급여 확정 취소');
     } catch (e) {
       debugPrint('❌ 급여 취소 실패: $e');
       ToastHelper.showError('급여 취소에 실패했습니다');
@@ -1122,7 +1123,7 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
         if (app == null) continue;
         final attendance = widget.attendanceMap[appId];
         if (attendance == null) continue;
-        await _processWageCancel(app, attendance);
+        await _processWageCancel(app, attendance, showToast: false); // [B-8] 일괄 취소 시 개별 토스트 억제
       }
       ToastHelper.showSuccess('$count명 급여 확정 취소 완료');
     } catch (e) {

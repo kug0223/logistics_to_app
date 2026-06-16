@@ -254,7 +254,8 @@ class FirestoreService {
         'reopenedBy': adminUID,
         'status': TOStatus.active,
         'statusUpdatedAt': FieldValue.serverTimestamp(),
-        'closedBy': FieldValue.delete(), // 재오픈 시 직접마감 표시 초기화
+        'closedBy': FieldValue.delete(),
+        'closedAt': FieldValue.delete(), // [B-9] 재오픈 시 closedAt 잔존 방지
       });
       clearCache(toId: toId);
       debugPrint('✅ TO 재오픈 완료: $toId');

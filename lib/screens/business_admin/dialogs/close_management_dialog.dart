@@ -182,6 +182,19 @@ class _CloseManagementDialogState extends State<CloseManagementDialog>
               ld.year == date.year && ld.month == date.month && ld.day == date.day)) {
             continue;
           }
+          // [B-6] extraWorkDates 우선 처리 — attendance_status_dialog._getConfirmedWorkersForDate()와 동일 우선순위
+          // 비근무 요일에 승인된 추가 근무일이면 workDays 체크 건너뛰고 바로 포함 (당일명단 vs 마감관리 불일치 방지)
+          final isExtraWork = app.extraWorkDates != null &&
+              app.extraWorkDates!.any((ed) =>
+                  ed.year == date.year && ed.month == date.month && ed.day == date.day);
+          if (isExtraWork) {
+            final dateKey = DateFormat('yyyy-MM-dd').format(date);
+            appsByDate.putIfAbsent(dateKey, () => []);
+            if (!appsByDate[dateKey]!.any((a) => a.id == app.id)) {
+              appsByDate[dateKey]!.add(app);
+            }
+            continue;
+          }
           // 요일 체크
           final dayWeekday = FormatHelper.weekday(date);
           if (!app.workDays!.contains(dayWeekday)) continue;

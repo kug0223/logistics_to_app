@@ -26,6 +26,7 @@ import '../../theme/app_colors.dart';
 import '../../widgets/common/gradient_scaffold.dart';
 import '../../widgets/common/app_empty_state.dart';
 import '../../widgets/common/loading_widget.dart';
+import '../business_admin/admin_review_list_screen.dart';
 
 /// 알림 목록 화면 (전체 / 미읽음 탭)
 class NotificationScreen extends StatefulWidget {
@@ -404,6 +405,19 @@ class _NotificationScreenState extends State<NotificationScreen> {
         break;
 
       case NotificationType.reviewReceived:
+        // [B-10] 관리자에게 reviewReceived 발송 시 탭 무반응 버그 수정
+        if (isUser) {
+          Navigator.push(
+            context,
+            MaterialPageRoute(builder: (_) => const MyScheduleScreen()),
+          );
+        } else {
+          Navigator.push(
+            context,
+            MaterialPageRoute(builder: (_) => const AdminReviewListScreen()),
+          );
+        }
+        break;
       case NotificationType.systemNotice:
       case NotificationType.other:
         if (isUser) {
@@ -461,12 +475,15 @@ class _NotificationScreenState extends State<NotificationScreen> {
         return;
       }
 
+      // [B-5] 서명 완료 후 알림 목록 갱신 — pop 반환값 수신
       Navigator.push(
         context,
         MaterialPageRoute(
           builder: (_) => ContractSignScreen(contract: contract, role: 'worker'),
         ),
-      );
+      ).then((result) {
+        if (mounted && result != null) setState(() {});
+      });
     } catch (e) {
       if (!context.mounted) return;
       Navigator.pop(context);

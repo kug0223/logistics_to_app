@@ -1383,6 +1383,8 @@ extension ApplicationFirestore on FirestoreService {
     final appRef = _firestore.collection('applications').doc(applicationId);
 
     // 트랜잭션으로 상태 체크 + CONTRACT_PENDING 선점 — 동시 확정 요청 방지
+    // [CAPACITY-GUARD] TO 문서를 트랜잭션 내에서 함께 읽어 정원 초과 서버 측 차단
+    // 클라이언트 캐시 기반 체크만으로는 동시 요청·병렬 일괄승인 시 초과 허용됨
     bool alreadyConfirmed = false;
     await _firestore.runTransaction((tx) async {
       final fresh = await tx.get(appRef);
@@ -1401,6 +1403,30 @@ extension ApplicationFirestore on FirestoreService {
       if (status == AppStatus.rejected) {
         throw Exception('거절된 지원서는 확정할 수 없습니다');
       }
+
+      // [CAPACITY-GUARD] 정원 서버 측 검증
+      final freshData = fresh.data()!;
+      final toIdFresh = freshData['toId'] as String?;
+      final selectedWorkType = freshData['selectedWorkType'] as String?;
+      if (toIdFresh != null && selectedWorkType != null) {
+        final toRef = _firestore.collection('tos').doc(toIdFresh);
+        final toFresh = await tx.get(toRef);
+        if (toFresh.exists) {
+          final confirmedCounts = toFresh.data()?['workTypeConfirmedCounts'] as Map<String, dynamic>?;
+          final workTypeConfirmed = (confirmedCounts?[selectedWorkType] as num?)?.toInt() ?? 0;
+          final rawWorkDetails = toFresh.data()?['workDetails'] as List<dynamic>? ?? [];
+          for (final wd in rawWorkDetails.cast<Map<String, dynamic>>()) {
+            if (wd['workType'] == selectedWorkType) {
+              final workTypeRequired = (wd['requiredCount'] as num?)?.toInt() ?? 0;
+              if (workTypeRequired > 0 && workTypeConfirmed >= workTypeRequired) {
+                throw Exception('정원이 초과되었습니다. (필요: $workTypeRequired명, 현재: $workTypeConfirmed명 확정)');
+              }
+              break;
+            }
+          }
+        }
+      }
+
       // 상태를 CONTRACT_PENDING으로 선점 → 두 번째 요청은 alreadyConfirmed=true 반환
       tx.update(appRef, {
         'status': 'CONTRACT_PENDING',
