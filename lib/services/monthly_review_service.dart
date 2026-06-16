@@ -396,6 +396,11 @@ class MonthlyReviewService {
   // ═══════════════════════════════════════════════════════════
 
   /// 해당 월 근무자 목록 (단기 + 장기 통합, 이미 리뷰한 근무자 제외)
+  ///
+  /// wageConfirmed 이후에만 리뷰를 허용하는 강제 조건이 없다 — 의도된 설계.
+  /// 리뷰는 급여 확정과 무관하게 해당 월 근무(confirmed/contractPending) 기준으로 작성 가능.
+  /// 대신 getReviewableWorkers 조회 경로 자체가 confirmed 상태 지원서만 반환하므로
+  /// 근무 이력 없는 사람에게 리뷰가 생성될 위험은 없다.
   Future<List<Map<String, dynamic>>> getReviewableWorkers({
     required String businessId,
     required int year,

@@ -237,7 +237,9 @@ class _CloseManagementDialogState extends State<CloseManagementDialog>
           } else if (att.status == AttendanceModel.statusNoShow) {
             noshowCount++;
             closedCount++;
-          } else if (att.wageStatus == AttendanceModel.wageConfirmed) {
+          } else if (att.wageStatus == AttendanceModel.wageConfirmed ||
+                     att.wageStatus == AttendanceModel.wageTransferred) {
+            // wageTransferred(송금완료)도 마감 완료로 집계
             closedCount++;
           } else {
             wagePendingCount++;

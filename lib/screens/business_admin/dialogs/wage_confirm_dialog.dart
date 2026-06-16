@@ -1219,7 +1219,11 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
       failCount = targetIds.length - successCount;
     }
 
-    if (!mounted) return;
+    if (!mounted) {
+      // dispose 이후에도 _isProcessing 플래그 반드시 복원
+      _isProcessing = false;
+      return;
+    }
     _hasChanges = true;
     widget.onClose?.call();
 
@@ -1325,7 +1329,10 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
       failCount = targetIds.length - successCount;
     }
 
-    if (!mounted) return;
+    if (!mounted) {
+      _isProcessing = false;
+      return;
+    }
     _hasChanges = true;
     widget.onClose?.call();
 

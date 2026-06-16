@@ -114,6 +114,7 @@ class _MyRequestsDialogState extends State<MyRequestsDialog> {
       // 최신순 정렬
       notifications.sort((a, b) => b.requestedAt.compareTo(a.requestedAt));
 
+      if (!mounted) return;
       setState(() {
         _allNotifications = notifications;
         _isLoading = false;

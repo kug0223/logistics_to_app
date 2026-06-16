@@ -323,9 +323,11 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
         if (isLeaveDay) continue;
       }
 
+      // extraWorkDates 우선 확인 — 추가 근무 승인일은 정규 요일 외에도 포함
+      final isExtraWorkDay = app.isExtraWorkDateOn(dateStart);
       // 요일 체크 — workDays가 없으면 요일 불문 포함 (스케줄 미지정 고정근무자)
       final dayWeekday = FormatHelper.weekday(dateStart);
-      if (app.workDays == null || app.workDays!.isEmpty || app.workDays!.contains(dayWeekday)) {
+      if (isExtraWorkDay || app.workDays == null || app.workDays!.isEmpty || app.workDays!.contains(dayWeekday)) {
         if (seenIds.add(app.id)) {
           result.add(app);
           longTermCount++;

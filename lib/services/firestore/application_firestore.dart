@@ -1874,7 +1874,10 @@ extension ApplicationFirestore on FirestoreService {
       for (final doc in scheduleRequests.docs) {
         localBatch.update(doc.reference, {'status': 'CANCELED'});
       }
-      // 급여 미처리(pending) 출근 기록 무효화 (고아 기록 방지)
+      // wageStatus == 'pending' 출근 기록만 무효화(canceledWithApplication: true) — 의도된 설계.
+      // calculated/confirmed/transferred 상태 attendance는 건드리지 않는다:
+      // 이미 급여 계산이 시작된 기록을 삭제하면 정산 불일치가 발생하므로,
+      // 관리자가 수동으로 wage_confirm_dialog에서 처리하도록 위임한다.
       final attendanceRecords = await _firestore
           .collection('attendance')
           .where('applicationId', isEqualTo: applicationId)
