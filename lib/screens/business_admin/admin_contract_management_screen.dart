@@ -175,9 +175,26 @@ class _AdminContractManagementScreenState
       ToastHelper.showSuccess('계약서가 무효 처리되었습니다');
       _refresh();
     } catch (e) {
-      ToastHelper.showError('무효 처리에 실패했습니다');
+      if (!mounted) return;
+      // voidContract는 app 취소 실패 시에도 계약서 voided는 완료됨 — 경고 토스트 후 목록 갱신
+      ToastHelper.showWarning('무효 처리됐으나 일부 지원서 취소에 실패했습니다. 카드에서 재처리하세요.');
+      _refresh();
     } finally {
       if (mounted) setState(() => _isVoidingContract = false);
+    }
+  }
+
+  /// voidFailedAppIds 재처리 — 실패한 application 취소를 다시 시도
+  Future<void> _retryVoidFailedApps(EmploymentContractModel c) async {
+    try {
+      await _contractService.retryVoidFailedApps(c);
+      if (!mounted) return;
+      ToastHelper.showSuccess('지원서 취소 재처리가 완료되었습니다');
+      _refresh();
+    } catch (e) {
+      if (!mounted) return;
+      ToastHelper.showError('재처리 실패: $e');
+      _refresh();
     }
   }
 
@@ -243,6 +260,9 @@ class _AdminContractManagementScreenState
                                 onVoid: item.status != ContractStatus.voided
                                     ? () => _voidContract(item)
                                     : null,
+                                onRetry: item.hasVoidFailedApps
+                                    ? () => _retryVoidFailedApps(item)
+                                    : null,
                               );
                             },
                           ),
@@ -273,11 +293,13 @@ class _ContractCard extends StatelessWidget {
   final EmploymentContractModel contract;
   final VoidCallback onTap;
   final VoidCallback? onVoid;
+  final VoidCallback? onRetry;
 
   const _ContractCard({
     required this.contract,
     required this.onTap,
     this.onVoid,
+    this.onRetry,
   });
 
   @override
@@ -402,6 +424,54 @@ class _ContractCard extends StatelessWidget {
 
                 // 서명 진행 인디케이터
                 _SignProgressBar(contract: contract),
+
+                // [V-001] voidFailedAppIds 경고 배너 — 앱 취소 실패 시 재처리 유도
+                if (contract.hasVoidFailedApps) ...[
+                  SizedBox(height: ResponsiveHelper.spacing(context, 8)),
+                  Container(
+                    width: double.infinity,
+                    padding: EdgeInsets.symmetric(
+                      horizontal: ResponsiveHelper.spacing(context, 10),
+                      vertical: ResponsiveHelper.spacing(context, 8),
+                    ),
+                    decoration: BoxDecoration(
+                      color: AppColors.warningBg,
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(color: AppColors.warning.withValues(alpha: 0.4)),
+                    ),
+                    child: Row(
+                      children: [
+                        Icon(Icons.warning_amber_rounded,
+                            size: ResponsiveHelper.iconSize(context, 16),
+                            color: AppColors.warningDark),
+                        SizedBox(width: ResponsiveHelper.spacing(context, 6)),
+                        Expanded(
+                          child: Text(
+                            '지원서 ${contract.voidFailedAppIds.length}건 취소 실패 — 재처리 필요',
+                            style: ResponsiveHelper.tinyStyle(context,
+                                color: AppColors.warningDark),
+                          ),
+                        ),
+                        if (onRetry != null)
+                          TextButton(
+                            onPressed: onRetry,
+                            style: TextButton.styleFrom(
+                              padding: EdgeInsets.symmetric(
+                                horizontal: ResponsiveHelper.spacing(context, 8),
+                                vertical: ResponsiveHelper.spacing(context, 2),
+                              ),
+                              minimumSize: Size.zero,
+                              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                            ),
+                            child: Text('재처리',
+                                style: ResponsiveHelper.tinyStyle(context,
+                                    color: AppColors.warningDark)
+                                    .copyWith(fontWeight: FontWeight.w700)),
+                          ),
+                      ],
+                    ),
+                  ),
+                ],
 
                 // 무효화 버튼 (voided 제외 모든 상태)
                 if (onVoid != null &&

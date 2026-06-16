@@ -386,6 +386,11 @@ class EmploymentContractModel {
   final DateTime createdAt;
   final DateTime? updatedAt;
 
+  /// voidContract 실행 후 취소 실패한 applicationId 목록.
+  /// 비어있으면 정상 완료. 있으면 관리자가 재처리 필요.
+  /// toMap()에 포함하지 않음 — Firestore .update()로만 관리.
+  final List<String> voidFailedAppIds;
+
   /// Firestore에 아직 저장되지 않은 미리보기 상태 (서명 시 최초 저장됨)
   /// toMap/fromFirestore에 포함되지 않는 트랜지언트 필드
   final bool isNewUnsaved;
@@ -411,12 +416,14 @@ class EmploymentContractModel {
     this.templateId,
     required this.createdAt,
     this.updatedAt,
+    this.voidFailedAppIds = const [],
     this.isNewUnsaved = false,
   });
 
   bool get isCompleted => status == ContractStatus.completed;
   bool get needsEmployerSignature => status == ContractStatus.pendingEmployer;
   bool get needsWorkerSignature => status == ContractStatus.pendingWorker;
+  bool get hasVoidFailedApps => voidFailedAppIds.isNotEmpty;
 
   factory EmploymentContractModel.fromFirestore(DocumentSnapshot doc) {
     final raw = doc.data();
@@ -466,6 +473,9 @@ class EmploymentContractModel {
           ? (d['createdAt'] as Timestamp).toDate().toLocal()
           : (throw ArgumentError('EmploymentContractModel: createdAt 필드 누락 (id: $id)')),
       updatedAt: (d['updatedAt'] as Timestamp?)?.toDate().toLocal(),
+      voidFailedAppIds: d['voidFailedAppIds'] != null
+          ? List<String>.from(d['voidFailedAppIds'] as List)
+          : [],
     );
   }
 
@@ -507,6 +517,7 @@ class EmploymentContractModel {
     List<ContractArticle>? articles,
     String? templateId,
     DateTime? updatedAt,
+    List<String>? voidFailedAppIds,
   }) {
     return EmploymentContractModel(
       id: id,
@@ -529,6 +540,7 @@ class EmploymentContractModel {
       templateId: templateId ?? this.templateId,
       createdAt: createdAt,
       updatedAt: updatedAt ?? this.updatedAt,
+      voidFailedAppIds: voidFailedAppIds ?? this.voidFailedAppIds,
       isNewUnsaved: isNewUnsaved,
     );
   }

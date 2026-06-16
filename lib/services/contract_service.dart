@@ -543,8 +543,11 @@ class ContractService {
 
   /// 계약서 무효화 (관리자 전용)
   ///
-  /// 계약서 status를 voided로 변경하고,
-  /// 연결된 모든 application을 CANCELED 상태로 전환한다.
+  /// [V-001] 실행 순서: 계약서 voided 먼저 → 알림 발송 → application 취소
+  /// 이전 순서(앱 취소 → 계약서 voided)는 계약서 update 실패 시 앱은 CANCELED인데
+  /// 계약서는 pendingWorker로 남는 Scenario A(상태 불일치)가 있었음.
+  /// 순서 역전으로 Scenario A를 원천 차단: 계약서 voided update 실패 시 아무것도 변경되지 않아
+  /// 관리자가 재시도 가능. 앱 취소 실패 시에는 계약서가 이미 voided이므로 근무자가 서명 불가.
   Future<void> voidContract(String contractId) async {
     final contractDoc = await _db.collection('employment_contracts').doc(contractId).get();
     if (!contractDoc.exists) return;
@@ -555,14 +558,34 @@ class ContractService {
     // failedIds가 발생하고 오해의 소지 있는 에러 토스트가 뜨는 버그 방지 (BUG-E-01)
     if (contract.status == ContractStatus.voided) return;
 
-    // 연결된 application들 취소 처리 (확정 상태인 것만)
-    // 하나라도 실패하면 계약서 상태 변경을 중단해 부분 무효화 방지
+    // 1단계: 계약서 voided 먼저 업데이트 (실패 시 아무것도 변경 안 됨 → 깨끗한 재시도 가능)
+    await _db.collection('employment_contracts').doc(contractId).update({
+      'status': ContractStatus.voided.value,
+      'updatedAt': Timestamp.fromDate(DateTime.now()),
+    });
+
+    // 2단계: 근무자에게 무효화 알림 즉시 발송 (계약서 voided 직후 — 앱 취소 전)
+    // [H-34] 앱 취소 실패와 무관하게 근무자가 즉시 인지하도록 순서 보장
+    try {
+      await _firestoreService.createNotification(
+        NotificationModel.createContractVoided(
+          userId: contract.workerId,
+          businessName: contract.snapshot.businessName,
+          businessId: contract.businessId,
+          contractId: contractId,
+        ),
+      );
+    } catch (e) {
+      debugPrint('⚠️ [H-34] 계약서 무효화 알림 발송 실패 (비치명적): $e');
+    }
+
+    // 3단계: 연결된 application 취소 처리
+    // [B-003] false 반환도 실패로 간주 — cancelConfirmedApplication은 내부 오류를
+    // exception 대신 false로 반환하므로 반환값을 명시적으로 체크해야 함
     final firestoreService = FirestoreService();
     final List<String> failedIds = [];
     for (final appId in contract.applicationIds) {
       try {
-        // [B-003] false 반환도 실패로 간주 — cancelConfirmedApplication은 내부 오류를
-        // exception 대신 false로 반환하므로 반환값을 명시적으로 체크해야 함
         final ok = await firestoreService.cancelConfirmedApplication(
           appId,
           canceledBy: null,
@@ -577,33 +600,56 @@ class ContractService {
         failedIds.add(appId);
       }
     }
-    // [088] 부분 실패 시에도 계약서는 voided로 업데이트 — 반투명 상태 방지
-    // 실패한 지원서는 voidFailedAppIds로 기록하여 관리자가 수동 확인 가능
-    await _db.collection('employment_contracts').doc(contractId).update({
-      'status': ContractStatus.voided.value,
-      'updatedAt': Timestamp.fromDate(DateTime.now()),
-      if (failedIds.isNotEmpty) 'voidFailedAppIds': failedIds,
-    });
 
-    // [H-34] 계약서 무효화 알림 — 근무자에게 발송
-    // 계약서가 voided 처리된 이후 알림 발송 (Firestore 갱신 완료 보장)
-    try {
-      await _firestoreService.createNotification(
-        NotificationModel.createContractVoided(
-          userId: contract.workerId,
-          businessName: contract.snapshot.businessName,
-          businessId: contract.businessId,
-          contractId: contractId,
-        ),
-      );
-    } catch (e) {
-      debugPrint('⚠️ [H-34] 계약서 무효화 알림 발송 실패 (비치명적): $e');
-    }
-
+    // 4단계: 실패한 appId 기록 — 관리자 화면 경고 배너로 노출, 재처리 버튼 제공
     if (failedIds.isNotEmpty) {
+      try {
+        await _db.collection('employment_contracts').doc(contractId).update({
+          'voidFailedAppIds': failedIds,
+        });
+      } catch (e) {
+        debugPrint('⚠️ voidFailedAppIds 기록 실패: $e');
+      }
       throw Exception(
         '계약서가 무효화되었으나 ${failedIds.length}개 지원서 취소에 실패했습니다.\n'
-        '해당 지원서를 직접 확인해주세요: ${failedIds.join(', ')}');
+        '계약서 카드에서 재처리하거나 직접 확인해주세요.');
+    }
+  }
+
+  /// voidFailedAppIds에 기록된 application들을 재시도로 취소 처리.
+  /// 성공한 항목은 voidFailedAppIds에서 제거하고, 전부 성공 시 필드를 삭제.
+  Future<void> retryVoidFailedApps(EmploymentContractModel contract) async {
+    if (contract.voidFailedAppIds.isEmpty) return;
+
+    final firestoreService = FirestoreService();
+    final List<String> stillFailedIds = [];
+
+    for (final appId in contract.voidFailedAppIds) {
+      try {
+        final ok = await firestoreService.cancelConfirmedApplication(
+          appId,
+          canceledBy: null,
+          cancelReason: '계약서가 무효화되었습니다',
+        );
+        if (!ok) {
+          debugPrint('⚠️ retryVoidFailedApps: application 취소 실패 ($appId): false 반환');
+          stillFailedIds.add(appId);
+        }
+      } catch (e) {
+        debugPrint('⚠️ retryVoidFailedApps: application 취소 실패 ($appId): $e');
+        stillFailedIds.add(appId);
+      }
+    }
+
+    // 성공한 항목 반영: 전부 성공 시 voidFailedAppIds 필드 삭제, 일부 실패 시 갱신
+    await _db.collection('employment_contracts').doc(contract.id).update({
+      'voidFailedAppIds': stillFailedIds.isEmpty
+          ? FieldValue.delete()
+          : stillFailedIds,
+    });
+
+    if (stillFailedIds.isNotEmpty) {
+      throw Exception('${stillFailedIds.length}개 지원서 재처리 실패. 잠시 후 다시 시도해주세요.');
     }
   }
 
