@@ -84,6 +84,7 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
   Map<String, dynamic> _workDetailTimeMap = {};  // 업무별 근무시간 (WorkDetail)
   Map<String, WorkerLocationModel> _locationMap = {};  // 근로자 위치
   Map<String, ApplicationModel> _workerIdMap = {};   // id → worker (O(1) 조회용)
+  Map<String, Map<String, dynamic>> _statusCache = {};  // _computeStatus 결과 캐시
   
   // UI 상태
   bool _isLoading = true;
@@ -239,6 +240,7 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
         _workDetailTimeMap = workDetailTimeMap;
         _locationMap = locationMap;
         _isLoading = false;
+        _rebuildStatusCache();
       });
 
       debugPrint('✅ 당일명단 로드 완료: ${confirmedWorkers.length}명');
@@ -256,6 +258,7 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
     final dateEnd = dateStart.add(const Duration(days: 1));
     
     final result = <ApplicationModel>[];
+    final seenIds = <String>{};  // 단기/장기 중복 entry 방어
 
     // ✅ 1. 단기 공고: 서버에서 workDate 필터링 (빠름!)
     final shortTermSnapshot = await FirebaseFirestore.instance
@@ -265,12 +268,12 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
         .where('workDate', isGreaterThanOrEqualTo: Timestamp.fromDate(dateStart))
         .where('workDate', isLessThan: Timestamp.fromDate(dateEnd))
         .get();
-    
+
     // 단기만 필터 (workDays가 없는 것)
     for (var doc in shortTermSnapshot.docs) {
       final app = ApplicationModel.fromFirestore(doc);
       if (app.workDays == null || app.workDays!.isEmpty) {
-        result.add(app);
+        if (seenIds.add(app.id)) result.add(app);
       }
     }
     
@@ -333,8 +336,10 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
       // 요일 체크 — workDays가 없으면 요일 불문 포함 (스케줄 미지정 고정근무자)
       final dayWeekday = FormatHelper.weekday(dateStart);
       if (app.workDays == null || app.workDays!.isEmpty || app.workDays!.contains(dayWeekday)) {
-        result.add(app);
-        longTermCount++;
+        if (seenIds.add(app.id)) {
+          result.add(app);
+          longTermCount++;
+        }
       }
     }
     
@@ -421,8 +426,20 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
     return parts.isNotEmpty ? '(${parts.join(', ')})' : '';
   }
 
-  /// 출퇴근 상태 판단 (UI 레벨 — DB status와 별개)
+  /// 캐시된 출퇴근 상태 반환 (build당 260회 호출 방지용)
   Map<String, dynamic> _getAttendanceStatus(ApplicationModel app) {
+    return _statusCache[app.id] ?? _computeStatus(app);
+  }
+
+  /// 전체 statusCache 재빌드 — _confirmedWorkers/_attendanceMap/_workDetailTimeMap 변경 후 호출
+  void _rebuildStatusCache() {
+    _statusCache = {
+      for (final app in _confirmedWorkers) app.id: _computeStatus(app),
+    };
+  }
+
+  /// 출퇴근 상태 실제 계산 (UI 레벨 — DB status와 별개)
+  Map<String, dynamic> _computeStatus(ApplicationModel app) {
     final attendance = _attendanceMap[app.id];
     final expectedStart = WorkDetailHelper.effectiveStart(app, _workDetailTimeMap);
     final expectedEnd   = WorkDetailHelper.effectiveEnd(app, _workDetailTimeMap);
@@ -2249,6 +2266,7 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
         }
         _isLoading = false;
         _hasChanges = true;
+        _rebuildStatusCache();
       });
     } catch (e) {
       debugPrint('❌ 그룹 전체 확인 실패: $e');
@@ -2289,6 +2307,7 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
         }
         _isLoading = false;
         _hasChanges = true;
+        _rebuildStatusCache();
       });
     } catch (e) {
       debugPrint('❌ 그룹 전체 취소 실패: $e');
@@ -2740,6 +2759,7 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
         }
         _selectedIds.clear();
         _hasChanges = true;
+        _rebuildStatusCache();
       });
       ToastHelper.showSuccess('노쇼 처리 완료 (${targets.length}명)');
     } catch (e) {
@@ -2784,6 +2804,7 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
         }
         _selectedIds.clear();
         _hasChanges = true;
+        _rebuildStatusCache();
       });
       ToastHelper.showSuccess('노쇼 취소 완료 (${targets.length}명)');
     } catch (e) {
@@ -2838,6 +2859,7 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
         }
         _selectedIds.clear();
         _hasChanges = true;
+        _rebuildStatusCache();
       });
       ToastHelper.showSuccess('리셋 완료 (${targets.length}명)');
     } catch (e) {
@@ -3938,6 +3960,7 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
 
   /// 일괄 마감 취소 (선택된 최종확정 근무자 전체)
   Future<void> _batchCancelFinal() async {
+    if (_isLoading) return;
     final targets = _selectedFinalConfirmedApps;
     if (targets.isEmpty) return;
 
@@ -3950,56 +3973,72 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
       message: '$names\n\n위 근무자들의 마감을 취소하시겠습니까?\n급여확정 상태로 되돌아가며, 지원자에게 급여가 숨겨집니다.',
       confirmText: '마감취소',
     );
-    if (!confirmed) return;
+    if (!confirmed || !mounted) return;
 
-    int successCount = 0;
+    // 1단계: attendance + users를 batch로 원자 업데이트
+    final batch = FirebaseFirestore.instance.batch();
+    final now = FieldValue.serverTimestamp();
+    final processed = <({ApplicationModel app, AttendanceModel attendance})>[];
+
     for (final app in targets) {
-      if (!mounted) break;
       final attendance = _attendanceMap[app.id];
       if (attendance == null) continue;
-      try {
-        final wageDetail = attendance.wageDetail?.copyWith(
-          confirmedBy: null,
-          confirmedAt: null,
-        );
-        await FirebaseFirestore.instance
-            .collection('attendance')
-            .doc(attendance.id)
-            .update({
+      final wageDetail = attendance.wageDetail?.copyWith(
+        confirmedBy: null,
+        confirmedAt: null,
+      );
+      batch.update(
+        FirebaseFirestore.instance.collection('attendance').doc(attendance.id),
+        {
           'wageStatus': AttendanceModel.wageCalculated,
           'wageDetail': wageDetail?.toMap(),
           'finalConfirmedAt': FieldValue.delete(),
-          'updatedAt': FieldValue.serverTimestamp(),
-        });
-        final trustService = TrustScoreService();
-        await trustService.onWorkCanceled(app.uid, app.businessId);
-        await FirebaseFirestore.instance
-            .collection('users')
-            .doc(app.uid)
-            .update({'totalWorkDays': FieldValue.increment(-1)});
-        final businessName = _businessNameMap[app.businessId] ?? '';
+          'updatedAt': now,
+        },
+      );
+      batch.update(
+        FirebaseFirestore.instance.collection('users').doc(app.uid),
+        {'totalWorkDays': FieldValue.increment(-1)},
+      );
+      processed.add((app: app, attendance: attendance));
+    }
+
+    try {
+      await batch.commit();
+    } catch (e) {
+      debugPrint('❌ 마감 취소 batch 실패: $e');
+      if (!mounted) return;
+      ToastHelper.showError('마감취소에 실패했습니다');
+      return;
+    }
+
+    // 2단계: TrustScore + 알림 (핵심 데이터 완료 후 보조 처리, 실패해도 계속)
+    for (final p in processed) {
+      if (!mounted) break;
+      try {
+        await TrustScoreService().onWorkCanceled(p.app.uid, p.app.businessId);
+      } catch (e) {
+        debugPrint('⚠️ TrustScore 취소 실패 (${p.app.uid}): $e');
+      }
+      try {
+        final businessName = _businessNameMap[p.app.businessId] ?? '';
         await _firestoreService.createNotification(
           NotificationModel.createWageCancelConfirmed(
-            userId: app.uid,
+            userId: p.app.uid,
             businessName: businessName,
-            businessId: app.businessId,
-            workDate: app.workDate,
-            attendanceId: attendance.id,
+            businessId: p.app.businessId,
+            workDate: p.app.workDate,
+            attendanceId: p.attendance.id,
           ),
         );
-        successCount++;
       } catch (e) {
-        debugPrint('❌ 마감 취소 실패 (${app.uid}): $e');
+        debugPrint('⚠️ 알림 발송 실패 (${p.app.uid}): $e');
       }
     }
 
     if (!mounted) return;
     _hasChanges = true;
-    if (successCount > 0) {
-      ToastHelper.showSuccess('$successCount명 마감취소 완료');
-    } else {
-      ToastHelper.showError('마감취소에 실패했습니다');
-    }
+    ToastHelper.showSuccess('${processed.length}명 마감취소 완료');
     await _loadData();
   }
 

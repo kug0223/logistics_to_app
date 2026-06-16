@@ -169,15 +169,18 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
   String _getGroupKey(ApplicationModel app) =>
       '${app.selectedWorkType}_${app.startTime}_${app.endTime}';
 
-  /// 전체 급여 계산 (async로 변경)
+  /// 전체 급여 계산 — Future.wait으로 병렬 처리
   Future<void> _calculateAllWages() async {
     final allWorkers = [..._pendingWorkers, ..._calculatedWorkers, ..._transferredWorkers];
-    for (var app in allWorkers) {
-      final extra = _workerExtraBreakMinutes[app.id] ?? 0;
-      final wage = await _calculateWageForWorker(app, extraBreakMinutes: extra);
-      if (wage != null) {
-        _calculatedWages[app.id] = wage;
-      }
+    final results = await Future.wait(
+      allWorkers.map((app) async {
+        final extra = _workerExtraBreakMinutes[app.id] ?? 0;
+        final wage = await _calculateWageForWorker(app, extraBreakMinutes: extra);
+        return (id: app.id, wage: wage);
+      }),
+    );
+    for (final r in results) {
+      if (r.wage != null) _calculatedWages[r.id] = r.wage!;
     }
   }
 
