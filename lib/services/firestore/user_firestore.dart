@@ -8,9 +8,14 @@ extension UserFirestore on FirestoreService {
   
   /// 사용자 정보 저장
   Future<void> saveUser(UserModel user) async {
-    await _firestore.collection('users').doc(user.uid).set(user.toMap());
-    _userCache.remove(user.uid);
-    _userCacheTimestamps.remove(user.uid);
+    try {
+      await _firestore.collection('users').doc(user.uid).set(user.toMap());
+      _userCache.remove(user.uid);
+      _userCacheTimestamps.remove(user.uid);
+    } catch (e) {
+      debugPrint('❌ 사용자 저장 실패: $e');
+      rethrow;
+    }
   }
 
   /// 사용자 정보 조회 (캐싱 적용!)

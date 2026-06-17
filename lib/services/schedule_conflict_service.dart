@@ -197,6 +197,7 @@ class ScheduleConflictService {
       final snapshot = await _firestore
           .collection('applications')
           .where('uid', isEqualTo: uid)
+          // [특이사항] confirmedStatuses 항목 수가 30개를 초과하면 whereIn 분할 처리 필요
           .where('status', whereIn: AppStatus.confirmedStatuses)
           .where('workEndDate', isGreaterThanOrEqualTo: queryDate)
           .get();

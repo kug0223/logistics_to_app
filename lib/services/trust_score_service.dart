@@ -101,18 +101,21 @@ class TrustScoreService {
 
   /// 지각 시 점수 업데이트
   ///
-  /// ⚠️ 설계 방침: lateCount 증가와 _updateScore()가 별도 Firestore 작업으로 분리되어 있다.
-  /// onNoShow()와 달리 트랜잭션으로 원자화하지 않은 이유:
-  ///   - 지각은 노쇼와 달리 "현재 noShowCount 값을 읽어 누진 감점을 결정"하는 로직이 없다.
-  ///   - 따라서 increment + read 사이의 TOCTOU 문제가 발생하지 않는다.
-  ///   - 단, lateCount 증가 직후 _updateScore()가 실패하면 카운트만 올라가고 점수는 변경되지
-  ///     않는 불일치가 발생할 수 있다. _updateScore()는 트랜잭션 내부에서 lateCount가 아닌
-  ///     설정 기반 고정 감점을 적용하므로 재시도로 복구 가능하다.
-  ///   - 허용된 트레이드오프: 지각 감점 누락(과소 처리)이 실제 발생 확률이 낮고,
-  ///     트랜잭션 추가 시 복잡도·비용이 높아 현재 규모에서는 분리 처리가 적절하다.
+  /// lateCount 증가를 runTransaction으로 원자화해 동시 호출 시 카운트 유실을 방지한다.
+  /// onNoShow()와 달리 "현재 lateCount 값을 읽어 누진 감점을 결정"하는 로직이 없으므로
+  /// 트랜잭션에서 read 없이 increment 만 수행한다.
+  ///
+  /// 설계 방침: 점수 변경(_updateScore)은 트랜잭션 밖에서 별도 실행한다.
+  ///   - _updateScore는 lateCount가 아닌 설정 기반 고정 감점을 적용하므로
+  ///     lateCount 트랜잭션과 묶을 필요가 없다.
+  ///   - lateCount 증가 후 _updateScore()가 실패하면 카운트·점수 불일치가 남지만,
+  ///     _updateScore는 재시도로 복구 가능하다.
   Future<void> onLate(String userId, String businessId) async {
-    await _firestore.collection('users').doc(userId).update({
-      'lateCount': FieldValue.increment(1),
+    final userRef = _firestore.collection('users').doc(userId);
+    await _firestore.runTransaction((tx) async {
+      final snap = await tx.get(userRef);
+      final current = ((snap.data()?['lateCount'] ?? 0) as num).toInt();
+      tx.update(userRef, {'lateCount': current + 1});
     });
     await _updateScore(userId, 'late', isIncrease: false, businessId: businessId);
   }

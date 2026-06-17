@@ -406,8 +406,9 @@ extension AttendanceFirestore on FirestoreService {
       final docRef = await _firestore.collection('schedule_change_requests').add(request.toMap());
       debugPrint('✅ 스케줄 변경 요청 생성 완료: ${docRef.id}');
       
-      // 🔔 알림 생성 (관리자에게) - 지원자가 요청한 경우
+      // 🔔 알림 생성 (관리자에게) - 지원자가 요청한 경우 (fire-and-forget)
       if (request.requestedBy == RequesterType.APPLICANT) {
+        // ignore: unawaited_futures
         _sendScheduleChangeRequestNotification(
           businessId: request.businessId,
           requesterName: request.applicantName,

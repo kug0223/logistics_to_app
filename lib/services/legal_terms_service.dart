@@ -62,15 +62,21 @@ class LegalTermsService {
   }
 
   /// 항목 활성/비활성 토글
+  ///
+  /// getTerms() + update() 분리 시 동시 호출에서 덮어쓰기가 발생할 수 있으므로
+  /// runTransaction으로 read → write를 원자화한다.
   Future<void> toggleActive(String itemId, bool isActive, {required String updatedBy}) async {
-    final current = await getTerms();
-    final updated = current.items.map((t) =>
-      t.id == itemId ? t.copyWith(isActive: isActive) : t
-    ).toList();
-    await _ref.update({
-      'items': updated.map((t) => t.toMap()).toList(),
-      'updatedAt': FieldValue.serverTimestamp(),
-      'updatedBy': updatedBy,
+    await FirebaseFirestore.instance.runTransaction((tx) async {
+      final snap = await tx.get(_ref);
+      if (!snap.exists || snap.data() == null) return;
+      final current = LegalTerms.fromFirestore(snap);
+      final updated = current.items.map((t) =>
+          t.id == itemId ? t.copyWith(isActive: isActive) : t).toList();
+      tx.update(_ref, {
+        'items': updated.map((t) => t.toMap()).toList(),
+        'updatedAt': FieldValue.serverTimestamp(),
+        'updatedBy': updatedBy,
+      });
     });
   }
 

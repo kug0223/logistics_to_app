@@ -361,15 +361,8 @@ extension BusinessFirestore on FirestoreService {
         return true;
       }
 
-      // 문서 없는 경우에도 성공으로 처리
-      await _firestore
-          .collection('businesses')
-          .doc(businessId)
-          .collection('workTypes')
-          .doc(workTypeId)
-          .update({'isActive': false});
-
-      debugPrint('✅ [FirestoreService] 업무 유형 삭제 완료');
+      // 문서가 없으면 이미 삭제된 것으로 간주 — 성공 처리
+      debugPrint('⚠️ [deleteBusinessWorkType] 문서 없음 — 이미 삭제된 것으로 간주');
       ToastHelper.showSuccess('업무 유형이 삭제되었습니다');
       return true;
     } catch (e) {
