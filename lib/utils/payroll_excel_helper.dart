@@ -115,17 +115,20 @@ class PayrollExcelHelper {
       return;
     }
 
+    final dir  = await getTemporaryDirectory();
+    final file = File('${dir.path}/$filename');
     try {
-      final dir  = await getTemporaryDirectory();
-      final file = File('${dir.path}/$filename');
       await file.writeAsBytes(bytes);
-      await Share.shareXFiles(
-        [XFile(file.path,
-            mimeType:
-                'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')],
-        subject: filename,
-      );
-      await file.delete();
+      try {
+        await Share.shareXFiles(
+          [XFile(file.path,
+              mimeType:
+                  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')],
+          subject: filename,
+        );
+      } finally {
+        await file.delete();
+      }
     } catch (e) {
       if (context.mounted) ToastHelper.showError('엑셀 내보내기에 실패했습니다');
     }
