@@ -2293,8 +2293,9 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
     } catch (e) {
       debugPrint('❌ 그룹 전체 확인 실패: $e');
       if (!mounted) return;
-      setState(() => _isLoading = false);
       ToastHelper.showError('그룹 전체 확인 실패');
+    } finally {
+      if (mounted && _isLoading) setState(() => _isLoading = false);
     }
   }
 
@@ -2334,8 +2335,9 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
     } catch (e) {
       debugPrint('❌ 그룹 전체 취소 실패: $e');
       if (!mounted) return;
-      setState(() => _isLoading = false);
       ToastHelper.showError('그룹 전체 확인 취소 실패');
+    } finally {
+      if (mounted && _isLoading) setState(() => _isLoading = false);
     }
   }
 
@@ -2813,11 +2815,10 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
     }
     try {
       await batch.commit();
-      for (final app in targets) {
-        // 신규 생성 or 기존 레코드 둘 다 신뢰도 감점 처리
-        if (!mounted) return;
-        await TrustScoreService().onNoShow(app.uid, app.businessId);
-      }
+      // 신규 생성 or 기존 레코드 둘 다 신뢰도 감점 처리 (병렬)
+      await Future.wait(
+        targets.map((app) => TrustScoreService().onNoShow(app.uid, app.businessId)),
+      );
       if (!mounted) return;
       setState(() {
         for (final app in targets) {
@@ -2883,11 +2884,12 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
     }
     try {
       await batch.commit();
-      for (final app in targets) {
-        if (_attendanceMap[app.id] == null) continue; // batch에서 스킵된 경우 신뢰도도 스킵
-        if (!mounted) return;
-        await TrustScoreService().onNoShowCanceled(app.uid, app.businessId);
-      }
+      // batch에서 스킵된 경우 신뢰도도 스킵, 나머지 병렬 처리
+      await Future.wait(
+        targets
+            .where((app) => _attendanceMap[app.id] != null)
+            .map((app) => TrustScoreService().onNoShowCanceled(app.uid, app.businessId)),
+      );
       if (!mounted) return;
       setState(() {
         for (final app in targets) {
@@ -3814,8 +3816,8 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
 
   /// 일괄 출근 처리
   Future<void> _processBatchCheckIn(String time) async {
-
-
+    if (_isLoading) return;
+    setState(() => _isLoading = true);
     try {
       int successCount = 0;
       int failCount = 0;
@@ -3861,12 +3863,14 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
       if (!mounted) return;
       ToastHelper.showError('일괄 출근 처리 실패');
     } finally {
-
+      if (mounted) setState(() => _isLoading = false);
     }
   }
 
   /// 일괄 퇴근 처리
   Future<void> _processBatchCheckOut(String time, List<String> targetIds) async {
+    if (_isLoading) return;
+    setState(() => _isLoading = true);
     try {
       int successCount = 0;
       int failCount = 0;
@@ -3923,6 +3927,8 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
       debugPrint('❌ 일괄 퇴근 처리 실패: $e');
       if (!mounted) return;
       ToastHelper.showError('일괄 퇴근 처리 실패');
+    } finally {
+      if (mounted) setState(() => _isLoading = false);
     }
   }
 

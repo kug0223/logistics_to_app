@@ -1620,7 +1620,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
       iconColor: AppColors.warningDark,
     );
 
-    if (!confirmed || !context.mounted) return;
+    if (confirmed != true || !context.mounted) return;
 
     DialogHelper.showLoading(context, message: '마이그레이션 진행 중...\n잠시만 기다려주세요.');
 
