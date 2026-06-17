@@ -352,6 +352,7 @@ class _WageDetailDialogState extends State<WageDetailDialog> {
         return;
     }
 
+    // [특이사항] 이 mounted 체크는 첫 await 이전이라 비동기 갭 보호 효과 없음 — 실질 보호는 아래 373행
     if (!mounted) return;
     bool confirmed;
     if (isDanger) {
