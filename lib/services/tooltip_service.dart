@@ -68,6 +68,7 @@ class TooltipService {
     Color? iconColor,
   }) async {
     // 이미 표시된 경우 스킵
+    // [특이사항] wasShown→markAsShown 사이 async gap — 동시 호출 시 중복 표시 가능 (발생 빈도 극히 낮음)
     if (await wasShown(key)) return;
 
     // 표시됨으로 저장

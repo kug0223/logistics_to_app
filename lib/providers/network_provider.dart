@@ -29,7 +29,8 @@ class NetworkProvider extends ChangeNotifier {
       NetworkChecker.instance.update(_isOnline); // 서비스 레이어와 동기화
     }
 
-    // 이후 변화 감지
+    // 이후 변화 감지 — dispose 이후 구독 방지
+    if (_disposed) return;
     _subscription = _connectivity
         .onConnectivityChanged
         .listen((List<ConnectivityResult> results) {

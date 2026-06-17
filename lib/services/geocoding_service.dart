@@ -40,8 +40,15 @@ class GeocodingService {
           final addressData = doc['road_address'] ?? doc['address'];
           
           if (addressData != null) {
-            final latitude = double.parse(addressData['y']);
-            final longitude = double.parse(addressData['x']);
+            final latStr = addressData['y'] as String?;
+            final lngStr = addressData['x'] as String?;
+            if (latStr == null || lngStr == null) {
+              debugPrint('❌ [Geocoding] 좌표 필드 누락');
+              return null;
+            }
+            final latitude = double.tryParse(latStr);
+            final longitude = double.tryParse(lngStr);
+            if (latitude == null || longitude == null) return null;
             
             debugPrint('✅ [Geocoding] 좌표 변환 성공!');
             debugPrint('   위도: $latitude');

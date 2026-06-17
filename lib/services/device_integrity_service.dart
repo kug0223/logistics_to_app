@@ -16,6 +16,7 @@ class DeviceIntegrityService {
   Future<bool> isDeviceTimeValid() async {
     try {
       final result = await _fn.httpsCallable('getServerTime').call({});
+      // [특이사항] null 또는 잘못된 타입 응답 시 예외 → catch에서 true 반환 (네트워크 오류와 동일 처리)
       final serverMs = (result.data['serverTimeMs'] as num).toInt();
       final deviceMs = DateTime.now().millisecondsSinceEpoch;
       final diffMs = (serverMs - deviceMs).abs();

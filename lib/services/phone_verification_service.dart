@@ -80,14 +80,37 @@ class PhoneVerificationService {
         smsCode: code.trim(),
       );
 
-      // 임시 로그인으로 코드 유효성 검증
-      final result = await _auth.signInWithCredential(credential);
-      debugPrint('✅ [PhoneAuth] 인증 성공: ${result.user?.phoneNumber}');
+      if (_auth.currentUser != null) {
+        // 이미 로그인된 상태 — linkWithCredential로 유효성만 검증 후 즉시 unlink
+        // (signInWithCredential 사용 시 기존 세션이 파괴되므로 금지)
+        try {
+          final linked = await _auth.currentUser!.linkWithCredential(credential);
+          await _auth.currentUser!.unlink(PhoneAuthProvider.PROVIDER_ID);
+          debugPrint('✅ [PhoneAuth] 인증 성공 (link/unlink): ${linked.user?.phoneNumber}');
+          return (valid: true, reason: null);
+        } on FirebaseAuthException catch (e) {
+          debugPrint('❌ [PhoneAuth] 코드 오류 (link): ${e.code}');
+          if (e.code == 'credential-already-in-use') {
+            return (valid: false, reason: '이미 다른 계정에 등록된 번호입니다');
+          }
+          return switch (e.code) {
+            'invalid-verification-code' => (valid: false, reason: 'wrong_code'),
+            'session-expired'           => (valid: false, reason: 'expired'),
+            'too-many-requests'         => (valid: false, reason: 'too_many_attempts'),
+            'invalid-verification-id'   => (valid: false, reason: 'no_code'),
+            _                           => (valid: false, reason: 'error'),
+          };
+        }
+      } else {
+        // 로그인 전 — 임시 로그인으로 코드 유효성 검증 후 삭제
+        final result = await _auth.signInWithCredential(credential);
+        debugPrint('✅ [PhoneAuth] 인증 성공: ${result.user?.phoneNumber}');
 
-      // 검증용 임시 계정 삭제 (Firebase Auth 세션 정리)
-      await result.user?.delete();
+        // 검증용 임시 계정 삭제 (Firebase Auth 세션 정리)
+        await result.user?.delete();
 
-      return (valid: true, reason: null);
+        return (valid: true, reason: null);
+      }
     } on FirebaseAuthException catch (e) {
       debugPrint('❌ [PhoneAuth] 코드 오류: ${e.code}');
       return switch (e.code) {
