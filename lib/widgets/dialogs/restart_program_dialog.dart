@@ -85,16 +85,12 @@ class _RestartProgramDialogState extends State<RestartProgramDialog> {
       if (mounted) Navigator.pop(context, true);
     } on FirebaseFunctionsException catch (e) {
       debugPrint('❌ 재시작 프로그램 적용 실패: ${e.code} — ${e.message}');
-      if (mounted) {
-        setState(() => _isSubmitting = false);
-        ToastHelper.showError(e.message ?? '재시작 프로그램 적용에 실패했습니다.');
-      }
+      if (mounted) ToastHelper.showError(e.message ?? '재시작 프로그램 적용에 실패했습니다.');
     } catch (e) {
       debugPrint('❌ 재시작 프로그램 적용 실패: $e');
-      if (mounted) {
-        setState(() => _isSubmitting = false);
-        ToastHelper.showError('재시작 프로그램 적용에 실패했습니다.');
-      }
+      if (mounted) ToastHelper.showError('재시작 프로그램 적용에 실패했습니다.');
+    } finally {
+      if (mounted) setState(() => _isSubmitting = false);
     }
   }
 

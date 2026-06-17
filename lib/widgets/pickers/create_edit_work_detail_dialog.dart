@@ -1340,6 +1340,7 @@ class WorkDetailDialog {
         borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
       ),
       builder: (ctx) {
+        // [특이사항] useSafeArea: true와 내부 SafeArea 이중 — Flutter가 자동으로 중복 패딩 방지
         return SafeArea(
           child: ConstrainedBox(
             constraints: const BoxConstraints(maxHeight: 220),
@@ -2577,6 +2578,7 @@ class WorkDetailDialog {
       useSafeArea: true,
       shape: const RoundedRectangleBorder(
           borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
+      // [특이사항] useSafeArea: true와 내부 SafeArea 이중 — Flutter가 자동으로 중복 패딩 방지
       builder: (ctx) => SafeArea(
         child: SizedBox(
           height: 320,
