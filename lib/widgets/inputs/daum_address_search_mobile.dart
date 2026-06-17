@@ -103,7 +103,7 @@ class _DaumPostcodeWebViewState extends State<_DaumPostcodeWebView> {
       ..setNavigationDelegate(
         NavigationDelegate(
           onPageFinished: (String url) {
-            setState(() => _isLoading = false);
+            if (mounted) setState(() => _isLoading = false);
           },
         ),
       )

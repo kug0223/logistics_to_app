@@ -200,16 +200,13 @@ class _MonthlyReviewDialogState extends State<MonthlyReviewDialog> {
         ),
       );
     } else {
-      if (!mounted) return;
-      setState(() => _isSubmitting = false);
-      ToastHelper.showError(result.error ?? '리뷰 작성에 실패했습니다.');
+      if (mounted) ToastHelper.showError(result.error ?? '리뷰 작성에 실패했습니다.');
     }
     } catch (e) {
       debugPrint('❌ 리뷰 제출 실패: $e');
-      if (mounted) {
-        setState(() => _isSubmitting = false);
-        ToastHelper.showError('리뷰 작성에 실패했습니다.');
-      }
+      if (mounted) ToastHelper.showError('리뷰 작성에 실패했습니다.');
+    } finally {
+      if (mounted) setState(() => _isSubmitting = false);
     }
   }
 

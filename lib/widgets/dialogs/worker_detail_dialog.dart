@@ -1554,7 +1554,7 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
         iconColor: AppColors.success,
       );
       
-      if (confirm != true) return;
+      if (confirm != true || !mounted) return;
     } else {
       // 거절 - 사유 선택
       rejectReason = await DialogHelper.showRejectReasonPicker(
@@ -1694,11 +1694,12 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
     } catch (e) {
       debugPrint('❌ 계약서 생성 실패: $e');
       if (mounted) {
-        setState(() => _isLoading = false);
         Navigator.pop(context);
         ToastHelper.showSuccess('승인 처리되었습니다');
         widget.onStatusChanged?.call();
       }
+    } finally {
+      if (mounted) setState(() => _isLoading = false);
     }
   }
 
