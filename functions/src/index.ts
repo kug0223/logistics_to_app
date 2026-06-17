@@ -1020,6 +1020,9 @@ async function processExpiredReviewRequests(now: Timestamp): Promise<void> {
     const userStatsToUpdate = new Set<string>();
     const businessStatsToUpdate = new Set<string>();
 
+    let batch = db.batch();
+    let batchCount = 0;
+
     for (const reqDoc of snap.docs) {
       const req = reqDoc.data();
       const reviewIds: string[] = [];
@@ -1029,20 +1032,26 @@ async function processExpiredReviewRequests(now: Timestamp): Promise<void> {
 
       if (reviewIds.length === 0) {
         // 양쪽 다 작성 안 함 → 요청만 만료 처리
-        await reqDoc.ref.update({isPublished: true, publishedAt: now});
-        continue;
+        batch.update(reqDoc.ref, {isPublished: true, publishedAt: now});
+        batchCount++;
+      } else {
+        // 작성된 리뷰 공개
+        for (const rid of reviewIds) {
+          batch.update(db.collection("monthly_reviews").doc(rid), {
+            isPublished: true,
+            publishedAt: now,
+          });
+          batchCount++;
+        }
+        batch.update(reqDoc.ref, {isPublished: true, publishedAt: now});
+        batchCount++;
       }
 
-      // 작성된 리뷰 공개
-      const batch = db.batch();
-      for (const rid of reviewIds) {
-        batch.update(db.collection("monthly_reviews").doc(rid), {
-          isPublished: true,
-          publishedAt: now,
-        });
+      if (batchCount >= 499) {
+        await batch.commit();
+        batch = db.batch();
+        batchCount = 0;
       }
-      batch.update(reqDoc.ref, {isPublished: true, publishedAt: now});
-      await batch.commit();
 
       // 통계 업데이트 대상 수집
       if (req.adminReviewId && req.workerId) {
@@ -1054,6 +1063,8 @@ async function processExpiredReviewRequests(now: Timestamp): Promise<void> {
 
       console.log(`    → ${reqDoc.id} 자동 공개`);
     }
+
+    if (batchCount > 0) await batch.commit();
 
     for (const uid of userStatsToUpdate) {
       try { await updateUserReviewStats(uid); }
@@ -1644,6 +1655,9 @@ async function processWorkDetailExpiry(now: Timestamp): Promise<void> {
   const affectedTOIds = new Set<string>();
   const affectedGroupIds = new Set<string>();
 
+  let batch = db.batch();
+  let batchCount = 0;
+
   for (const toDoc of tosSnapshot.docs) {
     const toData = toDoc.data();
     const toId = toDoc.id;
@@ -1669,9 +1683,13 @@ async function processWorkDetailExpiry(now: Timestamp): Promise<void> {
         wd
     );
 
-    const batch = db.batch();
     batch.update(toDoc.ref, {workDetails: updatedWorkDetails});
-    await batch.commit();
+    batchCount++;
+    if (batchCount >= 499) {
+      await batch.commit();
+      batch = db.batch();
+      batchCount = 0;
+    }
 
     totalClosed += expiredItems.length;
     affectedTOIds.add(toId);
@@ -1680,6 +1698,8 @@ async function processWorkDetailExpiry(now: Timestamp): Promise<void> {
     );
     if (toData.groupId) affectedGroupIds.add(toData.groupId);
   }
+
+  if (batchCount > 0) await batch.commit();
 
   console.log(`  ✅ [WorkDetail 마감] ${totalClosed}개 마감 완료`);
 
@@ -2074,9 +2094,7 @@ async function sendWorkReminders(now: Timestamp): Promise<void> {
             body: fcmBody,
             data: { type: "workReminder", applicationId: jobs[0].id },
           };
-          for (const token of tokens) {
-            await sendFCMToUser(userId, fcmPayload, token);
-          }
+          await Promise.all(tokens.map((token) => sendFCMToUser(userId, fcmPayload, token)));
           if (tokens.length === 0) {
             console.log(`    ⚠️ FCM 토큰 없음 (리마인더 스킵): ${userId}`);
           }
@@ -2112,6 +2130,9 @@ async function runIntegrityCheck(now: Timestamp): Promise<void> {
       .where("status", "==", "ACTIVE")
       .get();
 
+    let integrityBatch = db.batch();
+    let integrityBatchCount = 0;
+
     for (const toDoc of activeTOs.docs) {
       const toData = toDoc.data();
 
@@ -2120,16 +2141,24 @@ async function runIntegrityCheck(now: Timestamp): Promise<void> {
 
       const deadline = toData.applicationDeadline as Timestamp | null;
       if (deadline && deadline.toMillis() <= now.toMillis()) {
-        await toDoc.ref.update({
+        integrityBatch.update(toDoc.ref, {
           status: "CLOSED",
           closedAt: now,
           closedReason: "INTEGRITY_CHECK",
           statusUpdatedAt: now,
         });
+        integrityBatchCount++;
+        if (integrityBatchCount >= 499) {
+          await integrityBatch.commit();
+          integrityBatch = db.batch();
+          integrityBatchCount = 0;
+        }
         fixedCount++;
         console.log(`    → TO ${toDoc.id} 상태 수정`);
       }
     }
+
+    if (integrityBatchCount > 0) await integrityBatch.commit();
 
     // 2. 슬롯 workDetail 만료 정합성 — 10분 스케줄러에서 못 잡은 케이스 보정
     await processSlotWorkDetailExpiry(now);
