@@ -182,6 +182,11 @@ class _ContractSignScreenState extends State<ContractSignScreen> {
       ToastHelper.showWarning('내용 확인 동의가 필요합니다');
       return;
     }
+    // [BUG-수정] CS-M-1: _sign() 진입 즉시 락 설정 — 바텀시트/서명 패드 await 구간 동안
+    // 버튼이 활성 상태로 남아 이중 탭 시 _performSign이 두 번 실행되는 문제 방지.
+    // _performSign finally에서 _isSigning = false로 복원됨.
+    if (_isSigning) return;
+    setState(() => _isSigning = true);
     if (isEmployer) {
       await _signAsEmployer();
     } else {
@@ -213,6 +218,8 @@ class _ContractSignScreenState extends State<ContractSignScreen> {
           ],
         ),
       );
+      // [BUG-수정] CS-M-1: 인감 미등록으로 조기 반환 시 락 해제
+      if (mounted) setState(() => _isSigning = false);
       return;
     }
     // 인감 등록됨 → 바로 날인
@@ -222,7 +229,10 @@ class _ContractSignScreenState extends State<ContractSignScreen> {
 
   // 저장 서명 있을 때 선택 바텀시트 (근무자 전용)
   void _showSignatureOptions() {
-    showModalBottomSheet(
+    // [BUG-수정] CS-M-1: 바텀시트 선택 결과를 bool?로 반환받아 취소 시에만 락 해제.
+    // true = 저장 서명, false = 새 서명, null = 취소(드래그 다운 등)
+    // 선택 후 _signWithSaved / _signWithPad → _performSign finally에서 락 해제됨.
+    showModalBottomSheet<bool>(
       context: context,
       useSafeArea: true,
       isScrollControlled: true, // 가로 모드에서 콘텐츠 잘림 방지
@@ -268,10 +278,7 @@ class _ContractSignScreenState extends State<ContractSignScreen> {
               SizedBox(
                 width: double.infinity,
                 child: ElevatedButton(
-                  onPressed: () {
-                    Navigator.pop(ctx);
-                    _signWithSaved();
-                  },
+                  onPressed: () => Navigator.pop(ctx, true),
                   style: ElevatedButton.styleFrom(
                     padding: EdgeInsets.symmetric(
                         vertical: ResponsiveHelper.spacing(ctx, 14)),
@@ -285,10 +292,7 @@ class _ContractSignScreenState extends State<ContractSignScreen> {
               SizedBox(
                 width: double.infinity,
                 child: TextButton(
-                  onPressed: () {
-                    Navigator.pop(ctx);
-                    _signWithPad(askToSave: true);
-                  },
+                  onPressed: () => Navigator.pop(ctx, false),
                   child: Text('새 서명 그리기',
                       style: ResponsiveHelper.bodyStyle(ctx,
                           color: AppColors.grey600)),
@@ -298,7 +302,17 @@ class _ContractSignScreenState extends State<ContractSignScreen> {
           ),
         ),
       ),
-    );
+    ).then((choice) {
+      if (!mounted) return;
+      if (choice == null) {
+        // 취소(드래그 다운 등) — 락 해제
+        setState(() => _isSigning = false);
+      } else if (choice) {
+        _signWithSaved();
+      } else {
+        _signWithPad(askToSave: true);
+      }
+    });
   }
 
   // 저장된 서명으로 서명 처리
@@ -313,7 +327,12 @@ class _ContractSignScreenState extends State<ContractSignScreen> {
       context,
       title: isEmployer ? '사업주 서명' : '근무자 서명',
     );
-    if (bytes == null || !mounted) return;
+    if (bytes == null) {
+      // [BUG-수정] CS-M-1: 서명 패드 취소 시 락 해제
+      if (mounted) setState(() => _isSigning = false);
+      return;
+    }
+    if (!mounted) return;
 
     // 서명 저장 여부 묻기
     if (askToSave) {

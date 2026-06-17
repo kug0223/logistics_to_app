@@ -462,7 +462,11 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
             );
           }).toList(),
         );
-        if (!day8Confirmed || !mounted) return;
+        // [BUG-수정] 경고 다이얼로그 취소 시 _isProcessing 고착 방지 — finally에 도달하지 않으므로 직접 복원
+        if (!day8Confirmed || !mounted) {
+          setState(() => _isProcessing = false);
+          return;
+        }
       }
       // ────────────────────────────────────────────────────────────
 
@@ -1405,7 +1409,8 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
     _hasChanges = true;
     widget.onClose?.call();
 
-    final processed = targetIds.toSet();
+    // [BUG-수정] CS-L-1: targetIds 전체 대신 실제 커밋된 항목만 UI 이동
+    final processed = committedAppIds.toSet();
     setState(() {
       final moved = _transferredWorkers.where((a) => processed.contains(a.id)).toList();
       _transferredWorkers.removeWhere((a) => processed.contains(a.id));
