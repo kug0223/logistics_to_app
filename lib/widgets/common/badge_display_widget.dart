@@ -426,12 +426,13 @@ class AllBadgesDialog extends StatelessWidget {
   Widget _buildBadgeItem(BuildContext context, BadgeModel badge) {
     return GestureDetector(
       onTap: () {
-        final nav = Navigator.of(context);
-        nav.pop();
-        showDialog(
-          context: nav.context,
-          builder: (ctx) => BadgeDetailDialog(badge: badge),
-        );
+        Navigator.of(context).pop();
+        if (context.mounted) {
+          showDialog(
+            context: context,
+            builder: (ctx) => BadgeDetailDialog(badge: badge),
+          );
+        }
       },
       child: Container(
         width: ResponsiveHelper.spacing(context, 70),

@@ -1062,6 +1062,7 @@ class _TOGroupCardState extends State<TOGroupCard> {
           final calSlot = widget.calendarSlot!;
           final workDetails = _getSingleTOWorkDetails();
           if (workDetails.isEmpty && calSlot.needsWorkDetailLoad) {
+            // [특이사항] 이 mounted 체크는 첫 await 이전이라 비동기 갭 보호 효과 없음 — 실질 보호는 1077/1081/1083행
             if (!mounted) return;
             showDialog(context: this.context, barrierDismissible: false,
                 builder: (_) => const Center(child: LoadingWidget()));
@@ -1144,7 +1145,7 @@ class _TOGroupCardState extends State<TOGroupCard> {
           this.context,
           destination: AdminEditTOScreen(to: masterTO, newSlotDate: picked),
           onReturn: (result) {
-            if (result == true) {
+            if (result == true && mounted) {
               widget.firestoreService.clearCache(toId: masterTO.id);
               widget.onChanged();
             }
@@ -1159,7 +1160,7 @@ class _TOGroupCardState extends State<TOGroupCard> {
             context,
             destination: AdminEditTOScreen(to: masterTO, slot: widget.calendarSlot!.slot),
             onReturn: (result) {
-              if (result == true) {
+              if (result == true && mounted) {
                 widget.firestoreService.clearCache(toId: masterTO.id);
                 widget.onChanged();
               }
@@ -1170,7 +1171,7 @@ class _TOGroupCardState extends State<TOGroupCard> {
             context,
             destination: AdminEditTOScreen(to: masterTO),
             onReturn: (result) {
-              if (result == true) {
+              if (result == true && mounted) {
                 widget.firestoreService.clearCache();
                 widget.onChanged();
               }
@@ -1192,7 +1193,7 @@ class _TOGroupCardState extends State<TOGroupCard> {
           this.context,
           destination: AdminEditTOScreen(to: masterTO, batchSlots: editSlots),
           onReturn: (result) {
-            if (result == true) {
+            if (result == true && mounted) {
               widget.firestoreService.clearCache(toId: masterTO.id);
               widget.onChanged();
             }
@@ -1526,6 +1527,7 @@ class _TOGroupCardState extends State<TOGroupCard> {
         borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
       ),
       builder: (ctx) {
+        // [특이사항] useSafeArea: true와 내부 SafeArea 이중 — Flutter가 자동으로 중복 패딩 방지
         return SafeArea(
           child: Column(
             mainAxisSize: MainAxisSize.min,
