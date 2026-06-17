@@ -127,15 +127,14 @@ class _AttendanceQuickTimeSheetState extends State<AttendanceQuickTimeSheet> {
           topRight: Radius.circular(24),
         ),
       ),
-      child: SafeArea(
-        child: Padding(
-          padding: EdgeInsets.fromLTRB(
-            ResponsiveHelper.spacing(context, 16),
-            0,
-            ResponsiveHelper.spacing(context, 16),
-            ResponsiveHelper.spacing(context, 20),
-          ),
-          child: Column(
+      child: Padding(
+        padding: EdgeInsets.fromLTRB(
+          ResponsiveHelper.spacing(context, 16),
+          0,
+          ResponsiveHelper.spacing(context, 16),
+          ResponsiveHelper.spacing(context, 20),
+        ),
+        child: Column(
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
@@ -400,7 +399,6 @@ class _AttendanceQuickTimeSheetState extends State<AttendanceQuickTimeSheet> {
             ],
           ),
         ),
-      ),
     );
   }
 

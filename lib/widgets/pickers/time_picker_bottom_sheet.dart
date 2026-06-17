@@ -130,35 +130,33 @@ class _TimePickerBottomSheetState extends State<TimePickerBottomSheet> {
           topRight: Radius.circular(24),
         ),
       ),
-      child: SafeArea(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            // 핸들바
-            _buildHandle(context),
-            
-            // 헤더
-            _buildHeader(context, theme),
-            
-            // 선택된 시간 표시
-            _buildSelectedTimeDisplay(context, theme),
-            
-            // 시간 선택 휠
-            _buildTimePicker(context, theme),
-            
-            SizedBox(height: ResponsiveHelper.spacing(context, 16)),
-            
-            // 빠른 선택 버튼
-            _buildQuickSelectButtons(context, theme),
-            
-            SizedBox(height: ResponsiveHelper.spacing(context, 16)),
-            
-            // 버튼
-            _buildButtons(context, theme),
-            
-            SizedBox(height: ResponsiveHelper.spacing(context, 16)),
-          ],
-        ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          // 핸들바
+          _buildHandle(context),
+
+          // 헤더
+          _buildHeader(context, theme),
+
+          // 선택된 시간 표시
+          _buildSelectedTimeDisplay(context, theme),
+
+          // 시간 선택 휠
+          _buildTimePicker(context, theme),
+
+          SizedBox(height: ResponsiveHelper.spacing(context, 16)),
+
+          // 빠른 선택 버튼
+          _buildQuickSelectButtons(context, theme),
+
+          SizedBox(height: ResponsiveHelper.spacing(context, 16)),
+
+          // 버튼
+          _buildButtons(context, theme),
+
+          SizedBox(height: ResponsiveHelper.spacing(context, 16)),
+        ],
       ),
     );
   }
@@ -700,35 +698,33 @@ class _DateTimePickerBottomSheetState extends State<DateTimePickerBottomSheet> {
           topRight: Radius.circular(24),
         ),
       ),
-      child: SafeArea(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            // 핸들바
-            _buildHandle(context),
-            
-            // 헤더
-            _buildHeader(context, theme),
-            
-            // 선택된 날짜+시간 표시
-            _buildSelectedDisplay(context, theme),
-            
-            // 탭 인디케이터
-            _buildTabIndicator(context, theme),
-            
-            // 컨텐츠 (날짜 또는 시간)
-            Flexible(
-              child: _currentStep == 0
-                  ? _buildDatePicker(context, theme)
-                  : _buildTimePicker(context, theme),
-            ),
-            
-            // 버튼
-            _buildButtons(context, theme),
-            
-            SizedBox(height: ResponsiveHelper.spacing(context, 16)),
-          ],
-        ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          // 핸들바
+          _buildHandle(context),
+
+          // 헤더
+          _buildHeader(context, theme),
+
+          // 선택된 날짜+시간 표시
+          _buildSelectedDisplay(context, theme),
+
+          // 탭 인디케이터
+          _buildTabIndicator(context, theme),
+
+          // 컨텐츠 (날짜 또는 시간)
+          Flexible(
+            child: _currentStep == 0
+                ? _buildDatePicker(context, theme)
+                : _buildTimePicker(context, theme),
+          ),
+
+          // 버튼
+          _buildButtons(context, theme),
+
+          SizedBox(height: ResponsiveHelper.spacing(context, 16)),
+        ],
       ),
     );
   }

@@ -109,47 +109,45 @@ class _DatePickerBottomSheetState extends State<DatePickerBottomSheet> {
           topRight: Radius.circular(24),
         ),
       ),
-      child: SafeArea(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            // 핸들바
-            _buildHandle(context),
-            
-            // 헤더
-            _buildHeader(context, theme),
-            
-            // 선택된 날짜 표시
-            if (_selectedDate != null)
-              _buildSelectedDateDisplay(context, theme),
-            
-            // 캘린더
-            Padding(
-              padding: EdgeInsets.symmetric(
-                horizontal: ResponsiveHelper.spacing(context, 16),
-              ),
-              child: CarrotStyleCalendar(
-                mode: CalendarMode.single,
-                selectedDate: _selectedDate,
-                minDate: widget.minDate,
-                maxDate: widget.maxDate,
-                allowPastDates: widget.allowPastDates,
-                disabledDates: widget.disabledDates,
-                enabledDayPredicate: widget.enabledDayPredicate,
-                onDateSelected: (date) {
-                  setState(() => _selectedDate = date);
-                },
-              ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          // 핸들바
+          _buildHandle(context),
+
+          // 헤더
+          _buildHeader(context, theme),
+
+          // 선택된 날짜 표시
+          if (_selectedDate != null)
+            _buildSelectedDateDisplay(context, theme),
+
+          // 캘린더
+          Padding(
+            padding: EdgeInsets.symmetric(
+              horizontal: ResponsiveHelper.spacing(context, 16),
             ),
-            
-            SizedBox(height: ResponsiveHelper.spacing(context, 16)),
-            
-            // 버튼
-            _buildButtons(context, theme),
-            
-            SizedBox(height: ResponsiveHelper.spacing(context, 16)),
-          ],
-        ),
+            child: CarrotStyleCalendar(
+              mode: CalendarMode.single,
+              selectedDate: _selectedDate,
+              minDate: widget.minDate,
+              maxDate: widget.maxDate,
+              allowPastDates: widget.allowPastDates,
+              disabledDates: widget.disabledDates,
+              enabledDayPredicate: widget.enabledDayPredicate,
+              onDateSelected: (date) {
+                setState(() => _selectedDate = date);
+              },
+            ),
+          ),
+
+          SizedBox(height: ResponsiveHelper.spacing(context, 16)),
+
+          // 버튼
+          _buildButtons(context, theme),
+
+          SizedBox(height: ResponsiveHelper.spacing(context, 16)),
+        ],
       ),
     );
   }
@@ -415,50 +413,48 @@ class _DateRangePickerBottomSheetState extends State<DateRangePickerBottomSheet>
           topRight: Radius.circular(24),
         ),
       ),
-      child: SafeArea(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            // 핸들바
-            _buildHandle(context),
-            
-            // 헤더
-            _buildHeader(context, theme),
-            
-            // 선택된 범위 표시
-            _buildSelectedRangeDisplay(context, theme),
-            
-            // 캘린더
-            Padding(
-              padding: EdgeInsets.symmetric(
-                horizontal: ResponsiveHelper.spacing(context, 16),
-              ),
-              child: CarrotStyleCalendar(
-                mode: CalendarMode.range,
-                rangeStart: _rangeStart,
-                rangeEnd: _rangeEnd,
-                minDate: widget.minDate,
-                maxDate: widget.maxDate,
-                allowPastDates: widget.allowPastDates,
-                disabledDates: widget.disabledDates,
-                enabledDayPredicate: widget.enabledDayPredicate,
-                onRangeChanged: (start, end) {
-                  setState(() {
-                    _rangeStart = start;
-                    _rangeEnd = end;
-                  });
-                },
-              ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          // 핸들바
+          _buildHandle(context),
+
+          // 헤더
+          _buildHeader(context, theme),
+
+          // 선택된 범위 표시
+          _buildSelectedRangeDisplay(context, theme),
+
+          // 캘린더
+          Padding(
+            padding: EdgeInsets.symmetric(
+              horizontal: ResponsiveHelper.spacing(context, 16),
             ),
-            
-            SizedBox(height: ResponsiveHelper.spacing(context, 16)),
-            
-            // 버튼
-            _buildButtons(context, theme),
-            
-            SizedBox(height: ResponsiveHelper.spacing(context, 16)),
-          ],
-        ),
+            child: CarrotStyleCalendar(
+              mode: CalendarMode.range,
+              rangeStart: _rangeStart,
+              rangeEnd: _rangeEnd,
+              minDate: widget.minDate,
+              maxDate: widget.maxDate,
+              allowPastDates: widget.allowPastDates,
+              disabledDates: widget.disabledDates,
+              enabledDayPredicate: widget.enabledDayPredicate,
+              onRangeChanged: (start, end) {
+                setState(() {
+                  _rangeStart = start;
+                  _rangeEnd = end;
+                });
+              },
+            ),
+          ),
+
+          SizedBox(height: ResponsiveHelper.spacing(context, 16)),
+
+          // 버튼
+          _buildButtons(context, theme),
+
+          SizedBox(height: ResponsiveHelper.spacing(context, 16)),
+        ],
       ),
     );
   }
