@@ -22,6 +22,7 @@ class AppVersionService {
             : const Duration(hours: 1),
       ));
       await _rc.setDefaults({
+        // [특이사항] SP-L-1: 출시 전 실제 최소 지원 버전으로 갱신 필요 — 현재 '0.0.0'은 강제 업데이트 비활성 상태
         'min_version': '0.0.0',
         'latest_version': '0.0.0',
         'update_url_android': '',

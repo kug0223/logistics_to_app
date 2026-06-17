@@ -49,7 +49,7 @@ class _NetworkBannerState extends State<NetworkBanner>
             // 재연결 시(초기 온라인 제외) 잠깐 초록 배너 보여주고 닫기
             _controller.forward().then((_) async {
               await Future.delayed(const Duration(seconds: 2));
-              if (mounted) _controller.reverse();
+              if (mounted) _controller.reverse(); // [BUG-수정] SP-L-2: async gap 후 mounted 체크
             });
           }
         }

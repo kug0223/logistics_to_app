@@ -548,6 +548,7 @@ class FirestoreService {
           .get();
       return snap.docs.map((d) => ApplicationModel.fromFirestore(d)).toList();
     } catch (e) {
+      debugPrint('❌ getApplicationsByTO 실패: $e');
       return [];
     }
   }

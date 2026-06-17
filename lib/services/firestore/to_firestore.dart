@@ -93,6 +93,8 @@ extension TOFirestore on FirestoreService {
       }
     }
 
+    // [특이사항] sortBy='date'(마감임박순)는 서버 정렬 미지원 — 클라이언트 후처리로만 동작
+    // 데이터량 많을 시 2페이지 이후 마감임박 공고가 첫 화면에 미표시될 수 있음
     query = query.orderBy('createdAt', descending: true).limit(pageSize);
 
     if (startAfter != null) {

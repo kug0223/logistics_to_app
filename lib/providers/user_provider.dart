@@ -231,8 +231,12 @@ class UserProvider with ChangeNotifier {
       debugPrint('❌ 회원가입 실패: $e');
       return false;
     } finally {
-      _isLoading = false;
-      notifyListeners();
+      // [BUG-수정] SP-M-1: _loadUserData() 성공 시 내부에서 이미 _isLoading=false + notifyListeners() 처리됨.
+      // finally가 무조건 재호출하면 불필요한 이중 rebuild 발생 — _isLoading이 아직 true일 때만 정리.
+      if (_isLoading) {
+        _isLoading = false;
+        notifyListeners();
+      }
     }
   }
 
@@ -276,8 +280,12 @@ class UserProvider with ChangeNotifier {
       
       return false;
     } finally {
-      _isLoading = false;
-      notifyListeners();
+      // [BUG-수정] SP-M-1: _loadUserData() 성공 시 내부에서 이미 _isLoading=false + notifyListeners() 처리됨.
+      // finally가 무조건 재호출하면 불필요한 이중 rebuild 발생 — _isLoading이 아직 true일 때만 정리.
+      if (_isLoading) {
+        _isLoading = false;
+        notifyListeners();
+      }
     }
   }
 

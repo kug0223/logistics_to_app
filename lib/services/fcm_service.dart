@@ -298,6 +298,9 @@ class FCMService {
         _navigateToContractSign(data); // fire-and-forget: 내부에서 await 처리
         break;
       // 근무자 서명 완료 알림 — 관리자 전용, 인력 관리 화면으로 직접 이동
+      // [특이사항] SP-M-2: 역할 가드 없음 — FCMService는 _currentUserId만 보유하며 role 정보 미포함.
+      // USER가 이 payload를 수신하면 관리자 전용 IntegratedWorkforceScreen에 접근 가능.
+      // IntegratedWorkforceScreen 내부에서 비관리자 접근 시 처리 필요.
       case 'contractSigned':
         _navigatorKey!.currentState!.push(
           MaterialPageRoute(builder: (_) => const IntegratedWorkforceScreen()),

@@ -682,6 +682,9 @@ export const masterScheduler = onSchedule(
       console.log("🔄 [계약 연장] 처리 시작...");
       try { await processContractRenewalChecks(timestamp); }
       catch (e) { console.error("❌ [계약 연장] 실패:", e); }
+
+      // [TODO] idCardAccessExpiringSoon: 신분증 열람 권한 만료 D-1 알림 미구현
+      // approvedAccess 중 expiresAt이 내일인 항목 조회 → 근무자에게 알림 발송 필요
     }
 
     // ═══════════════════════════════════════════════════════

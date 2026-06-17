@@ -119,7 +119,7 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
   }
 
   Future<void> _loadMore() async {
-    if (_isLoadingMore || !_hasMore) return;
+    if (_isLoadingMore || !_hasMore || _lastDoc == null) return;
     if (!mounted) return;
     final uid = Provider.of<UserProvider>(context, listen: false).currentUser?.uid;
     if (uid == null) return;
@@ -314,6 +314,8 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
       isSelected: _selectedFilter == value,
       onTap: () {
         setState(() => _selectedFilter = value);
+        // [특이사항] 탭 필터는 클라이언트 필터 — 탭 변경 시 서버 재조회 없이 로드된 데이터 내에서만 필터링
+        // _loadMore 내 _lastDoc 가드로 커서 소실 방지 처리됨
         WidgetsBinding.instance.addPostFrameCallback((_) {
           if (mounted && _filteredApplications.isEmpty && _hasMore && !_isLoadingMore) {
             _loadMore();
