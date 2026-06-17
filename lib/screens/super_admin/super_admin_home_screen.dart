@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 import '../../providers/user_provider.dart';
 import '../../providers/theme_provider.dart';
 import 'all_businesses_screen.dart';
+import 'all_users_screen.dart';
 import '../../utils/dialog_helper.dart';
 import '../../utils/responsive_helper.dart';
 import '../common/settings_screen.dart';
@@ -227,7 +228,8 @@ class AdminHomeScreen extends StatelessWidget {
                               subtitle: '회원 관리',
                               color: theme.primaryColor,
                               onTap: () {
-                                ToastHelper.showInfo('사용자 관리 기능은 준비 중입니다');
+                                // [BUG-수정] 사용자 관리 카드 → AllUsersScreen 연결
+                                Navigator.push(context, MaterialPageRoute(builder: (_) => const AllUsersScreen()));
                               },
                             ),
 

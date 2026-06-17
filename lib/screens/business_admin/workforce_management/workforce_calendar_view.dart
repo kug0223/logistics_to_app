@@ -713,7 +713,7 @@ class _WorkforceCalendarViewState extends State<WorkforceCalendarView> {
           .where((g) => !g.isLongTerm && !g.isGroupDetailLoaded)
           .map((g) => controller.loadGroupDetails(context, g)),
     );
-    // Future.wait 완료 후 위젯이 unmount됐을 수 있으므로 이후 setState·context 사용 시 mounted 체크 필요
+    if (!mounted) return; // [BUG-수정] W-M-2: Future.wait 후 방어적 mounted guard 추가 (현재 setState 없으나 향후 코드 추가 시 guard 역할)
   }
 
   Future<void> _showAttendancePopup() async {

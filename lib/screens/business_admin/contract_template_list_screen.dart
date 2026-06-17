@@ -71,7 +71,7 @@ class _ContractTemplateListScreenState
         ),
       ),
     );
-    if (result == true) _load();
+    if (result == true && mounted) _load(); // [BUG-수정] W-M-1: async gap 후 mounted 체크 추가
   }
 
   void _openPreview(ContractTemplateModel t) {
@@ -104,7 +104,7 @@ class _ContractTemplateListScreenState
         if (result == true && mounted) _load();
       }
     } catch (e) {
-      ToastHelper.showError('복사에 실패했습니다');
+      if (mounted) ToastHelper.showError('복사에 실패했습니다'); // [BUG-수정] W-L-1: catch 블록 Toast mounted 체크 추가
     } finally {
       if (mounted) setState(() => _isDuplicating = false);
     }

@@ -51,6 +51,8 @@ class _AllBusinessesScreenState extends State<AllBusinessesScreen>
           .map((doc) => BusinessModel.fromMap(doc.data(), doc.id))
           .toList();
 
+      // [특이사항] 소유자 조회 N+1 — 최대 300회 Firestore read 발생
+      // 개선: ownerName을 사업장 문서에 denormalize하거나 whereIn 30개 청크로 배치 조회 필요
       final ownerFutures = businesses.map((business) async {
         try {
           final ownerDoc = await FirebaseFirestore.instance

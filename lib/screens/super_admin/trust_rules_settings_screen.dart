@@ -72,7 +72,7 @@ class _TrustRulesSettingsScreenState extends State<TrustRulesSettingsScreen> {
       _populateControllers();
     } catch (e) {
       debugPrint('❌ 설정 로드 실패: $e');
-      ToastHelper.showError('설정을 불러오는데 실패했습니다');
+      if (mounted) ToastHelper.showError('설정을 불러오는데 실패했습니다'); // [BUG-수정] catch Toast mounted 가드
     } finally {
       if (mounted) {
         setState(() => _isLoading = false);

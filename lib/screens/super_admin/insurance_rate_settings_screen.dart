@@ -81,10 +81,11 @@ class _InsuranceRateSettingsScreenState
     setState(() => _isSaving = true);
     try {
       await InsuranceRateService.saveRates(parsed);
+      if (!mounted) return; // [BUG-수정] async gap 후 mounted 체크
       _rates[_selectedYear] = parsed;
       ToastHelper.showSuccess('$_selectedYear년 보험료율 저장 완료');
     } catch (e) {
-      ToastHelper.showError('저장 실패: $e');
+      if (mounted) ToastHelper.showError('저장 실패: $e'); // [BUG-수정] catch Toast mounted 가드
     } finally {
       if (mounted) setState(() => _isSaving = false);
     }

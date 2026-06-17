@@ -58,7 +58,7 @@ class _ReviewTagsSettingsScreenState extends State<ReviewTagsSettingsScreen>
       } else {
         // 기본값 설정
         _setDefaultTags();
-        await _saveTags();
+        await _saveTags(showToast: false); // [BUG-수정] 초기화 경로에서 Toast 오발화 방지
       }
     } catch (e) {
       debugPrint('❌ 태그 로드 실패: $e');
@@ -77,7 +77,7 @@ class _ReviewTagsSettingsScreenState extends State<ReviewTagsSettingsScreen>
     _businessImprovementTags = ['업무 과중', '소통 부족', '시설 불편', '대기 시간 김', '안전 문제'];
   }
 
-  Future<void> _saveTags() async {
+  Future<void> _saveTags({bool showToast = true}) async { // [BUG-수정] 초기화 경로에서 Toast 오발화 방지용 파라미터
     try {
       await _firestore.collection('settings').doc('review_tags').set({
         'positiveTags': _positiveTags,
@@ -86,8 +86,8 @@ class _ReviewTagsSettingsScreenState extends State<ReviewTagsSettingsScreen>
         'businessImprovementTags': _businessImprovementTags,
         'updatedAt': FieldValue.serverTimestamp(),
       });
-      
-      if (mounted) ToastHelper.showSuccess('태그가 저장되었습니다');
+
+      if (showToast && mounted) ToastHelper.showSuccess('태그가 저장되었습니다');
     } catch (e) {
       debugPrint('❌ 태그 저장 실패: $e');
       if (mounted) ToastHelper.showError('저장에 실패했습니다');
