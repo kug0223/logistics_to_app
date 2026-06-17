@@ -274,6 +274,7 @@ export const resetPasswordWithCode = onCall(
     const docRef = db.collection("passwordResetCodes").doc(username);
 
     // 읽기+업데이트를 트랜잭션으로 묶어 병렬 요청에 의한 브루트포스 제한 우회 차단
+    const now = admin.firestore.Timestamp.now();
     await db.runTransaction(async (tx) => {
       const doc = await tx.get(docRef);
       if (!doc.exists) {
@@ -286,6 +287,10 @@ export const resetPasswordWithCode = onCall(
       const expiresAt = (data.expiresAt as Timestamp).toDate();
       const attempts = (data.attempts as number) ?? 0;
 
+      // 이미 사용된 코드 거부
+      if (data.used === true) {
+        throw new HttpsError("invalid-argument", "이미 사용된 인증 코드입니다. 다시 요청해주세요.");
+      }
       if (attempts >= 5) {
         tx.delete(docRef);
         throw new HttpsError(
@@ -301,8 +306,9 @@ export const resetPasswordWithCode = onCall(
         tx.update(docRef, {attempts: admin.firestore.FieldValue.increment(1)});
         throw new HttpsError("invalid-argument", "인증번호가 일치하지 않습니다.");
       }
-      // 검증 성공 → 트랜잭션 내에서 코드 삭제
-      tx.delete(docRef);
+      // 검증 성공 → 즉시 삭제 대신 used 마킹 (원자성 보장)
+      // 비밀번호 변경 성공 후 최종 삭제
+      tx.update(docRef, {used: true, usedAt: now});
     });
 
     // 코드 검증 성공 → 사용자 UID 조회
@@ -335,6 +341,9 @@ export const resetPasswordWithCode = onCall(
 
     // Firebase Admin SDK로 비밀번호 변경
     await admin.auth().updateUser(uid, {password: newPassword});
+
+    // 비밀번호 변경 성공 → 코드 문서 최종 삭제 (used 마킹 해제 불가 보장)
+    await docRef.delete();
 
     // 기존 세션(리프레시 토큰) 무효화 — 다른 디바이스 강제 로그아웃
     await admin.auth().revokeRefreshTokens(uid);
@@ -439,11 +448,11 @@ export const onMemberInvitationAccepted = onDocumentUpdated(
     if (!before || !after) return;
     if (before.status !== "pending" || after.status !== "accepted") return;
 
-    const targetUid = after.targetUid as string | undefined;
-    // [SEC-001] before.businessId 사용 — after는 수신자가 변조했을 수 있음
+    // [SEC-001] before 값 사용 — after는 수신자가 targetUid/businessId를 변조했을 수 있음
+    const targetUid = before.targetUid as string | undefined;
     const businessId = before.businessId as string | undefined;
     if (!targetUid || !businessId) {
-      console.error("⚠️ [초대수락 트리거] targetUid 또는 businessId 누락", after);
+      console.error("⚠️ [초대수락 트리거] targetUid 또는 businessId 누락", before);
       return;
     }
 
@@ -2470,14 +2479,18 @@ async function processContractRenewalChecks(now: Timestamp): Promise<void> {
         (bizDoc.data()?.adminIds as string[] ?? []) :
         [];
 
+      // notifRef를 트랜잭션 외부에서 미리 생성 — 재시도 시 동일 ID 재사용으로 중복 알림 방지
+      const notifRefs = adminIds.map(() => db.collection("notifications").doc());
+
       // 트랜잭션으로 중복 발송 방지
       await db.runTransaction(async (tx) => {
         const snap = await tx.get(doc.ref);
         if (snap.data()?.renewalNotifiedAt) return; // 이미 발송됨
 
         // 관리자 전원에게 알림
-        for (const adminId of adminIds) {
-          const notifRef = db.collection("notifications").doc();
+        for (let i = 0; i < adminIds.length; i++) {
+          const adminId = adminIds[i];
+          const notifRef = notifRefs[i];
           // [특이사항] businessId 미포함 — notification_screen.dart에서 userProvider.effectiveBusinessId로 폴백 처리 중
           // data 필드에 businessId 직접 참조 경로 추가 시 누락 이슈 발생 가능
           tx.set(notifRef, {
