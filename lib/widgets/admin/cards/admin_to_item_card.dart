@@ -584,7 +584,7 @@ class _TOItemCardState extends State<TOItemCard> {
             slot: widget.toItem.slot,
           ),
           onReturn: (result) {
-            if (result == true) {
+            if (result == true && mounted) {
               widget.firestoreService.clearCache(toId: widget.toItem.to.id);
               widget.onChanged();
             }

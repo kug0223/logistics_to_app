@@ -163,6 +163,7 @@ class _PayrollOverviewScreenState extends State<PayrollOverviewScreen> {
                       ),
                     ),
                   );
+                  if (!mounted) return;
                   _loadTodayCount();
                 },
               ),

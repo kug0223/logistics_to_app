@@ -268,7 +268,7 @@ class _BusinessListScreenState extends State<BusinessListScreen> {
             context,
             destination: BusinessDetailScreen(business: business),
             onReturn: (result) {
-              if (result == true) _loadBusinesses(forceServer: true);
+              if (result == true && mounted) _loadBusinesses(forceServer: true);
             },
           );
         },
@@ -500,7 +500,7 @@ class _BusinessListScreenState extends State<BusinessListScreen> {
               context,
               destination: BusinessDetailScreen(business: business),
               onReturn: (result) {
-                if (result == true) _loadBusinesses(forceServer: true);
+                if (result == true && mounted) _loadBusinesses(forceServer: true);
               },
             ),
           ),
@@ -513,7 +513,7 @@ class _BusinessListScreenState extends State<BusinessListScreen> {
                 context,
                 destination: BusinessFormScreen(business: business),
                 onReturn: (result) {
-                  if (result == true) _loadBusinesses(forceServer: true);
+                  if (result == true && mounted) _loadBusinesses(forceServer: true);
                 },
               ),
             ),
@@ -549,7 +549,7 @@ class _BusinessListScreenState extends State<BusinessListScreen> {
       context,
       destination: const AdminCreateTOScreen(),
       onReturn: (result) {
-        if (result == true) _loadBusinesses(forceServer: true);
+        if (result == true && mounted) _loadBusinesses(forceServer: true);
       },
     );
   }
@@ -639,7 +639,7 @@ class _BusinessListScreenState extends State<BusinessListScreen> {
       context,
       destination: const BusinessFormScreen(),
       onReturn: (result) {
-        if (result == true) _loadBusinesses(forceServer: true);
+        if (result == true && mounted) _loadBusinesses(forceServer: true);
       },
     );
   }
