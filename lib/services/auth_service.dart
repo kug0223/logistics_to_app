@@ -6,6 +6,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 import '../models/core/user_model.dart';
 import '../utils/toast_helper.dart';
+import '../utils/encryption_helper.dart';
 import 'fcm_service.dart';
 
 class AuthService {
@@ -67,6 +68,19 @@ class AuthService {
             await _auth.signOut();
             ToastHelper.showError('이용 제한된 계정입니다.\n사유: $reason\n고객센터에 문의해주세요.');
             throw Exception('블랙리스트 사용자');
+          }
+
+          // 가입 승인 상태 체크
+          final status = data['accountStatus'] as String? ?? 'active';
+          if (status == 'pending') {
+            await _auth.signOut();
+            ToastHelper.showError('가입 승인 대기 중입니다.\n슈퍼관리자 승인 후 이용 가능합니다.');
+            throw Exception('가입 승인 대기');
+          }
+          if (status == 'rejected') {
+            await _auth.signOut();
+            ToastHelper.showError('가입이 거절되었습니다.\n고객센터에 문의해주세요.');
+            throw Exception('가입 거절');
           }
 
           // 제재 기간 체크
@@ -160,7 +174,6 @@ class AuthService {
     required String username,
     required String password,
     required String name,
-    required String userEmail,      // ⭐ 실제 이메일
     String? phone,
     UserRole role = UserRole.USER,
     String? businessId,
@@ -168,9 +181,13 @@ class AuthService {
     String? gender,
     DateTime? birthDate,
     String? residentNumber,
+    // PASS 인증 필드
+    String? ci,
+    String? foreignIdNumber,
+    String accountStatus = 'active',
     // 주소 기반 필드
-    String? address,           
-    String? detailAddress,     
+    String? address,
+    String? detailAddress,
     // ⭐ 서류 업로드 필드
     String? idCardImageUrl,           // 신분증 앞면 (지원자)
     String? bankbookImageUrl,         // 통장 사본 (지원자)
@@ -199,7 +216,6 @@ class AuthService {
           username: username,
           name: name,
           email: systemEmail,         // 시스템 이메일
-          userEmail: userEmail,       // ⭐ 실제 이메일
           phone: phone,
           role: role,
           businessId: businessId,
@@ -209,6 +225,10 @@ class AuthService {
           gender: gender,
           birthDate: birthDate,
           residentNumber: residentNumber,
+          // PASS 인증 정보
+          ci: ci,
+          foreignIdNumber: foreignIdNumber,
+          accountStatus: accountStatus,
           // ⭐ 주소 추가!
           address: address,
           detailAddress: detailAddress,
@@ -276,7 +296,6 @@ class AuthService {
   // 사업장 관리자 회원가입 (슈퍼관리자만 호출 가능)
   Future<UserModel?> signUpBusinessAdmin({
     required String username,
-    required String userEmail,      // ⭐ 파라미터 이름 변경
     required String password,
     required String name,
     required String businessId,
@@ -287,7 +306,6 @@ class AuthService {
   }) async {
     return signUp(
       username: username,
-      userEmail: userEmail,         // ⭐ 변경
       password: password,
       name: name,
       phone: phone,
@@ -396,20 +414,32 @@ class AuthService {
       // 삭제 후 clearToken() 호출 시 users 문서가 없어 update() 오류 발생하던 문제 수정
       await FCMService().clearToken();
 
-      // [BUG-수정] A-H-1: 탈퇴 기록을 전화번호 해시로 저장 (재가입 30일 제한용)
-      // 기존 주민번호는 마스킹 저장되어 복호화 불가 → 해시 생성 불가 → 재가입 제한 비작동
-      // 전화번호(phone 필드)는 평문 저장되어 있어 해시 생성 가능
+      // [BUG-수정] A-H-1: 탈퇴 기록을 CI 해시로 저장 (재가입 30일 제한용)
+      // CI는 암호화 저장되므로 EncryptionHelper.decrypt 후 해시 생성
+      // CI가 없는 경우(외국인 등)는 전화번호 해시로 폴백
       final userDoc = await _firestore.collection('users').doc(user.uid).get();
       if (userDoc.exists) {
         final data = userDoc.data()!;
+        final ciEncrypted = data['ci'] as String?;
         final phone = data['phone'] as String?;
-        if (phone != null && phone.isNotEmpty) {
-          // 전화번호 해시 생성 (원본 저장 안 함)
-          final phoneHash = sha256.convert(utf8.encode(phone)).toString();
 
+        String? identityHash;
+        if (ciEncrypted != null && ciEncrypted.isNotEmpty) {
+          // CI 복호화 후 해시
+          final ciPlain = EncryptionHelper.decrypt(ciEncrypted);
+          if (ciPlain != null && ciPlain.isNotEmpty) {
+            identityHash = sha256.convert(utf8.encode(ciPlain)).toString();
+          }
+        }
+        // CI 없으면 전화번호 해시로 폴백
+        if (identityHash == null && phone != null && phone.isNotEmpty) {
+          identityHash = sha256.convert(utf8.encode(phone)).toString();
+        }
+
+        if (identityHash != null) {
           final isBlacklisted = data['isBlacklisted'] == true;
           await _firestore.collection('deleted_accounts').add({
-            'phoneHash': phoneHash,
+            'phoneHash': identityHash,
             'deletedAt': FieldValue.serverTimestamp(),
             // 블랙리스트면 슈퍼관리자가 직접 해제 전까지 차단
             'canReregisterAt': isBlacklisted
@@ -595,34 +625,6 @@ class AuthService {
     }
   }
 
-  // ⭐ NEW: 이메일 인증 발송 (이메일 인증 기능용)
-  Future<void> sendEmailVerification() async {
-    try {
-      final user = _auth.currentUser;
-      if (user != null && !user.emailVerified) {
-        await user.sendEmailVerification();
-        ToastHelper.showSuccess('인증 이메일이 발송되었습니다.');
-      }
-    } catch (e) {
-      ToastHelper.showError('이메일 발송에 실패했습니다.');
-      throw Exception('이메일 인증 발송 실패: $e');
-    }
-  }
-
-  // ⭐ NEW: 이메일 인증 상태 확인
-  Future<bool> isEmailVerified() async {
-    try {
-      final user = _auth.currentUser;
-      if (user != null) {
-        await user.reload(); // 최신 상태로 새로고침
-        return user.emailVerified;
-      }
-      return false;
-    } catch (e) {
-      debugPrint('이메일 인증 상태 확인 실패: $e');
-      return false;
-    }
-  }
   // 동일 전화번호 + 역할 중복 가입 체크
   // 같은 사람이 같은 역할로 이미 가입했는지 확인
   /// null = 네트워크 에러 (호출부에서 경고 표시 후 진행 결정)

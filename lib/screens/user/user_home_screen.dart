@@ -185,15 +185,6 @@ class _UserHomeScreenState extends State<UserHomeScreen> {
                       ],
                     ),
 
-                    SizedBox(height: ResponsiveHelper.spacing(context, 4)),
-
-                    Text(
-                      userProvider.currentUser?.userEmail ?? '',
-                      style: ResponsiveHelper.smallStyle(context,
-                          color: Colors.white.withValues(alpha: 0.9)),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                    ),
                   ],
                 ),
               ),
@@ -326,7 +317,7 @@ class _UserHomeScreenState extends State<UserHomeScreen> {
     final user = userProvider.currentUser;
     if (user == null) return const SizedBox.shrink();
     final missing = <String>[];
-    if (!user.isEmailVerified) missing.add('이메일 인증');
+    if (!user.isPassVerified) missing.add('PASS 인증');
     if (user.idCardImageUrl == null) missing.add('신분증');
     if (user.bankbookImageUrl == null) missing.add('통장사본');
     if (user.bankName == null || user.accountNumber == null) missing.add('통장 정보');

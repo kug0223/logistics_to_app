@@ -318,19 +318,19 @@ class _AuthWrapperState extends State<AuthWrapper> {
           );
         }
 
-        // 이메일 미인증 배너 (로그인 후 최초 1회)
-        if (!user.isEmailVerified && !_emailBannerShown) {
+        // PASS 인증 배너 (로그인 후 최초 1회)
+        if (!user.isPassVerified && !_emailBannerShown) {
           _emailBannerShown = true;
           WidgetsBinding.instance.addPostFrameCallback((_) {
             scaffoldMessengerKey.currentState?.showMaterialBanner(
               MaterialBanner(
                 padding: const EdgeInsets.symmetric(
                     horizontal: 16, vertical: 8),
-                leading: const Icon(Icons.mail_outline,
+                leading: const Icon(Icons.verified_user_outlined,
                     color: AppColors.warning),
                 backgroundColor: AppColors.warningBg,
                 content: const Text(
-                  '이메일 인증을 완료하면 더 많은 기능을 이용할 수 있어요',
+                  'PASS 인증을 완료하면 더 많은 기능을 이용할 수 있어요',
                   style: TextStyle(fontSize: 13),
                 ),
                 actions: [
@@ -362,7 +362,7 @@ class _AuthWrapperState extends State<AuthWrapper> {
             );
           });
         }
-        if (user.isEmailVerified && _emailBannerShown) {
+        if (user.isPassVerified && _emailBannerShown) {
           _emailBannerShown = false;
           WidgetsBinding.instance.addPostFrameCallback((_) {
             scaffoldMessengerKey.currentState?.hideCurrentMaterialBanner();

@@ -169,7 +169,6 @@ class UserProvider with ChangeNotifier {
   // 회원가입
   Future<bool> signUp({
     required String username,
-    required String userEmail,
     required String password,
     required String name,
     String? phone,
@@ -179,6 +178,10 @@ class UserProvider with ChangeNotifier {
     String? gender,
     DateTime? birthDate,
     String? residentNumber,
+    // PASS 인증 필드
+    String? ci,
+    String? foreignIdNumber,
+    String accountStatus = 'active',
     // 주소 필드
     String? address,
     String? detailAddress,
@@ -199,8 +202,7 @@ class UserProvider with ChangeNotifier {
       notifyListeners();
 
       final user = await _authService.signUp(
-        username: username, 
-        userEmail: userEmail,
+        username: username,
         password: password,
         name: name,
         phone: phone,
@@ -209,6 +211,9 @@ class UserProvider with ChangeNotifier {
         gender: gender,
         birthDate: birthDate,
         residentNumber: residentNumber,
+        ci: ci,
+        foreignIdNumber: foreignIdNumber,
+        accountStatus: accountStatus,
         address: address,
         detailAddress: detailAddress,
         idCardImageUrl: idCardImageUrl,

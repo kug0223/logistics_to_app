@@ -344,21 +344,11 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen> {
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
                           ),
-                          SizedBox(height: ResponsiveHelper.spacing(context, 4)),
-                          Text(
-                            userProvider.currentUser?.userEmail ?? '',
-                            style: ResponsiveHelper.smallStyle(
-                              context,
-                              color: Colors.white.withValues(alpha: 0.9),
-                            ),
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                          ),
                         ],
                       ],
                     ),
                   ),
-                  
+
                   // 메뉴 카드 영역
                   Expanded(
                     child: Container(
@@ -397,7 +387,7 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen> {
                                     final canProceed = await checkTOPrerequisites(
                                       context,
                                       hasApprovedBusiness: hasApprovedBusiness,
-                                      isEmailVerified: user.isEmailVerified,
+                                      isEmailVerified: user.isPassVerified,
                                       hasLicense: user.businessLicenseImageUrl != null,
                                     );
                                     if (!canProceed || !context.mounted) return;

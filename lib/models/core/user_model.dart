@@ -13,8 +13,7 @@ class UserModel {
   // ── 기본 인증 정보 ──
   final String uid;
   final String username;
-  final String email;              // systemEmail로 사용됨
-  final String? userEmail;         // 실제 이메일
+  final String email;              // systemEmail로 사용됨 (username@ALfit-system.com)
   final UserRole role;
   final String? businessId;             // 대표 사업장 ID (하위 호환용)
   final List<String> managedBusinessIds; // 관리하는 모든 사업장 ID 목록
@@ -30,11 +29,17 @@ class UserModel {
   final String? address;                 // 주소
   final String? detailAddress;           // 상세 주소
 
+  // ── PASS 본인인증 정보 ──
+  final String? ci;                     // PASS CI값 (암호화 저장, 내국인 전용)
+  final DateTime? passVerifiedAt;       // PASS 인증 시각 (내국인 전용)
+  final String? foreignIdNumber;        // 외국인등록번호 (암호화 저장, 외국인 전용)
+  // 'active' | 'pending' | 'rejected' — 외국인은 가입 후 pending, 슈퍼관리자 승인 시 active
+  final String accountStatus;
+
   // ── 신분증 정보 ──
   final String? idCardImageUrl;         // 신분증 앞면 이미지 URL
   final DateTime? idCardVerifiedAt;     // 신분증 인증 시각
   final bool isIdVerified;              // 신분증 인증 여부
-  final bool isEmailVerified;           // 이메일 인증 여부
   
   // ── 급여 통장 정보 ──
   final String? bankName;               // 은행명
@@ -96,13 +101,17 @@ class UserModel {
     required this.username,
     required this.name,
     required this.email,           // systemEmail
-    this.userEmail,
     this.phone,
     required this.role,
     this.businessId,
     List<String>? managedBusinessIds,
     this.createdAt,
     this.lastLoginAt,
+    // PASS 본인인증 필드
+    this.ci,
+    this.passVerifiedAt,
+    this.foreignIdNumber,
+    this.accountStatus = 'active',
     // 신규 필드
     this.gender,
     this.birthDate,
@@ -112,7 +121,6 @@ class UserModel {
     this.idCardImageUrl,
     this.idCardVerifiedAt,
     this.isIdVerified = false,
-    this.isEmailVerified = false,
     this.bankName,
     this.accountNumber,
     this.accountHolder,
@@ -165,6 +173,18 @@ class UserModel {
   
   /// 하위 관리자인지 (근무자이면서 특정 사업장 관리 권한 보유)
   bool get isSubAdmin => role == UserRole.USER && subAdminOf != null;
+
+  /// 외국인 여부
+  bool get isForeign => foreignIdNumber != null;
+
+  /// PASS 인증 완료 여부 (내국인)
+  bool get isPassVerified => ci != null && passVerifiedAt != null;
+
+  /// 가입 승인 대기 중 (외국인)
+  bool get isPending => accountStatus == 'pending';
+
+  /// 가입 거절됨 (외국인)
+  bool get isRejected => accountStatus == 'rejected';
 
   /// 현재 제재 중인지 (noShow 페널티)
   bool get isRestricted =>
@@ -236,7 +256,6 @@ class UserModel {
       username: map['username'] ?? '',
       name: map['name'] ?? '',
       email: map['email'] ?? '',           // systemEmail
-      userEmail: map['userEmail'],
       phone: map['phone'],
       role: role,
       businessId: map['businessId'],
@@ -245,6 +264,11 @@ class UserModel {
           : null,
       createdAt: map['createdAt']?.toDate().toLocal(),
       lastLoginAt: map['lastLoginAt']?.toDate().toLocal(),
+      // PASS 본인인증 필드
+      ci: EncryptionHelper.decrypt(map['ci']),
+      passVerifiedAt: _parseDateTime(map['passVerifiedAt']),
+      foreignIdNumber: EncryptionHelper.decrypt(map['foreignIdNumber']),
+      accountStatus: map['accountStatus'] ?? 'active',
       // 신규 필드
       gender: map['gender'],
       birthDate: map['birthDate']?.toDate().toLocal(),
@@ -254,7 +278,6 @@ class UserModel {
       idCardImageUrl: map['idCardImageUrl'],
       idCardVerifiedAt: _parseDateTime(map['idCardVerifiedAt']),
       isIdVerified: map['isIdVerified'] ?? false,
-      isEmailVerified: map['isEmailVerified'] ?? false,
       bankName: map['bankName'],
       accountNumber: EncryptionHelper.decrypt(map['accountNumber']),
       accountHolder: map['accountHolder'],
@@ -304,7 +327,6 @@ class UserModel {
       'username': username,
       'name': name,
       'email': email,              // systemEmail
-      'userEmail': userEmail,
       'phone': phone,
       'role': _roleToString(role),
       'businessId': businessId,
@@ -317,12 +339,15 @@ class UserModel {
       'residentNumber': EncryptionHelper.encrypt(residentNumber),
       'address': address,
       'detailAddress': detailAddress,
+      'ci': EncryptionHelper.encrypt(ci),
+      'passVerifiedAt': passVerifiedAt != null ? Timestamp.fromDate(passVerifiedAt!) : null,
+      'foreignIdNumber': EncryptionHelper.encrypt(foreignIdNumber),
+      'accountStatus': accountStatus,
       'idCardImageUrl': idCardImageUrl,
-      'idCardVerifiedAt': idCardVerifiedAt != null 
-          ? Timestamp.fromDate(idCardVerifiedAt!) 
+      'idCardVerifiedAt': idCardVerifiedAt != null
+          ? Timestamp.fromDate(idCardVerifiedAt!)
           : null,
       'isIdVerified': isIdVerified,
-      'isEmailVerified': isEmailVerified,
       'bankName': bankName,
       'accountNumber': EncryptionHelper.encrypt(accountNumber),
       'accountHolder': accountHolder,
@@ -399,9 +424,12 @@ class UserModel {
     String? username,
     String? name,
     String? email,
-    String? userEmail,
     String? phone,
     UserRole? role,
+    String? ci,
+    DateTime? passVerifiedAt,
+    String? foreignIdNumber,
+    String? accountStatus,
     String? businessId,
     List<String>? managedBusinessIds,
     DateTime? createdAt,
@@ -414,7 +442,6 @@ class UserModel {
     String? idCardImageUrl,
     DateTime? idCardVerifiedAt,
     bool? isIdVerified,
-    bool? isEmailVerified,
     String? bankName,
     String? accountNumber,
     String? accountHolder,
@@ -457,9 +484,12 @@ class UserModel {
       username: username ?? this.username,
       name: name ?? this.name,
       email: email ?? this.email,
-      userEmail: userEmail ?? this.userEmail,
       phone: phone ?? this.phone,
       role: role ?? this.role,
+      ci: ci ?? this.ci,
+      passVerifiedAt: passVerifiedAt ?? this.passVerifiedAt,
+      foreignIdNumber: foreignIdNumber ?? this.foreignIdNumber,
+      accountStatus: accountStatus ?? this.accountStatus,
       businessId: businessId ?? this.businessId,
       managedBusinessIds: managedBusinessIds ?? this.managedBusinessIds,
       createdAt: createdAt ?? this.createdAt,
@@ -472,7 +502,6 @@ class UserModel {
       idCardImageUrl: idCardImageUrl ?? this.idCardImageUrl,
       idCardVerifiedAt: idCardVerifiedAt ?? this.idCardVerifiedAt,
       isIdVerified: isIdVerified ?? this.isIdVerified,
-      isEmailVerified: isEmailVerified ?? this.isEmailVerified,
       bankName: bankName ?? this.bankName,
       accountNumber: accountNumber ?? this.accountNumber,
       accountHolder: accountHolder ?? this.accountHolder,

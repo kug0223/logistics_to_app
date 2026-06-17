@@ -111,8 +111,8 @@ class _JobPostingScreenState extends State<JobPostingScreen> {
       setState(() => _applyBlockReason = '이용 제한된 계정입니다');
       return;
     }
-    if (!user.isEmailVerified) {
-      setState(() => _applyBlockReason = '이메일 인증이 필요합니다');
+    if (!user.isPassVerified) {
+      setState(() => _applyBlockReason = 'PASS 인증이 필요합니다');
       return;
     }
     if (user.idCardImageUrl == null) {

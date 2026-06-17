@@ -539,7 +539,7 @@ class _BusinessListScreenState extends State<BusinessListScreen> {
       final canProceed = await checkTOPrerequisites(
         context,
         hasApprovedBusiness: true,
-        isEmailVerified: user.isEmailVerified,
+        isEmailVerified: user.isPassVerified,
         hasLicense: user.businessLicenseImageUrl != null,
       );
       if (!canProceed) return;

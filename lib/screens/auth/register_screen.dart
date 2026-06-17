@@ -623,7 +623,6 @@ class _RegisterScreenState extends State<RegisterScreen> {
       // Step 1: 이미지 URL 없이 계정 생성 → UID 확보
       final success = await userProvider.signUp(
         username: _usernameController.text.trim(),
-        userEmail: _emailController.text.trim(),
         password: _passwordController.text,
         name: _nameController.text.trim(),
         phone: _phoneController.text.trim(),
@@ -775,7 +774,6 @@ class _RegisterScreenState extends State<RegisterScreen> {
       // Step 1: 이미지 URL 없이 계정 생성 → UID 확보
       final success = await userProvider.signUp(
         username: _usernameController.text.trim(),
-        userEmail: _emailController.text.trim(),
         password: _passwordController.text,
         name: _nameController.text.trim(),
         phone: _phoneController.text.trim(),

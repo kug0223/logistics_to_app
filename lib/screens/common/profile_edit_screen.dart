@@ -1,11 +1,9 @@
 // lib/screens/common/profile_edit_screen.dart
 
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:intl/intl.dart';
-import 'package:cloud_functions/cloud_functions.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:cached_network_image/cached_network_image.dart' show CachedNetworkImageProvider;
@@ -44,22 +42,13 @@ class _ProfileEditScreenState extends State<ProfileEditScreen> {
   final _firestoreService = FirestoreService();
   final _authService = AuthService();
 
-  late TextEditingController _emailController;
   late TextEditingController _phoneController;
   late TextEditingController _addressController;
   late TextEditingController _detailAddressController;
-  final _emailCodeController = TextEditingController();
 
   bool _isLoading = false;
   bool _hasChanges = false;
   bool _isUploadingPhoto = false;
-
-  String? _originalEmail;
-  bool _isEmailChanged = false;
-  bool _isEmailSent = false;
-  bool _isEmailVerified = false;
-  bool _isEmailSending = false;
-  bool _isEmailVerifying = false;
 
   @override
   void initState() {
@@ -69,13 +58,10 @@ class _ProfileEditScreenState extends State<ProfileEditScreen> {
 
   void _initControllers() {
     final user = context.read<UserProvider>().currentUser;
-    _emailController = TextEditingController(text: user?.userEmail ?? '');
     _phoneController = TextEditingController(text: user?.phone ?? '');
     _addressController = TextEditingController(text: user?.address ?? '');
     _detailAddressController = TextEditingController(text: user?.detailAddress ?? '');
-    _originalEmail = user?.userEmail;
 
-    _emailController.addListener(_checkChanges);
     _phoneController.addListener(_checkChanges);
     _addressController.addListener(_checkChanges);
     _detailAddressController.addListener(_checkChanges);
@@ -86,25 +72,16 @@ class _ProfileEditScreenState extends State<ProfileEditScreen> {
     if (user == null) return;
     setState(() {
       _hasChanges =
-          _emailController.text != (user.userEmail ?? '') ||
-          _phoneController.text != (user.phone ?? '') ||
           _addressController.text != (user.address ?? '') ||
           _detailAddressController.text != (user.detailAddress ?? '');
-      _isEmailChanged = _emailController.text != (user.userEmail ?? '');
-      if (_isEmailChanged && _emailController.text != _originalEmail) {
-        _isEmailSent = false;
-        _isEmailVerified = false;
-      }
     });
   }
 
   @override
   void dispose() {
-    _emailController.dispose();
     _phoneController.dispose();
     _addressController.dispose();
     _detailAddressController.dispose();
-    _emailCodeController.dispose();
     super.dispose();
   }
 
@@ -182,65 +159,6 @@ class _ProfileEditScreenState extends State<ProfileEditScreen> {
       if (mounted) ToastHelper.showError('사진 업로드에 실패했습니다');
     } finally {
       if (mounted) setState(() => _isUploadingPhoto = false);
-    }
-  }
-
-  // ── 이메일 인증 ──────────────────────────────────────────────
-
-  Future<void> _sendEmailVerification() async {
-    final email = _emailController.text.trim();
-    if (email.isEmpty || !email.contains('@')) {
-      ToastHelper.showWarning('올바른 이메일을 입력해주세요');
-      return;
-    }
-    setState(() => _isEmailSending = true);
-    try {
-      final fn = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
-          .httpsCallable('sendEmailVerificationCode');
-      await fn.call({'email': email});
-      if (mounted) setState(() => _isEmailSent = true);
-      ToastHelper.showSuccess('인증번호가 $email로 발송되었습니다');
-    } catch (e) {
-      ToastHelper.showError('인증번호 발송에 실패했습니다');
-    } finally {
-      if (mounted) setState(() => _isEmailSending = false);
-    }
-  }
-
-  Future<void> _verifyEmailCode() async {
-    final code = _emailCodeController.text.trim();
-    if (code.length != 6) return;
-    setState(() => _isEmailVerifying = true);
-    try {
-      final fn = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
-          .httpsCallable('verifyEmailCode');
-      final result = await fn.call({
-        'email': _emailController.text.trim(),
-        'code': code,
-      });
-      final data = result.data as Map<String, dynamic>;
-      if (mounted) {
-        if (data['valid'] == true) {
-          setState(() => _isEmailVerified = true);
-          ToastHelper.showSuccess('이메일 인증이 완료되었습니다');
-        } else {
-          final reason = data['reason'] as String? ?? '';
-          switch (reason) {
-            case 'expired':
-              ToastHelper.showWarning('인증번호가 만료되었습니다. 다시 발송해주세요');
-              setState(() => _isEmailSent = false);
-            case 'too_many_attempts':
-              ToastHelper.showError('시도 횟수를 초과했습니다. 다시 발송해주세요');
-              setState(() => _isEmailSent = false);
-            default:
-              ToastHelper.showError('인증번호가 일치하지 않습니다');
-          }
-        }
-      }
-    } catch (e) {
-      ToastHelper.showError('인증 확인에 실패했습니다');
-    } finally {
-      if (mounted) setState(() => _isEmailVerifying = false);
     }
   }
 
@@ -410,25 +328,12 @@ class _ProfileEditScreenState extends State<ProfileEditScreen> {
 
   Future<void> _saveProfile() async {
     if (!_formKey.currentState!.validate()) return;
-    if (_isEmailChanged && !_isEmailVerified) {
-      ToastHelper.showWarning('변경된 이메일 인증을 완료해주세요');
-      return;
-    }
     final user = context.read<UserProvider>().currentUser;
     if (user == null) return;
 
     setState(() => _isLoading = true);
     try {
       final updates = <String, dynamic>{};
-      if (_emailController.text.trim() != (user.userEmail ?? '')) {
-        updates['userEmail'] = _emailController.text.trim();
-        updates['isEmailVerified'] = true;
-      }
-      if (_phoneController.text.trim() != (user.phone ?? '')) {
-        // 전화번호 변경 시 SMS 재인증 필요 — 직접 수정 차단
-        ToastHelper.showWarning('휴대폰 번호 변경은 고객센터를 통해 본인 확인 후 처리됩니다.');
-        return;
-      }
       if (_addressController.text.trim() != (user.address ?? '')) {
         updates['address'] = _addressController.text.trim();
       }
@@ -441,13 +346,9 @@ class _ProfileEditScreenState extends State<ProfileEditScreen> {
         if (!mounted) return;
         await context.read<UserProvider>().refreshCurrentUser();
         if (!mounted) return;
-        _originalEmail = _emailController.text.trim();
         ToastHelper.showSuccess('프로필이 수정되었습니다');
         setState(() {
           _hasChanges = false;
-          _isEmailChanged = false;
-          _isEmailSent = false;
-          _isEmailVerified = false;
         });
       }
     } catch (e) {
@@ -714,94 +615,10 @@ class _ProfileEditScreenState extends State<ProfileEditScreen> {
   }
 
   Widget _buildContactCard(UserModel user) {
-    final theme = Theme.of(context);
     return _buildCard(
       child: Padding(
         padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 16)),
         child: Column(children: [
-          CommonWidgets.textField(
-            context: context,
-            controller: _emailController,
-            label: '이메일',
-            hint: 'your@email.com',
-            icon: Icons.email_outlined,
-            keyboardType: TextInputType.emailAddress,
-            suffixIcon: _isEmailChanged
-                ? (_isEmailVerified
-                    ? Icon(Icons.check_circle,
-                        color: AppColors.successMedium,
-                        size: ResponsiveHelper.iconSize(context, 22))
-                    : _isEmailSending
-                        ? const SizedBox(
-                            width: 20, height: 20,
-                            child: Padding(
-                                padding: EdgeInsets.all(12),
-                                child: CircularProgressIndicator(strokeWidth: 2)))
-                        : TextButton(
-                            onPressed: _sendEmailVerification,
-                            child: Text(
-                              _isEmailSent ? '재발송' : '인증',
-                              style: ResponsiveHelper.smallStyle(context,
-                                  color: theme.primaryColor,
-                                  fontWeight: FontWeight.bold),
-                            ),
-                          ))
-                : null,
-            validator: (v) {
-              if (v == null || v.isEmpty) return '이메일을 입력해주세요';
-              if (!v.contains('@')) return '올바른 이메일 형식이 아닙니다';
-              return null;
-            },
-          ),
-
-          if (_isEmailChanged && _isEmailSent && !_isEmailVerified) ...[
-            SizedBox(height: ResponsiveHelper.spacing(context, 12)),
-            Row(children: [
-              Expanded(
-                child: TextField(
-                  controller: _emailCodeController,
-                  keyboardType: TextInputType.number,
-                  inputFormatters: [
-                    FilteringTextInputFormatter.digitsOnly,
-                    LengthLimitingTextInputFormatter(6),
-                  ],
-                  onChanged: (v) {
-                    if (v.length == 6 && !_isEmailVerifying) _verifyEmailCode();
-                  },
-                  decoration: InputDecoration(
-                    labelText: '인증번호 6자리',
-                    hintText: '123456',
-                    prefixIcon: Icon(Icons.pin, color: theme.primaryColor),
-                    border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(12)),
-                  ),
-                ),
-              ),
-              SizedBox(width: ResponsiveHelper.spacing(context, 10)),
-              ElevatedButton(
-                onPressed: _isEmailVerifying ? null : _verifyEmailCode,
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: theme.primaryColor,
-                  padding: EdgeInsets.symmetric(
-                      horizontal: ResponsiveHelper.spacing(context, 18),
-                      vertical: ResponsiveHelper.spacing(context, 16)),
-                  shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(12)),
-                  elevation: 0,
-                ),
-                child: _isEmailVerifying
-                    ? const SizedBox(
-                        width: 16, height: 16,
-                        child: CircularProgressIndicator(
-                            strokeWidth: 2, color: Colors.white))
-                    : Text('확인',
-                        style: ResponsiveHelper.bodyStyle(context)
-                            .copyWith(color: Colors.white)),
-              ),
-            ]),
-          ],
-
-          SizedBox(height: ResponsiveHelper.spacing(context, 12)),
           CommonWidgets.textField(
             context: context,
             controller: _phoneController,
@@ -809,11 +626,7 @@ class _ProfileEditScreenState extends State<ProfileEditScreen> {
             hint: '01012345678',
             icon: Icons.phone_outlined,
             keyboardType: TextInputType.phone,
-            validator: (v) {
-              if (v == null || v.isEmpty) return '전화번호를 입력해주세요';
-              if (v.length < 10) return '올바른 전화번호를 입력해주세요';
-              return null;
-            },
+            readOnly: true,
           ),
         ]),
       ),

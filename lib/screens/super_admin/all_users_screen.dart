@@ -77,10 +77,8 @@ class _AllUsersScreenState extends State<AllUsersScreen>
     if (_searchQuery.isNotEmpty) {
       list = list.where((u) {
         final name = u.name.toLowerCase();
-        final email = (u.userEmail ?? '').toLowerCase();
         final username = u.username.toLowerCase();
         return name.contains(_searchQuery) ||
-            email.contains(_searchQuery) ||
             username.contains(_searchQuery);
       }).toList();
     }
